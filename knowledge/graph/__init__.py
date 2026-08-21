@@ -30,19 +30,18 @@ B3: Graph Cache Integration:
 from knowledge.graph.context_graph import (
     ContextGraph,
     DuckDBContextGraph,
+    compute_centrality_duckdb,
+    compute_communities_duckdb,
+    get_graph_stats_duckdb,
     louvain_communities,
     pagerank,
     strongly_connected_components,
     # C5: DuckDB traversal
     traverse_duckdb,
-    traverse_duckdb_single,
     traverse_duckdb_flat,
-    compute_centrality_duckdb,
-    compute_communities_duckdb,
-    get_graph_stats_duckdb,
+    traverse_duckdb_single,
 )
 
-# Import analyze_ioc_graph from the wiring layer
 try:
     from rust_extensions.wiring.graph_analytics_wiring import analyze_ioc_graph
 except ImportError:

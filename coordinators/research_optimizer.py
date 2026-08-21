@@ -14,6 +14,7 @@ Optimizes research workflows through:
 
 Based on crypto_optimization_engine concept from integration files.
 """
+
 import asyncio
 import hashlib
 import logging
@@ -21,32 +22,35 @@ import time
 from collections.abc import Callable
 from dataclasses import field
 from enum import Enum
+from operator import itemgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
+
 class OptimizationStrategy(Enum):
     """Optimization strategies."""
-    AGGRESSIVE = 'aggressive'
-    BALANCED = 'balanced'
-    CONSERVATIVE = 'conservative'
-    ADAPTIVE = 'adaptive'
+
+    AGGRESSIVE = "aggressive"
+    BALANCED = "balanced"
+    CONSERVATIVE = "conservative"
+    ADAPTIVE = "adaptive"
+
 
 class CachePolicy(Enum):
     """Cache policies."""
-    NO_CACHE = 'no_cache'
-    MEMORY_ONLY = 'memory_only'
-    PERSISTENT = 'persistent'
+
+    NO_CACHE = "no_cache"
+    MEMORY_ONLY = "memory_only"
+    PERSISTENT = "persistent"
+
 
 class OptimizationConfig(Struct):
     """Configuration for research optimization."""
+
     strategy: OptimizationStrategy = OptimizationStrategy.BALANCED
     cache_policy: CachePolicy = CachePolicy.MEMORY_ONLY
     max_concurrent_requests: int = 5
@@ -57,21 +61,26 @@ class OptimizationConfig(Struct):
     batch_size: int = 10
     memory_limit_mb: float = 500.0
 
+
 class QueryMetrics(Struct, frozen=True):
     """Metrics for a query type."""
+
     query_hash: str
     count: int = 0
     avg_duration: float = 0.0
     success_rate: float = 1.0
     last_executed: float | None = None
 
+
 class OptimizedResult(Struct, frozen=True):
     """Result with optimization metadata."""
+
     data: Any
     cache_hit: bool
     duration: float
     optimizations_applied: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class ResearchOptimizer:
     """
@@ -89,19 +98,30 @@ class ResearchOptimizer:
         ...     research_func=actual_research
         ... )
     """
-    __slots__ = ('_active_requests', '_cache', '_execution_times', '_in_flight', '_max_history', '_query_metrics', '_request_semaphore', 'config')
 
-    def __init__(self, config: OptimizationConfig | None=None) -> None:
+    __slots__ = (
+        "_active_requests",
+        "_cache",
+        "_execution_times",
+        "_in_flight",
+        "_max_history",
+        "_query_metrics",
+        "_request_semaphore",
+        "config",
+    )
+
+    def __init__(self, config: OptimizationConfig | None = None) -> None:
         self.config = config or OptimizationConfig()
         self._cache: dict[str, tuple[Any, float]] = {}
         self._query_metrics: dict[str, QueryMetrics] = {}
         self._in_flight: dict[str, asyncio.Future] = {}
         self._active_requests = 0
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         self._request_semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         self._execution_times: list[float] = []
         self._max_history = 1000
-        logger.info(f'ResearchOptimizer initialized ({self.config.strategy.value})')
+        logger.info(f"ResearchOptimizer initialized ({self.config.strategy.value})")
 
     async def execute(self, query: str, research_func: Callable, **kwargs: Any) -> OptimizedResult:
         """
@@ -122,13 +142,25 @@ class ResearchOptimizer:
         if self.config.cache_policy != CachePolicy.NO_CACHE:
             cached = self._get_from_cache(query_hash)
             if cached is not None:
-                return OptimizedResult(data=cached, cache_hit=True, duration=time.time() - start_time, optimizations_applied=['cache_hit'], metadata={'query_hash': query_hash})
-            optimizations.append('cache_checked')
+                return OptimizedResult(
+                    data=cached,
+                    cache_hit=True,
+                    duration=time.time() - start_time,
+                    optimizations_applied=["cache_hit"],
+                    metadata={"query_hash": query_hash},
+                )
+            optimizations.append("cache_checked")
         if self.config.query_deduplication and query_hash in self._in_flight:
-            optimizations.append('deduplicated')
+            optimizations.append("deduplicated")
             try:
                 data = await self._in_flight[query_hash]
-                return OptimizedResult(data=data, cache_hit=False, duration=time.time() - start_time, optimizations_applied=optimizations, metadata={'query_hash': query_hash, 'deduplicated': True})
+                return OptimizedResult(
+                    data=data,
+                    cache_hit=False,
+                    duration=time.time() - start_time,
+                    optimizations_applied=optimizations,
+                    metadata={"query_hash": query_hash, "deduplicated": True},
+                )
             except Exception:  # noqa: BLE001
                 pass
         future = asyncio.Future()
@@ -140,19 +172,25 @@ class ResearchOptimizer:
                 try:
                     async with asyncio.timeout(timeout):
                         data = await research_func(query, **kwargs)
-                    optimizations.append(f'timeout_{timeout}s')
+                    optimizations.append(f"timeout_{timeout}s")
                 except TimeoutError:
-                    future.set_exception(TimeoutError(f'Query timed out after {timeout}s'))
+                    future.set_exception(TimeoutError(f"Query timed out after {timeout}s"))
                     raise
                 duration = time.time() - start_time
                 self._update_metrics(query_hash, duration, success=True)
                 if self.config.cache_policy != CachePolicy.NO_CACHE:
                     self._cache_result(query_hash, data)
-                    optimizations.append('cached')
+                    optimizations.append("cached")
                 if self.config.query_deduplication:
                     future.set_result(data)
                     del self._in_flight[query_hash]
-                return OptimizedResult(data=data, cache_hit=False, duration=duration, optimizations_applied=optimizations, metadata={'query_hash': query_hash, 'timeout': timeout})
+                return OptimizedResult(
+                    data=data,
+                    cache_hit=False,
+                    duration=duration,
+                    optimizations_applied=optimizations,
+                    metadata={"query_hash": query_hash, "timeout": timeout},
+                )
         except Exception as e:
             self._update_metrics(query_hash, time.time() - start_time, success=False)
             if self.config.query_deduplication and query_hash in self._in_flight:
@@ -175,13 +213,13 @@ class ResearchOptimizer:
         """
         if not self.config.result_batching or len(queries) <= self.config.batch_size:
             tasks = [self.execute(q, research_func, **kwargs) for q in queries]
-            return await parallel_ok(*tasks, label='research_optimizer:247')
+            return await parallel_ok(*tasks, label="research_optimizer:247")
         all_results = []
         for i in range(0, len(queries), self.config.batch_size):
-            batch = queries[i:i + self.config.batch_size]
+            batch = queries[i : i + self.config.batch_size]
             unique_queries = list(dict.fromkeys(batch))
             tasks = [self.execute(q, research_func, **kwargs) for q in unique_queries]
-            batch_results = await parallel_ok(*tasks, label='research_optimizer:261')
+            batch_results = await parallel_ok(*tasks, label="research_optimizer:261")
             result_map = dict(zip(unique_queries, batch_results, strict=False))
             for q in batch:
                 all_results.append(result_map[q])
@@ -189,19 +227,20 @@ class ResearchOptimizer:
 
     def _normalize_query(self, query: str) -> str:
         """Normalize query for deduplication."""
-        normalized = ' '.join(query.lower().split())
-        stop_words = {'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and'}
+        normalized = " ".join(query.lower().split())
+        stop_words = {"the", "a", "an", "in", "on", "at", "to", "for", "of", "and"}
         words = normalized.split()
-        normalized = ' '.join(w for w in words if w not in stop_words)
+        normalized = " ".join(w for w in words if w not in stop_words)
         return normalized
 
     def _hash_query(self, query: str) -> str:
         """Create hash of normalized query.
-        
+
         E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon).
         """
         try:
             from _core.rust_backend import rust
+
             hashes = rust.crypto.batch_sha256_hw([query])
             return hashes[0][:16] if hashes else hashlib.sha256(query.encode()).hexdigest()[:16]
         except Exception:
@@ -219,7 +258,12 @@ class ResearchOptimizer:
 
     def _cache_result(self, query_hash: str, data: Any) -> None:
         """Cache result with TTL."""
-        ttl_seconds = {OptimizationStrategy.AGGRESSIVE: 300, OptimizationStrategy.BALANCED: 600, OptimizationStrategy.CONSERVATIVE: 120, OptimizationStrategy.ADAPTIVE: 300}
+        ttl_seconds = {
+            OptimizationStrategy.AGGRESSIVE: 300,
+            OptimizationStrategy.BALANCED: 600,
+            OptimizationStrategy.CONSERVATIVE: 120,
+            OptimizationStrategy.ADAPTIVE: 300,
+        }
         ttl = ttl_seconds[self.config.strategy]
         expires_at = time.time() + ttl
         self._cache[query_hash] = (data, expires_at)
@@ -232,7 +276,7 @@ class ResearchOptimizer:
         expired = [k for k, (_, expires_at) in self._cache.items() if now > expires_at]
         for k in expired:
             del self._cache[k]
-        logger.debug(f'Cache cleanup: removed {len(expired)} expired entries')
+        logger.debug(f"Cache cleanup: removed {len(expired)} expired entries")
 
     def _calculate_timeout(self, query_hash: str) -> float:
         """Calculate adaptive timeout based on history."""
@@ -259,7 +303,7 @@ class ResearchOptimizer:
         metrics.success_rate = 0.9 * metrics.success_rate + 0.1 * success_val
         self._execution_times.append(duration)
         if len(self._execution_times) > self._max_history:
-            self._execution_times = self._execution_times[-self._max_history:]
+            self._execution_times = self._execution_times[-self._max_history :]
 
     def get_stats(self) -> dict[str, Any]:
         """Get optimizer statistics."""
@@ -269,16 +313,45 @@ class ResearchOptimizer:
         else:
             avg_time = sum(self._execution_times) / len(self._execution_times)
             max_time = max(self._execution_times)
-        return {'config': {'strategy': self.config.strategy.value, 'cache_policy': self.config.cache_policy.value, 'max_concurrent': self.config.max_concurrent_requests}, 'cache': {'size': len(self._cache), 'active_in_flight': len(self._in_flight)}, 'performance': {'total_executions': len(self._execution_times), 'avg_duration': avg_time, 'max_duration': max_time, 'unique_queries': len(self._query_metrics)}, 'query_patterns': sorted([{'hash': m.query_hash[:8], 'count': m.count, 'avg_duration': m.avg_duration, 'success_rate': m.success_rate} for m in self._query_metrics.values()], key=itemgetter("count"), reverse=True)[:10]}
+        return {
+            "config": {
+                "strategy": self.config.strategy.value,
+                "cache_policy": self.config.cache_policy.value,
+                "max_concurrent": self.config.max_concurrent_requests,
+            },
+            "cache": {"size": len(self._cache), "active_in_flight": len(self._in_flight)},
+            "performance": {
+                "total_executions": len(self._execution_times),
+                "avg_duration": avg_time,
+                "max_duration": max_time,
+                "unique_queries": len(self._query_metrics),
+            },
+            "query_patterns": sorted(
+                [
+                    {
+                        "hash": m.query_hash[:8],
+                        "count": m.count,
+                        "avg_duration": m.avg_duration,
+                        "success_rate": m.success_rate,
+                    }
+                    for m in self._query_metrics.values()
+                ],
+                key=itemgetter("count"),
+                reverse=True,
+            )[:10],
+        }
 
     def clear_cache(self) -> int:
         """Clear all cached results. Returns count of cleared entries."""
         count = len(self._cache)
         self._cache.clear()
-        logger.info(f'Cache cleared: {count} entries removed')
+        logger.info(f"Cache cleared: {count} entries removed")
         return count
 
-async def optimized_research(query: str, research_func: Callable, strategy: OptimizationStrategy=OptimizationStrategy.BALANCED, **kwargs: Any) -> OptimizedResult:
+
+async def optimized_research(
+    query: str, research_func: Callable, strategy: OptimizationStrategy = OptimizationStrategy.BALANCED, **kwargs: Any
+) -> OptimizedResult:
     """
     Quick optimized research.
 
@@ -294,7 +367,10 @@ async def optimized_research(query: str, research_func: Callable, strategy: Opti
     optimizer = ResearchOptimizer(OptimizationConfig(strategy=strategy))
     return await optimizer.execute(query, research_func, **kwargs)
 
-def create_optimized_pipeline(strategy: OptimizationStrategy=OptimizationStrategy.BALANCED) -> tuple[ResearchOptimizer, PrivacyEnhancedResearch]:
+
+def create_optimized_pipeline(
+    strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
+) -> tuple[ResearchOptimizer, PrivacyEnhancedResearch]:
     """
     Create optimized privacy-enhanced research pipeline.
 
@@ -302,6 +378,7 @@ def create_optimized_pipeline(strategy: OptimizationStrategy=OptimizationStrateg
         Tuple of (optimizer, privacy_research)
     """
     from .privacy_enhanced_research import PrivacyConfig, PrivacyEnhancedResearch
+
     optimizer = ResearchOptimizer(OptimizationConfig(strategy=strategy))
     privacy = PrivacyEnhancedResearch(PrivacyConfig())
     return (optimizer, privacy)

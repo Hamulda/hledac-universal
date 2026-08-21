@@ -11,6 +11,7 @@ Handles:
 
 M1 8GB: Uses structured output for deterministic decisions.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,9 +28,10 @@ logger = logging.getLogger(__name__)
 class DecisionOutput(msgspec.Struct, frozen=True):
     """
     Structured decision output from LLM-based decision engine.
-    
+
     PEP 698: Extracted from _DecisionOutput in deephermes3_engine.py.
     """
+
     action: str
     params: dict[str, Any]
     reasoning: str
@@ -67,11 +69,11 @@ async def decide_next_action(
 ) -> dict[str, Any]:
     """
     Decide the next action in research flow.
-    
+
     Args:
         engine: DeepHermes3Engine instance with generate_structured
         context: Research context with query, step, history, etc.
-        
+
     Returns:
         Decision dictionary with action, params, reasoning, complete
     """
@@ -79,12 +81,12 @@ async def decide_next_action(
     step = context.get("step", 0)
     max_steps = context.get("max_steps", 20)
     history = context.get("history", [])
-    
+
     # Prepare history string
     from hledac.universal.utils.msgspec_json import encode_fast as _msgspec_encode_fast
-    
+
     history_str = _msgspec_encode_fast(history[-3:]).decode() if history else "No previous actions"
-    
+
     prompt = f"""Research query: {query}
 Step: {step}/{max_steps}
 
@@ -92,45 +94,45 @@ History:
 {history_str}
 
 What should be the next action?"""
-    
+
     decision_model = await engine.generate_structured(
         prompt,
         DecisionOutput,
         system_msg=_RESEARCH_ORCHESTRATOR_PROMPT,
         temperature=0.2,
     )
-    
+
     return msgspec.to_dict(decision_model)
 
 
 class TriageMode:
     """
     Triage mode for relevance scoring.
-    
+
     PEP 698: Extracted from triage_mode and related methods.
     """
-    
+
     # Thresholds for M1 8GB constraints
     DEFAULT_THRESHOLD = 0.3
     HIGH_PRIORITY_THRESHOLD = 0.7
-    
+
     @staticmethod
     def is_enabled(engine) -> bool:
         """Check if triage mode is enabled."""
         return getattr(engine, "_triage_mode", False)
-    
+
     @staticmethod
     def enable(engine) -> None:
         """Enable triage mode."""
         engine._triage_mode = True
         logger.debug("[TRIAGE] Mode enabled")
-    
+
     @staticmethod
     def disable(engine) -> None:
         """Disable triage mode."""
         engine._triage_mode = False
         logger.debug("[TRIAGE] Mode disabled")
-    
+
     @staticmethod
     async def score_relevance(
         engine,
@@ -139,39 +141,41 @@ class TriageMode:
     ) -> bool:
         """
         Score and filter items by relevance.
-        
+
         Args:
             engine: DeepHermes3Engine instance
             item: Item to score (dict with 'content', 'url', etc.)
             threshold: Minimum relevance threshold
-            
+
         Returns:
             True if item is relevant enough
         """
         content = item.get("content", item.get("snippet", ""))
         url = item.get("url", "")
-        
+
         if not content:
             return False
-        
+
         # Quick heuristic for very short content
         if len(content) < 50:
             return False
-        
+
         # For now, use simple length-based scoring
         # In production, could use embeddings or LLM scoring
         base_score = min(1.0, len(content) / 500)
-        
+
         # URL quality signals
         if url:
-            quality_signals = sum([
-                "github" in url,  # Quality source
-                "arxiv" in url,
-                "wikipedia" in url,
-                not url.endswith(".pdf"),  # Harder to process
-            ])
+            quality_signals = sum(
+                [
+                    "github" in url,  # Quality source
+                    "arxiv" in url,
+                    "wikipedia" in url,
+                    not url.endswith(".pdf"),  # Harder to process
+                ]
+            )
             base_score += quality_signals * 0.1
-        
+
         return base_score >= threshold
 
 
@@ -179,13 +183,13 @@ class TriageMode:
 def route_action(action: str, params: dict[str, Any]) -> str:
     """
     Route decision action to appropriate handler.
-    
+
     PEP 698: Uses Python 3.14+ match statement for clean action routing.
-    
+
     Args:
         action: Action name
         params: Action parameters
-        
+
     Returns:
         Handler identifier
     """
@@ -210,7 +214,7 @@ def route_action(action: str, params: dict[str, Any]) -> str:
 def create_default_context() -> dict[str, Any]:
     """
     Create default context for decision engine.
-    
+
     Returns:
         Default context dictionary
     """

@@ -29,18 +29,24 @@ Invariant tests:
 from __future__ import annotations
 
 import asyncio
-import time as _time
 import statistics as _statistics
+import time as _time
 from typing import Any
-from _core import aclose
 
 # ── Synthetic SprintContext helpers ──────────────────────────────────────────────
 
 
 class _MockConfig:
     """Minimal mock for ctx.config."""
-    __slots__ = ("aggressive_mode", "max_parallel_sources", "effective_windup_lead_s",
-                 "sprint_duration_s", "doh_enabled", "wayback_enabled")
+
+    __slots__ = (
+        "aggressive_mode",
+        "max_parallel_sources",
+        "effective_windup_lead_s",
+        "sprint_duration_s",
+        "doh_enabled",
+        "wayback_enabled",
+    )
 
     def __init__(self, aggressive_mode: bool = True) -> None:
         self.aggressive_mode = aggressive_mode
@@ -53,10 +59,18 @@ class _MockConfig:
 
 class _MockResult:
     """Minimal mock for ctx.result."""
+
     __slots__ = (
-        "cycles_started", "consecutive_empty_cycles", "max_consecutive_empty_cycles",
-        "branch_timeout_count", "accepted_findings", "branch_errors", "public_ghosts_skipped",
-        "aimd_window", "aimd_successes", "aimd_failures",
+        "cycles_started",
+        "consecutive_empty_cycles",
+        "max_consecutive_empty_cycles",
+        "branch_timeout_count",
+        "accepted_findings",
+        "branch_errors",
+        "public_ghosts_skipped",
+        "aimd_window",
+        "aimd_successes",
+        "aimd_failures",
     )
 
     def __init__(self) -> None:
@@ -74,9 +88,17 @@ class _MockResult:
 
 class _MockCycle:
     """Minimal mock for ctx._cycle."""
-    __slots__ = ("wall_clock_start", "barrier_retry_count", "prewindup_barrier_delayed",
-                 "last_cycle_start", "cycle_time_ema", "effective_max_cycles", "_aimd_telemetry",
-                 "pressure_ratio")
+
+    __slots__ = (
+        "wall_clock_start",
+        "barrier_retry_count",
+        "prewindup_barrier_delayed",
+        "last_cycle_start",
+        "cycle_time_ema",
+        "effective_max_cycles",
+        "_aimd_telemetry",
+        "pressure_ratio",
+    )
 
     def __init__(self) -> None:
         self.wall_clock_start = _time.monotonic()
@@ -91,9 +113,20 @@ class _MockCycle:
 
 class _MockContext:
     """Minimal mock for SprintContext in benchmark."""
-    __slots__ = ("config", "result", "query", "_cycle", "_wall_clock_start",
-                 "_lifecycle", "_stop_requested", "acquisition_plan", "hermes_engine",
-                 "enrichment_services", "runner")
+
+    __slots__ = (
+        "config",
+        "result",
+        "query",
+        "_cycle",
+        "_wall_clock_start",
+        "_lifecycle",
+        "_stop_requested",
+        "acquisition_plan",
+        "hermes_engine",
+        "enrichment_services",
+        "runner",
+    )
 
     def __init__(self, aggressive: bool = True) -> None:
         self.config = _MockConfig(aggressive_mode=aggressive)
@@ -110,6 +143,7 @@ class _MockContext:
 
 class _MockLifecycle:
     """Minimal mock for lifecycle."""
+
     __slots__ = ("_remaining",)
 
     def __init__(self, remaining: float = 200.0) -> None:
@@ -159,7 +193,7 @@ async def _run_parallel_taskgroup(
     """V2-style parallel TaskGroup. Returns (wall-clock time, results)."""
     t0 = _time.perf_counter()
     remaining_s = lifecycle.remaining_time()
-    branch_timeout = max((remaining_s - 30.0) / n_branches, 5.0)
+    max((remaining_s - 30.0) / n_branches, 5.0)
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -167,7 +201,7 @@ async def _run_parallel_taskgroup(
             for i in range(n_branches):
                 t = tg.create_task(_simulate_branch(f"branch_{i}", latency_s=0.05, count=i + 1))
                 tasks.append(t)
-    except* BaseException as eg:  # noqa: BLE001
+    except* BaseException:  # noqa: BLE001
         # ExceptionGroup handling — at least one branch failed
         pass
 
@@ -237,7 +271,7 @@ async def _run_cancellation_test() -> dict[str, bool]:
             for i in range(3):
                 t = tg.create_task(_slow_branch(i))
                 tasks.append(t)
-            cancel_task = asyncio.create_task(_outer_cancel())
+            asyncio.create_task(_outer_cancel())
             await inner_done.wait()
     except* BaseException:  # noqa: BLE001
         pass  # CancelledError or ExceptionGroup
@@ -266,11 +300,7 @@ async def _run_aimd_telemetry_test() -> dict[str, Any]:
     )
 
     return {
-        "has_aimd_fields": (
-            result.aimd_window > 0
-            and result.aimd_successes > 0
-            and result.aimd_failures >= 0
-        ),
+        "has_aimd_fields": (result.aimd_window > 0 and result.aimd_successes > 0 and result.aimd_failures >= 0),
         "aimd_window_value": result.aimd_window,
         "aimd_successes_value": result.aimd_successes,
         "aimd_failures_value": result.aimd_failures,
@@ -306,6 +336,7 @@ async def _run_branch_limit_test() -> dict[str, Any]:
 
     async def _fetch_with_semaphore() -> None:
         nonlocal peak_concurrent, current_concurrent
+
         async def bounded_fetch(idx: int) -> tuple[int, int]:
             async with sem:
                 return await _fetch_source(idx)
@@ -382,16 +413,20 @@ async def main() -> dict[str, Any]:
     print("[P2-1-3] AIMD telemetry in CycleResult...", end=" ")
     aimd_result = await _run_aimd_telemetry_test()
     print(f"{'PASS' if aimd_result['has_aimd_fields'] else 'FAIL'}")
-    print(f"         aimd_window={aimd_result['aimd_window_value']}, "
-          f"successes={aimd_result['aimd_successes_value']}, "
-          f"failures={aimd_result['aimd_failures_value']}")
+    print(
+        f"         aimd_window={aimd_result['aimd_window_value']}, "
+        f"successes={aimd_result['aimd_successes_value']}, "
+        f"failures={aimd_result['aimd_failures_value']}"
+    )
     assert aimd_result["has_aimd_fields"], "AIMD telemetry test failed"
 
     # [P2-1-4] Branch limit (M1 8GB RAM)
     print("[P2-1-4] Branch limit (max 5 concurrent, M1 8GB)...", end=" ")
     limit_result = await _run_branch_limit_test()
-    print(f"{'PASS' if limit_result['under_limit'] else 'FAIL'} "
-          f"(peak={limit_result['peak_concurrent']}/{limit_result['max_allowed']})")
+    print(
+        f"{'PASS' if limit_result['under_limit'] else 'FAIL'} "
+        f"(peak={limit_result['peak_concurrent']}/{limit_result['max_allowed']})"
+    )
     assert limit_result["under_limit"], f"Branch limit exceeded: {limit_result}"
 
     # [P2-1-5] Speed comparison
@@ -400,8 +435,7 @@ async def main() -> dict[str, Any]:
     print(f"{'PASS' if speed_result['meets_target'] else 'FAIL'}")
     print(f"         sequential median: {speed_result['sequential_median_ms']} ms")
     print(f"         parallel median:   {speed_result['parallel_median_ms']} ms")
-    print(f"         speedup:          {speed_result['speedup_ratio']}× "
-          f"(target >= 1.5×)")
+    print(f"         speedup:          {speed_result['speedup_ratio']}× (target >= 1.5×)")
 
     print("\n" + "=" * 60)
     if speed_result["meets_target"]:

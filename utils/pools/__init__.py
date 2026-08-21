@@ -18,7 +18,6 @@ M1 8GB Constraints:
 Usage:
     from hledac.universal.utils.pools import get_pool, PoolType, PoolProtocol
 
-    # Get appropriate pool for workload
     pool = get_pool(PoolType.CPU)  # Rayon cpu_pool (4 P-cores)
     result = await pool.run_sync(cpu_bound_func, *args)
 
@@ -38,7 +37,7 @@ Migration guide:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from hledac.universal.utils.pools.protocol import (
     PoolProtocol,
@@ -74,7 +73,6 @@ from hledac.universal.utils.pools.subinterpreter import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 T = TypeVar("T")
 

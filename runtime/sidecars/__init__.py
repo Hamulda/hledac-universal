@@ -13,11 +13,11 @@ Categories:
 
 PEP 562 lazy loading — each category is loaded only when first accessed.
 """
+
 from __future__ import annotations
 
 # Re-export SidecarRegistry for convenience
-from hledac.universal.runtime.sidecar_protocol import SidecarRegistry  # noqa: F401
-from _core import aclose
+from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
 
 __all__ = [
     # discovery
@@ -46,29 +46,34 @@ def __getattr__(name: str):
         _LOADED = True
         # Import all category packages (triggers @SidecarRegistry.register)
         # Using local imports to avoid namespace pollution
-        from hledac.universal.runtime.sidecars.discovery import OnionDiscoverySidecarAdapter
-        from hledac.universal.runtime.sidecars.discovery import I2PDiscoverySidecarAdapter
-        from hledac.universal.runtime.sidecars.discovery import IPFSDiscoverySidecarAdapter
-        from hledac.universal.runtime.sidecars.discovery import DHTDiscoverySidecarAdapter
-        from hledac.universal.runtime.sidecars.discovery import CommonCrawlSidecarAdapter
-        from hledac.universal.runtime.sidecars.enrichment import BGPEnrichmentSidecarAdapter
-        from hledac.universal.runtime.sidecars.enrichment import BannerGrabSidecarAdapter
-        from hledac.universal.runtime.sidecars.enrichment import TIFeedSidecarAdapter
-        from hledac.universal.runtime.sidecars.forensics import DigitalGhostSidecarAdapter
-        from hledac.universal.runtime.sidecars.forensics import SteganographySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import (
+            CommonCrawlSidecarAdapter,
+            DHTDiscoverySidecarAdapter,
+            I2PDiscoverySidecarAdapter,
+            IPFSDiscoverySidecarAdapter,
+            OnionDiscoverySidecarAdapter,
+        )
+        from hledac.universal.runtime.sidecars.enrichment import (
+            BannerGrabSidecarAdapter,
+            BGPEnrichmentSidecarAdapter,
+            TIFeedSidecarAdapter,
+        )
+        from hledac.universal.runtime.sidecars.forensics import DigitalGhostSidecarAdapter, SteganographySidecarAdapter
 
-        _CACHE.update({
-            "OnionDiscoverySidecarAdapter": OnionDiscoverySidecarAdapter,
-            "I2PDiscoverySidecarAdapter": I2PDiscoverySidecarAdapter,
-            "IPFSDiscoverySidecarAdapter": IPFSDiscoverySidecarAdapter,
-            "DHTDiscoverySidecarAdapter": DHTDiscoverySidecarAdapter,
-            "CommonCrawlSidecarAdapter": CommonCrawlSidecarAdapter,
-            "BGPEnrichmentSidecarAdapter": BGPEnrichmentSidecarAdapter,
-            "BannerGrabSidecarAdapter": BannerGrabSidecarAdapter,
-            "TIFeedSidecarAdapter": TIFeedSidecarAdapter,
-            "DigitalGhostSidecarAdapter": DigitalGhostSidecarAdapter,
-            "SteganographySidecarAdapter": SteganographySidecarAdapter,
-        })
+        _CACHE.update(
+            {
+                "OnionDiscoverySidecarAdapter": OnionDiscoverySidecarAdapter,
+                "I2PDiscoverySidecarAdapter": I2PDiscoverySidecarAdapter,
+                "IPFSDiscoverySidecarAdapter": IPFSDiscoverySidecarAdapter,
+                "DHTDiscoverySidecarAdapter": DHTDiscoverySidecarAdapter,
+                "CommonCrawlSidecarAdapter": CommonCrawlSidecarAdapter,
+                "BGPEnrichmentSidecarAdapter": BGPEnrichmentSidecarAdapter,
+                "BannerGrabSidecarAdapter": BannerGrabSidecarAdapter,
+                "TIFeedSidecarAdapter": TIFeedSidecarAdapter,
+                "DigitalGhostSidecarAdapter": DigitalGhostSidecarAdapter,
+                "SteganographySidecarAdapter": SteganographySidecarAdapter,
+            }
+        )
 
     if name in _CACHE:
         return _CACHE[name]

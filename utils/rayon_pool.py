@@ -36,10 +36,10 @@ warnings.warn(
 from hledac.universal.utils.pools.rayon import (
     RayonPoolsAvailable,
     run_in_cpu_pool,
-    run_in_io_pool,
-    run_in_mixed_pool,
     run_in_cpu_pool_async,
+    run_in_io_pool,
     run_in_io_pool_async,
+    run_in_mixed_pool,
     run_in_mixed_pool_async,
 )
 

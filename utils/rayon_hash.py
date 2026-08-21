@@ -41,22 +41,13 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-SIMHASH_BATCH_MAX = 4096   # F266-U5: M1 8GB calibrated (was 8192)
-QUALITY_BATCH_MAX = 2048   # quality_gate.rs: 4 workers × 32 items = 128 chunk
-HASH_BATCH_MAX = 8192      # blake3 SIMD: 4 P-cores × 2048 items
-NORMALIZE_BATCH_MAX = 4096 # text normalization: mixed pool adaptive
-
-# ---------------------------------------------------------------------------
-# SimHash — via Rust simhash_ext.rs (NEON SIMD on M1)
-# ---------------------------------------------------------------------------
+SIMHASH_BATCH_MAX = 4096  # F266-U5: M1 8GB calibrated (was 8192)
+QUALITY_BATCH_MAX = 2048  # quality_gate.rs: 4 workers × 32 items = 128 chunk
+HASH_BATCH_MAX = 8192  # blake3 SIMD: 4 P-cores × 2048 items
+NORMALIZE_BATCH_MAX = 4096  # text normalization: mixed pool adaptive
 
 
 async def simhash_single(
@@ -81,6 +72,7 @@ async def simhash_single(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_simhash_single_sync, text, timeout=timeout)
         return result if result is not None else 0
     except Exception:
@@ -93,6 +85,7 @@ def _simhash_single_sync(text: str) -> int:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         compute_simhash = rust.raw.compute_simhash  # type: ignore[assignment]
         return compute_simhash(text)
     except ImportError:  # noqa: BLE001
@@ -100,6 +93,7 @@ def _simhash_single_sync(text: str) -> int:
     # Pure Python fallback
     try:
         from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
+
         return _python_compute_simhash(text)
     except Exception:
         return 0
@@ -130,6 +124,7 @@ async def simhash_batch(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_simhash_batch_sync, clamped, timeout=timeout)
         if result is None:
             return [0] * len(clamped)
@@ -145,20 +140,17 @@ def _simhash_batch_sync(texts: list[str]) -> list[int]:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         batch_compute_simhash = rust.raw.batch_compute_simhash  # type: ignore[assignment]
         return batch_compute_simhash(texts)
     except ImportError:  # noqa: BLE001
         pass
     try:
         from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
+
         return [_python_compute_simhash(t) for t in texts]
     except Exception:
         return [0] * len(texts)
-
-
-# ---------------------------------------------------------------------------
-# Quality Gate — via Rust quality_gate.rs (4 rayon workers, GIL released)
-# ---------------------------------------------------------------------------
 
 
 async def quality_gate_assess(
@@ -187,6 +179,7 @@ async def quality_gate_assess(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_quality_gate_sync, clamped, timeout=timeout)
         if result is None:
             return [_quality_minimal(f) for f in clamped]
@@ -200,6 +193,7 @@ def _quality_gate_sync(findings: list[Any]) -> list[dict[str, Any]]:
     """Sync quality gate — called on rayon cpu_pool thread."""
     try:
         from hledac.universal.knowledge.quality_assessment import assess_quality_batch
+
         return assess_quality_batch(findings)
     except Exception:
         return [_quality_minimal(f) for f in findings]
@@ -209,11 +203,6 @@ def _quality_minimal(finding: Any) -> dict[str, Any]:
     """Minimal quality result for error paths."""
     fid = getattr(finding, "finding_id", getattr(finding, "id", "unknown"))
     return {"finding_id": fid, "score": 0.0, "gate": "ERROR", "flags": []}
-
-
-# ---------------------------------------------------------------------------
-# Blake3 / XxHash — via Rust hasher_ext.rs (SIMD on M1)
-# ---------------------------------------------------------------------------
 
 
 async def blake3_hash_batch(
@@ -240,6 +229,7 @@ async def blake3_hash_batch(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_blake3_batch_sync, clamped, timeout=timeout)
         if result is None:
             return [b""] * len(clamped)
@@ -253,9 +243,11 @@ def _blake3_batch_sync(data: list[bytes]) -> list[bytes]:
     """Sync Blake3 batch — called on rayon cpu_pool thread."""
     try:
         import blake3
+
         return [blake3.blake3(d).digest() for d in data]
     except ImportError:
         import hashlib
+
         return [hashlib.blake2b(d, digest_size=32).digest() for d in data]
 
 
@@ -283,6 +275,7 @@ async def xxhash_batch(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_xxhash_batch_sync, clamped, timeout=timeout)
         if result is None:
             return [0] * len(clamped)
@@ -296,15 +289,11 @@ def _xxhash_batch_sync(data: list[bytes]) -> list[int]:
     """Sync xxHash batch — called on rayon cpu_pool thread."""
     try:
         import xxhash
+
         return [xxhash.xxh64(d).intdigest() for d in data]
     except ImportError:
         # Fallback to Python built-in hash (not stable across runs, but ok for dedup)
         return [hash(d) & 0xFFFFFFFFFFFFFFFF for d in data]
-
-
-# ---------------------------------------------------------------------------
-# Text Normalization — via Rust text_norm.rs (NFKC + whitespace collapse)
-# ---------------------------------------------------------------------------
 
 
 async def normalize_text_batch(
@@ -333,13 +322,14 @@ async def normalize_text_batch(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_mixed
+
         result = await dispatch_mixed(
             len(clamped),
             _normalize_text_sync,
             clamped,
             form,
             timeout=timeout,
-    )
+        )
         if result is None:
             return clamped  # return unmodified on error
         return result
@@ -358,11 +348,6 @@ def _normalize_text_sync(texts: list[str], form: str = "NFKC") -> list[str]:
         return " ".join(n.split())
 
     return [_norm(t) for t in texts]
-
-
-# ---------------------------------------------------------------------------
-# Convenience: Combined hash pipeline (blake3 + simhash in one dispatch)
-# ---------------------------------------------------------------------------
 
 
 async def compute_fingerprints(
@@ -391,6 +376,7 @@ async def compute_fingerprints(
 
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
+
         result = await dispatch_cpu(_fingerprints_sync, clamped, timeout=timeout)
         if result is None:
             return [(0, 0)] * len(clamped)
@@ -405,14 +391,17 @@ def _fingerprints_sync(texts: list[str]) -> list[tuple[int, int]]:
     results: list[tuple[int, int]] = []
     try:
         import blake3
+
         _blake3_available = True
     except ImportError:
         import hashlib
+
         _blake3_available = False
 
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         compute_simhash = rust.raw.compute_simhash  # type: ignore[assignment]
         _simhash_rust = True
     except ImportError:
@@ -431,6 +420,7 @@ def _fingerprints_sync(texts: list[str]) -> list[tuple[int, int]]:
         else:
             try:
                 from hledac.universal._core.rust_backend.simhash import _python_compute_simhash
+
                 s = _python_compute_simhash(t)
             except Exception:
                 s = 0

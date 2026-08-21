@@ -13,11 +13,11 @@ import pytest
 from hledac.universal.utils.async_generators import (
     BackpressureMonitor,
     aclose_safe,
-    async_iter_context,
     async_batched,
     async_chunked_pipeline,
     async_filter,
     async_flatmap,
+    async_iter_context,
     async_transform,
     findings_to_duckdb_pipeline,
 )
@@ -30,7 +30,7 @@ from hledac.universal.utils.async_generators import (
 class _MockDuckDBStore:
     """Mock DuckDB store for testing."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.ingested: list[dict] = []
         self.call_count = 0
 
@@ -62,7 +62,7 @@ class TestAsyncBatched:
     """Tests for async_batched()."""
 
     @pytest.mark.asyncio
-    async def test_batches_full_batches(self):
+    async def test_batches_full_batches(self) -> None:
         """Full batches are yielded correctly."""
         source = _async_range(100)
         batches = [batch async for batch in async_batched(source, batch_size=10)]
@@ -72,7 +72,7 @@ class TestAsyncBatched:
         assert batches[-1][-1] == 99
 
     @pytest.mark.asyncio
-    async def test_batches_partial_final(self):
+    async def test_batches_partial_final(self) -> None:
         """Partial final batch is yielded."""
         source = _async_range(25)
         batches = [batch async for batch in async_batched(source, batch_size=10)]
@@ -82,14 +82,14 @@ class TestAsyncBatched:
         assert len(batches[2]) == 5
 
     @pytest.mark.asyncio
-    async def test_batches_empty(self):
+    async def test_batches_empty(self) -> None:
         """Empty source yields nothing."""
         source = _async_range(0)
         batches = [batch async for batch in async_batched(source, batch_size=10)]
         assert batches == []
 
     @pytest.mark.asyncio
-    async def test_batches_larger_than_source(self):
+    async def test_batches_larger_than_source(self) -> None:
         """Batch size larger than source yields single batch."""
         source = _async_range(5)
         batches = [batch async for batch in async_batched(source, batch_size=100)]
@@ -106,14 +106,14 @@ class TestAsyncTransform:
     """Tests for async_transform()."""
 
     @pytest.mark.asyncio
-    async def test_transform_sequential(self):
+    async def test_transform_sequential(self) -> None:
         """Sequential transform (concurrency=1)."""
         source = _async_range(5)
         doubled = [x async for x in async_transform(source, lambda x: x * 2)]
         assert doubled == [0, 2, 4, 6, 8]
 
     @pytest.mark.asyncio
-    async def test_transform_async_func(self):
+    async def test_transform_async_func(self) -> None:
         """Async transform function."""
 
         async def double(x: int) -> int:
@@ -124,7 +124,7 @@ class TestAsyncTransform:
         assert doubled == [0, 2, 4, 6, 8]
 
     @pytest.mark.asyncio
-    async def test_transform_concurrent(self):
+    async def test_transform_concurrent(self) -> None:
         """Concurrent transform (concurrency=3)."""
         source = _async_range(10)
         processed = 0
@@ -149,14 +149,14 @@ class TestAsyncFilter:
     """Tests for async_filter()."""
 
     @pytest.mark.asyncio
-    async def test_filter_sync(self):
+    async def test_filter_sync(self) -> None:
         """Sync predicate filter."""
         source = _async_range(10)
         filtered = [x async for x in async_filter(source, lambda x: x % 2 == 0)]
         assert filtered == [0, 2, 4, 6, 8]
 
     @pytest.mark.asyncio
-    async def test_filter_async(self):
+    async def test_filter_async(self) -> None:
         """Async predicate filter."""
 
         async def is_even(x: int) -> bool:
@@ -176,7 +176,7 @@ class TestAsyncFlatmap:
     """Tests for async_flatmap()."""
 
     @pytest.mark.asyncio
-    async def test_flatmap_lists(self):
+    async def test_flatmap_lists(self) -> None:
         """Flatten list of lists."""
 
         async def list_source() -> AsyncIterator[list[int]]:
@@ -188,7 +188,7 @@ class TestAsyncFlatmap:
         assert result == [1, 2, 3, 4, 5]
 
     @pytest.mark.asyncio
-    async def test_flatmap_async_gen(self):
+    async def test_flatmap_async_gen(self) -> None:
         """Flatten async generators."""
 
         async def gen_source() -> AsyncIterator[AsyncIterator[int]]:
@@ -215,7 +215,7 @@ class TestAsyncChunkedPipeline:
     """Tests for async_chunked_pipeline()."""
 
     @pytest.mark.asyncio
-    async def test_pipeline_basic(self):
+    async def test_pipeline_basic(self) -> None:
         """Basic chunked processing."""
         source = _async_range(100)
         results: list[list[int]] = []
@@ -234,7 +234,7 @@ class TestAsyncChunkedPipeline:
         assert flat == [x * 2 for x in range(100)]
 
     @pytest.mark.asyncio
-    async def test_pipeline_partial_final(self):
+    async def test_pipeline_partial_final(self) -> None:
         """Partial final batch."""
         source = _async_range(25)
 
@@ -261,7 +261,7 @@ class TestFindingsToDuckDBPipeline:
     """Tests for findings_to_duckdb_pipeline()."""
 
     @pytest.mark.asyncio
-    async def test_duckdb_pipeline(self):
+    async def test_duckdb_pipeline(self) -> None:
         """Stream findings through DuckDB pipeline."""
         store = _MockDuckDBStore()
         source = _async_findings(50)
@@ -276,7 +276,7 @@ class TestFindingsToDuckDBPipeline:
         assert len(store.ingested) == 50
 
     @pytest.mark.asyncio
-    async def test_duckdb_pipeline_empty(self):
+    async def test_duckdb_pipeline_empty(self) -> None:
         """Empty source."""
         store = _MockDuckDBStore()
 
@@ -297,14 +297,14 @@ class TestFindingsToDuckDBPipeline:
 class TestBackpressureMonitor:
     """Tests for BackpressureMonitor."""
 
-    def test_initial_state(self):
+    def test_initial_state(self) -> None:
         """Initial state is zero."""
         monitor = BackpressureMonitor("test")
         assert monitor.pending_count == 0
         assert monitor.max_pending == 0
         assert monitor.pressure == 0.0
 
-    def test_pressure_calculation(self):
+    def test_pressure_calculation(self) -> None:
         """Pressure ratio calculation."""
         monitor = BackpressureMonitor("test")
         monitor.on_item_queued()
@@ -313,7 +313,7 @@ class TestBackpressureMonitor:
         assert monitor.max_pending == 2
         assert monitor.pressure == 1.0
 
-    def test_dequeue(self):
+    def test_dequeue(self) -> None:
         """Dequeue decrements count."""
         monitor = BackpressureMonitor("test")
         monitor.on_item_queued()
@@ -321,7 +321,7 @@ class TestBackpressureMonitor:
         monitor.on_item_dequeued()
         assert monitor.pending_count == 1
 
-    def test_repr(self):
+    def test_repr(self) -> None:
         """String representation."""
         monitor = BackpressureMonitor("test")
         assert "test" in repr(monitor)
@@ -337,12 +337,12 @@ class TestCoroutineCleanup:
     """Tests for async generator cleanup patterns (F350M-R)."""
 
     @pytest.mark.asyncio
-    async def test_async_generator_with_aclose_safe(self):
+    async def test_async_generator_with_aclose_safe(self) -> None:
         """Early exit with aclose_safe prevents coroutine leaks."""
         source = _async_range(1000)
         count = 0
         try:
-            async for item in source:
+            async for _item in source:
                 count += 1
                 if count >= 5:
                     break
@@ -351,7 +351,7 @@ class TestCoroutineCleanup:
         assert count == 5
 
     @pytest.mark.asyncio
-    async def test_async_generator_context_manager_pattern(self):
+    async def test_async_generator_context_manager_pattern(self) -> None:
         """AsyncIteratorContext ensures aclose on exit."""
         async with async_iter_context(_async_range(100)) as source:
             items = []
@@ -365,7 +365,7 @@ class TestCoroutineCleanup:
         assert len(items) == 10
 
     @pytest.mark.asyncio
-    async def test_pipeline_with_cleanup(self):
+    async def test_pipeline_with_cleanup(self) -> None:
         """Pipeline with proper cleanup on early exit."""
         source = _async_findings(1000)
         batches = []
@@ -389,7 +389,7 @@ class TestMemoryModel:
     """Verify F275 memory model: streaming vs list accumulation."""
 
     @pytest.mark.asyncio
-    async def test_no_list_accumulation_in_pipeline(self):
+    async def test_no_list_accumulation_in_pipeline(self) -> None:
         """Pipeline should NOT accumulate all items in memory."""
         source = _async_findings(1000)
 
@@ -403,9 +403,9 @@ class TestMemoryModel:
         # If we got here without OOM, the streaming model works
 
     @pytest.mark.asyncio
-    async def test_backpressure_limits_pending(self):
+    async def test_backpressure_limits_pending(self) -> None:
         """Pipeline should limit pending batches."""
-        store = _MockDuckDBStore()
+        _MockDuckDBStore()
         monitor = BackpressureMonitor("pipeline")
 
         source = _async_findings(1000)

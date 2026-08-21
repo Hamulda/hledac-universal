@@ -20,16 +20,12 @@ structlog integrace: structlog.contextvars.merge_contextvars processor
 ContextVar do log outputu — žádná další konfigurace není potřeba.
 """
 
-
 import contextvars
 import uuid
 from typing import Any
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core._util import aclose
 
-
-# ─── TelemetryContext (O-01) ─────────────────────────────────────────────────
 
 class TelemetryContext(Struct, frozen=True, eq=False):
     """
@@ -52,7 +48,7 @@ class TelemetryContext(Struct, frozen=True, eq=False):
     trace_id: str = ""
     span_id: str = ""
 
-    def with_phase(self, phase: str) -> "TelemetryContext":
+    def with_phase(self, phase: str) -> TelemetryContext:
         """Return new instance with updated sprint_phase."""
         return TelemetryContext(
             sprint_id=self.sprint_id,
@@ -64,9 +60,9 @@ class TelemetryContext(Struct, frozen=True, eq=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-    )
+        )
 
-    def with_sprint_id(self, sprint_id: str) -> "TelemetryContext":
+    def with_sprint_id(self, sprint_id: str) -> TelemetryContext:
         """Return new instance with updated sprint_id."""
         return TelemetryContext(
             sprint_id=sprint_id,
@@ -78,9 +74,9 @@ class TelemetryContext(Struct, frozen=True, eq=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-    )
+        )
 
-    def with_request_id(self, request_id: str) -> "TelemetryContext":
+    def with_request_id(self, request_id: str) -> TelemetryContext:
         """Return new instance with updated request_id."""
         return TelemetryContext(
             sprint_id=self.sprint_id,
@@ -92,9 +88,9 @@ class TelemetryContext(Struct, frozen=True, eq=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-    )
+        )
 
-    def with_lane(self, lane: str, latency_ms: float = 0.0, queue_depth: int = 0) -> "TelemetryContext":
+    def with_lane(self, lane: str, latency_ms: float = 0.0, queue_depth: int = 0) -> TelemetryContext:
         """Return new instance with updated lane metrics."""
         return TelemetryContext(
             sprint_id=self.sprint_id,
@@ -106,9 +102,9 @@ class TelemetryContext(Struct, frozen=True, eq=False):
             lane_queue_depth=queue_depth,
             trace_id=self.trace_id,
             span_id=self.span_id,
-    )
+        )
 
-    def with_trace(self, trace_id: str, span_id: str) -> "TelemetryContext":
+    def with_trace(self, trace_id: str, span_id: str) -> TelemetryContext:
         """Return new instance with updated OTel trace context."""
         return TelemetryContext(
             sprint_id=self.sprint_id,
@@ -120,7 +116,7 @@ class TelemetryContext(Struct, frozen=True, eq=False):
             lane_queue_depth=self.lane_queue_depth,
             trace_id=trace_id,
             span_id=span_id,
-    )
+        )
 
 
 # Module-level singleton — initialized in init_telemetry_context()
@@ -128,7 +124,7 @@ _TELEMETRY_CONTEXT: TelemetryContext = TelemetryContext()
 _CONTEXT_TOKEN: contextvars.Token[TelemetryContext] | None = None
 _telemetry_context_var: contextvars.ContextVar[TelemetryContext] = contextvars.ContextVar(
     "_telemetry_context", default=TelemetryContext()
-    )
+)
 
 
 def init_telemetry_context(
@@ -184,6 +180,7 @@ def _bind_telemetry_to_structlog(ctx: TelemetryContext) -> None:
     """Bind TelemetryContext fields to structlog contextvars."""
     try:
         import structlog
+
         structlog.contextvars.bind_contextvars(
             sprint_id=ctx.sprint_id,
             sprint_phase=ctx.sprint_phase,
@@ -192,17 +189,13 @@ def _bind_telemetry_to_structlog(ctx: TelemetryContext) -> None:
             lane=ctx.lane,
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
-    )
+        )
     except Exception:  # noqa: BLE001
         pass  # Fail-safe: logging still works without structlog binding
 
 
-# ─── Sprint phase ContextVar ────────────────────────────────────────────────
-
 # Sprint phase ContextVar — set by SprintScheduler.phase_transition_callback
-_sprint_phase_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "sprint_phase", default=""
-    )
+_sprint_phase_var: contextvars.ContextVar[str] = contextvars.ContextVar("sprint_phase", default="")
 
 
 def set_sprint_phase(phase: str) -> None:
@@ -215,12 +208,8 @@ def get_sprint_phase() -> str:
     return _sprint_phase_var.get()
 
 
-# ─── Stealth layer ContextVar ───────────────────────────────────────────────
-
 # Stealth layer ContextVar — set by SprintScheduler when stealth is enabled
-_stealth_enabled_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "stealth_enabled", default=False
-    )
+_stealth_enabled_var: contextvars.ContextVar[bool] = contextvars.ContextVar("stealth_enabled", default=False)
 
 
 def set_stealth_enabled(enabled: bool) -> None:
@@ -233,15 +222,11 @@ def is_stealth_enabled() -> bool:
     return _stealth_enabled_var.get()
 
 
-# ─── BLITZ-12: Blitz mode ContextVar ─────────────────────────────────────────
-
 # Blitz mode — set at sprint start when duration ≤ 1800s (30 min).
 # When active, ALL stealth/anti-correlation jitter delays are skipped
 # because the sprint is a one-shot burst where stealth timing is irrelevant.
 # Visible to all TaskGroup child tasks via contextvars propagation.
-_blitz_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "blitz_mode", default=False
-    )
+_blitz_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar("blitz_mode", default=False)
 
 
 def set_blitz_mode(enabled: bool) -> None:
@@ -258,12 +243,8 @@ def is_blitz_mode() -> bool:
     return _blitz_mode_var.get()
 
 
-# ─── Issue #046: Sprint ID ContextVar ───────────────────────────────────────
-
 # Per-sprint correlation ID — set once at sprint start, visible to all child tasks
-_current_sprint_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "current_sprint_id", default=""
-    )
+_current_sprint_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("current_sprint_id", default="")
 
 
 def set_current_sprint_id(sprint_id: str) -> None:
@@ -285,13 +266,9 @@ def generate_sprint_id() -> str:
     return uuid.uuid7().hex[:16]
 
 
-# ─── Issue #046: Request ID ContextVar ──────────────────────────────────────
-
 # Per-fetch correlation ID — set before each HTTP fetch, visible across fetch chain
 # Default is empty; set per-request via set_request_id()
-_request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "request_id", default=""
-    )
+_request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
 
 
 def set_request_id(request_id: str | None = None) -> str:
@@ -318,15 +295,13 @@ def reset_request_id() -> None:
     _request_id_var.set("")
 
 
-# ─── Issue #046: Lane Metrics ContextVar ───────────────────────────────────
-
 # Lane metrics ContextVar — set by MLXUnifiedScheduler on each request
 # Visible to all async tasks without explicit parameter passing
 # Value: dict with keys: lane (str), latency_ms (float), queue_depth (int)
 _lane_metrics_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "lane_metrics",
     default={"lane": "none", "latency_ms": 0.0, "queue_depth": 0},
-    )
+)
 
 
 def set_lane_metrics(
@@ -335,11 +310,13 @@ def set_lane_metrics(
     queue_depth: int = 0,
 ) -> None:
     """Set lane metrics for MLXUnifiedScheduler telemetry."""
-    _lane_metrics_var.set({
-        "lane": lane,
-        "latency_ms": latency_ms,
-        "queue_depth": queue_depth,
-    })
+    _lane_metrics_var.set(
+        {
+            "lane": lane,
+            "latency_ms": latency_ms,
+            "queue_depth": queue_depth,
+        }
+    )
 
 
 def get_lane_metrics() -> dict[str, Any]:
@@ -355,8 +332,10 @@ def update_lane_latency(lane: str, latency_ms: float) -> None:
         current["latency_ms"] = latency_ms
     else:
         # Lane changed — full replacement
-        _lane_metrics_var.set({
-            "lane": lane,
-            "latency_ms": latency_ms,
-            "queue_depth": current.get("queue_depth", 0),
-        })
+        _lane_metrics_var.set(
+            {
+                "lane": lane,
+                "latency_ms": latency_ms,
+                "queue_depth": current.get("queue_depth", 0),
+            }
+        )

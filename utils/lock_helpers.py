@@ -17,8 +17,6 @@ import asyncio
 import threading
 from collections.abc import Callable
 from typing import Any
-from _core import aclose
-
 
 # Type alias for the lock factory
 _AsyncLockFactory = Callable[[], asyncio.Lock]

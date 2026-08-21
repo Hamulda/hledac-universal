@@ -35,10 +35,6 @@ impl Default for UnicodeFingerprint {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Zero-Width Character Definitions
-// ---------------------------------------------------------------------------
-
 /// Zero-width characters used in Unicode steganography
 const ZERO_WIDTH_CHARS: &[(char, &str)] = &[
     ('\u{200B}', "ZERO_WIDTH_SPACE"),           // U+200B
@@ -74,10 +70,6 @@ const ZERO_WIDTH_CHARS: &[(char, &str)] = &[
 fn build_zw_set() -> std::collections::HashSet<char> {
     ZERO_WIDTH_CHARS.iter().map(|(c, _)| *c).collect()
 }
-
-// ---------------------------------------------------------------------------
-// Homoglyph Definitions (Cyrillic/Greek → ASCII)
-// ---------------------------------------------------------------------------
 
 /// Common Cyrillic/Greek homoglyphs that map to ASCII
 const HOMOGLYPHS: &[(char, char)] = &[
@@ -152,10 +144,6 @@ fn build_homoglyph_map() -> std::collections::HashMap<char, char> {
     HOMOGLYPHS.iter().copied().collect()
 }
 
-// ---------------------------------------------------------------------------
-// BIDI Override Detection
-// ---------------------------------------------------------------------------
-
 /// Detect BIDI override sequences
 fn detect_bidi_sequence(text: &str) -> Vec<String> {
     let mut sequences = Vec::new();
@@ -182,10 +170,6 @@ fn detect_bidi_sequence(text: &str) -> Vec<String> {
     sequences
 }
 
-// ---------------------------------------------------------------------------
-// Fingerprint Extraction (O(N) single-pass)
-// ---------------------------------------------------------------------------
-
 /// Extract Unicode fingerprint from text.
 /// This is the main extraction function - O(N) single-pass scan.
 pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
@@ -197,7 +181,6 @@ pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
     let mut visible_char_count: usize = 0;
 
     for (pos, c) in text.char_indices() {
-        // Check for zero-width characters
         if zw_set.contains(&c) {
             let name = ZERO_WIDTH_CHARS
                 .iter()
@@ -209,7 +192,6 @@ pub fn extract_fingerprint_impl(text: &str) -> UnicodeFingerprint {
             visible_char_count += 1;
         }
 
-        // Check for homoglyphs
         if let Some(&canonical) = homoglyph_map.get(&c) {
             homoglyph_pattern.push((c, canonical, pos));
         }
@@ -298,10 +280,6 @@ pub fn compute_similarity(a: &UnicodeFingerprint, b: &UnicodeFingerprint) -> f64
     // Zero-width and hash are most indicative for attribution
     (zw_jaccard * 0.4) + (hg_jaccard * 0.2) + (bidi_jaccard * 0.1) + (hash_match * 0.3)
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 Python bindings
-// ---------------------------------------------------------------------------
 
 #[pyclass(module = "hledac_rust_extensions")]
 pub struct PyUnicodeFingerprint {

@@ -7,13 +7,14 @@ Tests:
 3. AIMD window is clamped to [1.0, 25.0]
 4. Circuit breaker triggers double AIMD reduction on circuit trip
 """
+
 import pytest
 
 
 class TestAIMDLayer2:
     """Tests for AIMD Layer 2 in circuit_breaker."""
 
-    def test_aimd_decreases_on_failure(self):
+    def test_aimd_decreases_on_failure(self) -> None:
         """AIMD window should decrease by 25% on each failure."""
         # This test requires the Rust extension to be built
         try:
@@ -35,7 +36,7 @@ class TestAIMDLayer2:
         new_window = circuit_breaker_aimd_get_window()
         assert new_window == 7.5  # 10.0 * 0.75
 
-    def test_aimd_increases_after_threshold(self):
+    def test_aimd_increases_after_threshold(self) -> None:
         """AIMD window should increase by 2 after 8 consecutive successes."""
         try:
             from hledac_rust_extensions import (
@@ -47,7 +48,7 @@ class TestAIMDLayer2:
             pytest.skip("Rust extension not built")
 
         circuit_breaker_aimd_reset()
-        initial_window = circuit_breaker_aimd_get_window()
+        circuit_breaker_aimd_get_window()
 
         # Record 8 successes - should trigger increase
         for _ in range(8):
@@ -56,7 +57,7 @@ class TestAIMDLayer2:
         new_window = circuit_breaker_aimd_get_window()
         assert new_window == 12.0  # 10.0 + 2.0
 
-    def test_aimd_clamped_to_max(self):
+    def test_aimd_clamped_to_max(self) -> None:
         """AIMD window should be clamped to MAX_WINDOW (25.0)."""
         try:
             from hledac_rust_extensions import (
@@ -76,7 +77,7 @@ class TestAIMDLayer2:
         window = circuit_breaker_aimd_get_window()
         assert window == 25.0  # Clamped to max
 
-    def test_aimd_clamped_to_min(self):
+    def test_aimd_clamped_to_min(self) -> None:
         """AIMD window should be clamped to MIN_WINDOW (1.0)."""
         try:
             from hledac_rust_extensions import (
@@ -96,7 +97,7 @@ class TestAIMDLayer2:
         window = circuit_breaker_aimd_get_window()
         assert window == 1.0  # Clamped to min
 
-    def test_circuit_trip_triggers_aggressive_reduction(self):
+    def test_circuit_trip_triggers_aggressive_reduction(self) -> None:
         """Circuit trip should trigger double AIMD reduction."""
         try:
             from hledac_rust_extensions import (
@@ -108,7 +109,7 @@ class TestAIMDLayer2:
             pytest.skip("Rust extension not built")
 
         circuit_breaker_aimd_reset()
-        initial_window = circuit_breaker_aimd_get_window()
+        circuit_breaker_aimd_get_window()
 
         # Record 5 failures to trip circuit
         for _ in range(5):
@@ -125,7 +126,7 @@ class TestAIMDLayer2:
         # Final should be significantly reduced
         assert window < 5.0  # Much lower than initial
 
-    def test_wiring_functions(self):
+    def test_wiring_functions(self) -> None:
         """Test Python wiring functions."""
         try:
             from rust_extensions.wiring.circuit_breaker_wiring import (

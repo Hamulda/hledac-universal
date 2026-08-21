@@ -15,12 +15,10 @@ This is the canonical health endpoint consumed by:
 # Set to False to disable telemetry even when instrumentation is configured.
 HEALTH_ENDPOINT_TELEMETRY_ENABLED: bool = True
 
-
 from typing import Any
 
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
-from _core import aclose
 
 _rust_health_check = rust.raw.health_check
 _RUST_AVAILABLE = _rust_health_check is not None
@@ -95,7 +93,6 @@ async def collect_runtime_health() -> dict[str, Any]:
             from hledac.universal.runtime import get_logfire_logger
 
             logger = get_logfire_logger("health")
-            # Emit key UMA metrics as structured log
             if result["uma_state"]:
                 uma = result["uma_state"]
                 logger.info(
@@ -104,7 +101,7 @@ async def collect_runtime_health() -> dict[str, Any]:
                     pressure_level=uma["pressure_level"],
                     metal_gib=uma["metal_gib"],
                     dedup_bloom_pct=uma["dedup_bloom_pct"],
-    )
+                )
         except Exception:  # noqa: BLE001
             # Telemetry hook is best-effort — never fail the health endpoint
             pass

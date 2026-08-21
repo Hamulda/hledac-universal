@@ -3,7 +3,6 @@ transport/transport_race.py — R9: Parallel Transport Racing
 
 Replaces the sequential transport fallback chain in public_fetcher.py with
 
-
 bounded parallel racing: for each URL, launch httpx, curl_cffi, and
 nw_connection (Apple Network.framework) concurrently, take the first
 success, and cancel the rest.
@@ -47,57 +46,32 @@ import asyncio
 import logging
 import os
 import time
-from typing import TYPE_CHECKING
 import urllib.parse as _urlparse
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Final
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final
 
 from hledac.universal.transport.circuit_breaker import (
-    CircuitBreaker,
     TransportCircuitBreaker,
-    get_transport_breaker,
-    )
+)
 from hledac.universal.transport.utils import (
     safe_create_task,
-    )
+)
 from hledac.universal.utils.asyncx import safe_wait_for
-from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Env gates
-# ---------------------------------------------------------------------------
-
-_RACE_ENABLED: bool = (
-    os.environ.get("HLEDAC_ENABLE_TRANSPORT_RACE", "1").lower()
-    in ("1", "true", "yes", "on")
-    )
-_RACE_TIMEOUT_S: float = float(
-    os.environ.get("HLEDAC_TRANSPORT_RACE_TIMEOUT_S", "8.0")
-    )
+_RACE_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_TRANSPORT_RACE", "1").lower() in ("1", "true", "yes", "on")
+_RACE_TIMEOUT_S: float = float(os.environ.get("HLEDAC_TRANSPORT_RACE_TIMEOUT_S", "8.0"))
 
 # [FINAL]-019: SIEM fingerprint defense — stagger transport launches.
 # Fires 4 TLS handshakes within ~5ms by default (no-op fallback).
 # Races 3 transports: httpx, curl_cffi, nw_connection (+ nw_quic opportunistically).
 # Each transport gets a decorrelated stagger so they don't all fire simultaneously.
 # This breaks the "exactly N TLS ClientHellos in N ms" SIEM fingerprint.
-_RACE_STAGGER_MS: float = float(os.environ.get('HLEDAC_RACE_STAGGER_MS', '0'))
+_RACE_STAGGER_MS: float = float(os.environ.get("HLEDAC_RACE_STAGGER_MS", "0"))
 
-# ---------------------------------------------------------------------------
-# ISSUE-022-04: Pre-race gate thresholds
-# ---------------------------------------------------------------------------
-# Use RouteGraphService as a pre-race gate to avoid wasted parallel fetches.
-# If a transport has high confidence (>95% success rate, <500ms p50 latency,
-# >=3 observations), skip the race and use that transport directly.
-# Only race when no transport meets the high-confidence threshold.
-
-_PRE_RACE_GATE_ENABLED: bool = (
-    os.environ.get("HLEDAC_PRE_RACE_GATE", "1").lower()
-    in ("1", "true", "yes", "on")
-    )
+_PRE_RACE_GATE_ENABLED: bool = os.environ.get("HLEDAC_PRE_RACE_GATE", "1").lower() in ("1", "true", "yes", "on")
 _PRE_RACE_MIN_SUCCESS_RATE: float = float(
     os.environ.get("HLEDAC_PRE_RACE_MIN_SUCCESS_RATE", "0.95")
 )  # 95% success rate threshold
@@ -110,10 +84,6 @@ _PRE_RACE_MIN_OBSERVATIONS: int = int(
 _PRE_RACE_CONFIDENCE_THRESHOLD: float = float(
     os.environ.get("HLEDAC_PRE_RACE_CONFIDENCE_THRESHOLD", "0.80")
 )  # 80% confidence to skip race
-
-# ---------------------------------------------------------------------------
-# M1 8GB bounds
-# ---------------------------------------------------------------------------
 
 # Maximum concurrent races (one race = one URL × up to N transports).
 # 8 races × 3 transports = 24 in-flight at absolute worst.
@@ -133,16 +103,6 @@ _TRANSPORT_SEMAPHORE_LIMITS: Final[dict[str, int]] = {
     "curl_cffi_tor": 2,  # ISSUE-15: Tor curl_cffi (higher latency per conn)
 }
 
-# ---------------------------------------------------------------------------
-# NEXUS-018-011: Transport winner cache
-# ---------------------------------------------------------------------------
-# Per-host caching of the last winning transport. Eliminates redundant
-# racing for repeat requests to the same host — saving 50-100 ms per URL
-# (3× asyncio.create_task + semaphore + gather overhead).
-# For 200 URLs per sprint, this saves ~10-20 s in redundant racing.
-#
-# M1 8GB bounded: 256 entries, FIFO eviction, 120 s TTL.
-
 # Winner cache: host → (transport_name, timestamp_monotonic)
 _WINNER_CACHE: dict[str, tuple[str, float]] = {}
 _WINNER_CACHE_TTL_S: float = 120.0  # 2 min TTL
@@ -161,26 +121,25 @@ _WINNER_CACHE_STATS: dict[str, int] = {
 
 # ISSUE-022-04: Pre-race gate stats
 _PRE_RACE_GATE_STATS: dict[str, int] = {
-    "gate_hits": 0,           # transport found via pre-race gate
-    "gate_skips": 0,          # skipped (confidence < threshold)
-    "gate_no_data": 0,        # no route graph data for domain
-    "gate_errors": 0,         # errors accessing route graph
+    "gate_hits": 0,  # transport found via pre-race gate
+    "gate_skips": 0,  # skipped (confidence < threshold)
+    "gate_no_data": 0,  # no route graph data for domain
+    "gate_errors": 0,  # errors accessing route graph
     "gate_timeout_fallbacks": 0,  # pre-race candidate timed out
 }
 _pre_race_gate_lock = asyncio.Lock()
 
 # RouteGraphService singleton reference (lazy-initialized)
 _route_graph_service_lock = asyncio.Lock()
-_route_graph_service: "RouteGraphService | None" = None
+_route_graph_service: RouteGraphService | None = None
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.proxy_routes import RouteGraphService
-    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 
-async def _get_route_graph_service() -> "RouteGraphService | None":
+async def _get_route_graph_service() -> RouteGraphService | None:
     """Get or create the RouteGraphService singleton.
-    
+
     Lazy initialization to avoid circular imports and expensive DuckDB setup
     on every transport_race import.
     """
@@ -189,9 +148,9 @@ async def _get_route_graph_service() -> "RouteGraphService | None":
         return _route_graph_service
     # Import here to avoid circular imports
     try:
-        from hledac.universal.knowledge.proxy_routes import RouteGraphService
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-        
+        from hledac.universal.knowledge.proxy_routes import RouteGraphService
+
         # Try to get a shared DuckDB store
         store = DuckDBShadowStore.get_shared_instance()
         if store is not None:
@@ -204,9 +163,14 @@ async def _get_route_graph_service() -> "RouteGraphService | None":
 
 
 # Transport aliases map for canonical names
-_WINNER_CANONICAL_TRANSPORTS: frozenset[str] = frozenset({
-    "httpx", "curl_cffi", "nw_connection", "nw_quic",
-})
+_WINNER_CANONICAL_TRANSPORTS: frozenset[str] = frozenset(
+    {
+        "httpx",
+        "curl_cffi",
+        "nw_connection",
+        "nw_quic",
+    }
+)
 
 
 def _extract_host_for_winner_cache(url: str) -> str:
@@ -326,11 +290,6 @@ def _pre_race_gate_stats() -> dict[str, int]:
     return dict(_PRE_RACE_GATE_STATS)
 
 
-# ---------------------------------------------------------------------------
-# Transport race result
-# ---------------------------------------------------------------------------
-
-
 @dataclass(slots=True)
 class RaceResult:
     """Result from a single transport in the race.
@@ -351,11 +310,6 @@ class RaceResult:
             return False
         status = self.result.get("status_code", 0)
         return 200 <= status < 400 and not self.result.get("error")
-
-
-# ---------------------------------------------------------------------------
-# Transport Race Manager
-# ---------------------------------------------------------------------------
 
 
 class TransportRaceManager:
@@ -389,9 +343,7 @@ class TransportRaceManager:
     def __init__(self) -> None:
         if self._initialized:
             return
-        self._global_sem: asyncio.Semaphore = asyncio.Semaphore(
-            _MAX_CONCURRENT_RACES
-    )
+        self._global_sem: asyncio.Semaphore = asyncio.Semaphore(_MAX_CONCURRENT_RACES)
         self._transport_sems: dict[str, asyncio.Semaphore] = {}
         self._transport_breakers: dict[str, TransportCircuitBreaker] = {}
         self._stats: dict[str, int] = {
@@ -408,30 +360,20 @@ class TransportRaceManager:
             "circuit_breaker_skips": 0,
         }
         self._init_transport("httpx", failure_threshold=5, recovery_timeout=30.0)
+        self._init_transport("curl_cffi", failure_threshold=4, recovery_timeout=45.0)
+        self._init_transport("nw_connection", failure_threshold=3, recovery_timeout=30.0)
         self._init_transport(
-            "curl_cffi", failure_threshold=4, recovery_timeout=45.0
-    )
-        self._init_transport(
-            "nw_connection", failure_threshold=3, recovery_timeout=30.0
-    )
-        self._init_transport(
-            "nw_quic", failure_threshold=3, recovery_timeout=30.0  # SILICON-05
-    )
-        self._init_transport(
-            "playwright", failure_threshold=2, recovery_timeout=120.0
-    )
+            "nw_quic",
+            failure_threshold=3,
+            recovery_timeout=30.0,  # SILICON-05
+        )
+        self._init_transport("playwright", failure_threshold=2, recovery_timeout=120.0)
         # ISSUE-15: Initialize stealth and Tor transports for racing
-        self._init_transport(
-            "curl_cffi_stealth", failure_threshold=4, recovery_timeout=45.0
-    )
-        self._init_transport(
-            "curl_cffi_tor", failure_threshold=3, recovery_timeout=60.0
-    )
+        self._init_transport("curl_cffi_stealth", failure_threshold=4, recovery_timeout=45.0)
+        self._init_transport("curl_cffi_tor", failure_threshold=3, recovery_timeout=60.0)
         self._initialized = True
 
-    def _init_transport(
-        self, name: str, failure_threshold: int, recovery_timeout: float
-    ) -> None:
+    def _init_transport(self, name: str, failure_threshold: int, recovery_timeout: float) -> None:
         """Initialize per-transport semaphore and circuit breaker."""
         limit = _TRANSPORT_SEMAPHORE_LIMITS.get(name, 2)
         self._transport_sems[name] = asyncio.Semaphore(limit)
@@ -439,11 +381,7 @@ class TransportRaceManager:
             transport=name,
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout,
-    )
-
-    # ------------------------------------------------------------------
-    # Circuit breaker helpers
-    # ------------------------------------------------------------------
+        )
 
     def is_transport_open(self, transport: str) -> bool:
         """Check if a transport's circuit breaker is open (transport disabled)."""
@@ -466,7 +404,7 @@ class TransportRaceManager:
                 "transport_race: %s circuit open — skipping (retry in %.1fs)",
                 transport,
                 decision.retry_after_s,
-    )
+            )
             self._stats["circuit_breaker_skips"] += 1
             return False
         return True
@@ -476,10 +414,6 @@ class TransportRaceManager:
         breaker = self._transport_breakers.get(transport)
         if breaker is not None:
             breaker.record_success()
-
-    # ------------------------------------------------------------------
-    # ISSUE-022-04: Pre-race gate using RouteGraphService
-    # ------------------------------------------------------------------
 
     async def _check_pre_race_gate(
         self,
@@ -536,9 +470,7 @@ class TransportRaceManager:
                 continue
 
             # Check if this transport meets the high-confidence threshold
-            if (
-                edge.total_attempts < _PRE_RACE_MIN_OBSERVATIONS
-            ):
+            if edge.total_attempts < _PRE_RACE_MIN_OBSERVATIONS:
                 continue
 
             success_rate = edge.success_rate
@@ -573,7 +505,6 @@ class TransportRaceManager:
                 _PRE_RACE_GATE_STATS["gate_skips"] += 1
             return (None, 0.0)
 
-        # Check circuit breaker
         if not self.transport_check(best_transport):
             async with _pre_race_gate_lock:
                 _PRE_RACE_GATE_STATS["gate_skips"] += 1
@@ -584,8 +515,11 @@ class TransportRaceManager:
 
         logger.debug(
             "transport_race: pre-race gate → %s (confidence=%.2f, obs=%d) for %s",
-            best_transport, best_confidence, best_obs, domain,
-    )
+            best_transport,
+            best_confidence,
+            best_obs,
+            domain,
+        )
         return (best_transport, best_confidence)
 
     async def _record_to_route_graph(
@@ -622,28 +556,22 @@ class TransportRaceManager:
                     proxy="",  # No proxy for direct transports
                     transport=transport,
                     latency_ms=latency_ms,
-    )
+                )
             else:
                 await service.record_route_failure(
                     domain=clean_domain,
                     proxy="",  # No proxy for direct transports
                     transport=transport,
                     latency_ms=latency_ms,
-    )
+                )
         except Exception:  # noqa: BLE001 — fail-soft: don't let recording failures affect the main flow
             pass
 
-    def record_failure(
-        self, transport: str, is_timeout: bool = False
-    ) -> None:
+    def record_failure(self, transport: str, is_timeout: bool = False) -> None:
         """Record a failed fetch, potentially opening the circuit."""
         breaker = self._transport_breakers.get(transport)
         if breaker is not None:
             breaker.record_failure(is_timeout=is_timeout)
-
-    # ------------------------------------------------------------------
-    # Race execution
-    # ------------------------------------------------------------------
 
     async def race(
         self,
@@ -697,9 +625,7 @@ class TransportRaceManager:
 
         if not _auto_js and not use_stealth:
             # Winner cache fast path
-            result = await self._try_winner_cache_fastpath(
-                url, _cache_host, headers, max_bytes, timeout
-    )
+            result = await self._try_winner_cache_fastpath(url, _cache_host, headers, max_bytes, timeout)
             if result is not None:
                 return result
 
@@ -754,30 +680,37 @@ class TransportRaceManager:
             _WINNER_CACHE_STATS["hits"] += 1
         logger.debug(
             "transport_race: winner cache hit for %s → %s",
-            host, _cached_transport,
-    )
+            host,
+            _cached_transport,
+        )
 
         async with self._global_sem:
             self._stats["races_run"] += 1
             _fast_result = await _run_transport_standalone(
-                self, _cached_transport, url, headers,
-                max_bytes, timeout,
-    )
+                self,
+                _cached_transport,
+                url,
+                headers,
+                max_bytes,
+                timeout,
+            )
 
         # Detect if fast path timed out
         _fast_is_timeout = (
             _fast_result is not None
             and _fast_result.result is not None
             and "timeout" in (_fast_result.result.get("error") or "").lower()
-    )
+        )
 
         if _fast_result is not None and _fast_result.success:
             self.record_success(_cached_transport)
             self._stats[f"races_won_{_cached_transport}"] += 1
             await self._record_to_route_graph(
-                _cached_transport, host, success=True,
+                _cached_transport,
+                host,
+                success=True,
                 latency_ms=_fast_result.elapsed_ms,
-    )
+            )
             return (_fast_result.result, _cached_transport)
 
         # Cached winner failed — evict from cache and retry full race
@@ -790,15 +723,17 @@ class TransportRaceManager:
                 _winner_access_order.remove(host)
 
         await self._record_to_route_graph(
-            _cached_transport, host, success=False,
+            _cached_transport,
+            host,
+            success=False,
             latency_ms=_fast_result.elapsed_ms if _fast_result else 0.0,
-    )
+        )
         self.record_failure(_cached_transport, is_timeout=_fast_is_timeout)
         logger.debug(
-            "transport_race: winner cache fast path failed for %s "
-            "(%s), falling through to full race",
-            host, _cached_transport,
-    )
+            "transport_race: winner cache fast path failed for %s (%s), falling through to full race",
+            host,
+            _cached_transport,
+        )
         return None
 
     async def _try_pre_race_gate(
@@ -813,9 +748,7 @@ class TransportRaceManager:
 
         Returns result tuple on success, None to fall through to full race.
         """
-        _pre_race_transport, _pre_race_confidence = await self._check_pre_race_gate(
-            url, host
-    )
+        _pre_race_transport, _pre_race_confidence = await self._check_pre_race_gate(url, host)
         if _pre_race_transport is None:
             return None
 
@@ -823,9 +756,13 @@ class TransportRaceManager:
         async with self._global_sem:
             self._stats["races_run"] += 1
             _pre_race_result = await _run_transport_standalone(
-                self, _pre_race_transport, url, headers,
-                max_bytes, timeout,
-    )
+                self,
+                _pre_race_transport,
+                url,
+                headers,
+                max_bytes,
+                timeout,
+            )
 
         if _pre_race_result is not None and _pre_race_result.success:
             self.record_success(_pre_race_transport)
@@ -833,13 +770,16 @@ class TransportRaceManager:
             if _pre_race_transport in _WINNER_CANONICAL_TRANSPORTS:
                 await _winner_cache_set(host, _pre_race_transport)
             await self._record_to_route_graph(
-                _pre_race_transport, host, success=True,
+                _pre_race_transport,
+                host,
+                success=True,
                 latency_ms=_pre_race_result.elapsed_ms,
-    )
+            )
             logger.debug(
                 "transport_race: pre-race gate win for %s → %s",
-                host, _pre_race_transport,
-    )
+                host,
+                _pre_race_transport,
+            )
             return (_pre_race_result.result, _pre_race_transport)
 
         # Pre-race candidate failed — record failure and fall through to race
@@ -847,15 +787,18 @@ class TransportRaceManager:
             _pre_race_result is not None
             and _pre_race_result.result is not None
             and "timeout" in (_pre_race_result.result.get("error") or "").lower()
-    )
+        )
         self.record_failure(_pre_race_transport, is_timeout=_is_timeout)
         await self._record_to_route_graph(
-            _pre_race_transport, host, success=False,
-    )
+            _pre_race_transport,
+            host,
+            success=False,
+        )
         logger.debug(
             "transport_race: pre-race gate miss for %s (%s), racing all transports",
-            host, _pre_race_transport,
-    )
+            host,
+            _pre_race_transport,
+        )
         return None
 
     def _get_eligible_transports(
@@ -877,6 +820,7 @@ class TransportRaceManager:
             try:
                 from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
                 from hledac.universal.transport.http3_lane import extract_host as _h3_extract_host
+
                 host = _h3_extract_host(url)
                 if host and _h3_cache_get(host) is True:
                     eligible.append("nw_quic")
@@ -906,6 +850,7 @@ class TransportRaceManager:
 
         Returns dict of transport_name -> task.
         """
+
         async def _run_transport(name: str) -> RaceResult:
             """Run a single transport with per-transport semaphore."""
             t_start = time.monotonic()
@@ -913,44 +858,37 @@ class TransportRaceManager:
             try:
                 if sem is not None:
                     async with sem:
-                        result = await self._fetch_one(
-                            name, url, headers, max_bytes,
-                            timeout, use_stealth=use_stealth
-    )
+                        result = await self._fetch_one(name, url, headers, max_bytes, timeout, use_stealth=use_stealth)
                 else:
-                    result = await self._fetch_one(
-                        name, url, headers, max_bytes,
-                        timeout, use_stealth=use_stealth
-    )
+                    result = await self._fetch_one(name, url, headers, max_bytes, timeout, use_stealth=use_stealth)
             except asyncio.CancelledError:
                 return RaceResult(
                     transport=name,
                     cancelled=True,
                     elapsed_ms=(time.monotonic() - t_start) * 1000,
-    )
+                )
             except Exception as e:
                 logger.debug("transport_race: %s exception: %s", name, e)
                 return RaceResult(
                     transport=name,
                     error=str(e),
                     elapsed_ms=(time.monotonic() - t_start) * 1000,
-    )
+                )
             return RaceResult(
                 transport=name,
                 result=result if isinstance(result, dict) else None,
                 error=result.get("error") if isinstance(result, dict) else str(result),
                 elapsed_ms=(time.monotonic() - t_start) * 1000,
-    )
+            )
 
         # [FINAL]-019: Launch transports with temporal stagger
         tasks: dict[str, asyncio.Task[RaceResult]] = {}
         import random as _rng
+
         for idx, t_name in enumerate(eligible):
             if _RACE_STAGGER_MS > 0 and idx > 0:
                 await asyncio.sleep(abs(_rng.gauss(0.0, _RACE_STAGGER_MS / 3000.0)))  # type: ignore[arg-type]
-            tasks[t_name] = safe_create_task(
-                _run_transport(t_name), name=f"transport_race:{t_name}"
-    )
+            tasks[t_name] = safe_create_task(_run_transport(t_name), name=f"transport_race:{t_name}")
         return tasks
 
     async def _execute_race(
@@ -973,14 +911,12 @@ class TransportRaceManager:
                     done, pending = await asyncio.wait(
                         pending,
                         return_when=asyncio.FIRST_COMPLETED,
-    )
+                    )
                     for task in done:
                         try:
                             rr = task.result()
                         except Exception as exc:
-                            logger.debug(
-                                "transport_race: task exception: %s", exc
-    )
+                            logger.debug("transport_race: task exception: %s", exc)
                             continue
                         if rr.success and winner is None:
                             winner = rr
@@ -993,7 +929,7 @@ class TransportRaceManager:
             # No winner — all transports failed
             return await self._handle_race_all_failed(tasks, eligible, host)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return await self._handle_race_timeout(tasks, eligible, host, timeout, winner)
 
         except asyncio.CancelledError:
@@ -1013,16 +949,19 @@ class TransportRaceManager:
         self._stats[f"races_won_{winner.transport}"] += 1
         # Record to RouteGraphService
         self._record_to_route_graph_sync(
-            winner.transport, host, success=True,
+            winner.transport,
+            host,
+            success=True,
             latency_ms=winner.elapsed_ms,
-    )
+        )
         # Cache winning transport
         if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
             asyncio.create_task(_winner_cache_set(host, winner.transport))
             logger.debug(
                 "transport_race: winner cache set %s → %s",
-                host, winner.transport,
-    )
+                host,
+                winner.transport,
+            )
         # Cancel remaining tasks
         for t_name, task in tasks.items():
             if t_name != winner.transport and not task.done():
@@ -1047,11 +986,13 @@ class TransportRaceManager:
                         self.record_failure(
                             t_name,
                             is_timeout="timeout" in (rr.error or "").lower(),
-    )
+                        )
                         await self._record_to_route_graph(
-                            t_name, host, success=False,
+                            t_name,
+                            host,
+                            success=False,
                             latency_ms=rr.elapsed_ms,
-    )
+                        )
                 except Exception:
                     self.record_failure(t_name)
 
@@ -1064,9 +1005,11 @@ class TransportRaceManager:
                         _status = rr.result.get("status_code", 0)
                         _is_success = 200 <= _status < 400
                         await self._record_to_route_graph(
-                            t_name, host, success=_is_success,
+                            t_name,
+                            host,
+                            success=_is_success,
                             latency_ms=rr.elapsed_ms,
-    )
+                        )
                         return (rr.result, t_name)
                 except Exception:  # noqa: BLE001
                     pass
@@ -1094,17 +1037,21 @@ class TransportRaceManager:
         for t_name in eligible:
             self.record_failure(t_name, is_timeout=True)
             await self._record_to_route_graph(
-                t_name, host, success=False,
-    )
+                t_name,
+                host,
+                success=False,
+            )
 
         # Return partial result from winner if available
         if winner is not None and winner.result is not None:
             self.record_success(winner.transport)
             self._stats[f"races_won_{winner.transport}"] += 1
             await self._record_to_route_graph(
-                winner.transport, host, success=True,
+                winner.transport,
+                host,
+                success=True,
                 latency_ms=winner.elapsed_ms,
-    )
+            )
             if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
                 await _winner_cache_set(host, winner.transport)
             return (winner.result, winner.transport)
@@ -1120,9 +1067,7 @@ class TransportRaceManager:
     ) -> None:
         """Sync wrapper for _record_to_route_graph (for use in non-async context)."""
         # Create a fire-and-forget task since we don't need to await
-        asyncio.create_task(
-            self._record_to_route_graph(transport, domain, success, latency_ms)
-    )
+        asyncio.create_task(self._record_to_route_graph(transport, domain, success, latency_ms))
 
     async def _fetch_one(
         self,
@@ -1147,19 +1092,32 @@ class TransportRaceManager:
             return await self._fetch_nw_quic(url, timeout_s)
         elif transport in ("httpx", "curl_cffi"):
             return await self._fetch_unified(
-                transport, url, headers, max_bytes, timeout_s,
+                transport,
+                url,
+                headers,
+                max_bytes,
+                timeout_s,
                 use_stealth=False,
-    )
+            )
         elif transport == "curl_cffi_stealth":
             return await self._fetch_unified(
-                "curl_cffi", url, headers, max_bytes, timeout_s,
+                "curl_cffi",
+                url,
+                headers,
+                max_bytes,
+                timeout_s,
                 use_stealth=True,
-    )
+            )
         elif transport == "curl_cffi_tor":
             return await self._fetch_unified(
-                "curl_cffi", url, headers, max_bytes, timeout_s,
-                use_stealth=True, use_tor=True,
-    )
+                "curl_cffi",
+                url,
+                headers,
+                max_bytes,
+                timeout_s,
+                use_stealth=True,
+                use_tor=True,
+            )
         elif transport == "playwright":
             return await self._fetch_playwright(url, timeout_s)
         return None
@@ -1184,7 +1142,7 @@ class TransportRaceManager:
                 POLICY_STEALTH_CHROME,
                 POLICY_TOR,
                 fetch_via_unified,
-    )
+            )
 
             if use_tor:
                 policy = POLICY_TOR
@@ -1204,24 +1162,30 @@ class TransportRaceManager:
                     max_bytes=max_bytes,
                 ),
                 timeout=timeout_s,
-    )
+            )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("transport_race: %s timeout for %s", transport, url)
-            return {"url": url, "final_url": url, "status_code": 0,
-                    "content_type": "", "text": None, "fetched_bytes": 0,
-                    "declared_length": -1, "elapsed_ms": timeout_s * 1000,
-                    "error": f"{transport}_timeout", "failure_stage": "race_timeout",
-                    "headers": {}}
+            return {
+                "url": url,
+                "final_url": url,
+                "status_code": 0,
+                "content_type": "",
+                "text": None,
+                "fetched_bytes": 0,
+                "declared_length": -1,
+                "elapsed_ms": timeout_s * 1000,
+                "error": f"{transport}_timeout",
+                "failure_stage": "race_timeout",
+                "headers": {},
+            }
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.debug("transport_race: %s fetch error: %s", transport, e)
             return None
 
-    async def _fetch_nw(
-        self, url: str, timeout_s: float
-    ) -> dict[str, Any] | None:
+    async def _fetch_nw(self, url: str, timeout_s: float) -> dict[str, Any] | None:
         """Fetch via Apple Network.framework (hardware-accelerated TLS 1.3).
 
         Only on darwin/arm64. Fail-soft — returns None if unavailable.
@@ -1230,7 +1194,7 @@ class TransportRaceManager:
             from hledac.universal.transport.nw_connection_lane import (
                 fetch_nw_connection,
                 is_nw_connection_available,
-    )
+            )
 
             if not is_nw_connection_available():
                 return None
@@ -1241,7 +1205,7 @@ class TransportRaceManager:
                     timeout_ms=int(timeout_s * 1000),
                 ),
                 timeout=timeout_s + 1.0,  # slight grace for thread pool dispatch
-    )
+            )
 
             if result is None:
                 return None
@@ -1258,18 +1222,14 @@ class TransportRaceManager:
                     if isinstance(result.get("content"), bytes)
                     else ""
                 ),
-                "fetched_bytes": (
-                    len(result["content"])
-                    if isinstance(result.get("content"), bytes)
-                    else 0
-                ),
+                "fetched_bytes": (len(result["content"]) if isinstance(result.get("content"), bytes) else 0),
                 "declared_length": -1,
                 "elapsed_ms": result.get("elapsed_ms", 0.0),
                 "error": result.get("error"),
                 "failure_stage": "nw_connection" if result.get("error") else None,
                 "headers": result.get("headers", {}),
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except asyncio.CancelledError:
             raise
@@ -1278,9 +1238,7 @@ class TransportRaceManager:
         except Exception:
             return None
 
-    async def _fetch_nw_quic(
-        self, url: str, timeout_s: float
-    ) -> dict[str, Any] | None:
+    async def _fetch_nw_quic(self, url: str, timeout_s: float) -> dict[str, Any] | None:
         """Fetch via Apple Network.framework native QUIC/HTTP3.
 
         SILICON-05: Preferred HTTP/3 path on Apple Silicon. Uses
@@ -1293,7 +1251,7 @@ class TransportRaceManager:
             from hledac.universal.transport.nw_quic_lane import (
                 fetch_nw_quic,
                 is_nw_quic_available,
-    )
+            )
 
             if not is_nw_quic_available():
                 return None
@@ -1304,7 +1262,7 @@ class TransportRaceManager:
                     timeout_ms=int(timeout_s * 1000),
                 ),
                 timeout=timeout_s + 1.0,  # slight grace for thread pool dispatch
-    )
+            )
 
             if result is None:
                 return None
@@ -1320,18 +1278,14 @@ class TransportRaceManager:
                     if isinstance(result.get("content"), bytes)
                     else ""
                 ),
-                "fetched_bytes": (
-                    len(result["content"])
-                    if isinstance(result.get("content"), bytes)
-                    else 0
-                ),
+                "fetched_bytes": (len(result["content"]) if isinstance(result.get("content"), bytes) else 0),
                 "declared_length": -1,
                 "elapsed_ms": result.get("elapsed_ms", 0.0),
                 "error": result.get("error"),
                 "failure_stage": "nw_quic" if result.get("error") else None,
                 "headers": result.get("headers", {}),
             }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except asyncio.CancelledError:
             raise
@@ -1340,9 +1294,7 @@ class TransportRaceManager:
         except Exception:
             return None
 
-    async def _fetch_playwright(
-        self, url: str, timeout_s: float
-    ) -> dict[str, Any] | None:
+    async def _fetch_playwright(self, url: str, timeout_s: float) -> dict[str, Any] | None:
         """Fetch via Playwright JS renderer.
 
         Heavy path — only used when use_js=True. Fail-soft.
@@ -1350,13 +1302,14 @@ class TransportRaceManager:
         try:
             from hledac.universal.fetching.public_fetcher import (
                 _fetch_via_playwright,
-    )
+            )
+
             result = await safe_wait_for(
                 _fetch_via_playwright(url, timeout_s=timeout_s),
                 timeout=timeout_s * 2,  # playwright is slow
-    )
+            )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except asyncio.CancelledError:
             raise
@@ -1364,10 +1317,6 @@ class TransportRaceManager:
             return None
         except Exception:
             return None
-
-    # ------------------------------------------------------------------
-    # ISSUE-15: Darknet racing and JS page detection
-    # ------------------------------------------------------------------
 
     async def _race_darknet(
         self,
@@ -1405,9 +1354,7 @@ class TransportRaceManager:
 
         async def _try_tor() -> dict[str, Any] | None:
             try:
-                return await self._fetch_one(
-                    "curl_cffi_tor", url, headers, max_bytes, dark_timeout
-    )
+                return await self._fetch_one("curl_cffi_tor", url, headers, max_bytes, dark_timeout)
             except Exception:
                 return None
 
@@ -1420,21 +1367,27 @@ class TransportRaceManager:
                     self._stats["races_won_curl_cffi_tor"] += 1
                     # ISSUE-022-04: Record darknet success to RouteGraphService
                     await self._record_to_route_graph(
-                        "curl_cffi_tor", _darknet_host, success=True,
+                        "curl_cffi_tor",
+                        _darknet_host,
+                        success=True,
                         latency_ms=_latency_ms,
-    )
+                    )
                     return (result, "curl_cffi_tor")
                 # Record darknet failure to RouteGraphService
                 await self._record_to_route_graph(
-                    "curl_cffi_tor", _darknet_host, success=False,
+                    "curl_cffi_tor",
+                    _darknet_host,
+                    success=False,
                     latency_ms=_latency_ms,
-    )
-        except asyncio.TimeoutError:
+                )
+        except TimeoutError:
             self._stats["races_timeout"] += 1
             # ISSUE-022-04: Record timeout to RouteGraphService
             await self._record_to_route_graph(
-                "curl_cffi_tor", _darknet_host, success=False,
-    )
+                "curl_cffi_tor",
+                _darknet_host,
+                success=False,
+            )
 
         # Fallback to single transport
         return await self._fallback_single(url, headers, timeout_s, max_bytes)
@@ -1451,7 +1404,8 @@ class TransportRaceManager:
             from hledac.universal.transport.unified_transport import (
                 POLICY_STEALTH_CHROME,
                 fetch_via_unified,
-    )
+            )
+
             t = timeout_s if timeout_s is not None else _RACE_TIMEOUT_S
             t_start = time.monotonic()
             result = await fetch_via_unified(
@@ -1460,24 +1414,22 @@ class TransportRaceManager:
                 headers=headers,
                 timeout_s=t,
                 max_bytes=max_bytes,
-    )
+            )
             _latency_ms = (time.monotonic() - t_start) * 1000
             _status = result.get("status_code", 0) if isinstance(result, dict) else 0
             _is_success = 200 <= _status < 400 if isinstance(result, dict) else False
             # ISSUE-022-04: Record fallback result to RouteGraphService
             _host = _extract_host_for_winner_cache(url)
             await self._record_to_route_graph(
-                "curl_cffi_stealth", _host, success=_is_success,
+                "curl_cffi_stealth",
+                _host,
+                success=_is_success,
                 latency_ms=_latency_ms,
-    )
+            )
             return (result, "curl_cffi_stealth")
         except Exception as e:
             logger.debug("transport_race: fallback single failed: %s", e)
             return (None, f"stealth_failed:{e}")
-
-    # ------------------------------------------------------------------
-    # Stats
-    # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, int]:
         """Return racing statistics snapshot."""
@@ -1490,16 +1442,11 @@ class TransportRaceManager:
 
     def reset_stats(self) -> None:
         """Reset racing statistics."""
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
         # NEXUS-018-011: also reset winner cache
         _reset_winner_cache()
         # ISSUE-022-04: also reset pre-race gate stats
         _reset_pre_race_gate_stats()
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
 
 
 def _is_darknet_url(url: str) -> bool:
@@ -1518,7 +1465,7 @@ def _is_darknet_url(url: str) -> bool:
 
 
 async def _run_transport_standalone(
-    manager: "TransportRaceManager",
+    manager: TransportRaceManager,
     transport: str,
     url: str,
     headers: dict[str, str] | None,
@@ -1537,14 +1484,18 @@ async def _run_transport_standalone(
     t_start = time.monotonic()
     try:
         result = await manager._fetch_one(
-            transport, url, headers, max_bytes, timeout_s,
-    )
+            transport,
+            url,
+            headers,
+            max_bytes,
+            timeout_s,
+        )
     except asyncio.CancelledError:
         return RaceResult(
             transport=transport,
             cancelled=True,
             elapsed_ms=(time.monotonic() - t_start) * 1000,
-    )
+        )
     except Exception:
         return None
 
@@ -1565,13 +1516,21 @@ async def _run_transport_standalone(
 # from playwright inclusion in the transport race.
 _JS_HEAVY_DOMAIN_PATTERNS: tuple[str, ...] = (
     # SPAs and JS frameworks
-    "react.", "vue.", "angular.", "svelte.",
+    "react.",
+    "vue.",
+    "angular.",
+    "svelte.",
     # Known JS-only sites
-    "twitter.com", "x.com", "instagram.com", "facebook.com",
-    "tiktok.com", "reddit.com", "discord.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "facebook.com",
+    "tiktok.com",
+    "reddit.com",
+    "discord.com",
     # Cloudflare-protected (often JS challenge)
     "cloudflare",
-    )
+)
 
 
 def _is_likely_js_page(url: str) -> bool:
@@ -1613,11 +1572,6 @@ def get_race_manager() -> TransportRaceManager:
 def reset_race_manager() -> None:
     """Reset the singleton (for testing)."""
     TransportRaceManager._instance = None
-
-
-# ---------------------------------------------------------------------------
-# Public API — drop-in replacement for _fetch_core
-# ---------------------------------------------------------------------------
 
 
 async def fetch_via_race(

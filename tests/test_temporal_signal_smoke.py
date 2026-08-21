@@ -12,14 +12,13 @@ NOT a single class. The actual "tick" surface is TemporalSignalLayer.observe().
 import sys
 import time
 from pathlib import Path
-from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT.parent))
 
 
-def test_temporal_signal_chain_end_to_end():
+def test_temporal_signal_chain_end_to_end() -> None:
     """Import chain + observe() with mock event must not raise."""
     from hledac.universal.layers import (  # type: ignore[import-not-found]
         TemporalEvent,

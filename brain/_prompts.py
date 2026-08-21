@@ -29,11 +29,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
-from _core import aclose
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 T = TypeVar('T')
 
@@ -275,11 +273,6 @@ class ChatMLPromptFormatter:
 # Singleton instance — stateless, safe to share across all callers
 PROMPT_FORMATTER = ChatMLPromptFormatter()
 
-
-# ─── OSINT-specific Prompt Templates ───────────────────────────────────────────
-# Domain-specific templates for OSINT/research workflows.
-# These replace hardcoded template strings in DeepHermes3Engine and
-# hypothesis_engine (reducing the 20+ variant problem).
 
 OSINT_SYSTEM_PROMPT = PromptTemplate(
     role=PromptRole.SYSTEM,

@@ -17,11 +17,11 @@ The Python loop is simple, correct, and fast enough for key material
 (typically < 1ms for 256-byte keys on M1).  Security benefit of
 ctypes memset is negligible compared to the risk of silent failures.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 __all__ = [
     "secure_zero",
@@ -32,10 +32,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-# -------------------------------------------------------------------
-# Core wipe — two-pass (random + zero)
-# -------------------------------------------------------------------
 
 
 def secure_zero(buf: bytearray | bytes | memoryview) -> bool:
@@ -110,10 +106,6 @@ def wipe_bytearray(buf: bytearray) -> bool:
     return secure_zero(buf)
 
 
-# -------------------------------------------------------------------
-# Typed wipe for structured secret containers
-# -------------------------------------------------------------------
-
 SecretContainer: Any = None  # deferred msgspec.Struct import
 
 
@@ -139,13 +131,13 @@ def secure_zero_typed(obj: Any) -> None:
     if SecretContainer is None:
         try:
             import msgspec
+
             from compat.msgspec_gc_compat import Struct
 
             SecretContainer = msgspec.Struct
         except ImportError:
             SecretContainer = type(None)  # no-op
 
-    # --- duck-typed msgspec.Struct (has __slots__) ---
     if isinstance(obj, SecretContainer):
         for name in getattr(obj, "__slots__", ()):
             if name.startswith("public") or name in ("public", "public_key"):
@@ -160,7 +152,6 @@ def secure_zero_typed(obj: Any) -> None:
             elif isinstance(val, SecretContainer):
                 secure_zero_typed(val)
 
-    # --- plain object with __dict__ ---
     elif hasattr(obj, "__dict__"):
         for name, val in obj.__dict__.items():
             if name.startswith("public") or name in ("public", "public_key"):
@@ -172,14 +163,8 @@ def secure_zero_typed(obj: Any) -> None:
             elif isinstance(val, SecretContainer):
                 secure_zero_typed(val)
 
-    # --- bare bytearray ---
     elif isinstance(obj, bytearray):
         secure_zero(obj)
-
-
-# -------------------------------------------------------------------
-# Tor/I2P identity material wipe helpers
-# -------------------------------------------------------------------
 
 
 def wipe_tor_identity(onion_address: str | None, _hidden_service_dir: str | None = None) -> None:

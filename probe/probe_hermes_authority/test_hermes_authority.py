@@ -15,12 +15,10 @@ Test coverage:
 10. Proposed env gate name documented
 """
 
-
 import ast
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 # Project root: probe_hermes_authority/ -> universal/ -> Hledac/ -> project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -33,7 +31,7 @@ RUNTIME_DIR = PROJECT_ROOT / "runtime"
 # =============================================================================
 
 
-def test_hermes3_engine_definition_exists():
+def test_hermes3_engine_definition_exists() -> None:
     """Hermes3Engine class is defined in brain/deephermes3_engine.py (F350M-R canonical)."""
     deephermes_path = BRAIN_DIR / "deephermes3_engine.py"
     assert deephermes_path.exists(), f"DeepHermes3Engine file not found at {deephermes_path}"
@@ -53,7 +51,7 @@ def test_hermes3_engine_definition_exists():
     )
 
 
-def test_hermes3_engine_has_required_methods():
+def test_hermes3_engine_has_required_methods() -> None:
     """
     DeepHermes3Engine has all required runtime-facing methods.
     Methods: initialize, unload, generate_structured, decide_next_action,
@@ -67,10 +65,7 @@ def test_hermes3_engine_has_required_methods():
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "DeepHermes3Engine":
             # DeepHermes3Engine methods can be sync FunctionDef or async AsyncFunctionDef
-            class_methods = [
-                n.name for n in node.body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            ]
+            class_methods = [n.name for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
     required_methods = [
         "initialize",
@@ -86,7 +81,7 @@ def test_hermes3_engine_has_required_methods():
     assert not missing, f"DeepHermes3Engine missing methods: {missing}"
 
 
-def test_hermes3_engine_unload_is_async():
+def test_hermes3_engine_unload_is_async() -> None:
     """DeepHermes3Engine.unload() is an async method (7K canonical order)."""
     deephermes_path = BRAIN_DIR / "deephermes3_engine.py"
     source = deephermes_path.read_text()
@@ -106,7 +101,7 @@ def test_hermes3_engine_unload_is_async():
 # =============================================================================
 
 
-def test_brain_init_is_facade():
+def test_brain_init_is_facade() -> None:
     """
     brain/__init__.py is a FACADE module.
     Evidence: contains FACADE status comment, re-exports only, no heavy imports.
@@ -115,14 +110,10 @@ def test_brain_init_is_facade():
     source = init_path.read_text()
 
     # Check for FACADE marker comment
-    assert "FACADE" in source or "facade" in source.lower(), (
-        "brain/__init__.py should contain FACADE documentation"
-    )
+    assert "FACADE" in source or "facade" in source.lower(), "brain/__init__.py should contain FACADE documentation"
 
     # Verify no Hermes3Engine() instantiation in __init__
-    assert "Hermes3Engine()" not in source, (
-        "brain/__init__.py should NOT instantiate Hermes3Engine"
-    )
+    assert "Hermes3Engine()" not in source, "brain/__init__.py should NOT instantiate Hermes3Engine"
 
     # Verify DeepHermes3Engine is imported (re-exported), not created
     assert "from .deephermes3_engine import DeepHermes3Engine" in source, (
@@ -130,7 +121,7 @@ def test_brain_init_is_facade():
     )
 
 
-def test_brain_init_no_heavy_imports_at_module_level():
+def test_brain_init_no_heavy_imports_at_module_level() -> None:
     """
     brain/__init__.py does NOT trigger heavy imports (mlx_lm, models).
     Heavy imports should be lazy (inside functions).
@@ -167,7 +158,7 @@ def test_brain_init_no_heavy_imports_at_module_level():
 # =============================================================================
 
 
-def test_model_manager_registry_contains_hermes():
+def test_model_manager_registry_contains_hermes() -> None:
     """
     ModelManager._model_factories contains 'hermes' entry pointing to Hermes3Engine.
     """
@@ -175,9 +166,7 @@ def test_model_manager_registry_contains_hermes():
     source = mm_path.read_text()
 
     # Check for _create_hermes_engine factory method
-    assert "_create_hermes_engine" in source, (
-        "ModelManager should have _create_hermes_engine factory method"
-    )
+    assert "_create_hermes_engine" in source, "ModelManager should have _create_hermes_engine factory method"
 
     # Check for ModelType.HERMES in registry
     assert "ModelType.HERMES" in source or "hermes" in source.lower(), (
@@ -185,7 +174,7 @@ def test_model_manager_registry_contains_hermes():
     )
 
 
-def test_model_manager_load_model_enforces_memory():
+def test_model_manager_load_model_enforces_memory() -> None:
     """
     ModelManager.load_model('hermes') has memory admission gate.
     Evidence: _check_memory_admission() or _check_rss_before_load() called.
@@ -201,7 +190,7 @@ def test_model_manager_load_model_enforces_memory():
     ]
 
     found = [c for c in memory_checks if c in source]
-    assert found, f"ModelManager.load_model should have memory checks. None found."
+    assert found, "ModelManager.load_model should have memory checks. None found."
 
 
 # =============================================================================
@@ -209,7 +198,7 @@ def test_model_manager_load_model_enforces_memory():
 # =============================================================================
 
 
-def test_model_manager_factory_creates_hermes3_engine():
+def test_model_manager_factory_creates_hermes3_engine() -> None:
     """
     _create_hermes_engine() factory instantiates DeepHermes3Engine.
     """
@@ -230,7 +219,7 @@ def test_model_manager_factory_creates_hermes3_engine():
 # =============================================================================
 
 
-def test_sprint_scheduler_import_does_not_load_hermes():
+def test_sprint_scheduler_import_does_not_load_hermes() -> None:
     """
     Importing SprintScheduler does NOT load Hermes model.
     SprintScheduler is a re-export shim (SprintSchedulerV2 from scheduler_v2).
@@ -245,9 +234,7 @@ def test_sprint_scheduler_import_does_not_load_hermes():
     )
 
     # Verify it's a facade/re-export (contains __getattr__ or re-exports)
-    assert "__getattr__" in source or "from" in source, (
-        "sprint_scheduler.py should be a re-export module"
-    )
+    assert "__getattr__" in source or "from" in source, "sprint_scheduler.py should be a re-export module"
 
 
 # =============================================================================
@@ -255,7 +242,7 @@ def test_sprint_scheduler_import_does_not_load_hermes():
 # =============================================================================
 
 
-def test_hermes_load_is_lazy():
+def test_hermes_load_is_lazy() -> None:
     """
     Hermes model loading is lazy — mlx_lm.load() is NOT called at import time.
     Model is loaded via DeepHermes3Engine.initialize() which is called explicitly
@@ -293,7 +280,7 @@ def test_hermes_load_is_lazy():
 # =============================================================================
 
 
-def test_hermes_unload_7k_order():
+def test_hermes_unload_7k_order() -> None:
     """
     DeepHermes3Engine.unload() follows canonical 7K order:
     1. _shutdown_batch_worker
@@ -315,9 +302,7 @@ def test_hermes_unload_7k_order():
     clear_pos = source.find("mx.clear_cache()")
 
     if eval_pos != -1 and clear_pos != -1:
-        assert eval_pos < clear_pos, (
-            "mx.eval([]) should appear BEFORE mx.clear_cache() (7K order)"
-    )
+        assert eval_pos < clear_pos, "mx.eval([]) should appear BEFORE mx.clear_cache() (7K order)"
 
 
 # =============================================================================
@@ -326,15 +311,15 @@ def test_hermes_unload_7k_order():
 
 
 ALLOWED_HERMES_STATUSES = [
-    "CONNECTED_ACTIVE",      # loaded and actively used
-    "CONNECTED_ADVISORY",    # loaded but advisory-only use
+    "CONNECTED_ACTIVE",  # loaded and actively used
+    "CONNECTED_ADVISORY",  # loaded but advisory-only use
     "AVAILABLE_NOT_WIRED",  # available but not connected
-    "DOCS_ONLY_MISMATCH",    # docs say something else
-    "BROKEN",                # call-site exists but lifecycle is wrong
+    "DOCS_ONLY_MISMATCH",  # docs say something else
+    "BROKEN",  # call-site exists but lifecycle is wrong
 ]
 
 
-def test_classification_status_is_allowed():
+def test_classification_status_is_allowed() -> None:
     """
     Hermes authority classification returns one of allowed statuses.
     F206AD verdict: CONNECTED_ADVISORY
@@ -344,7 +329,7 @@ def test_classification_status_is_allowed():
     assert len(ALLOWED_HERMES_STATUSES) == 5
 
 
-def test_hermes_authority_verdict_documented():
+def test_hermes_authority_verdict_documented() -> None:
     """
     F206AD audit verdict is CONNECTED_ADVISORY.
     Hermes is loaded via ModelManager but NOT actively used in E2E synthesis.
@@ -358,7 +343,7 @@ def test_hermes_authority_verdict_documented():
 # =============================================================================
 
 
-def test_env_gate_name_documented():
+def test_env_gate_name_documented() -> None:
     """
     Proposed env gate for Hermes advisory synthesis is documented.
     Gate name: HLEDAC_ENABLE_HERMES_SYNTHESIS=1
@@ -376,7 +361,7 @@ def test_env_gate_name_documented():
 # =============================================================================
 
 
-def test_synthesis_runner_uses_xgrammar_not_hermes():
+def test_synthesis_runner_uses_xgrammar_not_hermes() -> None:
     """
     SynthesisRunner.synthesize_findings() uses xgrammar/Outlines path,
     NOT Hermes3Engine methods (generate_structured, synthesize_findings, etc.).
@@ -399,9 +384,7 @@ def test_synthesis_runner_uses_xgrammar_not_hermes():
     ]
 
     found_calls = [c for c in hermes_method_calls if c in source]
-    assert not found_calls, (
-        f"SynthesisRunner should NOT call Hermes methods directly: {found_calls}"
-    )
+    assert not found_calls, f"SynthesisRunner should NOT call Hermes methods directly: {found_calls}"
 
 
 # =============================================================================
@@ -409,7 +392,7 @@ def test_synthesis_runner_uses_xgrammar_not_hermes():
 # =============================================================================
 
 
-def test_model_manager_generate_report_uses_context_manager():
+def test_model_manager_generate_report_uses_context_manager() -> None:
     """
     ModelManager.generate_report() uses acquire_model_ctx for proper lifecycle authority.
     The E-15 bypass (direct Hermes3Engine() instantiation) was FIXED.
@@ -421,9 +404,7 @@ def test_model_manager_generate_report_uses_context_manager():
     generate_report_idx = source.find("async def generate_report")
     acquire_ctx_idx = source.find("acquire_model_ctx", generate_report_idx)
 
-    assert acquire_ctx_idx != -1, (
-        "generate_report should use acquire_model_ctx (E-15 fix)"
-    )
+    assert acquire_ctx_idx != -1, "generate_report should use acquire_model_ctx (E-15 fix)"
 
     # DeepHermes3Engine() direct instantiation should NOT appear after generate_report
     deephermes_direct_idx = source.find("DeepHermes3Engine()", generate_report_idx)
@@ -437,7 +418,7 @@ def test_model_manager_generate_report_uses_context_manager():
 # =============================================================================
 
 
-def test_sprint_scheduler_hermes_stored_not_called():
+def test_sprint_scheduler_hermes_stored_not_called() -> None:
     """
     SprintSchedulerV2 receives Hermes engine as injected dependency (_hermes_engine property),
     and does NOT call Hermes methods during acquisition.
@@ -448,9 +429,7 @@ def test_sprint_scheduler_hermes_stored_not_called():
     if sched_v2_path.exists():
         source = sched_v2_path.read_text()
         # Hermes is stored as property but NOT used during acquisition
-        assert "_hermes_engine" in source, (
-            "SprintSchedulerV2 should have _hermes_engine property for injected Hermes"
-    )
+        assert "_hermes_engine" in source, "SprintSchedulerV2 should have _hermes_engine property for injected Hermes"
         # SprintSchedulerV2 should NOT directly call hermes engine methods in hot path
         hot_path_patterns = [
             "self._hermes_engine.generate",
@@ -471,7 +450,7 @@ def test_sprint_scheduler_hermes_stored_not_called():
 # =============================================================================
 
 
-def test_model_manager_adjusts_fetch_workers():
+def test_model_manager_adjusts_fetch_workers() -> None:
     """
     ModelManager.load_model('hermes') reduces fetch workers to 3.
     ModelManager.release_model('hermes') restores fetch workers to 25.

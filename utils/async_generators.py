@@ -3,20 +3,14 @@ Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
 
-
-
 """
 
 import asyncio
 import inspect
 import typing
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
 
 T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)
@@ -236,9 +230,9 @@ async def findings_to_duckdb_pipeline(
 class BackpressureMonitor:
     """Monitor for async generator backpressure."""
 
-    __slots__ = tuple(("max_pending", "name", "pending_count", "total_processed"))
+    __slots__ = ("max_pending", "name", "pending_count", "total_processed")
 
-    def __init__(self, name: str = "unknown"):
+    def __init__(self, name: str = "unknown") -> None:
         self.name = name
         self.pending_count = 0
         self.max_pending = 0
@@ -286,7 +280,7 @@ async def aclose_safe(agen: AsyncIterator) -> None:
     try:
         if hasattr(agen, "aclose"):
             await agen.aclose()
-    except (AttributeError, StopAsyncIteration, RuntimeError):  # noqa: BLE001
+    except AttributeError, StopAsyncIteration, RuntimeError:  # noqa: BLE001
         # Already closed or doesn't support aclose
         pass
 
@@ -363,7 +357,6 @@ async def merge_async_iterables[T](*sources: AsyncIterator[T]) -> AsyncGenerator
     if not sources:
         return
 
-    # Queue for collecting items from all sources
     results_queue: asyncio.Queue[tuple[int, T]] = asyncio.Queue()
     # Track completed sources
     completed_count = 0
@@ -383,7 +376,6 @@ async def merge_async_iterables[T](*sources: AsyncIterator[T]) -> AsyncGenerator
         finally:
             completed_count += 1
 
-    # Start all source workers
     async with asyncio.TaskGroup() as tg:
         for idx, source in enumerate(sources):
             tg.create_task(source_worker(idx, source), eager_start=True)
@@ -396,7 +388,7 @@ async def merge_async_iterables[T](*sources: AsyncIterator[T]) -> AsyncGenerator
                 yield item
                 # Yield to event loop - allows downstream to process
                 await asyncio.sleep(0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No items available, continue checking for completion
                 continue
             except asyncio.CancelledError:  # noqa: BLE001

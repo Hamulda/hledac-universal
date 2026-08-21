@@ -3,10 +3,6 @@ Storage Trinity Schema Contracts — ISSUE [ARCH-DB-001]
 
 Unified validation layer for the Storage Trinity:
 
-
-
-
-
   Layer    | Tech    | Purpose
   ---------|---------|-------------------------------
   LMDB     | Key-val | WAL truth records (finding:{id})
@@ -37,9 +33,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.sprint_facts.canonical_finding import CanonicalFinding
@@ -102,7 +98,7 @@ class CanonicalFindingContract(Struct, frozen=True):
         """
         return msgspec.convert(raw, CanonicalFindingContract, strict=False)
 
-    def to_canonical_finding(self) -> "CanonicalFinding":
+    def to_canonical_finding(self) -> CanonicalFinding:
         """
         Convert contract to CanonicalFinding DTO.
 
@@ -122,12 +118,10 @@ class CanonicalFindingContract(Struct, frozen=True):
             ts=self.ts,
             provenance=self.provenance,
             payload_text=self.payload_text,
-    )
+        )
 
 
-def _convert_to_contract(
-    raw: dict[str, Any], contract_cls: type[msgspec.Struct]
-) -> msgspec.Struct | None:
+def _convert_to_contract(raw: dict[str, Any], contract_cls: type[msgspec.Struct]) -> msgspec.Struct | None:
     """
     Convert a raw dict to a msgspec.Struct contract type.
 
@@ -142,7 +136,7 @@ def _convert_to_contract(
     """
     try:
         return cast(Any, msgspec).convert(raw, contract_cls, strict=False)  # type: ignore[arg-type,return-value]
-    except (msgspec.ValidationError, TypeError, ValueError):
+    except msgspec.ValidationError, TypeError, ValueError:
         return None
 
 
@@ -214,11 +208,6 @@ class RAGChunkContract(Struct, frozen=True):
     created_at: float = 0.0
 
 
-# ---------------------------------------------------------------------------
-# Validation helpers (fail-safe, never block storage)
-# ---------------------------------------------------------------------------
-
-
 def validate_finding_dict(raw: dict[str, Any]) -> CanonicalFindingContract | None:
     """
     Validate a raw dict against CanonicalFindingContract.
@@ -240,7 +229,7 @@ def validate_finding_dict(raw: dict[str, Any]) -> CanonicalFindingContract | Non
         _logger.debug(
             "[ARCH-DB-001] WAL dict validation failed | raw_keys=%s",
             list(raw.keys()),
-    )
+        )
     return cast(CanonicalFindingContract | None, result)
 
 
@@ -264,7 +253,7 @@ def validate_wal_record(raw: dict[str, Any]) -> WALRecordContract | None:
         _logger.debug(
             "[ARCH-DB-001] WAL record validation failed | raw_keys=%s",
             list(raw.keys()),
-    )
+        )
     return cast(WALRecordContract | None, result)
 
 
@@ -288,7 +277,7 @@ def validate_entity_embedding(raw: dict[str, Any]) -> EntityEmbeddingContract | 
         _logger.debug(
             "[ARCH-DB-001] Entity embedding validation failed | raw_keys=%s",
             list(raw.keys()),
-    )
+        )
     return cast(EntityEmbeddingContract | None, result)
 
 
@@ -312,13 +301,8 @@ def validate_rag_chunk(raw: dict[str, Any]) -> RAGChunkContract | None:
         _logger.debug(
             "[ARCH-DB-001] RAG chunk validation failed | raw_keys=%s",
             list(raw.keys()),
-    )
+        )
     return cast(RAGChunkContract | None, result)
-
-
-# ---------------------------------------------------------------------------
-# Storage Trinity Validator — cross-store consistency checker
-# ---------------------------------------------------------------------------
 
 
 class StorageTrinityValidator:
@@ -382,7 +366,6 @@ class StorageTrinityValidator:
                     "desync_count": 0,
                 }
 
-            # Check LMDB → DuckDB direction
             for fid in finding_ids[:1000]:  # Cap at 1000 per check
                 wal_record = wal_manager.wal_get_finding(fid)
                 lmdb_has = wal_record is not None
@@ -401,12 +384,11 @@ class StorageTrinityValidator:
 
             if desync_count > 0:
                 _logger.warning(
-                    "[ARCH-DB-001] Storage desync detected: "
-                    "ghost_findings=%d duckdb_missing=%d checked=%d",
+                    "[ARCH-DB-001] Storage desync detected: ghost_findings=%d duckdb_missing=%d checked=%d",
                     len(ghost_findings),
                     len(duckdb_missing),
                     checked,
-    )
+                )
 
             return {
                 "ghost_findings": ghost_findings,
@@ -510,12 +492,11 @@ class StorageTrinityValidator:
 
             if desync_count > 0:
                 _logger.warning(
-                    "[ARCH-DB-001] Embedding desync detected: "
-                    "orphaned=%d missing_emb=%d checked=%d",
+                    "[ARCH-DB-001] Embedding desync detected: orphaned=%d missing_emb=%d checked=%d",
                     len(orphaned),
                     len(missing_emb),
                     checked,
-    )
+                )
 
             return {
                 "orphaned_embeddings": orphaned,

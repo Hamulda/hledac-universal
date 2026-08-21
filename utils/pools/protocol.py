@@ -7,14 +7,13 @@ Provides type-safe pool selection and resource management.
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from concurrent.futures import Executor
+    pass
 
 T = TypeVar("T")
 
@@ -174,10 +173,6 @@ class PoolProtocol(SyncPoolProtocol, AsyncPoolProtocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Pool registry for lazy initialization
-# ---------------------------------------------------------------------------
-
 _pool_registry: dict[PoolType, PoolProtocol] = {}
 
 
@@ -196,7 +191,4 @@ def get_pool(pool_type: PoolType) -> PoolProtocol | None:
 
 def list_registered_pools() -> list[tuple[PoolType, str, bool]]:
     """List all registered pools with availability status."""
-    return [
-        (pt, _pool_registry[pt].name, _pool_registry[pt].is_available())
-        for pt in _pool_registry
-    ]
+    return [(pt, _pool_registry[pt].name, _pool_registry[pt].is_available()) for pt in _pool_registry]

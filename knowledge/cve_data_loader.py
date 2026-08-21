@@ -40,17 +40,12 @@ from __future__ import annotations
 
 import asyncio
 import gzip
-import hashlib
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
-
-from hledac.universal._core.env_config import ENV
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -82,45 +77,80 @@ _CVE_MATRIX_JSON_GZ = _DATA_DIR / "cve_matrix.json.gz"
 # ── Top 50 Technologies ───────────────────────────────────────────────────────
 _INDEXED_TECHNOLOGIES = {
     # Web Servers
-    "nginx", "apache", "microsoft-iis", "lighttpd", "openbsd httpd",
+    "nginx",
+    "apache",
+    "microsoft-iis",
+    "lighttpd",
+    "openbsd httpd",
     # SSH
     "openssh",
     # Databases
-    "postgresql", "mysql", "mariadb", "mongodb", "redis", "elasticsearch",
+    "postgresql",
+    "mysql",
+    "mariadb",
+    "mongodb",
+    "redis",
+    "elasticsearch",
     # CMS
-    "wordpress", "drupal", "joomla", "magento",
+    "wordpress",
+    "drupal",
+    "joomla",
+    "magento",
     # Containers
-    "kubernetes", "docker",
+    "kubernetes",
+    "docker",
     # Languages/Runtimes
-    "php", "node.js", "nodejs", "python", "ruby", "java", "go",
+    "php",
+    "node.js",
+    "nodejs",
+    "python",
+    "ruby",
+    "java",
+    "go",
     # Web Frameworks
-    "django", "flask", "ruby on rails", "express", "spring",
+    "django",
+    "flask",
+    "ruby on rails",
+    "express",
+    "spring",
     # Caches
-    "memcached", "varnish",
-    # Load Balancers
+    "memcached",
+    "varnish",
     "haproxy",
     # DNS
-    "bind", "powerdns",
+    "bind",
+    "powerdns",
     # Mail
-    "postfix", "exim", "dovecot",
+    "postfix",
+    "exim",
+    "dovecot",
     # CDN/Proxy
-    "cloudflare", "akamai",
+    "cloudflare",
+    "akamai",
     # Authentication
-    "openldap", "389ds",
+    "openldap",
+    "389ds",
     # Monitoring
-    "prometheus", "grafana",
+    "prometheus",
+    "grafana",
     # Message Queues
-    "rabbitmq", "apache kafka", "nats",
+    "rabbitmq",
+    "apache kafka",
+    "nats",
     # CI/CD
-    "jenkins", "gitlab runner",
+    "jenkins",
+    "gitlab runner",
     # VPN
-    "openvpn", "wireguard",
+    "openvpn",
+    "wireguard",
     # FTP
-    "vsftpd", "proftpd",
+    "vsftpd",
+    "proftpd",
     # SMB
     "samba",
     # TLS/SSL
-    "openssl", "gnutls",
+    "openssl",
+    "gnutls",
 }
 
 
@@ -156,6 +186,7 @@ def _tech_cpe_prefix(tech: str) -> str:
 
 
 # ── CVE Record Parser ──────────────────────────────────────────────────────────
+
 
 def _parse_cvss_metrics(metrics: dict) -> tuple[float | None, str]:
     """Extract CVSS score and version from metrics (prefers 3.x)."""
@@ -206,7 +237,6 @@ def _parse_version_patterns(configs: list[dict]) -> dict[str, str]:
                     tech_key = f"{vendor}:{product}"
                     if tech_key in version_patterns:
                         continue
-                    # Build version pattern
                     if update == "*":
                         pattern = ".*" if version == "*" else f"^{re_escape(version)}.*"
                     else:
@@ -249,6 +279,7 @@ def re_escape(s: str) -> str:
 
 
 # ── Data Loader ────────────────────────────────────────────────────────────────
+
 
 async def _fetch_nvd_page(
     client: httpx.AsyncClient,
@@ -321,7 +352,9 @@ async def _fetch_all_nvd_cves(
                         all_cves.append(cve_record)
 
                 total = data.get("totalResults", 0)
-                logger.info(f"[CVE Loader] Fetched page {page}, {len(all_cves)} CVEs so far (of ~{min(total, max_records or float('inf'))})")
+                logger.info(
+                    f"[CVE Loader] Fetched page {page}, {len(all_cves)} CVEs so far (of ~{min(total, max_records or float('inf'))})"
+                )
 
                 if len(all_cves) >= (max_records or float("inf")):
                     break
@@ -344,6 +377,7 @@ async def _fetch_all_nvd_cves(
 
 
 # ── DuckDB Export ─────────────────────────────────────────────────────────────
+
 
 async def export_to_duckdb(cve_records: list[dict[str, Any]], db_path: Path) -> int:
     """Export CVE records to DuckDB."""
@@ -368,19 +402,22 @@ async def export_to_duckdb(cve_records: list[dict[str, Any]], db_path: Path) -> 
     loaded = 0
     for record in cve_records:
         try:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT OR IGNORE INTO cve_matrix
                 (cve_id, technology, version_pattern, cvss_score, cwe_id, description_snippet, published_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, [
-                record["cve_id"],
-                record["technology"].lower(),
-                record.get("version_pattern"),
-                record.get("cvss_score"),
-                record.get("cwe_id"),
-                record.get("description_snippet", "")[:500],
-                record.get("published_date"),
-            ])
+            """,
+                [
+                    record["cve_id"],
+                    record["technology"].lower(),
+                    record.get("version_pattern"),
+                    record.get("cvss_score"),
+                    record.get("cwe_id"),
+                    record.get("description_snippet", "")[:500],
+                    record.get("published_date"),
+                ],
+            )
             loaded += 1
         except Exception as e:
             logger.debug(f"Failed to insert {record.get('cve_id')}: {e}")
@@ -391,6 +428,7 @@ async def export_to_duckdb(cve_records: list[dict[str, Any]], db_path: Path) -> 
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 async def update_cve_matrix(
     output_db: Path = _CVE_MATRIX_DB,
@@ -408,14 +446,15 @@ async def update_cve_matrix(
 
     logger.info(f"[CVE Loader] Collected {len(cve_records)} CVE records in {elapsed:.1f}s")
 
-    # Save JSON backup
     with gzip.open(output_gz, "wb") as f:
         _json_dump(cve_records, f)
     logger.info(f"[CVE Loader] Saved JSON backup: {output_gz} ({output_gz.stat().st_size / 1024:.1f} KB)")
 
     # Export to DuckDB
     loaded = await export_to_duckdb(cve_records, output_db)
-    logger.info(f"[CVE Loader] Exported {loaded} records to {output_db} ({output_db.stat().st_size / 1024 / 1024:.1f} MB)")
+    logger.info(
+        f"[CVE Loader] Exported {loaded} records to {output_db} ({output_db.stat().st_size / 1024 / 1024:.1f} MB)"
+    )
 
     return loaded
 

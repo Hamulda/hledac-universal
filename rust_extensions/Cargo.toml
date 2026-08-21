@@ -304,7 +304,7 @@ evasive_tls = ["dep:rustls", "dep:webpki-roots", "dep:lazy_static"]
 #   - SAM-v3 parity API: isolate_circuit(), open_stream(), session_status()
 # M1 8GB: Shared tokio runtime (~10MB), Arti ~25-30MB, total ~35-40MB (safe).
 # Python fallback: transport/arti_transport.py uses external Arti subprocess.
-default = ["core", "data", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity", "embedded_tor", "evasive_tls", "stix"]
+default = ["core", "data", "fulltext", "ane", "metal", "metal_shared", "iosurface", "swarm_dag", "whisper", "shared_tokio", "simd_similarity", "embedded_tor", "evasive_tls", "stix"]
 
 # SILICON-02: Added whisper to default — ANE-based speech-to-text via whisper.cpp.
 # Only tiny (39 MB) and base (74 MB) models for M1 8GB safety.

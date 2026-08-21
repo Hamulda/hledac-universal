@@ -40,7 +40,6 @@ const MAX_PAGES: u32 = 10_000;
 pub fn extract_text(path: &str) -> PyResult<String> {
     let path = Path::new(path);
 
-    // Check file size before loading
     let metadata = std::fs::metadata(path).map_err(|e| {
         pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
     })?;
@@ -53,7 +52,6 @@ pub fn extract_text(path: &str) -> PyResult<String> {
         )));
     }
 
-    // Load PDF document
     let doc = lopdf::Document::load(path)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to parse PDF: {e}")))?;
 
@@ -372,13 +370,11 @@ const MAX_SUPPRESSED_ANNOTATIONS: usize = 200;
 fn extract_ocg_layers(doc: &lopdf::Document) -> Vec<(String, String, bool)> {
     let mut layers = Vec::new();
 
-    // Get catalog dictionary
     let catalog = match doc.catalog() {
         Ok(c) => c,
         Err(_) => return layers,
     };
 
-    // Get OCProperties from catalog
     let oc_props_ref = match catalog.get(b"OCProperties") {
         Ok(lopdf::Object::Reference(r)) => *r,
         _ => return layers,
@@ -389,7 +385,6 @@ fn extract_ocg_layers(doc: &lopdf::Document) -> Vec<(String, String, bool)> {
         _ => return layers,
     };
 
-    // Get OCGs array
     let ocgs_ref = match oc_props.get(b"OCGs") {
         Ok(lopdf::Object::Reference(r)) => *r,
         Ok(lopdf::Object::Array(arr)) => {
@@ -434,7 +429,6 @@ fn extract_single_ocg(
         _ => return None,
     };
 
-    // Get name
     let name = get_string_from_dict(ocg_dict, b"Name").unwrap_or_else(|| "Unnamed".to_string());
 
     // Get intent (default to "View")
@@ -499,13 +493,11 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
             break;
         }
 
-        // Get page dictionary
         let page_dict = match doc.get_object(*page_ref) {
             Ok(lopdf::Object::Dictionary(d)) => d,
             _ => continue,
         };
 
-        // Get annotations array
         let annots = match page_dict.get(b"Annots") {
             Ok(lopdf::Object::Reference(r)) => match doc.get_object(*r) {
                 Ok(lopdf::Object::Array(arr)) => arr.clone(),
@@ -515,7 +507,6 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
             _ => continue,
         };
 
-        // Check each annotation for redaction type
         for annot_obj in annots.iter() {
             if failures.len() >= MAX_REDACTION_FAILURES {
                 break;
@@ -541,7 +532,6 @@ fn detect_redaction_failures(doc: &lopdf::Document) -> Vec<String> {
                 continue;
             }
 
-            // Get the redaction rectangle
             let rect = match annot_dict.get(b"Rect") {
                 Ok(lopdf::Object::Array(arr)) if arr.len() == 4 => {
                     let coords: Vec<f64> = arr
@@ -631,7 +621,6 @@ fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, St
                 _ => continue,
             };
 
-            // Check annotation flags
             let flags = match annot_dict.get(b"F") {
                 Ok(lopdf::Object::Integer(f)) => *f,
                 _ => 0,
@@ -644,13 +633,11 @@ fn extract_suppressed_annotations(doc: &lopdf::Document) -> Vec<(u32, String, St
                 continue;
             }
 
-            // Get annotation type
             let annot_type = match annot_dict.get(b"Subtype") {
                 Ok(lopdf::Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
                 _ => "Unknown".to_string(),
             };
 
-            // Get annotation content
             let content = match annot_dict.get(b"Contents") {
                 Ok(lopdf::Object::String(bytes, _)) => String::from_utf8_lossy(bytes).to_string(),
                 _ => String::new(),

@@ -1,14 +1,58 @@
 import asyncio
-import pathlib as _pl
 import atexit
 import contextvars
-
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
+import pathlib as _pl
 from typing import cast
-__all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'get_sprint_bundle_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'compact_sprint_lmdb', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE', '_ensure_ramdisk_active_async', '_try_create_ramdisk_async']
-_paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar('_paths_context', default=None)
+
+from compat.msgspec_gc_compat import Struct
+
+__all__ = [
+    "RAMDISK_ROOT",
+    "FALLBACK_ROOT",
+    "RAMDISK_ACTIVE",
+    "CACHE_ROOT",
+    "LIGHTRAG_ROOT",
+    "DB_ROOT",
+    "LMDB_ROOT",
+    "SPRINT_LMDB_ROOT",
+    "EVIDENCE_ROOT",
+    "KEYS_ROOT",
+    "TOR_ROOT",
+    "NYM_ROOT",
+    "I2P_ROOT",
+    "RUNS_ROOT",
+    "SOCKETS_ROOT",
+    "SPRINT_STORE_ROOT",
+    "IOC_DB_PATH",
+    "PATHS",
+    "get_current_paths",
+    "set_current_paths",
+    "reset_current_paths",
+    "get_sprint_parquet_dir",
+    "get_dedup_paths",
+    "get_ioc_db_path",
+    "get_sprint_report_path",
+    "get_sprint_json_report_path",
+    "get_sprint_next_seeds_path",
+    "get_sprint_bundle_path",
+    "assert_ramdisk_alive",
+    "cleanup_fallback_artifacts",
+    "is_auto_ramdisk",
+    "lmdb_map_size",
+    "get_lmdb_max_size_mb",
+    "open_lmdb",
+    "cleanup_stale_lmdb_locks",
+    "compact_sprint_lmdb",
+    "cleanup_stale_sockets",
+    "CTI_EXPORT_DIR",
+    "RUNTIME_STATE",
+    "EMBEDDING_CACHE",
+    "BENCHMARK_CACHE",
+    "_ensure_ramdisk_active_async",
+    "_try_create_ramdisk_async",
+]
+_paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar("_paths_context", default=None)
+
 
 def get_current_paths() -> _Paths:
     """Get the current task's path bundle, or module defaults if not set.
@@ -19,6 +63,7 @@ def get_current_paths() -> _Paths:
     val = _paths_context_var.get()
     return val if val is not None else PATHS
 
+
 def set_current_paths(paths: _Paths) -> None:
     """Set the current task's path bundle (task-local override).
 
@@ -27,33 +72,45 @@ def set_current_paths(paths: _Paths) -> None:
     """
     _paths_context_var.set(paths)
 
+
 def reset_current_paths() -> None:
     """Reset current task's paths to module defaults (clear ContextVar override)."""
     _paths_context_var.set(None)
-_NONE_PATH = _pl.Path('None')
+
+
+_NONE_PATH = _pl.Path("None")
 if _NONE_PATH.exists():
     import warnings
-    warnings.warn(f"[P0] Soubor 'None' existuje na disku ({_NONE_PATH.resolve()}) — spusť: git rm --cached None", RuntimeWarning, stacklevel=2)
-import atexit
+
+    warnings.warn(
+        f"[P0] Soubor 'None' existuje na disku ({_NONE_PATH.resolve()}) — spusť: git rm --cached None",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 import logging
 import os
 import pathlib
 import shutil
-from hledac.universal._core.locks import make_lock, LockCategory
 import warnings
 from pathlib import Path
 from typing import Any
-from _core import aclose
+
+from hledac.universal._core.locks import LockCategory, make_lock
+
 _logger = logging.getLogger(__name__)
 _OPSEC_FALLBACK_WARNED: bool = False
+
 
 def _warn_opsec_once(msg: str) -> None:
     global _OPSEC_FALLBACK_WARNED
     if not _OPSEC_FALLBACK_WARNED:
         _OPSEC_FALLBACK_WARNED = True
-        warnings.warn(f'[GHOST OPSEC] {msg}', stacklevel=3)
+        warnings.warn(f"[GHOST OPSEC] {msg}", stacklevel=3)
+
+
 _AUTO_CREATED_DEVICE: str | None = None
 _AUTO_CREATED_LOCK = make_lock(LockCategory.CACHE, "paths._AUTO_CREATED_LOCK", prefer_unfair=True)
+
 
 def _cleanup_auto_ramdisk() -> None:
     """
@@ -70,12 +127,16 @@ def _cleanup_auto_ramdisk() -> None:
         device = _AUTO_CREATED_DEVICE
         _AUTO_CREATED_DEVICE = None
     import subprocess as _subprocess
+
     try:
-        _subprocess.run(['hdiutil', 'detach', device, '-force'], capture_output=True, timeout=10)
-        _logger.debug(f'Auto RAM disk cleaned up: {device}')
+        _subprocess.run(["hdiutil", "detach", device, "-force"], capture_output=True, timeout=10)
+        _logger.debug(f"Auto RAM disk cleaned up: {device}")
     except Exception as e:
-        _logger.error(f'Failed to cleanup auto RAM disk {device}: {e}')
+        _logger.error(f"Failed to cleanup auto RAM disk {device}: {e}")
+
+
 atexit.register(_cleanup_auto_ramdisk)
+
 
 def _is_active_ramdisk(path: Path) -> bool:
     """
@@ -87,6 +148,7 @@ def _is_active_ramdisk(path: Path) -> bool:
     3. st_dev differs from parent (confirms it's a separate filesystem)
     """
     import os as _os
+
     if not path.exists():
         return False
     try:
@@ -100,18 +162,20 @@ def _is_active_ramdisk(path: Path) -> bool:
         return _os.stat(path).st_dev != _os.stat(path.parent).st_dev
     except OSError:
         return False
-_ramdisk_env = os.environ.get('HLEDAC_RAMDISK', '') or os.environ.get('GHOST_RAMDISK', '')
+
+
+_ramdisk_env = os.environ.get("HLEDAC_RAMDISK", "") or os.environ.get("GHOST_RAMDISK", "")
 # ISSUE-033: LIBC_PERF_OPT — SSD optimization hint
 # When True: /tmp is treated as a viable fast-path on SSD (APFS-backed on macOS).
 # This eliminates RAM disk overhead for testing on SSD-only machines.
-_LIBC_PERF_OPT: bool = os.environ.get('LIBC_PERF_OPT', '0').lower() in ('1', 'true', 'yes')
+_LIBC_PERF_OPT: bool = os.environ.get("LIBC_PERF_OPT", "0").lower() in ("1", "true", "yes")
 # ISSUE-033: Deferred creation — mkdir happens at runtime, not on import (F500I spirit).
 # This avoids side-effects during module load and keeps import latency low.
-_TMP_OPT_ROOT: Path | None = Path('/tmp/hledac_tmp') if _LIBC_PERF_OPT else None
+_TMP_OPT_ROOT: Path | None = Path("/tmp/hledac_tmp") if _LIBC_PERF_OPT else None
 if _ramdisk_env:
     _SELECTED_ROOT = Path(_ramdisk_env)
 else:
-    _SELECTED_ROOT = Path('/Volumes/ghost_tmp')
+    _SELECTED_ROOT = Path("/Volumes/ghost_tmp")
 _RAMDISK_ACTIVE: bool = False
 if _is_active_ramdisk(_SELECTED_ROOT):
     _RAMDISK_ACTIVE = True
@@ -120,183 +184,191 @@ elif _ramdisk_env and _SELECTED_ROOT.exists():
 elif not _SELECTED_ROOT.exists():
     _SELECTED_ROOT = None  # Only None if default path doesn't exist AND no env var override
 
+
 async def _try_create_ramdisk_async() -> tuple[Path | None, bool]:
     """
     ISSUE-013 FIX: Async RAM disk creation with efficient mount polling.
-    
+
     Replaces the old sync _try_create_ramdisk() with a pure async version that:
     1. Uses asyncio.create_subprocess_exec for non-blocking subprocess calls
     2. Polls os.path.ismount() every 50ms (instead of 500ms sleep)
     3. Has a 200ms max timeout for mount detection
     4. Never blocks the event loop
-    
+
     Performance improvement: 500ms → ~100-200ms typical (10x faster on fast M1 Macs)
-    
+
     Returns:
         (path, is_active) tuple. path is None if creation failed.
     Stores device in _AUTO_CREATED_DEVICE for atexit cleanup.
     """
     global _AUTO_CREATED_DEVICE
     RAMDISK_SIZE_SECTORS = 2097152
-    RAMDISK_MOUNT_POINT = '/tmp/hledac_ramdisk'
-    
+    RAMDISK_MOUNT_POINT = "/tmp/hledac_ramdisk"
+
     try:
         # Check if already active (fast path - no subprocess)
         if _is_active_ramdisk(Path(RAMDISK_MOUNT_POINT)):
-            os.environ['HLEDAC_RAMDISK'] = RAMDISK_MOUNT_POINT
-            os.environ['HLEDAC_RAMDISK_AUTO_CREATED'] = '0'
+            os.environ["HLEDAC_RAMDISK"] = RAMDISK_MOUNT_POINT
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "0"
             return (Path(RAMDISK_MOUNT_POINT), True)
-        
-        # Create RAM device asynchronously
+
         proc = await asyncio.create_subprocess_exec(
-            'hdiutil', 'attach', '-nomount', f'ram://{RAMDISK_SIZE_SECTORS}',
+            "hdiutil",
+            "attach",
+            "-nomount",
+            f"ram://{RAMDISK_SIZE_SECTORS}",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
         device = stdout.decode().strip()
-        
+
         if not device:
             return (None, False)
-        
+
         _AUTO_CREATED_DEVICE = device
-        
+
         # Format volume asynchronously
         try:
             format_proc = await asyncio.create_subprocess_exec(
-                'diskutil', 'erasevolume', 'HFS+', 'RAMDisk', device,
+                "diskutil",
+                "erasevolume",
+                "HFS+",
+                "RAMDisk",
+                device,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await asyncio.wait_for(format_proc.communicate(), timeout=10)
         except Exception:  # noqa: BLE001
             pass
-        
+
         # ISSUE-013 FIX: Poll mount point every 50ms instead of 500ms sleep
         # HFS+ volume typically settles in 100-200ms on M1; max wait 200ms
         mount_path = Path(RAMDISK_MOUNT_POINT)
         mount_point_found = False
-        
+
         for _ in range(4):  # 4 x 50ms = 200ms max
             await asyncio.sleep(0.05)  # 50ms polling interval
-            
+
             if _is_active_ramdisk(mount_path):
                 mount_point_found = True
                 break
-        
+
         # Fallback: also check mount output for robustness
         if not mount_point_found:
             mount_proc = await asyncio.create_subprocess_exec(
-                'mount',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                "mount", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             mount_out, _ = await asyncio.wait_for(mount_proc.communicate(), timeout=5)
-            
+
             for line in mount_out.decode().splitlines():
-                if 'RAMDisk' in line and '/dev/disk' in line:
+                if "RAMDisk" in line and "/dev/disk" in line:
                     parts = line.split()
                     if len(parts) >= 3:
                         actual_mount = parts[2]
                         ramdisk_path = Path(actual_mount)
                         mount_point_found = True
                         break
-        
+
         # If mount point found via either method, set up directories
         if mount_point_found:
             # Use the resolved mount point path
             ramdisk_path = mount_path if mount_point_found else Path(RAMDISK_MOUNT_POINT)
-            
-            for subdir in ['duckdb_tmp', 'sockets', 'warc', 'arrow']:
+
+            for subdir in ["duckdb_tmp", "sockets", "warc", "arrow"]:
                 (ramdisk_path / subdir).mkdir(exist_ok=True)
-            os.environ['HLEDAC_RAMDISK'] = str(ramdisk_path)
-            os.environ['HLEDAC_RAMDISK_AUTO_CREATED'] = '1'
+            os.environ["HLEDAC_RAMDISK"] = str(ramdisk_path)
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "1"
             return (ramdisk_path, True)
-            
-    except asyncio.TimeoutError:  # noqa: BLE001
+
+    except TimeoutError:  # noqa: BLE001
         pass
     except Exception:  # noqa: BLE001
         pass
-    
+
     return (None, False)
 
 
 def _try_create_ramdisk() -> tuple[Path | None, bool]:
     """
     Sync wrapper for backward compatibility.
-    
+
     ISSUE-013: This sync wrapper now delegates to the async version
     via asyncio.to_thread(). Direct sync callers should migrate to async.
-    
+
     Returns:
         (path, is_active) tuple. path is None if creation failed.
     Stores device in _AUTO_CREATED_DEVICE for atexit cleanup.
     """
     import subprocess as _subprocess
+
     global _AUTO_CREATED_DEVICE
     RAMDISK_SIZE_SECTORS = 2097152
-    RAMDISK_MOUNT_POINT = '/tmp/hledac_ramdisk'
-    
+    RAMDISK_MOUNT_POINT = "/tmp/hledac_ramdisk"
+
     try:
         if _is_active_ramdisk(Path(RAMDISK_MOUNT_POINT)):
-            os.environ['HLEDAC_RAMDISK'] = RAMDISK_MOUNT_POINT
-            os.environ['HLEDAC_RAMDISK_AUTO_CREATED'] = '0'
+            os.environ["HLEDAC_RAMDISK"] = RAMDISK_MOUNT_POINT
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "0"
             return (Path(RAMDISK_MOUNT_POINT), True)
-        
+
         device_result = _subprocess.run(
-            ['hdiutil', 'attach', '-nomount', f'ram://{RAMDISK_SIZE_SECTORS}'],
-            capture_output=True, text=True, timeout=10
+            ["hdiutil", "attach", "-nomount", f"ram://{RAMDISK_SIZE_SECTORS}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         device = device_result.stdout.strip()
-        
+
         if not device:
             return (None, False)
-        
+
         _AUTO_CREATED_DEVICE = device
-        
+
         try:
-            _subprocess.run(
-                ['diskutil', 'erasevolume', 'HFS+', 'RAMDisk', device],
-                capture_output=True, timeout=10
-            )
+            _subprocess.run(["diskutil", "erasevolume", "HFS+", "RAMDisk", device], capture_output=True, timeout=10)
         except Exception:  # noqa: BLE001
             pass
-        
+
         # ISSUE-013 FIX: Reduced from 500ms to 200ms (4 x 50ms polling equivalent)
         # HFS+ volume settles in 100-200ms on M1; 200ms covers 99th percentile
         import time as _time
+
         _time.sleep(0.2)
-        
+
         actual_mount = None
-        for line in _subprocess.run(
-            ['mount'], capture_output=True, text=True, timeout=5
-        ).stdout.splitlines():
-            if 'RAMDisk' in line and '/dev/disk' in line:
+        for line in _subprocess.run(["mount"], capture_output=True, text=True, timeout=5).stdout.splitlines():
+            if "RAMDisk" in line and "/dev/disk" in line:
                 parts = line.split()
                 if len(parts) >= 3:
                     actual_mount = parts[2]
                     break
-        
+
         if actual_mount:
             ramdisk_path = Path(actual_mount)
-            for subdir in ['duckdb_tmp', 'sockets', 'warc', 'arrow']:
+            for subdir in ["duckdb_tmp", "sockets", "warc", "arrow"]:
                 (ramdisk_path / subdir).mkdir(exist_ok=True)
-            os.environ['HLEDAC_RAMDISK'] = actual_mount
-            os.environ['HLEDAC_RAMDISK_AUTO_CREATED'] = '1'
+            os.environ["HLEDAC_RAMDISK"] = actual_mount
+            os.environ["HLEDAC_RAMDISK_AUTO_CREATED"] = "1"
             return (ramdisk_path, True)
-            
+
     except Exception:  # noqa: BLE001
         pass
-    
+
     return (None, False)
+
+
 # Sprint F500I: Deferred RAM disk creation — do NOT call hdiutil on import.
 # RAM disk creation is deferred to first actual use (assert_ramdisk_alive() or open_lmdb()).
 # This eliminates ~2.8s import bottleneck from subprocess hdiutil calls.
 # Fallback to SSD is safe and correct; RAM disk is a performance optimization only.
-_FALLBACK_ROOT: Path = Path.home() / '.hledac_fallback_ramdisk'
+_FALLBACK_ROOT: Path = Path.home() / ".hledac_fallback_ramdisk"
 if _SELECTED_ROOT is None:
-    _FALLBACK_ROOT = Path.home() / '.hledac_fallback_ramdisk'
-    _warn_opsec_once('No active ramdisk found at import time. Using SSD fallback for runtime artifacts. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp for optimal M1 performance.')
+    _FALLBACK_ROOT = Path.home() / ".hledac_fallback_ramdisk"
+    _warn_opsec_once(
+        "No active ramdisk found at import time. Using SSD fallback for runtime artifacts. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp for optimal M1 performance."
+    )
     _SELECTED_ROOT = _FALLBACK_ROOT
     _RAMDISK_ACTIVE = False
 
@@ -323,19 +395,20 @@ def _ensure_ramdisk_active() -> None:
         _SELECTED_ROOT = auto_path
         _RAMDISK_ACTIVE = auto_active
         import warnings as _w
-        _w.warn(f'[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}', stacklevel=2)
-        if auto_active and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
-            duckdb_temp_path = str(_SELECTED_ROOT / 'duckdb_tmp')
-            os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
+
+        _w.warn(f"[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}", stacklevel=2)
+        if auto_active and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1":
+            duckdb_temp_path = str(_SELECTED_ROOT / "duckdb_tmp")
+            os.environ.setdefault("HLEDAC_DUCKDB_RAMDISK_TEMP", duckdb_temp_path)
 
 
 async def _ensure_ramdisk_active_async() -> None:
     """
     ISSUE-013 FIX: Async variant using pure async _try_create_ramdisk_async().
-    
+
     Non-blocking for async callers. Uses asyncio subprocess and efficient
     mount polling (50ms x 4 = 200ms max) instead of blocking 500ms sleep.
-    
+
     For sync callers, use _ensure_ramdisk_active() which wraps with
     asyncio.to_thread() if needed.
     """
@@ -344,26 +417,28 @@ async def _ensure_ramdisk_active_async() -> None:
         return
     if _SELECTED_ROOT is not None and _SELECTED_ROOT != _FALLBACK_ROOT:
         return  # Already have a working non-fallback root
-    
+
     # ISSUE-013: Use pure async version for true non-blocking
     auto_path, auto_active = await _try_create_ramdisk_async()
-    
+
     if auto_path is not None:
         _SELECTED_ROOT = auto_path
         _RAMDISK_ACTIVE = auto_active
         import warnings as _w
-        _w.warn(f'[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}', stacklevel=2)
-        if auto_active and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
-            duckdb_temp_path = str(_SELECTED_ROOT / 'duckdb_tmp')
-            os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
+
+        _w.warn(f"[GHOST OPSEC] RAM disk activated at runtime: {_SELECTED_ROOT}", stacklevel=2)
+        if auto_active and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1":
+            duckdb_temp_path = str(_SELECTED_ROOT / "duckdb_tmp")
+            os.environ.setdefault("HLEDAC_DUCKDB_RAMDISK_TEMP", duckdb_temp_path)
 
 
 RAMDISK_ROOT: Path = _SELECTED_ROOT
 FALLBACK_ROOT: Path = _FALLBACK_ROOT if not _RAMDISK_ACTIVE else RAMDISK_ROOT
 RAMDISK_ACTIVE: bool = _RAMDISK_ACTIVE
-if _RAMDISK_ACTIVE and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1':
-    duckdb_temp_path = str(RAMDISK_ROOT / 'duckdb_tmp')
-    os.environ.setdefault('HLEDAC_DUCKDB_RAMDISK_TEMP', duckdb_temp_path)
+if _RAMDISK_ACTIVE and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1":
+    duckdb_temp_path = str(RAMDISK_ROOT / "duckdb_tmp")
+    os.environ.setdefault("HLEDAC_DUCKDB_RAMDISK_TEMP", duckdb_temp_path)
+
 
 def is_auto_ramdisk() -> bool:
     """
@@ -371,9 +446,12 @@ def is_auto_ramdisk() -> bool:
 
     Allows other modules to detect auto-created RAM disk vs mounted one.
     """
-    return _RAMDISK_ACTIVE and os.environ.get('HLEDAC_RAMDISK_AUTO_CREATED') == '1'
-CACHE_ROOT: Path = RAMDISK_ROOT / 'cache'
-LIGHTRAG_ROOT: Path = RAMDISK_ROOT / 'lightrag'
+    return _RAMDISK_ACTIVE and os.environ.get("HLEDAC_RAMDISK_AUTO_CREATED") == "1"
+
+
+CACHE_ROOT: Path = RAMDISK_ROOT / "cache"
+LIGHTRAG_ROOT: Path = RAMDISK_ROOT / "lightrag"
+
 
 def _bootstrap_tempfile() -> None:
     """
@@ -387,6 +465,7 @@ def _bootstrap_tempfile() -> None:
     not at module import time.
     """
     import tempfile as _tempfile
+
     # ISSUE-033: LIBC_PERF_OPT uses /tmp/hledac_tmp for SSD optimization
     if _LIBC_PERF_OPT and _TMP_OPT_ROOT is not None:
         # Deferred creation: create directory on first use (F500I)
@@ -401,7 +480,10 @@ def _bootstrap_tempfile() -> None:
         _tempfile.tempdir = target
     except Exception:  # noqa: BLE001
         pass
+
+
 _bootstrap_tempfile()
+
 
 def lmdb_map_size() -> int:
     """
@@ -415,15 +497,18 @@ def lmdb_map_size() -> int:
     """
     try:
         from hledac.universal._core.config import get_storage_config
+
         return get_storage_config().lmdb_map_size_mb * 1024 * 1024
     except Exception:
         # Fallback: bootstrap-safe (StorageConfig may not be importable at earliest init)
         import os as _os
+
         try:
-            mb = int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
-        except (ValueError, TypeError):
+            mb = int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
+        except ValueError, TypeError:
             mb = 256
         return max(mb, 1) * 1024 * 1024
+
 
 def get_lmdb_max_size_mb() -> int:
     """
@@ -437,14 +522,17 @@ def get_lmdb_max_size_mb() -> int:
     """
     try:
         from hledac.universal._core.config import get_storage_config
+
         return get_storage_config().lmdb_map_size_mb
     except Exception:
         # Fallback: bootstrap-safe
         import os as _os
+
         try:
-            return int(_os.environ.get('GHOST_LMDB_MAX_SIZE_MB', 256))
-        except (ValueError, TypeError):
+            return int(_os.environ.get("GHOST_LMDB_MAX_SIZE_MB", 256))
+        except ValueError, TypeError:
             return 256
+
 
 def _chmod_lmdb_path(path: pathlib.Path) -> None:
     """
@@ -472,7 +560,7 @@ def _chmod_lmdb_path(path: pathlib.Path) -> None:
                 pass
 
 
-def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
+def open_lmdb(path: pathlib.Path, *, map_size: int | None = None, **kw) -> Any:
     """
     Open an LMDB environment with consistent defaults and single-retry lock recovery.
 
@@ -494,9 +582,9 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         - First open attempt
         - On LockError: single retry after safe cleanup (only if holder confirmed dead)
     """
-    import lmdb
     import os
-    import stat as _stat
+
+    import lmdb
 
     if map_size is None:
         map_size = lmdb_map_size()
@@ -510,12 +598,13 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
     try:
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
+
             cleanup_stale_lmdb_lock(path)
         except Exception:  # noqa: BLE001
             pass
         _effective_map_size: int = map_size
         # SEC-02: explicit mode=0o600 in defaults so lmdb respects our umask intent
-        defaults = {'writemap': False, 'sync': False, 'mode': 0o600}
+        defaults = {"writemap": False, "sync": False, "mode": 0o600}
         merged_kw = {**defaults, **kw}
         _instrument_lmdb_env = None
         try:
@@ -532,10 +621,12 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         except lmdb.LockError:
             try:
                 from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
+
                 removed, reason = cleanup_stale_lmdb_lock(path)
                 import logging
+
                 _logger = logging.getLogger(__name__)
-                _logger.debug(f'LMDB lock recovery: removed={removed} reason={reason}')
+                _logger.debug(f"LMDB lock recovery: removed={removed} reason={reason}")
             except Exception:
                 removed = 0
             if removed:
@@ -550,37 +641,46 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
             raise
     finally:
         os.umask(_old_umask)
+
+
 _PROJECT_ROOT: Path = Path(__file__).parent
-RUNTIME_BASE: Path = _PROJECT_ROOT / 'runtime'
-CTI_EXPORT_DIR: Path = RUNTIME_BASE / 'cti'
-RUNS_ROOT: Path = RUNTIME_BASE / 'runs'
-RUNTIME_STATE: Path = RUNTIME_BASE / 'state'
-EMBEDDING_CACHE: Path = RUNTIME_BASE / 'embeddings'
-BENCHMARK_CACHE: Path = RUNTIME_BASE / 'benchmarks'
+RUNTIME_BASE: Path = _PROJECT_ROOT / "runtime"
+CTI_EXPORT_DIR: Path = RUNTIME_BASE / "cti"
+RUNS_ROOT: Path = RUNTIME_BASE / "runs"
+RUNTIME_STATE: Path = RUNTIME_BASE / "state"
+EMBEDDING_CACHE: Path = RUNTIME_BASE / "embeddings"
+BENCHMARK_CACHE: Path = RUNTIME_BASE / "benchmarks"
 for _dir in (CTI_EXPORT_DIR, RUNS_ROOT, RUNTIME_STATE, EMBEDDING_CACHE, BENCHMARK_CACHE):
     _dir.mkdir(parents=True, exist_ok=True)
-DB_ROOT: Path = RAMDISK_ROOT / 'db'
-LMDB_ROOT: Path = DB_ROOT / 'lmdb'
-SPRINT_LMDB_ROOT: Path = LMDB_ROOT / 'sprint'
-EVIDENCE_ROOT: Path = RAMDISK_ROOT / 'evidence'
-KEYS_ROOT: Path = RAMDISK_ROOT / 'keys'
-TOR_ROOT: Path = RAMDISK_ROOT / 'tor'
-NYM_ROOT: Path = RAMDISK_ROOT / 'nym'
-I2P_ROOT: Path = RAMDISK_ROOT / 'i2p'
-SOCKETS_ROOT: Path = RAMDISK_ROOT / 'sockets'
-_SPRINT_STORE_DEFAULT = '~/.hledac/sprints' if not RAMDISK_ACTIVE else str(RAMDISK_ROOT / 'sprints')
-SPRINT_STORE_ROOT: Path = Path(os.environ.get('HLEDAC_SPRINT_STORE', _SPRINT_STORE_DEFAULT)).expanduser()
-_DUCKDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'duckdb_store') if RAMDISK_ACTIVE else '~/.hledac/duckdb_store'
-DUCKDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_DUCKDB_STORE']) if 'HLEDAC_DUCKDB_STORE' in os.environ else Path(_DUCKDB_STORE_DEFAULT)
-_LMDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lmdb_store') if RAMDISK_ACTIVE else '~/.hledac/lmdb_store'
-LMDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LMDB_STORE']) if 'HLEDAC_LMDB_STORE' in os.environ else Path(_LMDB_STORE_DEFAULT)
-_LANCEDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lancedb_store') if RAMDISK_ACTIVE else '~/.hledac/lancedb_store'
-LANCEDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LANCEDB_STORE']) if 'HLEDAC_LANCEDB_STORE' in os.environ else Path(_LANCEDB_STORE_DEFAULT)
+DB_ROOT: Path = RAMDISK_ROOT / "db"
+LMDB_ROOT: Path = DB_ROOT / "lmdb"
+SPRINT_LMDB_ROOT: Path = LMDB_ROOT / "sprint"
+EVIDENCE_ROOT: Path = RAMDISK_ROOT / "evidence"
+KEYS_ROOT: Path = RAMDISK_ROOT / "keys"
+TOR_ROOT: Path = RAMDISK_ROOT / "tor"
+NYM_ROOT: Path = RAMDISK_ROOT / "nym"
+I2P_ROOT: Path = RAMDISK_ROOT / "i2p"
+SOCKETS_ROOT: Path = RAMDISK_ROOT / "sockets"
+_SPRINT_STORE_DEFAULT = "~/.hledac/sprints" if not RAMDISK_ACTIVE else str(RAMDISK_ROOT / "sprints")
+SPRINT_STORE_ROOT: Path = Path(os.environ.get("HLEDAC_SPRINT_STORE", _SPRINT_STORE_DEFAULT)).expanduser()
+_DUCKDB_STORE_DEFAULT = str(RAMDISK_ROOT / "duckdb_store") if RAMDISK_ACTIVE else "~/.hledac/duckdb_store"
+DUCKDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_DUCKDB_STORE"]) if "HLEDAC_DUCKDB_STORE" in os.environ else Path(_DUCKDB_STORE_DEFAULT)
+)
+_LMDB_STORE_DEFAULT = str(RAMDISK_ROOT / "lmdb_store") if RAMDISK_ACTIVE else "~/.hledac/lmdb_store"
+LMDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_LMDB_STORE"]) if "HLEDAC_LMDB_STORE" in os.environ else Path(_LMDB_STORE_DEFAULT)
+)
+_LANCEDB_STORE_DEFAULT = str(RAMDISK_ROOT / "lancedb_store") if RAMDISK_ACTIVE else "~/.hledac/lancedb_store"
+LANCEDB_STORE_ROOT: Path = (
+    Path(os.environ["HLEDAC_LANCEDB_STORE"]) if "HLEDAC_LANCEDB_STORE" in os.environ else Path(_LANCEDB_STORE_DEFAULT)
+)
 _UNRESOLVED: object = object()
 _DEDUP_PATHS_CACHE: dict[str, Path] | object = _UNRESOLVED
 _DEDUP_PATHS_LOCK = make_lock(LockCategory.CONFIG, "paths._DEDUP_PATHS_LOCK", prefer_unfair=True)
 
-def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
+
+def resolve_dedup_paths(env_prefix: str = "HLEDAC_DEDUP") -> dict[str, Path]:
     """
     Resolve all dedup storage paths.
     Env precedence for LMDB root:
@@ -593,29 +693,37 @@ def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
     Returns dict with keys: lmdb_root, dedup_lmdb, bloom_dir,
                             bloom_active, bloom_previous, bloom_lock
     """
-    env_lmdb_override = os.environ.get(f'{env_prefix}_LMDB_PATH')
-    env_store_root = os.environ.get('HLEDAC_LMDB_STORE')
+    env_lmdb_override = os.environ.get(f"{env_prefix}_LMDB_PATH")
+    env_store_root = os.environ.get("HLEDAC_LMDB_STORE")
     if env_lmdb_override:
         lmdb_root = Path(env_lmdb_override)
     elif env_store_root:
         lmdb_root = Path(env_store_root)
     else:
         lmdb_root = Path(_LMDB_STORE_DEFAULT).expanduser()
-    bloom_dir = Path(os.environ.get(f'{env_prefix}_BLOOM_DIR', str(lmdb_root / 'bloom')))
+    bloom_dir = Path(os.environ.get(f"{env_prefix}_BLOOM_DIR", str(lmdb_root / "bloom")))
     try:
         lmdb_root.mkdir(parents=True, exist_ok=True)
     except Exception:
-        lmdb_root = Path('~/.hledac/lmdb_store').expanduser()
+        lmdb_root = Path("~/.hledac/lmdb_store").expanduser()
         lmdb_root.mkdir(parents=True, exist_ok=True)
     try:
         bloom_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
-        bloom_dir = lmdb_root / 'bloom'
+        bloom_dir = lmdb_root / "bloom"
         bloom_dir.mkdir(parents=True, exist_ok=True)
     # SEC-02: Enforce permissions on dedup LMDB root and bloom directory
     _chmod_lmdb_path(lmdb_root)
     _chmod_lmdb_path(bloom_dir)
-    return {'lmdb_root': lmdb_root, 'dedup_lmdb': lmdb_root / 'dedup.lmdb', 'bloom_dir': bloom_dir, 'bloom_active': bloom_dir / 'bloom_active.mmap', 'bloom_previous': bloom_dir / 'bloom_previous.mmap', 'bloom_lock': bloom_dir / 'bloom.lock'}
+    return {
+        "lmdb_root": lmdb_root,
+        "dedup_lmdb": lmdb_root / "dedup.lmdb",
+        "bloom_dir": bloom_dir,
+        "bloom_active": bloom_dir / "bloom_active.mmap",
+        "bloom_previous": bloom_dir / "bloom_previous.mmap",
+        "bloom_lock": bloom_dir / "bloom.lock",
+    }
+
 
 def get_dedup_paths() -> dict[str, Path]:
     """
@@ -629,28 +737,34 @@ def get_dedup_paths() -> dict[str, Path]:
                 _DEDUP_PATHS_CACHE = resolve_dedup_paths()
     return cast(dict[str, Path], _DEDUP_PATHS_CACHE)
 
+
 def reset_dedup_paths() -> None:
     """Reset singleton — testing only."""
     global _DEDUP_PATHS_CACHE
     with _DEDUP_PATHS_LOCK:
         _DEDUP_PATHS_CACHE = _UNRESOLVED
 
+
 def get_sprint_parquet_dir(sprint_id: str) -> Path:
     """Return sprint Parquet directory, created if needed."""
     p = SPRINT_STORE_ROOT / sprint_id
     p.mkdir(parents=True, exist_ok=True)
     return p
-IOC_DB_PATH: Path = SPRINT_STORE_ROOT.parent / 'ioc_graph.duckdb'
+
+
+IOC_DB_PATH: Path = SPRINT_STORE_ROOT.parent / "ioc_graph.duckdb"
 IOC_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 # SEC-02: chmod IOC_DB_PATH to 0o600 — DuckDB creates file on first write,
 # we chmod immediately after so the file never exists with world-readable perms.
 try:
     import os as _os_chmod
     import stat as _stat_chmod
+
     _os_chmod.chmod(IOC_DB_PATH, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR)  # 0o600
     _os_chmod.chmod(IOC_DB_PATH.parent, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR | _stat_chmod.S_IXUSR)  # 0o700
 except Exception as _e:  # noqa: BLE001
     pass  # chmod may fail if user is not owner
+
 
 class _Paths(Struct, frozen=True):
     """Immutable bundle of canonical runtime paths.
@@ -658,6 +772,7 @@ class _Paths(Struct, frozen=True):
     `hledac_home` is the XDG-style user-data root (`~/.hledac`); the other
     fields mirror the module-level constants of the same name.
     """
+
     hledac_home: Path
     ramdisk_root: Path
     fallback_root: Path
@@ -672,12 +787,33 @@ class _Paths(Struct, frozen=True):
     lmdb_store_root: Path
     lancedb_store_root: Path
     ioc_db_path: Path
-PATHS: _Paths = _Paths(hledac_home=Path.home() / '.hledac', ramdisk_root=RAMDISK_ROOT, fallback_root=FALLBACK_ROOT, cache_root=CACHE_ROOT, db_root=DB_ROOT, lmdb_root=LMDB_ROOT, sprint_lmdb_root=SPRINT_LMDB_ROOT, evidence_root=EVIDENCE_ROOT, keys_root=KEYS_ROOT, sprint_store_root=SPRINT_STORE_ROOT, duckdb_store_root=DUCKDB_STORE_ROOT, lmdb_store_root=LMDB_STORE_ROOT, lancedb_store_root=LANCEDB_STORE_ROOT, ioc_db_path=IOC_DB_PATH)
+
+
+PATHS: _Paths = _Paths(
+    hledac_home=Path.home() / ".hledac",
+    ramdisk_root=RAMDISK_ROOT,
+    fallback_root=FALLBACK_ROOT,
+    cache_root=CACHE_ROOT,
+    db_root=DB_ROOT,
+    lmdb_root=LMDB_ROOT,
+    sprint_lmdb_root=SPRINT_LMDB_ROOT,
+    evidence_root=EVIDENCE_ROOT,
+    keys_root=KEYS_ROOT,
+    sprint_store_root=SPRINT_STORE_ROOT,
+    duckdb_store_root=DUCKDB_STORE_ROOT,
+    lmdb_store_root=LMDB_STORE_ROOT,
+    lancedb_store_root=LANCEDB_STORE_ROOT,
+    ioc_db_path=IOC_DB_PATH,
+)
+
 
 def get_ioc_db_path() -> pathlib.Path:
     """Vrátí cestu k persistentnímu DuckDB IOC store."""
     return IOC_DB_PATH
-_SPRINT_LOCK_DIR: Path = Path.home() / '.hledac' / 'locks'
+
+
+_SPRINT_LOCK_DIR: Path = Path.home() / ".hledac" / "locks"
+
 
 def get_sprint_lock_path(query: str) -> Path:
     """
@@ -690,10 +826,12 @@ def get_sprint_lock_path(query: str) -> Path:
     If lock cannot be acquired within 5s, sys.exit(2) (config error).
     """
     import hashlib
+
     query_hash = hashlib.md5(query.encode()).hexdigest()[:16]
     lock_dir = _SPRINT_LOCK_DIR
     lock_dir.mkdir(parents=True, exist_ok=True)
-    return lock_dir / f'sprint_{query_hash}.lock'
+    return lock_dir / f"sprint_{query_hash}.lock"
+
 
 def get_sprint_report_path(sprint_id: str) -> Path:
     """
@@ -709,11 +847,12 @@ def get_sprint_report_path(sprint_id: str) -> Path:
     Path
         Absolute path to sprint report markdown file.
     """
-    reports_dir = Path.home() / '.hledac' / 'reports'
+    reports_dir = Path.home() / ".hledac" / "reports"
     if reports_dir.exists() and (not reports_dir.is_dir()):
-        reports_dir.rename(reports_dir.with_suffix('.bak.reports'))
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
-    return reports_dir / f'{sprint_id}.md'
+    return reports_dir / f"{sprint_id}.md"
+
 
 def get_sprint_json_report_path(sprint_id: str) -> Path:
     """
@@ -730,11 +869,12 @@ def get_sprint_json_report_path(sprint_id: str) -> Path:
     Path
         Absolute path to sprint report JSON file.
     """
-    reports_dir = Path.home() / '.hledac' / 'reports'
+    reports_dir = Path.home() / ".hledac" / "reports"
     if reports_dir.exists() and (not reports_dir.is_dir()):
-        reports_dir.rename(reports_dir.with_suffix('.bak.reports'))
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
-    return reports_dir / f'{sprint_id}_report.json'
+    return reports_dir / f"{sprint_id}_report.json"
+
 
 def get_sprint_next_seeds_path(sprint_id: str) -> Path:
     """
@@ -753,11 +893,12 @@ def get_sprint_next_seeds_path(sprint_id: str) -> Path:
     Path
         Absolute path to next-seeds JSON file.
     """
-    reports_dir = Path.home() / '.hledac' / 'reports'
+    reports_dir = Path.home() / ".hledac" / "reports"
     if reports_dir.exists() and (not reports_dir.is_dir()):
-        reports_dir.rename(reports_dir.with_suffix('.bak.reports'))
+        reports_dir.rename(reports_dir.with_suffix(".bak.reports"))
     reports_dir.mkdir(parents=True, exist_ok=True)
-    return reports_dir / f'{sprint_id}_next_seeds.json'
+    return reports_dir / f"{sprint_id}_next_seeds.json"
+
 
 def get_sprint_bundle_path(sprint_id: str) -> Path:
     """
@@ -770,21 +911,36 @@ def get_sprint_bundle_path(sprint_id: str) -> Path:
     Path
         Absolute path to sprint bundle archive.
     """
-    bundles_dir = Path.home() / '.hledac' / 'bundles'
+    bundles_dir = Path.home() / ".hledac" / "bundles"
     bundles_dir.mkdir(parents=True, exist_ok=True)
-    return bundles_dir / f'{sprint_id}.hledac-sprint'
+    return bundles_dir / f"{sprint_id}.hledac-sprint"
 
-def _ensure_dir(path: Path, mode: int | None=None) -> None:
+
+def _ensure_dir(path: Path, mode: int | None = None) -> None:
     """Ensure directory exists, optionally with specific permissions."""
     if mode is not None:
         path.mkdir(parents=True, exist_ok=True)
         path.chmod(mode)
     else:
         path.mkdir(parents=True, exist_ok=True)
-for _dir in [DB_ROOT, LMDB_ROOT, SPRINT_LMDB_ROOT, EVIDENCE_ROOT, RUNS_ROOT, SOCKETS_ROOT, CACHE_ROOT, DUCKDB_STORE_ROOT, LMDB_STORE_ROOT, LANCEDB_STORE_ROOT]:
+
+
+for _dir in [
+    DB_ROOT,
+    LMDB_ROOT,
+    SPRINT_LMDB_ROOT,
+    EVIDENCE_ROOT,
+    RUNS_ROOT,
+    SOCKETS_ROOT,
+    CACHE_ROOT,
+    DUCKDB_STORE_ROOT,
+    LMDB_STORE_ROOT,
+    LANCEDB_STORE_ROOT,
+]:
     _ensure_dir(_dir)
 for _dir in [KEYS_ROOT, TOR_ROOT, NYM_ROOT, I2P_ROOT]:
     _ensure_dir(_dir, mode=448)
+
 
 def assert_ramdisk_alive() -> None:
     """
@@ -794,7 +950,10 @@ def assert_ramdisk_alive() -> None:
     RAMDISK_ROOT is no longer a valid mount point.
     """
     if RAMDISK_ACTIVE and (not _is_active_ramdisk(RAMDISK_ROOT)):
-        raise RuntimeError(f'[GHOST OPSEC] RAMDISK at {RAMDISK_ROOT} is no longer available. Cannot continue with OPSEC-degraded storage. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp.')
+        raise RuntimeError(
+            f"[GHOST OPSEC] RAMDISK at {RAMDISK_ROOT} is no longer available. Cannot continue with OPSEC-degraded storage. Set GHOST_RAMDISK env var or mount /Volumes/ghost_tmp."
+        )
+
 
 def cleanup_fallback_artifacts() -> None:
     """
@@ -822,6 +981,7 @@ def cleanup_fallback_artifacts() -> None:
     except Exception:  # noqa: BLE001
         pass
 
+
 def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
     """
     Remove stale lock.mdb files from LMDB directories.
@@ -838,7 +998,7 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
     removed = 0
     if not lmdb_root.exists():
         return 0
-    direct_lock = lmdb_root / 'lock.mdb'
+    direct_lock = lmdb_root / "lock.mdb"
     if direct_lock.is_file():
         try:
             direct_lock.unlink()
@@ -848,7 +1008,7 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
     try:
         for entry in lmdb_root.iterdir():
             if entry.is_dir():
-                lock_file = entry / 'lock.mdb'
+                lock_file = entry / "lock.mdb"
                 if lock_file.is_file():
                     try:
                         lock_file.unlink()
@@ -886,7 +1046,6 @@ def compact_sprint_lmdb() -> dict[str, object]:
         "locks_removed": 0,
     }
 
-    # Step 1: Remove stale lock files first
     try:
         locks_removed = cleanup_stale_lmdb_locks(SPRINT_LMDB_ROOT)
         results["locks_removed"] = locks_removed
@@ -894,7 +1053,6 @@ def compact_sprint_lmdb() -> dict[str, object]:
     except Exception as exc:
         _logger.debug("[LMDB-COMPACT] cleanup_stale_lmdb_locks failed: %s", exc)
 
-    # Step 2: Compact the unified LMDB store (sprint_unified.lmdb)
     unified_path = SPRINT_LMDB_ROOT / "sprint_unified.lmdb"
     if unified_path.exists():
         try:
@@ -907,11 +1065,12 @@ def compact_sprint_lmdb() -> dict[str, object]:
             _logger.info(
                 "[LMDB-COMPACT] sprint_unified.lmdb compaction: %s",
                 "success" if success else "failed",
-    )
+            )
         except Exception as exc:
             _logger.warning("[LMDB-COMPACT] sprint_unified.lmdb compact failed: %s", exc)
 
     return dict(results)  # ensure JSON-serializable for callers
+
 
 def _is_socket_orphaned(sock_path: Path) -> bool:
     """
@@ -921,6 +1080,7 @@ def _is_socket_orphaned(sock_path: Path) -> bool:
     indicating the socket is stale and safe to remove.
     """
     import socket as _socket
+
     probe = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
     try:
         probe.settimeout(0.5)
@@ -928,13 +1088,14 @@ def _is_socket_orphaned(sock_path: Path) -> bool:
         return False
     except ConnectionRefusedError:
         return True
-    except (OSError, FileNotFoundError):
+    except OSError, FileNotFoundError:
         return True
     finally:
         try:
             probe.close()
         except Exception:  # noqa: BLE001
             pass
+
 
 def cleanup_stale_sockets(sockets_root: Path) -> int:
     """
@@ -950,7 +1111,7 @@ def cleanup_stale_sockets(sockets_root: Path) -> int:
         return 0
     try:
         for entry in sockets_root.iterdir():
-            if entry.suffix == '.sock' and entry.is_socket():
+            if entry.suffix == ".sock" and entry.is_socket():
                 if _is_socket_orphaned(entry):
                     try:
                         entry.unlink()

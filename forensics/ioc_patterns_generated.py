@@ -7,19 +7,28 @@
 from __future__ import annotations
 
 import re as _re
-from _core import aclose
 
 # Hash validators — mirrors forensics/ioc_extractor.py
 _HASH_VALIDATORS = {
-    "md5":    lambda v: len(v) == 32 and all(c in "0123456789abcdefABCDEF" for c in v),
-    "sha1":   lambda v: len(v) == 40 and all(c in "0123456789abcdefABCDEF" for c in v),
+    "md5": lambda v: len(v) == 32 and all(c in "0123456789abcdefABCDEF" for c in v),
+    "sha1": lambda v: len(v) == 40 and all(c in "0123456789abcdefABCDEF" for c in v),
     "sha256": lambda v: len(v) == 64 and all(c in "0123456789abcdefABCDEF" for c in v),
 }
 
 # Tracking params for URL normalization
 _TRACKING_PARAMS = {
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src", "ref_url",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "mc_cid",
+    "mc_eid",
+    "ref",
+    "ref_src",
+    "ref_url",
 }
 
 # ─── IOC Patterns ───────────────────────────────────────────────────────────────
@@ -27,9 +36,11 @@ _TRACKING_PARAMS = {
 # DO NOT edit manually — edit ioc_patterns.rs and regenerate.
 
 _IOC_PATTERNS: list[tuple[str, str]] = [
-
     ("url", r"https?://[^\s<>\"\]\[]+"),  # URL_PAT — must be BEFORE domain (alternation order)
-    ("ipv4", r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"),  # IPV4_PAT
+    (
+        "ipv4",
+        r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
+    ),  # IPV4_PAT
     ("ipv6", r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"),  # IPV6_PAT
     ("domain", r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"),  # DOMAIN_PAT
     ("md5", r"\b[a-fA-F0-9]{32}\b"),  # MD5_PAT
@@ -46,6 +57,4 @@ _IOC_PATTERNS: list[tuple[str, str]] = [
 _IOC_TYPE_NAMES: list[str] = [name for name, _ in _IOC_PATTERNS]
 
 # Single combined regex — one finditer pass, no rescanning.
-_IOC_COMBINED = _re.compile(
-    "|".join(f"(?P<{name}>{pattern})" for name, pattern in _IOC_PATTERNS)
-    )
+_IOC_COMBINED = _re.compile("|".join(f"(?P<{name}>{pattern})" for name, pattern in _IOC_PATTERNS))

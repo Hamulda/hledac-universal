@@ -11,19 +11,22 @@ Funkce:
 - Rollback management
 - Parallel plan evaluation
 """
-import asyncio
-from collections import deque
-from hledac.universal.utils.asyncx import safe_create_task
+
 import logging
 import time
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from collections import deque
+from dataclasses import field
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import safe_create_task
+
 logger = logging.getLogger(__name__)
+
 
 class Prediction(Struct):
     """Predikce kroku"""
+
     action: str
     params: dict[str, Any]
     confidence: float
@@ -31,8 +34,10 @@ class Prediction(Struct):
     executed: bool = False
     correct: bool | None = None
 
+
 class PredictionMetrics(Struct, frozen=True):
     """Metriky predikcí"""
+
     total_predictions: int = 0
     correct_predictions: int = 0
     incorrect_predictions: int = 0
@@ -55,15 +60,17 @@ class PredictionMetrics(Struct, frozen=True):
         else:
             self.incorrect_predictions += 1
 
+
 class RollbackManager:
     """
     Manager pro rollback operace.
 
     Umožňuje vrátit změny při špatné predikci.
     """
-    __slots__ = tuple(('_checkpoints',))
 
-    def __init__(self):
+    __slots__ = ("_checkpoints",)
+
+    def __init__(self) -> None:
         self._checkpoints: deque[dict[str, Any]] = deque(maxlen=128)
 
     def create_checkpoint(self, state: dict[str, Any]) -> int:
@@ -98,6 +105,7 @@ class RollbackManager:
         """Vymazat všechny checkpointy"""
         self._checkpoints.clear()
 
+
 class PredictivePlanner:
     """
     Prediktivní plánovač.
@@ -108,15 +116,18 @@ class PredictivePlanner:
     - Rollback při špatné predikci
     - Učí se z přesnosti predikcí
     """
-    __slots__ = tuple(('_prediction_history', 'metrics', 'min_confidence', 'rollback_manager'))
 
-    def __init__(self, min_confidence: float=0.7):
+    __slots__ = ("_prediction_history", "metrics", "min_confidence", "rollback_manager")
+
+    def __init__(self, min_confidence: float = 0.7) -> None:
         self.min_confidence = min_confidence
         self.metrics = PredictionMetrics()
         self.rollback_manager = RollbackManager()
         self._prediction_history: deque[dict[str, Any]] = deque(maxlen=512)
 
-    async def plan_with_prediction(self, planner_func, executor_func, context: dict[str, Any], max_speculative_steps: int=3) -> dict[str, Any]:
+    async def plan_with_prediction(
+        self, planner_func, executor_func, context: dict[str, Any], max_speculative_steps: int = 3
+    ) -> dict[str, Any]:
         """
         Plánovat s prediktivním vykonáváním.
 
@@ -137,10 +148,10 @@ class PredictivePlanner:
         Returns:
             Výsledky
         """
-        logger.info('Starting predictive planning...')
+        logger.info("Starting predictive planning...")
         checkpoint_id = self.rollback_manager.create_checkpoint(context)
         start_time = time.time()
-        planning_task = safe_create_task(planner_func(context), name='predictive:planning')
+        planning_task = safe_create_task(planner_func(context), name="predictive:planning")
         predictions = await self._predict_steps(context, max_speculative_steps)
         speculative_results = await self._execute_speculative(predictions, executor_func, context)
         plan = await planning_task
@@ -148,16 +159,21 @@ class PredictivePlanner:
         for pred in predictions:
             self.metrics.record(pred)
         if validated:
-            logger.info('Predictions validated, continuing...')
+            logger.info("Predictions validated, continuing...")
             results = await self._execute_remaining(remaining, executor_func, context)
         else:
-            logger.warning('Predictions incorrect, rolling back...')
+            logger.warning("Predictions incorrect, rolling back...")
             context = self.rollback_manager.rollback(checkpoint_id) or context
             results = await self._execute_full_plan(plan, executor_func, context)
         total_time = time.time() - start_time
-        logger.info(f'Predictive planning completed in {total_time:.2f}s')
-        logger.info(f'Prediction accuracy: {self.metrics.accuracy():.2%}')
-        return {'results': results, 'predictions': predictions, 'accuracy': self.metrics.accuracy(), 'duration': total_time}
+        logger.info(f"Predictive planning completed in {total_time:.2f}s")
+        logger.info(f"Prediction accuracy: {self.metrics.accuracy():.2%}")
+        return {
+            "results": results,
+            "predictions": predictions,
+            "accuracy": self.metrics.accuracy(),
+            "duration": total_time,
+        }
 
     async def _predict_steps(self, context: dict[str, Any], max_steps: int) -> list[Prediction]:
         """
@@ -171,19 +187,23 @@ class PredictivePlanner:
             Seznam predikcí
         """
         predictions = []
-        context.get('current_step', 0)
-        history: list[dict[str, Any]] = context.get('history', [])
+        context.get("current_step", 0)
+        history: list[dict[str, Any]] = context.get("history", [])
         action_counts: dict[str, int] = {}
         for h in history:
-            a = h.get('action') or h.get('predicted_action', 'search')
+            a = h.get("action") or h.get("predicted_action", "search")
             action_counts[a] = action_counts.get(a, 0) + 1
-        preferred_action = max(action_counts, key=lambda a: action_counts[a]) if action_counts else 'search'
+        preferred_action = max(action_counts, key=lambda a: action_counts[a]) if action_counts else "search"
         for i in range(max_steps):
-            prediction = Prediction(action=preferred_action, params={'query': context.get('query', '')}, confidence=0.7 - i * 0.1)
+            prediction = Prediction(
+                action=preferred_action, params={"query": context.get("query", "")}, confidence=0.7 - i * 0.1
+            )
             predictions.append(prediction)
         return predictions
 
-    async def _execute_speculative(self, predictions: list[Prediction], executor_func, context: dict[str, Any]) -> list[Any]:
+    async def _execute_speculative(
+        self, predictions: list[Prediction], executor_func, context: dict[str, Any]
+    ) -> list[Any]:
         """
         Spekulativně vykonat predikce.
 
@@ -203,13 +223,15 @@ class PredictivePlanner:
                     results.append(result)
                     pred.executed = True
                 except Exception as e:
-                    logger.warning(f'Speculative execution failed: {e}')
+                    logger.warning(f"Speculative execution failed: {e}")
                     results.append(None)
             else:
                 results.append(None)
         return results
 
-    def _validate_predictions(self, predictions: list[Prediction], actual_plan: list[dict[str, Any]], _speculative_results: list[Any]) -> tuple:
+    def _validate_predictions(
+        self, predictions: list[Prediction], actual_plan: list[dict[str, Any]], _speculative_results: list[Any]
+    ) -> tuple:
         """
         Validovat predikce oproti skutečnému plánu.
 
@@ -226,19 +248,21 @@ class PredictivePlanner:
             if i >= len(actual_plan):
                 break
             actual_step = actual_plan[i]
-            if pred.action == actual_step.get('action'):
+            if pred.action == actual_step.get("action"):
                 pred.correct = True
             else:
                 pred.correct = False
                 all_correct = False
-        remaining = actual_plan[len(predictions):]
+        remaining = actual_plan[len(predictions) :]
         return (all_correct, remaining)
 
-    async def _execute_remaining(self, remaining: list[dict[str, Any]], executor_func, context: dict[str, Any]) -> list[Any]:
+    async def _execute_remaining(
+        self, remaining: list[dict[str, Any]], executor_func, context: dict[str, Any]
+    ) -> list[Any]:
         """Vykonat zbývající kroky"""
         results = []
         for step in remaining:
-            result = await executor_func(step.get('action'), step.get('params', {}), context)
+            result = await executor_func(step.get("action"), step.get("params", {}), context)
             results.append(result)
         return results
 
@@ -246,12 +270,16 @@ class PredictivePlanner:
         """Vykonat celý plán od začátku"""
         results = []
         for step in plan:
-            result = await executor_func(step.get('action'), step.get('params', {}), context)
+            result = await executor_func(step.get("action"), step.get("params", {}), context)
             results.append(result)
         return results
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky predikcí"""
-        return {'total_predictions': self.metrics.total_predictions, 'correct': self.metrics.correct_predictions, 'incorrect': self.metrics.incorrect_predictions, 'not_executed': self.metrics.not_executed, 'accuracy': self.metrics.accuracy()}
-import asyncio
-from _core import aclose
+        return {
+            "total_predictions": self.metrics.total_predictions,
+            "correct": self.metrics.correct_predictions,
+            "incorrect": self.metrics.incorrect_predictions,
+            "not_executed": self.metrics.not_executed,
+            "accuracy": self.metrics.accuracy(),
+        }

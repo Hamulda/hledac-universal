@@ -49,19 +49,11 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// SPSC queue depth -- matches spsc_queue.rs SPSC_QUEUE_DEPTH.
 pub const MLX_BRIDGE_QUEUE_DEPTH: usize = 16;
 
 /// Per-prompt payload budget.
 pub const MLX_BRIDGE_SLOT_BYTES: usize = 1024;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MemoryPressure enum
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPressure {
@@ -91,10 +83,6 @@ impl MemoryPressure {
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MLXBridgeConfig -- streaming configuration
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for MLX token streaming bridge.
 #[pyclass(name = "MLXBridgeConfig", from_py_object)]
@@ -190,10 +178,6 @@ impl MLXBridgeConfig {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TokenChunk -- single yielded token from stream
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Token chunk with metadata for streaming.
 #[pyclass(name = "TokenChunk", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -253,10 +237,6 @@ impl TokenChunk {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AdaptiveChunkSizer -- memory-aware chunk sizing
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Adaptive chunk sizer based on memory pressure.
 #[pyclass(name = "AdaptiveChunkSizer", skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -306,10 +286,6 @@ impl AdaptiveChunkSizer {
         self.current_pressure != MemoryPressure::Normal
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MLXBridge -- Python-facing bridge wrapper
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// MLX streaming bridge.
 ///
@@ -470,10 +446,6 @@ impl MLXBridge {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// batch_tokenize — Rayon-parallel prompt tokenization
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// R4-04 FIX: Parallel tokenization of multiple prompts using rayon.
 ///
 /// GIL strategy: Acquire GIL once, collect ALL tokenizer Bound references,
@@ -526,10 +498,6 @@ pub fn batch_tokenize_(
     let py_list = PyList::new(py, &results)?;
     Ok(py_list)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Memory probing (M1 8GB UMA safety)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Probe total physical memory via sysctl HW_MEMSIZE on Darwin.
 /// Returns 0 if unavailable (non-Darwin or sysctl failure).
@@ -592,10 +560,6 @@ pub fn check_available_memory_py(
     }
     Ok((true, available_bytes, "ok".to_string()))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Registration
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Register MLX bridge types with Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

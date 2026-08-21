@@ -3,7 +3,6 @@ DuckDBWriteCoordinator — Extrahovaný hot-path pro batch ingest z DuckDBShadow
 
 Třída odpovídá za kompletní ingest pipeline:
 
-
 - WAL-first pořadí (LMDB putmany)
 - DuckDB Arrow zero-copy insert
 - Graph ingest (podmíněně)
@@ -13,31 +12,31 @@ Třída odpovídá za kompletní ingest pipeline:
 
 Fáze 1 refaktorace: DuckDBShadowStore.CBO 31 → ~25
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
-from _core import aclose
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from .duckdb_quality_gate import QualityAssessmentState
     from .duckdb_store import ActivationResult, CanonicalFinding, DuckDBShadowStore
     from .duckdb_wal_manager import DuckDBWALManager
-    from .duckdb_quality_gate import QualityAssessmentState
     from .semantic_store_buffer import SemanticStoreBuffer
 
 __all__ = ["DuckDBWriteCoordinator", "WriteCoordinatorConfig"]
-
 
 logger = logging.getLogger(__name__)
 
 
 class CBState(Enum):
     """Circuit breaker state."""
+
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
@@ -45,6 +44,7 @@ class CBState(Enum):
 
 class ArrowIngestStatus(Enum):
     """Arrow ingest path status - F360M-R refactoring."""
+
     SUCCESS = "success"
     FALLBACK_LEGACY = "fallback_legacy"
     FALLBACK_PYARROW = "fallback_pyarrow"
@@ -57,6 +57,7 @@ class ArrowIngestStatus(Enum):
 @dataclass(slots=True)
 class ArrowIngestResult:
     """Result of arrow ingest pipeline - F360M-R."""
+
     status: ArrowIngestStatus
     results: list[dict[str, Any]]
     duckdb_all_ok: bool
@@ -85,16 +86,17 @@ class ArrowIngestResult:
 class WriteCoordinatorConfig:
     """
     M1 8GB bounded configuration — všechny limity explicitní.
-    
+
     MODERN-36: Batching optimizations for unified 6-thread budget model.
     Thread budget breakdown: DuckDB RW(1) + DuckDB RO(2) + CPU I/O(3) = 6 total.
-    
+
     Batching strategy:
     - WAL batching: 500 items per LMDB putmany (reduces fsync overhead)
     - Arrow batching: >= 5 items for Arrow → DuckDB path
     - IOC buffering: 64 items per chunk (reduced from 128 for M1 8GB)
     - Memory-aware sizing: batch sizes scale with available memory pressure
     """
+
     max_concurrent_writes: int = 3  # Reduced from 4 for 6-thread budget
     circuit_breaker_threshold: int = 5
     circuit_breaker_cooldown: float = 30.0
@@ -121,6 +123,7 @@ class DuckDBWriteCoordinator:
 
     M1 8GB: __slots__ = ~200 bytes na instanci místo ~1KB dict-based.
     """
+
     __slots__ = (
         "_duckdb",
         "_wal_manager",
@@ -221,10 +224,6 @@ class DuckDBWriteCoordinator:
 
         self._write_semaphore = asyncio.Semaphore(self._config.max_concurrent_writes)
 
-    # -------------------------------------------------------------------------
-    # Circuit breaker
-    # -------------------------------------------------------------------------
-
     def _check_circuit_breaker(self) -> bool:
         """Vrátí True pokud je write path otevřená (není v open/half_open)."""
         import time as _time
@@ -245,18 +244,12 @@ class DuckDBWriteCoordinator:
         self._breaker_last_failure = _time.time()
         if self._breaker_failures >= self._breaker_threshold:
             self._breaker_state = CBState.OPEN
-            logger.warning(
-                f"[WriteCoordinator] Circuit breaker OPEN after {self._breaker_failures} failures"
-    )
+            logger.warning(f"[WriteCoordinator] Circuit breaker OPEN after {self._breaker_failures} failures")
 
     def _record_success(self) -> None:
         """Resetuje circuit breaker při úspěchu."""
         self._breaker_failures = 0
         self._breaker_state = CBState.CLOSED
-
-    # -------------------------------------------------------------------------
-    # WAL management (lazy init)
-    # -------------------------------------------------------------------------
 
     async def _ensure_wal_manager(self) -> bool:
         """Lazy init WAL manager. Vrací True pokud je připraven."""
@@ -277,10 +270,6 @@ class DuckDBWriteCoordinator:
             logger.error(f"[WriteCoordinator] WAL manager init failed: {e}")
             return False
 
-    # -------------------------------------------------------------------------
-    # Maintenance helpers (RES-03)
-    # -------------------------------------------------------------------------
-
     def _should_vacuum(self) -> bool:
         """CHECKPOINT/VACUUM podmínky z RES-03."""
         import time as _time
@@ -298,10 +287,6 @@ class DuckDBWriteCoordinator:
             if _time.time() - self._last_checkpoint_time >= self._checkpoint_interval_seconds:
                 return True
         return False
-
-    # -------------------------------------------------------------------------
-    # Arrow batch ingest (hlavní hot-path metoda)
-    # -------------------------------------------------------------------------
 
     async def _try_arrow_direct(self, findings: list[CanonicalFinding]) -> bool:
         """Try direct arrow ingest. Returns True if successful."""
@@ -326,7 +311,7 @@ class DuckDBWriteCoordinator:
                 self._duckdb_arrow_executor,
                 self._duckdb_arrow_sync,
                 findings,
-    )
+            )
             return result
         except Exception as e:
             return (0, str(e))
@@ -346,7 +331,9 @@ class DuckDBWriteCoordinator:
             return False, "batch_too_small"
         return True, None
 
-    def _build_arrow_results(self, findings: list, wal_ok: bool, duckdb_all_ok: bool, duckdb_err: str | None) -> list[dict]:
+    def _build_arrow_results(
+        self, findings: list, wal_ok: bool, duckdb_all_ok: bool, duckdb_err: str | None
+    ) -> list[dict]:
         """Build result dicts for arrow path."""
         return [
             {
@@ -370,9 +357,7 @@ class DuckDBWriteCoordinator:
         # Quality state update
         if self._quality_state is not None:
             accepted_total = sum(1 for r in results if r.get("lmdb_success"))
-            self._quality_state._accepted_count = (
-                getattr(self._quality_state, "_accepted_count", 0) + accepted_total
-    )
+            self._quality_state._accepted_count = getattr(self._quality_state, "_accepted_count", 0) + accepted_total
 
         # Maintenance counters update
         self._write_op_counter += len(findings)
@@ -399,10 +384,6 @@ class DuckDBWriteCoordinator:
         else:
             self._record_failure()
 
-    # -------------------------------------------------------------------------
-    # Arrow ingest pipeline (F360M-R refactoring)
-    # -------------------------------------------------------------------------
-
     async def _wait_startup_barrier(self, batch_size: int) -> bool:
         """Wait for startup barrier with timeout. Returns True if successful."""
         if self._startup_ready.is_set():
@@ -415,18 +396,15 @@ class DuckDBWriteCoordinator:
             self._arrow_metrics["arrow_fallback_init"] += batch_size
             return False
 
-    async def _execute_arrow_pipeline(
-        self, findings: list[CanonicalFinding]
-    ) -> ArrowIngestResult:
+    async def _execute_arrow_pipeline(self, findings: list[CanonicalFinding]) -> ArrowIngestResult:
         """
         Execute arrow ingest pipeline - F360M-R refactored.
-        
+
         Returns ArrowIngestResult with all pipeline outcomes.
         Single responsibility: orchestrate the pipeline phases.
         """
         batch_size = len(findings)
-        
-        # Phase 1: PyArrow availability check
+
         if not self._is_pyarrow_available():
             self._arrow_metrics["arrow_fallback_pyarrow"] += batch_size
             return ArrowIngestResult(
@@ -435,9 +413,8 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="pyarrow_unavailable",
-    )
-        
-        # Phase 2: Startup barrier
+            )
+
         if not await self._wait_startup_barrier(batch_size):
             return ArrowIngestResult(
                 status=ArrowIngestStatus.FALLBACK_INIT,
@@ -445,9 +422,8 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="startup_timeout",
-    )
-        
-        # Phase 3: Circuit breaker
+            )
+
         if not self._check_circuit_breaker():
             return ArrowIngestResult(
                 status=ArrowIngestStatus.FALLBACK_CIRCUIT,
@@ -455,31 +431,28 @@ class DuckDBWriteCoordinator:
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="circuit_breaker_open",
-    )
-        
-        # Phase 4: WAL first (LMDB)
+            )
+
         wal_ok = await self._try_wal_fallback(findings)
         if not wal_ok:
-            logger.error(f"[D7] Arrow WAL phase failed - falling back to legacy.")
+            logger.error("[D7] Arrow WAL phase failed - falling back to legacy.")
             return ArrowIngestResult(
                 status=ArrowIngestStatus.FALLBACK_WAL,
                 results=[],
                 duckdb_all_ok=False,
                 duckdb_count=0,
                 duckdb_err="wal_failed",
-    )
-        
-        # Phase 5: DuckDB Arrow insert
+            )
+
         duckdb_count, duckdb_err = await self._try_duckdb_basic(findings)
         duckdb_all_ok = duckdb_err is None or duckdb_count >= batch_size
         if duckdb_count < batch_size:
             self._arrow_metrics["arrow_partial_duplicates"] += 1
-        
-        # Phase 6: Build results
+
         results = self._build_arrow_results(findings, wal_ok, duckdb_all_ok, duckdb_err)
         lmdb_ok_count = sum(1 for r in results if r.get("lmdb_success"))
         duckdb_ok_count = sum(1 for r in results if r.get("duckdb_success"))
-        
+
         return ArrowIngestResult(
             status=ArrowIngestStatus.SUCCESS,
             results=results,
@@ -488,62 +461,57 @@ class DuckDBWriteCoordinator:
             duckdb_err=duckdb_err,
             lmdb_ok_count=lmdb_ok_count,
             duckdb_ok_count=duckdb_ok_count,
-    )
+        )
 
     def _is_pyarrow_available(self) -> bool:
         """Check if PyArrow is available - F360M-R."""
         try:
             import pyarrow  # noqa: F401
+
             return True
         except ImportError:
             return False
 
-    async def ingest_batch_arrow(
-        self, findings: list[CanonicalFinding]
-    ) -> list[ActivationResult]:
+    async def ingest_batch_arrow(self, findings: list[CanonicalFinding]) -> list[ActivationResult]:
         """
         Sprint P0-4: Arrow zero-copy batch ingest - F360M-R refactored.
-        
+
         Returns list[ActivationResult].
         Complexity: CC=8 (was 20), Cognitive=10 (was 24), Ifs=4 (was 16)
         """
         if not findings:
             return []
-        
+
         batch_size = len(findings)
-        
+
         # Early exit: conditions check
         should_use_arrow, reason = self._check_arrow_conditions(findings)
         if not should_use_arrow:
             self._arrow_metrics[f"arrow_fallback_{reason}"] += batch_size
             logger.debug(f"[WriteCoordinator-arrow-fallback] {reason}, using legacy path")
             return await self.ingest_batch_legacy(findings)
-        
+
         # Early exit: pyarrow availability
         if not await self._try_arrow_direct(findings):
             self._arrow_metrics["arrow_fallback_batch"] += batch_size
             return await self.ingest_batch_legacy(findings)
-        
-        # Execute pipeline
+
         result = await self._execute_arrow_pipeline(findings)
-        
-        # Handle fallback
+
         if result.should_fallback():
             return await self.ingest_batch_legacy(findings)
-        
+
         # Post-processing
         await self._handle_arrow_post_process(result.results, findings)
         self._update_arrow_metrics(result.results, result.duckdb_all_ok)
-        
+
         logger.info(
             f"[WriteCoordinator-arrow] path=arrow batch={batch_size} "
             f"lmdb_ok={result.lmdb_ok_count} duckdb_ok={result.duckdb_ok_count}"
-    )
+        )
         return self._build_activation_results(result.results)
 
-    async def ingest_batch_legacy(
-        self, findings: list[CanonicalFinding]
-    ) -> list[ActivationResult]:
+    async def ingest_batch_legacy(self, findings: list[CanonicalFinding]) -> list[ActivationResult]:
         """
         Legacy batch path — volá _sync_record_canonical_findings_batch_arrow_standalone
         přes executor. Používá se jako fallback z Arrow path nebo přímo.
@@ -557,7 +525,7 @@ class DuckDBWriteCoordinator:
                 self._duckdb_arrow_executor,
                 self._duckdb._sync_record_canonical_findings_batch_arrow_standalone,
                 findings,
-    )
+            )
         except Exception as e:
             logger.error(f"[WriteCoordinator-legacy] executor error: {e}")
             return self._build_activation_results_from_findings(findings, str(e))
@@ -572,15 +540,11 @@ class DuckDBWriteCoordinator:
         # Quality state
         if self._quality_state is not None:
             accepted_total = sum(1 for r in sync_results if r.get("lmdb_success"))
-            self._quality_state._accepted_count = (
-                getattr(self._quality_state, "_accepted_count", 0) + accepted_total
-    )
+            self._quality_state._accepted_count = getattr(self._quality_state, "_accepted_count", 0) + accepted_total
 
         return self._build_activation_results(sync_results)
 
-    def _build_activation_results(
-        self, results: list[dict[str, Any]]
-    ) -> list[ActivationResult]:
+    def _build_activation_results(self, results: list[dict[str, Any]]) -> list[ActivationResult]:
         """Build ActivationResult list from raw dict results."""
         from .duckdb_store import ActivationResult
 
@@ -593,7 +557,7 @@ class DuckDBWriteCoordinator:
                 desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
                 error=r.get("error"),
                 accepted=bool(r.get("lmdb_success")),
-    )
+            )
             for r in results
         ]
 
@@ -612,13 +576,9 @@ class DuckDBWriteCoordinator:
                 desync=False,
                 error=error,
                 accepted=False,
-    )
+            )
             for f in findings
         ]
-
-    # -------------------------------------------------------------------------
-    # WAL putmany (thread pool, WAL-first invariant)
-    # -------------------------------------------------------------------------
 
     async def _wal_put_many(self, findings: list[CanonicalFinding]) -> bool:
         """WAL putmany přes executor. Vrací True při úspěchu."""
@@ -634,7 +594,7 @@ class DuckDBWriteCoordinator:
                 self._wal_executor,
                 self._wal_put_many_sync,
                 findings,
-    )
+            )
         except Exception as e:
             logger.error(f"[WriteCoordinator] WAL putmany error: {e}")
             return False
@@ -657,7 +617,7 @@ class DuckDBWriteCoordinator:
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
                 },
-    )
+            )
         try:
             # DuckDBWALManager.wal_put_many has wrong type hint (bytes vs dict).
             # In practice it accepts dict and delegates to WALManager.wal_put_many(dict).
@@ -672,22 +632,12 @@ class DuckDBWriteCoordinator:
             logger.error(f"[WriteCoordinator] WAL putmany sync error: {e}")
             return False
 
-    # -------------------------------------------------------------------------
-    # DuckDB Arrow sync helper
-    # -------------------------------------------------------------------------
-
-    def _duckdb_arrow_sync(
-        self, findings: list[CanonicalFinding]
-    ) -> tuple[int, str | None]:
+    def _duckdb_arrow_sync(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
         """
         DuckDB Arrow sync helper — volá se v threadpool.
         Deleguje na DuckDBShadowStore._duckdb_arrow_sync.
         """
         return self._duckdb._duckdb_arrow_sync(findings)
-
-    # -------------------------------------------------------------------------
-    # Graph ingest (conditional na truth_write_graph_supports_buffered_writes)
-    # -------------------------------------------------------------------------
 
     async def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
         """Graph ingest přes DuckDBShadowStore._graph_ingest_findings."""
@@ -696,10 +646,6 @@ class DuckDBWriteCoordinator:
         except Exception as e:
             logger.warning(f"[WriteCoordinator] Graph ingest error (non-fatal): {e}")
 
-    # -------------------------------------------------------------------------
-    # Metrics a introspection
-    # -------------------------------------------------------------------------
-
     def get_arrow_metrics(self) -> dict[str, int]:
         """Vrací arrow metrics pro diagnostiku."""
         return dict(self._arrow_metrics)
@@ -707,7 +653,7 @@ class DuckDBWriteCoordinator:
     def get_batching_efficiency(self) -> dict:
         """
         MODERN-36: Return batching efficiency metrics for monitoring.
-        
+
         Returns:
             Dict with batching efficiency stats:
             - arrow_path_pct: Percentage of batches using arrow path
@@ -719,10 +665,10 @@ class DuckDBWriteCoordinator:
         batches_total = metrics.get("batches_total", 0)
         if batches_total == 0:
             return {"status": "no_data", "message": "No batches processed yet"}
-        
+
         arrow_path = metrics.get("batches_arrow_path", 0)
         items_total = metrics.get("items_total", 0)
-        
+
         return {
             "batches_total": batches_total,
             "arrow_path_pct": round(arrow_path / batches_total * 100, 1) if batches_total > 0 else 0,

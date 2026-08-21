@@ -25,10 +25,6 @@ use std::collections::HashMap;
 
 use crate::cpu_pool;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Maximum unique (IOC_A, IOC_B) pairs in memory.
 const MAX_PAIRS: usize = 50_000;
 /// Maximum findings processed per analyze() call.
@@ -39,10 +35,6 @@ const MAX_EDGES: usize = 500;
 const MIN_SUPPORT: usize = 2;
 /// Minimum confidence ratio to emit an edge.
 const MIN_CONFIDENCE: f64 = 0.3;
-
-// ---------------------------------------------------------------------------
-// Data structures
-// ---------------------------------------------------------------------------
 
 /// A co-occurrence pair with support and confidence metrics.
 #[derive(Debug, Clone)]
@@ -68,10 +60,6 @@ pub struct FindingInput {
     finding_id: String,
     payload_text: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// IOC extraction (inline, simplified — no regex dependency)
-// ---------------------------------------------------------------------------
 
 /// Extract (ioc_value, ioc_type) pairs from text using fast scan.
 /// Types: domain, ipv4, url, hash, email.
@@ -112,7 +100,6 @@ fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         match memchr::memchr(b'@', &bytes[j..]) {
             Some(offset) => {
                 let pos = j + offset;
-                // Extract email candidate: chars around '@'
                 let start = pos.saturating_sub(64);
                 let end = (pos + 64).min(len);
                 let candidate = &bytes[start..end];
@@ -310,10 +297,6 @@ fn extract_email_candidate(data: &[u8]) -> Option<&[u8]> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// memchr SIMD (fallback for Rust <1.80)
-// ---------------------------------------------------------------------------
-
 #[cfg(not(feature = "std_simd"))]
 mod memchr {
     pub fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
@@ -324,10 +307,6 @@ mod memchr {
         haystack.iter().position(|&x| x == a || x == b || x == c)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Core co-occurrence algorithm
-// ---------------------------------------------------------------------------
 
 /// Compute co-occurrence edges from findings.
 /// Returns a list of edge tuples: (source_ioc, source_type, target_ioc, target_type, confidence, reason, priority)
@@ -460,10 +439,6 @@ pub fn compute_cooccurrence_edges(
     edges
 }
 
-// ---------------------------------------------------------------------------
-// Python-facing API
-// ---------------------------------------------------------------------------
-
 /// Compute co-occurrence edges from CanonicalFinding dicts.
 ///
 /// Args:
@@ -500,7 +475,6 @@ pub fn compute_cooccurrence_edges_py(
         });
     }
 
-    // Run in cpu_pool for parallelism
     let pool = cpu_pool();
     let result = pool.install(|| compute_cooccurrence_edges(inputs));
 
@@ -522,8 +496,6 @@ pub fn batch_cooccurrence_edges_py(
         return Ok(vec![]);
     }
 
-    // Phase 1: Extract all data from Python objects WITH GIL held.
-    // We MUST do this before allow_threads because Py<PyAny>::extract needs GIL.
     let batch_inputs: Vec<Vec<FindingInput>> = batch_list
         .into_iter()
         .filter(|b| !b.is_empty())
@@ -548,8 +520,6 @@ pub fn batch_cooccurrence_edges_py(
         })
         );
 
-    // Phase 2: Process with rayon — NO GIL needed, all data is now plain Rust types
-    // Issue #27: Use into_par_iter() for parallel batch processing instead of serial .map()
     let all_edges: Vec<_> = batch_inputs
         .into_par_iter()
         .map(|inputs| compute_cooccurrence_edges(inputs))

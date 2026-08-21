@@ -48,7 +48,6 @@ Usage:
 -------
 from rust_extensions.wiring.mpsc_pool_wiring import get_mpsc_queue
 
-# Create typed queue
 queue = get_mpsc_queue(capacity=32)
 
 # Non-blocking send (from any thread)
@@ -68,7 +67,7 @@ import asyncio
 import json
 import logging
 import selectors
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -81,7 +80,6 @@ try:
 except ImportError:
     _rust_backend = None
 
-# Check availability
 _mpsc_pool_available = (
     _rust_backend is not None
     and _rust_backend.is_available
@@ -90,7 +88,7 @@ _mpsc_pool_available = (
 )
 
 # Module-level cache
-_cached_instances: dict[int, "MPSCQueue"] = {}
+_cached_instances: dict[int, MPSCQueue] = {}
 
 # ponytail: global lock for instance dict, add per-key lock if contention emerges
 _instances_lock = None
@@ -100,11 +98,12 @@ def _get_lock():
     global _instances_lock
     if _instances_lock is None:
         import threading
+
         _instances_lock = threading.Lock()
     return _instances_lock
 
 
-def get_mpsc_queue(capacity: int = 32) -> "MPSCQueue":
+def get_mpsc_queue(capacity: int = 32) -> MPSCQueue:
     """
     Get or create an MPSCQueue instance with given capacity.
 
@@ -127,11 +126,6 @@ def clear_mpsc_caches() -> None:
     """Clear all cached MPSCQueue instances (for testing)."""
     with _get_lock():
         _cached_instances.clear()
-
-
-# =============================================================================
-# MPSCQueue - Python wrapper for Rust MPSCPool
-# =============================================================================
 
 
 class MPSCQueue:
@@ -284,7 +278,6 @@ class MPSCQueue:
             payloads = [json.dumps(item).encode("utf-8") for item in items]
 
         try:
-            # Create Python list for PyO3
             import builtins
 
             py_list = builtins.list(payloads)
@@ -334,7 +327,7 @@ class MPSCQueue:
         while not self._closed:
             try:
                 events = self._selector.select(timeout=0.1)
-                for key, mask in events:
+                for _key, mask in events:
                     if mask & selectors.EVENT_READ:
                         # Wake event received
                         if self._event is not None:
@@ -360,9 +353,7 @@ class MPSCQueue:
         if self._available and self._wake_fd >= 0:
             if self._selector is None:
                 self._selector = selectors.DefaultSelector()
-                self._selector.register(
-                    self._wake_fd, selectors.EVENT_READ, None
-                )
+                self._selector.register(self._wake_fd, selectors.EVENT_READ, None)
 
             if self._selector_task is None or self._selector_task.done():
                 loop = asyncio.get_running_loop()
@@ -375,7 +366,7 @@ class MPSCQueue:
                     await self._event.wait()
                 self._event.clear()
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return False
         else:
             # Python fallback: simple polling
@@ -434,7 +425,6 @@ class MPSCQueue:
 
 # Backwards compatibility alias
 MpscPool = MPSCQueue
-
 
 __all__ = [
     "MPSCQueue",

@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import threading
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass

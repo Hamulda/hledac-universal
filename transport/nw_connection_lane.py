@@ -51,13 +51,10 @@ import os
 import platform
 import sys
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Env gate
-# ---------------------------------------------------------------------------
+
 def _resolve_enabled() -> bool:
     """Resolve NWConnection gate. Default ON on darwin/arm64, opt-out via env."""
     env_val = os.environ.get("HLEDAC_ENABLE_NW_CONNECTION", "").lower()
@@ -81,12 +78,10 @@ _NW_RSS_BLOCK_GIB: float = 5.5
 def _rss_over_budget() -> bool:
     """Return True if process RSS exceeds the NW lane budget."""
     from hledac.universal.transport._rss_guard import rss_over_budget as _guard
+
     return _guard(_NW_RSS_BLOCK_GIB)
 
 
-# ---------------------------------------------------------------------------
-# Rust extension import (lazy — no import on module load)
-# ---------------------------------------------------------------------------
 def _probe_nw_connection() -> bool:
     """Return True if the Rust nw_connection extension is available and functional."""
     if not NW_ENABLED:
@@ -94,7 +89,8 @@ def _probe_nw_connection() -> bool:
     if sys.platform != "darwin":
         return False
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
+
         # Probe: try pool_stats which works even in stub mode
         stats = nw_connection.pool_stats()
         if isinstance(stats, dict) and stats.get("error"):
@@ -109,9 +105,6 @@ def _probe_nw_connection() -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 async def fetch_nw_connection(
     url: str,
     *,
@@ -140,13 +133,13 @@ async def fetch_nw_connection(
     timeout = timeout_ms if timeout_ms is not None else NW_TIMEOUT_MS
 
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
 
         # MODERN-14: fetch_async() returns native awaitable — no GIL ping-pong!
         response = await nw_connection.fetch_async(
             url,
             timeout,
-    )
+        )
 
         if response is None:
             return None
@@ -202,15 +195,13 @@ def _extract_content_type(headers: dict[str, str]) -> str:
     return "application/octet-stream"
 
 
-# ---------------------------------------------------------------------------
-# Telemetry
-# ---------------------------------------------------------------------------
 def get_pool_stats() -> dict[str, Any] | None:
     """Return NWConnection pool statistics or None if unavailable."""
     if not _probe_nw_connection():
         return None
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
+
         return nw_connection.pool_stats()
     except Exception:
         return None

@@ -1,7 +1,6 @@
 """Stub for aiodns — c-ares backed async DNS resolver."""
 
 import asyncio
-from typing import Any
 
 class DNSResolver:
     loop: asyncio.AbstractEventLoop | None

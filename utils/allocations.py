@@ -18,7 +18,6 @@ USAGE:
     # Release when done
     release(1.0, "mlx")
 
-    # Check current allocation stats
     total, ceiling, utilization = get_stats()
 
 AUTHORITY BOUNDARY:
@@ -29,23 +28,23 @@ AUTHORITY BOUNDARY:
 Python 3.14+ Compatible: Yes
 M1 8GB Optimized: Yes (uses atomic operations via Rust)
 """
+
 from __future__ import annotations
 
 import logging
 from enum import IntEnum
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
-    from hledac.universal.utils.uma_budget import UmaBudget
+    pass
 
 __all__ = [
-    'Subsystem',
-    'acquire',
-    'release',
-    'get_stats',
-    'set_ceiling',
-    'AllocationError',
+    "Subsystem",
+    "acquire",
+    "release",
+    "get_stats",
+    "set_ceiling",
+    "AllocationError",
 ]
 
 logger = logging.getLogger(__name__)
@@ -57,25 +56,26 @@ class Subsystem(IntEnum):
 
     Values match rust_extensions/src/memory.rs::Subsystem enum.
     """
-    MLX = 0     # MLX Metal allocations
+
+    MLX = 0  # MLX Metal allocations
     DUCKDB = 1  # DuckDB memory-mapped files
-    TOKIO = 2   # Tokio task heap allocations
-    KUZU = 3    # Kuzu graph database
-    OTHER = 4   # Generic/uncategorized
+    TOKIO = 2  # Tokio task heap allocations
+    KUZU = 3  # Kuzu graph database
+    OTHER = 4  # Generic/uncategorized
 
     @classmethod
     def from_str(cls, name: str) -> Subsystem:
         """Create Subsystem from string name (case-insensitive)."""
         name_lower = name.lower()
         mapping = {
-            'mlx': cls.MLX,
-            'duckdb': cls.DUCKDB,
-            'tokio': cls.TOKIO,
-            'kuzu': cls.KUZU,
-            'other': cls.OTHER,
+            "mlx": cls.MLX,
+            "duckdb": cls.DUCKDB,
+            "tokio": cls.TOKIO,
+            "kuzu": cls.KUZU,
+            "other": cls.OTHER,
             # Aliases
-            'metal': cls.MLX,
-            'mlx_metal': cls.MLX,
+            "metal": cls.MLX,
+            "mlx_metal": cls.MLX,
         }
         if name_lower in mapping:
             return mapping[name_lower]
@@ -93,22 +93,20 @@ def _get_rust_mem():
     if _rust_mem_module is None:
         try:
             from hledac.universal.rust_extensions import memory as _mem
+
             _rust_mem_module = _mem
             # FIX: Sync from UmaBudget on first Rust module load
             if not _uma_synced:
                 sync_from_uma_budget()
                 _uma_synced = True
         except ImportError:
-            logger.warning(
-                "[ALLOC-LEDGER] Rust memory module unavailable — using Python fallback"
-    )
+            logger.warning("[ALLOC-LEDGER] Rust memory module unavailable — using Python fallback")
             _rust_mem_module = None
     return _rust_mem_module
 
 
 class AllocationError(Exception):
     """Raised when allocation would exceed ceiling."""
-    pass
 
 
 def acquire(gib: float, subsystem: str | Subsystem) -> bool:
@@ -150,7 +148,7 @@ def acquire(gib: float, subsystem: str | Subsystem) -> bool:
             logger.warning(
                 f"[ALLOC-LEDGER] Allocation rejected: {gib:.2f} GiB for {subsystem} "
                 f"would exceed ceiling ({total / (1024**3):.2f} / {ceiling / (1024**3):.2f} GiB)"
-    )
+            )
         return ok
 
     # Fallback: Python-only mode (no Rust, accept all allocations)
@@ -180,10 +178,7 @@ def release(gib: float, subsystem: str | Subsystem) -> None:
     rust = _get_rust_mem()
     if rust is not None:
         new_total = rust.release_bytes(gib, subsys_enum.value)
-        logger.debug(
-            f"[ALLOC-LEDGER] Released {gib:.2f} GiB for {subsystem} "
-            f"(now at {new_total / (1024**3):.2f} GiB)"
-    )
+        logger.debug(f"[ALLOC-LEDGER] Released {gib:.2f} GiB for {subsystem} (now at {new_total / (1024**3):.2f} GiB)")
 
 
 def get_stats() -> tuple[float, float, float]:
@@ -204,7 +199,7 @@ def get_stats() -> tuple[float, float, float]:
             total_bytes / (1024**3),
             ceiling_bytes / (1024**3),
             utilization,
-    )
+        )
 
     # Fallback: return zeros
     return (0.0, 0.0, 0.0)

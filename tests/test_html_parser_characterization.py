@@ -7,13 +7,12 @@ migrations (bs4 → selectolax) can be validated against known-good output.
 No network calls. All HTML is inline.
 """
 
-
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def minimal_html() -> str:
@@ -51,6 +50,7 @@ def rss_feed_html() -> str:
 # ---------------------------------------------------------------------------
 # rss_atom_adapter — discover_feed_urls_from_html
 # ---------------------------------------------------------------------------
+
 
 class TestRSSAtomAdapterFeedDiscovery:
     """Characterize discover_feed_urls_from_html behavior.
@@ -102,6 +102,7 @@ class TestRSSAtomAdapterFeedDiscovery:
 # ---------------------------------------------------------------------------
 # content_miner — RustMiner._extract_links_selectolax
 # ---------------------------------------------------------------------------
+
 
 class TestContentMinerLinkExtraction:
     """Characterize RustMiner._extract_links_selectolax behavior.
@@ -168,6 +169,7 @@ class TestContentMinerLinkExtraction:
 # content_extractor — extract_content_bounded
 # ---------------------------------------------------------------------------
 
+
 class TestContentExtractorExtraction:
     """Characterize extract_content_bounded behavior.
 
@@ -217,6 +219,7 @@ class TestContentExtractorExtraction:
 # ---------------------------------------------------------------------------
 # html_text_fast — already selectolax-first
 # ---------------------------------------------------------------------------
+
 
 class TestHtmlTextFast:
     """Characterize html_to_text_fast behavior.

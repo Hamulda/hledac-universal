@@ -39,13 +39,11 @@ on the deprecated re-export stub. Existing legacy/test callers are tracked
 but exempt from enforcement until the broader migration is complete.
 """
 
-
 import re
 from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from _core import aclose
 
 # Absolute path to universal/ (test is at universal/tests/test_... so parent.parent goes to universal/)
 UNIVERSAL_ROOT = Path(__file__).parent.parent.resolve()
@@ -57,7 +55,7 @@ ALLOWED_PREFIXES = (
     ("docs/", "docs may reference"),
     ("reports/", "reports may reference"),
     ("knowledge/atomic_storage.py", "the shim itself"),
-    )
+)
 
 # BANNED directory prefixes (relative to universal/)
 BANNED_DIRS = (
@@ -67,7 +65,7 @@ BANNED_DIRS = (
     "runtime/",
     "pipeline/",
     "layers/",
-    )
+)
 
 
 class ImportFinding(NamedTuple):
@@ -163,12 +161,8 @@ class TestAtomicStorageArchitectureSeal:
         shim_path = UNIVERSAL_ROOT / "knowledge" / "atomic_storage.py"
         assert shim_path.exists(), "knowledge/atomic_storage.py not found"
         text = shim_path.read_text()
-        assert "DeprecationWarning" in text, (
-            "Shim must emit DeprecationWarning to warn callers"
-    )
-        assert "duckdb_store" in text, (
-            "Shim must reference duckdb_store as canonical replacement"
-    )
+        assert "DeprecationWarning" in text, "Shim must emit DeprecationWarning to warn callers"
+        assert "duckdb_store" in text, "Shim must reference duckdb_store as canonical replacement"
 
 
 class TestLayerManagerMigrated:
@@ -181,12 +175,10 @@ class TestLayerManagerMigrated:
 
         # Must NOT use the shim
         assert "from ..knowledge.atomic_storage import" not in text, (
-            "layer_manager.py must not import from knowledge.atomic_storage shim; "
-            "use ..legacy.atomic_storage instead"
-    )
+            "layer_manager.py must not import from knowledge.atomic_storage shim; use ..legacy.atomic_storage instead"
+        )
 
         # Should use explicit legacy path
         assert "from ..legacy.atomic_storage import AtomicJSONKnowledgeGraph" in text, (
-            "layer_manager.py should import AtomicJSONKnowledgeGraph "
-            "directly from ..legacy.atomic_storage"
-    )
+            "layer_manager.py should import AtomicJSONKnowledgeGraph directly from ..legacy.atomic_storage"
+        )

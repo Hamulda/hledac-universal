@@ -15,6 +15,7 @@ Test Categories:
 4. Memory pressure - verify pressure handling
 5. M1 optimization - verify Apple Silicon specific code
 """
+
 from __future__ import annotations
 
 import os
@@ -22,7 +23,6 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 
 # M1-specific constants
 M1_PRODUCTION_CORES = 8  # M1 MacBook Air standard
-M1_PRO_MAX_CORES = 10   # M1 Pro
-M1_MAX_CORES = 12       # Theoretical max for any M-series
+M1_PRO_MAX_CORES = 10  # M1 Pro
+M1_MAX_CORES = 12  # Theoretical max for any M-series
 
 
 class TestM1CoreDetection:
@@ -40,7 +40,7 @@ class TestM1CoreDetection:
     def test_is_m1_platform(self) -> None:
         """Should correctly identify M1 platform."""
         try:
-            from utils._m1_platform import is_m1_platform, is_apple_silicon
+            from utils._m1_platform import is_apple_silicon, is_m1_platform
         except ImportError:
             # Fallback: check sys.platform
             is_m1 = sys.platform == "darwin"
@@ -51,7 +51,7 @@ class TestM1CoreDetection:
                     ["sysctl", "-n", "machdep.cpu.brand"],
                     capture_output=True,
                     text=True,
-    )
+                )
                 is_apple = "Apple" in result.stdout
                 assert is_m1 and is_apple, "Should be Apple Silicon on Darwin"
             except Exception:
@@ -69,10 +69,10 @@ class TestM1CoreDetection:
         """Should detect performance and efficiency cores."""
         try:
             from utils._m1_platform import (
-                performance_cores,
                 efficient_cores,
+                performance_cores,
                 total_cores,
-    )
+            )
 
             perf = performance_cores()
             eff = efficient_cores()
@@ -91,7 +91,7 @@ class TestM1CoreScheduling:
     def test_scheduling_affinity(self) -> None:
         """Should be able to set thread affinity."""
         try:
-            from utils._m1_platform import set_thread_affinity, get_thread_affinity
+            from utils._m1_platform import get_thread_affinity, set_thread_affinity
         except ImportError:
             pytest.skip("M1 platform utils not available")
 
@@ -116,7 +116,7 @@ class TestAppleNeuralEngine:
     def test_ane_available(self) -> None:
         """Should detect ANE availability."""
         try:
-            from brain.ane_inference import is_ane_available, ANEInferenceEngine
+            from brain.ane_inference import ANEInferenceEngine, is_ane_available
         except ImportError:
             pytest.skip("ANE inference not available")
 
@@ -220,9 +220,7 @@ class TestM1MemoryOptimization:
             from brain.ane_inference import _CachedModel
 
             # Should have gc=False
-            assert hasattr(_CachedModel, "__slots__") or hasattr(
-                _CachedModel, "__struct_fields"
-    )
+            assert hasattr(_CachedModel, "__slots__") or hasattr(_CachedModel, "__struct_fields")
         except ImportError:
             pytest.skip("msgspec not available")
 
@@ -230,9 +228,9 @@ class TestM1MemoryOptimization:
         """Should use memory-efficient collections."""
         try:
             from utils._m1_platform import (
-                BoundedCache,
                 LRU,
-    )
+                BoundedCache,
+            )
         except ImportError:
             pytest.skip("M1 platform utils not available")
 
@@ -362,7 +360,7 @@ class TestCoreTopologyModule:
     def test_topology_detection(self) -> None:
         """Should detect P/E core topology correctly."""
         from _core.topology import get_topology
-        
+
         topo = get_topology()
         assert topo.p_cores > 0, "Should have P-cores"
         assert topo.e_cores >= 0, "Should report E-cores"
@@ -371,18 +369,18 @@ class TestCoreTopologyModule:
     def test_topology_singleton(self) -> None:
         """Topology should be cached (singleton)."""
         from _core.topology import get_topology
-        
+
         topo1 = get_topology()
         topo2 = get_topology()
         assert topo1 is topo2, "Should return same cached instance"
 
     def test_p_e_core_indices(self) -> None:
         """P/E core indices should be valid."""
-        from _core.topology import get_p_core_indices, get_e_core_indices
-        
+        from _core.topology import get_e_core_indices, get_p_core_indices
+
         p_indices = get_p_core_indices()
         e_indices = get_e_core_indices()
-        
+
         # Indices should not overlap
         assert len(set(p_indices) & set(e_indices)) == 0, "P/E indices should not overlap"
         # E-cores come first (perflevel0 = E-cores in macOS)
@@ -392,9 +390,10 @@ class TestCoreTopologyModule:
 
     def test_is_m1_helper(self) -> None:
         """is_m1() should work."""
-        from _core.topology import is_m1
-        
         # On arm64 Darwin, should be True
         import os
+
+        from _core.topology import is_m1
+
         if os.uname().machine.lower() == "arm64" and sys.platform == "darwin":
-            assert is_m1() == True, "Should detect Apple Silicon on arm64 Darwin"
+            assert is_m1(), "Should detect Apple Silicon on arm64 Darwin"

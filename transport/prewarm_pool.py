@@ -31,26 +31,18 @@ Design invariants
 * Circuit-breaker for probe hosts — skip repeatedly failing CDN endpoints.
 """
 
-
 import asyncio
 import contextvars
 import functools
 import logging
-import os
 import time
+from typing import Any
 
 from hledac.universal._core.env_config import ENV  # noqa: E402
-from hledac.universal.utils.asyncx import safe_create_task, parallel
-from typing import Any
-from _core import aclose
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 logger = logging.getLogger("hledac.universal.transport.prewarm_pool")
 
-# ---------------------------------------------------------------------------
-# Bounded constants (M1 8GB tuned).
-# ---------------------------------------------------------------------------
-# Pool size from env; opt-out via HLEDAC_CURL_CFFI_PREWARM=0
-# M1 8GB recommended: HLEDAC_CURL_CFFI_POOL_SIZE=2
 _POOL_SIZE: int = ENV.get_int("HLEDAC_CURL_CFFI_POOL_SIZE", default=4)
 # Per-request hard cap on the speculative probe. 3 s is enough for a
 # TCP+TLS handshake against a public CDN; longer timeouts add nothing
@@ -65,7 +57,7 @@ _PROBE_HOSTS: tuple[str, ...] = (
     "https://cloudflare.com/",
     "https://cdn.jsdelivr.net/",
     "https://unpkg.com/",
-    )
+)
 _PROBE_FAILURE_THRESHOLD: int = 3  # skip host after 3 consecutive failures
 _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
 # F320-3.2: Session staleness threshold. A session older than this is
@@ -73,13 +65,11 @@ _PROBE_FAILURE_RESET_AFTER_S: float = 30.0  # re-enable a skipped host after 30s
 # forcing a new TLS handshake (200-500 ms blocking cost) on the first request.
 # Default: 60 s. Operators on slow connections may increase.
 # Configurable via HLEDAC_CURL_CFFI_PREWARM_STALE_TTL.
-_STALE_SESSION_TTL_S: float = ENV.get_float(
-    "HLEDAC_CURL_CFFI_PREWARM_STALE_TTL", default=60.0
-    )
+_STALE_SESSION_TTL_S: float = ENV.get_float("HLEDAC_CURL_CFFI_PREWARM_STALE_TTL", default=60.0)
 # Per-host circuit-breaker state: host -> (consecutive_failures, last_failure_time)
 _probe_circuit_var: contextvars.ContextVar[dict[str, tuple[int, float]]] = contextvars.ContextVar(
     "_probe_circuit", default={}
-    )
+)
 
 # Lazy reference to the runtime module to avoid a circular import
 # (curl_cffi_runtime imports prewarm_pool, not the other way around).
@@ -117,7 +107,7 @@ _stats_var: contextvars.ContextVar[dict[str, int]] = contextvars.ContextVar(
         "sessions_closed": 0,
         "stale_evictions": 0,  # F320-3.2: sessions evicted as stale
     },
-    )
+)
 
 
 def _resolve_enabled() -> bool:
@@ -191,7 +181,8 @@ async def _create_session(profile: str) -> Any | None:
     try:
         from hledac.universal.transport._tcp_keepalive import (
             TCP_KEEPALIVE_CURL_OPTIONS,
-    )
+        )
+
         _tcp_opts = TCP_KEEPALIVE_CURL_OPTIONS
     except Exception:  # noqa: BLE001
         _tcp_opts = {}
@@ -203,7 +194,7 @@ async def _create_session(profile: str) -> Any | None:
             timeout=10.0,
             max_clients=max_clients,
             curl_options=_tcp_opts,  # ISSUE-P6-001: TCP keep-alive on prewarmed sockets
-    )
+        )
         stats = _stats_var.get()
         stats["sessions_created"] += 1
         _stats_var.set(stats)
@@ -224,8 +215,7 @@ def _probe_host_iter():
     probe_circuit = _probe_circuit_var.get()
     # Periodic TTL eviction: remove expired entries on every call
     stale_keys = [
-        h for h, (_, last_fail) in probe_circuit.items()
-        if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S * 2
+        h for h, (_, last_fail) in probe_circuit.items() if now - last_fail >= _PROBE_FAILURE_RESET_AFTER_S * 2
     ]
     for h in stale_keys:
         probe_circuit.pop(h, None)
@@ -383,7 +373,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
                 safe_create_task(
                     old_sess.aclose(),
                     name=f"prewarm:evict:{slot_idx}",
-    )
+                )
             except RuntimeError:  # noqa: BLE001
                 pass
     # Create new session (async but fast — curl_cffi init)
@@ -397,6 +387,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
         "warmed_at": None,
     }
     _pool_var.set(pool)
+
     # Background probe — never blocks the caller. The probe updates
     # ``warmed_at`` on success. If the probe fails, the session is
     # still usable (just cold) — same behaviour as the lazy path.
@@ -416,8 +407,6 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
     try:
         safe_create_task(_probe_and_mark(), name=f"prewarm:probe:{profile}")
     except RuntimeError:  # noqa: BLE001
-        # No running loop (called from sync context in tests). Skip
-        # the probe; the session is still created and will be used cold.
         pass
 
 
@@ -471,7 +460,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                             safe_create_task(
                                 sess.aclose(),
                                 name=f"prewarm:evict:stale:{slot_idx}",
-    )
+                            )
                         except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
@@ -492,7 +481,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                             safe_create_task(
                                 _fill_slot(other, profile),
                                 name=f"prewarm:fill:{profile}:{other}",
-    )
+                            )
                         except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
@@ -542,6 +531,7 @@ async def fill_all_slots() -> None:
     lock = _get_lock()
     async with lock:
         pool = _pool_var.get()
+
         # Determine which slots need filling
         async def _ensure_slot(slot_idx: int) -> None:
             if slot_idx in pool:
@@ -552,7 +542,7 @@ async def fill_all_slots() -> None:
             [_ensure_slot(i) for i in range(_POOL_SIZE)],
             policy="log",
             ctx="prewarm_pool:fill_all_slots",
-    )
+        )
 
 
 async def close_pool() -> None:
@@ -582,9 +572,7 @@ def get_pool_snapshot() -> dict[int, dict[str, Any]]:
                 "profile": entry.get("profile"),
                 "warmed": entry.get("warmed_at") is not None,
                 "stale": _is_session_stale(entry.get("warmed_at")),
-                "age_s": round(now - entry["warmed_at"], 1)
-                if entry.get("warmed_at") is not None
-                else None,
+                "age_s": round(now - entry["warmed_at"], 1) if entry.get("warmed_at") is not None else None,
             }
             for idx, entry in pool.items()
         }
@@ -611,7 +599,6 @@ def __getattr__(name: str) -> Any:
     if name == "_next_slot":
         return _next_slot_var.get()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 
 __all__ = [

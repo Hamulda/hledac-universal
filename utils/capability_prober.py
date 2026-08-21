@@ -5,8 +5,8 @@ This module provides lazy capability probing without persistent boolean flags.
 
 
 """
+
 import asyncio
-from hledac.universal.utils.asyncx import parallel_ok
 import importlib
 import importlib.util
 import logging
@@ -14,18 +14,90 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal._core.system_detector import HardwareCapabilities
 logger = logging.getLogger(__name__)
 _MAX_CACHE_SIZE = 128
 _MAX_STATS_MISSED = 100
-_ALLOWED_LAZY_MODULES: frozenset[str] = frozenset({'os', 'json', 'time', 're', 'sys', 'logging', 'asyncio', 'threading', 'pathlib', 'functools', 'collections', 'copy', 'inspect', 'traceback', 'warnings', 'weakref', 'types', 'gc', 'io', 'abc', 'contextlib', 'mlx', 'mlx.core', 'mlx_lm', 'numpy', 'pandas', 'scipy', 'aiohttp', 'httpx', 'curl_cffi', 'requests', 'duckdb', 'lancedb', 'lmdb', 'sqlite3', 'igraph', 'orjson', 'msgspec', 'pydantic', 'cryptography', 'hashlib', 'hmac', 'secrets', 'nodriver', 'playwright', 'arxiv', 'openalex', 'unpaywall', 'core', 'torch', 'transformers', 'sentence_transformers', 'zstandard', 'zlib', 'gzip', 'bz2', 'lz4', 'psutil', 'yara_python', 'hledac.universal', 'hledac.universal.brain', 'hledac.universal.knowledge', 'hledac.universal.fetching', 'hledac.universal.discovery', 'hledac.universal.coordinators'})
+_ALLOWED_LAZY_MODULES: frozenset[str] = frozenset(
+    {
+        "os",
+        "json",
+        "time",
+        "re",
+        "sys",
+        "logging",
+        "asyncio",
+        "threading",
+        "pathlib",
+        "functools",
+        "collections",
+        "copy",
+        "inspect",
+        "traceback",
+        "warnings",
+        "weakref",
+        "types",
+        "gc",
+        "io",
+        "abc",
+        "contextlib",
+        "mlx",
+        "mlx.core",
+        "mlx_lm",
+        "numpy",
+        "pandas",
+        "scipy",
+        "aiohttp",
+        "httpx",
+        "curl_cffi",
+        "requests",
+        "duckdb",
+        "lancedb",
+        "lmdb",
+        "sqlite3",
+        "igraph",
+        "orjson",
+        "msgspec",
+        "pydantic",
+        "cryptography",
+        "hashlib",
+        "hmac",
+        "secrets",
+        "nodriver",
+        "playwright",
+        "arxiv",
+        "openalex",
+        "unpaywall",
+        "core",
+        "torch",
+        "transformers",
+        "sentence_transformers",
+        "zstandard",
+        "zlib",
+        "gzip",
+        "bz2",
+        "lz4",
+        "psutil",
+        "yara_python",
+        "hledac.universal",
+        "hledac.universal.brain",
+        "hledac.universal.knowledge",
+        "hledac.universal.fetching",
+        "hledac.universal.discovery",
+        "hledac.universal.coordinators",
+    }
+)
+
 
 def _validate_lazy_module(name: str) -> None:
     """Validate module name against whitelist. Raises ImportError if not allowed."""
     if name not in _ALLOWED_LAZY_MODULES:
-        raise ImportError(f"Module '{name}' not in whitelist. Dynamic module loading requires explicit allowlisting. Allowed modules: {(sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES')}")
+        raise ImportError(
+            f"Module '{name}' not in whitelist. Dynamic module loading requires explicit allowlisting. Allowed modules: {(sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES')}"
+        )
+
 
 class _LazyModule:
     """
@@ -52,10 +124,11 @@ class _LazyModule:
         for m in heavy_modules:
             await m.ensure_loaded()
     """
-    _cache: dict[str, Any] = {}
-    __slots__ = tuple(('_load_error', '_module', '_name'))
 
-    def __init__(self, name: str):
+    _cache: dict[str, Any] = {}
+    __slots__ = ("_load_error", "_module", "_name")
+
+    def __init__(self, name: str) -> None:
         self._name = name
         self._module: Any | None = None
         self._load_error: Exception | None = None
@@ -107,14 +180,16 @@ class _LazyModule:
                 self._load_error = e
                 _LazyModule._cache[self._name] = None
 
+
 class CapabilityProber:
     """Enhanced capability prober with sync/async methods and hardware detection."""
-    __slots__ = tuple(('_cache', '_cache_max', '_stats'))
 
-    def __init__(self):
+    __slots__ = ("_cache", "_cache_max", "_stats")
+
+    def __init__(self) -> None:
         self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_max = _MAX_CACHE_SIZE
-        self._stats: dict[str, Any] = {'hits': 0, 'misses': 0, 'missed_modules': deque()}
+        self._stats: dict[str, Any] = {"hits": 0, "misses": 0, "missed_modules": deque()}
 
     def has_module(self, name: str) -> bool:
         """
@@ -123,27 +198,27 @@ class CapabilityProber:
         For internal modules always use full prefix hledac.universal.
         """
         if name in self._cache:
-            self._stats['hits'] += 1
+            self._stats["hits"] += 1
             self._cache.move_to_end(name)
             return self._cache[name]
         try:
             spec = importlib.util.find_spec(name)
-        except (ModuleNotFoundError, ValueError):
+        except ModuleNotFoundError, ValueError:
             spec = None
         exists = spec is not None
         self._cache[name] = exists
         if not exists:
-            self._stats['misses'] += 1
-            self._stats['missed_modules'].append(name)
-            if len(self._stats['missed_modules']) > _MAX_STATS_MISSED:
-                self._stats['missed_modules'].popleft()
+            self._stats["misses"] += 1
+            self._stats["missed_modules"].append(name)
+            if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:
+                self._stats["missed_modules"].popleft()
         else:
-            self._stats['hits'] += 1
+            self._stats["hits"] += 1
         if len(self._cache) > self._cache_max:
             self._cache.popitem(last=False)
         return exists
 
-    async def aget_module(self, name: str, timeout: float=2.0):
+    async def aget_module(self, name: str, timeout: float = 2.0):
         """
         Asynchronous – import in executor with timeout.
         name must be fully qualified.
@@ -153,14 +228,14 @@ class CapabilityProber:
             async with asyncio.timeout(timeout):
                 module = await asyncio.to_thread(importlib.import_module, name)
             return module
-        except (TimeoutError, ImportError):
-            self._stats['misses'] += 1
-            self._stats['missed_modules'].append(name)
-            if len(self._stats['missed_modules']) > _MAX_STATS_MISSED:
-                self._stats['missed_modules'].popleft()
+        except TimeoutError, ImportError:
+            self._stats["misses"] += 1
+            self._stats["missed_modules"].append(name)
+            if len(self._stats["missed_modules"]) > _MAX_STATS_MISSED:
+                self._stats["missed_modules"].popleft()
             return None
 
-    async def aget_class(self, module_name: str, class_name: str, timeout: float=2.0):
+    async def aget_class(self, module_name: str, class_name: str, timeout: float = 2.0):
         """Asynchronously loads class from module."""
         module = await self.aget_module(module_name, timeout=timeout)
         if module is None:
@@ -181,17 +256,18 @@ class CapabilityProber:
         except ImportError:
             return None
 
-    def require(self, name: str, reason: str):
+    def require(self, name: str, reason: str) -> None:
         """Raises ImportError if module is not available."""
         if not self.has_module(name):
-            raise ImportError(f'{reason}: missing {name}')
+            raise ImportError(f"{reason}: missing {name}")
 
     @cached_property
     def has_ane(self) -> bool:
         """Detects ANE (Apple Neural Engine) availability - lazy, cached."""
         try:
             import mlx.core as mx
-            return hasattr(mx.metal, 'get_ane_utilization')
+
+            return hasattr(mx.metal, "get_ane_utilization")
         except ImportError:
             return False
 
@@ -200,18 +276,20 @@ class CapabilityProber:
         """Detects Metal (GPU) availability via MLX - lazy, cached."""
         try:
             import mlx.core as mx
+
             return mx.metal.is_available()
         except ImportError:
             return False
 
     @cached_property
-    def hardware_capabilities(self) -> 'HardwareCapabilities':
+    def hardware_capabilities(self) -> HardwareCapabilities:
         """
         Get hardware capabilities from SystemDetector.
 
         Lazy import to avoid circular dependencies.
         """
         from hledac.universal._core.system_detector import get_hardware_capabilities
+
         return get_hardware_capabilities()
 
     @cached_property
@@ -238,12 +316,22 @@ class CapabilityProber:
         """
         Returns copy of statistics (no modification, no blocking operations).
         """
-        return {'hits': self._stats['hits'], 'misses': self._stats['misses'], 'missed_modules': list(self._stats['missed_modules']), 'cache_size': len(self._cache), 'has_ane': self.has_ane, 'has_metal': self.has_metal}
+        return {
+            "hits": self._stats["hits"],
+            "misses": self._stats["misses"],
+            "missed_modules": list(self._stats["missed_modules"]),
+            "cache_size": len(self._cache),
+            "has_ane": self.has_ane,
+            "has_metal": self.has_metal,
+        }
 
     def clear_cache(self) -> None:
         """Clear the capability cache."""
         self._cache.clear()
+
+
 _PROBER: CapabilityProber | None = None
+
 
 def get_prober() -> CapabilityProber:
     """Returns global CapabilityProber singleton."""
@@ -252,7 +340,8 @@ def get_prober() -> CapabilityProber:
         _PROBER = CapabilityProber()
     return _PROBER
 
-def probe_import(module: str, attr: str | None=None) -> Any:
+
+def probe_import(module: str, attr: str | None = None) -> Any:
     """
     Probe if a module/attribute is importable.
     DEPRECATED: Use CapabilityProber.has_module() instead.
@@ -268,23 +357,26 @@ def probe_import(module: str, attr: str | None=None) -> Any:
     except ImportError:
         return None
 
+
 def probe_call(fn: Callable, *args, **kwargs) -> Any:
     """Probe if a callable succeeds. DEPRECATED: Use try/except directly."""
     try:
         return fn(*args, **kwargs)
     except Exception as e:
-        fn_name = getattr(fn, '__name__', None) or repr(fn)
-        logger.debug(f'Probe call failed: {fn_name}: {e}')
+        fn_name = getattr(fn, "__name__", None) or repr(fn)
+        logger.debug(f"Probe call failed: {fn_name}: {e}")
         return None
+
 
 def clear_cache() -> None:
     """Clear the capability cache. DEPRECATED: Use prober.clear_cache()."""
     if _PROBER:
         _PROBER.clear_cache()
 
+
 def get_cache_stats() -> dict[str, int]:
     """Get cache statistics. DEPRECATED: Use prober.stats()."""
     if _PROBER:
         s = _PROBER.stats()
-        return {'size': s['cache_size'], 'max_size': _MAX_CACHE_SIZE}
-    return {'size': 0, 'max_size': _MAX_CACHE_SIZE}
+        return {"size": s["cache_size"], "max_size": _MAX_CACHE_SIZE}
+    return {"size": 0, "max_size": _MAX_CACHE_SIZE}

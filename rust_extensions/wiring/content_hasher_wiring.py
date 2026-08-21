@@ -50,25 +50,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _content_hasher_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "content_hasher")
     and getattr(_rust_backend, "content_hasher", None) is not None
 )
 
-# Get module reference
 _content_hasher = getattr(_rust_backend, "content_hasher", None) if _content_hasher_available else None
-
-
-# =============================================================================
-# Hashing Functions
-# =============================================================================
-
 
 def sha256_hex(data: bytes) -> str:
     """
@@ -98,7 +89,6 @@ def sha256_hex(data: bytes) -> str:
 
     return hashlib.sha256(data).hexdigest()
 
-
 def blake3_64(data: bytes) -> str:
     """
     Compute 64-bit BLAKE3 fingerprint as 16-character hex.
@@ -125,7 +115,6 @@ def blake3_64(data: bytes) -> str:
     # Python fallback
     return _python_blake3_64(data)
 
-
 def _python_blake3_64(data: bytes) -> str:
     """Pure Python BLAKE3-64 fallback using blake3 package."""
     try:
@@ -139,7 +128,6 @@ def _python_blake3_64(data: bytes) -> str:
 
         h = hashlib.sha256(data).digest()
         return h[:8].hex()
-
 
 def blake3_hex(data: bytes) -> str:
     """
@@ -173,7 +161,6 @@ def blake3_hex(data: bytes) -> str:
 
         return hashlib.sha256(data).hexdigest()
 
-
 def xxh3_64_hex(data: bytes) -> str:
     """
     Compute xxh3-64 fingerprint as 16-character hex.
@@ -206,7 +193,6 @@ def xxh3_64_hex(data: bytes) -> str:
 
         return hashlib.sha256(data).digest()[:8].hex()
 
-
 def batch_xxh3_64_hex(items: list[bytes]) -> list[str]:
     """
     Parallel batch xxh3-64 hashing via rayon.
@@ -232,7 +218,6 @@ def batch_xxh3_64_hex(items: list[bytes]) -> list[str]:
     # Python fallback
     return [_python_xxh3_64_hex(item) for item in items]
 
-
 def _python_xxh3_64_hex(data: bytes) -> str:
     """Pure Python xxh3-64 fallback."""
     try:
@@ -243,7 +228,6 @@ def _python_xxh3_64_hex(data: bytes) -> str:
         import hashlib
 
         return hashlib.sha256(data).digest()[:8].hex()
-
 
 def batch_blake3_64(items: list[bytes]) -> list[str]:
     """
@@ -265,7 +249,6 @@ def batch_blake3_64(items: list[bytes]) -> list[str]:
 
     # Python fallback
     return [_python_blake3_64(item) for item in items]
-
 
 def batch_sha256_hex(items: list[bytes]) -> list[str]:
     """
@@ -294,7 +277,6 @@ def batch_sha256_hex(items: list[bytes]) -> list[str]:
     import hashlib
     return [hashlib.sha256(item).hexdigest() for item in items]
 
-
 def batch_blake3_hex(items: list[bytes]) -> list[str]:
     """
     Parallel batch BLAKE3 (full 256-bit) hashing via rayon.
@@ -321,7 +303,6 @@ def batch_blake3_hex(items: list[bytes]) -> list[str]:
     # Python fallback
     return [_python_blake3_hex(item) for item in items]
 
-
 def _python_blake3_hex(data: bytes) -> str:
     """Pure Python BLAKE3-256 fallback."""
     try:
@@ -331,15 +312,9 @@ def _python_blake3_hex(data: bytes) -> str:
         import hashlib
         return hashlib.sha256(data).hexdigest()
 
-
 def content_hasher_available() -> bool:
     """Check if Rust content hasher is available."""
     return _content_hasher_available
-
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     "sha256_hex",

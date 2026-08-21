@@ -12,11 +12,10 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .analytics_protocol import AnalyticsProtocol
 from .stix_protocol import StixProtocol
-from _core import aclose
 
 if TYPE_CHECKING:
     # Avoid circular import at runtime — protocols are only used for type checking

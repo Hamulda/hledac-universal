@@ -22,29 +22,46 @@ M1 8GB Optimized:
 - Memory-efficient pattern matching
 - Lazy loading of heavy content
 """
+
 import logging
 import math
 import re
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
+from operator import attrgetter
 from pathlib import Path
 from typing import Any
-from operator import attrgetter, itemgetter
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
-MAGIC_BYTES = {'jpeg': (b'\xff\xd8\xff',), 'png': (b'\x89PNG\r\n\x1a\n',), 'pdf': (b'%PDF',), 'zip': (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'), 'pcap': (b'\xa1\xb2\xc3\xd4', b'\xd4\xc3\xb2\xa1'), 'gif': (b'GIF87a', b'GIF89a'), 'bmp': (b'BM',), 'tiff': (b'II*\x00', b'MM\x00*'), 'webp': (b'RIFF',), 'mp3': (b'ID3', b'\xff\xfb', b'\xff\xf3', b'\xff\xf2'), 'wav': (b'RIFF',), 'mp4': (b'ftyp',), 'elf': (b'\x7fELF',), 'macho': (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')}
-HASH_PATTERN = '\\b[0-9a-fA-F]{32,128}\\b'
-BASE64_PATTERN = '[A-Za-z0-9+/]{20,}={0,2}'
+MAGIC_BYTES = {
+    "jpeg": (b"\xff\xd8\xff",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "pdf": (b"%PDF",),
+    "zip": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+    "pcap": (b"\xa1\xb2\xc3\xd4", b"\xd4\xc3\xb2\xa1"),
+    "gif": (b"GIF87a", b"GIF89a"),
+    "bmp": (b"BM",),
+    "tiff": (b"II*\x00", b"MM\x00*"),
+    "webp": (b"RIFF",),
+    "mp3": (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"),
+    "wav": (b"RIFF",),
+    "mp4": (b"ftyp",),
+    "elf": (b"\x7fELF",),
+    "macho": (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe"),
+}
+HASH_PATTERN = "\\b[0-9a-fA-F]{32,128}\\b"
+BASE64_PATTERN = "[A-Za-z0-9+/]{20,}={0,2}"
 URL_PATTERN = 'https?://[^\\s<>\\"{}|\\\\^`\\[\\]]+'
-IP_PATTERN = '\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b'
-EMAIL_PATTERN = '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b'
-ZERO_WIDTH_PATTERN = '[\\u200B\\u200C\\u200D\\uFEFF]'
-DOMAIN_PATTERN = '\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b'
-MAC_ADDRESS_PATTERN = '\\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b'
-UUID_PATTERN = '\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b'
-CREDIT_CARD_PATTERN = '\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b'
-PHONE_PATTERN = '\\b(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b'
+IP_PATTERN = "\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b"
+EMAIL_PATTERN = "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+ZERO_WIDTH_PATTERN = "[\\u200B\\u200C\\u200D\\uFEFF]"
+DOMAIN_PATTERN = "\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b"
+MAC_ADDRESS_PATTERN = "\\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b"
+UUID_PATTERN = "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"
+CREDIT_CARD_PATTERN = "\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b"
+PHONE_PATTERN = "\\b(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b"
+
 
 class Pattern(Struct):
     """Represents a detected pattern in input data.
@@ -55,10 +72,12 @@ class Pattern(Struct):
         confidence: Confidence score (0.0-1.0)
         preview: Preview of the matched content
     """
+
     pattern_type: str
     location: int
     confidence: float
     preview: str
+
 
 class ComplexityScore(Struct, frozen=True):
     """Complexity analysis for input data.
@@ -68,13 +87,15 @@ class ComplexityScore(Struct, frozen=True):
         factors: Dictionary of complexity factors and their scores
         estimated_analysis_time: Estimated time for analysis in seconds
     """
+
     level: str
     factors: dict[str, float] = field(default_factory=dict)
     estimated_analysis_time: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {'level': self.level, 'factors': self.factors, 'estimated_analysis_time': self.estimated_analysis_time}
+        return {"level": self.level, "factors": self.factors, "estimated_analysis_time": self.estimated_analysis_time}
+
 
 class InputAnalysis(Struct, frozen=True):
     """Complete input analysis result.
@@ -90,9 +111,10 @@ class InputAnalysis(Struct, frozen=True):
         size_bytes: Size of input in bytes
         entropy: Shannon entropy of content
     """
+
     input_type: str
     file_type: str | None = None
-    content_type: str = 'unknown'
+    content_type: str = "unknown"
     patterns: list[Pattern] = field(default_factory=list)
     complexity: ComplexityScore | None = None
     recommendations: list[str] = field(default_factory=list)
@@ -102,7 +124,26 @@ class InputAnalysis(Struct, frozen=True):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {'input_type': self.input_type, 'file_type': self.file_type, 'content_type': self.content_type, 'patterns': [{'pattern_type': p.pattern_type, 'location': p.location, 'confidence': p.confidence, 'preview': p.preview} for p in self.patterns], 'complexity': self.complexity.to_dict() if self.complexity else None, 'recommendations': self.recommendations, 'encoding': self.encoding, 'size_bytes': self.size_bytes, 'entropy': self.entropy}
+        return {
+            "input_type": self.input_type,
+            "file_type": self.file_type,
+            "content_type": self.content_type,
+            "patterns": [
+                {
+                    "pattern_type": p.pattern_type,
+                    "location": p.location,
+                    "confidence": p.confidence,
+                    "preview": p.preview,
+                }
+                for p in self.patterns
+            ],
+            "complexity": self.complexity.to_dict() if self.complexity else None,
+            "recommendations": self.recommendations,
+            "encoding": self.encoding,
+            "size_bytes": self.size_bytes,
+            "entropy": self.entropy,
+        }
+
 
 class IntelligenceConfig(Struct, frozen=True):
     """Configuration for intelligent input detection.
@@ -117,6 +158,7 @@ class IntelligenceConfig(Struct, frozen=True):
         enable_encoding_detection: Enable encoding detection
         enable_complexity_analysis: Enable complexity scoring
     """
+
     max_file_size: int = 1073741824
     chunk_size: int = 1048576
     min_pattern_length: int = 8
@@ -125,6 +167,7 @@ class IntelligenceConfig(Struct, frozen=True):
     enable_pattern_scanning: bool = True
     enable_encoding_detection: bool = True
     enable_complexity_analysis: bool = True
+
 
 class IntelligentInputDetector:
     """Intelligent input detector for OSINT analysis.
@@ -150,17 +193,30 @@ class IntelligentInputDetector:
         for pattern in analysis.patterns:
             print(f"Found {pattern.pattern_type} at {pattern.location}")
     """
-    __slots__ = tuple(('_pattern_regexes', '_stats', 'config'))
 
-    def __init__(self, config: IntelligenceConfig | None=None):
+    __slots__ = ("_pattern_regexes", "_stats", "config")
+
+    def __init__(self, config: IntelligenceConfig | None = None) -> None:
         """Initialize the input detector.
 
         Args:
             config: Optional configuration object
         """
         self.config = config or IntelligenceConfig()
-        self._pattern_regexes: dict[str, re.Pattern] = {'hash': re.compile(HASH_PATTERN), 'base64': re.compile(BASE64_PATTERN), 'url': re.compile(URL_PATTERN), 'ip': re.compile(IP_PATTERN), 'email': re.compile(EMAIL_PATTERN), 'zero_width': re.compile(ZERO_WIDTH_PATTERN), 'domain': re.compile(DOMAIN_PATTERN), 'mac_address': re.compile(MAC_ADDRESS_PATTERN), 'uuid': re.compile(UUID_PATTERN), 'credit_card': re.compile(CREDIT_CARD_PATTERN), 'phone': re.compile(PHONE_PATTERN)}
-        self._stats: dict[str, int] = {'files_analyzed': 0, 'text_analyzed': 0, 'patterns_found': 0}
+        self._pattern_regexes: dict[str, re.Pattern] = {
+            "hash": re.compile(HASH_PATTERN),
+            "base64": re.compile(BASE64_PATTERN),
+            "url": re.compile(URL_PATTERN),
+            "ip": re.compile(IP_PATTERN),
+            "email": re.compile(EMAIL_PATTERN),
+            "zero_width": re.compile(ZERO_WIDTH_PATTERN),
+            "domain": re.compile(DOMAIN_PATTERN),
+            "mac_address": re.compile(MAC_ADDRESS_PATTERN),
+            "uuid": re.compile(UUID_PATTERN),
+            "credit_card": re.compile(CREDIT_CARD_PATTERN),
+            "phone": re.compile(PHONE_PATTERN),
+        }
+        self._stats: dict[str, int] = {"files_analyzed": 0, "text_analyzed": 0, "patterns_found": 0}
 
     async def detect(self, input_data: Any) -> InputAnalysis:
         """Detect and analyze input data.
@@ -183,8 +239,10 @@ class IntelligentInputDetector:
             else:
                 return await self._analyze_text(str(input_data))
         except Exception as e:
-            logger.error(f'Error analyzing input: {e}')
-            return InputAnalysis(input_type='error', content_type='unknown', recommendations=[f'Analysis failed: {str(e)}'])
+            logger.error(f"Error analyzing input: {e}")
+            return InputAnalysis(
+                input_type="error", content_type="unknown", recommendations=[f"Analysis failed: {str(e)}"]
+            )
 
     async def _analyze_file(self, file_path: str) -> InputAnalysis:
         """Analyze a file.
@@ -198,15 +256,20 @@ class IntelligentInputDetector:
         path = Path(file_path)
         size = path.stat().st_size
         if size > self.config.max_file_size:
-            return InputAnalysis(input_type='file', content_type='oversized', size_bytes=size, recommendations=[f'File exceeds maximum size: {size} bytes'])
-        with open(file_path, 'rb') as f:
+            return InputAnalysis(
+                input_type="file",
+                content_type="oversized",
+                size_bytes=size,
+                recommendations=[f"File exceeds maximum size: {size} bytes"],
+            )
+        with open(file_path, "rb") as f:
             content = f.read()
         file_type = self._detect_file_type_from_bytes(content)
         analysis = await self._analyze_bytes(content)
-        analysis.input_type = 'file'
+        analysis.input_type = "file"
         analysis.file_type = file_type
         analysis.size_bytes = size
-        self._stats['files_analyzed'] += 1
+        self._stats["files_analyzed"] += 1
         return analysis
 
     async def _analyze_bytes(self, content: bytes) -> InputAnalysis:
@@ -226,16 +289,16 @@ class IntelligentInputDetector:
         encoding = None
         if self.config.enable_encoding_detection:
             encoding = self._detect_encoding(content)
-        text_content = ''
+        text_content = ""
         if encoding:
             try:
-                text_content = content.decode(encoding, errors='ignore')
+                text_content = content.decode(encoding, errors="ignore")
             except Exception:  # noqa: BLE001
                 pass
         else:
-            for enc in ['utf-8', 'ascii', 'latin-1', 'cp1252']:
+            for enc in ["utf-8", "ascii", "latin-1", "cp1252"]:
                 try:
-                    text_content = content.decode(enc, errors='ignore')
+                    text_content = content.decode(enc, errors="ignore")
                     encoding = enc
                     break
                 except Exception:
@@ -246,8 +309,18 @@ class IntelligentInputDetector:
         if self.config.enable_complexity_analysis:
             complexity = self._estimate_complexity_from_content(content, text_content, patterns, entropy)
         recommendations = self._generate_recommendations(file_type, content_type, patterns, entropy, complexity)
-        self._stats['patterns_found'] += len(patterns)
-        return InputAnalysis(input_type='binary', file_type=file_type, content_type=content_type, patterns=patterns, complexity=complexity, recommendations=recommendations, encoding=encoding, size_bytes=size, entropy=entropy)
+        self._stats["patterns_found"] += len(patterns)
+        return InputAnalysis(
+            input_type="binary",
+            file_type=file_type,
+            content_type=content_type,
+            patterns=patterns,
+            complexity=complexity,
+            recommendations=recommendations,
+            encoding=encoding,
+            size_bytes=size,
+            entropy=entropy,
+        )
 
     async def _analyze_text(self, text: str) -> InputAnalysis:
         """Analyze text content.
@@ -258,7 +331,7 @@ class IntelligentInputDetector:
         Returns:
             InputAnalysis result
         """
-        content = text.encode('utf-8')
+        content = text.encode("utf-8")
         size = len(content)
         entropy = self._calculate_entropy(content)
         patterns: list[Pattern] = []
@@ -267,10 +340,19 @@ class IntelligentInputDetector:
         complexity = None
         if self.config.enable_complexity_analysis:
             complexity = self._estimate_complexity_from_content(content, text, patterns, entropy)
-        recommendations = self._generate_recommendations(None, 'text', patterns, entropy, complexity)
-        self._stats['text_analyzed'] += 1
-        self._stats['patterns_found'] += len(patterns)
-        return InputAnalysis(input_type='text', content_type='text', patterns=patterns, complexity=complexity, recommendations=recommendations, encoding='utf-8', size_bytes=size, entropy=entropy)
+        recommendations = self._generate_recommendations(None, "text", patterns, entropy, complexity)
+        self._stats["text_analyzed"] += 1
+        self._stats["patterns_found"] += len(patterns)
+        return InputAnalysis(
+            input_type="text",
+            content_type="text",
+            patterns=patterns,
+            complexity=complexity,
+            recommendations=recommendations,
+            encoding="utf-8",
+            size_bytes=size,
+            entropy=entropy,
+        )
 
     def _detect_file_type(self, file_path: str) -> str | None:
         """Detect file type from magic bytes.
@@ -282,11 +364,11 @@ class IntelligentInputDetector:
             File type string or None
         """
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 header = f.read(32)
             return self._detect_file_type_from_bytes(header)
         except Exception as e:
-            logger.error(f'Error detecting file type: {e}')
+            logger.error(f"Error detecting file type: {e}")
             return None
 
     def _check_magic_match(self, content: bytes, file_type: str, magic_list: tuple) -> str | None:
@@ -294,10 +376,10 @@ class IntelligentInputDetector:
         for magic in magic_list:
             if content.startswith(magic):
                 # Handle RIFF-based formats (webp, wav)
-                if file_type == 'webp' and b'WEBP' in content[:12]:
-                    return 'webp'
-                if file_type == 'wav' and b'WAVE' in content[:12]:
-                    return 'wav'
+                if file_type == "webp" and b"WEBP" in content[:12]:
+                    return "webp"
+                if file_type == "wav" and b"WAVE" in content[:12]:
+                    return "wav"
                 return file_type
         return None
 
@@ -327,20 +409,20 @@ class IntelligentInputDetector:
         Returns:
             Content type classification
         """
-        if b'\x00' in content[:1024]:
-            return 'binary'
-        printable_count = sum((1 for b in content[:1024] if 32 <= b <= 126 or b in (9, 10, 13)))
+        if b"\x00" in content[:1024]:
+            return "binary"
+        printable_count = sum(1 for b in content[:1024] if 32 <= b <= 126 or b in (9, 10, 13))
         if len(content[:1024]) > 0:
             ratio = printable_count / len(content[:1024])
             if ratio < 0.7:
-                return 'binary'
+                return "binary"
         try:
-            text = content.decode('utf-8', errors='strict')
+            text = content.decode("utf-8", errors="strict")
             if re.search(BASE64_PATTERN, text):
-                return 'encoded_text'
-            return 'text'
+                return "encoded_text"
+            return "text"
         except UnicodeDecodeError:
-            return 'binary'
+            return "binary"
 
     def _scan_for_patterns(self, content: str) -> list[Pattern]:
         """Scan content for patterns.
@@ -360,21 +442,23 @@ class IntelligentInputDetector:
                 confidence = self._calculate_pattern_confidence(pattern_type, matched_text)
                 preview = matched_text[:50]
                 if len(matched_text) > 50:
-                    preview += '...'
-                patterns.append(Pattern(pattern_type=pattern_type, location=match.start(), confidence=confidence, preview=preview))
+                    preview += "..."
+                patterns.append(
+                    Pattern(pattern_type=pattern_type, location=match.start(), confidence=confidence, preview=preview)
+                )
         patterns.sort(key=attrgetter("location"))
         return patterns
 
     def _calculate_pattern_confidence(self, pattern_type: str, match: str) -> float:
         """Calculate confidence score for a pattern match."""
         calculators = {
-            'hash': self._hash_confidence,
-            'base64': self._base64_confidence,
-            'ip': self._ip_confidence,
-            'email': self._email_confidence,
-            'url': self._url_confidence,
-            'uuid': lambda _: 0.95,
-            'mac_address': self._mac_confidence,
+            "hash": self._hash_confidence,
+            "base64": self._base64_confidence,
+            "ip": self._ip_confidence,
+            "email": self._email_confidence,
+            "url": self._url_confidence,
+            "uuid": lambda _: 0.95,
+            "mac_address": self._mac_confidence,
         }
         calculator = calculators.get(pattern_type, lambda _: 0.7)
         return min(max(calculator(match), 0.0), 1.0)
@@ -384,7 +468,7 @@ class IntelligentInputDetector:
         base = 0.7
         if len(match) in [32, 40, 64, 128]:
             base += 0.2
-        if re.match('^[0-9a-fA-F]+$', match):
+        if re.match("^[0-9a-fA-F]+$", match):
             base += 0.1
         return base
 
@@ -401,8 +485,8 @@ class IntelligentInputDetector:
         """Calculate confidence for IP address patterns."""
         base = 0.7
         try:
-            octets = match.split('.')
-            if all((0 <= int(o) <= 255 for o in octets)):
+            octets = match.split(".")
+            if all(0 <= int(o) <= 255 for o in octets):
                 base += 0.25
             else:
                 base -= 0.3
@@ -413,24 +497,24 @@ class IntelligentInputDetector:
     def _email_confidence(self, match: str) -> float:
         """Calculate confidence for email patterns."""
         base = 0.7
-        if '@' in match:
-            parts = match.split('@')
-            if len(parts) == 2 and '.' in parts[1]:
+        if "@" in match:
+            parts = match.split("@")
+            if len(parts) == 2 and "." in parts[1]:
                 base += 0.2
         return base
 
     def _url_confidence(self, match: str) -> float:
         """Calculate confidence for URL patterns."""
         base = 0.7
-        if '://' in match:
+        if "://" in match:
             base += 0.2
-        if match.startswith(('http://', 'https://')):
+        if match.startswith(("http://", "https://")):
             base += 0.1
         return base
 
     def _mac_confidence(self, match: str) -> float:
         """Calculate confidence for MAC address patterns."""
-        if re.match('^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$', match):
+        if re.match("^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$", match):
             return 0.9
         return 0.7
 
@@ -443,16 +527,16 @@ class IntelligentInputDetector:
         Returns:
             Detected encoding or None
         """
-        if content.startswith(b'\xef\xbb\xbf'):
-            return 'utf-8-sig'
-        elif content.startswith(b'\xff\xfe'):
-            return 'utf-16-le'
-        elif content.startswith(b'\xfe\xff'):
-            return 'utf-16-be'
-        encodings = ['utf-8', 'ascii', 'latin-1', 'cp1252', 'iso-8859-1']
+        if content.startswith(b"\xef\xbb\xbf"):
+            return "utf-8-sig"
+        elif content.startswith(b"\xff\xfe"):
+            return "utf-16-le"
+        elif content.startswith(b"\xfe\xff"):
+            return "utf-16-be"
+        encodings = ["utf-8", "ascii", "latin-1", "cp1252", "iso-8859-1"]
         for encoding in encodings:
             try:
-                content.decode(encoding, errors='strict')
+                content.decode(encoding, errors="strict")
                 return encoding
             except UnicodeDecodeError:
                 continue
@@ -467,7 +551,7 @@ class IntelligentInputDetector:
         Returns:
             ComplexityScore
         """
-        return ComplexityScore(level='medium', factors={}, estimated_analysis_time=1.0)
+        return ComplexityScore(level="medium", factors={}, estimated_analysis_time=1.0)
 
     def _score_size_factor(self, size: int) -> float:
         """Score file size complexity factor."""
@@ -503,20 +587,22 @@ class IntelligentInputDetector:
 
     def _score_binary_content(self, content: bytes) -> float:
         """Check for binary content presence."""
-        return 0.4 if b'\x00' in content[:1024] else 0.0
+        return 0.4 if b"\x00" in content[:1024] else 0.0
 
-    def _estimate_complexity_from_content(self, content: bytes, text_content: str, patterns: list[Pattern], entropy: float) -> ComplexityScore:
+    def _estimate_complexity_from_content(
+        self, content: bytes, text_content: str, patterns: list[Pattern], entropy: float
+    ) -> ComplexityScore:
         """Estimate complexity from content analysis."""
         size = len(content)
         pattern_count = len(patterns)
         unique_types = len({p.pattern_type for p in patterns})
 
         factors: dict[str, float] = {
-            'size': self._score_size_factor(size),
-            'entropy': self._score_entropy_factor(entropy),
-            'patterns': self._score_pattern_factor(pattern_count),
-            'pattern_diversity': min(unique_types * 0.15, 0.6),
-            'binary_content': self._score_binary_content(content),
+            "size": self._score_size_factor(size),
+            "entropy": self._score_entropy_factor(entropy),
+            "patterns": self._score_pattern_factor(pattern_count),
+            "pattern_diversity": min(unique_types * 0.15, 0.6),
+            "binary_content": self._score_binary_content(content),
         }
 
         total_score = sum(factors.values())
@@ -531,12 +617,12 @@ class IntelligentInputDetector:
     def _get_complexity_level(self, avg_score: float) -> tuple[str, float]:
         """Map average score to complexity level and base time."""
         if avg_score < 0.25:
-            return 'low', 0.5
+            return "low", 0.5
         elif avg_score < 0.5:
-            return 'medium', 1.0
+            return "medium", 1.0
         elif avg_score < 0.75:
-            return 'high', 3.0
-        return 'critical', 10.0
+            return "high", 3.0
+        return "critical", 10.0
 
     def _calculate_entropy(self, data: bytes) -> float:
         """Calculate Shannon entropy of data.
@@ -560,7 +646,14 @@ class IntelligentInputDetector:
                 entropy -= p * math.log2(p)
         return entropy
 
-    def _generate_recommendations(self, file_type: str | None, content_type: str, patterns: list[Pattern], entropy: float, complexity: ComplexityScore | None) -> list[str]:
+    def _generate_recommendations(
+        self,
+        file_type: str | None,
+        content_type: str,
+        patterns: list[Pattern],
+        entropy: float,
+        complexity: ComplexityScore | None,
+    ) -> list[str]:
         """Generate analysis recommendations.
 
         Args:
@@ -594,7 +687,8 @@ class IntelligentInputDetector:
         for key in self._stats:
             self._stats[key] = 0
 
-def create_input_detector(config: IntelligenceConfig | None=None) -> IntelligentInputDetector:
+
+def create_input_detector(config: IntelligenceConfig | None = None) -> IntelligentInputDetector:
     """Create a configured IntelligentInputDetector instance.
 
     Args:
@@ -611,7 +705,8 @@ def create_input_detector(config: IntelligenceConfig | None=None) -> Intelligent
     """
     return IntelligentInputDetector(config)
 
-async def analyze_input(input_data: Any, config: IntelligenceConfig | None=None) -> InputAnalysis:
+
+async def analyze_input(input_data: Any, config: IntelligenceConfig | None = None) -> InputAnalysis:
     """Convenience function to analyze input data.
 
     Args:
@@ -623,6 +718,7 @@ async def analyze_input(input_data: Any, config: IntelligenceConfig | None=None)
     """
     detector = create_input_detector(config)
     return await detector.detect(input_data)
+
 
 async def detect_file_type(file_path: str) -> str | None:
     """Convenience function to detect file type.

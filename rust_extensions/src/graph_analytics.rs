@@ -22,10 +22,6 @@ use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Maximum number of nodes to prevent OOM on M1 8GB.
 /// Each node uses ~100-200 bytes for string ID + graph overhead.
 /// 100k nodes ≈ 20MB graph structure + string storage.
@@ -49,10 +45,6 @@ const LOUVAIN_RESOLUTION: f64 = 1.0;
 /// Maximum iterations for Louvain algorithm.
 const LOUVAIN_MAX_ITER: usize = 100;
 
-// ---------------------------------------------------------------------------
-// Data Structures
-// ---------------------------------------------------------------------------
-
 /// Node in the IOC graph.
 #[derive(Debug, Clone)]
 struct IOCNode {
@@ -65,10 +57,6 @@ struct IOCNode {
 struct IOCEdge {
     weight: f64,
 }
-
-// ---------------------------------------------------------------------------
-// Graph Construction
-// ---------------------------------------------------------------------------
 
 /// Build a petgraph UnGraph from IOC data.
 ///
@@ -96,7 +84,6 @@ fn build_graph(
     // Add edges
     for (from, to, weight) in edges {
         if let (Some(&from_idx), Some(&to_idx)) = (node_indices.get(from), node_indices.get(to)) {
-            // Check degree limits
             let from_degree = graph.edges(from_idx).count();
             let to_degree = graph.edges(to_idx).count();
             if from_degree < MAX_EDGES_PER_NODE && to_degree < MAX_EDGES_PER_NODE {
@@ -164,10 +151,6 @@ fn build_undirected_graph(
     (node_indices, graph)
 }
 
-// ---------------------------------------------------------------------------
-// Louvain Community Detection
-// ---------------------------------------------------------------------------
-
 /// Louvain community detection algorithm.
 ///
 /// This is a simplified implementation of the Louvain algorithm for community
@@ -190,7 +173,6 @@ fn louvain_communities_impl(
         return HashMap::new();
     }
 
-    // Initialize: each node in its own community
     let mut community: HashMap<NodeIndex, u32> = graph
         .node_indices()
         .enumerate()
@@ -228,7 +210,6 @@ fn louvain_communities_impl(
             let mut best_comm = current_comm;
             let mut best_gain = 0.0;
 
-            // Get communities of neighbors
             let neighbor_communities: HashSet<u32> =
                 neighbors.iter().map(|&n| community[&n]).collect();
 
@@ -251,7 +232,6 @@ fn louvain_communities_impl(
                 let delta_q =
                     (sum_to_comm - resolution * k_i_val * comm_weight / (2.0 * m)) / (2.0 * m);
 
-
                 if delta_q > best_gain {
                     best_gain = delta_q;
                     best_comm = comm;
@@ -262,8 +242,6 @@ fn louvain_communities_impl(
                 // Move node to new community
                 community.insert(idx, best_comm);
 
-
-                // Update community weights
                 *community_weights.entry(current_comm).or_insert(0.0) -= k_i_val;
                 *community_weights.entry(best_comm).or_insert(0.0) += k_i_val;
 
@@ -293,10 +271,6 @@ fn louvain_communities_impl(
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Python-Callable Functions
-// ---------------------------------------------------------------------------
-
 /// Compute PageRank for an IOC graph.
 ///
 /// Args:
@@ -320,7 +294,6 @@ pub fn rust_pagerank<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let (node_indices, graph) = build_graph(&nodes, &edges);
 
-
     let n = graph.node_indices().count();
     if n == 0 {
         return Ok(PyDict::new(py));
@@ -335,7 +308,6 @@ pub fn rust_pagerank<'py>(
         let tol = tol.max(1e-10);
 
         let max_iter = max_iter.min(PAGERANK_MAX_ITER);
-
 
         // Convert to static graph for petgraph
         let n_usize = n;
@@ -382,7 +354,6 @@ pub fn rust_pagerank<'py>(
                 .zip(new_pr.iter())
                 .map(|(a, b)| (a - b).abs())
                 .sum::<f64>();
-
 
             // Normalize new_pr in-place
             let sum: f64 = new_pr.iter().sum::<f64>();
@@ -447,9 +418,7 @@ pub fn rust_louvain_communities<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let (node_indices, graph) = build_undirected_graph(&nodes, &edges);
 
-
     let communities = louvain_communities_impl(&node_indices, &graph, resolution, max_iter);
-
 
     let result = PyDict::new(py);
 
@@ -479,7 +448,6 @@ pub fn rust_scc<'py>(
     let (node_indices, graph) = build_graph(&nodes, &edges);
 
     let sccs = compute_scc_impl(&node_indices, &graph);
-
 
     let result = PyList::empty(py);
 
@@ -516,8 +484,6 @@ pub fn rust_graph_analytics_all<'py>(
 
     let (node_indices_undir, graph_undir) = build_undirected_graph(&nodes, &edges);
 
-
-    // Build undirected adjacency list ONCE for PageRank
     let n = node_indices.len();
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for (from, to, weight) in &edges {
@@ -536,7 +502,6 @@ pub fn rust_graph_analytics_all<'py>(
     // PageRank via shared helper (no clone)
     let pr_scores = compute_pagerank_on_adj(&adj, damping, PAGERANK_TOLERANCE, PAGERANK_MAX_ITER);
 
-
     // Louvain on undirected graph
     let communities = louvain_communities_impl(
         &node_indices_undir,
@@ -547,7 +512,6 @@ pub fn rust_graph_analytics_all<'py>(
 
     // SCC on directed graph
     let sccs = compute_scc_impl(&node_indices, &graph_dir);
-
 
     // Build index->node_id mapping for PageRank result
     let mut index_to_id: Vec<u64> = vec![0; n];
@@ -590,13 +554,8 @@ pub fn rust_graph_analytics_all<'py>(
 
     let _ = result.set_item("scc", py_scc);
 
-
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// Helpers for rust_graph_analytics_all (avoid 4× clone)
-// ---------------------------------------------------------------------------
 
 /// Compute PageRank on a pre-built undirected adjacency list.
 fn compute_pagerank_on_adj(
@@ -688,7 +647,6 @@ fn compute_scc_impl(
 
     let sccs: Vec<Vec<NodeIndex>> = kosaraju_scc(&pet_graph);
 
-
     let reverse_map: HashMap<NodeIndex, u64> = idx_map
         .iter()
         .map(|(&k, &v)| (v, k.index() as u64))
@@ -717,10 +675,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rust_graph_analytics_all))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

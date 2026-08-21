@@ -16,11 +16,10 @@ Always-on, fail-safe, bounded.
 Author: Issue #22
 """
 
-
 from .ring_mmap_ipc import (
-    RingMMapIPC,
     RingMMap,
     RingMMapChannel,
+    RingMMapIPC,
     run_worker,
 )
 

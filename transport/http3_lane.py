@@ -87,15 +87,16 @@ import functools
 import logging
 import sys
 import time
-from hledac.universal.utils.lru_cache import LRUCache
 from typing import Any
 from urllib.parse import urlparse
+
+from hledac.universal.utils.lru_cache import LRUCache
 
 logger = logging.getLogger(__name__)
 
 # F270: Canonical constants — single source of truth for M1 8GB bounds
-from hledac.universal._core.constants import M1_BOUNDS  # noqa: E402
-from hledac.universal._core.env_config import ENV  # noqa: E402
+from hledac.universal._core.constants import M1_BOUNDS
+from hledac.universal._core.env_config import ENV
 from hledac.universal.utils.asyncx import safe_wait_for
 
 # Backward-compatible local aliases (these names are used throughout the module)
@@ -111,9 +112,6 @@ _H3_RSS_PROBE_TIMEOUT_S: float = M1_BOUNDS().rss_probe_timeout_s
 from hledac.universal._core.psutil_shim import process as _psutil_proc
 
 
-# ---------------------------------------------------------------------------
-# Env-gate resolution (project convention: HLEDAC_ENABLE_<LANE>).
-# ---------------------------------------------------------------------------
 def _resolve_enabled() -> bool:
     """Resolve HTTP/3 gate. Default ON (opt-out); set ``HLEDAC_ENABLE_HTTPX_H3=0`` to disable.
     ``HLEDAC_HTTP3=1`` (legacy F260 alias) is honored for back-compat.
@@ -134,8 +132,8 @@ _lru_cache: LRUCache[str, tuple[float, bool]] = LRUCache(max_size=_H3_CACHE_MAX)
 _semaphore: asyncio.Semaphore | None = None
 # PATCH 4: throttle speculative Alt-Svc probes (max 16 concurrent via _probe_semaphore)
 # Uses ConcurrencyCategory.HTTP_LANE from concurrency_registry (shared semaphore).
-from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore  # noqa: E402
 from _core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 
 _probe_semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.HTTP_LANE)
 _neqo_checked: bool = False
@@ -180,9 +178,6 @@ async def shutdown_probe_tasks() -> None:
     _stats["http3_probe_shutdowns"] = _stats.get("http3_probe_shutdowns", 0) + 1
 
 
-# ---------------------------------------------------------------------------
-# Telemetry (small, bounded, no I/O; safe to read in tight loops).
-# ---------------------------------------------------------------------------
 _stats: dict[str, int] = {
     "enabled": 1 if _ENABLED else 0,
     "altsvc_hits": 0,
@@ -225,9 +220,6 @@ def reset_stats() -> None:
             _stats[k] = 0
 
 
-# ---------------------------------------------------------------------------
-# Memory guard (M1 8GB envelope: 5.5 GiB soft cap).
-# ---------------------------------------------------------------------------
 def _rss_over_budget() -> bool:
     """Return True if the process RSS exceeds the M1 8GB mission budget.
 
@@ -255,9 +247,6 @@ def _rss_over_budget() -> bool:
     return gib > _H3_RSS_BLOCK_GIB
 
 
-# ---------------------------------------------------------------------------
-# Alt-Svc cache (bounded LRU).
-# ---------------------------------------------------------------------------
 def _cache_get(host: str) -> bool | None:
     """Return cached H3 support for ``host`` (sliding-window TTL), or ``None`` on miss.
 
@@ -357,9 +346,6 @@ def extract_host(url: str) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Dark web URL detection.
-# ---------------------------------------------------------------------------
 _DARK_WEB_TLDS: frozenset[str] = frozenset({".onion", ".i2p", ".b32.i2p"})
 
 
@@ -373,15 +359,13 @@ def is_dark_web_url(url: str) -> bool:
     """
     try:
         from hledac.universal.transport.transport_router import TransportRouter
+
         kind, host = TransportRouter()._classify_url(url)
         return kind in ("onion", "i2p")
     except Exception:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Public API: opportunistic (curl_cffi HttpVersion.v3)
-# ---------------------------------------------------------------------------
 def http_version_for_curl_cffi(url: str) -> Any:
     """Return ``curl_cffi.requests.HttpVersion.v3`` if the host advertises h3
     and the lane is enabled, else ``None``.
@@ -409,7 +393,7 @@ def http_version_for_curl_cffi(url: str) -> Any:
     if not _probe_curl_cffi():
         return None
     try:
-        from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore
+        from curl_cffi.requests import HttpVersion as _HttpVersion
     except Exception:
         return None
     return _HttpVersion.v3
@@ -444,21 +428,6 @@ def record_h3_support(url: str, supports: bool) -> None:
     _cache_put(host, bool(supports))
 
 
-# ---------------------------------------------------------------------------
-# F265B: Speculative Alt-Svc probe (background, fire-and-forget).
-#
-# The opportunistic H3 path is reactive: the first fetch to a host
-# runs on HTTP/1.1 or HTTP/2, parses the Alt-Svc response header, and
-# only then can the SECOND fetch use ``HttpVersion.v3``. That means
-# single-shot sprints (most of them) never get the h3 win.
-#
-# Solution: when the public_fetcher sees a host for the first time
-# AND the H3 lane is enabled, fire a background HEAD probe to prime
-# the LRU. The probe is fully detached (asyncio.create_task); the
-# caller never blocks. The probe result is written into the same
-# LRU the reactive path uses, so the very next call to
-# ``http_version_for_curl_cffi`` for that host sees the cached True.
-# ---------------------------------------------------------------------------
 _HEAD_PROBE_TIMEOUT_S: float = 4.0  # bounded; M1 8GB friendly
 
 
@@ -502,13 +471,13 @@ async def _speculative_altsvc_probe_inner(url: str) -> None:
         # the live fetch session. The session is closed at the end
         # of the probe to avoid leaking connections.
         # F1 fix: lazy import — guarded by _probe_curl_cffi() at call site.
-        from curl_cffi.requests import AsyncSession  # type: ignore
+        from curl_cffi.requests import AsyncSession
 
         sess = AsyncSession(
             impersonate="chrome124",
             timeout=_HEAD_PROBE_TIMEOUT_S,
             max_clients=2,
-    )
+        )
         try:
             async with asyncio.timeout(_HEAD_PROBE_TIMEOUT_S + 1.0):
                 resp = await sess.head(url, timeout=_HEAD_PROBE_TIMEOUT_S)
@@ -571,7 +540,7 @@ def probe_altsvc_speculative(url: str) -> None:
         logger.debug("http3_lane: speculative probe dropped (at capacity) for %s", host)
         return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         # No event loop in this context. The probe simply does not
         # happen; the next reactive fetch will populate the LRU.
@@ -583,32 +552,11 @@ def probe_altsvc_speculative(url: str) -> None:
         task = safe_create_task(
             _guarded_probe(url),
             name=f"http3_lane:speculative_probe:{host}",
-    )
+        )
         _probe_tasks.add(task)
         task.add_done_callback(_probe_tasks.discard)
     except Exception as e:  # noqa: BLE001
         logger.debug("http3_lane: speculative probe scheduling failed: %s", e)
-
-
-# ---------------------------------------------------------------------------
-# neqo availability probe (F320: Rust-engine priority on M1 arm64).
-# ---------------------------------------------------------------------------
-#
-# ROOT CAUSE ANALYSIS (HTTP3-ISSUE-001):
-#   neqo (Mozilla's QUIC) is NOT on PyPI - this is why the TODO exists.
-#
-# BUT: The project has rust.quic.fetch() implemented in rust_extensions/src/quic.rs
-# using quinn + h3. This is wired into QuinnRustTransportAdapter below.
-#
-# HTTP/3 PRIORITY ORDER (M1 8GB RAM-aware):
-#   1. NwQuicTransportAdapter ✓ — Apple Network.framework (BEST on macOS arm64)
-#   2. QuinnRustTransportAdapter ✓ — Rust quinn + h3 via rust.quic.fetch()
-#   3. AioquicTransportAdapter   ~ — Python aioquic fallback (~50-80MB resident)
-#
-# PyPI 'quinn' package is NOT Mozilla's Quinn — it's "PySpark helper methods".
-#
-# Tracking: https://github.com/mozilla/neqo/issues (watch for neqo PyPI release)
-#
 
 
 # Rust quic availability state (cached after first probe)
@@ -634,6 +582,7 @@ def _probe_rust_quic() -> bool:
 
     try:
         import rust
+
         if hasattr(rust, "quic"):
             # Verify the fetch function exists
             if hasattr(rust.quic, "fetch"):
@@ -673,6 +622,7 @@ def _probe_quinn_rs() -> bool:
     # Try Quinn-Rs from GitHub
     try:
         import quinn_rs  # type: ignore[import-not-found]
+
         _neqo_available = True
         logger.info("http3_lane: Quinn-Rs available (Mozilla Quinn via GitHub)")
         return True
@@ -681,8 +631,6 @@ def _probe_quinn_rs() -> bool:
 
     # Try neqo if Quinn-Rs is not available
     try:
-        import neqo_http3  # type: ignore[import-not-found]
-        import neqo_transport  # type: ignore[import-not-found]
         _neqo_available = True
         logger.info("http3_lane: neqo available (Mozilla neqo via PyPI/GitHub)")
         return True
@@ -713,11 +661,6 @@ def _probe_neqo() -> bool:
     available via GitHub. Use _probe_quinn_rs() for the full check.
     """
     return _probe_quinn_rs()
-
-
-# ---------------------------------------------------------------------------
-# AioquicTransportAdapter — legacy fallback, wrapped from original impl.
-# ---------------------------------------------------------------------------
 
 
 class AioquicTransportAdapter:
@@ -776,9 +719,9 @@ class AioquicTransportAdapter:
 
         try:
             try:
-                from aioquic.asyncio import connect as _quic_connect  # type: ignore[import-not-found]
-                from aioquic.h3.connection import H3Connection  # type: ignore[import-not-found]
-                from aioquic.quic.configuration import QuicConfiguration  # type: ignore[import-not-found]
+                from aioquic.asyncio import connect as _quic_connect
+                from aioquic.h3.connection import H3Connection
+                from aioquic.quic.configuration import QuicConfiguration
             except Exception as e:
                 logger.debug("http3_lane: aioquic: inner import failed: %s", e)
                 return None
@@ -809,7 +752,7 @@ class AioquicTransportAdapter:
                     data = await _do_request()
                 _stats["http3_aioquic_success"] += 1
                 return data
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _stats["http3_timeouts"] += 1
                 logger.debug("http3_lane: aioquic: timeout %.1fs for %s", timeout_s, host)
                 return None
@@ -831,17 +774,6 @@ class AioquicTransportAdapter:
                     pass
 
 
-# ---------------------------------------------------------------------------
-# SILICON-05: Apple Network.framework native QUIC transport adapter.
-#
-# This is the PREFERRED real-QUIC path on Apple Silicon (macOS 12.0+).
-# Network.framework provides kernel-bypass QUIC with hardware-accelerated
-# TLS 1.3 — zero external dependencies, ~80 KB per connection vs
-# ~50-80 MB for aioquic.
-#
-# Integration: delegates to ``transport/nw_quic_lane.py::fetch_nw_quic()``
-# which in turn calls ``rust.nw_connection.fetch_quic()`` via PyO3.
-# ---------------------------------------------------------------------------
 class NwQuicTransportAdapter:
     """Real HTTP/3 via Apple Network.framework native QUIC (macOS 12.0+).
 
@@ -925,8 +857,7 @@ class NwQuicTransportAdapter:
 
             if result.get("error"):
                 _stats["http3_nw_quic_failures"] += 1
-                logger.debug("http3_lane: nw_quic: fetch error for %s: %s",
-                             host, result["error"])
+                logger.debug("http3_lane: nw_quic: fetch error for %s: %s", host, result["error"])
                 return None
 
             _stats["http3_nw_quic_success"] += 1
@@ -944,27 +875,6 @@ class NwQuicTransportAdapter:
                     sem.release()
                 except Exception:  # noqa: BLE001
                     pass
-
-
-# ---------------------------------------------------------------------------
-# QuinnRustlsTransportAdapter (F320: Rust-engine priority on M1 arm64).
-#
-# INTEGRATED: This class now wraps rust.quic.fetch() from rust_extensions/src/quic.rs
-# which implements true HTTP/3 via quinn + h3 Rust crates.
-#
-# Stack: quinn (QUIC transport) + h3 (HTTP/3 layer) + rustls (TLS 1.3)
-#
-# Priority order (M1 8GB RAM-aware):
-#   1. NwQuicTransportAdapter — Apple Network.framework (macOS only)
-#   2. QuinnRustlsTransportAdapter — Rust quinn + h3 (cross-platform)
-#   3. AioquicTransportAdapter — Python aioquic fallback
-#
-# M1 8GB bounds (from rust_extensions/src/quic.rs):
-#   - Max 3 concurrent connections (semaphore-gated in Rust)
-#   - Immediate memory release on session close
-#   - Bounded receive buffer (10MB max body)
-#   - TLS verification enabled by default (production-safe)
-# ---------------------------------------------------------------------------
 
 
 class QuinnRustlsTransportAdapter:
@@ -1046,7 +956,7 @@ class QuinnRustlsTransportAdapter:
                 body=None,
                 headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
                 timeout_s=timeout_s,
-    )
+            )
 
             if response.error:
                 logger.debug("http3_lane: quinn: rust error: %s", response.error)
@@ -1077,6 +987,7 @@ def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: f
     This sync wrapper is kept only for backward compatibility with any external callers.
     """
     import warnings
+
     warnings.warn(
         "_rust_quic_fetch_sync is deprecated — use rust.quic.fetch_async() directly",
         DeprecationWarning,
@@ -1085,13 +996,14 @@ def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: f
 
     try:
         import rust
+
         response = rust.quic.fetch(
             url=url,
             method="GET",
             body=None,
             headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
             timeout_s=timeout_s,
-    )
+        )
 
         if response.error:
             logger.debug("http3_lane: quinn: rust error: %s", response.error)
@@ -1109,11 +1021,6 @@ def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: f
 
 # Backward compatibility alias
 NeqoRustlsTransportAdapter = QuinnRustlsTransportAdapter
-
-
-# ---------------------------------------------------------------------------
-# Factory: auto-detect best QUIC transport (F320: neqo priority on M1 arm64).
-# ---------------------------------------------------------------------------
 
 
 def get_quic_transport_adapter():
@@ -1142,11 +1049,6 @@ def get_quic_transport_adapter():
     return None  # no real QUIC available; caller uses opportunistic path
 
 
-# ---------------------------------------------------------------------------
-# Backward-compatible fetch_http3_aioquic wrapper (delegates to adapter).
-# ---------------------------------------------------------------------------
-
-
 async def fetch_http3_aioquic(
     url: str,
     headers: dict[str, str] | None = None,
@@ -1169,11 +1071,6 @@ async def fetch_http3_aioquic(
     if adapter is None:
         return None
     return await adapter.fetch(url, headers=headers, timeout_s=timeout_s)
-
-
-# ---------------------------------------------------------------------------
-# aioquic availability probe (moved above AioquicTransportAdapter).
-# ---------------------------------------------------------------------------
 
 
 def _probe_aioquic() -> bool:
@@ -1227,6 +1124,7 @@ def _probe_nw_quic() -> bool:
     try:
         import platform as _platform
         import sys as _sys
+
         if _sys.platform != "darwin":
             _nw_quic_available = False
             return False
@@ -1242,6 +1140,7 @@ def _probe_nw_quic() -> bool:
                 return False
         # Probe the Rust extension
         from hledac.universal.transport.nw_quic_lane import is_nw_quic_available
+
         _nw_quic_available = is_nw_quic_available()
         if not _nw_quic_available:
             logger.debug("http3_lane: nw_quic: lane not available (Rust extension or env gate)")
@@ -1266,6 +1165,7 @@ def _probe_curl_cffi() -> bool:
     _curl_cffi_checked = True
     try:
         import curl_cffi  # type: ignore[import-not-found]  # noqa: F401
+
         _curl_cffi_available = True
     except ImportError:
         _curl_cffi_available = False
@@ -1276,9 +1176,6 @@ def _probe_curl_cffi() -> bool:
     return _curl_cffi_available
 
 
-# ---------------------------------------------------------------------------
-# Convenience for tests + tooling.
-# ---------------------------------------------------------------------------
 def clear_cache() -> None:
     """Wipe the LRU cache. Tests only; never call from production paths."""
     _lru_cache.clear()

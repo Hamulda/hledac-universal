@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
@@ -8,11 +9,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.locks import LockCategory, make_lock
-from _core._util import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class Subsystem(StrEnum):
     """Registered subsystems that require admission control.
@@ -21,25 +23,42 @@ class Subsystem(StrEnum):
     UNIFIED-003: This enum is the canonical registry — no subsystem may
     bypass the co-scheduler for allocations > 100 MB.
     """
-    MLX_INFERENCE = 'mlx_inference'
-    ANE_VISION_OCR = 'ane_vision_ocr'
-    TANTIVY_INDEX = 'tantivy_index'
-    NETWORK_FETCH = 'network_fetch'
-    SIDECAR_ADVISORY = 'sidecar_advisory'
-    RAG_EMBEDDING = 'rag_embedding'
-    METAL_HNSW = 'metal_hnsw'
-    WHISPER_STT = 'whisper_stt'
-    DUCKDB_QUERY = 'duckdb_query'
-    LMDB_MMAP = 'lmdb_mmap'
-_SUBSYSTEM_TO_RESOURCE: dict[Subsystem, str] = {Subsystem.MLX_INFERENCE: 'mlx_generation', Subsystem.ANE_VISION_OCR: 'ane_vision', Subsystem.TANTIVY_INDEX: 'tantivy_index', Subsystem.NETWORK_FETCH: 'network_fetch', Subsystem.SIDECAR_ADVISORY: 'sidecar_advisory', Subsystem.RAG_EMBEDDING: 'mlx_generation', Subsystem.METAL_HNSW: 'mlx_generation', Subsystem.WHISPER_STT: 'ane_vision', Subsystem.DUCKDB_QUERY: 'network_fetch', Subsystem.LMDB_MMAP: 'network_fetch'}
+
+    MLX_INFERENCE = "mlx_inference"
+    ANE_VISION_OCR = "ane_vision_ocr"
+    TANTIVY_INDEX = "tantivy_index"
+    NETWORK_FETCH = "network_fetch"
+    SIDECAR_ADVISORY = "sidecar_advisory"
+    RAG_EMBEDDING = "rag_embedding"
+    METAL_HNSW = "metal_hnsw"
+    WHISPER_STT = "whisper_stt"
+    DUCKDB_QUERY = "duckdb_query"
+    LMDB_MMAP = "lmdb_mmap"
+
+
+_SUBSYSTEM_TO_RESOURCE: dict[Subsystem, str] = {
+    Subsystem.MLX_INFERENCE: "mlx_generation",
+    Subsystem.ANE_VISION_OCR: "ane_vision",
+    Subsystem.TANTIVY_INDEX: "tantivy_index",
+    Subsystem.NETWORK_FETCH: "network_fetch",
+    Subsystem.SIDECAR_ADVISORY: "sidecar_advisory",
+    Subsystem.RAG_EMBEDDING: "mlx_generation",
+    Subsystem.METAL_HNSW: "mlx_generation",
+    Subsystem.WHISPER_STT: "ane_vision",
+    Subsystem.DUCKDB_QUERY: "network_fetch",
+    Subsystem.LMDB_MMAP: "network_fetch",
+}
+
 
 class CoSchedulerState(StrEnum):
     """Operational state of the co-scheduler."""
-    UNINITIALIZED = 'uninitialized'
-    IDLE = 'idle'
-    ACTIVE = 'active'
-    DEGRADED = 'degraded'
-    SHUTDOWN = 'shutdown'
+
+    UNINITIALIZED = "uninitialized"
+    IDLE = "idle"
+    ACTIVE = "active"
+    DEGRADED = "degraded"
+    SHUTDOWN = "shutdown"
+
 
 class SubsystemProfile(Struct, frozen=True):
     """Declared resource profile for a subsystem.
@@ -48,26 +67,124 @@ class SubsystemProfile(Struct, frozen=True):
     and timeout tolerance. This profile is used by the co-scheduler to
     make admission decisions without needing per-call configuration.
     """
+
     subsystem: Subsystem
     estimated_mb: float
-    default_priority: str = 'normal'
+    default_priority: str = "normal"
     timeout_s: float = 30.0
     max_concurrent: int = 1
     preemptible: bool = True
-    description: str = ''
-_DEFAULT_PROFILES: dict[Subsystem, SubsystemProfile] = {Subsystem.MLX_INFERENCE: SubsystemProfile(subsystem=Subsystem.MLX_INFERENCE, estimated_mb=2500.0, default_priority='high', timeout_s=10.0, max_concurrent=1, preemptible=False, description='Hermes3 3B 4-bit MLX inference (~2.5 GB peak)'), Subsystem.ANE_VISION_OCR: SubsystemProfile(subsystem=Subsystem.ANE_VISION_OCR, estimated_mb=1500.0, default_priority='normal', timeout_s=5.0, max_concurrent=1, preemptible=True, description='Vision Framework ANE OCR (~1.5 GB peak)'), Subsystem.TANTIVY_INDEX: SubsystemProfile(subsystem=Subsystem.TANTIVY_INDEX, estimated_mb=2000.0, default_priority='normal', timeout_s=10.0, max_concurrent=1, preemptible=True, description='Tantivy mmap fulltext indexing (~2.0 GB peak)'), Subsystem.NETWORK_FETCH: SubsystemProfile(subsystem=Subsystem.NETWORK_FETCH, estimated_mb=800.0, default_priority='normal', timeout_s=5.0, max_concurrent=4, preemptible=True, description='Bulk HTTP fetching (~0.8 GB peak for 4 concurrent)'), Subsystem.SIDECAR_ADVISORY: SubsystemProfile(subsystem=Subsystem.SIDECAR_ADVISORY, estimated_mb=120.0, default_priority='low', timeout_s=5.0, max_concurrent=8, preemptible=True, description='Advisory sidecar pool (~15 MB each, max 8 concurrent)'), Subsystem.RAG_EMBEDDING: SubsystemProfile(subsystem=Subsystem.RAG_EMBEDDING, estimated_mb=400.0, default_priority='normal', timeout_s=8.0, max_concurrent=1, preemptible=True, description='MLX embedding generation (~0.4 GB peak)'), Subsystem.METAL_HNSW: SubsystemProfile(subsystem=Subsystem.METAL_HNSW, estimated_mb=500.0, default_priority='low', timeout_s=15.0, max_concurrent=1, preemptible=True, description='Metal GPU HNSW index construction (~0.5 GB peak)'), Subsystem.WHISPER_STT: SubsystemProfile(subsystem=Subsystem.WHISPER_STT, estimated_mb=300.0, default_priority='low', timeout_s=10.0, max_concurrent=1, preemptible=True, description='Whisper.cpp CoreML speech-to-text (~0.3 GB peak)'), Subsystem.DUCKDB_QUERY: SubsystemProfile(subsystem=Subsystem.DUCKDB_QUERY, estimated_mb=500.0, default_priority='normal', timeout_s=20.0, max_concurrent=2, preemptible=True, description='DuckDB analytical query (~0.5 GB peak)'), Subsystem.LMDB_MMAP: SubsystemProfile(subsystem=Subsystem.LMDB_MMAP, estimated_mb=300.0, default_priority='low', timeout_s=5.0, max_concurrent=2, preemptible=True, description='LMDB bulk mmap operations (~0.3 GB peak)')}
+    description: str = ""
+
+
+_DEFAULT_PROFILES: dict[Subsystem, SubsystemProfile] = {
+    Subsystem.MLX_INFERENCE: SubsystemProfile(
+        subsystem=Subsystem.MLX_INFERENCE,
+        estimated_mb=2500.0,
+        default_priority="high",
+        timeout_s=10.0,
+        max_concurrent=1,
+        preemptible=False,
+        description="Hermes3 3B 4-bit MLX inference (~2.5 GB peak)",
+    ),
+    Subsystem.ANE_VISION_OCR: SubsystemProfile(
+        subsystem=Subsystem.ANE_VISION_OCR,
+        estimated_mb=1500.0,
+        default_priority="normal",
+        timeout_s=5.0,
+        max_concurrent=1,
+        preemptible=True,
+        description="Vision Framework ANE OCR (~1.5 GB peak)",
+    ),
+    Subsystem.TANTIVY_INDEX: SubsystemProfile(
+        subsystem=Subsystem.TANTIVY_INDEX,
+        estimated_mb=2000.0,
+        default_priority="normal",
+        timeout_s=10.0,
+        max_concurrent=1,
+        preemptible=True,
+        description="Tantivy mmap fulltext indexing (~2.0 GB peak)",
+    ),
+    Subsystem.NETWORK_FETCH: SubsystemProfile(
+        subsystem=Subsystem.NETWORK_FETCH,
+        estimated_mb=800.0,
+        default_priority="normal",
+        timeout_s=5.0,
+        max_concurrent=4,
+        preemptible=True,
+        description="Bulk HTTP fetching (~0.8 GB peak for 4 concurrent)",
+    ),
+    Subsystem.SIDECAR_ADVISORY: SubsystemProfile(
+        subsystem=Subsystem.SIDECAR_ADVISORY,
+        estimated_mb=120.0,
+        default_priority="low",
+        timeout_s=5.0,
+        max_concurrent=8,
+        preemptible=True,
+        description="Advisory sidecar pool (~15 MB each, max 8 concurrent)",
+    ),
+    Subsystem.RAG_EMBEDDING: SubsystemProfile(
+        subsystem=Subsystem.RAG_EMBEDDING,
+        estimated_mb=400.0,
+        default_priority="normal",
+        timeout_s=8.0,
+        max_concurrent=1,
+        preemptible=True,
+        description="MLX embedding generation (~0.4 GB peak)",
+    ),
+    Subsystem.METAL_HNSW: SubsystemProfile(
+        subsystem=Subsystem.METAL_HNSW,
+        estimated_mb=500.0,
+        default_priority="low",
+        timeout_s=15.0,
+        max_concurrent=1,
+        preemptible=True,
+        description="Metal GPU HNSW index construction (~0.5 GB peak)",
+    ),
+    Subsystem.WHISPER_STT: SubsystemProfile(
+        subsystem=Subsystem.WHISPER_STT,
+        estimated_mb=300.0,
+        default_priority="low",
+        timeout_s=10.0,
+        max_concurrent=1,
+        preemptible=True,
+        description="Whisper.cpp CoreML speech-to-text (~0.3 GB peak)",
+    ),
+    Subsystem.DUCKDB_QUERY: SubsystemProfile(
+        subsystem=Subsystem.DUCKDB_QUERY,
+        estimated_mb=500.0,
+        default_priority="normal",
+        timeout_s=20.0,
+        max_concurrent=2,
+        preemptible=True,
+        description="DuckDB analytical query (~0.5 GB peak)",
+    ),
+    Subsystem.LMDB_MMAP: SubsystemProfile(
+        subsystem=Subsystem.LMDB_MMAP,
+        estimated_mb=300.0,
+        default_priority="low",
+        timeout_s=5.0,
+        max_concurrent=2,
+        preemptible=True,
+        description="LMDB bulk mmap operations (~0.3 GB peak)",
+    ),
+}
+
 
 class AdmissionContext(Struct, frozen=True):
     """Diagnostic context returned after admission is granted."""
+
     subsystem: str
     allocated_mb: float
     wait_time_s: float
     peak_utilization: float
     mutex_held: str | None
 
+
 @dataclass(slots=True)
 class CoSchedulerTelemetry:
     """Aggregate telemetry for the co-scheduler."""
+
     state: CoSchedulerState = CoSchedulerState.UNINITIALIZED
     total_admissions: int = 0
     total_rejections: int = 0
@@ -77,6 +194,7 @@ class CoSchedulerTelemetry:
     active_guards: int = 0
     peak_concurrent_mb: float = 0.0
     last_snapshot_time: float = 0.0
+
 
 class GlobalPeakCoScheduler:
     """Unified admission scheduler for all memory-intensive subsystems.
@@ -90,7 +208,17 @@ class GlobalPeakCoScheduler:
 
     SINGLETON: use get_co_scheduler() to access.
     """
-    __slots__ = ('_lock', '_lock_factory', '_state', '_coordinator', '_profiles', '_active_guards', '_telemetry', '_subsystem_semaphores')
+
+    __slots__ = (
+        "_lock",
+        "_lock_factory",
+        "_state",
+        "_coordinator",
+        "_profiles",
+        "_active_guards",
+        "_telemetry",
+        "_subsystem_semaphores",
+    )
 
     def __init__(self) -> None:
         self._lock_factory = threading.Lock()
@@ -119,7 +247,8 @@ class GlobalPeakCoScheduler:
     def _ensure_coordinator(self) -> Any:
         """Lazy-load the peak load coordinator."""
         if self._coordinator is None:
-            from hledac.universal._core.peak_load_coordinator import get_peak_coordinator, ResourceClass, TaskPriority
+            from hledac.universal._core.peak_load_coordinator import ResourceClass, TaskPriority, get_peak_coordinator
+
             self._coordinator = get_peak_coordinator()
             self._ResourceClass = ResourceClass
             self._TaskPriority = TaskPriority
@@ -129,7 +258,7 @@ class GlobalPeakCoScheduler:
     def state(self) -> CoSchedulerState:
         return self._state
 
-    async def start(self, sprint_deadline_s: float | None=None) -> None:
+    async def start(self, sprint_deadline_s: float | None = None) -> None:
         """Initialize the co-scheduler for a sprint.
 
         Args:
@@ -138,10 +267,11 @@ class GlobalPeakCoScheduler:
         self._ensure_coordinator()
         if sprint_deadline_s is not None:
             from hledac.universal._core.peak_load_coordinator import set_sprint_deadline
+
             set_sprint_deadline(sprint_deadline_s)
         self._state = CoSchedulerState.ACTIVE
         self._telemetry = CoSchedulerTelemetry(state=CoSchedulerState.ACTIVE)
-        logger.info(f'[CoScheduler] Started (sprint_deadline={sprint_deadline_s}s, subsystems={len(self._profiles)})')
+        logger.info(f"[CoScheduler] Started (sprint_deadline={sprint_deadline_s}s, subsystems={len(self._profiles)})")
 
     async def shutdown(self) -> None:
         """Shutdown the co-scheduler.
@@ -151,11 +281,22 @@ class GlobalPeakCoScheduler:
         """
         self._state = CoSchedulerState.SHUTDOWN
         from hledac.universal._core.peak_load_coordinator import set_sprint_deadline
+
         set_sprint_deadline(None)
-        logger.info(f'[CoScheduler] Shutdown complete (admissions={self._telemetry.total_admissions}, rejections={self._telemetry.total_rejections})')
+        logger.info(
+            f"[CoScheduler] Shutdown complete (admissions={self._telemetry.total_admissions}, rejections={self._telemetry.total_rejections})"
+        )
 
     @asynccontextmanager
-    async def guard(self, subsystem: Subsystem, estimated_mb: float | None=None, *, priority: str | None=None, timeout_s: float | None=None, owner: str=''):
+    async def guard(
+        self,
+        subsystem: Subsystem,
+        estimated_mb: float | None = None,
+        *,
+        priority: str | None = None,
+        timeout_s: float | None = None,
+        owner: str = "",
+    ):
         """Acquire admission for a subsystem operation.
 
         This is the canonical entry point for ALL memory-intensive operations.
@@ -182,14 +323,19 @@ class GlobalPeakCoScheduler:
         """
         profile = self._profiles.get(subsystem)
         if profile is None:
-            logger.warning(f'[CoScheduler] Unknown subsystem {subsystem}, using defaults')
-            profile = SubsystemProfile(subsystem=subsystem, estimated_mb=estimated_mb or 500.0, default_priority=priority or 'normal', timeout_s=timeout_s or 10.0)
+            logger.warning(f"[CoScheduler] Unknown subsystem {subsystem}, using defaults")
+            profile = SubsystemProfile(
+                subsystem=subsystem,
+                estimated_mb=estimated_mb or 500.0,
+                default_priority=priority or "normal",
+                timeout_s=timeout_s or 10.0,
+            )
         est_mb = estimated_mb if estimated_mb is not None else profile.estimated_mb
         prio = priority if priority is not None else profile.default_priority
         timeout = timeout_s if timeout_s is not None else profile.timeout_s
         owner_str = owner or subsystem.value
         if self._state == CoSchedulerState.SHUTDOWN:
-            raise RuntimeError(f'CoScheduler is shut down, rejecting {subsystem}')
+            raise RuntimeError(f"CoScheduler is shut down, rejecting {subsystem}")
         if self._state == CoSchedulerState.UNINITIALIZED:
             await self.start()
         sem = self._subsystem_semaphores.get(subsystem)
@@ -203,12 +349,24 @@ class GlobalPeakCoScheduler:
             async with sem:
                 coordinator = self._ensure_coordinator()
                 from hledac.universal._core.peak_load_coordinator import ResourceClass, TaskPriority
-                resource_class_name = _SUBSYSTEM_TO_RESOURCE.get(subsystem, 'network_fetch')
+
+                resource_class_name = _SUBSYSTEM_TO_RESOURCE.get(subsystem, "network_fetch")
                 resource_class = ResourceClass(resource_class_name)
-                priority_map = {'critical': TaskPriority.CRITICAL, 'high': TaskPriority.HIGH, 'normal': TaskPriority.NORMAL, 'low': TaskPriority.LOW}
+                priority_map = {
+                    "critical": TaskPriority.CRITICAL,
+                    "high": TaskPriority.HIGH,
+                    "normal": TaskPriority.NORMAL,
+                    "low": TaskPriority.LOW,
+                }
                 task_priority = priority_map.get(prio, TaskPriority.NORMAL)
                 try:
-                    peak_guard = await coordinator.acquire(resource_class, estimated_mb=est_mb, priority=task_priority, owner=f'{subsystem.value}:{owner_str}', timeout_s=timeout)
+                    peak_guard = await coordinator.acquire(
+                        resource_class,
+                        estimated_mb=est_mb,
+                        priority=task_priority,
+                        owner=f"{subsystem.value}:{owner_str}",
+                        timeout_s=timeout,
+                    )
                 except TimeoutError:
                     self._telemetry.total_timeouts += 1
                     self._telemetry.total_rejections += 1
@@ -219,7 +377,13 @@ class GlobalPeakCoScheduler:
                 total_gib = snap.total_allocated_gib
                 if total_gib > self._telemetry.peak_concurrent_mb:
                     self._telemetry.peak_concurrent_mb = total_gib
-                ctx = AdmissionContext(subsystem=subsystem.value, allocated_mb=est_mb, wait_time_s=wait_time, peak_utilization=coordinator.snapshot().utilization_fraction, mutex_held=None)
+                ctx = AdmissionContext(
+                    subsystem=subsystem.value,
+                    allocated_mb=est_mb,
+                    wait_time_s=wait_time,
+                    peak_utilization=coordinator.snapshot().utilization_fraction,
+                    mutex_held=None,
+                )
                 yield ctx
         except asyncio.CancelledError:
             self._telemetry.total_preemptions += 1
@@ -227,8 +391,10 @@ class GlobalPeakCoScheduler:
         except TimeoutError:
             raise
         except Exception:
-            logger.exception(f'[CoScheduler] Unexpected error for {subsystem}')
-            yield AdmissionContext(subsystem=subsystem.value, allocated_mb=0.0, wait_time_s=0.0, peak_utilization=0.0, mutex_held=None)
+            logger.exception(f"[CoScheduler] Unexpected error for {subsystem}")
+            yield AdmissionContext(
+                subsystem=subsystem.value, allocated_mb=0.0, wait_time_s=0.0, peak_utilization=0.0, mutex_held=None
+            )
         finally:
             if peak_guard is not None:
                 try:
@@ -250,7 +416,7 @@ class GlobalPeakCoScheduler:
 
     def register_subsystem(self, profile: SubsystemProfile) -> None:
         """Register a new subsystem profile (for extension).
-        
+
         Must be called before start().
         """
         self._profiles[profile.subsystem] = profile
@@ -269,7 +435,7 @@ class GlobalPeakCoScheduler:
             return
         coordinator = self._ensure_coordinator()
         try:
-            if uma_state in ('critical', 'emergency'):
+            if uma_state in ("critical", "emergency"):
                 await coordinator.preempt_low_priority(target_mb=500.0)
                 self._state = CoSchedulerState.DEGRADED
             elif self._state == CoSchedulerState.DEGRADED:
@@ -278,12 +444,16 @@ class GlobalPeakCoScheduler:
             pass
         try:
             from hledac.universal._core.resource_governor import get_qos_subscription_registry
+
             registry = get_qos_subscription_registry()
-            await registry.acknowledge('peak_coordinator', True, f'pressure={uma_state}')
+            await registry.acknowledge("peak_coordinator", True, f"pressure={uma_state}")
         except Exception:
             pass
+
+
 _co_scheduler: GlobalPeakCoScheduler | None = None
-_co_scheduler_lock = make_lock(LockCategory.CONFIG, 'global_co_scheduler._co_scheduler_lock')
+_co_scheduler_lock = make_lock(LockCategory.CONFIG, "global_co_scheduler._co_scheduler_lock")
+
 
 def get_co_scheduler() -> GlobalPeakCoScheduler:
     """Get or create the singleton GlobalPeakCoScheduler.
@@ -300,7 +470,8 @@ def get_co_scheduler() -> GlobalPeakCoScheduler:
                 _co_scheduler = GlobalPeakCoScheduler()
     return _co_scheduler
 
-async def start_co_scheduler(sprint_deadline_s: float | None=None) -> GlobalPeakCoScheduler:
+
+async def start_co_scheduler(sprint_deadline_s: float | None = None) -> GlobalPeakCoScheduler:
     """Initialize and start the co-scheduler.
 
     Call this at sprint startup (from SprintScheduler.run_prelude()).
@@ -312,10 +483,12 @@ async def start_co_scheduler(sprint_deadline_s: float | None=None) -> GlobalPeak
     await scheduler.start(sprint_deadline_s=sprint_deadline_s)
     return scheduler
 
+
 async def shutdown_co_scheduler() -> None:
     """Shutdown the co-scheduler. Call at sprint teardown (from winddown)."""
     scheduler = get_co_scheduler()
     await scheduler.shutdown()
+
 
 def reset_co_scheduler() -> None:
     """Reset the singleton. For testing only."""

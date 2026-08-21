@@ -4,21 +4,19 @@ DataValidator — data validation stub.
 Provides RFC-compliant email, URL, and JSON schema validation.
 This is a fail-safe stub: all methods return safe defaults.
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 # RFC 5321 basic email regex (simplified)
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-_URL_RE = re.compile(
-    r"^https?://[a-zA-Z0-9.-]+(?:\.[a-zA-Z]{2,})+(?:/[^?#]*)?(?:#[^\s]*)?$"
-    )
+_URL_RE = re.compile(r"^https?://[a-zA-Z0-9.-]+(?:\.[a-zA-Z]{2,})+(?:/[^?#]*)?(?:#[^\s]*)?$")
 
 
 class DataValidator:
@@ -31,9 +29,8 @@ class DataValidator:
 
     def __init__(self) -> None:
         raise ImportError(
-            "DataValidator requires additional dependencies — "
-            "install with: uv add fast-email-validator jsonschema"
-    )
+            "DataValidator requires additional dependencies — install with: uv add fast-email-validator jsonschema"
+        )
 
     def validate_email(self, email: str, *, strict: bool = True) -> dict[str, Any]:
         """Validate email address. Always returns valid=True for stub."""
@@ -56,9 +53,7 @@ class DataValidator:
             "errors": [],
         }
 
-    def validate_json_schema(
-        self, data: dict[str, Any], schema: dict[str, Any]
-    ) -> dict[str, Any]:
+    def validate_json_schema(self, data: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         """Validate data against JSON schema. Always returns valid=True for stub."""
         return {
             "valid": True,
@@ -66,5 +61,5 @@ class DataValidator:
             "critical_count": 0,
             "warning_count": 0,
             "errors": [],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }

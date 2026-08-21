@@ -12,7 +12,6 @@ import pytest  # noqa: F401 — needed for skip markers on ghost MARLCoordinator
 # Lazy import: numpy loaded only when tests run
 pytest.importorskip("numpy")
 import numpy as np  # noqa: E402,F401
-from _core import aclose
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 
@@ -23,7 +22,7 @@ sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 
 
 class TestQMIX(unittest.IsolatedAsyncioTestCase):
-    async def test_qmix_agent_init(self):
+    async def test_qmix_agent_init(self) -> None:
         """Test #1: QMIXAgent – inicializace a forward pass."""
         import mlx.core as mx
 
@@ -34,7 +33,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
         q_values = agent(state)
         self.assertEqual(q_values.shape, (2, 5))
 
-    async def test_qmix_mixer(self):
+    async def test_qmix_mixer(self) -> None:
         """Test #3: QMixer – správné tvary a nezáporné váhy."""
         import mlx.core as mx
 
@@ -48,7 +47,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(q_total.shape, (4, 1))
 
-    async def test_qmix_joint_update(self):
+    async def test_qmix_joint_update(self) -> None:
         """Test #4: QMIXJointTrainer – joint update krok."""
         import mlx.core as mx
 
@@ -74,7 +73,7 @@ class TestQMIX(unittest.IsolatedAsyncioTestCase):
 
 
 class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
-    async def test_replay_buffer_init(self):
+    async def test_replay_buffer_init(self) -> None:
         """Test #5: Replay buffer – inicializace."""
         from hledac.universal.rl.replay_buffer import MARLReplayBuffer
 
@@ -84,7 +83,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buffer.n_agents, 3)
         self.assertEqual(buffer.size, 0)
 
-    async def test_replay_buffer_push_sample(self):
+    async def test_replay_buffer_push_sample(self) -> None:
         """Test #5: Replay buffer – push a sample."""
         import mlx.core as mx
 
@@ -107,7 +106,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch["states"].shape, (4, 12))
         self.assertEqual(batch["actions"].shape, (4, 3))
 
-    async def test_replay_persistence(self):
+    async def test_replay_persistence(self) -> None:
         """Test #6: Replay buffer – perzistence s .npz."""
         import mlx.core as mx
 
@@ -140,7 +139,7 @@ class TestReplayBuffer(unittest.IsolatedAsyncioTestCase):
 
 
 class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
-    async def test_state_extractor(self):
+    async def test_state_extractor(self) -> None:
         """Test #7: State extractor – výstup state_dim (včetně GNN)."""
         from hledac.universal.rl.state_extractor import StateExtractor
 
@@ -169,28 +168,28 @@ class TestStateExtractor(unittest.IsolatedAsyncioTestCase):
 class TestMARLCoordinator(unittest.IsolatedAsyncioTestCase):
     """Testy pro MARL Coordinator — ALL skipped (module deleted F196A)."""
 
-    async def test_coordinator_register(self):
+    async def test_coordinator_register(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_coordinator_epsilon_decay(self):
+    async def test_coordinator_epsilon_decay(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_coordinator_reward_calculation(self):
+    async def test_coordinator_reward_calculation(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_coordinator_checkpointing(self):
+    async def test_coordinator_checkpointing(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_coordinator_joint_update(self):
+    async def test_coordinator_joint_update(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_qmix_joint_update(self):
+    async def test_qmix_joint_update(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_coordinator_training_mode(self):
+    async def test_coordinator_training_mode(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_end_to_end_joint_update(self):
+    async def test_end_to_end_joint_update(self) -> None:
         pass  # noqa: PLCB101
 
 
@@ -203,10 +202,10 @@ class TestMARLCoordinator(unittest.IsolatedAsyncioTestCase):
 class TestIntegration(unittest.IsolatedAsyncioTestCase):
     """Integrační testy — SKIPPED (depend on deleted MARLCoordinator)."""
 
-    async def test_thread_agent_integration(self):
+    async def test_thread_agent_integration(self) -> None:
         pass  # noqa: PLCB101
 
-    async def test_joint_training_loop(self):
+    async def test_joint_training_loop(self) -> None:
         pass  # noqa: PLCB101
 
 

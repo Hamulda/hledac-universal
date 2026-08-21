@@ -3,11 +3,11 @@
 Single source of truth for CLI argument definitions.
 Supports both legacy flat args and modern subcommand syntax.
 """
+
 import argparse
 import os
 import pathlib
 from argparse import Namespace as _NS
-from _core._util import aclose
 
 # Acquisition profile choices
 _ACQ_PROFILES: tuple[str, ...] = ("default", "nonfeed_diagnostic", "deep_osint_m1")

@@ -15,7 +15,6 @@ import pytest
 
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 from hledac.universal.transport.circuit_breaker import CBState
-from _core import aclose
 
 
 @pytest.fixture
@@ -55,12 +54,12 @@ def store():
 class TestIngestCircuitBreaker:
     """Test Issue #14: circuit breaker for DuckDB ingest."""
 
-    def test_breaker_closed_by_default(self, store):
+    def test_breaker_closed_by_default(self, store) -> None:
         """Breaker starts in CLOSED state."""
         assert store._ingest_breaker_state == CBState.CLOSED
         assert store._ingest_breaker_failures == 0
 
-    def test_success_resets_breaker_via_bg(self, store):
+    def test_success_resets_breaker_via_bg(self, store) -> None:
         """Successful _submit_findings_bg resets failure counter."""
         store._ingest_breaker_failures = 3
         # Call _submit_findings_bg directly with empty list (no-op success)
@@ -82,14 +81,14 @@ class TestIngestCircuitBreaker:
             # M1 8GB: event loop leak prevention -- close ALL loops created in tests.
             loop.close()
 
-    def test_failure_increments_counter(self, store):
+    def test_failure_increments_counter(self, store) -> None:
         """Failure increments counter."""
         store._ingest_breaker_failures = 0
         # Simulate failure by calling record path manually
         store._ingest_breaker_failures += 1
         assert store._ingest_breaker_failures == 1
 
-    def test_threshold_trips_breaker(self, store):
+    def test_threshold_trips_breaker(self, store) -> None:
         """Failures >= threshold trip breaker to OPEN."""
         store._ingest_breaker_failures = store._ingest_breaker_threshold - 1
         store._ingest_breaker_state = CBState.CLOSED
@@ -100,7 +99,7 @@ class TestIngestCircuitBreaker:
         assert store._ingest_breaker_state == CBState.OPEN
 
     @pytest.mark.asyncio
-    async def test_open_skips_batch(self, store):
+    async def test_open_skips_batch(self, store) -> None:
         """OPEN breaker causes submit_findings to skip task creation."""
         store._ingest_breaker_state = CBState.OPEN
         store._ingest_breaker_last_failure = _time.monotonic()  # fresh
@@ -117,14 +116,14 @@ class TestIngestCircuitBreaker:
 
         assert not task_created, "submit_findings should skip when circuit is OPEN"
 
-    def test_cooldown_transitions_to_half_open(self, store):
+    def test_cooldown_transitions_to_half_open(self, store) -> None:
         """After cooldown, OPEN transitions to HALF_OPEN."""
         store._ingest_breaker_state = CBState.OPEN
         store._ingest_breaker_last_failure = _time.monotonic() - (store._ingest_breaker_cooldown + 1)
         store._ingest_breaker_state = CBState.HALF_OPEN
         assert store._ingest_breaker_state == CBState.HALF_OPEN
 
-    def test_get_stats_includes_breaker(self, store):
+    def test_get_stats_includes_breaker(self, store) -> None:
         """get_stats() returns breaker snapshot."""
         store._ingest_breaker_failures = 2
         store._ingest_breaker_last_failure = _time.monotonic()
@@ -134,7 +133,7 @@ class TestIngestCircuitBreaker:
         assert stats["ingest_breaker"]["state"] == "closed"
 
     @pytest.mark.asyncio
-    async def test_empty_findings_skip_breaker_check(self, store):
+    async def test_empty_findings_skip_breaker_check(self, store) -> None:
         """Empty findings list skips circuit check entirely."""
         store._ingest_breaker_state = CBState.OPEN
         store._ingest_breaker_last_failure = _time.monotonic()

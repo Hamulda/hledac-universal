@@ -2,7 +2,6 @@
 Academic Discovery — Convenience Functions for Academic Search
 ===============================================================
 
-
 Migrated from: intelligence/ (parent/donor)
 Canonical path: hledac.universal.recon.academic_discovery
 
@@ -25,29 +24,19 @@ M1 8GB constraints:
 - All network calls have timeouts
 """
 
-
-
 import asyncio
 import logging
 import re
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from pathlib import Path
-from hledac.universal.utils.sync_bridge import run_sync_async
 from typing import Any
-from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
-from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+from hledac.universal.utils.sync_bridge import run_sync_async
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
 
 OPENALEX_BASE = "https://api.openalex.org"
 IARCHIVE_SCHOLAR = "https://scholar.archive.org"
@@ -58,12 +47,9 @@ MAX_CITATION_PAPERS = 50
 MAX_HOPS = 2
 
 
-# =============================================================================
-# RESULT DATA CLASSES
-# =============================================================================
-
 class AcademicPaper(Struct):
     """Structured academic paper result."""
+
     title: str
     authors: list[str]
     year: int | None
@@ -97,21 +83,17 @@ class AcademicPaper(Struct):
             return f"doi:{self.doi}"
         if self.title:
             import hashlib
+
             h = hashlib.sha256(self.title.encode()).hexdigest()[:16]
             return f"title:{h}"
         return ""
 
 
-# =============================================================================
-# STANDALONE SEARCH FUNCTIONS — NEW SOURCES
-# =============================================================================
-
 async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search OpenAlex for academic papers."""
     try:
-        import orjson
-
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         url = f"{OPENALEX_BASE}/works?search={query}&per-page={max_results}&mailto=research@hledac.ai"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -120,18 +102,24 @@ async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPap
         papers = []
         for work in data.get("results", [])[:max_results]:
             authors = [au.get("display_name", "") for au in work.get("authorships", [])]
-            affiliations = [au.get("institution", {}).get("display_name", "") for au in work.get("authorships", []) if au.get("institution")]  # noqa: E501
-            papers.append(AcademicPaper(
-                title=work.get("title", ""),
-                authors=authors,
-                year=work.get("publication_year"),
-                link=work.get("doi", "") or work.get("id", ""),
-                source="openalex",
-                abstract=work.get("abstract_inverted_index", ""),
-                doi=work.get("doi"),
-                citations=work.get("cited_by_count", 0),
-                affiliations=affiliations,
-            ))
+            affiliations = [
+                au.get("institution", {}).get("display_name", "")
+                for au in work.get("authorships", [])
+                if au.get("institution")
+            ]  # noqa: E501
+            papers.append(
+                AcademicPaper(
+                    title=work.get("title", ""),
+                    authors=authors,
+                    year=work.get("publication_year"),
+                    link=work.get("doi", "") or work.get("id", ""),
+                    source="openalex",
+                    abstract=work.get("abstract_inverted_index", ""),
+                    doi=work.get("doi"),
+                    citations=work.get("cited_by_count", 0),
+                    affiliations=affiliations,
+                )
+            )
         return papers
     except Exception as e:
         logger.error(f"search_openalex err: {e}")
@@ -141,9 +129,8 @@ async def search_openalex(query: str, max_results: int = 20) -> list[AcademicPap
 async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search Internet Archive Scholar for academic papers."""
     try:
-        import orjson
-
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         url = f"{IARCHIVE_SCHOLAR}/search?q={query}&limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -151,14 +138,16 @@ async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicP
         data = _msgspec_loads(result.content)
         papers = []
         for item in data.get("items", [])[:max_results]:
-            papers.append(AcademicPaper(
-                title=item.get("title", ""),
-                authors=[item.get("creator", "")],
-                year=item.get("year"),
-                link=item.get("url", ""),
-                source="ia_scholar",
-                abstract=item.get("abstract", ""),
-            ))
+            papers.append(
+                AcademicPaper(
+                    title=item.get("title", ""),
+                    authors=[item.get("creator", "")],
+                    year=item.get("year"),
+                    link=item.get("url", ""),
+                    source="ia_scholar",
+                    abstract=item.get("abstract", ""),
+                )
+            )
         return papers
     except Exception as e:
         logger.error(f"search_ia_scholar err: {e}")
@@ -168,9 +157,8 @@ async def search_ia_scholar(query: str, max_results: int = 20) -> list[AcademicP
 async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search CORE.ac.uk for academic papers."""
     try:
-        import orjson
-
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         url = f"{CORE_API}/v3/search/works/{query}?limit={max_results}"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -178,15 +166,17 @@ async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
         data = _msgspec_loads(result.content)
         papers = []
         for item in data.get("results", [])[:max_results]:
-            papers.append(AcademicPaper(
-                title=item.get("title", ""),
-                authors=[a.get("name", "") for a in item.get("authors", [])],
-                year=item.get("year"),
-                link=item.get("downloadUrl", "") or item.get("url", ""),
-                source="core",
-                abstract=item.get("abstract", ""),
-                doi=item.get("doi"),
-            ))
+            papers.append(
+                AcademicPaper(
+                    title=item.get("title", ""),
+                    authors=[a.get("name", "") for a in item.get("authors", [])],
+                    year=item.get("year"),
+                    link=item.get("downloadUrl", "") or item.get("url", ""),
+                    source="core",
+                    abstract=item.get("abstract", ""),
+                    doi=item.get("doi"),
+                )
+            )
         return papers
     except Exception as e:
         logger.error(f"search_core err: {e}")
@@ -196,9 +186,8 @@ async def search_core(query: str, max_results: int = 20) -> list[AcademicPaper]:
 async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search bioRxiv preprints."""
     try:
-        import orjson
-
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         url = f"{BIORXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -206,15 +195,17 @@ async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPape
         data = _msgspec_loads(result.content)
         papers = []
         for item in data.get("messages", [])[:max_results]:
-            papers.append(AcademicPaper(
-                title=item.get("title", ""),
-                authors=[a.get("name", "") for a in item.get("authors", [])],
-                year=item.get("date", "")[:4] if item.get("date") else None,
-                link=f"https://doi.org/{item.get('doi', '')}" if item.get("doi") else "",
-                source="biorxiv",
-                abstract=item.get("abstract", ""),
-                doi=item.get("doi"),
-            ))
+            papers.append(
+                AcademicPaper(
+                    title=item.get("title", ""),
+                    authors=[a.get("name", "") for a in item.get("authors", [])],
+                    year=item.get("date", "")[:4] if item.get("date") else None,
+                    link=f"https://doi.org/{item.get('doi', '')}" if item.get("doi") else "",
+                    source="biorxiv",
+                    abstract=item.get("abstract", ""),
+                    doi=item.get("doi"),
+                )
+            )
         return papers
     except Exception as e:
         logger.error(f"search_biorxiv err: {e}")
@@ -224,9 +215,8 @@ async def search_biorxiv(query: str, max_results: int = 20) -> list[AcademicPape
 async def search_medrxiv(query: str, max_results: int = 20) -> list[AcademicPaper]:
     """Search medRxiv preprints."""
     try:
-        import orjson
-
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         url = f"{MEDRXIV_API}/v2/server/search?query={query}&count={max_results}&format=json"
         result = await async_fetch_public_text(url, timeout_s=30.0, use_stealth=True)
         if not result or not result.content:
@@ -234,24 +224,22 @@ async def search_medrxiv(query: str, max_results: int = 20) -> list[AcademicPape
         data = _msgspec_loads(result.content)
         papers = []
         for item in data.get("messages", [])[:max_results]:
-            papers.append(AcademicPaper(
-                title=item.get("title", ""),
-                authors=[a.get("name", "") for a in item.get("authors", [])],
-                year=item.get("date", "")[:4] if item.get("date") else None,
-                link=f"https://doi.org/{item.get('doi', '')}" if item.get("doi") else "",
-                source="medrxiv",
-                abstract=item.get("abstract", ""),
-                doi=item.get("doi"),
-            ))
+            papers.append(
+                AcademicPaper(
+                    title=item.get("title", ""),
+                    authors=[a.get("name", "") for a in item.get("authors", [])],
+                    year=item.get("date", "")[:4] if item.get("date") else None,
+                    link=f"https://doi.org/{item.get('doi', '')}" if item.get("doi") else "",
+                    source="medrxiv",
+                    abstract=item.get("abstract", ""),
+                    doi=item.get("doi"),
+                )
+            )
         return papers
     except Exception as e:
         logger.error(f"search_medrxiv err: {e}")
         return []
 
-
-# =============================================================================
-# CITATION TRAVERSAL
-# =============================================================================
 
 async def traverse_citation_graph(
     seed_papers: list[AcademicPaper],
@@ -265,6 +253,7 @@ async def traverse_citation_graph(
     """
     try:
         from hledac.universal.recon.academic_search import SemanticScholarClient
+
         cache_dir = Path("/tmp/academic_cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
         ss_client = SemanticScholarClient(cache_dir)
@@ -282,17 +271,19 @@ async def traverse_citation_graph(
                 try:
                     citations = await ss_client.get_citations(paper_id, limit=5)
                     for cit in citations:
-                        pid = f"doi:{cit.get('doi', '')}" if cit.get('doi') else f"title:{cit.get('title', '')[:16]}"
+                        pid = f"doi:{cit.get('doi', '')}" if cit.get("doi") else f"title:{cit.get('title', '')[:16]}"
                         if pid not in visited and cit.get("title"):
                             visited.add(pid)
-                            hop1_papers.append(AcademicPaper(
-                                title=cit.get("title", ""),
-                                authors=cit.get("authors", []),
-                                year=cit.get("year"),
-                                link=cit.get("url", ""),
-                                source="semantic_scholar_cited_by",
-                                doi=cit.get("doi"),
-                            ))
+                            hop1_papers.append(
+                                AcademicPaper(
+                                    title=cit.get("title", ""),
+                                    authors=cit.get("authors", []),
+                                    year=cit.get("year"),
+                                    link=cit.get("url", ""),
+                                    source="semantic_scholar_cited_by",
+                                    doi=cit.get("doi"),
+                                )
+                            )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -308,31 +299,31 @@ async def traverse_citation_graph(
                     try:
                         citations = await ss_client.get_citations(paper_id, limit=3)
                         for cit in citations:
-                            pid = f"doi:{cit.get('doi', '')}" if cit.get('doi') else f"title:{cit.get('title', '')[:16]}"  # noqa: E501
+                            pid = (
+                                f"doi:{cit.get('doi', '')}" if cit.get("doi") else f"title:{cit.get('title', '')[:16]}"
+                            )  # noqa: E501
                             if pid not in visited and cit.get("title"):
                                 visited.add(pid)
-                                hop2_papers.append(AcademicPaper(
-                                    title=cit.get("title", ""),
-                                    authors=cit.get("authors", []),
-                                    year=cit.get("year"),
-                                    link=cit.get("url", ""),
-                                    source="semantic_scholar_cited_by",
-                                    doi=cit.get("doi"),
-                                ))
+                                hop2_papers.append(
+                                    AcademicPaper(
+                                        title=cit.get("title", ""),
+                                        authors=cit.get("authors", []),
+                                        year=cit.get("year"),
+                                        link=cit.get("url", ""),
+                                        source="semantic_scholar_cited_by",
+                                        doi=cit.get("doi"),
+                                    )
+                                )
                     except Exception:  # noqa: BLE001
                         pass
 
-                all_cited.extend(hop2_papers[:MAX_CITATION_PAPERS - len(all_cited)])
+                all_cited.extend(hop2_papers[: MAX_CITATION_PAPERS - len(all_cited)])
 
         return all_cited[:MAX_CITATION_PAPERS]
     except Exception as e:
         logger.error(f"traverse_citation_graph err: {e}")
         return []
 
-
-# =============================================================================
-# INTELLIGENCE CROSSLINKING
-# =============================================================================
 
 async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[dict[str, Any]]]:
     """
@@ -343,7 +334,6 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
     results: dict[str, list[dict[str, Any]]] = {"breach_alerts": [], "relationships": []}
 
     try:
-        # Extract emails and institutions
         emails = set()
         institutions = set()
 
@@ -357,22 +347,26 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
 
         # DataLeakHunter for breach checks
         from hledac.universal.recon.data_leak_hunter import DataLeakHunter
+
         if emails:
             hunter = DataLeakHunter(cache_dir=Path("/tmp/breach_cache"))
             for email in list(emails)[:10]:
                 try:
                     alerts = await hunter._check_breach_apis(email, "email")
                     for alert in alerts:
-                        results["breach_alerts"].append({
-                            "email": email,
-                            "source": getattr(alert, "source", "unknown"),
-                            "description": str(alert),
-                        })
+                        results["breach_alerts"].append(
+                            {
+                                "email": email,
+                                "source": getattr(alert, "source", "unknown"),
+                                "description": str(alert),
+                            }
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 
         # RelationshipDiscoveryEngine for institution relationships
         from hledac.universal.recon.relationship_discovery import RelationshipDiscoveryEngine
+
         if institutions:
             engine = RelationshipDiscoveryEngine(cache_dir=Path("/tmp/rel_cache"))
             for inst in list(institutions)[:20]:
@@ -380,10 +374,12 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
                     # Try predict_hidden_connections which may work for institutions
                     rels = await engine.predict_hidden_connections(max_predictions=5)
                     for src, tgt, conf in rels:
-                        results["relationships"].append({
-                            "institution": inst,
-                            "related": {"source": src, "target": tgt, "confidence": conf},
-                        })
+                        results["relationships"].append(
+                            {
+                                "institution": inst,
+                                "related": {"source": src, "target": tgt, "confidence": conf},
+                            }
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -393,21 +389,14 @@ async def intelligence_crosslink(papers: list[AcademicPaper]) -> dict[str, list[
     return results
 
 
-# =============================================================================
-# LAZY IMPORT — avoid circular imports
-# =============================================================================
-
 def _get_academic_search_engine():
     """Lazy-load AcademicSearchEngine from canonical path."""
     from hledac.universal.recon.academic_search import (
         AcademicSearchEngine,
     )
+
     return AcademicSearchEngine
 
-
-# =============================================================================
-# SEARCH FUNCTIONS
-# =============================================================================
 
 async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]]:
     """
@@ -427,7 +416,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
             query,
             max_results=max_results,
             sources=["arxiv"],
-    )
+        )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -436,7 +425,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
             if published:
                 try:
                     year = int(published[:4])
-                except (ValueError, IndexError):  # noqa: BLE001
+                except ValueError, IndexError:  # noqa: BLE001
                     pass
 
             paper = AcademicPaper(
@@ -449,7 +438,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
                 doi=None,
                 citations=0,
                 tags=search_result.metadata.get("categories", []),
-    )
+            )
             papers.append(paper.to_dict())
 
         await engine.cleanup()
@@ -478,7 +467,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
             query,
             max_results=max_results,
             sources=["crossref"],
-    )
+        )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -487,7 +476,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
             if published:
                 try:
                     year = int(published[:4])
-                except (ValueError, IndexError):  # noqa: BLE001
+                except ValueError, IndexError:  # noqa: BLE001
                     pass
 
             paper = AcademicPaper(
@@ -500,7 +489,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
                 doi=search_result.metadata.get("doi"),
                 citations=search_result.metadata.get("citations", 0),
                 tags=[],
-    )
+            )
             papers.append(paper.to_dict())
 
         await engine.cleanup()
@@ -529,7 +518,7 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
             query,
             max_results=max_results,
             sources=["semantic_scholar"],
-    )
+        )
 
         papers = []
         for search_result in result.deduplicated_results[:max_results]:
@@ -543,7 +532,7 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
                 doi=search_result.metadata.get("doi"),
                 citations=search_result.metadata.get("citation_count", 0),
                 tags=[],
-    )
+            )
             papers.append(paper.to_dict())
 
         await engine.cleanup()
@@ -554,14 +543,8 @@ async def search_semantic_scholar(query: str, max_results: int = 10) -> list[dic
         return []
 
 
-# =============================================================================
-# MAIN ORCHESTRATOR — search all sources concurrently
-# =============================================================================
-
 async def search_academic_all(
-    query: str,
-    max_results: int = 20,
-    _rate_limit: int = 100
+    query: str, max_results: int = 20, _rate_limit: int = 100
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Search all academic sources concurrently.
@@ -620,11 +603,6 @@ async def search_academic_all(
     }
 
 
-# =============================================================================
-# SYNC WRAPPERS — for backwards compatibility only
-# F214M: Replaced get_event_loop() with safe pattern for Python 3.14 compatibility.
-# =============================================================================
-
 def _run_sync(async_func, /, *args, **kwargs):
     """Run an async function synchronously in an isolated event loop.
 
@@ -670,24 +648,20 @@ def search_semantic_scholar_sync(query: str, max_results: int = 10) -> list[dict
     return _run_sync(search_semantic_scholar, query, max_results)
 
 
-# =============================================================================
-# EXPORTS
-# =============================================================================
-
 __all__ = [
-    'AcademicPaper',
-    'search_arxiv',
-    'search_crossref',
-    'search_semantic_scholar',
-    'search_openalex',
-    'search_ia_scholar',
-    'search_core',
-    'search_biorxiv',
-    'search_medrxiv',
-    'search_academic_all',
-    'traverse_citation_graph',
-    'intelligence_crosslink',
-    'search_arxiv_sync',
-    'search_crossref_sync',
-    'search_semantic_scholar_sync',
+    "AcademicPaper",
+    "search_arxiv",
+    "search_crossref",
+    "search_semantic_scholar",
+    "search_openalex",
+    "search_ia_scholar",
+    "search_core",
+    "search_biorxiv",
+    "search_medrxiv",
+    "search_academic_all",
+    "traverse_citation_graph",
+    "intelligence_crosslink",
+    "search_arxiv_sync",
+    "search_crossref_sync",
+    "search_semantic_scholar_sync",
 ]

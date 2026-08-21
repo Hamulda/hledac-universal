@@ -11,7 +11,6 @@ This test parses the .pyi stub, introspects the live module, and asserts
 every declared class/function is present at runtime.
 """
 
-
 import ast
 import sys
 from pathlib import Path
@@ -20,8 +19,6 @@ import pytest
 
 pytest.importorskip("hledac_rust_extensions", reason="hledac_rust_extensions not built")
 import hledac_rust_extensions as _live_module  # noqa: E402
-from _core import aclose
-
 
 _PYI_PATH = Path(__file__).parent.parent / "rust_extensions" / "hledac_rust_extensions.pyi"
 
@@ -47,9 +44,7 @@ class _PyiVisitor(ast.NodeVisitor):
 def _live_symbols() -> tuple[set[str], set[str]]:
     """Return (classes, standalone_funcs) from the live module."""
     live_classes = {
-        n
-        for n in dir(_live_module)
-        if not n.startswith("_") and isinstance(getattr(_live_module, n), type)
+        n for n in dir(_live_module) if not n.startswith("_") and isinstance(getattr(_live_module, n), type)
     }
     live_funcs = {
         n
@@ -120,18 +115,16 @@ class TestPyiConsistency:
         to call fast_ioc_extract instead of extract_iocs_simd.
         """
         # Verify extract_iocs_simd is registered in the live module
-        assert hasattr(
-            _live_module, "extract_iocs_simd"
-        ), "extract_iocs_simd not found in live module — SIMD path is missing"
+        assert hasattr(_live_module, "extract_iocs_simd"), (
+            "extract_iocs_simd not found in live module — SIMD path is missing"
+        )
         # Verify the method signature is correct (takes str, returns list of tuples)
         import inspect
 
         sig = inspect.signature(_live_module.extract_iocs_simd)
         assert list(sig.parameters) == ["text"], f"Unexpected signature: {sig}"
 
-    @pytest.mark.skipif(
-        sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)"
-    )
+    @pytest.mark.skipif(sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)")
     def test_bloom_filter_no_add_many(self) -> None:
         """BloomFilter must NOT have add_many (fabricated in old .pyi)."""
         from hledac_rust_extensions import BloomFilter
@@ -139,9 +132,7 @@ class TestPyiConsistency:
         bf = BloomFilter(capacity=1000)
         assert not hasattr(bf, "add_many"), "BloomFilter.add_many should not exist"
 
-    @pytest.mark.skipif(
-        sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)"
-    )
+    @pytest.mark.skipif(sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)")
     def test_content_hasher_no_instance_methods(self) -> None:
         """ContentHasher must only have static methods; instance methods are fabricated."""
         from hledac_rust_extensions import ContentHasher
@@ -151,9 +142,7 @@ class TestPyiConsistency:
         found = fabricated & set(dir(ch))
         assert not found, f"ContentHasher fabricated instance methods found: {found}"
 
-    @pytest.mark.skipif(
-        sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)"
-    )
+    @pytest.mark.skipif(sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)")
     def test_aho_corasick_no_find_all(self) -> None:
         """AhoCorasickMatcher must NOT have find_all/is_match (fabricated in old .pyi)."""
         from hledac_rust_extensions import AhoCorasickMatcher
@@ -163,9 +152,7 @@ class TestPyiConsistency:
         found = fabricated & set(dir(acm))
         assert not found, f"AhoCorasickMatcher fabricated methods found: {found}"
 
-    @pytest.mark.skipif(
-        sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)"
-    )
+    @pytest.mark.skipif(sys.platform != "darwin", reason="Rust extensions built for macOS (M1/M2/M3)")
     def test_ioc_dedup_store_no_bytes_methods(self) -> None:
         """IocDedupStore must NOT have to_bytes/set_state_from_bytes/get_state_bytes."""
         from hledac_rust_extensions import IocDedupStore

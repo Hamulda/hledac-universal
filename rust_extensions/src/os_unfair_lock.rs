@@ -25,10 +25,6 @@
 //! This module uses unsafe code to call the Darwin os_unfair_lock API.
 //! All lock/unlock pairs are wrapped in RAII guards for safety.
 
-// ---------------------------------------------------------------------------
-// Darwin (macOS/iOS) implementation
-// ---------------------------------------------------------------------------
-
 #[cfg(target_os = "macos")]
 pub mod darwin {
     //! Darwin-specific os_unfair_lock implementation.
@@ -101,10 +97,6 @@ pub mod darwin {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Stub implementation for non-Darwin platforms
-// ---------------------------------------------------------------------------
-
 #[cfg(not(target_os = "macos"))]
 pub mod darwin {
     //! Stub implementation for non-Darwin platforms.
@@ -148,10 +140,6 @@ pub mod darwin {
 }
 
 pub use darwin::OsUnfairLock;
-
-// ---------------------------------------------------------------------------
-// RAII Guard
-// ---------------------------------------------------------------------------
 
 /// RAII guard for os_unfair_lock.
 ///
@@ -228,18 +216,7 @@ impl OsUnfairLockExt for OsUnfairLock {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Convenience re-exports
-// ---------------------------------------------------------------------------
-
 pub type UnfairLock = OsUnfairLock;
-
-// ---------------------------------------------------------------------------
-// PyO3 Python Bindings — ISSUE-008
-// ---------------------------------------------------------------------------
-// Exposes os_unfair_lock to Python for use as a fast context manager.
-// ~5ns lock/unlock vs ~25ns for threading.Lock on M1.
-// ---------------------------------------------------------------------------
 
 mod py_bindings {
     use super::*;

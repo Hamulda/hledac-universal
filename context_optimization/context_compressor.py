@@ -10,40 +10,45 @@ MLXEmbeddingManager is primary for M1. FastEmbed removed P0-1.
 This module provides memory-efficient context compression using MLX embeddings
 with Metal backend, optimized for M1 MacBook Air (8GB RAM).
 """
+
 import hashlib
 import logging
 import re
 import time
-from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
-
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+
+import numpy as np
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+
 # E3: Use Rust zstd via msgspec_json (zero-copy, GIL-released)
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
-from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
-import numpy as np
-from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:
     from hledac.universal._core.mlx_embeddings import MLXEmbeddingManager
+
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
-    logger.debug('MLXEmbeddingManager not available')
-CRITICAL = 'critical'
-IMPORTANT = 'important'
-ABSTRACT = 'abstract'
+    logger.debug("MLXEmbeddingManager not available")
+CRITICAL = "critical"
+IMPORTANT = "important"
+ABSTRACT = "abstract"
+
 
 def _list_to_ndarray(obj: Any) -> Any:
     """Convert lists back to numpy arrays after JSON deserialization."""
     if isinstance(obj, str) and len(obj) > 100:
         import base64
+
         return base64.b64decode(obj)
     if isinstance(obj, dict):
         return {k: _list_to_ndarray(v) for k, v in obj.items()}
@@ -51,30 +56,64 @@ def _list_to_ndarray(obj: Any) -> Any:
         return [_list_to_ndarray(item) for item in obj]
     return obj
 
+
 def _serialize_compressed(data: dict[str, CompressedContext]) -> bytes:
     """Serialize compressed context data to bytes using msgspec facade."""
     serializable = {}
     for k, v in data.items():
-        entry_dict = {'context_id': v.context_id, 'original_size': v.original_size, 'compressed_size': v.compressed_size, 'compression_ratio': v.compression_ratio, 'critical_content': v.critical_content, 'important_summary': v.important_summary, 'abstract_summary': v.abstract_summary, 'full_compressed': v.full_compressed, 'metadata': v.metadata, 'timestamp': v.timestamp, 'embeddings': {kk: vv.tolist() for kk, vv in v.embeddings.items()} if v.embeddings else None, 'sentence_scores': v.sentence_scores, 'cluster_info': v.cluster_info}
+        entry_dict = {
+            "context_id": v.context_id,
+            "original_size": v.original_size,
+            "compressed_size": v.compressed_size,
+            "compression_ratio": v.compression_ratio,
+            "critical_content": v.critical_content,
+            "important_summary": v.important_summary,
+            "abstract_summary": v.abstract_summary,
+            "full_compressed": v.full_compressed,
+            "metadata": v.metadata,
+            "timestamp": v.timestamp,
+            "embeddings": {kk: vv.tolist() for kk, vv in v.embeddings.items()} if v.embeddings else None,
+            "sentence_scores": v.sentence_scores,
+            "cluster_info": v.cluster_info,
+        }
         serializable[k] = entry_dict
     return _msgspec_encode(serializable)
+
 
 def _deserialize_compressed(data: bytes) -> dict[str, CompressedContext]:
     """Deserialize compressed context data from bytes using msgspec facade."""
     raw = _msgspec_decode(data)
     result = {}
     for k, v in raw.items():
-        result[k] = CompressedContext(context_id=v['context_id'], original_size=v['original_size'], compressed_size=v['compressed_size'], compression_ratio=v['compression_ratio'], critical_content=v['critical_content'], important_summary=v['important_summary'], abstract_summary=v['abstract_summary'], full_compressed=v['full_compressed'], metadata=v['metadata'], timestamp=v['timestamp'], embeddings={kk: np.array(vv) for kk, vv in v['embeddings'].items()} if v['embeddings'] else None, sentence_scores=v['sentence_scores'], cluster_info=v['cluster_info'])
+        result[k] = CompressedContext(
+            context_id=v["context_id"],
+            original_size=v["original_size"],
+            compressed_size=v["compressed_size"],
+            compression_ratio=v["compression_ratio"],
+            critical_content=v["critical_content"],
+            important_summary=v["important_summary"],
+            abstract_summary=v["abstract_summary"],
+            full_compressed=v["full_compressed"],
+            metadata=v["metadata"],
+            timestamp=v["timestamp"],
+            embeddings={kk: np.array(vv) for kk, vv in v["embeddings"].items()} if v["embeddings"] else None,
+            sentence_scores=v["sentence_scores"],
+            cluster_info=v["cluster_info"],
+        )
     return result
+
 
 class CompressionLevel(Enum):
     """Compression levels for context."""
+
     CRITICAL = CRITICAL
     IMPORTANT = IMPORTANT
     ABSTRACT = ABSTRACT
 
+
 class CompressedContext(Struct):
     """Compressed context container."""
+
     context_id: str
     original_size: int
     compressed_size: int
@@ -89,13 +128,16 @@ class CompressedContext(Struct):
     sentence_scores: list[float] | None = None
     cluster_info: dict[str, Any] | None = None
 
+
 class DecompressionResult(Struct):
     """Result of context decompression."""
+
     content: str
     detail_level: str
     relevance_score: float
     decompression_time: float
     source_level: CompressionLevel
+
 
 class ContextCompressor:
     """
@@ -112,9 +154,29 @@ class ContextCompressor:
     - Low memory footprint (~100MB peak)
     - LZ4 compression for storage
     """
-    __slots__ = tuple(('_embedder_type', '_mlx_manager', 'compressed_storage', 'compression_stats', 'embedder', 'embedding_dim', 'embedding_model', 'max_abstract_tokens', 'max_critical_tokens', 'max_important_tokens', 'storage_path'))
 
-    def __init__(self, embedding_model: str='snowflake/snowflake-arctic-embed-xs', storage_path: str='compressed_storage', max_critical_tokens: int=10000, max_important_tokens: int=20000, max_abstract_tokens: int=5000):
+    __slots__ = (
+        "_embedder_type",
+        "_mlx_manager",
+        "compressed_storage",
+        "compression_stats",
+        "embedder",
+        "embedding_dim",
+        "embedding_model",
+        "max_abstract_tokens",
+        "max_critical_tokens",
+        "max_important_tokens",
+        "storage_path",
+    )
+
+    def __init__(
+        self,
+        embedding_model: str = "snowflake/snowflake-arctic-embed-xs",
+        storage_path: str = "compressed_storage",
+        max_critical_tokens: int = 10000,
+        max_important_tokens: int = 20000,
+        max_abstract_tokens: int = 5000,
+    ) -> None:
         """
         Initialize context compressor.
 
@@ -132,13 +194,16 @@ class ContextCompressor:
         if MLX_EMBED_AVAILABLE:
             try:
                 from hledac.universal._core.mlx_embeddings import get_embedding_manager
+
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM
-                self._embedder_type = 'mlx'
-                logger.info(f'[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}')
+                self._embedder_type = "mlx"
+                logger.info(
+                    f"[EMBEDDER] Using shared MLXEmbeddingManager: {self._mlx_manager.model_path}, dim={self.embedding_dim}"
+                )
             except Exception as e:
-                logger.warning(f'MLXEmbeddingManager init failed: {e}, using dummy embeddings')
+                logger.warning(f"MLXEmbeddingManager init failed: {e}, using dummy embeddings")
                 self._mlx_manager = None
                 self.embedder = None
                 self.embedding_dim = 384
@@ -146,7 +211,7 @@ class ContextCompressor:
         elif FASTEMBED_AVAILABLE:
             self._initialize_embedder()
         else:
-            logger.warning('MLXEmbeddingManager not available, using dummy embeddings')
+            logger.warning("MLXEmbeddingManager not available, using dummy embeddings")
             self.embedding_dim = 384
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -154,7 +219,13 @@ class ContextCompressor:
         self.max_critical_tokens = max_critical_tokens
         self.max_important_tokens = max_important_tokens
         self.max_abstract_tokens = max_abstract_tokens
-        self.compression_stats: dict[str, Any] = {'total_compressed': 0, 'total_original_tokens': 0, 'total_compressed_tokens': 0, 'compression_time': 0.0, 'decompression_time': 0.0}
+        self.compression_stats: dict[str, Any] = {
+            "total_compressed": 0,
+            "total_original_tokens": 0,
+            "total_compressed_tokens": 0,
+            "compression_time": 0.0,
+            "decompression_time": 0.0,
+        }
         self._load_compressed_storage()
 
     def _get_embeddings(self, texts: list[str]) -> list[np.ndarray]:
@@ -162,48 +233,49 @@ class ContextCompressor:
         if self.embedder is None:
             return []
         try:
-            if self._embedder_type == 'mlx':
-                if hasattr(self.embedder, 'embed_query'):
+            if self._embedder_type == "mlx":
+                if hasattr(self.embedder, "embed_query"):
                     return [self.embedder.embed_query(t) for t in texts]
                 results = self.embedder.encode(texts)
-                return [np.asarray(r.tolist()) if hasattr(r, 'tolist') else np.array(r) for r in results]
+                return [np.asarray(r.tolist()) if hasattr(r, "tolist") else np.array(r) for r in results]
             else:
                 return list(self.embedder.embed(texts))
         except Exception as e:
-            logger.warning(f'Embedding failed: {e}')
+            logger.warning(f"Embedding failed: {e}")
             return []
 
-    def _load_compressed_storage(self):
+    def _load_compressed_storage(self) -> None:
         """Load existing compressed contexts from disk."""
         try:
-            storage_file = self.storage_path / 'compressed_contexts.json'
+            storage_file = self.storage_path / "compressed_contexts.json"
             if storage_file.exists():
-                with open(storage_file, 'rb') as f:
+                with open(storage_file, "rb") as f:
                     self.compressed_storage = _deserialize_compressed(f.read())
-                logger.info(f'Loaded {len(self.compressed_storage)} compressed contexts')
+                logger.info(f"Loaded {len(self.compressed_storage)} compressed contexts")
         except FileNotFoundError:
             self.compressed_storage = {}
         except Exception as e:
-            logger.warning(f'Could not load compressed storage: {e}')
+            logger.warning(f"Could not load compressed storage: {e}")
             self.compressed_storage = {}
 
-    def _save_compressed_storage(self):
+    def _save_compressed_storage(self) -> None:
         """Save compressed contexts to disk."""
         try:
-            storage_file = self.storage_path / 'compressed_contexts.json'
-            with open(storage_file, 'wb') as f:
+            storage_file = self.storage_path / "compressed_contexts.json"
+            with open(storage_file, "wb") as f:
                 f.write(_serialize_compressed(self.compressed_storage))
         except Exception as e:
-            logger.warning(f'Could not save compressed storage: {e}')
+            logger.warning(f"Could not save compressed storage: {e}")
 
     def _generate_context_id(self, content: str) -> str:
         """Generate unique ID for content.
-        
+
         E1: Uses hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
         instead of MD5 for consistency with other crypto acceleration targets.
         """
         try:
             from _core.rust_backend import rust
+
             hashes = rust.crypto.batch_sha256_hw([content])
             return hashes[0][:16] if hashes else hashlib.sha256(content.encode()).hexdigest()[:16]
         except Exception:
@@ -215,10 +287,10 @@ class ContextCompressor:
 
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
-        sentences = re.split('[.!?]+', text)
+        sentences = re.split("[.!?]+", text)
         return [s.strip() for s in sentences if s.strip()]
 
-    def _chunk_text(self, text: str, chunk_size: int=1024) -> list[str]:
+    def _chunk_text(self, text: str, chunk_size: int = 1024) -> list[str]:
         """Split text into chunks for processing."""
         words = text.split()
         chunks = []
@@ -226,17 +298,17 @@ class ContextCompressor:
         current_length = 0
         for word in words:
             if current_length + len(word) + 1 > chunk_size:
-                chunks.append(' '.join(current_chunk))
+                chunks.append(" ".join(current_chunk))
                 current_chunk = [word]
                 current_length = len(word)
             else:
                 current_chunk.append(word)
                 current_length += len(word) + 1
         if current_chunk:
-            chunks.append(' '.join(current_chunk))
+            chunks.append(" ".join(current_chunk))
         return chunks
 
-    async def compress_context(self, full_context: str, metadata: dict[str, Any] | None=None) -> CompressedContext:
+    async def compress_context(self, full_context: str, metadata: dict[str, Any] | None = None) -> CompressedContext:
         """
         Compress context with multi-level compression.
 
@@ -258,26 +330,41 @@ class ContextCompressor:
         important_summary = self._create_summary(full_context, self.max_important_tokens)
         abstract_summary = self._create_abstract(full_context, self.max_abstract_tokens)
         # E3: Use Rust zstd via _encode_zstd (zero-copy, GIL-released)
-        full_compressed = _encode_zstd(full_context.encode('utf-8'))
-        compressed_tokens = self._estimate_tokens(critical_content) + self._estimate_tokens(important_summary) + self._estimate_tokens(abstract_summary)
+        full_compressed = _encode_zstd(full_context.encode("utf-8"))
+        compressed_tokens = (
+            self._estimate_tokens(critical_content)
+            + self._estimate_tokens(important_summary)
+            + self._estimate_tokens(abstract_summary)
+        )
         compression_ratio = compressed_tokens / max(original_tokens, 1)
         # E3: Add codec metadata for zstd
-        metadata = {**metadata, 'codec': 'zstd'}
-        compressed_ctx = CompressedContext(context_id=context_id, original_size=original_tokens, compressed_size=compressed_tokens, compression_ratio=compression_ratio, critical_content=critical_content, important_summary=important_summary, abstract_summary=abstract_summary, full_compressed=full_compressed, metadata=metadata, timestamp=time.time())
+        metadata = {**metadata, "codec": "zstd"}
+        compressed_ctx = CompressedContext(
+            context_id=context_id,
+            original_size=original_tokens,
+            compressed_size=compressed_tokens,
+            compression_ratio=compression_ratio,
+            critical_content=critical_content,
+            important_summary=important_summary,
+            abstract_summary=abstract_summary,
+            full_compressed=full_compressed,
+            metadata=metadata,
+            timestamp=time.time(),
+        )
         self.compressed_storage[context_id] = compressed_ctx
         self._save_compressed_storage()
         compression_time = time.time() - start_time
-        self.compression_stats['total_compressed'] += 1
-        self.compression_stats['total_original_tokens'] += original_tokens
-        self.compression_stats['total_compressed_tokens'] += compressed_tokens
-        self.compression_stats['compression_time'] += compression_time
+        self.compression_stats["total_compressed"] += 1
+        self.compression_stats["total_original_tokens"] += original_tokens
+        self.compression_stats["total_compressed_tokens"] += compressed_tokens
+        self.compression_stats["compression_time"] += compression_time
         return compressed_ctx
 
     def _extract_critical_content(self, content: str, max_tokens: int) -> str:
         """Extract most critical sentences using embedding-based scoring."""
         sentences = self._split_sentences(content)
         if not sentences:
-            return ''
+            return ""
         scored_sentences = []
         for idx, sentence in enumerate(sentences):
             score = self._score_sentence(sentence, idx, len(sentences))
@@ -291,7 +378,7 @@ class ContextCompressor:
                 break
             selected_sentences.append(sentence)
             current_tokens += sentence_tokens
-        return ' '.join(selected_sentences)
+        return " ".join(selected_sentences)
 
     def _score_sentence(self, sentence: str, position: int, total_sentences: int) -> float:
         """Score sentence based on multiple factors."""
@@ -310,11 +397,11 @@ class ContextCompressor:
         elif position_ratio < 0.4 or position_ratio > 0.6:
             score += 0.2
         sentence_lower = sentence.lower()
-        if any((kw in sentence_lower for kw in ['important', 'critical', 'key', 'main', 'primary'])):
+        if any(kw in sentence_lower for kw in ["important", "critical", "key", "main", "primary"]):
             score += 0.1
-        if re.search('\\d+', sentence):
+        if re.search("\\d+", sentence):
             score += 0.1
-        if '?' in sentence or '"' in sentence:
+        if "?" in sentence or '"' in sentence:
             score += 0.1
         return score
 
@@ -325,8 +412,8 @@ class ContextCompressor:
         for chunk in chunks:
             sentences = self._split_sentences(chunk)
             chunk_summary = sentences[:5]
-            summaries.append(' '.join(chunk_summary))
-        combined_summary = ' '.join(summaries)
+            summaries.append(" ".join(chunk_summary))
+        combined_summary = " ".join(summaries)
         sentences = self._split_sentences(combined_summary)
         result_sentences = []
         current_tokens = 0
@@ -336,7 +423,7 @@ class ContextCompressor:
                 break
             result_sentences.append(sentence)
             current_tokens += tokens
-        return ' '.join(result_sentences)
+        return " ".join(result_sentences)
 
     def _create_abstract(self, content: str, max_tokens: int) -> str:
         """Create high-level abstract of content."""
@@ -350,9 +437,11 @@ class ContextCompressor:
                 if current_tokens + tokens <= max_tokens:
                     abstract_sentences.append(sentence)
                     current_tokens += tokens
-        return ' '.join(abstract_sentences)
+        return " ".join(abstract_sentences)
 
-    async def decompress_context(self, context_id: str, detail_level: str | None=None, query: str | None=None) -> DecompressionResult:
+    async def decompress_context(
+        self, context_id: str, detail_level: str | None = None, query: str | None = None
+    ) -> DecompressionResult:
         """
         Decompress context at specified detail level.
 
@@ -366,46 +455,56 @@ class ContextCompressor:
         """
         start_time = time.time()
         if context_id not in self.compressed_storage:
-            raise ValueError(f'Context ID {context_id} not found')
+            raise ValueError(f"Context ID {context_id} not found")
         compressed_ctx = self.compressed_storage[context_id]
         if detail_level is None:
             detail_level = self._determine_detail_level(query)
-        content = ''
+        content = ""
         source_level = None
-        if detail_level == 'critical':
+        if detail_level == "critical":
             content = compressed_ctx.critical_content
             source_level = CompressionLevel.CRITICAL
-        elif detail_level == 'important':
+        elif detail_level == "important":
             content = compressed_ctx.important_summary
             source_level = CompressionLevel.IMPORTANT
-        elif detail_level == 'abstract':
+        elif detail_level == "abstract":
             content = compressed_ctx.abstract_summary
             source_level = CompressionLevel.ABSTRACT
         else:
             # E3: Use Rust zstd via _decode_zstd (zero-copy, GIL-released)
             try:
-                content = _decode_zstd(compressed_ctx.full_compressed).decode('utf-8')
+                content = _decode_zstd(compressed_ctx.full_compressed).decode("utf-8")
             except Exception:
                 # Fallback: assume uncompressed if decode fails
-                content = compressed_ctx.full_compressed.decode('utf-8') if isinstance(compressed_ctx.full_compressed, bytes) else str(compressed_ctx.full_compressed)
+                content = (
+                    compressed_ctx.full_compressed.decode("utf-8")
+                    if isinstance(compressed_ctx.full_compressed, bytes)
+                    else str(compressed_ctx.full_compressed)
+                )
             source_level = None
         relevance_score = 0.0
         if query and self.embedder:
             relevance_score = await self._calculate_relevance(query, content)
         decompression_time = time.time() - start_time
-        self.compression_stats['decompression_time'] += decompression_time
-        return DecompressionResult(content=content, detail_level=detail_level, relevance_score=relevance_score, decompression_time=decompression_time, source_level=source_level)
+        self.compression_stats["decompression_time"] += decompression_time
+        return DecompressionResult(
+            content=content,
+            detail_level=detail_level,
+            relevance_score=relevance_score,
+            decompression_time=decompression_time,
+            source_level=source_level,
+        )
 
     def _determine_detail_level(self, query: str | None) -> str:
         """Determine appropriate detail level based on query."""
         if query is None:
-            return 'important'
+            return "important"
         query_lower = query.lower()
-        detail_indicators = ['detailed', 'specific', 'exact', 'verbatim', 'quote', 'precise', 'comprehensive']
-        if any((indicator in query_lower for indicator in detail_indicators)):
-            return 'important'
+        detail_indicators = ["detailed", "specific", "exact", "verbatim", "quote", "precise", "comprehensive"]
+        if any(indicator in query_lower for indicator in detail_indicators):
+            return "important"
         else:
-            return 'abstract'
+            return "abstract"
 
     async def _calculate_relevance(self, query: str, content: str) -> float:
         """Calculate relevance score between query and content."""
@@ -418,20 +517,27 @@ class ContextCompressor:
                 return 0.5
             query_embedding = np.array(query_embeddings[0])
             content_embedding = np.array(content_embeddings[0])
-            similarity = float(np.dot(query_embedding, content_embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(content_embedding)))
+            similarity = float(
+                np.dot(query_embedding, content_embedding)
+                / (np.linalg.norm(query_embedding) * np.linalg.norm(content_embedding))
+            )
             return max(0.0, min(1.0, similarity))
         except Exception as e:
-            logger.warning(f'Relevance calculation failed: {e}')
+            logger.warning(f"Relevance calculation failed: {e}")
             return 0.5
 
     async def get_compression_stats(self) -> dict[str, Any]:
         """Get compression performance statistics."""
-        if self.compression_stats['total_compressed'] > 0:
-            avg_compression = self.compression_stats['total_compressed_tokens'] / self.compression_stats['total_original_tokens']
-            self.compression_stats['average_compression_ratio'] = avg_compression
+        if self.compression_stats["total_compressed"] > 0:
+            avg_compression = (
+                self.compression_stats["total_compressed_tokens"] / self.compression_stats["total_original_tokens"]
+            )
+            self.compression_stats["average_compression_ratio"] = avg_compression
         return self.compression_stats.copy()
 
-    async def batch_compress(self, contexts: list[str], metadata_list: list[dict[str, Any]] | None=None) -> list[CompressedContext]:
+    async def batch_compress(
+        self, contexts: list[str], metadata_list: list[dict[str, Any]] | None = None
+    ) -> list[CompressedContext]:
         """Batch compress multiple contexts."""
         if metadata_list is None:
             metadata_list = [{} for _ in range(len(contexts))]
@@ -439,30 +545,41 @@ class ContextCompressor:
         for context, metadata in zip(contexts, metadata_list, strict=False):
             task = self.compress_context(context, metadata=metadata)
             tasks.append(task)
-        return await parallel_ok(*tasks, label='context_compressor:701')
+        return await parallel_ok(*tasks, label="context_compressor:701")
 
-    async def batch_decompress(self, context_ids: list[str], detail_level: str | None=None, query: str | None=None) -> list[DecompressionResult]:
+    async def batch_decompress(
+        self, context_ids: list[str], detail_level: str | None = None, query: str | None = None
+    ) -> list[DecompressionResult]:
         """Batch decompress multiple contexts."""
         tasks = []
         for context_id in context_ids:
             task = self.decompress_context(context_id, detail_level, query)
             tasks.append(task)
-        return await parallel_ok(*tasks, label='context_compressor:715')
+        return await parallel_ok(*tasks, label="context_compressor:715")
 
     def list_compressed_contexts(self) -> list[dict[str, Any]]:
         """List all compressed contexts with metadata."""
         contexts = []
         for ctx in self.compressed_storage.values():
-            contexts.append({'context_id': ctx.context_id, 'original_size': ctx.original_size, 'compressed_size': ctx.compressed_size, 'compression_ratio': ctx.compression_ratio, 'timestamp': ctx.timestamp, 'metadata': ctx.metadata})
+            contexts.append(
+                {
+                    "context_id": ctx.context_id,
+                    "original_size": ctx.original_size,
+                    "compressed_size": ctx.compressed_size,
+                    "compression_ratio": ctx.compression_ratio,
+                    "timestamp": ctx.timestamp,
+                    "metadata": ctx.metadata,
+                }
+            )
         return contexts
 
-    def delete_compressed_context(self, context_id: str):
+    def delete_compressed_context(self, context_id: str) -> None:
         """Delete a compressed context."""
         if context_id in self.compressed_storage:
             del self.compressed_storage[context_id]
             self._save_compressed_storage()
 
-    def clear_all(self):
+    def clear_all(self) -> None:
         """Clear all compressed contexts."""
         self.compressed_storage.clear()
         self._save_compressed_storage()

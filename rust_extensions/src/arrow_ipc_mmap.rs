@@ -83,10 +83,6 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::mixed_pool;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Maximum Arrow IPC mmap pool size (512 MiB).
 /// Made pub(crate) for use by arrow_batch_builder.rs.
 pub(crate) const MAX_MMAP_POOL_BYTES: u64 = 512 * 1024 * 1024;
@@ -97,19 +93,11 @@ const MEMORY_FLOOR_BYTES: u64 = 1024 * 1024 * 1024;
 /// Arrow IPC schema version.
 const ARROW_IPC_VERSION: i32 = 5;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Global State (Atomic allocation ledger)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Total bytes currently in Arrow IPC mmap pool.
 static MMAP_POOL_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Peak mmap pool usage (for telemetry).
 static MMAP_POOL_PEAK: AtomicU64 = AtomicU64::new(0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mmap Pool Budget Guard
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Check if mmap allocation is allowed under UmaBudget.
 ///
@@ -143,7 +131,6 @@ pub fn check_mmap_budget(requested_bytes: u64) -> Result<(), String> {
 /// Made public for use by arrow_batch_builder.rs build_arrow_batch_to_mmap.
 pub fn account_mmap_alloc(bytes: u64) {
     let new_total = MMAP_POOL_BYTES.fetch_add(bytes, Ordering::AcqRel);
-    // Update peak
     let peak = MMAP_POOL_PEAK.load(Ordering::Relaxed);
     if new_total > peak {
         MMAP_POOL_PEAK.store(new_total, Ordering::Relaxed);
@@ -192,10 +179,6 @@ fn get_available_memory_bytes() -> u64 {
     8 * 1024 * 1024 * 1024
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Arrow IPC Mmap Writer
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Arrow IPC mmap writer for zero-copy streaming.
 ///
 /// Writes Arrow IPC RecordBatch directly to a memory-mapped file.
@@ -228,10 +211,8 @@ impl ArrowIpcMmapWriter {
             .max(64 * 1024) // Minimum 64 KiB
             .min(MAX_MMAP_POOL_BYTES / 2); // Cap at 256 MiB
 
-        // Check budget
         check_mmap_budget(estimated_bytes)?;
 
-        // Create file with estimated capacity
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -244,7 +225,6 @@ impl ArrowIpcMmapWriter {
         file.set_len(estimated_bytes)
             .map_err(|e| format!("failed to set file size: {}", e))?;
 
-        // Create mmap
         let mmap = unsafe { MmapMut::map_mut(&file) }
             .map_err(|e| format!("failed to create mmap: {}", e))?;
 
@@ -275,7 +255,6 @@ impl ArrowIpcMmapWriter {
 
         let start = self.bytes_written as usize;
 
-        // Write using StreamWriter into the mmap buffer
         let mut cursor = std::io::Cursor::new(unsafe { self.mmap.as_mut_slice() });
 
         // Use IPC writer
@@ -334,10 +313,6 @@ impl Drop for ArrowIpcMmapWriter {
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Python API
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Result of Arrow IPC mmap write operation.
 #[pyclass]
@@ -479,7 +454,6 @@ pub fn write_arrow_ipc_to_mmap(
         return Err(PyValueError::new_err(e));
     }
 
-    // Create/truncate file
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -498,7 +472,6 @@ pub fn write_arrow_ipc_to_mmap(
             e
         )))?;
 
-    // Create mmap
     let mmap = unsafe { MmapMut::map_mut(&file) }
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "failed to create mmap: {}",
@@ -518,7 +491,6 @@ pub fn write_arrow_ipc_to_mmap(
             e
         )))?;
 
-    // Parse schema from Arrow IPC bytes using StreamReader
     let schema_json = match parse_schema_from_ipc_bytes(ipc_bytes) {
         Ok(json) => json,
         Err(e) => {
@@ -552,7 +524,6 @@ pub fn write_arrow_ipc_to_mmap(
 #[pyfunction]
 #[pyo3(signature = (path, bytes))]
 pub fn delete_arrow_ipc_mmap(path: &str, bytes: i64) -> PyResult<()> {
-    // Delete file
     if std::path::Path::new(path).exists() {
         std::fs::remove_file(path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -586,10 +557,6 @@ pub fn create_mmap_result(
         owns_budget: false, // Budget already accounted by caller
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Python Module Registration
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Register Arrow IPC mmap functions with Python module.
 pub fn add_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -16,14 +16,12 @@ GHOST_INVARIANTS:
   - Fail-safe: returns [query] / [] on any error
 """
 
-
 import re
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     # Lazy import only for type checking — not executed at runtime
-    from hledac.universal.brain.ner_engine import extract_iocs_from_text
+    pass
 
 
 # Pre-compiled TTP pattern — module-level (was per-call re.compile in original)

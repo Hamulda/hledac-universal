@@ -29,15 +29,16 @@ Usage:
             execute_fn=self._execute_decision,
     )
 """
+
 from __future__ import annotations
 
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from ._dto import DecisionResponse, OperationResult
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 class DispatchContext(Struct, frozen=True):
     """Immutable context passed to all dispatch operations. M1 8GB: msgspec.Struct for fast init."""
+
     coordinator_name: str
     operation_ref: str
     operation_type: str  # 'execution', 'security', 'opsec', 'monitoring', etc.
@@ -98,20 +100,23 @@ async def execute_dispatch(
         OperationResult with execution outcome
     """
     operation_id = tracker.generate_operation_id()
-    tracker.track_operation(operation_id, {
-        'operation_ref': ctx.operation_ref,
-        'decision': ctx.decision,
-        'type': ctx.operation_type,
-    })
+    tracker.track_operation(
+        operation_id,
+        {
+            "operation_ref": ctx.operation_ref,
+            "decision": ctx.decision,
+            "type": ctx.operation_type,
+        },
+    )
     try:
         result = await execute_fn(ctx.decision)
         # Result must have: success (bool), summary (str), and optional metadata
-        is_success = getattr(result, 'success', True)
-        summary = getattr(result, 'summary', str(result))
+        is_success = getattr(result, "success", True)
+        summary = getattr(result, "summary", str(result))
         # Support both 'metadata' and 'result_data' attribute names
-        if hasattr(result, 'metadata'):
+        if hasattr(result, "metadata"):
             extra_meta = result.metadata
-        elif hasattr(result, 'result_data'):
+        elif hasattr(result, "result_data"):
             extra_meta = result.result_data
         else:
             extra_meta = {}
@@ -121,29 +126,27 @@ async def execute_dispatch(
 
         operation_result = OperationResult(
             operation_id=operation_id,
-            status='completed' if is_success else 'failed',
+            status="completed" if is_success else "failed",
             result_summary=summary,
             execution_time=time.time() - ctx.start_time,
             success=is_success,
             metadata=extra_meta,
-    )
+        )
     except Exception as e:
         operation_result = OperationResult(
             operation_id=operation_id,
-            status='failed',
-            result_summary=f'{ctx.operation_type.capitalize()} operation failed: {str(e)}',
+            status="failed",
+            result_summary=f"{ctx.operation_type.capitalize()} operation failed: {str(e)}",
             execution_time=time.time() - ctx.start_time,
             success=False,
             error_message=str(e),
-    )
+        )
     finally:
         tracker.untrack_operation(operation_id)
 
     tracker.record_operation_result(operation_result)
     return operation_result
 
-
-# ─── Routing Helpers ───────────────────────────────────────────────────────────
 
 def match_keyword(chosen: str, keywords: list[str]) -> bool:
     """Check if any keyword appears in chosen option (case-insensitive)."""
@@ -175,9 +178,9 @@ def route_by_keyword(
 
 
 __all__ = [
-    'DispatchContext',
-    'execute_dispatch',
-    'match_keyword',
-    'route_by_keyword',
-    '_make_context',
+    "DispatchContext",
+    "execute_dispatch",
+    "match_keyword",
+    "route_by_keyword",
+    "_make_context",
 ]

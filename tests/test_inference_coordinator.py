@@ -20,33 +20,32 @@ Test convention: TestSprintM10* — 1 test class per backend.
 
 Author: M-10 (F350M-R)
 """
+
 from __future__ import annotations
 
-import asyncio
 import os
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Import from the new coordinator
 from _core.inference_coordinator import (
+    CoreMLBackend,
     InferenceBackend,
     InferenceCoordinator,
     InferenceError,
     InferenceRequest,
     InferenceResponse,
-    MLXInProcBackend,
     MlxcelBackend,
-    CoreMLBackend,
+    MLXInProcBackend,
     Token,
-    get_inference_coordinator,
     generate,
+    get_inference_coordinator,
     stream_generate,
 )
 
-
 # ─── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_env_mlx_inproc():
@@ -89,10 +88,11 @@ def sample_request():
 
 # ─── TestSprintM10: Backend Enum ────────────────────────────────────────────────
 
+
 class TestSprintM10BackendEnum:
     """IC.2: Backend resolution from env."""
 
-    def test_default_is_mlxcel(self):
+    def test_default_is_mlxcel(self) -> None:
         """Default backend is mlxcel when env is unset (M1 8GB RSS savings)."""
         # Clear any existing env
         with patch.dict(os.environ, {}, clear=True):
@@ -100,25 +100,25 @@ class TestSprintM10BackendEnum:
             backend = InferenceBackend.from_env()
             assert backend == InferenceBackend.MLXCEL
 
-    def test_env_mlx_inproc(self, mock_env_mlx_inproc):
+    def test_env_mlx_inproc(self, mock_env_mlx_inproc) -> None:
         backend = InferenceBackend.from_env()
         assert backend == InferenceBackend.MLX_INPROC
 
-    def test_env_mlxcel(self, mock_env_mlxcel):
+    def test_env_mlxcel(self, mock_env_mlxcel) -> None:
         backend = InferenceBackend.from_env()
         assert backend == InferenceBackend.MLXCEL
 
-    def test_env_coreml(self, mock_env_coreml):
+    def test_env_coreml(self, mock_env_coreml) -> None:
         backend = InferenceBackend.from_env()
         assert backend == InferenceBackend.COREML
 
-    def test_env_unknown_defaults_to_mlxcel(self):
+    def test_env_unknown_defaults_to_mlxcel(self) -> None:
         """Unknown env value falls back to mlxcel."""
         with patch.dict(os.environ, {"HLEDAC_INFERENCE_BACKEND": "invalid_backend"}):
             backend = InferenceBackend.from_env()
             assert backend == InferenceBackend.MLXCEL
 
-    def test_backend_values(self):
+    def test_backend_values(self) -> None:
         """All backends have string values."""
         assert InferenceBackend.MLX_INPROC.value == "mlx_inproc"
         assert InferenceBackend.MLXCEL.value == "mlxcel"
@@ -127,10 +127,11 @@ class TestSprintM10BackendEnum:
 
 # ─── TestSprintM10: InferenceRequest ───────────────────────────────────────────
 
+
 class TestSprintM10Request:
     """InferenceRequest DTO + effective_backend()."""
 
-    def test_effective_backend_uses_request_backend(self):
+    def test_effective_backend_uses_request_backend(self) -> None:
         """Per-request backend overrides env."""
         req = InferenceRequest(
             prompt="test",
@@ -139,7 +140,7 @@ class TestSprintM10Request:
         with patch.dict(os.environ, {"HLEDAC_INFERENCE_BACKEND": "mlx_inproc"}):
             assert req.effective_backend() == InferenceBackend.MLXCEL
 
-    def test_effective_backend_falls_back_to_env(self):
+    def test_effective_backend_falls_back_to_env(self) -> None:
         """No per-request backend → use env."""
         req = InferenceRequest(prompt="test")
         with patch.dict(os.environ, {"HLEDAC_INFERENCE_BACKEND": "coreml"}):
@@ -147,7 +148,7 @@ class TestSprintM10Request:
             os.environ["HLEDAC_INFERENCE_BACKEND"] = "coreml"
             assert req.effective_backend() == InferenceBackend.COREML
 
-    def test_request_defaults(self):
+    def test_request_defaults(self) -> None:
         """Canonical defaults."""
         req = InferenceRequest(prompt="hello")
         assert req.temperature == 0.3
@@ -159,11 +160,12 @@ class TestSprintM10Request:
 
 # ─── TestSprintM10: MLXInProc Backend ─────────────────────────────────────────
 
+
 class TestSprintM10MLXInProc:
     """MLXInProcBackend — in-process mlx_lm via DeepHermes3Engine."""
 
     @pytest.mark.asyncio
-    async def test_generate_returns_inference_response(self):
+    async def test_generate_returns_inference_response(self) -> None:
         """generate() returns InferenceResponse with correct backend."""
         backend = MLXInProcBackend()
         mock_engine = AsyncMock()
@@ -183,7 +185,7 @@ class TestSprintM10MLXInProc:
         mock_engine.generate.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stream_yields_tokens(self):
+    async def test_stream_yields_tokens(self) -> None:
         """stream() yields Token objects with done=True at end."""
         backend = MLXInProcBackend()
         mock_engine = AsyncMock()
@@ -209,7 +211,7 @@ class TestSprintM10MLXInProc:
         assert tokens[3].text == ""
 
     @pytest.mark.asyncio
-    async def test_generate_propagates_inference_error(self):
+    async def test_generate_propagates_inference_error(self) -> None:
         """Exception wrapped as InferenceError with backend + cause."""
         backend = MLXInProcBackend()
         mock_engine = AsyncMock()
@@ -225,7 +227,7 @@ class TestSprintM10MLXInProc:
         assert "Metal OOM" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_engine_presence(self):
+    async def test_health_check_returns_engine_presence(self) -> None:
         """health_check returns True when engine is set."""
         backend = MLXInProcBackend()
         backend._engine = MagicMock()
@@ -233,7 +235,7 @@ class TestSprintM10MLXInProc:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_health_check_false_on_error(self):
+    async def test_health_check_false_on_error(self) -> None:
         """health_check returns False on exception."""
         backend = MLXInProcBackend()
         backend._get_engine = MagicMock(side_effect=RuntimeError("unavailable"))
@@ -243,11 +245,12 @@ class TestSprintM10MLXInProc:
 
 # ─── TestSprintM10: Mlxcel Backend ─────────────────────────────────────────────
 
+
 class TestSprintM10Mlxcel:
     """MlxcelBackend — out-of-process via MlxcelIpcClient."""
 
     @pytest.mark.asyncio
-    async def test_generate_returns_inference_response(self):
+    async def test_generate_returns_inference_response(self) -> None:
         """generate() calls client.generate and wraps result."""
         backend = MlxcelBackend()
         mock_result = MagicMock()
@@ -268,7 +271,7 @@ class TestSprintM10Mlxcel:
         assert response.tokens_generated == 5
 
     @pytest.mark.asyncio
-    async def test_stream_yields_tokens(self):
+    async def test_stream_yields_tokens(self) -> None:
         """stream() yields Token objects from client.generate_stream."""
         backend = MlxcelBackend()
 
@@ -291,7 +294,7 @@ class TestSprintM10Mlxcel:
         assert tokens[2].done is True
 
     @pytest.mark.asyncio
-    async def test_generate_propagates_inference_error(self):
+    async def test_generate_propagates_inference_error(self) -> None:
         """Exception wrapped as InferenceError with MLXCEL backend."""
         backend = MlxcelBackend()
 
@@ -309,11 +312,12 @@ class TestSprintM10Mlxcel:
 
 # ─── TestSprintM10: CoreML Backend ─────────────────────────────────────────────
 
+
 class TestSprintM10CoreML:
     """CoreMLBackend — FastAPI microservice via CoreMLClient."""
 
     @pytest.mark.asyncio
-    async def test_generate_returns_inference_response(self):
+    async def test_generate_returns_inference_response(self) -> None:
         """generate() calls client.predict and wraps result."""
         backend = CoreMLBackend()
         mock_result = MagicMock()
@@ -329,7 +333,7 @@ class TestSprintM10CoreML:
         assert response.text == "coreml embedding result"
 
     @pytest.mark.asyncio
-    async def test_stream_single_token(self):
+    async def test_stream_single_token(self) -> None:
         """CoreML doesn't support streaming — yields single done token."""
         backend = CoreMLBackend()
         mock_result = MagicMock()
@@ -350,7 +354,7 @@ class TestSprintM10CoreML:
         assert tokens[1].done is True
 
     @pytest.mark.asyncio
-    async def test_generate_propagates_inference_error(self):
+    async def test_generate_propagates_inference_error(self) -> None:
         """Exception wrapped as InferenceError with COREML backend."""
         backend = CoreMLBackend()
         mock_client = AsyncMock()
@@ -366,15 +370,16 @@ class TestSprintM10CoreML:
 
 # ─── TestSprintM10: InferenceCoordinator ─────────────────────────────────────────
 
+
 class TestSprintM10Coordinator:
     """InferenceCoordinator — unified entry point."""
 
-    def test_default_backend_from_env(self, mock_env_mlx_inproc):
+    def test_default_backend_from_env(self, mock_env_mlx_inproc) -> None:
         """Coordinator uses env default when no per-request override."""
         coord = InferenceCoordinator()
         assert coord.get_default_backend() == InferenceBackend.MLX_INPROC
 
-    def test_resolve_backend_per_request(self):
+    def test_resolve_backend_per_request(self) -> None:
         """_resolve_backend uses request.backend over default.
 
         B1 FIX: Both MLXCEL and MLX_INPROC are always in _backends dict.
@@ -385,7 +390,7 @@ class TestSprintM10Coordinator:
         be = coord._resolve_backend(req)
         assert isinstance(be, MlxcelBackend)
 
-    def test_resolve_backend_env_default(self, mock_env_mlxcel):
+    def test_resolve_backend_env_default(self, mock_env_mlxcel) -> None:
         """_resolve_backend uses MLXCEL as default when HLEDAC_INFERENCE_BACKEND=mlxcel.
 
         B1 FIX: MLXCEL is now the default and is always registered.
@@ -397,16 +402,18 @@ class TestSprintM10Coordinator:
         assert isinstance(be, MlxcelBackend)
 
     @pytest.mark.asyncio
-    async def test_generate_delegates_to_backend(self, sample_request):
+    async def test_generate_delegates_to_backend(self, sample_request) -> None:
         """generate() calls the resolved backend's generate()."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
-        mock_be.generate = AsyncMock(return_value=InferenceResponse(
-            text="delegated",
-            tokens_generated=2,
-            latency_ms=100.0,
-            backend=InferenceBackend.MLX_INPROC,
-        ))
+        mock_be.generate = AsyncMock(
+            return_value=InferenceResponse(
+                text="delegated",
+                tokens_generated=2,
+                latency_ms=100.0,
+                backend=InferenceBackend.MLX_INPROC,
+            )
+        )
         coord._backends[InferenceBackend.MLX_INPROC] = mock_be
 
         response = await coord.generate(sample_request)
@@ -414,7 +421,7 @@ class TestSprintM10Coordinator:
         mock_be.generate.assert_called_once_with(sample_request)
 
     @pytest.mark.asyncio
-    async def test_stream_delegates_to_backend(self, sample_request):
+    async def test_stream_delegates_to_backend(self, sample_request) -> None:
         """stream() calls the resolved backend's stream()."""
         coord = InferenceCoordinator()
         mock_tokens = [
@@ -436,7 +443,7 @@ class TestSprintM10Coordinator:
         assert tokens[0].text == "hello"
 
     @pytest.mark.asyncio
-    async def test_generate_wraps_unknown_errors(self, sample_request):
+    async def test_generate_wraps_unknown_errors(self, sample_request) -> None:
         """Unknown errors wrapped as InferenceError."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
@@ -449,7 +456,7 @@ class TestSprintM10Coordinator:
         assert exc_info.value.cause is not None
 
     @pytest.mark.asyncio
-    async def test_health_check_default_backend(self):
+    async def test_health_check_default_backend(self) -> None:
         """health_check checks the default backend by default."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
@@ -461,7 +468,7 @@ class TestSprintM10Coordinator:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_health_check_specific_backend(self):
+    async def test_health_check_specific_backend(self) -> None:
         """health_check can check a specific backend."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
@@ -474,26 +481,29 @@ class TestSprintM10Coordinator:
 
 # ─── TestSprintM10: Module-level API ────────────────────────────────────────────
 
+
 class TestSprintM10ModuleAPI:
     """Module-level convenience functions: get_inference_coordinator, generate, stream_generate."""
 
-    def test_get_inference_coordinator_singleton(self):
+    def test_get_inference_coordinator_singleton(self) -> None:
         """get_inference_coordinator returns same object."""
         c1 = get_inference_coordinator()
         c2 = get_inference_coordinator()
         assert c1 is c2
 
     @pytest.mark.asyncio
-    async def test_generate_convenience_wraps_coordinator(self):
+    async def test_generate_convenience_wraps_coordinator(self) -> None:
         """generate() is a convenience wrapper over coordinator.generate()."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
-        mock_be.generate = AsyncMock(return_value=InferenceResponse(
-            text="convenience",
-            tokens_generated=1,
-            latency_ms=50.0,
-            backend=InferenceBackend.MLX_INPROC,
-        ))
+        mock_be.generate = AsyncMock(
+            return_value=InferenceResponse(
+                text="convenience",
+                tokens_generated=1,
+                latency_ms=50.0,
+                backend=InferenceBackend.MLX_INPROC,
+            )
+        )
         # B1: mock whatever the actual default backend is
         coord._backends[coord._default_backend] = mock_be
 
@@ -502,7 +512,7 @@ class TestSprintM10ModuleAPI:
         assert response.text == "convenience"
 
     @pytest.mark.asyncio
-    async def test_stream_generate_convenience_wraps_coordinator(self):
+    async def test_stream_generate_convenience_wraps_coordinator(self) -> None:
         """stream_generate() is a convenience wrapper over coordinator.stream()."""
         coord = InferenceCoordinator()
         mock_tokens = [
@@ -530,31 +540,35 @@ class TestSprintM10ModuleAPI:
 
 # ─── TestSprintM10: IC Invariants ───────────────────────────────────────────────
 
+
 class TestSprintM10Invariants:
     """IC.* invariants — verified through behavior."""
 
-    def test_ic1_no_mlx_lm_in_core_coordinator(self):
+    def test_ic1_no_mlx_lm_in_core_coordinator(self) -> None:
         """IC.1: core/inference_coordinator.py must NOT import mlx_lm at module level."""
         import _core.inference_coordinator as mod
 
         source = open(mod.__file__).read()
         # Check for actual import statements, not docstring mentions
         # "import mlx_lm" as a statement (beginning of line or after ;)
-        import_lines = [l.strip() for l in source.split('\n')
-                        if l.strip().startswith('import mlx_lm')
-                        or l.strip().startswith('from mlx_lm')]
+        import_lines = [
+            l.strip()
+            for l in source.split("\n")
+            if l.strip().startswith("import mlx_lm") or l.strip().startswith("from mlx_lm")
+        ]
         assert not import_lines, f"Found mlx_lm imports: {import_lines}"
 
-    def test_ic3_inference_error_has_backend_and_cause(self):
+    def test_ic3_inference_error_has_backend_and_cause(self) -> None:
         """IC.3: InferenceError carries backend and cause."""
         cause = ValueError("original")
         err = InferenceError("msg", InferenceBackend.MLXCEL, cause=cause)
         assert err.backend == InferenceBackend.MLXCEL
         assert err.cause is cause
 
-    def test_ic5_lazy_lock_no_module_level_lock(self):
+    def test_ic5_lazy_lock_no_module_level_lock(self) -> None:
         """IC.5: No asyncio.Lock at module level in coordinator (only lazy _get_lock())."""
         import _core.inference_coordinator as mod
+
         source = open(mod.__file__).read()
         lines = source.split("\n")
         for line in lines:
@@ -563,12 +577,12 @@ class TestSprintM10Invariants:
             if "asyncio.Lock()" in line:
                 # Module-level: starts at column 0 or after only whitespace + =
                 indent = len(line) - len(line.lstrip())
-                if indent == 0 or (indent <= 4 and "=" in line[:indent + 8]):
+                if indent == 0 or (indent <= 4 and "=" in line[: indent + 8]):
                     if "_COORDINATOR_LOCK" not in line and "_client_lock" not in line:
                         pytest.fail(f"Module-level asyncio.Lock found: {line.strip()}")
 
     @pytest.mark.asyncio
-    async def test_ic4_stream_returns_async_iterator(self):
+    async def test_ic4_stream_returns_async_iterator(self) -> None:
         """IC.4: All backends return AsyncIterator[Token] from stream()."""
         for BackendClass, _backend_type in [
             (MLXInProcBackend, InferenceBackend.MLX_INPROC),
@@ -582,6 +596,7 @@ class TestSprintM10Invariants:
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────────
+
 
 async def async_iter(items):
     """Turn a list into an async iterator."""

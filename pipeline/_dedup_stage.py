@@ -10,13 +10,13 @@ B5 Pipeline Compose Integration:
 - Zero-alloc pipeline composition via asyncio.to_thread
 
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from ._stage_protocol import BoundedStageQueue, StageContext
@@ -32,9 +32,9 @@ _DEDUPER_FACTORY: Any = object()  # sentinel: not yet tried
 try:
     from rust_extensions.wiring.pipeline_compose_wiring import (
         BATCH_SIZE,
+        pipeline_batch_stats_async,
         pipeline_filter_async,
         pipeline_map_async,
-        pipeline_batch_stats_async,
     )
 except ImportError:
     # Fallback when Rust extension unavailable
@@ -46,7 +46,7 @@ except ImportError:
     async def pipeline_map_async(items, fn_name):
         return items
 
-    async def pipeline_batch_stats_async(items):
+    async def pipeline_batch_stats_async(items) -> None:
         return None
 
 
@@ -173,7 +173,9 @@ class DedupStage:
             metrics.update_latency((time.monotonic() - start_time) * 1000)
             logger.debug(
                 "DedupStage: seen=%d, dedup=%d, batches=%d",
-                seen_count, dedup_count, batch_count,
+                seen_count,
+                dedup_count,
+                batch_count,
             )
 
     async def _process_batch_b5(
@@ -205,15 +207,12 @@ class DedupStage:
 
             # B5. Normalize URLs (strip) via asyncio.to_thread
             if valid_urls:
-                normalized_urls: list[str] = await pipeline_map_async(
-                    valid_urls, "strip"
-                )
+                normalized_urls: list[str] = await pipeline_map_async(valid_urls, "strip")
                 # Filter empty strings after strip
                 normalized_urls = [u for u in normalized_urls if u]
             else:
                 normalized_urls = []
 
-            # Run dedup on processed URLs
             for url in normalized_urls:
                 is_new = self._check_and_add(url)
                 if is_new:

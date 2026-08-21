@@ -10,24 +10,21 @@ LaneSpec:
     cost_estimate_per_query=1 (lightweight per-query cost)
 """
 
-
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.asyncx import parallel
-
 from hledac.universal.recon.lane import (
-    BaseIntelligenceLane,
-    FetchResult,
     IPV4_PATTERN,
     IPV6_PATTERN,
+    BaseIntelligenceLane,
+    FetchResult,
     LaneContext,
     LaneSpec,
     ParsedResult,
     ResolveResult,
 )
+from hledac.universal.utils.asyncx import parallel
 
 if TYPE_CHECKING:
     pass
@@ -69,10 +66,6 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         self._ssl: Any | None = None
         self._passive_dns: Any | None = None
 
-    # -------------------------------------------------------------------------
-    # Phase 1: Resolve
-    # -------------------------------------------------------------------------
-
     async def resolve(self, target: str, ctx: LaneContext) -> ResolveResult:
         """
         Classify target as domain, IPv4, IPv6, or hostname.
@@ -101,10 +94,6 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
 
         # Domain / hostname
         return ResolveResult(resolved=target, kind="domain", metadata={"aggressive": aggressive})
-
-    # -------------------------------------------------------------------------
-    # Phase 2: Fetch
-    # -------------------------------------------------------------------------
 
     async def fetch(self, resolved: ResolveResult, ctx: LaneContext) -> FetchResult:
         """
@@ -205,10 +194,6 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
                     elapsed_ms=(time.monotonic() - start) * 1000,
                 )
 
-    # -------------------------------------------------------------------------
-    # Phase 3: Parse
-    # -------------------------------------------------------------------------
-
     async def parse(self, fetch_result: FetchResult, ctx: LaneContext) -> ParsedResult:
         """
         Parse network reconnaissance results for IOCs.
@@ -252,7 +237,6 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         mx_pattern = re.compile(r"\bmx[0-9]?\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b", re.IGNORECASE)
         iocs["mailserver"] = list(set(mx_pattern.findall(body)))[:max_per_type]
 
-        # Remove empty
         iocs = {k: v for k, v in iocs.items() if v}
 
         return ParsedResult(
@@ -263,16 +247,13 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
             metadata={"kind": "dns_enumeration", "status": fetch_result.status_code},
         )
 
-    # -------------------------------------------------------------------------
-    # Lazy initialization helpers
-    # -------------------------------------------------------------------------
-
     async def _get_dns(self) -> Any | None:
         """Lazy-initialize DNSEnumerator."""
         if self._dns is not None:
             return self._dns
         try:
             from hledac.universal.recon.network_reconnaissance import DNSEnumerator
+
             self._dns = DNSEnumerator()
             return self._dns
         except ImportError:
@@ -284,6 +265,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
             return self._whois
         try:
             from hledac.universal.recon.network_reconnaissance import WHOISLookup
+
             self._whois = WHOISLookup()
             return self._whois
         except ImportError:
@@ -295,6 +277,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
             return self._ssl
         try:
             from hledac.universal.recon.network_reconnaissance import SSLAnalyzer
+
             self._ssl = SSLAnalyzer()
             return self._ssl
         except ImportError:
@@ -306,6 +289,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
             return self._passive_dns
         try:
             from hledac.universal.recon.network_reconnaissance import PassiveDNSClient
+
             self._passive_dns = PassiveDNSClient()
             return self._passive_dns
         except ImportError:

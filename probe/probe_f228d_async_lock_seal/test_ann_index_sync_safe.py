@@ -11,7 +11,6 @@ import inspect
 import threading
 
 import pytest
-from _core import aclose
 
 
 class TestANNIndexLockSafety:
@@ -24,9 +23,7 @@ class TestANNIndexLockSafety:
         """Assert that a method or function is synchronous (not a coroutine)."""
         method = getattr(class_or_module, method_name, None)
         assert method is not None, f"{method_name!r} not found"
-        assert not inspect.iscoroutinefunction(method), (
-            f"{method_name}() should be sync def"
-    )
+        assert not inspect.iscoroutinefunction(method), f"{method_name}() should be sync def"
 
     @staticmethod
     def _assert_no_await_in_lock(class_or_module, method_name: str) -> None:
@@ -50,58 +47,70 @@ class TestANNIndexLockSafety:
                 if stripped.startswith("await ") and "self._lock" not in stripped:
                     pytest.fail(f"await found inside _lock block in {method_name}(): {stripped}")
 
-    def test_annindex_lock_is_threading_lock(self):
+    def test_annindex_lock_is_threading_lock(self) -> None:
         """_ANNIndex._lock must be threading.Lock (not asyncio.Lock)."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         assert isinstance(idx._lock, threading.Lock), (
             "_ANNIndex._lock should be threading.Lock — guards LanceDB ops in sync context"
-    )
+        )
 
-    def test_module_lock_is_threading_lock(self):
+    def test_module_lock_is_threading_lock(self) -> None:
         """Module-level _ann_index_lock must be threading.Lock."""
         from knowledge import ann_index
-        assert isinstance(ann_index._ann_index_lock, threading.Lock), (
-            "_ann_index_lock should be threading.Lock"
-    )
 
-    def test_ann_search_is_sync_def(self):
+        assert isinstance(ann_index._ann_index_lock, threading.Lock), "_ann_index_lock should be threading.Lock"
+
+    def test_ann_search_is_sync_def(self) -> None:
         """ann_search() is sync def — no async def."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         self._assert_is_sync_def(idx, "ann_search")
 
-    def test_upsert_is_sync_def(self):
+    def test_upsert_is_sync_def(self) -> None:
         """upsert() is sync def — no async def."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         self._assert_is_sync_def(idx, "upsert")
 
-    def test_no_await_inside_lock_ann_search(self):
+    def test_no_await_inside_lock_ann_search(self) -> None:
         """No await inside lock block in ann_search()."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         self._assert_no_await_in_lock(idx, "ann_search")
 
-    def test_no_await_inside_lock_upsert(self):
+    def test_no_await_inside_lock_upsert(self) -> None:
         """No await inside lock block in upsert()."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         self._assert_no_await_in_lock(idx, "upsert")
 
-    def test_get_ann_index_is_sync(self):
+    def test_get_ann_index_is_sync(self) -> None:
         """get_ann_index() is sync def — no async def."""
         from knowledge import ann_index
+
         self._assert_is_sync_def(ann_index, "get_ann_index")
 
-    def test_close_is_sync_def(self):
+    def test_close_is_sync_def(self) -> None:
         """close() is sync def."""
-        from knowledge.ann_index import _ANNIndex
         from pathlib import Path
+
+        from knowledge.ann_index import _ANNIndex
+
         idx = _ANNIndex(Path("/tmp/test_ann"))
         self._assert_is_sync_def(idx, "close")

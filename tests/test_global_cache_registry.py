@@ -2,18 +2,17 @@
 
 Runs with: pytest tests/test_global_cache_registry.py -v
 """
+
 from __future__ import annotations
 
-import pytest
-
 from hledac.universal._core.global_cache_registry import (
-    GlobalCacheRegistry,
     CacheEntry,
-    register_cache,
-    unregister_cache,
+    GlobalCacheRegistry,
     clear_all_caches,
     get_cache_stats,
     list_registered_caches,
+    register_cache,
+    unregister_cache,
 )
 
 
@@ -59,7 +58,7 @@ class TestGlobalCacheRegistry:
         clear_count = 0
 
         def make_clear():
-            def clear():
+            def clear() -> None:
                 nonlocal clear_count
                 clear_count += 1
 
@@ -76,9 +75,7 @@ class TestGlobalCacheRegistry:
 
     def test_clear_all_caches_failure(self) -> None:
         """clear_all_caches handles clear() exceptions gracefully."""
-        register_cache(
-            "fail", get_size=lambda: 1, clear=lambda: (_ for _ in ()).throw(ValueError("fail"))
-        )
+        register_cache("fail", get_size=lambda: 1, clear=lambda: (_ for _ in ()).throw(ValueError("fail")))
         sizes = clear_all_caches()
         assert sizes["fail"] == -1  # Failure indicator
 

@@ -25,35 +25,42 @@ Fail-soft:
   - PQ unavailable → PQ_EXPORT_ENCRYPTION_UNAVAILABLE if policy requires PQ
   - Otherwise → unencrypted export only if policy allows
 """
+
 import hashlib
 import logging
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import Protocol, runtime_checkable
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
+
 
 class HPKEAvailability(Enum):
     """Truthful HPKE availability states."""
-    DISABLED = 'disabled'
-    UNAVAILABLE = 'unavailable'
-    AVAILABLE = 'available'
-    ENCRYPTED = 'encrypted'
-    FAIL_SOFT = 'fail_soft'
+
+    DISABLED = "disabled"
+    UNAVAILABLE = "unavailable"
+    AVAILABLE = "available"
+    ENCRYPTED = "encrypted"
+    FAIL_SOFT = "fail_soft"
+
 
 class ExportPolicy(Enum):
     """Export encryption policy."""
-    PQ_REQUIRED = 'pq_required'
-    PQ_PREFERRED = 'pq_preferred'
-    UNENCRYPTED_ONLY = 'unencrypted_only'
+
+    PQ_REQUIRED = "pq_required"
+    PQ_PREFERRED = "pq_preferred"
+    UNENCRYPTED_ONLY = "unencrypted_only"
+
 
 class Decryptability(Enum):
     """Truthful decryptability states for production envelopes."""
-    PERSISTENT_KEYCHAIN = 'persistent_keychain'
-    EPHEMERAL_TEST_ONLY = 'ephemeral_test_only'
-    UNSUPPORTED = 'unsupported'
+
+    PERSISTENT_KEYCHAIN = "persistent_keychain"
+    EPHEMERAL_TEST_ONLY = "ephemeral_test_only"
+    UNSUPPORTED = "unsupported"
+
 
 class ExportEncryptionEnvelope(Struct):
     """
@@ -75,32 +82,59 @@ class ExportEncryptionEnvelope(Struct):
 
     NEVER: recipient_private_key_b64, private key in to_dict(), private key in repr/logging
     """
-    mode: str = 'PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256'
-    encapsulated_key_b64: str = ''
-    aad_hash: str = ''
-    aad_b64: str = ''
-    ciphertext_b64: str = ''
-    recipient_public_key_b64: str = ''
-    recipient_key_id: str = ''
-    recipient_public_key_fingerprint: str = ''
+
+    mode: str = "PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256"
+    encapsulated_key_b64: str = ""
+    aad_hash: str = ""
+    aad_b64: str = ""
+    ciphertext_b64: str = ""
+    recipient_public_key_b64: str = ""
+    recipient_key_id: str = ""
+    recipient_public_key_fingerprint: str = ""
     decryptability: Decryptability = Decryptability.UNSUPPORTED
     pq: bool = False
-    created_at: str = ''
-    backend: str = 'null'
+    created_at: str = ""
+    backend: str = "null"
 
     def to_dict(self) -> dict:
         """Serialize envelope — NEVER includes private key material."""
-        return {'mode': self.mode, 'encapsulated_key_b64': self.encapsulated_key_b64, 'aad_hash': self.aad_hash, 'aad_b64': self.aad_b64, 'ciphertext_b64': self.ciphertext_b64, 'recipient_public_key_b64': self.recipient_public_key_b64, 'recipient_key_id': self.recipient_key_id, 'recipient_public_key_fingerprint': self.recipient_public_key_fingerprint, 'decryptability': self.decryptability.value, 'pq': self.pq, 'created_at': self.created_at, 'backend': self.backend}
+        return {
+            "mode": self.mode,
+            "encapsulated_key_b64": self.encapsulated_key_b64,
+            "aad_hash": self.aad_hash,
+            "aad_b64": self.aad_b64,
+            "ciphertext_b64": self.ciphertext_b64,
+            "recipient_public_key_b64": self.recipient_public_key_b64,
+            "recipient_key_id": self.recipient_key_id,
+            "recipient_public_key_fingerprint": self.recipient_public_key_fingerprint,
+            "decryptability": self.decryptability.value,
+            "pq": self.pq,
+            "created_at": self.created_at,
+            "backend": self.backend,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> ExportEncryptionEnvelope:
         """Deserialize envelope — restores from production-safe dict."""
-        decrypt_str = d.get('decryptability', 'unsupported')
+        decrypt_str = d.get("decryptability", "unsupported")
         try:
             decryptability = Decryptability(decrypt_str)
         except ValueError:
             decryptability = Decryptability.UNSUPPORTED
-        return cls(mode=d.get('mode', 'PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256'), encapsulated_key_b64=d.get('encapsulated_key_b64', ''), aad_hash=d.get('aad_hash', ''), aad_b64=d.get('aad_b64', ''), ciphertext_b64=d.get('ciphertext_b64', ''), recipient_public_key_b64=d.get('recipient_public_key_b64', ''), recipient_key_id=d.get('recipient_key_id', ''), recipient_public_key_fingerprint=d.get('recipient_public_key_fingerprint', ''), decryptability=decryptability, pq=d.get('pq', False), created_at=d.get('created_at', ''), backend=d.get('backend', 'null'))
+        return cls(
+            mode=d.get("mode", "PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256"),
+            encapsulated_key_b64=d.get("encapsulated_key_b64", ""),
+            aad_hash=d.get("aad_hash", ""),
+            aad_b64=d.get("aad_b64", ""),
+            ciphertext_b64=d.get("ciphertext_b64", ""),
+            recipient_public_key_b64=d.get("recipient_public_key_b64", ""),
+            recipient_key_id=d.get("recipient_key_id", ""),
+            recipient_public_key_fingerprint=d.get("recipient_public_key_fingerprint", ""),
+            decryptability=decryptability,
+            pq=d.get("pq", False),
+            created_at=d.get("created_at", ""),
+            backend=d.get("backend", "null"),
+        )
 
     def is_encrypted(self) -> bool:
         """True if this envelope contains encrypted data."""
@@ -108,7 +142,8 @@ class ExportEncryptionEnvelope(Struct):
 
     def __repr__(self) -> str:
         """Safe repr — no private key material."""
-        return f'ExportEncryptionEnvelope(mode={self.mode!r}, pq={self.pq}, decryptability={self.decryptability.value}, recipient_key_id={self.recipient_key_id!r}, backend={self.backend!r})'
+        return f"ExportEncryptionEnvelope(mode={self.mode!r}, pq={self.pq}, decryptability={self.decryptability.value}, recipient_key_id={self.recipient_key_id!r}, backend={self.backend!r})"
+
 
 class TestOnlyHPKERoundtripMaterial(Struct, frozen=True):
     """
@@ -120,17 +155,21 @@ class TestOnlyHPKERoundtripMaterial(Struct, frozen=True):
 
     Usage: explicit test helper path only.
     """
+
     public_key_b64: str
     private_key_b64: str
 
+
 class HPKEStatus(Struct, frozen=True):
     """Current status of the HPKE export backend."""
+
     availability: HPKEAvailability = HPKEAvailability.DISABLED
-    backend_name: str = 'null'
+    backend_name: str = "null"
     error_message: str | None = None
     recipient_key_id: str | None = None
     encrypted_count: int = 0
     decrypted_count: int = 0
+
 
 @runtime_checkable
 class PostQuantumExportBackend(Protocol):
@@ -162,7 +201,9 @@ class PostQuantumExportBackend(Protocol):
         """
         ...
 
-    def encrypt_hpke(self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str='') -> ExportEncryptionEnvelope | None:
+    def encrypt_hpke(
+        self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str = ""
+    ) -> ExportEncryptionEnvelope | None:
         """
         Encrypt plaintext using HPKE X-Wing.
 
@@ -177,7 +218,12 @@ class PostQuantumExportBackend(Protocol):
         """
         ...
 
-    def decrypt_hpke(self, envelope: ExportEncryptionEnvelope, plaintext_placeholder: bytes, test_material: TestOnlyHPKERoundtripMaterial | None=None) -> bytes | None:
+    def decrypt_hpke(
+        self,
+        envelope: ExportEncryptionEnvelope,
+        plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
+    ) -> bytes | None:
         """
         Decrypt HPKE-encrypted envelope.
 
@@ -193,13 +239,14 @@ class PostQuantumExportBackend(Protocol):
         """
         ...
 
+
 class ExportEncryptionError(Exception):
     """Base exception for export encryption operations."""
-    pass
+
 
 class ExportEncryptionUnavailableError(ExportEncryptionError):
     """PQ export encryption is not available on this system."""
-    pass
+
 
 class NullPostQuantumExportBackend:
     """
@@ -213,7 +260,8 @@ class NullPostQuantumExportBackend:
 
     This backend NEVER crashes on import and NEVER blocks sprint execution.
     """
-    name: str = 'null'
+
+    name: str = "null"
     _status: HPKEStatus = HPKEStatus(availability=HPKEAvailability.DISABLED)
 
     def is_available(self) -> bool:
@@ -225,17 +273,28 @@ class NullPostQuantumExportBackend:
     def generate_recipient_key(self, key_id: str) -> tuple[str, str, str] | None:
         return None
 
-    def encrypt_hpke(self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str='') -> ExportEncryptionEnvelope | None:
+    def encrypt_hpke(
+        self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str = ""
+    ) -> ExportEncryptionEnvelope | None:
         return None
 
-    def decrypt_hpke(self, envelope: ExportEncryptionEnvelope, plaintext_placeholder: bytes, test_material: TestOnlyHPKERoundtripMaterial | None=None) -> bytes | None:
+    def decrypt_hpke(
+        self,
+        envelope: ExportEncryptionEnvelope,
+        plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
+    ) -> bytes | None:
         return None
+
 
 def compute_aad_hash(aad: bytes) -> str:
     """Compute SHA-256 hash of additional authenticated data."""
     return hashlib.sha256(aad).hexdigest()
 
-async def create_export_backend(enabled: bool=True, key_id: str='com.hledac.pq.export.v1') -> tuple[PostQuantumExportBackend, HPKEStatus]:
+
+async def create_export_backend(
+    enabled: bool = True, key_id: str = "com.hledac.pq.export.v1"
+) -> tuple[PostQuantumExportBackend, HPKEStatus]:
     """
     Create appropriate HPKE export backend based on environment.
 
@@ -259,6 +318,7 @@ async def create_export_backend(enabled: bool=True, key_id: str='com.hledac.pq.e
         return (NullPostQuantumExportBackend(), status)
     try:
         from .pq_export_encryption_swift import HPKEExportBackend
+
         backend = HPKEExportBackend(key_id=key_id)
         if backend.is_available():
             status = backend.hpke_status()
@@ -267,17 +327,28 @@ async def create_export_backend(enabled: bool=True, key_id: str='com.hledac.pq.e
             status = backend.hpke_status()
             return (NullPostQuantumExportBackend(), status)
     except ImportError as e:
-        logger.debug(f'HPKEExportBackend not available: {e}')
-        status = HPKEStatus(availability=HPKEAvailability.UNAVAILABLE, backend_name='null', error_message=f'Import failed: {e}')
+        logger.debug(f"HPKEExportBackend not available: {e}")
+        status = HPKEStatus(
+            availability=HPKEAvailability.UNAVAILABLE, backend_name="null", error_message=f"Import failed: {e}"
+        )
         return (NullPostQuantumExportBackend(), status)
     except Exception as e:
-        logger.warning(f'HPKEExportBackend init failed: {e}')
-        status = HPKEStatus(availability=HPKEAvailability.FAIL_SOFT, backend_name='null', error_message=str(e))
+        logger.warning(f"HPKEExportBackend init failed: {e}")
+        status = HPKEStatus(availability=HPKEAvailability.FAIL_SOFT, backend_name="null", error_message=str(e))
         return (NullPostQuantumExportBackend(), status)
+
+
 _export_backend: PostQuantumExportBackend | None = None
 _export_status: HPKEStatus = HPKEStatus()
 
-async def encrypt_export_bundle(plaintext: bytes, aad: bytes, recipient_public_key_b64: str, policy: ExportPolicy=ExportPolicy.PQ_REQUIRED, recipient_key_id: str='') -> tuple[ExportEncryptionEnvelope | None, bool, str]:
+
+async def encrypt_export_bundle(
+    plaintext: bytes,
+    aad: bytes,
+    recipient_public_key_b64: str,
+    policy: ExportPolicy = ExportPolicy.PQ_REQUIRED,
+    recipient_key_id: str = "",
+) -> tuple[ExportEncryptionEnvelope | None, bool, str]:
     """
     Encrypt an export bundle using HPKE X-Wing.
 
@@ -299,21 +370,31 @@ async def encrypt_export_bundle(plaintext: bytes, aad: bytes, recipient_public_k
     if _export_backend is None:
         _export_backend, _export_status = await create_export_backend()
     if policy == ExportPolicy.UNENCRYPTED_ONLY:
-        return (None, False, '')
+        return (None, False, "")
     if not _export_backend.is_available():
         if policy == ExportPolicy.PQ_REQUIRED:
-            return (None, False, 'PQ_EXPORT_ENCRYPTION_UNAVAILABLE')
+            return (None, False, "PQ_EXPORT_ENCRYPTION_UNAVAILABLE")
         else:
-            return (None, False, '')
-    envelope = _export_backend.encrypt_hpke(plaintext=plaintext, aad=aad, recipient_public_key_b64=recipient_public_key_b64, recipient_key_id=recipient_key_id)
+            return (None, False, "")
+    envelope = _export_backend.encrypt_hpke(
+        plaintext=plaintext,
+        aad=aad,
+        recipient_public_key_b64=recipient_public_key_b64,
+        recipient_key_id=recipient_key_id,
+    )
     if envelope is None:
         if policy == ExportPolicy.PQ_REQUIRED:
-            return (None, False, 'PQ_EXPORT_ENCRYPTION_UNAVAILABLE')
+            return (None, False, "PQ_EXPORT_ENCRYPTION_UNAVAILABLE")
         else:
-            return (None, False, '')
-    return (envelope, True, '')
+            return (None, False, "")
+    return (envelope, True, "")
 
-async def decrypt_export_bundle(envelope: ExportEncryptionEnvelope, expected_size: int=0, test_material: TestOnlyHPKERoundtripMaterial | None=None) -> tuple[bytes | None, str]:
+
+async def decrypt_export_bundle(
+    envelope: ExportEncryptionEnvelope,
+    expected_size: int = 0,
+    test_material: TestOnlyHPKERoundtripMaterial | None = None,
+) -> tuple[bytes | None, str]:
     """
     Decrypt an HPKE-encrypted export bundle.
 
@@ -337,14 +418,16 @@ async def decrypt_export_bundle(envelope: ExportEncryptionEnvelope, expected_siz
     if _export_backend is None:
         _export_backend, _export_status = await create_export_backend()
     if not envelope.is_encrypted():
-        return (None, 'NOT_ENCRYPTED')
+        return (None, "NOT_ENCRYPTED")
     if test_material is None:
         if envelope.decryptability != Decryptability.PERSISTENT_KEYCHAIN:
-            return (None, 'PQ_HPKE_DECRYPT_PERSISTENCE_UNSUPPORTED')
-    placeholder = b'\x00' * expected_size if expected_size > 0 else b''
-    plaintext = _export_backend.decrypt_hpke(envelope=envelope, plaintext_placeholder=placeholder, test_material=test_material)
+            return (None, "PQ_HPKE_DECRYPT_PERSISTENCE_UNSUPPORTED")
+    placeholder = b"\x00" * expected_size if expected_size > 0 else b""
+    plaintext = _export_backend.decrypt_hpke(
+        envelope=envelope, plaintext_placeholder=placeholder, test_material=test_material
+    )
     if plaintext is None:
-        return (None, 'DECRYPTION_FAILED')
+        return (None, "DECRYPTION_FAILED")
     if expected_size > 0 and len(plaintext) != expected_size:
-        return (None, 'SIZE_MISMATCH')
-    return (plaintext, '')
+        return (None, "SIZE_MISMATCH")
+    return (plaintext, "")

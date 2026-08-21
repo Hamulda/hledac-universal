@@ -30,14 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.domain_executors import get_html_executor
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-# -----------------------------------------------------------------------
-# Module-level state — migrated to domain_executors (ISSUE-049)
-# -----------------------------------------------------------------------
 _POOL: ThreadPoolExecutor | None = None
 
 
@@ -53,10 +49,6 @@ def _get_pool() -> ThreadPoolExecutor:
         _POOL = get_html_executor()
     return _POOL
 
-
-# -----------------------------------------------------------------------
-# CPU-bound parse functions (run in worker processes)
-# -----------------------------------------------------------------------
 
 def _parse_links_worker(html: str) -> list[dict[str, str]]:
     """
@@ -85,6 +77,7 @@ def _parse_links_worker(html: str) -> list[dict[str, str]]:
 
     # Fallback: regex-only (stdlib)
     import re
+
     pattern = re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>', re.IGNORECASE)
     for match in pattern.finditer(html):
         href = match.group(1)
@@ -107,10 +100,8 @@ def _parse_text_worker(html: str) -> str:
         from selectolax.parser import HTMLParser as _SelectoLaxParser
 
         tree = _SelectoLaxParser(html)
-        # Remove script/style tags first
         for tag in tree.css("script,style"):
             tag.decompose()
-        # Extract text from body or whole tree
         body = tree.css_first("body")
         if body is not None:
             text = body.text(separator=" ", strip=True)
@@ -136,10 +127,6 @@ def _parse_text_worker(html: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-
-# -----------------------------------------------------------------------
-# Public async API
-# -----------------------------------------------------------------------
 
 async def parse_html_links(html: str) -> list[dict[str, str]]:
     """

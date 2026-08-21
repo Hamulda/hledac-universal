@@ -3,7 +3,6 @@ DuckDuckGo public web discovery adapter.
 
 Backend: ddgs v9+ (sync-only; async via asyncio.to_thread compatibility fallback)
 
-
 INVARIANTS (Sprint 8AC):
 - Public/passive-only; no auth, no cookies, no credentials
 - No AO imports; no storage writes; no pattern matcher calls
@@ -47,11 +46,6 @@ _PUBLIC_REPLAY_ADAPTER = "public_duckduckgo"
 if TYPE_CHECKING:
     from ddgs import DDGS  # noqa: F401
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 SOURCE_NAME: str = "duckduckgo"
 DEFAULT_MAX_RESULTS: int = 10
 HARD_MAX_RESULTS: int = 50
@@ -60,19 +54,8 @@ DEFAULT_TIMEOUT_S: float = 35.0
 # F178E: tightened from 0.4→0.25 — prevents single-host concentration in results
 MAX_HOST_SHARE_RATIO: float = 0.25
 
-# ---------------------------------------------------------------------------
-# DTO contracts
-# ---------------------------------------------------------------------------
-
-
 # NOTE: The actual class definitions live in discovery/base.py (SSOT).
 # This module re-exports them for backward compatibility with existing call sites.
-
-
-# ---------------------------------------------------------------------------
-# Discovery error taxonomy — F206AB
-# ---------------------------------------------------------------------------
-
 
 def classify_discovery_error(
     error: str | BaseException | None,
@@ -101,64 +84,46 @@ def classify_discovery_error(
         - task_cancelled    : asyncio.CancelledError (re-raised by caller)
         - unknown_backend_error : any other error
     """
-    # ---- CancelledError → task_cancelled (re-raised by caller) ----
     if isinstance(error, asyncio.CancelledError):
         return "task_cancelled"
 
-    # ---- TimeoutError → timeout ----
     if isinstance(error, asyncio.TimeoutError) or isinstance(error, TimeoutError):
         return "timeout"
 
-    # ---- None / empty → classify by hits_count ----
     if error is None or (isinstance(error, str) and not error.strip()):
         if hits_count > 0:
             return "none"  # successful call with results
         # elapsed_s >= timeout_s with no error: slow call that returned normally → provider_empty
         return "provider_empty"
 
-    # ---- string coercion for remaining checks ----
     err_str = str(error)
 
-    # ---- timeout keyword in string ----
     if "timeout" in err_str.lower():
         return "timeout"
 
-    # ---- elapsed >= timeout_s with error present → timeout ----
     if elapsed_s is not None and elapsed_s >= timeout_s:
         return "timeout"
 
-    # ---- rate limiting ----
     if any(kw in err_str.lower() for kw in ("ratelimit", "rate limit", "429", "too many")):
         return "rate_limited"
 
-    # ---- captcha / blocking ----
     if any(kw in err_str.lower() for kw in ("captcha", "blocked", "403", "bot detection", "forbidden", "access denied")):  # noqa: E501
         return "captcha_or_blocked"
 
-    # ---- import error ----
     if isinstance(error, (ImportError, ModuleNotFoundError)):
         return "import_error"
 
-    # ---- generic exception (non-CancelledError/TimeoutError) ----
     if isinstance(error, Exception):
         return "provider_exception"
 
-    # ---- anything else: unknown backend error ----
     return "unknown_backend_error"
-
-
-# ---------------------------------------------------------------------------
-# Status helpers (O(1), no network calls)
-# ---------------------------------------------------------------------------
 
 _backend_name: str = "ddgs"
 _backend_version: str | None = None
 _last_error: str | None = None
 
-
 def backend_name() -> str:
     return _backend_name
-
 
 def backend_version() -> str:  # noqa: D102
     global _backend_version
@@ -174,17 +139,10 @@ def backend_version() -> str:  # noqa: D102
                 _backend_version = "unknown"
     return _backend_version  # type: ignore[return-value]
 
-
 def last_error() -> str | None:
     return _last_error
 
-
-# ---------------------------------------------------------------------------
-# Query shaping — preserves quoted strings, entity-like tokens, IOC patterns
-# ---------------------------------------------------------------------------
-
 _REQUOTEABLE_QUOTE_CHARS = {'"', "'", "\u201c", "\u201d", "\u00ab", "\u00bb"}
-
 
 def _extract_quoted_tokens(query: str) -> tuple[list[str], str]:
     """
@@ -211,13 +169,11 @@ def _extract_quoted_tokens(query: str) -> tuple[list[str], str]:
     cleaned = " ".join(remaining.split())
     return quoted, cleaned
 
-
 # IOC / domain / time patterns that deserve special treatment
 _IOC_DOMAIN_RE = __import__("re").compile(
     r"(?:\w+\.){1,6}(?:com|org|net|io|co|uk|edu|gov|mil|info|biz|ru|cn|de|fr|nl|pl|eu|us|ca|au|at|be|ch|jp|kr|br|mx|za|in|it|es|nl|se|no|fi|dk|cz|sk|hu|ro|gr|pt|tr|il|ae|sa|ng|ke|gh|eg|ua|rs|by|kz|uz|tj|ir|iq|pk|bd|kh|la|mm|vn|th|my|sg|ph|id|tl|tz|et|zm|zw|bw|na|ug|rw|mw|mz|ao|ci|cm|sn|gd|jm|ht|cu|do|ve|co|pe|bo|cl|ar|uy|p ypy|py|pr|pa|cr|ni|sv|gt|hn|bz|gy|sr|gf|ec|py)")  # noqa: E501
 _IOC_IP_RE = __import__("re").compile(
     r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-
 
 def _tokenize_raw_query(query: str) -> set[str]:
     """Lower-case word tokens from the non-quoted part of the query."""
@@ -226,7 +182,6 @@ def _tokenize_raw_query(query: str) -> set[str]:
         for t in query.split()
         if len(t) > 1
     }
-
 
 def _score_quoted_phrase_match(quoted_phrases: list[str], lower_title: str) -> tuple[float, list[str]]:
     """Check for quoted phrase match in title."""
@@ -238,7 +193,6 @@ def _score_quoted_phrase_match(quoted_phrases: list[str], lower_title: str) -> t
             reasons.append("quoted_title")
             break
     return score, reasons
-
 
 def _score_ioc_match(url: str, lower_url: str, query: str) -> tuple[float, list[str]]:
     """Check for IOC-style domain/IP matches."""
@@ -262,7 +216,6 @@ def _score_ioc_match(url: str, lower_url: str, query: str) -> tuple[float, list[
             reasons.append("ip_hit")
 
     return score, reasons
-
 
 def _score_token_overlap(query_tokens: set[str], lower_title: str, lower_snippet: str) -> tuple[float, list[str]]:
     """Score token overlap between query and title/snippet."""
@@ -288,7 +241,6 @@ def _score_token_overlap(query_tokens: set[str], lower_title: str, lower_snippet
 
     return score, reasons
 
-
 def _score_path_depth(url: str) -> float:
     """Score based on URL path depth."""
     try:
@@ -301,7 +253,6 @@ def _score_path_depth(url: str) -> float:
     except Exception:  # noqa: BLE001
         pass
     return 0.0
-
 
 def _build_signals(
     query: str,
@@ -336,7 +287,6 @@ def _build_signals(
 
     return {"score": max(0.0, min(1.0, score)), "reasons": reasons}
 
-
 # F178E: SEO spam / title-manipulation patterns (shared logic for DDG adapter)
 _re = __import__("re")
 _SEO_SPAM_TITLE_RE = _re.compile(
@@ -370,7 +320,6 @@ _CDN_NOISE_PATTERNS = (
     "cloudfront.net",
     "jsdelivr.com",
 )
-
 
 def _is_noise_result(title: str, url: str, snippet: str, query: str = "") -> bool:
     """
@@ -474,12 +423,10 @@ _TRACKING_PARAM_PREFIXES: tuple[str, ...] = (
     "source",
 )
 
-
 def _is_tracking_param(param: str) -> bool:
     """Return True if query param is a known tracking/advertising identifier."""
     p = param.lower()
     return any(p == prefix or p.startswith(prefix) for prefix in _TRACKING_PARAM_PREFIXES)
-
 
 def _normalize_url_for_dedup(raw_url: str) -> str:
     """
@@ -554,7 +501,6 @@ def _normalize_url_for_dedup(raw_url: str) -> str:
             lower = lower.rstrip("/")
         return lower
 
-
 def _extract_host(norm_url: str) -> str:
     """Extract lower-case host from a normalised URL (already urlparse'd).
 
@@ -572,12 +518,6 @@ def _extract_host(norm_url: str) -> str:
         return urlparse.urlparse(norm_url).netloc
     except Exception:
         return ""
-
-
-# ---------------------------------------------------------------------------
-# Internal backend wrapper
-# ---------------------------------------------------------------------------
-
 
 async def _ddgs_text_search(
     query: str,
@@ -619,17 +559,10 @@ async def _ddgs_text_search(
     hits: list[dict] = await asyncio.to_thread(_sync_search)
     return hits
 
-
-# ---------------------------------------------------------------------------
-# Per-run query cache (F207I-A): deduplicate identical DDG queries within one run.
-# Lightweight: keyed by normalized query string, bounded to MAX_CACHE entries.
-# Does NOT survive across runs — no persistent cache required.
-# ---------------------------------------------------------------------------
 from collections import OrderedDict  # noqa: E402
 
 _QUERY_CACHE: OrderedDict[str, DiscoveryBatchResult] = OrderedDict()
 _QUERY_CACHE_MAX = 20  # max entries; oldest evicted when full
-
 
 def _get_cached_discovery(query: str) -> DiscoveryBatchResult | None:
     """Return cached result for query if present, else None. Moves entry to end."""
@@ -640,7 +573,6 @@ def _get_cached_discovery(query: str) -> DiscoveryBatchResult | None:
         return result
     return None
 
-
 def _set_cached_discovery(query: str, result: DiscoveryBatchResult) -> None:
     """Cache a discovery result. Evicts oldest entry when at capacity."""
     key = query.strip().lower()
@@ -650,15 +582,9 @@ def _set_cached_discovery(query: str, result: DiscoveryBatchResult) -> None:
         _QUERY_CACHE.popitem(last=False)  # evict oldest
     _QUERY_CACHE[key] = result
 
-
 def _clear_query_cache() -> None:
     """Clear the per-run query cache. Called by pipeline on run start."""
     _QUERY_CACHE.clear()
-
-
-# ---------------------------------------------------------------------------
-# Query variant expansion (Sprint F213B)
-# ---------------------------------------------------------------------------
 
 _MAX_QUERY_VARIANTS: int = 4
 """Max query variants for domain-like queries."""
@@ -675,7 +601,6 @@ _DOMAIN_TOKEN_RE: re.Pattern = re.compile(
 )
 """Extract domain-like tokens from mixed queries."""
 
-
 def _query_looks_like_domain(query: str) -> bool:
     """
     Sprint F213B: Detect if query is a bare domain name suitable for variant expansion.
@@ -690,7 +615,6 @@ def _query_looks_like_domain(query: str) -> bool:
     if " " in q or q.lower().startswith("site:") or q.startswith('"') or q.startswith("'"):
         return False
     return bool(_DOMAIN_LIKE_RE.match(q))
-
 
 def _extract_domain_token(query: str) -> str | None:
     """
@@ -715,7 +639,6 @@ def _extract_domain_token(query: str) -> str | None:
     if match:
         return match.group(1)
     return None
-
 
 def _build_query_variants(query: str, dspy_variants: list | None = None) -> list[str]:
     """
@@ -753,7 +676,6 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
     if domain is None:
         return dspy_variants[:5] if dspy_variants else [query]
 
-    # Build CT-aware variants for extracted domain
     variants = [
         f"site:{domain}",
         f'"{domain}" certificate transparency',
@@ -763,21 +685,13 @@ def _build_query_variants(query: str, dspy_variants: list | None = None) -> list
     combined = dspy_variants + variants
     return combined[:_MAX_QUERY_VARIANTS]
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 # ── F280A: Pipeline-based refactoring for async_search_public_web ───────────
 # Problem: CC=27, 13 ifs, 6 exception handlers, 4 nesting depth
 # Solution: Extract each concern into composable pipeline stages
 # Modern patterns: dataclass attrs, match/case, explicit state machine
 
-
 from dataclasses import dataclass, field
 from enum import Enum, auto
-
 
 class SearchStage(Enum):
     """Tracks which pipeline stage we are in for debugging/metrics."""
@@ -792,7 +706,6 @@ class SearchStage(Enum):
     CACHE_WRITE = auto()
     CASSETTE_WRITE = auto()
     COMPLETE = auto()
-
 
 @dataclass(frozen=True, slots=True)
 class SearchContext:
@@ -835,7 +748,6 @@ class SearchContext:
     def is_terminal(self) -> bool:
         """Check if we should stop the pipeline."""
         return self.result is not None
-
 
 @dataclass(slots=True)
 class SearchPolicy:
@@ -885,7 +797,6 @@ class SearchPolicy:
     def should_strict_replay_miss(self, query: str, adapter: str) -> bool:
         """Check if we should fail on replay miss in strict mode."""
         return self.replay_strict and self.check_replay_cassette(query, adapter) is None
-
 
 @dataclass(slots=True)
 class ErrorClassifier:
@@ -949,14 +860,11 @@ class ErrorClassifier:
             }],
         )
 
-
 # Shared instances for the module
 _error_classifier = ErrorClassifier()
 _policy = SearchPolicy()
 
-
 # ── Pipeline stages ───────────────────────────────────────────────────────────
-
 
 def _stage_validate(ctx: SearchContext) -> SearchContext:
     """Stage 1: Input validation and normalization."""
@@ -973,7 +881,6 @@ def _stage_validate(ctx: SearchContext) -> SearchContext:
         stage=SearchStage.REPLAY_CHECK,
         max_results=normalized_max,
     )
-
 
 def _stage_check_replay(ctx: SearchContext) -> SearchContext:
     """Stage 2: Check replay cassette (primary adapter)."""
@@ -995,7 +902,6 @@ def _stage_check_replay(ctx: SearchContext) -> SearchContext:
 
     return dataclass_replace(ctx, stage=SearchStage.DSPY_EXPANSION)
 
-
 async def _stage_dspy_expand(ctx: SearchContext) -> SearchContext:
     """Stage 3: DSPy query expansion (optional)."""
     if not FeatureFlags.get(FeatureFlag.DSPY):
@@ -1010,7 +916,6 @@ async def _stage_dspy_expand(ctx: SearchContext) -> SearchContext:
         )
     except Exception:
         return dataclass_replace(ctx, stage=SearchStage.VARIANT_BUILD)
-
 
 def _stage_build_variants(ctx: SearchContext) -> SearchContext:
     """Stage 4: Build query variants."""
@@ -1029,7 +934,6 @@ def _stage_build_variants(ctx: SearchContext) -> SearchContext:
         query_variants=tuple(variants),
     )
 
-
 def _stage_check_cache(ctx: SearchContext) -> SearchContext:
     """Stage 5: Per-run cache check."""
     cached = _get_cached_discovery(ctx.trimmed_query)
@@ -1039,7 +943,6 @@ def _stage_check_cache(ctx: SearchContext) -> SearchContext:
             result=_build_cache_hit_result(cached),
         )
     return dataclass_replace(ctx, stage=SearchStage.LIVE_SEARCH)
-
 
 async def _stage_live_search(ctx: SearchContext) -> SearchContext:
     """Stage 6: Execute live search with timeout."""
@@ -1137,7 +1040,6 @@ async def _stage_live_search(ctx: SearchContext) -> SearchContext:
                 ),
             )
 
-
 def _stage_process_results(ctx: SearchContext) -> SearchContext:
     """Stage 7: Process raw hits into final result."""
     if ctx.result is not None:
@@ -1177,7 +1079,6 @@ def _stage_process_results(ctx: SearchContext) -> SearchContext:
         result=result,
     )
 
-
 def _stage_write_caches(ctx: SearchContext) -> SearchContext:
     """Stage 8: Write replay cassette and per-run cache."""
     if ctx.result is None:
@@ -1198,20 +1099,16 @@ def _stage_write_caches(ctx: SearchContext) -> SearchContext:
             "provider_status_debug": ctx.result.provider_status_debug,
         })
 
-    # Write per-run cache
     _set_cached_discovery(ctx.original_query, ctx.result)
 
     return dataclass_replace(ctx, stage=SearchStage.COMPLETE)
-
 
 def dataclass_replace(ctx: SearchContext, **updates) -> SearchContext:
     """Create a new SearchContext with updated fields (immutable pattern)."""
     import dataclasses
     return dataclasses.replace(ctx, **updates)
 
-
 # ── Main async_search_public_web with pipeline ───────────────────────────────
-
 
 async def async_search_public_web(
     query: str,
@@ -1227,7 +1124,6 @@ async def async_search_public_web(
 
     Complexity: CC < 10 (was 27)
     """
-    # Initialize context
     ctx = SearchContext(
         original_query=query,
         trimmed_query=query.strip(),
@@ -1235,7 +1131,6 @@ async def async_search_public_web(
         timeout_s=timeout_s,
     )
 
-    # Run pipeline stages
     stages = [
         _stage_validate,
         _stage_check_replay,
@@ -1254,9 +1149,7 @@ async def async_search_public_web(
 
     return ctx.result or DiscoveryBatchResult(hits=(), error="pipeline_error")
 
-
 # ── Legacy helper functions preserved for compatibility ─────────────────────
-
 
 def _process_raw_hits(
     raw_hits: list,
@@ -1310,7 +1203,6 @@ def _process_raw_hits(
     hits_list.sort(key=lambda h: (-h.score, h.rank))
     return hits_list, seen_urls, host_counts
 
-
 def _classify_error(err_str: str, err_name: str) -> str:
     """Classify exception into error taxonomy."""
     err_lower = err_str.lower()
@@ -1327,11 +1219,9 @@ def _classify_error(err_str: str, err_name: str) -> str:
     else:
         return "unknown_backend_error"
 
-
 def _should_use_fallback(error_tag: str) -> bool:
     """Determine if backend error fallback should be attempted."""
     return error_tag in {"timeout", "proxy_error", "network_error", "server_error", "unknown_backend_error"}
-
 
 def _build_cassette_result(query: str, cassette: dict, elapsed: float) -> DiscoveryBatchResult:
     """Build result from replay cassette."""
@@ -1362,7 +1252,6 @@ def _build_cassette_result(query: str, cassette: dict, elapsed: float) -> Discov
         provider_status_debug=cassette.get("provider_status_debug"),
     )
 
-
 def _build_replay_miss_result(query: str, elapsed: float) -> DiscoveryBatchResult:
     """Build result for cassette miss in strict replay mode."""
     return DiscoveryBatchResult(
@@ -1380,7 +1269,6 @@ def _build_replay_miss_result(query: str, elapsed: float) -> DiscoveryBatchResul
         }],
     )
 
-
 def _build_cached_replay_result(query: str, cached: dict, elapsed: float) -> DiscoveryBatchResult:
     """Build result from cached replay."""
     cached_hits = cached.get("hits", ())
@@ -1397,7 +1285,6 @@ def _build_cached_replay_result(query: str, cached: dict, elapsed: float) -> Dis
         provider_status_debug=cached.get("provider_status_debug"),
     )
 
-
 def _build_cache_hit_result(cached: DiscoveryBatchResult) -> DiscoveryBatchResult:
     """Build result from per-run cache hit."""
     return DiscoveryBatchResult(
@@ -1413,7 +1300,6 @@ def _build_cache_hit_result(cached: DiscoveryBatchResult) -> DiscoveryBatchResul
         provider_status_debug=getattr(cached, 'provider_status_debug', None),
     )
 
-
 def _build_timeout_result(query: str) -> DiscoveryBatchResult:
     """Build result for timeout error."""
     return DiscoveryBatchResult(
@@ -1426,7 +1312,6 @@ def _build_timeout_result(query: str) -> DiscoveryBatchResult:
             "reason": "timeout",
         }],
     )
-
 
 async def _search_with_variants(
     query: str,
@@ -1497,7 +1382,6 @@ async def _search_with_variants(
     _set_cached_discovery(query, result)
     return result
 
-
 def _apply_fallback(
     fallback_hits: list,
     query: str,
@@ -1559,11 +1443,9 @@ def _apply_fallback(
         ],
     )
 
-
 # ── Sprint 8VB: Multi-Engine Search ───────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
-
 
 async def _scrape_mojeek(
     query: str, n: int = 10
@@ -1607,7 +1489,6 @@ async def _scrape_mojeek(
         logger.debug(f"[Mojeek] {e}")
     return results
 
-
 async def _search_wayback_cdx(
     url_pattern: str, max_results: int = 20
 ) -> list[dict]:
@@ -1631,7 +1512,6 @@ async def _search_wayback_cdx(
             "source":       "wayback_cdx"
         })
     return results
-
 
 async def _search_commoncrawl_cdx(
     url_pattern: str, max_results: int = 20
@@ -1679,7 +1559,6 @@ async def _search_commoncrawl_cdx(
         logger.warning(f"[CommonCrawl CDX] {e}")
     return results
 
-
 async def _query_shodan_internetdb(ip: str) -> dict:
     """Shodan InternetDB — open ports, CVEs, hostnames. Free, no API key.
     COMPAT: Tato funkce je dočasný compat wrapper.
@@ -1708,7 +1587,6 @@ async def _query_shodan_internetdb(ip: str) -> dict:
         logger.debug(f"[ShodanInternetDB] {e}")
     return {}
 
-
 async def _query_rdap(target: str) -> dict:
     """RDAP — structured WHOIS successor, free without key.
     COMPAT: Tato funkce je dočasný compat wrapper.
@@ -1718,7 +1596,6 @@ async def _query_rdap(target: str) -> dict:
     from hledac.universal.discovery.ti_feed_adapter import query_rdap
 
     return await query_rdap(target)
-
 
 async def _search_commoncrawl_domain(
     query: str, max_results: int = 20
@@ -1759,7 +1636,6 @@ async def _search_commoncrawl_domain(
     except Exception as e:
         logger.debug(f"[CommonCrawl domain search] {e}")
         return []
-
 
 async def search_multi_engine(
     query: str, max_results: int = 30
@@ -1811,7 +1687,6 @@ async def search_multi_engine(
     # R4-11 FIX: batch add — normalize all URLs first, then add_batch() once
     bloom = get_default_bloom_filter()
     deduped: list[dict] = []
-    # Phase 1: normalize all URLs upfront
     all_norm: list[tuple[dict, str]] = []
     for r in all_results:
         raw_u = r.get("url", "")
@@ -1820,14 +1695,12 @@ async def search_multi_engine(
             if norm:
                 all_norm.append((r, norm))
 
-    # Phase 2: batch dedup check — collect non-duplicate normalized URLs
     new_norms: list[str] = []
     for r, norm in all_norm:
         if norm not in bloom:
             new_norms.append(norm)
             deduped.append(r)
 
-    # Phase 3: batch add all new URLs at once (single lock acquisition)
     if new_norms and hasattr(bloom, 'add_batch'):
         bloom.add_batch(new_norms)
     elif new_norms:

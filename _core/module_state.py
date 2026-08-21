@@ -28,15 +28,16 @@ Anti-pattern it replaces:
             _cache["key"] = compute()
         return _cache["key"]
 """
+
 from __future__ import annotations
 
 import gc
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
-
 
 # ── Thread-safe singleton registry ────────────────────────────────────────────
 
@@ -213,7 +214,6 @@ class ModuleState:
 # ISSUE-002: Add atexit handler for automatic cleanup at process exit.
 # This ensures all module state is properly released when the process terminates.
 
-
 import atexit as _atexit
 
 # NOTE: This is the module-level state instance that replaces
@@ -287,7 +287,6 @@ def __getattr__(name: str) -> Any:
         _state.set(key, value)
     """
     if name.startswith("_"):
-        # Handle backward-compat aliases
         if name == "_cache" or name == "_lazy_caches":
             return _state.lazy_caches
         if name == "_engines" or name == "_loaded_engines":

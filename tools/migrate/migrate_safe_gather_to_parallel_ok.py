@@ -19,15 +19,21 @@ import ast
 import os
 import sys
 from pathlib import Path
-from typing import Any
-from _core import aclose
-
 
 SKIP_PARTS = {
-    '.venv', 'venv', '__pycache__', 'node_modules', '.git', 'build', 'dist',
-    '.venv-test', 'site-packages', '.cache', 'target',
-    'tools/migrate_safe_gather_to_parallel_ok.py',
-    'utils/async_helpers.py',  # source of truth, not migrated
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".git",
+    "build",
+    "dist",
+    ".venv-test",
+    "site-packages",
+    ".cache",
+    "target",
+    "tools/migrate_safe_gather_to_parallel_ok.py",
+    "utils/async_helpers.py",  # source of truth, not migrated
 }
 
 
@@ -45,11 +51,11 @@ class SafeGatherTransformer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call) -> ast.Call | list[ast.Name]:
         # Rename safe_gather_ok → parallel_ok
-        if isinstance(node.func, ast.Name) and node.func.id == 'safe_gather_ok':
-            node.func = ast.Name(id='parallel_ok', ctx=ast.Load())
+        if isinstance(node.func, ast.Name) and node.func.id == "safe_gather_ok":
+            node.func = ast.Name(id="parallel_ok", ctx=ast.Load())
             self.changes.append(f"  renamed safe_gather_ok → parallel_ok at line {node.lineno}")
-        elif isinstance(node.func, ast.Attribute) and node.func.attr == 'safe_gather_ok':
-            node.func = ast.Attribute(value=node.func.value, attr='parallel_ok', ctx=ast.Load())
+        elif isinstance(node.func, ast.Attribute) and node.func.attr == "safe_gather_ok":
+            node.func = ast.Attribute(value=node.func.value, attr="parallel_ok", ctx=ast.Load())
             self.changes.append(f"  renamed safe_gather_ok → parallel_ok at line {node.lineno}")
         self.generic_visit(node)
         return node
@@ -60,9 +66,9 @@ class SafeGatherTransformer(ast.NodeTransformer):
         is_safe_gather_iter = False
         if isinstance(node.iter, ast.Call):
             func = node.iter.func
-            if isinstance(func, ast.Name) and func.id == 'safe_gather_ok':
+            if isinstance(func, ast.Name) and func.id == "safe_gather_ok":
                 is_safe_gather_iter = True
-            elif isinstance(func, ast.Attribute) and func.attr == 'safe_gather_ok':
+            elif isinstance(func, ast.Attribute) and func.attr == "safe_gather_ok":
                 is_safe_gather_iter = True
 
         if not is_safe_gather_iter:
@@ -81,7 +87,7 @@ class SafeGatherTransformer(ast.NodeTransformer):
                 and isinstance(stmt.body[0], ast.Continue)
                 and isinstance(stmt.test, ast.Call)
                 and isinstance(stmt.test.func, ast.Name)
-                and stmt.test.func.id == 'isinstance'
+                and stmt.test.func.id == "isinstance"
                 and len(stmt.test.args) >= 2
             ):
                 self.changes.append(f"  removed dead isinstance Exception branch at line {stmt.lineno}")
@@ -98,7 +104,7 @@ class SafeGatherTransformer(ast.NodeTransformer):
 def process_file(path: str, dry_run: bool = True) -> tuple[bool, list[str]]:
     """Process one file. Returns (changed, messages)."""
     try:
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             source = f.read()
     except OSError as e:
         return False, [f"  ERROR reading {path}: {e}"]
@@ -119,19 +125,19 @@ def process_file(path: str, dry_run: bool = True) -> tuple[bool, list[str]]:
 
     # Apply changes
     new_source = ast.unparse(new_tree)
-    backup_path = path + '.bak'
+    backup_path = path + ".bak"
     os.rename(path, backup_path)
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(new_source)
     return True, transformer.changes
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='ISSUE 6.1: safe_gather_ok → parallel_ok migration')
-    parser.add_argument('--dry-run', action='store_true', default=True)
-    parser.add_argument('--apply', action='store_true')
-    parser.add_argument('--files', nargs='*', help='Specific files to process')
-    parser.add_argument('--root', default='.', help='Root directory to scan')
+    parser = argparse.ArgumentParser(description="ISSUE 6.1: safe_gather_ok → parallel_ok migration")
+    parser.add_argument("--dry-run", action="store_true", default=True)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--files", nargs="*", help="Specific files to process")
+    parser.add_argument("--root", default=".", help="Root directory to scan")
     args = parser.parse_args()
 
     dry_run = not args.apply
@@ -141,14 +147,14 @@ def main() -> None:
     else:
         # Scan for files using safe_gather_ok
         import subprocess
+
         result = subprocess.run(
-            ['rg', '-l', 'safe_gather_ok', args.root, '--type', 'py'],
-            capture_output=True, text=True, cwd=args.root
-    )
+            ["rg", "-l", "safe_gather_ok", args.root, "--type", "py"], capture_output=True, text=True, cwd=args.root
+        )
         if result.returncode != 0:
             print("No files found with safe_gather_ok")
             sys.exit(0)
-        files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
+        files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
 
     total_changed = 0
     total_unchanged = 0
@@ -175,5 +181,5 @@ def main() -> None:
         print("\nRun with --apply to apply changes.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

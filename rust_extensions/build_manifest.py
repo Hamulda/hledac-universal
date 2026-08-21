@@ -23,20 +23,16 @@ Usage:
     # Verify manifest matches source
     python rust_extensions/build_manifest.py --verify
 
-    # Integration with maturin build:
-    # Called from build.rs or as maturin post-build hook
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from _core import aclose
 
 # rust_extensions/ → project root
 _REPO_ROOT = Path(__file__).resolve().parent
@@ -63,7 +59,6 @@ def _compute_source_hash() -> tuple[str, dict[str, str]]:
     Returns:
         tuple[str, dict]: (overall_hash, per_file_hashes)
     """
-    import hashlib
 
     # Collect all source files
     file_paths: list[Path] = []
@@ -133,7 +128,7 @@ def _generate_build_command() -> str:
         return (
             "CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 "
             "cargo build --release --manifest-path rust_extensions/Cargo.toml"
-    )
+        )
     else:
         return "cargo build --release --manifest-path rust_extensions/Cargo.toml"
 
@@ -160,7 +155,7 @@ def generate_manifest(
     manifest = {
         "version": "1.0",
         "manifest_version": "1.0",  # Schema version for compatibility
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         # ISSUE-11: BLAKE2B hash - MUST match _prober.py _compute_source_content_hash()
         "source_hash": source_hash,
         "source_hash_algorithm": "blake2b-256",
@@ -208,10 +203,7 @@ def verify_manifest(manifest_path: Path | None = None) -> tuple[bool, str]:
     current_hash, _ = _compute_sha256_full()
 
     if stored_hash != current_hash:
-        return False, (
-            f"Source hash mismatch: "
-            f"stored={stored_hash[:16]}..., current={current_hash[:16]}..."
-    )
+        return False, (f"Source hash mismatch: stored={stored_hash[:16]}..., current={current_hash[:16]}...")
 
     return True, "BUILD_MANIFEST is valid"
 
@@ -259,7 +251,8 @@ Examples:
         help="Output path for manifest (default: BUILD_MANIFEST.json in python pkg)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Verbose output",
     )

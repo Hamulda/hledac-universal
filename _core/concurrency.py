@@ -50,7 +50,7 @@ import logging
 from hledac.universal._core.concurrency_registry import (
     ConcurrencyBudgetRegistry,
     ConcurrencyCategory,
-    )
+)
 
 logger = logging.getLogger(__name__)
 

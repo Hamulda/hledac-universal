@@ -41,7 +41,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 __all__ = [
     "SafeSQL",
@@ -61,7 +60,6 @@ _SQL_REPLACEMENT = "''"
 
 import json  # noqa: E402
 
-
 def _escape_sql(value: str) -> str:
     """Escape single quotes for SQL string literals.
     
@@ -69,14 +67,12 @@ def _escape_sql(value: str) -> str:
     """
     return _SQL_ESCAPE_PATTERN.sub(_SQL_REPLACEMENT, str(value))
 
-
 def _escape_json(value: str) -> str:
     """Escape characters for JSON string literals.
     
     Uses standard json for proper escaping.
     """
     return json.dumps(value)[1:-1]  # Strip surrounding quotes
-
 
 def _parse_template_str(template_str: str) -> Template:
     """Parse a template string into Template structure.
@@ -143,7 +139,6 @@ def _parse_template_str(template_str: str) -> Template:
                     # First } ends the interpolation, second } produces literal }
                     expr = interp_buffer.strip()
                     if expr:
-                        # Parse conversion and format spec
                         conversion: Literal["a", "r", "s"] | None = None
                         format_spec = ""
                         
@@ -174,7 +169,6 @@ def _parse_template_str(template_str: str) -> Template:
                     # End of interpolation (single })
                     expr = interp_buffer.strip()
                     if expr:
-                        # Parse conversion and format spec
                         conversion: Literal["a", "r", "s"] | None = None
                         format_spec = ""
                         
@@ -214,7 +208,6 @@ def _parse_template_str(template_str: str) -> Template:
     
     return Template(strings=tuple(strings), interpolations=tuple(interpolations))
 
-
 @dataclass
 class Interpolation:
     """Represents a single interpolation in a t-string.
@@ -238,7 +231,6 @@ class Interpolation:
         if self.format_spec:
             v = format(v, self.format_spec)
         return str(v)
-
 
 @dataclass 
 class Template:
@@ -290,7 +282,6 @@ class Template:
                     strings.append(literal_buffer)
                     literal_buffer = ""
                 
-                # Parse interpolation
                 expr = match.group(1)
                 conversion: Literal["a", "r", "s"] | None = None
                 format_spec = ""
@@ -321,7 +312,6 @@ class Template:
         
         return cls(strings=tuple(strings), interpolations=tuple(interpolations))
 
-
 def render(template: Template, **values: Any) -> str:
     """Render a Template with the given values.
     
@@ -334,11 +324,9 @@ def render(template: Template, **values: Any) -> str:
     """
     parts: list[str] = []
     
-    # Build value lookup from interpolations
     for i, interp in enumerate(template.interpolations):
-        # Get value from expression name
         try:
-            value = eval(interp.expression, {"__builtins__": {}}, values)
+            value = eval(interp.expression, {"__builtins__": {}}, values)  # noqa: S307,security/eval
             interp.value = value
         except NameError:
             raise KeyError(f"Missing value for interpolation: {interp.expression}")
@@ -350,11 +338,6 @@ def render(template: Template, **values: Any) -> str:
             parts.append(template.interpolations[i].resolve())
     
     return "".join(parts)
-
-
-# =============================================================================
-# SafeSQL — SQL-safe template rendering
-# =============================================================================
 
 @dataclass
 class SafeSQL:
@@ -432,9 +415,8 @@ class SafeSQL:
             parts.append(s)
             if i < len(self._template.interpolations):
                 interp = self._template.interpolations[i]
-                # Get value from expression name
                 try:
-                    value = eval(interp.expression, {"__builtins__": {}}, values)
+                    value = eval(interp.expression, {"__builtins__": {}}, values)  # noqa: S307,security/eval
                 except NameError:
                     raise KeyError(f"Missing value for: {interp.expression}")
                 parts.append(self._escape_value(value))
@@ -447,11 +429,6 @@ class SafeSQL:
     
     def __repr__(self) -> str:
         return f"SafeSQL({self._raw_template!r})"
-
-
-# =============================================================================
-# SafeJSON — JSON-safe template rendering
-# =============================================================================
 
 @dataclass
 class SafeJSON:
@@ -508,7 +485,7 @@ class SafeJSON:
             if i < len(self._template.interpolations):
                 interp = self._template.interpolations[i]
                 try:
-                    value = eval(interp.expression, {"__builtins__": {}}, values)
+                    value = eval(interp.expression, {"__builtins__": {}}, values)  # noqa: S307,security/eval
                 except NameError:
                     raise KeyError(f"Missing value for: {interp.expression}")
                 parts.append(self._escape_json_value(value))
@@ -520,11 +497,6 @@ class SafeJSON:
     
     def __repr__(self) -> str:
         return f"SafeJSON({self._raw_template!r})"
-
-
-# =============================================================================
-# HermeTemplate — Zero-risk hermes prompt templates
-# =============================================================================
 
 @dataclass
 class HermeTemplate:
@@ -564,7 +536,7 @@ class HermeTemplate:
             if i < len(self._template.interpolations):
                 interp = self._template.interpolations[i]
                 try:
-                    value = eval(interp.expression, {"__builtins__": {}}, values)
+                    value = eval(interp.expression, {"__builtins__": {}}, values)  # noqa: S307,security/eval
                 except NameError:
                     raise KeyError(f"Missing value for: {interp.expression}")
                 parts.append(str(value))
@@ -576,11 +548,6 @@ class HermeTemplate:
     
     def __repr__(self) -> str:
         return f"HermeTemplate({self._raw_template!r})"
-
-
-# =============================================================================
-# Native t-string support (Python 3.14+)
-# =============================================================================
 
 if TStringAvailable:
     from string.templatelib import Template as _NativeTemplate

@@ -67,34 +67,44 @@ If mlxcel is unavailable (binary not found, socket connection refused, or any
 RPC error), MlxcelIpcClient raises MlxcelUnavailable and callers should fall
 back to DeepHermes3Engine (in-process mlx-lm Python bindings fallback).
 """
+
 from __future__ import annotations
+
 import asyncio
-from hledac.universal.utils.asyncx import safe_wait_for
-import orjson as json
 import logging
 import os
-import socket
-import sys
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from collections.abc import AsyncIterator
+
+import orjson as json
+
+from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils.locks import LazyAsyncioLock
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-_MLXCEL_PATHS = [Path.home() / '.local' / 'bin' / 'mlxcel', Path.home() / 'bin' / 'mlxcel', Path('/usr/local/bin/mlxcel'), Path('/opt/homebrew/bin/mlxcel'), Path('/opt/bin/mlxcel')]
-_SOCKET_PATH = Path('/tmp/hledac_mlxcel.sock')
-_PID_FILE = Path('/tmp/hledac_mlxcel.pid')
+_MLXCEL_PATHS = [
+    Path.home() / ".local" / "bin" / "mlxcel",
+    Path.home() / "bin" / "mlxcel",
+    Path("/usr/local/bin/mlxcel"),
+    Path("/opt/homebrew/bin/mlxcel"),
+    Path("/opt/bin/mlxcel"),
+]
+_SOCKET_PATH = Path("/tmp/hledac_mlxcel.sock")
+_PID_FILE = Path("/tmp/hledac_mlxcel.pid")
 RPC_PARSE_ERROR = -32700
 RPC_INVALID_REQUEST = -32600
 RPC_METHOD_NOT_FOUND = -32601
 RPC_INVALID_PARAMS = -32602
 RPC_INTERNAL_ERROR = -32603
 
+
 @dataclass(slots=True)
 class MlxcelIpcStats:
     """Telemetry for IPC calls."""
+
     ipc_latency_ms: float = 0.0
     rss_before_mb: float = 0.0
     rss_after_mb: float = 0.0
@@ -103,7 +113,7 @@ class MlxcelIpcStats:
     calls_failed: int = 0
     last_error: str | None = None
 
-    def record_call(self, latency_ms: float, rss_before: float=0.0, rss_after: float=0.0) -> None:
+    def record_call(self, latency_ms: float, rss_before: float = 0.0, rss_after: float = 0.0) -> None:
         self.ipc_latency_ms = latency_ms
         self.rss_before_mb = rss_before
         self.rss_after_mb = rss_after
@@ -118,20 +128,23 @@ class MlxcelIpcStats:
         self.calls_failed += 1
         self.last_error = error
 
+
 @dataclass(frozen=True, slots=True)
 class GenerateResult:
     """Result from mlxcel generate RPC."""
+
     text: str
     tokens_generated: int
     latency_ms: float
 
+
 class MlxcelUnavailable(Exception):
     """Raised when mlxcel binary/socket is not available."""
-    pass
+
 
 class MlxcelProtocolError(Exception):
     """Raised on JSON-RPC protocol errors."""
-    pass
+
 
 class MlxcelIpcClient:
     """
@@ -144,9 +157,22 @@ class MlxcelIpcClient:
     Thread-safe for asyncio use with a single in-flight request at a time
     (mlxcel is single-threaded Rust inference server).
     """
-    __slots__ = ('_binary_path', '_socket_path', '_process', '_reader', '_writer', '_lock', '_stats', '_connected', '_version', '_pid', '_next_id')
 
-    def __init__(self, binary_path: Path | None=None, socket_path: Path | None=None) -> None:
+    __slots__ = (
+        "_binary_path",
+        "_socket_path",
+        "_process",
+        "_reader",
+        "_writer",
+        "_lock",
+        "_stats",
+        "_connected",
+        "_version",
+        "_pid",
+        "_next_id",
+    )
+
+    def __init__(self, binary_path: Path | None = None, socket_path: Path | None = None) -> None:
         """
         Args:
             binary_path: Explicit path to mlxcel binary (skip auto-detection).
@@ -159,7 +185,7 @@ class MlxcelIpcClient:
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
         self._connected = False
-        self._version = 'unknown'
+        self._version = "unknown"
         self._pid: int | None = None
         self._stats = MlxcelIpcStats()
         self._next_id: int = 0
@@ -187,8 +213,8 @@ class MlxcelIpcClient:
             if path.exists():
                 self._binary_path = path
                 return path
-        for directory in os.environ.get('PATH', '').split(os.pathsep):
-            candidate = Path(directory) / 'mlxcel'
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            candidate = Path(directory) / "mlxcel"
             if candidate.exists():
                 self._binary_path = candidate
                 return candidate
@@ -203,10 +229,10 @@ class MlxcelIpcClient:
             self._reader = reader
             self._writer = writer
             self._connected = True
-            logger.debug('[MLXCEL] Connected to socket %s', self._socket_path)
+            logger.debug("[MLXCEL] Connected to socket %s", self._socket_path)
         except OSError as e:
             self._connected = False
-            raise MlxcelUnavailable(f'Cannot connect to mlxcel socket {self._socket_path}: {e}')
+            raise MlxcelUnavailable(f"Cannot connect to mlxcel socket {self._socket_path}: {e}")
 
     async def _disconnect_socket(self) -> None:
         """Disconnect UNIX socket."""
@@ -233,9 +259,9 @@ class MlxcelIpcClient:
                 # Try socket connection
                 await safe_wait_for(self._connect_socket(), timeout=delay, label="mlxcel_connect")
                 return
-            except (MlxcelUnavailable, asyncio.TimeoutError, OSError) as e:
+            except (TimeoutError, MlxcelUnavailable, OSError) as e:
                 last_error = e if isinstance(e, MlxcelUnavailable) else MlxcelUnavailable(str(e))
-                logger.debug('[MLXCEL] reconnect attempt %d failed: %s', attempt + 1, e)
+                logger.debug("[MLXCEL] reconnect attempt %d failed: %s", attempt + 1, e)
                 if attempt < len(delays) - 1:
                     await asyncio.sleep(delay)
         # Last resort: try subprocess
@@ -245,22 +271,30 @@ class MlxcelIpcClient:
         except MlxcelUnavailable:
             if last_error:
                 raise last_error
-            raise MlxcelUnavailable('mlxcel reconnect failed')
+            raise MlxcelUnavailable("mlxcel reconnect failed")
 
     async def _spawn_subprocess(self) -> None:
         """Spawn mlxcel as subprocess with stdin/stdout pipes (NOT socket mode)."""
         binary = self._find_binary()
         if binary is None:
-            raise MlxcelUnavailable('mlxcel binary not found in standard locations or PATH')
+            raise MlxcelUnavailable("mlxcel binary not found in standard locations or PATH")
         try:
-            self._process = await asyncio.create_subprocess_exec(str(binary), '--pid-file', str(_PID_FILE), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            self._process = await asyncio.create_subprocess_exec(
+                str(binary),
+                "--pid-file",
+                str(_PID_FILE),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             self._reader = self._process.stdout
             self._writer = self._process.stdin
             self._connected = True
             self._pid = self._process.pid
-            logger.debug('[MLXCEL] Spawned mlxcel pid=%s binary=%s', self._process.pid, binary)
+            logger.debug("[MLXCEL] Spawned mlxcel pid=%s binary=%s", self._process.pid, binary)
         except OSError as e:
-            raise MlxcelUnavailable(f'Failed to spawn mlxcel: {e}')
+            raise MlxcelUnavailable(f"Failed to spawn mlxcel: {e}")
+
     _RPC_TIMEOUT_S: float = 60.0
 
     async def _send_rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -275,36 +309,36 @@ class MlxcelIpcClient:
                 await self._connect_socket()
             req_id = self._next_id
             self._next_id = req_id + 1
-            request = {'jsonrpc': '2.0', 'method': method, 'params': params, 'id': req_id}
-            request_bytes = json.dumps(request) + b'\n'
+            request = {"jsonrpc": "2.0", "method": method, "params": params, "id": req_id}
+            request_bytes = json.dumps(request) + b"\n"
             start = time.monotonic()
             try:
                 if self._writer is None:
-                    raise MlxcelUnavailable('Not connected to mlxcel')
+                    raise MlxcelUnavailable("Not connected to mlxcel")
                 reader = self._reader
                 if reader is None:
-                    raise MlxcelUnavailable('Reader not available')
+                    raise MlxcelUnavailable("Reader not available")
                 self._writer.write(request_bytes)
                 await self._writer.drain()
                 async with asyncio.timeout(self._RPC_TIMEOUT_S):
                     response_line = await reader.readline()
                 latency_ms = (time.monotonic() - start) * 1000
                 if not response_line:
-                    raise MlxcelUnavailable('mlxcel closed connection')
+                    raise MlxcelUnavailable("mlxcel closed connection")
                 response = json.loads(response_line)
-                if 'error' in response:
-                    err = response['error']
+                if "error" in response:
+                    err = response["error"]
                     raise MlxcelProtocolError(f"RPC error {err.get('code', -1)}: {err.get('message', 'unknown')}")
                 self._stats.record_call(latency_ms)
-                return response.get('result', {})
-            except asyncio.TimeoutError:
-                self._stats.record_failure('RPC timeout')
+                return response.get("result", {})
+            except TimeoutError:
+                self._stats.record_failure("RPC timeout")
                 self._connected = False
-                raise MlxcelUnavailable(f'RPC timeout after {self._RPC_TIMEOUT_S}s for {method}')
+                raise MlxcelUnavailable(f"RPC timeout after {self._RPC_TIMEOUT_S}s for {method}")
             except (OSError, ValueError, asyncio.CancelledError) as e:
                 self._stats.record_failure(str(e))
                 self._connected = False
-                raise MlxcelUnavailable(f'RPC failed: {e}') from e
+                raise MlxcelUnavailable(f"RPC failed: {e}") from e
 
     async def ping(self) -> str:
         """
@@ -314,20 +348,20 @@ class MlxcelIpcClient:
             mlxcel version string.
         """
         try:
-            result = await self._send_rpc('ping', {})
-            self._version = result.get('mlxcel_version', 'unknown')
+            result = await self._send_rpc("ping", {})
+            self._version = result.get("mlxcel_version", "unknown")
             return self._version
         except MlxcelUnavailable:
             try:
                 # Issue #19: reconnect with backoff
                 await self._reconnect_with_backoff()
-                result = await self._send_rpc('ping', {})
-                self._version = result.get('mlxcel_version', 'unknown')
+                result = await self._send_rpc("ping", {})
+                self._version = result.get("mlxcel_version", "unknown")
                 return self._version
             except MlxcelUnavailable:
                 raise
 
-    async def load_model(self, model_path: str, *, kv_bits: int=4, max_kv_size: int=8192) -> bool:
+    async def load_model(self, model_path: str, *, kv_bits: int = 4, max_kv_size: int = 8192) -> bool:
         """
         Load model in mlxcel process.
 
@@ -339,15 +373,26 @@ class MlxcelIpcClient:
         Returns:
             True if model loaded successfully.
         """
-        result = await self._send_rpc('load_model', {'model_path': model_path, 'kv_bits': kv_bits, 'max_kv_size': max_kv_size})
-        return result.get('ok', False)
+        result = await self._send_rpc(
+            "load_model", {"model_path": model_path, "kv_bits": kv_bits, "max_kv_size": max_kv_size}
+        )
+        return result.get("ok", False)
 
     async def unload_model(self) -> bool:
         """Unload model from mlxcel process."""
-        result = await self._send_rpc('unload_model', {})
-        return result.get('ok', False)
+        result = await self._send_rpc("unload_model", {})
+        return result.get("ok", False)
 
-    async def generate(self, prompt: str, *, temperature: float=0.7, max_tokens: int=1024, system_msg: str | None=None, thinking: bool=True, adapter_path: str | None=None) -> GenerateResult:
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        system_msg: str | None = None,
+        thinking: bool = True,
+        adapter_path: str | None = None,
+    ) -> GenerateResult:
         """
         Generate text via mlxcel subprocess.
 
@@ -362,10 +407,33 @@ class MlxcelIpcClient:
         Returns:
             GenerateResult with text, token count, and latency.
         """
-        result = await self._send_rpc('generate', {'prompt': prompt, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'thinking': thinking, 'adapter_path': adapter_path})
-        return GenerateResult(text=result.get('text', ''), tokens_generated=result.get('tokens_generated', 0), latency_ms=result.get('latency_ms', 0.0))
+        result = await self._send_rpc(
+            "generate",
+            {
+                "prompt": prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "system_msg": system_msg,
+                "thinking": thinking,
+                "adapter_path": adapter_path,
+            },
+        )
+        return GenerateResult(
+            text=result.get("text", ""),
+            tokens_generated=result.get("tokens_generated", 0),
+            latency_ms=result.get("latency_ms", 0.0),
+        )
 
-    async def generate_stream(self, prompt: str, *, temperature: float=0.7, max_tokens: int=512, system_msg: str | None=None, thinking: bool=True, adapter_path: str | None=None) -> AsyncIterator[str]:
+    async def generate_stream(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 512,
+        system_msg: str | None = None,
+        thinking: bool = True,
+        adapter_path: str | None = None,
+    ) -> AsyncIterator[str]:
         """
         Stream generated tokens from mlxcel.
 
@@ -377,13 +445,25 @@ class MlxcelIpcClient:
                 await self._connect_socket()
             req_id = self._next_id
             self._next_id = req_id + 1
-            request = {'jsonrpc': '2.0', 'method': 'generate_stream', 'params': {'prompt': prompt, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'thinking': thinking, 'adapter_path': adapter_path}, 'id': req_id}
-            request_bytes = json.dumps(request) + b'\n'
+            request = {
+                "jsonrpc": "2.0",
+                "method": "generate_stream",
+                "params": {
+                    "prompt": prompt,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "system_msg": system_msg,
+                    "thinking": thinking,
+                    "adapter_path": adapter_path,
+                },
+                "id": req_id,
+            }
+            request_bytes = json.dumps(request) + b"\n"
             if self._writer is None:
-                raise MlxcelUnavailable('Not connected to mlxcel')
+                raise MlxcelUnavailable("Not connected to mlxcel")
             reader = self._reader
             if reader is None:
-                raise MlxcelUnavailable('Reader not available')
+                raise MlxcelUnavailable("Reader not available")
             self._writer.write(request_bytes)
             await self._writer.drain()
             stream_start = time.monotonic()
@@ -395,13 +475,13 @@ class MlxcelIpcClient:
                     break
                 try:
                     resp = json.loads(line)
-                    if 'error' in resp:
-                        err = resp['error']
-                        logger.warning('[MLXCEL] stream error: %s', err.get('message'))
+                    if "error" in resp:
+                        err = resp["error"]
+                        logger.warning("[MLXCEL] stream error: %s", err.get("message"))
                         break
-                    result = resp.get('result', {})
-                    chunk = result.get('chunk', '')
-                    done = result.get('done', False)
+                    result = resp.get("result", {})
+                    chunk = result.get("chunk", "")
+                    done = result.get("done", False)
                     if chunk:
                         yield chunk
                     if done:
@@ -411,16 +491,16 @@ class MlxcelIpcClient:
                 except ValueError:
                     # Malformed JSON line — skip and keep reading
                     continue
-                except asyncio.TimeoutError:
-                    self._stats.record_failure('Stream chunk timeout')
+                except TimeoutError:
+                    self._stats.record_failure("Stream chunk timeout")
                     self._connected = False
-                    raise MlxcelUnavailable(f'Stream chunk timeout after {self._RPC_TIMEOUT_S}s')
+                    raise MlxcelUnavailable(f"Stream chunk timeout after {self._RPC_TIMEOUT_S}s")
                 except (OSError, asyncio.CancelledError) as e:
                     # OSError: socket broken pipe / connection reset
                     # CancelledError: caller cancelled the generator mid-stream
                     self._stats.record_failure(str(e))
                     self._connected = False
-                    raise MlxcelUnavailable(f'Stream failed: {e}') from e
+                    raise MlxcelUnavailable(f"Stream failed: {e}") from e
 
     async def close(self) -> None:
         """Close connection to mlxcel gracefully."""
@@ -434,26 +514,28 @@ class MlxcelIpcClient:
                     proc.terminate()
                     async with asyncio.timeout(5.0):
                         await proc.wait()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     try:
                         proc.kill()
                         await proc.wait()
-                    except (OSError, asyncio.CancelledError):  # noqa: BLE001
+                    except OSError, asyncio.CancelledError:  # noqa: BLE001
                         pass
                 except asyncio.CancelledError:
                     try:
                         proc.kill()
                         await proc.wait()
-                    except (OSError, asyncio.CancelledError):  # noqa: BLE001
+                    except OSError, asyncio.CancelledError:  # noqa: BLE001
                         pass
                 try:
                     if proc.stderr is not None:
                         async with asyncio.timeout(1.0):
                             await proc.stderr.read()
-                except (asyncio.TimeoutError, OSError, asyncio.CancelledError):  # noqa: BLE001
+                except TimeoutError, OSError, asyncio.CancelledError:  # noqa: BLE001
                     pass
             self._connected = False
             self._pid = None
+
+
 _client: MlxcelIpcClient | None = None
 _client_lock = LazyAsyncioLock()
 _client_failure_count: int = 0
@@ -472,6 +554,7 @@ def _set_degraded(val: bool) -> None:
     """Set degraded mode flag (module-level for cross-coroutine visibility)."""
     global _degraded_mode
     _degraded_mode = val
+
 
 async def get_mlxcel_client() -> MlxcelIpcClient:
     """
@@ -493,14 +576,14 @@ async def get_mlxcel_client() -> MlxcelIpcClient:
             async with asyncio.timeout(5.0):
                 await _client.ping()
             _set_degraded(False)
-            logger.info('[MLXCEL] Connected: version=%s', _client.version)
-        except (MlxcelUnavailable, asyncio.TimeoutError) as e:
+            logger.info("[MLXCEL] Connected: version=%s", _client.version)
+        except (TimeoutError, MlxcelUnavailable) as e:
             _client_failure_count += 1
             if _client_failure_count >= _MAX_CONSECUTIVE_FAILURES:
                 _set_degraded(True)
-                logger.warning('[MLXCEL] Degraded mode: mlxcel unavailable after %d attempts', _client_failure_count)
+                logger.warning("[MLXCEL] Degraded mode: mlxcel unavailable after %d attempts", _client_failure_count)
             else:
-                logger.debug('[MLXCEL] mlxcel not available: %s (failure #%d)', e, _client_failure_count)
+                logger.debug("[MLXCEL] mlxcel not available: %s (failure #%d)", e, _client_failure_count)
     return _client
 
 
@@ -522,8 +605,9 @@ async def health_check() -> bool:
             await _client.ping()
             _set_degraded(False)
             return True
-    except (MlxcelUnavailable, asyncio.TimeoutError, Exception):
+    except TimeoutError, MlxcelUnavailable, Exception:
         return False
+
 
 def is_mlxcel_available() -> bool:
     """

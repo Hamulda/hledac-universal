@@ -1,9 +1,6 @@
 # rolling_hash.py — Rolling hash domain
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-
-
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -34,11 +31,6 @@ def get_domain(ext: object | None) -> _RustRollingHashDomain | _PythonRollingHas
     return _PythonRollingHashDomain()
 
 
-# ------------------------------------------------------------------
-# Pure-Python rolling hash (moved from top of rust_backend.py)
-# ------------------------------------------------------------------
-
-
 class _PythonRollingHashEngine:
     """Pure-Python rolling hash engine fallback."""
 
@@ -54,7 +46,7 @@ class _PythonRollingHashEngine:
 
     def hash(self, data: bytes) -> int:
         h = 0
-        for i, b in enumerate(data[: self._window_size]):
+        for _i, b in enumerate(data[: self._window_size]):
             h = (h * self._base + b) % self._modulus
         return h
 

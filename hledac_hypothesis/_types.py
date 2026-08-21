@@ -24,38 +24,38 @@ from __future__ import annotations
 
 # Re-export everything from the new types/ subpackage
 from hledac_hypothesis.types import (
-    # Enums
-    HypothesisType,
-    HypothesisStatus,
-    TestType,
-    DarkQueryType,
-    # Core dataclasses
-    Evidence,
-    TestResult,
-    TestDesign,
-    FalsificationResult,
-    # Dark query
-    DarkQuery,
-    _DarkQueryListResponse,
-    # Causal reasoning
-    CausalEntity,
-    TemporalSequence,
-    AnomalySignal,
-    CausalHypothesis,
+    CO_OCCURRENCE_FP16,
     # Bounds
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
-    CO_OCCURRENCE_FP16,
-    # Adversarial
-    SourceCredibility,
-    Event,
+    AdversarialReport,
+    AnomalySignal,
+    # Causal reasoning
+    CausalEntity,
+    CausalHypothesis,
     Contradiction,
     CrossReferenceResult,
-    AdversarialReport,
+    # Dark query
+    DarkQuery,
+    DarkQueryType,
+    Event,
+    # Core dataclasses
+    Evidence,
+    FalsificationResult,
+    HypothesisStatus,
+    # Enums
+    HypothesisType,
     # Protocol
     InferenceEngineProtocol,
+    # Adversarial
+    SourceCredibility,
+    TemporalSequence,
+    TestDesign,
+    TestResult,
+    TestType,
+    _DarkQueryListResponse,
     # Utilities
     _to_operator_shortlist,
 )

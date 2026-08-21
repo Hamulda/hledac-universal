@@ -14,21 +14,17 @@ Usage:
     # Use ctx_manager.denorm_buffer, ctx_manager.session_tracker, etc.
     await ctx_manager.stop()
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .types import SprintRunContext
+    pass
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Sprint Context Manager — Per-sprint resource lifecycle
-# =============================================================================
 
 class SprintContextManager:
     """
@@ -45,7 +41,8 @@ class SprintContextManager:
         # Use ctx_manager.denorm_buffer, ctx_manager.session_tracker, etc.
         await ctx_manager.stop()
     """
-    __slots__ = ('_denorm_buffer', '_session_tracker', '_duckpgq_graph', '_started')
+
+    __slots__ = ("_denorm_buffer", "_session_tracker", "_duckpgq_graph", "_started")
 
     def __init__(self) -> None:
         self._denorm_buffer: Any = None
@@ -81,6 +78,7 @@ class SprintContextManager:
         # SprintDenormBuffer
         try:
             from hledac.universal.knowledge.hot_edges_cache import SprintDenormBuffer
+
             self._denorm_buffer = SprintDenormBuffer()
         except Exception:
             self._denorm_buffer = None
@@ -88,6 +86,7 @@ class SprintContextManager:
         # SessionTracker
         try:
             from hledac.universal.transport.darknet_session_provider import _get_tracker
+
             self._session_tracker = await _get_tracker()
         except Exception:
             self._session_tracker = None
@@ -95,6 +94,7 @@ class SprintContextManager:
         # DuckPGQGraph
         try:
             from hledac.universal.knowledge.graph_service import _get_graph
+
             self._duckpgq_graph = _get_graph()
         except Exception:
             self._duckpgq_graph = None
@@ -120,9 +120,9 @@ class SprintContextManager:
         # SessionTracker cleanup
         if self._session_tracker is not None:
             try:
-                if hasattr(self._session_tracker, 'reset'):
+                if hasattr(self._session_tracker, "reset"):
                     await self._session_tracker.reset()
-                elif hasattr(self._session_tracker, 'close'):
+                elif hasattr(self._session_tracker, "close"):
                     await self._session_tracker.close()
             except Exception:
                 pass
@@ -131,13 +131,13 @@ class SprintContextManager:
         # DuckPGQGraph cleanup
         if self._duckpgq_graph is not None:
             try:
-                if hasattr(self._duckpgq_graph, 'close'):
+                if hasattr(self._duckpgq_graph, "close"):
                     self._duckpgq_graph.close()
             except Exception:
                 pass
             self._duckpgq_graph = None
 
-    async def __aenter__(self) -> 'SprintContextManager':
+    async def __aenter__(self) -> SprintContextManager:
         """Async context manager entry."""
         await self.start()
         return self
@@ -147,15 +147,11 @@ class SprintContextManager:
         await self.stop()
 
 
-# =============================================================================
-# Global State Accessors
-# =============================================================================
-
-_current_sprint_context: 'SprintContextManager | None' = None
+_current_sprint_context: SprintContextManager | None = None
 _current_sprint_seed_state: Any = None
 
 
-def get_current_sprint_context() -> 'SprintContextManager | None':
+def get_current_sprint_context() -> SprintContextManager | None:
     """
     Get the current sprint context manager.
 
@@ -164,7 +160,7 @@ def get_current_sprint_context() -> 'SprintContextManager | None':
     return _current_sprint_context
 
 
-def set_current_sprint_context(ctx: 'SprintContextManager | None') -> None:
+def set_current_sprint_context(ctx: SprintContextManager | None) -> None:
     """Set the current sprint context manager (internal use)."""
     global _current_sprint_context
     _current_sprint_context = ctx

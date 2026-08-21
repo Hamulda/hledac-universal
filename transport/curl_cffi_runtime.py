@@ -20,16 +20,14 @@ To migrate:
     )
 """
 
-
 # Re-export all public symbols from the canonical module
 from hledac.universal.transport.curl_cffi_fetch import (  # noqa: F401, E402
-    is_curl_cffi_available,
     async_get_curl_cffi_session,
     async_get_curl_cffi_session_for_host,
     close_curl_cffi_sessions_async,
     get_curl_cffi_runtime_status,
-    )
-from _core import aclose
+    is_curl_cffi_available,
+)
 
 __all__ = [
     "is_curl_cffi_available",

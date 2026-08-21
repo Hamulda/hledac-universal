@@ -7,17 +7,15 @@ Tests for core/dlq_manager.py - Dead-Letter Queue for isolating corrupt payloads
 
 Architecture: M1 8GB optimized, Python 3.14+ compatible
 """
+
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from _core import aclose
 
 
 @pytest.fixture
@@ -32,8 +30,8 @@ class TestDLQPayload:
 
     def test_dlq_payload_creation(self) -> None:
         """DLQPayload must be created with correct fields."""
+
         from hledac.universal._core.dlq_manager import DLQPayload
-        from datetime import datetime, timezone
 
         payload = DLQPayload(
             payload_id="test123",
@@ -42,7 +40,7 @@ class TestDLQPayload:
             error_type="ValueError",
             error_message="Test error",
             payload_data=b"test data",
-    )
+        )
 
         assert payload.payload_id == "test123"
         assert payload.sprint_id == "sprint1"
@@ -65,7 +63,7 @@ class TestDLQPayload:
             error_message="Test error",
             payload_data=b"test",
             metadata={"key": "value"},
-    )
+        )
 
         d = payload.to_dict()
 
@@ -85,7 +83,7 @@ class TestDLQPayload:
             error_type="Err",
             error_message="msg",
             payload_data=b"data",
-    )
+        )
 
         with pytest.raises(AttributeError):
             payload.payload_id = "changed"  # type: ignore
@@ -149,7 +147,7 @@ class TestStorePayload:
             source="test_source",
             error=error,
             metadata={"key": "value"},
-    )
+        )
 
         assert payload_id is not None
         assert len(payload_id) == 64  # SHA256 hash length
@@ -168,14 +166,14 @@ class TestStorePayload:
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         id2 = await manager.store_payload(
             payload_data=payload_data,
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         # Same content = same ID
         assert id1 == id2
@@ -192,14 +190,14 @@ class TestStorePayload:
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         id2 = await manager.store_payload(
             payload_data=b"data2",
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         assert id1 != id2
 
@@ -231,7 +229,7 @@ class TestGetPayloads:
             sprint_id="sprint1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         # Store in sprint2
         await manager.store_payload(
@@ -239,7 +237,7 @@ class TestGetPayloads:
             sprint_id="sprint2",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         payloads_s1 = await manager.get_payloads(sprint_id="sprint1")
         payloads_s2 = await manager.get_payloads(sprint_id="sprint2")
@@ -261,14 +259,14 @@ class TestGetPayloads:
             sprint_id="s1",
             source="source_a",
             error=ValueError("err"),
-    )
+        )
 
         await manager.store_payload(
             payload_data=b"data2",
             sprint_id="s1",
             source="source_b",
             error=ValueError("err"),
-    )
+        )
 
         payloads = await manager.get_payloads(sprint_id="s1", source="source_a")
 
@@ -292,7 +290,7 @@ class TestCleanup:
             sprint_id="s1",
             source="src",
             error=ValueError("old"),
-    )
+        )
 
         # Mock time to be old
         old_time = time.time() - (31 * 24 * 60 * 60)  # 31 days ago
@@ -303,7 +301,7 @@ class TestCleanup:
             await manager._connection.execute(
                 "UPDATE dlq_entries SET created_at = ? WHERE payload_id IN (SELECT payload_id FROM dlq_entries LIMIT 1)",
                 (old_time,),
-    )
+            )
 
         # Cleanup should remove old entries
         removed = await manager.cleanup(retention_days=30)
@@ -323,10 +321,10 @@ class TestCleanup:
             sprint_id="s1",
             source="src",
             error=ValueError("recent"),
-    )
+        )
 
         # Cleanup with 30 day retention
-        removed = await manager.cleanup(retention_days=30)
+        await manager.cleanup(retention_days=30)
 
         # Recent entry should still exist
         payloads = await manager.get_payloads(sprint_id="s1")
@@ -348,7 +346,7 @@ class TestRetryPayload:
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         # Get initial state
         payloads = await manager.get_payloads(sprint_id="s1")
@@ -373,7 +371,7 @@ class TestRetryPayload:
             sprint_id="s1",
             source="src",
             error=ValueError("err"),
-    )
+        )
 
         # Get initial state
         payloads = await manager.get_payloads(sprint_id="s1")
@@ -407,6 +405,7 @@ class TestDLQCatchDecorator:
 
         # Patch global manager
         with patch("hledac.universal._core.dlq_manager.get_dlq_manager", return_value=manager):
+
             @dlq_catch(source="test_decorator")
             async def failing_function() -> str:
                 raise ValueError("Captured by DLQ")

@@ -3,126 +3,7 @@
 //! This crate provides high-performance Rust implementations of critical
 //! security operations used by the hledac tool.
 
-// ============================================================================
-// MODERN RUST BEST PRACTICES (ROADMAP-012)
-// ============================================================================
-//
-// This crate follows modern Rust patterns for dead code management:
-//
-// 1. NO global #[allow(dead_code)] — Rust's linter will warn about unused code
-// 2. Zombie modules (no Python callers) use targeted #[allow(dead_code)] per-module
-// 3. Dormant modules (kept for future use) have inline comments explaining why
-// 4. Feature-gated modules only warn when their feature is enabled
-//
-// KNOWN ZOMBIE/DORMANT MODULES (no Python callers found):
-// - accelerate: Accelerate/vDSP FFI - no callers (Python fallback: scipy/numpy)
-// - feed_pipeline: Feed pipeline - no callers (replaced by live_feed_pipeline.py)
-// - h2_safari_preset: Safari H2 preset - no callers
-// - health: Health metrics - no callers (Python path exists)
-// - topology: Network topology - no callers
-// - tracing: Tracing infrastructure - no direct callers (internal only)
-// - deobfuscate: Deobfuscation - no callers
-// - mpsc_pool: Multi-producer single-consumer - AKTIVNÍ via fetch_coordinator
-// - spsc_queue: Single-producer single-consumer - no callers
-// - adaptive_scheduler: Adaptive scheduling - no callers
-// - circuit_breaker: Circuit breaker - no callers
-// - claims_extraction: Claims extraction - no callers
-// - compress: Compression - G3: compress_zstd/decompress_zstd (ZOMBIE → AKTIVNÍ)
-// - crypto_accelerate: Crypto acceleration - no callers
-// - data: Data module - no callers
-// - elastic_pool: Elastic pool - no callers
-// - feed_decision: Feed decision - no callers
-// - ffi_safe: FFI safety - no callers
-// - graph_analytics: Graph analytics - no callers
-// - hot_edges_rs: Hot edges - no callers
-// - html_parse: HTML parsing - no callers
-// - int_counter_layout: Int counter layout - no callers
-// - ioc_extract: IOC extraction - no callers (Python uses ioc module facade)
-// - ioc_extract_simd: IOC extraction SIMD - no callers
-// - ioc_stream_scan: IOC stream scan - no callers
-// - lsh_index: LSH index - no callers
-// - pool_run: Pool run - no callers
-// - quality_gate: Quality gate - no callers
-// - query_terms: Query terms - no callers
-// - regex_lz4: Regex LZ4 - REMOVED (zombie, no Python callers)
-// - serde_json_rs: Serde JSON RS - no callers
-// - signal_batch: Signal batch - no callers
-// - simd_similarity: SIMD similarity - no callers
-// - telemetry_agg: Telemetry aggregation - no callers
-// - text_norm: Text normalization - no callers
-// - text_similarity: Text similarity - no callers
-// - tls13: TLS 1.3 - no callers (Python fallback: tls_metadata)
-// - url_engine: URL engine - no callers
-// - url_ops: URL operations - no callers
-// - xxhash_ext: xxHash extension - no callers
-// - zero_copy: Zero copy - no callers
-// - aho_corasick_simd: Aho-Corasick SIMD - no callers
-// - git_forensics: Git forensics - ORPHANED (Python has own Git analysis)
-// - unindexed_scanner: Unindexed scanner - no callers
-// - warc_parser: WARC parser - no callers
-// - mlx_bridge: MLX bridge - no callers
-// - nw_connection: Network connection - no callers
-// - arrow_batch_builder: Arrow batch builder - no callers
-// - arrow_c_data: Arrow C data - no callers
-// - arrow_ipc_mmap: Arrow IPC mmap - no callers
-// - aimd_controller: AIMD controller - wired via circuit_breaker.rs Layer 2
-// - federated_qtable: Federated Q-table - no callers
-// - lmdb_dht: LMDB DHT - no callers
-// - simdjson_extract: SIMD JSON extract - no callers
-// - simhash_ext: Simhash extension - no callers
-// - dns_tunnel: DNS tunnel - no callers
-// - tls_metadata: TLS metadata - no callers
-// - sendfile: Sendfile - no callers
-// - fulltext_index: Fulltext index - no callers
-// - p2p_harvest: P2P harvest - no callers
-// - async_bridge: Async bridge - no callers
-// - async_query: Async query - no callers
-// - swarm_dag: Swarm DAG - no callers
-// - metal_compute: Metal compute - no callers (DEPRECATED)
-// - metal_hashcrack: Metal hash crack - DEPRECATED (no Python callers)
-// - metal_shared_buf: Metal shared buffer - no callers
-// - pdf: PDF extraction - no callers (Python fallback: PyMuPDF)
-// - office: Office documents - no callers (Python fallback: python-docx)
-// - consistency_verifier: Consistency verifier - no callers
-// - native_db: Native DB wire protocols - no callers
-// - content_hasher: Content hasher - no callers
-// - dedup_bloom: Dedup bloom - no callers
-// - graph_cache: Graph cache - no callers (ACTIVE: B3 integration)
-// - collections_backup: Dead module (never declared in lib.rs)
-// - regex_lz4: Marked as REMOVED but kept for potential future use
-//
-// USED MODULES (have Python callers):
-// - rust.memory: Memory monitoring (RSS, pressure, Metal memory)
-// - rust.rate_limit: Rate limiting
-// - rust.bloom: BloomFilter, UrlSet
-// - rust.pipeline_compose: MAP/FILTER/FOLD operators, asyncio.to_thread bridge (B5)
-// - rust.sprint_policies: LaneBudgetPool, FeedDominanceGuard
-// - rust.ioc_dedup: IocDedupStore
-// - rust.rolling_hash: RollingHashEngine
-// - rust.link_predictor: Link prediction
-// - rust.graph_centrality: Graph centrality
-// - rust.whisper: Whisper transcription
-// - rust.anti_analysis: Anti-analysis/evasion detection
-// - rust.quic: QUIC/HTTP3
-// - rust.ane: ANE/CoreML model registry
-// - rust.madvise: madvise system calls
-// - rust.swarm_fabric: Swarm fabric
-// - rust.iosurface_bridge: IOSurface bridge
-// - rust.arti_bridge: Arti Tor bridge
-// - rust.stealth_bridge: Stealth bridge
-// - rust.binary_matryoshka: Binary Matryoshka
-// - rust.dns: DNS resolution
-// - rust.tls: TLS fingerprinting
-// - rust.pool_run: CPU pool run (archived)
-// - rust.simd: ARM NEON detection, dot product
-// - rust.stix: STIX 2.1 bundle encoding + validation
-// ============================================================================
-
 use pyo3::prelude::*;
-
-// ============================================================================
-// Submodules (always compiled)
-// ============================================================================
 
 mod pools;
 pub use pools::{cpu_pool, io_pool, mixed_pool};
@@ -137,10 +18,6 @@ mod stix_2_1;
 mod gil;
 mod pool_run;
 mod qos_class_helpers;
-
-// ============================================================================
-// Core modules (always compiled)
-// ============================================================================
 
 mod _entropy;
 
@@ -384,10 +261,6 @@ mod xxhash_ext;
 #[allow(dead_code)]
 mod zero_copy;
 
-// ============================================================================
-// Data modules (feature = "data")
-// ============================================================================
-
 #[cfg(feature = "data")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
@@ -412,10 +285,6 @@ mod aimd_controller;
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
 mod federated_qtable;
-
-// ============================================================================
-// Apple Silicon modules (macOS only)
-// ============================================================================
 
 #[cfg(all(target_os = "macos", feature = "ane"))]
 mod ane;
@@ -443,10 +312,6 @@ mod iosurface_bridge;
 #[allow(dead_code)]
 mod nw_connection;
 
-// ============================================================================
-// Async modules (feature = "shared_tokio")
-// ============================================================================
-
 #[cfg(feature = "shared_tokio")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
@@ -471,10 +336,6 @@ mod swarm_dag;
 #[cfg(feature = "p2p_harvest")]
 mod swarm_fabric;
 
-// ============================================================================
-// DNS/TLS modules
-// ============================================================================
-
 #[cfg(feature = "dns")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
@@ -485,18 +346,10 @@ mod dns_tunnel;
 #[allow(dead_code)]
 mod tls_metadata;
 
-// ============================================================================
-// P2P/Harvest modules (feature = "p2p_harvest")
-// ============================================================================
-
 #[cfg(feature = "p2p_harvest")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
 mod p2p_harvest;
-
-// ============================================================================
-// Document parsing modules
-// ============================================================================
 
 #[cfg(feature = "pdf")]
 // ZOMBIE: No Python callers (Python fallback: PyMuPDF)
@@ -507,10 +360,6 @@ mod pdf;
 // ZOMBIE: No Python callers (Python fallback: python-docx + openpyxl)
 #[allow(dead_code)]
 mod office;
-
-// ============================================================================
-// Arti Tor modules (feature = "embedded_tor")
-// ============================================================================
 
 #[cfg(feature = "embedded_tor")]
 mod arti_bridge;
@@ -525,10 +374,6 @@ mod quic;
 #[allow(dead_code)]
 mod sendfile;
 
-// ============================================================================
-// Other optional modules
-// ============================================================================
-
 #[cfg(feature = "mlx_bridge")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
@@ -540,18 +385,10 @@ mod binary_matryoshka;
 #[cfg(feature = "whisper")]
 mod whisper;
 
-// ============================================================================
-// LMDB DHT
-// ============================================================================
-
 #[cfg(feature = "lmdb_dht")]
 // ZOMBIE: No Python callers
 #[allow(dead_code)]
 mod lmdb_dht;
-
-// ============================================================================
-// Darwin-specific modules
-// ============================================================================
 
 #[cfg(target_os = "macos")]
 mod darwin_affinity;
@@ -568,10 +405,6 @@ mod madvise;
 // #[cfg(target_os = "macos")]
 // mod mach_remap;
 
-// ============================================================================
-// Version info
-// ============================================================================
-
 macro_rules! version_info {
     () => { (0, 1, 0) };
 }
@@ -579,10 +412,6 @@ macro_rules! version_info {
 macro_rules! version_string {
     () => { "0.1.0" };
 }
-
-// ============================================================================
-// Main module entry point
-// ============================================================================
 
 #[pymodule]
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {

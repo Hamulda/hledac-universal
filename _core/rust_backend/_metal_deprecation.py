@@ -27,22 +27,21 @@ Usage::
 from __future__ import annotations
 
 import warnings
-from _core._util import aclose
 
 __all__ = ["metal_compute"]
 
 _FEATURE_MSG = (
     "metal_compute: Rust metal_compute module not compiled (metal feature not enabled). "
     "CPU/NEON fallback via core.rust_backend.metal._PythonMetalDomainInner is used."
-    )
+)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> None:
     if name == "metal_compute":
         warnings.warn(
             f"{name}: {_FEATURE_MSG}",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         return None
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

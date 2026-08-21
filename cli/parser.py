@@ -9,23 +9,21 @@ Wired path:
 The canonical ArgumentParser lives in ``core.cli.args.build_parser()``.
 ``cli/parser.py`` owns only the dispatch logic and async wrappers.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
-import gc
 import logging
 import os
 import pathlib
-import sys
 from typing import TYPE_CHECKING
 
 # Python 3.14+ JIT compilation: 10-30% compute speedup
 # CI benchmarks this; now enabled in production
 os.environ.setdefault("PYTHON_JIT", "1")
 
-from hledac.universal._core.cli.args import build_parser, resolve_rl_args  # noqa: E402
-from _core import aclose
+from hledac.universal._core.cli.args import build_parser, resolve_rl_args
 
 if TYPE_CHECKING:
     pass
@@ -57,6 +55,7 @@ def main() -> int:
         # NameError/AttributeError removed: Ruff F821/F811 now enabled,
         # these are caught at lint time rather than swallowed at runtime
         from hledac.universal.runtime.sprint_entrypoint import _fatal
+
         _fatal(_e, code=3)  # logs _MAIN_FATAL + exits 3
 
 
@@ -82,7 +81,8 @@ async def dispatch_async(args: argparse.Namespace) -> int:
     try:
         from hledac.universal.runtime.observability_async_handler import (
             configure_async_logging,
-    )
+        )
+
         await configure_async_logging()
     except Exception:  # noqa: BLE001
         pass
@@ -137,9 +137,7 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
     force: bool = getattr(args, "force", False)
     profile: str | None = getattr(args, "acquisition_profile", "default")
     dry_run: bool = getattr(args, "dry_run", False)
-    export_dir: str = getattr(args, "export_dir", None) or str(
-        pathlib.Path.home() / ".hledac" / "reports"
-    )
+    export_dir: str = getattr(args, "export_dir", None) or str(pathlib.Path.home() / ".hledac" / "reports")
 
     if vault:
         os.environ["HLEDAC_VAULT_EXPORT"] = "1"
@@ -186,7 +184,7 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
                 acquisition_profile=profile,
                 flags=root_flags,
                 shutdown_event=shutdown_event,
-    )
+            )
         return 0
     except ImportError as _e:
         raise  # propagate to main() → code 3
@@ -208,9 +206,7 @@ async def _dispatch_pivot_async(args: argparse.Namespace) -> int:
     target: str = getattr(args, "pivot", None) or ""
     k: int = getattr(args, "pivot_k", 10)
 
-    logger.info(
-        "[CLI] pivot: delegating to runtime.sprint_entrypoint.run_semantic_pivot()"
-    )
+    logger.info("[CLI] pivot: delegating to runtime.sprint_entrypoint.run_semantic_pivot()")
     try:
         await run_semantic_pivot(query=target, top_k=k)
         return 0

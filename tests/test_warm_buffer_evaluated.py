@@ -3,10 +3,10 @@ Issue M-09: _warm_buffer in model_lifecycle.py was never evaluated.
 mx.eval([]) evaluates an empty list, not the buffer.
 Test verifies mx.metal.get_peak_memory() increases after mx.eval(_warm_buffer).
 """
+
 from __future__ import annotations
 
 import pytest
-from _core import aclose
 
 try:
     import mlx.core as mx
@@ -17,7 +17,7 @@ except ImportError:
 class TestWarmBufferEvaluated:
     """Test that warm buffer allocation is actually evaluated by MLX."""
 
-    def test_metal_peak_memory_increases_after_eval(self):
+    def test_metal_peak_memory_increases_after_eval(self) -> None:
         """
         Verify that mx.eval(_warm_buffer) actually triggers Metal memory allocation.
         Before the fix: mx.eval([]) is a no-op — peak memory unchanged.
@@ -63,9 +63,9 @@ class TestWarmBufferEvaluated:
             f"Metal peak memory did not increase after buffer allocation. "
             f"initial={initial_memory}, after={peak_after_alloc}. "
             f"mx.eval(_warm_buffer) did not trigger allocation — bug not fixed."
-    )
+        )
 
-    def test_warm_buffer_size_is_48mb(self):
+    def test_warm_buffer_size_is_48mb(self) -> None:
         """Verify the buffer size is exactly 48 MB as documented."""
         if mx is None:
             pytest.skip("MLX not available")
@@ -80,11 +80,10 @@ class TestWarmBufferEvaluated:
         del buffer
 
         assert actual_nbytes == expected_bytes, (
-            f"Buffer size mismatch: expected {expected_bytes} bytes (48 MB), "
-            f"got {actual_nbytes} bytes"
-    )
+            f"Buffer size mismatch: expected {expected_bytes} bytes (48 MB), got {actual_nbytes} bytes"
+        )
 
-    def test_empty_eval_does_not_allocate_buffer(self):
+    def test_empty_eval_does_not_allocate_buffer(self) -> None:
         """
         Document the original bug: mx.eval([]) is a no-op.
         This test passes before AND after the fix — it just documents behavior.
@@ -115,4 +114,4 @@ class TestWarmBufferEvaluated:
         # Empty eval should NOT change memory (this is correct behavior)
         assert peak_after_empty == initial_memory, (
             "mx.eval([]) incorrectly changed peak memory — this should be a no-op"
-    )
+        )

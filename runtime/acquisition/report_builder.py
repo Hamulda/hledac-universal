@@ -10,13 +10,10 @@ MODERNIZATION (Issue #18):
   - complete_source_family_outcomes_from_lane_details() imported from acquisition_telemetry_reconcile
 """
 
-
 from typing import Any
 
-from hledac.universal.runtime.acquisition.nonfeed_eligibility import terminality_report
 from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     AcquisitionStrategySnapshot,
-    MandatoryLaneTerminality,
 )
 from hledac.universal.runtime.acquisition.plan_builder import (
     ACQUISITION_REPORT_SCHEMA_VERSION,
@@ -342,8 +339,6 @@ def complete_source_family_outcomes_from_lane_details(
         return outcomes
     result = []
     for outcome in outcomes:
-        completed = reconcile_lane_detail_fields(
-            outcome.get("family", ""), outcome, lane_details
-        )
+        completed = reconcile_lane_detail_fields(outcome.get("family", ""), outcome, lane_details)
         result.append(completed)
     return result

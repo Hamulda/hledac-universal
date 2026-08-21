@@ -20,20 +20,20 @@ Benefits:
 
 Usage:
     from rust_extensions.wiring.graph_traverse_wiring import graph_traverse_wired
-    
+
     # Batch traversal
     results = graph_traverse_wired.batch_graph_traverse(
         db_path="/data/ioc.db",
         values=["evil.com", "malware.exe"],
         max_hops=2
     )
-    
+
     # Centrality
     centrality = graph_traverse_wired.batch_graph_centrality(
         db_path="/data/ioc.db",
         values=["evil.com", "malware.exe"]
     )
-    
+
     # Release connections
     graph_traverse_wired.drop_connections()
 """
@@ -64,10 +64,7 @@ def _get_executor() -> ThreadPoolExecutor:
         with _executor_lock:
             # Double-check locking pattern
             if _async_executor is None:
-                _async_executor = ThreadPoolExecutor(
-                    max_workers=2,
-                    thread_name_prefix="graph_traverse_async"
-                )
+                _async_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="graph_traverse_async")
                 # Register cleanup on process exit
                 atexit.register(_shutdown_executor)
     return _async_executor
@@ -83,21 +80,14 @@ def _shutdown_executor() -> None:
             logger.debug("[GraphTraverse] Async executor shut down")
 
 
-# Import the integration layer
 from rust_extensions.integrations import get_graph_traverse
 
-# Create singleton instance
 _graph_traverse = get_graph_traverse()
 
 
 def graph_traverse_wired() -> Any:
     """Get the wired graph traversal integration."""
     return _graph_traverse
-
-
-# ============================================================================
-# PUBLIC API — Direct wrappers for backward compatibility
-# ============================================================================
 
 
 def batch_graph_traverse(
@@ -235,11 +225,6 @@ def drop_connections() -> bool:
         True if successful, False otherwise
     """
     return _graph_traverse.drop_connections()
-
-
-# ============================================================================
-# ASYNC WRAPPERS
-# ============================================================================
 
 
 async def batch_graph_traverse_async(
@@ -389,11 +374,6 @@ async def drop_connections_async() -> bool:
     return await loop.run_in_executor(executor, drop_connections)
 
 
-# ============================================================================
-# MODULE STATUS
-# ============================================================================
-
-# Check availability at import time for logging
 if _graph_traverse.available:
     logger.info(
         "[GraphTraverse] Rust graph_traverse.rs integration: ENABLED "
@@ -401,8 +381,7 @@ if _graph_traverse.available:
     )
 else:
     logger.warning(
-        "[GraphTraverse] Rust graph_traverse.rs integration: DISABLED "
-        "(falling back to DuckDB SQL traversal)"
+        "[GraphTraverse] Rust graph_traverse.rs integration: DISABLED (falling back to DuckDB SQL traversal)"
     )
 
 __all__ = [

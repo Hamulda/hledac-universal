@@ -59,7 +59,7 @@ class RustWorkerPoolProtocol(Protocol):
         ...
 
 
-@runtime_checkable  
+@runtime_checkable
 class SharedWorkerPoolProtocol(Protocol):
     """
     Protocol for Python ThreadPoolExecutor-backed worker pool.
@@ -84,15 +84,17 @@ class SharedWorkerPoolProtocol(Protocol):
 def get_rust_pool(pool_type: PoolType = "cpu") -> RustWorkerPoolProtocol:
     """
     Lazy getter for RustWorkerPool.
-    
+
     Import is deferred until first call, breaking the core ↔ runtime cycle.
     M1 8GB: This avoids loading runtime.worker_pool at cold-start.
     """
     from hledac.universal.runtime.worker_pool import get_rust_pool as _impl
+
     return _impl(pool_type)
 
 
 def get_shared_pool() -> SharedWorkerPoolProtocol:
     """Lazy getter for SharedWorkerPool."""
     from hledac.universal.runtime.worker_pool import get_shared_pool as _impl
+
     return _impl()

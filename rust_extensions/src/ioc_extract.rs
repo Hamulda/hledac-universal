@@ -315,7 +315,6 @@ pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut patterns: Vec<String> = Vec::new();
 
-    // Extract subdomain parts for analysis
     for part in query.split('.') {
         if part.len() < 4 {
             continue;
@@ -359,11 +358,6 @@ pub fn detect_encoding_patterns(query: &str) -> Vec<String> {
 
     patterns
 }
-
-// ---------------------------------------------------------------------------
-// Presence-check functions for claims_extraction (ISSUE-008 fix)
-// Uses ioc_patterns.rs (single source of truth) — no duplicate LazyLock
-// ---------------------------------------------------------------------------
 
 /// Check if text contains any URL.
 #[inline]

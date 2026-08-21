@@ -10,9 +10,6 @@ Canonical import path:
 
 from __future__ import annotations
 
-import msgspec
-from _core import aclose
-
 from compat.msgspec_gc_compat import Struct
 
 

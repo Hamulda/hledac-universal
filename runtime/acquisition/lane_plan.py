@@ -13,15 +13,17 @@ MODERNIZATION (Issue #18):
   - AcquisitionContext stays as @dataclass (has field(default=...) which msgspec doesn't support)
   - All helper functions (_lc, _lane_rule, _disabled_reason) isolated here
 """
+
 from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from typing import Any
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane, RiskLevel
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class LaneSpec(Struct, frozen=True):
     """
@@ -32,6 +34,7 @@ class LaneSpec(Struct, frozen=True):
       - timeout_s is bounded [1, 3600]
       - concurrency is bounded [1, 32]
     """
+
     lane: str
     enabled: bool
     max_items: int
@@ -39,10 +42,12 @@ class LaneSpec(Struct, frozen=True):
     concurrency: int
     risk_level: str
 
+
 class LaneRule(Struct, frozen=True):
     """
     A single lane enable/disable rule with condition functions.
     """
+
     lane: str
     enabled: bool
     reason: str
@@ -51,10 +56,12 @@ class LaneRule(Struct, frozen=True):
     concurrency: int
     risk_level: str
 
+
 class AcquisitionContext(Struct):
     """
     Shared context for lane eligibility evaluation.
     """
+
     query: str
     uma_state: str
     swap_detected: bool
@@ -72,6 +79,7 @@ class AcquisitionContext(Struct):
     has_threat: bool = False
     feed_budget_active: bool = False
 
+
 def _lc(lane: str, base: int, uma_state: str) -> int:
     """
     Adjust base concurrency based on lane name and UMA state.
@@ -80,22 +88,39 @@ def _lc(lane: str, base: int, uma_state: str) -> int:
       - No network I/O, no model/MLX load
       - Bounded: returns 1-32
     """
-    heavy_lanes = {'CT', 'WAYBACK', 'PASSIVE_DNS', 'BLOCKCHAIN'}
-    if lane in heavy_lanes and uma_state in ('warn', 'critical'):
+    heavy_lanes = {"CT", "WAYBACK", "PASSIVE_DNS", "BLOCKCHAIN"}
+    if lane in heavy_lanes and uma_state in ("warn", "critical"):
         base = max(1, base // 2)
-    light_lanes = {'PUBLIC', 'FEED', 'PIVOT_EXECUTOR'}
+    light_lanes = {"PUBLIC", "FEED", "PIVOT_EXECUTOR"}
     if lane in light_lanes:
         base = base
     return max(1, min(32, base))
 
-def _lane_rule(lane: str, spec: LaneSpec, ctx: AcquisitionContext, enabled_fn: Callable[[AcquisitionContext], bool], reason_fn: Callable[[AcquisitionContext], str], conc_fn: Callable[[AcquisitionContext], int]) -> LaneRule:
+
+def _lane_rule(
+    lane: str,
+    spec: LaneSpec,
+    ctx: AcquisitionContext,
+    enabled_fn: Callable[[AcquisitionContext], bool],
+    reason_fn: Callable[[AcquisitionContext], str],
+    conc_fn: Callable[[AcquisitionContext], int],
+) -> LaneRule:
     """
     Build a LaneRule from a LaneSpec + condition functions.
 
     GHOST_INVARIANTS:
       - No network I/O, no model/MLX load
     """
-    return LaneRule(lane=lane, enabled=spec.enabled and enabled_fn(ctx), reason=reason_fn(ctx), max_items=spec.max_items, timeout_s=spec.timeout_s, concurrency=conc_fn(ctx), risk_level=spec.risk_level)
+    return LaneRule(
+        lane=lane,
+        enabled=spec.enabled and enabled_fn(ctx),
+        reason=reason_fn(ctx),
+        max_items=spec.max_items,
+        timeout_s=spec.timeout_s,
+        concurrency=conc_fn(ctx),
+        risk_level=spec.risk_level,
+    )
+
 
 def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     """
@@ -104,14 +129,14 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
     GHOST_INVARIANTS:
       - No network I/O, no model/MLX load
     """
-    if ctx.uma_state == 'emergency':
-        return f'UMA emergency, {lane} disabled'
-    if ctx.uma_state == 'critical':
-        if lane in {'CT', 'WAYBACK', 'PASSIVE_DNS', 'BLOCKCHAIN', 'IPFS'}:
-            return f'UMA critical, {lane} disabled'
+    if ctx.uma_state == "emergency":
+        return f"UMA emergency, {lane} disabled"
+    if ctx.uma_state == "critical":
+        if lane in {"CT", "WAYBACK", "PASSIVE_DNS", "BLOCKCHAIN", "IPFS"}:
+            return f"UMA critical, {lane} disabled"
     if ctx.swap_detected:
-        if lane in {'CT', 'BLOCKCHAIN', 'IPFS'}:
-            return f'swap detected, {lane} disabled'
+        if lane in {"CT", "BLOCKCHAIN", "IPFS"}:
+            return f"swap detected, {lane} disabled"
     if ctx.branch_timeout_count >= 3:
-        return f'branch timeouts ({ctx.branch_timeout_count}), {lane} disabled'
-    return f'{lane} disabled'
+        return f"branch timeouts ({ctx.branch_timeout_count}), {lane} disabled"
+    return f"{lane} disabled"

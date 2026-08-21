@@ -11,14 +11,13 @@ Tests cover:
 7. prewarm + acquire reuse
 8. Tor proxy in browser_args per pool
 """
+
 from __future__ import annotations
 
 import asyncio
 import gc
 
 import pytest
-from _core import aclose
-
 
 # ─── helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,7 +33,7 @@ class _DummyBrowser:
 
     _instances: list[_DummyBrowser] = []
 
-    def __init__(self, unique_id: int):
+    def __init__(self, unique_id: int) -> None:
         self.unique_id = unique_id
         self._tabs: list[object] = []
         self._stopped = False
@@ -79,12 +78,12 @@ def _make_launch_patch():
 # ─── Pool lifecycle ───────────────────────────────────────────────────────────
 
 
-def test_pool_singleton_creation():
+def test_pool_singleton_creation() -> None:
     """First _get_pool() creates the singleton; second call returns the same."""
 
-    async def _run():
-        from utils.browser_pool import _get_pool, close_pool
+    async def _run() -> None:
         import utils.browser_pool as bp_module
+        from utils.browser_pool import _get_pool, close_pool
 
         original = _make_launch_patch()
         _DummyBrowser.reset()
@@ -103,12 +102,12 @@ def test_pool_singleton_creation():
     asyncio.run(_run())
 
 
-def test_pool_close_stops_idle_browsers():
+def test_pool_close_stops_idle_browsers() -> None:
     """close() stops all idle browsers and clears the registry."""
 
-    async def _run():
-        from utils.browser_pool import _get_pool, close_pool
+    async def _run() -> None:
         import utils.browser_pool as bp_module
+        from utils.browser_pool import _get_pool, close_pool
 
         original = _make_launch_patch()
         _DummyBrowser.reset()
@@ -133,10 +132,10 @@ def test_pool_close_stops_idle_browsers():
 # ─── acquire / release round-trip ─────────────────────────────────────────────
 
 
-def test_acquire_release_returns_browser():
+def test_acquire_release_returns_browser() -> None:
     """acquire() returns a browser; release() returns it to the idle deque."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -158,10 +157,10 @@ def test_acquire_release_returns_browser():
     asyncio.run(_run())
 
 
-def test_idle_browser_reused_on_second_acquire():
+def test_idle_browser_reused_on_second_acquire() -> None:
     """Second acquire() returns the same browser from the idle deque (no cold start)."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -187,10 +186,10 @@ def test_idle_browser_reused_on_second_acquire():
 # ─── Concurrency ─────────────────────────────────────────────────────────────
 
 
-def test_max_active_blocks_excess_acquirers():
+def test_max_active_blocks_excess_acquirers() -> None:
     """When max_active semaphores are exhausted, acquire() blocks the caller."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -202,7 +201,7 @@ def test_max_active_blocks_excess_acquirers():
             pool = bp_module.BrowserPool(max_idle=0, max_active=2)
 
             b1 = await pool.acquire()
-            b2 = await pool.acquire()
+            await pool.acquire()
 
             # Semaphore should be exhausted
             assert pool._active_sem.locked()
@@ -219,12 +218,12 @@ def test_max_active_blocks_excess_acquirers():
 # ─── Memory pressure ──────────────────────────────────────────────────────────
 
 
-def test_memory_pressure_blocks_acquire():
+def test_memory_pressure_blocks_acquire() -> None:
     """When RSS > threshold, acquire() raises MemoryPressureError."""
 
-    async def _run():
-        import utils.browser_pool as bp_module
+    async def _run() -> None:
         import utils.browser_pool as bp
+        import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
         _DummyBrowser.reset()
@@ -253,12 +252,12 @@ def test_memory_pressure_blocks_acquire():
 # ─── Tor pool isolation ──────────────────────────────────────────────────────
 
 
-def test_tor_pool_is_separate_from_clearnet():
+def test_tor_pool_is_separate_from_clearnet() -> None:
     """Clearnet pool and Tor pool are distinct — different browsers, different args."""
 
-    async def _run():
-        from utils.browser_pool import _get_pool, close_pool
+    async def _run() -> None:
         import utils.browser_pool as bp_module
+        from utils.browser_pool import _get_pool, close_pool
 
         original = _make_launch_patch()
         _DummyBrowser.reset()
@@ -285,10 +284,10 @@ def test_tor_pool_is_separate_from_clearnet():
 # ─── prewarm ────────────────────────────────────────────────────────────────
 
 
-def test_prewarm_launches_idle_browser():
+def test_prewarm_launches_idle_browser() -> None:
     """prewarm() adds one browser to the idle deque without blocking."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -310,7 +309,7 @@ def test_prewarm_launches_idle_browser():
             assert _launch_id == 1
 
             # Acquire should reuse the prewarmed browser
-            b = await pool.acquire()
+            await pool.acquire()
             assert _launch_id == 1
         finally:
             bp_module.BrowserPool._launch_browser = original
@@ -322,10 +321,10 @@ def test_prewarm_launches_idle_browser():
 # ─── closed pool ──────────────────────────────────────────────────────────────
 
 
-def test_closed_pool_raises_on_acquire():
+def test_closed_pool_raises_on_acquire() -> None:
     """After close(), acquire() raises RuntimeError."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -348,12 +347,12 @@ def test_closed_pool_raises_on_acquire():
 # ─── browser_args preserved per pool ─────────────────────────────────────────
 
 
-def test_tor_proxy_in_browser_args():
+def test_tor_proxy_in_browser_args() -> None:
     """Pool for tor_proxy has --proxy-server in browser_args; clearnet does not."""
 
-    async def _run():
-        from utils.browser_pool import _get_pool, close_pool
+    async def _run() -> None:
         import utils.browser_pool as bp_module
+        from utils.browser_pool import _get_pool, close_pool
 
         original = _make_launch_patch()
         _DummyBrowser.reset()
@@ -378,10 +377,10 @@ def test_tor_proxy_in_browser_args():
 # ─── dead browser replacement ─────────────────────────────────────────────────
 
 
-def test_dead_browser_replaced_on_acquire():
+def test_dead_browser_replaced_on_acquire() -> None:
     """If idle browser is dead, _get_or_create_browser launches a replacement."""
 
-    async def _run():
+    async def _run() -> None:
         import utils.browser_pool as bp_module
 
         original = _make_launch_patch()
@@ -413,12 +412,12 @@ def test_dead_browser_replaced_on_acquire():
 # ─── close_pool closes all pools ──────────────────────────────────────────────
 
 
-def test_close_pool_closes_all():
+def test_close_pool_closes_all() -> None:
     """close_pool() closes every pool in the registry."""
 
-    async def _run():
-        from utils.browser_pool import _get_pool, close_pool
+    async def _run() -> None:
         import utils.browser_pool as bp_module
+        from utils.browser_pool import _get_pool, close_pool
 
         original = _make_launch_patch()
         _DummyBrowser.reset()

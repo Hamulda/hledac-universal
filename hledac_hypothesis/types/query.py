@@ -13,13 +13,13 @@ from enum import Enum
 from typing import Any
 
 import msgspec
-from _core import aclose
 
 from compat.msgspec_gc_compat import Struct
 
 
 class DarkQueryType(Enum):
     """Types of dark surface queries for unindexed source expansion."""
+
     ONION = "onion"
     IPFS = "ipfs"
     PASTE = "paste"
@@ -33,6 +33,7 @@ class DarkQuery(Struct, frozen=True):
     Invariant: All dark queries MUST transit via Tor/I2P transport.
     NEVER route through aiohttp clearnet.
     """
+
     query_type: DarkQueryType
     query: str
     priority: float  # 0-1, higher = explore first
@@ -42,6 +43,7 @@ class DarkQuery(Struct, frozen=True):
 
 class _DarkQueryListResponse(Struct):
     """Response model for Hermes LLM dark query generation."""
+
     queries: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 

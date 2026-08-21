@@ -41,19 +41,17 @@ import contextlib
 import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 
-from hledac.universal.utils.asyncx._fault import _log_failure, silent_except
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx._fault import _log_failure
 
 if TYPE_CHECKING:
     pass
 
 T = TypeVar("T", default=Any)
-
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +87,6 @@ except ImportError:
 _EAGER_START_SUPPORTED: bool = _PY_312_PLUS
 
 
-# ---------------------------------------------------------------------------
-# ISSUE-010: Feature-flag gated eager_start
-# ---------------------------------------------------------------------------
-
-
 def _should_use_eager_start() -> bool:
     """Determine if eager_start should be used based on feature flags.
 
@@ -118,11 +111,6 @@ def _should_use_eager_start() -> bool:
     return ENV.EAGER_START_ENABLED
 
 
-# ---------------------------------------------------------------------------
-# TaskGroup task creation helpers
-# ---------------------------------------------------------------------------
-
-
 def _tg_create_task(
     tg: asyncio.TaskGroup,
     coro: Any,
@@ -144,10 +132,6 @@ def _tg_create_task(
         tg.create_task(coro, name=name)
 
 
-# ---------------------------------------------------------------------------
-# OTel context propagation
-# ---------------------------------------------------------------------------
-
 _OTelContextFn = Callable[[], dict[str, Any] | None]
 
 
@@ -156,13 +140,15 @@ def _noop_current_otel_context() -> dict[str, Any] | None:
 
 
 try:
-    from otel._instrumentation_asyncio import current_otel_context, create_task_with_context  # noqa: E402, F401
+    from otel._instrumentation_asyncio import create_task_with_context, current_otel_context
 
     _safe_task_factory: Callable[..., asyncio.Task[Any]] = create_task_with_context
 except ImportError:
     current_otel_context: _OTelContextFn = _noop_current_otel_context
 
-    def _safe_task_factory(coro: Any, *, name: str | None = None, eager_start: bool = True, **_: Any) -> asyncio.Task[Any]:
+    def _safe_task_factory(
+        coro: Any, *, name: str | None = None, eager_start: bool = True, **_: Any
+    ) -> asyncio.Task[Any]:
         return asyncio.create_task(coro, name=name, eager_start=eager_start)
 
 
@@ -218,10 +204,6 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
                 pass
 
 
-# ---------------------------------------------------------------------------
-# Result DTOs
-# ---------------------------------------------------------------------------
-
 ExceptionPolicy = Literal["raise", "first", "collect", "log"]
 
 
@@ -276,10 +258,6 @@ class _BoundedExceptionLog(Struct, frozen=True):
     sample: tuple[tuple[str, str, str], ...]  # ((type_name, str(exc), label), ...)
     suppressed_count: int  # how many additional exceptions
 
-
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
 
 ConcurrencyBudgetResolver = Callable[[], Awaitable[int]]
 
@@ -357,7 +335,9 @@ def _classify_gathered(
             errors.append(item)
             continue
         if isinstance(item, _BaseE):
-            _log.debug("[GHOST] gather BaseException[%d]%s: %s — re-raising", i, (" " + label) if label else "", t.__name__)
+            _log.debug(
+                "[GHOST] gather BaseException[%d]%s: %s — re-raising", i, (" " + label) if label else "", t.__name__
+            )
             if re_raise is None:
                 re_raise = item
             continue
@@ -422,7 +402,7 @@ def _check_gathered(
             raise all_errors[0]
         _log.debug(
             "[GHOST] gather BaseExceptionGroup[%d]%s — raising aggregated", len(all_errors), (" " + ctx) if ctx else ""
-    )
+        )
         raise BaseExceptionGroup(f"gather{' ' + ctx if ctx else ''}", all_errors)
 
     return ok_results, other_errors
@@ -462,13 +442,9 @@ def _apply_policy(
                     f"dropped {len(errors)} exceptions "
                     f"(sample: {sample_preview}"
                     f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-    )
+                )
             return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
 
-
-# ---------------------------------------------------------------------------
-# TaskGroup helpers
-# ---------------------------------------------------------------------------
 
 async def _parallel_taskgroup[T](
     coros: Sequence[Awaitable[T]],
@@ -508,7 +484,7 @@ async def _parallel_taskgroup[T](
                     "[GHOST] parallel(taskgroup) BaseException%s: %s",
                     (" " + ctx) if ctx else "",
                     type(exc).__name__,
-    )
+                )
                 raise exc from None
             errors.append(exc)
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
@@ -522,6 +498,7 @@ async def _parallel_taskgroup[T](
 
 
 # _classify_gathered is defined earlier at line ~231 (optimized version with fast path)
+
 
 def _build_parallel_result(
     ok: list[Any],
@@ -556,17 +533,13 @@ def _build_parallel_result(
 
         case "log":
             if errors:
-                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
                 return ok
 
         case _:
             return ParallelResult(ok=ok, by_name=by_name, errors=errors, re_raised=None)
 
-
-# ---------------------------------------------------------------------------
-# parallel() — unified parallel runner
-# ---------------------------------------------------------------------------
 
 @overload
 async def parallel[T](
@@ -661,7 +634,7 @@ async def parallel[T](
             ctx=ctx,
             logger_instance=_log,
             names=names,
-    )
+        )
 
     if concurrency is not None:
         sem = asyncio.Semaphore(concurrency)
@@ -691,13 +664,6 @@ async def parallel[T](
     return _build_parallel_result(ok, errors, re_raise, by_name, policy, ctx)
 
 
-
-
-
-# ---------------------------------------------------------------------------
-# parallel_ok — drop-in for safe_gather_ok
-# ---------------------------------------------------------------------------
-
 async def parallel_ok[T](
     *coros: Awaitable[T] | T,
     label: str = "",
@@ -726,17 +692,13 @@ async def parallel_ok[T](
             f"dropped {len(errors)} exceptions "
             f"(sample: {sample_preview}"
             f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-    )
+        )
 
     if re_raise is not None:
         raise re_raise
 
     return ok
 
-
-# ---------------------------------------------------------------------------
-# try_group — TaskGroup + except* for structured groups
-# ---------------------------------------------------------------------------
 
 async def try_group[*Ts](
     *coros: Awaitable[Ts],
@@ -763,14 +725,10 @@ async def try_group[*Ts](
         raise BaseExceptionGroup(
             f"try_group{' ' + ctx if ctx else ''}",
             list(eg.exceptions),
-    )
+        )
 
     return tuple(results)  # type: ignore[return-value]
 
-
-# ---------------------------------------------------------------------------
-# parallel_taskgroup_star — PEP 654 except* variant
-# ---------------------------------------------------------------------------
 
 async def parallel_taskgroup_star[T](
     coros: Sequence[Awaitable[T]],
@@ -811,16 +769,16 @@ async def parallel_taskgroup_star[T](
             _log.debug("[GHOST] parallel_taskgroup_star%s %s: %s", (" " + ctx) if ctx else "", type(exc).__name__, exc)
             errors.append(exc)
     except* BaseException as eg:
-        _log.debug("[GHOST] parallel_taskgroup_star BaseException%s: %s", (" " + ctx) if ctx else "", type(eg.exceptions[0]).__name__ if eg.exceptions else "unknown")
+        _log.debug(
+            "[GHOST] parallel_taskgroup_star BaseException%s: %s",
+            (" " + ctx) if ctx else "",
+            type(eg.exceptions[0]).__name__ if eg.exceptions else "unknown",
+        )
         raise
 
     ok_results = [r for r in results if r is not _SENTINEL and not isinstance(r, BaseException)]
     return ParallelResult(ok=ok_results, errors=errors, re_raised=None)
 
-
-# ---------------------------------------------------------------------------
-# safe_gather variants (deprecated)
-# ---------------------------------------------------------------------------
 
 @warnings.deprecated("Use parallel(coros, policy='collect') instead", category=DeprecationWarning)
 async def safe_gather[T](
@@ -896,7 +854,7 @@ async def safe_gather_fire_and_forget[T](
             "[GHOST] safe_gather_faf re-raising %s%s",
             type(re_raise).__name__,
             (" " + label) if label else "",
-    )
+        )
         raise re_raise
 
     if not errors:
@@ -914,10 +872,6 @@ async def safe_gather_fire_and_forget[T](
     )
     return _BoundedExceptionLog(sample=tuple(sample), suppressed_count=suppressed)
 
-
-# ---------------------------------------------------------------------------
-# bounded_parallel_map
-# ---------------------------------------------------------------------------
 
 async def bounded_parallel_map[T, R](
     items: list[T],
@@ -946,6 +900,7 @@ async def bounded_parallel_map[T, R](
             concurrency = 1
     else:
         from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     sem = asyncio.Semaphore(concurrency)
@@ -955,8 +910,10 @@ async def bounded_parallel_map[T, R](
             _bpm_jitter = jitter_sigma_s
             if _bpm_jitter > 0:
                 from hledac.universal._core.telemetry.context_state import is_blitz_mode
+
                 if not is_blitz_mode():
                     import random as _rng
+
                     await asyncio.sleep(min(abs(_rng.gauss(0.0, _bpm_jitter)), jitter_max_s))
         except Exception:  # noqa: BLE001
             pass
@@ -966,9 +923,8 @@ async def bounded_parallel_map[T, R](
                 return idx, await coro_fn(item)
             except BaseException as e:
                 _log.debug(
-                    f"[GHOST] bounded_parallel_map{' ' + ctx if ctx else ''} "
-                    f"item[{idx}] raised {type(e).__name__}: {e}"
-    )
+                    f"[GHOST] bounded_parallel_map{' ' + ctx if ctx else ''} item[{idx}] raised {type(e).__name__}: {e}"
+                )
                 return idx, e
 
     tasks = [safe_create_task(_run(i, item)) for i, item in enumerate(items)]
@@ -990,10 +946,6 @@ async def bounded_parallel_map[T, R](
         filtered.append(None if isinstance(result, Exception) else cast(R, result))
     return filtered
 
-
-# ---------------------------------------------------------------------------
-# race_first_success
-# ---------------------------------------------------------------------------
 
 async def race_first_success(
     *coros: tuple[Awaitable[Any], str],
@@ -1046,7 +998,9 @@ async def race_first_success(
 
                     _tg_create_task(tg, _runner(idx, coro, coro_label, require_truthy), name=f"race:{coro_label}")
     except TimeoutError:
-        return RaceFirstSuccessResult(result=None, winner_index=-1, winner_label="", errors=errors, falsy_results=falsy_results)
+        return RaceFirstSuccessResult(
+            result=None, winner_index=-1, winner_label="", errors=errors, falsy_results=falsy_results
+        )
     except BaseExceptionGroup as eg:
         for exc in eg.exceptions:
             if isinstance(exc, asyncio.CancelledError):
@@ -1062,10 +1016,6 @@ async def race_first_success(
         falsy_results=falsy_results,
     )
 
-
-# ---------------------------------------------------------------------------
-# chunked_taskgroup
-# ---------------------------------------------------------------------------
 
 async def chunked_taskgroup[T, R](
     items: list[T],
@@ -1094,6 +1044,7 @@ async def chunked_taskgroup[T, R](
             concurrency = 1
     else:
         from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     all_results: list[R] = []
@@ -1131,7 +1082,9 @@ async def chunked_taskgroup[T, R](
                     _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
                     raise exc from None
                 if isinstance(exc, BaseException) and not isinstance(exc, Exception):
-                    _log.debug("[GHOST] chunked_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__)
+                    _log.debug(
+                        "[GHOST] chunked_taskgroup BaseException%s: %s", ("_" + ctx) if ctx else "", type(exc).__name__
+                    )
                     raise exc from None
         except asyncio.CancelledError:
             _log.debug("[GHOST] chunked_taskgroup CancelledError%s", ("_" + ctx) if ctx else "")
@@ -1145,10 +1098,6 @@ async def chunked_taskgroup[T, R](
 
     return all_results
 
-
-# ---------------------------------------------------------------------------
-# ISSUE-009: Unified Async Execution API — Single Entry Point
-# ---------------------------------------------------------------------------
 
 async def execute_parallel[T](
     tasks: list[Awaitable[T]],
@@ -1190,7 +1139,6 @@ async def execute_parallel[T](
         policy="raise"/"first": raises on error, otherwise returns ParallelResult
 
     Example:
-        # Fire-and-forget with collection
         result = await execute_parallel([crawl(url) for url in urls])
 
         # Fail-soft (exceptions filtered)

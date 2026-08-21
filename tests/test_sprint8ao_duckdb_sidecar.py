@@ -35,6 +35,7 @@ venv_site = UNIVERSAL_ROOT / ".venv" / "lib" / "python3.14" / "site-packages"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _run_python(code: str) -> str:
     """Run code in an isolated subprocess, return stdout last line."""
     # Build PYTHONPATH to include venv site-packages and project root
@@ -104,7 +105,7 @@ print(json.dumps({
 class TestDuckDBShadowStore:
     """Test suite for DuckDB shadow-mode sidecar."""
 
-    def test_duckdb_sidecar_initializes_cleanly(self):
+    def test_duckdb_sidecar_initializes_cleanly(self) -> None:
         """Sidecar initializes without raising exceptions."""
         result = _run_python(
             """
@@ -118,10 +119,10 @@ print('ok' if ok else 'fail')
         )
         assert result == "ok", f"initialize() returned False: {result}"
 
-    def test_duckdb_sidecar_not_loaded_by_orchestrator_import(self):
+    def test_duckdb_sidecar_not_loaded_by_orchestrator_import(self) -> None:
         """REMOVED — autonomous_orchestrator.py no longer exists."""
 
-    def test_duckdb_sidecar_sets_memory_limit_from_env_or_default_1gb(self):
+    def test_duckdb_sidecar_sets_memory_limit_from_env_or_default_1gb(self) -> None:
         """memory_limit is set to env var or defaults to 1GB."""
         data = _import_sidecar_standalone()
         assert data.get("memory_limit") in (
@@ -130,7 +131,7 @@ print('ok' if ok else 'fail')
             "512MB",
         ), f"unexpected memory_limit: {data.get('memory_limit')}"
 
-    def test_duckdb_sidecar_sets_temp_directory_under_ramdisk_when_active(self):
+    def test_duckdb_sidecar_sets_temp_directory_under_ramdisk_when_active(self) -> None:
         """When RAMDISK_ACTIVE, temp_dir is under RAMDISK_ROOT/duckdb_tmp."""
         # Force RAMDISK active by setting env
         code = """
@@ -157,29 +158,25 @@ print(json.dumps({
         if data.get("is_ramdisk_mode"):
             assert data.get("temp_dir", "").endswith("duckdb_tmp"), (
                 f"temp_dir should end with duckdb_tmp: {data.get('temp_dir')}"
-    )
+            )
 
-    def test_duckdb_sidecar_sets_max_temp_directory_size_when_active(self):
+    def test_duckdb_sidecar_sets_max_temp_directory_size_when_active(self) -> None:
         """When RAMDISK_ACTIVE, max_temp reflects the configured limit."""
         data = _import_sidecar_standalone()
         # In this env, RAMDISK is inactive so max_temp may be 0GB
         # This test documents the setting is available
         assert "max_temp" in data, f"max_temp not in data: {data}"
 
-    def test_duckdb_sidecar_uses_memory_mode_when_ramdisk_inactive(self):
+    def test_duckdb_sidecar_uses_memory_mode_when_ramdisk_inactive(self) -> None:
         """When RAMDISK inactive, db_path is None (signals :memory: mode)."""
         data = _import_sidecar_standalone()
         if data.get("is_ramdisk_mode"):
             # RAMDisk is active on this machine — skip this test path
             pytest.skip("RAMDisk is active on this machine; test requires inactive RAMDisk")
-        assert data.get("is_ramdisk_mode") is False, (
-            f"Expected ramdisk_mode=False: {data}"
-    )
-        assert data.get("db_path") == ":memory:", (
-            f"Expected db_path=:memory:: {data.get('db_path')}"
-    )
+        assert data.get("is_ramdisk_mode") is False, f"Expected ramdisk_mode=False: {data}"
+        assert data.get("db_path") == ":memory:", f"Expected db_path=:memory:: {data.get('db_path')}"
 
-    def test_duckdb_sidecar_disables_spill_when_ramdisk_inactive(self):
+    def test_duckdb_sidecar_disables_spill_when_ramdisk_inactive(self) -> None:
         """When RAMDISK inactive, db_path is :memory: (no SSD spill path)."""
         data = _import_sidecar_standalone()
         if data.get("is_ramdisk_mode"):
@@ -188,32 +185,22 @@ print(json.dumps({
         # In inactive mode: db_path is :memory: and temp_dir is None
         # The actual DuckDB SET max_temp_directory_size='0GB' is applied at runtime
         # but the max_temp property reflects the configured env limit (1GB default)
-        assert data.get("is_ramdisk_mode") is False, (
-            f"Expected ramdisk_mode=False: {data}"
-    )
-        assert data.get("db_path") == ":memory:", (
-            f"Expected :memory: mode: {data.get('db_path')}"
-    )
-        assert data.get("temp_dir") is None, (
-            f"Expected no temp_dir in inactive mode: {data.get('temp_dir')}"
-    )
+        assert data.get("is_ramdisk_mode") is False, f"Expected ramdisk_mode=False: {data}"
+        assert data.get("db_path") == ":memory:", f"Expected :memory: mode: {data.get('db_path')}"
+        assert data.get("temp_dir") is None, f"Expected no temp_dir in inactive mode: {data.get('temp_dir')}"
 
-    def test_duckdb_sidecar_roundtrip_insert_query(self):
+    def test_duckdb_sidecar_roundtrip_insert_query(self) -> None:
         """insert_shadow_finding and query_recent_findings work end-to-end."""
         data = _import_sidecar_standalone()
         # RAMDisk path: concurrent insert fails due to pre-existing _prewarm_file_conn issue
         if data.get("is_ramdisk_mode"):
             pytest.skip("RAMDisk active: concurrent insert fails prewarm on RAMDisk path")
         assert data.get("init_ok") is True, f"init failed: {data}"
-        assert data.get("insert_finding_ok") is True, (
-            f"insert_finding failed: {data}"
-    )
+        assert data.get("insert_finding_ok") is True, f"insert_finding failed: {data}"
         assert data.get("insert_run_ok") is True, f"insert_run failed: {data}"
-        assert (data.get("query_count") or 0) >= 1, (
-            f"no results returned: {data}"
-    )
+        assert (data.get("query_count") or 0) >= 1, f"no results returned: {data}"
 
-    def test_duckdb_sidecar_close_releases_connection(self):
+    def test_duckdb_sidecar_close_releases_connection(self) -> None:
         """close() is idempotent and sets initialized=False."""
         code = """
 import sys
@@ -229,7 +216,7 @@ print('ok')
         result = _run_python(code)
         assert result == "ok", f"close() failed: {result}"
 
-    def test_regression_orchestrator_still_imports(self):
+    def test_regression_orchestrator_still_imports(self) -> None:
         """autonomous_orchestrator still imports without errors (sanity)."""
         code = """
 import sys
@@ -243,14 +230,14 @@ except Exception as e:
         result = _run_python(code)
         assert result == "import_ok", f"orchestrator import failed: {result}"
 
-    def test_regression_orchestrator_still_imports(self):
+    def test_regression_orchestrator_still_imports(self) -> None:
         """REMOVED — autonomous_orchestrator.py no longer exists."""
 
 
 class TestWalWriteFindingDelegation:
     """Sprint F233A: _wal_write_finding delegates to WALManager.wal_write_finding."""
 
-    def test_wal_write_finding_delegates_to_wal_manager(self):
+    def test_wal_write_finding_delegates_to_wal_manager(self) -> None:
         """
         _wal_write_finding(finding_id, query, source_type, confidence)
         calls WALManager.wal_write_finding and returns its bool result.
@@ -289,9 +276,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
             capture_output=True,
             text=True,
             cwd=str(UNIVERSAL_ROOT),
-    )
-        lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
-                 if l.startswith("{") and not l.startswith("WARNING")]
+        )
+        lines = [
+            l
+            for l in result.stdout.strip().splitlines()  # noqa: E741
+            if l.startswith("{") and not l.startswith("WARNING")
+        ]
         assert len(lines) >= 2, f"unexpected output: {result.stdout!r}"
         data1 = json.loads(lines[0])
         data2 = json.loads(lines[1])
@@ -303,7 +293,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         assert record["source_type"] == "test_source", f"wrong source_type: {record}"
         assert record["confidence"] == 0.99, f"wrong confidence: {record}"
 
-    def test_wal_write_finding_fail_soft_no_db_path(self):
+    def test_wal_write_finding_fail_soft_no_db_path(self) -> None:
         """
         Fail-soft: _wal_write_finding returns False when _db_path is None
         (e.g., path resolution returns None) — WALManager cannot be initialized.
@@ -334,9 +324,12 @@ store.close()
             text=True,
             cwd=str(UNIVERSAL_ROOT),
             env={**os.environ, "PYTHONPATH": "/Users/vojtechhamada/PycharmProjects/Hledac"},
-    )
-        lines = [l for l in result.stdout.strip().splitlines()  # noqa: E741
-                 if l.startswith("{") and not l.startswith("WARNING")]
+        )
+        lines = [
+            l
+            for l in result.stdout.strip().splitlines()  # noqa: E741
+            if l.startswith("{") and not l.startswith("WARNING")
+        ]
         assert len(lines) >= 1, f"unexpected output: {result.stdout!r}"
         data = json.loads(lines[0])
         # _db_path=None → fail-soft returns False

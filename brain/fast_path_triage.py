@@ -25,7 +25,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import TYPE_CHECKING
 
@@ -36,18 +35,18 @@ logger = logging.getLogger(__name__)
 
 # ── Tier 1: Jaccard shingle constants ────────────────────────────────────────
 _SHINGLE_SIZE: int = 3  # 3-gram character shingles
-_MIN_SHINGLE_OVERLAP: float = 0.06   # below → definitely noise
-_HIGH_SHINGLE_OVERLAP: float = 0.20   # above → definitely relevant
-_MIN_DOC_CHARS: int = 32   # skip trivially short docs (noise)
+_MIN_SHINGLE_OVERLAP: float = 0.06  # below → definitely noise
+_HIGH_SHINGLE_OVERLAP: float = 0.20  # above → definitely relevant
+_MIN_DOC_CHARS: int = 32  # skip trivially short docs (noise)
 
 # ── Tier 2: Embedding cosine similarity constants ────────────────────────────
-_COSINE_HIGH_THRESHOLD: float = 0.45   # above → relevant even if Tier 1 missed
-_COSINE_LOW_THRESHOLD: float = 0.15    # below → noise even if Tier 1 borderline
+_COSINE_HIGH_THRESHOLD: float = 0.45  # above → relevant even if Tier 1 missed
+_COSINE_LOW_THRESHOLD: float = 0.15  # below → noise even if Tier 1 borderline
 
 # ── Env overrides ────────────────────────────────────────────────────────────
 # SWARM-010: Use FeatureFlags for registry compliance
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
-from _core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _HLEDAC_TRIAGE_DISABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED)
 _HLEDAC_TRIAGE_TIER2_ENABLED: bool = FeatureFlags.get(FeatureFlag.TRIAGE_TIER2)
 
@@ -56,9 +55,11 @@ def _get_xxh3_hex(data: str) -> str:
     """Return 16-char xxh3-64 hex fingerprint via Rust backend (zero-copy safe)."""
     try:
         from hledac.universal._core.rust_backend import rust
+
         return rust.hash.ContentHasher.xxh3_64_hex(data.encode())
     except Exception:
         import hashlib
+
         return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
 
 
@@ -171,8 +172,8 @@ class FastPathTriage:
     def __init__(self, query: str) -> None:
         self._query = query
         self._query_text = query.lower().strip()
-        self._query_embedding: "np.ndarray | None" = None
-        self._embedder: "object | None" = None
+        self._query_embedding: np.ndarray | None = None
+        self._embedder: object | None = None
         self._embedder_loaded: bool = False
 
         # Telemetry
@@ -258,9 +259,7 @@ class FastPathTriage:
         # ── Batch Tier 2 ───────────────────────────────────────────────
         if tier2_candidates:
             self._tier2_attempted += len(tier2_candidates)
-            embeddings = self._get_embeddings_batch(
-                [doc for _, doc in tier2_candidates]
-            )
+            embeddings = self._get_embeddings_batch([doc for _, doc in tier2_candidates])
             if embeddings is not None:
                 query_emb = self._get_query_embedding()
                 if query_emb is not None:
@@ -286,13 +285,9 @@ class FastPathTriage:
             "tier2_attempted": self._tier2_attempted,
             "tier2_passed": self._tier2_passed,
             "tier2_fallback": self._tier2_fallback,
-            "filtered_out": self._total_triaged
-            - self._tier1_passed
-            - self._tier2_passed,
+            "filtered_out": self._total_triaged - self._tier1_passed - self._tier2_passed,
             "noise_reduction_pct": round(
-                100
-                * (1
-                   - (self._tier1_passed + self._tier2_passed) / total),
+                100 * (1 - (self._tier1_passed + self._tier2_passed) / total),
                 1,
             ),
         }
@@ -318,7 +313,7 @@ class FastPathTriage:
             return True
         return False
 
-    def _get_embedding(self, text: str) -> "np.ndarray | None":
+    def _get_embedding(self, text: str) -> np.ndarray | None:
         """Get embedding for a single text. Lazy-inits the embedder."""
         embedder = self._ensure_embedder()
         if embedder is None:
@@ -329,7 +324,7 @@ class FastPathTriage:
             logger.debug("[FASTPATH] Single embed failed, fallback", exc_info=True)
             return None
 
-    def _get_embeddings_batch(self, texts: list[str]) -> "list[np.ndarray] | None":
+    def _get_embeddings_batch(self, texts: list[str]) -> list[np.ndarray] | None:
         """Get embeddings for a batch. Uses batch API when available."""
         embedder = self._ensure_embedder()
         if embedder is None:
@@ -344,14 +339,14 @@ class FastPathTriage:
             logger.debug("[FASTPATH] Batch embed failed, fallback", exc_info=True)
             return None
 
-    def _get_query_embedding(self) -> "np.ndarray | None":
+    def _get_query_embedding(self) -> np.ndarray | None:
         """Get or compute the query embedding (cached)."""
         if self._query_embedding is not None:
             return self._query_embedding
         self._query_embedding = self._get_embedding(self._query_text)
         return self._query_embedding
 
-    def _ensure_embedder(self) -> "object | None":
+    def _ensure_embedder(self) -> object | None:
         """
         Lazy-load the MLX/ANE embedder from the existing infrastructure.
         Uses core/embeddings (the canonical embedding manager) with fallbacks
@@ -368,6 +363,7 @@ class FastPathTriage:
         # Priority 1: core/embeddings manager (canonical, always loaded for RAG)
         try:
             from hledac.universal._core.embeddings import get_embedding_manager
+
             mgr = get_embedding_manager()
             if mgr is not None and hasattr(mgr, "encode_texts"):
                 self._embedder = mgr.encode_texts
@@ -378,7 +374,8 @@ class FastPathTriage:
 
         # Priority 2: ANE embedder (Apple Neural Engine, zero RAM cost)
         try:
-            from hledac.universal.brain.ane_embedder import ANEEmbedder, get_ane_embedder
+            from hledac.universal.brain.ane_embedder import get_ane_embedder
+
             ane = get_ane_embedder()
             if ane is not None and ane.is_loaded:
                 self._embedder = ane.embed
@@ -390,6 +387,7 @@ class FastPathTriage:
         # Priority 3: MLX embedder (Metal GPU, ~100MB RAM)
         try:
             from hledac.universal.brain.mlx_embedder import MLXEmbedder
+
             mlx_emb = MLXEmbedder()
             if mlx_emb.is_loaded:
                 self._embedder = mlx_emb.embed
@@ -401,6 +399,7 @@ class FastPathTriage:
         # Priority 4: core.mlx_embeddings (newer path)
         try:
             from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
             core_emb = get_mlx_embedder()
             if core_emb is not None:
                 if hasattr(core_emb, "encode"):
@@ -419,15 +418,17 @@ class FastPathTriage:
         """Check if Rust vDSP SIMD similarity is available via accelerate_wired."""
         try:
             from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+
             return accelerate_wired().available
         except Exception:
             return False
 
     @staticmethod
-    def _cosine_similarity(a: "np.ndarray", b: "np.ndarray") -> float:
+    def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
         """Cosine similarity between two numpy vectors. Returns 0.0-1.0."""
         try:
             import numpy as np
+
             dot = float(np.dot(a, b))
             norm_a = float(np.linalg.norm(a))
             norm_b = float(np.linalg.norm(b))
@@ -439,8 +440,8 @@ class FastPathTriage:
 
     def _batch_cosine_similarity(
         self,
-        query_emb: "np.ndarray",
-        candidate_embs: "list[np.ndarray]",
+        query_emb: np.ndarray,
+        candidate_embs: list[np.ndarray],
     ) -> list[float]:
         """
         Batch cosine similarity between one query and multiple candidates.
@@ -466,6 +467,7 @@ class FastPathTriage:
         if self._simd_available:
             try:
                 from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+
                 accel = accelerate_wired()
 
                 if accel.available:

@@ -28,15 +28,16 @@ M1 8GB invariants:
 - Pattern: raise on critical failures (broken oracle, pool unavailable), fail-soft on transient errors
 - Rust SPSC lock-free queue (spsc_queue.rs) used for MLX worker coordination, not for this pipeline
 """
+
 import asyncio
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 import logging
 import time
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import parallel, safe_create_task, safe_wait_for
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ IDLE_PREFETCH_INTERVAL_S = 5.0
 IDLE_PREFETCH_THRESHOLD = 3
 PREFETCH_PREWARMED_HOSTS_MAX = 50
 
+
 class PrefetchItem(Struct):
     """
     Single IOC prefetch item with priority queue ordering.
@@ -57,6 +59,7 @@ class PrefetchItem(Struct):
     Higher confidence → lower priority value → dequeued sooner.
     Tie-break: older items (lower enqueued_at) dequeued first within same confidence.
     """
+
     ioc_value: str
     ioc_type: str
     confidence: float
@@ -76,6 +79,7 @@ class PrefetchItem(Struct):
             return self.priority < other.priority
         return self.enqueued_at < other.enqueued_at
 
+
 class ContinuousPrefetchPipeline:
     """
     P3-3: Continuous prefetch pipeline with producer-consumer pattern.
@@ -90,9 +94,32 @@ class ContinuousPrefetchPipeline:
     - Fail-safe: all errors caught, logged, never propagate
     - M1 8GB safe: thread-based producer, bounded concurrency
     """
-    __slots__ = tuple(('_cache', '_concurrent', '_executor_tasks', '_fetch_timeout', '_oracle', '_poll_interval', '_producer_task', '_queue', '_queue_depth', '_running', '_stats', '_stop_event', '_last_prewarm_at'))
 
-    def __init__(self, prefetch_oracle: Any, prefetch_cache: Any | None=None, queue_depth: int=PREFETCH_QUEUE_DEPTH, concurrent_fetches: int=MAX_CONCURRENT_PREFETCHES, fetch_timeout_s: float=PREFETCH_TIMEOUT_S, poll_interval_s: float=PREFETCH_INTERVAL_S):
+    __slots__ = (
+        "_cache",
+        "_concurrent",
+        "_executor_tasks",
+        "_fetch_timeout",
+        "_oracle",
+        "_poll_interval",
+        "_producer_task",
+        "_queue",
+        "_queue_depth",
+        "_running",
+        "_stats",
+        "_stop_event",
+        "_last_prewarm_at",
+    )
+
+    def __init__(
+        self,
+        prefetch_oracle: Any,
+        prefetch_cache: Any | None = None,
+        queue_depth: int = PREFETCH_QUEUE_DEPTH,
+        concurrent_fetches: int = MAX_CONCURRENT_PREFETCHES,
+        fetch_timeout_s: float = PREFETCH_TIMEOUT_S,
+        poll_interval_s: float = PREFETCH_INTERVAL_S,
+    ) -> None:
         self._oracle = prefetch_oracle
         self._cache = prefetch_cache
         self._queue_depth = queue_depth
@@ -104,7 +131,7 @@ class ContinuousPrefetchPipeline:
         self._executor_tasks: set[asyncio.Task] = set()
         self._running = False
         self._stop_event = asyncio.Event()
-        self._stats = {'items_enqueued': 0, 'items_fetched': 0, 'cache_hits': 0, 'fetch_errors': 0, 'queue_overflow': 0}
+        self._stats = {"items_enqueued": 0, "items_fetched": 0, "cache_hits": 0, "fetch_errors": 0, "queue_overflow": 0}
         self._last_prewarm_at = 0.0
 
     async def start(self) -> None:
@@ -114,12 +141,12 @@ class ContinuousPrefetchPipeline:
         self._running = True
         self._stop_event.clear()
         self._producer_task = safe_create_task(self._producer_loop())
-        self._producer_task.add_done_callback(lambda t: self._handle_task_done(t, 'producer'))
+        self._producer_task.add_done_callback(lambda t: self._handle_task_done(t, "producer"))
         for i in range(self._concurrent):
             task = safe_create_task(self._executor_loop(worker_id=i))
-            task.add_done_callback(lambda t, w=i: self._handle_task_done(t, f'executor-{w}'))
+            task.add_done_callback(lambda t, w=i: self._handle_task_done(t, f"executor-{w}"))
             self._executor_tasks.add(task)
-        logger.debug('[P3-3] ContinuousPrefetchPipeline started')
+        logger.debug("[P3-3] ContinuousPrefetchPipeline started")
 
     async def stop(self) -> None:
         """Graceful stop: signal stop, drain queue, cancel tasks."""
@@ -132,12 +159,18 @@ class ContinuousPrefetchPipeline:
             try:
                 await self._producer_task
             except asyncio.CancelledError:
-                logger.debug('[P3-3] Producer task cancelled during stop')
+                logger.debug("[P3-3] Producer task cancelled during stop")
                 raise
         for task in list(self._executor_tasks):
             task.cancel()
         if self._executor_tasks:
-            await parallel(list(self._executor_tasks), taskgroup=True, policy='log', ctx='prefetch:executor_shutdown', logger_instance=logger)
+            await parallel(
+                list(self._executor_tasks),
+                taskgroup=True,
+                policy="log",
+                ctx="prefetch:executor_shutdown",
+                logger_instance=logger,
+            )
         self._executor_tasks.clear()
         drained = 0
         while not self._queue.empty():
@@ -148,8 +181,8 @@ class ContinuousPrefetchPipeline:
             except asyncio.QueueEmpty:
                 break
         if drained:
-            logger.debug(f'[P3-3] Pipeline drained {drained} queued items')
-        logger.debug('[P3-3] ContinuousPrefetchPipeline stopped')
+            logger.debug(f"[P3-3] Pipeline drained {drained} queued items")
+        logger.debug("[P3-3] ContinuousPrefetchPipeline stopped")
 
     async def enqueue_predictions(self, predictions: list[dict]) -> int:
         """
@@ -166,17 +199,24 @@ class ContinuousPrefetchPipeline:
         enqueued = 0
         for pred in predictions:
             try:
-                item = PrefetchItem(ioc_value=pred['ioc_value'], ioc_type=pred['ioc_type'], confidence=float(pred['confidence']), source_node=str(pred.get('source_node', '')), prediction_method=str(pred.get('prediction_method', 'unknown')), enqueued_at=time.time())
+                item = PrefetchItem(
+                    ioc_value=pred["ioc_value"],
+                    ioc_type=pred["ioc_type"],
+                    confidence=float(pred["confidence"]),
+                    source_node=str(pred.get("source_node", "")),
+                    prediction_method=str(pred.get("prediction_method", "unknown")),
+                    enqueued_at=time.time(),
+                )
                 try:
                     self._queue.put_nowait(item)
                     enqueued += 1
-                    self._stats['items_enqueued'] += 1
+                    self._stats["items_enqueued"] += 1
                 except asyncio.QueueFull:
-                    self._stats['queue_overflow'] += 1
-                    logger.debug('[P3-3] Queue full, dropping prediction')
+                    self._stats["queue_overflow"] += 1
+                    logger.debug("[P3-3] Queue full, dropping prediction")
                     break
             except Exception as e:
-                logger.debug(f'[P3-3] Failed to enqueue prediction: {e}')
+                logger.debug(f"[P3-3] Failed to enqueue prediction: {e}")
         # Eager prewarm: fire immediately after enqueue, rate-limited to every 10s
         if enqueued > 0:
             now = time.time()
@@ -185,7 +225,7 @@ class ContinuousPrefetchPipeline:
                 safe_create_task(self._prewarm_once())
         return enqueued
 
-    async def enqueue_ioc(self, ioc_value: str, ioc_type: str='domain', confidence: float=0.5) -> bool:
+    async def enqueue_ioc(self, ioc_value: str, ioc_type: str = "domain", confidence: float = 0.5) -> bool:
         """
         Enqueue a single IOC directly (for immediate prefetch).
 
@@ -195,17 +235,29 @@ class ContinuousPrefetchPipeline:
         if not self._running:
             return False
         try:
-            item = PrefetchItem(ioc_value=ioc_value, ioc_type=ioc_type, confidence=confidence, source_node='direct', prediction_method='direct', enqueued_at=time.time())
+            item = PrefetchItem(
+                ioc_value=ioc_value,
+                ioc_type=ioc_type,
+                confidence=confidence,
+                source_node="direct",
+                prediction_method="direct",
+                enqueued_at=time.time(),
+            )
             self._queue.put_nowait(item)
-            self._stats['items_enqueued'] += 1
+            self._stats["items_enqueued"] += 1
             return True
         except asyncio.QueueFull:
-            self._stats['queue_overflow'] += 1
+            self._stats["queue_overflow"] += 1
             return False
 
     def get_stats(self) -> dict[str, Any]:
         """Return pipeline statistics."""
-        return {**self._stats, 'queue_depth': self._queue.qsize(), 'queue_capacity': self._queue.maxsize, 'running': self._running}
+        return {
+            **self._stats,
+            "queue_depth": self._queue.qsize(),
+            "queue_capacity": self._queue.maxsize,
+            "running": self._running,
+        }
 
     async def _producer_loop(self) -> None:
         """
@@ -217,27 +269,33 @@ class ContinuousPrefetchPipeline:
         try:
             while not self._stop_event.is_set():
                 try:
-                    await safe_wait_for(self._stop_event.wait(), timeout=self._poll_interval, label='prefetch_stop_event')
+                    await safe_wait_for(
+                        self._stop_event.wait(), timeout=self._poll_interval, label="prefetch_stop_event"
+                    )
                     break
                 except TimeoutError:  # noqa: BLE001
                     pass
                 if not self._running:
                     break
                 try:
-                    if hasattr(self._oracle, 'predict_next_iocs'):
+                    if hasattr(self._oracle, "predict_next_iocs"):
                         try:
-                            predictions = await safe_wait_for(self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE), timeout=10.0, label='predict_next_iocs')
+                            predictions = await safe_wait_for(
+                                self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE),
+                                timeout=10.0,
+                                label="predict_next_iocs",
+                            )
                             if predictions:
                                 enqueued = await self.enqueue_predictions(predictions)
-                                logger.debug(f'[P3-3] Producer: {len(predictions)} predictions, {enqueued} enqueued')
+                                logger.debug(f"[P3-3] Producer: {len(predictions)} predictions, {enqueued} enqueued")
                         except TimeoutError:
-                            logger.debug('[P3-3] predict_next_iocs timed out')
+                            logger.debug("[P3-3] predict_next_iocs timed out")
                         except Exception as e:
-                            logger.debug(f'[P3-3] predict_next_iocs failed: {e}')
+                            logger.debug(f"[P3-3] predict_next_iocs failed: {e}")
                 except Exception as e:
-                    logger.debug(f'[P3-3] Producer loop error: {e}')
+                    logger.debug(f"[P3-3] Producer loop error: {e}")
         except asyncio.CancelledError:
-            logger.debug('[P3-3] Producer loop cancelled')
+            logger.debug("[P3-3] Producer loop cancelled")
             raise
 
     async def _executor_loop(self, worker_id: int) -> None:
@@ -255,7 +313,7 @@ class ContinuousPrefetchPipeline:
         try:
             while not self._stop_event.is_set():
                 try:
-                    item = await safe_wait_for(self._queue.get(), timeout=IDLE_PREFETCH_INTERVAL_S, label='queue_get')
+                    item = await safe_wait_for(self._queue.get(), timeout=IDLE_PREFETCH_INTERVAL_S, label="queue_get")
                 except TimeoutError:
                     if self._queue.empty():
                         idle_cycles += 1
@@ -268,20 +326,20 @@ class ContinuousPrefetchPipeline:
                 idle_cycles = 0
                 age = time.time() - item.enqueued_at
                 if age > 300:
-                    logger.debug(f'[P3-3] Executor-{worker_id}: item too old, skipping')
+                    logger.debug(f"[P3-3] Executor-{worker_id}: item too old, skipping")
                     self._queue.task_done()
                     continue
                 try:
                     success = await self._prefetch_item(item)
                     if success:
-                        self._stats['items_fetched'] += 1
+                        self._stats["items_fetched"] += 1
                 except Exception as e:
-                    logger.debug(f'[P3-3] Executor-{worker_id} prefetch error: {e}')
-                    self._stats['fetch_errors'] += 1
+                    logger.debug(f"[P3-3] Executor-{worker_id} prefetch error: {e}")
+                    self._stats["fetch_errors"] += 1
                 finally:
                     self._queue.task_done()
         except asyncio.CancelledError:
-            logger.debug(f'[P3-3] Executor-{worker_id} loop cancelled')
+            logger.debug(f"[P3-3] Executor-{worker_id} loop cancelled")
             raise
 
     async def _prewarm_connections_for_predictions(self, prewarmed_hosts: set[str]) -> None:
@@ -295,16 +353,18 @@ class ContinuousPrefetchPipeline:
             prewarmed_hosts: Set of already-prewarmed hosts (modified in-place)
         """
         try:
-            if not hasattr(self._oracle, 'predict_next_iocs'):
+            if not hasattr(self._oracle, "predict_next_iocs"):
                 return
-            predictions = await safe_wait_for(self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE), timeout=10.0, label='predict_next_iocs')
+            predictions = await safe_wait_for(
+                self._oracle.predict_next_iocs(top_k=PREFETCH_BATCH_SIZE), timeout=10.0, label="predict_next_iocs"
+            )
             if not predictions:
                 return
             hosts_to_prewarm: list[str] = []
             for pred in predictions:
-                ioc_type = pred.get('ioc_type', 'domain')
-                ioc_value = pred.get('ioc_value', '')
-                if ioc_type == 'domain' and ioc_value:
+                ioc_type = pred.get("ioc_type", "domain")
+                ioc_value = pred.get("ioc_value", "")
+                if ioc_type == "domain" and ioc_value:
                     if ioc_value not in prewarmed_hosts:
                         if len(prewarmed_hosts) >= PREFETCH_PREWARMED_HOSTS_MAX:
                             # Evict oldest (first-in set iteration order)
@@ -320,26 +380,34 @@ class ContinuousPrefetchPipeline:
                 """Pre-warm curl_cffi session for ja3_fingerprint profile."""
                 try:
                     from hledac.universal.transport.prewarm_pool import acquire_session
-                    await acquire_session('ja3_fingerprint')
+
+                    await acquire_session("ja3_fingerprint")
                 except ImportError:
                     import warnings
-                    warnings.warn('[P3-3] transport.prewarm_pool not available; prefetch will use direct httpx (higher latency)', RuntimeWarning, stacklevel=2)
+
+                    warnings.warn(
+                        "[P3-3] transport.prewarm_pool not available; prefetch will use direct httpx (higher latency)",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+
             await _prewarm_async()
-            logger.debug(f'[P3-3] Pre-warmed connections for {len(hosts_to_prewarm)} hosts')
+            logger.debug(f"[P3-3] Pre-warmed connections for {len(hosts_to_prewarm)} hosts")
         except TimeoutError:
-            logger.debug('[P3-3] Pre-warm predictions timed out')
+            logger.debug("[P3-3] Pre-warm predictions timed out")
         except Exception as e:
-            logger.debug(f'[P3-3] Pre-warm failed: {e}')
+            logger.debug(f"[P3-3] Pre-warm failed: {e}")
 
     async def _prewarm_once(self) -> None:
         """Single eager pre-warm of ja3_fingerprint profile (fire-and-forget)."""
         try:
             from hledac.universal.transport.prewarm_pool import acquire_session
-            await acquire_session('ja3_fingerprint')
+
+            await acquire_session("ja3_fingerprint")
         except ImportError:  # noqa: BLE001
             pass
         except Exception as e:
-            logger.debug(f'[P3-3] Eager prewarm failed: {e}')
+            logger.debug(f"[P3-3] Eager prewarm failed: {e}")
 
     async def _prefetch_item(self, item: PrefetchItem) -> bool:
         """
@@ -352,35 +420,39 @@ class ContinuousPrefetchPipeline:
             try:
                 cached = await self._cache.get(item.ioc_value)
                 if cached is not None:
-                    self._stats['cache_hits'] += 1
+                    self._stats["cache_hits"] += 1
                     try:
-                        if hasattr(self._oracle, 'record_prefetch_outcome'):
+                        if hasattr(self._oracle, "record_prefetch_outcome"):
                             await self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
                     except Exception:  # noqa: BLE001
                         pass
                     return True
             except Exception as e:
-                logger.debug(f'[P3-3] Cache check failed: {e}')
+                logger.debug(f"[P3-3] Cache check failed: {e}")
         url = self._ioc_to_url(item.ioc_value, item.ioc_type)
         if not url:
             return False
         success = False
         try:
-            result = await safe_wait_for(self._fetch_url(url), timeout=self._fetch_timeout, label='fetch_url')
+            result = await safe_wait_for(self._fetch_url(url), timeout=self._fetch_timeout, label="fetch_url")
             if result:
-                bytes_downloaded = len(result.get('content', ''))
+                bytes_downloaded = len(result.get("content", ""))
                 if self._cache is not None:
                     try:
-                        await self._cache.put(item.ioc_value, {'data': result, 'ioc_type': item.ioc_type, 'fetched_at': time.time()}, ttl=3600)
+                        await self._cache.put(
+                            item.ioc_value,
+                            {"data": result, "ioc_type": item.ioc_type, "fetched_at": time.time()},
+                            ttl=3600,
+                        )
                     except Exception as e:
-                        logger.debug(f'[P3-3] Cache put failed: {e}')
+                        logger.debug(f"[P3-3] Cache put failed: {e}")
                 success = True
         except TimeoutError:
-            logger.debug(f'[P3-3] Prefetch timeout for {item.ioc_value}')
+            logger.debug(f"[P3-3] Prefetch timeout for {item.ioc_value}")
         except Exception as e:
-            logger.debug(f'[P3-3] Prefetch failed for {item.ioc_value}: {e}')
+            logger.debug(f"[P3-3] Prefetch failed for {item.ioc_value}: {e}")
         try:
-            if hasattr(self._oracle, 'record_prefetch_outcome'):
+            if hasattr(self._oracle, "record_prefetch_outcome"):
                 await self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
         except Exception:  # noqa: BLE001
             pass
@@ -388,9 +460,9 @@ class ContinuousPrefetchPipeline:
 
     def _ioc_to_url(self, ioc_value: str, ioc_type: str) -> str | None:
         """Convert IOC value to URL for fetching."""
-        if ioc_type == 'domain':
-            return f'https://{ioc_value}'
-        elif ioc_type == 'url' and ioc_value.startswith(('http://', 'https://')):
+        if ioc_type == "domain":
+            return f"https://{ioc_value}"
+        elif ioc_type == "url" and ioc_value.startswith(("http://", "https://")):
             return ioc_value
         return None
 
@@ -403,27 +475,30 @@ class ContinuousPrefetchPipeline:
         """
         try:
             from hledac.universal.transport.prewarm_pool import acquire_session
+
             # Issue 18: use canonical JA3 profile (chrome136) instead of
             # invalid 'ja3_fingerprint' string. Session is AsyncSession from
             # prewarm pool — call .get() natively, not via asyncio.to_thread.
-            success, session, _profile = await acquire_session('chrome136')
+            success, session, _profile = await acquire_session("chrome136")
             if success and session is not None:
                 try:
                     resp = await session.get(url, timeout=self._fetch_timeout)
                     if resp.status_code == 200:
-                        return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
+                        return {"url": url, "content": resp.text, "status": resp.status_code, "fetched_at": time.time()}
                 except Exception:  # noqa: BLE001
                     pass
         except ImportError:  # noqa: BLE001
             pass
         try:
             # F-01: session_pool.httpx() returns shared singleton
-            from hledac.universal.transport.session_pool import session_pool
             import httpx
+
+            from hledac.universal.transport.session_pool import session_pool
+
             session = await session_pool.httpx()
             resp = await session.get(url, follow_redirects=True, timeout=httpx.Timeout(self._fetch_timeout))
             if resp.status_code == 200:
-                return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
+                return {"url": url, "content": resp.text, "status": resp.status_code, "fetched_at": time.time()}
         except Exception:  # noqa: BLE001
             pass
         return None
@@ -433,6 +508,6 @@ class ContinuousPrefetchPipeline:
         try:
             exc = task.exception()
             if exc and (not isinstance(exc, asyncio.CancelledError)):
-                logger.warning(f'[P3-3] {name} task failed: {exc}')
+                logger.warning(f"[P3-3] {name} task failed: {exc}")
         except asyncio.CancelledError:  # noqa: BLE001
             pass

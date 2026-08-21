@@ -21,7 +21,6 @@ import os
 import time
 
 import pytest
-from _core import aclose
 
 # ── Module availability ───────────────────────────────────────────────────
 # The Rust extension is built via `maturin develop` in `rust_extensions/`.
@@ -30,6 +29,7 @@ from _core import aclose
 
 try:
     from hledac_rust_extensions import ContentHasher
+
     _HAS_RUST = True
     _SKIP_REASON = ""
 except ImportError as _e:
@@ -41,10 +41,11 @@ except ImportError as _e:
 pytestmark = pytest.mark.skipif(
     not _HAS_RUST,
     reason=_SKIP_REASON,
-    )
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
 
 def _hex16(s: str) -> str:
     """Convenience: SHA-256 first 16 hex chars (Python reference for blake3_64)."""
@@ -117,9 +118,7 @@ class TestBlake3:
 
     def test_blake3_hex_known_vector(self) -> None:
         """BLAKE3("") = af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"""
-        assert ContentHasher.blake3_hex(b"") == (
-            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
-    )
+        assert ContentHasher.blake3_hex(b"") == ("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262")
 
     def test_blake3_hex_returns_64_lowercase_hex(self) -> None:
         h = ContentHasher.blake3_hex(b"test")

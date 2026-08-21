@@ -3,9 +3,6 @@
 UNIFIED-009: Replaces flat proxy-affinity lists with a weighted adjacency-list
 route graph persisted in DuckDB. Enables intelligent proxy+transport selection
 
-
-
-
 based on historical latency, success rate, and recency — eliminating the wasteful
 "race all transports" approach for domains with known-good routes.
 
@@ -43,13 +40,11 @@ import os
 import random
 import threading
 import time as _time
-from typing import TYPE_CHECKING, Any
+from operator import attrgetter
+from typing import TYPE_CHECKING
 
-from operator import attrgetter, itemgetter
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -57,13 +52,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Feature flag
-# ---------------------------------------------------------------------------
 _PROXY_ROUTES_ENABLED: bool = os.getenv("HLEDAC_PROXY_ROUTES", "1") != "0"
-_PROXY_ROUTES_MAX_ROWS: int = int(
-    os.getenv("HLEDAC_PROXY_ROUTES_MAX_ROWS", "10000")
-    )
+_PROXY_ROUTES_MAX_ROWS: int = int(os.getenv("HLEDAC_PROXY_ROUTES_MAX_ROWS", "10000"))
 # In-memory cache config for hot-path lookups
 _ROUTE_CACHE_MAX: int = 256
 _ROUTE_CACHE_TTL_S: float = 300.0  # 5 minutes
@@ -74,10 +64,6 @@ _EWMA_ALPHA: float = 0.2
 # Minimum observations before a route is considered "known-good"
 _MIN_OBSERVATIONS_FOR_ROUTING: int = 3
 
-
-# ---------------------------------------------------------------------------
-# RouteEdge DTO
-# ---------------------------------------------------------------------------
 
 class RouteEdge(Struct, frozen=True):
     """Immutable route edge snapshot from DuckDB.
@@ -121,7 +107,7 @@ class RouteEdge(Struct, frozen=True):
     @property
     def recency_score(self) -> float:
         """Exponential decay based on time since last success.
-        
+
         Returns 1.0 for recent success (within 1h), decaying to 0.1 after 24h.
         """
         if self.last_success <= 0:
@@ -144,16 +130,12 @@ class RouteEdge(Struct, frozen=True):
         Returns 0.0-1.0 where higher is better.
         """
         latency_score = 1.0 / (1.0 + self.ewma_latency_ms / 1000.0) if self.ewma_latency_ms > 0 else 0.5
-        return (
-            self.success_rate * 0.40
-            + latency_score * 0.35
-            + self.recency_score * 0.25
-    )
+        return self.success_rate * 0.40 + latency_score * 0.35 + self.recency_score * 0.25
 
     @property
     def thompson_alpha(self) -> float:
         """Beta distribution alpha parameter for Thompson Sampling.
-        
+
         alpha = success_count + 1 (prior: Beta(1,1) = uniform)
         """
         return float(self.success_count + 1)
@@ -167,7 +149,7 @@ class RouteEdge(Struct, frozen=True):
         return float(self.fail_count + 1)
 
     @classmethod
-    def empty(cls, domain: str, proxy: str = "", transport: str = "") -> "RouteEdge":
+    def empty(cls, domain: str, proxy: str = "", transport: str = "") -> RouteEdge:
         """Factory for unknown routes — neutral metrics."""
         return cls(domain=domain, proxy=proxy, transport=transport)
 
@@ -188,10 +170,6 @@ class RouteRecommendation(Struct, frozen=True):
         """True if this is a real recommendation, not a fallback."""
         return self.reason not in ("none", "fallback")
 
-
-# ---------------------------------------------------------------------------
-# In-memory cache for hot-path lookups
-# ---------------------------------------------------------------------------
 
 class _RouteCache:
     """TTL-bounded LRU cache for route edges. M1 8GB: 256 entries max."""
@@ -225,10 +203,6 @@ class _RouteCache:
     def clear(self) -> None:
         self._data.clear()
 
-
-# ---------------------------------------------------------------------------
-# RouteGraphService
-# ---------------------------------------------------------------------------
 
 class RouteGraphService:
     """Async service for proxy route graph CRUD and intelligent route selection.
@@ -268,12 +242,8 @@ class RouteGraphService:
         self._cache: _RouteCache = _RouteCache(
             max_entries=_ROUTE_CACHE_MAX,
             ttl_s=_ROUTE_CACHE_TTL_S,
-    )
+        )
         self._evict_lock: threading.Lock = threading.Lock()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     async def select_best_route(
         self,
@@ -325,7 +295,7 @@ class RouteGraphService:
                         confidence=0.2,
                         reason="exploration",
                         edge=chosen,
-    )
+                    )
                 if edges:
                     chosen = random.choice(edges)
                     return RouteRecommendation(
@@ -336,7 +306,7 @@ class RouteGraphService:
                         confidence=0.5,
                         reason="exploration",
                         edge=chosen,
-    )
+                    )
 
             # Thompson Sampling on known-good routes (preferred_transport is
             # handled implicitly: known_good routes where transport matches
@@ -353,7 +323,7 @@ class RouteGraphService:
                     confidence=confidence,
                     reason="known_good",
                     edge=chosen,
-    )
+                )
 
             # Fallback: best composite score from all edges
             if edges:
@@ -367,7 +337,7 @@ class RouteGraphService:
                     confidence=0.3,
                     reason="fallback",
                     edge=chosen,
-    )
+                )
 
             return RouteRecommendation(domain=domain, reason="none")
 
@@ -397,7 +367,7 @@ class RouteGraphService:
                 success=True,
                 latency_ms=latency_ms,
                 body_bytes=body_bytes,
-    )
+            )
             await self._persist(updated)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -419,7 +389,7 @@ class RouteGraphService:
                 existing=existing or RouteEdge.empty(domain, proxy, transport),
                 success=False,
                 latency_ms=latency_ms,
-    )
+            )
             await self._persist(updated)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -430,10 +400,6 @@ class RouteGraphService:
             return await self._get_routes_for_domain(domain)
         except Exception:  # noqa: BLE001 — fail-safe
             return []
-
-    # ------------------------------------------------------------------
-    # Thompson Sampling
-    # ------------------------------------------------------------------
 
     def _thompson_sample(
         self,
@@ -459,16 +425,11 @@ class RouteGraphService:
             # Bandwidth bias: if we expect a large body, boost high-bw routes
             if body_size_estimate > 100_000 and edge.bw_bytes_per_sec > 0:
                 bw_factor = math.log2(1 + edge.bw_bytes_per_sec / 1_000_000)  # log scale
-                sample *= (1.0 + bw_factor * 0.02)  # up to ~20% boost
+                sample *= 1.0 + bw_factor * 0.02  # up to ~20% boost
 
             samples.append((sample, edge))
 
-        # Return the edge with the highest sample
         return max(samples, key=lambda x: x[0])[1]
-
-    # ------------------------------------------------------------------
-    # Edge computation
-    # ------------------------------------------------------------------
 
     def _compute_updated_edge(
         self,
@@ -503,10 +464,14 @@ class RouteGraphService:
                 new_p50 = existing.p50_latency_ms * 0.9 + latency_ms * 0.1
             # p95: only update if this observation is above current p50
             if latency_ms > existing.p50_latency_ms:
-                new_p95 = existing.p95_latency_ms * 0.95 + latency_ms * 0.05 if existing.p95_latency_ms > 0 else latency_ms
+                new_p95 = (
+                    existing.p95_latency_ms * 0.95 + latency_ms * 0.05 if existing.p95_latency_ms > 0 else latency_ms
+                )
             # p99: only update if observation is in the top 5% (above p95)
             if existing.p95_latency_ms > 0 and latency_ms > existing.p95_latency_ms:
-                new_p99 = existing.p99_latency_ms * 0.98 + latency_ms * 0.02 if existing.p99_latency_ms > 0 else latency_ms
+                new_p99 = (
+                    existing.p99_latency_ms * 0.98 + latency_ms * 0.02 if existing.p99_latency_ms > 0 else latency_ms
+                )
 
         # Bandwidth estimate update (EWMA)
         new_bw = existing.bw_bytes_per_sec
@@ -535,15 +500,10 @@ class RouteGraphService:
             last_success=now if success else existing.last_success,
             last_failure=now if not success else existing.last_failure,
             first_seen=existing.first_seen if existing.first_seen > 0 else now,
-    )
-
-    # ------------------------------------------------------------------
-    # DuckDB persistence
-    # ------------------------------------------------------------------
+        )
 
     async def _get_routes_for_domain(self, domain: str) -> list[RouteEdge]:
         """Get all route edges for a domain. Cache-first, then DuckDB."""
-        # Check in-memory cache first
         cached = self._cache.get(domain)
         if cached is not None:
             return cached
@@ -594,7 +554,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-    )
+                )
                 if conn is None:
                     return []
                 rows = conn.execute(
@@ -625,7 +585,7 @@ class RouteGraphService:
                         last_success=float(r[11]) if r[11] else 0.0,
                         last_failure=float(r[12]) if r[12] else 0.0,
                         first_seen=float(r[13]) if r[13] else 0.0,
-    )
+                    )
                     for r in rows
                 ]
             except Exception:  # noqa: BLE001 — fail-safe
@@ -634,7 +594,7 @@ class RouteGraphService:
         return await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync_query,
-    )
+        )
 
     async def _query_single_route_from_db(
         self,
@@ -654,7 +614,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-    )
+                )
                 if conn is None:
                     return None
                 r = conn.execute(
@@ -686,14 +646,14 @@ class RouteGraphService:
                     last_success=float(r[11]) if r[11] else 0.0,
                     last_failure=float(r[12]) if r[12] else 0.0,
                     first_seen=float(r[13]) if r[13] else 0.0,
-    )
+                )
             except Exception:  # noqa: BLE001 — fail-safe
                 return None
 
         return await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync,
-    )
+        )
 
     async def _persist(self, edge: RouteEdge) -> None:
         """Persist a route edge to DuckDB with LRU eviction."""
@@ -712,7 +672,7 @@ class RouteGraphService:
                     self._store._file_conn  # type: ignore[union-attr] # noqa: SLF001
                     if self._store._db_path  # type: ignore[union-attr] # noqa: SLF001
                     else self._store._persistent_conn  # type: ignore[union-attr] # noqa: SLF001
-    )
+                )
                 if conn is None:
                     return
 
@@ -721,15 +681,15 @@ class RouteGraphService:
 
                 # Convert float timestamps to DuckDB TIMESTAMP
                 last_success_ts = (
-                    _dt.datetime.fromtimestamp(edge.last_success, tz=_dt.timezone.utc).isoformat()
+                    _dt.datetime.fromtimestamp(edge.last_success, tz=_dt.UTC).isoformat()
                     if edge.last_success > 0
                     else None
-    )
+                )
                 last_failure_ts = (
-                    _dt.datetime.fromtimestamp(edge.last_failure, tz=_dt.timezone.utc).isoformat()
+                    _dt.datetime.fromtimestamp(edge.last_failure, tz=_dt.UTC).isoformat()
                     if edge.last_failure > 0
                     else None
-    )
+                )
 
                 conn.execute(
                     "INSERT INTO proxy_routes "
@@ -765,13 +725,11 @@ class RouteGraphService:
                         last_success_ts,
                         last_failure_ts,
                     ],
-    )
+                )
 
                 # LRU eviction — use threading.Lock for thread-safe eviction
                 with self._evict_lock:
-                    count_result = conn.execute(
-                        "SELECT COUNT(*) FROM proxy_routes"
-                    ).fetchone()
+                    count_result = conn.execute("SELECT COUNT(*) FROM proxy_routes").fetchone()
                     if count_result and count_result[0] > self._max_rows:
                         excess = count_result[0] - self._max_rows
                         conn.execute(
@@ -780,21 +738,17 @@ class RouteGraphService:
                             "ORDER BY COALESCE(last_success, first_seen) ASC LIMIT ?"
                             ")",
                             [excess],
-    )
+                        )
             except Exception:  # noqa: BLE001 — fail-safe; DB write failure
                 pass
 
         await loop.run_in_executor(
             self._store._shared_executor,  # type: ignore[union-attr] # noqa: SLF001
             _sync_upsert,
-    )
+        )
 
 
-# ---------------------------------------------------------------------------
-# Singleton factory (F320: Refactored to use centralized pattern)
-# ---------------------------------------------------------------------------
 from hledac.universal.utils._patterns import module_singleton_getter
-from _core import aclose
 
 
 def _make_route_graph_service(store: DuckDBShadowStore | None) -> RouteGraphService:
@@ -806,7 +760,7 @@ def _make_route_graph_service(store: DuckDBShadowStore | None) -> RouteGraphServ
 _get_route_graph_service = module_singleton_getter(
     singleton_name="_route_graph_singleton",
     factory=lambda: _make_route_graph_service(None),
-    )
+)
 
 
 def get_route_graph_service(

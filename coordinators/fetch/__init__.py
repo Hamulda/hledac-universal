@@ -48,71 +48,71 @@ Service Architecture (SRP/ISP Compliant):
         - micro_sprint.py: Sprint scheduling
         - evidence.py: Evidence collection
 """
+
 from __future__ import annotations
 
 from .facade import FetchCoordinatorConfig, FetchCoordinatorFacade
 from .services import (
+    # AIMD
+    AIMDConfig,
+    AIMDWindowService,
     # Base services
     CircuitBreakerService,
     DNSCacheService,
+    # Entropy
+    EntropyConfig,
+    EntropyFeedbackService,
+    # Evidence
+    EvidenceConfig,
+    EvidenceSinkService,
     FetchOptions,
     FetchResult,
     FetchServiceConfig,
     FetchServiceRegistry,
-    RateLimiterService,
-    RetryPolicyService,
-    # AIMD
-    AIMDConfig,
-    AIMDWindowService,
-    # Privacy
-    PrivacyConfig,
-    PrivacyLevel,
-    PrivacyAllocatorService,
-    # Speculative
-    SpeculativeConfig,
-    SpeculativePrefetchService,
-    # Entropy
-    EntropyConfig,
-    EntropyFeedbackService,
     # Micro Sprint
     MicroSprintConfig,
     MicroSprintService,
-    # Evidence
-    EvidenceConfig,
-    EvidenceSinkService,
+    PrivacyAllocatorService,
+    # Privacy
+    PrivacyConfig,
+    PrivacyLevel,
+    RateLimiterService,
+    RetryPolicyService,
+    # Speculative
+    SpeculativeConfig,
+    SpeculativePrefetchService,
 )
-from hledac.universal._core import aclose
 
 __all__ = [
     # Services
-    'FetchServiceRegistry',
-    'FetchServiceConfig',
-    'DNSCacheService',
-    'RateLimiterService',
-    'CircuitBreakerService',
-    'RetryPolicyService',
-    'FetchOptions',
-    'FetchResult',
+    "FetchServiceRegistry",
+    "FetchServiceConfig",
+    "DNSCacheService",
+    "RateLimiterService",
+    "CircuitBreakerService",
+    "RetryPolicyService",
+    "FetchOptions",
+    "FetchResult",
     # AIMD
-    'AIMDConfig',
-    'AIMDWindowService',
+    "AIMDConfig",
+    "AIMDWindowService",
     # Privacy
-    'PrivacyLevel',
-    'PrivacyConfig',
-    'PrivacyAllocatorService',
+    "PrivacyLevel",
+    "PrivacyConfig",
+    "PrivacyAllocatorService",
     # Speculative
-    'SpeculativeConfig',
-    'SpeculativePrefetchService',
+    "SpeculativeConfig",
+    "SpeculativePrefetchService",
     # Entropy
-    'EntropyConfig',
-    'EntropyFeedbackService',
+    "EntropyConfig",
+    "EntropyFeedbackService",
     # Micro Sprint
-    'MicroSprintConfig',
-    'MicroSprintService',
+    "MicroSprintConfig",
+    "MicroSprintService",
     # Evidence
-    'EvidenceConfig',
-    'EvidenceSinkService',
+    "EvidenceConfig",
+    "EvidenceSinkService",
     # Facade
-    'FetchCoordinatorFacade',
-    'FetchCoordinatorConfig',
+    "FetchCoordinatorFacade",
+    "FetchCoordinatorConfig",
 ]

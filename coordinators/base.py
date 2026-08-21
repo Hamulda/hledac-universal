@@ -23,6 +23,7 @@ The three responsibilities are now isolated in composable components:
 - LoadFactorCalculator: capacity management
 - MemoryPressureMonitor: M1 memory monitoring
 """
+
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -36,8 +37,7 @@ from .components import (
     NullMemoryPressureMonitor,
     NullOperationTracker,
     OperationTracker,
-    )
-from _core import aclose
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,8 @@ class CoordinatorComponents:
             memory=MemoryPressureMonitor(),
     )
     """
-    __slots__ = ('tracker', 'load', 'memory')
+
+    __slots__ = ("tracker", "load", "memory")
 
     def __init__(
         self,
@@ -88,11 +89,16 @@ class UniversalCoordinator(ABC):
     """
 
     __slots__ = (
-        '_name', '_memory_aware',
-        '_initialized', '_available', '_initialization_error',
-        '_total_operations', '_successful_operations', '_failed_operations',
-        '_total_execution_time',
-        '_components',
+        "_name",
+        "_memory_aware",
+        "_initialized",
+        "_available",
+        "_initialization_error",
+        "_total_operations",
+        "_successful_operations",
+        "_failed_operations",
+        "_total_execution_time",
+        "_components",
     )
 
     def __init__(
@@ -119,18 +125,12 @@ class UniversalCoordinator(ABC):
             tracker=tracker,
             load=load,
             memory=memory,
-    )
+        )
 
     @abstractmethod
     def get_supported_operations(self) -> list[OperationType]:
         """Get list of operation types this coordinator supports."""
         ...
-
-    # -------------------------------------------------------------------------
-    # Template Method Pattern: handle_request lifecycle
-    # Eliminates ~200 lines of duplicated boilerplate across coordinators.
-    # Subclasses only implement _do_execute_decision().
-    # -------------------------------------------------------------------------
 
     async def handle_request(
         self,
@@ -159,11 +159,11 @@ class UniversalCoordinator(ABC):
             self.track_operation(
                 operation_id,
                 {
-                    'operation_ref': operation_ref,
-                    'decision': decision,
-                    'type': operation_type,
+                    "operation_ref": operation_ref,
+                    "decision": decision,
+                    "type": operation_type,
                 },
-    )
+            )
             exec_result = await self._do_execute_decision(decision)
             elapsed = time_mod.time() - start_time
             operation_result = OperationResult(
@@ -174,16 +174,16 @@ class UniversalCoordinator(ABC):
                 success=exec_result.success,
                 error_message=exec_result.error_message,
                 metadata=exec_result.metadata,
-    )
+            )
         except Exception as e:
             operation_result = OperationResult(
                 operation_id=operation_id,
-                status='failed',
-                result_summary=f'{self.__class__.__name__} operation failed: {str(e)}',
+                status="failed",
+                result_summary=f"{self.__class__.__name__} operation failed: {str(e)}",
                 execution_time=time_mod.time() - start_time,
                 success=False,
                 error_message=str(e),
-    )
+            )
         finally:
             self.untrack_operation(operation_id)
         self.record_operation_result(operation_result)
@@ -191,7 +191,7 @@ class UniversalCoordinator(ABC):
 
     def _get_operation_type_for_tracking(self) -> str:
         """Override to provide operation type for tracking."""
-        return 'coordinator'
+        return "coordinator"
 
     @abstractmethod
     async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
@@ -254,7 +254,7 @@ class UniversalCoordinator(ABC):
             logger.error(f"Error during cleanup of '{self._name}': {e}")
         finally:
             # Clear active operations via tracker (safe for NullOperationTracker)
-            active = getattr(self._components.tracker, '_active', None)
+            active = getattr(self._components.tracker, "_active", None)
             if active is not None:
                 active.clear()
             self._initialized = False
@@ -275,10 +275,7 @@ class UniversalCoordinator(ABC):
             operation_id: Unique operation identifier
             operation_data: Operation context and metadata
         """
-        self._components.tracker.track(
-            operation_id,
-            {**operation_data, 'coordinator': self._name}
-    )
+        self._components.tracker.track(operation_id, {**operation_data, "coordinator": self._name})
 
     def untrack_operation(self, operation_id: str) -> None:
         """
@@ -314,7 +311,7 @@ class UniversalCoordinator(ABC):
         """
         return self._components.load.get_load_factor()
 
-    def can_accept_operation(self, priority: int=5) -> bool:
+    def can_accept_operation(self, priority: int = 5) -> bool:
         """
         Check if coordinator can accept new operation.
 
@@ -331,9 +328,9 @@ class UniversalCoordinator(ABC):
     def get_capacity_info(self) -> dict[str, Any]:
         """Get detailed capacity information."""
         info = self._components.load.get_capacity_info()
-        info['memory_pressure'] = self._components.memory.current_level.value
-        info['can_accept_normal'] = self.can_accept_operation(priority=5)
-        info['can_accept_critical'] = self.can_accept_operation(priority=10)
+        info["memory_pressure"] = self._components.memory.current_level.value
+        info["can_accept_normal"] = self.can_accept_operation(priority=5)
+        info["can_accept_critical"] = self.can_accept_operation(priority=10)
         return info
 
     def update_memory_pressure(self, level: MemoryPressureLevel) -> None:
@@ -371,13 +368,13 @@ class UniversalCoordinator(ABC):
         total = self._total_operations
         tracker = self._components.tracker
         return {
-            'total_operations': total,
-            'successful': self._successful_operations,
-            'failed': self._failed_operations,
-            'success_rate': self._successful_operations / total if total > 0 else 0.0,
-            'average_execution_time': self._total_execution_time / total if total > 0 else 0.0,
-            'active_operations': tracker.active_count,
-            'history_size': len(getattr(tracker, '_history', [])),
+            "total_operations": total,
+            "successful": self._successful_operations,
+            "failed": self._failed_operations,
+            "success_rate": self._successful_operations / total if total > 0 else 0.0,
+            "average_execution_time": self._total_execution_time / total if total > 0 else 0.0,
+            "active_operations": tracker.active_count,
+            "history_size": len(getattr(tracker, "_history", [])),
         }
 
     def get_capabilities(self) -> CoordinatorCapabilities:
@@ -391,11 +388,11 @@ class UniversalCoordinator(ABC):
             load_factor=self.get_load_factor(),
             max_concurrent=tracker.max_concurrent,
             current_operations=tracker.active_count,
-    )
+        )
 
     def _get_feature_list(self) -> list[str]:
         """Override in subclasses to report specific features."""
-        return ['Basic coordination']
+        return ["Basic coordination"]
 
     def get_name(self) -> str:
         """Get coordinator name."""
@@ -454,7 +451,7 @@ class UniversalCoordinator(ABC):
         Override in subclasses for specific step logic.
         Default: empty response.
         """
-        return {'urls_fetched': 0, 'evidence_ids': [], 'clusters_updated': 0, 'stop_reason': None}
+        return {"urls_fetched": 0, "evidence_ids": [], "clusters_updated": 0, "stop_reason": None}
 
     async def shutdown(self, ctx: dict[str, Any]) -> None:
         """

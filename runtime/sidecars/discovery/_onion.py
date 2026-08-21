@@ -21,8 +21,8 @@ REAL IMPLEMENTATION:
   This sidecar performs actual .onion crawling via Tor transport.
   If Tor is unavailable, the sidecar skips with clear logging.
 """
+
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from _core import aclose
 
 
 class OnionDiscoverySidecarAdapter(DarknetSidecarAdapter):

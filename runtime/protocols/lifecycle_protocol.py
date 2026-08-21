@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: lifecycle state machine is strict
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable

@@ -13,32 +13,29 @@ Run with: pytest tests/test_property_based_invariants.py -v
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
-import os
+
 import pytest
-from hypothesis import given, settings, Verbosity, assume, HealthCheck
+from hypothesis import HealthCheck, Verbosity, given, settings
 from hypothesis.strategies import (
     binary,
-    booleans,
     integers,
     lists,
-    none,
     one_of,
     text,
     tuples,
 )
 
-from hledac.universal._core.lmdb_unified import UnifiedLMDB, SubDB, get_unified_lmdb
+from hledac.universal._core.lmdb_unified import SubDB, UnifiedLMDB
 from hledac.universal.brain.prompt_injection_validator import (
-    sanitize_prompt_injection_patterns,
     PromptInjectionValidationResult,
+    sanitize_prompt_injection_patterns,
 )
-
 
 # ---------------------------------------------------------------------------
 # LMDB — atomicity and consistency invariants
 # ---------------------------------------------------------------------------
+
 
 class TestLMDBPropertyBased:
     """LMDB operation invariants via Hypothesis."""
@@ -52,15 +49,20 @@ class TestLMDBPropertyBased:
         # Cleanup
         store.close()
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     @given(
         key=binary(min_size=1, max_size=100),
         value=binary(min_size=0, max_size=10000),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=100, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_put_get_roundtrip(self, lmdb_store, key, value):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=100,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_put_get_roundtrip(self, lmdb_store, key, value) -> None:
         """Property: LMDB put followed by get returns original value."""
         sub_db = SubDB.TASK_CACHE
 
@@ -73,17 +75,20 @@ class TestLMDBPropertyBased:
 
         if result is True:  # Only if put succeeded
             assert retrieved == value, (
-                f"LMDB put/get roundtrip mismatch: put returned {result}, "
-                f"got {retrieved!r} instead of {value!r}"
+                f"LMDB put/get roundtrip mismatch: put returned {result}, got {retrieved!r} instead of {value!r}"
             )
         # If put failed (e.g., key exists), retrieval behavior is undefined
 
     @given(
         key=binary(min_size=1, max_size=100),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=100, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_get_nonexistent_returns_none(self, lmdb_store, key):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=100,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_get_nonexistent_returns_none(self, lmdb_store, key) -> None:
         """Property: LMDB get on nonexistent key returns None."""
         sub_db = SubDB.TASK_CACHE
 
@@ -91,17 +96,19 @@ class TestLMDBPropertyBased:
         lmdb_store.delete(sub_db, key)
 
         retrieved = lmdb_store.get(sub_db, key)
-        assert retrieved is None, (
-            f"LMDB get on nonexistent key returned {retrieved!r}, expected None"
-        )
+        assert retrieved is None, f"LMDB get on nonexistent key returned {retrieved!r}, expected None"
 
     @given(
         key=binary(min_size=1, max_size=100),
         value=binary(min_size=1, max_size=1000),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_delete_after_put(self, lmdb_store, key, value):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_delete_after_put(self, lmdb_store, key, value) -> None:
         """Property: LMDB delete after put removes the key."""
         sub_db = SubDB.TASK_CACHE
 
@@ -132,9 +139,13 @@ class TestLMDBPropertyBased:
             unique_by=lambda x: x[0],  # Unique keys
         )
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_batch_consistency(self, lmdb_store, operations):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=30,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_batch_consistency(self, lmdb_store, operations) -> None:
         """Property: Batch of puts followed by batch of gets maintains consistency."""
         sub_db = SubDB.TASK_CACHE
 
@@ -150,17 +161,20 @@ class TestLMDBPropertyBased:
         for key, expected_value in operations:
             retrieved = lmdb_store.get(sub_db, key)
             assert retrieved == expected_value, (
-                f"LMDB batch consistency failed for key {key!r}: "
-                f"expected {expected_value!r}, got {retrieved!r}"
+                f"LMDB batch consistency failed for key {key!r}: expected {expected_value!r}, got {retrieved!r}"
             )
 
     @given(
         key=binary(min_size=1, max_size=100),
         value=binary(min_size=1, max_size=5000),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_update_existing_key(self, lmdb_store, key, value):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_update_existing_key(self, lmdb_store, key, value) -> None:
         """Property: Updating an existing key returns the new value."""
         sub_db = SubDB.TASK_CACHE
 
@@ -172,14 +186,13 @@ class TestLMDBPropertyBased:
 
         # Should return new value
         retrieved = lmdb_store.get(sub_db, key)
-        assert retrieved == value, (
-            f"LMDB update failed: expected {value!r}, got {retrieved!r}"
-        )
+        assert retrieved == value, f"LMDB update failed: expected {value!r}, got {retrieved!r}"
 
 
 # ---------------------------------------------------------------------------
 # LMDB SubDB isolation
 # ---------------------------------------------------------------------------
+
 
 class TestLMDBSubDBIsolation:
     """LMDB SubDB isolation invariants."""
@@ -192,6 +205,7 @@ class TestLMDBSubDBIsolation:
         yield store
         store.close()
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     @given(
@@ -199,9 +213,13 @@ class TestLMDBSubDBIsolation:
         key=binary(min_size=1, max_size=100),
         value=binary(min_size=1, max_size=1000),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_subdb_isolation(self, lmdb_store, subdb_key, key, value):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_subdb_isolation(self, lmdb_store, subdb_key, key, value) -> None:
         """Property: Data in one SubDB doesn't leak to another."""
         sub_db_a = subdb_key % len(SubDB._NAMES)
         sub_db_b = (subdb_key + 1) % len(SubDB._NAMES)
@@ -216,8 +234,7 @@ class TestLMDBSubDBIsolation:
         # sub_db_b should NOT have this data
         retrieved_b = lmdb_store.get(sub_db_b, key)
         assert retrieved_b is None, (
-            f"SubDB isolation violated: key {key!r} written to {sub_db_a} "
-            f"but found in {sub_db_b}: {retrieved_b!r}"
+            f"SubDB isolation violated: key {key!r} written to {sub_db_a} but found in {sub_db_b}: {retrieved_b!r}"
         )
 
         # sub_db_a should have the data
@@ -228,6 +245,7 @@ class TestLMDBSubDBIsolation:
 # ---------------------------------------------------------------------------
 # LMDB stats
 # ---------------------------------------------------------------------------
+
 
 class TestLMDBStats:
     """LMDB stats invariants."""
@@ -240,6 +258,7 @@ class TestLMDBStats:
         yield store
         store.close()
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     @given(
@@ -253,9 +272,13 @@ class TestLMDBStats:
             unique_by=lambda x: x[0],  # Ensure unique keys
         )
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_lmdb_operations_reflect_in_store(self, lmdb_store, operations):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=30,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_lmdb_operations_reflect_in_store(self, lmdb_store, operations) -> None:
         """Property: LMDB operations are reflected in subsequent reads."""
         sub_db = SubDB.TASK_CACHE
 
@@ -282,6 +305,7 @@ class TestLMDBStats:
 # Prompt Injection — robustness invariants
 # ---------------------------------------------------------------------------
 
+
 class TestPromptInjectionPropertyBased:
     """Prompt injection sanitization robustness via Hypothesis."""
 
@@ -300,32 +324,23 @@ class TestPromptInjectionPropertyBased:
         deadline=None,
         suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
     )
-    def test_sanitize_never_crashes(self, text):
+    def test_sanitize_never_crashes(self, text) -> None:
         """Property: Prompt sanitization never raises, always returns valid result."""
         # Should never raise any exception
         result = sanitize_prompt_injection_patterns(text)
 
         # Should always return a valid result object
         assert isinstance(result, PromptInjectionValidationResult), (
-            f"sanitize_prompt_injection_patterns returned {type(result)}, "
-            f"expected PromptInjectionValidationResult"
+            f"sanitize_prompt_injection_patterns returned {type(result)}, expected PromptInjectionValidationResult"
         )
 
         # Result fields should have correct types
-        assert isinstance(result.safe_text, str), (
-            f"safe_text should be str, got {type(result.safe_text)}"
-        )
-        assert isinstance(result.suspicious, bool), (
-            f"suspicious should be bool, got {type(result.suspicious)}"
-        )
-        assert isinstance(result.patterns, tuple), (
-            f"patterns should be tuple, got {type(result.patterns)}"
-        )
+        assert isinstance(result.safe_text, str), f"safe_text should be str, got {type(result.safe_text)}"
+        assert isinstance(result.suspicious, bool), f"suspicious should be bool, got {type(result.suspicious)}"
+        assert isinstance(result.patterns, tuple), f"patterns should be tuple, got {type(result.patterns)}"
 
         # safe_text should be bounded
-        assert len(result.safe_text) <= 200000, (
-            f"safe_text exceeds maximum length: {len(result.safe_text)}"
-        )
+        assert len(result.safe_text) <= 200000, f"safe_text exceeds maximum length: {len(result.safe_text)}"
 
     @given(
         text=text(
@@ -339,7 +354,7 @@ class TestPromptInjectionPropertyBased:
         deadline=None,
         suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
     )
-    def test_sanitize_output_is_safer(self, text):
+    def test_sanitize_output_is_safer(self, text) -> None:
         """Property: Sanitized text is no longer than input (removal doesn't add content)."""
         result = sanitize_prompt_injection_patterns(text)
 
@@ -364,7 +379,7 @@ class TestPromptInjectionPropertyBased:
         max_examples=50,
         deadline=None,
     )
-    def test_sanitize_idempotent(self, text):
+    def test_sanitize_idempotent(self, text) -> None:
         """Property: Sanitization is idempotent — applying it twice gives same result."""
         result1 = sanitize_prompt_injection_patterns(text)
         result2 = sanitize_prompt_injection_patterns(result1.safe_text)
@@ -384,14 +399,12 @@ class TestPromptInjectionPropertyBased:
         max_examples=100,
         deadline=None,
     )
-    def test_sanitize_deterministic(self, text):
+    def test_sanitize_deterministic(self, text) -> None:
         """Property: Same input always produces same output (idempotence)."""
         result1 = sanitize_prompt_injection_patterns(text)
         result2 = sanitize_prompt_injection_patterns(text)
 
-        assert result1.safe_text == result2.safe_text, (
-            "sanitize_prompt_injection_patterns is not deterministic"
-        )
+        assert result1.safe_text == result2.safe_text, "sanitize_prompt_injection_patterns is not deterministic"
         assert result1.suspicious == result2.suspicious
         assert result1.patterns == result2.patterns
 
@@ -399,6 +412,7 @@ class TestPromptInjectionPropertyBased:
 # ---------------------------------------------------------------------------
 # Prompt injection patterns coverage
 # ---------------------------------------------------------------------------
+
 
 class TestPromptInjectionPatternCoverage:
     """Known injection pattern coverage tests."""
@@ -419,7 +433,7 @@ class TestPromptInjectionPatternCoverage:
         max_examples=50,
         deadline=None,
     )
-    def test_injection_prefix_is_removed(self, pattern, benign_suffix):
+    def test_injection_prefix_is_removed(self, pattern, benign_suffix) -> None:
         """Property: If injection pattern detected, it's not in safe_text."""
         # Construct text with injection pattern
         text = f"{pattern} {benign_suffix}"
@@ -435,6 +449,7 @@ class TestPromptInjectionPatternCoverage:
 # Edge cases and boundary invariants
 # ---------------------------------------------------------------------------
 
+
 class TestEdgeCaseInvariants:
     """Edge case invariants for core operations."""
 
@@ -446,14 +461,19 @@ class TestEdgeCaseInvariants:
         yield store
         store.close()
         import shutil
+
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     @given(
         data=binary(min_size=0, max_size=1000),
     )
-    @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None,
-              suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_empty_and_extreme_binary_roundtrip(self, lmdb_store, data):
+    @settings(
+        verbosity=Verbosity.verbose,
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    def test_empty_and_extreme_binary_roundtrip(self, lmdb_store, data) -> None:
         """Property: Empty and extreme binary data roundtrips correctly."""
         sub_db = SubDB.TASK_CACHE
         key = b"edge_case_key_" + str(len(data)).encode()
@@ -477,7 +497,7 @@ class TestEdgeCaseInvariants:
         )
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_sanitize_handles_unicode(self, texts):
+    def test_sanitize_handles_unicode(self, texts) -> None:
         """Property: Sanitizer handles various Unicode inputs safely."""
         combined = "\n".join(texts)
 

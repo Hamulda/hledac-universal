@@ -21,10 +21,9 @@ To update baseline after intentional changes:
 import subprocess
 import sys
 import time
-from _core import aclose
 
 
-def test_import_run_sprint_time():
+def test_import_run_sprint_time() -> None:
     """
     Regression test: from _core.__main__ import run_sprint must be < 1.0 s.
 
@@ -58,7 +57,7 @@ def test_import_run_sprint_time():
     )
 
 
-def test_help_flag_time():
+def test_help_flag_time() -> None:
     """
     Regression test: python -m hledac.universal._core --help must be < 5.0 s.
 

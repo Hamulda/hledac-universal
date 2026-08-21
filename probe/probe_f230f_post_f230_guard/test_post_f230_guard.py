@@ -24,10 +24,7 @@ ABORT CONDITIONS (enforced):
 Run: python -m pytest tests/probe_f230f_post_f230_guard/ -v
 """
 
-
-
 import json
-import os
 import sys
 import tempfile
 import unittest
@@ -36,36 +33,30 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
-from tools.prelive_one_button_gate import (
-    OneButtonVerdict,
-    OneButtonResult,
-    run_one_button_gate,
-    _run_self_test,
-    _get_acquisition_profile_for_benchmark,
-    _BENCHMARK_TO_ACQUISITION_PROFILE,
-    _F221_REQUIRED_PROBES,
-    _F223_REQUIRED_PROBES,
-    _F223_OPTIONAL_PROBES,
-    _CROSS_SPRINT_REQUIRED,
-    CLEAN_SWAP_MAX_GIB,
-    DIAGNOSTIC_SWAP_MAX_GIB,
-)
 from hledac.universal.pipeline.live_public_pipeline import (
-    generate_bootstrap_urls,
     PipelineRunResult,
 )
+from hledac.universal.runtime.acquisition_strategy import (
+    AcquisitionProfile,
+    FeedDominanceBudget,
+)
 from hledac.universal.runtime.sprint_scheduler import (
-    _PublicStage,
-    _compute_public_stage,
     CTLossStage,
     SprintSchedulerResult,
+    _compute_public_stage,
+    _PublicStage,
 )
-from hledac.universal.runtime.acquisition_strategy import (
-    FeedDominanceBudget,
-    AcquisitionProfile,
-    _NONFEED_PROFILE_FEED_CAP_THRESHOLDS,
+from tools.prelive_one_button_gate import (
+    _CROSS_SPRINT_REQUIRED,
+    _F221_REQUIRED_PROBES,
+    _F223_OPTIONAL_PROBES,
+    _F223_REQUIRED_PROBES,
+    OneButtonResult,
+    OneButtonVerdict,
+    _get_acquisition_profile_for_benchmark,
+    _run_self_test,
+    run_one_button_gate,
 )
-
 
 _PROFILE = "nonfeed_diagnostic180"
 _QUERY = "mozilla.org certificate transparency subdomains april 2026"
@@ -75,6 +66,7 @@ _REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fake_gate_result(tmppath: Path, swap_gib: float, uma_state: str = "ok") -> OneButtonResult:
     with patch("tools.prelive_one_button_gate._sample_uma") as mock_uma:
@@ -90,7 +82,7 @@ def _make_fake_gate_result(tmppath: Path, swap_gib: float, uma_state: str = "ok"
         return result
 
 
-def _create_all_artifacts(tmppath: Path):
+def _create_all_artifacts(tmppath: Path) -> None:
     for probe_dir, filename in _F221_REQUIRED_PROBES:
         (tmppath / probe_dir).mkdir(parents=True, exist_ok=True)
         with open(tmppath / probe_dir / filename, "w") as fh:
@@ -113,67 +105,69 @@ def _create_all_artifacts(tmppath: Path):
 # F230A Integration — swap tiers + capability_synthesis + nonfeed_diagnostic180
 # ---------------------------------------------------------------------------
 
+
 class TestF230AIntegration(unittest.TestCase):
     """F230A: Swap tiers + OneButtonVerdict + capability_synthesis contract."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="f230f_f230a_")
         self.tmppath = Path(self.tmpdir)
         _create_all_artifacts(self.tmppath)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_do_not_run_memory_hard_block_verdict_exists(self):
+    def test_do_not_run_memory_hard_block_verdict_exists(self) -> None:
         """OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK exists."""
         self.assertTrue(hasattr(OneButtonVerdict, "DO_NOT_RUN_MEMORY_HARD_BLOCK"))
 
-    def test_swap_tier_clean_run_now(self):
+    def test_swap_tier_clean_run_now(self) -> None:
         """<=2.0 GiB → RUN_NOW."""
         result = _make_fake_gate_result(self.tmppath, 0.5)
         self.assertEqual(result.verdict, OneButtonVerdict.RUN_NOW)
 
-    def test_swap_tier_diagnostic_boundary_run_now(self):
+    def test_swap_tier_diagnostic_boundary_run_now(self) -> None:
         """2.0 GiB exactly → RUN_NOW (boundary case)."""
         result = _make_fake_gate_result(self.tmppath, 2.0)
         self.assertEqual(result.verdict, OneButtonVerdict.RUN_NOW)
 
-    def test_swap_tier_diagnostic_restart_then_run(self):
+    def test_swap_tier_diagnostic_restart_then_run(self) -> None:
         """>2.0 and <=4.0 GiB → RESTART_THEN_RUN."""
         result = _make_fake_gate_result(self.tmppath, 3.3)
         self.assertEqual(result.verdict, OneButtonVerdict.RESTART_THEN_RUN)
 
-    def test_swap_tier_diagnostic_boundary_restart_then_run(self):
+    def test_swap_tier_diagnostic_boundary_restart_then_run(self) -> None:
         """4.0 GiB exactly → RESTART_THEN_RUN (boundary case)."""
         result = _make_fake_gate_result(self.tmppath, 4.0)
         self.assertEqual(result.verdict, OneButtonVerdict.RESTART_THEN_RUN)
 
-    def test_swap_tier_hard_block_memory_hard_block(self):
+    def test_swap_tier_hard_block_memory_hard_block(self) -> None:
         """>4.0 GiB → DO_NOT_RUN_MEMORY_HARD_BLOCK."""
         result = _make_fake_gate_result(self.tmppath, 4.5)
         self.assertEqual(result.verdict, OneButtonVerdict.DO_NOT_RUN_MEMORY_HARD_BLOCK)
 
-    def test_capability_synthesis_in_expected_assertions(self):
+    def test_capability_synthesis_in_expected_assertions(self) -> None:
         """expected_assertions includes capability_synthesis for nonfeed_diagnostic180."""
         result = _make_fake_gate_result(self.tmppath, 0.5)
         ea = result.live_command.get("expected_assertions", {})
         self.assertIn("capability_synthesis", ea)
 
-    def test_nonfeed_public_ct_truth_fields_in_expected_assertions(self):
+    def test_nonfeed_public_ct_truth_fields_in_expected_assertions(self) -> None:
         """expected_assertions includes nonfeed/public/ct truth fields."""
         result = _make_fake_gate_result(self.tmppath, 0.5)
         ea = result.live_command.get("expected_assertions", {})
         self.assertIn("public_terminal_stage_not_discovery_timeout", ea)
         self.assertIn("CT_raw_gt_0_accepted_eq_0_no_loss", ea)
 
-    def test_command_uses_nonfeed_diagnostic180(self):
+    def test_command_uses_nonfeed_diagnostic180(self) -> None:
         """Live command benchmark is nonfeed_diagnostic180."""
         result = _run_self_test(_REPO_ROOT, _PROFILE, _QUERY)
         pa_json = json.dumps(result.profile_assertions)
         self.assertIn("nonfeed_diagnostic180", pa_json)
 
-    def test_acquisition_profile_for_benchmark_is_nonfeed_diagnostic(self):
+    def test_acquisition_profile_for_benchmark_is_nonfeed_diagnostic(self) -> None:
         """nonfeed_diagnostic180 benchmark maps to nonfeed_diagnostic profile."""
         profile = _get_acquisition_profile_for_benchmark("nonfeed_diagnostic180")
         self.assertEqual(profile, "nonfeed_diagnostic")
@@ -183,34 +177,35 @@ class TestF230AIntegration(unittest.TestCase):
 # F230B Integration — bootstrap telemetry wiring
 # ---------------------------------------------------------------------------
 
+
 class TestF230BIntegration(unittest.TestCase):
     """F230B: PipelineRunResult bootstrap telemetry fields are wired."""
 
-    def test_pipeline_result_has_bootstrap_candidates_count(self):
+    def test_pipeline_result_has_bootstrap_candidates_count(self) -> None:
         """PipelineRunResult.public_bootstrap_candidates_count exists."""
         self.assertTrue(hasattr(PipelineRunResult, "public_bootstrap_candidates_count"))
 
-    def test_pipeline_result_has_bootstrap_fetch_attempted(self):
+    def test_pipeline_result_has_bootstrap_fetch_attempted(self) -> None:
         """PipelineRunResult.public_bootstrap_fetch_attempted exists."""
         self.assertTrue(hasattr(PipelineRunResult, "public_bootstrap_fetch_attempted"))
 
-    def test_pipeline_result_has_bootstrap_fetch_success(self):
+    def test_pipeline_result_has_bootstrap_fetch_success(self) -> None:
         """PipelineRunResult.public_bootstrap_fetch_success exists."""
         self.assertTrue(hasattr(PipelineRunResult, "public_bootstrap_fetch_success"))
 
-    def test_pipeline_result_has_bootstrap_accepted_findings(self):
+    def test_pipeline_result_has_bootstrap_accepted_findings(self) -> None:
         """PipelineRunResult.public_bootstrap_accepted_findings exists."""
         self.assertTrue(hasattr(PipelineRunResult, "public_bootstrap_accepted_findings"))
 
-    def test_public_stage_enum_has_bootstrap_zero_success(self):
-        """"_PublicStage.BOOTSTRAP_ZERO_SUCCESS exists."""
+    def test_public_stage_enum_has_bootstrap_zero_success(self) -> None:
+        """ "_PublicStage.BOOTSTRAP_ZERO_SUCCESS exists."""
         self.assertTrue(hasattr(_PublicStage, "BOOTSTRAP_ZERO_SUCCESS"))
 
-    def test_public_stage_enum_has_bootstrap_accepted(self):
-        """"_PublicStage.BOOTSTRAP_ACCEPTED exists."""
+    def test_public_stage_enum_has_bootstrap_accepted(self) -> None:
+        """ "_PublicStage.BOOTSTRAP_ACCEPTED exists."""
         self.assertTrue(hasattr(_PublicStage, "BOOTSTRAP_ACCEPTED"))
 
-    def test_compute_public_stage_with_bootstrap_accepted(self):
+    def test_compute_public_stage_with_bootstrap_accepted(self) -> None:
         """Bootstrap accepted > 0 → BOOTSTRAP_ACCEPTED, not DISCOVERY_TIMEOUT."""
         outcome = {
             "lane": "PUBLIC",
@@ -247,7 +242,7 @@ class TestF230BIntegration(unittest.TestCase):
         self.assertEqual(stage, _PublicStage.BOOTSTRAP_ACCEPTED)
         self.assertNotEqual(stage, _PublicStage.DISCOVERY_TIMEOUT)
 
-    def test_discovery_timeout_leaves_bootstrap_telemetry(self):
+    def test_discovery_timeout_leaves_bootstrap_telemetry(self) -> None:
         """Discovery timeout cannot erase bootstrap telemetry."""
         mock_result = MagicMock()
         mock_result.public_bootstrap_enabled = True
@@ -292,15 +287,16 @@ class TestF230BIntegration(unittest.TestCase):
 # F230C Integration — STALE_CACHE_USED before raw=0 check
 # ---------------------------------------------------------------------------
 
+
 class TestF230CIntegration(unittest.TestCase):
     """F230C: CTLossStage.STALE_CACHE_USED wired before raw=0 derivation."""
 
-    def test_stale_cache_used_in_ctloss_stage_enum(self):
+    def test_stale_cache_used_in_ctloss_stage_enum(self) -> None:
         """CTLossStage.STALE_CACHE_USED exists."""
         self.assertTrue(hasattr(CTLossStage, "STALE_CACHE_USED"))
         self.assertEqual(CTLossStage.STALE_CACHE_USED.value, "stale_cache_used")
 
-    def test_cache_used_before_raw_zero_derivation(self):
+    def test_cache_used_before_raw_zero_derivation(self) -> None:
         """ct_cache_used=True → STALE_CACHE_USED regardless of raw count."""
         result = SprintSchedulerResult()
         result.ct_cache_used = True
@@ -318,7 +314,7 @@ class TestF230CIntegration(unittest.TestCase):
         self.assertEqual(stage, "stale_cache_used")
         self.assertNotEqual(stage, "provider_failure")
 
-    def test_cache_used_with_raw_gt_0_is_stale_cache_used(self):
+    def test_cache_used_with_raw_gt_0_is_stale_cache_used(self) -> None:
         """ct_cache_used=True with raw>0 → STALE_CACHE_USED."""
         result = SprintSchedulerResult()
         result.ct_cache_used = True
@@ -334,7 +330,7 @@ class TestF230CIntegration(unittest.TestCase):
 
         self.assertEqual(stage, "stale_cache_used")
 
-    def test_no_cache_raw_0_is_provider_failure_not_stale_cache(self):
+    def test_no_cache_raw_0_is_provider_failure_not_stale_cache(self) -> None:
         """ct_cache_used=False + raw=0 → PROVIDER_FAILURE, NOT STALE_CACHE_USED."""
         result = SprintSchedulerResult()
         result.ct_cache_used = False
@@ -350,7 +346,7 @@ class TestF230CIntegration(unittest.TestCase):
         self.assertEqual(stage, "provider_failure")
         self.assertNotEqual(stage, "stale_cache_used")
 
-    def test_raw_gt_0_accepted_0_cannot_be_no_loss(self):
+    def test_raw_gt_0_accepted_0_cannot_be_no_loss(self) -> None:
         """raw>0 + accepted=0 with bridge → NOT no_loss."""
         result = SprintSchedulerResult()
         result.ct_cache_used = False
@@ -369,7 +365,7 @@ class TestF230CIntegration(unittest.TestCase):
 
         self.assertNotEqual(stage, "no_loss")
 
-    def test_ct_loss_stage_truth_table(self):
+    def test_ct_loss_stage_truth_table(self) -> None:
         """Truth table: cache_used × raw_count → expected stage."""
         cases = [
             (True, 0, "stale_cache_used"),
@@ -387,7 +383,7 @@ class TestF230CIntegration(unittest.TestCase):
                     stage = "other"
                 self.assertEqual(stage, expected)
 
-    def test_result_has_ct_cache_used_stale_age_fields(self):
+    def test_result_has_ct_cache_used_stale_age_fields(self) -> None:
         """SprintSchedulerResult has ct_cache_used, ct_cache_stale, ct_cache_age_s."""
         result = SprintSchedulerResult()
         self.assertTrue(hasattr(result, "ct_cache_used"))
@@ -399,21 +395,23 @@ class TestF230CIntegration(unittest.TestCase):
 # F230D Integration — nonfeed budget cap wiring
 # ---------------------------------------------------------------------------
 
+
 class TestF230DIntegration(unittest.TestCase):
     """F230D: FeedDominanceBudget nonfeed profile cap wiring."""
 
-    def test_feed_dominance_budget_has_cap_feeding(self):
+    def test_feed_dominance_budget_has_cap_feeding(self) -> None:
         """FeedDominanceBudget.cap_feeding exists and accepts acquisition_profile."""
         budget = FeedDominanceBudget()
         self.assertTrue(hasattr(budget, "cap_feeding"))
 
-    def test_cap_feeding_accepts_acquisition_profile_param(self):
+    def test_cap_feeding_accepts_acquisition_profile_param(self) -> None:
         """cap_feeding signature includes acquisition_profile."""
         import inspect
+
         sig = inspect.signature(FeedDominanceBudget.cap_feeding)
         self.assertIn("acquisition_profile", sig.parameters)
 
-    def test_nonfeed_diagnostic_profile_activates_cap(self):
+    def test_nonfeed_diagnostic_profile_activates_cap(self) -> None:
         """nonfeed_diagnostic profile activates nonfeed cap."""
         budget = FeedDominanceBudget()
         should_cap, reason = budget.cap_feeding(
@@ -427,7 +425,7 @@ class TestF230DIntegration(unittest.TestCase):
         self.assertTrue(should_cap)
         self.assertIn("nonfeed_profile", reason)
 
-    def test_nonfeed_cap_checked_before_base_budget(self):
+    def test_nonfeed_cap_checked_before_base_budget(self) -> None:
         """Nonfeed profile cap is evaluated before mission/base budget."""
         budget = FeedDominanceBudget()
         # Below nonfeed_profile threshold (10 < 20 for domain_recon)
@@ -451,7 +449,7 @@ class TestF230DIntegration(unittest.TestCase):
         self.assertFalse(cap_below)
         self.assertTrue(cap_at)
 
-    def test_feed_relaxes_when_nonfeed_terminal(self):
+    def test_feed_relaxes_when_nonfeed_terminal(self) -> None:
         """When nonfeed is terminal, FEED cap does not trigger."""
         budget = FeedDominanceBudget()
         should_cap, reason = budget.cap_feeding(
@@ -464,7 +462,7 @@ class TestF230DIntegration(unittest.TestCase):
         )
         self.assertFalse(should_cap)
 
-    def test_result_has_nonfeed_budget_telemetry(self):
+    def test_result_has_nonfeed_budget_telemetry(self) -> None:
         """SprintSchedulerResult has all F230D nonfeed budget fields."""
         result = SprintSchedulerResult()
         self.assertTrue(hasattr(result, "nonfeed_budget_active"))
@@ -475,12 +473,12 @@ class TestF230DIntegration(unittest.TestCase):
         self.assertTrue(hasattr(result, "feed_suppression_count"))
         self.assertTrue(hasattr(result, "feed_suppression_reason"))
 
-    def test_feed_suppression_count_starts_at_zero(self):
+    def test_feed_suppression_count_starts_at_zero(self) -> None:
         """feed_suppression_count defaults to 0."""
         result = SprintSchedulerResult()
         self.assertEqual(result.feed_suppression_count, 0)
 
-    def test_feed_suppressed_by_nonfeed_budget_starts_at_zero(self):
+    def test_feed_suppressed_by_nonfeed_budget_starts_at_zero(self) -> None:
         """feed_suppressed_by_nonfeed_budget defaults to 0."""
         result = SprintSchedulerResult()
         self.assertEqual(result.feed_suppressed_by_nonfeed_budget, 0)
@@ -489,6 +487,7 @@ class TestF230DIntegration(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Synthetic Live Artifact — nonfeed_diagnostic180
 # ---------------------------------------------------------------------------
+
 
 class TestSyntheticArtifact(unittest.TestCase):
     """Synthetic artifact fixture simulates a live nonfeed_diagnostic180 run."""
@@ -546,26 +545,26 @@ class TestSyntheticArtifact(unittest.TestCase):
 
         return r
 
-    def test_synthetic_result_is_not_fail_terminality_unsatisfied(self):
+    def test_synthetic_result_is_not_fail_terminality_unsatisfied(self) -> None:
         """Synthetic artifact would NOT be FAIL_TERMINALITY_UNSATISFIED."""
         r = self._build_synthetic_result()
         # nonfeed_all_required_terminal=True → terminality satisfied
         self.assertTrue(r.nonfeed_all_required_terminal)
         self.assertTrue(r.return_guard_satisfied)
 
-    def test_synthetic_result_is_not_no_loss_ct(self):
+    def test_synthetic_result_is_not_no_loss_ct(self) -> None:
         """Synthetic CT result has ct_loss_stage=STALE_CACHE_USED, not no_loss."""
         r = self._build_synthetic_result()
         self.assertEqual(r.ct_loss_stage, CTLossStage.STALE_CACHE_USED.value)
         self.assertNotEqual(r.ct_loss_stage, "no_loss")
 
-    def test_synthetic_result_is_not_generic_discovery_timeout(self):
+    def test_synthetic_result_is_not_generic_discovery_timeout(self) -> None:
         """Bootstrap exists → not generic DISCOVERY_TIMEOUT."""
         r = self._build_synthetic_result()
         self.assertTrue(r.public_bootstrap_enabled)
         self.assertNotEqual(r.public_terminal_stage, "discovery_timeout")
 
-    def test_synthetic_result_is_not_run_now_under_dirty_swap(self):
+    def test_synthetic_result_is_not_run_now_under_dirty_swap(self) -> None:
         """Synthetic has nonfeed_budget_active → not RUN_NOW under dirty swap.
 
         When nonfeed budget is active, swap > 4 GiB would block.
@@ -576,7 +575,7 @@ class TestSyntheticArtifact(unittest.TestCase):
         self.assertTrue(r.nonfeed_budget_active)
         self.assertGreater(r.feed_suppressed_by_nonfeed_budget, 0)
 
-    def test_synthetic_ct_cache_used_derives_stale_cache_used(self):
+    def test_synthetic_ct_cache_used_derives_stale_cache_used(self) -> None:
         """ct_cache_used=True + raw>0 → STALE_CACHE_USED in truth table."""
         r = self._build_synthetic_result()
         if r.ct_cache_used:
@@ -587,14 +586,14 @@ class TestSyntheticArtifact(unittest.TestCase):
             stage = "other"
         self.assertEqual(stage, "stale_cache_used")
 
-    def test_synthetic_capability_synthesis_produces_nonfeed_signal(self):
+    def test_synthetic_capability_synthesis_produces_nonfeed_signal(self) -> None:
         """capability_synthesis from F230A expected_assertions uses nonfeed budget."""
         r = self._build_synthetic_result()
         # nonfeed_mission_active + nonfeed_budget_active = capability synthesis confirmed
         self.assertTrue(r.nonfeed_mission_active)
         self.assertTrue(r.nonfeed_budget_active)
 
-    def test_synthetic_next_sprint_seeds_present(self):
+    def test_synthetic_next_sprint_seeds_present(self) -> None:
         """next_sprint_seeds generated or explicit skip_reason in expected_assertions.
 
         Note: this field lives in live_command.expected_assertions, not SprintSchedulerResult.
@@ -609,17 +608,18 @@ class TestSyntheticArtifact(unittest.TestCase):
 # Cross-F230 Integration Assertions
 # ---------------------------------------------------------------------------
 
+
 class TestCrossF230Integration(unittest.TestCase):
     """Verifies F230A-D surfaces interconnect correctly."""
 
-    def test_swap_tier_with_nonfeed_budget_together(self):
+    def test_swap_tier_with_nonfeed_budget_together(self) -> None:
         """Clean swap + nonfeed budget active = RUN_NOW with nonfeed signals."""
         result = _make_fake_gate_result(Path(tempfile.mkdtemp()), 0.5)
         self.assertEqual(result.verdict, OneButtonVerdict.RUN_NOW)
         ea = result.live_command.get("expected_assertions", {})
         self.assertIn("capability_synthesis", ea)
 
-    def test_nonfeed_budget_and_bootstrap_telemetry_coexist(self):
+    def test_nonfeed_budget_and_bootstrap_telemetry_coexist(self) -> None:
         """nonfeed_budget_active and bootstrap telemetry both on SprintSchedulerResult."""
         r = SprintSchedulerResult()
         r.nonfeed_budget_active = True
@@ -629,7 +629,7 @@ class TestCrossF230Integration(unittest.TestCase):
         self.assertTrue(r.nonfeed_budget_active)
         self.assertTrue(r.public_bootstrap_enabled)
 
-    def test_ct_cache_telemetry_with_nonfeed_budget(self):
+    def test_ct_cache_telemetry_with_nonfeed_budget(self) -> None:
         """ct_cache_used=True and nonfeed_budget_active coexist without conflict."""
         r = SprintSchedulerResult()
         r.ct_cache_used = True
@@ -645,18 +645,20 @@ class TestCrossF230Integration(unittest.TestCase):
 # Reports
 # ---------------------------------------------------------------------------
 
+
 class TestF230FReports(unittest.TestCase):
     """Creates REPORT_POST_F230_GUARD.md and post_f230_guard.json."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmpdir = tempfile.mkdtemp(prefix="f230f_reports_")
         self.out_dir = Path(self.tmpdir)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         import shutil
+
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_report_md_written(self):
+    def test_report_md_written(self) -> None:
         """REPORT_POST_F230_GUARD.md is created and contains F230A-D findings."""
         report_path = self.out_dir / "REPORT_POST_F230_GUARD.md"
         report_path.write_text("""# Sprint F230F: Post-F230 Integration Guard Report
@@ -701,7 +703,7 @@ F230A-D proven as one coherent nonfeed capability upgrade. Ready for one clean l
         self.assertIn("F230C", content)
         self.assertIn("F230D", content)
 
-    def test_report_json_written(self):
+    def test_report_json_written(self) -> None:
         """post_f230_guard.json is created and valid."""
         report_json = {
             "sprint": "F230F",

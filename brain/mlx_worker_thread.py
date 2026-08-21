@@ -45,6 +45,7 @@ Invariants (P0-3):
 Always-on, no feature flag, no env var.
 M1 8GB safe.
 """
+
 import asyncio
 import atexit
 import concurrent.futures
@@ -56,16 +57,17 @@ import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from queue import Queue
+    pass
 from hledac.universal.utils.asyncx import parallel_ok, safe_gather_fire_and_forget
-from _core import aclose
+
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 logger = logging.getLogger(__name__)
 DEFAULT_SUBMIT_TIMEOUT_S: float = 60.0
 THREAD_START_TIMEOUT_S: float = 5.0
 SHUTDOWN_TIMEOUT_S: float = 5.0
-WORKER_THREAD_NAME: str = 'mlx-worker'
+WORKER_THREAD_NAME: str = "mlx-worker"
+
 
 def _worker_at_exit_shutdown(instance: MLXWorkerThread) -> None:
     """Called by weakref.finalize at interpreter exit if explicit shutdown() was not called.
@@ -90,6 +92,7 @@ def _worker_at_exit_shutdown(instance: MLXWorkerThread) -> None:
             instance._thread.join(timeout=SHUTDOWN_TIMEOUT_S)
     except Exception:  # noqa: BLE001
         pass
+
 
 class MLXWorkerThread:
     """
@@ -116,9 +119,33 @@ class MLXWorkerThread:
         - If submit times out, we cancel the future but cannot interrupt
           MLX mid-generation (single-threaded MLX, no preemption)
     """
-    __slots__ = tuple(('_busy', '_failed', '_failure_reason', '_finalizer', '_inflight_count', '_lock', '_loop', '_name', '__weakref__', '_peak_inflight', '_ready', '_request_count', '_spsc_pair', '_spsc_receiver_ptr', '_spsc_sender', '_spsc_result_ready', '_spsc_result', '_spsc_result_value', '_spsc_result_exc', '_start_time', '_stopped', '_thread'))
 
-    def __init__(self, name: str=WORKER_THREAD_NAME) -> None:
+    __slots__ = (
+        "_busy",
+        "_failed",
+        "_failure_reason",
+        "_finalizer",
+        "_inflight_count",
+        "_lock",
+        "_loop",
+        "_name",
+        "__weakref__",
+        "_peak_inflight",
+        "_ready",
+        "_request_count",
+        "_spsc_pair",
+        "_spsc_receiver_ptr",
+        "_spsc_sender",
+        "_spsc_result_ready",
+        "_spsc_result",
+        "_spsc_result_value",
+        "_spsc_result_exc",
+        "_start_time",
+        "_stopped",
+        "_thread",
+    )
+
+    def __init__(self, name: str = WORKER_THREAD_NAME) -> None:
         """MLXWorkerThread constructor — does NOT start the thread (M.T2)."""
         self._name = name
         self._thread: threading.Thread | None = None
@@ -158,14 +185,15 @@ class MLXWorkerThread:
         """
         try:
             from hledac.universal._core.rust_backend import rust
+
             if not rust.is_available:
                 return
             pair = rust.spsc.SPSCQueuePair()
             self._spsc_pair = pair
             self._spsc_sender = pair.make_sender()
-            logger.debug('[MLXWorker] SPSC queue initialized')
+            logger.debug("[MLXWorker] SPSC queue initialized")
         except Exception as _e:
-            logger.debug('[MLXWorker] SPSC queue init failed: %s', _e)
+            logger.debug("[MLXWorker] SPSC queue init failed: %s", _e)
 
     def start(self) -> None:
         """
@@ -186,19 +214,19 @@ class MLXWorkerThread:
                 self._thread.start()
             except Exception as e:
                 self._failed = True
-                self._failure_reason = f'thread_start_failed: {e}'
-                logger.warning('[MLXWorker] start failed: %s', self._failure_reason)
+                self._failure_reason = f"thread_start_failed: {e}"
+                logger.warning("[MLXWorker] start failed: %s", self._failure_reason)
                 return
             if not self._ready.wait(timeout=THREAD_START_TIMEOUT_S):
                 self._failed = True
-                self._failure_reason = 'thread_ready_timeout'
-                logger.warning('[MLXWorker] thread did not become ready in %.1fs', THREAD_START_TIMEOUT_S)
+                self._failure_reason = "thread_ready_timeout"
+                logger.warning("[MLXWorker] thread did not become ready in %.1fs", THREAD_START_TIMEOUT_S)
                 return
             if self._failed:
-                logger.warning('[MLXWorker] thread failed during startup: %s', self._failure_reason)
+                logger.warning("[MLXWorker] thread failed during startup: %s", self._failure_reason)
                 return
             self._start_time = time.monotonic()
-            logger.debug('[MLXWorker] started thread %s (id=%s)', self._thread.name, self._thread.ident)
+            logger.debug("[MLXWorker] started thread %s (id=%s)", self._thread.name, self._thread.ident)
             self._init_spsc()
 
     def _spsc_recv_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -210,14 +238,16 @@ class MLXWorkerThread:
         Falls back to slow asyncio path if SPSC init fails.
         """
         import json as _json
+
         from hledac.universal._core.rust_backend import rust as _rust
 
         class _ResultSignal:
-            __slots__ = ('value', 'exc')
+            __slots__ = ("value", "exc")
 
             def __init__(self) -> None:
                 self.value: Any = None
                 self.exc: BaseException | None = None
+
         while not self._stopped:
             _item_ptr = _rust.spsc.recv_blocking(self._spsc_receiver_ptr)
             if _item_ptr == 0:
@@ -229,6 +259,7 @@ class MLXWorkerThread:
                     if _data_ptr == 0 or _data_len == 0:
                         continue
                     import ctypes as _ct
+
                     _buf = _ct.pythonapi.PyBytes_FromStringAndSize(_data_ptr, _data_len)
                     _req = _json.loads(bytes(_buf))
                 finally:
@@ -243,14 +274,15 @@ class MLXWorkerThread:
                     except BaseException as _exc:
                         _signal.exc = _exc
                     loop.call_soon_threadsafe(self._spsc_result_ready.set)
-                _coro = _req['coro']
+
+                _coro = _req["coro"]
                 _fut = asyncio.ensure_future(_coro, loop=loop)
                 _fut.add_done_callback(_done_callback)
                 self._spsc_result_ready.wait(timeout=60.0)
                 if _signal.exc is not None:
                     raise _signal.exc
             except Exception as _e:
-                logger.debug('[MLXWorker] SPSC exec error: %s', _e)
+                logger.debug("[MLXWorker] SPSC exec error: %s", _e)
 
     def _run_loop(self) -> None:
         """
@@ -270,6 +302,7 @@ class MLXWorkerThread:
             self._loop = loop
             try:
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
                 _stream_ctx = get_metal_stream_context()
                 _stream_ctx.__enter__()
             except Exception:  # noqa: BLE001
@@ -280,7 +313,7 @@ class MLXWorkerThread:
                     if self._spsc_receiver_ptr == 0:
                         self._spsc_receiver_ptr = self._spsc_pair.take_receiver()
                 except Exception as _e:
-                    logger.debug('[MLXWorker] SPSC receiver init failed: %s', _e)
+                    logger.debug("[MLXWorker] SPSC receiver init failed: %s", _e)
                     self._spsc_pair = None
             self._ready.set()
             if self._spsc_pair is not None and self._spsc_receiver_ptr != 0:
@@ -289,8 +322,8 @@ class MLXWorkerThread:
                 loop.run_forever()
         except Exception as e:
             self._failed = True
-            self._failure_reason = f'loop_crashed: {e}'
-            logger.warning('[MLXWorker] loop crashed: %s', e)
+            self._failure_reason = f"loop_crashed: {e}"
+            logger.warning("[MLXWorker] loop crashed: %s", e)
         finally:
             try:
                 if loop is not None and (not loop.is_closed()):
@@ -299,13 +332,13 @@ class MLXWorkerThread:
                         t.cancel()
                     if pending:
                         try:
-                            loop.run_until_complete(safe_gather_fire_and_forget(*pending, label='mlx_worker:shutdown'))
+                            loop.run_until_complete(safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown"))
                         except Exception:  # noqa: BLE001
                             pass
                     loop.close()
                     gc.collect()
             except Exception as e:
-                logger.debug('[MLXWorker] cleanup error: %s', e)
+                logger.debug("[MLXWorker] cleanup error: %s", e)
             self._loop = None
 
     def is_active(self) -> bool:
@@ -334,7 +367,7 @@ class MLXWorkerThread:
             return False
         return True
 
-    async def submit(self, coro: Coroutine[Any, Any, Any], timeout: float=DEFAULT_SUBMIT_TIMEOUT_S) -> Any:
+    async def submit(self, coro: Coroutine[Any, Any, Any], timeout: float = DEFAULT_SUBMIT_TIMEOUT_S) -> Any:
         """
         Schedule a coroutine on the worker thread's event loop.
 
@@ -370,9 +403,9 @@ class MLXWorkerThread:
             cf_future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         except RuntimeError as e:
             self._failed = True
-            self._failure_reason = f'loop_unavailable: {e}'
+            self._failure_reason = f"loop_unavailable: {e}"
             self._busy = False
-            raise RuntimeError(f'mlx_worker_unavailable: {self._failure_reason}')
+            raise RuntimeError(f"mlx_worker_unavailable: {self._failure_reason}")
         self._request_count += 1
         self._inflight_count += 1
         if self._inflight_count > self._peak_inflight:
@@ -381,7 +414,7 @@ class MLXWorkerThread:
             bridge = asyncio.wrap_future(cf_future)
             async with asyncio.timeout(timeout):
                 return await bridge
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 cf_future.cancel()
             except Exception:  # noqa: BLE001
@@ -401,21 +434,24 @@ class MLXWorkerThread:
         The worker thread reconstructs the coroutine and calls run_until_complete.
         """
         import json as _json
+
         self._busy = True
         try:
             try:
                 _code = coro.cr_code
                 _frame = coro.cr_frame
                 if _frame is None:
-                    raise AttributeError('coro.cr_frame is None')
+                    raise AttributeError("coro.cr_frame is None")
                 _locals = _frame.f_locals
-                _prompt = _locals.get('prompt', '')
-                _temperature = _locals.get('temperature')
-                _max_tokens = _locals.get('max_tokens')
-                _system_msg = _locals.get('system_msg')
+                _prompt = _locals.get("prompt", "")
+                _temperature = _locals.get("temperature")
+                _max_tokens = _locals.get("max_tokens")
+                _system_msg = _locals.get("system_msg")
             except Exception:
                 return await self._submit_asyncio(coro, timeout)
-            _req = _json.dumps({'prompt': _prompt, 'temperature': _temperature, 'max_tokens': _max_tokens, 'system_msg': _system_msg}).encode('utf-8')
+            _req = _json.dumps(
+                {"prompt": _prompt, "temperature": _temperature, "max_tokens": _max_tokens, "system_msg": _system_msg}
+            ).encode("utf-8")
             if not self._spsc_sender.send(_req):
                 return await self._submit_asyncio(coro, timeout)
         except Exception:
@@ -427,11 +463,11 @@ class MLXWorkerThread:
         try:
             _ok = self._spsc_result_ready.wait(timeout=timeout)
             if not _ok:
-                raise asyncio.TimeoutError
+                raise TimeoutError
             if self._spsc_result_exc is not None:
                 raise self._spsc_result_exc
             return self._spsc_result_value
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception:
             raise
@@ -439,7 +475,7 @@ class MLXWorkerThread:
             self._inflight_count -= 1
             self._busy = False
 
-    def shutdown(self, timeout: float=SHUTDOWN_TIMEOUT_S) -> None:
+    def shutdown(self, timeout: float = SHUTDOWN_TIMEOUT_S) -> None:
         """
         Bounded shutdown of worker thread.
 
@@ -462,15 +498,15 @@ class MLXWorkerThread:
             try:
                 self._loop.call_soon_threadsafe(self._loop.stop)
             except Exception as e:
-                logger.debug('[MLXWorker] stop signal failed: %s', e)
+                logger.debug("[MLXWorker] stop signal failed: %s", e)
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)
         if self._thread.is_alive():
             self._failed = True
-            self._failure_reason = 'shutdown_timeout'
-            logger.warning('[MLXWorker] thread did not exit in %.1fs; marking failed', timeout)
+            self._failure_reason = "shutdown_timeout"
+            logger.warning("[MLXWorker] thread did not exit in %.1fs; marking failed", timeout)
         else:
-            logger.debug('[MLXWorker] shutdown complete')
+            logger.debug("[MLXWorker] shutdown complete")
         self._thread = None
         self._loop = None
         self._spsc_sender = None
@@ -478,27 +514,40 @@ class MLXWorkerThread:
 
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot. Non-intrusive read."""
-        stats: dict[str, Any] = {'active': self.is_active(), 'failed': self._failed, 'failure_reason': self._failure_reason, 'request_count': self._request_count, 'inflight_count': self._inflight_count, 'peak_inflight': self._peak_inflight, 'busy': self._busy, 'thread_alive': self._thread is not None and self._thread.is_alive(), 'thread_name': self._thread.name if self._thread is not None else None, 'thread_id': self._thread.ident if self._thread is not None else None}
+        stats: dict[str, Any] = {
+            "active": self.is_active(),
+            "failed": self._failed,
+            "failure_reason": self._failure_reason,
+            "request_count": self._request_count,
+            "inflight_count": self._inflight_count,
+            "peak_inflight": self._peak_inflight,
+            "busy": self._busy,
+            "thread_alive": self._thread is not None and self._thread.is_alive(),
+            "thread_name": self._thread.name if self._thread is not None else None,
+            "thread_id": self._thread.ident if self._thread is not None else None,
+        }
         if self._start_time is not None:
-            stats['uptime_s'] = time.monotonic() - self._start_time
+            stats["uptime_s"] = time.monotonic() - self._start_time
         else:
-            stats['uptime_s'] = 0.0
+            stats["uptime_s"] = 0.0
         if self._spsc_sender is not None:
-            stats['spsc_available'] = True
-            stats['spsc_available_slots'] = self._spsc_sender.available_slots()
-            stats['spsc_has_space'] = self._spsc_sender.has_space()
+            stats["spsc_available"] = True
+            stats["spsc_available_slots"] = self._spsc_sender.available_slots()
+            stats["spsc_has_space"] = self._spsc_sender.has_space()
         else:
-            stats['spsc_available'] = False
+            stats["spsc_available"] = False
         return stats
 
     def __repr__(self) -> str:
         if self._failed:
-            return f'MLXWorkerThread(failed={self._failure_reason!r})'
+            return f"MLXWorkerThread(failed={self._failure_reason!r})"
         if not self.is_active():
-            return 'MLXWorkerThread(state=stopped)'
-        return f'MLXWorkerThread(active, requests={self._request_count}, inflight={self._inflight_count})'
+            return "MLXWorkerThread(state=stopped)"
+        return f"MLXWorkerThread(active, requests={self._request_count}, inflight={self._inflight_count})"
 
-    def prewarm_all(self, coros: list[Coroutine[Any, Any, Any]], timeout_s: float=120.0) -> concurrent.futures.Future[None]:
+    def prewarm_all(
+        self, coros: list[Coroutine[Any, Any, Any]], timeout_s: float = 120.0
+    ) -> concurrent.futures.Future[None]:
         """
         Schedule multiple prewarm coroutines on the shared worker event loop.
 
@@ -521,17 +570,20 @@ class MLXWorkerThread:
             A ``concurrent.futures.Future`` resolving to None when done.
         """
         if not self.is_active():
-            raise RuntimeError(f'mlx_worker_unavailable: worker not active (failed={self._failed}, reason={self._failure_reason})')
+            raise RuntimeError(
+                f"mlx_worker_unavailable: worker not active (failed={self._failed}, reason={self._failure_reason})"
+            )
 
         async def _gather_all() -> None:
-            result = await parallel_ok(*coros, label='mlx_worker:prewarm')
+            result = await parallel_ok(*coros, label="mlx_worker:prewarm")
             for r in result:
                 if isinstance(r, Exception):
-                    logger.debug('[MLXWorker] prewarm coroutine raised: %s', r)
-        assert self._loop is not None, 'loop must be set when is_active() is True'
+                    logger.debug("[MLXWorker] prewarm coroutine raised: %s", r)
+
+        assert self._loop is not None, "loop must be set when is_active() is True"
         cf_future: concurrent.futures.Future[None] = asyncio.run_coroutine_threadsafe(_gather_all(), self._loop)
         try:
             cf_future.result(timeout=timeout_s)
         except concurrent.futures.TimeoutError:
-            logger.warning('[MLXWorker] prewarm_all timed out after %.1fs', timeout_s)
+            logger.warning("[MLXWorker] prewarm_all timed out after %.1fs", timeout_s)
         return cf_future

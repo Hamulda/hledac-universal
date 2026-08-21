@@ -41,7 +41,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
@@ -52,7 +51,7 @@ REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 class TestImportSmoke:
     """Verify the three SyntaxError bugs are gone."""
 
-    def test_ghost_layer_imports_without_syntax_error(self):
+    def test_ghost_layer_imports_without_syntax_error(self) -> None:
         """layers/ghost_layer.py must import cleanly."""
         from hledac.universal.layers import ghost_layer  # noqa: F401
 
@@ -63,9 +62,9 @@ class TestImportSmoke:
         # at lines 666/714/722/730 for subprocess.run calls).
         assert "subprocess" in dir(ghost_layer), (
             "subprocess must remain importable (used by ghost_layer.run_system_command)"
-    )
+        )
 
-    def test_rendering_imports_without_syntax_error(self):
+    def test_rendering_imports_without_syntax_error(self) -> None:
         """rendering/__init__.py must import cleanly (full namespace)."""
         from hledac.universal import rendering  # noqa: F401
 
@@ -79,7 +78,7 @@ class TestImportSmoke:
         for name in expected:
             assert name in rendering.__all__, f"{name} missing from rendering.__all__"
 
-    def test_duckdb_store_module_parses(self):
+    def test_duckdb_store_module_parses(self) -> None:
         """duckdb_store.py must be AST-parseable on Python 3.14."""
         path = REPO_ROOT / "knowledge" / "duckdb_store.py"
         source = path.read_text(encoding="utf-8")
@@ -93,7 +92,7 @@ class TestImportSmoke:
 class TestAsyncioCoroutineDrift:
     """Production code must not use the removed-in-3.11 ``asyncio.coroutine``."""
 
-    def test_no_asyncio_coroutine_in_production_code(self):
+    def test_no_asyncio_coroutine_in_production_code(self) -> None:
         """No active asyncio.coroutine() in non-probe, non-test code."""
         prod_dirs = [
             REPO_ROOT / "core",
@@ -150,7 +149,7 @@ class TestAsyncioCoroutineDrift:
                         offenders.append((py_file, node.lineno, "asyncio.coroutine() call"))
         assert not offenders, "Production code uses asyncio.coroutine() (removed in 3.11):\n" + "\n".join(
             f"  {p.relative_to(REPO_ROOT)}:{ln} {why}" for p, ln, why in offenders
-    )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +158,7 @@ class TestAsyncioCoroutineDrift:
 class TestSubprocessInParensDrift:
     """No ``import subprocess`` accidentally inside ``from ... import (...)``."""
 
-    def test_no_subprocess_inside_from_parens_imports(self):
+    def test_no_subprocess_inside_from_parens_imports(self) -> None:
         """Drift guard: no SyntaxError from ``import X`` inside ``from ... import (...)`` parens.
 
         Uses ``ast.parse`` rather than line-pattern matching — this avoids
@@ -217,7 +216,7 @@ class TestSubprocessInParensDrift:
                     continue
                 try:
                     src = py_file.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
+                except OSError, UnicodeDecodeError:
                     continue
                 try:
                     ast.parse(src, filename=str(py_file))
@@ -232,7 +231,7 @@ class TestSubprocessInParensDrift:
         assert not offenders, (
             "Drift pattern detected — import stmt inside 'from ... import (...)' parens:\n"
             + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln} {snippet}" for p, ln, snippet in offenders)
-    )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +271,7 @@ class TestScheduleGraphUpdate:
         """Minimal CanonicalFinding-like objects (duck-typed)."""
 
         class _F:
-            def __init__(self, value, type_, conf, src):
+            def __init__(self, value, type_, conf, src) -> None:
                 self.ioc_value = value
                 self.ioc_type = type_
                 self.confidence = conf
@@ -286,7 +285,7 @@ class TestScheduleGraphUpdate:
         ]
 
     @pytest.mark.asyncio
-    async def test_async_context_creates_task(self, store, sample_findings):
+    async def test_async_context_creates_task(self, store, sample_findings) -> None:
         """In async context, _schedule_graph_update creates a real task."""
         store._schedule_graph_update(sample_findings)
         # Yield to the loop so the task starts
@@ -295,14 +294,14 @@ class TestScheduleGraphUpdate:
         # Critically: it must NOT have raised (was failing pre-fix).
         assert isinstance(store._bg_tasks, set)
 
-    def test_sync_context_is_noop(self, store, sample_findings):
+    def test_sync_context_is_noop(self, store, sample_findings) -> None:
         """In sync context (no running loop), method is silent no-op."""
         # We are explicitly NOT in an event loop. Should not raise.
         store._schedule_graph_update(sample_findings)
         # Tasks set should be empty (loop was absent, so no task created).
         assert not store._bg_tasks
 
-    def test_inflight_cap_enforced(self, store, sample_findings):
+    def test_inflight_cap_enforced(self, store, sample_findings) -> None:
         """In-flight task set is bounded by _MAX_INFLIGHT_GRAPH_UPDATES."""
         from hledac.universal.knowledge import duckdb_store as ds_mod
 
@@ -320,7 +319,7 @@ class TestScheduleGraphUpdate:
         assert len(store._bg_tasks) == cap + 5
 
     @pytest.mark.asyncio
-    async def test_drain_callback_releases_task(self, store, sample_findings):
+    async def test_drain_callback_releases_task(self, store, sample_findings) -> None:
         """Task added to _bg_tasks is removed on completion."""
         store._schedule_graph_update(sample_findings)
         await asyncio.sleep(0.05)  # let any spawned task finish
@@ -328,7 +327,7 @@ class TestScheduleGraphUpdate:
         assert len(store._bg_tasks) <= 1
 
     @pytest.mark.asyncio
-    async def test_finds_with_missing_attrs_filtered(self, store):
+    async def test_finds_with_missing_attrs_filtered(self, store) -> None:
         """Objects without ioc_value/ioc_type are filtered out, no error."""
 
         class _BadFinding:
@@ -339,7 +338,7 @@ class TestScheduleGraphUpdate:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
-    async def test_finds_with_no_findings_is_noop(self, store):
+    async def test_finds_with_no_findings_is_noop(self, store) -> None:
         """Empty findings list creates a task that completes near-immediately.
 
         Invariant: steady-state _bg_tasks count returns near 0 after the

@@ -20,7 +20,6 @@ import ast
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
 
 
 class Violation(NamedTuple):
@@ -52,7 +51,7 @@ def audit_file(py_file: Path) -> list[Violation]:
         source = py_file.read_text()
         source_lines = source.splitlines(keepends=True)
         tree = ast.parse(source)
-    except (SyntaxError, OSError):
+    except SyntaxError, OSError:
         return []
 
     for node in ast.walk(tree):
@@ -61,10 +60,9 @@ def audit_file(py_file: Path) -> list[Violation]:
         for handler in node.handlers:
             if handler.type is None:
                 # bare except
-                violations.append(Violation(
-                    py_file, handler.lineno, "bare_except",
-                    get_code_snippet(source_lines, handler.lineno)
-                ))
+                violations.append(
+                    Violation(py_file, handler.lineno, "bare_except", get_code_snippet(source_lines, handler.lineno))
+                )
             elif (
                 isinstance(handler.type, ast.Name)
                 and handler.type.id == "Exception"
@@ -72,10 +70,11 @@ def audit_file(py_file: Path) -> list[Violation]:
                 and isinstance(handler.body[0], ast.Pass)
             ):
                 # except Exception: pass
-                violations.append(Violation(
-                    py_file, handler.lineno, "except_Exception_pass",
-                    get_code_snippet(source_lines, handler.lineno)
-                ))
+                violations.append(
+                    Violation(
+                        py_file, handler.lineno, "except_Exception_pass", get_code_snippet(source_lines, handler.lineno)
+                    )
+                )
     return violations
 
 
@@ -100,11 +99,11 @@ def main() -> None:
     pass_ = [v for v in violations if v.kind == "except_Exception_pass"]
     project = [v for v in violations if ".venv" not in str(v.file)]
 
-    print(f"=== TRY/EXCEPT AUDIT REPORT ===")
-    print(f"Total try blocks:        (see full AST count above)")
+    print("=== TRY/EXCEPT AUDIT REPORT ===")
+    print("Total try blocks:        (see full AST count above)")
     print(f"Bare except violations:  {len(bare)}")
     print(f"except Exception pass:    {len(pass_)}")
-    print(f"Project violations:      {len([v for v in project if v.kind in ('bare_except','except_Exception_pass')])}")
+    print(f"Project violations:      {len([v for v in project if v.kind in ('bare_except', 'except_Exception_pass')])}")
     print()
 
     if violations:
@@ -116,7 +115,9 @@ def main() -> None:
 
     # CI gate
     ci_threshold = 10
-    project_violations = len([v for v in violations if ".venv" not in str(v.file) and v.kind in ("bare_except", "except_Exception_pass")])
+    project_violations = len(
+        [v for v in violations if ".venv" not in str(v.file) and v.kind in ("bare_except", "except_Exception_pass")]
+    )
     if project_violations > ci_threshold:
         print(f"\nCI FAIL: {project_violations} violations (threshold: {ci_threshold})")
         sys.exit(1)

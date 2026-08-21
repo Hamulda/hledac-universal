@@ -17,11 +17,10 @@ New import:
 import warnings
 
 warnings.warn(
-    "coordinators.gc_policy is deprecated. "
-    "Import from coordinators.resource.resource_coordinator instead.",
+    "coordinators.gc_policy is deprecated. Import from coordinators.resource.resource_coordinator instead.",
     DeprecationWarning,
     stacklevel=2,
-    )
+)
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
@@ -29,8 +28,7 @@ from hledac.universal.coordinators.resource.resource_coordinator import (
     gc_collect_aggressive,
     gc_collect_async,
     get_gc_stats,
-    )
-from _core import aclose
+)
 
 __all__ = [
     "gc_collect",

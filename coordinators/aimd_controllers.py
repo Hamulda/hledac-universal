@@ -17,15 +17,13 @@ New import:
 import warnings
 
 warnings.warn(
-    "coordinators.aimd_controllers is deprecated. "
-    "Import from coordinators.resource.resource_coordinator instead.",
+    "coordinators.aimd_controllers is deprecated. Import from coordinators.resource.resource_coordinator instead.",
     DeprecationWarning,
     stacklevel=2,
-    )
+)
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import AIMDController
-from _core import aclose
 
 __all__ = ["AIMDController", "make_enrich_aimd"]
 

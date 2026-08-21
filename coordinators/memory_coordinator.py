@@ -13,6 +13,7 @@ context optimization moved imports, and memory pressure polling.
 
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,29 +32,30 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any
 
+from hledac.universal._core.locks import LockCategory, register_lock
 from hledac.universal._core.psutil_shim import psutil
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 from hledac.universal.utils.lru_cache import LRUCache
-from hledac.universal._core.locks import LockCategory, register_lock
 
 try:
     import numpy as np
     from numpy.typing import NDArray
+
     HAS_NUMPY = True
 except ImportError:
     np = None
-    NDArray = 'NDArray'
+    NDArray = "NDArray"
     HAS_NUMPY = False
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
 
 try:
     import usearch
+
     USEARCH_AVAILABLE = True
 except ImportError:
     usearch = None
@@ -65,7 +67,6 @@ if TYPE_CHECKING:
 import contextlib
 
 from hledac.universal._core.resource_governor import PressureState
-from _core import aclose
 
 
 def _serialize_to_json(data: Any) -> bytes:
@@ -76,9 +77,12 @@ def _serialize_to_json(data: Any) -> bytes:
     """
     return _encode_zstd(data)
 
+
 def _deserialize_from_json(data: bytes) -> Any:
     """Deserialize from zstd-compressed JSON bytes via msgspec facade."""
     return _decode_zstd(data)
+
+
 logger = logging.getLogger(__name__)
 
 # ISSUE-5: Atomic counter for cleanup_count — itertools.count + threading.Lock
@@ -93,23 +97,29 @@ def _next_cleanup_id() -> int:
     with _cleanup_lock:
         return next(_cleanup_counter)
 
+
 def _get_np() -> Any | None:
     """Return numpy module. Defined at module level for type compatibility."""
     if not HAS_NUMPY:
         return None
     return np
+
+
 MAX_SIMILARITIES = 1000
 MAX_PATTERNS = 2000
 
 # Backward compat alias - MemoryPressureLevel now points to canonical PressureState
 MemoryPressureLevel = PressureState
 
+
 class ThermalState(IntEnum):
     """Thermal state levels for M1 optimization (Sprint 72/73)."""
+
     NORMAL = 0
     WARM = 1
     HOT = 2
     CRITICAL = 3
+
 
 class MemoryZone(Enum):
     """
@@ -124,13 +134,16 @@ class MemoryZone(Enum):
     Note: BRAIN/TOOLS/SYNTHESIS/SYSTEM were removed in F214 — dual zone
     system collapsed to single priority-based system.
     """
-    CRITICAL = 'critical'
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
 
 class MemoryAllocation(Struct):
     """Represents a memory allocation."""
+
     allocation_id: str
     zone: MemoryZone
     size_bytes: int
@@ -140,8 +153,10 @@ class MemoryAllocation(Struct):
     evictable: bool = True
     on_evict: Callable | None = None
 
+
 class MemoryStatistics(Struct):
     """Memory usage statistics."""
+
     total_memory_mb: float
     used_memory_mb: float
     available_memory_mb: float
@@ -151,14 +166,17 @@ class MemoryStatistics(Struct):
     last_cleanup_time: float
     allocation_count: int = 0
 
+
 class ZoneStatistics(Struct, frozen=True):
     """Statistics for a specific memory zone (immutable, msgspec zero-copy)."""
+
     zone: str
     allocation_count: int
     total_bytes: int
     total_mb: float
     evictable_count: int
     non_evictable_count: int
+
 
 class UniversalMemoryCoordinator:
     """
@@ -176,9 +194,34 @@ class UniversalMemoryCoordinator:
     - Callback system for pressure events
     - Neuromorphic memory zones and pattern storage
     """
-    __slots__ = ('_alloc_lock', '_alloc_lock_once', '_cached_cpu_percent', '_cached_on_battery', '_last_battery_check', '_last_cpu_sample_time', '_last_memory_stats', '_neuro_enabled', '_neuro_memory', '_pressure_lock', '_pressure_lock_once', '_running', '_stats_lock', '_stats_lock_once', '_thermal_history', '_thermal_state', 'allocations', 'callbacks', 'lock', 'memory_limit_bytes', 'memory_limit_mb', 'statistics', 'zone_allocations')
 
-    def __init__(self, memory_limit_mb: float=5500, enable_neuromorphic: bool=False) -> None:
+    __slots__ = (
+        "_alloc_lock",
+        "_alloc_lock_once",
+        "_cached_cpu_percent",
+        "_cached_on_battery",
+        "_last_battery_check",
+        "_last_cpu_sample_time",
+        "_last_memory_stats",
+        "_neuro_enabled",
+        "_neuro_memory",
+        "_pressure_lock",
+        "_pressure_lock_once",
+        "_running",
+        "_stats_lock",
+        "_stats_lock_once",
+        "_thermal_history",
+        "_thermal_state",
+        "allocations",
+        "callbacks",
+        "lock",
+        "memory_limit_bytes",
+        "memory_limit_mb",
+        "statistics",
+        "zone_allocations",
+    )
+
+    def __init__(self, memory_limit_mb: float = 5500, enable_neuromorphic: bool = False) -> None:
         """
         Initialize memory coordinator.
 
@@ -190,7 +233,15 @@ class UniversalMemoryCoordinator:
         self.memory_limit_bytes = memory_limit_mb * 1024 * 1024
         self.allocations: dict[str, MemoryAllocation] = {}
         self.zone_allocations: dict[MemoryZone, LRUCache] = {zone: LRUCache() for zone in MemoryZone}
-        self.statistics = MemoryStatistics(total_memory_mb=psutil.virtual_memory().total / (1024 * 1024), used_memory_mb=0, available_memory_mb=0, peak_usage_mb=0, current_level=MemoryPressureLevel.NORMAL, cleanup_count=0, last_cleanup_time=0)
+        self.statistics = MemoryStatistics(
+            total_memory_mb=psutil.virtual_memory().total / (1024 * 1024),
+            used_memory_mb=0,
+            available_memory_mb=0,
+            peak_usage_mb=0,
+            current_level=MemoryPressureLevel.NORMAL,
+            cleanup_count=0,
+            last_cleanup_time=0,
+        )
         self.callbacks: list[Callable] = []
         # ISSUE-5 OPTIMIZATION: Reduced from 6 to 3 asyncio.Lock instances.
         # _alloc_lock  — allocation/free/touch (serializes heap writes) [KEEP]
@@ -208,7 +259,7 @@ class UniversalMemoryCoordinator:
         self._neuro_enabled = enable_neuromorphic
         if enable_neuromorphic:
             self._initialize_neuromorphic_memory()
-        logger.info(f'UniversalMemoryCoordinator initialized with {memory_limit_mb}MB limit')
+        logger.info(f"UniversalMemoryCoordinator initialized with {memory_limit_mb}MB limit")
         self._thermal_state = ThermalState.NORMAL
         self._thermal_history = deque(maxlen=10)
         self._running = True
@@ -253,6 +304,7 @@ class UniversalMemoryCoordinator:
         """
         try:
             from Foundation import NSProcessInfo
+
             thermal_state = NSProcessInfo.processInfo().thermalState
             if thermal_state == 0:
                 return ThermalState.NORMAL
@@ -301,6 +353,7 @@ class UniversalMemoryCoordinator:
             if sys.platform == "linux":
                 try:
                     import glob as _glob
+
                     zones = _glob.glob("/sys/class/thermal/thermal_zone*/temp")
                     if zones:
                         with open(zones[0]) as _f:
@@ -350,14 +403,14 @@ class UniversalMemoryCoordinator:
     def get_thermal_trend(self) -> str:
         """Returns thermal trend (rising, stable, falling) from history."""
         if len(self._thermal_history) < 3:
-            return 'stable'
+            return "stable"
         last = self._thermal_history[-1][1].value
         prev = self._thermal_history[-2][1].value
         if last > prev:
-            return 'rising'
+            return "rising"
         elif last < prev:
-            return 'falling'
-        return 'stable'
+            return "falling"
+        return "stable"
 
     def get_pressure_level(self, used_memory_mb: float | None = None) -> str:
         """Returns memory pressure level.
@@ -369,17 +422,17 @@ class UniversalMemoryCoordinator:
         """
         current = self._calculate_pressure_level(used_memory_mb)
         if current == MemoryPressureLevel.CRITICAL:
-            return 'critical'
+            return "critical"
         elif current == MemoryPressureLevel.HIGH:
-            return 'high'
+            return "high"
         elif current == MemoryPressureLevel.ELEVATED:
-            return 'elevated'
-        return 'normal'
+            return "elevated"
+        return "normal"
 
     async def get_pressure(self) -> PressureState:
         """Get canonical pressure state (UMAGovernor protocol)."""
         # Re-use latest value from get_memory_usage if available, avoids stale read
-        if hasattr(self, '_last_memory_stats') and self._last_memory_stats is not None:
+        if hasattr(self, "_last_memory_stats") and self._last_memory_stats is not None:
             current = self._calculate_pressure_level(self._last_memory_stats.used_memory_mb)
         else:
             current = self._calculate_pressure_level()
@@ -391,14 +444,26 @@ class UniversalMemoryCoordinator:
         USE ONLY from non-async contexts (e.g. __init__, sync callbacks).
         From async contexts use get_power_state_async() instead.
         """
-        return {'on_battery': self._on_battery_power(), 'thermal_state': self._thermal_state.name.lower(), 'thermal_trend': self.get_thermal_trend(), 'memory_pressure_level': self.get_pressure_level(), 'should_throttle': self.should_throttle()}
+        return {
+            "on_battery": self._on_battery_power(),
+            "thermal_state": self._thermal_state.name.lower(),
+            "thermal_trend": self.get_thermal_trend(),
+            "memory_pressure_level": self.get_pressure_level(),
+            "should_throttle": self.should_throttle(),
+        }
 
     async def get_power_state_async(self) -> dict:
         """Async power state — calls _on_battery_power_async() which uses asyncio.create_subprocess_exec.
 
         USE from async contexts (event loop). Avoids blocking the event loop.
         """
-        return {'on_battery': await self._on_battery_power_async(), 'thermal_state': self._thermal_state.name.lower(), 'thermal_trend': self.get_thermal_trend(), 'memory_pressure_level': self.get_pressure_level(), 'should_throttle': self.should_throttle()}
+        return {
+            "on_battery": await self._on_battery_power_async(),
+            "thermal_state": self._thermal_state.name.lower(),
+            "thermal_trend": self.get_thermal_trend(),
+            "memory_pressure_level": self.get_pressure_level(),
+            "should_throttle": self.should_throttle(),
+        }
 
     def get_reranking_context(self) -> dict:
         """Reranking context pro lancedb_store adaptive reranking.
@@ -410,9 +475,10 @@ class UniversalMemoryCoordinator:
         state = self.get_power_state()
         try:
             import psutil
-            state['available_gb'] = psutil.virtual_memory().available / 1024 ** 3
+
+            state["available_gb"] = psutil.virtual_memory().available / 1024**3
         except Exception:
-            state['available_gb'] = 8.0
+            state["available_gb"] = 8.0
         return state
 
     def _on_battery_power(self) -> bool:
@@ -429,8 +495,9 @@ class UniversalMemoryCoordinator:
                     self._cached_on_battery = not battery.power_plugged
                 else:
                     import subprocess
-                    result = subprocess.run(['pmset', '-g', 'batt'], capture_output=True, text=True, timeout=2)
-                    self._cached_on_battery = 'discharging' in result.stdout.lower()
+
+                    result = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=2)
+                    self._cached_on_battery = "discharging" in result.stdout.lower()
             except Exception:
                 self._cached_on_battery = True
             self._last_battery_check = now
@@ -456,15 +523,17 @@ class UniversalMemoryCoordinator:
                     self._cached_on_battery = not battery.power_plugged
                 else:
                     proc = await asyncio.create_subprocess_exec(
-                        'pmset', '-g', 'batt',
+                        "pmset",
+                        "-g",
+                        "batt",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
-    )
+                    )
                     # ISSUE-3 fix: check returncode — nepoužívat stdout když pmset selhal
                     async with asyncio.timeout(1.0):
                         stdout, _ = await proc.communicate()
                     if proc.returncode == 0:
-                        self._cached_on_battery = b'discharging' in stdout.lower()
+                        self._cached_on_battery = b"discharging" in stdout.lower()
                     # else: cache se neaktualizuje, ponechá předchozí hodnotu
             except asyncio.CancelledError:
                 raise  # Re-raise — CancelledError nesmí být polykána
@@ -486,12 +555,12 @@ class UniversalMemoryCoordinator:
             try:
                 new_state = await self._update_thermal_state()
                 if new_state != self._thermal_state:
-                    logger.info(f'[Thermal] State changed: {self._thermal_state.value} -> {new_state.value}')
+                    logger.info(f"[Thermal] State changed: {self._thermal_state.value} -> {new_state.value}")
                     self._thermal_state = new_state
                     self._thermal_history.append((time.time(), new_state))
                 interval = 10 if self._thermal_state in (ThermalState.HOT, ThermalState.CRITICAL) else 30
             except Exception as e:
-                logger.debug(f'Thermal monitor error: {e}')
+                logger.debug(f"Thermal monitor error: {e}")
                 interval = 60
             await asyncio.sleep(interval)
 
@@ -499,7 +568,7 @@ class UniversalMemoryCoordinator:
         """Zastavit thermal monitor loop (voláno při cleanup)."""
         self._running = False
 
-    def _initialize_neuromorphic_memory(self, n_neurons: int=512) -> None:
+    def _initialize_neuromorphic_memory(self, n_neurons: int = 512) -> None:
         """
         Initialize neuromorphic memory manager (runtime lazy import).
 
@@ -511,10 +580,11 @@ class UniversalMemoryCoordinator:
         """
         try:
             from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager
+
             self._neuro_memory = NeuromorphicMemoryManager(n_neurons=n_neurons, connectivity=0.03)
-            logger.info('Neuromorphic memory initialized: %s neurons', n_neurons)
+            logger.info("Neuromorphic memory initialized: %s neurons", n_neurons)
         except Exception as e:
-            logger.warning('Failed to initialize neuromorphic memory: %s', e)
+            logger.warning("Failed to initialize neuromorphic memory: %s", e)
             self._neuro_memory = None
             self._neuro_enabled = False
 
@@ -530,15 +600,16 @@ class UniversalMemoryCoordinator:
             Allocation result with zone info
         """
         from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryZone
+
         if not self._neuro_memory:
-            return {'success': False, 'error': 'Neuromorphic memory not initialized'}
+            return {"success": False, "error": "Neuromorphic memory not initialized"}
         if zone_type == NeuromorphicMemoryZone.WORKING_MEMORY:
             self._neuro_memory.working_memory = deque(self._neuro_memory.working_memory, maxlen=size)
         elif zone_type == NeuromorphicMemoryZone.LONG_TERM_MEMORY:
             self._neuro_memory.long_term_memory = deque(self._neuro_memory.long_term_memory, maxlen=size)
         elif zone_type == NeuromorphicMemoryZone.EPISODIC_BUFFER:
             self._neuro_memory.episodic_buffer = deque(self._neuro_memory.episodic_buffer, maxlen=size)
-        return {'success': True, 'zone': zone_type.value, 'size': size, 'neurons': self._neuro_memory.n_neurons}
+        return {"success": True, "zone": zone_type.value, "size": size, "neurons": self._neuro_memory.n_neurons}
 
     def store_neural_pattern(self, zone: NeuromorphicMemoryZone, pattern_id: str, data: Any) -> dict[str, Any]:
         """
@@ -553,15 +624,17 @@ class UniversalMemoryCoordinator:
             Storage result with metadata
         """
         if not self._neuro_memory:
-            return {'success': False, 'error': 'Neuromorphic memory not initialized'}
+            return {"success": False, "error": "Neuromorphic memory not initialized"}
         try:
             success = self._neuro_memory.store_pattern(pattern_id, data, zone)
-            return {'success': success, 'pattern_id': pattern_id, 'zone': zone.value, 'timestamp': time.time()}
+            return {"success": success, "pattern_id": pattern_id, "zone": zone.value, "timestamp": time.time()}
         except Exception as e:
-            logger.error(f'Failed to store neural pattern: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Failed to store neural pattern: {e}")
+            return {"success": False, "error": str(e)}
 
-    def recall_neural_pattern(self, zone: NeuromorphicMemoryZone, pattern_id: str, completion: bool=True) -> dict[str, Any]:
+    def recall_neural_pattern(
+        self, zone: NeuromorphicMemoryZone, pattern_id: str, completion: bool = True
+    ) -> dict[str, Any]:
         """
         Recall a pattern from neuromorphic memory.
 
@@ -574,18 +647,18 @@ class UniversalMemoryCoordinator:
             Recalled pattern data or error
         """
         if not self._neuro_memory:
-            return {'success': False, 'error': 'Neuromorphic memory not initialized'}
+            return {"success": False, "error": "Neuromorphic memory not initialized"}
         try:
             result = self._neuro_memory.recall_pattern(pattern_id, completion)
             if result:
-                return {'success': True, 'pattern': result, 'zone': zone.value}
+                return {"success": True, "pattern": result, "zone": zone.value}
             else:
-                return {'success': False, 'error': f'Pattern {pattern_id} not found', 'zone': zone.value}
+                return {"success": False, "error": f"Pattern {pattern_id} not found", "zone": zone.value}
         except Exception as e:
-            logger.error(f'Failed to recall neural pattern: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Failed to recall neural pattern: {e}")
+            return {"success": False, "error": str(e)}
 
-    def consolidate_neural_memories(self, strength_threshold: float=0.5) -> dict[str, Any]:
+    def consolidate_neural_memories(self, strength_threshold: float = 0.5) -> dict[str, Any]:
         """
         Consolidate strong working memories to long-term memory.
 
@@ -596,30 +669,47 @@ class UniversalMemoryCoordinator:
             Consolidation results
         """
         if not self._neuro_memory:
-            return {'success': False, 'error': 'Neuromorphic memory not initialized'}
+            return {"success": False, "error": "Neuromorphic memory not initialized"}
         try:
             count = self._neuro_memory.consolidate_memories(strength_threshold)
             self._neuro_memory._memory_replay(n_replays=min(count, 20))
-            return {'success': True, 'consolidated_count': count, 'working_memory_size': len(self._neuro_memory.working_memory), 'long_term_memory_size': len(self._neuro_memory.long_term_memory)}
+            return {
+                "success": True,
+                "consolidated_count": count,
+                "working_memory_size": len(self._neuro_memory.working_memory),
+                "long_term_memory_size": len(self._neuro_memory.long_term_memory),
+            }
         except Exception as e:
-            logger.error(f'Failed to consolidate neural memories: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Failed to consolidate neural memories: {e}")
+            return {"success": False, "error": str(e)}
 
     def get_neuromorphic_stats(self) -> dict[str, Any]:
         """Get neuromorphic memory statistics."""
         if not self._neuro_memory:
-            return {'enabled': False}
-        return {'enabled': True, **self._neuro_memory.get_stats()}
+            return {"enabled": False}
+        return {"enabled": True, **self._neuro_memory.get_stats()}
 
     def cleanup_neuromorphic_memory(self) -> dict[str, Any]:
         """Perform aggressive cleanup of neuromorphic memory."""
         if not self._neuro_memory:
-            return {'success': False, 'error': 'Neuromorphic memory not initialized'}
+            return {"success": False, "error": "Neuromorphic memory not initialized"}
         forgotten = self._neuro_memory.forget_weak_memories(threshold=0.2)
         self._neuro_memory.cleanup()
-        return {'success': True, 'forgotten_patterns': forgotten, 'remaining_patterns': len(self._neuro_memory._patterns)}
+        return {
+            "success": True,
+            "forgotten_patterns": forgotten,
+            "remaining_patterns": len(self._neuro_memory._patterns),
+        }
 
-    async def allocate(self, allocation_id: str, zone: MemoryZone, size_bytes: int, priority: int=5, evictable: bool=True, on_evict: Callable | None=None) -> bool:
+    async def allocate(
+        self,
+        allocation_id: str,
+        zone: MemoryZone,
+        size_bytes: int,
+        priority: int = 5,
+        evictable: bool = True,
+        on_evict: Callable | None = None,
+    ) -> bool:
         """
         Allocate memory in a specific zone.
 
@@ -636,17 +726,26 @@ class UniversalMemoryCoordinator:
         """
         async with self._get_alloc_lock():
             if allocation_id in self.allocations:
-                logger.warning(f'Allocation {allocation_id} already exists')
+                logger.warning(f"Allocation {allocation_id} already exists")
                 return False
             available = self._get_available_memory()
             if size_bytes > available:
-                logger.warning(f'Not enough memory for {allocation_id}: {size_bytes} > {available}')
+                logger.warning(f"Not enough memory for {allocation_id}: {size_bytes} > {available}")
                 if not await self._handle_memory_pressure(size_bytes - available):
                     return False
-            allocation = MemoryAllocation(allocation_id=allocation_id, zone=zone, size_bytes=size_bytes, priority=priority, created_at=time.time(), last_accessed=time.time(), evictable=evictable, on_evict=on_evict)
+            allocation = MemoryAllocation(
+                allocation_id=allocation_id,
+                zone=zone,
+                size_bytes=size_bytes,
+                priority=priority,
+                created_at=time.time(),
+                last_accessed=time.time(),
+                evictable=evictable,
+                on_evict=on_evict,
+            )
             self.allocations[allocation_id] = allocation
             self.zone_allocations[zone][allocation_id] = allocation
-            logger.debug(f'Allocated {allocation_id} in zone {zone.value}: {size_bytes} bytes')
+            logger.debug(f"Allocated {allocation_id} in zone {zone.value}: {size_bytes} bytes")
             return True
 
     async def free(self, allocation_id: str) -> bool:
@@ -666,7 +765,7 @@ class UniversalMemoryCoordinator:
             if allocation_id in self.zone_allocations[allocation.zone]:
                 del self.zone_allocations[allocation.zone][allocation_id]
             del self.allocations[allocation_id]
-            logger.debug(f'Freed allocation {allocation_id}')
+            logger.debug(f"Freed allocation {allocation_id}")
             return True
 
     async def touch(self, allocation_id: str) -> None:
@@ -703,40 +802,47 @@ class UniversalMemoryCoordinator:
         Returns:
             Cleanup results
         """
-        logger.info('🧹 Performing aggressive cleanup...')
-        results: dict[str, bool | int | str] = {'mlx_cache_cleared': False, 'gc_collections': 0, 'weakref_collected': 0, 'neuromorphic_cleaned': False, 'success': False}
+        logger.info("🧹 Performing aggressive cleanup...")
+        results: dict[str, bool | int | str] = {
+            "mlx_cache_cleared": False,
+            "gc_collections": 0,
+            "weakref_collected": 0,
+            "neuromorphic_cleaned": False,
+            "success": False,
+        }
         try:
             gc.collect()
-            results['gc_collections'] += 1
+            results["gc_collections"] += 1
             gc.collect(2)
-            results['gc_collections'] += 1
+            results["gc_collections"] += 1
             with contextlib.suppress(Exception):
-                results['weakref_collected'] = weakref.collect()
+                results["weakref_collected"] = weakref.collect()
             if self._neuro_memory:
                 neuro_result = self.cleanup_neuromorphic_memory()
-                results['neuromorphic_cleaned'] = neuro_result.get('success', False)
-                results['neuromorphic_forgotten'] = neuro_result.get('forgotten_patterns', 0)
-                logger.info('✓ Neuromorphic memory cleaned')
+                results["neuromorphic_cleaned"] = neuro_result.get("success", False)
+                results["neuromorphic_forgotten"] = neuro_result.get("forgotten_patterns", 0)
+                logger.info("✓ Neuromorphic memory cleaned")
             # M5: metal_reclaim() = canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
             # RSS > soft ceiling is one of the 3 designated call sites.
             try:
                 from hledac.universal.utils.mlx_memory import metal_reclaim
+
                 metal_reclaim()
-                results['mlx_cache_cleared'] = True
-                logger.info('✓ MLX cache cleared via metal_reclaim')
+                results["mlx_cache_cleared"] = True
+                logger.info("✓ MLX cache cleared via metal_reclaim")
             except ImportError:
-                logger.debug('mlx_memory not available, skipping MLX cache clear')
+                logger.debug("mlx_memory not available, skipping MLX cache clear")
             gc.collect()
-            results['gc_collections'] += 1
-            await self.record_cleanup('aggressive_cleanup')
-            results['success'] = True
-            logger.info('✓ Aggressive cleanup complete')
+            results["gc_collections"] += 1
+            await self.record_cleanup("aggressive_cleanup")
+            results["success"] = True
+            logger.info("✓ Aggressive cleanup complete")
         except Exception as e:
-            logger.error(f'Error during aggressive cleanup: {e}')
-            results['error'] = str(e)
+            logger.error(f"Error during aggressive cleanup: {e}")
+            results["error"] = str(e)
         return results
 
-    async def cleanup(self, level: MemoryPressureLevel | None=None) -> bool:
+    async def cleanup(self, level: MemoryPressureLevel | None = None) -> bool:
         """
         Async cleanup with zone-based eviction.
 
@@ -748,7 +854,7 @@ class UniversalMemoryCoordinator:
         """
         if level is None:
             level = (await self.get_memory_usage()).current_level
-        logger.info(f'Memory cleanup triggered: {level.value}')
+        logger.info(f"Memory cleanup triggered: {level.value}")
         released = False
         if level in [MemoryPressureLevel.ELEVATED, MemoryPressureLevel.HIGH, MemoryPressureLevel.CRITICAL]:
             released |= await self.clear_zone(MemoryZone.LOW) > 0
@@ -757,7 +863,7 @@ class UniversalMemoryCoordinator:
         if level == MemoryPressureLevel.CRITICAL:
             released |= await self.clear_zone(MemoryZone.HIGH) > 0
         cleanup_result = await self.aggressive_cleanup()
-        released |= cleanup_result['success']
+        released |= cleanup_result["success"]
         return released
 
     async def clear_zone(self, zone: MemoryZone) -> int:
@@ -780,11 +886,11 @@ class UniversalMemoryCoordinator:
                         try:
                             allocation.on_evict()
                         except Exception as e:
-                            logger.error(f'Eviction callback error for {allocation_id}: {e}')
+                            logger.error(f"Eviction callback error for {allocation_id}: {e}")
                     await self.free(allocation_id)
                     count += 1
             if count > 0:
-                logger.info(f'Cleared {count} allocations from zone {zone.value}')
+                logger.info(f"Cleared {count} allocations from zone {zone.value}")
             return count
 
     async def record_cleanup(self, component: str) -> None:
@@ -799,7 +905,7 @@ class UniversalMemoryCoordinator:
         async with self._get_stats_lock():
             self.statistics.cleanup_count = new_count
             self.statistics.last_cleanup_time = time.time()
-        logger.info(f'Cleanup recorded for {component} (total: {new_count})')
+        logger.info(f"Cleanup recorded for {component} (total: {new_count})")
 
     async def get_memory_usage(self) -> MemoryStatistics:
         """
@@ -825,7 +931,16 @@ class UniversalMemoryCoordinator:
             self.statistics.peak_usage_mb = max(self.statistics.peak_usage_mb, used_mb)
             self.statistics.current_level = self._calculate_pressure_level()
             self.statistics.allocation_count = len(self.allocations)
-            result = MemoryStatistics(total_memory_mb=vm.total / (1024 * 1024), used_memory_mb=used_mb, available_memory_mb=vm.available / (1024 * 1024), peak_usage_mb=self.statistics.peak_usage_mb, current_level=self.statistics.current_level, cleanup_count=self.statistics.cleanup_count, last_cleanup_time=self.statistics.last_cleanup_time, allocation_count=len(self.allocations))
+            result = MemoryStatistics(
+                total_memory_mb=vm.total / (1024 * 1024),
+                used_memory_mb=used_mb,
+                available_memory_mb=vm.available / (1024 * 1024),
+                peak_usage_mb=self.statistics.peak_usage_mb,
+                current_level=self.statistics.current_level,
+                cleanup_count=self.statistics.cleanup_count,
+                last_cleanup_time=self.statistics.last_cleanup_time,
+                allocation_count=len(self.allocations),
+            )
             self._last_memory_stats = result
             return result
 
@@ -843,43 +958,75 @@ class UniversalMemoryCoordinator:
             allocations = list(self.zone_allocations[zone].values())
             total_bytes = sum(a.size_bytes for a in allocations)
             evictable = sum(1 for a in allocations if a.evictable)
-            return ZoneStatistics(zone=zone.value, allocation_count=len(allocations), total_bytes=total_bytes, total_mb=total_bytes / (1024 * 1024), evictable_count=evictable, non_evictable_count=len(allocations) - evictable)
+            return ZoneStatistics(
+                zone=zone.value,
+                allocation_count=len(allocations),
+                total_bytes=total_bytes,
+                total_mb=total_bytes / (1024 * 1024),
+                evictable_count=evictable,
+                non_evictable_count=len(allocations) - evictable,
+            )
 
     async def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
         """Get usage for all zones (parallel fetch, fail-safe)."""
         from hledac.universal.utils.asyncx import parallel
+
         result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
             ctx="zone_usage",
-    )
+        )
         return {
-            z.value: data if not isinstance(data, Exception) else ZoneStatistics(
-                zone=z.value, allocation_count=0, total_bytes=0, total_mb=0.0,
-                evictable_count=0, non_evictable_count=0,
-    )
+            z.value: data
+            if not isinstance(data, Exception)
+            else ZoneStatistics(
+                zone=z.value,
+                allocation_count=0,
+                total_bytes=0,
+                total_mb=0.0,
+                evictable_count=0,
+                non_evictable_count=0,
+            )
             for z, data in zip(MemoryZone, result.ok, strict=True)
         }
 
     async def get_stats(self) -> dict[str, Any]:
         """Get comprehensive memory statistics (parallel zone fetch, fail-safe)."""
         from hledac.universal.utils.asyncx import parallel
+
         stats = await self.get_memory_usage()
         zone_result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
             ctx="zone_stats",
-    )
+        )
         zones = {
-            z.value: msgspec.to_builtins(data) if not isinstance(data, Exception) else {
-                'zone': z.value, 'allocation_count': 0, 'total_bytes': 0,
-                'total_mb': 0.0, 'evictable_count': 0, 'non_evictable_count': 0,
+            z.value: msgspec.to_builtins(data)
+            if not isinstance(data, Exception)
+            else {
+                "zone": z.value,
+                "allocation_count": 0,
+                "total_bytes": 0,
+                "total_mb": 0.0,
+                "evictable_count": 0,
+                "non_evictable_count": 0,
             }
             for z, data in zip(MemoryZone, zone_result.ok, strict=True)
         }
-        result = {'total_mb': stats.total_memory_mb, 'used_mb': stats.used_memory_mb, 'available_mb': stats.available_memory_mb, 'peak_mb': stats.peak_usage_mb, 'percent': stats.used_memory_mb / stats.total_memory_mb * 100, 'limit_mb': self.memory_limit_mb, 'pressure': stats.current_level.value, 'allocations': stats.allocation_count, 'cleanups': stats.cleanup_count, 'zones': zones}
+        result = {
+            "total_mb": stats.total_memory_mb,
+            "used_mb": stats.used_memory_mb,
+            "available_mb": stats.available_memory_mb,
+            "peak_mb": stats.peak_usage_mb,
+            "percent": stats.used_memory_mb / stats.total_memory_mb * 100,
+            "limit_mb": self.memory_limit_mb,
+            "pressure": stats.current_level.value,
+            "allocations": stats.allocation_count,
+            "cleanups": stats.cleanup_count,
+            "zones": zones,
+        }
         if self._neuro_memory:
-            result['neuromorphic'] = self.get_neuromorphic_stats()
+            result["neuromorphic"] = self.get_neuromorphic_stats()
         return result
 
     def register_callback(self, callback: Callable[[MemoryPressureLevel], None]) -> None:
@@ -912,7 +1059,7 @@ class UniversalMemoryCoordinator:
             try:
                 callback(level)
             except Exception as e:
-                logger.error(f'Callback error: {e}')
+                logger.error(f"Callback error: {e}")
 
     def _get_available_memory(self) -> int:
         """Get available memory in bytes."""
@@ -929,7 +1076,7 @@ class UniversalMemoryCoordinator:
         Returns:
             True if enough memory was freed
         """
-        logger.warning(f'Handling memory pressure, need {required_bytes} bytes')
+        logger.warning(f"Handling memory pressure, need {required_bytes} bytes")
         async with self._get_pressure_lock():
             evictable = [a for a in self.allocations.values() if a.evictable]
             evictable.sort(key=lambda a: (a.priority, a.last_accessed))
@@ -941,11 +1088,11 @@ class UniversalMemoryCoordinator:
                     try:
                         allocation.on_evict()
                     except Exception as e:
-                        logger.error(f'Eviction callback error: {e}')
+                        logger.error(f"Eviction callback error: {e}")
                 await self.free(allocation.allocation_id)
                 freed_bytes += allocation.size_bytes
-                logger.debug(f'Evicted {allocation.allocation_id} ({allocation.size_bytes} bytes)')
-            logger.info(f'Freed {freed_bytes} bytes via eviction')
+                logger.debug(f"Evicted {allocation.allocation_id} ({allocation.size_bytes} bytes)")
+            logger.info(f"Freed {freed_bytes} bytes via eviction")
             return freed_bytes >= required_bytes
 
     def _calculate_pressure_level(self, used_memory_mb: float | None = None) -> MemoryPressureLevel:
@@ -976,7 +1123,7 @@ class UniversalMemoryCoordinator:
         """
         return (await self.get_memory_usage()).current_level
 
-    async def register_object(self, obj: Any, zone: MemoryZone=MemoryZone.MEDIUM) -> None:
+    async def register_object(self, obj: Any, zone: MemoryZone = MemoryZone.MEDIUM) -> None:
         """
         Register an object to a zone (simplified API).
 
@@ -984,15 +1131,22 @@ class UniversalMemoryCoordinator:
             obj: Object to register
             zone: Zone to register in
         """
-        allocation_id = f'obj_{id(obj)}_{zone.value}'
+        allocation_id = f"obj_{id(obj)}_{zone.value}"
         import sys
+
         try:
             size = sys.getsizeof(obj)
         except Exception:
             size = 1024
-        await self.allocate(allocation_id=allocation_id, zone=zone, size_bytes=size, priority=5, evictable=zone in [MemoryZone.LOW, MemoryZone.MEDIUM])
+        await self.allocate(
+            allocation_id=allocation_id,
+            zone=zone,
+            size_bytes=size,
+            priority=5,
+            evictable=zone in [MemoryZone.LOW, MemoryZone.MEDIUM],
+        )
 
-    def create_url_filter(self, use_binary_fuse: bool=True, cache_size: int=1000) -> dict[str, Any]:
+    def create_url_filter(self, use_binary_fuse: bool = True, cache_size: int = 1000) -> dict[str, Any]:
         """
         Create memory-efficient URL filter using Binary Fuse Filter.
 
@@ -1013,18 +1167,27 @@ class UniversalMemoryCoordinator:
         """
         try:
             from hledac.universal.tools.preserved_logic.fast_filter import FastFilter
+
             filter_instance = FastFilter(use_bff=use_binary_fuse, enable_cache=True)
-            filter_id = f'url_filter_{id(filter_instance)}'
-            if not hasattr(self, '_filters'):
+            filter_id = f"url_filter_{id(filter_instance)}"
+            if not hasattr(self, "_filters"):
                 self._filters = {}
             self._filters[filter_id] = filter_instance
-            return {'success': True, 'filter_id': filter_id, 'type': 'FastFilter', 'binary_fuse_available': filter_instance.is_bff_available(), 'default_blocked_domains': len(FastFilter.DEFAULT_BLOCKED_DOMAINS), 'cache_enabled': True, 'cache_size': cache_size}
+            return {
+                "success": True,
+                "filter_id": filter_id,
+                "type": "FastFilter",
+                "binary_fuse_available": filter_instance.is_bff_available(),
+                "default_blocked_domains": len(FastFilter.DEFAULT_BLOCKED_DOMAINS),
+                "cache_enabled": True,
+                "cache_size": cache_size,
+            }
         except ImportError:
-            logger.warning('FastFilter not available')
-            return {'success': False, 'error': 'FastFilter module not available'}
+            logger.warning("FastFilter not available")
+            return {"success": False, "error": "FastFilter module not available"}
         except Exception as e:
-            logger.error(f'Failed to create URL filter: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Failed to create URL filter: {e}")
+            return {"success": False, "error": str(e)}
 
     def check_url_allowed(self, filter_id: str, url: str) -> dict[str, Any]:
         """
@@ -1037,18 +1200,20 @@ class UniversalMemoryCoordinator:
         Returns:
             Check result with allow/block status
         """
-        if not hasattr(self, '_filters') or filter_id not in self._filters:
-            return {'success': False, 'error': 'Filter not found', 'allowed': True}
+        if not hasattr(self, "_filters") or filter_id not in self._filters:
+            return {"success": False, "error": "Filter not found", "allowed": True}
         try:
             filter_instance = self._filters[filter_id]
             allowed = filter_instance.check_url(url)
             stats = filter_instance.get_stats()
-            return {'success': True, 'url': url, 'allowed': allowed, 'blocked': not allowed, 'filter_stats': stats}
+            return {"success": True, "url": url, "allowed": allowed, "blocked": not allowed, "filter_stats": stats}
         except Exception as e:
-            logger.error(f'URL check failed: {e}')
-            return {'success': False, 'error': str(e), 'allowed': True}
+            logger.error(f"URL check failed: {e}")
+            return {"success": False, "error": str(e), "allowed": True}
 
-    def add_blocked_urls(self, filter_id: str, urls: list[str], domains: list[str] | None=None, patterns: list[str] | None=None) -> dict[str, Any]:
+    def add_blocked_urls(
+        self, filter_id: str, urls: list[str], domains: list[str] | None = None, patterns: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Add blocked URLs, domains, or patterns to filter.
 
@@ -1061,8 +1226,8 @@ class UniversalMemoryCoordinator:
         Returns:
             Update result
         """
-        if not hasattr(self, '_filters') or filter_id not in self._filters:
-            return {'success': False, 'error': 'Filter not found'}
+        if not hasattr(self, "_filters") or filter_id not in self._filters:
+            return {"success": False, "error": "Filter not found"}
         try:
             filter_instance = self._filters[filter_id]
             added_count = 0
@@ -1078,12 +1243,16 @@ class UniversalMemoryCoordinator:
                 for pattern in patterns:
                     filter_instance.add_blocked_pattern(pattern)
                     added_count += 1
-            return {'success': True, 'added_count': added_count, 'total_blocked': filter_instance._set_filter.size() if filter_instance._set_filter else 0}
+            return {
+                "success": True,
+                "added_count": added_count,
+                "total_blocked": filter_instance._set_filter.size() if filter_instance._set_filter else 0,
+            }
         except Exception as e:
-            logger.error(f'Failed to add blocked items: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Failed to add blocked items: {e}")
+            return {"success": False, "error": str(e)}
 
-    def detect_language(self, text: str, min_length: int=10, fallback: bool=True) -> dict[str, Any]:
+    def detect_language(self, text: str, min_length: int = 10, fallback: bool = True) -> dict[str, Any]:
         """
         Fast language detection optimized for M1 Apple Silicon.
 
@@ -1105,18 +1274,31 @@ class UniversalMemoryCoordinator:
         """
         try:
             from hledac.universal.tools.preserved_logic.fast_lang import LanguageDetector
+
             detector = LanguageDetector(fallback_mode=fallback)
             lang_code = detector.detect(text, min_length=min_length)
             lang_name = detector.get_language_name(lang_code)
-            return {'success': True, 'language_code': lang_code, 'language_name': lang_name, 'supported': detector.is_supported(lang_code), 'text_length': len(text), 'min_length': min_length}
+            return {
+                "success": True,
+                "language_code": lang_code,
+                "language_name": lang_name,
+                "supported": detector.is_supported(lang_code),
+                "text_length": len(text),
+                "min_length": min_length,
+            }
         except ImportError:
-            logger.warning('LanguageDetector not available')
-            return {'success': False, 'error': 'LanguageDetector not available', 'language_code': 'unknown', 'language_name': 'Unknown'}
+            logger.warning("LanguageDetector not available")
+            return {
+                "success": False,
+                "error": "LanguageDetector not available",
+                "language_code": "unknown",
+                "language_name": "Unknown",
+            }
         except Exception as e:
-            logger.error(f'Language detection failed: {e}')
-            return {'success': False, 'error': str(e), 'language_code': 'unknown'}
+            logger.error(f"Language detection failed: {e}")
+            return {"success": False, "error": str(e), "language_code": "unknown"}
 
-    def batch_detect_languages(self, texts: list[str], min_length: int=10) -> dict[str, Any]:
+    def batch_detect_languages(self, texts: list[str], min_length: int = 10) -> dict[str, Any]:
         """
         Detect languages for multiple texts.
 
@@ -1129,15 +1311,28 @@ class UniversalMemoryCoordinator:
         """
         try:
             from hledac.universal.tools.preserved_logic.fast_lang import LanguageDetector
+
             detector = LanguageDetector()
             results = detector.batch_detect(texts, min_length=min_length)
             lang_counts = {}
             for lang in results:
                 lang_counts[lang] = lang_counts.get(lang, 0) + 1
-            return {'success': True, 'total_texts': len(texts), 'results': [{'text_preview': text[:50] + '...' if len(text) > 50 else text, 'language_code': lang, 'language_name': detector.get_language_name(lang)} for text, lang in zip(texts, results, strict=False)], 'language_distribution': lang_counts}
+            return {
+                "success": True,
+                "total_texts": len(texts),
+                "results": [
+                    {
+                        "text_preview": text[:50] + "..." if len(text) > 50 else text,
+                        "language_code": lang,
+                        "language_name": detector.get_language_name(lang),
+                    }
+                    for text, lang in zip(texts, results, strict=False)
+                ],
+                "language_distribution": lang_counts,
+            }
         except Exception as e:
-            logger.error(f'Batch language detection failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Batch language detection failed: {e}")
+            return {"success": False, "error": str(e)}
 
     def filter_by_language(self, texts: list[Any], allowed_languages: list[str]) -> dict[str, Any]:
         """
@@ -1152,12 +1347,20 @@ class UniversalMemoryCoordinator:
         """
         try:
             from hledac.universal.tools.preserved_logic.fast_lang import LanguageDetector
+
             detector = LanguageDetector()
             filtered = detector.filter_by_language(texts, allowed_languages)
-            return {'success': True, 'total_input': len(texts), 'filtered_count': len(filtered), 'allowed_languages': allowed_languages, 'filtered_items': filtered}
+            return {
+                "success": True,
+                "total_input": len(texts),
+                "filtered_count": len(filtered),
+                "allowed_languages": allowed_languages,
+                "filtered_items": filtered,
+            }
         except Exception as e:
-            logger.error(f'Language filtering failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Language filtering failed: {e}")
+            return {"success": False, "error": str(e)}
+
 
 # DEPRECATED — MOVED to coordinators/memory/ (F320)
 class _DeprecatedContextPriority(Enum):
@@ -1166,19 +1369,24 @@ class _DeprecatedContextPriority(Enum):
 
 class ContextPriority(Enum):
     """Priority levels for context items."""
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
 
 class ResearchPhase(Enum):
     """Research phases for context prioritization."""
-    DATA_COLLECTION = 'data_collection'
-    ANALYSIS = 'analysis'
-    SYNTHESIS = 'synthesis'
-    VALIDATION = 'validation'
+
+    DATA_COLLECTION = "data_collection"
+    ANALYSIS = "analysis"
+    SYNTHESIS = "synthesis"
+    VALIDATION = "validation"
+
 
 class ContextItem(Struct):
     """Individual context item with metadata for three-tier storage."""
+
     item_id: str
     content: str
     metadata: dict[str, Any]
@@ -1187,11 +1395,13 @@ class ContextItem(Struct):
     access_count: int
     last_accessed: float
     embedding: Any | None = None
-    content_type: str = 'general'
+    content_type: str = "general"
     confidence: float = 0.5
+
 
 class CompressedContext(Struct):
     """Compressed context container."""
+
     context_id: str
     original_size: int
     compressed_size: int
@@ -1206,17 +1416,22 @@ class CompressedContext(Struct):
 
 class CacheType(Enum):
     """Types of cache entries."""
-    SEMANTIC = 'semantic'
-    COMPUTATION = 'computation'
-    QUERY = 'query'
+
+    SEMANTIC = "semantic"
+    COMPUTATION = "computation"
+    QUERY = "query"
+
 
 class CacheLocation(Enum):
     """Cache location levels."""
-    L1_MEMORY = 'l1_memory'
-    L2_DISK = 'l2_disk'
+
+    L1_MEMORY = "l1_memory"
+    L2_DISK = "l2_disk"
+
 
 class CacheEntry(Struct):
     """Single cache entry with FAISS embedding support."""
+
     cache_id: str
     content: Any
     embedding: Any | None
@@ -1226,6 +1441,7 @@ class CacheEntry(Struct):
     size_bytes: int
     cache_type: CacheType
     metadata: dict[str, Any]
+
 
 class MultiLevelContextCache:
     """
@@ -1238,9 +1454,39 @@ class MultiLevelContextCache:
     - CacheType classification
     - Configurable similarity threshold
     """
-    __slots__ = ('_hnsw_ef_construction', '_hnsw_ef_search', '_hnsw_index', '_hnsw_m', '_hnsw_max_elements', '_l1_freq', '_l2_freq', '_lock', 'embedder', 'embedding_dim', 'embedding_model', 'embedding_to_cache_id', 'faiss_available', 'l1_cache', 'l1_max_size_bytes', 'l2_cache', 'l2_storage_path', 'max_entries', 'semantic_index', 'similarity_threshold', 'stats')
 
-    def __init__(self, embedding_model: str='nomic-ai/nomic-embed-text-v1.5', l1_max_size_mb: float=100.0, l2_storage_path: str='cache_storage', similarity_threshold: float=0.95, max_entries: int=10000) -> None:
+    __slots__ = (
+        "_hnsw_ef_construction",
+        "_hnsw_ef_search",
+        "_hnsw_index",
+        "_hnsw_m",
+        "_hnsw_max_elements",
+        "_l1_freq",
+        "_l2_freq",
+        "_lock",
+        "embedder",
+        "embedding_dim",
+        "embedding_model",
+        "embedding_to_cache_id",
+        "faiss_available",
+        "l1_cache",
+        "l1_max_size_bytes",
+        "l2_cache",
+        "l2_storage_path",
+        "max_entries",
+        "semantic_index",
+        "similarity_threshold",
+        "stats",
+    )
+
+    def __init__(
+        self,
+        embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
+        l1_max_size_mb: float = 100.0,
+        l2_storage_path: str = "cache_storage",
+        similarity_threshold: float = 0.95,
+        max_entries: int = 10000,
+    ) -> None:
         """
         Initialize multi-level cache.
 
@@ -1266,10 +1512,11 @@ class MultiLevelContextCache:
         self._l2_freq: dict[str, int] = {}
         try:
             import faiss
+
             self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
             self.faiss_available = True
         except ImportError:
-            logger.warning('FAISS not available, semantic search disabled')
+            logger.warning("FAISS not available, semantic search disabled")
             self.semantic_index = None
             self.faiss_available = False
         self._hnsw_index = None
@@ -1280,7 +1527,15 @@ class MultiLevelContextCache:
         if USEARCH_AVAILABLE:
             self._init_hnsw()
         self.embedding_to_cache_id: dict[int, str] = {}
-        self.stats = {'hits': 0, 'misses': 0, 'total_requests': 0, 'l1_promotions': 0, 'l2_demotions': 0, 'evictions': 0, 'similarities': []}
+        self.stats = {
+            "hits": 0,
+            "misses": 0,
+            "total_requests": 0,
+            "l1_promotions": 0,
+            "l2_demotions": 0,
+            "evictions": 0,
+            "similarities": [],
+        }
         self._lock: asyncio.Lock = asyncio.Lock()
         self._load_l2_cache()
         self._rebuild_semantic_index()
@@ -1291,10 +1546,18 @@ class MultiLevelContextCache:
             return
         try:
             import usearch.index
-            self._hnsw_index = usearch.index.Index(ndim=self.embedding_dim, metric='cos', dtype='f32', connectivity=self._hnsw_m, expansion_add=min(self._hnsw_ef_construction, 100), expansion_search=self._hnsw_ef_search)
-            logger.debug('USearch index initialized')
+
+            self._hnsw_index = usearch.index.Index(
+                ndim=self.embedding_dim,
+                metric="cos",
+                dtype="f32",
+                connectivity=self._hnsw_m,
+                expansion_add=min(self._hnsw_ef_construction, 100),
+                expansion_search=self._hnsw_ef_search,
+            )
+            logger.debug("USearch index initialized")
         except Exception as e:
-            logger.warning(f'USearch index initialization failed: {e}')
+            logger.warning(f"USearch index initialization failed: {e}")
             self._hnsw_index = None
 
     def _hnsw_search(self, query_emb: Any, k: int) -> list[int]:
@@ -1303,7 +1566,7 @@ class MultiLevelContextCache:
             return []
         try:
             results = self._hnsw_index.search(query_emb.astype(np.float32), count=k)
-            return [int(getattr(r, 'key', 0)) for r in results]
+            return [int(getattr(r, "key", 0)) for r in results]
         except Exception:
             return []
 
@@ -1315,40 +1578,46 @@ class MultiLevelContextCache:
     def _load_l2_cache(self) -> None:
         """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
         try:
-            zst_file = self.l2_storage_path / 'l2_cache.json.zst'
-            json_file = self.l2_storage_path / 'l2_cache.json'
+            zst_file = self.l2_storage_path / "l2_cache.json.zst"
+            json_file = self.l2_storage_path / "l2_cache.json"
             if zst_file.exists():
-                with open(zst_file, 'rb') as f:
+                with open(zst_file, "rb") as f:
                     cache_bytes = f.read()
                 if len(cache_bytes) > 50 * 1024 * 1024:
-                    logger.warning('L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh', len(cache_bytes) // (1024 * 1024))
+                    logger.warning(
+                        "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",
+                        len(cache_bytes) // (1024 * 1024),
+                    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = _deserialize_from_json(cache_bytes)
-                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.zst)')
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
             elif json_file.exists():
-                with open(json_file, 'rb') as f:
+                with open(json_file, "rb") as f:
                     cache_bytes = f.read()
                 if len(cache_bytes) > 50 * 1024 * 1024:
-                    logger.warning('L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh', len(cache_bytes) // (1024 * 1024))
+                    logger.warning(
+                        "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",
+                        len(cache_bytes) // (1024 * 1024),
+                    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = _deserialize_from_json(cache_bytes)
-                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)')
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)")
             else:
                 self.l2_cache = {}
         except Exception as e:
-            logger.warning(f'Could not load L2 cache: {e}')
+            logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
 
     def _save_l2_cache(self) -> None:
         """Save L2 cache to disk as zstd-compressed .json.zst."""
         try:
-            cache_file = self.l2_storage_path / 'l2_cache.json.zst'
-            with open(cache_file, 'wb') as f:
+            cache_file = self.l2_storage_path / "l2_cache.json.zst"
+            with open(cache_file, "wb") as f:
                 f.write(_serialize_to_json(self.l2_cache))
         except Exception as e:
-            logger.warning(f'Could not save L2 cache: {e}')
+            logger.warning(f"Could not save L2 cache: {e}")
 
     def _rebuild_semantic_index(self) -> None:
         """Rebuild FAISS semantic index from existing entries."""
@@ -1356,6 +1625,7 @@ class MultiLevelContextCache:
             return
         try:
             import faiss
+
             self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
             self.embedding_to_cache_id.clear()
             all_entries = list(self.l1_cache.values()) + list(self.l2_cache.values())
@@ -1363,9 +1633,10 @@ class MultiLevelContextCache:
                 if entry.embedding is not None:
                     embedding_id = len(self.embedding_to_cache_id)
                     self.embedding_to_cache_id[embedding_id] = entry.cache_id
-                    self.semantic_index.add(entry.embedding.reshape(1, -1).astype('float32'))
+                    self.semantic_index.add(entry.embedding.reshape(1, -1).astype("float32"))
         except Exception as e:
-            logger.warning(f'Could not rebuild semantic index: {e}')
+            logger.warning(f"Could not rebuild semantic index: {e}")
+
     _embedding_cache: dict[str, Any] = {}
     _embedding_cache_lock: asyncio.Lock | None = None
 
@@ -1375,7 +1646,8 @@ class MultiLevelContextCache:
         F320-Issue2: Results are cached by NFC-normalized text to avoid
         re-encoding the same string across cycles."""
         import unicodedata
-        normalized = unicodedata.normalize('NFC', text)
+
+        normalized = unicodedata.normalize("NFC", text)
         if self._embedding_cache_lock is None:
             try:
                 self._embedding_cache_lock = asyncio.Lock()
@@ -1386,13 +1658,13 @@ class MultiLevelContextCache:
             return cached
         if self.embedder:
             try:
-                if hasattr(self.embedder, 'encode_batch'):
+                if hasattr(self.embedder, "encode_batch"):
                     # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
                     # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
                     result = await self.embedder.encode_batch([text])
                     return result[0] if result else None
             except Exception as e:
-                logger.debug(f'Embedding failed: {e}')
+                logger.debug(f"Embedding failed: {e}")
         result = None
         self._embedding_cache[normalized] = result
         return result
@@ -1406,7 +1678,8 @@ class MultiLevelContextCache:
         import unicodedata
 
         from hledac.universal.utils.sync_bridge import run_sync_async
-        normalized = unicodedata.normalize('NFC', text)
+
+        normalized = unicodedata.normalize("NFC", text)
         cached = self._embedding_cache.get(normalized)
         if cached is not None:
             return cached
@@ -1415,7 +1688,9 @@ class MultiLevelContextCache:
         except Exception:
             return None
 
-    async def get(self, input_data: Any, cache_type: CacheType=CacheType.COMPUTATION, threshold: float | None=None) -> Any | None:
+    async def get(
+        self, input_data: Any, cache_type: CacheType = CacheType.COMPUTATION, threshold: float | None = None
+    ) -> Any | None:
         """
         Get cached result using semantic similarity search.
 
@@ -1428,17 +1703,17 @@ class MultiLevelContextCache:
             Cached content or None if not found
         """
         threshold = threshold or self.similarity_threshold
-        self.stats['total_requests'] += 1
+        self.stats["total_requests"] += 1
         input_text = str(input_data)
         similar_entry = await self._find_similar_entry(input_text, threshold)
         if similar_entry:
             async with self._lock:
-                self.stats['hits'] += 1
+                self.stats["hits"] += 1
                 self._update_access(similar_entry.cache_id)
                 if similar_entry.cache_id in self.l2_cache:
                     self._promote_to_l1(similar_entry.cache_id)
             return similar_entry.content
-        self.stats['misses'] += 1
+        self.stats["misses"] += 1
         return None
 
     async def _find_similar_entry(self, input_text: str, threshold: float) -> CacheEntry | None:
@@ -1451,7 +1726,7 @@ class MultiLevelContextCache:
         if input_embedding is None:
             return None
         try:
-            query_embedding = input_embedding.reshape(1, -1).astype('float32')
+            query_embedding = input_embedding.reshape(1, -1).astype("float32")
             D, I = self.semantic_index.search(query_embedding, 10)
             for idx, similarity in zip(I[0], D[0], strict=False):
                 if float(similarity) >= threshold:
@@ -1461,10 +1736,10 @@ class MultiLevelContextCache:
                     entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                     if entry:
                         async with self._lock:
-                            self.stats['similarities'].append(float(similarity))
+                            self.stats["similarities"].append(float(similarity))
                         return entry
         except Exception as e:
-            logger.debug(f'Similarity search failed: {e}')
+            logger.debug(f"Similarity search failed: {e}")
         return None
 
     async def _find_similar_entry_hnsw(self, input_text: str, threshold: float) -> CacheEntry | None:
@@ -1481,13 +1756,13 @@ class MultiLevelContextCache:
                 entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                 if entry:
                     async with self._lock:
-                        self.stats['similarities'].append(1.0)
+                        self.stats["similarities"].append(1.0)
                     return entry
         except Exception as e:
-            logger.debug(f'USearch similarity search failed: {e}')
+            logger.debug(f"USearch similarity search failed: {e}")
         return None
 
-    async def set(self, input_data: Any, content: Any, cache_type: CacheType=CacheType.COMPUTATION) -> None:
+    async def set(self, input_data: Any, content: Any, cache_type: CacheType = CacheType.COMPUTATION) -> None:
         """
         Cache a computation result.
 
@@ -1501,15 +1776,25 @@ class MultiLevelContextCache:
             return
         input_text = str(input_data)
         embedding = await self._get_embedding_async(input_text)
-        cache_entry = CacheEntry(cache_id=cache_id, content=content, embedding=embedding, access_count=1, last_accessed=time.time(), created_at=time.time(), size_bytes=sys.getsizeof(content), cache_type=cache_type, metadata={})
+        cache_entry = CacheEntry(
+            cache_id=cache_id,
+            content=content,
+            embedding=embedding,
+            access_count=1,
+            last_accessed=time.time(),
+            created_at=time.time(),
+            size_bytes=sys.getsizeof(content),
+            cache_type=cache_type,
+            metadata={},
+        )
         async with self._lock:
             if embedding is not None and self.faiss_available:
                 try:
                     embedding_id = len(self.embedding_to_cache_id)
                     self.embedding_to_cache_id[embedding_id] = cache_id
-                    self.semantic_index.add(embedding.reshape(1, -1).astype('float32'))
+                    self.semantic_index.add(embedding.reshape(1, -1).astype("float32"))
                 except Exception as e:
-                    logger.debug(f'Could not add to semantic index: {e}')
+                    logger.debug(f"Could not add to semantic index: {e}")
             if self._get_l1_size_bytes() + cache_entry.size_bytes <= self.l1_max_size_bytes:
                 self.l1_cache[cache_id] = cache_entry
                 self.l1_cache.move_to_end(cache_id)
@@ -1551,7 +1836,7 @@ class MultiLevelContextCache:
         entry = self.l2_cache.pop(cache_id)
         if self._get_l1_size_bytes() + entry.size_bytes <= self.l1_max_size_bytes:
             self.l1_cache[cache_id] = entry
-            self.stats['l1_promotions'] += 1
+            self.stats["l1_promotions"] += 1
         else:
             self.l2_cache[cache_id] = entry
         self._save_l2_cache()
@@ -1573,7 +1858,7 @@ class MultiLevelContextCache:
                 self._l1_freq.pop(oldest_id, None)
             self.l2_cache[oldest_id] = oldest_entry
             self._l2_freq[oldest_id] = self._l1_freq.get(oldest_id, 1)
-            self.stats['l2_demotions'] += 1
+            self.stats["l2_demotions"] += 1
         total_entries = len(self.l1_cache) + len(self.l2_cache)
         if total_entries > self.max_entries and self.l2_cache:
             batch_size = max(1, int(self.max_entries * 0.1))
@@ -1589,20 +1874,32 @@ class MultiLevelContextCache:
                     oldest_id = min(self.l2_cache.keys(), key=lambda k: self.l2_cache[k].last_accessed)
                     del self.l2_cache[oldest_id]
                     self._l2_freq.pop(oldest_id, None)
-                self.stats['evictions'] += 1
+                self.stats["evictions"] += 1
                 evicted += 1
             if evicted > 0:
                 self._save_l2_cache()
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        total = self.stats['hits'] + self.stats['misses']
+        total = self.stats["hits"] + self.stats["misses"]
         avg_similarity = 0.0
-        if self.stats['similarities']:
-            avg_similarity = sum(self.stats['similarities']) / len(self.stats['similarities'])
-        return {'total_entries': len(self.l1_cache) + len(self.l2_cache), 'l1_entries': len(self.l1_cache), 'l2_entries': len(self.l2_cache), 'hit_count': self.stats['hits'], 'miss_count': self.stats['misses'], 'hit_rate': self.stats['hits'] / total if total > 0 else 0.0, 'l1_size_mb': self._get_l1_size_bytes() / (1024 * 1024), 'avg_similarity_score': avg_similarity, 'l1_promotions': self.stats['l1_promotions'], 'l2_demotions': self.stats['l2_demotions'], 'evictions': self.stats['evictions']}
+        if self.stats["similarities"]:
+            avg_similarity = sum(self.stats["similarities"]) / len(self.stats["similarities"])
+        return {
+            "total_entries": len(self.l1_cache) + len(self.l2_cache),
+            "l1_entries": len(self.l1_cache),
+            "l2_entries": len(self.l2_cache),
+            "hit_count": self.stats["hits"],
+            "miss_count": self.stats["misses"],
+            "hit_rate": self.stats["hits"] / total if total > 0 else 0.0,
+            "l1_size_mb": self._get_l1_size_bytes() / (1024 * 1024),
+            "avg_similarity_score": avg_similarity,
+            "l1_promotions": self.stats["l1_promotions"],
+            "l2_demotions": self.stats["l2_demotions"],
+            "evictions": self.stats["evictions"],
+        }
 
-    async def clear(self, location: CacheLocation | None=None) -> None:
+    async def clear(self, location: CacheLocation | None = None) -> None:
         """
         Clear cache entries.
 
@@ -1619,11 +1916,13 @@ class MultiLevelContextCache:
                 self._save_l2_cache()
             self._rebuild_semantic_index()
 
+
 class MemoryPressurePoller:
     """Throttled memory pressure monitoring."""
-    __slots__ = ('_interval', '_level', '_shutdown', '_task')
 
-    def __init__(self, interval: float=5.0) -> None:
+    __slots__ = ("_interval", "_level", "_shutdown", "_task")
+
+    def __init__(self, interval: float = 5.0) -> None:
         self._interval = interval
         self._level = 0.1
         self._task: asyncio.Task | None = None
@@ -1631,9 +1930,9 @@ class MemoryPressurePoller:
 
     async def start(self) -> None:
         """Start polling."""
-        self._task = safe_create_task(self._poll_loop(), name='memory_coordinator:poll')
+        self._task = safe_create_task(self._poll_loop(), name="memory_coordinator:poll")
 
-    async def aclose(self, timeout_s: float=10.0) -> None:
+    async def aclose(self, timeout_s: float = 10.0) -> None:
         """
         Graceful shutdown — signal poller to stop, bounded wait.
 
@@ -1643,18 +1942,24 @@ class MemoryPressurePoller:
         self._shutdown.set()
         if self._task is not None:
             try:
-                await safe_wait_for(self._task, timeout=timeout_s, label='memory_coord_shutdown')
+                await safe_wait_for(self._task, timeout=timeout_s, label="memory_coord_shutdown")
             except TimeoutError:
                 self._task.cancel()
                 with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                     await self._task
-                logger.debug('memory_coordinator: poll loop cancelled after %.1fs', timeout_s)
+                logger.debug("memory_coordinator: poll loop cancelled after %.1fs", timeout_s)
 
     async def _poll_loop(self) -> None:
         """Polling loop."""
         try:
-            libc = ctypes.CDLL('/usr/lib/libc.dylib')
-            libc.sysctlbyname.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p, ctypes.c_size_t]
+            libc = ctypes.CDLL("/usr/lib/libc.dylib")
+            libc.sysctlbyname.argtypes = [
+                ctypes.c_char_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_size_t),
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+            ]
             libc.sysctlbyname.restype = ctypes.c_int
         except Exception:
             libc = None
@@ -1663,11 +1968,13 @@ class MemoryPressurePoller:
                 if libc is not None:
                     val = ctypes.c_uint32()
                     size = ctypes.c_size_t(4)
-                    ret = libc.sysctlbyname(b'kern.memorystatus_vm_pressure_level', ctypes.byref(val), ctypes.byref(size), None, 0)
+                    ret = libc.sysctlbyname(
+                        b"kern.memorystatus_vm_pressure_level", ctypes.byref(val), ctypes.byref(size), None, 0
+                    )
                     if ret == 0:
                         self._level = {0: 0.1, 2: 0.6, 4: 0.95}.get(val.value, 0.1)
             except Exception as e:
-                logger.warning(f'MemoryPressurePoller error: {e}')
+                logger.warning(f"MemoryPressurePoller error: {e}")
             await asyncio.sleep(self._interval)
             if self._shutdown.is_set():
                 break

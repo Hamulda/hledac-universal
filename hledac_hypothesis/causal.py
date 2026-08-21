@@ -54,15 +54,28 @@ M1 8GB Optimizations preserved:
 - Bounded entity storage with deterministic eviction via MAX_CAUSAL_ENTITIES
 - np.zeros lazy alloc; falls back to None on ImportError
 """
+
 import logging
 import re
 import time
 from collections import defaultdict
+from operator import attrgetter
 from typing import Any
-from ._types import CO_OCCURRENCE_FP16, MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS, MAX_CAUSAL_HYPOTHESES, MAX_CO_OCCURRENCE_MATRIX_SIZE, AnomalySignal, CausalEntity, CausalHypothesis, TemporalSequence
-from operator import attrgetter, itemgetter
-from _core import aclose
+
+from ._types import (
+    CO_OCCURRENCE_FP16,
+    MAX_CAUSAL_ENTITIES,
+    MAX_CAUSAL_FINDINGS,
+    MAX_CAUSAL_HYPOTHESES,
+    MAX_CO_OCCURRENCE_MATRIX_SIZE,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
+    TemporalSequence,
+)
+
 logger = logging.getLogger(__name__)
+
 
 class CausalReasoner:
     """
@@ -81,7 +94,16 @@ class CausalReasoner:
         - _anomaly_signals: list[AnomalySignal]
         - _source_types: set[str] — observed source_type values
     """
-    __slots__ = tuple(('_anomaly_signals', '_causal_entities', '_co_occurrence_matrix', '_entity_id_to_idx', '_idx_to_entity_id', '_source_types', '_temporal_sequences'))
+
+    __slots__ = (
+        "_anomaly_signals",
+        "_causal_entities",
+        "_co_occurrence_matrix",
+        "_entity_id_to_idx",
+        "_idx_to_entity_id",
+        "_source_types",
+        "_temporal_sequences",
+    )
 
     def __init__(self) -> None:
         self._causal_entities: dict[str, CausalEntity] = {}
@@ -105,16 +127,15 @@ class CausalReasoner:
             List of newly added CausalEntity objects (excluding merged
             duplicates).
         """
-        import time
         entities: list[CausalEntity] = []
         seen_values: dict[str, str] = {}
         for i, finding in enumerate(findings):
             if i >= MAX_CAUSAL_FINDINGS:
                 break
-            payload = getattr(finding, 'payload_text', '') or ''
-            source_type = getattr(finding, 'source_type', 'unknown')
-            finding_id = getattr(finding, 'finding_id', f'finding_{i}')
-            ts = getattr(finding, 'ts', time.time())
+            payload = getattr(finding, "payload_text", "") or ""
+            source_type = getattr(finding, "source_type", "unknown")
+            finding_id = getattr(finding, "finding_id", f"finding_{i}")
+            ts = getattr(finding, "ts", time.time())
             self._source_types.add(source_type)
             extracted = self._extract_iocs_from_text(payload, source_type, finding_id, ts)
             for entity in extracted:
@@ -128,41 +149,84 @@ class CausalReasoner:
                     if existing_id in self._causal_entities:
                         existing = self._causal_entities[existing_id]
                         new_sources = existing.source_findings + entity.source_findings
-                        self._causal_entities[existing_id] = CausalEntity(entity_id=existing.entity_id, entity_type=existing.entity_type, value=existing.value, source_findings=new_sources[:100], first_seen=min(existing.first_seen, entity.first_seen), last_seen=max(existing.last_seen, entity.last_seen))
-        logger.info(f'CausalReasoner: extracted {len(entities)} entities from {len(findings)} findings')
+                        self._causal_entities[existing_id] = CausalEntity(
+                            entity_id=existing.entity_id,
+                            entity_type=existing.entity_type,
+                            value=existing.value,
+                            source_findings=new_sources[:100],
+                            first_seen=min(existing.first_seen, entity.first_seen),
+                            last_seen=max(existing.last_seen, entity.last_seen),
+                        )
+        logger.info(f"CausalReasoner: extracted {len(entities)} entities from {len(findings)} findings")
         return entities
 
     def _extract_iocs_from_text(self, text: str, source_type: str, finding_id: str, ts: float) -> list[CausalEntity]:
         """Extract IOCs (IP, domain, email, URL) from text."""
         entities = []
-        ip_pattern = '\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b'
+        ip_pattern = "\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b"
         for match in re.findall(ip_pattern, text):
             if self._is_valid_ip(match):
-                entities.append(CausalEntity(entity_id=f'ip_{match}', entity_type='ip', value=match, source_findings=(finding_id,), first_seen=ts, last_seen=ts))
-        domain_pattern = '\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b'
+                entities.append(
+                    CausalEntity(
+                        entity_id=f"ip_{match}",
+                        entity_type="ip",
+                        value=match,
+                        source_findings=(finding_id,),
+                        first_seen=ts,
+                        last_seen=ts,
+                    )
+                )
+        domain_pattern = "\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b"
         for match in re.findall(domain_pattern, text):
-            if len(match) > 4 and match not in ('example.com', 'test.com', 'localhost'):
-                entities.append(CausalEntity(entity_id=f'domain_{match}', entity_type='domain', value=match, source_findings=(finding_id,), first_seen=ts, last_seen=ts))
-        email_pattern = '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b'
+            if len(match) > 4 and match not in ("example.com", "test.com", "localhost"):
+                entities.append(
+                    CausalEntity(
+                        entity_id=f"domain_{match}",
+                        entity_type="domain",
+                        value=match,
+                        source_findings=(finding_id,),
+                        first_seen=ts,
+                        last_seen=ts,
+                    )
+                )
+        email_pattern = "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
         for match in re.findall(email_pattern, text):
-            entities.append(CausalEntity(entity_id=f'email_{match}', entity_type='email', value=match, source_findings=(finding_id,), first_seen=ts, last_seen=ts))
+            entities.append(
+                CausalEntity(
+                    entity_id=f"email_{match}",
+                    entity_type="email",
+                    value=match,
+                    source_findings=(finding_id,),
+                    first_seen=ts,
+                    last_seen=ts,
+                )
+            )
         url_pattern = 'https?://[^\\s<>"{}|\\\\^`\\[\\]]+'
         for match in re.findall(url_pattern, text):
-            entities.append(CausalEntity(entity_id=f'url_{match[:100]}', entity_type='url', value=match[:200], source_findings=(finding_id,), first_seen=ts, last_seen=ts))
+            entities.append(
+                CausalEntity(
+                    entity_id=f"url_{match[:100]}",
+                    entity_type="url",
+                    value=match[:200],
+                    source_findings=(finding_id,),
+                    first_seen=ts,
+                    last_seen=ts,
+                )
+            )
         return entities
 
     @staticmethod
     def _is_valid_ip(ip: str) -> bool:
         """Validate IP address."""
-        parts = ip.split('.')
+        parts = ip.split(".")
         if len(parts) != 4:
             return False
         try:
-            return all((0 <= int(p) <= 255 for p in parts))
+            return all(0 <= int(p) <= 255 for p in parts)
         except ValueError:
             return False
 
-    def build_temporal_sequences(self, gap_threshold: float=3600.0) -> list[TemporalSequence]:
+    def build_temporal_sequences(self, gap_threshold: float = 3600.0) -> list[TemporalSequence]:
         """
         Build temporal sequences from entity timestamps.
 
@@ -173,7 +237,9 @@ class CausalReasoner:
         Returns:
             List of TemporalSequence objects.
         """
-        by_time: list[tuple[float, CausalEntity]] = [(e.last_seen, e) for e in self._causal_entities.values() if e.last_seen > 0]
+        by_time: list[tuple[float, CausalEntity]] = [
+            (e.last_seen, e) for e in self._causal_entities.values() if e.last_seen > 0
+        ]
         by_time.sort(key=lambda x: x[0])
         sequences: list[TemporalSequence] = []
         current_seq: list[str] = []
@@ -190,14 +256,30 @@ class CausalReasoner:
                 current_findings.update(entity.source_findings)
             else:
                 if len(current_seq) >= 2:
-                    sequences.append(TemporalSequence(sequence_id=f'seq_{len(sequences)}', entities=current_seq, timestamps=current_ts, source_findings=tuple(current_findings), confidence=min(1.0, len(current_seq) / 5.0)))
+                    sequences.append(
+                        TemporalSequence(
+                            sequence_id=f"seq_{len(sequences)}",
+                            entities=current_seq,
+                            timestamps=current_ts,
+                            source_findings=tuple(current_findings),
+                            confidence=min(1.0, len(current_seq) / 5.0),
+                        )
+                    )
                 current_seq = [entity.entity_id]
                 current_ts = [ts]
                 current_findings = set(entity.source_findings)
         if len(current_seq) >= 2:
-            sequences.append(TemporalSequence(sequence_id=f'seq_{len(sequences)}', entities=current_seq, timestamps=current_ts, source_findings=tuple(current_findings), confidence=min(1.0, len(current_seq) / 5.0)))
+            sequences.append(
+                TemporalSequence(
+                    sequence_id=f"seq_{len(sequences)}",
+                    entities=current_seq,
+                    timestamps=current_ts,
+                    source_findings=tuple(current_findings),
+                    confidence=min(1.0, len(current_seq) / 5.0),
+                )
+            )
         self._temporal_sequences = sequences
-        logger.info(f'CausalReasoner: built {len(sequences)} temporal sequences')
+        logger.info(f"CausalReasoner: built {len(sequences)} temporal sequences")
         return sequences
 
     def compute_co_occurrence_matrix(self) -> Any | None:
@@ -209,6 +291,7 @@ class CausalReasoner:
         """
         try:
             import numpy as np
+
             entities = list(self._causal_entities.values())
             n = len(entities)
             if n > MAX_CO_OCCURRENCE_MATRIX_SIZE or n == 0:
@@ -227,22 +310,19 @@ class CausalReasoner:
                 n_ent = len(entity_ids)
                 if n_ent < 2:
                     continue
-                idx_array = np.array(
-                    [self._entity_id_to_idx[e] for e in entity_ids],
-                    dtype=np.int32
-    )
+                idx_array = np.array([self._entity_id_to_idx[e] for e in entity_ids], dtype=np.int32)
                 if len(idx_array) < 2:
                     continue
                 # Outer-product increment: all pairs (e1, e2) within same finding
                 matrix[np.ix_(idx_array, idx_array)] += 1
             self._co_occurrence_matrix = matrix
-            logger.info(f'CausalReasoner: computed {n}x{n} co-occurrence matrix (dtype={dtype.__name__})')
+            logger.info(f"CausalReasoner: computed {n}x{n} co-occurrence matrix (dtype={dtype.__name__})")
             return matrix
         except ImportError:
-            logger.warning('CausalReasoner: numpy not available, skipping co-occurrence')
+            logger.warning("CausalReasoner: numpy not available, skipping co-occurrence")
             return None
         except Exception as e:
-            logger.error(f'CausalReasoner: co-occurrence failed: {e}')
+            logger.error(f"CausalReasoner: co-occurrence failed: {e}")
             return None
 
     def get_co_occurrence(self, entity_a: str, entity_b: str) -> float:
@@ -273,23 +353,34 @@ class CausalReasoner:
             sources = list(entity.source_findings)
             source_domains = set()
             for source in sources:
-                if any((kw in source.lower() for kw in ['dark', 'tor', 'i2p'])):
-                    source_domains.add('dark_web')
-                elif any((kw in source.lower() for kw in ['paste', 'bin'])):
-                    source_domains.add('paste')
-                elif any((kw in source.lower() for kw in ['cert', 'ct', 'transparency'])):
-                    source_domains.add('cert_log')
-                elif any((kw in source.lower() for kw in ['github', 'gitlab'])):
-                    source_domains.add('code_repo')
+                if any(kw in source.lower() for kw in ["dark", "tor", "i2p"]):
+                    source_domains.add("dark_web")
+                elif any(kw in source.lower() for kw in ["paste", "bin"]):
+                    source_domains.add("paste")
+                elif any(kw in source.lower() for kw in ["cert", "ct", "transparency"]):
+                    source_domains.add("cert_log")
+                elif any(kw in source.lower() for kw in ["github", "gitlab"]):
+                    source_domains.add("code_repo")
                 else:
-                    source_domains.add('other')
+                    source_domains.add("other")
             if len(source_domains) >= 3:
-                anomalies.append(AnomalySignal(anomaly_type='cross_domain', entities=(entity.entity_id,), expected_sources=(), actual_sources=tuple(source_domains), score=min(1.0, len(source_domains) / 5.0), description=f'Entity {entity.value} found across {len(source_domains)} different source domains'))
+                anomalies.append(
+                    AnomalySignal(
+                        anomaly_type="cross_domain",
+                        entities=(entity.entity_id,),
+                        expected_sources=(),
+                        actual_sources=tuple(source_domains),
+                        score=min(1.0, len(source_domains) / 5.0),
+                        description=f"Entity {entity.value} found across {len(source_domains)} different source domains",
+                    )
+                )
         self._anomaly_signals = anomalies
-        logger.info(f'CausalReasoner: detected {len(anomalies)} anomalies')
+        logger.info(f"CausalReasoner: detected {len(anomalies)} anomalies")
         return anomalies
 
-    def generate_hypotheses(self, findings: list[Any], max_hypotheses: int=MAX_CAUSAL_HYPOTHESES) -> list[CausalHypothesis]:
+    def generate_hypotheses(
+        self, findings: list[Any], max_hypotheses: int = MAX_CAUSAL_HYPOTHESES
+    ) -> list[CausalHypothesis]:
         """
         Generate causal hypotheses from entity relationships.
 
@@ -322,10 +413,10 @@ class CausalReasoner:
 
                 upper_tri_mask = _np.triu(self._co_occurrence_matrix >= 2, k=1)
                 rows, cols = _np.where(upper_tri_mask)
-                for i, j in zip(rows, cols):
+                for i, j in zip(rows, cols, strict=False):
                     score = float(self._co_occurrence_matrix[i, j])
-                    e1 = self._idx_to_entity_id.get(int(i), '')
-                    e2 = self._idx_to_entity_id.get(int(j), '')
+                    e1 = self._idx_to_entity_id.get(int(i), "")
+                    e2 = self._idx_to_entity_id.get(int(j), "")
                     if e1 and e2:
                         relationships.append((e1, e2, score))
             except Exception:  # noqa: BLE001 — fallback to original loop on any numpy error
@@ -333,12 +424,12 @@ class CausalReasoner:
                     for j in range(i + 1, n):
                         score = float(self._co_occurrence_matrix[i, j])
                         if score >= 2:
-                            e1 = self._idx_to_entity_id.get(i, '')
-                            e2 = self._idx_to_entity_id.get(j, '')
+                            e1 = self._idx_to_entity_id.get(i, "")
+                            e2 = self._idx_to_entity_id.get(j, "")
                             if e1 and e2:
                                 relationships.append((e1, e2, score))
         for seq in self._temporal_sequences:
-            for ent_a, ent_b in zip(seq.entities, seq.entities[1:]):
+            for ent_a, ent_b in zip(seq.entities, seq.entities[1:], strict=False):
                 relationships.append((ent_a, ent_b, 1.0))
         seen_pairs: set[tuple[str, str]] = set()
         unique_relationships = []
@@ -355,22 +446,44 @@ class CausalReasoner:
                 continue
             source_count = len(set(entity1.source_findings + entity2.source_findings))
             source_diversity = len(self._source_types)
-            temporal_consistent = any((e1 in s.entities and e2 in s.entities for s in self._temporal_sequences))
-            confidence = self._calculate_confidence(source_count=source_count, source_diversity=source_diversity, co_occurrence_score=co_score, temporal_consistent=temporal_consistent)
+            temporal_consistent = any(e1 in s.entities and e2 in s.entities for s in self._temporal_sequences)
+            confidence = self._calculate_confidence(
+                source_count=source_count,
+                source_diversity=source_diversity,
+                co_occurrence_score=co_score,
+                temporal_consistent=temporal_consistent,
+            )
             statement = self._generate_statement(entity1, entity2, confidence)
-            hypotheses.append(CausalHypothesis(hypothesis_id=f'hyp_{len(hypotheses)}', source_entity=e1, target_entity=e2, hypothesis_type='causal' if temporal_consistent else 'correlative', statement=statement, confidence=confidence, source_count=source_count, source_diversity=source_diversity, temporal_consistent=temporal_consistent, supporting_findings=entity1.source_findings + entity2.source_findings))
+            hypotheses.append(
+                CausalHypothesis(
+                    hypothesis_id=f"hyp_{len(hypotheses)}",
+                    source_entity=e1,
+                    target_entity=e2,
+                    hypothesis_type="causal" if temporal_consistent else "correlative",
+                    statement=statement,
+                    confidence=confidence,
+                    source_count=source_count,
+                    source_diversity=source_diversity,
+                    temporal_consistent=temporal_consistent,
+                    supporting_findings=entity1.source_findings + entity2.source_findings,
+                )
+            )
         hypotheses.sort(key=attrgetter("confidence"), reverse=True)
-        logger.info(f'CausalReasoner: generated {len(hypotheses)} causal hypotheses')
+        logger.info(f"CausalReasoner: generated {len(hypotheses)} causal hypotheses")
         return hypotheses[:max_hypotheses]
 
     @staticmethod
-    def _calculate_confidence(source_count: int, source_diversity: int, co_occurrence_score: float, temporal_consistent: bool) -> float:
+    def _calculate_confidence(
+        source_count: int, source_diversity: int, co_occurrence_score: float, temporal_consistent: bool
+    ) -> float:
         """Calculate hypothesis confidence score (composite 4-factor)."""
         source_factor = min(1.0, source_count / 10.0)
         diversity_factor = min(1.0, source_diversity / 5.0)
         co_occurrence_factor = min(1.0, co_occurrence_score / 5.0)
         temporal_factor = 1.0 if temporal_consistent else 0.3
-        confidence = 0.25 * source_factor + 0.25 * diversity_factor + 0.25 * co_occurrence_factor + 0.25 * temporal_factor
+        confidence = (
+            0.25 * source_factor + 0.25 * diversity_factor + 0.25 * co_occurrence_factor + 0.25 * temporal_factor
+        )
         return round(confidence, 3)
 
     @staticmethod

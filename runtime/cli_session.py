@@ -32,7 +32,6 @@ Invariants:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     import httpx
@@ -56,7 +55,7 @@ class _CliSessionContextManager:
         # Idempotent — session_runtime.close_httpx_session_async() is safe to call twice
         from hledac.universal.network.session_runtime import (
             close_httpx_session_async,
-    )
+        )
 
         await close_httpx_session_async()
         self._session = None

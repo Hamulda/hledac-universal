@@ -50,19 +50,15 @@ Usage:
     )
     # Returns: {"avg_entropy": 1.23, "confidence": "high", "uncertainty_flag": "normal"}
 """
+
 from __future__ import annotations
 
 import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 # Entropy threshold (bits) above which an entity is flagged as low-confidence.
 # H=1.5 bits ~ top-2 tokens are close (e.g. 0.65/0.35 split).
@@ -77,13 +73,10 @@ MAX_TOKEN_WINDOW: int = 512
 DEFAULT_TOP_K: int = 5
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 @dataclass(slots=True)
 class TokenEntropy:
     """Per-token entropy record."""
+
     token_id: int
     text: str
     entropy_bits: float
@@ -94,6 +87,7 @@ class TokenEntropy:
 @dataclass(slots=True)
 class EntityUncertainty:
     """Entity-level uncertainty aggregation result."""
+
     entity_text: str
     avg_entropy_bits: float
     max_entropy_bits: float
@@ -102,10 +96,6 @@ class EntityUncertainty:
     uncertainty_flag: str  # "normal", "elevated", "high_entropy"
     token_entropies: list[TokenEntropy] = field(default_factory=list)
 
-
-# ---------------------------------------------------------------------------
-# LogitsCaptureProcessor - mlx_lm logits_processor callback
-# ---------------------------------------------------------------------------
 
 class LogitsCaptureProcessor:
     """
@@ -125,8 +115,8 @@ class LogitsCaptureProcessor:
     """
 
     __slots__ = (
-        '_top_k',
-        '_max_window',
+        "_top_k",
+        "_max_window",
     )
 
     def __init__(self, top_k: int = DEFAULT_TOP_K, max_window: int = MAX_TOKEN_WINDOW) -> None:
@@ -197,17 +187,17 @@ class LogitsCaptureProcessor:
                 token_id=selected_token_id,
                 text=text,
                 entropy_bits=round(entropy_bits, 4),
-                top_k_logprobs=list(zip(top_k_indices_cpu, [round(lp, 4) for lp in top_k_logprobs_cpu])),
+                top_k_logprobs=list(zip(top_k_indices_cpu, [round(lp, 4) for lp in top_k_logprobs_cpu], strict=False)),
                 position=self._position,
-    )
+            )
             self._token_entropies.append(record)
             self._generated_texts.append(text)
             self._position += 1
 
             # Enforce sliding window (M1 8GB bounded memory)
             if len(self._token_entropies) > self._max_window:
-                self._token_entropies = self._token_entropies[-self._max_window:]
-                self._generated_texts = self._generated_texts[-self._max_window:]
+                self._token_entropies = self._token_entropies[-self._max_window :]
+                self._generated_texts = self._generated_texts[-self._max_window :]
 
         except Exception as e:
             # Non-fatal: logprobs are optional enhancement
@@ -222,10 +212,6 @@ class LogitsCaptureProcessor:
         self._generated_texts.clear()
         self._position = 0
 
-
-# ---------------------------------------------------------------------------
-# TokenUncertaintyCollector - high-level API
-# ---------------------------------------------------------------------------
 
 class TokenUncertaintyCollector:
     """
@@ -253,8 +239,8 @@ class TokenUncertaintyCollector:
     """
 
     __slots__ = (
-        '_top_k',
-        '_max_window',
+        "_top_k",
+        "_max_window",
     )
 
     def __init__(self, top_k: int = DEFAULT_TOP_K, max_window: int = MAX_TOKEN_WINDOW) -> None:
@@ -267,7 +253,7 @@ class TokenUncertaintyCollector:
         self._processor = LogitsCaptureProcessor(
             top_k=self._top_k,
             max_window=self._max_window,
-    )
+        )
         if tokenizer is not None:
             self._processor.set_tokenizer(tokenizer)
         return self._processor
@@ -349,7 +335,7 @@ class TokenUncertaintyCollector:
             confidence=confidence,
             uncertainty_flag=uncertainty_flag,
             token_entropies=matching_entropies,
-    )
+        )
 
     def get_all_entity_uncertainties(
         self,

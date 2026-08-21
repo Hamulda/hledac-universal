@@ -10,7 +10,6 @@ LaneSpec:
     cost_estimate_per_query=3 (external API calls + parsing cost)
 """
 
-
 import asyncio
 import logging
 import time
@@ -18,14 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.recon.lane import (
     BTC_ADDRESS_PATTERN,
-    BaseIntelligenceLane,
     ETH_ADDRESS_PATTERN,
+    TX_HASH_PATTERN,
+    BaseIntelligenceLane,
     FetchResult,
     LaneContext,
     LaneSpec,
     ParsedResult,
     ResolveResult,
-    TX_HASH_PATTERN,
 )
 
 if TYPE_CHECKING:
@@ -73,10 +72,6 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
         """Check env gate."""
         return super().is_available()
 
-    # -------------------------------------------------------------------------
-    # Phase 1: Resolve
-    # -------------------------------------------------------------------------
-
     async def resolve(self, target: str, ctx: LaneContext) -> ResolveResult:
         """
         Classify and validate a cryptocurrency address.
@@ -115,10 +110,6 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
             metadata={"original": target},
         )
 
-    # -------------------------------------------------------------------------
-    # Phase 2: Fetch
-    # -------------------------------------------------------------------------
-
     async def fetch(self, resolved: ResolveResult, ctx: LaneContext) -> FetchResult:
         """
         Fetch blockchain analysis for the address.
@@ -143,9 +134,9 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
 
         chain = resolved.metadata.get("chain", resolved.kind)
 
-        # Load API keys lazily
         if not self._api_keys:
             import os
+
             self._api_keys = {
                 "etherscan": os.getenv("ETHERSCAN_API_KEY"),
                 "blockchair": os.getenv("BLOCKCHAIR_API_KEY"),
@@ -190,10 +181,6 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
                     error=f"fetch_error:{type(exc).__name__}",
                     elapsed_ms=(time.monotonic() - start) * 1000,
                 )
-
-    # -------------------------------------------------------------------------
-    # Phase 3: Parse
-    # -------------------------------------------------------------------------
 
     async def parse(self, fetch_result: FetchResult, ctx: LaneContext) -> ParsedResult:
         """
@@ -251,10 +238,6 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
             metadata={"chain": fetch_result.url.split(":")[0] if ":" in fetch_result.url else "unknown"},
         )
 
-    # -------------------------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------------------------
-
     def _serialize_analysis(self, analysis: Any) -> str:
         """Serialize a WalletAnalysis object to string."""
         try:
@@ -281,6 +264,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
             return self._forensics
         try:
             from hledac.universal.recon.blockchain_analyzer import BlockchainForensics
+
             self._forensics = BlockchainForensics(
                 etherscan_api_key=self._api_keys.get("etherscan"),
                 blockchair_api_key=self._api_keys.get("blockchair"),

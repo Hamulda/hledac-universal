@@ -15,24 +15,20 @@ Datum: 2026-08-07
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from functools import wraps
 from operator import itemgetter
+from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     Literal,
     ParamSpec,
     TypeVar,
-    )
-from collections.abc import Awaitable, Callable
-import logging
-
-from collections.abc import Sequence
-from _core import aclose
-from pathlib import Path
+)
 
 __all__ = [
     # Singleton
@@ -82,12 +78,7 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
-# ==============================================================================
-# Singleton Pattern
-# ==============================================================================
-
-
-def singleton_with_lock(cls: type[T]) -> type[T]:
+def singleton_with_lock[T](cls: type[T]) -> type[T]:
     """
     Decorator pro thread-safe singleton s lockem.
 
@@ -166,12 +157,7 @@ class SingletonMeta(type):
             return instance
 
 
-# ==============================================================================
-# Module-Level Singleton Pattern (Double-Checked Locking)
-# ==============================================================================
-
-
-def module_singleton_creator(
+def module_singleton_creator[T](
     *,
     factory: Callable[[], T],
     post_init: Callable[[T], None] | None = None,
@@ -228,7 +214,7 @@ def module_singleton_creator(
     return get_instance
 
 
-def module_singleton_getter(
+def module_singleton_getter[T](
     *,
     singleton_name: str,
     factory: Callable[[], T],
@@ -290,11 +276,6 @@ def module_singleton_getter(
     return get_instance
 
 
-# ==============================================================================
-# Lazy Module Import Pattern
-# ==============================================================================
-
-
 def lazy_module_getter(
     module_path: str,
     attrs: dict[str, str],
@@ -320,19 +301,16 @@ def lazy_module_getter(
     - Centralizovaná definice mappings
     - Snadná údržba
     """
+
     def getter(name: str) -> Any:
         if name in attrs:
             import importlib
+
             module = importlib.import_module(module_path)
             return getattr(module, attrs[name])
         raise AttributeError(f"module has no attribute {name!r}")
 
     return getter
-
-
-# ==============================================================================
-# Async Lifecycle Helpers
-# ==============================================================================
 
 
 async def async_cleanup(
@@ -431,12 +409,7 @@ def fail_safe_async(
     return decorator
 
 
-# ==============================================================================
-# Result Aggregation
-# ==============================================================================
-
-
-def collect_results(
+def collect_results[T, R](
     items: Sequence[T],
     processor: Callable[[T], R],
     *,
@@ -462,7 +435,7 @@ def collect_results(
     return [processor(item) for item in items]
 
 
-async def collect_results_async(
+async def collect_results_async[T, R](
     items: Sequence[T],
     processor: Callable[[T], Awaitable[R]],
 ) -> list[R]:
@@ -491,7 +464,7 @@ async def collect_results_async(
     return results
 
 
-def aggregate_with_score(
+def aggregate_with_score[T](
     items: Sequence[T],
     scorer: Callable[[T], float],
     *,
@@ -595,12 +568,7 @@ def compound_confidence_from_objects(
     return product * penalty
 
 
-# ==============================================================================
-# Fail-Safe Decorators
-# ==============================================================================
-
-
-def never_raises(
+def never_raises[R](
     default: R = None,  # type: ignore[assignment]
     reraise: bool = False,
     log_traceback: bool = False,
@@ -618,8 +586,8 @@ def never_raises(
     - Volitelný logging
     - Type-safe default
     """
-    import traceback
     import logging
+    import traceback
 
     logger = logging.getLogger("hledac.patterns")
 
@@ -675,11 +643,6 @@ def log_failures(
     return decorator
 
 
-# ==============================================================================
-# Telemetry Helpers
-# ==============================================================================
-
-
 def elapsed_ms(started_at: float | None) -> float:
     """
     Výpočet uplynulého času v ms.
@@ -729,14 +692,9 @@ def record_transition_safe(
             to_phase=to_phase,
             component=component,
             elapsed_ms=elapsed,
-    )
+        )
     except Exception:  # noqa: BLE001
         pass
-
-
-# ==============================================================================
-# Batch Processing Helpers
-# ==============================================================================
 
 
 def backpressure_tier(
@@ -821,15 +779,10 @@ async def collect_batch_items(
                     await queue.put(item)
                     break
                 items.append(item)
-        except (TimeoutError, asyncio.QueueEmpty):
+        except TimeoutError, asyncio.QueueEmpty:
             break
 
     return items, current_schema, current_prompt_hash, current_length_bin
-
-
-# ==============================================================================
-# LMDB / Safe Close Helpers
-# ==============================================================================
 
 
 def safe_lmdb_close(env: Any, *, logger: Any = None, name: str = "LMDB") -> None:
@@ -930,6 +883,7 @@ def make_close_method(
 
     F320-REFACTOR: Eliminuje 6 klonů close() metod.
     """
+
     def close() -> None:
         resource = getattr(instance, attr_name, None)
         if resource is not None:
@@ -977,11 +931,6 @@ def finalizer_context(obj: Any, cleanup_method: str = "_cleanup"):
         finalizer()
 
 
-# ==============================================================================
-# Path Extraction Helpers
-# ==============================================================================
-
-
 def extract_internal_paths(
     names: list[str],
     *,
@@ -1016,11 +965,6 @@ def extract_internal_paths(
         if name.endswith(extensions):
             paths.append(name)
     return list(set(paths))[:max_paths]
-
-
-# ==============================================================================
-# Memory Cleanup Helpers
-# ==============================================================================
 
 
 def memory_cleanup_fallback(
@@ -1079,10 +1023,6 @@ def memory_cleanup_fallback(
                 logger.debug(f"[MEM-CLEANUP] malloc relief failed: {e}")
 
 
-# ==============================================================================
-# Re-export pro zpětnou kompatibilitu
-# ==============================================================================
-
 # Pro případné post-import úpravy existujících modulů
 ORIGINAL_MODULES: dict[str, str] = {
     "core/rust_backend/__init__.py": "singleton pattern",
@@ -1112,15 +1052,6 @@ ORIGINAL_MODULES: dict[str, str] = {
     "transport/darknet_session_provider.py": "cleanup",
     "utils/uma_budget.py": "on_* callbacks",
 }
-
-
-# ==============================================================================
-# F330 Clone Report Analysis (2026-08-07)
-# ==============================================================================
-# Dokumentace false-positive klonů z clone reportu (94.2% similarity).
-# Clone report neznamená vždy "refaktoruj to" — mnoho reportů jsou
-# strukturální podobnosti s různou sémantikou.
-# ==============================================================================
 
 # FALSE POSITIVE CLONES - Různá sémantika, různý účel:
 # 1. core/global_co_scheduler.py:308 vs utils/execution_optimizer.py:184
@@ -1170,11 +1101,6 @@ ORIGINAL_MODULES: dict[str, str] = {
 #     -> Různé KPI helper funkce, různé data paths
 
 
-# ==============================================================================
-# Lazy Property Pattern
-# ==============================================================================
-
-
 class lazy_property:
     """
     Descriptor pro lazy initialization s importem.
@@ -1219,7 +1145,6 @@ class lazy_property:
         if self._attr_name is None:
             raise RuntimeError("lazy_property not properly initialized")
 
-        # Get cached value or create it
         try:
             cached = getattr(obj, self._attr_name)
             if cached is not None:
@@ -1227,20 +1152,9 @@ class lazy_property:
         except AttributeError:
             pass
 
-        # Create and cache
         value = self._factory(obj)
         object.__setattr__(obj, self._attr_name, value)
         return value
-
-
-# ==============================================================================
-# F320-FINAL-2: Async Lazy Helpers (2026-08-07)
-# ==============================================================================
-# Clone report analysis: lazy initialization patterns across codebase:
-# - discovery/matrix_adapter.py:51 - httpx.AsyncClient lazy session property
-# - core/embeddings/cache.py:265 - asyncio.Lock lazy initialization (_l1_lock, _mmap_lock)
-# - core/dlq_manager.py:173 - asyncio.Lock lazy initialization (_get_async_lock)
-# ==============================================================================
 
 
 def lazy_async_lock(
@@ -1290,7 +1204,6 @@ def lazy_async_lock(
                         return attr
                 else:
                     return attr
-            # Create and cache
             value = factory(self)
             object.__setattr__(self, attr_name, value)
             return value
@@ -1372,14 +1285,11 @@ class lazy_resource_property:
         if not needs_recreation:
             return attr
 
-        # Create new resource
         if self._factory:
             value = self._factory()
         else:
             # Generic factory: try to create from type or raise
-            raise RuntimeError(
-                f"lazy_resource_property for {self._attr_name} needs a factory"
-    )
+            raise RuntimeError(f"lazy_resource_property for {self._attr_name} needs a factory")
 
         object.__setattr__(obj, self._attr_name, value)
         return value
@@ -1447,13 +1357,6 @@ def make_close_method(
     return close_method
 
 
-
-
-# ==============================================================================
-# Cleanup Component Helpers (F320)
-# ==============================================================================
-
-
 async def safe_cleanup_component(
     component: object | None,
     name: str,
@@ -1481,7 +1384,7 @@ async def safe_cleanup_component(
             except Exception as e:
                 logger.warning(f'Component cleanup error: {e}')
     """
-    if component is None or not hasattr(component, 'cleanup'):
+    if component is None or not hasattr(component, "cleanup"):
         return
     try:
         if _type == "async":
@@ -1493,12 +1396,7 @@ async def safe_cleanup_component(
             logger.warning(f"WARNING: {name} cleanup error: {e}")
 
 
-# ==============================================================================
-# F330 Clone Refactoring: Exposed Service Hunter Scan Pattern
-# ==============================================================================
-
-
-async def scan_parallel(
+async def scan_parallel[T](
     check_args: Sequence[tuple[Any, ...]],
     checker: Callable[..., Awaitable[T | None]],
     *,
@@ -1540,9 +1438,9 @@ async def scan_parallel(
                 result = await checker(*args)
                 if result and logger and log_success:
                     try:
-                        msg = log_success.format(**dict(zip(['host', 'port'], args[:2])))
+                        msg = log_success.format(**dict(zip(["host", "port"], args[:2], strict=False)))
                         logger.info(msg)
-                    except (KeyError, IndexError):
+                    except KeyError, IndexError:
                         logger.info(f"Found: {args}")
                 return result
             except Exception as e:
@@ -1556,11 +1454,6 @@ async def scan_parallel(
     tasks = [_checked(*args) for args in check_args]
     results = await parallel_ok(*tasks, label=label)
     return [r for r in results if r is not None]
-
-
-# ==============================================================================
-# Lazy Lock Patterns (ISSUE-014 compliant)
-# ==============================================================================
 
 
 def make_lazy_lock(
@@ -1600,6 +1493,7 @@ def make_lazy_lock(
 
     F320-REFACTOR-2: Eliminuje 6 klonů _get_lock() metod.
     """
+
     def _get_lock() -> asyncio.Lock:
         lock = getattr(instance, lock_attr, None)
         if lock is None:
@@ -1680,28 +1574,28 @@ def make_lazy_lock_classmethod(
     - Konzistentní sémantika
 
     F320-REFACTOR-2: Eliminuje classmethod klony _get_lock().
-    
+
     BUG-FIX: Cache the returned getter to prevent creating new locks on each call.
     """
     # Cache per class to prevent creating new locks on each _get_lock() call
     _getter_cache: dict[type, Callable[[], asyncio.Lock]] = {}
-    
+
     def make_getter(cls: type) -> Callable[[], asyncio.Lock]:
         """Create or return cached lazy lock getter for this class."""
         cached = _getter_cache.get(cls)
         if cached is not None:
             return cached
-        
+
         def _get_lock() -> asyncio.Lock:
             lock = getattr(cls, lock_attr, None)
             if lock is None:
                 lock = asyncio.Lock()
                 setattr(cls, lock_attr, lock)
             return lock
-        
+
         _getter_cache[cls] = _get_lock
         return _get_lock
-    
+
     return make_getter
 
 
@@ -1744,7 +1638,7 @@ class AsyncLazyLockDescriptor:
 
         # Nebo použít descriptor factory:
         _get_lock = AsyncLazyLockDescriptor("_lock")
-        
+
         # Usage:
         # lock = await self._get_lock()
 
@@ -1754,7 +1648,7 @@ class AsyncLazyLockDescriptor:
     - Konzistentní sémantika
 
     F320-REFACTOR-2: Eliminuje klony async _get_lock() metod.
-    
+
     BUG-FIX: __get__ is now regular method returning async function,
     not async method. Usage: lock = await self._get_lock()
     """
@@ -1779,11 +1673,6 @@ class AsyncLazyLockDescriptor:
             return lock
 
         return _get_lock
-
-
-# ==============================================================================
-# LMDB Close Pattern
-# ==============================================================================
 
 
 def make_lmdb_close(
@@ -1822,6 +1711,7 @@ def make_lmdb_close(
 
     F320-REFACTOR-2: Eliminuje 3 klony close() metod s LMDB.
     """
+
     def close() -> None:
         env = getattr(instance, env_attr, None)
         if env is not None:
@@ -1880,6 +1770,7 @@ def make_close_method(
 
     F320-REFACTOR-2: Eliminuje klony close() metod s více resources.
     """
+
     def close() -> None:
         resource = getattr(instance, resource_attr, None)
         if resource is not None:
@@ -1961,16 +1852,11 @@ class CloseMethodDescriptor:
         return close
 
 
-# ==============================================================================
-# IOC Pattern Helpers (F320-REFACTOR: Eliminace _looks_like_domain klonů)
-# ==============================================================================
-
-
 import re
 
 # Pre-compiled patterns for performance
-_IP_RE = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
-_DOMAIN_LABEL_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
+_IP_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+_DOMAIN_LABEL_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$")
 
 
 def looks_like_domain(value: str) -> bool:
@@ -1987,20 +1873,19 @@ def looks_like_domain(value: str) -> bool:
     """
     if not value or len(value) > 253:
         return False
-    if '.' not in value:
+    if "." not in value:
         return False
     # Reject IP addresses
     if _IP_RE.match(value):
         return False
-    # Check each label
-    parts = value.split('.')
+    parts = value.split(".")
     if len(parts) < 2:
         return False
     for label in parts:
         if not label or len(label) > 63:
             return False
         # Allow alphanumeric + hyphen, but not starting/ending with hyphen
-        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$', label):
+        if not re.match(r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$", label):
             return False
     return True
 
@@ -2009,24 +1894,16 @@ def looks_like_ip(value: str) -> bool:
     """Check if value looks like an IPv4 address."""
     if not value:
         return False
-    parts = value.split('.')
+    parts = value.split(".")
     if len(parts) != 4:
         return False
     return all(part.isdigit() and 0 <= int(part) <= 255 for part in parts)
 
 
-# Update __all__ to include new functions
 __all__ = __all__ + ["looks_like_domain", "looks_like_ip"]
 
-
-# ==============================================================================
-# Terminal State Normalization (F208L - Canonical Implementation)
-# ==============================================================================
-
 # Non-terminal states that should be returned as-is
-NON_TERMINAL_STATES: frozenset[str | None] = frozenset([
-    'pending', 'running', 'not_attempted', 'missing', '', None
-])
+NON_TERMINAL_STATES: frozenset[str | None] = frozenset(["pending", "running", "not_attempted", "missing", "", None])
 
 
 def normalize_terminal_state(outcome_or_dict: Any) -> str | None:
@@ -2050,42 +1927,37 @@ def normalize_terminal_state(outcome_or_dict: Any) -> str | None:
     if outcome_or_dict is None:
         return None
     d: dict
-    if hasattr(outcome_or_dict, 'to_dict'):
+    if hasattr(outcome_or_dict, "to_dict"):
         d = outcome_or_dict.to_dict()
     elif isinstance(outcome_or_dict, dict):
         d = outcome_or_dict
     else:
         return None
-    raw_state = d.get('terminal_state')
+    raw_state = d.get("terminal_state")
     if raw_state is not None and raw_state in NON_TERMINAL_STATES:
         return raw_state
-    if d.get('skipped'):
-        return 'skipped'
-    if d.get('timeout'):
-        return 'timeout'
-    if d.get('error') is not None and d.get('error') != '':
-        return 'error'
-    if d.get('attempted'):
-        has_raw_count = 'raw_count' in d
-        raw_count = d.get('raw_count', 0)
-        accepted_count = d.get('accepted_count', 0)
+    if d.get("skipped"):
+        return "skipped"
+    if d.get("timeout"):
+        return "timeout"
+    if d.get("error") is not None and d.get("error") != "":
+        return "error"
+    if d.get("attempted"):
+        has_raw_count = "raw_count" in d
+        raw_count = d.get("raw_count", 0)
+        accepted_count = d.get("accepted_count", 0)
         if accepted_count > 0:
-            return 'success'
+            return "success"
         if has_raw_count and raw_count > 0 and accepted_count == 0:
-            return 'success_empty'
+            return "success_empty"
         if has_raw_count and raw_count == 0 and accepted_count == 0:
-            return 'empty'
-        return 'attempted'
+            return "empty"
+        return "attempted"
     return None
 
 
-# Update __all__ to include new functions
 __all__ = __all__ + ["normalize_terminal_state", "NON_TERMINAL_STATES"]
 
-
-# ==============================================================================
-# File Path Extraction (from forensics + multimodal)
-# ==============================================================================
 
 def extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
@@ -2101,9 +1973,9 @@ def extract_file_path_from_payload(payload_text: str | None) -> str | None:
     """
     if not payload_text:
         return None
-    if payload_text.startswith('file://'):
+    if payload_text.startswith("file://"):
         path_str = payload_text[7:]
-        path_str = path_str.split('?')[0].split('#')[0]
+        path_str = path_str.split("?")[0].split("#")[0]
         path = Path(path_str)
         if path.exists() and path.is_file():
             return str(path)
@@ -2112,31 +1984,25 @@ def extract_file_path_from_payload(payload_text: str | None) -> str | None:
         path = Path.cwd() / path
     if path.exists() and path.is_file():
         return str(path)
-    clean = payload_text.split('?')[0].split('#')[0]
+    clean = payload_text.split("?")[0].split("#")[0]
     if clean != payload_text:
         return extract_file_path_from_payload(clean)
     return None
 
 
-# ==============================================================================
-# Mission Intent Inference (from acquisition_strategy_planner + lanes)
-# ==============================================================================
-
 # Regex patterns for mission intent detection
-_MISSION_CVE_RE = re.compile(r'\bCVE-\d{4}-\d{4,}\b', re.IGNORECASE)
+_MISSION_CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
 _MISSION_DOMAIN_OR_IP_RE = re.compile(
-    r'(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|\d{1,3}(?:\.\d{1,3}){3}'
+    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|\d{1,3}(?:\.\d{1,3}){3}"
 )
-_MISSION_URL_RE = re.compile(r'(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)')
+_MISSION_URL_RE = re.compile(r"(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)")
 _MISSION_WALLET_RE = re.compile(
-    r'(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|'
-    r'4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|'
-    r'ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}'
+    r"(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|"
+    r"4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|"
+    r"ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}"
 )
-_MISSION_CRYPTO_HASH_RE = re.compile(
-    r'\b[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{80}\b|\b[0-9a-fA-F]{16}\b'
-)
-_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+_MISSION_CRYPTO_HASH_RE = re.compile(r"\b[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{80}\b|\b[0-9a-fA-F]{16}\b")
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 
 def _has_crypto_indicator(query: str) -> bool:
@@ -2161,23 +2027,19 @@ def infer_mission_intent(query: str) -> str:
     """
     # Note: MissionIntent enum must be imported by caller
     if _MISSION_CVE_RE.search(query):
-        return 'cve_recon'
+        return "cve_recon"
     if _has_crypto_indicator(query):
-        return 'wallet_recon'
-    if re.match(r'\d{1,3}(?:\.\d{1,3}){3}$', query.strip()):
-        return 'infra_recon'
+        return "wallet_recon"
+    if re.match(r"\d{1,3}(?:\.\d{1,3}){3}$", query.strip()):
+        return "infra_recon"
     if _EMAIL_RE.search(query):
-        return 'person_recon'
+        return "person_recon"
     if _MISSION_URL_RE.search(query):
-        return 'infra_recon'
+        return "infra_recon"
     if looks_like_domain(query):
-        return 'domain_recon'
-    return 'unknown'
+        return "domain_recon"
+    return "unknown"
 
-
-# ==============================================================================
-# CT Domain Extraction (from acquisition_strategy_planner + lanes)
-# ==============================================================================
 
 def extract_domain_from_ct_finding(finding: Any) -> str | None:
     """
@@ -2191,35 +2053,33 @@ def extract_domain_from_ct_finding(finding: Any) -> str | None:
         Normalized lowercase domain string, or None if not extractable.
     Canonical implementation - use this instead of local duplicates.
     """
-    payload: str | None = getattr(finding, 'payload_text', None)
+    payload: str | None = getattr(finding, "payload_text", None)
     if payload and isinstance(payload, str):
         for line in payload.splitlines():
             line = line.strip()
-            if line.startswith('domain:'):
-                domain = line[len('domain:'):].strip()
+            if line.startswith("domain:"):
+                domain = line[len("domain:") :].strip()
                 if domain:
                     return domain.lower()
         for line in payload.splitlines():
             line = line.strip()
-            if line and (not line.startswith('#')) and ('.' in line):
-                if len(line) <= 253 and ' ' not in line and (line.startswith(('www.', 'http', '//')) is False):
-                    if re.match(r'^[a-z0-9.\-_]+$', line):
+            if line and (not line.startswith("#")) and ("." in line):
+                if len(line) <= 253 and " " not in line and (line.startswith(("www.", "http", "//")) is False):
+                    if re.match(r"^[a-z0-9.\-_]+$", line):
                         return line.lower()
-    query: str = getattr(finding, 'query', '') or ''
+    query: str = getattr(finding, "query", "") or ""
     if query:
         domains = _MISSION_DOMAIN_OR_IP_RE.findall(query)
         if domains:
             for d in domains:
-                if d and '.' in d and (not looks_like_ip(d)):
+                if d and "." in d and (not looks_like_ip(d)):
                     return d.lower()
         if looks_like_domain(query.strip()):
             return query.strip().lower()
     return None
 
 
-def select_ct_domains_for_passivedns_pivot(
-    ct_candidate_findings: list, *, max_pivots: int = 5
-) -> list[str]:
+def select_ct_domains_for_passivedns_pivot(ct_candidate_findings: list, *, max_pivots: int = 5) -> list[str]:
     """
     Sprint R5: Extract deduplicated domains from CT-accepted CanonicalFinding
     candidates for PassiveDNS one-hop pivot.
@@ -2251,7 +2111,6 @@ def select_ct_domains_for_passivedns_pivot(
     return list(seen.values())
 
 
-# Update __all__ to include new functions
 __all__ = __all__ + [
     "extract_file_path_from_payload",
     "infer_mission_intent",
@@ -2260,17 +2119,14 @@ __all__ = __all__ + [
 ]
 
 
-# ==============================================================================
-# Nonfeed Mission Exit Reason (from acquisition_strategy_planner + lanes)
-# ==============================================================================
-
 class NonfeedMissionExitReason:
     """F217B: Canonical mission exit reason values."""
-    MISSION_NOT_FINISHED = ''
-    DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED = 'diagnostic_complete_nonfeed_accepted'
-    DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED = 'diagnostic_complete_no_nonfeed_accepted'
-    DIAGNOSTIC_BLOCKED_BY_MEMORY = 'diagnostic_blocked_by_memory'
-    MISSION_INCOMPLETE = 'mission_incomplete'
+
+    MISSION_NOT_FINISHED = ""
+    DIAGNOSTIC_COMPLETE_NONFEED_ACCEPTED = "diagnostic_complete_nonfeed_accepted"
+    DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED = "diagnostic_complete_no_nonfeed_accepted"
+    DIAGNOSTIC_BLOCKED_BY_MEMORY = "diagnostic_blocked_by_memory"
+    MISSION_INCOMPLETE = "mission_incomplete"
 
 
 def derive_exit_reason(
@@ -2282,7 +2138,7 @@ def derive_exit_reason(
 ) -> str:
     """
     Derive the canonical mission exit reason.
-    
+
     Canonical implementation - use this instead of local duplicates.
     """
     if not snapshot_mission_active:
@@ -2293,32 +2149,29 @@ def derive_exit_reason(
         required_set = set(required_families)
         skipped_set = set(memory_skipped_families)
         if skipped_set.issuperset(required_set) or all(
-            (family_status.get(f, 'missing') == 'memory_skip' for f in required_families)
+            family_status.get(f, "missing") == "memory_skip" for f in required_families
         ):
             return NonfeedMissionExitReason.DIAGNOSTIC_BLOCKED_BY_MEMORY
-    terminal_statuses = {'accepted', 'terminal', 'provider_failure', 'memory_skip'}
-    if all((family_status.get(f, 'missing') in terminal_statuses for f in required_families)):
+    terminal_statuses = {"accepted", "terminal", "provider_failure", "memory_skip"}
+    if all(family_status.get(f, "missing") in terminal_statuses for f in required_families):
         return NonfeedMissionExitReason.DIAGNOSTIC_COMPLETE_NO_NONFEED_ACCEPTED
     return NonfeedMissionExitReason.MISSION_INCOMPLETE
 
 
-# ==============================================================================
-# Secure Enclave Helper Path Resolution (from security/pq_crypto_swift + pq_export_encryption_swift)
-# ==============================================================================
-
-_REPO_ROOT: "Path | None" = None
+_REPO_ROOT: Path | None = None
 
 
-def _detect_repo_root() -> "Path | None":
+def _detect_repo_root() -> Path | None:
     """Detect repo root from this file's location."""
     global _REPO_ROOT
     if _REPO_ROOT is not None:
         return _REPO_ROOT
     try:
         from pathlib import Path
+
         self_path = Path(__file__).resolve()
         repo_root = self_path.parent.parent.parent
-        if (repo_root / 'tools' / 'secure_enclave_helper').exists():
+        if (repo_root / "tools" / "secure_enclave_helper").exists():
             _REPO_ROOT = repo_root
             return _REPO_ROOT
     except Exception:  # noqa: BLE001
@@ -2326,19 +2179,19 @@ def _detect_repo_root() -> "Path | None":
     return None
 
 
-def get_secure_enclave_helper_path() -> "Path | None":
+def get_secure_enclave_helper_path() -> Path | None:
     """
     Resolve secure-enclave-helper path with priority:
       a) HLEDAC_SECURE_ENCLAVE_HELPER env var
       b) repo-root/tools/secure_enclave_helper/.build/release/secure-enclave-helper
       c) None (fail-soft)
-    
+
     Canonical implementation - use this instead of local duplicates.
     """
     import os
     from pathlib import Path
-    
-    env_path = os.environ.get('HLEDAC_SECURE_ENCLAVE_HELPER')
+
+    env_path = os.environ.get("HLEDAC_SECURE_ENCLAVE_HELPER")
     if env_path:
         p = Path(env_path)
         if p.exists() and p.is_file():
@@ -2346,39 +2199,34 @@ def get_secure_enclave_helper_path() -> "Path | None":
         return None
     repo_root = _detect_repo_root()
     if repo_root is not None:
-        repo_helper = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
+        repo_helper = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
         if repo_helper.exists() and repo_helper.is_file():
             return repo_helper
     return None
 
 
-# Update __all__ to include new functions
 __all__ = __all__ + [
     "get_secure_enclave_helper_path",
 ]
 
 
-# ==============================================================================
-# Cosine Similarity (from ffi_circuit_breaker.py + rust_backend/simd.py)
-# ==============================================================================
-
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """
     Compute cosine similarity between two vectors.
-    
+
     Pure Python fallback - no SIMD, no external dependencies.
     Canonical implementation.
-    
+
     Args:
         a: First vector
         b: Second vector
-    
+
     Returns:
         Cosine similarity score in range [-1, 1], or 0.0 on error
     """
     if len(a) != len(b) or len(a) == 0:
         return 0.0
-    dot_product = sum(x * y for x, y in zip(a, b))
+    dot_product = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
     if norm_a == 0 or norm_b == 0:
@@ -2389,14 +2237,14 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 def batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
     """
     Compute cosine similarity between query and multiple vectors.
-    
+
     Pure Python fallback - no SIMD, no external dependencies.
     Canonical implementation.
-    
+
     Args:
         vectors: List of vectors to compare against query
         query: Query vector
-    
+
     Returns:
         List of cosine similarity scores
     """
@@ -2405,60 +2253,54 @@ def batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> l
     return [cosine_similarity(v, query) for v in vectors]
 
 
-# Update __all__ to include cosine similarity functions
 __all__ = __all__ + [
     "cosine_similarity",
     "batch_cosine_similarity",
 ]
 
-
-# ==============================================================================
-# Source Family Name Normalization (from acquisition_strategy_planner + lanes + plan_builder)
-# ==============================================================================
-
 _SOURCE_FAMILY_ALIASES: dict[str, str] = {
     # Canonical lowercase forms
-    'ct': 'ct',
-    'ct_log': 'ct',
-    'ct-log': 'ct',
-    'public': 'public',
-    'feed': 'feed',
-    'wayback': 'wayback',
-    'passive_dns': 'passive_dns',
-    'passivedns': 'passive_dns',
-    'passive-dns': 'passive_dns',
-    'academic': 'academic',
-    'ipfs': 'ipfs',
-    'pivot': 'pivot',
-    'pivot_executor': 'pivot',
-    'blockchain': 'blockchain',
-    'stealth': 'stealth',
-    'doh': 'doh',
-    'open_source': 'open_source',
-    'shodan': 'shodan',
-    'censys': 'censys',
-    'greynoise': 'greynoise',
-    'tor': 'tor',
+    "ct": "ct",
+    "ct_log": "ct",
+    "ct-log": "ct",
+    "public": "public",
+    "feed": "feed",
+    "wayback": "wayback",
+    "passive_dns": "passive_dns",
+    "passivedns": "passive_dns",
+    "passive-dns": "passive_dns",
+    "academic": "academic",
+    "ipfs": "ipfs",
+    "pivot": "pivot",
+    "pivot_executor": "pivot",
+    "blockchain": "blockchain",
+    "stealth": "stealth",
+    "doh": "doh",
+    "open_source": "open_source",
+    "shodan": "shodan",
+    "censys": "censys",
+    "greynoise": "greynoise",
+    "tor": "tor",
     # Canonical uppercase forms (preserve case)
-    'CT': 'ct',
-    'PUBLIC': 'ct',
-    'FEED': 'feed',
-    'WAYBACK': 'wayback',
-    'PASSIVE_DNS': 'passive_dns',
-    'PASSIVEDNS': 'passive_dns',
-    'PASSIVE-DNS': 'passive_dns',
-    'ACADEMIC': 'academic',
-    'IPFS': 'ipfs',
-    'PIVOT': 'pivot',
-    'PIVOT_EXECUTOR': 'pivot',
-    'BLOCKCHAIN': 'blockchain',
-    'STEALTH': 'stealth',
-    'DOH': 'doh',
-    'OPEN_SOURCE': 'open_source',
-    'SHODAN': 'shodan',
-    'CENSYS': 'censys',
-    'GREYNOISE': 'greynoise',
-    'TOR': 'tor',
+    "CT": "ct",
+    "PUBLIC": "ct",
+    "FEED": "feed",
+    "WAYBACK": "wayback",
+    "PASSIVE_DNS": "passive_dns",
+    "PASSIVEDNS": "passive_dns",
+    "PASSIVE-DNS": "passive_dns",
+    "ACADEMIC": "academic",
+    "IPFS": "ipfs",
+    "PIVOT": "pivot",
+    "PIVOT_EXECUTOR": "pivot",
+    "BLOCKCHAIN": "blockchain",
+    "STEALTH": "stealth",
+    "DOH": "doh",
+    "OPEN_SOURCE": "open_source",
+    "SHODAN": "shodan",
+    "CENSYS": "censys",
+    "GREYNOISE": "greynoise",
+    "TOR": "tor",
 }
 
 
@@ -2481,9 +2323,9 @@ def normalize_source_family_name(value: str | None) -> str:
     Canonical implementation - use this instead of local duplicates.
     """
     if value is None:
-        return 'unknown'
+        return "unknown"
     if not isinstance(value, str):
-        return 'unknown'
+        return "unknown"
     # Try lowercase lookup first
     normalized = value.strip().lower()
     if normalized in _SOURCE_FAMILY_ALIASES:
@@ -2496,7 +2338,6 @@ def normalize_source_family_name(value: str | None) -> str:
     return normalized
 
 
-# Update __all__ to include source family normalization
 __all__ = __all__ + [
     "normalize_source_family_name",
 ]

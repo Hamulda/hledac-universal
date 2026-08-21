@@ -28,21 +28,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_graph_analytics
 
-# Create singleton instance
 _graph_analytics = get_graph_analytics()
-
 
 def graph_analytics_wired():
     """Get the wired graph analytics integration."""
     return _graph_analytics
-
 
 def louvain_communities(
     nodes: list[tuple[int, str, str]],
@@ -61,7 +56,6 @@ def louvain_communities(
         Dict mapping node_id -> community_id
     """
     return _graph_analytics.louvain_communities(nodes, edges, resolution)
-
 
 def pagerank(
     nodes: list[tuple[int, str, str]],
@@ -82,7 +76,6 @@ def pagerank(
         Dict mapping node_id -> pagerank_score
     """
     return _graph_analytics.pagerank(nodes, edges, damping, max_iter)
-
 
 def strongly_connected_components(
     nodes: list[tuple[int, str, str]],
@@ -109,7 +102,6 @@ def strongly_connected_components(
         return []
     except Exception:  # noqa: BLE001
         return []
-
 
 def analyze_ioc_graph(
     node_data: list[dict],
@@ -167,8 +159,6 @@ def analyze_ioc_graph(
         "num_edges": len(edges),
     }
 
-
-# Check availability at import time for logging
 if _graph_analytics.available:
     logger.info("[GraphAnalytics] Rust graph_analytics.rs integration: ENABLED")
 else:

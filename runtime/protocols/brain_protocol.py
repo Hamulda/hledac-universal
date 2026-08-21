@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: kv_cache_size, max_tokens limits enforced
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -39,9 +36,7 @@ class BrainProtocol(Protocol):
         """Generate LLM response."""
         ...
 
-    async def synthesize(
-        self, findings: list[Any], query: str
-    ) -> dict[str, Any] | None:
+    async def synthesize(self, findings: list[Any], query: str) -> dict[str, Any] | None:
         """Synthesize findings into structured report."""
         ...
 

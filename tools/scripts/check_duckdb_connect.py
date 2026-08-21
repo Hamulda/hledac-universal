@@ -50,64 +50,66 @@ import glob
 import os
 import re
 import sys
-from pathlib import Path
-from _core import aclose
 
 # Authorized modules that may use duckdb.connect directly
-AUTHORIZED_MODULES: frozenset[str] = frozenset([
-    # Canonical store
-    "knowledge/duckdb_store.py",
-    "knowledge/duckdb_wal_manager.py",
-    "knowledge/duckdb_base.py",
-    # Canonical pool
-    "core/duckdb_pool.py",
-    # Legacy pools (to be refactored)
-    "core/resource_pool.py",
-    "core/resource_lifecycle.py",
-    "core/lazy_imports.py",
-    "core/rust_backend/async_query.py",
-    # Domain-specific stores
-    "graph/quantum_pathfinder.py",
-    "runtime/cti/db/duckdb_domain_mv.py",
-    "discovery/duckdb_fts_store.py",
-    # Infrastructure
-    "evidence_log.py",
-    "export/parquet_writer.py",
-    # Knowledge stores
-    "knowledge/duckdb_cve_matrix.py",
-    "knowledge/duckdb_migrator.py",
-    "knowledge/hot_edges_cache.py",
-    "knowledge/link_prediction.py",
-    "knowledge/cve_data_loader.py",
-    # Brain modules
-    "brain/gnn_node_mapper.py",
-    "brain/synthesis_runner.py",
-    # Utilities
-    "utils/optional_imports.py",
-    "otel/_setup.py",
-    # This script
-    "tools/scripts/check_duckdb_connect.py",
-])
+AUTHORIZED_MODULES: frozenset[str] = frozenset(
+    [
+        # Canonical store
+        "knowledge/duckdb_store.py",
+        "knowledge/duckdb_wal_manager.py",
+        "knowledge/duckdb_base.py",
+        # Canonical pool
+        "core/duckdb_pool.py",
+        # Legacy pools (to be refactored)
+        "core/resource_pool.py",
+        "core/resource_lifecycle.py",
+        "core/lazy_imports.py",
+        "core/rust_backend/async_query.py",
+        # Domain-specific stores
+        "graph/quantum_pathfinder.py",
+        "runtime/cti/db/duckdb_domain_mv.py",
+        "discovery/duckdb_fts_store.py",
+        # Infrastructure
+        "evidence_log.py",
+        "export/parquet_writer.py",
+        # Knowledge stores
+        "knowledge/duckdb_cve_matrix.py",
+        "knowledge/duckdb_migrator.py",
+        "knowledge/hot_edges_cache.py",
+        "knowledge/link_prediction.py",
+        "knowledge/cve_data_loader.py",
+        # Brain modules
+        "brain/gnn_node_mapper.py",
+        "brain/synthesis_runner.py",
+        # Utilities
+        "utils/optional_imports.py",
+        "otel/_setup.py",
+        # This script
+        "tools/scripts/check_duckdb_connect.py",
+    ]
+)
 
 # Pattern for detecting duckdb.connect( usage
-DUCKDB_CONNECT_PATTERN = re.compile(r'duckdb\.connect\s*\(')
+DUCKDB_CONNECT_PATTERN = re.compile(r"duckdb\.connect\s*\(")
 
 # Skip these directories and files
-SKIP_PATTERNS: frozenset[str] = frozenset([
-    ".git",
-    ".ruff_cache",
-    "__pycache__",
-    "node_modules",
-    ".venv",
-    "venv",
-    ".tox",
-    ".scratch",
-    "benchmarks_shadow",
-    # All test directories and files (use raw connections for isolation)
-    "/tests/",
-    "/test_",
-    "test_",  # Prefix match for test files
-])
+SKIP_PATTERNS: frozenset[str] = frozenset(
+    [
+        ".git",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".scratch",
+        "benchmarks_shadow",
+        # All test directories and files (use raw connections for isolation)
+        "/tests/",
+        "/test_",
+        "test_",  # Prefix match for test files
+    ]
+)
 
 
 def is_authorized(file_path: str) -> bool:
@@ -173,7 +175,7 @@ def check_file(file_path: str) -> list[str]:
     violations = []
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except Exception as e:
         return [f"Error reading file: {e}"]

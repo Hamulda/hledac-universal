@@ -30,22 +30,18 @@ API
 
 Fallback: asyncio.to_thread() — vždy funkční, fail-safe.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Rust backend — lazy load, GIL-release bridge přes py.allow_threads()
-# ─────────────────────────────────────────────────────────────────────────────
 
 _lmdb_async_rust: Any | None = None
 
@@ -56,6 +52,7 @@ def _get_rust_backend() -> Any:
     if _lmdb_async_rust is None:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _lmdb_async_rust = rust.raw.module  # raw extension module or None
     return _lmdb_async_rust
 
@@ -64,11 +61,6 @@ def _use_rust_lmdb_async() -> bool:
     """Check if Rust LMDB async backend is available."""
     backend = _get_rust_backend()
     return backend is not None and hasattr(backend, "lmdb_async_put_batch")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Core async LMDB operations
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def lmdb_async_put(env: Any, key: bytes, value: bytes) -> bool:
@@ -197,6 +189,7 @@ async def lmdb_async_get_many(
             return await lmdb_async_get(env, key)
 
     from hledac.universal.utils.asyncx import parallel
+
     result = await parallel([_get_one(k) for k in keys], policy="log", ctx="lmdb_get_many")
     # Filter exceptions — turn them into None so caller sees clean list
     return [r if isinstance(r, bytes) or r is None else None for r in result.ok]
@@ -312,11 +305,6 @@ async def lmdb_async_put_many(
     return await asyncio.to_thread(_put_many)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Context manager pro async LMDB environment lifecycle
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class AsyncLMDBEnv:
     """
     Async LMDB environment wrapper with lazy open.
@@ -352,7 +340,7 @@ class AsyncLMDBEnv:
                 return open_lmdb_with_guard(
                     pathlib.Path(self._path),
                     map_size=self._map_size,
-    )
+                )
 
             self._env = await asyncio.to_thread(_open)
         return self._env

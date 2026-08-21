@@ -9,16 +9,15 @@ Hot-path helpers s ZERO allocation na Ok path — ideální pro M1 8GB.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 
 from hledac.universal._core.result import (
+    Err,
+    Ok,
     try_or_async,
     try_or_none_async,
     try_or_raise_async,
-    Ok,
-    Err,
 )
 
 
@@ -33,6 +32,7 @@ class TestTryOrAsync:
 
     async def test_returns_default_on_exception(self) -> None:
         """Default is returned when function raises."""
+
         async def raise_exc() -> None:
             raise ValueError("test error")
 
@@ -41,6 +41,7 @@ class TestTryOrAsync:
 
     async def test_returns_default_on_any_exception(self) -> None:
         """Default is returned for any exception type."""
+
         async def raise_type_error() -> int:
             raise TypeError("type error")
 
@@ -70,6 +71,7 @@ class TestTryOrNoneAsync:
 
     async def test_returns_none_on_exception(self) -> None:
         """None is returned when function raises."""
+
         async def raise_exc() -> str:
             raise RuntimeError("test")
 
@@ -78,6 +80,7 @@ class TestTryOrNoneAsync:
 
     async def test_returns_none_on_value_error(self) -> None:
         """None is returned for ValueError."""
+
         async def raise_ve() -> int:
             raise ValueError("invalid")
 
@@ -91,9 +94,7 @@ class TestTryOrRaiseAsync:
 
     async def test_returns_value_on_success(self) -> None:
         """Value is returned directly on success path."""
-        result = await try_or_raise_async(
-            lambda: asyncio.sleep(0.001, "success"), ValueError
-        )
+        result = await try_or_raise_async(lambda: asyncio.sleep(0.001, "success"), ValueError)
         assert result == "success"
 
     async def test_raises_specified_exception_on_failure(self) -> None:
@@ -162,9 +163,7 @@ class TestAsyncHelpersIntegration:
 
         resource = MockResource()
         with pytest.raises(RuntimeError):
-            await try_or_raise_async(
-                lambda: resource.aclose(), RuntimeError, label="aclose_resource"
-            )
+            await try_or_raise_async(lambda: resource.aclose(), RuntimeError, label="aclose_resource")
 
     async def test_result_type_preserved(self) -> None:
         """Verify Result types are still available alongside helpers."""

@@ -33,13 +33,13 @@ from __future__ import annotations
 
 # Redirect all imports to the new package
 from metrics_registry import (
-    TTLCache,
-    LRUCache,
+    _GRAMMAR_KEYS,
     METRIC_NAMES,
+    LRUCache,
     MetricSnapshot,
+    TTLCache,
     _AsyncBatchFlusher,
     _BoundedCounter,
-    _GRAMMAR_KEYS,
 )
 from metrics_registry.registry import (
     MetricsRegistry,
@@ -56,22 +56,22 @@ def get_metrics_registry() -> MetricsRegistry:
     global _metrics_registry_singleton
     if _metrics_registry_singleton is None:
         _metrics_registry_singleton = MetricsRegistry(
-            run_dir=__import__("pathlib").Path('/tmp/hledac_metrics'),
-            run_id='default',
+            run_dir=__import__("pathlib").Path("/tmp/hledac_metrics"),
+            run_id="default",
         )
     return _metrics_registry_singleton
 
 
 # Re-export for backward compatibility
 __all__ = [
-    'MetricsRegistry',
-    'create_metrics_registry',
-    'get_metrics_registry',
-    'METRIC_NAMES',
-    'MetricSnapshot',
-    '_BoundedCounter',
-    '_GRAMMAR_KEYS',
-    'TTLCache',
-    'LRUCache',
-    '_AsyncBatchFlusher',
+    "MetricsRegistry",
+    "create_metrics_registry",
+    "get_metrics_registry",
+    "METRIC_NAMES",
+    "MetricSnapshot",
+    "_BoundedCounter",
+    "_GRAMMAR_KEYS",
+    "TTLCache",
+    "LRUCache",
+    "_AsyncBatchFlusher",
 ]

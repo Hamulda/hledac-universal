@@ -1,36 +1,46 @@
 from __future__ import annotations
+
 import hashlib
 import mmap
 import os
-
-
 import threading
-from hledac.universal.utils.lru_cache import LRUCache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
 import numpy as np
-from _core._util import aclose
+
+from hledac.universal.utils.lru_cache import LRUCache
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
 
 class EmbeddingCacheError(Exception):
     """Base exception."""
 
+
 class CacheCorruptError(EmbeddingCacheError):
     """L2 memmap read failed — file truncated or checksum mismatch."""
-_L2_CACHE_DIR = Path.home() / '.hledac' / 'embedding_cache'
+
+
+_L2_CACHE_DIR = Path.home() / ".hledac" / "embedding_cache"
 _L2_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _MAX_L2_BYTES = 2 * 1024 * 1024 * 1024
 _L2_ENTRY_OVERHEAD = 24
+
 
 def _item_size(dim: int, itemsize: int) -> int:
     """Bytes per embedding vector including 16-byte key digest."""
     return 16 + int(dim) * itemsize
 
+
 def _max_items(dim: int, itemsize: int, max_bytes: int) -> int:
     """Max entries that fit within max_bytes."""
     return max(0, (max_bytes - _L2_ENTRY_OVERHEAD) // _item_size(dim, itemsize))
+
+
 _DARWIN_ALIGN = 4096
+
 
 class _L2Store:
     """Memory-mapped L2 cache.
@@ -42,9 +52,22 @@ class _L2Store:
 
     Thread-safe via threading.RLock.
     """
-    __slots__ = tuple(('_dim', '_entry_bytes', '_fp', '_free_offsets', '_itemsize', '_lock', '_max_items', '_mmap', '_offset_map', '_path', '_vec_bytes'))
 
-    def __init__(self, path: Path, dim: int, itemsize: int, max_bytes: int=_MAX_L2_BYTES) -> None:
+    __slots__ = (
+        "_dim",
+        "_entry_bytes",
+        "_fp",
+        "_free_offsets",
+        "_itemsize",
+        "_lock",
+        "_max_items",
+        "_mmap",
+        "_offset_map",
+        "_path",
+        "_vec_bytes",
+    )
+
+    def __init__(self, path: Path, dim: int, itemsize: int, max_bytes: int = _MAX_L2_BYTES) -> None:
         self._path = path
         self._dim = dim
         self._itemsize = itemsize
@@ -61,7 +84,7 @@ class _L2Store:
             if path.exists():
                 self._mmap, self._fp = self._open_mmap(path)
             else:
-                self._fp = open(path, 'w+b')
+                self._fp = open(path, "w+b")
                 try:
                     self._resize(self._max_items * self._entry_bytes)
                     self._mmap = mmap.mmap(self._fp.fileno(), 0)
@@ -87,11 +110,11 @@ class _L2Store:
     def _open_mmap(self, path: Path) -> tuple[mmap.mmap, Any]:
         """Return both mmap and fp to keep them paired in instance state."""
         try:
-            fp = open(path, 'r+b')
+            fp = open(path, "r+b")
             return (mmap.mmap(fp.fileno(), 0), fp)
         except OSError:
             path.unlink(missing_ok=True)
-            fp = open(path, 'w+b')
+            fp = open(path, "w+b")
             try:
                 self._resize(self._max_items * self._entry_bytes)
                 return (mmap.mmap(fp.fileno(), 0), fp)
@@ -114,7 +137,7 @@ class _L2Store:
             offset = self._offset_map.get(key_digest, -1)
             if offset < 0:
                 return None
-            data = mm[offset + 16:offset + 16 + self._vec_bytes]
+            data = mm[offset + 16 : offset + 16 + self._vec_bytes]
             vec = np.frombuffer(data, dtype=np.float16)
             vec.flags.writeable = False
             try:
@@ -136,8 +159,8 @@ class _L2Store:
                 offset = self._free_offsets.pop(0)
             else:
                 return False
-            mm[offset:offset + 16] = key_digest
-            mm[offset + 16:offset + 16 + self._vec_bytes] = vec.tobytes()
+            mm[offset : offset + 16] = key_digest
+            mm[offset + 16 : offset + 16 + self._vec_bytes] = vec.tobytes()
             self._offset_map[key_digest] = offset
             return True
 
@@ -149,7 +172,7 @@ class _L2Store:
         with self._lock:
             for offset in self._offset_map.values():
                 if offset not in self._free_offsets:
-                    key_digest = bytes(mm[offset:offset + 16])
+                    key_digest = bytes(mm[offset : offset + 16])
                     self._free_offsets.append(offset)
                     del self._offset_map[key_digest]
                     return key_digest
@@ -172,6 +195,7 @@ class _L2Store:
         with self._lock:
             return len(self._offset_map)
 
+
 class EmbeddingCache:
     """Two-layer embedding cache: L1 (OrderedDict[float16]) + L2 (np.memmap).
 
@@ -183,9 +207,31 @@ class EmbeddingCache:
     - L2: max 2 GB, full 768d float16 overflow
     - Total: ~8 MB for 5000x384d + optional 2 GB L2
     """
-    __slots__ = ('_l1', '_l1_size', '_l2', '_l2_path', '_dim', '_itemsize', '_max_l1_items', '_l1_max_mb', '_l2_max_bytes', '_hits', '_misses', '_l2_hits', '_l2_evictions')
 
-    def __init__(self, capacity: int=100000, dim: int=384, dtype: type[np.floating[Any]]=np.float16, l1_max_mb: float=512.0, l2_max_gb: float=2.0) -> None:
+    __slots__ = (
+        "_l1",
+        "_l1_size",
+        "_l2",
+        "_l2_path",
+        "_dim",
+        "_itemsize",
+        "_max_l1_items",
+        "_l1_max_mb",
+        "_l2_max_bytes",
+        "_hits",
+        "_misses",
+        "_l2_hits",
+        "_l2_evictions",
+    )
+
+    def __init__(
+        self,
+        capacity: int = 100000,
+        dim: int = 384,
+        dtype: type[np.floating[Any]] = np.float16,
+        l1_max_mb: float = 512.0,
+        l2_max_gb: float = 2.0,
+    ) -> None:
         self._l1_size: int = 0
         self._dim = dim
         self._itemsize = np.dtype(dtype).itemsize
@@ -195,7 +241,7 @@ class EmbeddingCache:
         self._l1_max_mb = l1_max_mb
         self._l2_max_bytes = int(l2_max_gb * 1024 * 1024 * 1024)
         self._l2: _L2Store | None = None
-        self._l2_path = _L2_CACHE_DIR / f'embed_{dim}d_{self._itemsize}b.bin'
+        self._l2_path = _L2_CACHE_DIR / f"embed_{dim}d_{self._itemsize}b.bin"
         self._hits = 0
         self._misses = 0
         self._l2_hits = 0
@@ -244,7 +290,16 @@ class EmbeddingCache:
     def stats(self) -> dict[str, int | float]:
         """Return hit/miss statistics."""
         total = self._hits + self._misses
-        return {'hits': self._hits, 'misses': self._misses, 'l1_hit_rate': self._hits / total if total else 0.0, 'l2_hits': self._l2_hits, 'l2_evictions': self._l2_evictions, 'l1_size_mb': self._l1_size / 1024 / 1024, 'l1_items': len(self._l1), 'l2_items': len(self._l2) if self._l2 else 0}
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "l1_hit_rate": self._hits / total if total else 0.0,
+            "l2_hits": self._l2_hits,
+            "l2_evictions": self._l2_evictions,
+            "l1_size_mb": self._l1_size / 1024 / 1024,
+            "l1_items": len(self._l1),
+            "l2_items": len(self._l2) if self._l2 else 0,
+        }
 
     def _key_digest(self, key: str) -> bytes:
         """SHA256 digest of key, first 16 bytes."""
@@ -257,7 +312,7 @@ class EmbeddingCache:
             if not self._l1:
                 break
             self._evict_l1()
-        key = f'_l2promo_{id(vec)}'
+        key = f"_l2promo_{id(vec)}"
         self._l1[key] = vec.copy()
         self._l1_size += vec.nbytes
 
@@ -281,7 +336,7 @@ class EmbeddingCache:
             self._l2_evictions += 1
             self._l2.set(digest, oldest_vec)
 
-    def __enter__(self) -> 'EmbeddingCache':
+    def __enter__(self) -> EmbeddingCache:
         return self
 
     def __exit__(self, *_: object) -> None:

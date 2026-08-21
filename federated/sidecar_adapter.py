@@ -40,8 +40,6 @@ Returns list[CanonicalFinding] with:
     payload_text = finding payload (if any)
 """
 
-
-
 import logging
 import os
 import time
@@ -60,8 +58,6 @@ logger = logging.getLogger(__name__)
 __all__ = ["FederatedSidecarAdapter"]
 
 
-# --- M1 BOUNDS (different from coordinator.py — tighter for sidecar) --------
-
 SIDECAR_MAX_NODES: int = 2
 """Max virtual nodes in sidecar mode (1 default, 2 max)."""
 
@@ -74,13 +70,8 @@ SIDECAR_MEMORY_REDUCED_THRESHOLD: float = 0.70
 SIDECAR_TIMEOUT_S: float = 12.0
 """Hard timeout for the whole sidecar run. Tighter than coordinator default."""
 
-# --- SOURCE TYPE -------------------------------------------------------------
-
 SOURCE_TYPE: str = "federated_research"
 """source_type field on produced CanonicalFinding objects."""
-
-
-# --- ADAPTER -----------------------------------------------------------------
 
 
 class FederatedSidecarAdapter:
@@ -102,7 +93,6 @@ class FederatedSidecarAdapter:
     happens in run_async().
     """
 
-    # --- Class-level sidecar protocol attributes ---
     sidecar_id: str = "federated_research"
     env_gate: str = "HLEDAC_ENABLE_FEDERATED"
     ram_budget_mb: int = 30
@@ -135,7 +125,8 @@ class FederatedSidecarAdapter:
         except Exception as e:
             logger.warning(
                 "[FED-SIDECAR] run: fail-soft exception: %s: %s",
-                type(e).__name__, e,
+                type(e).__name__,
+                e,
             )
             return []
 
@@ -167,12 +158,14 @@ class FederatedSidecarAdapter:
                 from cryptography.hazmat.primitives.asymmetric.x25519 import (  # noqa: F401
                     X25519PrivateKey,
                 )
+
                 return "peer_node"
             except Exception as e:
                 logger.info(
                     "[FED-SIDECAR] HLEDAC_ENABLE_FEDERATED_P2P=1 but "
                     "P2P deps missing (%s: %s) — falling back to lane_dispatch",
-                    type(e).__name__, e,
+                    type(e).__name__,
+                    e,
                 )
         return "lane_dispatch"
 
@@ -203,15 +196,14 @@ class FederatedSidecarAdapter:
         memory_pressure = float(getattr(ctx, "memory_pressure", 0.0) or 0.0)
         sprint_mode = str(getattr(ctx, "sprint_mode", "active") or "active")
 
-        # Step 1: M1 safety check
         if memory_pressure > SIDECAR_MEMORY_SKIP_THRESHOLD:
             logger.info(
                 "[FED-SIDECAR] skipping (memory_pressure=%.2f > %.2f)",
-                memory_pressure, SIDECAR_MEMORY_SKIP_THRESHOLD,
+                memory_pressure,
+                SIDECAR_MEMORY_SKIP_THRESHOLD,
             )
             return []
 
-        # Step 2: adaptive node count
         if memory_pressure > SIDECAR_MEMORY_REDUCED_THRESHOLD:
             max_nodes = 1
         else:
@@ -227,10 +219,8 @@ class FederatedSidecarAdapter:
         # Clamp to max_nodes
         lanes = lanes[:max_nodes]
 
-        # Step 3: build the coordinator with a tightened total timeout.
-        # We import the module here to mutate the constant temporarily —
-        # this is safe because the constant is read at call time.
         from . import coordinator as _coord_mod
+
         original_total = _coord_mod.DISTRIBUTE_TOTAL_TIMEOUT_S
         _coord_mod.DISTRIBUTE_TOTAL_TIMEOUT_S = SIDECAR_TIMEOUT_S
         # F350M-FED-P: Transport selection. The sidecar now picks the
@@ -260,7 +250,8 @@ class FederatedSidecarAdapter:
         except Exception as e:  # last-resort fail-soft
             logger.warning(
                 "[FED-SIDECAR] coordinator raised: %s: %s",
-                type(e).__name__, e,
+                type(e).__name__,
+                e,
             )
             return []
         finally:
@@ -273,19 +264,22 @@ class FederatedSidecarAdapter:
             except Exception:  # GHOST_INVARIANT: never raise  # noqa: BLE001
                 pass
 
-        # Step 4: convert merged_findings → CanonicalFinding
         findings = self._to_canonical_findings(
-            result.merged_findings, sprint_id, query,
+            result.merged_findings,
+            sprint_id,
+            query,
         )
-        # Step 5: hard cap
         findings = findings[:AGGREGATION_MAX_FINDINGS]
 
         elapsed = time.monotonic() - started
         logger.info(
-            "[FED-SIDECAR] done: query_len=%d nodes=%d failed=%d "
-            "merged=%d canonical=%d dur=%.3fs",
-            len(query), result.total_nodes, result.failed_nodes,
-            len(result.merged_findings), len(findings), elapsed,
+            "[FED-SIDECAR] done: query_len=%d nodes=%d failed=%d merged=%d canonical=%d dur=%.3fs",
+            len(query),
+            result.total_nodes,
+            result.failed_nodes,
+            len(result.merged_findings),
+            len(findings),
+            elapsed,
         )
         return findings
 
@@ -310,10 +304,12 @@ class FederatedSidecarAdapter:
         canonical_cls: type | None = None
         try:
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
             canonical_cls = CanonicalFinding
         except Exception:
             try:
                 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
                 canonical_cls = CanonicalFinding
             except Exception:
                 canonical_cls = None
@@ -322,29 +318,15 @@ class FederatedSidecarAdapter:
         for finding in merged:
             if not isinstance(finding, dict):
                 continue
-            ioc_type = (
-                finding.get("ioc_type")
-                or finding.get("type")
-                or finding.get("indicator_type")
-                or "unknown"
-            )
-            ioc_value = (
-                finding.get("ioc_value")
-                or finding.get("value")
-                or finding.get("indicator")
-                or ""
-            )
+            ioc_type = finding.get("ioc_type") or finding.get("type") or finding.get("indicator_type") or "unknown"
+            ioc_value = finding.get("ioc_value") or finding.get("value") or finding.get("indicator") or ""
             confidence = float(finding.get("confidence", 0.5) or 0.5)
             # Clamp confidence into [0, 1]
             confidence = max(0.0, min(1.0, confidence))
             lane = str(finding.get("source_lane", "surface") or "surface")
-            finding_id = (
-                finding.get("finding_id")
-                or f"fed-{sprint_id}-{uuid.uuid7().hex[:12]}"
-            )
+            finding_id = finding.get("finding_id") or f"fed-{sprint_id}-{uuid.uuid7().hex[:12]}"
             payload_text = (
-                finding.get("payload_text")
-                or f"federated_lane={lane} ioc_type={ioc_type} ioc_value={ioc_value}"
+                finding.get("payload_text") or f"federated_lane={lane} ioc_type={ioc_type} ioc_value={ioc_value}"
             )
 
             if canonical_cls is not None:
@@ -362,19 +344,20 @@ class FederatedSidecarAdapter:
                     continue
                 except Exception as e:
                     logger.debug(
-                        "[FED-SIDECAR] CanonicalFinding construction "
-                        "failed: %s — falling back to dict",
+                        "[FED-SIDECAR] CanonicalFinding construction failed: %s — falling back to dict",
                         e,
                     )
 
             # Fallback: plain dict with canonical-ish shape
-            out.append({
-                "finding_id": finding_id,
-                "query": query,
-                "source_type": SOURCE_TYPE,
-                "confidence": confidence,
-                "ts": time.time(),
-                "provenance": ("federated_research", f"lane={lane}"),
-                "payload_text": payload_text,
-            })
+            out.append(
+                {
+                    "finding_id": finding_id,
+                    "query": query,
+                    "source_type": SOURCE_TYPE,
+                    "confidence": confidence,
+                    "ts": time.time(),
+                    "provenance": ("federated_research", f"lane={lane}"),
+                    "payload_text": payload_text,
+                }
+            )
         return out

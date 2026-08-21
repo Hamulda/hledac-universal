@@ -127,10 +127,6 @@ pub struct AhoCorasickMatcher {
     capture_patterns_raw: Vec<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Private module-level helpers — NOT part of PyO3 #[pymethods]
-// ---------------------------------------------------------------------------
-
 /// Returns true when the character at `byte_offset - 1` is NOT alphanumeric.
 /// Used for "before" boundary check — offset is the match START.
 /// This is the inverse of Python's str.isalnum().
@@ -157,7 +153,6 @@ fn is_boundary_char_at(text: &str, byte_offset: usize) -> bool {
     if byte_offset >= text.len() {
         return false;
     }
-    // Get the character at byte_offset
     text[byte_offset..]
         .chars()
         .next()
@@ -420,8 +415,6 @@ impl AhoCorasickMatcher {
     /// (intentional: labels are process-wide constants for OSINT patterns).
     fn close(&mut self) {
         use std::mem;
-        // std::mem::take replaces the value with its Default (empty vec / None automaton)
-        // This drops the old values immediately rather than waiting for struct drop.
         self.automaton = AhoCorasick::new(&[] as &[String]);
         self.patterns = mem::take(&mut self.patterns);
         // interned_labels: Vec<Option<&'static str>> — no mem::take needed (no Drop)

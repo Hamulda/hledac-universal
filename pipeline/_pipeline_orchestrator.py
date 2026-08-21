@@ -20,6 +20,7 @@ Invarianty:
 - Fail-safe: žádná stage nehazuje exception do TaskGroup
 - TaskGroup cancellation: Ctrl-C → graceful shutdown všech stages
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,8 +32,7 @@ from ._stage_protocol import (
     BoundedStageQueue,
     StageContext,
     StageMetrics,
-    )
-from _core import aclose
+)
 
 # B5. Pipeline Compose imports
 try:
@@ -41,9 +41,9 @@ try:
         BatchStats,
         RustPipelineComposer,
         pipeline_batch_stats_async,
-        pipeline_map_async,
         pipeline_filter_async,
         pipeline_filter_map_async,
+        pipeline_map_async,
     )
 except ImportError:
     # Fallback when Rust extension unavailable
@@ -51,7 +51,8 @@ except ImportError:
 
     class BatchStats:  # type: ignore[no-redef]
         """Fallback batch stats."""
-        def __init__(self, count=0, sum_len=0, min_len=0, max_len=0, unique=0):
+
+        def __init__(self, count=0, sum_len=0, min_len=0, max_len=0, unique=0) -> None:
             self.count = count
             self.sum_len = sum_len
             self.min_len = min_len
@@ -60,7 +61,8 @@ except ImportError:
 
     class RustPipelineComposer:  # type: ignore[no-redef]
         """Fallback composer using Python."""
-        def __init__(self, *, batch_size=100):
+
+        def __init__(self, *, batch_size=100) -> None:
             self._batch_size = batch_size
             self._stages = []
 
@@ -100,11 +102,11 @@ except ImportError:
     async def pipeline_filter_map_async(items, filter_fn, map_fn):
         return items
 
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
 
 # Default queue sizes — M1 8GB safe for 1 000 URL/sprint
 QUEUE_DISCOVERY_OUT = 32
@@ -182,17 +184,17 @@ class PipelineOrchestrator:
 
     def _init_stages(self, ctx: StageContext) -> None:
         """Inicializuje stages s AIMD controllers."""
-        from ._discovery_stage import DiscoveryStage
-        from ._dedup_stage import DedupStage
-        from ._fetch_stage import FetchStage
-        from ._match_stage import MatchStage
-        from ._enrich_stage import EnrichStage
-        from ._store_stage import StoreStage
         from hledac.universal.coordinators.aimd_controllers import (
             make_enrich_aimd,
-            make_extract_aimd,
             make_fetch_aimd,
-    )
+        )
+
+        from ._dedup_stage import DedupStage
+        from ._discovery_stage import DiscoveryStage
+        from ._enrich_stage import EnrichStage
+        from ._fetch_stage import FetchStage
+        from ._match_stage import MatchStage
+        from ._store_stage import StoreStage
 
         # Discovery — first stage, no input
         discovery = DiscoveryStage(
@@ -200,12 +202,11 @@ class PipelineOrchestrator:
             max_results=ctx.max_results,
             public_bootstrap_enabled=True,
             seed_context=None,
-    )
+        )
 
         # Dedup
         dedup = DedupStage(capacity=10_000)
 
-        # Fetch — AIMD
         fetch_aimd = make_fetch_aimd()
         fetch = FetchStage(
             aimd_controller=fetch_aimd,
@@ -214,7 +215,7 @@ class PipelineOrchestrator:
             fetch_max_bytes=ctx.fetch_max_bytes,
             fetch_concurrency=ctx.fetch_concurrency,
             uma_state=ctx.uma_state,
-    )
+        )
 
         # Match
         match = MatchStage()
@@ -225,14 +226,14 @@ class PipelineOrchestrator:
             aimd_controller=enrich_aimd,
             query=ctx.query,
             uma_state=ctx.uma_state,
-    )
+        )
 
         # Store — last stage
         store = StoreStage(
             store=ctx.store,
             batch_size=50,
             flush_interval_s=2.0,
-    )
+        )
 
         self._stages = [discovery, dedup, fetch, match, enrich, store]
 
@@ -272,7 +273,7 @@ class PipelineOrchestrator:
                 self._adapter_task = main_tg.create_task(
                     _adapt_queues_to_uma(),
                     name="adapter:uma_queue_sizing",
-    )
+                )
 
                 # Discovery → Dedup
                 disc_task = main_tg.create_task(
@@ -282,7 +283,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:discovery",
-    )
+                )
 
                 dedup_task = main_tg.create_task(
                     self._stages[1].run(
@@ -291,7 +292,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:dedup",
-    )
+                )
 
                 # Dedup → Fetch
                 fetch_task = main_tg.create_task(
@@ -301,9 +302,8 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:fetch",
-    )
+                )
 
-                # Fetch → Match
                 match_task = main_tg.create_task(
                     self._stages[3].run(
                         input_queue=self._queues["fetch_out"],
@@ -311,7 +311,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:match",
-    )
+                )
 
                 # Match → Enrich
                 enrich_task = main_tg.create_task(
@@ -321,7 +321,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:enrich",
-    )
+                )
 
                 # Enrich → Store (final)
                 store_task = main_tg.create_task(
@@ -331,7 +331,7 @@ class PipelineOrchestrator:
                         ctx=self._ctx,
                     ),
                     name="stage:store",
-    )
+                )
 
                 self._tasks = [
                     disc_task,
@@ -350,15 +350,9 @@ class PipelineOrchestrator:
         finally:
             self._running = False
             elapsed_ms = (time.monotonic() - start_time) * 1000
-            logger.info(
-                "PipelineOrchestrator.run() completed in %.1fms", elapsed_ms
-    )
+            logger.info("PipelineOrchestrator.run() completed in %.1fms", elapsed_ms)
 
         return self._ctx.metrics
-
-    # ------------------------------------------------------------------
-    # B5. Parallel Batch Processing — asyncio.gather for concurrent batches
-    # ------------------------------------------------------------------
 
     async def _process_batches_parallel(
         self,
@@ -396,60 +390,42 @@ class PipelineOrchestrator:
         all_stats: list[BatchStats] = []
 
         # Split items into batches
-        batches: list[list[str]] = [
-            items[i : i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)
-        ]
+        batches: list[list[str]] = [items[i : i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
 
         if not batches:
             return [], []
 
-        # Process batches in parallel groups to limit memory pressure
         for batch_group_start in range(0, len(batches), max_concurrent):
-            batch_group = batches[
-                batch_group_start : batch_group_start + max_concurrent
-            ]
+            batch_group = batches[batch_group_start : batch_group_start + max_concurrent]
 
-            # Create async tasks for this group
             tasks: list[asyncio.Task[tuple[list[Any] | list[str], BatchStats]]] = []
             for batch_idx, batch in enumerate(batch_group):
                 global_idx = batch_group_start + batch_idx
                 if op == "map":
                     task = asyncio.create_task(
-                        self._process_batch_with_stats(
-                            batch, fn_name, stage_name, global_idx, "map"
-                        )
+                        self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "map")
                     )
                 elif op == "filter":
                     task = asyncio.create_task(
-                        self._process_batch_with_stats(
-                            batch, fn_name, stage_name, global_idx, "filter"
-                        )
+                        self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "filter")
                     )
                 elif op == "filter_map" and filter_fn is not None:
                     task = asyncio.create_task(
-                        self._process_batch_with_stats_filter_map(
-                            batch, filter_fn, fn_name, stage_name, global_idx
-                        )
+                        self._process_batch_with_stats_filter_map(batch, filter_fn, fn_name, stage_name, global_idx)
                     )
                 else:
                     task = asyncio.create_task(
-                        self._process_batch_with_stats(
-                            batch, fn_name, stage_name, global_idx, "passthrough"
-                        )
+                        self._process_batch_with_stats(batch, fn_name, stage_name, global_idx, "passthrough")
                     )
                 tasks.append(task)
 
             # Wait for all tasks in this group to complete
-            group_results: list[tuple[list[Any], BatchStats]] = await asyncio.gather(
-                *tasks, return_exceptions=True
-            )
+            group_results: list[tuple[list[Any], BatchStats]] = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Collect results and handle any exceptions
             for result in group_results:
                 if isinstance(result, Exception):
-                    logger.warning(
-                        "B5.[%s] Batch failed: %s", stage_name, result
-                    )
+                    logger.warning("B5.[%s] Batch failed: %s", stage_name, result)
                     continue
                 batch_results, batch_stats = result
                 all_results.extend(batch_results)
@@ -514,13 +490,7 @@ class PipelineOrchestrator:
         results = await pipeline_filter_map_async(items, filter_fn, map_fn)
         return results, stats
 
-    # ------------------------------------------------------------------
-    # B5. Batch Processing Methods — Rust pipeline_compose via asyncio.to_thread
-    # ------------------------------------------------------------------
-
-    async def _log_batch_stats(
-        self, stage_name: str, items: list[str], batch_idx: int
-    ) -> BatchStats:
+    async def _log_batch_stats(self, stage_name: str, items: list[str], batch_idx: int) -> BatchStats:
         """Log batch statistics before stage processing.
 
         Calls pipeline_batch_stats_async() to get batch metrics
@@ -651,9 +621,7 @@ class PipelineOrchestrator:
             elif op == "filter":
                 batch_results = await pipeline_filter_async(batch, fn_name)
             elif op == "filter_map" and filter_fn is not None:
-                batch_results = await pipeline_filter_map_async(
-                    batch, filter_fn, fn_name
-                )
+                batch_results = await pipeline_filter_map_async(batch, filter_fn, fn_name)
             else:
                 batch_results = list(batch)
 
@@ -694,11 +662,6 @@ class PipelineOrchestrator:
                 pass
             except Exception:  # noqa: BLE001
                 pass
-
-
-# ----------------------------------------------------------------------
-# Convenience function
-# ----------------------------------------------------------------------
 
 
 async def run_public_pipeline(

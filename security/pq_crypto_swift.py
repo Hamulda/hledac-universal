@@ -14,37 +14,39 @@ Helper path discovery (priority order):
 Fail-soft throughout: any helper failure returns safe defaults.
 Never spawns subprocess at import time.
 """
+
 import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import logging
-import msgspec.json as _json
-import os
 import platform
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 from typing import Any
 
+import msgspec.json as _json
+
+from compat.msgspec_gc_compat import Struct
+from utils._patterns import get_secure_enclave_helper_path
+
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
-from .pq_crypto import PQAvailability, PQSignature, PQStatus, PostQuantumError
-from _core import aclose
-from utils._patterns import get_secure_enclave_helper_path  # noqa: E402,F401
+from .pq_crypto import PostQuantumError, PQAvailability, PQSignature, PQStatus
 
 logger = logging.getLogger(__name__)
-HELPER_MISSING = 'HELPER_MISSING'
-HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'
-HELPER_TIMEOUT = 'HELPER_TIMEOUT'
-HELPER_BAD_JSON = 'HELPER_BAD_JSON'
-HELPER_NONZERO_EXIT = 'HELPER_NONZERO_EXIT'
+HELPER_MISSING = "HELPER_MISSING"
+HELPER_NOT_EXECUTABLE = "HELPER_NOT_EXECUTABLE"
+HELPER_TIMEOUT = "HELPER_TIMEOUT"
+HELPER_BAD_JSON = "HELPER_BAD_JSON"
+HELPER_NONZERO_EXIT = "HELPER_NONZERO_EXIT"
 _STATUS_CACHE_TTL_SECONDS = 30.0
+
 
 def _get_helper_path() -> Path | None:
     """Internal alias for get_secure_enclave_helper_path()."""
     return get_secure_enclave_helper_path()
 
-def _run_helper_sync(command: list[str], timeout: float=10.0) -> dict[str, Any] | None:
+
+def _run_helper_sync(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
     """
     Run the secure-enclave-helper synchronously and return parsed JSON.
     Returns None on any failure (timeout, non-zero exit, bad JSON).
@@ -55,24 +57,28 @@ def _run_helper_sync(command: list[str], timeout: float=10.0) -> dict[str, Any] 
     try:
         result = subprocess.run([str(helper_path)] + command, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
-            logger.debug(f'Helper exited {result.returncode}: {result.stderr}')
+            logger.debug(f"Helper exited {result.returncode}: {result.stderr}")
             return None
         return _json.decode(result.stdout)
     except Exception as e:
-        logger.debug(f'Helper failed: {e}')
+        logger.debug(f"Helper failed: {e}")
         return None
 
-async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str, Any] | None:
+
+async def _run_helper_async(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
     """
     Run the secure-enclave-helper asynchronously via asyncio.to_thread.
     Returns None on any failure.
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
+
 class _CachedStatus(Struct):
     """Bounded status cache entry with short TTL."""
+
     status: PQStatus
     until: float
+
 
 class SwiftPostQuantumBackend(Struct):
     """
@@ -81,11 +87,12 @@ class SwiftPostQuantumBackend(Struct):
     Only active on macOS 26+ where ML-DSA-65 is available.
     Falls back gracefully when helper is unavailable or fails.
     """
-    key_id: str = 'com.hledac.pq.signing.v1'
+
+    key_id: str = "com.hledac.pq.signing.v1"
     _status: PQStatus = field(default_factory=lambda: PQStatus(availability=PQAvailability.UNAVAILABLE))
     _cache: _CachedStatus | None = None
 
-    def is_available(self, force_refresh: bool=False) -> bool:
+    def is_available(self, force_refresh: bool = False) -> bool:
         """
         Check if the Swift helper is available and ML-DSA is supported.
 
@@ -101,29 +108,51 @@ class SwiftPostQuantumBackend(Struct):
             if time.monotonic() < self._cache.until:
                 self._status = self._cache.status
                 return self._status.availability == PQAvailability.AVAILABLE
-        if platform.machine() != 'arm64':
-            self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='ML-DSA requires arm64 (M1/M2/M3)')
+        if platform.machine() != "arm64":
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="ML-DSA requires arm64 (M1/M2/M3)",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
         if _get_helper_path() is None:
-            self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='secure-enclave-helper not found')
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="secure-enclave-helper not found",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        result = _run_helper_sync(['pq-status'])
+        result = _run_helper_sync(["pq-status"])
         if result is None:
-            self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='Helper unavailable or ML-DSA not supported')
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="Helper unavailable or ML-DSA not supported",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        if not result.get('ok', False):
-            self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, backend_name='swift-helper', error_message=result.get('message', 'PQ status check failed'))
+        if not result.get("ok", False):
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message=result.get("message", "PQ status check failed"),
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        mldsa_available = result.get('data', {}).get('mldsa_available', 'false') == 'true'
+        mldsa_available = result.get("data", {}).get("mldsa_available", "false") == "true"
         if not mldsa_available:
-            self._status = PQStatus(availability=PQAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='ML-DSA not available on this macOS version')
+            self._status = PQStatus(
+                availability=PQAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="ML-DSA not available on this macOS version",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        self._status = PQStatus(availability=PQAvailability.AVAILABLE, backend_name='swift-helper', mldsa_key_id=self.key_id, mldsa_level=65)
+        self._status = PQStatus(
+            availability=PQAvailability.AVAILABLE, backend_name="swift-helper", mldsa_key_id=self.key_id, mldsa_level=65
+        )
         self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
         return True
 
@@ -131,18 +160,18 @@ class SwiftPostQuantumBackend(Struct):
         """Return current PQ status snapshot."""
         return self._status
 
-    def ensure_mldsa_key(self, key_id: str, level: int=65) -> bool:
+    def ensure_mldsa_key(self, key_id: str, level: int = 65) -> bool:
         """
         Ensure ML-DSA key exists via the helper.
 
         Returns True if key is ready or already exists.
         """
-        result = _run_helper_sync(['ensure-mldsa-key', '--key-id', key_id])
+        result = _run_helper_sync(["ensure-mldsa-key", "--key-id", key_id])
         if result is None:
             return False
-        return result.get('ok', False)
+        return result.get("ok", False)
 
-    def sign_mldsa_digest(self, key_id: str, digest: str, level: int=65) -> PQSignature:
+    def sign_mldsa_digest(self, key_id: str, digest: str, level: int = 65) -> PQSignature:
         """
         Sign a digest with ML-DSA-65 via the helper.
 
@@ -157,16 +186,18 @@ class SwiftPostQuantumBackend(Struct):
         Raises:
             PostQuantumError: If signing fails
         """
-        result = _run_helper_sync(['mldsa-sign-digest', '--key-id', key_id, '--digest-hex', digest])
-        if result is None or not result.get('ok', False):
-            msg = result.get('message', 'ML-DSA signing failed') if result else 'Helper unavailable'
+        result = _run_helper_sync(["mldsa-sign-digest", "--key-id", key_id, "--digest-hex", digest])
+        if result is None or not result.get("ok", False):
+            msg = result.get("message", "ML-DSA signing failed") if result else "Helper unavailable"
             raise PostQuantumError(msg)
-        sig_hex = result.get('data', {}).get('signature_hex', '')
+        sig_hex = result.get("data", {}).get("signature_hex", "")
         if not sig_hex:
-            raise PostQuantumError('No signature in helper response')
-        return PQSignature(algorithm='ml-dsa-65', signature=bytes.fromhex(sig_hex), backend_name=self.name, security_level=level)
+            raise PostQuantumError("No signature in helper response")
+        return PQSignature(
+            algorithm="ml-dsa-65", signature=bytes.fromhex(sig_hex), backend_name=self.name, security_level=level
+        )
 
-    def verify_mldsa_signature(self, digest: str, signature: bytes, public_key_bytes: bytes, level: int=65) -> bool:
+    def verify_mldsa_signature(self, digest: str, signature: bytes, public_key_bytes: bytes, level: int = 65) -> bool:
         """
         Verify an ML-DSA-65 signature via the helper.
 
@@ -179,11 +210,21 @@ class SwiftPostQuantumBackend(Struct):
         Returns:
             True if valid, False otherwise
         """
-        result = _run_helper_sync(['mldsa-verify', '--digest-hex', digest, '--signature-hex', signature.hex(), '--public-key-hex', public_key_bytes.hex()])
+        result = _run_helper_sync(
+            [
+                "mldsa-verify",
+                "--digest-hex",
+                digest,
+                "--signature-hex",
+                signature.hex(),
+                "--public-key-hex",
+                public_key_bytes.hex(),
+            ]
+        )
         if result is None:
             return False
-        return result.get('ok', False)
+        return result.get("ok", False)
 
     @property
     def name(self) -> str:
-        return 'swift-helper-mldsa'
+        return "swift-helper-mldsa"

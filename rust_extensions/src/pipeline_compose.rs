@@ -54,10 +54,6 @@ use std::sync::Arc;
 
 use crate::mixed_pool;
 
-// ---------------------------------------------------------------------------
-// Constants (M1 8GB bounded)
-// ---------------------------------------------------------------------------
-
 /// Hard cap: max items per single pipeline invoke.
 /// Prevents unbounded memory allocation on M1 8GB.
 /// Beyond this, caller should batch.
@@ -67,20 +63,12 @@ const MAX_PIPELINE_ITEMS: usize = 50_000;
 /// Beyond this, caller should compose multiple pipelines.
 const MAX_PIPELINE_STAGES: usize = 8;
 
-// ---------------------------------------------------------------------------
-// Typedefs for zero-copy Arc<T> pipeline
-// ---------------------------------------------------------------------------
-
 /// Arc-wrapped item for zero-copy stage-to-stage transfer.
 /// Each stage receives Arc<T>, can Clone to share without copy.
 pub(crate) type ArcItem<T> = Arc<T>;
 
 /// Arc-wrapped result of a map/filter stage.
 pub(crate) type ArcResult<T> = Arc<Option<T>>;
-
-// ---------------------------------------------------------------------------
-// Pipeline stage definitions
-// ---------------------------------------------------------------------------
 
 /// Single pipeline stage — filter, map, or fold.
 ///
@@ -97,10 +85,6 @@ pub enum PipelineStage<T, U, Acc> {
     /// FOLD: (Acc, T) → Acc, sequential within each partition.
     Fold(fn(Acc, &T) -> Acc, Acc),
 }
-
-// ---------------------------------------------------------------------------
-// Core pipeline primitives
-// ---------------------------------------------------------------------------
 
 /// MAP stage — parallel transform via rayon on mixed_pool.
 ///
@@ -224,10 +208,6 @@ where
     })
 }
 
-// ---------------------------------------------------------------------------
-// Compose: 2-3 stage pipelines via mixed_pool
-// ---------------------------------------------------------------------------
-
 /// Compose 2 stages: MAP → MAP (both parallel via rayon).
 ///
 /// Zero-copy: intermediate result wrapped in Arc<Option<U>> and
@@ -321,10 +301,6 @@ where
     })
 }
 
-// ---------------------------------------------------------------------------
-// Arc-wrapped bulk ops for zero-copy Python FFI
-// ---------------------------------------------------------------------------
-
 /// MAP over items wrapped in Arc<T> (zero-copy from Python list).
 ///
 /// PyO3 receives `Vec<ArcItem<T>>` from Python — Rust clones the Arc
@@ -362,10 +338,6 @@ where
 {
     pipeline_fold_arc(source, fold_fn, initial)
 }
-
-// ---------------------------------------------------------------------------
-// Python FFI — concrete named functions (no closure passing across FFI)
-// ---------------------------------------------------------------------------
 
 /// pipeline_map — MAP stage with named transform functions.
 ///
@@ -905,10 +877,6 @@ pub fn pipeline_batch_stats(
     Ok((n, sum_len, *min_len, *max_len, unique_count))
 }
 
-// ---------------------------------------------------------------------------
-// PyO3 registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pipeline_map))?;
     m.add_function(wrap_pyfunction!(pipeline_filter))?;
@@ -919,10 +887,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(pipeline_batch_stats))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

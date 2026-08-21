@@ -11,7 +11,6 @@ import ctypes
 import ctypes.util
 import sys
 from typing import TYPE_CHECKING
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -25,11 +24,6 @@ if sys.platform == "darwin":
         pass
 
 _MADV_FREE_REUSABLE = 7  # macOS MADV_FREE_REUSABLE
-
-
-# =============================================================================
-# Madvise Domain
-# =============================================================================
 
 
 class _RustMadvisDomain:

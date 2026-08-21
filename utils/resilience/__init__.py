@@ -41,46 +41,46 @@ Usage:
         ...
 """
 
+from hledac.universal.utils.resilience.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerOpen,
+    CircuitBreakers,
+    CircuitState,
+)
 from hledac.universal.utils.resilience.degradation_modes import (
-    DegradedMode,
     DegradationState,
-    ModeTransition,
-    get_degradation_action,
+    DegradedMode,
     FailureSeverity,
+    ModeTransition,
     SeverityMapper,
+    get_degradation_action,
 )
 from hledac.universal.utils.resilience.failure_registry import (
     FailureEntry,
     FailureRegistry,
     SprintHealthLedger,
-    get_ledger,
     get_current_ledger,
-)
-from hledac.universal.utils.resilience.circuit_breaker import (
-    CircuitBreaker,
-    CircuitBreakerOpen,
-    CircuitState,
-    CircuitBreakers,
-    CircuitBreakerConfig,
+    get_ledger,
 )
 from hledac.universal.utils.resilience.health_indicators import (
-    HealthScore,
     HealthReporter,
-    format_health_status,
-    format_completion_summary,
+    HealthScore,
     check_alerts,
     check_alerts_async,
+    format_completion_summary,
+    format_health_status,
 )
 
 try:
     from hledac.universal.utils.resilience.decorators import (
-        with_circuit_breaker,
         circuit_protected,
         degradation_aware,
+        get_all_circuit_status,
         get_circuit,
         register_circuit,
-        get_all_circuit_status,
         reset_all_circuits,
+        with_circuit_breaker,
     )
 except ImportError:
     # decorators module is optional

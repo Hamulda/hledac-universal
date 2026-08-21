@@ -24,33 +24,25 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Literal
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Module-level compiled regex (performance - compiled once at import)
-# ---------------------------------------------------------------------------
-
 _URL_PATTERN = re.compile(
-    r'https?://'
-    r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
-    r'localhost|'
-    r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-    r'(?::\d+)?'
-    r'(?:/?|[/?]\S+)\b',
+    r"https?://"
+    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"
+    r"localhost|"
+    r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+    r"(?::\d+)?"
+    r"(?:/?|[/?]\S+)\b",
     re.IGNORECASE,
-    )
+)
 
-_IP_PATTERN = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?$')
-_DOMAIN_PATTERN = re.compile(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b')
-_DOMAIN_STRICT_PATTERN = re.compile(r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$')
-_THREAT_PATTERN = re.compile(r'\b(malware|ransomware|phishing|c2|command[- ]and[- ]control|apt[ -]?\d{1,2})\b', re.I)
+_IP_PATTERN = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?$")
+_DOMAIN_PATTERN = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+_DOMAIN_STRICT_PATTERN = re.compile(r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$")
+_THREAT_PATTERN = re.compile(r"\b(malware|ransomware|phishing|c2|command[- ]and[- ]control|apt[ -]?\d{1,2})\b", re.I)
 
-# ---------------------------------------------------------------------------
-# Pure Lane Predicate Helpers
-# ---------------------------------------------------------------------------
 
 def _lc(s: str) -> str:
     """Lowercase helper for lane classification."""
@@ -59,12 +51,12 @@ def _lc(s: str) -> str:
 
 def _has_explicit_cid(query: str) -> bool:
     """Check if query contains an explicit CIDR notation."""
-    return bool(re.search(r'\d+\.\d+\.\d+\.\d+/\d+', query))
+    return bool(re.search(r"\d+\.\d+\.\d+\.\d+/\d+", query))
 
 
 def _extract_cids_from_text(text: str) -> list[str]:
     """Extract all CIDR blocks from text."""
-    return re.findall(r'\d+\.\d+\.\d+\.\d+/\d+', text)
+    return re.findall(r"\d+\.\d+\.\d+\.\d+/\d+", text)
 
 
 def _has_url(text: str) -> bool:
@@ -74,24 +66,24 @@ def _has_url(text: str) -> bool:
 
 def _has_crypto_wallet(text: str) -> bool:
     """Check if text contains a crypto wallet address pattern."""
-    btc = re.search(r'\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b', text)
-    eth = re.search(r'\b0x[a-fA-F0-9]{40}\b', text)
+    btc = re.search(r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b", text)
+    eth = re.search(r"\b0x[a-fA-F0-9]{40}\b", text)
     return bool(btc or eth)
 
 
 def _has_crypto_hash(text: str) -> bool:
     """Check if text contains a crypto hash (BTC tx, block or ETH tx)."""
-    btc = re.search(r'\b[a-fA-F0-9]{64}\b', text)
-    eth = re.search(r'\b0x[a-fA-F0-9]{64}\b', text)
+    btc = re.search(r"\b[a-fA-F0-9]{64}\b", text)
+    eth = re.search(r"\b0x[a-fA-F0-9]{64}\b", text)
     return bool(btc or eth)
 
 
 def _has_crypto_indicator(text: str) -> bool:
     """Check if text contains any cryptocurrency-related indicator."""
     patterns = [
-        r'\b(bTC|btc|ETH|eth|XMR|xmr|LTC|ltc|DOGE|doge|USDT|usdt|BCash|bch)\b',
-        r'\b0x[a-fA-F0-9]{40}\b',
-        r'\b[a-fA-F0-9]{64}\b',
+        r"\b(bTC|btc|ETH|eth|XMR|xmr|LTC|ltc|DOGE|doge|USDT|usdt|BCash|bch)\b",
+        r"\b0x[a-fA-F0-9]{40}\b",
+        r"\b[a-fA-F0-9]{64}\b",
     ]
     return any(re.search(p, text) for p in patterns)
 
@@ -108,7 +100,7 @@ def _has_domain_or_ip(text: str) -> bool:
 
 def _looks_like_ip(text: str) -> bool:
     """Check if text looks like an IP address."""
-    parts = text.strip().split('.')
+    parts = text.strip().split(".")
     if len(parts) != 4:
         return False
     try:
@@ -122,32 +114,26 @@ def _looks_like_domain(text: str) -> bool:
     return bool(_DOMAIN_STRICT_PATTERN.match(text.strip()))
 
 
-# ---------------------------------------------------------------------------
-# Mission / Query Classification
-# ---------------------------------------------------------------------------
-
-def _mission_target_kind(query: str) -> Literal['ip', 'domain', 'url', 'crypto', 'hash', 'cid', 'threat', 'keyword', 'unknown']:
+def _mission_target_kind(
+    query: str,
+) -> Literal["ip", "domain", "url", "crypto", "hash", "cid", "threat", "keyword", "unknown"]:
     """Classify the primary target kind of a query string."""
     if _has_explicit_cid(query):
-        return 'cid'
+        return "cid"
     if _has_url(query):
-        return 'url'
+        return "url"
     if _looks_like_ip(query.strip()):
-        return 'ip'
+        return "ip"
     if _looks_like_domain(query.strip()):
-        return 'domain'
+        return "domain"
     if _has_crypto_wallet(query):
-        return 'crypto'
+        return "crypto"
     if _has_crypto_hash(query):
-        return 'hash'
+        return "hash"
     if _has_threat_indicator(query):
-        return 'threat'
-    return 'unknown'
+        return "threat"
+    return "unknown"
 
-
-# ---------------------------------------------------------------------------
-# Lane Priority & Concurrency Helpers
-# ---------------------------------------------------------------------------
 
 def _base_concurrency() -> int:
     """Default base concurrency for lane execution."""
@@ -160,18 +146,10 @@ def _lane_concurrency(_lane_name: str) -> int:
     return _base_concurrency()
 
 
-# ---------------------------------------------------------------------------
-# Lane Rule Helpers
-# ---------------------------------------------------------------------------
-
 def _lane_rule(_lane_name: str, _mode: str = "active") -> str | None:
     """Legacy lane rule resolver (stub for backward compat)."""
     return None
 
-
-# ---------------------------------------------------------------------------
-# Lane Eligibility & Skip Reasoning
-# ---------------------------------------------------------------------------
 
 def _build_nonfeed_lane_eligibility(
     query: str,
@@ -230,15 +208,17 @@ def lane_is_terminal(lane_name: str) -> bool:
     Returns:
         True if lane produces terminal (non-pivotable) findings
     """
-    terminal_lanes = frozenset({
-        "ct",
-        "passivedns",
-        "crypto",
-        "blockchain",
-        "academic",
-        "whois",
-        "dns",
-    })
+    terminal_lanes = frozenset(
+        {
+            "ct",
+            "passivedns",
+            "crypto",
+            "blockchain",
+            "academic",
+            "whois",
+            "dns",
+        }
+    )
     return lane_name in terminal_lanes
 
 
@@ -261,10 +241,6 @@ def lane_skip_reason(lane_name: str, mode: str, _kind: str) -> str | None:
         return None  # Terminal lanes always run
     return None
 
-
-# ---------------------------------------------------------------------------
-# Terminality & Normalization
-# ---------------------------------------------------------------------------
 
 def normalize_terminal_state(outcome: dict[str, Any]) -> dict[str, Any]:
     """
@@ -303,10 +279,6 @@ def terminality_report(lane_outcomes: dict[str, dict[str, Any]]) -> dict[str, An
     }
 
 
-# ---------------------------------------------------------------------------
-# Source Family Normalization
-# ---------------------------------------------------------------------------
-
 def normalize_source_family_name(family: str) -> str:
     """
     Normalize a source family name to canonical form.
@@ -319,10 +291,6 @@ def normalize_source_family_name(family: str) -> str:
     """
     return family.lower().strip().replace("-", "_").replace(" ", "_")
 
-
-# ---------------------------------------------------------------------------
-# Mission Intent Inference
-# ---------------------------------------------------------------------------
 
 def infer_mission_intent(query: str) -> str:
     """
@@ -345,10 +313,6 @@ def infer_mission_intent(query: str) -> str:
         return "threat"
     return "unknown"
 
-
-# ---------------------------------------------------------------------------
-# Acquisition Plan Helpers
-# ---------------------------------------------------------------------------
 
 def get_lane_plan(
     query: str,
@@ -390,10 +354,6 @@ def get_lane_plan(
     }
 
 
-# ---------------------------------------------------------------------------
-# CT / PassiveDNS Pivot Helpers
-# ---------------------------------------------------------------------------
-
 def _extract_domain_from_ct_finding(finding: dict[str, Any]) -> str | None:
     """Extract domain from a Certificate Transparency finding."""
     return finding.get("domain") or finding.get("hostname") or finding.get("subject")
@@ -423,12 +383,8 @@ def select_ct_domains_for_passivedns_pivot(
 
 def _extract_ips_from_query(query: str) -> list[str]:
     """Extract all IP addresses from a query string."""
-    return re.findall(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?', query)
+    return re.findall(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?", query)
 
-
-# ---------------------------------------------------------------------------
-# Crypto Extraction
-# ---------------------------------------------------------------------------
 
 def _extract_crypto_from_query(query: str) -> dict[str, list[str]]:
     """
@@ -440,23 +396,19 @@ def _extract_crypto_from_query(query: str) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {"btc": [], "eth": [], "xmr": [], "ltc": [], "doge": []}
 
     # BTC addresses
-    btc_addrs = re.findall(r'\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b', query)
+    btc_addrs = re.findall(r"\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b", query)
     result["btc"].extend(btc_addrs)
 
     # ETH addresses
-    eth_addrs = re.findall(r'\b0x[a-fA-F0-9]{40}\b', query)
+    eth_addrs = re.findall(r"\b0x[a-fA-F0-9]{40}\b", query)
     result["eth"].extend(eth_addrs)
 
     # Generic hex hashes (likely crypto)
-    hex_hashes = re.findall(r'\b[a-fA-F0-9]{64}\b', query)
+    hex_hashes = re.findall(r"\b[a-fA-F0-9]{64}\b", query)
     result["btc"].extend(h for h in hex_hashes if len(h) == 64)
 
     return result
 
-
-# ---------------------------------------------------------------------------
-# Exports
-# ---------------------------------------------------------------------------
 
 __all__ = [
     # Pure predicates

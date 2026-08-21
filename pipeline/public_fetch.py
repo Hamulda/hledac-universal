@@ -15,46 +15,42 @@ DI seams (testable via _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT globals):
 - CanonicalFinding: from duckdb_store (lazy import)
 - run_in_cpu_pool_async: from utils.rayon_pool (lazy import)
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from .public_acceptance import _build_public_finding
-from .public_acceptance import _extract_live_public_findings_from_page
-from .public_discovery import _compute_fetch_policy
-from .public_patterns import _compute_page_usable_fields
-from .public_patterns import _enrich_text_with_metadata
-from .public_patterns import _html_to_text
-from .public_patterns import _js_confidence_from_verdict
-from .public_patterns import _make_finding_id
-from .public_patterns import _score_page_quality
-from .public_stages import PipelinePageResult
+import numpy as np
+
 from hledac.universal.brain.model_manager import get_model_manager
 from hledac.universal.embedding_pipeline import generate_embeddings_async
 from hledac.universal.layers import get_temporal_signal_layer
 from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
 from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
 from hledac.universal.utils.asyncx import parallel
-from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit
+from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
 
-import numpy as np
-from _core import aclose
+from .public_acceptance import _build_public_finding, _extract_live_public_findings_from_page
+from .public_discovery import _compute_fetch_policy
+from .public_patterns import (
+    _compute_page_usable_fields,
+    _enrich_text_with_metadata,
+    _html_to_text,
+    _js_confidence_from_verdict,
+    _make_finding_id,
+    _score_page_quality,
+)
+from .public_stages import PipelinePageResult
 
-# ----------------------------------------------------------------------
-# DI globals — patched by tests; real code uses _ensure_patched()
-# ----------------------------------------------------------------------
 _ASYNC_FETCH_PUBLIC_TEXT: Any = None
 _SYNC_MATCH_TEXT: Any = None
 _PATCHED_BY_ENSURE: bool = False
 
-# ----------------------------------------------------------------------
-# Constants (from public_constants)
-# ----------------------------------------------------------------------
 MAX_EXTRACTED_TEXT_CHARS: int = 200_000
 _DISCOVERY_SIGNAL_SCORE_THRESHOLD: float = 0.3
 _DISCOVERY_SKIP_THRESHOLD: float = 0.15
@@ -63,11 +59,6 @@ _FETCH_BUDGET_STRONG: float = 1.0
 _FETCH_BUDGET_NORMAL: float = 0.75
 _FETCH_BUDGET_WEAK: float = 0.4
 _PRE_FETCH_TEXT_MIN_CHARS: int = 50
-
-
-# ----------------------------------------------------------------------
-# Patch helpers (for tests)
-# ----------------------------------------------------------------------
 
 
 def _patch_fetcher_and_matcher(fetch_fn: Any, match_fn: Any) -> None:
@@ -91,11 +82,6 @@ def _ensure_patched() -> None:
         from hledac.universal.utils.patterns.pattern_matcher import match_text
 
         _SYNC_MATCH_TEXT = match_text
-
-
-# ----------------------------------------------------------------------
-# Graph helper (inline to avoid circular imports)
-# ----------------------------------------------------------------------
 
 
 def _add_pattern_hits_to_graph(
@@ -122,16 +108,11 @@ def _add_pattern_hits_to_graph(
                         source="public_pipeline",
                         properties={"pattern": pattern},
                         observed_at=observed_at,
-    )
+                    )
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001
-
-
-# ----------------------------------------------------------------------
-# Pipeline Context — holds all intermediate state
-# ----------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,18 +159,15 @@ class PipelinePageContext:
         discovery_reason: str | None = None,
         vector_store: Any = None,
         graph: Any = None,
-    ) -> "PipelinePageContext":
+    ) -> PipelinePageContext:
         """Create context from function parameters."""
-        has_signal = (
-            (discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD)
-            or (discovery_reason is not None and discovery_reason.strip() != "")
-    )
+        has_signal = (discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD) or (
+            discovery_reason is not None and discovery_reason.strip() != ""
+        )
         strong_signal = discovery_score is not None and discovery_score >= 0.7
         low_discovery = (
-            discovery_score is not None
-            and discovery_score < _DISCOVERY_SKIP_THRESHOLD
-            and not strong_signal
-    )
+            discovery_score is not None and discovery_score < _DISCOVERY_SKIP_THRESHOLD and not strong_signal
+        )
         if low_discovery:
             budget_mult = _FETCH_BUDGET_SKIP
         elif discovery_score is not None and discovery_score >= 0.85:
@@ -222,12 +200,7 @@ class PipelinePageContext:
             has_signal=has_signal,
             strong_signal=strong_signal,
             budget_mult=budget_mult,
-    )
-
-
-# ----------------------------------------------------------------------
-# Terminal Reason State Machine
-# ----------------------------------------------------------------------
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,22 +240,12 @@ class TerminalReasonMachine:
         return TerminalState("rejected_storage_rejected", "storage_rejected")
 
 
-# ----------------------------------------------------------------------
-# Skip Result Exception
-# ----------------------------------------------------------------------
-
-
 class _SkipWithResult(Exception):
     """Signal that processing should skip to end with a specific result."""
 
-    def __init__(self, result: Any):
+    def __init__(self, result: Any) -> None:
         self.result = result
         super().__init__()
-
-
-# ----------------------------------------------------------------------
-# Phase Result Dataclasses (slots=True for M1 8GB memory efficiency)
-# ----------------------------------------------------------------------
 
 
 @dataclass(slots=True)
@@ -341,11 +304,6 @@ class _StorageResult:
     quality_gate_rejected: bool
 
 
-# ----------------------------------------------------------------------
-# Fetch Stage Helper (extracted for CC reduction)
-# ----------------------------------------------------------------------
-
-
 async def _execute_fetch_stage(
     hit_url: str,
     semaphore: asyncio.Semaphore,
@@ -369,7 +327,7 @@ async def _execute_fetch_stage(
                     use_stealth=policy.use_stealth,
                     use_js=policy.use_js,
                     use_doh=policy.use_doh,
-    )
+                )
         except TimeoutError:
             return _FetchStageResult(
                 result=None,
@@ -377,7 +335,7 @@ async def _execute_fetch_stage(
                 redirected=False,
                 redirect_target=None,
                 js_skip_reason=None,
-    )
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -387,9 +345,8 @@ async def _execute_fetch_stage(
                 redirected=False,
                 redirect_target=None,
                 js_skip_reason=None,
-    )
+            )
 
-    # Extract metadata from successful fetch
     return _FetchStageResult(
         result=result,
         failure_stage=getattr(result, "failure_stage", None),
@@ -397,11 +354,6 @@ async def _execute_fetch_stage(
         redirect_target=getattr(result, "redirect_target", None),
         js_skip_reason=getattr(result, "js_renderer_skipped_reason", None),
     )
-
-
-# ----------------------------------------------------------------------
-# Pattern Scan Stage Helper (extracted for CC reduction)
-# ----------------------------------------------------------------------
 
 
 def _execute_pattern_scan_stage(
@@ -450,11 +402,6 @@ async def _run_pattern_scan(
     return await _scan_patterns(scan_text, result, quality_reason, js_result=None)
 
 
-# ----------------------------------------------------------------------
-# Storage Stage Helper (extracted for CC reduction)
-# ----------------------------------------------------------------------
-
-
 async def _execute_storage_stage(
     unique_findings: list,
     store: Any,
@@ -488,11 +435,6 @@ async def _execute_storage_stage(
         storage_error=storage_error,
         quality_gate_rejected=quality_gate_rejected,
     )
-
-
-# ----------------------------------------------------------------------
-# Public Findings Counter Helper (extracted from _handle_no_pattern_match)
-# ----------------------------------------------------------------------
 
 
 def _count_public_findings_results(
@@ -532,21 +474,11 @@ def _count_public_findings_results(
     return accepted, stored
 
 
-# ----------------------------------------------------------------------
-# URL Validation
-# ----------------------------------------------------------------------
-
-
 def _validate_url_scheme(hit_url: str) -> tuple[bool, str | None]:
     """Validate URL has http/https scheme."""
     _parsed_url = urlparse(hit_url)
     is_valid = bool(_parsed_url.scheme and _parsed_url.scheme.lower() in ("http", "https"))
     return is_valid, _parsed_url.scheme
-
-
-# ----------------------------------------------------------------------
-# Page Text Extraction
-# ----------------------------------------------------------------------
 
 
 async def _extract_page_text(
@@ -584,14 +516,12 @@ async def _extract_page_text(
             fetched_js_skip_reason=fetched_js_skip_reason,
             rejection_reason="empty_text",
             terminal_reason="rejected_empty_text",
-    )
+        )
 
     # HTML to text extraction
     try:
         content_type = getattr(result, "content_type", None)
-        extracted_text = await run_in_cpu_pool_async(
-            lambda: _html_to_text(fetched_text, content_type)
-    )
+        extracted_text = await run_in_cpu_pool_async(lambda: _html_to_text(fetched_text, content_type))
     except Exception as exc:
         _raise_skip_ppr(
             url=getattr(result, "url", ""),
@@ -605,7 +535,7 @@ async def _extract_page_text(
             fetched_js_skip_reason=fetched_js_skip_reason,
             rejection_reason="extraction_failed",
             terminal_reason="rejected_extraction_failed",
-    )
+        )
 
     # Hard cap
     if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:
@@ -628,12 +558,17 @@ def _raise_skip_ppr(
     terminal_reason: str,
 ) -> None:
     """Raise _SkipWithResult with a PipelinePageResult."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=True, matched_patterns=0, stored_findings=0,
-        quality_reason=None, discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error=error,
-        extracted_text_len=0,
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=True,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=None,
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error=error,
+            extracted_text_len=0,
+        )
     )
     raise _SkipWithResult(
         PipelinePageResult(
@@ -658,13 +593,8 @@ def _raise_skip_ppr(
             js_renderer_skipped_reason=fetched_js_skip_reason,
             rejection_reason=rejection_reason,
             terminal_reason=terminal_reason,
+        )
     )
-    )
-
-
-# ----------------------------------------------------------------------
-# JS Retry
-# ----------------------------------------------------------------------
 
 
 async def _perform_js_retry_if_needed(
@@ -698,13 +628,15 @@ async def _perform_js_retry_if_needed(
     )
     try:
         js_result = await _ASYNC_FETCH_PUBLIC_TEXT(
-            hit_url, effective_timeout, fetch_max_bytes,
+            hit_url,
+            effective_timeout,
+            fetch_max_bytes,
             use_stealth=policy.use_stealth,
             use_js=True,
             use_doh=policy.use_doh,
             js_confidence=_js_conf,
             priority=3,
-    )
+        )
     except Exception:
         js_result = None
 
@@ -714,9 +646,7 @@ async def _perform_js_retry_if_needed(
     # JS content available - re-extract
     try:
         js_content_type = getattr(js_result, "content_type", None)
-        extracted_text = await run_in_cpu_pool_async(
-            lambda: _html_to_text(js_result.text, js_content_type)
-    )
+        extracted_text = await run_in_cpu_pool_async(lambda: _html_to_text(js_result.text, js_content_type))
     except Exception:
         extracted_text = js_result.text or ""
 
@@ -738,11 +668,6 @@ async def _perform_js_retry_if_needed(
     return extracted_text, quality_reason
 
 
-# ----------------------------------------------------------------------
-# Pattern Scanning
-# ----------------------------------------------------------------------
-
-
 async def _scan_patterns(
     scan_text: str,
     result: Any,
@@ -753,7 +678,11 @@ async def _scan_patterns(
 
     Returns: (hits, matched_count, observed_at)
     """
-    _matched_source = js_result if (quality_reason is not None and quality_reason.startswith("RETRY_JS") and js_result is not None) else result
+    _matched_source = (
+        js_result
+        if (quality_reason is not None and quality_reason.startswith("RETRY_JS") and js_result is not None)
+        else result
+    )
     _result_matched = getattr(_matched_source, "matched_patterns", None) or ()
 
     if _result_matched:
@@ -779,11 +708,6 @@ async def _scan_patterns(
     _observed_at = getattr(result, "fetched_at", None) or time.time()
 
     return hits, matched_count, _observed_at
-
-
-# ----------------------------------------------------------------------
-# Secondary Query Match
-# ----------------------------------------------------------------------
 
 
 def _secondary_query_term_match(
@@ -816,8 +740,8 @@ def _secondary_query_term_match(
                 pattern=term,
                 start=_text_lower.find(term),
                 end=_text_lower.find(term) + len(term),
-                value=search_text[_text_lower.find(term):_text_lower.find(term) + len(term)]
-    )
+                value=search_text[_text_lower.find(term) : _text_lower.find(term) + len(term)],
+            )
             for term in _found_terms
             if term in _text_lower
         ]
@@ -830,11 +754,6 @@ def _secondary_query_term_match(
         pass  # noqa: BLE001
 
     return hits, matched_count
-
-
-# ----------------------------------------------------------------------
-# Hit Deduplication
-# ----------------------------------------------------------------------
 
 
 def _deduplicate_hits(hits: list) -> list:
@@ -850,11 +769,6 @@ def _deduplicate_hits(hits: list) -> list:
     return deduped
 
 
-# ----------------------------------------------------------------------
-# Findings Extraction
-# ----------------------------------------------------------------------
-
-
 async def _extract_findings_parallel(
     deduped_hits: list,
     query: str,
@@ -863,6 +777,7 @@ async def _extract_findings_parallel(
     discovery_score: float | None,
 ) -> list:
     """Extract findings from deduped hits in parallel."""
+
     async def _extract_one_hit(hit: Any) -> Any | None:
         try:
             findings_tuple = await _extract_live_public_findings_from_page(
@@ -875,22 +790,15 @@ async def _extract_findings_parallel(
                 hit_end=hit.end,
                 page_text=extracted_text,
                 discovery_score=discovery_score,
-    )
+            )
             return findings_tuple[0]
         except Exception:
             return None
 
     results = await parallel(
-        [_extract_one_hit(hit) for hit in deduped_hits],
-        policy="log",
-        ctx="public_fetch:_extract_hit"
+        [_extract_one_hit(hit) for hit in deduped_hits], policy="log", ctx="public_fetch:_extract_hit"
     )
     return [r for r in results if r is not None]
-
-
-# ----------------------------------------------------------------------
-# Storage Result Extraction
-# ----------------------------------------------------------------------
 
 
 def _extract_counts_from_results(
@@ -902,8 +810,7 @@ def _extract_counts_from_results(
     Returns: (accepted_count, stored_count, storage_error, quality_gate_rejected)
     """
     accepted_count = sum(
-        (sr.get("accepted") if isinstance(sr, dict) else bool(getattr(sr, "accepted", False)))
-        for sr in store_results
+        (sr.get("accepted") if isinstance(sr, dict) else bool(getattr(sr, "accepted", False))) for sr in store_results
     )
     stored_count = sum(
         (sr.get("lmdb_success") if isinstance(sr, dict) else bool(getattr(sr, "lmdb_success", False)))
@@ -912,11 +819,6 @@ def _extract_counts_from_results(
     quality_gate_rejected = bool(unique_findings and accepted_count == 0)
     storage_error = bool(stored_count == 0 and unique_findings)
     return accepted_count, stored_count, storage_error, quality_gate_rejected
-
-
-# ----------------------------------------------------------------------
-# Memory Manager Helper
-# ----------------------------------------------------------------------
 
 
 async def _store_in_memory_manager(
@@ -943,11 +845,6 @@ async def _store_in_memory_manager(
             await memory_manager.put(session_id, f"finding:{finding_id}", memory_entry)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001
-
-
-# ----------------------------------------------------------------------
-# Storage & Embeddings
-# ----------------------------------------------------------------------
 
 
 async def _store_and_embed(
@@ -978,7 +875,6 @@ async def _store_and_embed(
     # Graph accumulation
     _accumulate_to_graph(unique_findings)
 
-    # Extract counts
     accepted_count, stored_count, storage_error, quality_gate_rejected = _extract_counts_from_results(
         store_results, unique_findings
     )
@@ -1076,19 +972,10 @@ async def _embed_page_text(vector_store: Any, extracted_text: str, query: str, h
         embeddings = await generate_embeddings_async([extracted_text], keep_loaded=True)
     if embeddings is not None and len(embeddings) > 0:
         finding_id_for_vec = _make_finding_id(
-            query=query,
-            url=hit_url,
-            label="page_text",
-            pattern="embedding",
-            value=extracted_text[:100]
-    )
+            query=query, url=hit_url, label="page_text", pattern="embedding", value=extracted_text[:100]
+        )
         vec = np.asarray(embeddings[0], dtype=np.float32)
         vector_store.add_vectors([finding_id_for_vec], vec.reshape(1, -1), index_type="text")
-
-
-# ----------------------------------------------------------------------
-# No-pattern-match handling
-# ----------------------------------------------------------------------
 
 
 def _build_public_findings(
@@ -1122,7 +1009,7 @@ def _build_public_findings(
                 discovery_score=discovery_score,
                 discovery_reason=discovery_reason,
                 http_status_code=http_status,
-    )
+            )
             if _pub_tuple:
                 findings.append(_pub_tuple[0])
         except Exception:
@@ -1139,7 +1026,7 @@ def _build_public_findings(
                 discovery_score=discovery_score,
                 discovery_reason=discovery_reason,
                 http_status_code=http_status,
-    )
+            )
             if _signal_tuple:
                 findings.extend(_signal_tuple)
         except Exception:  # noqa: BLE001
@@ -1161,18 +1048,30 @@ async def _handle_no_pattern_match(
 
     Attempts public surface fallback, then returns appropriate PPR.
     """
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=True, matched_patterns=0, stored_findings=0,
-        quality_reason=quality_reason, discovery_signal=ctx.has_signal,
-        discovery_score=ctx.discovery_score,
-        error=None,
-        extracted_text_len=len(extracted_text or ""),
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=True,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=quality_reason,
+            discovery_signal=ctx.has_signal,
+            discovery_score=ctx.discovery_score,
+            error=None,
+            extracted_text_len=len(extracted_text or ""),
+        )
     )
 
     public_findings = _build_public_findings(
-        ctx.query, ctx.hit_url, extracted_text or "", ctx.hit_title,
-        ctx.hit_snippet, quality_reason, ctx.has_signal, ctx.discovery_score,
-        ctx.discovery_reason, result,
+        ctx.query,
+        ctx.hit_url,
+        extracted_text or "",
+        ctx.hit_title,
+        ctx.hit_snippet,
+        quality_reason,
+        ctx.has_signal,
+        ctx.discovery_score,
+        ctx.discovery_reason,
+        result,
     )
 
     pub_accepted, pub_stored = _count_public_findings_results(public_findings, ctx.store)
@@ -1190,13 +1089,16 @@ async def _handle_no_pattern_match(
             fetched_redirected=fetched_redirected,
             fetched_redirect_target=fetched_redirect_target,
             fetched_js_skip_reason=fetched_js_skip_reason,
-    )
+        )
 
     # Final return: terminal state
     terminal_state = TerminalReasonMachine.from_js_skip(fetched_js_skip_reason)
     return PipelinePageResult(
-        url=ctx.hit_url, fetched=True, matched_patterns=0,
-        accepted_findings=0, stored_findings=0,
+        url=ctx.hit_url,
+        fetched=True,
+        matched_patterns=0,
+        accepted_findings=0,
+        stored_findings=0,
         quality_reason=quality_reason,
         discovery_score=ctx.discovery_score,
         discovery_reason=ctx.discovery_reason,
@@ -1231,17 +1133,25 @@ def _build_public_surface_ppr(
     """Build PPR for public surface findings case."""
     is_dup = bool(public_findings and pub_stored > 0 and pub_accepted == 0)
 
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=True, matched_patterns=0, stored_findings=pub_stored,
-        quality_reason=quality_reason, discovery_signal=ctx.has_signal,
-        discovery_score=ctx.discovery_score,
-        error=None,
-        extracted_text_len=len(extracted_text or ""),
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=True,
+            matched_patterns=0,
+            stored_findings=pub_stored,
+            quality_reason=quality_reason,
+            discovery_signal=ctx.has_signal,
+            discovery_score=ctx.discovery_score,
+            error=None,
+            extracted_text_len=len(extracted_text or ""),
+        )
     )
 
     return PipelinePageResult(
-        url=ctx.hit_url, fetched=True, matched_patterns=0,
-        accepted_findings=pub_accepted, stored_findings=pub_stored,
+        url=ctx.hit_url,
+        fetched=True,
+        matched_patterns=0,
+        accepted_findings=pub_accepted,
+        stored_findings=pub_stored,
         quality_reason=quality_reason,
         discovery_score=ctx.discovery_score,
         discovery_reason=ctx.discovery_reason,
@@ -1262,11 +1172,6 @@ def _build_public_surface_ppr(
     )
 
 
-# ----------------------------------------------------------------------
-# Shortcut PPR builders
-# ----------------------------------------------------------------------
-
-
 def _make_skip_weak_discovery_ppr(
     hit_url: str,
     has_signal: bool,
@@ -1274,13 +1179,17 @@ def _make_skip_weak_discovery_ppr(
     discovery_reason: str | None,
 ) -> Any:
     """Build PPR for skipped weak discovery."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=False, matched_patterns=0, stored_findings=0,
-        quality_reason="SKIP_WEAK:weak_discovery",
-        discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error="skipped:weak_discovery",
-        extracted_text_len=0,
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=False,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason="SKIP_WEAK:weak_discovery",
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error="skipped:weak_discovery",
+            extracted_text_len=0,
+        )
     )
     return PipelinePageResult(
         url=hit_url,
@@ -1316,12 +1225,17 @@ def _make_invalid_url_ppr(
     discovery_reason: str | None,
 ) -> Any:
     """Build PPR for invalid URL scheme."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=False, matched_patterns=0, stored_findings=0,
-        quality_reason=None, discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error=f"url_unsupported_scheme:{url_scheme}",
-        extracted_text_len=0,
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=False,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=None,
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error=f"url_unsupported_scheme:{url_scheme}",
+            extracted_text_len=0,
+        )
     )
     return PipelinePageResult(
         url=hit_url,
@@ -1357,16 +1271,24 @@ def _make_timeout_ppr(
     discovery_reason: str | None,
 ) -> Any:
     """Build PPR for fetch timeout."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=False, matched_patterns=0, stored_findings=0,
-        quality_reason=None, discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error=f"fetch_timeout_after_{effective_timeout:.1f}s",
-        extracted_text_len=0,
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=False,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=None,
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error=f"fetch_timeout_after_{effective_timeout:.1f}s",
+            extracted_text_len=0,
+        )
     )
     return PipelinePageResult(
-        url=hit_url, fetched=False, matched_patterns=0,
-        accepted_findings=0, stored_findings=0,
+        url=hit_url,
+        fetched=False,
+        matched_patterns=0,
+        accepted_findings=0,
+        stored_findings=0,
         error=f"fetch_timeout_after_{effective_timeout:.1f}s",
         discovery_score=discovery_score,
         discovery_reason=discovery_reason,
@@ -1394,16 +1316,24 @@ def _make_fetch_error_ppr(
     discovery_reason: str | None,
 ) -> Any:
     """Build PPR for fetch exception."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=False, matched_patterns=0, stored_findings=0,
-        quality_reason=None, discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error=f"fetch_exception:{type(exc).__name__}:{exc}",
-        extracted_text_len=0,
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=False,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=None,
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error=f"fetch_exception:{type(exc).__name__}:{exc}",
+            extracted_text_len=0,
+        )
     )
     return PipelinePageResult(
-        url=hit_url, fetched=False, matched_patterns=0,
-        accepted_findings=0, stored_findings=0,
+        url=hit_url,
+        fetched=False,
+        matched_patterns=0,
+        accepted_findings=0,
+        stored_findings=0,
         error=f"fetch_exception:{type(exc).__name__}:{exc}",
         discovery_score=discovery_score,
         discovery_reason=discovery_reason,
@@ -1436,12 +1366,17 @@ def _make_skip_weak_ppr(
     extracted_text: str,
 ) -> Any:
     """Build PPR for skip weak quality."""
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=True, matched_patterns=0, stored_findings=0,
-        quality_reason=quality_reason, discovery_signal=has_signal,
-        discovery_score=discovery_score,
-        error=None,
-        extracted_text_len=len(extracted_text),
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=True,
+            matched_patterns=0,
+            stored_findings=0,
+            quality_reason=quality_reason,
+            discovery_signal=has_signal,
+            discovery_score=discovery_score,
+            error=None,
+            extracted_text_len=len(extracted_text),
+        )
     )
     _tr_skipped: str | None = None
     if fetched_js_skip_reason == "browser_unavailable":
@@ -1452,9 +1387,13 @@ def _make_skip_weak_ppr(
     _rejection_reason = _tr_skipped if _tr_skipped else "low_information"
 
     return PipelinePageResult(
-        url=hit_url, fetched=True, matched_patterns=0,
-        accepted_findings=0, stored_findings=0,
-        error=None, quality_reason=quality_reason,
+        url=hit_url,
+        fetched=True,
+        matched_patterns=0,
+        accepted_findings=0,
+        stored_findings=0,
+        error=None,
+        quality_reason=quality_reason,
         discovery_score=discovery_score,
         discovery_reason=discovery_reason,
         discovery_signal=has_signal,
@@ -1471,11 +1410,6 @@ def _make_skip_weak_ppr(
         rejection_reason=_rejection_reason,
         terminal_reason=_terminal_reason,
     )
-
-
-# ----------------------------------------------------------------------
-# MAIN FETCH FUNCTION — Simplified Orchestrator
-# ----------------------------------------------------------------------
 
 
 async def _fetch_and_process_page(
@@ -1502,7 +1436,6 @@ async def _fetch_and_process_page(
 
     F226B: PUBLIC acceptance uplift telemetry — each parallel task has its own counters.
     """
-    # --- Stage 1: Create context & early exits -----------------------
     ctx = PipelinePageContext.from_params(
         query=query,
         hit_url=hit_url,
@@ -1522,21 +1455,14 @@ async def _fetch_and_process_page(
 
     # Early exit: weak discovery
     if ctx.skip_fetch:
-        return _make_skip_weak_discovery_ppr(
-            hit_url, ctx.has_signal, discovery_score, discovery_reason
-    )
+        return _make_skip_weak_discovery_ppr(hit_url, ctx.has_signal, discovery_score, discovery_reason)
 
-    # --- Stage 2: URL validation --------------------------------------
     is_valid_url, url_scheme = _validate_url_scheme(hit_url)
     if not is_valid_url:
-        return _make_invalid_url_ppr(
-            hit_url, url_scheme, ctx.has_signal, discovery_score, discovery_reason
-    )
+        return _make_invalid_url_ppr(hit_url, url_scheme, ctx.has_signal, discovery_score, discovery_reason)
 
-    # --- Stage 3: Policy computation ----------------------------------
     policy = _compute_fetch_policy(hit_url, discovery_score, discovery_reason, ctx.strong_signal)
 
-    # --- Stage 4: Execute fetch with error handling ------------------
     fetch_result = await _execute_fetch_stage(
         hit_url=hit_url,
         semaphore=semaphore,
@@ -1545,19 +1471,13 @@ async def _fetch_and_process_page(
         policy=policy,
     )
 
-    # Handle fetch failures via early returns
     if fetch_result.failure_stage == "fetch_timeout":
-        return _make_timeout_ppr(
-            hit_url, ctx.effective_timeout, ctx.has_signal, discovery_score, discovery_reason
-    )
+        return _make_timeout_ppr(hit_url, ctx.effective_timeout, ctx.has_signal, discovery_score, discovery_reason)
     if fetch_result.failure_stage == "fetch_error":
-        return _make_fetch_error_ppr(
-            hit_url, Exception("Unknown"), ctx.has_signal, discovery_score, discovery_reason
-    )
+        return _make_fetch_error_ppr(hit_url, Exception("Unknown"), ctx.has_signal, discovery_score, discovery_reason)
 
     result = fetch_result.result
 
-    # --- Stage 5: Text extraction ------------------------------------
     try:
         extracted_text = await _extract_page_text(
             result=result,
@@ -1568,11 +1488,10 @@ async def _fetch_and_process_page(
             fetched_redirected=fetch_result.redirected,
             fetched_redirect_target=fetch_result.redirect_target,
             fetched_js_skip_reason=fetch_result.js_skip_reason,
-    )
+        )
     except _SkipWithResult as e:
         return e.result
 
-    # --- Stage 6: Quality scoring ------------------------------------
     quality_reason = _score_page_quality(
         hit_url=hit_url,
         hit_title=ctx.hit_title,
@@ -1587,13 +1506,18 @@ async def _fetch_and_process_page(
     # Early exit: low quality
     if quality_reason.startswith("SKIP_WEAK"):
         return _make_skip_weak_ppr(
-            hit_url, quality_reason, ctx.has_signal, discovery_score, discovery_reason,
-            fetch_result.failure_stage, fetch_result.redirected,
-            fetch_result.redirect_target, fetch_result.js_skip_reason,
+            hit_url,
+            quality_reason,
+            ctx.has_signal,
+            discovery_score,
+            discovery_reason,
+            fetch_result.failure_stage,
+            fetch_result.redirected,
+            fetch_result.redirect_target,
+            fetch_result.js_skip_reason,
             extracted_text,
-    )
+        )
 
-    # --- Stage 7: JS retry if needed ---------------------------------
     extracted_text, quality_reason = await _perform_js_retry_if_needed(
         hit_url=hit_url,
         result=result,
@@ -1610,7 +1534,6 @@ async def _fetch_and_process_page(
         current_text=extracted_text,
     )
 
-    # --- Stage 8: Pattern scanning -----------------------------------
     scan_result = _execute_pattern_scan_stage(
         hit_title=ctx.hit_title,
         hit_snippet=ctx.hit_snippet,
@@ -1633,15 +1556,11 @@ async def _fetch_and_process_page(
             fetched_redirected=fetch_result.redirected,
             fetched_redirect_target=fetch_result.redirect_target,
             fetched_js_skip_reason=fetch_result.js_skip_reason,
-    )
+        )
 
-    # --- Stage 9: Deduplication & extraction ------------------------
     deduped_hits = _deduplicate_hits(scan_result.hits)
-    unique_findings = await _extract_findings_parallel(
-        deduped_hits, query, hit_url, extracted_text, discovery_score
-    )
+    unique_findings = await _extract_findings_parallel(deduped_hits, query, hit_url, extracted_text, discovery_score)
 
-    # --- Stage 10: Storage & embeddings -------------------------------
     storage_result = await _execute_storage_stage(
         unique_findings=unique_findings,
         store=store,
@@ -1654,16 +1573,17 @@ async def _fetch_and_process_page(
         extracted_text=extracted_text,
     )
 
-    # --- Stage 11: Final PPR construction ----------------------------
-    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = _compute_page_usable_fields(
-        fetched=True,
-        matched_patterns=scan_result.matched_count,
-        stored_findings=storage_result.stored_count,
-        quality_reason=quality_reason,
-        discovery_signal=ctx.has_signal,
-        discovery_score=discovery_score,
-        error=None,
-        extracted_text_len=len(extracted_text),
+    usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality = (
+        _compute_page_usable_fields(
+            fetched=True,
+            matched_patterns=scan_result.matched_count,
+            stored_findings=storage_result.stored_count,
+            quality_reason=quality_reason,
+            discovery_signal=ctx.has_signal,
+            discovery_score=discovery_score,
+            error=None,
+            extracted_text_len=len(extracted_text),
+        )
     )
 
     # Determine terminal state

@@ -1,20 +1,19 @@
 """Quantum-safe cryptography (PQ only — neuromorphic crypto moved to brain/experimental_neuro_crypto.py)."""
+
 from __future__ import annotations
 
 import base64
 import logging
 import secrets
 import weakref
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from enum import Enum
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 # secure_zero: ctypes-based memory wipe (M1 Metal-safe, zero Python overhead)
 from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
-from _core import aclose
 
 try:
     import oqs as _oqs
@@ -29,17 +28,22 @@ except ImportError:
     _oqs = None
 
 if not REAL_PQ_AVAILABLE:
-    logger.warning("PQ crypto running in SIMULATION mode — NOT cryptographically secure. Install liboqs-python: pip install oqs")
+    logger.warning(
+        "PQ crypto running in SIMULATION mode — NOT cryptographically secure. Install liboqs-python: pip install oqs"
+    )
 
 
 class SecurityLevel(Enum):
     """Úrovně zabezpečení"""
-    STANDARD = 'standard'
-    HIGH = 'high'
-    MAXIMUM = 'maximum'
+
+    STANDARD = "standard"
+    HIGH = "high"
+    MAXIMUM = "maximum"
+
 
 class EncryptedContainer(Struct):
     """Šifrovaný kontejner"""
+
     ciphertext: bytes
     encapsulated_key: bytes
     nonce: bytes
@@ -48,12 +52,25 @@ class EncryptedContainer(Struct):
 
     def to_dict(self) -> dict[str, str]:
         """Export jako slovník"""
-        return {'ciphertext': base64.b64encode(self.ciphertext).decode(), 'encapsulated_key': base64.b64encode(self.encapsulated_key).decode(), 'nonce': base64.b64encode(self.nonce).decode(), 'algorithm': self.algorithm, 'security_level': self.security_level.value}
+        return {
+            "ciphertext": base64.b64encode(self.ciphertext).decode(),
+            "encapsulated_key": base64.b64encode(self.encapsulated_key).decode(),
+            "nonce": base64.b64encode(self.nonce).decode(),
+            "algorithm": self.algorithm,
+            "security_level": self.security_level.value,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, str]) -> EncryptedContainer:
         """Import ze slovníku"""
-        return cls(ciphertext=base64.b64decode(data['ciphertext']), encapsulated_key=base64.b64decode(data['encapsulated_key']), nonce=base64.b64decode(data['nonce']), algorithm=data['algorithm'], security_level=SecurityLevel(data['security_level']))
+        return cls(
+            ciphertext=base64.b64decode(data["ciphertext"]),
+            encapsulated_key=base64.b64decode(data["encapsulated_key"]),
+            nonce=base64.b64decode(data["nonce"]),
+            algorithm=data["algorithm"],
+            security_level=SecurityLevel(data["security_level"]),
+        )
+
 
 class QuantumSafeVault:
     """
@@ -61,9 +78,10 @@ class QuantumSafeVault:
     Používá ML-KEM (Kyber) pro šifrování a ML-DSA (Dilithium)
     pro digitální podpisy. Odolné vůči kvantovým útokům.
     """
-    __slots__ = tuple(('_initialized', '_keypair', '_signing_keypair', 'security_level', '_finalizer'))
 
-    def __init__(self, security_level: SecurityLevel=SecurityLevel.HIGH):
+    __slots__ = ("_initialized", "_keypair", "_signing_keypair", "security_level", "_finalizer")
+
+    def __init__(self, security_level: SecurityLevel = SecurityLevel.HIGH) -> None:
         self.security_level = security_level
         self._keypair = None
         self._signing_keypair = None
@@ -79,18 +97,18 @@ class QuantumSafeVault:
 
     async def initialize(self) -> None:
         """Inicializovat vault - vygenerovat klíče"""
-        logger.info(f'Initializing QuantumSafeVault ({self.security_level.value})')
+        logger.info(f"Initializing QuantumSafeVault ({self.security_level.value})")
         if not REAL_PQ_AVAILABLE:
-            logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
-            self._keypair = {'public': secrets.token_bytes(32), 'secret': secrets.token_bytes(32)}
-            self._signing_keypair = {'public': secrets.token_bytes(32), 'secret': secrets.token_bytes(64)}
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
+            self._keypair = {"public": secrets.token_bytes(32), "secret": secrets.token_bytes(32)}
+            self._signing_keypair = {"public": secrets.token_bytes(32), "secret": secrets.token_bytes(64)}
         else:
             with _oqs.KeyEncapsulation(_KYBER_ALG) as kem:
-                self._keypair = {'public': kem.generate_keypair(), 'secret': kem.export_secret_key()}
+                self._keypair = {"public": kem.generate_keypair(), "secret": kem.export_secret_key()}
             with _oqs.Signature(_DILITHIUM_ALG) as sig:
-                self._signing_keypair = {'public': sig.generate_keypair(), 'secret': sig.export_secret_key()}
+                self._signing_keypair = {"public": sig.generate_keypair(), "secret": sig.export_secret_key()}
         self._initialized = True
-        logger.info('✓ QuantumSafeVault initialized')
+        logger.info("✓ QuantumSafeVault initialized")
 
     def wipe_keys(self) -> None:
         """
@@ -115,48 +133,56 @@ class QuantumSafeVault:
     def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         F350M-R G1: wipe keys at GC time as last-resort safety net.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self.wipe_keys()
 
-    async def encrypt(self, plaintext: bytes, associated_data: bytes | None=None) -> EncryptedContainer:
+    async def encrypt(self, plaintext: bytes, associated_data: bytes | None = None) -> EncryptedContainer:
         """Zašifrovat data pomocí ML-KEM."""
         if not self._initialized:
-            raise RuntimeError('Vault not initialized')
+            raise RuntimeError("Vault not initialized")
         if self._keypair is None:
-            raise RuntimeError('Keypair not available')
+            raise RuntimeError("Keypair not available")
         nonce = secrets.token_bytes(12)
         if REAL_PQ_AVAILABLE:
-            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair['secret']) as kem:
-                encapsulated_key, shared_secret = kem.encap_secret(self._keypair['public'])
+            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
+                encapsulated_key, shared_secret = kem.encap_secret(self._keypair["public"])
         else:
-            logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
             encapsulated_key = secrets.token_bytes(32)
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
         aesgcm = AESGCM(shared_secret)
         ciphertext = aesgcm.encrypt(nonce, plaintext, associated_data)
-        return EncryptedContainer(ciphertext=ciphertext, encapsulated_key=encapsulated_key, nonce=nonce, algorithm='ML-KEM-768+AES-256-GCM', security_level=self.security_level)
+        return EncryptedContainer(
+            ciphertext=ciphertext,
+            encapsulated_key=encapsulated_key,
+            nonce=nonce,
+            algorithm="ML-KEM-768+AES-256-GCM",
+            security_level=self.security_level,
+        )
 
-    async def decrypt(self, container: EncryptedContainer, associated_data: bytes | None=None) -> bytes:
+    async def decrypt(self, container: EncryptedContainer, associated_data: bytes | None = None) -> bytes:
         """Dešifrovat data."""
         if not self._initialized:
-            raise RuntimeError('Vault not initialized')
+            raise RuntimeError("Vault not initialized")
         if self._keypair is None:
-            raise RuntimeError('Keypair not available')
+            raise RuntimeError("Keypair not available")
         if REAL_PQ_AVAILABLE:
-            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair['secret']) as kem:
+            with _oqs.KeyEncapsulation(_KYBER_ALG, self._keypair["secret"]) as kem:
                 shared_secret = kem.decap_secret(container.encapsulated_key)
         else:
-            logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             shared_secret = secrets.token_bytes(32)
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
         aesgcm = AESGCM(shared_secret)
         plaintext = aesgcm.decrypt(container.nonce, container.ciphertext, associated_data)
         return plaintext
@@ -164,30 +190,30 @@ class QuantumSafeVault:
     async def sign(self, message: bytes) -> bytes:
         """Podepsat zprávu pomocí ML-DSA (Dilithium)."""
         if not self._initialized:
-            raise RuntimeError('Vault not initialized')
+            raise RuntimeError("Vault not initialized")
         if REAL_PQ_AVAILABLE:
-            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair['secret']) as sig:
+            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair["secret"]) as sig:
                 return sig.sign(message)
         else:
-            logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             return secrets.token_bytes(64)
 
     async def verify(self, message: bytes, signature: bytes) -> bool:
         """Ověřit podpis"""
         if not self._initialized:
-            raise RuntimeError('Vault not initialized')
+            raise RuntimeError("Vault not initialized")
         if REAL_PQ_AVAILABLE:
-            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair['secret']) as sig:
-                return sig.verify(message, signature, self._signing_keypair['public'])
+            with _oqs.Signature(_DILITHIUM_ALG, self._signing_keypair["secret"]) as sig:
+                return sig.verify(message, signature, self._signing_keypair["public"])
         else:
-            logger.warning('PQ crypto SIMULATION MODE — not cryptographically secure')
+            logger.warning("PQ crypto SIMULATION MODE — not cryptographically secure")
             return True
 
 
 def _quantum_vault_cleanup(keypair: Any, signing_keypair: Any) -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Wipe keys at GC time as last-resort safety net.
     Called automatically by weakref.finalize when the object is GC'd.
     """

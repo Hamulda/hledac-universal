@@ -18,20 +18,15 @@ Usage:
         pass
     # context is reset
 """
+
 from __future__ import annotations
-
-
 
 import contextlib
 from contextvars import ContextVar, Token
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
-# =============================================================================
-# SprintContext — frozen struct for hot-path performance
-# =============================================================================
+from compat.msgspec_gc_compat import Struct
 
 
 class SprintContext(Struct, frozen=True):
@@ -60,23 +55,12 @@ class SprintContext(Struct, frozen=True):
         return self.phase not in ("export", "teardown")
 
 
-# =============================================================================
-# ContextVar — module-level, safe for async
-# =============================================================================
-
 # NOTE: ContextVar automatically propagates to async tasks (child tasks inherit).
 # For thread-pool executors or ProcessPoolExecutor, explicit context
 # propagation is needed via copy_context().run(fn). ContextVar does NOT
 # automatically flow across thread boundaries.
 
-_sprint_ctx: ContextVar[SprintContext | None] = ContextVar(
-    "sprint_context", default=None
-    )
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
+_sprint_ctx: ContextVar[SprintContext | None] = ContextVar("sprint_context", default=None)
 
 
 def get_current_context() -> SprintContext | None:

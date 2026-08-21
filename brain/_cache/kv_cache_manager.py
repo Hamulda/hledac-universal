@@ -27,9 +27,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.lru_cache import LRUCache
-from _core import aclose
 if TYPE_CHECKING:
-    from collections.abc import Callable
 logger = logging.getLogger(__name__)
 _KVCacheValue = tuple[Any, int, float]
 

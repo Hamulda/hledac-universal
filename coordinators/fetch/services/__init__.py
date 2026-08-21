@@ -34,6 +34,7 @@ Usage:
 
 M1 8GB: All services use __slots__ and lazy initialization.
 """
+
 from __future__ import annotations
 
 # Base services (from parent services.py)
@@ -55,6 +56,31 @@ from .aimd import (
     PyAIMDController,
 )
 
+# Entropy Feedback Service
+from .entropy import (
+    BlockingEntropyCalculator,
+    EntropyConfig,
+    EntropyFeedbackService,
+    EntropyResult,
+    StreamingEntropyCalculator,
+)
+
+# Evidence Sink Service
+from .evidence import (
+    EvidenceConfig,
+    EvidenceRecord,
+    EvidenceSinkService,
+    InMemoryEvidenceStorage,
+)
+
+# Micro Sprint Service
+from .micro_sprint import (
+    MicroSprintConfig,
+    MicroSprintService,
+    SprintResult,
+    SprintTask,
+)
+
 # Privacy Allocator Service
 from .privacy import (
     PrivacyAllocatorService,
@@ -71,31 +97,6 @@ from .speculative import (
     URLPriorityEntry,
 )
 
-# Entropy Feedback Service
-from .entropy import (
-    BlockingEntropyCalculator,
-    EntropyConfig,
-    EntropyFeedbackService,
-    EntropyResult,
-    StreamingEntropyCalculator,
-)
-
-# Micro Sprint Service
-from .micro_sprint import (
-    MicroSprintConfig,
-    MicroSprintService,
-    SprintResult,
-    SprintTask,
-)
-
-# Evidence Sink Service
-from .evidence import (
-    EvidenceConfig,
-    EvidenceRecord,
-    EvidenceSinkService,
-    InMemoryEvidenceStorage,
-)
-
 # Text Normalizer Service (C10: Rust nfc_normalize integration)
 from .text_normalizer import (
     TextNormalizerService,
@@ -104,45 +105,45 @@ from .text_normalizer import (
 
 __all__ = [
     # Base services
-    'DNSCacheService',
-    'RateLimiterService',
-    'CircuitBreakerService',
-    'RetryPolicyService',
-    'FetchServiceRegistry',
-    'FetchServiceConfig',
-    'FetchOptions',
-    'FetchResult',
+    "DNSCacheService",
+    "RateLimiterService",
+    "CircuitBreakerService",
+    "RetryPolicyService",
+    "FetchServiceRegistry",
+    "FetchServiceConfig",
+    "FetchOptions",
+    "FetchResult",
     # AIMD
-    'AIMDConfig',
-    'AIMDWindowService',
-    'PyAIMDController',
+    "AIMDConfig",
+    "AIMDWindowService",
+    "PyAIMDController",
     # Privacy
-    'PrivacyLevel',
-    'PrivacyConfig',
-    'PrivacyBudgetEntry',
-    'PrivacyAllocatorService',
+    "PrivacyLevel",
+    "PrivacyConfig",
+    "PrivacyBudgetEntry",
+    "PrivacyAllocatorService",
     # Speculative Prefetch
-    'SpeculativeConfig',
-    'URLPriorityEntry',
-    'StreamingLinkExtractor',
-    'SpeculativePrefetchService',
+    "SpeculativeConfig",
+    "URLPriorityEntry",
+    "StreamingLinkExtractor",
+    "SpeculativePrefetchService",
     # Entropy
-    'EntropyConfig',
-    'EntropyResult',
-    'StreamingEntropyCalculator',
-    'EntropyFeedbackService',
-    'BlockingEntropyCalculator',
+    "EntropyConfig",
+    "EntropyResult",
+    "StreamingEntropyCalculator",
+    "EntropyFeedbackService",
+    "BlockingEntropyCalculator",
     # Micro Sprint
-    'MicroSprintConfig',
-    'SprintTask',
-    'SprintResult',
-    'MicroSprintService',
+    "MicroSprintConfig",
+    "SprintTask",
+    "SprintResult",
+    "MicroSprintService",
     # Evidence
-    'EvidenceConfig',
-    'EvidenceRecord',
-    'EvidenceSinkService',
-    'InMemoryEvidenceStorage',
+    "EvidenceConfig",
+    "EvidenceRecord",
+    "EvidenceSinkService",
+    "InMemoryEvidenceStorage",
     # Text Normalizer (C10: Rust nfc_normalize)
-    'TextNormalizerService',
-    'get_text_normalizer',
+    "TextNormalizerService",
+    "get_text_normalizer",
 ]

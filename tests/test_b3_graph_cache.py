@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 class TestQueryCacheBasics:
     """Test QueryCache TTL and invalidation."""
 
-    def test_ttl_entry_creation(self):
+    def test_ttl_entry_creation(self) -> None:
         """TTLEntry stores value and expiration correctly."""
         from hledac.universal.knowledge.graph.query_cache import TTLEntry
 
@@ -20,7 +20,7 @@ class TestQueryCacheBasics:
         assert entry.expires_at > time.monotonic()
         assert not entry.is_expired()
 
-    def test_ttl_entry_expiration(self):
+    def test_ttl_entry_expiration(self) -> None:
         """Expired TTLEntry correctly identified."""
         from hledac.universal.knowledge.graph.query_cache import TTLEntry
 
@@ -28,7 +28,7 @@ class TestQueryCacheBasics:
         time.sleep(0.01)
         assert entry.is_expired()
 
-    def test_make_history_key(self):
+    def test_make_history_key(self) -> None:
         """History key generation is deterministic."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -41,7 +41,7 @@ class TestQueryCacheBasics:
         assert key3 == "history:1.2.3.4:3"
         assert key1 != key3
 
-    def test_make_batch_key_deterministic(self):
+    def test_make_batch_key_deterministic(self) -> None:
         """Batch key is same regardless of input order."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -53,7 +53,7 @@ class TestQueryCacheBasics:
         assert key1.startswith("batch:")
         assert key1.endswith(":2")
 
-    def test_batch_key_different_inputs(self):
+    def test_batch_key_different_inputs(self) -> None:
         """Different inputs produce different keys."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -66,7 +66,7 @@ class TestQueryCacheBasics:
 class TestQueryCacheMocked:
     """Test QueryCache with mocked Rust backend."""
 
-    def test_cache_put_get_cycle(self):
+    def test_cache_put_get_cycle(self) -> None:
         """Basic put/get cycle works with mocked Rust cache."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -92,7 +92,7 @@ class TestQueryCacheMocked:
             cached = cache.get_history("test.io", 2)
             assert cached == b'{"result": "test"}'
 
-    def test_cache_miss_on_expiration(self):
+    def test_cache_miss_on_expiration(self) -> None:
         """Cache miss when entry expired."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -115,7 +115,7 @@ class TestQueryCacheMocked:
             result = cache.get_history("expired.io", 2)
             assert result is None
 
-    def test_invalidate_on_ioc_add_clears_cache(self):
+    def test_invalidate_on_ioc_add_clears_cache(self) -> None:
         """invalidate_on_ioc_add clears all cache entries."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -143,7 +143,7 @@ class TestQueryCacheMocked:
             assert cache._hits == 0
             assert cache._misses == 0
 
-    def test_cache_unavailable_returns_none(self):
+    def test_cache_unavailable_returns_none(self) -> None:
         """Cache operations gracefully handle unavailable Rust backend."""
         from hledac.universal.knowledge.graph.query_cache import QueryCache
 
@@ -163,16 +163,14 @@ class TestQueryCacheMocked:
 class TestGraphCacheWiringMocked:
     """Test GraphCache wiring with mocked Rust backend."""
 
-    def test_graph_cache_get_returns_bytes(self):
+    def test_graph_cache_get_returns_bytes(self) -> None:
         """GraphCache.get returns bytes from Rust cache."""
         from hledac.universal.rust_extensions.wiring.graph_cache_wiring import GraphCache
 
         mock_cache = MagicMock()
         mock_cache.get.return_value = [104, 101, 108, 108, 111]  # b"hello"
 
-        with patch(
-            "hledac.universal.rust_extensions.wiring.graph_cache_wiring._rust_backend"
-        ) as mock_backend:
+        with patch("hledac.universal.rust_extensions.wiring.graph_cache_wiring._rust_backend") as mock_backend:
             mock_backend.is_available = True
             mock_backend.graph_cache.PyGraphLRUCache.return_value = mock_cache
 
@@ -185,16 +183,14 @@ class TestGraphCacheWiringMocked:
             assert result == b"hello"
             mock_cache.get.assert_called_once_with("test_key")
 
-    def test_graph_cache_put_converts_str_to_bytes(self):
+    def test_graph_cache_put_converts_str_to_bytes(self) -> None:
         """GraphCache.put converts string values to bytes."""
         from hledac.universal.rust_extensions.wiring.graph_cache_wiring import GraphCache
 
         mock_cache = MagicMock()
         mock_cache.put.return_value = True
 
-        with patch(
-            "hledac.universal.rust_extensions.wiring.graph_cache_wiring._rust_backend"
-        ) as mock_backend:
+        with patch("hledac.universal.rust_extensions.wiring.graph_cache_wiring._rust_backend") as mock_backend:
             mock_backend.is_available = True
             mock_backend.graph_cache.PyGraphLRUCache.return_value = mock_cache
 
@@ -207,7 +203,7 @@ class TestGraphCacheWiringMocked:
             # Check that string was converted to list of bytes
             mock_cache.put.assert_called_once()
 
-    def test_graph_cache_unavailable_graceful(self):
+    def test_graph_cache_unavailable_graceful(self) -> None:
         """GraphCache gracefully handles unavailable Rust backend."""
         from hledac.universal.rust_extensions.wiring.graph_cache_wiring import GraphCache
 
@@ -229,7 +225,7 @@ class TestGraphCacheWiringMocked:
 class TestGraphServiceCacheIntegration:
     """Test GraphService cache integration."""
 
-    def test_find_entity_history_checks_cache_first(self):
+    def test_find_entity_history_checks_cache_first(self) -> None:
         """find_entity_history checks cache before DuckDB query."""
         from hledac.universal.knowledge.graph_service import GraphService
 
@@ -240,12 +236,15 @@ class TestGraphServiceCacheIntegration:
         mock_graph = MagicMock()
         mock_graph.find_connected.return_value = []
 
-        with patch(
-            "hledac.universal.knowledge.graph_service._get_query_cache",
-            return_value=mock_cache,
-        ), patch(
-            "hledac.universal.knowledge.graph_service._get_graph",
-            return_value=mock_graph,
+        with (
+            patch(
+                "hledac.universal.knowledge.graph_service._get_query_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "hledac.universal.knowledge.graph_service._get_graph",
+                return_value=mock_graph,
+            ),
         ):
             svc = GraphService()
             svc._seen_iocs = set()
@@ -259,7 +258,7 @@ class TestGraphServiceCacheIntegration:
             # DuckDB should NOT be called
             mock_graph.find_connected.assert_not_called()
 
-    def test_find_entity_history_falls_back_on_miss(self):
+    def test_find_entity_history_falls_back_on_miss(self) -> None:
         """find_entity_history queries DuckDB on cache miss."""
         from hledac.universal.knowledge.graph_service import GraphService
 
@@ -270,12 +269,15 @@ class TestGraphServiceCacheIntegration:
         mock_graph = MagicMock()
         mock_graph.find_connected.return_value = [{"value": "db.io", "ioc_type": "ip"}]
 
-        with patch(
-            "hledac.universal.knowledge.graph_service._get_query_cache",
-            return_value=mock_cache,
-        ), patch(
-            "hledac.universal.knowledge.graph_service._get_graph",
-            return_value=mock_graph,
+        with (
+            patch(
+                "hledac.universal.knowledge.graph_service._get_query_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "hledac.universal.knowledge.graph_service._get_graph",
+                return_value=mock_graph,
+            ),
         ):
             svc = GraphService()
             svc._seen_iocs = set()
@@ -291,7 +293,7 @@ class TestGraphServiceCacheIntegration:
             # Result should be cached
             mock_cache.put_history.assert_called_once()
 
-    def test_find_connected_batch_checks_cache(self):
+    def test_find_connected_batch_checks_cache(self) -> None:
         """find_connected_batch checks cache before DuckDB."""
         from hledac.universal.knowledge.graph_service import GraphService
 
@@ -301,12 +303,15 @@ class TestGraphServiceCacheIntegration:
 
         mock_graph = MagicMock()
 
-        with patch(
-            "hledac.universal.knowledge.graph_service._get_query_cache",
-            return_value=mock_cache,
-        ), patch(
-            "hledac.universal.knowledge.graph_service._get_graph",
-            return_value=mock_graph,
+        with (
+            patch(
+                "hledac.universal.knowledge.graph_service._get_query_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "hledac.universal.knowledge.graph_service._get_graph",
+                return_value=mock_graph,
+            ),
         ):
             svc = GraphService()
             svc._seen_iocs = set()
@@ -318,7 +323,7 @@ class TestGraphServiceCacheIntegration:
             assert "io2" in result
             mock_graph.find_connected_batch.assert_not_called()
 
-    def test_upsert_ioc_invalidates_cache(self):
+    def test_upsert_ioc_invalidates_cache(self) -> None:
         """upsert_ioc invalidates cache after successful insert."""
         from hledac.universal.knowledge.graph_service import GraphService
 
@@ -329,12 +334,15 @@ class TestGraphServiceCacheIntegration:
         mock_graph = MagicMock()
         mock_graph.add_ioc.return_value = 1
 
-        with patch(
-            "hledac.universal.knowledge.graph_service._get_query_cache",
-            return_value=mock_cache,
-        ), patch(
-            "hledac.universal.knowledge.graph_service._get_graph",
-            return_value=mock_graph,
+        with (
+            patch(
+                "hledac.universal.knowledge.graph_service._get_query_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "hledac.universal.knowledge.graph_service._get_graph",
+                return_value=mock_graph,
+            ),
         ):
             svc = GraphService()
             svc._seen_iocs = set()
@@ -345,7 +353,7 @@ class TestGraphServiceCacheIntegration:
             assert result is True
             mock_cache.invalidate_on_ioc_add.assert_called_once()
 
-    def test_upsert_relation_invalidates_cache(self):
+    def test_upsert_relation_invalidates_cache(self) -> None:
         """upsert_relation invalidates cache after successful insert."""
         from hledac.universal.knowledge.graph_service import GraphService
 
@@ -355,12 +363,15 @@ class TestGraphServiceCacheIntegration:
 
         mock_graph = MagicMock()
 
-        with patch(
-            "hledac.universal.knowledge.graph_service._get_query_cache",
-            return_value=mock_cache,
-        ), patch(
-            "hledac.universal.knowledge.graph_service._get_graph",
-            return_value=mock_graph,
+        with (
+            patch(
+                "hledac.universal.knowledge.graph_service._get_query_cache",
+                return_value=mock_cache,
+            ),
+            patch(
+                "hledac.universal.knowledge.graph_service._get_graph",
+                return_value=mock_graph,
+            ),
         ):
             svc = GraphService()
             svc._seen_iocs = set()

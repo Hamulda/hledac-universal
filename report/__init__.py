@@ -1,5 +1,3 @@
-
-
 # report/ — Unified Reporting Pipeline
 # Issue 12.1: Consolidated export package for {json, md, html, svg}
 #
@@ -20,9 +18,9 @@
 #
 # Export compatibility: export/ re-exports from report/ for backward compat
 
-from hledac.universal.report.engine import ReportEngine, get_report_engine
 import msgspec
-from _core import aclose
+
+from hledac.universal.report.engine import ReportEngine, get_report_engine
 
 __all__ = [
     "ReportEngine",

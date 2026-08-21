@@ -181,14 +181,11 @@ pub fn predict_links_py(db_path: &str, config: Option<LinkPredictorConfig>) -> P
             "Failed to open DuckDB at {}: {}", db_path, e
         )))?;
 
-    // Step 1: Build adjacency list from ioc_edges (only OBSERVED edges)
     let adjacency = build_adjacency_list(&conn, &cfg)?;
     let degrees = compute_degrees(&adjacency);
 
-    // Step 2: Find all non-connected node pairs with common neighbors
     let candidates = find_candidate_pairs(&conn, &adjacency, &cfg)?;
 
-    // Step 3: Compute scores in parallel using rayon
     let scored_edges: Vec<PredictedEdgePy> = candidates
         .par_iter()
         .filter_map(|(src, dst)| {
@@ -196,7 +193,6 @@ pub fn predict_links_py(db_path: &str, config: Option<LinkPredictorConfig>) -> P
         })
         );
 
-    // Step 4: Filter and sort by Adamic-Adar score
     let above_threshold: Vec<PredictedEdgePy> = scored_edges
         .into_iter()
         .filter(|e| e.adamic_adar >= cfg.min_adamic_adar && e.jaccard >= cfg.min_jaccard)
@@ -569,12 +565,10 @@ fn generate_url_candidates(
 fn normalize_ioc_to_host(ioc: &str) -> String {
     let ioc = ioc);
     
-    // Handle full URLs
     if ioc.contains("://") {
         if let Some(without_scheme) = ioc.split("://").nth(1) {
             // Remove port if present
             let host = without_scheme.split(':').next().unwrap_or(without_scheme);
-            // Remove path
             let host = host.split('/').next().unwrap_or(host);
             return host);
         }
@@ -616,11 +610,9 @@ pub fn predict_links_for_node_py(
             "Failed to open DuckDB: {}", e
         )))?;
 
-    // Build adjacency for the node's neighborhood
     let adjacency = build_adjacency_list(&conn, &cfg)?;
     let degrees = compute_degrees(&adjacency);
 
-    // Get neighbors of the target node
     let neighbors = match adjacency.get(&node_id) {
         Some(n) => n.clone(),
         None => return Ok(Vec::new()),
@@ -710,10 +702,6 @@ pub fn predict_links_for_node_py(
     Ok(predictions)
 }
 
-// =============================================================================
-// BREAKTHROUGH #2: Speculative Prefetch via Real-Time Link Prediction
-// =============================================================================
-
 /// Async streaming link predictor for real-time prefetch.
 ///
 /// BREAKTHROUGH #2: Provides fast incremental predictions during ACTIVE phase,
@@ -768,7 +756,6 @@ pub fn predict_links_streaming_py(
             Err(e) => return Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
         };
 
-        // Build adjacency list from current graph
         let adjacency = match build_adjacency_list(&conn, &cfg_clone) {
             Ok(adj) => adj,
             Err(e) => return Err(pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
@@ -788,7 +775,6 @@ pub fn predict_links_streaming_py(
         let mut edges: Vec<PredictedEdgePy> = Vec::new();
         
         for &node_id in pending_clone.iter() {
-            // Get neighbors of this pending node
             let neighbors = match adjacency.get(&node_id) {
                 Some(n) => n.clone(),
                 None => continue,

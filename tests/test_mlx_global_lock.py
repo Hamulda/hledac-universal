@@ -9,12 +9,12 @@ Testuje že:
 
 Author: L-01 (F350M-R)
 """
+
 from __future__ import annotations
 
 import asyncio
 import threading
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 

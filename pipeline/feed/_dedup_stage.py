@@ -9,13 +9,13 @@ Responsibilities:
 Input: FeedMatchedBatch
 Output: FeedMatchedBatch with entry_dedup_hits filled
 """
+
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedMatchedBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,7 @@ class DedupStage:
         """Reset run-level dedup state."""
         self._seen_entry_urls.clear()
 
-    async def process(
-        self, input_batch: FeedMatchedBatch | None
-    ) -> tuple[FeedMatchedBatch, dict[str, Any]]:
+    async def process(self, input_batch: FeedMatchedBatch | None) -> tuple[FeedMatchedBatch, dict[str, Any]]:
         """Apply dedup to matched batch.
 
         Args:
@@ -73,14 +71,13 @@ class DedupStage:
                 entry_dedup_hits.append(False)
                 telemetry["entries_deduped"] += 1
 
-        # Update batch with dedup flags
         batch = FeedMatchedBatch(
             entry_urls=input_batch.entry_urls,
             matched_pattern_counts=input_batch.matched_pattern_counts,
             matched_pattern_labels=input_batch.matched_pattern_labels,
             entry_dedup_hits=entry_dedup_hits,
             errors=input_batch.errors,
-    )
+        )
 
         return batch, telemetry
 
@@ -91,4 +88,4 @@ class DedupStage:
             matched_pattern_labels=[],
             entry_dedup_hits=[],
             errors=[],
-    )
+        )

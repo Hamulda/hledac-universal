@@ -3,26 +3,19 @@
 Extracted from live_public_pipeline.py.
 Contains only: struct definitions + thin orchestration stub.
 
-
-
 All heavy logic delegated to sibling modules:
 - public_discovery: URL generation + _DiscoveryEngine
 - public_patterns: pattern matching + quality scoring
 - public_acceptance: CanonicalFinding construction
 - public_fetch: page fetching + extraction
 """
+
 from __future__ import annotations
 
+from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import Any
-from _core import aclose
-
-# ----------------------------------------------------------------------
-# Pipeline result structs
-# ----------------------------------------------------------------------
 
 
 class PipelinePageResult(Struct, frozen=True):
@@ -192,11 +185,6 @@ class PipelineRunResult(Struct, frozen=True):
     public_discovery_empty_reason: str = ""
 
 
-# ----------------------------------------------------------------------
-# Main entry point — delegates to live_public_pipeline.py for now
-# ----------------------------------------------------------------------
-
-
 async def async_run_live_public_pipeline(
     query: str,
     store=None,
@@ -232,7 +220,6 @@ async def async_run_live_public_pipeline(
     Currently delegates to the existing monolithic implementation for
     backward compatibility.
     """
-    # Import the existing implementation
     from pipeline.live_public_pipeline import async_run_live_public_pipeline as _impl
 
     return await _impl(

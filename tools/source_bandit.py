@@ -7,13 +7,14 @@ Sprint 42: LinUCB contextual bandit přidán.
 Sprint 43: Geo + Language context features (14 dim).
 Sprint 3D: Uses open_lmdb() from paths.py for env-driven discipline.
 """
+
 import logging
 import math
 import weakref
 from pathlib import Path
 from typing import Any
+
 import numpy as np
-from _core import aclose
 
 try:
     import orjson as _json
@@ -26,16 +27,19 @@ N_FEATURES = 14
 MIN_LINUCB_SAMPLES = 5
 try:
     from .serialization import pack, unpack
+
     MSGPACK_AVAILABLE = True
 except ImportError:
     MSGPACK_AVAILABLE = False
-    logger.warning('[MSGPACK] not available, using JSON')
+    logger.warning("[MSGPACK] not available, using JSON")
+
 
 class LinUCBArm:
     """Linear UCB arm with online update."""
-    __slots__ = tuple(('A', 'alpha', 'b', 'n_features'))
 
-    def __init__(self, n_features: int, alpha: float=0.5):
+    __slots__ = ("A", "alpha", "b", "n_features")
+
+    def __init__(self, n_features: int, alpha: float = 0.5) -> None:
         self.A = np.eye(n_features)
         self.b = np.zeros(n_features)
         self.alpha = alpha
@@ -54,20 +58,31 @@ class LinUCBArm:
         self.b += reward * context
 
     def to_dict(self) -> dict:
-        return {'A': self.A.tolist(), 'b': self.b.tolist(), 'alpha': self.alpha}
+        return {"A": self.A.tolist(), "b": self.b.tolist(), "alpha": self.alpha}
 
     @classmethod
     def from_dict(cls, d: dict, n_features: int) -> LinUCBArm:
-        arm = cls(n_features, d['alpha'])
-        arm.A = np.array(d['A'])
-        arm.b = np.array(d['b'])
+        arm = cls(n_features, d["alpha"])
+        arm.A = np.array(d["A"])
+        arm.b = np.array(d["b"])
         return arm
+
 
 def _extract_base_features(analysis: dict[str, Any]) -> list:
     """Sprint 42 features (8 dims)."""
-    intent = analysis.get('intent', 'other').lower()
-    query = analysis.get('query', '')
-    return [1.0 if 'factual' in intent else 0.0, 1.0 if 'investigat' in intent else 0.0, 1.0 if 'tech' in intent else 0.0, 1.0 if 'monitor' in intent else 0.0, 1.0 if all((k not in intent for k in ['factual', 'investigat', 'tech', 'monitor'])) else 0.0, min(len(query), 200) / 200.0, 1.0 if analysis.get('entities') else 0.0, 1.0 if analysis.get('temporal_scope') else 0.0]
+    intent = analysis.get("intent", "other").lower()
+    query = analysis.get("query", "")
+    return [
+        1.0 if "factual" in intent else 0.0,
+        1.0 if "investigat" in intent else 0.0,
+        1.0 if "tech" in intent else 0.0,
+        1.0 if "monitor" in intent else 0.0,
+        1.0 if all(k not in intent for k in ["factual", "investigat", "tech", "monitor"]) else 0.0,
+        min(len(query), 200) / 200.0,
+        1.0 if analysis.get("entities") else 0.0,
+        1.0 if analysis.get("temporal_scope") else 0.0,
+    ]
+
 
 def extract_context_features(analysis: dict[str, Any] | None) -> np.ndarray:
     """
@@ -83,23 +98,31 @@ def extract_context_features(analysis: dict[str, Any] | None) -> np.ndarray:
     if analysis is None:
         return np.ones(N_FEATURES, dtype=np.float64) * 0.5
     base = _extract_base_features(analysis)
-    query_lower = analysis.get('query', '').lower()
-    geo_eu = 1.0 if any((w in query_lower for w in ['eu', 'euro', 'brusel', 'praha', 'berlin', 'paris', 'london', 'warsaw'])) else 0.0
-    geo_us = 1.0 if any((w in query_lower for w in ['usa', 'washington', 'ny', 'california', 'texas', 'new york'])) else 0.0
-    geo_ru = 1.0 if any((w in query_lower for w in ['moscow', 'kreml', 'putin', 'россия', 'kremlin'])) else 0.0
-    lang_cz = 1.0 if any((ord('á') <= ord(c) <= ord('ů') for c in query_lower)) else 0.0
-    lang_ru = 1.0 if any((1024 <= ord(c) <= 1279 for c in query_lower)) else 0.0
-    lang_de = 1.0 if any((c in 'äöüß' for c in query_lower)) else 0.0
+    query_lower = analysis.get("query", "").lower()
+    geo_eu = (
+        1.0
+        if any(w in query_lower for w in ["eu", "euro", "brusel", "praha", "berlin", "paris", "london", "warsaw"])
+        else 0.0
+    )
+    geo_us = (
+        1.0 if any(w in query_lower for w in ["usa", "washington", "ny", "california", "texas", "new york"]) else 0.0
+    )
+    geo_ru = 1.0 if any(w in query_lower for w in ["moscow", "kreml", "putin", "россия", "kremlin"]) else 0.0
+    lang_cz = 1.0 if any(ord("á") <= ord(c) <= ord("ů") for c in query_lower) else 0.0
+    lang_ru = 1.0 if any(1024 <= ord(c) <= 1279 for c in query_lower) else 0.0
+    lang_de = 1.0 if any(c in "äöüß" for c in query_lower) else 0.0
     geo_lang = [geo_eu, geo_us, geo_ru, lang_cz, lang_ru, lang_de]
     return np.array(base + geo_lang, dtype=np.float64)
 
+
 class SourceBandit:
     """UCB1 bandit pro source selection s LMDB persistence."""
-    SOURCES = ['web', 'academic', 'darkweb', 'archive', 'blockchain', 'osint']
-    LMDB_MAP_SIZE = 10 * 1024 * 1024
-    __slots__ = tuple(('_counts', '_env', '_linucb_arms', '_rewards', '_stats', '_finalizer'))
 
-    def __init__(self, lmdb_path: Path | None=None):
+    SOURCES = ["web", "academic", "darkweb", "archive", "blockchain", "osint"]
+    LMDB_MAP_SIZE = 10 * 1024 * 1024
+    __slots__ = ("_counts", "_env", "_linucb_arms", "_rewards", "_stats", "_finalizer")
+
+    def __init__(self, lmdb_path: Path | None = None) -> None:
         global _LMDB_ROOT, _open_lmdb
         if _LMDB_ROOT is None:
             try:
@@ -110,16 +133,20 @@ class SourceBandit:
                 _open_lmdb = None
         if lmdb_path is None:
             if _LMDB_ROOT is not None:
-                lmdb_path = _LMDB_ROOT / 'bandit.lmdb'
+                lmdb_path = _LMDB_ROOT / "bandit.lmdb"
             else:
                 from hledac.universal.paths import CACHE_ROOT
-                lmdb_path = CACHE_ROOT / 'bandit.lmdb'
+
+                lmdb_path = CACHE_ROOT / "bandit.lmdb"
         lmdb_path.parent.mkdir(parents=True, exist_ok=True)
         if _open_lmdb is not None:
             self._env = _open_lmdb(lmdb_path, map_size=self.LMDB_MAP_SIZE, max_dbs=1, writemap=False, metasync=True)
         else:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
-            self._env = open_lmdb_with_guard(lmdb_path, map_size=self.LMDB_MAP_SIZE, max_dbs=1, writemap=False, metasync=True)
+
+            self._env = open_lmdb_with_guard(
+                lmdb_path, map_size=self.LMDB_MAP_SIZE, max_dbs=1, writemap=False, metasync=True
+            )
         self._stats = self._load()
         self._linucb_arms: dict[str, LinUCBArm] = {}
         self._counts: dict[str, int] = {}
@@ -130,75 +157,75 @@ class SourceBandit:
 
     def _load(self) -> dict[str, dict[str, float]]:
         """Načte statistiky z LMDB."""
-        stats = {s: {'pulls': 0, 'rewards': 0.0} for s in self.SOURCES}
+        stats = {s: {"pulls": 0, "rewards": 0.0} for s in self.SOURCES}
         try:
             with self._env.begin() as txn:
                 for src in self.SOURCES:
                     val = txn.get(src.encode())
                     if val:
                         loaded = _json.loads(val)
-                        stats[src]['pulls'] = loaded.get('pulls', 0)
-                        stats[src]['rewards'] = loaded.get('rewards', 0.0)
+                        stats[src]["pulls"] = loaded.get("pulls", 0)
+                        stats[src]["rewards"] = loaded.get("rewards", 0.0)
         except Exception as e:
-            logger.warning(f'[BANDIT] Failed to load stats: {e}')
+            logger.warning(f"[BANDIT] Failed to load stats: {e}")
         return stats
 
-    def _save(self, source: str):
+    def _save(self, source: str) -> None:
         """Uloží statistiku pro jeden zdroj do LMDB."""
         try:
             with self._env.begin(write=True) as txn:
                 txn.put(source.encode(), _json.dumps(self._stats[source]))
         except Exception as e:
-            logger.warning(f'[BANDIT] Failed to save {source}: {e}')
+            logger.warning(f"[BANDIT] Failed to save {source}: {e}")
 
-    def select(self, n: int=3) -> list[str]:
+    def select(self, n: int = 3) -> list[str]:
         """
         UCB1 selection – vrací top-n zdrojů.
         Pokud některý zdroj nemá pulls, má nekonečný score (explore).
         """
-        total_pulls = sum((s['pulls'] for s in self._stats.values())) + 1
+        total_pulls = sum(s["pulls"] for s in self._stats.values()) + 1
         scored = []
         for src, s in self._stats.items():
-            if s['pulls'] == 0:
-                score = float('inf')
+            if s["pulls"] == 0:
+                score = float("inf")
             else:
-                mean_reward = s['rewards'] / s['pulls']
-                exploration = math.sqrt(2 * math.log(total_pulls) / s['pulls'])
+                mean_reward = s["rewards"] / s["pulls"]
+                exploration = math.sqrt(2 * math.log(total_pulls) / s["pulls"])
                 score = mean_reward + exploration
             scored.append((score, src))
         scored.sort(reverse=True)
         selected = [src for _, src in scored[:n]]
-        logger.debug(f'[BANDIT] selected={selected}')
+        logger.debug(f"[BANDIT] selected={selected}")
         return selected
 
-    def update(self, source: str, reward: float):
+    def update(self, source: str, reward: float) -> None:
         """
         Aktualizuje statistiku pro zdroj a uloží do LMDB.
         reward = 0..1 (např. poměr úspěšných findings / celkem)
         """
         if source not in self._stats:
-            logger.warning(f'[BANDIT] Unknown source: {source}')
+            logger.warning(f"[BANDIT] Unknown source: {source}")
             return
-        self._stats[source]['pulls'] += 1
-        self._stats[source]['rewards'] += reward
+        self._stats[source]["pulls"] += 1
+        self._stats[source]["rewards"] += reward
         self._save(source)
 
     def get_credibility(self, source: str) -> float:
         """Get credibility score for a source (0-1)."""
         if source not in self._stats:
             return 0.5
-        pulls = self._stats[source]['pulls']
+        pulls = self._stats[source]["pulls"]
         if pulls == 0:
             return 0.5
-        return min(1.0, self._stats[source]['rewards'] / pulls)
+        return min(1.0, self._stats[source]["rewards"] / pulls)
 
-    def _load_linucb(self):
+    def _load_linucb(self) -> None:
         """Load LinUCB arms from LMDB if available."""
-        if not hasattr(self, '_env') or self._env is None:
+        if not hasattr(self, "_env") or self._env is None:
             return
         try:
             with self._env.begin() as txn:
-                raw = txn.get(b'linucb_arms')
+                raw = txn.get(b"linucb_arms")
                 if raw:
                     if MSGPACK_AVAILABLE:
                         try:
@@ -208,24 +235,24 @@ class SourceBandit:
                     else:
                         data = _json.loads(raw)
                     for src, d in data.items():
-                        if len(d['A'][0]) == 8:
-                            oldA = np.array(d['A'])
-                            oldb = np.array(d['b'])
+                        if len(d["A"][0]) == 8:
+                            oldA = np.array(d["A"])
+                            oldb = np.array(d["b"])
                             newA = np.eye(N_FEATURES)
                             newA[:8, :8] = oldA
                             newb = np.zeros(N_FEATURES)
                             newb[:8] = oldb
-                            d['A'] = newA.tolist()
-                            d['b'] = newb.tolist()
-                            logger.info(f'[LINUCB] Migrated {src} from 8-dim to 14-dim')
+                            d["A"] = newA.tolist()
+                            d["b"] = newb.tolist()
+                            logger.info(f"[LINUCB] Migrated {src} from 8-dim to 14-dim")
                         self._linucb_arms[src] = LinUCBArm.from_dict(d, N_FEATURES)
-                    logger.info(f'[LINUCB] Loaded {len(self._linucb_arms)} arms')
+                    logger.info(f"[LINUCB] Loaded {len(self._linucb_arms)} arms")
         except Exception as e:
-            logger.warning(f'[LINUCB] Load failed: {e}')
+            logger.warning(f"[LINUCB] Load failed: {e}")
 
-    def _save_linucb(self):
+    def _save_linucb(self) -> None:
         """Save LinUCB arms to LMDB if available."""
-        if not hasattr(self, '_env') or self._env is None:
+        if not hasattr(self, "_env") or self._env is None:
             return
         try:
             data = {src: arm.to_dict() for src, arm in self._linucb_arms.items()}
@@ -234,20 +261,20 @@ class SourceBandit:
             else:
                 packed = _json.dumps(data)
             with self._env.begin(write=True) as txn:
-                txn.put(b'linucb_arms', packed)
+                txn.put(b"linucb_arms", packed)
         except Exception as e:
-            logger.warning(f'[LINUCB] Save failed: {e}')
+            logger.warning(f"[LINUCB] Save failed: {e}")
 
     def _ucb1_score(self, source: str) -> float:
         """Classic UCB1 score (used for fallback)."""
         total = sum(self._counts.values()) + 1
         if self._counts.get(source, 0) == 0:
-            return float('inf')
+            return float("inf")
         mean = self._rewards.get(source, 0.0) / max(1, self._counts[source])
         exploration = 2.0 * np.sqrt(np.log(total) / max(1, self._counts[source]))
         return mean + exploration
 
-    def select_with_context(self, sources: list[str], analysis: dict[str, Any] | None, n: int=3) -> list[str]:
+    def select_with_context(self, sources: list[str], analysis: dict[str, Any] | None, n: int = 3) -> list[str]:
         """Select sources using LinUCB if enough data, else fallback to UCB1."""
         try:
             context = extract_context_features(analysis)
@@ -264,7 +291,7 @@ class SourceBandit:
             scored.sort(reverse=True)
             return [s for _, s in scored[:n]]
         except Exception as e:
-            logger.warning(f'[LINUCB] Error: {e}, falling back to UCB1')
+            logger.warning(f"[LINUCB] Error: {e}, falling back to UCB1")
             return self._select_ucb1(sources, n)
 
     def _select_ucb1(self, sources: list[str], n: int) -> list[str]:
@@ -290,29 +317,29 @@ class SourceBandit:
             if sum(self._counts.values()) % 10 == 0:
                 self._save_linucb()
         except Exception as e:
-            logger.warning(f'[LINUCB] Update error: {e}')
+            logger.warning(f"[LINUCB] Update error: {e}")
 
-    def close(self):
+    def close(self) -> None:
         """Uzavře LMDB environment."""
-        if hasattr(self, '_env') and self._env:
+        if hasattr(self, "_env") and self._env:
             self._env.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self.close()
 
 
 def _source_bandit_cleanup(env: Any) -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Close LMDB environment when SourceBandit is garbage collected.
     Called automatically by weakref.finalize when the object is GC'd.
     """

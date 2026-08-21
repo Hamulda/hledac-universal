@@ -7,13 +7,10 @@ Používá hypothesis pro property-based testing s rozsáhlými strategiemi.
 Always-on, bounded, fail-safe.
 """
 
-
 import pytest
-from hypothesis import given, settings, Verbosity
+from hypothesis import Verbosity, given, settings
 from hypothesis.strategies import (
     binary,
-    booleans,
-    dictionaries,
     floats,
     from_regex,
     integers,
@@ -21,8 +18,7 @@ from hypothesis.strategies import (
     one_of,
     sampled_from,
     text,
-    tuples,
-    )
+)
 
 # Strategie — rozsáhlé generování testovacích dat
 
@@ -67,45 +63,41 @@ _UNICODE_CHARS = (
     "한국어한국어"  # sample
     "العربية"  # sample
     "😀😎🤖"  # emojis
-    )
+)
 UNICODE_TEXT = text(alphabet=_UNICODE_CHARS, min_size=0, max_size=1000)
 ASCII_TEXT = text(
     alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n.,!?-;:",
     min_size=0,
     max_size=500,
-    )
+)
 MIXED_CONTENT = text(min_size=0, max_size=2000)
 
 # IOC-obsahující texty
 _IOC_BASE_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,!?-;:\n	 "
 IOC_TEXT_IPV4 = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
-    lambda s: s + " 192.168.1.1 10.0.0.255 172.16.0.1 8.8.8.8 1.2.3.4"
-    if len(s) < 100
-    else s[:100]
-    )
+    lambda s: s + " 192.168.1.1 10.0.0.255 172.16.0.1 8.8.8.8 1.2.3.4" if len(s) < 100 else s[:100]
+)
 IOC_TEXT_EMAILS = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
-    lambda s: s + " user@example.com admin@test.org root@localhost"
-    if len(s) < 100
-    else s[:100]
-    )
+    lambda s: s + " user@example.com admin@test.org root@localhost" if len(s) < 100 else s[:100]
+)
 IOC_TEXT_DOMAINS = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=1000).map(
-    lambda s: s + " example.com google.com github.io api.example.org"
-    if len(s) < 100
-    else s[:100]
-    )
+    lambda s: s + " example.com google.com github.io api.example.org" if len(s) < 100 else s[:100]
+)
 IOC_TEXT_HASHES = text(alphabet=_IOC_BASE_CHARS + "abcdef0123456789", min_size=100, max_size=1000).map(
-    lambda s: s + " d41d8cd98f00b204e9800998ecf8427e 5ba38463b51b5a0f71b3a4a8c8ad3e2d1a7c6b9d0e3f5"
-    if len(s) < 100
-    else s[:100]
+    lambda s: (
+        s + " d41d8cd98f00b204e9800998ecf8427e 5ba38463b51b5a0f71b3a4a8c8ad3e2d1a7c6b9d0e3f5"
+        if len(s) < 100
+        else s[:100]
     )
+)
 IOC_TEXT_CVES = text(alphabet=_IOC_BASE_CHARS, min_size=50, max_size=500).map(
-    lambda s: s + " CVE-2024-1234 CVE-2023-99999 CVE-2021-44228"
-    if len(s) < 100
-    else s[:100]
-    )
+    lambda s: s + " CVE-2024-1234 CVE-2023-99999 CVE-2021-44228" if len(s) < 100 else s[:100]
+)
 
 # IP strategie
-IPV4_STRATEGY = from_regex(r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)", fullmatch=True)
+IPV4_STRATEGY = from_regex(
+    r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)", fullmatch=True
+)
 IPV6_STRATEGY = from_regex(r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}", fullmatch=True)
 PRIVATE_IPS = ["192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1"]
 PUBLIC_IPS = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222", "4.2.2.1"]
@@ -122,7 +114,7 @@ ENTROPY_TEXT = text(
     alphabet="abcdefgh",
     min_size=0,
     max_size=1000,
-    )
+)
 UNIFORM_TEXT = text(alphabet="a", min_size=0, max_size=500)
 RANDOM_TEXT = binary(min_size=0, max_size=1000)
 
@@ -130,10 +122,8 @@ RANDOM_TEXT = binary(min_size=0, max_size=1000)
 # Rust normalize_quality_text() přijímá str, ne bytes
 # F5.3: Binary data způsobuje TypeError v Rust
 QUALITY_TEXT = text(
-    min_size=0,
-    max_size=200,
-    alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n.,!?-;:_"
-    )
+    min_size=0, max_size=200, alphabet="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n.,!?-;:_"
+)
 
 # Batch strategie
 BATCH_TEXTS = lists(UNICODE_TEXT, min_size=1, max_size=100)
@@ -146,6 +136,7 @@ GRAPH_IDS = lists(integers(min_value=1, max_value=10000), min_size=1, max_size=5
 
 # Pomocné funkce
 
+
 def _is_numeric_hostname(url: str) -> bool:
     """Returns True if URL has a numeric or problematic hostname.
 
@@ -155,6 +146,7 @@ def _is_numeric_hostname(url: str) -> bool:
     """
     try:
         import urllib.parse
+
         # Skip malformed URLs that don't look like valid http/https URLs
         if not url.startswith(("http://", "https://")):
             return True
@@ -186,16 +178,14 @@ def _is_numeric_hostname(url: str) -> bool:
 
 # _Python*Domain classes live in submodules, not in the package __init__
 from _core.rust_backend.bloom import _PythonBloomDomain
-from _core.rust_backend.url import _PythonUrlDomain
 from _core.rust_backend.hash import _PythonHashDomain
+from _core.rust_backend.ioc import _PythonIocDomain
+from _core.rust_backend.ip import _PythonIpDomain
+from _core.rust_backend.misc import _PythonHtmlDomain, _PythonSimdDomain, _PythonTextDomain
+from _core.rust_backend.quality import _PythonQualityDomain
 from _core.rust_backend.rolling_hash import _PythonRollingHashDomain
 from _core.rust_backend.simhash import _PythonSimhashDomain
-from _core.rust_backend.quality import _PythonQualityDomain
-from _core.rust_backend.ioc import _PythonIocDomain
-from _core.rust_backend.misc import _PythonTextDomain, _PythonHtmlDomain
-from _core.rust_backend.ip import _PythonIpDomain
-from _core.rust_backend.misc import _PythonSimdDomain
-from _core import aclose
+from _core.rust_backend.url import _PythonUrlDomain
 
 _PYTHON_DOMAINS = {
     "bloom": _PythonBloomDomain,
@@ -265,7 +255,7 @@ class TestDifferentialUrlDomain:
         py_result = python_domain.normalize(url)
         try:
             rust_result = rust_domain.normalize(url)
-        except (ValueError, Exception):
+        except ValueError, Exception:
             # Rust může vyhodit exception na neplatných URL které Python zpracuje-graciously
             # Skipneme tyto edge cases — nejsou "bit-identical" ale obě implementace
             # jsou "fail-safe" svým způsobem
@@ -273,7 +263,11 @@ class TestDifferentialUrlDomain:
 
         assert py_result == rust_result, f"normalize mismatch for {url}"
 
-    @given(url=one_of(URL_STRATEGY, URL_WITH_TRACKING, URL_WITH_AUTH, IP_URL).filter(lambda u: not u.startswith("http://0")))
+    @given(
+        url=one_of(URL_STRATEGY, URL_WITH_TRACKING, URL_WITH_AUTH, IP_URL).filter(
+            lambda u: not u.startswith("http://0")
+        )
+    )
     @settings(max_examples=300, verbosity=Verbosity.verbose, deadline=None)
     def test_fingerprint_stability(self, url: str) -> None:
         """Fingerprint URL musí být stabilní a konzistentní.
@@ -290,7 +284,9 @@ class TestDifferentialUrlDomain:
 
         # Skipneme mismatch kvůli fundamentálnímu API rozdílu (str vs int)
         if type(py_result) != type(rust_result):
-            pytest.skip(f"fingerprint API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}")
+            pytest.skip(
+                f"fingerprint API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}"
+            )
 
         assert py_result == rust_result, f"fingerprint mismatch for {url}"
 
@@ -381,10 +377,10 @@ class TestDifferentialUrlDomain:
         rust_result = rust_domain.batch_classify(urls)
 
         if py_result != rust_result:
-            pytest.skip(f"batch_classify divergence")
+            pytest.skip("batch_classify divergence")
         assert py_result == rust_result
 
-        assert py_result == rust_result, f"batch_classify mismatch"
+        assert py_result == rust_result, "batch_classify mismatch"
 
 
 class TestDifferentialQualityDomain:
@@ -400,8 +396,8 @@ class TestDifferentialQualityDomain:
         py_result = python_domain.batch_entropy(texts)
         rust_result = rust_domain.batch_entropy(texts)
 
-        assert len(py_result) == len(rust_result), f"length mismatch"
-        for i, (py_e, rust_e) in enumerate(zip(py_result, rust_result)):
+        assert len(py_result) == len(rust_result), "length mismatch"
+        for i, (py_e, rust_e) in enumerate(zip(py_result, rust_result, strict=False)):
             assert abs(py_e - rust_e) < 1e-6, f"entropy mismatch at {i}: py={py_e} rust={rust_e}"
 
     @given(text=ENTROPY_TEXT)
@@ -446,7 +442,7 @@ class TestDifferentialQualityDomain:
         rust_result = rust_domain.batch_dedup_fingerprints(texts)
 
         if py_result != rust_result:
-            pytest.skip(f"batch_dedup_fingerprints divergence")
+            pytest.skip("batch_dedup_fingerprints divergence")
         assert py_result == rust_result
 
 
@@ -481,7 +477,7 @@ class TestDifferentialSimhashDomain:
         rust_result = rust_domain.batch_compute_simhash(texts)
 
         if py_result != rust_result:
-            pytest.skip(f"batch_compute_simhash divergence")
+            pytest.skip("batch_compute_simhash divergence")
         assert py_result == rust_result
 
 
@@ -516,7 +512,7 @@ class TestDifferentialSimdDomain:
             lambda vl: (
                 all(len(v) > 0 and any(x != 0.0 for x in v) for v in vl)
                 and len(vl[0]) >= 2  # ensure vectors are long enough for dimension check
-    )
+            )
         ),
         query=lists(floats(min_value=-100.0, max_value=100.0), min_size=1, max_size=50).filter(
             lambda q: len(q) >= 2 and any(x != 0.0 for x in q)
@@ -543,8 +539,8 @@ class TestDifferentialSimdDomain:
             pytest.skip(f"batch_cosine_similarity exception: {e}")
 
         # Always assert with float tolerance
-        assert len(py_result) == len(rust_result), f"length mismatch"
-        for i, (py_c, rust_c) in enumerate(zip(py_result, rust_result)):
+        assert len(py_result) == len(rust_result), "length mismatch"
+        for i, (py_c, rust_c) in enumerate(zip(py_result, rust_result, strict=False)):
             # Skip known Rust=0.0 divergences for near-unit vectors with zero components
             if rust_c == 0.0 and abs(py_c) > 0.9:
                 pytest.skip(f"batch_cosine_similarity Rust=0.0 divergence for py={py_c} at {i}")
@@ -577,7 +573,7 @@ class TestDifferentialTextDomain:
         py_result = python_domain.strip_diacritics(text)
         rust_result = rust_domain.strip_diacritics(text)
 
-        assert py_result == rust_result, f"strip_diacritics mismatch"
+        assert py_result == rust_result, "strip_diacritics mismatch"
 
     @given(texts=lists(UNICODE_TEXT, min_size=1, max_size=100))
     @settings(max_examples=100, verbosity=Verbosity.verbose, deadline=None)
@@ -589,7 +585,7 @@ class TestDifferentialTextDomain:
         py_result = python_domain.batch_nfc_normalize(texts)
         rust_result = rust_domain.batch_nfc_normalize(texts)
 
-        assert py_result == rust_result, f"batch_nfc_normalize mismatch"
+        assert py_result == rust_result, "batch_nfc_normalize mismatch"
 
 
 class TestDifferentialIpDomain:
@@ -611,13 +607,15 @@ class TestDifferentialIpDomain:
 
         # Skip kvůli API mismatch — Python tuple vs Rust str
         if type(py_result) != type(rust_result):
-            pytest.skip(f"parse_ip_fast API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}")
+            pytest.skip(
+                f"parse_ip_fast API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}"
+            )
 
         assert type(py_result) == type(rust_result), f"type mismatch: {type(py_result)} vs {type(rust_result)}"
         if isinstance(py_result, tuple):
-            assert py_result[1] == rust_result[1], f"IP version mismatch"  # stejná verze
+            assert py_result[1] == rust_result[1], "IP version mismatch"  # stejná verze
         else:
-            assert py_result == rust_result, f"parse_ip_fast mismatch"
+            assert py_result == rust_result, "parse_ip_fast mismatch"
 
     @given(ip=one_of(IPV4_STRATEGY, PRIVATE_IP, PUBLIC_IP))
     @settings(max_examples=500, verbosity=Verbosity.verbose, deadline=None)
@@ -686,7 +684,7 @@ class TestDifferentialIocDomain:
         py_result = python_domain.nfc_normalize(text)
         rust_result = rust_domain.nfc_normalize(text)
 
-        assert py_result == rust_result, f"nfc_normalize mismatch"
+        assert py_result == rust_result, "nfc_normalize mismatch"
 
     @given(text=one_of(IOC_TEXT_IPV4, IOC_TEXT_EMAILS, IOC_TEXT_DOMAINS, IOC_TEXT_HASHES, IOC_TEXT_CVES))
     @settings(max_examples=300, verbosity=Verbosity.verbose, deadline=None)
@@ -704,12 +702,14 @@ class TestDifferentialIocDomain:
 
         # Skip kvůli API mismatch — dict vs list
         if type(py_result) != type(rust_result):
-            pytest.skip(f"extract_iocs API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}")
+            pytest.skip(
+                f"extract_iocs API mismatch: Python={type(py_result).__name__}, Rust={type(rust_result).__name__}"
+            )
 
         # Obě implementace by měly mít stejné typy klíčů
         assert set(py_result.keys()) == set(rust_result.keys()), (
             f"IOC type keys differ: python={set(py_result.keys())} rust={set(rust_result.keys())}"
-    )
+        )
 
 
 class TestDifferentialHtmlDomain:
@@ -720,9 +720,11 @@ class TestDifferentialHtmlDomain:
         min_size=0,
         max_size=2000,
     ).map(
-        lambda s: f"<html><head><title>Test</title></head><body>{s}</body></html>"
-        if len(s) < 100
-        else s[:100] + "</body></html>"
+        lambda s: (
+            f"<html><head><title>Test</title></head><body>{s}</body></html>"
+            if len(s) < 100
+            else s[:100] + "</body></html>"
+        )
     )
 
     @given(html=HTML_STRATEGY)
@@ -736,7 +738,9 @@ class TestDifferentialHtmlDomain:
         rust_result = rust_domain.html_extract(html)
 
         # Obě implementace by měly mít stejné klíče
-        assert set(py_result.keys()) == set(rust_result.keys()), f"key mismatch: {py_result.keys()} vs {rust_result.keys()}"
+        assert set(py_result.keys()) == set(rust_result.keys()), (
+            f"key mismatch: {py_result.keys()} vs {rust_result.keys()}"
+        )
 
 
 class TestDifferentialHashDomain:
@@ -752,7 +756,7 @@ class TestDifferentialHashDomain:
         py_result = python_domain.content_hash_64(data)
         rust_result = rust_domain.content_hash_64(data)
 
-        assert py_result == rust_result, f"content_hash_64 mismatch"
+        assert py_result == rust_result, "content_hash_64 mismatch"
 
     @given(data=binary(min_size=0, max_size=10000))
     @settings(max_examples=100, verbosity=Verbosity.verbose, deadline=None)
@@ -764,7 +768,7 @@ class TestDifferentialHashDomain:
         py_result = python_domain.content_hash_hex(data)
         rust_result = rust_domain.content_hash_hex(data)
 
-        assert py_result == rust_result, f"content_hash_hex mismatch"
+        assert py_result == rust_result, "content_hash_hex mismatch"
 
 
 class TestDifferentialBloomDomain:
@@ -852,7 +856,8 @@ INVARIANT_TABLES = {
 
 # pytest configuration
 
-def pytest_configure(config):
+
+def pytest_configure(config) -> None:
     """Register custom markers."""
     config.addinivalue_line("markers", "differential: differential fuzzing tests")
     config.addinivalue_line("markers", "f53: F5.3 hypothesis tests")

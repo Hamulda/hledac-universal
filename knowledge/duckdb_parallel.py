@@ -34,17 +34,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import numpy as np
-    import duckdb
+    pass
 
 logger = logging.getLogger(__name__)
-
-
-# ─── Configuration ─────────────────────────────────────────────────────────────
 
 # M1 8GB bounded concurrency limits
 _MAX_PARALLEL_QUERIES: int = 4  # Max concurrent DuckDB queries
@@ -52,11 +48,10 @@ _MAX_PARALLEL_ARROW_BATCHES: int = 2  # Max concurrent Arrow batches
 _RRF_K: int = 60  # Standard RRF parameter
 
 
-# ─── Result DTOs ──────────────────────────────────────────────────────────────
-
 @dataclass(slots=True)
 class RRFusionResult:
     """Result of parallel RRF fusion."""
+
     fused_results: list[dict[str, Any]]
     fts_count: int
     vec_count: int
@@ -66,12 +61,11 @@ class RRFusionResult:
 @dataclass(slots=True)
 class ParallelQueryResult:
     """Result of parallel DuckDB query execution."""
+
     results: list[Any]
     errors: list[Exception]
     execution_time_ms: float
 
-
-# ─── NumPy Vectorized RRF Fusion ─────────────────────────────────────────────
 
 def numpy_rrf_fusion(
     fts_results: list[dict[str, Any]],
@@ -140,10 +134,7 @@ def numpy_rrf_fusion(
     # Vector scores - vectorized with distance-based weighting
     if vec_results:
         vec_ranks = np.arange(len(vec_results), dtype=np.float64)
-        vec_distances = np.array(
-            [r.get("distance", 1.0) for r in vec_results],
-            dtype=np.float64
-        )
+        vec_distances = np.array([r.get("distance", 1.0) for r in vec_results], dtype=np.float64)
         # Convert distance to similarity score
         vec_sim = 1.0 / (vec_distances + 0.001)
         vec_scores = vec_weight * (1.0 / (k + vec_ranks + 1)) * vec_sim / vec_sim.max()
@@ -214,8 +205,6 @@ def _simple_rrf_fusion(
         execution_time_ms=(time.monotonic() - start) * 1000,
     )
 
-
-# ─── Parallel DuckDB Batch Queries ──────────────────────────────────────────────
 
 async def parallel_duckdb_queries(
     queries: list[tuple[str, list[Any]]],
@@ -303,8 +292,6 @@ async def parallel_duckdb_queries(
     )
 
 
-# ─── Parallel Arrow Batch Ingestion ───────────────────────────────────────────
-
 async def parallel_arrow_ingest(
     batches: list[bytes],
     table_name: str,
@@ -357,7 +344,6 @@ async def parallel_arrow_ingest(
             errors.append(e)
             return 0
 
-    # Execute with bounded concurrency
     from hledac.universal.utils.asyncx import parallel
 
     coros = [_ingest_batch(batch) for batch in batches]
@@ -379,8 +365,6 @@ async def parallel_arrow_ingest(
 
     return total_rows, errors
 
-
-# ─── Vectorized Candidate Building ────────────────────────────────────────────
 
 def vectorized_build_candidates(
     fts_results: list[dict[str, Any]],
@@ -460,8 +444,6 @@ def vectorized_build_candidates(
     return candidates
 
 
-# ─── Hybrid Search with Parallel Execution ─────────────────────────────────────
-
 async def parallel_hybrid_search(
     fts_task: Any,
     vec_task: Any,
@@ -496,8 +478,6 @@ async def parallel_hybrid_search(
     return fts_results, vec_results
 
 
-# ─── Batch Query Builder ───────────────────────────────────────────────────────
-
 def build_parallel_query_batches(
     items: list[Any],
     batch_size: int,
@@ -524,7 +504,6 @@ def build_parallel_query_batches(
         batch = items[i : i + batch_size]
         ids = [item.get(id_field, item) if isinstance(item, dict) else getattr(item, id_field, item) for item in batch]
 
-        # Build IN clause with correct number of placeholders
         placeholders = ", ".join(["?" for _ in ids])
         sql = query_template.format(placeholders=placeholders)
 
@@ -532,8 +511,6 @@ def build_parallel_query_batches(
 
     return batches
 
-
-# ─── Module Exports ───────────────────────────────────────────────────────────
 
 __all__ = [
     # Configuration (public accessors)
@@ -553,8 +530,6 @@ __all__ = [
     "build_parallel_query_batches",
 ]
 
-
-# ─── Public Configuration Accessors ────────────────────────────────────────────
 
 def get_max_parallel_queries() -> int:
     """Get the max parallel queries limit for current platform."""

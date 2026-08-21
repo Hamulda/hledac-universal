@@ -42,17 +42,13 @@ INVARIANTS:
   [TP-4] All transport functions are fail-soft — exceptions return None/false
   [TP-5] CancelledError is always re-raised by transport functions
 """
+
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Fetch Adapter — TransportAdapter ABC for HTTP fetch operations
-# ---------------------------------------------------------------------------
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 if TYPE_CHECKING:
     from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
@@ -69,6 +65,7 @@ class TransportConfig(Struct, frozen=True):
     Contains all parameters needed by any transport provider.
     Fail-soft: missing fields use sensible defaults.
     """
+
     url: str
     timeout_s: float = 35.0
     max_bytes: int = 2_000_000
@@ -89,6 +86,7 @@ class TransportResult(Struct, frozen=True):
     Contains everything public_fetcher needs to construct FetchResult.
     All fields have defaults so existing callers are unaffected.
     """
+
     # Core response
     url: str = ""  # default allows error-path construction without url
     final_url: str = ""
@@ -184,12 +182,6 @@ class TransportAdapter(ABC):
         return False
 
 
-# ---------------------------------------------------------------------------
-# Transport ABC — Abstract base for node-transport overlays
-# Implemented by: InMemoryTransport, TorTransport, NymTransport, I2PTransport
-# ---------------------------------------------------------------------------
-
-
 class Transport(ABC):
     """
     Abstract base class for node-transport overlays.
@@ -256,7 +248,6 @@ class Transport(ABC):
         that need periodic maintenance (e.g., refreshing sessions,
         checking connections). Default no-op.
         """
-        pass
 
     def health_cost(self) -> float:
         """
@@ -274,41 +265,32 @@ class Transport(ABC):
         Override to perform phase-boundary operations like circuit rotation.
         Default no-op.
         """
-        pass
 
-
-# ---------------------------------------------------------------------------
-# Re-exports from transport_router (TransportDecision, Lane)
-# These provide the lane-selection abstraction without requiring
-# public_fetcher to import from transport_router directly.
-# Kept as lazy __getattr__ to avoid import chain failures when transport.base
-# is imported as top-level (no hledac.universal parent in sys.modules).
-# ---------------------------------------------------------------------------
 
 __all__ = [
     # Transport ABC (node-transport overlay base)
-    'Transport',
+    "Transport",
     # DTOs
-    'TransportConfig',
-    'TransportResult',
+    "TransportConfig",
+    "TransportResult",
     # Adapter interface
-    'TransportAdapter',
+    "TransportAdapter",
     # Router types
-    'TransportDecision',
-    'Lane',
+    "TransportDecision",
+    "Lane",
     # Circuit breaker re-exports (backward compatibility)
-    'get_breaker',
-    'CircuitBreaker',
-    'CircuitDecision',
+    "get_breaker",
+    "CircuitBreaker",
+    "CircuitDecision",
     # HTTPX transport functions
-    'should_use_httpx_h2',
-    'fetch_via_httpx_h2',
+    "should_use_httpx_h2",
+    "fetch_via_httpx_h2",
     # curl_cffi transport functions
-    'should_use_curl_cffi',
-    'fetch_via_curl_cffi',
-    'fetch_via_tor_curl_cffi',  # noqa: F822
+    "should_use_curl_cffi",
+    "fetch_via_curl_cffi",
+    "fetch_via_tor_curl_cffi",  # noqa: F822
     # Router
-    'route_transport',
+    "route_transport",
 ]
 
 
@@ -316,24 +298,24 @@ def __getattr__(name: str):
     # Lazy imports to break circular dependency cycle with transport/__init__.py
     # base.py → __init__.py → base.py was causing runtime circular import
     # FIX: Import DIRECTLY from submodule FILE, NOT via __init__.py
-    if name in ('TransportDecision', 'Lane', 'route_transport'):
+    if name in ("TransportDecision", "Lane", "route_transport"):
         from .transport_router import Lane, TransportDecision, route_transport
 
-        return {'TransportDecision': TransportDecision, 'Lane': Lane, 'route_transport': route_transport}[name]
-    if name in ('get_breaker', 'CircuitBreaker', 'CircuitDecision'):
-        from .circuit_breaker import get_breaker, CircuitBreaker, CircuitDecision
+        return {"TransportDecision": TransportDecision, "Lane": Lane, "route_transport": route_transport}[name]
+    if name in ("get_breaker", "CircuitBreaker", "CircuitDecision"):
+        from .circuit_breaker import CircuitBreaker, CircuitDecision, get_breaker
 
-        return {'get_breaker': get_breaker, 'CircuitBreaker': CircuitBreaker, 'CircuitDecision': CircuitDecision}[name]
-    if name in ('should_use_httpx_h2', 'fetch_via_httpx_h2'):
-        from .httpx_transport import should_use_httpx_h2, fetch_via_httpx_h2
+        return {"get_breaker": get_breaker, "CircuitBreaker": CircuitBreaker, "CircuitDecision": CircuitDecision}[name]
+    if name in ("should_use_httpx_h2", "fetch_via_httpx_h2"):
+        from .httpx_transport import fetch_via_httpx_h2, should_use_httpx_h2
 
-        return {'should_use_httpx_h2': should_use_httpx_h2, 'fetch_via_httpx_h2': fetch_via_httpx_h2}[name]
-    if name == 'should_use_curl_cffi':
+        return {"should_use_httpx_h2": should_use_httpx_h2, "fetch_via_httpx_h2": fetch_via_httpx_h2}[name]
+    if name == "should_use_curl_cffi":
         from .curl_cffi_transport import should_use_curl_cffi
 
         return should_use_curl_cffi
-    if name in ('fetch_via_curl_cffi', 'fetch_via_tor_curl_cffi'):
+    if name in ("fetch_via_curl_cffi", "fetch_via_tor_curl_cffi"):
         from .curl_cffi_fetch import fetch_via_curl_cffi, fetch_via_tor_curl_cffi
 
-        return {'fetch_via_curl_cffi': fetch_via_curl_cffi, 'fetch_via_tor_curl_cffi': fetch_via_tor_curl_cffi}[name]
+        return {"fetch_via_curl_cffi": fetch_via_curl_cffi, "fetch_via_tor_curl_cffi": fetch_via_tor_curl_cffi}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

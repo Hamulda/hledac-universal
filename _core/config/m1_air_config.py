@@ -19,20 +19,13 @@ References:
   - FetchCoordinatorConfig (coordinators/fetch_coordinator.py)
 """
 
-
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import ClassVar
+
+from compat.msgspec_gc_compat import Struct
 
 # MODERN-41 Fix: Import SWAP_TIERS SSOT for swap thresholds
 from hledac.universal.utils.uma_budget import SWAP_TIERS
-from _core._util import aclose
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# M1AirConfig — frozen hardware profile for MacBook Air M1 8GB UMA
-# ─────────────────────────────────────────────────────────────────────────────
 
 class M1AirConfig(Struct, frozen=True):
     """
@@ -41,13 +34,13 @@ class M1AirConfig(Struct, frozen=True):
     MODERN-38 Fix: Clarified axis distinction between process-RSS and system-used.
 
     Memory budget breakdown (two distinct AXES):
-    
+
     AXIS: process-RSS (memory_budget_gib = MISSION_PEAK_RSS_GIB = 5.5 GiB):
       macOS system         ~2.5 GiB  (baseline)
       Hledac process       ~3.0 GiB  (orchestrator + LLM + KV)
       ──────────────────────────────
       Process RSS cap      5.5 GiB   (hard limit)
-    
+
     AXIS: system-used (threshold_*_gib from UmaBudget SSOT):
       UmaBudget ceiling    6.25 GiB  (SSOT hard ceiling)
       Soft warn            5.5 GiB    (88% - first signal)
@@ -65,11 +58,11 @@ class M1AirConfig(Struct, frozen=True):
 
     # ── MODERN-36/38 Fix: SSOT imports ──────────────────────────────────────
     from hledac.universal.utils.uma_budget import (
-        UmaBudget,
-        MISSION_PEAK_RSS_GIB,
-        ORCHESTRATOR_GIB,
         # MODERN-38 Fix: Import threshold ladder from SSOT
         M1_FETCH_SOFT_CEILING_GB,
+        MISSION_PEAK_RSS_GIB,
+        ORCHESTRATOR_GIB,
+        UmaBudget,
     )
 
     # ── Hardware profile ─────────────────────────────────────────────────────
@@ -234,16 +227,19 @@ class M1AirConfig(Struct, frozen=True):
         # MODERN-38 Fix: Updated to expect MISSION_PEAK_RSS_GIB (5.5) not 6.0
         # Memory ceiling check — ensure we never exceed physical RAM
         expected_rss = cls.MISSION_PEAK_RSS_GIB
-        assert cls.memory_budget_gib == expected_rss, f"memory_budget_gib invariant violated: expected {expected_rss}, got {cls.memory_budget_gib}"
-        assert cls.threshold_emergency_gib >= cls.threshold_critical_gib >= cls.threshold_warn_gib >= cls.threshold_soft_warn_gib
+        assert cls.memory_budget_gib == expected_rss, (
+            f"memory_budget_gib invariant violated: expected {expected_rss}, got {cls.memory_budget_gib}"
+        )
+        assert (
+            cls.threshold_emergency_gib
+            >= cls.threshold_critical_gib
+            >= cls.threshold_warn_gib
+            >= cls.threshold_soft_warn_gib
+        )
         assert cls.hermes_timeout_max_s >= cls.hermes_timeout_default_s >= cls.hermes_timeout_min_s
         assert cls.h3_timeout_s >= cls.h3_wait_timeout_s
         return True
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Derived convenience accessors
-# ─────────────────────────────────────────────────────────────────────────────
 
 M1_AIR = M1AirConfig()
 """Singleton instance for runtime access to M1 8GB hardware profile."""

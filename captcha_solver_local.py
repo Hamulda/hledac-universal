@@ -17,18 +17,13 @@ This module exists for environments where:
 - Users explicitly opt-in with HLEDAC_ENABLE_CAPTCHA_LOCAL=1
 """
 
-
 import asyncio
 import io
 import logging
-import time
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -49,22 +44,15 @@ def _check_enabled() -> bool:
     return _LOCAL_ENABLED
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Local OCR Config
-# ─────────────────────────────────────────────────────────────────────────────
-
 class LocalOcrConfig(Struct):
     """Configuration for local OCR CAPTCHA solving."""
+
     model_name: str = "microsoft/trocr-small-printed"
     use_mlx: bool = True  # Use MLX acceleration if available
     max_image_size: int = 640  # Max image dimension (pixels)
     confidence_threshold: float = 0.6
     timeout_seconds: float = 30.0
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Local OCR Solver
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LocalCaptchaSolver:
     """
@@ -78,7 +66,7 @@ class LocalCaptchaSolver:
         3. fail (return None)
     """
 
-    __slots__ = ('_config', '_ocr_pipeline', '_initialized', '_stats')
+    __slots__ = ("_config", "_ocr_pipeline", "_initialized", "_stats")
 
     def __init__(self, config: LocalOcrConfig | None = None) -> None:
         self._config = config or LocalOcrConfig()
@@ -147,16 +135,16 @@ class LocalCaptchaSolver:
     async def _init_transformers_pipeline(self) -> None:
         """Initialize transformers OCR pipeline (CPU, heavy ~1-2 GB RAM)."""
         # Heavy: transformers + torch loaded eagerly here
-        from transformers import AutoProcessor, AutoModelForVision2Seq
         import torch
+        from transformers import AutoModelForVision2Seq, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(self._config.model_name)
         model = AutoModelForVision2Seq.from_pretrained(
             self._config.model_name,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-    )
+        )
         # No GPU on M1 — use float32
-        if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+        if hasattr(torch, "mps") and torch.backends.mps.is_available():
             model = model.to("mps")
 
         self._ocr_pipeline = (processor, model)
@@ -165,6 +153,7 @@ class LocalCaptchaSolver:
     def _init_tesseract(self) -> None:
         """Initialize pytesseract (lightweight fallback)."""
         import pytesseract
+
         # Verify tesseract is installed
         pytesseract.get_tesseract_version()
         self._ocr_pipeline = True  # marker: tesseract available
@@ -232,19 +221,18 @@ class LocalCaptchaSolver:
         processor, model = self._ocr_pipeline  # type: ignore[assignment]
 
         try:
-            from transformers import AutoProcessor, AutoModelForVision2Seq
             import torch
 
             # Run in thread to avoid blocking
             def _run():
                 inputs = processor(images=image, return_tensors="pt")
-                if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+                if hasattr(torch, "mps") and torch.backends.mps.is_available():
                     inputs = {k: v.to("mps") for k, v in inputs.items()}
                 with torch.no_grad():
                     generated_ids = model.generate(
                         **inputs,
                         max_new_tokens=50,
-    )
+                    )
                 return processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
             return await asyncio.to_thread(_run)
@@ -257,6 +245,7 @@ class LocalCaptchaSolver:
         """Solve using pytesseract (lightweight)."""
         try:
             import pytesseract
+
             return pytesseract.image_to_string(
                 image,
                 config="--psm 8",
@@ -268,10 +257,6 @@ class LocalCaptchaSolver:
     def get_stats(self) -> dict:
         return dict(self._stats)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Standalone function API (for compatibility)
-# ─────────────────────────────────────────────────────────────────────────────
 
 async def solve_local(image_bytes: bytes) -> str | None:
     """

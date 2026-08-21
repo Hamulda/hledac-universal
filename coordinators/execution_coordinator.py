@@ -18,6 +18,7 @@ Unique Features Integrated:
 5. Parallel task optimization with priorities
 6. Execution result aggregation
 """
+
 import asyncio
 import logging
 import time
@@ -25,19 +26,18 @@ from collections import deque
 from dataclasses import field
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task
 
-from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task  # ISSUE-15
-
-from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from _core import aclose
+from .base import DecisionResponse, ExecutionResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
+
 class ExecutionTask(Struct):
     """Definition of an execution task."""
+
     task_id: str
     description: str
     priority: str
@@ -45,6 +45,7 @@ class ExecutionTask(Struct):
     payload: dict[str, Any] = field(default_factory=dict)
     timeout: float = 60.0
     retries: int = 0
+
 
 class TaskResult(Struct, frozen=True):
     """
@@ -54,6 +55,7 @@ class TaskResult(Struct, frozen=True):
     types.py and from the CoordinatorTaskResult in _dto.py.
     Used internally by execution_coordinator for task-level results.
     """
+
     task_id: str
     success: bool
     summary: str
@@ -61,6 +63,7 @@ class TaskResult(Struct, frozen=True):
     execution_time: float
     result_data: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+
 
 class UniversalExecutionCoordinator(UniversalCoordinator):
     """
@@ -81,10 +84,31 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
     - Dynamic task count based on decision.confidence
     - Priority based on confidence threshold
     """
-    __slots__ = ('_action_history', '_completed_tasks', '_ghost_available', '_ghost_director', '_ghost_executions', '_ghost_max_steps', '_load_factor', '_max_completed_history', '_max_history', '_parallel_available', '_parallel_executions', '_parallel_executor', '_parallel_max_tasks', '_pending_tasks', '_ray_available', '_ray_cluster', '_ray_executions', '_ray_max_tasks', '_worker_pool')
 
-    def __init__(self, max_concurrent: int=10) -> None:
-        super().__init__(name='universal_execution_coordinator', max_concurrent=max_concurrent, memory_aware=True)
+    __slots__ = (
+        "_action_history",
+        "_completed_tasks",
+        "_ghost_available",
+        "_ghost_director",
+        "_ghost_executions",
+        "_ghost_max_steps",
+        "_load_factor",
+        "_max_completed_history",
+        "_max_history",
+        "_parallel_available",
+        "_parallel_executions",
+        "_parallel_executor",
+        "_parallel_max_tasks",
+        "_pending_tasks",
+        "_ray_available",
+        "_ray_cluster",
+        "_ray_executions",
+        "_ray_max_tasks",
+        "_worker_pool",
+    )
+
+    def __init__(self, max_concurrent: int = 10) -> None:
+        super().__init__(name="universal_execution_coordinator", max_concurrent=max_concurrent, memory_aware=True)
         self._ghost_director: Any | None = None
         self._parallel_executor: Any | None = None
         self._ray_cluster: Any | None = None
@@ -115,57 +139,60 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         initialized_any = False
         try:
             from hledac.universal.cortex.director import GhostDirector
+
             self._ghost_director = GhostDirector(max_steps=self._ghost_max_steps)
             self._ghost_available = True
             initialized_any = True
-            logger.info('ExecutionCoordinator: GhostDirector initialized')
-        except (ImportError, IndentationError):
-            logger.warning('ExecutionCoordinator: GhostDirector not available')
+            logger.info("ExecutionCoordinator: GhostDirector initialized")
+        except ImportError, IndentationError:
+            logger.warning("ExecutionCoordinator: GhostDirector not available")
         except Exception as e:
-            logger.warning(f'ExecutionCoordinator: GhostDirector init failed: {e}')
+            logger.warning(f"ExecutionCoordinator: GhostDirector init failed: {e}")
         try:
             from hledac.universal.utils.execution_optimizer import ParallelExecutionOptimizer
+
             self._parallel_executor = ParallelExecutionOptimizer()
-            if hasattr(self._parallel_executor, 'initialize'):
+            if hasattr(self._parallel_executor, "initialize"):
                 await self._parallel_executor.initialize()
             self._parallel_available = True
             initialized_any = True
-            logger.info('ExecutionCoordinator: ParallelExecutionOptimizer initialized')
+            logger.info("ExecutionCoordinator: ParallelExecutionOptimizer initialized")
         except ImportError:
-            logger.warning('ExecutionCoordinator: ParallelExecutionOptimizer not available')
+            logger.warning("ExecutionCoordinator: ParallelExecutionOptimizer not available")
         except Exception as e:
-            logger.warning(f'ExecutionCoordinator: ParallelExecutor init failed: {e}')
+            logger.warning(f"ExecutionCoordinator: ParallelExecutor init failed: {e}")
         try:
             from hledac.universal.distributed_computing.ray_cluster import RayClusterManager
+
             self._ray_cluster = RayClusterManager()
-            if hasattr(self._ray_cluster, 'initialize'):
+            if hasattr(self._ray_cluster, "initialize"):
                 await self._ray_cluster.initialize()
             self._ray_available = True
             initialized_any = True
-            logger.info('ExecutionCoordinator: RayClusterManager initialized')
+            logger.info("ExecutionCoordinator: RayClusterManager initialized")
         except ImportError:
-            logger.warning('ExecutionCoordinator: RayClusterManager not available')
+            logger.warning("ExecutionCoordinator: RayClusterManager not available")
         except Exception as e:
-            logger.warning(f'ExecutionCoordinator: RayCluster init failed: {e}')
+            logger.warning(f"ExecutionCoordinator: RayCluster init failed: {e}")
         return initialized_any
 
     async def _do_cleanup(self) -> None:
         """Cleanup execution subsystems."""
-        if self._ghost_director and hasattr(self._ghost_director, 'cleanup'):
+        if self._ghost_director and hasattr(self._ghost_director, "cleanup"):
             try:
                 await self._ghost_director.cleanup()
             except Exception as e:
-                logger.error(f'Error cleaning up GhostDirector: {e}')
-        if self._parallel_executor and hasattr(self._parallel_executor, 'cleanup'):
+                logger.error(f"Error cleaning up GhostDirector: {e}")
+        if self._parallel_executor and hasattr(self._parallel_executor, "cleanup"):
             try:
                 await self._parallel_executor.cleanup()
             except Exception as e:
-                logger.error(f'Error cleaning up ParallelExecutor: {e}')
-        if self._ray_cluster and hasattr(self._ray_cluster, 'cleanup'):
+                logger.error(f"Error cleaning up ParallelExecutor: {e}")
+        if self._ray_cluster and hasattr(self._ray_cluster, "cleanup"):
             try:
                 await self._ray_cluster.cleanup()
             except Exception as e:
-                logger.error(f'Error cleaning up RayCluster: {e}')
+                logger.error(f"Error cleaning up RayCluster: {e}")
         self._pending_tasks.clear()
         self._completed_tasks.clear()
 
@@ -175,20 +202,20 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
 
     def _get_operation_type_for_tracking(self) -> str:
         """Return operation type for tracking."""
-        return 'execution'
+        return "execution"
 
     async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle execution request — routes to appropriate backend."""
         result = await self._execute_decision(decision)
         return ExecutionResult(
-            status='completed' if result.success else 'failed',
+            status="completed" if result.success else "failed",
             result_summary=result.summary,
             success=result.success,
             metadata={
-                'executor': result.executor,
-                'tasks_executed': 1 if result.executor == 'ghost' else result.result_data.get('task_count', 1),
+                "executor": result.executor,
+                "tasks_executed": 1 if result.executor == "ghost" else result.result_data.get("task_count", 1),
             },
-    )
+        )
 
     async def _execute_decision(self, decision: DecisionResponse) -> TaskResult:
         """
@@ -204,28 +231,35 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         3. Cancel losers, return winner
         """
         chosen = decision.chosen_option.lower()
-        if 'ghost' in chosen or 'director' in chosen or 'mission' in chosen:
-            primary = 'ghost'
-        elif 'parallel' in chosen or 'concurrent' in chosen:
-            primary = 'parallel'
-        elif 'ray' in chosen or 'cluster' in chosen or 'distributed' in chosen:
-            primary = 'ray'
+        if "ghost" in chosen or "director" in chosen or "mission" in chosen:
+            primary = "ghost"
+        elif "parallel" in chosen or "concurrent" in chosen:
+            primary = "parallel"
+        elif "ray" in chosen or "cluster" in chosen or "distributed" in chosen:
+            primary = "ray"
         else:
-            primary = 'ghost'
+            primary = "ghost"
         backends: list[tuple[str, Any]] = []
         if self._ghost_available:
-            backends.append(('ghost', self._execute_ghost_director(decision)))
-        if self._parallel_available and primary != 'parallel':
-            backends.append(('parallel', self._execute_parallel_processing(decision)))
-        if self._ray_available and primary != 'ray':
-            backends.append(('ray', self._execute_ray_cluster(decision)))
+            backends.append(("ghost", self._execute_ghost_director(decision)))
+        if self._parallel_available and primary != "parallel":
+            backends.append(("parallel", self._execute_parallel_processing(decision)))
+        if self._ray_available and primary != "ray":
+            backends.append(("ray", self._execute_ray_cluster(decision)))
         if not backends:
-            return TaskResult(task_id='none', success=False, summary='No backends available', executor='none', execution_time=0.0, error='All execution backends unavailable')
+            return TaskResult(
+                task_id="none",
+                success=False,
+                summary="No backends available",
+                executor="none",
+                execution_time=0.0,
+                error="All execution backends unavailable",
+            )
         timeout_value = decision.estimated_duration if decision.estimated_duration else 10.0
         winner_result: TaskResult | None = None
         # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
         backend_tasks: list[asyncio.Task[TaskResult]] = [
-            safe_create_task(coro, name=f'exec:{name}') for name, coro in backends
+            safe_create_task(coro, name=f"exec:{name}") for name, coro in backends
         ]
         try:
             async with asyncio.timeout(timeout_value):
@@ -235,9 +269,16 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                         t.cancel()
                 winner_result = winner_task.result()
         except TimeoutError:
-            return TaskResult(task_id='none', success=False, summary=f'All backends timed out after {timeout_value}s', executor='none', execution_time=timeout_value, error='Backend race timeout')
+            return TaskResult(
+                task_id="none",
+                success=False,
+                summary=f"All backends timed out after {timeout_value}s",
+                executor="none",
+                execution_time=timeout_value,
+                error="Backend race timeout",
+            )
         except Exception as e:
-            logger.warning(f'Backend race failed: {e}')
+            logger.warning(f"Backend race failed: {e}")
         if winner_result is not None:
             return winner_result
         last_error: Exception | None = None
@@ -249,43 +290,78 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             except Exception as e:
                 last_error = e
                 continue
-        return TaskResult(task_id='none', success=False, summary=f'All execution backends failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error) if last_error else None)
+        return TaskResult(
+            task_id="none",
+            success=False,
+            summary=f"All execution backends failed. Last error: {last_error}",
+            executor="none",
+            execution_time=0.0,
+            error=str(last_error) if last_error else None,
+        )
 
     async def _execute_ghost_director(self, decision: DecisionResponse) -> TaskResult:
         """Execute using GhostDirector (mission-based)."""
         start_time = time.time()
         if not self._ghost_director:
-            raise RuntimeError('GhostDirector not available')
-        mission = {'objective': decision.reasoning, 'confidence': decision.confidence, 'estimated_duration': decision.estimated_duration, 'decision_id': decision.decision_id, 'priority': decision.priority, 'metadata': decision.metadata}
+            raise RuntimeError("GhostDirector not available")
+        mission = {
+            "objective": decision.reasoning,
+            "confidence": decision.confidence,
+            "estimated_duration": decision.estimated_duration,
+            "decision_id": decision.decision_id,
+            "priority": decision.priority,
+            "metadata": decision.metadata,
+        }
         result = await self._ghost_director.execute_mission(mission)
         execution_time = time.time() - start_time
         self._ghost_executions += 1
-        return TaskResult(task_id=decision.decision_id, success=result.get('success', False), summary=result.get('summary', 'Ghost mission completed'), executor='ghost', execution_time=execution_time, result_data=result)
+        return TaskResult(
+            task_id=decision.decision_id,
+            success=result.get("success", False),
+            summary=result.get("summary", "Ghost mission completed"),
+            executor="ghost",
+            execution_time=execution_time,
+            result_data=result,
+        )
 
     async def _execute_parallel_processing(self, decision: DecisionResponse) -> TaskResult:
         """Execute using ParallelExecutionOptimizer."""
         start_time = time.time()
         if not self._parallel_executor:
-            raise RuntimeError('ParallelExecutionOptimizer not available')
+            raise RuntimeError("ParallelExecutionOptimizer not available")
         num_tasks = self._calculate_task_count(decision.confidence, self._parallel_max_tasks)
         tasks = self._generate_tasks(decision, num_tasks)
         results = await self._parallel_executor.execute_parallel(tasks)
         execution_time = time.time() - start_time
         self._parallel_executions += 1
-        success_count = sum(1 for r in results if r.get('success', False))
-        return TaskResult(task_id=f'parallel_{decision.decision_id}', success=success_count > 0, summary=f'Parallel execution: {success_count}/{len(results)} tasks succeeded', executor='parallel', execution_time=execution_time, result_data={'task_count': len(results), 'success_count': success_count, 'tasks': results})
+        success_count = sum(1 for r in results if r.get("success", False))
+        return TaskResult(
+            task_id=f"parallel_{decision.decision_id}",
+            success=success_count > 0,
+            summary=f"Parallel execution: {success_count}/{len(results)} tasks succeeded",
+            executor="parallel",
+            execution_time=execution_time,
+            result_data={"task_count": len(results), "success_count": success_count, "tasks": results},
+        )
 
     async def _execute_ray_cluster(self, decision: DecisionResponse) -> TaskResult:
         """Execute using RayClusterManager."""
         start_time = time.time()
         if not self._ray_cluster:
-            raise RuntimeError('RayClusterManager not available')
+            raise RuntimeError("RayClusterManager not available")
         num_tasks = self._calculate_task_count(decision.confidence, self._ray_max_tasks)
-        tasks = [f'{decision.decision_id}_task_{i}' for i in range(num_tasks)]
+        tasks = [f"{decision.decision_id}_task_{i}" for i in range(num_tasks)]
         results = await self._ray_cluster.distribute_tasks(tasks)
         execution_time = time.time() - start_time
         self._ray_executions += 1
-        return TaskResult(task_id=f'ray_{decision.decision_id}', success=results, summary=f'Distributed execution: {len(results)} tasks across cluster', executor='ray', execution_time=execution_time, result_data={'task_count': len(results), 'distributed': True, 'tasks': results})
+        return TaskResult(
+            task_id=f"ray_{decision.decision_id}",
+            success=results,
+            summary=f"Distributed execution: {len(results)} tasks across cluster",
+            executor="ray",
+            execution_time=execution_time,
+            result_data={"task_count": len(results), "distributed": True, "tasks": results},
+        )
 
     def _calculate_task_count(self, confidence: float, max_tasks: int) -> int:
         """
@@ -305,14 +381,20 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         - confidence > 0.5: medium priority
         - otherwise: low priority
         """
-        priority = 'high' if decision.confidence > 0.8 else 'medium' if decision.confidence > 0.5 else 'low'
+        priority = "high" if decision.confidence > 0.8 else "medium" if decision.confidence > 0.5 else "low"
         tasks = []
         for i in range(count):
-            task = {'id': f'{decision.decision_id}_task_{i}', 'description': f'Execute {decision.chosen_option} (part {i + 1}/{count})', 'priority': priority, 'parent_decision': decision.decision_id, 'metadata': decision.metadata}
+            task = {
+                "id": f"{decision.decision_id}_task_{i}",
+                "description": f"Execute {decision.chosen_option} (part {i + 1}/{count})",
+                "priority": priority,
+                "parent_decision": decision.decision_id,
+                "metadata": decision.metadata,
+            }
             tasks.append(task)
         return tasks
 
-    async def execute_with_fallback(self, task: ExecutionTask, fallback_chain: list[str] | None=None) -> TaskResult:
+    async def execute_with_fallback(self, task: ExecutionTask, fallback_chain: list[str] | None = None) -> TaskResult:
         """
         Execute task with automatic fallback between backends.
 
@@ -326,23 +408,29 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Execution result from first successful executor
         """
         if fallback_chain is None:
-            fallback_chain = ['ghost', 'parallel', 'ray']
+            fallback_chain = ["ghost", "parallel", "ray"]
         if task.executor in fallback_chain:
             fallback_chain.remove(task.executor)
         fallback_chain = [task.executor] + fallback_chain
         last_error = None
         for executor in fallback_chain:
             try:
-                decision = DecisionResponse(decision_id=task.task_id, chosen_option=executor, confidence=0.7, reasoning=task.description, estimated_duration=task.timeout)
-                if executor == 'ghost' and self._ghost_available:
+                decision = DecisionResponse(
+                    decision_id=task.task_id,
+                    chosen_option=executor,
+                    confidence=0.7,
+                    reasoning=task.description,
+                    estimated_duration=task.timeout,
+                )
+                if executor == "ghost" and self._ghost_available:
                     result = await self._execute_ghost_director(decision)
                     if result.success:
                         return result
-                elif executor == 'parallel' and self._parallel_available:
+                elif executor == "parallel" and self._parallel_available:
                     result = await self._execute_parallel_processing(decision)
                     if result.success:
                         return result
-                elif executor == 'ray' and self._ray_available:
+                elif executor == "ray" and self._ray_available:
                     result = await self._execute_ray_cluster(decision)
                     if result.success:
                         return result
@@ -350,9 +438,16 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 last_error = e
                 logger.warning(f"Fallback execution failed for '{executor}': {e}")
                 continue
-        return TaskResult(task_id=task.task_id, success=False, summary=f'All fallback executors failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error))
+        return TaskResult(
+            task_id=task.task_id,
+            success=False,
+            summary=f"All fallback executors failed. Last error: {last_error}",
+            executor="none",
+            execution_time=0.0,
+            error=str(last_error),
+        )
 
-    async def execute_batch(self, tasks: list[ExecutionTask], max_parallel: int=5) -> list[TaskResult]:
+    async def execute_batch(self, tasks: list[ExecutionTask], max_parallel: int = 5) -> list[TaskResult]:
         """
         Execute batch of tasks with controlled parallelism.
 
@@ -381,12 +476,23 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 pass  # Fall back to max_parallel
 
         async def execute_task(task: ExecutionTask) -> TaskResult:
-            decision = DecisionResponse(decision_id=task.task_id, chosen_option=task.executor, confidence=0.7 if task.priority == 'high' else 0.5, reasoning=task.description, estimated_duration=task.timeout)
+            decision = DecisionResponse(
+                decision_id=task.task_id,
+                chosen_option=task.executor,
+                confidence=0.7 if task.priority == "high" else 0.5,
+                reasoning=task.description,
+                estimated_duration=task.timeout,
+            )
             return await self._execute_decision(decision)
 
         concurrency_limit = max(concurrency_limit, 1)
 
-        result = await parallel([execute_task(task) for task in tasks], concurrency=concurrency_limit, policy="log", ctx='execution_coordinator.execute_batch')
+        result = await parallel(
+            [execute_task(task) for task in tasks],
+            concurrency=concurrency_limit,
+            policy="log",
+            ctx="execution_coordinator.execute_batch",
+        )
         return result.ok
 
     def register_task(self, task: ExecutionTask) -> str:
@@ -406,41 +512,56 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
     def get_task_status(self, task_id: str) -> dict[str, Any] | None:
         """Get status of specific task."""
         if task_id in self._pending_tasks:
-            return {'status': 'pending', 'task': self._pending_tasks[task_id]}
+            return {"status": "pending", "task": self._pending_tasks[task_id]}
         if task_id in self._completed_tasks:
             result = self._completed_tasks[task_id]
-            return {'status': 'completed', 'result': result}
+            return {"status": "completed", "result": result}
         return None
 
     def get_pending_tasks(self) -> list[str]:
         """Get list of pending task IDs."""
         return list(self._pending_tasks.keys())
 
-    def get_completed_tasks(self, limit: int=10) -> list[TaskResult]:
+    def get_completed_tasks(self, limit: int = 10) -> list[TaskResult]:
         """Get recently completed tasks."""
         return list(self._completed_tasks.values())[-limit:]
 
     def _get_feature_list(self) -> list[str]:
         """Report available features."""
-        features = ['Multi-backend execution routing']
+        features = ["Multi-backend execution routing"]
         if self._ghost_available:
-            features.append('GhostDirector Mission Execution')
+            features.append("GhostDirector Mission Execution")
         if self._parallel_available:
-            features.append('Parallel Task Processing')
+            features.append("Parallel Task Processing")
         if self._ray_available:
-            features.append('Ray Cluster Distribution')
-        features.extend(['Dynamic task generation', 'Automatic fallback chain', 'Batch execution with parallelism control', 'Task tracking and history', 'Confidence-based routing'])
+            features.append("Ray Cluster Distribution")
+        features.extend(
+            [
+                "Dynamic task generation",
+                "Automatic fallback chain",
+                "Batch execution with parallelism control",
+                "Task tracking and history",
+                "Confidence-based routing",
+            ]
+        )
         return features
 
     def get_execution_stats(self) -> dict[str, Any]:
         """Get execution statistics."""
-        return {'ghost_executions': self._ghost_executions, 'parallel_executions': self._parallel_executions, 'ray_executions': self._ray_executions, 'total_executions': self._ghost_executions + self._parallel_executions + self._ray_executions, 'pending_tasks': len(self._pending_tasks), 'completed_history': len(self._completed_tasks)}
+        return {
+            "ghost_executions": self._ghost_executions,
+            "parallel_executions": self._parallel_executions,
+            "ray_executions": self._ray_executions,
+            "total_executions": self._ghost_executions + self._parallel_executions + self._ray_executions,
+            "pending_tasks": len(self._pending_tasks),
+            "completed_history": len(self._completed_tasks),
+        }
 
     def get_available_executors(self) -> dict[str, bool]:
         """Get availability status of all executors."""
-        return {'ghost': self._ghost_available, 'parallel': self._parallel_available, 'ray': self._ray_available}
+        return {"ghost": self._ghost_available, "parallel": self._parallel_available, "ray": self._ray_available}
 
-    async def execute_action(self, action_type: str, payload: dict[str, Any] | None=None) -> dict[str, Any]:
+    async def execute_action(self, action_type: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Execute a single action via GhostDirector (from Hermes3).
 
@@ -452,23 +573,30 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Action execution result
         """
         if not self._ghost_available or not self._ghost_director:
-            return {'success': False, 'error': 'GhostDirector not available', 'action': action_type}
+            return {"success": False, "error": "GhostDirector not available", "action": action_type}
         try:
             from hledac.universal.cortex.director import DirectorAction
-            if hasattr(self._ghost_director, 'initialize_drivers'):
+
+            if hasattr(self._ghost_director, "initialize_drivers"):
                 await self._ghost_director.initialize_drivers()
             action = DirectorAction(action_type.upper())
             result = await self._ghost_director._act(action, payload or {}, {})
-            self._action_history.append({'timestamp': time.time(), 'action': action_type, 'payload': payload, 'result': result, 'success': True})
+            self._action_history.append(
+                {"timestamp": time.time(), "action": action_type, "payload": payload, "result": result, "success": True}
+            )
             while len(self._action_history) > self._max_history:
                 self._action_history.popleft()
-            return {'success': True, 'action': action_type, 'result': result}
+            return {"success": True, "action": action_type, "result": result}
         except Exception as e:
-            logger.error(f'Action execution failed: {e}')
-            self._action_history.append({'timestamp': time.time(), 'action': action_type, 'payload': payload, 'error': str(e), 'success': False})
-            return {'success': False, 'error': str(e), 'action': action_type}
+            logger.error(f"Action execution failed: {e}")
+            self._action_history.append(
+                {"timestamp": time.time(), "action": action_type, "payload": payload, "error": str(e), "success": False}
+            )
+            return {"success": False, "error": str(e), "action": action_type}
 
-    async def generate_with_speculative_decoding(self, prompt: str, max_tokens: int=100, mode: str='balanced', draft_model_path: str | None=None) -> dict[str, Any]:
+    async def generate_with_speculative_decoding(
+        self, prompt: str, max_tokens: int = 100, mode: str = "balanced", draft_model_path: str | None = None
+    ) -> dict[str, Any]:
         """
         Generate text using speculative decoding for faster inference.
 
@@ -494,22 +622,40 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 DecodingMode,
                 SpeculationConfig,
                 SpeculativeEngine,
-    )
-            mode_map = {'fast': DecodingMode.FAST, 'quality': DecodingMode.QUALITY, 'balanced': DecodingMode.BALANCED}
+            )
+
+            mode_map = {"fast": DecodingMode.FAST, "quality": DecodingMode.QUALITY, "balanced": DecodingMode.BALANCED}
             decoding_mode = mode_map.get(mode, DecodingMode.BALANCED)
             config = SpeculationConfig()
             engine = SpeculativeEngine(config=config, draft_model_path=draft_model_path)
             if not engine.is_available():
-                logger.warning('Speculative decoding not available, using fallback')
-                return {'success': False, 'error': 'Speculative decoding not available (MLX not installed)', 'text': prompt, 'fallback': True}
+                logger.warning("Speculative decoding not available, using fallback")
+                return {
+                    "success": False,
+                    "error": "Speculative decoding not available (MLX not installed)",
+                    "text": prompt,
+                    "fallback": True,
+                }
             result = await engine.generate(prompt=prompt, max_tokens=max_tokens, mode=decoding_mode)
-            return {'success': True, 'text': result.final_text, 'total_tokens': result.total_tokens, 'accepted_tokens': result.accepted_tokens, 'rejected_tokens': result.rejected_tokens, 'acceptance_rate': result.acceptance_rate, 'speedup_factor': result.speedup_factor, 'total_time': result.total_time, 'draft_model_calls': result.draft_model_calls, 'target_model_calls': result.target_model_calls, 'mode': mode}
+            return {
+                "success": True,
+                "text": result.final_text,
+                "total_tokens": result.total_tokens,
+                "accepted_tokens": result.accepted_tokens,
+                "rejected_tokens": result.rejected_tokens,
+                "acceptance_rate": result.acceptance_rate,
+                "speedup_factor": result.speedup_factor,
+                "total_time": result.total_time,
+                "draft_model_calls": result.draft_model_calls,
+                "target_model_calls": result.target_model_calls,
+                "mode": mode,
+            }
         except ImportError:
-            logger.warning('SpeculativeEngine not available')
-            return {'success': False, 'error': 'SpeculativeEngine not available', 'text': prompt, 'fallback': True}
+            logger.warning("SpeculativeEngine not available")
+            return {"success": False, "error": "SpeculativeEngine not available", "text": prompt, "fallback": True}
         except Exception as e:
-            logger.error(f'Speculative decoding failed: {e}')
-            return {'success': False, 'error': str(e), 'text': prompt, 'fallback': True}
+            logger.error(f"Speculative decoding failed: {e}")
+            return {"success": False, "error": str(e), "text": prompt, "fallback": True}
 
     async def get_speculative_decoding_stats(self) -> dict[str, Any]:
         """
@@ -520,17 +666,33 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """
         try:
             from hledac.universal.speculative_decoding.speculative_engine import SpeculativeEngine
-            engine = SpeculativeEngine()
-            if hasattr(engine, 'metrics'):
-                metrics = engine.metrics
-                return {'available': engine.is_available(), 'total_tokens_generated': metrics.total_tokens_generated, 'accepted_tokens': metrics.accepted_tokens, 'rejected_tokens': metrics.rejected_tokens, 'average_acceptance_rate': metrics.average_acceptance_rate, 'average_speedup': metrics.average_speedup, 'total_generation_time': metrics.total_generation_time}
-            return {'available': engine.is_available(), 'metrics': None}
-        except ImportError:
-            return {'available': False, 'error': 'SpeculativeEngine not available'}
-        except Exception as e:
-            return {'available': False, 'error': str(e)}
 
-    async def generate_with_adaptive_speculation(self, prompt: str, max_tokens: int=100, initial_k: int=5, target_acceptance_rate: float=0.7, draft_model_path: str | None=None) -> dict[str, Any]:
+            engine = SpeculativeEngine()
+            if hasattr(engine, "metrics"):
+                metrics = engine.metrics
+                return {
+                    "available": engine.is_available(),
+                    "total_tokens_generated": metrics.total_tokens_generated,
+                    "accepted_tokens": metrics.accepted_tokens,
+                    "rejected_tokens": metrics.rejected_tokens,
+                    "average_acceptance_rate": metrics.average_acceptance_rate,
+                    "average_speedup": metrics.average_speedup,
+                    "total_generation_time": metrics.total_generation_time,
+                }
+            return {"available": engine.is_available(), "metrics": None}
+        except ImportError:
+            return {"available": False, "error": "SpeculativeEngine not available"}
+        except Exception as e:
+            return {"available": False, "error": str(e)}
+
+    async def generate_with_adaptive_speculation(
+        self,
+        prompt: str,
+        max_tokens: int = 100,
+        initial_k: int = 5,
+        target_acceptance_rate: float = 0.7,
+        draft_model_path: str | None = None,
+    ) -> dict[str, Any]:
         """
         Generate text with adaptive K speculative decoding.
 
@@ -554,7 +716,8 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 DecodingMode,
                 SpeculationConfig,
                 SpeculativeEngine,
-    )
+            )
+
             config = SpeculationConfig()
             config.adaptive_k = True
             config.min_k = 1
@@ -562,16 +725,35 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             config.target_acceptance_rate = target_acceptance_rate
             engine = SpeculativeEngine(config=config, draft_model_path=draft_model_path)
             if not engine.is_available():
-                return {'success': False, 'error': 'Speculative decoding not available', 'text': prompt, 'fallback': True}
+                return {
+                    "success": False,
+                    "error": "Speculative decoding not available",
+                    "text": prompt,
+                    "fallback": True,
+                }
             result = await engine.generate(prompt=prompt, max_tokens=max_tokens, mode=DecodingMode.BALANCED)
-            return {'success': True, 'text': result.final_text, 'total_tokens': result.total_tokens, 'accepted_tokens': result.accepted_tokens, 'rejected_tokens': result.rejected_tokens, 'acceptance_rate': result.acceptance_rate, 'speedup_factor': result.speedup_factor, 'total_time': result.total_time, 'draft_model_calls': result.draft_model_calls, 'target_model_calls': result.target_model_calls, 'initial_k': initial_k, 'target_acceptance': target_acceptance_rate, 'adaptive_enabled': True}
+            return {
+                "success": True,
+                "text": result.final_text,
+                "total_tokens": result.total_tokens,
+                "accepted_tokens": result.accepted_tokens,
+                "rejected_tokens": result.rejected_tokens,
+                "acceptance_rate": result.acceptance_rate,
+                "speedup_factor": result.speedup_factor,
+                "total_time": result.total_time,
+                "draft_model_calls": result.draft_model_calls,
+                "target_model_calls": result.target_model_calls,
+                "initial_k": initial_k,
+                "target_acceptance": target_acceptance_rate,
+                "adaptive_enabled": True,
+            }
         except ImportError:
-            return {'success': False, 'error': 'SpeculativeEngine not available', 'fallback': True}
+            return {"success": False, "error": "SpeculativeEngine not available", "fallback": True}
         except Exception as e:
-            logger.error(f'Adaptive speculative decoding failed: {e}')
-            return {'success': False, 'error': str(e), 'fallback': True}
+            logger.error(f"Adaptive speculative decoding failed: {e}")
+            return {"success": False, "error": str(e), "fallback": True}
 
-    def get_action_history(self, action_type: str | None=None, limit: int=50) -> list[dict[str, Any]]:
+    def get_action_history(self, action_type: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """
         Get action execution history (from Hermes3).
 
@@ -584,7 +766,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """
         history = self._action_history
         if action_type:
-            history = [h for h in history if h.get('action') == action_type]
+            history = [h for h in history if h.get("action") == action_type]
         return list(history)[-limit:]
 
     def clear_action_history(self) -> int:
@@ -612,12 +794,21 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Plan execution results
         """
         if not plan:
-            return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
-        step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
+            return {"success": True, "steps_executed": 0, "successful_steps": 0, "failed_steps": 0, "results": []}
+        step_coros = [self.execute_action(s.get("action", "search"), s.get("payload", {})) for s in plan]
         # F1 FIX: execution steps use SCRAPE_GENERAL for dynamic UMA-aware concurrency
         from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+
         exec_concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
-        result = await parallel(step_coros, concurrency=exec_concurrency, policy="collect", ctx='execution_coordinator.execute_plan')
+        result = await parallel(
+            step_coros, concurrency=exec_concurrency, policy="collect", ctx="execution_coordinator.execute_plan"
+        )
         results = result.ok
         self._load_factor = min(1.0, len(results) / 10)
-        return {'success': all(r.get('success', False) for r in results), 'steps_executed': len(results), 'successful_steps': sum(1 for r in results if r.get('success')), 'failed_steps': sum(1 for r in results if not r.get('success')), 'results': results}
+        return {
+            "success": all(r.get("success", False) for r in results),
+            "steps_executed": len(results),
+            "successful_steps": sum(1 for r in results if r.get("success")),
+            "failed_steps": sum(1 for r in results if not r.get("success")),
+            "results": results,
+        }

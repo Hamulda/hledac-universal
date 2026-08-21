@@ -12,9 +12,10 @@ import pytest
 
 # Ensure benchmarks/ is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
+from typing import Never
+
 from benchmarks.harness import BenchmarkHarness, _percentile, _run_single_sprint_unsafe
 from benchmarks.migrate_schema import migrate_record
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # _percentile
@@ -22,22 +23,22 @@ from _core import aclose
 
 
 class TestPercentile:
-    def test_empty(self):
+    def test_empty(self) -> None:
         assert _percentile([], 50) == 0.0
 
-    def test_single(self):
+    def test_single(self) -> None:
         assert _percentile([3.0], 50) == 3.0
 
-    def test_p50_median(self):
+    def test_p50_median(self) -> None:
         vals = [1.0, 2.0, 3.0, 4.0, 5.0]
         assert _percentile(vals, 50) == 3.0
 
-    def test_p95(self):
+    def test_p95(self) -> None:
         vals = [float(x) for x in range(1, 101)]  # 1.0..100.0
         p = _percentile(vals, 95)
         assert 94.0 < p < 96.0
 
-    def test_p99(self):
+    def test_p99(self) -> None:
         vals = [float(x) for x in range(1, 1001)]  # 1.0..1000.0
         p = _percentile(vals, 99)
         assert 989.0 < p < 991.0
@@ -51,21 +52,21 @@ class TestPercentile:
 class TestBenchmarkHarnessValidation:
     """Validation errors are raised synchronously before the event loop is touched."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.harness = BenchmarkHarness()
 
     @pytest.mark.asyncio
-    async def test_warmup_negative_raises(self):
+    async def test_warmup_negative_raises(self) -> None:
         with pytest.raises(ValueError, match="warmup"):
             await self.harness.run(warmup=-1, iterations=5, query="test", output_path=Path("/tmp/x"))
 
     @pytest.mark.asyncio
-    async def test_iterations_zero_raises(self):
+    async def test_iterations_zero_raises(self) -> None:
         with pytest.raises(ValueError, match="iterations"):
             await self.harness.run(warmup=0, iterations=0, query="test", output_path=Path("/tmp/x"))
 
     @pytest.mark.asyncio
-    async def test_warmup_ge_iterations_raises(self):
+    async def test_warmup_ge_iterations_raises(self) -> None:
         with pytest.raises(ValueError, match="warmup"):
             await self.harness.run(warmup=5, iterations=3, query="test", output_path=Path("/tmp/x"))
 
@@ -77,7 +78,7 @@ class TestBenchmarkHarnessValidation:
 
 class TestBenchmarkHarnessRun:
     @pytest.mark.asyncio
-    async def test_run_writes_schema_v2(self, tmp_path):
+    async def test_run_writes_schema_v2(self, tmp_path) -> None:
         harness = BenchmarkHarness()
         out = tmp_path / "result.json"
 
@@ -92,7 +93,7 @@ class TestBenchmarkHarnessRun:
         assert data["schema_version"] == "2.0"
 
     @pytest.mark.asyncio
-    async def test_warmup_excluded_from_percentiles(self, tmp_path):
+    async def test_warmup_excluded_from_percentiles(self, tmp_path) -> None:
         harness = BenchmarkHarness(seed=42)
         out = tmp_path / "result.json"
 
@@ -119,7 +120,7 @@ class TestBenchmarkHarnessRun:
         assert all(r["latency_s"] is not None for r in detail)
 
     @pytest.mark.asyncio
-    async def test_error_iteration_continues(self, tmp_path):
+    async def test_error_iteration_continues(self, tmp_path) -> None:
         harness = BenchmarkHarness()
         out = tmp_path / "result.json"
 
@@ -142,7 +143,7 @@ class TestBenchmarkHarnessRun:
         assert len(data["iterations_detail"]) == 3
 
     @pytest.mark.asyncio
-    async def test_latency_stats_present(self, tmp_path):
+    async def test_latency_stats_present(self, tmp_path) -> None:
         harness = BenchmarkHarness()
         out = tmp_path / "result.json"
 
@@ -162,7 +163,7 @@ class TestBenchmarkHarnessRun:
         assert "max" in lat
 
     @pytest.mark.asyncio
-    async def test_seed_reproducible(self, tmp_path):
+    async def test_seed_reproducible(self, tmp_path) -> None:
         out1 = tmp_path / "r1.json"
         out2 = tmp_path / "r2.json"
 
@@ -194,8 +195,8 @@ class TestBenchmarkHarnessRun:
 
 class TestRunSingleSprintUnsafe:
     @pytest.mark.asyncio
-    async def test_returns_error_on_exception(self):
-        async def broken(query):
+    async def test_returns_error_on_exception(self) -> None:
+        async def broken(query) -> Never:
             raise ValueError("boom")
 
         with mock.patch("benchmarks.harness._run_single_sprint", side_effect=broken):
@@ -205,7 +206,7 @@ class TestRunSingleSprintUnsafe:
         assert "boom" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_passes_through_success(self):
+    async def test_passes_through_success(self) -> None:
         async def ok(query):
             return {"latency_s": 0.5, "findings_count": 3}
 
@@ -222,7 +223,7 @@ class TestRunSingleSprintUnsafe:
 
 
 class TestMigrateSchema:
-    def test_rename_wall_clock(self):
+    def test_rename_wall_clock(self) -> None:
         data = {"total_wall_clock_seconds": 1.5, "schema_version": "1.0"}
         new_data, renames = migrate_record(data)
         assert "wall_clock_s" in new_data
@@ -230,7 +231,7 @@ class TestMigrateSchema:
         # renames contains "new_key ← old_key"
         assert any("wall_clock_s" in r for r in renames)
 
-    def test_rename_all_time_fields(self):
+    def test_rename_all_time_fields(self) -> None:
         data = {
             "total_wall_clock_seconds": 10.0,
             "research_runtime_seconds": 2.0,
@@ -249,7 +250,7 @@ class TestMigrateSchema:
         assert "final_synthesis_duration_s" in new_data
         assert len(renames) == 6
 
-    def test_preserves_other_fields(self):
+    def test_preserves_other_fields(self) -> None:
         data = {
             "total_wall_clock_seconds": 1.0,
             "findings_count": 5,
@@ -260,7 +261,7 @@ class TestMigrateSchema:
         assert new_data["findings_count"] == 5
         assert new_data["iterations"] == 10
 
-    def test_already_v2_unchanged(self):
+    def test_already_v2_unchanged(self) -> None:
         data = {"wall_clock_s": 1.0, "schema_version": "2.0"}
         new_data, renames = migrate_record(data)
         assert new_data is data

@@ -4,8 +4,8 @@ Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 Sprint 48: Async LMDB operations via executor, orjson serialization
 
 """
+
 import asyncio
-import concurrent.futures
 import hashlib
 import json
 import logging
@@ -13,21 +13,25 @@ import os
 import secrets
 import sys
 import time
+
 import lmdb
-from _core import aclose
+
 try:
     import orjson
+
     USE_ORJSON = True
 except ImportError:
     USE_ORJSON = False
     import json
 try:
     from cryptography.fernet import Fernet
+
     FERNET_AVAILABLE = True
 except ImportError:
     FERNET_AVAILABLE = False
 logger = logging.getLogger(__name__)
-_ENCRYPTION_KEY_KEY = b'session:_encryption_key'
+_ENCRYPTION_KEY_KEY = b"session:_encryption_key"
+
 
 def _derive_encryption_key_sync() -> bytes:
     """
@@ -39,27 +43,30 @@ def _derive_encryption_key_sync() -> bytes:
     """
     key_material = []
     try:
-        key_material.append(os.environ.get('HOSTNAME', ''))
-        key_material.append(os.environ.get('COMPUTERNAME', ''))
+        key_material.append(os.environ.get("HOSTNAME", ""))
+        key_material.append(os.environ.get("COMPUTERNAME", ""))
     except Exception:  # noqa: BLE001
         pass
-    key_material.append(os.environ.get('USER', ''))
-    key_material.append(os.environ.get('USERNAME', ''))
+    key_material.append(os.environ.get("USER", ""))
+    key_material.append(os.environ.get("USERNAME", ""))
     key_material.append(sys.platform)
-    machine_id = ''
+    machine_id = ""
     try:
-        if sys.platform == 'darwin':
+        if sys.platform == "darwin":
             import subprocess
+
             result = subprocess.run(
-                ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
-                capture_output=True, text=True, timeout=5,
-    )
-            for line in result.stdout.split('\n'):
-                if 'IOPlatformUUID' in line:
-                    machine_id = line.split('"')[-2] if '"' in line else ''
+                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.split("\n"):
+                if "IOPlatformUUID" in line:
+                    machine_id = line.split('"')[-2] if '"' in line else ""
                     break
-        elif sys.platform == 'linux':
-            for mpath in ['/etc/machine-id', '/var/lib/dbus/machine-id']:
+        elif sys.platform == "linux":
+            for mpath in ["/etc/machine-id", "/var/lib/dbus/machine-id"]:
                 if os.path.exists(mpath):
                     with open(mpath) as f:
                         machine_id = f.read().strip()
@@ -70,7 +77,7 @@ def _derive_encryption_key_sync() -> bytes:
         key_material.append(machine_id)
     else:
         return Fernet.generate_key() if FERNET_AVAILABLE else secrets.token_bytes(32)
-    combined = ''.join(key_material)
+    combined = "".join(key_material)
     derived = hashlib.sha256(combined.encode()).digest()
     fernet_key = base64.urlsafe_b64encode(derived)
     return fernet_key
@@ -82,6 +89,7 @@ async def _derive_encryption_key_async() -> bytes:
     Fully async pipeline — no blocking calls in event loop.
     """
     return await asyncio.to_thread(_derive_encryption_key_sync)
+
 
 class SessionManager:
     """
@@ -110,20 +118,22 @@ class SessionManager:
         - _cache is NOT cleared (by design — remains accessible for reads)
         - _closed flag guards all mutating operations post-close
     """
-    __slots__ = tuple(('_cache', '_closed', '_encryption_key', '_env', '_executor', '_fernet'))
 
-    def __init__(self, lmdb_env: lmdb.Environment):
+    __slots__ = ("_cache", "_closed", "_encryption_key", "_env", "_executor", "_fernet")
+
+    def __init__(self, lmdb_env: lmdb.Environment) -> None:
         self._env = lmdb_env
         self._cache: dict[str, dict] = {}
         # M1-OPT: Use shared 'storage' domain executor instead of per-module TPE
         from hledac.universal.utils.domain_executors import get_or_create
+
         self._executor = get_or_create("storage")
         self._closed: bool = False
         self._fernet: Fernet | None = None
         self._encryption_key: bytes | None = None
 
     def _get_key(self, domain: str) -> bytes:
-        return f'session:{domain}'.encode()
+        return f"session:{domain}".encode()
 
     async def _ensure_fernet(self) -> None:
         """
@@ -150,7 +160,7 @@ class SessionManager:
         self._encryption_key = await _derive_encryption_key_async()
 
         # Write key to LMDB (blocking write, must run in thread pool)
-        async def _sync_put():
+        async def _sync_put() -> None:
             with self._env.begin(write=True) as txn:
                 txn.put(_ENCRYPTION_KEY_KEY, self._encryption_key)
 
@@ -209,10 +219,10 @@ class SessionManager:
         if self._closed:
             cached = self._cache.get(domain)
             if cached:
-                cached['last_used'] = time.time()
+                cached["last_used"] = time.time()
             return cached
         if domain in self._cache:
-            self._cache[domain]['last_used'] = time.time()
+            self._cache[domain]["last_used"] = time.time()
             return self._cache[domain]
         try:
             loop = asyncio.get_running_loop()
@@ -224,24 +234,24 @@ class SessionManager:
             pass
         return None
 
-    async def save_session(self, domain: str, cookies: dict, headers: dict | None=None):
+    async def save_session(self, domain: str, cookies: dict, headers: dict | None = None) -> None:
         """Uloží session pro domain. F300K: no-op after close."""
         await self._ensure_fernet()
         if self._closed:
-            logger.debug(f'[SESSION] save_session({domain}) — blocked, manager closed')
+            logger.debug(f"[SESSION] save_session({domain}) — blocked, manager closed")
             return
-        session = {'cookies': cookies, 'headers': headers or {}, 'created': time.time(), 'last_used': time.time()}
+        session = {"cookies": cookies, "headers": headers or {}, "created": time.time(), "last_used": time.time()}
         self._cache[domain] = session
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(self._executor, self._sync_put, self._get_key(domain), self._serialize(session))
         except Exception as e:
-            logger.warning(f'[SESSION] Failed to save {domain}: {e}')
+            logger.warning(f"[SESSION] Failed to save {domain}: {e}")
 
-    async def rotate_credentials(self, domain: str):
+    async def rotate_credentials(self, domain: str) -> None:
         """Zahodí staré session, přiští fetch zkusí znovu přihlásit. F300K: no-op after close."""
         if self._closed:
-            logger.debug(f'[SESSION] rotate_credentials({domain}) — blocked, manager closed')
+            logger.debug(f"[SESSION] rotate_credentials({domain}) — blocked, manager closed")
             return
         if domain in self._cache:
             del self._cache[domain]

@@ -1,4 +1,4 @@
-"""  # noqa: N999
+"""# noqa: N999
 Sprint Phase Gate Manifest
 ==========================
 

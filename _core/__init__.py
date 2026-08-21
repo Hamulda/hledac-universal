@@ -9,6 +9,7 @@ Migration path:
     Old: global _cache; _cache[key] = value
     New: from _core.module_state import _state; _state.set(key, value)
 """
+
 from __future__ import annotations
 
 __all__ = [
@@ -96,7 +97,6 @@ _STATE_KEYS = {
     "async_retry": "core.async_retry",
 }
 
-
 # ── Loader functions for __getattr__ dispatch table ─────────────────────────
 #
 # ISSUE-002: All loaders now use ModuleState for thread-safe, clearable caching.
@@ -107,9 +107,7 @@ def _load_rust_backend() -> object:
     """Load rust backend (thread-safe via ModuleState)."""
     return _state.get_or_create(
         _STATE_KEYS["rust_backend"],
-        lambda: __import__(
-            "hledac.universal._core.rust_backend", fromlist=["rust"]
-        ).rust,
+        lambda: __import__("hledac.universal._core.rust_backend", fromlist=["rust"]).rust,
     )
 
 
@@ -120,17 +118,19 @@ def _load_locks() -> dict[str, object]:
 
 def _make_locks_loader() -> dict[str, object]:
     """Factory for locks loader (isolated for lazy evaluation)."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.locks import (
+            AsyncLockDCLP,
             LockCategory,
             LockInfo,
-            register_lock,
             acquire_in_order,
-            get_registered_locks,
             get_locks_by_category,
-            AsyncLockDCLP,
+            get_registered_locks,
             make_counter,
+            register_lock,
         )
+
         return {
             "LockCategory": LockCategory,
             "LockInfo": LockInfo,
@@ -141,31 +141,33 @@ def _make_locks_loader() -> dict[str, object]:
             "AsyncLockDCLP": AsyncLockDCLP,
             "make_counter": make_counter,
         }
+
     return loader
 
 
 def _load_embeddings() -> dict[str, object]:
     """Load embeddings module (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["embeddings"], _make_embeddings_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["embeddings"], _make_embeddings_loader())
 
 
 def _make_embeddings_loader() -> dict[str, object]:
     """Factory for embeddings loader (isolated for lazy evaluation)."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.embeddings.legacy import (
-            MLXEmbeddingManager,
             EmbeddingTask,
+            MLXEmbeddingManager,
             apply_task_prefix,
             should_normalize,
         )
+
         return {
             "MLXEmbeddingManager": MLXEmbeddingManager,
             "EmbeddingTask": EmbeddingTask,
             "apply_task_prefix": apply_task_prefix,
             "should_normalize": should_normalize,
         }
+
     return loader
 
 
@@ -173,57 +175,57 @@ def _load_resource_governor() -> dict[str, object]:
     """Load resource governor (thread-safe via ModuleState)."""
     return _state.get_or_create(
         _STATE_KEYS["resource_governor"],
-        lambda: {"Priority": __import__(
-            "hledac.universal._core.resource_governor", fromlist=["Priority"]
-        ).Priority},
+        lambda: {"Priority": __import__("hledac.universal._core.resource_governor", fromlist=["Priority"]).Priority},
     )
 
 
 def _load_resource_lifecycle() -> dict[str, object]:
     """Load resource lifecycle (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["resource_lifecycle"], _make_resource_lifecycle_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["resource_lifecycle"], _make_resource_lifecycle_loader())
 
 
 def _make_resource_lifecycle_loader() -> dict[str, object]:
     """Factory for resource lifecycle loader."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.resource_lifecycle import (
             ResourceLifecycleManager,
-            require_rlm,
             get_current_rlm,
+            require_rlm,
         )
+
         return {
             "ResourceLifecycleManager": ResourceLifecycleManager,
             "require_rlm": require_rlm,
             "get_current_rlm": get_current_rlm,
         }
+
     return loader
 
 
 def _load_system_detector() -> dict[str, object]:
     """Load system detector (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["system_detector"], _make_system_detector_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["system_detector"], _make_system_detector_loader())
 
 
 def _make_system_detector_loader() -> dict[str, object]:
     """Factory for system detector loader."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.system_detector import (
-            SystemDetector,
-            get_system_detector,
-            get_hardware_capabilities,
             HardwareCapabilities,
+            SystemDetector,
+            get_hardware_capabilities,
+            get_system_detector,
         )
+
         return {
             "SystemDetector": SystemDetector,
             "get_system_detector": get_system_detector,
             "get_hardware_capabilities": get_hardware_capabilities,
             "HardwareCapabilities": HardwareCapabilities,
         }
+
     return loader
 
 
@@ -231,9 +233,7 @@ def _load_uma_budget() -> dict[str, object]:
     """Load UMA budget (thread-safe via ModuleState)."""
     return _state.get_or_create(
         _STATE_KEYS["uma_budget"],
-        lambda: {"Watchdog": __import__(
-            "hledac.universal.utils.uma_budget", fromlist=["Watchdog"]
-        ).Watchdog},
+        lambda: {"Watchdog": __import__("hledac.universal.utils.uma_budget", fromlist=["Watchdog"]).Watchdog},
     )
 
 
@@ -248,53 +248,53 @@ def _make_main_loader() -> object:
     import sys
 
     def loader() -> object:
-        main_mod = importlib.import_module(
-            "hledac.universal.runtime.sprint_entrypoint"
-        )
+        main_mod = importlib.import_module("hledac.universal.runtime.sprint_entrypoint")
         sys.modules["hledac.universal._core.__main__"] = main_mod
         return main_mod
+
     return loader
 
 
 def _load_concurrency() -> dict[str, object]:
     """Load concurrency (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["concurrency"], _make_concurrency_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["concurrency"], _make_concurrency_loader())
 
 
 def _make_concurrency_loader() -> dict[str, object]:
     """Factory for concurrency loader."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.concurrency import (
             ConcurrencyCategory,
             get_semaphore,
         )
+
         return {
             "ConcurrencyCategory": ConcurrencyCategory,
             "get_semaphore": get_semaphore,
         }
+
     return loader
 
 
 def _load_feature_flags() -> dict[str, object]:
     """Load feature flags (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["feature_flags"], _make_feature_flags_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["feature_flags"], _make_feature_flags_loader())
 
 
 def _make_feature_flags_loader() -> dict[str, object]:
     """Factory for feature flags loader."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.feature_flags import (
-            FeatureFlags,
             FeatureFlag,
+            FeatureFlags,
             FlagCategory,
             FlagInfo,
             FlagValidationError,
             validate_sprint_flags,
         )
+
         return {
             "FeatureFlags": FeatureFlags,
             "FeatureFlag": FeatureFlag,
@@ -303,28 +303,29 @@ def _make_feature_flags_loader() -> dict[str, object]:
             "FlagValidationError": FlagValidationError,
             "validate_sprint_flags": validate_sprint_flags,
         }
+
     return loader
 
 
 # ISSUE-04: DuckDB connection pool loader (ISSUE-002: Uses ModuleState)
 def _load_duckdb_pool() -> dict[str, object]:
     """Load DuckDB pool (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["duckdb_pool"], _make_duckdb_pool_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["duckdb_pool"], _make_duckdb_pool_loader())
 
 
 def _make_duckdb_pool_loader() -> dict[str, object]:
     """Factory for DuckDB pool loader."""
+
     def loader() -> dict[str, object]:
         from hledac.universal._core.duckdb_pool import (
-            duckdb_ro_pool,
-            duckdb_rw_pool,
+            close_all_pools,
             duckdb_ro_acquire,
             duckdb_ro_connection,
-            close_all_pools,
+            duckdb_ro_pool,
+            duckdb_rw_pool,
             get_pool_stats,
         )
+
         return {
             "duckdb_ro_pool": duckdb_ro_pool,
             "duckdb_rw_pool": duckdb_rw_pool,
@@ -333,8 +334,8 @@ def _make_duckdb_pool_loader() -> dict[str, object]:
             "close_all_pools": close_all_pools,
             "get_pool_stats": get_pool_stats,
         }
-    return loader
 
+    return loader
 
 
 # F350M-R: Type-4 clone elimination — shared async cleanup helpers
@@ -346,33 +347,36 @@ def _load_util() -> dict[str, object]:
 
 def _make_util_loader() -> dict[str, object]:
     """Factory for util loader."""
+
     def loader() -> dict[str, object]:
         from _core._util import aclose, aclose_many
+
         return {"aclose": aclose, "aclose_many": aclose_many}
+
     return loader
 
 
 def _load_async_retry() -> dict[str, object]:
     """ROADMAP-005: Load retry utilities (thread-safe via ModuleState)."""
-    return _state.get_or_create(
-        _STATE_KEYS["async_retry"], _make_async_retry_loader()
-    )
+    return _state.get_or_create(_STATE_KEYS["async_retry"], _make_async_retry_loader())
 
 
 def _make_async_retry_loader() -> dict[str, object]:
     """Factory for async retry loader."""
+
     def loader() -> dict[str, object]:
         from _core.async_retry import (
             async_retry,
+            blitz_aware_stop,
+            exponential_backoff,
+            http_retry,
+            jitter_wait,
+            network_retry,
             retry_if_exception,
             retry_if_exception_type,
             retry_if_result,
-            blitz_aware_stop,
-            exponential_backoff,
-            jitter_wait,
-            network_retry,
-            http_retry,
         )
+
         return {
             "async_retry": async_retry,
             "retry_if_exception": retry_if_exception,
@@ -384,60 +388,124 @@ def _make_async_retry_loader() -> dict[str, object]:
             "network_retry": network_retry,
             "http_retry": http_retry,
         }
+
     return loader
 
 
 # ── Dispatch table: name → loader ───────────────────────────────────────────
 
-_LOADER_DISPATCH: tuple[tuple[frozenset[str], _load_locks | _load_embeddings | _load_resource_governor | _load_resource_lifecycle | _load_system_detector | _load_uma_budget | _load_concurrency | _load_feature_flags | _load_duckdb_pool | _load_async_retry], ...] = (
-    (frozenset(("LockCategory", "LockInfo", "register_lock", "acquire_in_order", "get_registered_locks", "get_locks_by_category", "AsyncLockDCLP", "make_counter")), _load_locks),
+_LOADER_DISPATCH: tuple[
+    tuple[
+        frozenset[str],
+        _load_locks
+        | _load_embeddings
+        | _load_resource_governor
+        | _load_resource_lifecycle
+        | _load_system_detector
+        | _load_uma_budget
+        | _load_concurrency
+        | _load_feature_flags
+        | _load_duckdb_pool
+        | _load_async_retry,
+    ],
+    ...,
+] = (
+    (
+        frozenset(
+            (
+                "LockCategory",
+                "LockInfo",
+                "register_lock",
+                "acquire_in_order",
+                "get_registered_locks",
+                "get_locks_by_category",
+                "AsyncLockDCLP",
+                "make_counter",
+            )
+        ),
+        _load_locks,
+    ),
     (frozenset(("MLXEmbeddingManager", "EmbeddingTask", "apply_task_prefix", "should_normalize")), _load_embeddings),
     (frozenset(("Priority",)), _load_resource_governor),
     (frozenset(("ResourceLifecycleManager", "require_rlm", "get_current_rlm")), _load_resource_lifecycle),
-    (frozenset(("SystemDetector", "get_system_detector", "get_hardware_capabilities", "HardwareCapabilities")), _load_system_detector),
+    (
+        frozenset(("SystemDetector", "get_system_detector", "get_hardware_capabilities", "HardwareCapabilities")),
+        _load_system_detector,
+    ),
     (frozenset(("Watchdog",)), _load_uma_budget),
     (frozenset(("ConcurrencyCategory", "get_semaphore")), _load_concurrency),
-    (frozenset(("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")), _load_feature_flags),
-    (frozenset(("duckdb_ro_pool", "duckdb_rw_pool", "duckdb_ro_acquire", "duckdb_ro_connection", "close_all_pools", "get_pool_stats")), _load_duckdb_pool),
+    (
+        frozenset(
+            ("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags")
+        ),
+        _load_feature_flags,
+    ),
+    (
+        frozenset(
+            (
+                "duckdb_ro_pool",
+                "duckdb_rw_pool",
+                "duckdb_ro_acquire",
+                "duckdb_ro_connection",
+                "close_all_pools",
+                "get_pool_stats",
+            )
+        ),
+        _load_duckdb_pool,
+    ),
     (frozenset(("aclose", "aclose_many")), _load_util),
-    (frozenset(("async_retry", "retry_if_exception", "retry_if_exception_type", "retry_if_result", "blitz_aware_stop", "exponential_backoff", "jitter_wait", "network_retry", "http_retry")), _load_async_retry),
-    )
-
+    (
+        frozenset(
+            (
+                "async_retry",
+                "retry_if_exception",
+                "retry_if_exception_type",
+                "retry_if_result",
+                "blitz_aware_stop",
+                "exponential_backoff",
+                "jitter_wait",
+                "network_retry",
+                "http_retry",
+            )
+        ),
+        _load_async_retry,
+    ),
+)
 
 # ISSUE-002: Sprint winddown hook using ModuleState
 # MODERN-36 PERFORMANCE FIX: Cache cleanup for memory leak prevention
 
+
 def clear_core_caches() -> dict[str, int]:
     """
     Clear all module-level caches in _core to free memory.
-    
+
     Returns:
         Dict of cleared cache names to number of items cleared.
-    
+
     MODERN-36 PERFORMANCE FIX / ISSUE-002: Call this from shutdown hooks
     to prevent memory leaks from accumulated lazy-loaded modules.
     Uses ModuleState for centralized, thread-safe cache management.
     """
-    # Get cache count before clearing
     results = {"caches_cleared": _state.cache_size, "engines_cleared": _state.engine_count}
-    
+
     # Delegate to ModuleState for proper cleanup
     _state.clear()
-    
+
     return results
 
 
 def clear_between_sprints() -> None:
     """
     ISSUE-002: Sprint winddown hook - deep clear all state.
-    
+
     MUST be called at sprint winddown to prevent memory leaks.
     This clears:
     - All lazy caches
     - All loaded engines (with unload if supported)
     - Attribute index
     - Triggers garbage collection
-    
+
     Usage:
         from _core import clear_between_sprints
         clear_between_sprints()  # Call at sprint end

@@ -9,20 +9,18 @@ Invariant testy:
   - test_deep_source_hydrate_no_extra_alloc: hydrate_from_lmdb sid = k.decode('utf-8') je správný pro plain key
   - test_memory_alloc_profile: 100k key scan alokuje < 1 MB (test_benchmark_removeprefix)
 """
-import gc
+
 import sys
-import tracemalloc
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import msgspec  # noqa: F401 — used in test methods
 import pytest
 
 # Laziness guard
-if sys.platform != 'darwin':
-    pytest.skip('M1/Apple Silicon only', allow_module_level=True)
+if sys.platform != "darwin":
+    pytest.skip("M1/Apple Silicon only", allow_module_level=True)
 
 from hledac.universal.memory.memory_manager import MemoryManager
-from _core import aclose
 
 
 class TestS02LMDBZeroCopy:
@@ -50,25 +48,26 @@ class TestS02LMDBZeroCopy:
 
         # Ověř pattern v kódu — check that the code uses removeprefix approach
         import inspect
+
         source = inspect.getsource(mm.get_session_keys)
         # Nový pattern: key[len(prefix):].decode() — jeden decode volání
         # Starý pattern: key_str = key.decode() + key_str[len():] — dva kroky
-        assert '.decode(' in source, 'get_session_keys must decode keys'
+        assert ".decode(" in source, "get_session_keys must decode keys"
         # Klíčová věc: nesmí být key_str = key.decode() pak key_str[len():]
-        assert 'key_str = key.decode' not in source, (
-            'OLD pattern detected: key_str = key.decode() creates full string. '
-            'Use key_part = key[len(prefix):].decode(utf-8) instead'
-    )
+        assert "key_str = key.decode" not in source, (
+            "OLD pattern detected: key_str = key.decode() creates full string. "
+            "Use key_part = key[len(prefix):].decode(utf-8) instead"
+        )
 
     def test_list_sessions_removeprefix(self) -> None:
         """INVARIANT: list_sessions musí používat key[len(prefix):].decode()"""
         import inspect
+
         mm = MemoryManager.__new__(MemoryManager)
         source = inspect.getsource(mm.list_sessions)
-        assert 'key_str = key.decode' not in source, (
-            'OLD pattern: key_str = key.decode() — allocates full string. '
-            'Use key[len(prefix):].decode()'
-    )
+        assert "key_str = key.decode" not in source, (
+            "OLD pattern: key_str = key.decode() — allocates full string. Use key[len(prefix):].decode()"
+        )
 
     # ── Invariant 2: memory alloc profile ───────────────────────────────────
 
@@ -87,15 +86,15 @@ class TestS02LMDBZeroCopy:
 
         # Files to check
         files_to_check = [
-            '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/memory/memory_manager.py',
-            '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/deep_source_registry.py',
-            '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/scheduler_v2/scheduler.py',
-            '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/scheduler_v2/acquisition.py',
+            "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/memory/memory_manager.py",
+            "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/discovery/deep_source_registry.py",
+            "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/scheduler_v2/scheduler.py",
+            "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/runtime/scheduler_v2/acquisition.py",
         ]
 
         # Regex for the OLD anti-pattern: key_str = key.decode() followed by slice
         # This catches: key_str = key.decode(...)  \n  key_part = key_str[len(...):]
-        old_pattern_re = re.compile(r'key_str\s*=\s*key\.decode\s*\(')
+        old_pattern_re = re.compile(r"key_str\s*=\s*key\.decode\s*\(")
 
         violations = []
         for filepath in files_to_check:
@@ -103,15 +102,12 @@ class TestS02LMDBZeroCopy:
                 continue
             with open(filepath) as f:
                 content = f.read()
-            lines = content.split('\n')
+            lines = content.split("\n")
             for i, line in enumerate(lines):
                 if old_pattern_re.search(line):
-                    violations.append(f'{filepath}:{i+1}: {line.strip()}')
+                    violations.append(f"{filepath}:{i + 1}: {line.strip()}")
 
-        assert not violations, (
-            f'OLD pattern found in {len(violations)} location(s):\n'
-            + '\n'.join(violations)
-    )
+        assert not violations, f"OLD pattern found in {len(violations)} location(s):\n" + "\n".join(violations)
 
 
 class TestS02DeepSourceRegistry:
@@ -125,11 +121,12 @@ class TestS02DeepSourceRegistry:
         """
         # Ověření: _persist_timestamp ukládá source_id.encode() přímo
         import inspect
-        from hledac.universal.discovery.deep_source_registry import DeepSourceRegistry
-        source = inspect.getsource(DeepSourceRegistry._persist_timestamp)
-        assert 'source_id.encode' in source, 'Key must be source_id.encode() — no prefix'
-        assert 'prefix' not in source.lower(), 'Key format has no prefix'
 
+        from hledac.universal.discovery.deep_source_registry import DeepSourceRegistry
+
+        source = inspect.getsource(DeepSourceRegistry._persist_timestamp)
+        assert "source_id.encode" in source, "Key must be source_id.encode() — no prefix"
+        assert "prefix" not in source.lower(), "Key format has no prefix"
 
     @pytest.mark.slow
     def test_encoder_encode_returns_bytes_not_str(self) -> None:
@@ -141,9 +138,8 @@ class TestS02DeepSourceRegistry:
         Optimalizace: lze cachovat Encoder() instanci místo volání msgspec.json.encode().
         Encoder je stateless a thread-safe.
         """
-        import msgspec
 
-        data = {'query': 'test', 'confidence': 0.9}
+        data = {"query": "test", "confidence": 0.9}
 
         # encode().decode() — dva objekty (bytes pak str)
         encoded_bytes = msgspec.json.encode(data)
@@ -158,7 +154,7 @@ class TestS02DeepSourceRegistry:
         assert encoded2 == encoded_bytes
 
         # .decode() je tedy skutečně nutné pro str field
-        decoded = encoded_bytes.decode('utf-8')
+        decoded = encoded_bytes.decode("utf-8")
         assert isinstance(decoded, str)
 
     @pytest.mark.slow
@@ -170,40 +166,38 @@ class TestS02DeepSourceRegistry:
         """
         import time
 
-        import msgspec
-
         data = {
-            'query': 'ransomware infrastructure',
-            'ioc_entities': [{'type': 'ipv4', 'value': '1.2.3.4'}],
-            'threat_summary': 'Ransomware C2 analysis',
-            'threat_actors': ['LockBit'],
-            'confidence': 0.87,
-            'sources_count': 12,
-            'timestamp': 1753512000.0,
+            "query": "ransomware infrastructure",
+            "ioc_entities": [{"type": "ipv4", "value": "1.2.3.4"}],
+            "threat_summary": "Ransomware C2 analysis",
+            "threat_actors": ["LockBit"],
+            "confidence": 0.87,
+            "sources_count": 12,
+            "timestamp": 1753512000.0,
         }
         n = 5000
 
         # Pattern A: msgspec.json.encode() — pokaždé nový encode
         t0 = time.perf_counter()
         for _ in range(n):
-            _ = msgspec.json.encode(data).decode('utf-8')
+            _ = msgspec.json.encode(data).decode("utf-8")
         t_a = time.perf_counter() - t0
 
         # Pattern B: cachovaný Encoder().encode() — 1× Encoder instance
         encoder = msgspec.json.Encoder()
         t0 = time.perf_counter()
         for _ in range(n):
-            _ = encoder.encode(data).decode('utf-8')
+            _ = encoder.encode(data).decode("utf-8")
         t_b = time.perf_counter() - t0
 
-        print(f'\n  encode().decode(): {t_a*1000:.2f} ms / {n} ops')
-        print(f'  Encoder().encode().decode(): {t_b*1000:.2f} ms / {n} ops')
-        print(f'  Speedup: {t_a/t_b:.2f}x')
+        print(f"\n  encode().decode(): {t_a * 1000:.2f} ms / {n} ops")
+        print(f"  Encoder().encode().decode(): {t_b * 1000:.2f} ms / {n} ops")
+        print(f"  Speedup: {t_a / t_b:.2f}x")
 
         # Encoder má nižší overhead (žádný import + dispatch)
         # Tolerujeme ±5% měřícího šumu — na rychlých strojích jsou obě cesty vyrovnané
         speedup = t_a / t_b
         assert speedup >= 0.95, (
-            f'Cached Encoder should be faster or equivalent: '
-            f'{t_b*1000:.2f} ms vs {t_a*1000:.2f} ms (speedup={speedup:.2f}x)'
-    )
+            f"Cached Encoder should be faster or equivalent: "
+            f"{t_b * 1000:.2f} ms vs {t_a * 1000:.2f} ms (speedup={speedup:.2f}x)"
+        )

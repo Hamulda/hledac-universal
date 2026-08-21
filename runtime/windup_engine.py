@@ -24,8 +24,6 @@ DORMANT PATH (pro back-compat testy):
     tests/test_e2e_dry_run.py:51 — stále volá run_windup() přímo
 """
 
-
-
 import logging
 import resource as _resource
 import time
@@ -36,21 +34,26 @@ from typing import TYPE_CHECKING
 _semantic_dedup_findings_impl = None
 _gnn_predictor_impl = None
 
+
 def _get_semantic_dedup_findings():
     global _semantic_dedup_findings_impl
     if _semantic_dedup_findings_impl is None:
         from hledac.universal.brain.ane_embedder import semantic_dedup_findings as _impl
+
         _semantic_dedup_findings_impl = _impl
     return _semantic_dedup_findings_impl
+
 
 def _get_gnn_predictor():
     global _gnn_predictor_impl
     if _gnn_predictor_impl is None:
         from hledac.universal.brain import gnn_predictor as _mod
+
         _gnn_predictor_impl = _mod
     return _gnn_predictor_impl
+
+
 from hledac.universal._core.mlx_embeddings import get_embedding_manager
-from _core import aclose
 
 if TYPE_CHECKING:
     from .sprint_scheduler import SprintScheduler
@@ -62,12 +65,13 @@ def _safe_get_breaker_states() -> dict:
     """Circuit breaker states — failsafe."""
     try:
         from hledac.universal.transport.circuit_breaker import get_all_breaker_states
+
         return get_all_breaker_states()
     except Exception:
         return {}
 
 
-def _run_dedup_phase(scheduler: "SprintScheduler") -> str | None:
+def _run_dedup_phase(scheduler: SprintScheduler) -> str | None:
     """Parquet dedup + ranking. Returns ranked_path or None on error."""
     try:
         ranked_path = scheduler.deduplicate_and_rank_findings()
@@ -107,10 +111,7 @@ async def _run_gnn_phase(graph: object) -> tuple[list, list, object]:
         anomalies = _get_gnn_predictor().get_anomaly_scores(edges)
     except Exception as e:
         logger.warning(f"[WINDUP] GNN inference: {e}")
-    logger.info(
-        f"[GNN] {len(gnn_predictions)} predicted links, "
-        f"{len(anomalies)} anomalies"
-    )
+    logger.info(f"[GNN] {len(gnn_predictions)} predicted links, {len(anomalies)} anomalies")
     return gnn_predictions, anomalies, graph
 
 
@@ -123,17 +124,14 @@ async def _run_graph_stats_phase(graph: object) -> tuple[list, dict]:
     try:
         ioc_graph_stats = getattr(graph, "stats", lambda: {"nodes": 0, "edges": 0})()
         top_nodes = getattr(graph, "get_top_nodes_by_degree", lambda *_a, **_k: [])(n=10)
-        logger.info(
-            f"[GRAPH] nodes={ioc_graph_stats['nodes']} "
-            f"edges={ioc_graph_stats['edges']}"
-    )
+        logger.info(f"[GRAPH] nodes={ioc_graph_stats['nodes']} edges={ioc_graph_stats['edges']}")
     except Exception as e:
         logger.warning(f"[WINDUP] DuckPGQ stats: {e}")
     return top_nodes, ioc_graph_stats
 
 
 async def _run_hypothesis_phase(
-    scheduler: "SprintScheduler",
+    scheduler: SprintScheduler,
     deduped: list,
     graph: object,
 ) -> None:
@@ -159,12 +157,12 @@ async def _run_hypothesis_phase(
             ioc_type="hypothesis",
             confidence=0.82,
             degree=1,
-    )
+        )
         logger.info(f"[HYPOTHESIS] enqueued: {h_text[:80]}")
 
 
 async def _run_synthesis_phase(
-    scheduler: "SprintScheduler",
+    scheduler: SprintScheduler,
     sprint_query: str,
     deduped: list,
     gnn_predictions: list,
@@ -184,6 +182,7 @@ async def _run_synthesis_phase(
         memory_level = "nominal"
         try:
             from hledac.universal._core.resource_governor import sample_uma_status
+
             status = sample_uma_status()
             memory_level = getattr(status, "state", "nominal")
         except Exception:  # noqa: BLE001
@@ -194,7 +193,7 @@ async def _run_synthesis_phase(
             has_gnn=bool(gnn_predictions),
             memory_pressure=memory_level,
             sprint_query=sprint_query,
-    )
+        )
         engine_name = engine
         scheduler._synthesis_engine = engine
         logger.info(f"[MOE] synthesis engine: {engine}")
@@ -218,16 +217,18 @@ async def _run_synthesis_phase(
             runner.inject_lifecycle_adapter(scheduler._lc_adapter)
 
         finding_texts = []
-        for f in (deduped or []):
+        for f in deduped or []:
             text = f.get("text") or f.get("snippet") or f.get("title") or str(f)
             finding_texts.append(text[:500])
 
         await runner.synthesize_findings(
             query=sprint_query,
-            findings=[{"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
-                      for t, f in zip(finding_texts, deduped or [], strict=False)],
+            findings=[
+                {"text": t, "ioc": f.get("ioc", ""), "source": f.get("source", "")}
+                for t, f in zip(finding_texts, deduped or [], strict=False)
+            ],
             force_synthesis=True,
-    )
+        )
         synthesis_meta = runner.last_synthesis_meta
     except Exception as e:
         logger.warning(f"[WINDUP] Synthesis: {e}")
@@ -290,8 +291,7 @@ async def run_windup(
             "top_graph_nodes": [],
             "phase_duration_seconds": {
                 "warmup": 0.0,
-                "active": round(t_active_end - t_warmup_end, 2)
-                    if t_warmup_end and t_active_end else 0.0,
+                "active": round(t_active_end - t_warmup_end, 2) if t_warmup_end and t_active_end else 0.0,
                 "windup": t_windup_dur,
             },
             "cb_open_domains": _safe_get_breaker_states(),

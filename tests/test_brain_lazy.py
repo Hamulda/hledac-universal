@@ -18,12 +18,10 @@ CPU contention but are valid tests when the system is not under load.
 
 import asyncio
 import gc
+import sys
 import time
 
 import pytest
-
-import sys
-from _core import aclose
 
 
 class TestLazyModelConcurrency:
@@ -38,13 +36,14 @@ class TestLazyModelConcurrency:
             sys.modules.pop(mod, None)
 
         from brain._lazy import LazyModel
+
         yield LazyModel
         # Cleanup
         gc.collect()
 
     @pytest.mark.asyncio
     @pytest.mark.flaky_race  # P3-04: Race condition test - timing dependent
-    async def test_concurrent_get_creates_single_instance(self, fresh_lazy):
+    async def test_concurrent_get_creates_single_instance(self, fresh_lazy) -> None:
         """
         100 concurrent await lazy.get() calls must create exactly 1 instance.
 
@@ -67,13 +66,13 @@ class TestLazyModelConcurrency:
             ttl_seconds=600,
             name="test_model",
             min_free_mb=0,  # Disable memory guard for this test
-    )
+        )
 
         # Fire 100 concurrent get() calls
         results = await asyncio.gather(
             *[lazy.get() for _ in range(100)],
             return_exceptions=True,
-    )
+        )
 
         # All results should be the same instance (no exceptions)
         exceptions = [r for r in results if isinstance(r, Exception)]
@@ -86,16 +85,14 @@ class TestLazyModelConcurrency:
         assert factory_calls["count"] == 1, (
             f"Factory called {factory_calls['count']} times, expected 1. "
             f"Race condition: concurrent get() calls are not properly serialized."
-    )
+        )
 
         # All results should be the same object
         first_instance = instances[0]
-        assert all(r is first_instance for r in instances), (
-            "Got different instances — lock is not working correctly"
-    )
+        assert all(r is first_instance for r in instances), "Got different instances — lock is not working correctly"
 
     @pytest.mark.asyncio
-    async def test_stale_evict_skipped_on_fresh_load(self, fresh_lazy):
+    async def test_stale_evict_skipped_on_fresh_load(self, fresh_lazy) -> None:
         """
         Timer fires → _evict() queued → but a newer load happened → skip evict.
 
@@ -113,7 +110,7 @@ class TestLazyModelConcurrency:
             ttl_seconds=0.05,  # 50ms TTL
             name="test_gen",
             min_free_mb=0,
-    )
+        )
 
         # Load instance #1
         instance1 = await lazy.get()
@@ -138,7 +135,7 @@ class TestLazyModelConcurrency:
         assert lazy._instance is None, "Timer should have evicted instance2"
 
     @pytest.mark.asyncio
-    async def test_second_load_after_eviction_resets_generation(self, fresh_lazy):
+    async def test_second_load_after_eviction_resets_generation(self, fresh_lazy) -> None:
         """
         After first instance is evicted, loading a new instance should
         properly track generations so subsequent evicts work correctly.
@@ -154,7 +151,7 @@ class TestLazyModelConcurrency:
             ttl_seconds=0.05,
             name="test_gen",
             min_free_mb=0,
-    )
+        )
 
         # Load instance #1
         instance1 = await lazy.get()
@@ -176,13 +173,14 @@ class TestLazyModelConcurrency:
         assert lazy._evict_count == 2
 
     @pytest.mark.asyncio
-    async def test_lock_lazy_init_is_thread_safe(self, fresh_lazy):
+    async def test_lock_lazy_init_is_thread_safe(self, fresh_lazy) -> None:
         """
         asyncio.Lock is created lazily under a threading.Lock (DCLP).
 
         Verifies that concurrent get() calls from multiple coroutines
         don't race on asyncio.Lock() creation.
         """
+
         def factory():
             return {"locked": True}
 
@@ -191,7 +189,7 @@ class TestLazyModelConcurrency:
             ttl_seconds=600,
             name="lock_test",
             min_free_mb=0,
-    )
+        )
 
         # Simulate concurrent Lock creation attempts
         async def trigger_lock_init():
@@ -202,20 +200,18 @@ class TestLazyModelConcurrency:
         locks = await asyncio.gather(
             *[trigger_lock_init() for _ in range(50)],
             return_exceptions=True,
-    )
+        )
 
         exceptions = [l for l in locks if isinstance(l, Exception)]
         assert len(exceptions) == 0, f"Lock init raised exceptions: {exceptions}"
 
         # All should return the SAME lock instance
         first_lock = locks[0]
-        assert all(l is first_lock for l in locks), (
-            "Got different Lock instances — DCLP is broken"
-    )
+        assert all(l is first_lock for l in locks), "Got different Lock instances — DCLP is broken"
         assert lazy._load_lock is first_lock
 
     @pytest.mark.asyncio
-    async def test_memory_guard_under_concurrency(self, fresh_lazy):
+    async def test_memory_guard_under_concurrency(self, fresh_lazy) -> None:
         """
         Memory guard still works when multiple coroutines check it concurrently.
 
@@ -232,19 +228,19 @@ class TestLazyModelConcurrency:
             ttl_seconds=600,
             name="mem_guard",
             min_free_mb=1_000_000,  # 1TB — impossible on M1, always refuse
-    )
+        )
 
         results = await asyncio.gather(
             *[lazy.get() for _ in range(50)],
             return_exceptions=True,
-    )
+        )
 
         # All should return None (memory guard triggered)
         assert all(r is None for r in results), "Memory guard should refuse all"
         assert factory_calls["count"] == 0, "Factory should never be called"
 
     @pytest.mark.asyncio
-    async def test_conditional_load_under_concurrency(self, fresh_lazy):
+    async def test_conditional_load_under_concurrency(self, fresh_lazy) -> None:
         """
         Conditional load (min_findings) still works under concurrency.
 
@@ -263,13 +259,13 @@ class TestLazyModelConcurrency:
             name="gnn",
             min_free_mb=0,
             conditional_min_findings=100,  # Only load if >= 100 findings
-    )
+        )
 
         # 50 coroutines call with findings_count=50 (< 100 threshold)
         results = await asyncio.gather(
             *[lazy.get(findings_count=50) for _ in range(50)],
             return_exceptions=True,
-    )
+        )
 
         assert all(r is None for r in results), "Should return None for low findings"
         assert factory_calls["count"] == 0, "Factory should not be called"
@@ -291,18 +287,19 @@ class TestLazyModelGenerationCounter:
             sys.modules.pop(mod, None)
 
         from brain._lazy import LazyModel
+
         yield LazyModel
         gc.collect()
 
     @pytest.mark.asyncio
-    async def test_evict_increments_evict_count(self, fresh_lazy):
+    async def test_evict_increments_evict_count(self, fresh_lazy) -> None:
         """Eviction should increment _evict_count."""
         lazy = fresh_lazy(
             factory=lambda: {"x": 1},
             ttl_seconds=0.05,
             name="gen_test",
             min_free_mb=0,
-    )
+        )
 
         await lazy.get()
         assert lazy._load_count == 1
@@ -315,7 +312,7 @@ class TestLazyModelGenerationCounter:
         assert lazy._evict_count == 1
 
     @pytest.mark.asyncio
-    async def test_multiple_load_evict_cycles(self, fresh_lazy):
+    async def test_multiple_load_evict_cycles(self, fresh_lazy) -> None:
         """
         Multiple load/evict cycles should correctly track generations.
 
@@ -326,7 +323,7 @@ class TestLazyModelGenerationCounter:
             ttl_seconds=0.05,
             name="multi_cycle",
             min_free_mb=0,
-    )
+        )
 
         # Cycle 1
         await lazy.get()
@@ -343,7 +340,7 @@ class TestLazyModelGenerationCounter:
         assert lazy._evict_count == 2
 
     @pytest.mark.asyncio
-    async def test_fast_path_does_not_increment_load_count(self, fresh_lazy):
+    async def test_fast_path_does_not_increment_load_count(self, fresh_lazy) -> None:
         """
         Getting an already-loaded instance via fast path should NOT
         increment _load_count, so that timer is reset but generation stays.
@@ -359,7 +356,7 @@ class TestLazyModelGenerationCounter:
             ttl_seconds=0.1,
             name="fast_path",
             min_free_mb=0,
-    )
+        )
 
         # First call - slow path, loads instance
         result1 = await lazy.get()

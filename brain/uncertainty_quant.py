@@ -36,15 +36,17 @@ Usage:
     if bridge is not None:
         bridge.subscribe('fetch_coordinator', self._handle_entropy_alert)
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Callable
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True, frozen=True)
 class EntropyAlert:
@@ -63,6 +65,7 @@ class EntropyAlert:
             traces back to a specific contradictory source. None if the
             high entropy is not source-attributable.
     """
+
     entity_id: str
     entropy: float
     threshold_exceeded: float
@@ -74,13 +77,34 @@ class EntropyAlert:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for queue serialization."""
-        return {'entity_id': self.entity_id, 'entropy': self.entropy, 'threshold_exceeded': self.threshold_exceeded, 'confidence': self.confidence, 'risk_level': self.risk_level, 'timestamp': self.timestamp, 'metadata': self.metadata, 'contradiction_source_id': self.contradiction_source_id}
+        return {
+            "entity_id": self.entity_id,
+            "entropy": self.entropy,
+            "threshold_exceeded": self.threshold_exceeded,
+            "confidence": self.confidence,
+            "risk_level": self.risk_level,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+            "contradiction_source_id": self.contradiction_source_id,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EntropyAlert:
         """Reconstruct from dict (for deserialization)."""
-        return cls(entity_id=data['entity_id'], entropy=data['entropy'], threshold_exceeded=data['threshold_exceeded'], confidence=data['confidence'], risk_level=data['risk_level'], timestamp=data.get('timestamp', time.time()), metadata=data.get('metadata', {}), contradiction_source_id=data.get('contradiction_source_id'))
-_ALERT_SEVERITY_RANK: dict[str, int] = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+        return cls(
+            entity_id=data["entity_id"],
+            entropy=data["entropy"],
+            threshold_exceeded=data["threshold_exceeded"],
+            confidence=data["confidence"],
+            risk_level=data["risk_level"],
+            timestamp=data.get("timestamp", time.time()),
+            metadata=data.get("metadata", {}),
+            contradiction_source_id=data.get("contradiction_source_id"),
+        )
+
+
+_ALERT_SEVERITY_RANK: dict[str, int] = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
 
 def _get_alert_priority(alert: EntropyAlert) -> tuple[int, float]:
     """
@@ -94,6 +118,7 @@ def _get_alert_priority(alert: EntropyAlert) -> tuple[int, float]:
     severity_rank = _ALERT_SEVERITY_RANK.get(alert.risk_level, 0)
     recency_bonus = int(alert.timestamp % 1000)
     return severity_rank * 1000 + recency_bonus
+
 
 class SeverityPriorityQueue:
     """
@@ -109,9 +134,10 @@ class SeverityPriorityQueue:
 
     M1 8GB: Minimal overhead — only computes priority when queue is full.
     """
-    __slots__ = ('_queue', '_maxsize', '_dropped_count', '_evicted_count')
 
-    def __init__(self, maxsize: int=64) -> None:
+    __slots__ = ("_queue", "_maxsize", "_dropped_count", "_evicted_count")
+
+    def __init__(self, maxsize: int = 64) -> None:
         self._queue: asyncio.Queue[tuple[int, EntropyAlert]] = asyncio.Queue(maxsize=maxsize)
         self._maxsize = maxsize
         self._dropped_count: int = 0
@@ -138,7 +164,7 @@ class SeverityPriorityQueue:
     def full(self) -> bool:
         return self._queue.full()
 
-    async def put(self, alert: EntropyAlert, *, timeout: float | None=0.1) -> bool:
+    async def put(self, alert: EntropyAlert, *, timeout: float | None = 0.1) -> bool:
         """
         Put alert into queue, using severity-based overflow strategy.
 
@@ -159,10 +185,10 @@ class SeverityPriorityQueue:
             try:
                 await asyncio.wait_for(self._queue.put((incoming_priority, alert)), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         items: list[tuple[int, EntropyAlert]] = []
-        lowest_priority = float('inf')
+        lowest_priority = float("inf")
         lowest_item: tuple[int, EntropyAlert] | None = None
         while True:
             try:
@@ -201,7 +227,7 @@ class SeverityPriorityQueue:
             self._queue.put_nowait((incoming_priority, alert))
             return True
         items: list[tuple[int, EntropyAlert]] = []
-        lowest_priority = float('inf')
+        lowest_priority = float("inf")
         lowest_item: tuple[int, EntropyAlert] | None = None
         while True:
             try:
@@ -250,6 +276,7 @@ class SeverityPriorityQueue:
     def _internal_queue(self) -> asyncio.Queue[tuple[int, EntropyAlert]]:
         return self._queue
 
+
 class EntropyFetchBridge:
     """
     Asyncio.Queue-based pub/sub bridge for entropy alerts.
@@ -275,14 +302,22 @@ class EntropyFetchBridge:
         - Priority = (risk_level_rank * 1000) + recency_bonus
         - Critical alerts (contradictions) are preserved even at high load
     """
+
     MAX_QUEUE_SIZE: int = 64
     MAX_SUBSCRIBERS: int = 16
-    __slots__ = ('_lock', '_stats', '_subscribers')
+    __slots__ = ("_lock", "_stats", "_subscribers")
 
     def __init__(self) -> None:
         self._subscribers: dict[str, SeverityPriorityQueue] = {}
         self._lock = asyncio.Lock()
-        self._stats = {'alerts_emitted': 0, 'alerts_dropped': 0, 'alerts_dropped_low_priority': 0, 'alerts_evicted': 0, 'subscribers_added': 0, 'subscribers_removed': 0}
+        self._stats = {
+            "alerts_emitted": 0,
+            "alerts_dropped": 0,
+            "alerts_dropped_low_priority": 0,
+            "alerts_evicted": 0,
+            "subscribers_added": 0,
+            "subscribers_removed": 0,
+        }
 
     async def emit(self, alert: EntropyAlert) -> int:
         """
@@ -310,18 +345,24 @@ class EntropyFetchBridge:
                         if queue.put_nowait(alert):
                             delivered += 1
                         else:
-                            self._stats['alerts_dropped_low_priority'] += 1
-                            logger.debug('[ENTROPY_BRIDGE] Alert dropped (lower priority than queue contents): entity=%s risk=%s', alert.entity_id, alert.risk_level)
+                            self._stats["alerts_dropped_low_priority"] += 1
+                            logger.debug(
+                                "[ENTROPY_BRIDGE] Alert dropped (lower priority than queue contents): entity=%s risk=%s",
+                                alert.entity_id,
+                                alert.risk_level,
+                            )
                     except Exception as e:
-                        self._stats['alerts_dropped'] += 1
-                        logger.debug('[ENTROPY_BRIDGE] Failed to deliver alert to %s: %s', subscriber_id, e)
-            self._stats['alerts_emitted'] += 1
+                        self._stats["alerts_dropped"] += 1
+                        logger.debug("[ENTROPY_BRIDGE] Failed to deliver alert to %s: %s", subscriber_id, e)
+            self._stats["alerts_emitted"] += 1
             return delivered
         except Exception as e:
-            logger.debug(f'[ENTROPY_BRIDGE] emit failed (fail-soft): {e}')
+            logger.debug(f"[ENTROPY_BRIDGE] emit failed (fail-soft): {e}")
             return 0
 
-    async def subscribe(self, subscriber_id: str, queue: SeverityPriorityQueue | asyncio.Queue[EntropyAlert] | None=None) -> bool:
+    async def subscribe(
+        self, subscriber_id: str, queue: SeverityPriorityQueue | asyncio.Queue[EntropyAlert] | None = None
+    ) -> bool:
         """
         Subscribe to entropy alerts.
 
@@ -342,18 +383,25 @@ class EntropyFetchBridge:
         try:
             async with self._lock:
                 if len(self._subscribers) >= self.MAX_SUBSCRIBERS:
-                    logger.warning('[ENTROPY_BRIDGE] Subscriber limit reached (%d), rejecting %s', self.MAX_SUBSCRIBERS, subscriber_id)
+                    logger.warning(
+                        "[ENTROPY_BRIDGE] Subscriber limit reached (%d), rejecting %s",
+                        self.MAX_SUBSCRIBERS,
+                        subscriber_id,
+                    )
                     return False
                 if queue is None:
                     queue = SeverityPriorityQueue(maxsize=self.MAX_QUEUE_SIZE)
                 elif isinstance(queue, asyncio.Queue) and (not isinstance(queue, SeverityPriorityQueue)):
-                    logger.debug('[ENTROPY_BRIDGE] Subscriber %s using legacy asyncio.Queue (FIFO strategy). Prefer SeverityPriorityQueue for severity-aware overflow.', subscriber_id)
+                    logger.debug(
+                        "[ENTROPY_BRIDGE] Subscriber %s using legacy asyncio.Queue (FIFO strategy). Prefer SeverityPriorityQueue for severity-aware overflow.",
+                        subscriber_id,
+                    )
                 self._subscribers[subscriber_id] = queue
-                self._stats['subscribers_added'] += 1
-                logger.debug('[ENTROPY_BRIDGE] Subscribed: %s', subscriber_id)
+                self._stats["subscribers_added"] += 1
+                logger.debug("[ENTROPY_BRIDGE] Subscribed: %s", subscriber_id)
                 return True
         except Exception as e:
-            logger.debug(f'[ENTROPY_BRIDGE] subscribe failed (fail-soft): {e}')
+            logger.debug(f"[ENTROPY_BRIDGE] subscribe failed (fail-soft): {e}")
             return False
 
     async def unsubscribe(self, subscriber_id: str) -> bool:
@@ -370,12 +418,12 @@ class EntropyFetchBridge:
             async with self._lock:
                 if subscriber_id in self._subscribers:
                     del self._subscribers[subscriber_id]
-                    self._stats['subscribers_removed'] += 1
-                    logger.debug('[ENTROPY_BRIDGE] Unsubscribed: %s', subscriber_id)
+                    self._stats["subscribers_removed"] += 1
+                    logger.debug("[ENTROPY_BRIDGE] Unsubscribed: %s", subscriber_id)
                     return True
                 return False
         except Exception as e:
-            logger.debug(f'[ENTROPY_BRIDGE] unsubscribe failed (fail-soft): {e}')
+            logger.debug(f"[ENTROPY_BRIDGE] unsubscribe failed (fail-soft): {e}")
             return False
 
     def get_queue(self, subscriber_id: str) -> SeverityPriorityQueue | asyncio.Queue[EntropyAlert] | None:
@@ -397,8 +445,16 @@ class EntropyFetchBridge:
         - alerts_dropped_low_priority: dropped due to lower priority than queue contents
         - alerts_evicted: count of high-priority items that evicted lower ones
         """
-        return {**self._stats, 'active_subscribers': len(self._subscribers), 'max_subscribers': self.MAX_SUBSCRIBERS, 'queue_capacity': self.MAX_QUEUE_SIZE}
+        return {
+            **self._stats,
+            "active_subscribers": len(self._subscribers),
+            "max_subscribers": self.MAX_SUBSCRIBERS,
+            "queue_capacity": self.MAX_QUEUE_SIZE,
+        }
+
+
 _ENTROPY_BRIDGE: EntropyFetchBridge | None = None
+
 
 def get_entropy_bridge() -> EntropyFetchBridge | None:
     """
@@ -413,11 +469,12 @@ def get_entropy_bridge() -> EntropyFetchBridge | None:
     try:
         if _ENTROPY_BRIDGE is None:
             _ENTROPY_BRIDGE = EntropyFetchBridge()
-            logger.debug('[ENTROPY_BRIDGE] Global bridge initialized')
+            logger.debug("[ENTROPY_BRIDGE] Global bridge initialized")
         return _ENTROPY_BRIDGE
     except Exception as e:
-        logger.debug(f'[ENTROPY_BRIDGE] get_entropy_bridge failed (fail-soft): {e}')
+        logger.debug(f"[ENTROPY_BRIDGE] get_entropy_bridge failed (fail-soft): {e}")
         return None
+
 
 def reset_entropy_bridge() -> None:
     """
@@ -427,6 +484,7 @@ def reset_entropy_bridge() -> None:
     """
     global _ENTROPY_BRIDGE
     _ENTROPY_BRIDGE = None
+
 
 @dataclass(slots=True, frozen=True)
 class EntropyStats:
@@ -441,6 +499,7 @@ class EntropyStats:
         is_low_entropy: True if normalized < 0.3 (highly repetitive)
         is_high_entropy: True if normalized > 0.7 (near-random)
     """
+
     entropy_bits: float
     normalized: float
     unique_symbols: int
@@ -448,7 +507,10 @@ class EntropyStats:
     is_low_entropy: bool = False
     is_high_entropy: bool = False
 
-def calculate_entropy(data: bytes | str | bytearray | memoryview, *, normalize: bool=True, prefer_rust: bool=True) -> float:
+
+def calculate_entropy(
+    data: bytes | str | bytearray | memoryview, *, normalize: bool = True, prefer_rust: bool = True
+) -> float:
     """
     Compute Shannon entropy of binary or text data.
 
@@ -472,17 +534,18 @@ def calculate_entropy(data: bytes | str | bytearray | memoryview, *, normalize: 
     Fail-soft: Returns 0.0 on empty input or any error.
     """
     if isinstance(data, str):
-        data = data.encode('utf-8', errors='replace')
+        data = data.encode("utf-8", errors="replace")
     elif isinstance(data, (bytearray, memoryview)):
         data = bytes(data)
     elif not isinstance(data, bytes):
-        logger.debug('[ENTROPY] calculate_entropy received unsupported type %s', type(data).__name__)
+        logger.debug("[ENTROPY] calculate_entropy received unsupported type %s", type(data).__name__)
         return 0.0
     if len(data) == 0:
         return 0.0
     if prefer_rust:
         try:
             from hledac.universal._core.rust_backend import rust
+
             rust_entropy: float = rust.quality.compute_entropy(data)
             if normalize:
                 return min(rust_entropy / 6.5, 1.0)
@@ -490,6 +553,7 @@ def calculate_entropy(data: bytes | str | bytearray | memoryview, *, normalize: 
         except Exception:
             pass
     import math
+
     freq: dict[int, int] = {}
     for byte in data:
         freq[byte] = freq.get(byte, 0) + 1
@@ -502,6 +566,7 @@ def calculate_entropy(data: bytes | str | bytearray | memoryview, *, normalize: 
     if normalize:
         return min(entropy_bits / 6.5, 1.0)
     return entropy_bits
+
 
 def calculate_entropy_detailed(data: bytes | str | bytearray | memoryview) -> EntropyStats:
     """
@@ -517,14 +582,29 @@ def calculate_entropy_detailed(data: bytes | str | bytearray | memoryview) -> En
         EntropyStats with entropy_bits, normalized, unique_symbols, etc.
     """
     if isinstance(data, str):
-        data = data.encode('utf-8', errors='replace')
+        data = data.encode("utf-8", errors="replace")
     elif isinstance(data, (bytearray, memoryview)):
         data = bytes(data)
     elif not isinstance(data, bytes):
-        return EntropyStats(entropy_bits=0.0, normalized=0.0, unique_symbols=0, total_symbols=0, is_low_entropy=True, is_high_entropy=False)
+        return EntropyStats(
+            entropy_bits=0.0,
+            normalized=0.0,
+            unique_symbols=0,
+            total_symbols=0,
+            is_low_entropy=True,
+            is_high_entropy=False,
+        )
     if len(data) == 0:
-        return EntropyStats(entropy_bits=0.0, normalized=0.0, unique_symbols=0, total_symbols=0, is_low_entropy=True, is_high_entropy=False)
+        return EntropyStats(
+            entropy_bits=0.0,
+            normalized=0.0,
+            unique_symbols=0,
+            total_symbols=0,
+            is_low_entropy=True,
+            is_high_entropy=False,
+        )
     import math
+
     freq: dict[int, int] = {}
     for byte in data:
         freq[byte] = freq.get(byte, 0) + 1
@@ -535,7 +615,15 @@ def calculate_entropy_detailed(data: bytes | str | bytearray | memoryview) -> En
         entropy_bits -= p * math.log2(p)
     unique = len(freq)
     normalized = min(entropy_bits / 6.5, 1.0)
-    return EntropyStats(entropy_bits=round(entropy_bits, 4), normalized=round(normalized, 4), unique_symbols=unique, total_symbols=total, is_low_entropy=normalized < 0.3, is_high_entropy=normalized > 0.7)
+    return EntropyStats(
+        entropy_bits=round(entropy_bits, 4),
+        normalized=round(normalized, 4),
+        unique_symbols=unique,
+        total_symbols=total,
+        is_low_entropy=normalized < 0.3,
+        is_high_entropy=normalized > 0.7,
+    )
+
 
 class UncertaintyQuantifier:
     """
@@ -558,18 +646,24 @@ class UncertaintyQuantifier:
     M1 8GB safe: No GPU usage. Pure CPU (Rust NEON or Python fallback).
     Memory: O(1) beyond input data.
     """
+
     DEFAULT_HIGH_ENTROPY_BITS: float = 1.5
     DEFAULT_NORMALIZED_THRESHOLD: float = 0.5
     DEFAULT_MAX_ENTROPY_BITS: float = 4.0
-    __slots__ = ('_high_entropy_threshold', '_normalized_threshold', '_max_entropy_bits', '_stats')
+    __slots__ = ("_high_entropy_threshold", "_normalized_threshold", "_max_entropy_bits", "_stats")
 
-    def __init__(self, high_entropy_threshold: float=DEFAULT_HIGH_ENTROPY_BITS, normalized_threshold: float=DEFAULT_NORMALIZED_THRESHOLD, max_entropy_bits: float=DEFAULT_MAX_ENTROPY_BITS) -> None:
+    def __init__(
+        self,
+        high_entropy_threshold: float = DEFAULT_HIGH_ENTROPY_BITS,
+        normalized_threshold: float = DEFAULT_NORMALIZED_THRESHOLD,
+        max_entropy_bits: float = DEFAULT_MAX_ENTROPY_BITS,
+    ) -> None:
         self._high_entropy_threshold = high_entropy_threshold
         self._normalized_threshold = normalized_threshold
         self._max_entropy_bits = max_entropy_bits
-        self._stats: dict[str, int] = {'quantify_calls': 0, 'high_entropy_flags': 0}
+        self._stats: dict[str, int] = {"quantify_calls": 0, "high_entropy_flags": 0}
 
-    def quantify_from_text(self, text: str, *, normalize: bool=True) -> EntropyStats:
+    def quantify_from_text(self, text: str, *, normalize: bool = True) -> EntropyStats:
         """
         Quantify uncertainty from raw text content via Shannon entropy.
 
@@ -580,13 +674,15 @@ class UncertaintyQuantifier:
         Returns:
             EntropyStats with full entropy decomposition
         """
-        self._stats['quantify_calls'] += 1
+        self._stats["quantify_calls"] += 1
         stats = calculate_entropy_detailed(text if isinstance(text, (str, bytes)) else str(text))
         if stats.normalized > self._normalized_threshold:
-            self._stats['high_entropy_flags'] += 1
+            self._stats["high_entropy_flags"] += 1
         return stats
 
-    def quantify_from_logprobs(self, logprobs: list[float], *, self_reported_confidence: float=1.0) -> tuple[float, float, bool]:
+    def quantify_from_logprobs(
+        self, logprobs: list[float], *, self_reported_confidence: float = 1.0
+    ) -> tuple[float, float, bool]:
         """
         Quantify uncertainty from token-level log probabilities.
 
@@ -603,8 +699,9 @@ class UncertaintyQuantifier:
 
         Fail-soft: Returns (0.0, 1.0, False) on empty input or error.
         """
-        self._stats['quantify_calls'] += 1
+        self._stats["quantify_calls"] += 1
         import math
+
         try:
             finite = [lp for lp in logprobs if math.isfinite(lp)]
             if not finite:
@@ -614,10 +711,10 @@ class UncertaintyQuantifier:
             implied_confidence = max(0.0, min(1.0, 1.0 - entropy_bits / self._max_entropy_bits))
             is_high = entropy_bits > self._high_entropy_threshold
             if is_high:
-                self._stats['high_entropy_flags'] += 1
+                self._stats["high_entropy_flags"] += 1
             return (round(entropy_bits, 3), round(implied_confidence, 3), is_high)
         except Exception as e:
-            logger.debug('[ENTROPY] quantify_from_logprobs failed (fail-soft): %s', e)
+            logger.debug("[ENTROPY] quantify_from_logprobs failed (fail-soft): %s", e)
             return (0.0, 1.0, False)
 
     def assess_confidence_divergence(self, self_reported: float, logprobs: list[float]) -> dict[str, float | bool]:
@@ -636,12 +733,18 @@ class UncertaintyQuantifier:
         entropy_bits, implied_conf, _ = self.quantify_from_logprobs(logprobs, self_reported_confidence=self_reported)
         divergence = abs(self_reported - implied_conf)
         if divergence < 0.2:
-            risk = 'low'
+            risk = "low"
         elif divergence < 0.4:
-            risk = 'medium'
+            risk = "medium"
         else:
-            risk = 'high'
-        return {'measured_entropy': entropy_bits, 'implied_confidence': implied_conf, 'divergence': round(divergence, 3), 'hallucination_risk': divergence > 0.3, 'risk_level': risk}
+            risk = "high"
+        return {
+            "measured_entropy": entropy_bits,
+            "implied_confidence": implied_conf,
+            "divergence": round(divergence, 3),
+            "hallucination_risk": divergence > 0.3,
+            "risk_level": risk,
+        }
 
     @property
     def high_entropy_threshold(self) -> float:
@@ -652,4 +755,4 @@ class UncertaintyQuantifier:
         return self._stats.copy()
 
     def reset_stats(self) -> None:
-        self._stats = {'quantify_calls': 0, 'high_entropy_flags': 0}
+        self._stats = {"quantify_calls": 0, "high_entropy_flags": 0}

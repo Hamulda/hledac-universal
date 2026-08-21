@@ -49,10 +49,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const STATE_CLOSED: u8 = 0;
 const STATE_OPEN: u8 = 1;
 const STATE_HALF_OPEN: u8 = 2;
@@ -60,18 +56,6 @@ const STATE_HALF_OPEN: u8 = 2;
 const FAILURE_THRESHOLD: u32 = 5;
 const HALF_OPEN_PROBES: u32 = 3;
 const RECOVERY_TIMEOUT_SECS: u64 = 30;
-
-// ---------------------------------------------------------------------------
-// AIMD Layer 2 Integration
-// ---------------------------------------------------------------------------
-// AIMD (Additive Increase, Multiplicative Decrease) provides adaptive rate
-// limiting on top of circuit breaking. When failures occur, AIMD reduces the
-// concurrency window. On success, AIMD gradually increases it.
-//
-// Design:
-// - Lazy initialization: AIMD controller created on first use
-// - Thread-safe: Uses AtomicU32 for counter state
-// - M1 8GB safe: ~16 bytes, zero allocations on hot path
 
 /// AIMD Layer 2 state for adaptive rate limiting.
 struct AIMDLayer2 {
@@ -130,10 +114,6 @@ impl Default for AIMDLayer2 {
 /// Global AIMD Layer 2 instance.
 /// Lazy initialization: created on first circuit_breaker_record_failure call.
 static AIMD_LAYER2: std::sync::LazyLock<AIMDLayer2> = std::sync::LazyLock::new(AIMDLayer2::default);
-
-// ---------------------------------------------------------------------------
-// Domain State (stored in RwLock-protected AHashMap per domain)
-// ---------------------------------------------------------------------------
 
 struct DomainState {
     failure_count: AtomicU32,
@@ -242,25 +222,6 @@ impl DomainState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Global Circuit Breaker Registry
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Layer 2: AIMD Integration for Adaptive Rate Limiting
-// ---------------------------------------------------------------------------
-// AIMD Layer 2 provides adaptive rate limiting on top of circuit breaking.
-// When circuit breaker records a failure, AIMD reduces the concurrency window.
-// When circuit breaker records success, AIMD gradually increases the window.
-//
-// AIMD State Machine:
-//   - record_failure() → window *= 0.75 (25% reduction)
-//   - record_success() (8×) → window += 2.0 (capped at 25)
-//   - Window clamped to [1.0, 25.0]
-//
-// M1 8GB: ~16 bytes per AIMD instance, zero allocations on hot path.
-// ---------------------------------------------------------------------------
-
 /// Global registry of circuit breakers per domain.
 /// parking_lot::RwLock: multiple concurrent readers OR single exclusive writer.
 /// ISSUE-5.1 fix: Replaces DashMap which caused PyO3 GIL segfaults in async contexts.
@@ -297,10 +258,6 @@ fn get_or_create_state(domain: &str) -> Arc<DomainState> {
     guard.insert(domain.to_string(), state.clone());
     state
 }
-
-// ---------------------------------------------------------------------------
-// Python-callable Functions
-// ---------------------------------------------------------------------------
 
 /// circuit_breaker_is_open(domain: str) -> bool
 ///
@@ -417,10 +374,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(circuit_breaker_aimd_reset))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

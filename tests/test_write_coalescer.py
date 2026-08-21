@@ -18,9 +18,9 @@ Invariant table:
 """
 
 import asyncio
+from typing import Never
 
 import pytest
-from _core import aclose
 
 try:
     from hledac.universal.storage.write_coalescer import (
@@ -33,19 +33,24 @@ except ModuleNotFoundError:
 
 # ─── Fixtures ───────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def failing_flush_fn():
     """flush_fn that always raises."""
-    async def fn(_findings):
+
+    async def fn(_findings) -> Never:
         raise RuntimeError("DB write failed")
+
     return fn
 
 
 @pytest.fixture
 def success_flush_fn():
     """flush_fn that returns one result per finding."""
+
     async def fn(findings):
         return [{"accepted": True, "finding": f} for f in findings]
+
     return fn
 
 
@@ -60,12 +65,14 @@ def partial_flush_fn():
         if counter % 2 == 0:
             raise RuntimeError("intermittent failure")
         return [{"accepted": True, "finding": f} for f in findings]
+
     return fn
 
 
 class _ErrorCallbackTracker:
     """Tracks on_flush_error callback invocations."""
-    def __init__(self):
+
+    def __init__(self) -> None:
         self._calls: list[tuple[Exception, list, int]] = []
 
     def __call__(self, exc: Exception, findings: list, batch_num: int):
@@ -80,8 +87,9 @@ def error_callback_log():
 
 # ─── WC-8: Lifecycle ───────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_start_stop_lifecycle(success_flush_fn):
+async def test_start_stop_lifecycle(success_flush_fn) -> None:
     """WC-8: start() creates task; stop() drains and joins."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     assert not coalescer._running
@@ -97,7 +105,7 @@ async def test_start_stop_lifecycle(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_stop_idempotent_drains_residual(success_flush_fn):
+async def test_stop_idempotent_drains_residual(success_flush_fn) -> None:
     """WC-8: Calling stop() twice drains residual items both times."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -113,8 +121,9 @@ async def test_stop_idempotent_drains_residual(success_flush_fn):
 
 # ─── WC-9: Submit ───────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_submit_queues_findings(success_flush_fn):
+async def test_submit_queues_findings(success_flush_fn) -> None:
     """WC-9: submit() adds to queue and increments submitted counter."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -131,8 +140,9 @@ async def test_submit_queues_findings(success_flush_fn):
 
 # ─── WC-1 / WC-6: _flush error returns [], coalescer survives ──────────────
 
+
 @pytest.mark.asyncio
-async def test_flush_returns_empty_on_error(failing_flush_fn):
+async def test_flush_returns_empty_on_error(failing_flush_fn) -> None:
     """WC-1: _flush catches exception and returns [] (not re-raised)."""
     coalescer = WriteCoalescer(flush_fn=failing_flush_fn)
     await coalescer.start()
@@ -145,7 +155,7 @@ async def test_flush_returns_empty_on_error(failing_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_coalescer_continues_after_flush_error(failing_flush_fn):
+async def test_coalescer_continues_after_flush_error(failing_flush_fn) -> None:
     """WC-6: Single flush error does NOT stop the coalescer loop."""
     coalescer = WriteCoalescer(flush_fn=failing_flush_fn)
     await coalescer.start()
@@ -166,8 +176,9 @@ async def test_coalescer_continues_after_flush_error(failing_flush_fn):
 
 # ─── WC-2: on_flush_error callback ───────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_on_flush_error_callback_fires(failing_flush_fn, error_callback_log):
+async def test_on_flush_error_callback_fires(failing_flush_fn, error_callback_log) -> None:
     """WC-2: on_flush_error is called with (exc, findings, batch_num) on every error."""
     coalescer = WriteCoalescer(
         flush_fn=failing_flush_fn,
@@ -188,7 +199,7 @@ async def test_on_flush_error_callback_fires(failing_flush_fn, error_callback_lo
 
 
 @pytest.mark.asyncio
-async def test_on_flush_error_not_required(success_flush_fn):
+async def test_on_flush_error_not_required(success_flush_fn) -> None:
     """WC-2: on_flush_error=None is valid (no callback on error)."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn, on_flush_error=None)
     await coalescer.start()
@@ -198,8 +209,9 @@ async def test_on_flush_error_not_required(success_flush_fn):
 
 # ─── WC-3 / WC-4 / WC-5: drain_and_get_accepted raises FlushError ──────────
 
+
 @pytest.mark.asyncio
-async def test_drain_and_get_accepted_raises_flush_error_on_silent_failure(failing_flush_fn):
+async def test_drain_and_get_accepted_raises_flush_error_on_silent_failure(failing_flush_fn) -> None:
     """WC-3: drain_and_get_accepted raises FlushError when flush returns [] with non-empty input."""
     coalescer = WriteCoalescer(flush_fn=failing_flush_fn)
     await coalescer.start()
@@ -214,7 +226,7 @@ async def test_drain_and_get_accepted_raises_flush_error_on_silent_failure(faili
 
 
 @pytest.mark.asyncio
-async def test_drain_and_get_accepted_returns_results_on_success(success_flush_fn):
+async def test_drain_and_get_accepted_returns_results_on_success(success_flush_fn) -> None:
     """WC-3: On success, returns merged results without raising."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -227,7 +239,7 @@ async def test_drain_and_get_accepted_returns_results_on_success(success_flush_f
 
 
 @pytest.mark.asyncio
-async def test_drain_and_get_accepted_empty_input_no_error(success_flush_fn):
+async def test_drain_and_get_accepted_empty_input_no_error(success_flush_fn) -> None:
     """WC-3: Empty input + successful flush returns [], does not raise FlushError."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -240,7 +252,8 @@ async def test_drain_and_get_accepted_empty_input_no_error(success_flush_fn):
 
 # ─── WC-4 / WC-5: FlushError properties ────────────────────────────────────
 
-def test_flush_error_properties():
+
+def test_flush_error_properties() -> None:
     """WC-4/WC-5: FlushError.original_exception and .findings are set correctly."""
     original = RuntimeError("inner")
     findings = [{"id": 1}, {"id": 2}]
@@ -251,7 +264,7 @@ def test_flush_error_properties():
     assert "RuntimeError: inner" in str(error)
 
 
-def test_flush_error_string_representation():
+def test_flush_error_string_representation() -> None:
     """WC-4: FlushError has readable string representation."""
     error = FlushError(RuntimeError("boom"), [{"id": 1}])
     s = str(error)
@@ -262,8 +275,9 @@ def test_flush_error_string_representation():
 
 # ─── WC-7: _drain_residual_queue ─────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_drain_residual_queue_on_stop_timeout(failing_flush_fn):
+async def test_drain_residual_queue_on_stop_timeout(failing_flush_fn) -> None:
     """WC-7: stop() timeout triggers _drain_residual_queue so items are not lost."""
     coalescer = WriteCoalescer(flush_fn=failing_flush_fn)
     await coalescer.start()
@@ -280,7 +294,7 @@ async def test_drain_residual_queue_on_stop_timeout(failing_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_drain_residual_queue_success(success_flush_fn):
+async def test_drain_residual_queue_success(success_flush_fn) -> None:
     """WC-7: Items in queue at stop() are flushed."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -297,12 +311,13 @@ async def test_drain_residual_queue_success(success_flush_fn):
 
 # ─── WC-10: Adaptive flush interval ───────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_adaptive_fast_interval_sparse_queue(success_flush_fn):
+async def test_adaptive_fast_interval_sparse_queue(success_flush_fn) -> None:
     """WC-10: Sparse queue (< min_batch_ratio) uses fast_interval deadline."""
     config = CoalescerConfig(
         max_batch_size=100,
-        flush_interval_s=0.1,   # 100ms deadline
+        flush_interval_s=0.1,  # 100ms deadline
         fast_interval_s=0.005,  # 5ms adaptive interval
         min_batch_ratio=0.05,
     )
@@ -323,7 +338,7 @@ async def test_adaptive_fast_interval_sparse_queue(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_immediate_flush_on_max_batch_size(success_flush_fn):
+async def test_immediate_flush_on_max_batch_size(success_flush_fn) -> None:
     """WC-10: pending >= max_batch_size triggers immediate flush."""
     config = CoalescerConfig(
         max_batch_size=3,
@@ -348,8 +363,9 @@ async def test_immediate_flush_on_max_batch_size(success_flush_fn):
 
 # ─── Stats accounting ──────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_stats_submitted_accurate(success_flush_fn):
+async def test_stats_submitted_accurate(success_flush_fn) -> None:
     """Verify submitted counter equals sum of all submit() batch sizes."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -363,7 +379,7 @@ async def test_stats_submitted_accurate(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_stats_flushed_findings_accurate(success_flush_fn):
+async def test_stats_flushed_findings_accurate(success_flush_fn) -> None:
     """Verify flushed_findings counter equals sum of successful flush batches."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -379,7 +395,8 @@ async def test_stats_flushed_findings_accurate(success_flush_fn):
 
 # ─── CoalescerConfig ───────────────────────────────────────────────────────
 
-def test_coalescer_config_defaults():
+
+def test_coalescer_config_defaults() -> None:
     """Verify CoalescerConfig default values."""
     config = CoalescerConfig()
     assert config.max_batch_size == 50
@@ -389,7 +406,7 @@ def test_coalescer_config_defaults():
     assert config.fast_interval_s == 0.005
 
 
-def test_coalescer_config_from_env(monkeypatch):
+def test_coalescer_config_from_env(monkeypatch) -> None:
     """Verify CoalescerConfig.from_env reads env vars correctly."""
     monkeypatch.setenv("HLEDAC_COALESCER_MAX_BATCH", "256")
     monkeypatch.setenv("HLEDAC_COALESCER_FLUSH_MS", "10")
@@ -406,7 +423,7 @@ def test_coalescer_config_from_env(monkeypatch):
     assert config.fast_interval_s == 0.002
 
 
-def test_coalescer_config_from_env_missing_env_uses_defaults(monkeypatch):
+def test_coalescer_config_from_env_missing_env_uses_defaults(monkeypatch) -> None:
     """Missing env vars fall back to defaults."""
     monkeypatch.delenv("HLEDAC_COALESCER_MAX_BATCH", raising=False)
     config = CoalescerConfig.from_env()
@@ -415,8 +432,9 @@ def test_coalescer_config_from_env_missing_env_uses_defaults(monkeypatch):
 
 # ─── Edge cases ────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_flush_empty_findings_returns_empty(success_flush_fn):
+async def test_flush_empty_findings_returns_empty(success_flush_fn) -> None:
     """Empty findings list → _flush returns [] without calling flush_fn."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -428,7 +446,7 @@ async def test_flush_empty_findings_returns_empty(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_submit_empty_does_nothing(success_flush_fn):
+async def test_submit_empty_does_nothing(success_flush_fn) -> None:
     """submit([]) does not queue and does not increment stats."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -440,7 +458,7 @@ async def test_submit_empty_does_nothing(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_batch_counter_incremented_on_each_flush(success_flush_fn):
+async def test_batch_counter_incremented_on_each_flush(success_flush_fn) -> None:
     """_batch_counter increments on every _flush call."""
     coalescer = WriteCoalescer(flush_fn=success_flush_fn)
     await coalescer.start()
@@ -456,7 +474,7 @@ async def test_batch_counter_incremented_on_each_flush(success_flush_fn):
 
 
 @pytest.mark.asyncio
-async def test_multiple_flush_errors_all_counted(failing_flush_fn, error_callback_log):
+async def test_multiple_flush_errors_all_counted(failing_flush_fn, error_callback_log) -> None:
     """WC-6: Each flush error increments stats and fires callback."""
     coalescer = WriteCoalescer(
         flush_fn=failing_flush_fn,

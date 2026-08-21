@@ -13,8 +13,6 @@ Legacy imports (still supported via this stub):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 # F350M-R: Re-exported from canonical locations for backward compatibility.
 # Canonical: from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
 from hledac.universal.runtime.acquisition_strategy import (  # noqa: F401
@@ -25,18 +23,17 @@ from hledac.universal.runtime.acquisition_strategy import (  # noqa: F401
     complete_source_family_outcomes_from_lane_details,
     normalize_source_family_outcome,
     reconcile_lane_detail_fields,
-    )
-from hledac.universal.runtime.acquisition_strategy import run_enabled_acquisition_lanes  # noqa: F401
+    run_enabled_acquisition_lanes,
+)
 from hledac.universal.runtime.source_finding_bridge import (  # noqa: F401
     ct_results_to_findings,
-    wayback_results_to_findings,
     passive_dns_results_to_findings,
-    )
+    wayback_results_to_findings,
+)
 
 
 class SprintTooShortError(ValueError):
     """Raised when sprint duration is below minimum."""
-    pass
 
 
 def __getattr__(name: str):
@@ -67,6 +64,7 @@ def __getattr__(name: str):
     # ── _LifecycleAdapter — renamed to SprintLifecycleAdapter in scheduler/core/ ─
     if name == "_LifecycleAdapter":
         from hledac.universal.runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
+
         return SprintLifecycleAdapter
 
     if name in _v1_archived_names:
@@ -83,12 +81,15 @@ def __getattr__(name: str):
     # ── Shared types ──────────────────────────────────────────────────────
     if name == "SprintSchedulerConfig":
         from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+
         return SprintSchedulerConfig
     if name == "SprintSchedulerResult":
         from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
+
         return SprintSchedulerResult
 
     if name == "detect_sprint_tier":
+
         def detect_sprint_tier(duration_s: float) -> str:
             if duration_s < 60:
                 raise SprintTooShortError(f"Sprint duration {duration_s}s is below minimum 60s")
@@ -99,6 +100,7 @@ def __getattr__(name: str):
             if duration_s < 600:
                 return "deep"
             return "thorough"
+
         return detect_sprint_tier
 
     if name == "SPRINT_TIERS":
@@ -113,11 +115,13 @@ def __getattr__(name: str):
     if name == "run_enabled_acquisition_lanes":
         from hledac.universal.runtime.acquisition_strategy_runner import (
             run_enabled_acquisition_lanes as _run,
-    )
+        )
+
         return _run
 
     if name == "source_finding_bridge":
         from hledac.universal.runtime import source_finding_bridge as _sfb
+
         return _sfb
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -130,7 +134,6 @@ def __getattr__(name: str):
 # local variable that resolves to the runner's function at runtime via
 # sys.modules lookup, avoiding Python's lexical scoping shadowing).
 import sys
-from _core import aclose
 
 
 async def run_enabled_acquisition_lanes(
@@ -145,7 +148,7 @@ async def run_enabled_acquisition_lanes(
     # Look up the real function via sys.modules to avoid Python lexical scoping
     # where the local function name shadows the imported one.
     _runner_mod = sys.modules.get("hledac.universal.runtime.acquisition_strategy_runner")
-    _impl = getattr(_runner_mod, "run_enabled_acquisition_lanes")
+    _impl = _runner_mod.run_enabled_acquisition_lanes
     return await _impl(snapshot, query, store, uma_state, seed_context, graph_accumulator)
 
 

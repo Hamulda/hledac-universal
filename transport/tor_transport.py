@@ -12,49 +12,81 @@ from urllib.parse import urlparse
 import aiofiles
 
 from .base import Transport, TransportConfig, TransportResult
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.safe_swallow import safe_swallow
-MAX_CIRCUIT_REQUESTS: int = 3
-_TOR_TRANSPORT_SINGLETON: 'TorTransport | None' = None
 
-def get_tor_transport_singleton() -> 'TorTransport | None':
+MAX_CIRCUIT_REQUESTS: int = 3
+_TOR_TRANSPORT_SINGLETON: TorTransport | None = None
+
+
+def get_tor_transport_singleton() -> TorTransport | None:
     """Return the module-level TorTransport singleton or None."""
     return _TOR_TRANSPORT_SINGLETON
 
-def set_tor_transport_singleton(transport: 'TorTransport') -> None:
+
+def set_tor_transport_singleton(transport: TorTransport) -> None:
     """Set the module-level TorTransport singleton. Call after start() succeeds."""
     global _TOR_TRANSPORT_SINGLETON
     _TOR_TRANSPORT_SINGLETON = transport
+
 
 def _generate_torrc(torrc_path: Path) -> None:
     """Generate torrc with anonymity-hardening settings."""
     if torrc_path.exists():
         return
     torrc_path.parent.mkdir(parents=True, exist_ok=True)
-    data_dir = torrc_path.parent / 'data'
+    data_dir = torrc_path.parent / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    torrc_path.write_text(f'DataDirectory {data_dir}\nSocksPort 9050\nControlPort 9051\nMaxCircuitDirtiness 600\nIsolateSOCKSAuth 1\nNumEntryGuards 3\nHiddenServiceStatistics 0\nLog notice stderr\n')
+    torrc_path.write_text(
+        f"DataDirectory {data_dir}\nSocksPort 9050\nControlPort 9051\nMaxCircuitDirtiness 600\nIsolateSOCKSAuth 1\nNumEntryGuards 3\nHiddenServiceStatistics 0\nLog notice stderr\n"
+    )
+
 
 class TorUnavailableError(RuntimeError):
     """Raised when .onion fetch attempted without running Tor."""
 
+
 class TorTransport(Transport):
     available: bool = True
-    __slots__ = tuple(('_circuit_failures', '_circuit_lock', '_circuit_request_count', '_circuits_created', '_domain_circuits', '_httpx', '_httpx_socks', '_max_circuit_requests', '_ready', '_session_direct', '_session_tor', 'available', 'control_port', 'data_dir', 'handlers', 'hidden_service_dir', 'http_port', 'http_server', 'onion_address', 'security_level', 'socks_port', 'tor_process'))
+    __slots__ = (
+        "_circuit_failures",
+        "_circuit_lock",
+        "_circuit_request_count",
+        "_circuits_created",
+        "_domain_circuits",
+        "_httpx",
+        "_httpx_socks",
+        "_max_circuit_requests",
+        "_ready",
+        "_session_direct",
+        "_session_tor",
+        "available",
+        "control_port",
+        "data_dir",
+        "handlers",
+        "hidden_service_dir",
+        "http_port",
+        "http_server",
+        "onion_address",
+        "security_level",
+        "socks_port",
+        "tor_process",
+    )
 
-    def __init__(self, data_dir: str | None=None, control_port: int=9051, socks_port: int=9050):
+    def __init__(self, data_dir: str | None = None, control_port: int = 9051, socks_port: int = 9050) -> None:
         self.available = True
         try:
             import httpx
             import httpx_socks
         except ImportError as e:
-            logger.critical(f'TorTransport unavailable: {e}')
+            logger.critical(f"TorTransport unavailable: {e}")
             self.available = False
             return
         self._httpx = httpx
         self._httpx_socks = httpx_socks
         from hledac.universal.paths import TOR_ROOT
+
         if data_dir is None:
             self.data_dir = TOR_ROOT
         else:
@@ -62,7 +94,7 @@ class TorTransport(Transport):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.control_port = control_port
         self.socks_port = socks_port
-        self.hidden_service_dir = self.data_dir / 'hidden_service'
+        self.hidden_service_dir = self.data_dir / "hidden_service"
         self.hidden_service_dir.mkdir(exist_ok=True)
         self.onion_address: str | None = None
         self.tor_process: asyncio.subprocess.Process | None = None
@@ -70,7 +102,7 @@ class TorTransport(Transport):
         self.handlers: dict[str, Callable] = {}
         self._ready = asyncio.Event()
         self.http_port: int = 0
-        self.security_level = 'tor'
+        self.security_level = "tor"
         self._circuit_request_count: int = 0
         self._domain_circuits: dict[str, int] = {}
         self._max_circuit_requests: int = MAX_CIRCUIT_REQUESTS
@@ -85,17 +117,19 @@ class TorTransport(Transport):
 
     async def start(self) -> bool:
         """Spustit Tor daemon autonomně. Vrátí True pokud circuit established."""
-        tor_bin = shutil.which('tor')
+        tor_bin = shutil.which("tor")
         if not tor_bin:
-            logger.error('tor binary not found — install: brew install tor')
+            logger.error("tor binary not found — install: brew install tor")
             return False
         from hledac.universal.paths import TOR_ROOT
-        torrc_path = TOR_ROOT / 'torrc'
+
+        torrc_path = TOR_ROOT / "torrc"
         _generate_torrc(torrc_path)
-        pid_path = TOR_ROOT / 'tor.pid'
+        pid_path = TOR_ROOT / "tor.pid"
         if await self.is_circuit_established():
-            logger.info('Tor already running + circuit OK')
+            logger.info("Tor already running + circuit OK")
             return True
+
         # E-41 FIX: replaced aiohttp.web with asyncio.start_server + minimal HTTP parser
         # ~100 LOC for /message + /health, zero new deps, ~2KB resident
         async def _http_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -105,36 +139,36 @@ class TorTransport(Transport):
                 if not request_line:
                     writer.close()
                     return
-                method, path, _ = request_line.decode('utf-8', errors='ignore').strip().split()
+                method, path, _ = request_line.decode("utf-8", errors="ignore").strip().split()
                 # Read headers
                 headers: dict[str, str] = {}
                 while True:
                     line = await reader.readline()
-                    if not line or line == b'\r\n':
+                    if not line or line == b"\r\n":
                         break
-                    if b':' in line:
-                        k, v = line.decode('utf-8', errors='ignore').strip().split(':', 1)
+                    if b":" in line:
+                        k, v = line.decode("utf-8", errors="ignore").strip().split(":", 1)
                         headers[k.strip().lower()] = v.strip()
-                # Dispatch
-                if path == '/message' and method == 'POST':
-                    content_length = int(headers.get('content-length', 0))
-                    body = await reader.read(content_length) if content_length else b''
+                if path == "/message" and method == "POST":
+                    content_length = int(headers.get("content-length", 0))
+                    body = await reader.read(content_length) if content_length else b""
                     try:
                         import json as _json
-                        data = _json.loads(body.decode('utf-8', errors='ignore'))
-                        msg_type = data.get('type')
+
+                        data = _json.loads(body.decode("utf-8", errors="ignore"))
+                        msg_type = data.get("type")
                         handler = self.handlers.get(msg_type)
                         if handler:
                             await handler(data)
                     except Exception:  # noqa: BLE001
                         pass
-                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
+                    writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
                     await writer.drain()
-                elif path == '/health' and method == 'GET':
-                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
+                elif path == "/health" and method == "GET":
+                    writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
                     await writer.drain()
                 else:
-                    writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+                    writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
                     await writer.drain()
                 writer.close()
             except Exception:
@@ -143,13 +177,15 @@ class TorTransport(Transport):
                 except Exception:  # noqa: BLE001
                     pass
 
-        self.http_server = await asyncio.start_server(_http_handler, '127.0.0.1', 0)
+        self.http_server = await asyncio.start_server(_http_handler, "127.0.0.1", 0)
         sock = self.http_server.sockets[0] if self.http_server.sockets else None
         if not sock:
-            raise RuntimeError('Tor HTTP server failed to bind (no sockets)')
+            raise RuntimeError("Tor HTTP server failed to bind (no sockets)")
         self.http_port = sock.getsockname()[1]
         try:
-            self.tor_process = await asyncio.create_subprocess_exec(tor_bin, '-f', str(torrc_path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            self.tor_process = await asyncio.create_subprocess_exec(
+                tor_bin, "-f", str(torrc_path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+            )
             pid_path.parent.mkdir(parents=True, exist_ok=True)
             pid_path.write_text(str(self.tor_process.pid))
             delay = 1.0
@@ -159,16 +195,16 @@ class TorTransport(Transport):
                 await asyncio.sleep(delay)
                 total_wait += delay
                 if await self.is_circuit_established():
-                    logger.info(f'Tor circuit established in {total_wait:.1f}s (pid={self.tor_process.pid})')
+                    logger.info(f"Tor circuit established in {total_wait:.1f}s (pid={self.tor_process.pid})")
                     break
                 delay = min(delay * 2, 8.0)
-                logger.debug(f'Waiting for Tor circuit... {total_wait:.1f}s')
+                logger.debug(f"Waiting for Tor circuit... {total_wait:.1f}s")
             else:
-                raise RuntimeError(f'Tor circuit not established after {max_wait}s')
-            hostname_file = self.hidden_service_dir / 'hostname'
+                raise RuntimeError(f"Tor circuit not established after {max_wait}s")
+            hostname_file = self.hidden_service_dir / "hostname"
             for _ in range(15):
                 if await asyncio.to_thread(hostname_file.exists):
-                    async with aiofiles.open(hostname_file, 'r') as f:
+                    async with aiofiles.open(hostname_file) as f:
                         self.onion_address = (await f.read()).strip()
                     break
                 await asyncio.sleep(1)
@@ -177,28 +213,34 @@ class TorTransport(Transport):
                 # URLs to a local HTTP server, returning fake data or hitting local services.
                 # Mark Tor as unavailable; FetchCoordinator checks RouteDecision.TOR_UNAVAILABLE
                 # and drops .onion URLs instead of leaking to clearnet.
-                logger.warning('[SEC-05] Tor hostname file not found after %ds — Tor unavailable', 15)
+                logger.warning("[SEC-05] Tor hostname file not found after %ds — Tor unavailable", 15)
                 self.onion_address = None
-                self.security_level = 'local'
+                self.security_level = "local"
         except Exception as e:
             # SEC-05 FIX: Tor process/cert bootstrap failure must NOT fall back to localhost.
             # Tor was explicitly requested for this URL; failure to start means anonymity
             # cannot be guaranteed. Mark unavailable so FetchCoordinator drops the URL
             # rather than leaking to clearnet.
-            logger.warning('[SEC-05] Tor start failed: %s — Tor unavailable (will drop .onion)', e)
+            logger.warning("[SEC-05] Tor start failed: %s — Tor unavailable (will drop .onion)", e)
             self.onion_address = None
-            self.security_level = 'local'
+            self.security_level = "local"
         limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
         timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
-        self._session_direct = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, trust_env=False)
-        if self.security_level == 'tor':
+        self._session_direct = self._httpx.AsyncClient(
+            limits=limits, http2=True, timeout=timeout, follow_redirects=True, trust_env=False
+        )
+        if self.security_level == "tor":
             # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
-            transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5h://127.0.0.1:{self.socks_port}', rdns=True)
-            self._session_tor = self._httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
+            transport = self._httpx_socks.AsyncProxyTransport.from_url(
+                f"socks5h://127.0.0.1:{self.socks_port}", rdns=True
+            )
+            self._session_tor = self._httpx.AsyncClient(
+                limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False
+            )  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
         else:
             self._session_tor = self._session_direct
         self._ready.set()
-        logger.info(f'TorTransport ready at {self.onion_address}')
+        logger.info(f"TorTransport ready at {self.onion_address}")
         return await self.is_circuit_established()
 
     async def stop(self) -> None:
@@ -209,7 +251,7 @@ class TorTransport(Transport):
         # G1: Secure wipe of Tor identity material before shutdown
         wipe_tor_identity(self.onion_address)
 
-        pid_path = TOR_ROOT / 'tor.pid'
+        pid_path = TOR_ROOT / "tor.pid"
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text().strip())
@@ -226,7 +268,7 @@ class TorTransport(Transport):
                     except ProcessLookupError:  # noqa: BLE001
                         pass
             except Exception as e:
-                logger.warning(f'Tor stop: {e}')
+                logger.warning(f"Tor stop: {e}")
             finally:
                 pid_path.unlink(missing_ok=True)
         elif self.tor_process:
@@ -242,11 +284,11 @@ class TorTransport(Transport):
             await self._session_tor.aclose()
         if self.http_server:
             self.http_server.close()
-        logger.info('Tor stopped')
+        logger.info("Tor stopped")
 
     def telemetry(self) -> dict:
         """Sprint F214Q B.3: Export circuit telemetry for MetricsRegistry."""
-        return {'circuits_created': self._circuits_created, 'circuit_failures': self._circuit_failures}
+        return {"circuits_created": self._circuits_created, "circuit_failures": self._circuit_failures}
 
     def _cleanup(self) -> None:
         """Called by weakref.finalize when TorTransport is garbage collected.
@@ -257,16 +299,19 @@ class TorTransport(Transport):
             onion_addr = getattr(self, "onion_address", None)
             if onion_addr:
                 from hledac.universal.utils.secure_zero import wipe_tor_identity
+
                 wipe_tor_identity(onion_addr)
         except Exception as e:
             safe_swallow("tor_transport_cleanup_Exception", logger=logger, exc=e)
 
         if getattr(self, "tor_process", None) is not None or getattr(self, "http_server", None) is not None:
-            logger.warning(f"TorTransport: stop() not called before GC — Tor process or HTTP server may leak. "
-                         f"circuits_created={getattr(self, '_circuits_created', 0)}, "
-                         f"circuit_failures={getattr(self, '_circuit_failures', 0)}")
+            logger.warning(
+                f"TorTransport: stop() not called before GC — Tor process or HTTP server may leak. "
+                f"circuits_created={getattr(self, '_circuits_created', 0)}, "
+                f"circuit_failures={getattr(self, '_circuit_failures', 0)}"
+            )
 
-    async def wait_ready(self):
+    async def wait_ready(self) -> None:
         await self._ready.wait()
 
     async def is_circuit_established(self) -> bool:
@@ -276,11 +321,12 @@ class TorTransport(Transport):
             try:
                 s = socket.socket()
                 s.settimeout(2.0)
-                s.connect(('127.0.0.1', self.socks_port))
+                s.connect(("127.0.0.1", self.socks_port))
                 s.close()
                 return True
             except OSError:
                 return False
+
         socks_ok = await asyncio.to_thread(_check_socks)
         if not socks_ok:
             return False
@@ -288,13 +334,15 @@ class TorTransport(Transport):
         def _check_stem() -> bool:
             try:
                 import stem.control
+
                 with stem.control.Controller.from_port(port=self.control_port) as ctrl:
                     ctrl.authenticate()
                     circuits = ctrl.get_circuits()
-                    built = [c for c in circuits if c.status == 'BUILT']
+                    built = [c for c in circuits if c.status == "BUILT"]
                     return len(built) > 0
             except Exception:
                 return True
+
         return await asyncio.to_thread(_check_stem)
 
     async def is_running(self) -> bool:
@@ -310,21 +358,22 @@ class TorTransport(Transport):
         try:
             import stem.control
         except ImportError:
-            logger.warning('stem not available — circuit rotation skipped')
+            logger.warning("stem not available — circuit rotation skipped")
             return False
         try:
 
-            def _do_rotate():
+            def _do_rotate() -> None:
                 with stem.control.Controller.from_port(port=self.control_port) as ctrl:
                     ctrl.authenticate()
                     ctrl.signal(stem.Signal.NEWNYM)
+
             await asyncio.to_thread(_do_rotate)
             self._circuits_created += 1
-            logger.debug('Tor circuit rotated via NEWNYM')
+            logger.debug("Tor circuit rotated via NEWNYM")
             return True
         except Exception as e:
             self._circuit_failures += 1
-            logger.warning(f'Tor circuit rotation failed: {e}')
+            logger.warning(f"Tor circuit rotation failed: {e}")
             return False
 
     def health_cost(self) -> float:
@@ -347,9 +396,11 @@ class TorTransport(Transport):
 
             def _check() -> bool:
                 import stem.control
+
                 with stem.control.Controller.from_port(port=self.control_port) as ctrl:
                     ctrl.authenticate()
                     return True
+
             await asyncio.to_thread(_check)
         except Exception:  # noqa: BLE001
             pass
@@ -368,13 +419,13 @@ class TorTransport(Transport):
                 async with asyncio.timeout(10.0):
                     ok = await self.rotate_circuit()
                 if ok:
-                    logger.info('[Tor] Phase-boundary circuit rotation: %s → %s', old_phase, new_phase)
+                    logger.info("[Tor] Phase-boundary circuit rotation: %s → %s", old_phase, new_phase)
                 else:
-                    logger.warning('[Tor] Phase-boundary circuit rotation failed: %s → %s', old_phase, new_phase)
+                    logger.warning("[Tor] Phase-boundary circuit rotation failed: %s → %s", old_phase, new_phase)
             except TimeoutError:
-                logger.warning('[Tor] Phase-boundary circuit rotation timed out: %s → %s', old_phase, new_phase)
+                logger.warning("[Tor] Phase-boundary circuit rotation timed out: %s → %s", old_phase, new_phase)
 
-    async def _maybe_rotate_circuit(self, domain: str='') -> None:
+    async def _maybe_rotate_circuit(self, domain: str = "") -> None:
         """
         Sprint F214 B.1 / F251: Check request count and rotate circuit if threshold reached.
 
@@ -391,17 +442,17 @@ class TorTransport(Transport):
                 if count >= self._max_circuit_requests:
                     self._domain_circuits[domain] = 0
                     if await self.rotate_circuit():
-                        logger.info(f'Tor circuit rotated for domain {domain} after {count} requests')
+                        logger.info(f"Tor circuit rotated for domain {domain} after {count} requests")
                     else:
-                        logger.warning(f'Circuit rotation failed for {domain} — continuing')
+                        logger.warning(f"Circuit rotation failed for {domain} — continuing")
             else:
                 self._circuit_request_count += 1
                 if self._circuit_request_count >= self._max_circuit_requests:
                     self._circuit_request_count = 0
                     if await self.rotate_circuit():
-                        logger.info(f'Tor circuit rotated after {self._max_circuit_requests} requests')
+                        logger.info(f"Tor circuit rotated after {self._max_circuit_requests} requests")
                     else:
-                        logger.warning('Circuit rotation failed — continuing with current circuit')
+                        logger.warning("Circuit rotation failed — continuing with current circuit")
 
     async def fetch(self, config: TransportConfig) -> TransportResult:
         """
@@ -411,10 +462,14 @@ class TorTransport(Transport):
         Fail-safe: returns TransportResult with `error` if Tor unavailable.
         """
         from .curl_cffi_fetch import fetch_via_curl_cffi
+
         if not await self.is_circuit_established():
             from .base import TransportResult
-            return TransportResult(url=config.url, error='tor_unavailable', failure_stage='tor_check', selected_transport='tor')
-        domain = ''
+
+            return TransportResult(
+                url=config.url, error="tor_unavailable", failure_stage="tor_check", selected_transport="tor"
+            )
+        domain = ""
         try:
             parsed = urlparse(config.url)
             domain = parsed.netloc
@@ -422,36 +477,64 @@ class TorTransport(Transport):
             pass
         await self._maybe_rotate_circuit(domain=domain)
         from hledac.universal._core.env_config import ENV
-        os.environ['CURL_CFFI_PROXY'] = ENV.get_str('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
+
+        os.environ["CURL_CFFI_PROXY"] = ENV.get_str("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
         try:
             result = await fetch_via_curl_cffi(url=config.url, timeout_s=config.timeout_s, max_bytes=config.max_bytes)
             from .base import TransportResult
-            return TransportResult(url=config.url, final_url=result.get('final_url', config.url), status_code=result.get('status_code', 0), content_type=result.get('content_type', ''), fetched_bytes=len(result.get('content', b'')), error=result.get('error'), failure_stage=result.get('failure_stage'), network_error_kind=result.get('network_error_kind'), selected_transport='tor')
+
+            return TransportResult(
+                url=config.url,
+                final_url=result.get("final_url", config.url),
+                status_code=result.get("status_code", 0),
+                content_type=result.get("content_type", ""),
+                fetched_bytes=len(result.get("content", b"")),
+                error=result.get("error"),
+                failure_stage=result.get("failure_stage"),
+                network_error_kind=result.get("network_error_kind"),
+                selected_transport="tor",
+            )
         except Exception as e:
             from .base import TransportResult
-            return TransportResult(url=config.url, error=f'tor_fetch_failed: {e}', failure_stage='tor_fetch', selected_transport='tor')
 
-    def register_handler(self, msg_type: str, handler: Callable):
+            return TransportResult(
+                url=config.url, error=f"tor_fetch_failed: {e}", failure_stage="tor_fetch", selected_transport="tor"
+            )
+
+    def register_handler(self, msg_type: str, handler: Callable) -> None:
         self.handlers[msg_type] = handler
 
-    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None=None):
-        if target.startswith('localhost:'):
-            url = f'http://{target}/message'
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None = None):
+        if target.startswith("localhost:"):
+            url = f"http://{target}/message"
             session = self._session_direct
         else:
-            url = f'http://{target}/message'
+            url = f"http://{target}/message"
             session = self._session_tor
         if session is None:
-            logger.warning('TorTransport.send_message called before start() — no session')
-            return ''
-        data = {'sender': self.onion_address, 'type': msg_type, 'payload': payload, 'signature': signature, 'msg_id': msg_id}
+            logger.warning("TorTransport.send_message called before start() — no session")
+            return ""
+        data = {
+            "sender": self.onion_address,
+            "type": msg_type,
+            "payload": payload,
+            "signature": signature,
+            "msg_id": msg_id,
+        }
         resp = await session.post(url, json=data)
         return resp.text
 
 
-KNOWN_MALICIOUS_JARM: dict[str, str] = {'2ad2ad0002ad2ad00042d42d000000ad': 'Cobalt Strike 4.x', '07d14d16d21d21d07c42d41d00041d24': 'Metasploit Framework', '3fd21b20d00000021c43d21b21b43d41': 'AsyncRAT', '1dd28d28d00028d1c1c1c00d1c1c41e7': 'Havoc C2', '29d3fd00029d29d21c41d21b21b41c41': 'Covenant C2'}
+KNOWN_MALICIOUS_JARM: dict[str, str] = {
+    "2ad2ad0002ad2ad00042d42d000000ad": "Cobalt Strike 4.x",
+    "07d14d16d21d21d07c42d41d00041d24": "Metasploit Framework",
+    "3fd21b20d00000021c43d21b21b43d41": "AsyncRAT",
+    "1dd28d28d00028d1c1c1c00d1c1c41e7": "Havoc C2",
+    "29d3fd00029d29d21c41d21b21b41c41": "Covenant C2",
+}
 
-async def jarm_fingerprint(host: str, port: int=443) -> str | None:
+
+async def jarm_fingerprint(host: str, port: int = 443) -> str | None:
     """
     Sprint 8TC B.2: Async JARM-like TLS fingerprint — 3 handshakes, M1 native ssl.
 
@@ -465,7 +548,12 @@ async def jarm_fingerprint(host: str, port: int=443) -> str | None:
     """
     import hashlib
     import ssl
-    probes = [(ssl.TLSVersion.TLSv1_2, ssl.OP_NO_TLSv1_3), (ssl.TLSVersion.TLSv1_3, 0), (ssl.TLSVersion.TLSv1_2, ssl.OP_CIPHER_SERVER_PREFERENCE)]
+
+    probes = [
+        (ssl.TLSVersion.TLSv1_2, ssl.OP_NO_TLSv1_3),
+        (ssl.TLSVersion.TLSv1_3, 0),
+        (ssl.TLSVersion.TLSv1_2, ssl.OP_CIPHER_SERVER_PREFERENCE),
+    ]
     tokens: list[str] = []
     for min_ver, extra_op in probes:
         try:
@@ -476,9 +564,9 @@ async def jarm_fingerprint(host: str, port: int=443) -> str | None:
             ctx.options |= extra_op
             async with asyncio.timeout(4.0):
                 r, w = await asyncio.open_connection(host, port, ssl=ctx)
-            ssl_obj = w.get_extra_info('ssl_object')
+            ssl_obj = w.get_extra_info("ssl_object")
             cipher = ssl_obj.cipher() if ssl_obj else None
-            proto = ssl_obj.version() if ssl_obj else 'NONE'
+            proto = ssl_obj.version() if ssl_obj else "NONE"
             tokens.append(f"{(cipher[0] if cipher else 'NONE')}|{proto}")
             w.close()
             try:
@@ -486,22 +574,24 @@ async def jarm_fingerprint(host: str, port: int=443) -> str | None:
                     await w.wait_closed()
             except Exception:  # noqa: BLE001
                 pass
-        except (TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
-            tokens.append('TIMEOUT')
+        except TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError:
+            tokens.append("TIMEOUT")
         except Exception as e:
-            tokens.append(f'ERR:{type(e).__name__}')
+            tokens.append(f"ERR:{type(e).__name__}")
     # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
     # Note: JARM originally used MD5, but SHA-256 hardware acceleration
     # provides better consistency with other crypto acceleration targets.
-    fp_input = ';'.join(tokens)
+    fp_input = ";".join(tokens)
     try:
         from _core.rust_backend import rust
+
         hashes = rust.crypto.batch_sha256_hw([fp_input])
         fp = hashes[0][:32] if hashes else hashlib.sha256(fp_input.encode()).hexdigest()
     except Exception:
         fp = hashlib.sha256(fp_input.encode()).hexdigest()
-    logger.debug(f'JARM {host}:{port} → {fp} (probes={tokens})')
+    logger.debug(f"JARM {host}:{port} → {fp} (probes={tokens})")
     return fp
+
 
 def check_jarm_malicious(fp: str) -> str | None:
     """Sprint 8TC B.2: Vrátí název known C2/RAT nebo None."""

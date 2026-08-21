@@ -28,11 +28,9 @@ import time
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
-    import msgspec as _msgspec_module
 
 try:
     import msgspec

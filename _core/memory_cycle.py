@@ -38,18 +38,18 @@ Invariants (per CLAUDE.md):
   - No new public APIs beyond the three functions.
   - No ``asyncio.run()`` in threads (B7 invariant).
 """
+
 import asyncio
 import gc as _gc
 import logging
 import sys
 import threading
 import time
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+
 from _core.lock_registry import LockCategory, register_lock
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -68,19 +68,18 @@ _GC_THRESHOLD = (700, 10, 5)
 # are no-ops when blitz mode is active.
 from hledac.universal.coordinators.resource.blitz_gc import (
     BOOT_THRESHOLD,
+)
+from hledac.universal.coordinators.resource.blitz_gc import (
     blitz_gc as _blitz_gc,
-    )
+)
 
-# GC thresholds for different UMA states — used by _apply_gc_thresholds()
-# during non-blitz phases (boot, idle, winddown). During active sprint,
-# BlitzGCStrategy disables GC entirely so these never trigger.
 _GC_THRESHOLD = BOOT_THRESHOLD  # (2000, 100, 50) — moderate for idle periods
 _GC_THRESHOLDS: dict[str, tuple[int, int, int]] = {
-    "ok": (2000, 100, 50),      # baseline: moderate — blitz handles active sprint
+    "ok": (2000, 100, 50),  # baseline: moderate — blitz handles active sprint
     "soft_warn": (1500, 50, 30),  # slightly tighter
-    "warn": (1000, 30, 20),       # aggressive
-    "critical": (700, 20, 10),    # very aggressive — near-OOM urgency
-    "emergency": (500, 10, 5),    # maximum pressure
+    "warn": (1000, 30, 20),  # aggressive
+    "critical": (700, 20, 10),  # very aggressive — near-OOM urgency
+    "emergency": (500, 10, 5),  # maximum pressure
 }
 
 # F266-U4: gc.freeze() requires Python 3.14.7+ (gilstate_tss_set regression fix)
@@ -196,8 +195,10 @@ _PRESSURE_RELIEF_MIN_INTERVAL_S: float = 60.0
 # Issue #042: Background gc.collect(2) interval (60s per spec)
 _GC_BACKGROUND_INTERVAL_S: float = 60.0
 
+
 class MemoryCycleStats(Struct):
     """Snapshot of GC + pressure-relief state — for telemetry / debug."""
+
     gc_freeze_supported: bool
     gc_gen0_collected: int
     gc_gen1_collected: int
@@ -220,14 +221,45 @@ class MemoryCycleStats(Struct):
 
     def __post_init__(self) -> None:
         if not self.platform:
-            object.__setattr__(self, 'platform', sys.platform)
+            object.__setattr__(self, "platform", sys.platform)
 
 
-_stats = MemoryCycleStats(gc_freeze_supported=hasattr(_gc, 'freeze'), gc_gen0_collected=0, gc_gen1_collected=0, gc_gen2_collected=0, gc_gen2_collected_at_last_freeze=0, re_freeze_count=0, last_re_freeze_monotonic=0.0, gc_background_runs=0, last_gc_background_monotonic=0.0, last_gc_background_error=None, pressure_relief_runs=0, pressure_relief_bytes_released=0, last_pressure_relief_monotonic=0.0)
+_stats = MemoryCycleStats(
+    gc_freeze_supported=hasattr(_gc, "freeze"),
+    gc_gen0_collected=0,
+    gc_gen1_collected=0,
+    gc_gen2_collected=0,
+    gc_gen2_collected_at_last_freeze=0,
+    re_freeze_count=0,
+    last_re_freeze_monotonic=0.0,
+    gc_background_runs=0,
+    last_gc_background_monotonic=0.0,
+    last_gc_background_error=None,
+    pressure_relief_runs=0,
+    pressure_relief_bytes_released=0,
+    last_pressure_relief_monotonic=0.0,
+)
+
 
 def get_stats() -> dict[str, Any]:
     """Return a JSON-safe snapshot of memory_cycle state."""
-    return {'gc_freeze_supported': _stats.gc_freeze_supported, 'gc_gen0_collected': _stats.gc_gen0_collected, 'gc_gen1_collected': _stats.gc_gen1_collected, 'gc_gen2_collected': _stats.gc_gen2_collected, 'gc_gen2_collected_at_last_freeze': _stats.gc_gen2_collected_at_last_freeze, 're_freeze_count': _stats.re_freeze_count, 'last_re_freeze_monotonic': _stats.last_re_freeze_monotonic, 'gc_background_runs': _stats.gc_background_runs, 'last_gc_background_monotonic': _stats.last_gc_background_monotonic, 'last_gc_background_error': _stats.last_gc_background_error, 'pressure_relief_runs': _stats.pressure_relief_runs, 'pressure_relief_bytes_released': _stats.pressure_relief_bytes_released, 'last_pressure_relief_monotonic': _stats.last_pressure_relief_monotonic, 'last_pressure_relief_error': _stats.last_pressure_relief_error, 'platform': _stats.platform}
+    return {
+        "gc_freeze_supported": _stats.gc_freeze_supported,
+        "gc_gen0_collected": _stats.gc_gen0_collected,
+        "gc_gen1_collected": _stats.gc_gen1_collected,
+        "gc_gen2_collected": _stats.gc_gen2_collected,
+        "gc_gen2_collected_at_last_freeze": _stats.gc_gen2_collected_at_last_freeze,
+        "re_freeze_count": _stats.re_freeze_count,
+        "last_re_freeze_monotonic": _stats.last_re_freeze_monotonic,
+        "gc_background_runs": _stats.gc_background_runs,
+        "last_gc_background_monotonic": _stats.last_gc_background_monotonic,
+        "last_gc_background_error": _stats.last_gc_background_error,
+        "pressure_relief_runs": _stats.pressure_relief_runs,
+        "pressure_relief_bytes_released": _stats.pressure_relief_bytes_released,
+        "last_pressure_relief_monotonic": _stats.last_pressure_relief_monotonic,
+        "last_pressure_relief_error": _stats.last_pressure_relief_error,
+        "platform": _stats.platform,
+    }
 
 
 def _mlx_cache_clear_if_available() -> bool:
@@ -256,6 +288,7 @@ def _mlx_cache_clear_if_available() -> bool:
             def _do_clear() -> bool:
                 try:
                     import mlx.core as mx
+
                     _gc.collect()
                     mx.eval([])
                     if hasattr(mx, "clear_cache"):
@@ -289,7 +322,8 @@ def _mlx_cache_clear_if_available() -> bool:
     except Exception:
         return False
 
-def gc_cycle_maintain(*, force: bool=False) -> bool:
+
+def gc_cycle_maintain(*, force: bool = False) -> bool:
     """
     Per-cycle GC maintenance. Call at the boundary of each sprint
     iteration (i.e. at winddown, or before the next cycle's prelude).
@@ -317,18 +351,18 @@ def gc_cycle_maintain(*, force: bool=False) -> bool:
     now = time.monotonic()
     try:
         # gc.get_stats() requires Python 3.14+; guard to avoid AttributeError on older versions
-        if hasattr(_gc, 'get_stats'):
+        if hasattr(_gc, "get_stats"):
             gc_stats = _gc.get_stats()
         else:
             gc_stats = []
     except Exception as exc:
-        logger.debug('[memory_cycle] gc.get_stats() failed: %s', exc)
+        logger.debug("[memory_cycle] gc.get_stats() failed: %s", exc)
         return False
     try:
         if len(gc_stats) >= 3:
-            _stats.gc_gen0_collected = int(gc_stats[0].get('collected', 0))
-            _stats.gc_gen1_collected = int(gc_stats[1].get('collected', 0))
-            _stats.gc_gen2_collected = int(gc_stats[2].get('collected', 0))
+            _stats.gc_gen0_collected = int(gc_stats[0].get("collected", 0))
+            _stats.gc_gen1_collected = int(gc_stats[1].get("collected", 0))
+            _stats.gc_gen2_collected = int(gc_stats[2].get("collected", 0))
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -359,16 +393,29 @@ def gc_cycle_maintain(*, force: bool=False) -> bool:
         try:
             _gc.freeze()
         except Exception as exc:
-            logger.debug('[memory_cycle] gc.freeze() failed: %s', exc)
+            logger.debug("[memory_cycle] gc.freeze() failed: %s", exc)
             return False
     _stats.gc_gen2_collected_at_last_freeze = _stats.gc_gen2_collected
     _stats.re_freeze_count += 1
     _stats.last_re_freeze_monotonic = now
     if _GC_FREEZE_ENABLED:
-        logger.debug('[memory_cycle] re-freeze #%d (gen2=%d, gen2_drift=%d, threshold=%d, since_last=%.0fs)', _stats.re_freeze_count, _stats.gc_gen2_collected, gen2_since_last_freeze, adaptive_threshold, since_freeze)
+        logger.debug(
+            "[memory_cycle] re-freeze #%d (gen2=%d, gen2_drift=%d, threshold=%d, since_last=%.0fs)",
+            _stats.re_freeze_count,
+            _stats.gc_gen2_collected,
+            gen2_since_last_freeze,
+            adaptive_threshold,
+            since_freeze,
+        )
     else:
-        logger.debug('[memory_cycle] gen2 collect #%d (freeze skipped: Python %s < 3.14.7, gen2_drift=%d)', _stats.gc_gen2_collected, sys.version_info[:3], gen2_since_last_freeze)
+        logger.debug(
+            "[memory_cycle] gen2 collect #%d (freeze skipped: Python %s < 3.14.7, gen2_drift=%d)",
+            _stats.gc_gen2_collected,
+            sys.version_info[:3],
+            gen2_since_last_freeze,
+        )
     return True
+
 
 def malloc_zone_pressure_relief() -> int:
     """
@@ -386,10 +433,11 @@ def malloc_zone_pressure_relief() -> int:
       - Single syscall per call. Cheap (kernel coalesces).
       - Safe to call concurrently (libmalloc is thread-safe).
     """
-    if sys.platform != 'darwin':
+    if sys.platform != "darwin":
         return 0
     try:
         import ctypes
+
         libc = ctypes.CDLL(None, use_errno=True)
         libc.malloc_zone_pressure_relief.restype = ctypes.c_int
         libc.malloc_zone_pressure_relief.argtypes = (ctypes.c_void_p, ctypes.c_int)
@@ -398,10 +446,13 @@ def malloc_zone_pressure_relief() -> int:
             return 0
         return int(rc)
     except Exception as exc:
-        logger.debug('[memory_cycle] malloc_zone_pressure_relief failed: %s', exc)
+        logger.debug("[memory_cycle] malloc_zone_pressure_relief failed: %s", exc)
         return 0
+
+
 _pressure_relief_task: asyncio.Task | None = None
 _pressure_relief_stop: asyncio.Event | None = None
+
 
 async def _pressure_relief_loop(interval_s: float) -> None:
     """
@@ -422,12 +473,17 @@ async def _pressure_relief_loop(interval_s: float) -> None:
                 _stats.pressure_relief_bytes_released += released
                 _stats.last_pressure_relief_monotonic = time.monotonic()
                 if released > 0:
-                    logger.debug('[memory_cycle] pressure_relief released %d bytes (total=%d, runs=%d)', released, _stats.pressure_relief_bytes_released, _stats.pressure_relief_runs)
+                    logger.debug(
+                        "[memory_cycle] pressure_relief released %d bytes (total=%d, runs=%d)",
+                        released,
+                        _stats.pressure_relief_bytes_released,
+                        _stats.pressure_relief_runs,
+                    )
             except Exception as exc:
                 _stats.last_pressure_relief_error = str(exc)
-                logger.debug('[memory_cycle] pressure_relief tick error: %s', exc)
+                logger.debug("[memory_cycle] pressure_relief tick error: %s", exc)
             try:
-                await safe_wait_for(_pressure_relief_stop.wait(), timeout=interval_s, label='pressure_relief_sleep')
+                await safe_wait_for(_pressure_relief_stop.wait(), timeout=interval_s, label="pressure_relief_sleep")
             except TimeoutError:
                 continue
             else:
@@ -435,9 +491,10 @@ async def _pressure_relief_loop(interval_s: float) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning('[memory_cycle] pressure_relief loop crashed: %s', exc)
+        logger.warning("[memory_cycle] pressure_relief loop crashed: %s", exc)
 
-def start_pressure_relief_loop(interval_s: float=_PRESSURE_RELIEF_INTERVAL_S) -> asyncio.Task | None:
+
+def start_pressure_relief_loop(interval_s: float = _PRESSURE_RELIEF_INTERVAL_S) -> asyncio.Task | None:
     """
     Spawn the background pressure-relief task. Idempotent.
 
@@ -454,9 +511,12 @@ def start_pressure_relief_loop(interval_s: float=_PRESSURE_RELIEF_INTERVAL_S) ->
         return _pressure_relief_task
     # F350M-R ISSUE #31: safe_create_task handles loop detection internally
     _pressure_relief_stop = asyncio.Event()
-    _pressure_relief_task = safe_create_task(_pressure_relief_loop(interval_s), name='memory_cycle.pressure_relief', eager_start=True)
-    logger.debug('[memory_cycle] pressure_relief loop started (interval=%.0fs)', interval_s)
+    _pressure_relief_task = safe_create_task(
+        _pressure_relief_loop(interval_s), name="memory_cycle.pressure_relief", eager_start=True
+    )
+    logger.debug("[memory_cycle] pressure_relief loop started (interval=%.0fs)", interval_s)
     return _pressure_relief_task
+
 
 async def stop_pressure_relief_loop() -> None:
     """Stop the background pressure-relief task. Awaits clean shutdown."""
@@ -465,7 +525,7 @@ async def stop_pressure_relief_loop() -> None:
         _pressure_relief_stop.set()
     if _pressure_relief_task is not None:
         try:
-            await safe_wait_for(_pressure_relief_task, timeout=5.0, label='pressure_relief_stop')
+            await safe_wait_for(_pressure_relief_task, timeout=5.0, label="pressure_relief_stop")
         except asyncio.CancelledError:
             _pressure_relief_task.cancel()
             raise
@@ -473,7 +533,7 @@ async def stop_pressure_relief_loop() -> None:
             _pressure_relief_task.cancel()
             try:
                 await _pressure_relief_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except asyncio.CancelledError, Exception:  # noqa: BLE001
                 pass
         except Exception:  # noqa: BLE001
             pass
@@ -481,7 +541,6 @@ async def stop_pressure_relief_loop() -> None:
     _pressure_relief_stop = None
 
 
-# === Issue #042: Background periodic gc.collect(2) ===
 _gc_background_task: asyncio.Task | None = None
 _gc_background_stop: asyncio.Event | None = None
 
@@ -509,19 +568,19 @@ async def _gc_background_loop(interval_s: float) -> None:
                     try:
                         _gc.freeze()
                     except Exception as exc:
-                        logger.debug('[memory_cycle] gc_background freeze failed: %s', exc)
+                        logger.debug("[memory_cycle] gc_background freeze failed: %s", exc)
                 _stats.gc_background_runs += 1
                 _stats.last_gc_background_monotonic = time.monotonic()
                 logger.debug(
-                    '[memory_cycle] gc.collect(2)+freeze run #%d at %.0fs',
+                    "[memory_cycle] gc.collect(2)+freeze run #%d at %.0fs",
                     _stats.gc_background_runs,
                     _stats.last_gc_background_monotonic,
-    )
+                )
             except Exception as exc:
                 _stats.last_gc_background_error = str(exc)
-                logger.debug('[memory_cycle] gc_background tick error: %s', exc)
+                logger.debug("[memory_cycle] gc_background tick error: %s", exc)
             try:
-                await safe_wait_for(_gc_background_stop.wait(), timeout=interval_s, label='gc_background_sleep')
+                await safe_wait_for(_gc_background_stop.wait(), timeout=interval_s, label="gc_background_sleep")
             except TimeoutError:
                 continue
             else:
@@ -529,10 +588,10 @@ async def _gc_background_loop(interval_s: float) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning('[memory_cycle] gc_background loop crashed: %s', exc)
+        logger.warning("[memory_cycle] gc_background loop crashed: %s", exc)
 
 
-def start_gc_background_loop(interval_s: float=_GC_BACKGROUND_INTERVAL_S) -> asyncio.Task | None:
+def start_gc_background_loop(interval_s: float = _GC_BACKGROUND_INTERVAL_S) -> asyncio.Task | None:
     """
     Spawn the background gc.collect(2) task. Idempotent.
 
@@ -546,8 +605,10 @@ def start_gc_background_loop(interval_s: float=_GC_BACKGROUND_INTERVAL_S) -> asy
         return _gc_background_task
     # F350M-R ISSUE #31: safe_create_task handles loop detection internally
     _gc_background_stop = asyncio.Event()
-    _gc_background_task = safe_create_task(_gc_background_loop(interval_s), name='memory_cycle.gc_background', eager_start=True)
-    logger.debug('[memory_cycle] gc_background loop started (interval=%.0fs)', interval_s)
+    _gc_background_task = safe_create_task(
+        _gc_background_loop(interval_s), name="memory_cycle.gc_background", eager_start=True
+    )
+    logger.debug("[memory_cycle] gc_background loop started (interval=%.0fs)", interval_s)
     return _gc_background_task
 
 
@@ -558,7 +619,7 @@ async def stop_gc_background_loop() -> None:
         _gc_background_stop.set()
     if _gc_background_task is not None:
         try:
-            await safe_wait_for(_gc_background_task, timeout=5.0, label='gc_background_stop')
+            await safe_wait_for(_gc_background_task, timeout=5.0, label="gc_background_stop")
         except asyncio.CancelledError:
             _gc_background_task.cancel()
             raise
@@ -566,7 +627,7 @@ async def stop_gc_background_loop() -> None:
             _gc_background_task.cancel()
             try:
                 await _gc_background_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except asyncio.CancelledError, Exception:  # noqa: BLE001
                 pass
         except Exception:  # noqa: BLE001
             pass
@@ -575,12 +636,12 @@ async def stop_gc_background_loop() -> None:
 
 
 __all__ = [
-    'gc_cycle_maintain',
-    'malloc_zone_pressure_relief',
-    'start_pressure_relief_loop',
-    'stop_pressure_relief_loop',
-    'start_gc_background_loop',
-    'stop_gc_background_loop',
-    'get_stats',
-    'MemoryCycleStats',
+    "gc_cycle_maintain",
+    "malloc_zone_pressure_relief",
+    "start_pressure_relief_loop",
+    "stop_pressure_relief_loop",
+    "start_gc_background_loop",
+    "stop_gc_background_loop",
+    "get_stats",
+    "MemoryCycleStats",
 ]

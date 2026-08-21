@@ -36,20 +36,33 @@ Přístup pro nové konstanty:
     2. Exportuj v __all__
     3. Pokud je konstanta použita v >1 modulu, musí být v TOMTO souboru
 """
-import os
-import sys
-import time
-from dataclasses import dataclass, field
-import msgspec
+
+from dataclasses import field
+
 from compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING
 
 # MODERN-36/37/38 Fix: SSOT imports for UmaBudget constants
 # Import at module level to enable class attribute derivation
 from hledac.universal.utils.uma_budget import UmaBudget
-from _core._util import aclose
 
-__all__ = ['NetworkTimeouts', 'M1MemoryBounds', 'MLXInference', 'ProtocolPorts', 'HTTPCodes', 'SemanticRatios', 'DuckDBStorage', 'NETWORK', 'M1_BOUNDS', 'MLX', 'PORTS', 'HTTP', 'RATIOS', 'DUCKDB', 'get_m1_uma_mb']
+__all__ = [
+    "NetworkTimeouts",
+    "M1MemoryBounds",
+    "MLXInference",
+    "ProtocolPorts",
+    "HTTPCodes",
+    "SemanticRatios",
+    "DuckDBStorage",
+    "NETWORK",
+    "M1_BOUNDS",
+    "MLX",
+    "PORTS",
+    "HTTP",
+    "RATIOS",
+    "DUCKDB",
+    "get_m1_uma_mb",
+]
+
 
 def _detect_uma_mb() -> int:
     """
@@ -60,14 +73,19 @@ def _detect_uma_mb() -> int:
     """
     try:
         import psutil
+
         return int(psutil.virtual_memory().total // (1024 * 1024))
     except Exception:
         return 8192
+
+
 _UMA_TOTAL_MB: int = _detect_uma_mb()
+
 
 def get_m1_uma_mb() -> int:
     """Public accessor for detected UMA size."""
     return _UMA_TOTAL_MB
+
 
 class NetworkTimeouts(Struct, frozen=True):
     """
@@ -78,6 +96,7 @@ class NetworkTimeouts(Struct, frozen=True):
     - Pro per-request timeouty platí: timeout <= ceil(zbytek_sprintu / 2)
     - Fail-soft: timeout na úrovni requestu neznamená crash — vrací None/[]
     """
+
     curl_cffi_session: float = 10.0
     http3_request: float = 8.0
     http3_semaphore_wait: float = 2.0
@@ -98,6 +117,7 @@ class NetworkTimeouts(Struct, frozen=True):
     i2p: float = 150.0
     gopher: float = 30.0
 
+
 class M1MemoryBounds(Struct, frozen=True):
     """
     M1 8GB UMA specifické memory a cache limity.
@@ -108,6 +128,7 @@ class M1MemoryBounds(Struct, frozen=True):
     - Metal cache ceiling 1 GiB (hardcoded v MLX)
     - KV cache budget ~750 MB při plném vytížení
     """
+
     fetch_soft_ceiling_gb: float = field(default_factory=lambda: round(_UMA_TOTAL_MB / 1024 * 0.88, 2))
     metal_cache_ceiling_mb: int = 1024
     kv_cache_headroom_mb: int = 512
@@ -129,6 +150,7 @@ class M1MemoryBounds(Struct, frozen=True):
     domain_failure_cutoff_s: int = 86400
     duckdb_vacuum_threshold_mb: int = 2048
 
+
 class MLXInference(Struct, frozen=True):
     """
     MLX inference limity — KV cache, batch, token boundy.
@@ -139,6 +161,7 @@ class MLXInference(Struct, frozen=True):
     - M1 Metal cache ceiling: 1 GiB
     - KV cache při 4bit quantization: ~0.75 GB
     """
+
     context_window: int = 8192
     default_max_tokens: int = 1024
     system_prompt_cache_kv: int = 512
@@ -173,12 +196,14 @@ class MLXInference(Struct, frozen=True):
     pid_kd: float = 0.1
     lora_kv_reduction_factor: int = 2
 
+
 class ProtocolPorts(Struct, frozen=True):
     """
     Protocol-specific port numbers.
 
     Všechny porty jsou konfigurovatelné přes ENV vars.
     """
+
     tor_socks: int = 9050
     tor_control: int = 9051
     tor_max_circuit_dirtiness: int = 600
@@ -187,12 +212,14 @@ class ProtocolPorts(Struct, frozen=True):
     i2p_http: int = 8888
     https: int = 443
 
+
 class HTTPCodes(Struct, frozen=True):
     """
     HTTP status kódy pro retry/error policy.
 
     Duplikace PŘÍSĚ zakázána — všechny moduly používají HTTP.retryable
     """
+
     retryable: frozenset[int] = field(default_factory=lambda: frozenset({429, 502, 503, 504, 520}))
     escalation_trigger: frozenset[int] = field(default_factory=lambda: frozenset({401, 403}))
     success_min: int = 200
@@ -200,12 +227,14 @@ class HTTPCodes(Struct, frozen=True):
     redirect_min: int = 300
     redirect_max: int = 399
 
+
 class SemanticRatios(Struct, frozen=True):
     """
     Empiricky odvozené plovoucí konstanty.
 
     Každá hodnota má poznámku ODKUD pochází (benchmark, historical fix, etc.)
     """
+
     windup_normal: float = 0.3
     windup_aggressive: float = 0.15
     windup_clamp_min: float = 30.0
@@ -227,10 +256,12 @@ class SemanticRatios(Struct, frozen=True):
     funnel_text_rate: float = 100.0
     windup_efficiency_acceptable: float = 0.7
 
+
 class DuckDBStorage(Struct, frozen=True):
     """
     DuckDB-specific storage bounds.
     """
+
     batch_ingest_size: int = 2048
     pending_sync_markers_max: int = 10000
     replay_chunk_size: int = 100
@@ -251,6 +282,7 @@ class DuckDBStorage(Struct, frozen=True):
     dedup_lmdb_map_size: int = 64 * 1024 * 1024
     yield_per_min_floor: float = 0.001
 
+
 def _make_lazy(cls):
     """Create a lazily-initialized singleton for the given dataclass."""
     instance = None
@@ -260,7 +292,10 @@ def _make_lazy(cls):
         if instance is None:
             instance = cls()
         return instance
+
     return get
+
+
 NETWORK = _make_lazy(NetworkTimeouts)
 M1_BOUNDS = _make_lazy(M1MemoryBounds)
 MLX = _make_lazy(MLXInference)

@@ -3,14 +3,11 @@
 Implements the EVIDENCE LEDGER boundary — records what happened during research
 but does NOT govern sprint truth or own facts. See :ref:`evidence-ledger` for
 
-
-
-
-
 architecture overview, 3-tier hierarchy, and ledger boundary rules.
 """
+
 from __future__ import annotations
-from _core import aclose  # F350M-R: Type-4 clone elimination
+
 import asyncio
 import concurrent.futures
 import contextlib
@@ -19,43 +16,43 @@ import gzip
 import hashlib
 import logging
 
+from _core import aclose  # F350M-R: Type-4 clone elimination
+
 logger = logging.getLogger(__name__)
 
+import atexit
 import os
 import secrets
+import sys as _sys
 import threading
-import atexit
 import time
 import uuid
-import zlib
 from collections import deque
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-import sys as _sys
 from typing import Any, Literal, cast
-from collections.abc import Iterator
+
 import aiosqlite
 import msgspec
-from compat.msgspec_gc_compat import Struct
 import orjson
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.env_config import ENV
+from hledac.universal._core.locks import LockCategory, register_lock
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
-from hledac.universal._core.locks import LockCategory, register_lock
 
-# ─── Sprint Split-Brain: Import split components ───────────────────────────────
-# New components are available for migration. EvidenceLog currently maintains
-# its own implementations for backward compatibility. Migration to use these
-# components is tracked separately.
 try:
     from hledac.universal.evidence import (
-        EvidenceWriter,
         EvidenceQuery,
+        EvidenceWriter,
         WARCArchiver,
         WarcWriteResult,
     )
     from hledac.universal.evidence._writer import EvidenceEvent as _SplitEvidenceEvent
+
     _HAS_SPLIT_COMPONENTS = True
 except ImportError:
     EvidenceWriter = None
@@ -68,7 +65,6 @@ except ImportError:
 # ISSUE-14: Structured logging via structlog
 # Lazy import to avoid early import overhead — structlog is optional
 _structlog: Any = None
-
 
 # ISSUE [FINAL]-019-05: Global WARC paths singleton — allows sprint_exporter to
 # discover WARC files created during a sprint without needing a direct EvidenceLog
@@ -155,6 +151,7 @@ def _get_archive_http_elog() -> EvidenceLog | None:
             return _archive_http_elog
         try:
             from _lazy_imports import get_EvidenceLog
+
             EvidenceLog = get_EvidenceLog()
             _archive_http_elog = EvidenceLog()
         except Exception:  # noqa: BLE001 — fail-safe; EvidenceLog unavailable
@@ -187,7 +184,7 @@ def _archive_sync_worker(
             http_request=http_request,
             http_response=http_response,
             content_type=content_type,
-    )
+        )
     except Exception:  # noqa: BLE001 — fail-safe
         return None
 
@@ -255,15 +252,19 @@ def archive_http_response_cached(
                 http_request,
                 http_response,
                 content_type,
-    )
+            )
             return _future.result(timeout=3.0)
         except Exception:  # noqa: BLE001 — fail-safe; timeout or scheduling error
             return None
     else:
         # Sync context: call the worker directly
         return _archive_sync_worker(
-            url, _ts, http_request, http_response, content_type,
-    )
+            url,
+            _ts,
+            http_request,
+            http_response,
+            content_type,
+        )
 
 
 def _register_warc_path(path: str) -> None:
@@ -286,6 +287,7 @@ def _get_logger() -> Any:
             _structlog = logging.getLogger("evidence_log")
     return _structlog
 
+
 # ISSUE-11 / C2: ThreadPoolExecutor for GIL-free SQLite writes
 # Lazily initialized — only created if SQLite path is used
 # C2: Added threading.RLock for thread-safe singleton creation
@@ -300,7 +302,8 @@ _arrow = None
 #         _ARROW_ENABLED is evaluated once at import; subsequent _get_arrow()
 #         calls skip the env lookup entirely (fast-path: _arrow cached).
 # SWARM-010: Use FeatureFlags for registry compliance
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _ARROW_ENABLED: bool = FeatureFlags.get(FeatureFlag.ARROW_EVIDENCE)
 
 
@@ -315,6 +318,7 @@ def _ensure_duckdb_executor() -> concurrent.futures.ThreadPoolExecutor:
     with _duckdb_executor_lock:
         if _duckdb_executor is None:
             from hledac.universal.utils.domain_executors import get_evidence_duckdb_executor
+
             _duckdb_executor = get_evidence_duckdb_executor()
         return _duckdb_executor
 
@@ -328,13 +332,12 @@ def _ensure_evidence_sqlite_executor() -> concurrent.futures.ThreadPoolExecutor:
     with _evidence_sqlite_executor_lock:
         if _evidence_sqlite_executor is None:
             from hledac.universal.utils.domain_executors import get_evidence_sqlite_executor
+
             _evidence_sqlite_executor = get_evidence_sqlite_executor()
         return _evidence_sqlite_executor
 
 
-def _shutdown_executor_guarded(
-    ex: concurrent.futures.ThreadPoolExecutor, *, timeout_s: float = 2.0
-) -> None:
+def _shutdown_executor_guarded(ex: concurrent.futures.ThreadPoolExecutor, *, timeout_s: float = 2.0) -> None:
     """Graceful shutdown with bounded timeout, then force-fallback.
 
     Python 3.12+ has shutdown(timeout=...) natively, but we implement our own
@@ -368,10 +371,10 @@ def _shutdown_executors() -> None:
     """
     # R5: domain_executors.shutdown_all() handles this via its own atexit.
     # Calling it here would double-shutdown, which is harmless but unnecessary.
-    pass
 
 
 atexit.register(_shutdown_executors)
+
 
 def _get_arrow():
     """Lazy Arrow IPC loader — only loads pyarrow if HLEDAC_ARROW_EVIDENCE=1.
@@ -385,50 +388,45 @@ def _get_arrow():
             try:
                 import pyarrow as _pa
                 import pyarrow.ipc as _ipc
+
                 _arrow = (_pa, _ipc)
             except ImportError:
                 import logging as _logger
+
                 _logger.getLogger("evidence_log").debug("arrow_not_available_falling_back_to_sqlite")
                 _arrow = False
         else:
             _arrow = False
     return _arrow if _arrow else None
+
+
 try:
-    from hledac.universal.utils.flow_trace import is_enabled, trace_counter, trace_evidence_append, trace_evidence_flush, trace_queue_drop
+    from hledac.universal.utils.flow_trace import (
+        is_enabled,
+        trace_counter,
+        trace_evidence_append,
+        trace_evidence_flush,
+        trace_queue_drop,
+    )
 except ImportError:
 
-    def trace_evidence_append(*_, **_kw):
+    def trace_evidence_append(*_, **_kw) -> None:
         pass
 
-    def trace_evidence_flush(*_, **_kw):
+    def trace_evidence_flush(*_, **_kw) -> None:
         pass
 
-    def trace_queue_drop(*_, **_kw):
+    def trace_queue_drop(*_, **_kw) -> None:
         pass
 
-    def trace_counter(*_, **_kw):
+    def trace_counter(*_, **_kw) -> None:
         pass
 
-    def is_enabled():
+    def is_enabled() -> bool:
         return False
+
+
 logger = _get_logger()
-
-
-# ISSUE F5-FIX: WARC Seek Function — court-admissible byte-level replay from gzip WARC
-# ==================================================================================
-# gzip files do NOT support random access by uncompressed offset. To read a specific
-# record, we must decompress from the beginning of the file until we reach the target
-# uncompressed offset. This function provides that capability.
-#
-# For performance, we use a streaming decompressor that stops as soon as the target
-# uncompressed offset is reached, then extracts the HTTP response from the WARC record.
-#
-# Usage:
-#   result = warc_seek(warc_path, compressed_offset, byte_length)
-#   if result:
-#       print(result['http_response'])  # Raw HTTP bytes
-#       print(result['url'])            # Archived URL
-#
 
 
 def warc_seek(
@@ -487,7 +485,7 @@ def warc_seek(
         return None
 
     try:
-        with gzip.GzipFile(_path, 'rb') as _gz:
+        with gzip.GzipFile(_path, "rb") as _gz:
             # ISSUE F5-FIX: Stream decompress and scan for matching WARC record
             # Gzip doesn't support random access - we must decompress from start
             _buffer = bytearray()
@@ -502,7 +500,7 @@ def warc_seek(
 
                 # Try to find and parse WARC records in buffer
                 _data = bytes(_buffer)
-                _warc_pos = _data.find(b'WARC/1.')
+                _warc_pos = _data.find(b"WARC/1.")
 
                 while _warc_pos != -1:
                     # Try to parse record starting at this position
@@ -512,7 +510,7 @@ def warc_seek(
                         return _record_result
 
                     # Move to next potential WARC header
-                    _next_pos = _data.find(b'WARC/1.', _warc_pos + 1)
+                    _next_pos = _data.find(b"WARC/1.", _warc_pos + 1)
                     if _next_pos == -1:
                         # Keep more data in buffer for next iteration
                         _buffer = bytearray(_data[_warc_pos:])
@@ -549,21 +547,20 @@ def _try_parse_warc_record(
 
     try:
         # Find WARC header start
-        _warc_pos = data.find(b'WARC/1.')
+        _warc_pos = data.find(b"WARC/1.")
         if _warc_pos == -1:
             return None
 
         _record_data = data[_warc_pos:]
 
-        # Parse headers to find Content-Length
-        _header_end = _record_data.find(b'\r\n\r\n')
+        _header_end = _record_data.find(b"\r\n\r\n")
         if _header_end == -1:
-            _header_end = _record_data.find(b'\n\n')
+            _header_end = _record_data.find(b"\n\n")
             if _header_end == -1:
                 return None  # Incomplete header
-            _line_end = b'\n'
+            _line_end = b"\n"
         else:
-            _line_end = b'\r\n'
+            _line_end = b"\r\n"
 
         # Look for Content-Length header
         _header_lines = _record_data[:_header_end].split(_line_end)
@@ -572,20 +569,20 @@ def _try_parse_warc_record(
 
         for _line in _header_lines:
             if isinstance(_line, bytes):
-                _line = _line.decode('utf-8', errors='replace')
-            if ':' in _line:
-                _key, _val = _line.split(':', 1)
+                _line = _line.decode("utf-8", errors="replace")
+            if ":" in _line:
+                _key, _val = _line.split(":", 1)
                 _key_lower = _key.strip().lower()
-                if _key_lower == 'content-length':
+                if _key_lower == "content-length":
                     try:
                         _content_length = int(_val.strip())
                     except ValueError:
                         pass
-                elif _key_lower == 'warc-record-id':
+                elif _key_lower == "warc-record-id":
                     _record_id = _val.strip()
 
         # Calculate total record size
-        _header_size = _header_end + (4 if _line_end == b'\r\n' else 2)
+        _header_size = _header_end + (4 if _line_end == b"\r\n" else 2)
         _total_size = _header_size + _content_length
 
         # Check if we have the complete record
@@ -596,7 +593,6 @@ def _try_parse_warc_record(
         if _record_id and _record_id != expected_record_id:
             return None  # Wrong record
 
-        # Parse the complete record
         return _parse_warc_record_from_bytes(_record_data[:_total_size], expected_record_id)
 
     except Exception as _e:  # noqa: BLE001
@@ -617,77 +613,71 @@ def _parse_warc_record_from_bytes(
 
     try:
         # Find WARC header start
-        _warc_pos = data.find(b'WARC/1.')
+        _warc_pos = data.find(b"WARC/1.")
         if _warc_pos == -1:
             _logger.debug("warc_seek_no_warc_header")
             return None
 
         _record_data = data[_warc_pos:]
 
-        # Parse headers
         _headers: dict[str, str] = {}
-        _header_end = _record_data.find(b'\r\n\r\n')
+        _header_end = _record_data.find(b"\r\n\r\n")
         if _header_end == -1:
-            _header_end = _record_data.find(b'\n\n')
-            _line_end = b'\n'
+            _header_end = _record_data.find(b"\n\n")
+            _line_end = b"\n"
         else:
-            _line_end = b'\r\n'
+            _line_end = b"\r\n"
 
         if _header_end != -1:
             _header_lines = _record_data[:_header_end].split(_line_end)
             for _line in _header_lines:
                 if isinstance(_line, bytes):
-                    _line = _line.decode('utf-8', errors='replace')
-                if ':' in _line:
-                    _key, _val = _line.split(':', 1)
+                    _line = _line.decode("utf-8", errors="replace")
+                if ":" in _line:
+                    _key, _val = _line.split(":", 1)
                     _headers[_key.strip().lower()] = _val.strip()
 
-        # Extract record type and metadata
-        _warc_type = _headers.get('warc-type', 'response')
-        _record_id = _headers.get('warc-record-id', '')
-        _url = _headers.get('warc-target-uri', '')
-        _timestamp = _headers.get('warc-date', '')
-        _content_length = int(_headers.get('content-length', 0))
-        _payload_digest = _headers.get('warc-payload-digest', '')
+        _warc_type = _headers.get("warc-type", "response")
+        _record_id = _headers.get("warc-record-id", "")
+        _url = _headers.get("warc-target-uri", "")
+        _timestamp = _headers.get("warc-date", "")
+        _content_length = int(_headers.get("content-length", 0))
+        _payload_digest = _headers.get("warc-payload-digest", "")
 
         # Verify record ID if provided
         if expected_record_id and _record_id != expected_record_id:
-            _logger.debug(
-                "warc_seek_record_id_mismatch",
-                expected=expected_record_id,
-                found=_record_id
-    )
+            _logger.debug("warc_seek_record_id_mismatch", expected=expected_record_id, found=_record_id)
             return None
 
         # Extract body (HTTP response/request)
-        _body_start = _header_end + (4 if _line_end == b'\r\n' else 2)
-        _body = _record_data[_body_start:_body_start + _content_length]
+        _body_start = _header_end + (4 if _line_end == b"\r\n" else 2)
+        _body = _record_data[_body_start : _body_start + _content_length]
 
         # Parse HTTP status if this is a response record
         _status = 0
-        if _warc_type == 'response' and _body:
-            _status_line_end = _body.find(b'\r\n')
+        if _warc_type == "response" and _body:
+            _status_line_end = _body.find(b"\r\n")
             if _status_line_end == -1:
-                _status_line_end = _body.find(b'\n')
+                _status_line_end = _body.find(b"\n")
             if _status_line_end != -1:
-                _status_line = _body[:_status_line_end].decode('utf-8', errors='replace')
-                _parts = _status_line.split(' ', 2)
-                if len(_parts) >= 2 and _parts[0].startswith('HTTP/'):
+                _status_line = _body[:_status_line_end].decode("utf-8", errors="replace")
+                _parts = _status_line.split(" ", 2)
+                if len(_parts) >= 2 and _parts[0].startswith("HTTP/"):
                     try:
                         _status = int(_parts[1])
                     except ValueError:
                         pass
 
         return {
-            'http_response': _body if _warc_type == 'response' else b'',
-            'http_request': _body if _warc_type == 'request' else b'',
-            'url': _url,
-            'timestamp': _timestamp,
-            'record_id': _record_id,
-            'warc_type': _warc_type,
-            'payload_digest': _payload_digest,
-            'status': _status,
-            'content_length': _content_length,
+            "http_response": _body if _warc_type == "response" else b"",
+            "http_request": _body if _warc_type == "request" else b"",
+            "url": _url,
+            "timestamp": _timestamp,
+            "record_id": _record_id,
+            "warc_type": _warc_type,
+            "payload_digest": _payload_digest,
+            "status": _status,
+            "content_length": _content_length,
         }
 
     except Exception as _e:  # noqa: BLE001
@@ -727,6 +717,7 @@ class WarcWriteResult(Struct, frozen=True, kw_only=True):
         compressed_offset: Compressed (file) byte offset - seekable position in .warc.gz
         compressed_size:  Size of compressed record block in bytes
     """
+
     # Core write metadata (from issue spec)
     record_id: str = ""  # URN-UUID from WARC-Record-ID header
     byte_offset: int = 0  # Uncompressed byte offset in .warc.gz (DEPRECATED)
@@ -764,16 +755,16 @@ class WARCWriter:
     - WARC files are append-only, readable by standard tools (wget --warc-file, warcio)
     """
 
-    __slots__ = ('_path', '_file', '_current_size', '_max_size', '_record_counter', '_lock', '_logger', '_path_history')
+    __slots__ = ("_path", "_file", "_current_size", "_max_size", "_record_counter", "_lock", "_logger", "_path_history")
     WARC_VERSION = "WARC/1.1"
     MAX_WARC_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
     _MIN_PAYLOAD_SIZE = 50  # Skip tiny responses (< 50 bytes)
 
     def __init__(self, path: Path, max_size_gb: float = 10.0) -> None:
-        self._path = Path(str(path).replace('.jsonl', '').replace('.enc', ''))  # Strip old extensions
-        if not str(self._path).endswith('.warc.gz'):
+        self._path = Path(str(path).replace(".jsonl", "").replace(".enc", ""))  # Strip old extensions
+        if not str(self._path).endswith(".warc.gz"):
             self._path = self._path.parent / f"{self._path.stem}.warc.gz"
-        self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+        self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
         self._current_size = self._path.stat().st_size if self._path.exists() else 0
         self._max_size = int(max_size_gb * 1024 * 1024 * 1024)
         self._record_counter = 0
@@ -837,7 +828,7 @@ class WARCWriter:
                     f"WARC-Identified-Payload-Type: application/http;msgtype=response\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-    )
+                )
 
                 # Request record (Section 7.3 — request is separate record for full context)
                 request_header = (
@@ -849,15 +840,13 @@ class WARCWriter:
                     f"Content-Length: {len(http_request)}\r\n"
                     f"Content-Type: application/http;msgtype=request\r\n"
                     f"\r\n"
-    )
+                )
 
-                # Write request record
-                request_block = request_header.encode('utf-8', errors='replace') + http_request + b"\r\n"
+                request_block = request_header.encode("utf-8", errors="replace") + http_request + b"\r\n"
                 self._file.write(request_block)
                 self._current_size += len(request_block)
 
-                # Write response record
-                response_block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
+                response_block = header.encode("utf-8", errors="replace") + http_response + b"\r\n"
                 self._file.write(response_block)
                 self._current_size += len(response_block)
 
@@ -880,18 +869,18 @@ class WARCWriter:
 
                 return WarcWriteResult(
                     url=url,
-                    timestamp=timestamp.isoformat() + 'Z',
+                    timestamp=timestamp.isoformat() + "Z",
                     record_id=record_id,
                     byte_offset=byte_offset,
                     byte_length=byte_length,
                     warc_path=_current_warc_path,  # captured BEFORE rotation
-                    warc_type='response',
+                    warc_type="response",
                     payload_digest=payload_digest,
                     status=_http_status,
                     success=True,
                     compressed_offset=compressed_offset,
                     compressed_size=compressed_size,
-    )
+                )
 
         except Exception as e:  # noqa: BLE001 — fail-safe: never blocks sprint
             try:
@@ -952,9 +941,9 @@ class WARCWriter:
                     f"WARC-Payload-Digest: {payload_digest}\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-    )
+                )
 
-                block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
+                block = header.encode("utf-8", errors="replace") + http_response + b"\r\n"
                 self._file.write(block)
                 self._current_size += len(block)
 
@@ -976,18 +965,18 @@ class WARCWriter:
 
                 return WarcWriteResult(
                     url=url,
-                    timestamp=timestamp.isoformat() + 'Z',
+                    timestamp=timestamp.isoformat() + "Z",
                     record_id=record_id,
                     byte_offset=byte_offset,
                     byte_length=byte_length,
                     warc_path=_current_warc_path,  # captured BEFORE rotation
-                    warc_type='response',
+                    warc_type="response",
                     payload_digest=payload_digest,
                     status=_http_status,
                     success=True,
                     compressed_offset=compressed_offset,
                     compressed_size=compressed_size,
-    )
+                )
 
         except Exception as e:  # noqa: BLE001
             try:
@@ -1009,14 +998,13 @@ class WARCWriter:
         if not http_response:
             return 0
         # Find first CRLF or LF to isolate the status line
-        crlf_pos = http_response.find(b'\r\n')
-        lf_pos = http_response.find(b'\n')
+        crlf_pos = http_response.find(b"\r\n")
+        lf_pos = http_response.find(b"\n")
         if crlf_pos == -1 and lf_pos == -1:
             return 0
         end_pos = crlf_pos if crlf_pos != -1 else lf_pos
         status_line = http_response[:end_pos]
-        # Parse "HTTP/1.1 200 OK" or "HTTP/2 200"
-        parts = status_line.split(b' ')
+        parts = status_line.split(b" ")
         if len(parts) >= 2:
             try:
                 return int(parts[1])
@@ -1041,13 +1029,13 @@ class WARCWriter:
         old_path = self._path
         self._path = self._path.parent / f"{self._path.stem}.{self._record_counter}.warc.gz"
         try:
-            self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+            self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
             self._current_size = 0
             self._path_history.append(self._path)
         except Exception as _e:  # noqa: BLE001 — fail-safe: revert to old path, keep file open
             self._path = old_path
             try:
-                self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+                self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
             except Exception:  # noqa: BLE001
                 pass  # Exhausted — abandon rotation
 
@@ -1102,6 +1090,7 @@ class EvidenceEvent(Struct, frozen=False):
     Každá událost má unikátní ID, typ, timestamp, payload
     a content hash pro verifikaci integrity.
     """
+
     event_id: str
     event_type: str
     timestamp: float
@@ -1115,7 +1104,17 @@ class EvidenceEvent(Struct, frozen=False):
     chain_hash: str | None = None
 
     @classmethod
-    def create(cls, event_id: str, event_type: str, payload: dict[str, Any], run_id: str, source_ids: list[str] | None=None, confidence: float=1.0, seq_no: int=0, prev_chain_hash: str | None=None) -> EvidenceEvent:
+    def create(
+        cls,
+        event_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        run_id: str,
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
+        seq_no: int = 0,
+        prev_chain_hash: str | None = None,
+    ) -> EvidenceEvent:
         """Factory method — creates event with auto-generated content_hash."""
         source_ids = source_ids or []
         timestamp = datetime.now(UTC).timestamp()
@@ -1132,29 +1131,74 @@ class EvidenceEvent(Struct, frozen=False):
             # from being permanently stored in evidence logs (LMDB/SQLite).
             try:
                 from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
+
                 scrubbed_payload = scrub_dict_recursive(normalized_payload)
             except Exception:
                 # Fail-safe: store original if scrubbing fails
                 scrubbed_payload = normalized_payload
         encoded_payload = orjson.dumps(scrubbed_payload)
         # Hash computed from scrubbed payload to maintain integrity verification
-        content_hash = cls._calculate_hash(event_id=event_id, event_type=event_type, timestamp=timestamp, payload=scrubbed_payload, source_ids=source_ids, confidence=confidence, run_id=run_id)
-        return cls(event_id=event_id, event_type=event_type, timestamp=timestamp, payload=encoded_payload, source_ids=source_ids, confidence=confidence, content_hash=content_hash, run_id=run_id, seq_no=seq_no, prev_chain_hash=prev_chain_hash, chain_hash=None)
+        content_hash = cls._calculate_hash(
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            payload=scrubbed_payload,
+            source_ids=source_ids,
+            confidence=confidence,
+            run_id=run_id,
+        )
+        return cls(
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            payload=encoded_payload,
+            source_ids=source_ids,
+            confidence=confidence,
+            content_hash=content_hash,
+            run_id=run_id,
+            seq_no=seq_no,
+            prev_chain_hash=prev_chain_hash,
+            chain_hash=None,
+        )
 
     @staticmethod
-    def _calculate_hash(event_id: str, event_type: str, timestamp: float, payload: dict[str, Any], source_ids: list[str], confidence: float, run_id: str) -> str:
+    def _calculate_hash(
+        event_id: str,
+        event_type: str,
+        timestamp: float,
+        payload: dict[str, Any],
+        source_ids: list[str],
+        confidence: float,
+        run_id: str,
+    ) -> str:
         """Calculate SHA-256 hash of normalized event content.
 
         TEL-03: Only normalizes here for the instance method path (payload_dict from orjson.loads).
         The classmethod path (create()) passes already-normalized payload.
         """
-        data = {'event_id': event_id, 'event_type': event_type, 'timestamp': timestamp, 'payload': payload, 'source_ids': sorted(source_ids), 'confidence': round(confidence, 6), 'run_id': run_id}
+        data = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "timestamp": timestamp,
+            "payload": payload,
+            "source_ids": sorted(source_ids),
+            "confidence": round(confidence, 6),
+            "run_id": run_id,
+        }
         json_bytes = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
         return hashlib.sha256(json_bytes).hexdigest()
 
     def calculate_hash(self) -> str:
         """Calculate current event's content hash."""
-        return self._calculate_hash(event_id=self.event_id, event_type=self.event_type, timestamp=self.timestamp, payload=self.payload_dict, source_ids=self.source_ids, confidence=self.confidence, run_id=self.run_id)
+        return self._calculate_hash(
+            event_id=self.event_id,
+            event_type=self.event_type,
+            timestamp=self.timestamp,
+            payload=self.payload_dict,
+            source_ids=self.source_ids,
+            confidence=self.confidence,
+            run_id=self.run_id,
+        )
 
     @property
     def payload_dict(self) -> dict[str, Any]:
@@ -1167,28 +1211,49 @@ class EvidenceEvent(Struct, frozen=False):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert event to dictionary (for backward compatibility)."""
-        result = {'event_id': self.event_id, 'event_type': self.event_type, 'timestamp': datetime.fromtimestamp(self.timestamp, UTC).isoformat(), 'payload': orjson.loads(self.payload), 'source_ids': self.source_ids, 'confidence': self.confidence, 'content_hash': self.content_hash, 'run_id': self.run_id}
+        result = {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "timestamp": datetime.fromtimestamp(self.timestamp, UTC).isoformat(),
+            "payload": orjson.loads(self.payload),
+            "source_ids": self.source_ids,
+            "confidence": self.confidence,
+            "content_hash": self.content_hash,
+            "run_id": self.run_id,
+        }
         if self.seq_no > 0:
-            result['seq_no'] = self.seq_no
+            result["seq_no"] = self.seq_no
         if self.prev_chain_hash:
-            result['prev_chain_hash'] = self.prev_chain_hash
+            result["prev_chain_hash"] = self.prev_chain_hash
         if self.chain_hash:
-            result['chain_hash'] = self.chain_hash
+            result["chain_hash"] = self.chain_hash
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EvidenceEvent:
         """Create event from dictionary."""
-        ts = data['timestamp']
+        ts = data["timestamp"]
         if isinstance(ts, str):
             ts = datetime.fromisoformat(ts).timestamp()
-        encoded_payload = orjson.dumps(data['payload'])
-        source_ids = data.get('source_ids') or []
-        return cls(event_id=data['event_id'], event_type=data['event_type'], timestamp=ts, payload=encoded_payload, source_ids=source_ids, confidence=data.get('confidence', 1.0), content_hash=data['content_hash'], run_id=data['run_id'], seq_no=data.get('seq_no', 0), prev_chain_hash=data.get('prev_chain_hash'), chain_hash=data.get('chain_hash'))
+        encoded_payload = orjson.dumps(data["payload"])
+        source_ids = data.get("source_ids") or []
+        return cls(
+            event_id=data["event_id"],
+            event_type=data["event_type"],
+            timestamp=ts,
+            payload=encoded_payload,
+            source_ids=source_ids,
+            confidence=data.get("confidence", 1.0),
+            content_hash=data["content_hash"],
+            run_id=data["run_id"],
+            seq_no=data.get("seq_no", 0),
+            prev_chain_hash=data.get("prev_chain_hash"),
+            chain_hash=data.get("chain_hash"),
+        )
 
     def to_jsonl_line(self) -> str:
         """Convert event to JSONL line."""
-        return orjson.dumps(self.to_dict()).decode() + '\n'
+        return orjson.dumps(self.to_dict()).decode() + "\n"
 
     def to_bytes(self) -> bytes:
         """Serialize event to bytes using msgspec (faster than orjson).
@@ -1201,9 +1266,19 @@ class EvidenceEvent(Struct, frozen=False):
 
     def _to_struct_tuple(self) -> tuple:
         """Internal: tuple form for msgspec encoding (faster than dict)."""
-        return (self.event_id, self.event_type, self.timestamp, self.payload,
-                self.source_ids, self.confidence, self.content_hash, self.run_id,
-                self.seq_no, self.prev_chain_hash, self.chain_hash)
+        return (
+            self.event_id,
+            self.event_type,
+            self.timestamp,
+            self.payload,
+            self.source_ids,
+            self.confidence,
+            self.content_hash,
+            self.run_id,
+            self.seq_no,
+            self.prev_chain_hash,
+            self.chain_hash,
+        )
 
     @classmethod
     def from_bytes(cls, data: bytes) -> EvidenceEvent:
@@ -1216,9 +1291,6 @@ class EvidenceEvent(Struct, frozen=False):
         decoded = msgspec.msgpack.decode(data)
         return cls(*decoded)
 
-# -------------------------------------------------------------------------------------------------
-# TEL-03 Optimization: Hot-path normalization with fast-path guards
-# -------------------------------------------------------------------------------------------------
 
 # Fast-path: types that NEVER need normalization (primitives only payload = skip recursive traversal)
 _SAFE_BUILTIN = (type(None), bool, int, float, str)
@@ -1250,7 +1322,7 @@ def _payload_needs_scrubbing(payload: dict[str, Any]) -> bool:
             return True
         if isinstance(item, _msgspec_struct_type):
             return True
-        if hasattr(item, '__array__'):
+        if hasattr(item, "__array__"):
             # MLX/numpy arrays — no secrets embedded
             continue
     return False
@@ -1273,7 +1345,7 @@ def _payload_needs_normalization(payload: dict[str, Any]) -> bool:
             return True
         if isinstance(item, _msgspec_struct_type):
             return True
-        if hasattr(item, '__array__'):
+        if hasattr(item, "__array__"):
             # MLX/numpy arrays need normalization
             return True
     return False
@@ -1291,7 +1363,7 @@ def _normalize_payload(payload: dict[str, Any], *, _depth: int = 0) -> dict[str,
     # Depth limit to prevent stack overflow
     max_depth = 8
     if _depth > max_depth:
-        return {'_tel03_truncated': f'depth>{max_depth}'}
+        return {"_tel03_truncated": f"depth>{max_depth}"}
 
     normalized: dict[str, Any] = {}
     for key in sorted(payload.keys()):
@@ -1322,7 +1394,7 @@ def _normalize_list(value: list | tuple, *, _depth: int) -> list:
     """Normalize a list/tuple with depth limit."""
     max_depth = 8
     if _depth > max_depth:
-        return [f'[truncated:depth>{max_depth}]']
+        return [f"[truncated:depth>{max_depth}]"]
 
     result: list[Any] = []
     for item in value:
@@ -1356,7 +1428,7 @@ def _normalize_single(value: Any) -> Any:
     elif isinstance(value, (set, frozenset)):
         return sorted(value)
     elif isinstance(value, bytes):
-        return value.decode('utf-8', errors='replace')
+        return value.decode("utf-8", errors="replace")
     elif isinstance(value, _msgspec_struct_type):
         # TEL-03 FIX: Recursively normalize to_builtins result.
         # Start depth at 0 since to_builtins output is a fresh structure.
@@ -1367,7 +1439,7 @@ def _normalize_single(value: Any) -> Any:
             return _normalize_list(converted, _depth=0)
         else:
             return _normalize_single(converted)
-    elif hasattr(value, '__array__'):
+    elif hasattr(value, "__array__"):
         # MLX/numpy arrays → list for orjson serialization
         try:
             return value.tolist()
@@ -1377,6 +1449,7 @@ def _normalize_single(value: Any) -> Any:
             except Exception:  # noqa: BLE001
                 return str(value)
     return value
+
 
 class _RustMPSCBytes:
     """Single canonical Rust MPSC wrapper — bytes in, bytes out.
@@ -1395,6 +1468,7 @@ class _RustMPSCBytes:
     S1-03 FIX: asyncio.Queue asyncio_fallback capacity is derived from memory budget.
     Falls back to Rust MPSC with ~50× throughput when available.
     """
+
     # S1-03/C3-04 FIX: asyncio.Queue maxsize derived from memory budget.
     # Formula: floor(available_memory * 0.05 / avg_item_bytes)
     # With 1 KiB/item and 10% of 512 MiB available ≈ 512 items (≈0.5 MiB).
@@ -1419,10 +1493,11 @@ class _RustMPSCBytes:
         """
         try:
             import psutil
+
             process = psutil.Process()
             mem_info = process.memory_info()
             # Use RSS as the memory budget metric (actual physical memory used)
-            available = getattr(mem_info, 'available', mem_info.rss)
+            available = getattr(mem_info, "available", mem_info.rss)
             # Reserve 5% of available memory for the queue
             memory_fraction = 0.05
             avg_item_bytes = 1024  # 1 KiB per evidence item
@@ -1440,9 +1515,21 @@ class _RustMPSCBytes:
     # No retry scheduling — PyO3 C extension cannot be safely reloaded.
     # "maturin develop" + process restart is required for Rust MPSC.
 
-    __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback', '_retry_handle', '_retry_delay', '_capacity', '_asyncio_fallback', '_pending_retry'))
+    __slots__ = (
+        "_impl",
+        "_pool",
+        "_queue",
+        "_sender_ptr",
+        "_wake_fd",
+        "fallback",
+        "_retry_handle",
+        "_retry_delay",
+        "_capacity",
+        "_asyncio_fallback",
+        "_pending_retry",
+    )
 
-    def __init__(self, capacity: int=2048, asyncio_fallback: bool=False) -> None:
+    def __init__(self, capacity: int = 2048, asyncio_fallback: bool = False) -> None:
         """Initialize MPSC pool.
 
         Args:
@@ -1455,7 +1542,7 @@ class _RustMPSCBytes:
         self._sender_ptr: int = 0
         self._wake_fd: int = -1
         self.fallback: bool = True
-        self._impl: str = 'asyncio'
+        self._impl: str = "asyncio"
         self._retry_handle: asyncio.TimerHandle | None = None  # Scheduled retry timer
         self._retry_delay: float = 5.0  # seconds, exponential backoff
         self._capacity: int = capacity
@@ -1469,6 +1556,7 @@ class _RustMPSCBytes:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _MPSC = rust.raw.MPSCPool
             pool = _MPSC(capacity=capacity)
             sender_ptr = pool.add_sender()
@@ -1477,7 +1565,7 @@ class _RustMPSCBytes:
             self._sender_ptr = sender_ptr
             self._wake_fd = wake_fd
             self.fallback = False
-            self._impl = 'rust'
+            self._impl = "rust"
             # Rust is now available — cancel any pending retry
             if self._retry_handle is not None:
                 try:
@@ -1500,7 +1588,7 @@ class _RustMPSCBytes:
             else:
                 self._queue = None
             self.fallback = True
-            self._impl = 'asyncio'
+            self._impl = "asyncio"
             # F-15 FIX: Mark Rust extension as permanently unavailable.
             # No retry — if it wasn't compiled at startup, "maturin develop"
             # + process restart is required. asyncio.Queue is functionally equivalent.
@@ -1543,9 +1631,7 @@ class _RustMPSCBytes:
 
         try:
             # call_later is safe — if loop is closed, callback simply doesn't fire
-            self._retry_handle = loop.call_later(
-                self._retry_delay, _retry_callback
-    )
+            self._retry_handle = loop.call_later(self._retry_delay, _retry_callback)
             self._pending_retry = True
             # Exponential backoff: double delay, cap at 60s
             self._retry_delay = min(self._retry_delay * 2, 60.0)
@@ -1588,6 +1674,7 @@ class _RustMPSCBytes:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _MPSC = rust.raw.MPSCPool  # type: ignore[import]
             pool = _MPSC(capacity=self._capacity)
             sender_ptr = pool.add_sender()
@@ -1599,7 +1686,7 @@ class _RustMPSCBytes:
             self._sender_ptr = sender_ptr
             self._wake_fd = wake_fd
             self.fallback = False
-            self._impl = 'rust'
+            self._impl = "rust"
             self._queue = None  # Abandon asyncio.Queue
             self._pending_retry = False
 
@@ -1633,10 +1720,10 @@ class _RustMPSCBytes:
         try to re-initialize Rust MPSC synchronously on first send().
         """
         # D4 FIX: Sync retry on first send if pending but no event loop was available
-        if self._pending_retry and self._impl != 'rust':
+        if self._pending_retry and self._impl != "rust":
             self._do_retry_init()
 
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             try:
                 return self._pool.send(self._sender_ptr, item)
             except Exception:  # noqa: BLE001
@@ -1691,7 +1778,7 @@ class _RustMPSCBytes:
         Returns True when item was queued within timeout, False on timeout
         or when the queue is permanently unavailable.
         """
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             return self.send(item)
         elif self._queue is not None:
             try:
@@ -1701,7 +1788,7 @@ class _RustMPSCBytes:
                 # D5 FIX: safe_wait_for for correct TaskGroup composition
                 await safe_wait_for(self._queue.put(item), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Queue full for timeout seconds — apply backpressure signal.
                 # No silent drop; caller receives False and can react.
                 logger.debug("evidence_mpsc_async_queue_timeout", timeout=timeout)
@@ -1710,7 +1797,7 @@ class _RustMPSCBytes:
                 return False
         return False
 
-    def recv_batch(self, max_items: int | None=None) -> list[bytes]:
+    def recv_batch(self, max_items: int | None = None) -> list[bytes]:
         """Drain up to max_items as raw bytes (non-blocking).
 
         ISSUE-006: Returns bytes directly — caller deserializes only when needed.
@@ -1719,10 +1806,10 @@ class _RustMPSCBytes:
         D4 FIX: If _pending_retry is True, try to re-initialize Rust MPSC on first recv.
         """
         # D4 FIX: Sync retry on first recv if pending but no event loop was available
-        if self._pending_retry and self._impl != 'rust':
+        if self._pending_retry and self._impl != "rust":
             self._do_retry_init()
 
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             try:
                 return self._pool.recv_batch(max_items)
             except Exception:  # noqa: BLE001
@@ -1743,14 +1830,14 @@ class _RustMPSCBytes:
         return self._wake_fd
 
     def len(self) -> int:
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             return self._pool.len()
         elif self._queue is not None:
             return self._queue.qsize()
         return 0
 
     def is_empty(self) -> bool:
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             return self._pool.is_empty()
         elif self._queue is not None:
             return self._queue.empty()
@@ -1760,6 +1847,7 @@ class _RustMPSCBytes:
     def has_async_queue(self) -> bool:
         """True when asyncio.Queue fallback is active (Rust unavailable)."""
         return self._queue is not None
+
 
 class EvidenceLog:
     """
@@ -1774,7 +1862,61 @@ class EvidenceLog:
     - Dotazování podle typu a confidence
     - Shrnutí pro Hermes (ne celý raw log)
     """
-    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager', '_warc_writer', '_warc_enabled', '_warc_paths', '_warc_init_lock', '_warc_data_lock', '_warc_archiver', '_blitz_mode', '_warc_provenance', '_warc_snippets')
+
+    __slots__ = (
+        "_run_id",
+        "_log",
+        "_index_by_type",
+        "_index_by_source",
+        "_created_at",
+        "_frozen",
+        "_closed",
+        "_total_count",
+        "_dropped_count",
+        "_seq",
+        "_chain_head",
+        "_genesis_hash",
+        "_encrypt_at_rest",
+        "_encryption_key",
+        "_cipher",
+        "_enable_persist",
+        "_persist_path",
+        "_persist_file",
+        "_persist_path_str",
+        "_mpsc",
+        "_mpsc2",
+        "_flush_task",
+        "_async_write_queue",
+        "_async_write_task",
+        "_mpsc2_reader",
+        "_db_path",
+        "_db",
+        "_initialized",
+        "_arrow_path",
+        "_arrow_writer",
+        "_arrow_schema",
+        "_closing",
+        "_manifest_dirty",
+        "_flush_shutdown",
+        "_async_write_shutdown",
+        "_cancel_event",
+        "_cancel_watcher_task",
+        "_loop",
+        "_silent_failure",
+        "_sample_rate",
+        "_duckdb_conn",
+        "_duckdb_enabled",
+        "_dlq_manager",
+        "_warc_writer",
+        "_warc_enabled",
+        "_warc_paths",
+        "_warc_init_lock",
+        "_warc_data_lock",
+        "_warc_archiver",
+        "_blitz_mode",
+        "_warc_provenance",
+        "_warc_snippets",
+    )
     MAX_RAM_EVENTS = 50
     MAX_PAYLOAD_PREVIEW = 200
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024
@@ -1787,8 +1929,8 @@ class EvidenceLog:
 
     # PHYSICS-09: Blitz mode flush thresholds — reduce I/O syscall frequency
     # during aggressive sprints. Deferred fsync at teardown is already the norm.
-    _BLITZ_FLUSH_THRESHOLD = 256       # 4× normal (was 64)
-    _BLITZ_FLUSH_INTERVAL_S = 3.0      # 2× normal (was 1.5)
+    _BLITZ_FLUSH_THRESHOLD = 256  # 4× normal (was 64)
+    _BLITZ_FLUSH_INTERVAL_S = 3.0  # 2× normal (was 1.5)
     _NORMAL_FLUSH_THRESHOLD = 64
     _NORMAL_FLUSH_INTERVAL_S = 1.5
 
@@ -1796,7 +1938,18 @@ class EvidenceLog:
     # Outer bound for the entire aclose() operation.
     DEFAULT_TIMEOUT_S = 10.0
 
-    def __init__(self, run_id: str, persist_path: Path | None=None, enable_persist: bool=True, encrypt_at_rest: bool=False, silent_failure: bool=False, sample_rate: float=1.0, cancel_event: asyncio.Event | None=None, *, blitz_mode: bool=False):
+    def __init__(
+        self,
+        run_id: str,
+        persist_path: Path | None = None,
+        enable_persist: bool = True,
+        encrypt_at_rest: bool = False,
+        silent_failure: bool = False,
+        sample_rate: float = 1.0,
+        cancel_event: asyncio.Event | None = None,
+        *,
+        blitz_mode: bool = False,
+    ) -> None:
         """
         Inicializuje EvidenceLog.
 
@@ -1820,11 +1973,19 @@ class EvidenceLog:
                         aclose(); blitz_mode just reduces the per-batch syscalls.
         """
         import os
+
         self._run_id: str = run_id
         self._silent_failure: bool = silent_failure
-        self._sample_rate: float = ENV.get_float('HLEDAC_EVIDENCE_SAMPLE_RATE', default=sample_rate)
+        self._sample_rate: float = ENV.get_float("HLEDAC_EVIDENCE_SAMPLE_RATE", default=sample_rate)
         self._log: deque = deque(maxlen=self.MAX_RAM_EVENTS)
-        self._index_by_type: dict[str, deque[int]] = {'tool_call': deque(maxlen=self.MAX_RAM_EVENTS), 'observation': deque(maxlen=self.MAX_RAM_EVENTS), 'synthesis': deque(maxlen=self.MAX_RAM_EVENTS), 'error': deque(maxlen=self.MAX_RAM_EVENTS), 'decision': deque(maxlen=self.MAX_RAM_EVENTS), 'evidence_packet': deque(maxlen=self.MAX_RAM_EVENTS)}
+        self._index_by_type: dict[str, deque[int]] = {
+            "tool_call": deque(maxlen=self.MAX_RAM_EVENTS),
+            "observation": deque(maxlen=self.MAX_RAM_EVENTS),
+            "synthesis": deque(maxlen=self.MAX_RAM_EVENTS),
+            "error": deque(maxlen=self.MAX_RAM_EVENTS),
+            "decision": deque(maxlen=self.MAX_RAM_EVENTS),
+            "evidence_packet": deque(maxlen=self.MAX_RAM_EVENTS),
+        }
         self._index_by_source: dict[str, deque[int]] = {}
         self._created_at: datetime = datetime.now(UTC)
         self._frozen: bool = False
@@ -1832,11 +1993,11 @@ class EvidenceLog:
         self._total_count: int = 0
         self._dropped_count: int = 0
         self._seq: int = 0
-        self._chain_head: str = ''
-        self._genesis_hash: str = hashlib.sha256(f'GENESIS:{run_id}'.encode()).hexdigest()
+        self._chain_head: str = ""
+        self._genesis_hash: str = hashlib.sha256(f"GENESIS:{run_id}".encode()).hexdigest()
         self._chain_head = self._genesis_hash
-        self._encrypt_at_rest = encrypt_at_rest or os.environ.get('ENCRYPT_AT_REST', '0') == '1'
-        self._encryption_key = os.environ.get('ENCRYPTION_KEY', '').encode() if self._encrypt_at_rest else None
+        self._encrypt_at_rest = encrypt_at_rest or os.environ.get("ENCRYPT_AT_REST", "0") == "1"
+        self._encryption_key = os.environ.get("ENCRYPTION_KEY", "").encode() if self._encrypt_at_rest else None
         if self._encrypt_at_rest:
             logger.info("encryption_enabled", target="evidence")
             self._init_encryption()
@@ -1849,15 +2010,21 @@ class EvidenceLog:
         if enable_persist:
             if persist_path is None:
                 from hledac.universal.paths import EVIDENCE_ROOT
+
                 evidence_dir = EVIDENCE_ROOT
                 evidence_dir.mkdir(parents=True, exist_ok=True)
-                ext = '.enc' if self._encrypt_at_rest else '.jsonl'
-                self._persist_path = evidence_dir / f'{run_id}{ext}'
+                ext = ".enc" if self._encrypt_at_rest else ".jsonl"
+                self._persist_path = evidence_dir / f"{run_id}{ext}"
             else:
                 self._persist_path = Path(persist_path)
                 self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._persist_file = open(self._persist_path, 'ab' if self._encrypt_at_rest else 'a', encoding='utf-8' if not self._encrypt_at_rest else None, buffering=8192)
+                self._persist_file = open(
+                    self._persist_path,
+                    "ab" if self._encrypt_at_rest else "a",
+                    encoding="utf-8" if not self._encrypt_at_rest else None,
+                    buffering=8192,
+                )
                 self._persist_path_str = str(self._persist_path)
                 logger.debug("evidence_log_persistence", persist_path=str(self._persist_path))
             except Exception as e:  # noqa: BLE001
@@ -1877,10 +2044,6 @@ class EvidenceLog:
         self._arrow_schema: Any = None
         self._closing = False
         self._manifest_dirty: bool = False
-        # E2: Bare asyncio.Event() replaced with lifecycle-bound shutdown via cancel_event.
-        # _flush_shutdown and _async_write_shutdown are still used by aclose() to signal
-        # workers to drain, but a watcher on cancel_event auto-triggers aclose() when
-        # the sprint lifecycle ends (even if aclose() is never called explicitly).
         self._flush_shutdown: asyncio.Event = asyncio.Event()
         self._async_write_shutdown: asyncio.Event = asyncio.Event()
         self._cancel_event: asyncio.Event | None = cancel_event
@@ -1893,7 +2056,7 @@ class EvidenceLog:
         self._dlq_manager: Any = None
         # ISSUE-P8-001: WARC writer for raw HTTP response archival
         self._warc_writer: WARCWriter | None = None
-        self._warc_enabled: bool = ENV.get_bool('HLEDAC_WARC_ENABLED', default=False)
+        self._warc_enabled: bool = ENV.get_bool("HLEDAC_WARC_ENABLED", default=False)
         self._warc_paths: list[str] = []
         # ISSUE [FINAL]-019-04: In-memory provenance list for WARC records
         self._warc_provenance: list[WarcWriteResult] = []
@@ -1918,7 +2081,7 @@ class EvidenceLog:
 
     def _sync_close(self) -> None:
         """Synchronous cleanup: cancel flush task, close Arrow writer, sync persist."""
-        if not hasattr(self, '_flush_task'):
+        if not hasattr(self, "_flush_task"):
             return
         if self._flush_task is not None and (not self._flush_task.done()):
             self._flush_task.cancel()
@@ -1938,7 +2101,7 @@ class EvidenceLog:
             except Exception:  # noqa: BLE001
                 pass
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup — synchronous resources only.
 
         F285-RESOURCE FIX: __del__ now calls _sync_close() which handles:
@@ -1966,16 +2129,21 @@ class EvidenceLog:
         """Cancel any existing flush and write tasks."""
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
-            try: await safe_wait_for(self._flush_task, timeout=1.0, label='_flush_task')
-            except (TimeoutError, asyncio.CancelledError): pass
+            try:
+                await safe_wait_for(self._flush_task, timeout=1.0, label="_flush_task")
+            except TimeoutError, asyncio.CancelledError:
+                pass
             self._flush_task = None
         if self._async_write_task and not self._async_write_task.done():
             self._async_write_task.cancel()
-            try: await safe_wait_for(self._async_write_task, timeout=1.0, label='_async_write_task')
-            except (TimeoutError, asyncio.CancelledError): pass
+            try:
+                await safe_wait_for(self._async_write_task, timeout=1.0, label="_async_write_task")
+            except TimeoutError, asyncio.CancelledError:
+                pass
             self._async_write_task = None
         if self._mpsc2_reader:
-            try: self._mpsc2_reader.close()
+            try:
+                self._mpsc2_reader.close()
             except Exception:  # noqa: BLE001 — best-effort; mpsc2 reader close failure; non-critical
                 logger.debug("Failed to close mpsc2 reader: %s", type(e).__name__, exc_info=True)
             self._mpsc2_reader = None
@@ -1993,15 +2161,16 @@ class EvidenceLog:
 
     async def _init_post_migration(self) -> None:
         """Initialize workers and resources after DB init."""
-        for task_name, worker in [('_flush_task', self._flush_worker), ('_async_write_task', self._async_write_worker)]:
+        for task_name, worker in [("_flush_task", self._flush_worker), ("_async_write_task", self._async_write_worker)]:
             try:
-                setattr(self, f'_{task_name}', safe_create_task(worker()))
+                setattr(self, f"_{task_name}", safe_create_task(worker()))
             except Exception as e:
                 logger.warning(f"f11c_{task_name}_creation_failed_non_fatal", error=str(e))
-                setattr(self, f'_{task_name}', None)
+                setattr(self, f"_{task_name}", None)
         self._start_cancel_watcher()
         try:
             from hledac.universal._core.dlq_manager import get_dlq_manager
+
             self._dlq_manager = get_dlq_manager()
         except Exception:  # noqa: BLE001
             self._dlq_manager = None
@@ -2015,15 +2184,19 @@ class EvidenceLog:
 
     async def initialize(self) -> None:
         """Initialize async SQLite components. Idempotent."""
-        try: self._loop = asyncio.get_running_loop()
-        except RuntimeError: self._loop = None
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         await self._cancel_existing_tasks()
         if self._initialized:
             self._restart_workers()
             return
         await self._init_db()
-        try: await self._migrate_from_file()
-        except Exception as e: logger.warning("f11c_migration_from_jsonl_failed_non_fatal", error=str(e))
+        try:
+            await self._migrate_from_file()
+        except Exception as e:
+            logger.warning("f11c_migration_from_jsonl_failed_non_fatal", error=str(e))
         await self._init_post_migration()
 
     def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
@@ -2056,9 +2229,10 @@ class EvidenceLog:
         """
         if self._db_path is None:
             from hledac.universal.paths import EVIDENCE_ROOT
+
             evidence_dir = EVIDENCE_ROOT
             evidence_dir.mkdir(parents=True, exist_ok=True)
-            self._db_path = evidence_dir / f'{self._run_id}.db'
+            self._db_path = evidence_dir / f"{self._run_id}.db"
 
         # ISSUE-11: DuckDB Arrow IPC path
         # SWARM-010: Use FeatureFlags for registry compliance
@@ -2066,7 +2240,8 @@ class EvidenceLog:
         if use_duckdb:
             try:
                 import duckdb
-                self._duckdb_conn = duckdb.connect(str(self._db_path).replace('.db', '.duckdb'), read_only=False)
+
+                self._duckdb_conn = duckdb.connect(str(self._db_path).replace(".db", ".duckdb"), read_only=False)
                 # M1 8GB: memory_limit + threads + preserve_insertion_order
                 try:
                     self._duckdb_conn.execute("SET memory_limit = '256MB'")
@@ -2074,7 +2249,7 @@ class EvidenceLog:
                     self._duckdb_conn.execute("SET preserve_insertion_order = false")
                 except Exception:  # noqa: BLE001 — fail-soft
                     pass
-                self._duckdb_conn.execute('''
+                self._duckdb_conn.execute("""
                     CREATE TABLE IF NOT EXISTS events (
                         id INTEGER PRIMARY KEY,
                         timestamp DOUBLE NOT NULL,
@@ -2084,7 +2259,7 @@ class EvidenceLog:
                         prev_chain_hash VARCHAR,
                         chain_hash VARCHAR
     )
-                ''')
+                """)
                 self._duckdb_enabled = True
                 logger.info("duckdb_arrow_ipc_evidence_enabled", db_path=str(self._db_path))
                 _ensure_duckdb_executor()
@@ -2097,19 +2272,19 @@ class EvidenceLog:
         if not self._duckdb_enabled:
             self._db = await aiosqlite.connect(str(self._db_path), check_same_thread=False)
             # Batch PRAGMA: single round-trip instead of 6 sequential executes
-            await self._db.executescript('''
+            await self._db.executescript("""
                 PRAGMA busy_timeout=30000;
                 PRAGMA journal_mode=WAL;
                 PRAGMA synchronous=NORMAL;
                 PRAGMA wal_autocheckpoint=1000;
                 PRAGMA cache_size=-8192;
                 PRAGMA read_uncommitted=1;
-            ''')
+            """)
             try:
-                await self._db.execute('PRAGMA integrity_check')
+                await self._db.execute("PRAGMA integrity_check")
             except Exception:  # noqa: BLE001
                 pass
-            await self._db.execute('''
+            await self._db.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp REAL NOT NULL,
@@ -2119,7 +2294,7 @@ class EvidenceLog:
                     prev_chain_hash TEXT,
                     chain_hash TEXT
     )
-            ''')
+            """)
             await self._db.commit()
             _ensure_evidence_sqlite_executor()
 
@@ -2127,9 +2302,19 @@ class EvidenceLog:
         if arrow_loader:
             pa, ipc = arrow_loader
             from hledac.universal.paths import EVIDENCE_ROOT
+
             evidence_dir = EVIDENCE_ROOT
-            self._arrow_path = evidence_dir / f'{self._run_id}.arrow'
-            self._arrow_schema = pa.schema([('timestamp', pa.float64()), ('event_type', pa.string()), ('data', pa.string()), ('hash', pa.string()), ('prev_chain_hash', pa.string()), ('chain_hash', pa.string())])
+            self._arrow_path = evidence_dir / f"{self._run_id}.arrow"
+            self._arrow_schema = pa.schema(
+                [
+                    ("timestamp", pa.float64()),
+                    ("event_type", pa.string()),
+                    ("data", pa.string()),
+                    ("hash", pa.string()),
+                    ("prev_chain_hash", pa.string()),
+                    ("chain_hash", pa.string()),
+                ]
+            )
             self._arrow_writer = ipc.new_file(str(self._arrow_path), self._arrow_schema)
             logger.info("arrow_ipc_enabled", arrow_path=str(self._arrow_path))
 
@@ -2145,28 +2330,31 @@ class EvidenceLog:
         if self._persist_path is None or not self._persist_path.exists():
             return
         old_file = self._persist_path
-        migrated_file = old_file.with_suffix('.migrated')
+        migrated_file = old_file.with_suffix(".migrated")
         if migrated_file.exists():
             return
         if self._db is None:
             return
         try:
             migrated_file.touch(exist_ok=True)
-            await self._db.execute('BEGIN TRANSACTION')
+            await self._db.execute("BEGIN TRANSACTION")
             try:
-                with open(old_file, encoding='utf-8') as f:
+                with open(old_file, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
                             continue
                         data = orjson.loads(line)
-                        timestamp = datetime.fromisoformat(data['timestamp']).timestamp()
-                        event_type = data['event_type']
+                        timestamp = datetime.fromisoformat(data["timestamp"]).timestamp()
+                        event_type = data["event_type"]
                         event_data = orjson.dumps(data).decode()
-                        content_hash = data.get('content_hash', '')
-                        prev_chain_hash = data.get('prev_chain_hash', '')
-                        chain_hash = data.get('chain_hash', '')
-                        await self._db.execute('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', (timestamp, event_type, event_data, content_hash, prev_chain_hash, chain_hash))
+                        content_hash = data.get("content_hash", "")
+                        prev_chain_hash = data.get("prev_chain_hash", "")
+                        chain_hash = data.get("chain_hash", "")
+                        await self._db.execute(
+                            "INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                            (timestamp, event_type, event_data, content_hash, prev_chain_hash, chain_hash),
+                        )
                 await self._db.commit()
             except Exception:
                 await self._db.rollback()
@@ -2197,10 +2385,7 @@ class EvidenceLog:
         _adaptive_batch_size: int = self._SQLITE_BATCH_SIZE  # Start with default, adapt on first flush
         _events_since_last_flush: int = 0
         # PHYSICS-09: Use blitz flush interval when in blitz mode
-        _flush_interval = (
-            self._BLITZ_FLUSH_INTERVAL_S if self._blitz_mode
-            else self._SQLITE_FLUSH_INTERVAL
-    )
+        _flush_interval = self._BLITZ_FLUSH_INTERVAL_S if self._blitz_mode else self._SQLITE_FLUSH_INTERVAL
         while True:
             try:
                 async with asyncio.timeout(1.0):
@@ -2227,18 +2412,20 @@ class EvidenceLog:
                     # CancelledError propagates after the batch write completes.
                     await asyncio.shield(self._flush_batch_bytes(batch))
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                    trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
+                    trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
                 except asyncio.CancelledError:
                     # Outer CancelledError — flush completed but shutdown was requested.
                     # Re-raise so the worker loop exits cleanly after the shielded write.
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                    logger.warning("flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms)
-                    trace_evidence_flush(len(batch), flush_latency_ms, 'cancelled', 0)
+                    logger.warning(
+                        "flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms
+                    )
+                    trace_evidence_flush(len(batch), flush_latency_ms, "cancelled", 0)
                     raise
                 except Exception as _flush_err:  # noqa: BLE001
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     logger.warning("flush_batch_failed_dropping_events", batch_size=len(batch), error=str(_flush_err))
-                    trace_evidence_flush(len(batch), flush_latency_ms, 'flush_error', 0)
+                    trace_evidence_flush(len(batch), flush_latency_ms, "flush_error", 0)
                 batch = []
                 last_flush = datetime.now(UTC)
                 _events_since_last_flush = 0  # P2-03: Reset after flush
@@ -2250,11 +2437,13 @@ class EvidenceLog:
             try:
                 await asyncio.shield(self._flush_batch_bytes(batch))
                 flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
+                trace_evidence_flush(len(batch), flush_latency_ms, "ok", len(batch))
             except asyncio.CancelledError:
                 flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                logger.warning("flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms)
-                trace_evidence_flush(len(batch), flush_latency_ms, 'cancelled', 0)
+                logger.warning(
+                    "flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms
+                )
+                trace_evidence_flush(len(batch), flush_latency_ms, "cancelled", 0)
                 raise
 
     def _sync_write_fallback(self, line: str, bytes_to_write: bytes) -> None:
@@ -2267,7 +2456,7 @@ class EvidenceLog:
             if self._encrypt_at_rest:
                 self._persist_file.write(bytes_to_write)
             else:
-                self._persist_file.write(line + '\n')
+                self._persist_file.write(line + "\n")
             self._persist_file.flush()
 
     def _mpsc2_drain_callback(self) -> None:
@@ -2279,21 +2468,22 @@ class EvidenceLog:
         The callback exists solely to break the worker out of asyncio.timeout()
         so it can immediately drain via recv_batch().
         """
-        pass
 
     async def _open_aiofile(self) -> object | None:
         """Open aiofiles handle with fallback to sync."""
         import aiofiles as _af
+
         try:
-            return await _af.open(self._persist_path_str, 'ab', buffering=8192)
+            return await _af.open(self._persist_path_str, "ab", buffering=8192)
         except Exception as e:
             logger.warning("f290_aiofiles_open_failed_using_sync_fallback", error=str(e))
             return None
 
     async def _flush_write_buf(self, buf: list[bytes], afile) -> None:
         """Flush write buffer to file."""
-        if not buf: return
-        data = b''.join(buf)
+        if not buf:
+            return
+        data = b"".join(buf)
         if afile:
             try:
                 await afile.write(data)
@@ -2307,8 +2497,8 @@ class EvidenceLog:
     def _sync_write_buf(self, buf: list[bytes]) -> None:
         """Sync fallback write."""
         try:
-            with open(cast(str, self._persist_path_str), 'ab') as f:
-                f.write(b''.join(buf))
+            with open(cast(str, self._persist_path_str), "ab") as f:
+                f.write(b"".join(buf))
         except Exception:  # noqa: BLE001
             pass
 
@@ -2317,18 +2507,27 @@ class EvidenceLog:
         if remaining := self._mpsc2.recv_batch(max_items=None):
             buf.extend(remaining)
         if buf:
-            try: await asyncio.shield(self._flush_write_buf(buf, afile))
+            try:
+                await asyncio.shield(self._flush_write_buf(buf, afile))
             except asyncio.CancelledError:
-                logger.warning("async_write_worker_cancelled_during_final_flush", pending_bytes=sum(len(b) for b in buf))
-                buf.clear(); raise
+                logger.warning(
+                    "async_write_worker_cancelled_during_final_flush", pending_bytes=sum(len(b) for b in buf)
+                )
+                buf.clear()
+                raise
 
     async def _async_write_worker(self) -> None:
         """Background worker that writes JSONL entries asynchronously using aiofiles."""
-        afile, threshold, buf = await self._open_aiofile(), self._BLITZ_FLUSH_THRESHOLD if self._blitz_mode else self._NORMAL_FLUSH_THRESHOLD, []
+        afile, threshold, buf = (
+            await self._open_aiofile(),
+            self._BLITZ_FLUSH_THRESHOLD if self._blitz_mode else self._NORMAL_FLUSH_THRESHOLD,
+            [],
+        )
         while True:
             batch = self._mpsc2.recv_batch(max_items=1 if self._mpsc2.has_async_queue else None)
             if not batch:
-                if self._async_write_shutdown.is_set(): break
+                if self._async_write_shutdown.is_set():
+                    break
                 if self._mpsc2.has_async_queue:
                     await asyncio.sleep(0.05)
                     continue
@@ -2337,16 +2536,22 @@ class EvidenceLog:
                         pass
                 except TimeoutError:
                     pass
-                if self._async_write_shutdown.is_set(): break
+                if self._async_write_shutdown.is_set():
+                    break
                 continue
             if batch:
                 buf.extend(batch)
                 if len(buf) >= threshold:
-                    try: await asyncio.shield(self._flush_write_buf(buf, afile))
-                    except asyncio.CancelledError: buf.clear(); raise
-            if not self._mpsc2.has_async_queue and not self._mpsc2.is_empty(): continue
+                    try:
+                        await asyncio.shield(self._flush_write_buf(buf, afile))
+                    except asyncio.CancelledError:
+                        buf.clear()
+                        raise
+            if not self._mpsc2.has_async_queue and not self._mpsc2.is_empty():
+                continue
         await self._drain_and_flush(buf, afile)
         await aclose(afile)
+
     _ARROW_SUB_BATCH = 256
 
     async def _flush_batch_bytes(self, batch: list[bytes]) -> None:
@@ -2384,14 +2589,14 @@ class EvidenceLog:
                 if not decoded_batch:
                     return
                 for i in range(0, len(decoded_batch), self._ARROW_SUB_BATCH):
-                    sub = decoded_batch[i:i + self._ARROW_SUB_BATCH]
+                    sub = decoded_batch[i : i + self._ARROW_SUB_BATCH]
                     arrays = [
-                        pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),
-                        pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()),
-                        pa.array([orjson.dumps(e.get('data', {})) for e in sub], type=pa.string()),
-                        pa.array([e.get('content_hash', '') for e in sub], type=pa.string()),
-                        pa.array([e.get('prev_chain_hash', '') for e in sub], type=pa.string()),
-                        pa.array([e.get('chain_hash', '') for e in sub], type=pa.string()),
+                        pa.array([e.get("timestamp", datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),
+                        pa.array([e.get("event_type", "unknown") for e in sub], type=pa.string()),
+                        pa.array([orjson.dumps(e.get("data", {})) for e in sub], type=pa.string()),
+                        pa.array([e.get("content_hash", "") for e in sub], type=pa.string()),
+                        pa.array([e.get("prev_chain_hash", "") for e in sub], type=pa.string()),
+                        pa.array([e.get("chain_hash", "") for e in sub], type=pa.string()),
                     ]
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
@@ -2427,13 +2632,19 @@ class EvidenceLog:
                 # event tuple: (event_id, event_type, timestamp, payload_bytes, source_ids,
                 #               confidence, content_hash, run_id, seq_no, prev_chain_hash, chain_hash)
                 timestamp = event[2] if len(event) > 2 else datetime.now(UTC).timestamp()
-                event_type = event[1] if len(event) > 1 else 'unknown'
-                payload_bytes = event[3] if len(event) > 3 else b''
-                payload_str = payload_bytes.decode('utf-8', errors='replace') if isinstance(payload_bytes, bytes) else str(payload_bytes)
-                content_hash = event[6] if len(event) > 6 else ''
+                event_type = event[1] if len(event) > 1 else "unknown"
+                payload_bytes = event[3] if len(event) > 3 else b""
+                payload_str = (
+                    payload_bytes.decode("utf-8", errors="replace")
+                    if isinstance(payload_bytes, bytes)
+                    else str(payload_bytes)
+                )
+                content_hash = event[6] if len(event) > 6 else ""
                 prev_chain_hash = event[9] if len(event) > 9 else None
                 chain_hash = event[10] if len(event) > 10 else None
-                records.append((timestamp, event_type, payload_str, content_hash, prev_chain_hash or '', chain_hash or ''))
+                records.append(
+                    (timestamp, event_type, payload_str, content_hash, prev_chain_hash or "", chain_hash or "")
+                )
             except Exception:  # noqa: BLE001
                 logger.debug("flush_batch_batch_item_failed_skipping", exc_info=True)
                 continue
@@ -2451,9 +2662,9 @@ class EvidenceLog:
             """
             try:
                 self._duckdb_conn.executemany(
-                    'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
+                    "INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)",
                     records,
-    )
+                )
                 self._duckdb_conn.commit()
             except Exception as e:  # noqa: BLE001
                 logger.warning("flush_duckdb_batch_executemany_failed", error=str(e))
@@ -2482,12 +2693,14 @@ class EvidenceLog:
             try:
                 event = msgspec.msgpack.decode(b)
                 timestamp = event[2] if len(event) > 2 else datetime.now(UTC).timestamp()
-                event_type = event[1] if len(event) > 1 else 'unknown'
-                payload_bytes = event[3] if len(event) > 3 else b''
-                content_hash = event[6] if len(event) > 6 else ''
+                event_type = event[1] if len(event) > 1 else "unknown"
+                payload_bytes = event[3] if len(event) > 3 else b""
+                content_hash = event[6] if len(event) > 6 else ""
                 prev_chain_hash = event[9] if len(event) > 9 else None
                 chain_hash = event[10] if len(event) > 10 else None
-                records.append((timestamp, event_type, payload_bytes, content_hash, prev_chain_hash or '', chain_hash or ''))
+                records.append(
+                    (timestamp, event_type, payload_bytes, content_hash, prev_chain_hash or "", chain_hash or "")
+                )
             except Exception:  # noqa: BLE001
                 logger.debug("write_payload_encoding_failed_skipping", exc_info=True)
                 continue
@@ -2496,20 +2709,21 @@ class EvidenceLog:
             return
 
         loop = asyncio.get_running_loop()
-        db_path = str(self._db_path) if self._db_path else ''
+        db_path = str(self._db_path) if self._db_path else ""
 
         def _sqlite_insert() -> None:
             """Synchronous SQLite insert — runs on ThreadPoolExecutor, no GIL."""
             import sqlite3
+
             try:
-                conn = sqlite3.connect(db_path or ':memory:', timeout=30.0)
-                conn.execute('PRAGMA busy_timeout=30000')
-                conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('PRAGMA synchronous=NORMAL')
+                conn = sqlite3.connect(db_path or ":memory:", timeout=30.0)
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executemany(
-                    'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
-                    records
-    )
+                    "INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                    records,
+                )
                 conn.commit()
                 conn.close()
             except Exception as e:  # noqa: BLE001
@@ -2535,8 +2749,15 @@ class EvidenceLog:
             pa, _ = arrow_loader
             try:
                 for i in range(0, len(batch), self._ARROW_SUB_BATCH):
-                    sub = batch[i:i + self._ARROW_SUB_BATCH]
-                    arrays = [pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()), pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()), pa.array([orjson.dumps(e.get('data', {})) for e in sub], type=pa.string()), pa.array([e.get('content_hash', '') for e in sub], type=pa.string()), pa.array([e.get('prev_chain_hash', '') for e in sub], type=pa.string()), pa.array([e.get('chain_hash', '') for e in sub], type=pa.string())]
+                    sub = batch[i : i + self._ARROW_SUB_BATCH]
+                    arrays = [
+                        pa.array([e.get("timestamp", datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),
+                        pa.array([e.get("event_type", "unknown") for e in sub], type=pa.string()),
+                        pa.array([orjson.dumps(e.get("data", {})) for e in sub], type=pa.string()),
+                        pa.array([e.get("content_hash", "") for e in sub], type=pa.string()),
+                        pa.array([e.get("prev_chain_hash", "") for e in sub], type=pa.string()),
+                        pa.array([e.get("chain_hash", "") for e in sub], type=pa.string()),
+                    ]
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
                 return
@@ -2544,29 +2765,33 @@ class EvidenceLog:
                 logger.warning("arrow_ipc_write_failed_sqlite_fallback", error=str(e))
         records = []
         for event_data in batch:
-            timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())
-            event_type = event_data.get('event_type', 'unknown')
+            timestamp = event_data.get("timestamp", datetime.now(UTC).timestamp())
+            event_type = event_data.get("event_type", "unknown")
             data = orjson.dumps(event_data).decode()
-            content_hash = event_data.get('content_hash', '')
-            prev_chain_hash = event_data.get('prev_chain_hash', '')
-            chain_hash = event_data.get('chain_hash', '')
+            content_hash = event_data.get("content_hash", "")
+            prev_chain_hash = event_data.get("prev_chain_hash", "")
+            chain_hash = event_data.get("chain_hash", "")
             records.append((timestamp, event_type, data, content_hash, prev_chain_hash, chain_hash))
         db = self._db
         if db is None:
             return
-        if not hasattr(db, 'executemany'):
+        if not hasattr(db, "executemany"):
             logger.warning("evidence_log_db_not_aiosqlite_connection")
             return
-        await db.executemany('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', records)
+        await db.executemany(
+            "INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            records,
+        )
         await db.commit()
 
-    def _init_encryption(self):
+    def _init_encryption(self) -> None:
         """Initialize encryption cipher."""
         if not self._encryption_key:
             self._encryption_key = secrets.token_bytes(32)
             logger.warning("encrypt_no_key_env_using_temporary")
         try:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
             self._cipher = (Cipher, algorithms, modes)
         except ImportError:
             logger.warning("encrypt_cryptography_not_available_disabled")
@@ -2584,18 +2809,18 @@ class EvidenceLog:
             return payload
         trimmed = {}
         for key, value in payload.items():
-            large_fields = {'content', 'fulltext', 'html', 'body', 'text', 'raw_data', 'document', 'finding_text'}
+            large_fields = {"content", "fulltext", "html", "body", "text", "raw_data", "document", "finding_text"}
             if key in large_fields and isinstance(value, str):
                 if len(value) > self.MAX_PAYLOAD_PREVIEW:
-                    preview = value[:self.MAX_PAYLOAD_PREVIEW] + '...'
+                    preview = value[: self.MAX_PAYLOAD_PREVIEW] + "..."
                     content_hash = hashlib.sha256(value.encode()).hexdigest()[:16]
-                    trimmed[key] = f'[preview:{content_hash}] {preview}'
+                    trimmed[key] = f"[preview:{content_hash}] {preview}"
                 else:
                     trimmed[key] = value
             elif isinstance(value, dict):
                 trimmed[key] = self._trim_payload(value)
             elif isinstance(value, list) and len(value) > 10:
-                trimmed[key] = value[:10] + [f'... ({len(value) - 10} more)']
+                trimmed[key] = value[:10] + [f"... ({len(value) - 10} more)"]
             else:
                 trimmed[key] = value
         return trimmed
@@ -2646,42 +2871,52 @@ class EvidenceLog:
     def _send_to_mpsc(self, event: EvidenceEvent) -> None:
         """Send event to MPSC channels."""
         queue_size = self._mpsc.len()
-        trace_evidence_append(event.event_type, queue_size, 'queued')
+        trace_evidence_append(event.event_type, queue_size, "queued")
         if self._initialized and self._flush_task and not self._flush_task.done() and not self._closing:
             _sent = self._mpsc.send(event.to_bytes())
             if not _sent:
                 logger.warning("mpsc_pool_full_fallback_to_sync_write")
-                trace_queue_drop('mpsc_pool', queue_size + 1)
+                trace_queue_drop("mpsc_pool", queue_size + 1)
         elif not self._initialized and self._db is not None:
             _event_dict = event.to_dict()
             try:
-                def _sync_insert():
+
+                def _sync_insert() -> None:
                     import sqlite3
+
                     db_path = str(self._db_path)
                     conn = sqlite3.connect(db_path, timeout=30.0)
-                    conn.executescript('''
+                    conn.executescript("""
                         PRAGMA busy_timeout=30000; PRAGMA journal_mode=WAL;
                         PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA cache_size=-8192;
-                    ''')
+                    """)
                     conn.execute(
-                        'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
-                        (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'),
-                         orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', ''),
-                         _event_dict.get('prev_chain_hash', ''), _event_dict.get('chain_hash', '')))
+                        "INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            _event_dict.get("timestamp", 0.0),
+                            _event_dict.get("event_type", "unknown"),
+                            orjson.dumps(_event_dict).decode(),
+                            _event_dict.get("content_hash", ""),
+                            _event_dict.get("prev_chain_hash", ""),
+                            _event_dict.get("chain_hash", ""),
+                        ),
+                    )
                     conn.commit()
                     conn.close()
+
                 threading.Thread(target=_sync_insert, daemon=True).start()
-                trace_evidence_append(event.event_type, 0, 'sync_sqlite')
+                trace_evidence_append(event.event_type, 0, "sync_sqlite")
             except Exception:
                 logger.debug("f11c_sync_sqlite_fallback_failed_non_fatal")
 
     def _persist_event(self, event: EvidenceEvent) -> None:
         """Persist event to JSONL with optional encryption."""
         line = event.to_jsonl_line()
-        bytes_to_write = line.encode('utf-8') + b'\n'
+        bytes_to_write = line.encode("utf-8") + b"\n"
         if self._encrypt_at_rest and self._cipher and self._encryption_key:
             try:
                 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
                 nonce = secrets.token_bytes(12)
                 cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
                 encryptor = cipher.encryptor()
@@ -2697,12 +2932,19 @@ class EvidenceLog:
             if self._dlq_manager:
                 try:
                     self._dlq_manager.store_payload(
-                        payload_data=event.to_bytes(), sprint_id=self._run_id,
-                        source="evidence_log.append", error=e,
-                        metadata={'event_id': event.event_id, 'event_type': event.event_type, 'timestamp': event.timestamp})
+                        payload_data=event.to_bytes(),
+                        sprint_id=self._run_id,
+                        source="evidence_log.append",
+                        error=e,
+                        metadata={
+                            "event_id": event.event_id,
+                            "event_type": event.event_type,
+                            "timestamp": event.timestamp,
+                        },
+                    )
                 except Exception:
                     pass
-            raise RuntimeError(f'EvidenceLog SWAL write failed: {e}') from e
+            raise RuntimeError(f"EvidenceLog SWAL write failed: {e}") from e
 
     def _update_indexes(self, event: EvidenceEvent) -> None:
         """Update in-memory indexes for an event."""
@@ -2727,31 +2969,36 @@ class EvidenceLog:
         """Record event to analytics if applicable."""
         try:
             from hledac.universal.knowledge.analytics_hook import shadow_record_finding
-            if event.event_type == 'evidence_packet':
+
+            if event.event_type == "evidence_packet":
                 payload = event.payload_dict if event.payload else {}
-                _corr = payload.get('_correlation')
+                _corr = payload.get("_correlation")
                 shadow_record_finding(
-                    finding_id=event.event_id, query=payload.get('query', ''),
-                    source_type='evidence_packet', confidence=event.confidence,
-                    run_id=event.run_id, url=payload.get('url'), title=payload.get('title'),
-                    source=payload.get('source'), relevance_score=payload.get('relevance_score'),
-                    branch_id=_corr.get('branch_id') if _corr else None,
-                    provider_id=_corr.get('provider_id') if _corr else None,
-                    action_id=_corr.get('action_id') if _corr else None)
+                    finding_id=event.event_id,
+                    query=payload.get("query", ""),
+                    source_type="evidence_packet",
+                    confidence=event.confidence,
+                    run_id=event.run_id,
+                    url=payload.get("url"),
+                    title=payload.get("title"),
+                    source=payload.get("source"),
+                    relevance_score=payload.get("relevance_score"),
+                    branch_id=_corr.get("branch_id") if _corr else None,
+                    provider_id=_corr.get("provider_id") if _corr else None,
+                    action_id=_corr.get("action_id") if _corr else None,
+                )
         except Exception:
             pass
 
     def _compute_chain_hash(self, prev_hash: str | None, content_hash: str, event_id: str) -> str:
         """Compute chain hash for an event."""
-        chain_input = f'{prev_hash}:{content_hash}:{event_id}'
+        chain_input = f"{prev_hash}:{content_hash}:{event_id}"
         return hashlib.sha256(chain_input.encode()).hexdigest()
 
     def _update_chain_state(self, event: EvidenceEvent) -> None:
         """Update event with chain state and update internal chain head."""
         event.prev_chain_hash = self._chain_head
-        event.chain_hash = self._compute_chain_hash(
-            self._chain_head, event.content_hash, event.event_id
-    )
+        event.chain_hash = self._compute_chain_hash(self._chain_head, event.content_hash, event.event_id)
         self._chain_head = event.chain_hash
 
     def append(self, event: EvidenceEvent) -> None:
@@ -2765,7 +3012,6 @@ class EvidenceLog:
             self._persist_event(event)
         event.payload = self._trim_payload_fast(event.payload)
         event.content_hash = event.calculate_hash()
-        # Update chain hash after content change
         self._update_chain_state(event)
         self._update_indexes(event)
         self._record_analytics(event)
@@ -2775,16 +3021,24 @@ class EvidenceLog:
         if self._silent_failure:
             return
         if self._frozen:
-            raise RuntimeError('Cannot append to frozen EvidenceLog')
+            raise RuntimeError("Cannot append to frozen EvidenceLog")
         if self._closed:
-            raise RuntimeError('Cannot append to closed EvidenceLog')
+            raise RuntimeError("Cannot append to closed EvidenceLog")
         if self._closing:
-            raise RuntimeError('Cannot append while EvidenceLog is closing')
+            raise RuntimeError("Cannot append while EvidenceLog is closing")
         if event.run_id != self._run_id:
-            raise ValueError(f"Event run_id mismatch")
+            raise ValueError("Event run_id mismatch")
+
     def _rebuild_indexes(self) -> None:
         """Přebuduj indexy po vyřazení z ring bufferu."""
-        self._index_by_type = {'tool_call': deque(maxlen=self.MAX_RAM_EVENTS), 'observation': deque(maxlen=self.MAX_RAM_EVENTS), 'synthesis': deque(maxlen=self.MAX_RAM_EVENTS), 'error': deque(maxlen=self.MAX_RAM_EVENTS), 'decision': deque(maxlen=self.MAX_RAM_EVENTS), 'evidence_packet': deque(maxlen=self.MAX_RAM_EVENTS)}
+        self._index_by_type = {
+            "tool_call": deque(maxlen=self.MAX_RAM_EVENTS),
+            "observation": deque(maxlen=self.MAX_RAM_EVENTS),
+            "synthesis": deque(maxlen=self.MAX_RAM_EVENTS),
+            "error": deque(maxlen=self.MAX_RAM_EVENTS),
+            "decision": deque(maxlen=self.MAX_RAM_EVENTS),
+            "evidence_packet": deque(maxlen=self.MAX_RAM_EVENTS),
+        }
         self._index_by_source = {}
         for i, event in enumerate(self._log):
             self._index_by_type[event.event_type].append(i)
@@ -2793,7 +3047,14 @@ class EvidenceLog:
                     self._index_by_source[source_id] = deque(maxlen=self.MAX_RAM_EVENTS)
                 self._index_by_source[source_id].append(i)
 
-    def create_event(self, event_type: Literal['tool_call', 'observation', 'synthesis', 'error', 'decision', 'evidence_packet'], payload: dict[str, Any], source_ids: list[str] | None=None, confidence: float=1.0, correlation: dict[str, str | None] | None=None) -> EvidenceEvent | None:
+    def create_event(
+        self,
+        event_type: Literal["tool_call", "observation", "synthesis", "error", "decision", "evidence_packet"],
+        payload: dict[str, Any],
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
+        correlation: dict[str, str | None] | None = None,
+    ) -> EvidenceEvent | None:
         """
         Vytvoří a přidá novou událost.
 
@@ -2810,16 +3071,26 @@ class EvidenceLog:
         """
         if self._silent_failure:
             return None
-        if event_type != 'error' and self._sample_rate < 1.0:
+        if event_type != "error" and self._sample_rate < 1.0:
             import random as _random
+
             if _random.random() > self._sample_rate:
                 return None
         if self._closed:
-            raise RuntimeError('Cannot create event in closed EvidenceLog')
-        event_id = f'{self._run_id}_{uuid.uuid4().hex[:12]}'
+            raise RuntimeError("Cannot create event in closed EvidenceLog")
+        event_id = f"{self._run_id}_{uuid.uuid4().hex[:12]}"
         if correlation:
-            payload = {**payload, '_correlation': correlation}
-        event = EvidenceEvent(event_id=event_id, event_type=event_type, timestamp=datetime.now(UTC).timestamp(), payload=orjson.dumps(payload), source_ids=source_ids or [], confidence=confidence, content_hash='', run_id=self._run_id)
+            payload = {**payload, "_correlation": correlation}
+        event = EvidenceEvent(
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=datetime.now(UTC).timestamp(),
+            payload=orjson.dumps(payload),
+            source_ids=source_ids or [],
+            confidence=confidence,
+            content_hash="",
+            run_id=self._run_id,
+        )
         event.content_hash = event.calculate_hash()
         self.append(event)
         return event
@@ -2834,6 +3105,7 @@ class EvidenceLog:
     ) -> tuple[EvidenceEvent | None, str | None]:
         """Create a single event for batch processing."""
         import random as _random
+
         if event_type != "error" and self._sample_rate < 1.0:
             if _random.random() > self._sample_rate:
                 return None, chain_head
@@ -2841,7 +3113,7 @@ class EvidenceLog:
         normalized_payload = _normalize_payload(payload)
         _scrub_dict_recursive = None
         try:
-            from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
+            pass
         except Exception:
             pass
         if not _payload_needs_scrubbing(normalized_payload):
@@ -2851,19 +3123,22 @@ class EvidenceLog:
         else:
             scrubbed_payload = normalized_payload
         event = EvidenceEvent(
-            event_id=event_id, event_type=event_type,
+            event_id=event_id,
+            event_type=event_type,
             timestamp=datetime.now(UTC).timestamp(),
             payload=orjson.dumps(scrubbed_payload),
-            source_ids=source_ids or [], confidence=confidence,
-            content_hash="", run_id=self._run_id,
-    )
+            source_ids=source_ids or [],
+            confidence=confidence,
+            content_hash="",
+            run_id=self._run_id,
+        )
         event.prev_chain_hash = chain_head
         event.content_hash = event.calculate_hash()
-        chain_input = f'{chain_head}:{event.content_hash}:{event.event_id}'
+        chain_input = f"{chain_head}:{event.content_hash}:{event.event_id}"
         event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
         return event, event.chain_hash
 
-    def _update_indexes_batch(self, event):
+    def _update_indexes_batch(self, event) -> None:
         """Update in-memory indexes for a single event."""
         was_full = len(self._log) == self.MAX_RAM_EVENTS
         self._log.append(event)
@@ -2885,10 +3160,11 @@ class EvidenceLog:
     def _encrypt_event_line(self, line: str) -> bytes:
         """Encrypt a single event line for persistence."""
         if not (self._encrypt_at_rest and self._cipher and self._encryption_key):
-            return line.encode('utf-8') + b'\n'
+            return line.encode("utf-8") + b"\n"
         try:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-            bytes_to_write = line.encode('utf-8') + b'\n'
+
+            bytes_to_write = line.encode("utf-8") + b"\n"
             nonce = secrets.token_bytes(12)
             cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
             encryptor = cipher.encryptor()
@@ -2896,7 +3172,7 @@ class EvidenceLog:
             return nonce + encryptor.tag + encrypted
         except Exception:
             logger.warning("encrypt_batch_failed")
-            return line.encode('utf-8') + b'\n'
+            return line.encode("utf-8") + b"\n"
 
     def _check_backpressure(self, mpsc_pressure: float, mpsc2_pressure: float, threshold: float = 0.85) -> bool:
         """Check if channels are in backpressure state."""
@@ -2921,17 +3197,16 @@ class EvidenceLog:
         if self._enable_persist:
             _jsonl_payloads = [self._encrypt_event_line(e.to_jsonl_line()) for e in created]
 
-        # Check backpressure before sending
         if self._check_backpressure(_mpsc_pressure_pct, _mpsc2_pressure_pct, _MPSC_BACKPRESSURE_THRESHOLD):
             self._dropped_count += 1
             logger.warning("m1_02_backpressure_dropped_batch", mpsc_pressure=f"{_mpsc_pressure_pct:.0%}")
-            trace_queue_drop('dual_channel_backpressure', len(created))
+            trace_queue_drop("dual_channel_backpressure", len(created))
             return
 
         # Send to primary MPSC
         _sent = self._mpsc.send_batch(_mpsc_payloads)
         for e in created:
-            trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
+            trace_evidence_append(e.event_type, self._mpsc.len(), "queued")
         if _sent < len(created):
             logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
 
@@ -2947,23 +3222,29 @@ class EvidenceLog:
             except Exception:
                 logger.critical("f286_swal_batch_send_failed")
 
-    def _run_analytics_batch(self, created):
+    def _run_analytics_batch(self, created) -> None:
         """Run analytics hook for evidence_packet events."""
         try:
             from hledac.universal.knowledge.analytics_hook import shadow_record_finding
+
             for e in created:
-                if e.event_type == 'evidence_packet':
+                if e.event_type == "evidence_packet":
                     _pl = orjson.loads(e.payload) if e.payload else {}
-                    _co = _pl.get('_correlation')
+                    _co = _pl.get("_correlation")
                     shadow_record_finding(
-                        finding_id=e.event_id, query=_pl.get('query', ''),
-                        source_type='evidence_packet', confidence=e.confidence,
-                        run_id=e.run_id, url=_pl.get('url'), title=_pl.get('title'),
-                        source=_pl.get('source'), relevance_score=_pl.get('relevance_score'),
-                        branch_id=_co.get('branch_id') if _co else None,
-                        provider_id=_co.get('provider_id') if _co else None,
-                        action_id=_co.get('action_id') if _co else None,
-    )
+                        finding_id=e.event_id,
+                        query=_pl.get("query", ""),
+                        source_type="evidence_packet",
+                        confidence=e.confidence,
+                        run_id=e.run_id,
+                        url=_pl.get("url"),
+                        title=_pl.get("title"),
+                        source=_pl.get("source"),
+                        relevance_score=_pl.get("relevance_score"),
+                        branch_id=_co.get("branch_id") if _co else None,
+                        provider_id=_co.get("provider_id") if _co else None,
+                        action_id=_co.get("action_id") if _co else None,
+                    )
         except Exception:
             pass
 
@@ -2998,7 +3279,14 @@ class EvidenceLog:
         self._run_analytics_batch(created)
         return created
 
-    def create_evidence_packet_event(self, evidence_id: str, packet_path: str, summary: dict[str, Any], source_ids: list[str] | None=None, confidence: float=1.0) -> EvidenceEvent | None:
+    def create_evidence_packet_event(
+        self,
+        evidence_id: str,
+        packet_path: str,
+        summary: dict[str, Any],
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
+    ) -> EvidenceEvent | None:
         """
         Vytvoří evidence_packet event s payload trimming (jen summary + pointer na packet).
 
@@ -3012,8 +3300,10 @@ class EvidenceLog:
         Returns:
             EvidenceEvent s trimmovaným payloadem
         """
-        payload = {'evidence_id': evidence_id, 'packet_path': packet_path, 'summary': summary}
-        return self.create_event(event_type='evidence_packet', payload=payload, source_ids=source_ids, confidence=confidence)
+        payload = {"evidence_id": evidence_id, "packet_path": packet_path, "summary": summary}
+        return self.create_event(
+            event_type="evidence_packet", payload=payload, source_ids=source_ids, confidence=confidence
+        )
 
     # ISSUE-P8-001 + ISSUE [FINAL]-019-04: WARC archival API with provenance chain
     def archive_http_response(
@@ -3025,36 +3315,36 @@ class EvidenceLog:
         content_type: str = "application/http;msgtype=response",
     ) -> WarcWriteResult | None:
         """
-        Archive raw HTTP response to WARC file (ISO 28500 compliant).
+            Archive raw HTTP response to WARC file (ISO 28500 compliant).
 
-        ISSUE [FINAL]-019-04: Now returns WarcWriteResult for court-admissible
-        byte-level provenance chain. The provenance record is also stored in
-        the internal _warc_provenance list for later extraction by sprint_exporter.
+            ISSUE [FINAL]-019-04: Now returns WarcWriteResult for court-admissible
+            byte-level provenance chain. The provenance record is also stored in
+            the internal _warc_provenance list for later extraction by sprint_exporter.
 
-        M1 8GB optimized: uses gzip compression (native C), bounded file size
-        rotation (10 GB default), fail-safe error handling.
+            M1 8GB optimized: uses gzip compression (native C), bounded file size
+            rotation (10 GB default), fail-safe error handling.
 
-        Args:
-            url: Requested URL
-            timestamp: Fetch timestamp (UTC). Defaults to now.
-            http_request: Raw HTTP request bytes (optional — if not provided,
-                         only response record is written)
-            http_response: Raw HTTP response bytes to archive
-            content_type: WARC Content-Type (default: application/http;msgtype=response)
+            Args:
+                url: Requested URL
+                timestamp: Fetch timestamp (UTC). Defaults to now.
+                http_request: Raw HTTP request bytes (optional — if not provided,
+                             only response record is written)
+                http_response: Raw HTTP response bytes to archive
+                content_type: WARC Content-Type (default: application/http;msgtype=response)
 
-        Returns:
-            WarcWriteResult if archived successfully, None on error (fail-safe)
+            Returns:
+                WarcWriteResult if archived successfully, None on error (fail-safe)
 
-        Usage:
-            warc_enabled = ENV.get_bool('HLEDAC_WARC_ENABLED', default=False)
-            if warc_enabled and fetch_result.body:
-                prov = evidence_log.archive_http_response(
-                    url=fetch_result.url,
-                    http_response=fetch_result.body,
-                    content_type=f"application/http;msgtype=response;charset={fetch_result.content_type or 'utf-8'}",
-    )
-                if prov:
-                    logger.debug("warc_archived", url=url, record_id=prov.record_id)
+            Usage:
+                warc_enabled = ENV.get_bool('HLEDAC_WARC_ENABLED', default=False)
+                if warc_enabled and fetch_result.body:
+                    prov = evidence_log.archive_http_response(
+                        url=fetch_result.url,
+                        http_response=fetch_result.body,
+                        content_type=f"application/http;msgtype=response;charset={fetch_result.content_type or 'utf-8'}",
+        )
+                    if prov:
+                        logger.debug("warc_archived", url=url, record_id=prov.record_id)
         """
         if not http_response:
             return None
@@ -3128,7 +3418,6 @@ class EvidenceLog:
             # Bound provenance list at 500 for M1 8GB safety
             if len(self._warc_provenance) > 500:
                 self._warc_provenance.pop(0)
-            # Build dashboard-ready snippet
             _snippet = self._build_warc_snippet(prov, http_response)
             if _snippet is not None:
                 self._warc_snippets.append(_snippet)
@@ -3152,9 +3441,7 @@ class EvidenceLog:
                     if _path_str not in _warc_paths_global:
                         _warc_paths_global.append(_path_str)
 
-    def _build_warc_snippet(
-        self, prov: WarcWriteResult, http_response: bytes
-    ) -> dict[str, Any] | None:
+    def _build_warc_snippet(self, prov: WarcWriteResult, http_response: bytes) -> dict[str, Any] | None:
         """
         ISSUE [FINAL]-019-05: Build a dashboard-ready snippet dict from a WARC record.
 
@@ -3172,33 +3459,27 @@ class EvidenceLog:
         """
         try:
             # Find body start: double CRLF separates headers from body
-            _body_start = http_response.find(b'\r\n\r\n')
-            _raw_headers = (
-                http_response[:_body_start] if _body_start >= 0 else b''
-    )
-            _body_bytes = (
-                http_response[_body_start + 4:]
-                if _body_start >= 0
-                else http_response
-    )
+            _body_start = http_response.find(b"\r\n\r\n")
+            _raw_headers = http_response[:_body_start] if _body_start >= 0 else b""
+            _body_bytes = http_response[_body_start + 4 :] if _body_start >= 0 else http_response
 
-            # Extract status from first response line
             _status = prov.status or 0
             if _status == 0:
-                _header_text = _raw_headers.decode('utf-8', errors='replace')
-                _first_line = _header_text.split('\r\n')[0] if _header_text else ''
-                if _first_line.startswith('HTTP/'):
-                    _parts = _first_line.split(' ', 2)
+                _header_text = _raw_headers.decode("utf-8", errors="replace")
+                _first_line = _header_text.split("\r\n")[0] if _header_text else ""
+                if _first_line.startswith("HTTP/"):
+                    _parts = _first_line.split(" ", 2)
                     if len(_parts) >= 2:
                         _status = int(_parts[1])
 
             # Decode body for text display (strip binary)
-            _text_content = _body_bytes.decode('utf-8', errors='replace')
+            _text_content = _body_bytes.decode("utf-8", errors="replace")
 
             # Detect HTML — extract text for preview via HTMLParser
             _html_content: str | None = None
-            if _text_content.strip().startswith(('<', '<?', '<!')):
+            if _text_content.strip().startswith(("<", "<?", "<!")):
                 try:
+
                     class _TextExtractor(HTMLParser):
                         def __init__(self) -> None:
                             super().__init__()
@@ -3209,27 +3490,27 @@ class EvidenceLog:
 
                     _parser = _TextExtractor()
                     _parser.feed(_text_content)
-                    _html_content = '\n'.join(_parser._lines)[:5000]
+                    _html_content = "\n".join(_parser._lines)[:5000]
                 except Exception:  # noqa: BLE001
                     _html_content = _text_content[:5000]
 
             # ISSUE [FINAL]-019-04: Merge provenance chain fields into snippet
             # This ensures the dashboard receives both content AND provenance metadata
             return {
-                'url': prov.url,
-                'timestamp': prov.timestamp,
-                'status': _status,
-                'html': _html_content or '',  # Stripped text from HTML (or raw text if not HTML)
-                'text': _text_content[:5000],  # Always full decoded text for preview
+                "url": prov.url,
+                "timestamp": prov.timestamp,
+                "status": _status,
+                "html": _html_content or "",  # Stripped text from HTML (or raw text if not HTML)
+                "text": _text_content[:5000],  # Always full decoded text for preview
                 # ISSUE [FINAL]-019-04: Provenance chain fields
-                'record_id': prov.record_id,
-                'byte_offset': prov.byte_offset,
-                'byte_length': prov.byte_length,
-                'warc_path': prov.warc_path,
-                'payload_digest': prov.payload_digest,
+                "record_id": prov.record_id,
+                "byte_offset": prov.byte_offset,
+                "byte_length": prov.byte_length,
+                "warc_path": prov.warc_path,
+                "payload_digest": prov.payload_digest,
                 # ISSUE F5-FIX: Compressed offsets for court-admissible gzip seek
-                'compressed_offset': prov.compressed_offset,
-                'compressed_size': prov.compressed_size,
+                "compressed_offset": prov.compressed_offset,
+                "compressed_size": prov.compressed_size,
             }
         except Exception:  # noqa: BLE001 — fail-safe; snippet building is non-critical
             return None
@@ -3256,19 +3537,19 @@ class EvidenceLog:
     _FORENSIC_MAX_LIST_ITEMS = 20
     _FORENSIC_MAX_DEPTH = 3
 
-    def _bound_forensic_value(self, value: Any, depth: int=0) -> Any:
+    def _bound_forensic_value(self, value: Any, depth: int = 0) -> Any:
         """Bound forensic result values to prevent payload blowup."""
         if depth > self._FORENSIC_MAX_DEPTH:
-            return '[depth_truncated]'
+            return "[depth_truncated]"
         if value is None or isinstance(value, bool) or isinstance(value, (int, float)):
             return value
         if isinstance(value, str):
-            return value[:self._FORENSIC_MAX_VALUE_LEN] + ('...' if len(value) > self._FORENSIC_MAX_VALUE_LEN else '')
+            return value[: self._FORENSIC_MAX_VALUE_LEN] + ("..." if len(value) > self._FORENSIC_MAX_VALUE_LEN else "")
         if isinstance(value, (list, tuple)):
             return self._bound_forensic_list(value, depth)
         if isinstance(value, dict):
             return self._bound_forensic_dict(value, depth)
-        return str(value)[:self._FORENSIC_MAX_VALUE_LEN]
+        return str(value)[: self._FORENSIC_MAX_VALUE_LEN]
 
     def _bound_forensic_list(self, value: list | tuple, depth: int) -> list:
         """Bound forensic list/tuple values."""
@@ -3276,7 +3557,7 @@ class EvidenceLog:
         items = [self._bound_forensic_value(v, depth + 1) for v in value[:cap]]
         truncated = len(value) - len(items)
         if truncated > 0:
-            items.append(f'[...{truncated}_more_items_truncated]')
+            items.append(f"[...{truncated}_more_items_truncated]")
         return items
 
     def _bound_forensic_dict(self, value: dict, depth: int) -> dict:
@@ -3284,12 +3565,14 @@ class EvidenceLog:
         out: dict[str, Any] = {}
         for i, (k, v) in enumerate(value.items()):
             if i >= self._FORENSIC_MAX_KEYS:
-                out['_truncated_keys'] = list(value.keys())[i:][:5]
+                out["_truncated_keys"] = list(value.keys())[i:][:5]
                 break
             out[str(k)[:80]] = self._bound_forensic_value(v, depth + 1)
         return out
 
-    def attach_forensic_analysis(self, finding_id: str, forensic_result: Any, source_id: str | None=None, confidence: float=0.95) -> EvidenceEvent | None:
+    def attach_forensic_analysis(
+        self, finding_id: str, forensic_result: Any, source_id: str | None = None, confidence: float = 0.95
+    ) -> EvidenceEvent | None:
         """
         Attach a forensic analysis result to a finding in the evidence chain.
 
@@ -3325,17 +3608,26 @@ class EvidenceLog:
             logger.debug("forensic_attach_no_result", finding_id=finding_id)
             return None
         if not isinstance(forensic_result, dict):
-            logger.warning("forensic_attach_invalid_result_type", got_type=type(forensic_result).__name__, finding_id=finding_id)
+            logger.warning(
+                "forensic_attach_invalid_result_type", got_type=type(forensic_result).__name__, finding_id=finding_id
+            )
             return None
         try:
             confidence = max(0.0, min(1.0, float(confidence)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             confidence = 0.95
         bounded_result = self._bound_forensic_value(forensic_result)
-        payload = {'kind': 'forensic_analysis', 'finding_id': str(finding_id)[:128], 'forensic_result': bounded_result, 'attached_at': datetime.now(UTC).isoformat()}
+        payload = {
+            "kind": "forensic_analysis",
+            "finding_id": str(finding_id)[:128],
+            "forensic_result": bounded_result,
+            "attached_at": datetime.now(UTC).isoformat(),
+        }
         effective_source_id = (source_id or finding_id)[:128]
         try:
-            return self.create_event(event_type='evidence_packet', payload=payload, source_ids=[effective_source_id], confidence=confidence)
+            return self.create_event(
+                event_type="evidence_packet", payload=payload, source_ids=[effective_source_id], confidence=confidence
+            )
         except (RuntimeError, ValueError) as exc:
             logger.warning("forensic_attach_failed", finding_id=finding_id, error=str(exc))
             return None
@@ -3358,15 +3650,16 @@ class EvidenceLog:
             return []
         out: list[EvidenceEvent] = []
         for event in self._log:
-            if event.event_type != 'evidence_packet':
+            if event.event_type != "evidence_packet":
                 continue
             payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
-            if payload.get('kind') != 'forensic_analysis':
+            if payload.get("kind") != "forensic_analysis":
                 continue
-            if payload.get('finding_id') != finding_id:
+            if payload.get("finding_id") != finding_id:
                 continue
             out.append(event)
         return out
+
     MAX_DECISION_SUMMARY_KEYS = 20
     MAX_DECISION_SUMMARY_VALUE_LEN = 200
     MAX_DECISION_REASONS = 8
@@ -3383,7 +3676,7 @@ class EvidenceLog:
                 break
             v_str = str(v)
             if len(v_str) > self.MAX_DECISION_SUMMARY_VALUE_LEN:
-                v_str = v_str[:self.MAX_DECISION_SUMMARY_VALUE_LEN] + '...'
+                v_str = v_str[: self.MAX_DECISION_SUMMARY_VALUE_LEN] + "..."
             trimmed[k] = v_str
         return trimmed
 
@@ -3393,30 +3686,37 @@ class EvidenceLog:
         for i, r in enumerate(reasons):
             if i >= self.MAX_DECISION_REASONS:
                 break
-            trimmed.append(r[:self.MAX_DECISION_REASON_LEN] + ('...' if len(r) > self.MAX_DECISION_REASON_LEN else ''))
+            trimmed.append(r[: self.MAX_DECISION_REASON_LEN] + ("..." if len(r) > self.MAX_DECISION_REASON_LEN else ""))
         return trimmed
 
     def _trim_refs(self, refs: dict) -> dict:
         """Trim decision refs to max counts."""
         return {
-            'evidence_ids': refs.get('evidence_ids', [])[:self.MAX_DECISION_REF_EVIDENCE],
-            'cluster_ids': refs.get('cluster_ids', [])[:self.MAX_DECISION_REF_CLUSTERS],
-            'url_hashes': refs.get('url_hashes', [])[:self.MAX_DECISION_REF_URLS],
+            "evidence_ids": refs.get("evidence_ids", [])[: self.MAX_DECISION_REF_EVIDENCE],
+            "cluster_ids": refs.get("cluster_ids", [])[: self.MAX_DECISION_REF_CLUSTERS],
+            "url_hashes": refs.get("url_hashes", [])[: self.MAX_DECISION_REF_URLS],
         }
 
-    def create_decision_event(self, kind: str, summary: dict[str, Any], reasons: list[str], refs: dict[str, list[str]], confidence: float=1.0) -> EvidenceEvent | None:
+    def create_decision_event(
+        self,
+        kind: str,
+        summary: dict[str, Any],
+        reasons: list[str],
+        refs: dict[str, list[str]],
+        confidence: float = 1.0,
+    ) -> EvidenceEvent | None:
         """Vytvoří decision event pro Decision Ledger."""
-        valid_kinds = {'bandit', 'playbook', 'backpressure', 'delta', 'alignment', 'primary_chase', 'drift'}
+        valid_kinds = {"bandit", "playbook", "backpressure", "delta", "alignment", "primary_chase", "drift"}
         if kind not in valid_kinds:
             logger.warning("decision_invalid_kind_using_drift", kind=kind)
-            kind = 'drift'
+            kind = "drift"
         payload = {
-            'kind': kind,
-            'summary': self._trim_summary(summary),
-            'reasons': self._trim_reasons(reasons),
-            'refs': self._trim_refs(refs),
+            "kind": kind,
+            "summary": self._trim_summary(summary),
+            "reasons": self._trim_reasons(reasons),
+            "refs": self._trim_refs(refs),
         }
-        return self.create_event(event_type='decision', payload=payload, source_ids=[], confidence=confidence)
+        return self.create_event(event_type="decision", payload=payload, source_ids=[], confidence=confidence)
 
     def get(self, index: int) -> EvidenceEvent | None:
         """
@@ -3447,7 +3747,14 @@ class EvidenceLog:
                 return event
         return None
 
-    def query(self, event_type: str | None=None, min_confidence: float=0.0, after_timestamp: datetime | None=None, before_timestamp: datetime | None=None, limit: int | None=None) -> list[EvidenceEvent]:
+    def query(
+        self,
+        event_type: str | None = None,
+        min_confidence: float = 0.0,
+        after_timestamp: datetime | None = None,
+        before_timestamp: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[EvidenceEvent]:
         """
         Dotazuje se na události v logu.
 
@@ -3479,7 +3786,7 @@ class EvidenceLog:
             results = results[:limit]
         return results
 
-    def get_summary_lines(self, last_n: int=10) -> Iterator[str]:
+    def get_summary_lines(self, last_n: int = 10) -> Iterator[str]:
         """
         ISSUE-34: Lazy generator version of get_summary — yields lines one by one.
 
@@ -3492,28 +3799,28 @@ class EvidenceLog:
         Yields:
             Formátované řádky shrnutí
         """
-        yield '=' * 60
-        yield 'EVIDENCE LOG SUMMARY'
-        yield '=' * 60
-        yield ''
-        yield f'Run ID: {self._run_id}'
-        yield f'Total Events: {self.size}'
-        yield f'Created: {self._created_at.isoformat()}'
-        yield ''
-        yield 'Event Counts by Type:'
+        yield "=" * 60
+        yield "EVIDENCE LOG SUMMARY"
+        yield "=" * 60
+        yield ""
+        yield f"Run ID: {self._run_id}"
+        yield f"Total Events: {self.size}"
+        yield f"Created: {self._created_at.isoformat()}"
+        yield ""
+        yield "Event Counts by Type:"
         for event_type, indices in self._index_by_type.items():
             count = len(indices)
             if count > 0:
-                yield f'  {event_type}: {count}'
-        yield ''
-        yield '-' * 40
-        yield f'Last {last_n} Events (newest first):'
-        yield '-' * 40
+                yield f"  {event_type}: {count}"
+        yield ""
+        yield "-" * 40
+        yield f"Last {last_n} Events (newest first):"
+        yield "-" * 40
         # Slice deque directly — materialize only the needed slice (not full list)
         start = max(0, len(self._log) - last_n)
         recent = list(self._log)[start:]  # deque doesn't support slicing
         for i, event in enumerate(reversed(recent), 1):
-            timestamp = datetime.fromtimestamp(event.timestamp, UTC).strftime('%H:%M:%S')
+            timestamp = datetime.fromtimestamp(event.timestamp, UTC).strftime("%H:%M:%S")
             # Parse only fields we need, not the whole payload
             try:
                 payload_dict = orjson.loads(event.payload) if event.payload else None
@@ -3521,17 +3828,17 @@ class EvidenceLog:
                 logger.debug("serialise_payload_encoding_failed", exc_info=True)
                 payload_dict = None
             payload_summary = self._summarize_payload(payload_dict)
-            yield f'{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})'
-            yield f'   {payload_summary}'
+            yield f"{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})"
+            yield f"   {payload_summary}"
             if event.source_ids:
-                sources_str = ', '.join(event.source_ids[:3])
+                sources_str = ", ".join(event.source_ids[:3])
                 if len(event.source_ids) > 3:
-                    sources_str += f' (+{len(event.source_ids) - 3} more)'
-                yield f'   Sources: {sources_str}'
-            yield ''
-        yield '=' * 60
+                    sources_str += f" (+{len(event.source_ids) - 3} more)"
+                yield f"   Sources: {sources_str}"
+            yield ""
+        yield "=" * 60
 
-    def get_summary(self, last_n: int=10) -> str:
+    def get_summary(self, last_n: int = 10) -> str:
         """
         Vytvoří shrnutí logu pro Hermes.
 
@@ -3543,7 +3850,7 @@ class EvidenceLog:
         Returns:
             Formátovaný string shrnutí
         """
-        return '\n'.join(self.get_summary_lines(last_n))
+        return "\n".join(self.get_summary_lines(last_n))
 
     async def stream_summary_to_queue(self, queue: asyncio.Queue[str], last_n: int = 10) -> None:
         """
@@ -3560,24 +3867,24 @@ class EvidenceLog:
             await queue.put(line)
         await queue.put("")  # Empty string: end of stream sentinel
 
-    def _summarize_payload(self, payload: dict[str, Any] | None, max_length: int=60) -> str:
+    def _summarize_payload(self, payload: dict[str, Any] | None, max_length: int = 60) -> str:
         """Vytvoří stručné shrnutí payloadu"""
         if not payload:
-            return '(no payload)'
-        priority_fields = ['action', 'tool', 'query', 'result', 'message', 'summary']
+            return "(no payload)"
+        priority_fields = ["action", "tool", "query", "result", "message", "summary"]
         for field in priority_fields:
             if field in payload:
                 value = payload[field]
                 if isinstance(value, str):
                     if len(value) > max_length:
-                        return f'{field}={value[:max_length]}...'
-                    return f'{field}={value}'
-                return f'{field}={str(value)[:max_length]}'
+                        return f"{field}={value[:max_length]}..."
+                    return f"{field}={value}"
+                return f"{field}={str(value)[:max_length]}"
         first_key = next(iter(payload.keys()))
         value = str(payload[first_key])[:max_length]
         return f"{first_key}={value}{('...' if len(str(payload[first_key])) > max_length else '')}"
 
-    def to_jsonl(self, path: Path | None=None) -> None:
+    def to_jsonl(self, path: Path | None = None) -> None:
         """
         Exportuje log do JSONL souboru pro replay mode.
 
@@ -3588,7 +3895,7 @@ class EvidenceLog:
         """
         export_path = path or self._persist_path
         if not export_path:
-            raise ValueError('No path specified for export')
+            raise ValueError("No path specified for export")
         export_path = Path(export_path)
         export_path.parent.mkdir(parents=True, exist_ok=True)
         if self._persist_path and export_path == self._persist_path:
@@ -3598,18 +3905,21 @@ class EvidenceLog:
             # Falls back to shutil.copy2 na non-APFS / Linux
             try:
                 os.clonefile(self._persist_path, export_path)
-            except (AttributeError, OSError):
+            except AttributeError, OSError:
                 import shutil
+
                 shutil.copy2(self._persist_path, export_path)
             return
         # Streaming write: O(1) memory instead of materializing entire log
         # For 100K events × 500 bytes = 50MB → ~0 memory overhead
-        with open(export_path, 'w', encoding='utf-8', buffering=65536) as f:
+        with open(export_path, "w", encoding="utf-8", buffering=65536) as f:
             for event in self._log:
-                f.write(event.to_jsonl_line() + '\n')
+                f.write(event.to_jsonl_line() + "\n")
 
     @classmethod
-    def from_jsonl(cls, path: Path, run_id: str | None=None, load_to_ram: bool=False, max_ram_events: int=100) -> EvidenceLog:
+    def from_jsonl(
+        cls, path: Path, run_id: str | None = None, load_to_ram: bool = False, max_ram_events: int = 100
+    ) -> EvidenceLog:
         """
         Načte log z JSONL souboru - M1 8GB optimized.
 
@@ -3627,17 +3937,17 @@ class EvidenceLog:
         """
         path = Path(path)
         if not path.exists():
-            raise FileNotFoundError(f'JSONL file not found: {path}')
+            raise FileNotFoundError(f"JSONL file not found: {path}")
 
         detected_run_id = run_id
         if detected_run_id is None:
-            with open(path, encoding='utf-8') as f:
+            with open(path, encoding="utf-8") as f:
                 first_line = f.readline().strip()
                 if first_line:
                     data = orjson.loads(first_line)
-                    detected_run_id = data.get('run_id', 'unknown')
+                    detected_run_id = data.get("run_id", "unknown")
 
-        log = cls(run_id=detected_run_id or 'unknown', enable_persist=False)
+        log = cls(run_id=detected_run_id or "unknown", enable_persist=False)
 
         # Fast path: small files or load_to_ram requested — read fully
         if load_to_ram:
@@ -3687,7 +3997,7 @@ class EvidenceLog:
         """Read all events from JSONL file (for small files or load_to_ram=True)."""
         events = []
         total_lines = 0
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 total_lines += 1
                 line = line.strip()
@@ -3724,9 +4034,9 @@ class EvidenceLog:
                 pos -= read_size
                 os.lseek(fd, pos, os.SEEK_SET)
                 chunk = os.read(fd, read_size)
-                count += chunk.count(b'\n')
+                count += chunk.count(b"\n")
                 # Skip potential incomplete line at start
-                if pos > 0 and chunk and chunk[-1] != ord('\n'):
+                if pos > 0 and chunk and chunk[-1] != ord("\n"):
                     count -= 1
                     if count < 0:
                         count = 0
@@ -3734,7 +4044,7 @@ class EvidenceLog:
             return count
         except Exception:
             # Fallback: count by reading forward (expensive but safe)
-            with open(path, encoding='utf-8') as f:
+            with open(path, encoding="utf-8") as f:
                 return sum(1 for _ in f)
         finally:
             if fd is not None:
@@ -3744,7 +4054,7 @@ class EvidenceLog:
     def _parse_jsonl_line(cls, current_line: bytearray) -> EvidenceEvent | None:
         """Parse a JSONL line into EvidenceEvent."""
         try:
-            if line_str := current_line.decode('utf-8').strip():
+            if line_str := current_line.decode("utf-8").strip():
                 return EvidenceEvent.from_dict(orjson.loads(line_str))
         except Exception:
             pass
@@ -3758,7 +4068,7 @@ class EvidenceLog:
             read_size, pos = min(buf_size, pos), pos - min(buf_size, pos)
             os.lseek(fd, pos, os.SEEK_SET)
             for byte in reversed(os.read(fd, read_size)):
-                if byte == ord('\n'):
+                if byte == ord("\n"):
                     if current_line:
                         if event := cls._parse_jsonl_line(current_line):
                             events.append(event)
@@ -3776,7 +4086,7 @@ class EvidenceLog:
     def _read_jsonl_tail_fallback(cls, path: Path, max_events: int) -> list[EvidenceEvent]:
         """Fallback: stream forward with sliding window."""
         events = []
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             for line in (l.strip() for l in f if l.strip()):
                 try:
                     events.append(EvidenceEvent.from_dict(orjson.loads(line)))
@@ -3818,29 +4128,6 @@ class EvidenceLog:
         """Zmrazí log - přepne do read-only režimu"""
         self._frozen = True
 
-    # =============================================================================
-    # FLOW-03: WAL checkpoint protocol for dual-writer atomic commit
-    # =============================================================================
-    # EvidenceLog uses two write paths:
-    #   1. DuckDB/SQLite (_flush_worker → _flush_batch_bytes → _flush_duckdb_batch/_flush_sqlite_batch)
-    #   2. JSONL (_async_write_worker → mpsc2 → _persist_file)
-    #
-    # Problem: There is no atomic commit protocol between these two paths.
-    # A crash between path-1 commit and path-2 write leaves the ledger inconsistent.
-    #
-    # FLOW-03 FIX: WAL checkpoint protocol using write-ahead phases:
-    #   Phase 1: PREPARE — drain both paths, fsync JSONL, write .wal.prepare marker
-    #   Phase 2: COMMIT — write .wal.commit marker (proves both paths flushed)
-    #   Phase 3: CLEANUP — rename .wal.commit to .wal.done, delete .wal.prepare
-    #
-    # On crash recovery: if .wal.prepare exists without .wal.commit, replay from
-    # DuckDB/SQLite checkpoint (last committed state). If .wal.commit exists, both
-    # paths completed — promote to .wal.done.
-    #
-    # Bounds: checkpoint runs at most once per aclose(). WAL files cleaned on next init.
-    # M1 8GB: WAL files are tiny (<1 KiB each), negligible I/O.
-    # =============================================================================
-
     _WAL_DIR: Path | None = None
 
     def _get_wal_dir(self) -> Path | None:
@@ -3850,7 +4137,7 @@ class EvidenceLog:
         if not self._persist_path:
             return None
         try:
-            wal_dir = self._persist_path.parent / '.wal'
+            wal_dir = self._persist_path.parent / ".wal"
             wal_dir.mkdir(parents=True, exist_ok=True)
             EvidenceLog._WAL_DIR = wal_dir
             return wal_dir
@@ -3865,20 +4152,20 @@ class EvidenceLog:
         wal_dir = self._get_wal_dir()
         if wal_dir is None:
             return False
-        prepare_path = wal_dir / f'{self._run_id}.wal.prepare'
+        prepare_path = wal_dir / f"{self._run_id}.wal.prepare"
         try:
             # .wal.prepare contains: run_id, chain_head, total_count, seq, timestamp
             # This is the commit proof for path-1 (DuckDB/SQLite)
             prepare_data = {
-                'run_id': self._run_id,
-                'chain_head': self._chain_head,
-                'total_count': self._total_count,
-                'seq': self._seq,
-                'genesis_hash': self._genesis_hash,
-                'timestamp': datetime.now(UTC).isoformat(),
-                'version': 1,
+                "run_id": self._run_id,
+                "chain_head": self._chain_head,
+                "total_count": self._total_count,
+                "seq": self._seq,
+                "genesis_hash": self._genesis_hash,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "version": 1,
             }
-            with open(prepare_path, 'wb') as f:
+            with open(prepare_path, "wb") as f:
                 f.write(orjson.dumps(prepare_data))
                 os.fsync(f.fileno())
             return True
@@ -3893,18 +4180,18 @@ class EvidenceLog:
         wal_dir = self._get_wal_dir()
         if wal_dir is None:
             return False
-        prepare_path = wal_dir / f'{self._run_id}.wal.prepare'
-        commit_path = wal_dir / f'{self._run_id}.wal.commit'
+        prepare_path = wal_dir / f"{self._run_id}.wal.prepare"
+        commit_path = wal_dir / f"{self._run_id}.wal.commit"
         try:
             # Verify .wal.prepare exists (Phase 1 must have succeeded)
             if not prepare_path.exists():
                 logger.warning("wal_commit_no_prepare", run_id=self._run_id)
                 return False
             # Read prepare data and extend with commit timestamp
-            with open(prepare_path, 'rb') as f:
+            with open(prepare_path, "rb") as f:
                 prepare_data = orjson.loads(f.read())
-            prepare_data['commit_timestamp'] = datetime.now(UTC).isoformat()
-            with open(commit_path, 'wb') as f:
+            prepare_data["commit_timestamp"] = datetime.now(UTC).isoformat()
+            with open(commit_path, "wb") as f:
                 f.write(orjson.dumps(prepare_data))
                 os.fsync(f.fileno())
             return True
@@ -3919,8 +4206,8 @@ class EvidenceLog:
         wal_dir = self._get_wal_dir()
         if wal_dir is None:
             return
-        prepare_path = wal_dir / f'{self._run_id}.wal.prepare'
-        commit_path = wal_dir / f'{self._run_id}.wal.commit'
+        prepare_path = wal_dir / f"{self._run_id}.wal.prepare"
+        commit_path = wal_dir / f"{self._run_id}.wal.commit"
         try:
             if commit_path.exists():
                 commit_path.unlink()
@@ -3938,8 +4225,8 @@ class EvidenceLog:
         wal_dir = self._get_wal_dir()
         if wal_dir is None:
             return None
-        prepare_path = wal_dir / f'{self._run_id}.wal.prepare'
-        commit_path = wal_dir / f'{self._run_id}.wal.commit'
+        prepare_path = wal_dir / f"{self._run_id}.wal.prepare"
+        commit_path = wal_dir / f"{self._run_id}.wal.commit"
         try:
             if commit_path.exists():
                 # Both paths completed — WAL cycle done, clean up
@@ -3948,9 +4235,11 @@ class EvidenceLog:
             if prepare_path.exists():
                 # Phase-1 only — crash between prepare and commit
                 # Recovery: replay from DuckDB/SQLite checkpoint (last committed state)
-                with open(prepare_path, 'rb') as f:
+                with open(prepare_path, "rb") as f:
                     prepare_data = orjson.loads(f.read())
-                logger.warning("wal_recovery_from_prepare", run_id=self._run_id, chain_head=prepare_data.get('chain_head'))
+                logger.warning(
+                    "wal_recovery_from_prepare", run_id=self._run_id, chain_head=prepare_data.get("chain_head")
+                )
                 self._wal_cleanup()
                 return prepare_data
         except Exception:  # noqa: BLE001
@@ -3963,15 +4252,10 @@ class EvidenceLog:
         Called at the start of aclose() before any shutdown.
         Returns True if protocol completed successfully.
         """
-        # Phase 1: PREPARE — both paths must be drained before this runs
         if not self._wal_prepare():
             return False
-        # Phase 2: COMMIT — proves DuckDB/SQLite flushed (path-1 done)
-        # JSONL flush is synchronous in _do_shutdown before this is called,
-        # so path-2 is also done at this point
         if not self._wal_commit():
             return False
-        # Phase 3: CLEANUP
         self._wal_cleanup()
         return True
 
@@ -3989,14 +4273,22 @@ class EvidenceLog:
         if not self._persist_path:
             logger.warning("cannot_write_manifest_no_persist_path")
             return None
-        manifest: dict[str, Any] = {'run_id': self._run_id, 'chain_head': self._chain_head, 'total_count': self._total_count, 'created_at': self._created_at.isoformat(), 'last_seq_no': self._seq, 'persist_path': str(self._persist_path), 'genesis_hash': self._genesis_hash}
+        manifest: dict[str, Any] = {
+            "run_id": self._run_id,
+            "chain_head": self._chain_head,
+            "total_count": self._total_count,
+            "created_at": self._created_at.isoformat(),
+            "last_seq_no": self._seq,
+            "persist_path": str(self._persist_path),
+            "genesis_hash": self._genesis_hash,
+        }
         # ISSUE-P8-001: Include WARC file paths in manifest
         if self._warc_paths:
-            manifest['warc_paths'] = self._warc_paths
-        manifest_path = self._persist_path.with_suffix('.manifest.json')
+            manifest["warc_paths"] = self._warc_paths
+        manifest_path = self._persist_path.with_suffix(".manifest.json")
         try:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(manifest_path, 'wb') as f:
+            with open(manifest_path, "wb") as f:
                 f.write(orjson.dumps(manifest, option=orjson.OPT_INDENT_2))
             logger.info("evidence_manifest_written", manifest_path=str(manifest_path))
             return manifest_path
@@ -4035,7 +4327,7 @@ class EvidenceLog:
                     logger.debug("e2_aclose_from_cancel_watcher_failed", error=str(_aclose_err))
 
         try:
-            self._cancel_watcher_task = safe_create_task(_watch_cancel(), name='_cancel_watcher')
+            self._cancel_watcher_task = safe_create_task(_watch_cancel(), name="_cancel_watcher")
         except Exception as _watch_err:  # noqa: BLE001
             logger.debug("e2_cancel_watcher_start_failed", error=str(_watch_err))
 
@@ -4055,9 +4347,9 @@ class EvidenceLog:
             name="EvidenceLog",
             coro=self._do_shutdown(),
             timeout_s=timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S,
-    )
+        )
 
-    async def _cancel_task_with_timeout(self, task, label, timeout1=5.0, timeout2=2.0):
+    async def _cancel_task_with_timeout(self, task, label, timeout1=5.0, timeout2=2.0) -> None:
         """Cancel a task with two-stage timeout."""
         try:
             await safe_wait_for(task, timeout=timeout1, label=label)
@@ -4066,13 +4358,13 @@ class EvidenceLog:
             task.cancel()
             try:
                 await safe_wait_for(task, timeout=timeout2, label=label)
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 pass
         except asyncio.CancelledError:
             task.cancel()
             try:
                 await safe_wait_for(task, timeout=timeout2, label=label)
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 pass
 
     async def _cancel_watcher(self) -> None:
@@ -4082,19 +4374,21 @@ class EvidenceLog:
             try:
                 with contextlib.suppress(asyncio.CancelledError):
                     await safe_wait_for(self._cancel_watcher_task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError, Exception):
+            except TimeoutError, asyncio.CancelledError, Exception:
                 pass
             self._cancel_watcher_task = None
 
     async def _shutdown_workers(self) -> None:
         """Shutdown flush and write workers."""
-        if self._flush_shutdown: self._flush_shutdown.set()
+        if self._flush_shutdown:
+            self._flush_shutdown.set()
         if self._flush_task:
-            await self._cancel_task_with_timeout(self._flush_task, '_flush_task', 10.0, 5.0)
+            await self._cancel_task_with_timeout(self._flush_task, "_flush_task", 10.0, 5.0)
             self._flush_task = None
-        if self._async_write_shutdown: self._async_write_shutdown.set()
+        if self._async_write_shutdown:
+            self._async_write_shutdown.set()
         if self._async_write_task:
-            await self._cancel_task_with_timeout(self._async_write_task, '_async_write_task', 5.0, 2.0)
+            await self._cancel_task_with_timeout(self._async_write_task, "_async_write_task", 5.0, 2.0)
             self._async_write_task = None
 
     def _close_arrow_writer(self) -> None:
@@ -4111,27 +4405,39 @@ class EvidenceLog:
     async def _flush_remaining(self, drained, mpsc2_drained) -> None:
         """Flush remaining items from drained channels."""
         if drained and self._db:
-            try: await self._flush_batch_bytes(drained)
-            except Exception as e: logger.warning("failed_to_flush_remaining_items", error=str(e))
+            try:
+                await self._flush_batch_bytes(drained)
+            except Exception as e:
+                logger.warning("failed_to_flush_remaining_items", error=str(e))
         if mpsc2_drained and self._persist_file:
             try:
-                data = b''.join(mpsc2_drained) if self._encrypt_at_rest else b''.join(i.decode('utf-8', errors='replace') for i in mpsc2_drained)
+                data = (
+                    b"".join(mpsc2_drained)
+                    if self._encrypt_at_rest
+                    else b"".join(i.decode("utf-8", errors="replace") for i in mpsc2_drained)
+                )
                 self._persist_file.write(data)
                 self._persist_file.flush()
-            except Exception as e: logger.warning("failed_to_flush_mpsc2_remaining_items", error=str(e))
+            except Exception as e:
+                logger.warning("failed_to_flush_mpsc2_remaining_items", error=str(e))
 
     async def _close_databases(self) -> None:
         """Close SQLite and DuckDB connections."""
         if self._db:
             try:
-                await self._db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                await self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 await self._db.close()
-            except Exception as e: logger.warning("failed_to_close_sqlite", error=str(e))
-            finally: self._db = None
+            except Exception as e:
+                logger.warning("failed_to_close_sqlite", error=str(e))
+            finally:
+                self._db = None
         if self._duckdb_conn:
-            try: self._duckdb_conn.close()
-            except Exception as e: logger.warning("failed_to_close_duckdb", error=str(e))
-            finally: self._duckdb_conn = None
+            try:
+                self._duckdb_conn.close()
+            except Exception as e:
+                logger.warning("failed_to_close_duckdb", error=str(e))
+            finally:
+                self._duckdb_conn = None
 
     def _close_warc_writer(self) -> None:
         """Close WARC writer if open."""
@@ -4139,11 +4445,14 @@ class EvidenceLog:
             try:
                 self._warc_writer.close()
                 for p in self._warc_writer.path_history:
-                    if str(p) not in self._warc_paths: self._warc_paths.append(str(p))
+                    if str(p) not in self._warc_paths:
+                        self._warc_paths.append(str(p))
                 logger.info("warc_writer_closed", warc_paths=self._warc_paths)
                 self._register_warc_paths_global()
-            except Exception as e: logger.warning("failed_to_close_warc", error=str(e))
-            finally: self._warc_writer = None
+            except Exception as e:
+                logger.warning("failed_to_close_warc", error=str(e))
+            finally:
+                self._warc_writer = None
 
     def _do_shutdown_sync(self) -> None:
         """Synchronous shutdown using Runner when no loop is running."""
@@ -4152,15 +4461,18 @@ class EvidenceLog:
 
     def _do_shutdown_with_running_loop(self, stored_loop: asyncio.AbstractEventLoop) -> None:
         """Shutdown when an event loop is already running."""
-        async def _coro():
+
+        async def _coro() -> None:
             await self.aclose()
+
         future = asyncio.run_coroutine_threadsafe(_coro(), stored_loop)
         future.result()
 
     async def _do_shutdown(self) -> None:
         """Inner cleanup — called by aclose() via shutdown_aclose()."""
         self._closing = True
-        try: self._wal_checkpoint()
+        try:
+            self._wal_checkpoint()
         except Exception:  # noqa: BLE001 — best-effort; WAL checkpoint failure; non-critical
             logger.debug("WAL checkpoint failed: %s", type(e).__name__, exc_info=True)
         await self._cancel_watcher()
@@ -4235,7 +4547,13 @@ class EvidenceLog:
         self.write_manifest()
         self.close()
         self.freeze()
-        logger.info("evidence_log_finalized", run_id=self._run_id, events=self._total_count, chain_head=self._chain_head[:16], wal_checkpoint=_wal_ok)
+        logger.info(
+            "evidence_log_finalized",
+            run_id=self._run_id,
+            events=self._total_count,
+            chain_head=self._chain_head[:16],
+            wal_checkpoint=_wal_ok,
+        )
 
     def verify_all(self) -> dict[str, Any]:
         """
@@ -4254,18 +4572,41 @@ class EvidenceLog:
             if event.verify_integrity():
                 valid += 1
             else:
-                invalid.append({'index': i, 'event_id': event.event_id, 'stored_hash': event.content_hash, 'calculated_hash': event.calculate_hash()})
+                invalid.append(
+                    {
+                        "index": i,
+                        "event_id": event.event_id,
+                        "stored_hash": event.content_hash,
+                        "calculated_hash": event.calculate_hash(),
+                    }
+                )
             if event.chain_hash and event.seq_no > 0:
-                chain_input = f'{event.prev_chain_hash or self._genesis_hash}:{event.content_hash}:{event.event_id}'
+                chain_input = f"{event.prev_chain_hash or self._genesis_hash}:{event.content_hash}:{event.event_id}"
                 expected_chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
                 if expected_chain_hash != event.chain_hash:
                     chain_valid = False
                     if len(chain_invalid) < 100:
-                        chain_invalid.append({'index': i, 'event_id': event.event_id, 'reason': 'chain_hash_mismatch', 'expected': expected_chain_hash, 'stored': event.chain_hash})
+                        chain_invalid.append(
+                            {
+                                "index": i,
+                                "event_id": event.event_id,
+                                "reason": "chain_hash_mismatch",
+                                "expected": expected_chain_hash,
+                                "stored": event.chain_hash,
+                            }
+                        )
                 if event.prev_chain_hash and event.prev_chain_hash != prev_expected_hash:
                     chain_valid = False
                     if len(chain_invalid) < 100:
-                        chain_invalid.append({'index': i, 'event_id': event.event_id, 'reason': 'linkage_broken', 'expected_prev': prev_expected_hash, 'stored_prev': event.prev_chain_hash})
+                        chain_invalid.append(
+                            {
+                                "index": i,
+                                "event_id": event.event_id,
+                                "reason": "linkage_broken",
+                                "expected_prev": prev_expected_hash,
+                                "stored_prev": event.prev_chain_hash,
+                            }
+                        )
                 prev_expected_hash = event.chain_hash
         chain_invalid_reason = None
         if not chain_valid:
@@ -4273,8 +4614,20 @@ class EvidenceLog:
                 first_issue = chain_invalid[0]
                 chain_invalid_reason = f"{first_issue.get('reason', 'unknown')}_at_index_{first_issue.get('index', 0)}"
             else:
-                chain_invalid_reason = 'legacy_events_missing_chain_fields'
-        return {'total_events': total, 'valid_events': valid, 'invalid_events': len(invalid), 'integrity_percentage': valid / total * 100 if total > 0 else 100.0, 'invalid_details': invalid[:10], 'all_valid': not invalid, 'chain_valid': chain_valid, 'chain_invalid_reason': chain_invalid_reason, 'chain_invalid': chain_invalid, 'chain_head': self._chain_head, 'last_seq_no': self._seq}
+                chain_invalid_reason = "legacy_events_missing_chain_fields"
+        return {
+            "total_events": total,
+            "valid_events": valid,
+            "invalid_events": len(invalid),
+            "integrity_percentage": valid / total * 100 if total > 0 else 100.0,
+            "invalid_details": invalid[:10],
+            "all_valid": not invalid,
+            "chain_valid": chain_valid,
+            "chain_invalid_reason": chain_invalid_reason,
+            "chain_invalid": chain_invalid,
+            "chain_head": self._chain_head,
+            "last_seq_no": self._seq,
+        }
 
     def get_event_funnel(self) -> dict[str, Any]:
         """
@@ -4294,8 +4647,12 @@ class EvidenceLog:
             if not indices:
                 continue
             events = [self._log[i] for i in indices]
-            avg_conf = sum((e.confidence for e in events)) / len(events)
-            result[event_type] = {'count': len(indices), 'avg_conf': round(avg_conf, 4), 'pct': round(len(indices) / total * 100, 1)}
+            avg_conf = sum(e.confidence for e in events) / len(events)
+            result[event_type] = {
+                "count": len(indices),
+                "avg_conf": round(avg_conf, 4),
+                "pct": round(len(indices) / total * 100, 1),
+            }
         return result
 
     def get_decision_summary(self) -> dict[str, Any]:
@@ -4308,17 +4665,17 @@ class EvidenceLog:
         Returns:
             Dict s decision statistikami
         """
-        decisions = self.query(event_type='decision')
+        decisions = self.query(event_type="decision")
         if not decisions:
-            return {'count': 0, 'kinds': {}, 'avg_confidence': 0.0}
+            return {"count": 0, "kinds": {}, "avg_confidence": 0.0}
         kind_counts: dict[str, int] = {}
         all_reasons: list[str] = []
         confidences: list[float] = []
         for e in decisions:
             payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
-            kind = payload.get('kind', 'unknown')
+            kind = payload.get("kind", "unknown")
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
-            reasons = payload.get('reasons', [])
+            reasons = payload.get("reasons", [])
             all_reasons.extend(reasons)
             confidences.append(e.confidence)
         top_reasons: dict[str, int] = {}
@@ -4326,7 +4683,14 @@ class EvidenceLog:
             fragment = r[:40] if len(r) > 40 else r
             top_reasons[fragment] = top_reasons.get(fragment, 0) + 1
         top_reasons = dict(sorted(top_reasons.items(), key=lambda x: -x[1])[:5])
-        return {'count': len(decisions), 'avg_confidence': round(sum(confidences) / len(confidences), 4), 'min_confidence': round(min(confidences), 4), 'max_confidence': round(max(confidences), 4), 'kinds': dict(sorted(kind_counts.items(), key=lambda x: -x[1])), 'top_reasons': top_reasons}
+        return {
+            "count": len(decisions),
+            "avg_confidence": round(sum(confidences) / len(confidences), 4),
+            "min_confidence": round(min(confidences), 4),
+            "max_confidence": round(max(confidences), 4),
+            "kinds": dict(sorted(kind_counts.items(), key=lambda x: -x[1])),
+            "top_reasons": top_reasons,
+        }
 
     def get_surface_tension(self) -> float:
         """
@@ -4338,8 +4702,8 @@ class EvidenceLog:
         try:
             decision_summary = self.get_decision_summary()
             error_rate = self.get_error_rate()
-            confirmed = decision_summary.get('count', 0)
-            errors = error_rate.get('error_count', 0)
+            confirmed = decision_summary.get("count", 0)
+            errors = error_rate.get("error_count", 0)
             total = confirmed + errors
             if total == 0:
                 return 1.0
@@ -4347,7 +4711,7 @@ class EvidenceLog:
         except Exception:  # noqa: BLE001
             return 1.0
 
-    def get_evidence_by_finding_id(self, finding_id: str, event_types: list[str] | None=None) -> list[EvidenceEvent]:
+    def get_evidence_by_finding_id(self, finding_id: str, event_types: list[str] | None = None) -> list[EvidenceEvent]:
         """
         Return all EvidenceEvents whose payload contains finding_id.
         Lookup key: check payload.get('finding_id') OR payload.get('id')
@@ -4362,7 +4726,7 @@ class EvidenceLog:
                 if event_types and event.event_type not in event_types:
                     continue
                 payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
-                if payload.get('finding_id') == finding_id or payload.get('id') == finding_id:
+                if payload.get("finding_id") == finding_id or payload.get("id") == finding_id:
                     results.append(event)
             return results
         except Exception:  # noqa: BLE001
@@ -4379,16 +4743,29 @@ class EvidenceLog:
             Dict s error a low-confidence metrikama
         """
         if not self._log:
-            return {'error_count': 0, 'error_rate': 0.0, 'low_conf_count': 0}
-        errors = self.query(event_type='error')
+            return {"error_count": 0, "error_rate": 0.0, "low_conf_count": 0}
+        errors = self.query(event_type="error")
         low_conf_events = [e for e in self._log if e.confidence < 0.7]
         recent_errors = []
         for e in reversed(errors):
             if len(recent_errors) >= 10:
                 break
             payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
-            recent_errors.append({'event_id': e.event_id, 'timestamp': datetime.fromtimestamp(e.timestamp, UTC).isoformat(), 'message': payload.get('message', '')[:80], 'kind': payload.get('kind', '')})
-        return {'error_count': len(errors), 'error_rate': round(len(errors) / len(self._log) * 100, 2), 'low_conf_count': len(low_conf_events), 'low_conf_rate': round(len(low_conf_events) / len(self._log) * 100, 2), 'recent_errors': recent_errors}
+            recent_errors.append(
+                {
+                    "event_id": e.event_id,
+                    "timestamp": datetime.fromtimestamp(e.timestamp, UTC).isoformat(),
+                    "message": payload.get("message", "")[:80],
+                    "kind": payload.get("kind", ""),
+                }
+            )
+        return {
+            "error_count": len(errors),
+            "error_rate": round(len(errors) / len(self._log) * 100, 2),
+            "low_conf_count": len(low_conf_events),
+            "low_conf_rate": round(len(low_conf_events) / len(self._log) * 100, 2),
+            "recent_errors": recent_errors,
+        }
 
     def get_statistics(self) -> dict[str, Any]:
         """
@@ -4400,56 +4777,82 @@ class EvidenceLog:
         type_counts = {et: len(indices) for et, indices in self._index_by_type.items()}
         type_counts = {k: v for k, v in type_counts.items() if v > 0}
         if self._log:
-            avg_confidence = sum((e.confidence for e in self._log)) / len(self._log)
+            avg_confidence = sum(e.confidence for e in self._log) / len(self._log)
             timestamps = [e.timestamp for e in self._log]
             time_span = (max(timestamps) - min(timestamps)).total_seconds()
         else:
             avg_confidence = 0.0
             time_span = 0.0
-        return {'total_events': self._total_count, 'ram_events': self.ram_size, 'dropped_events': self._dropped_count, 'event_types': type_counts, 'avg_confidence': round(avg_confidence, 4), 'time_span_seconds': round(time_span, 2), 'created_at': self._created_at.isoformat(), 'is_frozen': self._frozen, 'is_closed': self._closed, 'is_closing': self._closing, 'sqlite_open': self._db is not None, 'persist_file_open': self._persist_file is not None and (not self._persist_file.closed), 'persist_path': str(self._persist_path) if self._persist_path else None, 'persistence_enabled': self._enable_persist}
+        return {
+            "total_events": self._total_count,
+            "ram_events": self.ram_size,
+            "dropped_events": self._dropped_count,
+            "event_types": type_counts,
+            "avg_confidence": round(avg_confidence, 4),
+            "time_span_seconds": round(time_span, 2),
+            "created_at": self._created_at.isoformat(),
+            "is_frozen": self._frozen,
+            "is_closed": self._closed,
+            "is_closing": self._closing,
+            "sqlite_open": self._db is not None,
+            "persist_file_open": self._persist_file is not None and (not self._persist_file.closed),
+            "persist_path": str(self._persist_path) if self._persist_path else None,
+            "persistence_enabled": self._enable_persist,
+        }
 
     def _derive_posture(self, funnel) -> tuple:
         """Derive posture and dominant_pct from funnel."""
         if not funnel:
-            return 'empty', 0.0
-        dominant = max(funnel.items(), key=lambda x: x[1]['count'])
-        dominant_pct = dominant[1]['pct']
+            return "empty", 0.0
+        dominant = max(funnel.items(), key=lambda x: x[1]["count"])
+        dominant_pct = dominant[1]["pct"]
         if dominant_pct < 40:
-            return 'balanced', 0.0
-        posture_map = {'observation': 'observation_heavy', 'decision': 'decision_heavy', 'tool_call': 'tool_heavy',
-                      'error': 'error_heavy', 'synthesis': 'synthesis_heavy'}
-        return posture_map.get(dominant[0], f'{dominant[0]}_heavy'), dominant_pct
+            return "balanced", 0.0
+        posture_map = {
+            "observation": "observation_heavy",
+            "decision": "decision_heavy",
+            "tool_call": "tool_heavy",
+            "error": "error_heavy",
+            "synthesis": "synthesis_heavy",
+        }
+        return posture_map.get(dominant[0], f"{dominant[0]}_heavy"), dominant_pct
 
     def _derive_health_status(self, posture, total, error_rate, low_conf_rate) -> str:
         """Derive health status from error and low_conf rates."""
-        if posture == 'empty' or total == 0:
-            return 'empty'
+        if posture == "empty" or total == 0:
+            return "empty"
         if error_rate >= 20 or low_conf_rate >= 30:
-            return 'noisy'
+            return "noisy"
         if error_rate >= 10 or low_conf_rate >= 20:
-            return 'degraded'
+            return "degraded"
         if error_rate >= 5 or low_conf_rate >= 10:
-            return 'warning'
-        return 'healthy'
+            return "warning"
+        return "healthy"
 
     def _compute_weak_spots(self) -> dict:
         """Compute weak spots from error events."""
         weak_spots = {}
-        for e in self.query(event_type='error', limit=100):
+        for e in self.query(event_type="error", limit=100):
             payload = orjson.loads(e.payload) if e.payload else {}
-            kind, msg = payload.get('kind', 'unknown'), payload.get('message', '')[:50]
-            key = f'[{kind}] {msg}' if msg else f'[{kind}]'
+            kind, msg = payload.get("kind", "unknown"), payload.get("message", "")[:50]
+            key = f"[{kind}] {msg}" if msg else f"[{kind}]"
             weak_spots[key] = weak_spots.get(key, 0) + 1
         return dict(sorted(weak_spots.items(), key=lambda x: -x[1])[:5])
 
     def _compute_recent_high_conf_decisions(self) -> list:
         """Compute recent high confidence decisions."""
         result = []
-        for e in reversed(self.query(event_type='decision', limit=50)):
+        for e in reversed(self.query(event_type="decision", limit=50)):
             if e.confidence >= 0.9:
                 payload = orjson.loads(e.payload) if e.payload else {}
-                result.append({'event_id': e.event_id[-12:], 'kind': payload.get('kind', ''),
-                             'conf': e.confidence, 'timestamp': datetime.fromtimestamp(e.timestamp, UTC).isoformat()})
+                result.append(
+                    {
+                        "event_id": e.event_id[-12:],
+                        "kind": payload.get("kind", ""),
+                        "conf": e.confidence,
+                        "timestamp": datetime.fromtimestamp(e.timestamp, UTC).isoformat(),
+                    }
+                )
                 if len(result) >= 3:
                     break
         return result
@@ -4457,124 +4860,177 @@ class EvidenceLog:
     def get_sprint_health_summary(self) -> dict[str, Any]:
         """Compact retrospective seam for sprint health assessment."""
         funnel, decisions, errors = self.get_event_funnel(), self.get_decision_summary(), self.get_error_rate()
-        total = sum(v['count'] for v in funnel.values()) if funnel else 0
+        total = sum(v["count"] for v in funnel.values()) if funnel else 0
         posture, dominant_pct = self._derive_posture(funnel)
-        quality_breaks = [{'event_type': et, 'avg_conf': d['avg_conf'], 'count': d['count']} for et, d in funnel.items() if d['avg_conf'] < 0.7]
-        quality_signal = 'intact' if not quality_breaks else 'degraded'
-        decision_count = decisions.get('count', 0)
-        low_conf_decisions = sum(1 for e in self.query(event_type='decision', limit=500) if e.confidence < 0.7) if decision_count > 0 else 0
-        error_rate, low_conf_rate = errors.get('error_rate', 0.0), errors.get('low_conf_rate', 0.0)
+        quality_breaks = [
+            {"event_type": et, "avg_conf": d["avg_conf"], "count": d["count"]}
+            for et, d in funnel.items()
+            if d["avg_conf"] < 0.7
+        ]
+        quality_signal = "intact" if not quality_breaks else "degraded"
+        decision_count = decisions.get("count", 0)
+        low_conf_decisions = (
+            sum(1 for e in self.query(event_type="decision", limit=500) if e.confidence < 0.7)
+            if decision_count > 0
+            else 0
+        )
+        error_rate, low_conf_rate = errors.get("error_rate", 0.0), errors.get("low_conf_rate", 0.0)
         health = self._derive_health_status(posture, total, error_rate, low_conf_rate)
-        if posture == 'error_heavy' and error_rate > 15 and health == 'healthy':
-            health = 'degraded'
+        if posture == "error_heavy" and error_rate > 15 and health == "healthy":
+            health = "degraded"
         pressure_pct = low_conf_decisions / decision_count * 100 if decision_count > 0 else 0
-        low_conf_pressure = 'high' if pressure_pct > 30 else 'moderate' if pressure_pct > 15 else 'low' if low_conf_decisions > 0 else 'none'
-        return {'run_id': self._run_id, 'total_events': total, 'created_at': self._created_at.isoformat(), 'posture': posture,
-            'dominant_pct': dominant_pct, 'quality_signal': quality_signal, 'quality_breaks': quality_breaks[:5],
-            'decision_count': decision_count, 'decision_avg_conf': round(decisions.get('avg_confidence', 0.0), 4),
-            'decision_conf_range': [round(decisions.get('min_confidence', 0.0), 4), round(decisions.get('max_confidence', 0.0), 4)],
-            'low_conf_decisions': low_conf_decisions, 'low_conf_pressure': low_conf_pressure,
-            'error_count': errors.get('error_count', 0), 'error_rate_pct': error_rate,
-            'low_conf_count': errors.get('low_conf_count', 0), 'low_conf_rate_pct': low_conf_rate,
-            'health': health, 'top_weak_spots': self._compute_weak_spots(),
-            'recent_high_conf_decisions': self._compute_recent_high_conf_decisions()}
+        low_conf_pressure = (
+            "high"
+            if pressure_pct > 30
+            else "moderate"
+            if pressure_pct > 15
+            else "low"
+            if low_conf_decisions > 0
+            else "none"
+        )
+        return {
+            "run_id": self._run_id,
+            "total_events": total,
+            "created_at": self._created_at.isoformat(),
+            "posture": posture,
+            "dominant_pct": dominant_pct,
+            "quality_signal": quality_signal,
+            "quality_breaks": quality_breaks[:5],
+            "decision_count": decision_count,
+            "decision_avg_conf": round(decisions.get("avg_confidence", 0.0), 4),
+            "decision_conf_range": [
+                round(decisions.get("min_confidence", 0.0), 4),
+                round(decisions.get("max_confidence", 0.0), 4),
+            ],
+            "low_conf_decisions": low_conf_decisions,
+            "low_conf_pressure": low_conf_pressure,
+            "error_count": errors.get("error_count", 0),
+            "error_rate_pct": error_rate,
+            "low_conf_count": errors.get("low_conf_count", 0),
+            "low_conf_rate_pct": low_conf_rate,
+            "health": health,
+            "top_weak_spots": self._compute_weak_spots(),
+            "recent_high_conf_decisions": self._compute_recent_high_conf_decisions(),
+        }
 
     @staticmethod
-    def _derive_continue_reason(continue_or_pivot: str, health_status: str, decision_count: int, biggest_weakness: str) -> str:
+    def _derive_continue_reason(
+        continue_or_pivot: str, health_status: str, decision_count: int, biggest_weakness: str
+    ) -> str:
         """Derive one-line continue reason from health signals."""
-        if continue_or_pivot == 'pivot':
-            return 'pivot: errors/errors dominate — cannot trust signal'
-        if continue_or_pivot == 'inspect':
+        if continue_or_pivot == "pivot":
+            return "pivot: errors/errors dominate — cannot trust signal"
+        if continue_or_pivot == "inspect":
             if biggest_weakness:
-                return f'inspect: {biggest_weakness[:70]}'
-            return f'inspect: health={health_status}, check signals'
+                return f"inspect: {biggest_weakness[:70]}"
+            return f"inspect: health={health_status}, check signals"
         if decision_count == 0:
-            return 'continue: no decisions made yet — gather more signal'
-        return f'continue: healthy sprint with {decision_count} decisions'
+            return "continue: no decisions made yet — gather more signal"
+        return f"continue: healthy sprint with {decision_count} decisions"
 
     @staticmethod
     def _derive_trust_level(total: int, health_status: str, low_conf_pressure: str, error_rate: float) -> str:
         """Derive trust level enum from health signals."""
         if total < 10:
-            return 'low'
-        if health_status == 'noisy':
-            return 'low'
-        if low_conf_pressure == 'high':
-            return 'moderate'
-        if health_status == 'degraded' or error_rate > 10:
-            return 'moderate'
-        if health_status == 'warning' or error_rate > 5:
-            return 'moderate'
-        return 'high'
+            return "low"
+        if health_status == "noisy":
+            return "low"
+        if low_conf_pressure == "high":
+            return "moderate"
+        if health_status == "degraded" or error_rate > 10:
+            return "moderate"
+        if health_status == "warning" or error_rate > 5:
+            return "moderate"
+        return "high"
 
     def _derive_what_worked(self, health) -> list:
         """Derive what_worked list from health funnel."""
-        funnel = health.get('funnel') or {}
-        return [f"{et} (conf={d['avg_conf']:.2f}, n={d['count']})" for et, d in funnel.items()
-               if d.get('avg_conf', 0) >= 0.85 and d.get('count', 0) >= 2][:4]
+        funnel = health.get("funnel") or {}
+        return [
+            f"{et} (conf={d['avg_conf']:.2f}, n={d['count']})"
+            for et, d in funnel.items()
+            if d.get("avg_conf", 0) >= 0.85 and d.get("count", 0) >= 2
+        ][:4]
 
     def _derive_breakdown(self, health) -> list:
         """Derive breakdown list from quality_breaks and weak_spots."""
-        breakdown = [f"{b['event_type']} conf={b['avg_conf']:.2f}" for b in health.get('quality_breaks', [])]
-        breakdown.extend(f'error: {s}' for s in list(health.get('top_weak_spots', {}).keys())[:3])
+        breakdown = [f"{b['event_type']} conf={b['avg_conf']:.2f}" for b in health.get("quality_breaks", [])]
+        breakdown.extend(f"error: {s}" for s in list(health.get("top_weak_spots", {}).keys())[:3])
         return breakdown[:5]
 
     def _derive_biggest_weakness(self, health, breakdown) -> str:
         """Derive biggest weakness from health signals."""
-        if weak_spots := health.get('top_weak_spots', {}):
-            return next(iter(weak_spots.keys()), '')
+        if weak_spots := health.get("top_weak_spots", {}):
+            return next(iter(weak_spots.keys()), "")
         if breakdown:
             return breakdown[0]
-        if quality_breaks := health.get('quality_breaks', []):
+        if quality_breaks := health.get("quality_breaks", []):
             return f"{quality_breaks[0]['event_type']} quality gap"
-        return ''
+        return ""
 
     def _derive_verdict(self, total, health_status, posture, decision_count, error_rate) -> str:
         """Derive verdict string from health signals."""
         if total == 0:
-            return 'empty log — no events recorded'
+            return "empty log — no events recorded"
         match health_status:
-            case 'healthy': return f'clean sprint: {posture}, {total} events, {decision_count} decisions'
-            case 'warning': return f'warning sprint: {posture}, {total} events, {error_rate:.1f}% errors'
-            case 'degraded': return f'degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors'
-            case 'noisy': return f'noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust'
-            case _: return f'{posture} sprint: {total} events, health={health_status}'
+            case "healthy":
+                return f"clean sprint: {posture}, {total} events, {decision_count} decisions"
+            case "warning":
+                return f"warning sprint: {posture}, {total} events, {error_rate:.1f}% errors"
+            case "degraded":
+                return f"degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors"
+            case "noisy":
+                return f"noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust"
+            case _:
+                return f"{posture} sprint: {total} events, health={health_status}"
 
     def _derive_continue_or_pivot(self, total, health_status, error_rate, low_conf_pressure) -> str:
         """Derive continue/inspect/pivot decision."""
         match ():
-            case _ if health_status == 'noisy': return 'pivot'
-            case _ if health_status == 'degraded' and error_rate > 15: return 'pivot'
-            case _ if health_status in ('degraded', 'warning'): return 'inspect'
-            case _ if low_conf_pressure == 'high' or total < 10: return 'inspect'
-            case _: return 'continue'
+            case _ if health_status == "noisy":
+                return "pivot"
+            case _ if health_status == "degraded" and error_rate > 15:
+                return "pivot"
+            case _ if health_status in ("degraded", "warning"):
+                return "inspect"
+            case _ if low_conf_pressure == "high" or total < 10:
+                return "inspect"
+            case _:
+                return "continue"
 
     def _derive_operator_takeaway(self, total, health_status, biggest_weakness, verdict, decision_count) -> str:
         """Derive operator takeaway string."""
         if total == 0:
-            return 'no data — sprint not started or all events dropped'
-        weakness = biggest_weakness[:60] if biggest_weakness else ''
+            return "no data — sprint not started or all events dropped"
+        weakness = biggest_weakness[:60] if biggest_weakness else ""
         match health_status:
-            case 'healthy': return f'sprint healthy, {decision_count} decisions made, continue'
-            case 'warning': return f"sprint has warnings: {weakness or 'see breakdown'}"
-            case 'degraded': return f"sprint degraded: {weakness or 'errors above threshold'}"
-            case 'noisy': return f"sprint noisy: {weakness or 'too many errors to trust'}"
-            case _: return f'sprint status={health_status}, verdict={verdict[:80]}'
+            case "healthy":
+                return f"sprint healthy, {decision_count} decisions made, continue"
+            case "warning":
+                return f"sprint has warnings: {weakness or 'see breakdown'}"
+            case "degraded":
+                return f"sprint degraded: {weakness or 'errors above threshold'}"
+            case "noisy":
+                return f"sprint noisy: {weakness or 'too many errors to trust'}"
+            case _:
+                return f"sprint status={health_status}, verdict={verdict[:80]}"
 
     def _derive_top_actions(self, continue_or_pivot, biggest_weakness, error_rate, health, what_worked) -> list:
         """Derive top retro actions."""
         actions = []
-        if continue_or_pivot == 'pivot':
-            actions.append('pivot: root-cause errors blocking progress — investigate before continuing')
-        elif continue_or_pivot == 'inspect':
-            if biggest_weakness: actions.append(f'inspect: {biggest_weakness[:80]}')
-            if error_rate > 5: actions.append(f'review error_rate={error_rate:.1f}% — identify top failure modes')
-            if health.get('low_conf_pressure') != 'none':
+        if continue_or_pivot == "pivot":
+            actions.append("pivot: root-cause errors blocking progress — investigate before continuing")
+        elif continue_or_pivot == "inspect":
+            if biggest_weakness:
+                actions.append(f"inspect: {biggest_weakness[:80]}")
+            if error_rate > 5:
+                actions.append(f"review error_rate={error_rate:.1f}% — identify top failure modes")
+            if health.get("low_conf_pressure") != "none":
                 actions.append(f"review low-conf decisions ({health.get('low_conf_pressure')} pressure)")
-        if health.get('low_conf_pressure') == 'high' and continue_or_pivot != 'pivot':
-            actions.append('address decision confidence — >30% decisions below 0.7 conf')
-        if what_worked and continue_or_pivot == 'continue':
-            actions.append(f'leverage what worked: {what_worked[0][:60]}')
+        if health.get("low_conf_pressure") == "high" and continue_or_pivot != "pivot":
+            actions.append("address decision confidence — >30% decisions below 0.7 conf")
+        if what_worked and continue_or_pivot == "continue":
+            actions.append(f"leverage what worked: {what_worked[0][:60]}")
         seen, deduped = set(), []
         for a in actions:
             if (norm := a[:60]) not in seen:
@@ -4585,11 +5041,14 @@ class EvidenceLog:
     def _derive_health_confidence_note(self, total, health_status, low_conf_pressure) -> str:
         """Derive health confidence note."""
         if total < 10:
-            return f'low confidence: only {total} events — treat verdict as indicative'
+            return f"low confidence: only {total} events — treat verdict as indicative"
         match health_status:
-            case 'noisy': return 'low confidence: error_rate >20% — signal integrity compromised'
-            case _ if low_conf_pressure == 'high': return 'moderate confidence: high low-conf decision pressure'
-            case _: return 'confident verdict: sufficient data and low noise'
+            case "noisy":
+                return "low confidence: error_rate >20% — signal integrity compromised"
+            case _ if low_conf_pressure == "high":
+                return "moderate confidence: high low-conf decision pressure"
+            case _:
+                return "confident verdict: sufficient data and low noise"
 
     def _assemble_retrospective_bundle(
         self,
@@ -4607,43 +5066,48 @@ class EvidenceLog:
         biggest_weakness = self._derive_biggest_weakness(health, breakdown)
         verdict = self._derive_verdict(total, health_status, posture, decision_count, error_rate)
         continue_or_pivot = self._derive_continue_or_pivot(total, health_status, error_rate, low_conf_pressure)
-        operator_takeaway = self._derive_operator_takeaway(total, health_status, biggest_weakness, verdict, decision_count)
-        top_retro_actions = self._derive_top_actions(continue_or_pivot, biggest_weakness, error_rate, health, what_worked)
+        operator_takeaway = self._derive_operator_takeaway(
+            total, health_status, biggest_weakness, verdict, decision_count
+        )
+        top_retro_actions = self._derive_top_actions(
+            continue_or_pivot, biggest_weakness, error_rate, health, what_worked
+        )
         health_confidence_note = self._derive_health_confidence_note(total, health_status, low_conf_pressure)
         return {
-            'run_id': self._run_id,
-            'total_events': total,
-            'verdict': verdict,
-            'posture': posture,
-            'health': health_status,
-            'breakdown': breakdown,
-            'what_worked': what_worked,
-            'biggest_weakness': biggest_weakness,
-            'continue_or_pivot': continue_or_pivot,
-            'operator_takeaway': operator_takeaway,
-            'top_retro_actions': top_retro_actions,
-            'health_confidence_note': health_confidence_note,
-            'operator_retro_brief': operator_takeaway,
-            'continue_reason': self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),
-            'trust_level': self._derive_trust_level(total, health_status, low_conf_pressure, error_rate),
-            'biggest_win': what_worked[0] if what_worked else '',
-            'retro_priority': top_retro_actions[0] if top_retro_actions else '',
-            '_health': health,
+            "run_id": self._run_id,
+            "total_events": total,
+            "verdict": verdict,
+            "posture": posture,
+            "health": health_status,
+            "breakdown": breakdown,
+            "what_worked": what_worked,
+            "biggest_weakness": biggest_weakness,
+            "continue_or_pivot": continue_or_pivot,
+            "operator_takeaway": operator_takeaway,
+            "top_retro_actions": top_retro_actions,
+            "health_confidence_note": health_confidence_note,
+            "operator_retro_brief": operator_takeaway,
+            "continue_reason": self._derive_continue_reason(
+                continue_or_pivot, health_status, decision_count, biggest_weakness
+            ),
+            "trust_level": self._derive_trust_level(total, health_status, low_conf_pressure, error_rate),
+            "biggest_win": what_worked[0] if what_worked else "",
+            "retro_priority": top_retro_actions[0] if top_retro_actions else "",
+            "_health": health,
         }
 
     def get_retrospective_bundle(self) -> dict[str, Any]:
         """Single-call retrospective seam for private sprint retro."""
         health = self.get_sprint_health_summary()
-        total = health.get('total_events', 0)
-        health_status = health.get('health', 'unknown')
-        posture = health.get('posture', 'unknown')
-        error_rate = health.get('error_rate_pct', 0.0)
-        decision_count = health.get('decision_count', 0)
-        low_conf_pressure = health.get('low_conf_pressure', 'none')
+        total = health.get("total_events", 0)
+        health_status = health.get("health", "unknown")
+        posture = health.get("posture", "unknown")
+        error_rate = health.get("error_rate_pct", 0.0)
+        decision_count = health.get("decision_count", 0)
+        low_conf_pressure = health.get("low_conf_pressure", "none")
         return self._assemble_retrospective_bundle(
-            health, total, health_status, posture,
-            error_rate, decision_count, low_conf_pressure
-    )
+            health, total, health_status, posture, error_rate, decision_count, low_conf_pressure
+        )
 
     def get_chain(self, event_id: str) -> list[EvidenceEvent]:
         """
@@ -4660,7 +5124,7 @@ class EvidenceLog:
         chain = []
         visited = set()
 
-        def traverse(eid: str):
+        def traverse(eid: str) -> None:
             if eid in visited:
                 return
             visited.add(eid)
@@ -4670,20 +5134,15 @@ class EvidenceLog:
             for source_id in event.source_ids:
                 traverse(source_id)
             chain.append(event)
+
         traverse(event_id)
         return chain
 
-# ─── Evidence Architect Components ────────────────────────────────────────────────
-# Sprint Split-Brain: Delegation to split components
 
 from hledac.universal.evidence import (
-    WarcWriteResult,
-    WARCWriter,
-    WARCArchiver,
     EvidenceEvent,
-    EvidenceWriter,
-    EvidenceQuery,
-    get_warc_paths,
-    get_warc_snippets,
+    WARCArchiver,
+    WARCWriter,
+    WarcWriteResult,
     _clear_warc_globals,
-    )
+)

@@ -21,39 +21,43 @@ M1 8GB: All bounded, fail-safe, no recursion.
 
 from __future__ import annotations
 
-import re as _re
 import time as _time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rust_extensions.wiring.dedup_bloom_wiring import DedupBloom
 
-from urllib.parse import parse_qsl as _parse_qsl, urlencode as _urlencode, urlparse as _urlparse
-
-# ─── AccelBackend facade (properly lazy, single probe) ────────────────────────
+from urllib.parse import parse_qsl as _parse_qsl
+from urllib.parse import urlencode as _urlencode
+from urllib.parse import urlparse as _urlparse
 
 from hledac.universal._core.rust_backend import get_accel as _get_accel
-
-# C14: Deobfuscation for +25% IOC recall
-from rust_extensions.wiring.deobfuscate_wiring import (
-    batch_decode_ioc_candidates as _batch_decode_ioc_candidates,
-    deobfuscate_wired as _deobfuscate_wired,
-)
 
 # D4: SIMD Aho-Corasick for 10-100x faster IOC pre-filtering
 from rust_extensions.wiring.aho_corasick_simd_wiring import (
     SIMDAhoCorasickMatcher,
+)
+from rust_extensions.wiring.aho_corasick_simd_wiring import (
     ioc_prefilter as _ioc_prefilter,
+)
+from rust_extensions.wiring.aho_corasick_simd_wiring import (
     ioc_prefilter_batch as _ioc_prefilter_batch,
+)
+from rust_extensions.wiring.aho_corasick_simd_wiring import (
     simd_aho_available as _simd_aho_available,
+)
+
+# C14: Deobfuscation for +25% IOC recall
+from rust_extensions.wiring.deobfuscate_wiring import (
+    deobfuscate_wired as _deobfuscate_wired,
 )
 
 # D5: DedupBloom Tier 0 pre-filter — 10× faster than RotatingBloomFilter for URL dedup
 # Import lazily to avoid circular dependencies and speed up cold start
-_dedup_bloom: "DedupBloom | None" = None
+_dedup_bloom: DedupBloom | None = None
 
 
-def _get_dedup_bloom() -> "DedupBloom | None":
+def _get_dedup_bloom() -> DedupBloom | None:
     """Lazy load DedupBloom instance (M1 8GB safe, bounded to 50K items)."""
     global _dedup_bloom
     if _dedup_bloom is None:
@@ -65,36 +69,45 @@ def _get_dedup_bloom() -> "DedupBloom | None":
             _dedup_bloom = None
     return _dedup_bloom
 
-# ─── Python fallback regexes (pre-compiled, module-level) ──────────────────────
 
 from forensics.ioc_patterns_generated import (  # noqa: F401,E402
+    _HASH_VALIDATORS,
     _IOC_COMBINED,
     _IOC_TYPE_NAMES,
-    _HASH_VALIDATORS,
     _TRACKING_PARAMS,
 )
 
-# ─── IOC type constants ───────────────────────────────────────────────────────
-
 IOC_TYPES: frozenset[str] = frozenset(
-    ("cve", "ip", "ipv4", "ipv6", "hash_sha256", "hash_md5", "onion", "i2p",
-     "domain", "apt", "malware", "info_hash", "magnet_uri", "threat_actor",
-     "malware_family", "email", "mac", "btc", "eth", "pending")
+    (
+        "cve",
+        "ip",
+        "ipv4",
+        "ipv6",
+        "hash_sha256",
+        "hash_md5",
+        "onion",
+        "i2p",
+        "domain",
+        "apt",
+        "malware",
+        "info_hash",
+        "magnet_uri",
+        "threat_actor",
+        "malware_family",
+        "email",
+        "mac",
+        "btc",
+        "eth",
+        "pending",
+    )
 )
-
-# ─── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _looks_like_mac(value: str) -> bool:
     """Disambiguate IPv6 compressed form vs MAC address (aa:bb:cc:dd:ee:ff)."""
     sep = ":" if ":" in value else "-"
     parts = value.split(sep)
-    return len(parts) == 6 and all(
-        len(p) == 2 and all(c in "0123456789abcdefABCDEF" for c in p) for p in parts
-    )
-
-
-# ─── Python-only IOC extraction (fallback when Rust unavailable) ────────────────
+    return len(parts) == 6 and all(len(p) == 2 and all(c in "0123456789abcdefABCDEF" for c in p) for p in parts)
 
 
 def _python_fast_ioc_extract(text: str) -> list[tuple[str, str]]:
@@ -147,8 +160,6 @@ def _python_batch_extract(texts: list[str]) -> list[list[tuple[str, str]]]:
     return [_python_fast_ioc_extract(text) for text in texts]
 
 
-# ─── Rust text normalization fast-path (lazy import, M1 NEON SIMD) ────────────
-
 # Cache entry: (combined_func, batch_nfc, batch_strip)
 # combined_func = batch_nfc_and_strip_diacritics_fast (single pass, preferred)
 # batch_nfc, batch_strip = separate fallback functions
@@ -172,10 +183,17 @@ def _get_rust_text_fast() -> tuple[object, object, object] | None:
         # F1: Use centralized text_norm_wiring layer for consistency
         from rust_extensions.wiring.text_norm_wiring import (
             batch_nfc_and_strip_diacritics as _combined,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             batch_nfc_normalize_fast as _batch_nfc,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             batch_strip_diacritics_fast as _batch_strip,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             is_available as _available,
         )
+
         if _available():
             _RUST_TEXT_FAST = (_combined, _batch_nfc, _batch_strip)
             return _RUST_TEXT_FAST
@@ -193,6 +211,7 @@ def _rust_text_fast_single(text: str) -> str:
     rust_fast = _get_rust_text_fast()
     if rust_fast is None:
         import unicodedata
+
         try:
             nfkd = unicodedata.normalize("NFKD", text)
             return "".join(c for c in nfkd if not unicodedata.combining(c))
@@ -210,6 +229,7 @@ def _rust_text_fast_single(text: str) -> str:
             return batch_strip([normalized])[0]
     except Exception:  # noqa: BLE001
         import unicodedata
+
         try:
             nfkd = unicodedata.normalize("NFKD", text)
             return "".join(c for c in nfkd if not unicodedata.combining(c))
@@ -318,9 +338,6 @@ def _python_batch_dedup_urls(urls: list[str]) -> list[str]:
     return result
 
 
-# ─── IOCProcessor — single unified facade ──────────────────────────────────────
-
-
 class IOCProcessor:
     """
     Unified IOC extraction facade.
@@ -367,14 +384,11 @@ class IOCProcessor:
         except Exception:
             return False
 
-    def _extract_with_deobfuscation(
-        self, text: str
-    ) -> list[tuple[str, str]]:
+    def _extract_with_deobfuscation(self, text: str) -> list[tuple[str, str]]:
         """Extract IOCs with deobfuscation pipeline (C14: +25% recall)."""
         if not text:
             return []
 
-        # Step 1: Deobfuscate (Rust fast-path or Python fallback)
         decoded_candidates: list[str] = []
         if self._deobfuscate.available:
             try:
@@ -382,7 +396,6 @@ class IOCProcessor:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Step 2: Extract IOCs from original text
         iocs: list[tuple[str, str]] = []
         if self.is_rust_available:
             ioc_domain = self._accel.ioc
@@ -400,7 +413,6 @@ class IOCProcessor:
             # Python fallback — named-group combined regex, single pass
             iocs = _python_fast_ioc_extract(text)
 
-        # Step 3: Extract IOCs from decoded candidates (for +25% recall)
         seen: set[str] = {f"{v}:{t}" for v, t in iocs}
         for decoded in decoded_candidates:
             if self.is_rust_available:
@@ -459,9 +471,7 @@ class IOCProcessor:
 
         return _ioc_prefilter(text, self._get_simd_matcher())
 
-    def prefilter_simd_batch(
-        self, texts: list[str]
-    ) -> list[list[tuple[str, str]]]:
+    def prefilter_simd_batch(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         """D4: Batch IOC prefilter using SIMD Aho-Corasick.
 
         Args:
@@ -475,9 +485,7 @@ class IOCProcessor:
 
         return _ioc_prefilter_batch(texts, self._get_simd_matcher())
 
-    def extract_batch(
-        self, texts: list[str]
-    ) -> list[list[tuple[str, str]]]:
+    def extract_batch(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         """Batch extract IOCs from multiple texts.
 
         C14: Uses deobfuscation pipeline for +25% recall on defanged/encoded IOC.
@@ -492,7 +500,6 @@ class IOCProcessor:
         if not texts:
             return []
 
-        # Step 1: Batch deobfuscate (Rust fast-path or Python fallback)
         decoded_batch: list[list[str]] = [[] for _ in texts]
         if self._deobfuscate.available:
             try:
@@ -500,7 +507,6 @@ class IOCProcessor:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Step 2: Extract IOCs from original texts
         results: list[list[tuple[str, str]]] = []
         if self.is_rust_available:
             ioc_domain = self._accel.ioc
@@ -518,8 +524,7 @@ class IOCProcessor:
             with _ThreadPoolExecutor(max_workers=n_workers) as ex:
                 results = list(ex.map(_python_fast_ioc_extract, texts))
 
-        # Step 3: Extract IOCs from decoded candidates and merge (for +25% recall)
-        seen_batch: list[set[str]] = [set(f"{v}:{t}" for v, t in r) for r in results]
+        seen_batch: list[set[str]] = [{f"{v}:{t}" for v, t in r} for r in results]
 
         for text_idx, decoded_list in enumerate(decoded_batch):
             for decoded in decoded_list:
@@ -545,9 +550,7 @@ class IOCProcessor:
 
         return results
 
-    def extract_indexed(
-        self, texts: list[str]
-    ) -> list[tuple[int, str, str]]:
+    def extract_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
         """Indexed batch extract — returns (text_idx, ioc_value, ioc_type).
 
         Uses Rust indexed batch extractor when available.
@@ -582,14 +585,9 @@ class IOCProcessor:
             with _asyncio.Runner() as runner:
                 return runner.run(self.extract_indexed_async(texts))
         else:
-            # Running loop detected — schedule on running loop
-            return _asyncio.run_coroutine_threadsafe(
-                self.extract_indexed_async(texts), loop
-            ).result()
+            return _asyncio.run_coroutine_threadsafe(self.extract_indexed_async(texts), loop).result()
 
-    async def extract_indexed_async(
-        self, texts: list[str]
-    ) -> list[tuple[int, str, str]]:
+    async def extract_indexed_async(self, texts: list[str]) -> list[tuple[int, str, str]]:
         """Async indexed batch extract with rayon parallelism and deobfuscation.
 
         C14: Uses deobfuscation pipeline for +25% recall on defanged/encoded IOC.
@@ -607,7 +605,6 @@ class IOCProcessor:
         if not texts:
             return []
 
-        # Step 1: Batch deobfuscate
         decoded_batch: list[list[str]] = [[] for _ in texts]
         if self._deobfuscate.available:
             try:
@@ -615,12 +612,10 @@ class IOCProcessor:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Step 2: Extract IOCs from original texts
         if self.is_rust_available:
             ioc_domain = self._accel.ioc
             try:
                 results = ioc_domain.batch_extract_iocs_simd_indexed(texts)
-                # Step 3: Add decoded candidates
                 seen: set[str] = {f"{idx}:{v}:{t}" for idx, v, t in results}
                 extra_results: list[tuple[int, str, str]] = []
                 for text_idx, decoded_list in enumerate(decoded_batch):
@@ -660,11 +655,7 @@ class IOCProcessor:
             results: list[tuple[int, str, str]] = []
 
             for i in range(0, len(texts), chunk_size):
-                chunk = [
-                    (i + j, texts[i + j], decoded_batch[i + j])
-                    for j in range(min(chunk_size, len(texts) - i))
-                ]
-                # Dispatch to rayon CPU pool for parallel extraction
+                chunk = [(i + j, texts[i + j], decoded_batch[i + j]) for j in range(min(chunk_size, len(texts) - i))]
                 chunk_results = await to_thread_rayon(
                     "cpu",
                     _extract_with_index,
@@ -674,16 +665,14 @@ class IOCProcessor:
                 results.extend(chunk_results)
 
             return results
-        except (ImportError, RuntimeError):
+        except ImportError, RuntimeError:
             # Fallback: rayon unavailable — sequential extraction with deobfuscation
             results: list[tuple[int, str, str]] = []
             for idx, text in enumerate(texts):
                 seen: set[str] = set()
-                # Extract from original
                 for value, ioc_type in _python_fast_ioc_extract(text):
                     results.append((idx, value, ioc_type))
                     seen.add(f"{value}:{ioc_type}")
-                # Extract from decoded candidates
                 for decoded in decoded_batch[idx]:
                     for value, ioc_type in _python_fast_ioc_extract(decoded):
                         key = f"{value}:{ioc_type}"
@@ -702,9 +691,7 @@ class IOCProcessor:
                 pass
         return _python_fast_ioc_extract(text)
 
-    async def extract_batch_async(
-        self, texts: list[str]
-    ) -> list[list[tuple[str, str]]]:
+    async def extract_batch_async(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         """Async batch extract with rayon parallelism and deobfuscation.
 
         C14: Uses deobfuscation pipeline for +25% recall on defanged/encoded IOC.
@@ -724,7 +711,6 @@ class IOCProcessor:
         if not texts:
             return []
 
-        # Step 1: Batch deobfuscate
         decoded_batch: list[list[str]] = [[] for _ in texts]
         if self._deobfuscate.available:
             try:
@@ -732,13 +718,11 @@ class IOCProcessor:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Step 2: Extract IOCs from original texts
         if self.is_rust_available:
             ioc_domain = self._accel.ioc
             try:
                 results = ioc_domain.batch_extract_iocs_simd(texts)
-                # Step 3: Merge decoded candidates
-                seen_batch: list[set[str]] = [set(f"{v}:{t}" for v, t in r) for r in results]
+                seen_batch: list[set[str]] = [{f"{v}:{t}" for v, t in r} for r in results]
                 for text_idx, decoded_list in enumerate(decoded_batch):
                     for decoded in decoded_list:
                         decoded_iocs = self._extract_iocs_from_text(decoded)
@@ -774,11 +758,7 @@ class IOCProcessor:
             results: list[list[tuple[str, str]]] = []
 
             for i in range(0, len(texts), chunk_size):
-                chunk = [
-                    (i + j, texts[i + j], decoded_batch[i + j])
-                    for j in range(min(chunk_size, len(texts) - i))
-                ]
-                # Dispatch to rayon CPU pool for parallel extraction
+                chunk = [(i + j, texts[i + j], decoded_batch[i + j]) for j in range(min(chunk_size, len(texts) - i))]
                 chunk_results = await to_thread_rayon(
                     "cpu",
                     _extract_with_deobfuscation,
@@ -790,7 +770,7 @@ class IOCProcessor:
                 results.extend([r[1] for r in chunk_results])
 
             return results
-        except (ImportError, RuntimeError):
+        except ImportError, RuntimeError:
             # Fallback: rayon unavailable — use ThreadPoolExecutor with deobfuscation
             import os as _os
             from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
@@ -928,17 +908,12 @@ class IOCProcessor:
             with _asyncio.Runner() as runner:
                 batch_results = runner.run(self.extract_batch_async(texts))
         else:
-            # Running loop detected — schedule on running loop
-            batch_results = _asyncio.run_coroutine_threadsafe(
-                self.extract_batch_async(texts), loop
-            ).result()
+            batch_results = _asyncio.run_coroutine_threadsafe(self.extract_batch_async(texts), loop).result()
 
         results: list[list] = []
         for i in range(n):
             iocs = batch_results[i] if i < len(batch_results) else []
-            findings = _iocs_to_findings(
-                iocs, source_finding_ids[i], queries[i], min_confidence
-            )
+            findings = _iocs_to_findings(iocs, source_finding_ids[i], queries[i], min_confidence)
             results.append(findings)
         return results
 
@@ -973,14 +948,9 @@ class IOCProcessor:
         results: list[list] = []
         for i in range(n):
             iocs = batch_results[i] if i < len(batch_results) else []
-            findings = _iocs_to_findings(
-                iocs, source_finding_ids[i], queries[i], min_confidence
-            )
+            findings = _iocs_to_findings(iocs, source_finding_ids[i], queries[i], min_confidence)
             results.append(findings)
         return results
-
-
-# ─── CanonicalFinding builder ───────────────────────────────────────────────────
 
 
 def _ioc_confidence(ioc_type: str) -> float:
@@ -1026,8 +996,6 @@ def _iocs_to_findings(
     return findings
 
 
-# ─── Functional API (delegates to IOCProcessor) ───────────────────────────────
-
 # Module-level singleton processor — thread-safe, lazy
 _processor: IOCProcessor | None = None
 _processor_lock: _threading.Lock | None = None
@@ -1069,6 +1037,7 @@ def _get_rust_zero_copy_func() -> object | None:
         return _async_rust_zero_copy_func
     try:
         from hledac.universal._core.rust_backend import rust
+
         if rust.is_available and hasattr(rust.ioc, "extract_iocs_zero_copy"):
             _async_rust_zero_copy_func = rust.ioc.extract_iocs_zero_copy
             return _async_rust_zero_copy_func
@@ -1184,25 +1153,19 @@ async def extract_to_findings_bulk_async(
 
     ISSUE-006: Full async version using extract_batch_async() for rayon parallelism.
     """
-    return await _get_processor().extract_to_findings_bulk_async(
-        texts, source_finding_ids, queries, min_confidence
-    )
+    return await _get_processor().extract_to_findings_bulk_async(texts, source_finding_ids, queries, min_confidence)
 
-
-# ─── Backward-compatibility aliases ────────────────────────────────────────────
 
 # Aliases for forensics/ioc_extractor.py backward compatibility
 ioc_extract_to_canonical_findings = extract_to_findings
 ioc_extract_to_canonical_findings_bulk = extract_to_findings_bulk
 
-# ─── Backward-compatibility re-exports ─────────────────────────────────────────
-# forensics/ioc_extractor.py imports these from here — must be present
 from forensics.ioc_patterns_generated import (  # noqa: F401,E402,F811
-    _IOC_PATTERNS,
-    _IOC_COMBINED,
     _HASH_VALIDATORS,
-    _TRACKING_PARAMS,
+    _IOC_COMBINED,
+    _IOC_PATTERNS,
     _IOC_TYPE_NAMES,
+    _TRACKING_PARAMS,
 )
 
 __all__ = [

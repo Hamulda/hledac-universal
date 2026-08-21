@@ -8,11 +8,11 @@ Issue #16: Unified structlog configuration moved to utils/logging_config.py
 """
 
 from hledac.universal.utils.logging_config import (
+    bind_sprint_context,
     configure_logging,
     get_logger,
-    bind_sprint_context,
-    unbind_sprint_context,
     get_sprint_context,
+    unbind_sprint_context,
 )
 
 __all__ = [

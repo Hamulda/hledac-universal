@@ -16,12 +16,12 @@ Usage:
         try_get_domain,
     )
 """
+
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Callable
-from _core import aclose
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     pass
@@ -50,6 +50,7 @@ def try_get_domain() -> Any | None:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _ext = rust.raw.module
 
         # Probe for pipeline_map symbol
@@ -67,7 +68,7 @@ def try_get_domain() -> Any | None:
 
 
 # ── Generic Rust Stage Runner (DRY — replaced 6x identical try/except patterns) ──
-def _rust_stage(
+def _rust_stage[R](
     rust_fn_name: str,
     fallback_fn: Callable[..., _R],
     *args: Any,
@@ -140,11 +141,6 @@ def rust_batch_stats(items: list[str]) -> dict[str, Any]:
     return _rust_stage("pipeline_batch_stats", _python_fallback_batch_stats, items)
 
 
-# ---------------------------------------------------------------------------
-# Python fallbacks — pure Python equivalents for when Rust is unavailable
-# ---------------------------------------------------------------------------
-
-
 def _python_fallback_map(items: list[str], fn_name: str) -> list[Any]:
     """Pure Python MAP fallback."""
     transforms = {
@@ -152,9 +148,7 @@ def _python_fallback_map(items: list[str], fn_name: str) -> list[Any]:
         "lower": lambda s: s.lower(),
         "upper": lambda s: s.upper(),
         "strip": lambda s: s.strip(),
-        "hash_xxh3": lambda s: str(
-            int.from_bytes(__import__("xxhash").xxh64(s.encode()).digest()[:8], "little")
-        ),
+        "hash_xxh3": lambda s: str(int.from_bytes(__import__("xxhash").xxh64(s.encode()).digest()[:8], "little")),
         "hash_xxh3_hex": lambda s: __import__("xxhash").xxh64(s.encode()).hexdigest(),
     }
     fn = transforms.get(fn_name, lambda s: s)

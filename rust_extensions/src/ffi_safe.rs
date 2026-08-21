@@ -120,9 +120,6 @@ pub fn ffi_circuit_is_open(_module: &str) -> bool {
 /// Called by Python when a pyfunction returns an error or exception.
 #[pyfunction]
 pub fn ffi_record_failure(module: &str, error_type: &str, error_msg: &str) {
-    // This is called from Python when a pyfunction returns an error.
-    // The Python side (ffi_circuit_breaker.py) manages the circuit state.
-    // This function exists for future Rust-side state management.
     eprintln!(
         "[FFI-SAFE] Recording failure: module={} type={} msg={}",
         module, error_type, error_msg

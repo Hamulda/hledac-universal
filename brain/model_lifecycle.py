@@ -35,25 +35,17 @@ F6.5 LAYER MAPPING — MUST NOT BE CONFLATED:
 from __future__ import annotations
 
 import functools
-import gc
 import logging
-import os
 import threading
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal._core.locks import LockCategory
 from _core.lock_registry import register_lock
-from _core import aclose
+from hledac.universal._core.locks import LockCategory
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Role 1: Emergency Seam
-# =============================================================================
 
 _EMERGENCY_UNLOAD_REQUESTED = False
 
@@ -78,11 +70,6 @@ def request_emergency_unload() -> None:
         _EMERGENCY_UNLOAD_REQUESTED = True
     get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
     logger.warning("[LIFECYCLE] Emergency unload requested via emergency seam")
-
-
-# =============================================================================
-# Role 2: MLX Lazy Init Helper
-# =============================================================================
 
 
 def init_mlx_buffers_ifneeded() -> bool:
@@ -112,11 +99,6 @@ def _init_mlx_buffers_impl(mx: Any) -> None:
         del _warm
     except Exception:  # noqa: BLE001
         pass  # fail-open: non-critical
-
-
-# =============================================================================
-# Role 3: Unload Helper (DELEGATES to engine.unload — 7K SSOT)
-# =============================================================================
 
 
 def unload_model(model: Any | None = None) -> None:
@@ -149,11 +131,6 @@ def unload_model(model: Any | None = None) -> None:
         logger.warning("[LIFECYCLE] Unload: engine.unload() unavailable, used fallback")
     except Exception:
         logger.debug("[LIFECYCLE] Unload: MLX fallback also unavailable")
-
-
-# =============================================================================
-# Role 4: Lifecycle Shadow-State (O(1), side-effect free)
-# =============================================================================
 
 
 # Module-level shadow state — maintained by model_manager.py via register_model()
@@ -240,18 +217,3 @@ def get_model_lifecycle_status() -> dict:
         "last_unload_age_s": get_last_unload_age(),
         "emergency_unload_requested": _EMERGENCY_UNLOAD_REQUESTED,
     }
-
-
-# =============================================================================
-# Role 5: Structured-Generation Sidecar
-# (MIGRATED — see core/model_runtime.py)
-# =============================================================================
-
-
-# ------------------------------------------------------------------------------------------------
-# F6.5 class ModelLifecycle MIGRATED to core/model_runtime.py (F350M-R W6 refactor)
-# Windup-local structured-generation (Qwen/SmolLM, Outlines MLX constrained generation)
-# is now in core/model_runtime.py.
-# brain/model_lifecycle.py now contains ONLY roles 1-4 (emergency seam, MLX helpers,
-# shadow-state, unload helpers). Do NOT re-add structured-generation code here.
-# ------------------------------------------------------------------------------------------------

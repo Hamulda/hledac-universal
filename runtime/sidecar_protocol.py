@@ -1,10 +1,9 @@
 """
 from __future__ import annotations
 from enum import Enum, auto
-from operator import attrgetter, itemgetter
+from operator import attrgetter
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
-
 
 Plugin registry for sidecar adapters with Protocol-based type checking.
 Replaces hardcoded DEFAULT_SIDECAR_RUNNERS list with dynamic discovery.
@@ -26,7 +25,7 @@ Refactored advisory sidecars from method-based to callable __call__ adapters:
 
   BEFORE (method-based, hard to compose):
       orchestrator._run_ipfs_discovery_sidecar()  # method call
-  
+
   AFTER (callable adapter, composable):
       adapter = IPFSDsidecarAdapter(orchestrator)
       await adapter(ctx)  # callable interface
@@ -43,15 +42,11 @@ Parallel execution policy:
 """
 
 import logging
-from typing import Any, Protocol, TypeVar, runtime_checkable
 from collections.abc import Callable
-from collections.abc import Awaitable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +54,15 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 _R = TypeVar("_R")
 
-
 # Callable types for extract → search → transform pattern
 TermExtractorFn = Callable[["SidecarContext"], list[str]]
 SearchFn = Callable[..., Any]
 ResultToFindingFn = Callable[..., dict | None | list[dict]]
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ISSUE #15 FIX: Advisory Priority System
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class AdvisoryPriority(Enum):
     """
@@ -92,6 +86,7 @@ class AdvisoryPriority(Enum):
         - concurrency=4, may be skipped under memory pressure
         - Conservative resource usage
     """
+
     HIGH = 1
     NORMAL = 2
     LOW = 3
@@ -115,6 +110,7 @@ class AdvisoryPriority(Enum):
 # ISSUE #15 FIX: Callable Advisory Adapter Pattern
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class SidecarContext(Struct):
     """
     Context passed to every sidecar adapter.
@@ -130,6 +126,7 @@ class SidecarContext(Struct):
         sprint_mode: Current sprint mode (aggressive/active/passive/research)
         memory_pressure: Current RSS/max_rss ratio (0.0-1.0)
     """
+
     query: str
     sprint_id: str
     findings: list[Any]
@@ -181,6 +178,7 @@ class AdvisoryCallable(Protocol):
 
 
 # ── SchedulerAdvisory Protocol ─────────────────────────────────────────────────
+
 
 @runtime_checkable
 class SchedulerAdvisory(Protocol):
@@ -244,8 +242,8 @@ class SchedulerAdvisory(Protocol):
     async def _run_auto_re_sidecar(self) -> list: ...
 
 
-
 # ── SidecarAdapterProtocol ─────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class SidecarAdapterProtocol(Protocol):
@@ -304,6 +302,7 @@ class SidecarAdapterProtocol(Protocol):
 
 # ── SidecarRegistry ────────────────────────────────────────────────────────────
 
+
 class SidecarRegistry:
     """
     Plugin registry for SidecarAdapterProtocol implementations.
@@ -338,6 +337,7 @@ class SidecarRegistry:
         Returns:
             Decorator function that registers the class
         """
+
         def decorator(klass: type[SidecarAdapterProtocol]) -> type[SidecarAdapterProtocol]:
             cls._registry[sidecar_id] = klass
             # Invalidate cached availability + instance (RC-8)
@@ -345,6 +345,7 @@ class SidecarRegistry:
             cls._cached_instances.pop(sidecar_id, None)
             logger.debug("SidecarRegistry: registered %s", sidecar_id)
             return klass
+
         return decorator
 
     @classmethod
@@ -367,7 +368,6 @@ class SidecarRegistry:
 
         for sidecar_id, klass in cls._registry.items():
             try:
-                # Check cached availability
                 if sidecar_id in cls._lock_available:
                     if not cls._lock_available[sidecar_id]:
                         continue
@@ -392,8 +392,10 @@ class SidecarRegistry:
                 if instance.ram_budget_mb > memory_budget_mb:
                     logger.debug(
                         "SidecarRegistry: %s skipped (RAM %dMB > budget %dMB)",
-                        sidecar_id, instance.ram_budget_mb, memory_budget_mb
-    )
+                        sidecar_id,
+                        instance.ram_budget_mb,
+                        memory_budget_mb,
+                    )
                     continue
 
                 available.append(instance)
@@ -425,14 +427,15 @@ class SidecarRegistry:
         Idempotent: subsequent calls are no-ops.
         Skips sidecars already cached via get_available().
         """
-        from hledac.universal.utils.asyncx import parallel  # ISSUE-006: parallel() canonical API
+        from hledac.universal.utils.asyncx import parallel
+
         for sidecar_id in cls._registry:
             if sidecar_id in cls._cached_instances:
                 continue  # Already pre-warmed
             if sidecar_id in cls._lock_available and not cls._lock_available[sidecar_id]:
                 continue  # Already tried and unavailable
 
-        async def _try_init(sid: str, klass: type[SidecarAdapterProtocol]):
+        async def _try_init(sid: str, klass: type[SidecarAdapterProtocol]) -> None:
             try:
                 instance = klass()
                 if instance.is_available():
@@ -443,11 +446,7 @@ class SidecarRegistry:
             except Exception:  # noqa: BLE001 — fail-safe: sidecar init error → mark unavailable
                 cls._lock_available[sid] = False
 
-        tasks = [
-            _try_init(sid, klass)
-            for sid, klass in cls._registry.items()
-            if sid not in cls._cached_instances
-        ]
+        tasks = [_try_init(sid, klass) for sid, klass in cls._registry.items() if sid not in cls._cached_instances]
         if tasks:
             await parallel(tasks, policy="log")
 
@@ -515,10 +514,7 @@ class BaseSidecarAdapter:
         try:
             return await self.run_async(ctx)
         except Exception:  # noqa: BLE001 — fail-safe: sidecar run error → return empty list
-            logger.warning(
-                "SidecarAdapter.%s.run: fail-soft exception",
-                self.sidecar_id, exc_info=True
-    )
+            logger.warning("SidecarAdapter.%s.run: fail-soft exception", self.sidecar_id, exc_info=True)
             return []
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
@@ -547,7 +543,6 @@ class BaseSidecarAdapter:
             return []
 
         try:
-            # Extract terms
             if self._extract_terms_fn is not None:
                 terms = self._extract_terms_fn(ctx)
             else:
@@ -578,8 +573,9 @@ class BaseSidecarAdapter:
         except Exception:  # noqa: BLE001
             logger.warning(
                 "BaseSidecarAdapter.%s: fail-soft",
-                self.sidecar_id, exc_info=True,
-    )
+                self.sidecar_id,
+                exc_info=True,
+            )
             return []
 
     def _default_extract_terms(self, ctx: SidecarContext) -> list[str]:
@@ -605,8 +601,9 @@ class BaseSidecarAdapter:
         except Exception:  # noqa: BLE001
             logger.warning(
                 "BaseSidecarAdapter.%s: correlate fail-soft",
-                self.sidecar_id, exc_info=True,
-    )
+                self.sidecar_id,
+                exc_info=True,
+            )
             return []
 
     # ── Extract→Search→Transform hook methods ─────────────────────────────
@@ -661,14 +658,14 @@ _ADAPTER_NAMES: tuple[str, ...] = (
     "WhoisSidecarAdapter",
     "ThreatIntelSidecarAdapter",
     "ShadowWalkerSidecarAdapter",
-    )
+)
 
 
 def __getattr__(name: str):
     """Lazy import: load sidecar adapters on first access."""
     if name in _ADAPTER_NAMES:
         import importlib
-        import sys
+
         mod = importlib.import_module(_ADAPTERS_MODULE)
         return getattr(mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

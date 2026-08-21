@@ -2,22 +2,24 @@ import asyncio
 import atexit
 import logging
 import os
-
 import tempfile
 import zipfile
-from os import fspath, PathLike
 from datetime import UTC, datetime
+from os import fspath
 from pathlib import Path
 from typing import TYPE_CHECKING
-from _core import aclose
+
 
 def _get_tempdir() -> str:
     """Return tempfile.gettempdir() - reads current value at call time."""
     return tempfile.gettempdir()
+
+
 _atexit_executor_registered = False
 _cryptokit_checked: bool = False
 _cryptokit_available: bool = False
 _cryptokit_lock: asyncio.Lock | None = None
+
 
 def _get_cryptokit_lock() -> asyncio.Lock:
     """Get or create the asyncio.Lock for cryptokit check (lazy init)."""
@@ -26,9 +28,10 @@ def _get_cryptokit_lock() -> asyncio.Lock:
         _cryptokit_lock = asyncio.Lock()
     return _cryptokit_lock
 
+
 def _shutdown_cryptokit_at_exit() -> None:
     """Cleanup handler called at interpreter exit (no-op for asyncio)."""
-    pass
+
 
 def _register_cryptokit_executor_atexit() -> None:
     """Register atexit handler for cryptokit cleanup; registers on first call."""
@@ -36,12 +39,16 @@ def _register_cryptokit_executor_atexit() -> None:
     if not _atexit_executor_registered:
         atexit.register(_shutdown_cryptokit_at_exit)
         _atexit_executor_registered = True
+
+
 _register_cryptokit_executor_atexit()
 try:
     import base64
+
     from cryptography.fernet import Fernet
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
     CRYPTO_AVAILABLE = True
 except ImportError:
     CRYPTO_AVAILABLE = False
@@ -49,10 +56,12 @@ if TYPE_CHECKING:
     import pyzipper
 try:
     import pyzipper
+
     PYZIPPER_AVAILABLE = True
 except ImportError:
     PYZIPPER_AVAILABLE = False
 CRYPTOKIT_AVAILABLE = False
+
 
 def _check_cryptokit() -> bool:
     """
@@ -71,47 +80,37 @@ def _check_cryptokit() -> bool:
     try:
         import json as _json
         import subprocess
+
         repo_root = Path(__file__).parent.parent
-        helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
+        helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
         if not helper_path.exists():
             return False
 
         async def _check() -> subprocess.CompletedProcess:
             return await asyncio.to_thread(
                 subprocess.run,
-                [str(helper_path), 'cryptokit-status'],
+                [str(helper_path), "cryptokit-status"],
                 capture_output=True,
                 text=True,
                 timeout=5,
-    )
+            )
 
-        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
-        # Avoids M1 Metal crash vector when called from async context.
         with asyncio.Runner() as runner:
             result = runner.run(_check())
 
         if result.returncode == 0:
             import msgspec.json as _json
+
             data = _json.decode(result.stdout)
-            return data.get('ok', False) and data.get('data', {}).get('aes_gcm_available', False) == 'true'
+            return data.get("ok", False) and data.get("data", {}).get("aes_gcm_available", False) == "true"
     except Exception:  # noqa: BLE001
         pass
     return False
+
+
 CRYPTOKIT_AVAILABLE = _check_cryptokit()
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# P7-003: Ratio-limited zip openers (defense-in-depth)
-#
-# _safe_extractall() performs a pre-flight ratio check on zf.infolist() before
-# calling extractall().  These module-level openers add a second layer: they
-# open a standard ZipFile/AESZipFile and validate the ratio BEFORE the caller
-# gets the object, so any caller (not just _safe_extractall) benefits.
-#
-# ratio_limited_open() — standard zipfile.ZipFile with pre-open ratio guard
-# ratio_limited_aes_open() — pyzipper.AESZipFile with pre-open ratio guard
-# ---------------------------------------------------------------------------
 
 _MAX_RATIO = 100
 _MAX_EXTRACT_MB = 100
@@ -125,16 +124,15 @@ def _check_zip_ratio(info: zipfile.ZipInfo, max_ratio: int, max_extract_mb: int)
 
     if fs > max_bytes:
         raise zipfile.BadZipFile(
-            f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
-            f"(limit {max_extract_mb:.0f}MB per member)"
-    )
+            f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB (limit {max_extract_mb:.0f}MB per member)"
+        )
     if cs > 0 and fs > 0:
         ratio = fs / cs
         if ratio > max_ratio:
             raise zipfile.BadZipFile(
                 f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                 f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {max_ratio}x)"
-    )
+            )
 
 
 def ratio_limited_open(
@@ -157,7 +155,7 @@ def ratio_limited_open(
     # via pathlib.Path in ZipFile.__init__ overloads.  Using positional str arg
     # bypasses the overload mismatch.  Valid at runtime: Path implements PathLike[str].
     src_str: str = fspath(src)
-    zf = zipfile.ZipFile(open(src_str, 'rb'), mode)  # type: ignore
+    zf = zipfile.ZipFile(open(src_str, "rb"), mode)  # type: ignore
     try:
         for info in zf.infolist():
             _check_zip_ratio(info, max_ratio, max_extract_mb)
@@ -168,6 +166,7 @@ def ratio_limited_open(
 
 
 if PYZIPPER_AVAILABLE:
+
     def ratio_limited_aes_open(
         src: str | Path,
         mode: str = "r",
@@ -183,7 +182,7 @@ if PYZIPPER_AVAILABLE:
         The password is passed directly to ``AESZipFile.setpassword()`` after
         opening, because pyzipper requires password set *after* construction.
         """
-        zf = pyzipper.AESZipFile(open(fspath(src), 'rb'), mode)
+        zf = pyzipper.AESZipFile(open(fspath(src), "rb"), mode)
         try:
             if password is not None:
                 zf.setpassword(password)
@@ -225,7 +224,8 @@ class LootManager:
         - Steganography detection (see stego_detector.py)
         - Sprint report export (see export/sprint_exporter.py)
     """
-    __slots__ = tuple(('vault_path',))
+
+    __slots__ = ("vault_path",)
 
     # P7-003: Decompression ratio limits to prevent zip-bomb OOM on M1 8GB.
     # - MAX_DECOMPRESS_RATIO: hard cap on compression ratio (file_size/compress_size).
@@ -235,10 +235,12 @@ class LootManager:
     MAX_DECOMPRESS_RATIO: int = 100  # 100:1 — industry-standard threshold
     MAX_EXTRACT_PER_MEMBER: int = 100 * 1024 * 1024  # 100 MB per member hard cap
 
-    def __init__(self, vault_path: str):
+    def __init__(self, vault_path: str) -> None:
         self.vault_path = Path(vault_path)
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
-            raise RuntimeError("vault_manager requires 'cryptography' or 'pyzipper' for real encryption. XOR fallback has been removed (P0-3/P0-5 fix). Install: pip install cryptography pyzipper")
+            raise RuntimeError(
+                "vault_manager requires 'cryptography' or 'pyzipper' for real encryption. XOR fallback has been removed (P0-3/P0-5 fix). Install: pip install cryptography pyzipper"
+            )
 
     def _derive_key(self, password: str, salt: bytes) -> bytes:
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=310000)
@@ -260,12 +262,12 @@ class LootManager:
             fernet = Fernet(key)
             return fernet.decrypt(encrypted)
         except Exception as e:
-            logger.error(f'Decryption failed: {e}')
+            logger.error(f"Decryption failed: {e}")
             return None
 
     def _create_zip(self, source_path: Path, output_path: Path) -> bool:
         try:
-            with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for root, _dirs, files in os.walk(source_path):
                     for file in files:
                         file_path = Path(root) / file
@@ -273,7 +275,7 @@ class LootManager:
                         zipf.write(file_path, arcname)
             return True
         except Exception as e:
-            logger.error(f'Failed to create ZIP: {e}')
+            logger.error(f"Failed to create ZIP: {e}")
             return False
 
     def _create_encrypted_zip(self, source_path: Path, output_path: Path, password: str) -> bool:
@@ -284,11 +286,13 @@ class LootManager:
         elif CRYPTO_AVAILABLE:
             return self._create_zip_fernet(source_path, output_path, password)
         else:
-            raise RuntimeError('No encryption backend available')
+            raise RuntimeError("No encryption backend available")
 
     def _create_zip_pyzipper(self, source_path: Path, output_path: Path, password: str) -> bool:
         try:
-            with pyzipper.AESZipFile(output_path, 'w', encryption=pyzipper.WZ_AES, compression=pyzipper.ZIP_DEFLATED) as zipf:
+            with pyzipper.AESZipFile(
+                output_path, "w", encryption=pyzipper.WZ_AES, compression=pyzipper.ZIP_DEFLATED
+            ) as zipf:
                 zipf.setpassword(password.encode())
                 for root, _dirs, files in os.walk(source_path):
                     for file in files:
@@ -297,7 +301,7 @@ class LootManager:
                         zipf.write(file_path, arcname)
             return True
         except Exception as e:
-            logger.error(f'Failed to create encrypted ZIP with pyzipper: {e}')
+            logger.error(f"Failed to create encrypted ZIP with pyzipper: {e}")
             return False
 
     def _create_zip_cryptokit(self, source_path: Path, output_path: Path, password: str) -> bool:
@@ -310,42 +314,43 @@ class LootManager:
         - Hardware-backed key derivation
         """
         import subprocess
+
         temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=_get_tempdir()) as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip", dir=_get_tempdir()) as temp_file:
                 temp_path = Path(temp_file.name)
             if not self._create_zip(source_path, temp_path):
                 if temp_path and temp_path.exists():
                     os.unlink(temp_path)
                 return False
-            with open(temp_path, 'rb') as f:
+            with open(temp_path, "rb") as f:
                 zip_data = f.read()
             repo_root = Path(__file__).parent.parent
-            helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
-            cmd = [str(helper_path), 'cryptokit-encrypt', '--output', str(output_path)]
+            helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
+            cmd = [str(helper_path), "cryptokit-encrypt", "--output", str(output_path)]
 
             async def _run_encrypt() -> subprocess.CompletedProcess:
                 # Pass password + newline + zip_data via stdin to avoid ps exposure
-                stdin_payload = password.encode() + b'\n' + zip_data
-                return await asyncio.to_thread(subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30)
+                stdin_payload = password.encode() + b"\n" + zip_data
+                return await asyncio.to_thread(
+                    subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30
+                )
 
-            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
-            # Avoids M1 Metal crash vector when called from async context.
             with asyncio.Runner() as runner:
                 result = runner.run(_run_encrypt())
 
             os.unlink(temp_path)
             if result.returncode != 0:
-                logger.error(f'CryptoKit encryption failed: {result.stderr}')
+                logger.error(f"CryptoKit encryption failed: {result.stderr}")
                 return False
             return True
         except subprocess.TimeoutExpired:
-            logger.error('CryptoKit encryption timed out')
+            logger.error("CryptoKit encryption timed out")
             if temp_path and temp_path.exists():
                 os.unlink(temp_path)
             return False
         except Exception as e:
-            logger.error(f'Failed to create encrypted ZIP with CryptoKit: {e}')
+            logger.error(f"Failed to create encrypted ZIP with CryptoKit: {e}")
             if temp_path and temp_path.exists():
                 os.unlink(temp_path)
             return False
@@ -353,26 +358,26 @@ class LootManager:
     def _create_zip_fernet(self, source_path: Path, output_path: Path, password: str) -> bool:
         temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=_get_tempdir()) as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip", dir=_get_tempdir()) as temp_file:
                 temp_path = Path(temp_file.name)
             if not self._create_zip(source_path, temp_path):
                 if temp_path is not None and temp_path.exists():
                     os.unlink(temp_path)
                 return False
-            with open(temp_path, 'rb') as f:
+            with open(temp_path, "rb") as f:
                 zip_data = f.read()
             encrypted_data = self._encrypt_with_fernet(zip_data, password)
-            with open(output_path, 'wb') as f:
+            with open(output_path, "wb") as f:
                 f.write(encrypted_data)
             os.unlink(temp_path)
             return True
         except Exception as e:
-            logger.error(f'Failed to create encrypted ZIP with fernet: {e}')
+            logger.error(f"Failed to create encrypted ZIP with fernet: {e}")
             if temp_path is not None and temp_path.exists():
                 os.unlink(temp_path)
             return False
 
-    def _shred_directory(self, path: Path, passes: int=3) -> bool:
+    def _shred_directory(self, path: Path, passes: int = 3) -> bool:
         if not path.exists():
             return True
         try:
@@ -381,7 +386,7 @@ class LootManager:
                     file_path = Path(root) / file
                     try:
                         size = file_path.stat().st_size
-                        with open(file_path, 'r+b') as f:
+                        with open(file_path, "r+b") as f:
                             for _ in range(passes):
                                 f.seek(0)
                                 f.write(os.urandom(size))
@@ -389,7 +394,7 @@ class LootManager:
                                 os.fsync(f.fileno())
                         os.unlink(file_path)
                     except Exception as e:
-                        logger.warning(f'Failed to shred {file_path}: {e}')
+                        logger.warning(f"Failed to shred {file_path}: {e}")
                         os.unlink(file_path)
                 for dir_name in dirs:
                     dir_path = Path(root) / dir_name
@@ -400,13 +405,13 @@ class LootManager:
             try:
                 os.rmdir(path)
             except Exception as e:
-                logger.warning(f'Failed to remove directory {path}: {e}')
+                logger.warning(f"Failed to remove directory {path}: {e}")
             return True
         except Exception as e:
-            logger.error(f'Error shredding directory: {e}')
+            logger.error(f"Error shredding directory: {e}")
             return False
 
-    def secure_export(self, output_dir: str, password: str, archive_name: str | None=None) -> str | None:
+    def secure_export(self, output_dir: str, password: str, archive_name: str | None = None) -> str | None:
         """
         Create encrypted ZIP archive of vault contents and shred original.
 
@@ -428,40 +433,40 @@ class LootManager:
             Path to encrypted archive, or None on failure
         """
         if not self.vault_path.exists():
-            logger.error(f'Vault path does not exist: {self.vault_path}')
+            logger.error(f"Vault path does not exist: {self.vault_path}")
             return None
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         if archive_name is None:
-            timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
-            archive_name = f'ghostvault_{timestamp}.enc'
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            archive_name = f"ghostvault_{timestamp}.enc"
         output_file = output_path / archive_name
         if not self._create_encrypted_zip(self.vault_path, output_file, password):
-            logger.error('Failed to create encrypted export')
+            logger.error("Failed to create encrypted export")
             return None
         if not self._shred_directory(self.vault_path):
-            logger.warning('Failed to completely shred vault contents')
-        logger.info(f'Secure export completed: {output_file}')
+            logger.warning("Failed to completely shred vault contents")
+        logger.info(f"Secure export completed: {output_file}")
         return str(output_file)
 
     def decrypt_export(self, encrypted_path: str, password: str, output_dir: str) -> str | None:
         encrypted_file = Path(encrypted_path)
         if not encrypted_file.exists():
-            logger.error(f'Encrypted file does not exist: {encrypted_file}')
+            logger.error(f"Encrypted file does not exist: {encrypted_file}")
             return None
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         try:
-            with open(encrypted_file, 'rb') as f:
+            with open(encrypted_file, "rb") as f:
                 encrypted_data = f.read()
-            if encrypted_data.startswith(b'FALLBACK_ENC:'):
-                logger.error('FALLBACK_ENC export detected — XOR fallback removed, cannot decrypt')
+            if encrypted_data.startswith(b"FALLBACK_ENC:"):
+                logger.error("FALLBACK_ENC export detected — XOR fallback removed, cannot decrypt")
                 return None
-            if encrypted_data[:4] == b'PK\x03\x04':
+            if encrypted_data[:4] == b"PK\x03\x04":
                 if PYZIPPER_AVAILABLE:
                     return self._decrypt_pyzipper(encrypted_file, password, output_path)
                 else:
-                    logger.error('ZIP archive but pyzipper unavailable — cannot decrypt')
+                    logger.error("ZIP archive but pyzipper unavailable — cannot decrypt")
                     return None
             elif CRYPTOKIT_AVAILABLE and len(encrypted_data) > 16:
                 try:
@@ -473,10 +478,10 @@ class LootManager:
             if CRYPTO_AVAILABLE:
                 return self._decrypt_fernet(encrypted_data, password, output_path)
             else:
-                logger.error('No decryption method available')
+                logger.error("No decryption method available")
                 return None
         except Exception as e:
-            logger.error(f'Decryption failed: {e}')
+            logger.error(f"Decryption failed: {e}")
             return None
 
     @staticmethod
@@ -509,7 +514,7 @@ class LootManager:
                 raise zipfile.BadZipFile(
                     f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                     f"(limit {LootManager.MAX_EXTRACT_PER_MEMBER / 1024 / 1024:.0f}MB)"
-    )
+                )
 
             # Check 2: compression ratio cap.
             # compress_size=0 is a valid empty file; treat as ratio=0.
@@ -519,20 +524,20 @@ class LootManager:
                     raise zipfile.BadZipFile(
                         f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
                         f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {LootManager.MAX_DECOMPRESS_RATIO}x)"
-    )
+                    )
 
         # Second pass: path-traversal and zip-slip checks (still before extractall).
         for member in zf.namelist():
-            if '\x00' in member:
-                raise zipfile.BadZipFile(f'NUL byte in member name: {member!r}')
+            if "\x00" in member:
+                raise zipfile.BadZipFile(f"NUL byte in member name: {member!r}")
             if os.path.isabs(member):
-                raise zipfile.BadZipFile(f'Absolute path in ZIP: {member}')
-            parts = member.split('/')
-            if '..' in parts:
-                raise zipfile.BadZipFile(f'Path traversal attempt: {member}')
+                raise zipfile.BadZipFile(f"Absolute path in ZIP: {member}")
+            parts = member.split("/")
+            if ".." in parts:
+                raise zipfile.BadZipFile(f"Path traversal attempt: {member}")
             member_path = (extract_to / member).resolve()
             if not member_path.is_relative_to(extract_to):
-                raise zipfile.BadZipFile(f'Path traversal attempt: {member}')
+                raise zipfile.BadZipFile(f"Path traversal attempt: {member}")
 
         zf.extractall(extract_to)
 
@@ -542,17 +547,17 @@ class LootManager:
             decrypted = self._decrypt_with_fernet(encrypted_data, password)
             if not decrypted:
                 return None
-            extract_path = output_path / 'decrypted_vault'
+            extract_path = output_path / "decrypted_vault"
             extract_path.mkdir(exist_ok=True)
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=_get_tempdir()) as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip", dir=_get_tempdir()) as temp_file:
                 temp_path = Path(temp_file.name)
             temp_path.write_bytes(decrypted)
-            with zipfile.ZipFile(temp_path, 'r') as zipf:
+            with zipfile.ZipFile(temp_path, "r") as zipf:
                 LootManager._safe_extractall(zipf, extract_path)
             os.unlink(temp_path)
             return str(extract_path)
         except Exception as e:
-            logger.error(f'Fernet decryption failed: {e}')
+            logger.error(f"Fernet decryption failed: {e}")
             if temp_path is not None and temp_path.exists():
                 os.unlink(temp_path)
             return None
@@ -560,56 +565,59 @@ class LootManager:
     def _decrypt_cryptokit(self, encrypted_data: bytes, password: str, output_path: Path) -> str | None:
         """Decrypt data encrypted with CryptoKit AES-GCM via Swift helper."""
         import subprocess
+
         temp_path = None
         try:
-            extract_path = output_path / 'decrypted_vault'
+            extract_path = output_path / "decrypted_vault"
             extract_path.mkdir(exist_ok=True)
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.enc', dir=_get_tempdir()) as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".enc", dir=_get_tempdir()) as temp_file:
                 temp_file.write(encrypted_data)
                 temp_path = Path(temp_file.name)
             repo_root = Path(__file__).parent.parent
-            helper_path = repo_root / 'tools' / 'secure_enclave_helper' / '.build' / 'release' / 'secure-enclave-helper'
-            decrypt_output = output_path / 'decrypted.zip'
-            cmd = [str(helper_path), 'cryptokit-decrypt', '--input', str(temp_path), '--output', str(decrypt_output)]
+            helper_path = repo_root / "tools" / "secure_enclave_helper" / ".build" / "release" / "secure-enclave-helper"
+            decrypt_output = output_path / "decrypted.zip"
+            cmd = [str(helper_path), "cryptokit-decrypt", "--input", str(temp_path), "--output", str(decrypt_output)]
 
             async def _run_decrypt() -> subprocess.CompletedProcess:
                 # Pass password + newline via stdin to avoid ps exposure
-                stdin_payload = password.encode() + b'\n'
-                return await asyncio.to_thread(subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30)
+                stdin_payload = password.encode() + b"\n"
+                return await asyncio.to_thread(
+                    subprocess.run, cmd, input=stdin_payload, capture_output=True, timeout=30
+                )
 
-            # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
-            # Avoids M1 Metal crash vector when called from async context.
             with asyncio.Runner() as runner:
                 result = runner.run(_run_decrypt())
 
             os.unlink(temp_path)
             if result.returncode != 0:
-                logger.error(f'CryptoKit decryption failed: {result.stderr}')
+                logger.error(f"CryptoKit decryption failed: {result.stderr}")
                 return None
-            with zipfile.ZipFile(decrypt_output, 'r') as zipf:
+            with zipfile.ZipFile(decrypt_output, "r") as zipf:
                 LootManager._safe_extractall(zipf, extract_path)
             os.unlink(decrypt_output)
             return str(extract_path)
         except subprocess.TimeoutExpired:
-            logger.error('CryptoKit decryption timed out')
+            logger.error("CryptoKit decryption timed out")
             if temp_path and temp_path.exists():
                 os.unlink(temp_path)
             return None
         except Exception as e:
-            logger.error(f'CryptoKit decryption failed: {e}')
+            logger.error(f"CryptoKit decryption failed: {e}")
             if temp_path and temp_path.exists():
                 os.unlink(temp_path)
             return None
 
     def _decrypt_pyzipper(self, encrypted_file: Path, password: str, output_path: Path) -> str | None:
         try:
-            extract_path = output_path / 'decrypted_vault'
+            extract_path = output_path / "decrypted_vault"
             extract_path.mkdir(exist_ok=True)
             with pyzipper.AESZipFile(encrypted_file) as zipf:
                 zipf.setpassword(password.encode())
                 LootManager._safe_extractall(zipf, extract_path)
             return str(extract_path)
         except Exception as e:
-            logger.error(f'Pyzipper decryption failed: {e}')
+            logger.error(f"Pyzipper decryption failed: {e}")
             return None
+
+
 VaultManager = LootManager

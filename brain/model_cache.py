@@ -5,12 +5,10 @@ Single cache directory: ~/.cache/hledac/models/{model_id}
 Size monitoring via uma_budget.py
 """
 
-
 import asyncio
 import logging
 import os
 from pathlib import Path
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +86,6 @@ async def get_or_download_model(
             logger.debug(f"[model_cache] {model_id} already cached at {model_dir}")
             return model_dir
 
-    # Check cache size limit
     current_size_gb = get_cache_size_gb()
     if current_size_gb >= min(max_size, HARDCAP_CACHE_SIZE_GB):
         # Try to evict oldest entries (simple: check mtime)
@@ -97,30 +94,24 @@ async def get_or_download_model(
     # Final size check after potential eviction
     current_size_gb = get_cache_size_gb()
     if current_size_gb >= min(max_size, HARDCAP_CACHE_SIZE_GB):
-        logger.warning(
-            f"[model_cache] Cache at {current_size_gb:.1f}GB, cannot download {model_id}"
-    )
+        logger.warning(f"[model_cache] Cache at {current_size_gb:.1f}GB, cannot download {model_id}")
         return None
 
     # Check disk space (need ~2x model size for temp files)
     available_gb = get_available_disk_gb()
     estimated_model_gb = 2.5  # conservative estimate
     if available_gb < estimated_model_gb:
-        logger.warning(
-            f"[model_cache] Insufficient disk space: {available_gb:.1f}GB available"
-    )
+        logger.warning(f"[model_cache] Insufficient disk space: {available_gb:.1f}GB available")
         return None
 
     # Download via snapshot_download
     try:
-        from huggingface_hub import snapshot_download
-
         logger.info(f"[model_cache] Downloading {model_id}...")
         cache_dir = await asyncio.to_thread(
             _snapshot_download,
             model_id,
             cache_dir=str(MODEL_CACHE_DIR),
-    )
+        )
         logger.info(f"[model_cache] ✓ {model_id} cached at {cache_dir}")
         return Path(cache_dir)
 
@@ -145,7 +136,6 @@ def _evict_oldest_if_needed(max_size_gb: float) -> None:
         return
 
     try:
-        # Get all model directories with mtime
         model_dirs = []
         for entry in MODEL_CACHE_DIR.iterdir():
             if entry.is_dir():
@@ -167,6 +157,7 @@ def _evict_oldest_if_needed(max_size_gb: float) -> None:
             logger.info(f"[model_cache] Evicting old cache: {entry.name}")
             try:
                 import shutil
+
                 shutil.rmtree(entry)
                 current_size -= size / (1024**3)
             except OSError:  # noqa: BLE001
@@ -184,9 +175,7 @@ def get_cache_stats() -> dict:
     if MODEL_CACHE_DIR.exists():
         for entry in MODEL_CACHE_DIR.iterdir():
             if entry.is_dir():
-                size_mb = sum(
-                    f.stat().st_size for f in entry.rglob("*") if f.is_file()
-                ) / (1024**2)
+                size_mb = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file()) / (1024**2)
                 models.append({"id": entry.name, "size_mb": round(size_mb, 1)})
 
     return {

@@ -23,20 +23,13 @@ TaskRegistry (safe_create_task_tracked). This guarantees:
   3. No lost tasks if prelude finishes before ingest completes
   4. M1 8GB: no orphan tasks holding references under memory pressure
 """
+
 import asyncio
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
 
-from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import first_completed
 
-# ─── Module-level lazy import cache ───────────────────────────────────────────
-# Pattern: import at first use, cache in module globals for subsequent calls.
-# This avoids the overhead of importing on EVERY function call while still
-# keeping imports out of module __init__ (which would trigger M1 Metal init).
-#
-# Usage: call _lazy_import(name) to get the cached module/class.
 _LAZY_IMPORT_CACHE: dict[str, Any] = {}
 
 
@@ -48,8 +41,10 @@ def _lazy_import(name: str) -> Any:
     """
     if name not in _LAZY_IMPORT_CACHE:
         from importlib import import_module
+
         _LAZY_IMPORT_CACHE[name] = import_module(name)
     return _LAZY_IMPORT_CACHE[name]
+
 
 class LaneResult(Struct):
     lane: str
@@ -62,6 +57,7 @@ class LaneResult(Struct):
     error: str | None = None
     timeout: bool = False
     duration_s: float | None = None
+
 
 async def run_public_prelude_lane(query: str) -> LaneResult:
     """Run PUBLIC prelude lane.
@@ -77,35 +73,68 @@ async def run_public_prelude_lane(query: str) -> LaneResult:
     # Lazy imports with module-level cache
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
+
     try:
         _shaped = build_lane_query(query, AcquisitionLane.PUBLIC)
         if isinstance(_shaped, dict) or not _shaped:
-            return LaneResult(lane='PUBLIC', attempted=False, skipped=True, skip_reason='empty_public_query')
+            return LaneResult(lane="PUBLIC", attempted=False, skipped=True, skip_reason="empty_public_query")
         # ISSUE-2.1: Zvýšena concurrency 2→4 pro vnitřní paralelizaci fetch.
         # Fail-fast: při ≥80% úspěšnosti (3/3 = 100%, žádný další fetch není potřeba).
         _success_target = 3
         _fail_fast_threshold = _success_target  # 3 — 80% z 3 = 2.4, pro ≥80% potřeba 3
         async with asyncio.timeout(10.0):
-            _pipeline_result = await async_run_live_public_pipeline(query=_shaped, store=None, max_results=3, fetch_timeout_s=10.0, fetch_concurrency=4, hermes_engine=None, memory_manager=None, enqueue_hypothesis_pivot=None)
+            _pipeline_result = await async_run_live_public_pipeline(
+                query=_shaped,
+                store=None,
+                max_results=3,
+                fetch_timeout_s=10.0,
+                fetch_concurrency=4,
+                hermes_engine=None,
+                memory_manager=None,
+                enqueue_hypothesis_pivot=None,
+            )
             # Fail-fast: pokud jsme získali >=80% cílových výsledků, ukončíme early
-            _discovered = getattr(_pipeline_result, 'discovered', 0) or 0
+            _discovered = getattr(_pipeline_result, "discovered", 0) or 0
             if _discovered >= _fail_fast_threshold:
-                return LaneResult(lane='PUBLIC', attempted=True, skipped=False, raw_count=_discovered, built_count=getattr(_pipeline_result, 'fetched', 0) or 0, accepted_count=getattr(_pipeline_result, 'accepted_findings', 0) or 0, error=getattr(_pipeline_result, 'error', None), timeout=getattr(_pipeline_result, 'timed_out', False), duration_s=getattr(_pipeline_result, 'elapsed_s', None))
-        return LaneResult(lane='PUBLIC', attempted=True, skipped=False, raw_count=getattr(_pipeline_result, 'discovered', 0) or 0, built_count=getattr(_pipeline_result, 'fetched', 0) or 0, accepted_count=getattr(_pipeline_result, 'accepted_findings', 0) or 0, error=getattr(_pipeline_result, 'error', None), timeout=getattr(_pipeline_result, 'timed_out', False), duration_s=getattr(_pipeline_result, 'elapsed_s', None))
+                return LaneResult(
+                    lane="PUBLIC",
+                    attempted=True,
+                    skipped=False,
+                    raw_count=_discovered,
+                    built_count=getattr(_pipeline_result, "fetched", 0) or 0,
+                    accepted_count=getattr(_pipeline_result, "accepted_findings", 0) or 0,
+                    error=getattr(_pipeline_result, "error", None),
+                    timeout=getattr(_pipeline_result, "timed_out", False),
+                    duration_s=getattr(_pipeline_result, "elapsed_s", None),
+                )
+        return LaneResult(
+            lane="PUBLIC",
+            attempted=True,
+            skipped=False,
+            raw_count=getattr(_pipeline_result, "discovered", 0) or 0,
+            built_count=getattr(_pipeline_result, "fetched", 0) or 0,
+            accepted_count=getattr(_pipeline_result, "accepted_findings", 0) or 0,
+            error=getattr(_pipeline_result, "error", None),
+            timeout=getattr(_pipeline_result, "timed_out", False),
+            duration_s=getattr(_pipeline_result, "elapsed_s", None),
+        )
     except TimeoutError:
-        return LaneResult(lane='PUBLIC', attempted=True, skipped=False, timeout=True, duration_s=10.0)
+        return LaneResult(lane="PUBLIC", attempted=True, skipped=False, timeout=True, duration_s=10.0)
     except Exception as exc:
-        return LaneResult(lane='PUBLIC', attempted=True, skipped=False, error=f'{type(exc).__name__}:{exc}')
+        return LaneResult(lane="PUBLIC", attempted=True, skipped=False, error=f"{type(exc).__name__}:{exc}")
 
-async def run_ct_prelude_lane(query: str, result: Any, seed_context: Any=None) -> LaneResult:
+
+async def run_ct_prelude_lane(query: str, result: Any, seed_context: Any = None) -> LaneResult:
     """Run CT prelude lane.
 
     Returns LaneResult with telemetry written to result (ctx.result).
     Bounded: 15s asyncio.timeout, max 5 results.
     """
     import time as _time
+
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
     from hledac.universal.runtime.source_finding_bridge import ct_results_to_findings
+
     _ct_result: Any = None
     _candidates: tuple = ()
     _rejections: tuple = ()
@@ -113,13 +142,16 @@ async def run_ct_prelude_lane(query: str, result: Any, seed_context: Any=None) -
         _shaped = build_lane_query(query, AcquisitionLane.CT, seed_context=seed_context)
         if isinstance(_shaped, dict) or not _shaped:
             result.ct_planned = False
-            return LaneResult(lane='CT', attempted=False, skipped=True, skip_reason='empty_query')
+            return LaneResult(lane="CT", attempted=False, skipped=True, skip_reason="empty_query")
         from hledac.universal.runtime.scheduler.lanes import _get_ct_adapter
+
         _ct_adapter = _get_ct_adapter()
         async with asyncio.timeout(15.0):
             _ct_result, _ct_outcome = await _ct_adapter(query=_shaped, max_results=5, timeout_s=15.0)
-        _raw = getattr(_ct_outcome, 'raw_count', 0) or 0
-        _bridge_result = ct_results_to_findings(_ct_result, _ct_outcome, query, sprint_id=f'prelude-ct-{int(_time.time())}')
+        _raw = getattr(_ct_outcome, "raw_count", 0) or 0
+        _bridge_result = ct_results_to_findings(
+            _ct_result, _ct_outcome, query, sprint_id=f"prelude-ct-{int(_time.time())}"
+        )
         _candidates: list = _bridge_result[0]
         _rejections: list = _bridge_result[1]
         _ct_tel: dict = _bridge_result[2]
@@ -128,17 +160,29 @@ async def run_ct_prelude_lane(query: str, result: Any, seed_context: Any=None) -
         result.ct_query = str(_shaped)
         result.ct_results_raw = _raw
         if _ct_tel:
-            result.ct_advisory_clues_count = _ct_tel.get('ct_advisory_clues_count', 0)
-        return LaneResult(lane='CT', attempted=True, skipped=False, raw_count=_raw, built_count=len(_candidates), accepted_count=len(_candidates), error=getattr(_ct_outcome, 'error', None), duration_s=0.0)
+            result.ct_advisory_clues_count = _ct_tel.get("ct_advisory_clues_count", 0)
+        return LaneResult(
+            lane="CT",
+            attempted=True,
+            skipped=False,
+            raw_count=_raw,
+            built_count=len(_candidates),
+            accepted_count=len(_candidates),
+            error=getattr(_ct_outcome, "error", None),
+            duration_s=0.0,
+        )
     except TimeoutError:
         result.ct_planned = True
-        result.ct_terminal_stage = 'prelude_timeout'
-        return LaneResult(lane='CT', attempted=True, skipped=False, timeout=True, duration_s=15.0)
+        result.ct_terminal_stage = "prelude_timeout"
+        return LaneResult(lane="CT", attempted=True, skipped=False, timeout=True, duration_s=15.0)
     except Exception as exc:
-        result.ct_terminal_stage = f'prelude_error:{type(exc).__name__}'
-        return LaneResult(lane='CT', attempted=True, skipped=False, error=f'{type(exc).__name__}:{exc}')
+        result.ct_terminal_stage = f"prelude_error:{type(exc).__name__}"
+        return LaneResult(lane="CT", attempted=True, skipped=False, error=f"{type(exc).__name__}:{exc}")
 
-async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, time_module: Any, seed_context: Any=None) -> LaneResult:
+
+async def run_wayback_prelude_lane(
+    query: str, result: Any, duckdb_store: Any, time_module: Any, seed_context: Any = None
+) -> LaneResult:
     """Run WAYBACK prelude lane.
 
     Bounded: no hard timeout, writes to duckdb_store via bg_tasks.
@@ -146,6 +190,7 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
     from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.runtime.source_finding_bridge import wayback_results_to_findings
+
     _wb_query = _build_lane_query(query, AcquisitionLane.WAYBACK, seed_context=seed_context)
     if _wb_query and (not isinstance(_wb_query, dict)):
         _wb_miner = WaybackDiffMiner()
@@ -153,13 +198,15 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
             _wb_result = await _wb_miner.mine([str(_wb_query)])
         finally:
             await _wb_miner.close()
-        _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(_wb_result, query, sprint_id=f'prelude-wb-{int(time_module.time())}')
+        _wb_cands, _wb_rejs, _wb_tel = wayback_results_to_findings(
+            _wb_result, query, sprint_id=f"prelude-wb-{int(time_module.time())}"
+        )
         if _wb_tel:
-            result.wayback_advisory_clues_count = _wb_tel.get('wayback_changed_count', 0)
+            result.wayback_advisory_clues_count = _wb_tel.get("wayback_changed_count", 0)
         # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
         # Lane returns immediately with built_count; ingest runs in background.
         _wb_acc = 0
-        if _wb_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
+        if _wb_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
             try:
                 # Fire-and-forget: safe_create_task_tracked runs ingest in background.
                 # ISSUE P2 FIX: TaskRegistry tracks this task — guaranteed cleanup on winddown.
@@ -168,53 +215,78 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
                     TaskScope,
                     safe_create_task_tracked,
                 )
+
                 async def _wb_ingest_bg():
                     try:
                         _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
-                        return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                        return sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
                     except Exception:
                         return 0
-                safe_create_task_tracked(_wb_ingest_bg(), name='prelude:wayback_ingest', scope=TaskScope.PRELUDE)
+
+                safe_create_task_tracked(_wb_ingest_bg(), name="prelude:wayback_ingest", scope=TaskScope.PRELUDE)
                 _wb_acc = len(_wb_cands)  # Optimistic: all built candidates accepted
             except Exception:
                 _wb_acc = 0
         result.wayback_diff_findings_produced = _wb_acc
-        return LaneResult(lane='WAYBACK', attempted=True, skipped=False, built_count=len(_wb_cands), accepted_count=_wb_acc)
-    return LaneResult(lane='WAYBACK', attempted=False, skipped=True, skip_reason='empty_shaped_query' if not _wb_query else 'lane_disabled')
+        return LaneResult(
+            lane="WAYBACK", attempted=True, skipped=False, built_count=len(_wb_cands), accepted_count=_wb_acc
+        )
+    return LaneResult(
+        lane="WAYBACK",
+        attempted=False,
+        skipped=True,
+        skip_reason="empty_shaped_query" if not _wb_query else "lane_disabled",
+    )
 
-async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time_module: Any, seed_context: Any=None) -> LaneResult:
+
+async def run_pdns_prelude_lane(
+    query: str, result: Any, duckdb_store: Any, time_module: Any, seed_context: Any = None
+) -> LaneResult:
     """Run PASSIVE_DNS prelude lane."""
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.runtime.source_finding_bridge import passive_dns_results_to_findings
     from hledac.universal.security.passive_dns import call_lookup_passive_dns
+
     _pdns_query = _build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context=seed_context)
     if _pdns_query and (not isinstance(_pdns_query, dict)):
         _pdns_ips, _pdns_outcome = await call_lookup_passive_dns(str(_pdns_query))
-        _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(_pdns_ips, _pdns_outcome, query, sprint_id=f'prelude-pdns-{int(time_module.time())}')
+        _pdns_cands, _pdns_rejs, _pdns_tel = passive_dns_results_to_findings(
+            _pdns_ips, _pdns_outcome, query, sprint_id=f"prelude-pdns-{int(time_module.time())}"
+        )
         if _pdns_tel:
-            result.passive_dns_advisory_clues_count = _pdns_tel.get('pdns_public_accepted', 0)
+            result.passive_dns_advisory_clues_count = _pdns_tel.get("pdns_public_accepted", 0)
         # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
         # ISSUE P2 FIX: TaskRegistry tracks this task — guaranteed cleanup on winddown.
         _pdns_acc = 0
-        if _pdns_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
+        if _pdns_cands and duckdb_store and hasattr(duckdb_store, "async_ingest_findings_batch"):
             try:
                 from hledac.universal.runtime.scheduler_v2._task_registry import (
                     TaskScope,
                     safe_create_task_tracked,
                 )
+
                 async def _pdns_ingest_bg():
                     try:
                         _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
-                        return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
+                        return sum(1 for r in _ing if isinstance(r, dict) and r.get("accepted"))
                     except Exception:
                         return 0
-                safe_create_task_tracked(_pdns_ingest_bg(), name='prelude:pdns_ingest', scope=TaskScope.PRELUDE)
+
+                safe_create_task_tracked(_pdns_ingest_bg(), name="prelude:pdns_ingest", scope=TaskScope.PRELUDE)
                 _pdns_acc = len(_pdns_cands)
             except Exception:  # noqa: BLE001
                 pass
         result.pdns_advisory_findings_produced = _pdns_acc
-        return LaneResult(lane='PASSIVE_DNS', attempted=True, skipped=False, built_count=len(_pdns_cands), accepted_count=_pdns_acc)
-    return LaneResult(lane='PASSIVE_DNS', attempted=False, skipped=True, skip_reason='empty_shaped_query' if not _pdns_query else 'lane_disabled')
+        return LaneResult(
+            lane="PASSIVE_DNS", attempted=True, skipped=False, built_count=len(_pdns_cands), accepted_count=_pdns_acc
+        )
+    return LaneResult(
+        lane="PASSIVE_DNS",
+        attempted=False,
+        skipped=True,
+        skip_reason="empty_shaped_query" if not _pdns_query else "lane_disabled",
+    )
+
 
 def _collect_doh_domains(
     pivot_doh_items: Any,
@@ -228,22 +300,22 @@ def _collect_doh_domains(
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
 
     domains: list[str] = []
-    seed_source = 'no_domain_seed'
+    seed_source = "no_domain_seed"
 
     if pivot_doh_items:
         for item in pivot_doh_items:
-            if getattr(item, 'lane', None) == 'DOH' and getattr(item, 'seed_type', None) == 'domain':
-                domain = getattr(item, 'seed_value', None)
+            if getattr(item, "lane", None) == "DOH" and getattr(item, "seed_type", None) == "domain":
+                domain = getattr(item, "seed_value", None)
                 if domain:
                     domains.append(str(domain))
         if domains:
-            seed_source = 'pivot_items'
+            seed_source = "pivot_items"
 
     if not domains:
         shaped = _build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
         if shaped and not isinstance(shaped, dict):
             domains = [str(shaped)]
-            seed_source = 'seed_context' if seed_context and seed_context.domains else 'raw_query'
+            seed_source = "seed_context" if seed_context and seed_context.domains else "raw_query"
 
     return domains[:3], seed_source  # Max 3 for M1 8GB RAM safety
 
@@ -256,19 +328,21 @@ async def _init_doh_adapter(result: Any) -> tuple[Any, Any] | tuple[None, None]:
     adapter = None
     try:
         from hledac.universal.intel.doh_lane import DOHAdapter
+
         adapter = DOHAdapter()
     except Exception as init_exc:
-        result.doh_terminal_stage = 'dependency_missing'
-        result.doh_provider_errors = (f'doh_adapter_init_failed:{type(init_exc).__name__}:{init_exc}',)
+        result.doh_terminal_stage = "dependency_missing"
+        result.doh_provider_errors = (f"doh_adapter_init_failed:{type(init_exc).__name__}:{init_exc}",)
         return None, None
 
     session = None
     try:
         import httpx
+
         session = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
         result.doh_request_attempted = True
     except Exception as session_exc:
-        result.doh_terminal_stage = f'session_init_failed:{type(session_exc).__name__}'
+        result.doh_terminal_stage = f"session_init_failed:{type(session_exc).__name__}"
         if adapter:
             await adapter.close()
         return None, None
@@ -360,12 +434,12 @@ async def _aggregate_doh_results(
     cancelled_count = 0
     cache_used = False
     first_done_domain: str | None = None
-    cache: dict = getattr(adapter, '_cache', None) if adapter else None
+    cache: dict = getattr(adapter, "_cache", None) if adapter else None
 
     while pending and total_raw < fail_fast_threshold:
         try:
             _res, winner_task = await first_completed(*pending)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             break
 
         pending.discard(winner_task)
@@ -393,7 +467,7 @@ async def _ingest_doh_findings(
 
     Returns accepted count (optimistic).
     """
-    if not candidates or not duckdb_store or not hasattr(duckdb_store, 'async_ingest_findings_batch'):
+    if not candidates or not duckdb_store or not hasattr(duckdb_store, "async_ingest_findings_batch"):
         return 0
 
     try:
@@ -405,47 +479,45 @@ async def _ingest_doh_findings(
         async def _ingest_bg():
             try:
                 ing = await duckdb_store.async_ingest_findings_batch(list(candidates))
-                return sum(1 for r in ing if isinstance(r, dict) and r.get('accepted'))
+                return sum(1 for r in ing if isinstance(r, dict) and r.get("accepted"))
             except Exception:
                 return 0
 
-        safe_create_task_tracked(_ingest_bg(), name='prelude:doh_ingest', scope=TaskScope.PRELUDE)
+        safe_create_task_tracked(_ingest_bg(), name="prelude:doh_ingest", scope=TaskScope.PRELUDE)
         return len(candidates)  # Optimistic: all built candidates accepted
     except Exception:  # noqa: BLE001
         return 0
 
 
-async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_module: Any, pivot_doh_items: Any=None, seed_context: Any=None) -> LaneResult:
+async def run_doh_prelude_lane(
+    query: str, result: Any, duckdb_store: Any, time_module: Any, pivot_doh_items: Any = None, seed_context: Any = None
+) -> LaneResult:
     """Run DOH prelude lane.
 
     Orchestrator: collects domains → initializes adapter → fetches in parallel
     with fail-fast → ingests results.
     """
-    from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
     from hledac.universal.utils.asyncx import safe_create_task
 
     result.doh_planned = True
     result.doh_scheduled = True
 
-    # Phase 1: Collect domains
     domains, seed_source = _collect_doh_domains(pivot_doh_items, query, seed_context)
     result.doh_seed_source = seed_source
 
     if not domains:
-        result.doh_terminal_stage = 'no_candidates'
-        return LaneResult(lane='DOH', attempted=False, skipped=True)
+        result.doh_terminal_stage = "no_candidates"
+        return LaneResult(lane="DOH", attempted=False, skipped=True)
 
     result.doh_domains_attempted = len(domains)
 
-    # Phase 2: Initialize adapter
     adapter, session = await _init_doh_adapter(result)
     if adapter is None or session is None:
-        return LaneResult(lane='DOH', attempted=False, skipped=True)
+        return LaneResult(lane="DOH", attempted=False, skipped=True)
 
     try:
-        # Phase 3: Create and schedule fetch tasks
         semaphore = asyncio.Semaphore(3)  # Concurrency=3 for M1 8GB RAM safety
-        sprint_id = f'prelude-doh-{int(time_module.time())}'
+        sprint_id = f"prelude-doh-{int(time_module.time())}"
         success_target = 10  # Typical DOH results per domain
         fail_fast_threshold = int(success_target * 0.8)  # 8 = 80% fail-fast
 
@@ -453,39 +525,44 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         for domain in domains:
             task = safe_create_task(
                 _create_domain_fetch_task(domain, semaphore, adapter, session, query, sprint_id),
-                name=f'prelude:doh:{domain}',
+                name=f"prelude:doh:{domain}",
             )
             tasks.add(task)
 
-        # Phase 4: Aggregate results with fail-fast
-        all_cands, all_rejs, all_tel, total_raw, cancelled_count, cache_used, first_domain = \
-            await _aggregate_doh_results(tasks, fail_fast_threshold, adapter)
+        (
+            all_cands,
+            all_rejs,
+            all_tel,
+            total_raw,
+            cancelled_count,
+            cache_used,
+            first_domain,
+        ) = await _aggregate_doh_results(tasks, fail_fast_threshold, adapter)
 
         result.doh_cache_used = cache_used
-        result.doh_raw_count = all_tel.get('doh_total', total_raw)
+        result.doh_raw_count = all_tel.get("doh_total", total_raw)
         result.doh_cancelled_count = cancelled_count
 
-        # Phase 5: Ingest findings
         if all_cands:
             accepted_count = await _ingest_doh_findings(all_cands, duckdb_store, result)
             result.doh_advisory_findings_produced = accepted_count
             return LaneResult(
-                lane='DOH',
+                lane="DOH",
                 attempted=True,
                 skipped=False,
                 built_count=len(all_cands),
                 accepted_count=accepted_count,
             )
 
-        return LaneResult(lane='DOH', attempted=True, skipped=False)
+        return LaneResult(lane="DOH", attempted=True, skipped=False)
 
     except Exception as exc:
-        result.doh_terminal_stage = f'error:{type(exc).__name__}'
+        result.doh_terminal_stage = f"error:{type(exc).__name__}"
         return LaneResult(
-            lane='DOH',
+            lane="DOH",
             attempted=True,
             skipped=False,
-            error=f'{type(exc).__name__}:{exc}',
+            error=f"{type(exc).__name__}:{exc}",
         )
     finally:
         if session:
@@ -493,12 +570,16 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         if adapter:
             await adapter.close()
 
+
 async def gather_taskgroup(coros: list, concurrency: int, ctx: str) -> tuple[list, list]:
     """Wrapper around utils.async_helpers.gather_taskgroup for prelude lanes."""
     from hledac.universal.utils.asyncx import parallel
+
     result = await parallel(coros, concurrency=concurrency, policy="collect", taskgroup=True, ctx=ctx)
     return result.ok, list(result.errors)
 
-def _build_lane_query(query: str, lane: Any, seed_context: Any=None) -> Any:
+
+def _build_lane_query(query: str, lane: Any, seed_context: Any = None) -> Any:
     from hledac.universal.runtime.acquisition_strategy import build_lane_query as _blq
+
     return _blq(query, lane, seed_context=seed_context)

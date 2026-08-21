@@ -14,30 +14,24 @@ Invariant table:
   T7: feed_pivots selected when pipeline_context_available=True
 """
 
-
-
 import asyncio
 import time
-from unittest import mock
 
 import pytest
-
 from hledac.universal.discovery.discovery_planner import (
     DiscoveryPlanner,
     ProviderCapabilityState,
-    ProviderStatusDebug,
     get_provider_state,
     reset_discovery_planner,
 )
 from hledac.universal.discovery.provider_stats import (
     ProviderStatsRegistry,
-    get_provider_stats_registry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def clean_registry() -> ProviderStatsRegistry:
@@ -62,6 +56,7 @@ def planner_with_stubs(clean_registry: ProviderStatsRegistry) -> DiscoveryPlanne
 # T1: feed_pivots NOT selected by default (NOT_WIRED when pipeline_context=False)
 # ---------------------------------------------------------------------------
 
+
 def test_feed_pivots_not_selected_by_default(planner: DiscoveryPlanner) -> None:
     """feed_pivots has requires_context=True and is NOT_WIRED by default."""
     plan = planner.plan("test query", remaining_time_budget_s=30.0, target_results=20)
@@ -70,21 +65,22 @@ def test_feed_pivots_not_selected_by_default(planner: DiscoveryPlanner) -> None:
     skipped_feed_pivots = [d for d in plan.provider_status_debug if d.provider == "feed_pivots"]
 
     # feed_pivots must NOT be selected
-    assert "feed_pivots" not in selected_names, (
-        f"feed_pivots should not be selected by default, got: {selected_names}"
-    )
+    assert "feed_pivots" not in selected_names, f"feed_pivots should not be selected by default, got: {selected_names}"
 
     # Must appear in debug as NOT_WIRED and not selected
     assert len(skipped_feed_pivots) == 1, f"Expected 1 debug entry for feed_pivots, got {len(skipped_feed_pivots)}"
     debug = skipped_feed_pivots[0]
     assert debug.state == ProviderCapabilityState.NOT_WIRED, f"Expected NOT_WIRED, got {debug.state}"
     assert debug.selected is False, "feed_pivots should be marked selected=False"
-    assert "pipeline_context_not_available" in debug.reason, f"Expected pipeline_context_not_available in reason, got: {debug.reason}"
+    assert "pipeline_context_not_available" in debug.reason, (
+        f"Expected pipeline_context_not_available in reason, got: {debug.reason}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # T7: feed_pivots selected when pipeline_context_available=True
 # ---------------------------------------------------------------------------
+
 
 def test_feed_pivots_selected_with_pipeline_context(planner: DiscoveryPlanner) -> None:
     """When pipeline_context_available=True, feed_pivots becomes eligible."""
@@ -121,6 +117,7 @@ def test_feed_pivots_selected_with_pipeline_context(planner: DiscoveryPlanner) -
 # T2: commoncrawl_cdx NOT selected by default (ADVISORY_STUB)
 # ---------------------------------------------------------------------------
 
+
 def test_commoncrawl_cdx_not_selected_by_default(planner: DiscoveryPlanner) -> None:
     """commoncrawl_cdx is ADVISORY_STUB, must not be selected by default."""
     plan = planner.plan("test query", remaining_time_budget_s=30.0, target_results=20)
@@ -143,13 +140,16 @@ def test_commoncrawl_cdx_not_selected_by_default(planner: DiscoveryPlanner) -> N
 # T3: include_stub_providers allows commoncrawl_cdx but result is stub_not_production
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_commoncrawl_cdx_stub_result_when_included(planner_with_stubs: DiscoveryPlanner) -> None:
     """With include_stub_providers=True, commoncrawl_cdx runs but returns stub_not_production."""
     # Get commoncrawl_cdx selected
     plan = planner_with_stubs.plan("test query", remaining_time_budget_s=30.0, target_results=20)
     selected_cc = [p for p in plan.plans if p.provider == "commoncrawl_cdx"]
-    assert len(selected_cc) == 1, f"commoncrawl_cdx should be selected with include_stub_providers=True, plan={plan.plans}"
+    assert len(selected_cc) == 1, (
+        f"commoncrawl_cdx should be selected with include_stub_providers=True, plan={plan.plans}"
+    )
 
     # Execute the plan
     results = await planner_with_stubs.execute("test query", plan)
@@ -165,6 +165,7 @@ async def test_commoncrawl_cdx_stub_result_when_included(planner_with_stubs: Dis
 # ---------------------------------------------------------------------------
 # T4: ct_pivots remains selectable (PRODUCTION)
 # ---------------------------------------------------------------------------
+
 
 def test_ct_pivots_remains_selectable(planner: DiscoveryPlanner) -> None:
     """ct_pivots is production-enabled and should be selectable."""
@@ -188,6 +189,7 @@ def test_ct_pivots_remains_selectable(planner: DiscoveryPlanner) -> None:
 # T5: provider_status_debug includes ALL providers with explicit skip/select reasons
 # ---------------------------------------------------------------------------
 
+
 def test_provider_status_debug_all_providers(planner: DiscoveryPlanner) -> None:
     """Every provider in PROVIDER_NAMES appears in provider_status_debug."""
     from hledac.universal.discovery.provider_stats import PROVIDER_NAMES
@@ -208,6 +210,7 @@ def test_provider_status_debug_all_providers(planner: DiscoveryPlanner) -> None:
 # ---------------------------------------------------------------------------
 # T6: plan() is idempotent — no live network, no MLX load
 # ---------------------------------------------------------------------------
+
 
 def test_plan_no_network_no_mlx(planner: DiscoveryPlanner) -> None:
     """plan() completes without any network calls or MLX loading."""
@@ -246,6 +249,7 @@ async def test_execute_no_network_no_mlx(planner: DiscoveryPlanner) -> None:
 # State machine — get_provider_state correctness
 # ---------------------------------------------------------------------------
 
+
 def test_get_provider_state_mapping() -> None:
     """Verify get_provider_state returns correct states for each provider."""
     # Production providers
@@ -263,11 +267,14 @@ def test_get_provider_state_mapping() -> None:
 
 def test_execute_common_runners_no_crash(planner: DiscoveryPlanner) -> None:
     """Sanity: _run_* functions that are real (not stubs) don't crash on execution."""
-    async def run_all():
+
+    async def run_all() -> None:
         from hledac.universal.discovery.discovery_planner import _RUNNERS
+
         for name, runner in _RUNNERS.items():
             # Stub runners return immediately
             result = await runner("test", 5, 5.0)
-            assert hasattr(result, 'provider_name'), f"{name} runner returned invalid result"
+            assert hasattr(result, "provider_name"), f"{name} runner returned invalid result"
             assert result.provider_name == name
+
     asyncio.run(run_all())

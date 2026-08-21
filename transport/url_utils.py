@@ -3,9 +3,9 @@ Shared URL utilities for transport layer.
 
 Centralizes cached_urlparse to avoid redundant urlparse calls across fetchers.
 """
+
 from functools import lru_cache
 from urllib.parse import urlparse
-from _core import aclose
 
 
 @lru_cache(maxsize=2048)

@@ -2,7 +2,6 @@
 coordinators/resource/blitz_gc.py — BlitzGCStrategy (PHYSICS-06, PHYSICS-07)
 ============================================================================
 
-
 Eliminates involuntary GC stop-the-world pauses during active sprint phase.
 
 PHYSICS-06: Disable automatic GC during active sprint
@@ -52,13 +51,8 @@ import logging
 import sys
 import time as _time_module
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Threshold constants
-# =============================================================================
 
 # Blitz-mode thresholds: extremely high to prevent accidental triggering
 # during active sprint when GC is disabled
@@ -71,21 +65,12 @@ POST_TEARDOWN_THRESHOLD = (2000, 100, 50)
 # Pre-blitz startup thresholds: aggressive but safe for boot phase
 BOOT_THRESHOLD = (2000, 100, 50)
 
-# =============================================================================
-# PHYSICS-07: gc.freeze() availability
-# =============================================================================
-
 # F266-U4: gc.freeze() requires Python 3.14.7+ (gilstate_tss_set regression fix)
 _GC_FREEZE_NATIVE: bool = sys.version_info >= (3, 14, 7)
 
 # PHYSICS-07: On 3.14.6, gc.freeze() exists but is guarded due to crash risk.
 # We detect availability separately from safety.
 _GC_FREEZE_AVAILABLE: bool = hasattr(_gc, "freeze")
-
-
-# =============================================================================
-# Manual freeze for Python < 3.14.7 (PHYSICS-07 workaround)
-# =============================================================================
 
 # Snapshot of object ids captured at startup — treated as the "permanent" set.
 # Objects created after this snapshot are "ephemeral" and subject to gen-0
@@ -113,11 +98,10 @@ def _capture_startup_snapshot() -> int:
         _startup_object_ids = {id(o) for o in _objects}
         _startup_snapshot_count = len(_startup_object_ids)
         logger.debug(
-            "[blitz_gc] startup snapshot captured: %d objects — "
-            "manual-freeze active (Python %s < 3.14.7)",
+            "[blitz_gc] startup snapshot captured: %d objects — manual-freeze active (Python %s < 3.14.7)",
             _startup_snapshot_count,
             ".".join(str(x) for x in sys.version_info[:3]),
-    )
+        )
         return _startup_snapshot_count
     except Exception as exc:
         logger.debug("[blitz_gc] startup snapshot failed: %s", exc)
@@ -137,11 +121,6 @@ def _get_new_since_startup() -> int:
         return sum(1 for o in _gc.get_objects() if id(o) not in _startup_object_ids)
     except Exception:
         return -1
-
-
-# =============================================================================
-# BlitzGCStrategy
-# =============================================================================
 
 
 class BlitzGCStrategy:
@@ -210,7 +189,6 @@ class BlitzGCStrategy:
             except Exception as exc:
                 logger.debug("[blitz_gc] native gc.freeze() failed: %s", exc)
 
-        # Save current thresholds before disabling
         try:
             self._pre_blitz_thresholds = _gc.get_threshold()
         except Exception:
@@ -234,7 +212,7 @@ class BlitzGCStrategy:
                 BLITZ_THRESHOLD,
                 result["freeze_method"],
                 result["startup_snapshot_count"],
-    )
+            )
         except Exception as exc:
             logger.warning("[blitz_gc] gc.disable() failed: %s — sprint continues", exc)
 
@@ -317,14 +295,12 @@ class BlitzGCStrategy:
             logger.debug("[blitz_gc] sprint_teardown() already done — no-op")
             return result
 
-        # Step 1: Re-enable automatic GC
         try:
             _gc.enable()
             result["gc_reenabled"] = True
         except Exception as exc:
             logger.warning("[blitz_gc] gc.enable() failed: %s", exc)
 
-        # Step 2: Restore thresholds
         try:
             _gc.set_threshold(*POST_TEARDOWN_THRESHOLD)
             result["final_thresholds"] = POST_TEARDOWN_THRESHOLD
@@ -332,7 +308,6 @@ class BlitzGCStrategy:
             logger.debug("[blitz_gc] set_threshold(post_teardown) failed: %s", exc)
             result["final_thresholds"] = POST_TEARDOWN_THRESHOLD  # intended, even if failed
 
-        # Step 3: Full gen-2 sweep — reclaim everything before export
         try:
             gen2_before = _gc.get_count()[2] if hasattr(_gc, "get_count") else 0
             collected = _gc.collect(2)
@@ -341,7 +316,6 @@ class BlitzGCStrategy:
         except Exception as exc:
             logger.debug("[blitz_gc] gc.collect(2) at teardown failed: %s", exc)
 
-        # Step 4: Re-freeze on native-capable Python
         if _GC_FREEZE_NATIVE and _GC_FREEZE_AVAILABLE:
             try:
                 _gc.freeze()
@@ -350,7 +324,6 @@ class BlitzGCStrategy:
             except Exception as exc:
                 logger.debug("[blitz_gc] freeze at teardown failed: %s", exc)
 
-        # Step 5: Update manual snapshot for idle period (PHYSICS-07)
         if not _GC_FREEZE_NATIVE:
             _capture_startup_snapshot()
             result["freeze_method"] = "manual_snapshot_refresh"
@@ -367,7 +340,7 @@ class BlitzGCStrategy:
             result["final_thresholds"],
             result["gen2_collected"],
             result["freeze_method"],
-    )
+        )
         return result
 
     # ── Telemetry ───────────────────────────────────────────────────────
@@ -388,15 +361,7 @@ class BlitzGCStrategy:
         }
 
 
-# =============================================================================
-# Module-level singleton
-# =============================================================================
-
 blitz_gc = BlitzGCStrategy()
-
-# =============================================================================
-# Boot-time GC configuration — applied at module import
-# =============================================================================
 
 
 def _apply_boot_gc() -> None:

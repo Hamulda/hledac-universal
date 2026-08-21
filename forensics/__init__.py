@@ -114,12 +114,14 @@ _ALL_DISPATCHES: tuple[dict[str, tuple[str, tuple[str, ...]]], ...] = (
 
 # ── Availability Flag Names ────────────────────────────────────────────────────
 
-_AVAILABILITY_FLAGS: frozenset[str] = frozenset({
-    "METADATA_EXTRACTOR_AVAILABLE",
-    "STEGANOGRAPHY_AVAILABLE",
-    "DIGITAL_GHOST_AVAILABLE",
-    "GIT_FORENSICS_AVAILABLE",
-})
+_AVAILABILITY_FLAGS: frozenset[str] = frozenset(
+    {
+        "METADATA_EXTRACTOR_AVAILABLE",
+        "STEGANOGRAPHY_AVAILABLE",
+        "DIGITAL_GHOST_AVAILABLE",
+        "GIT_FORENSICS_AVAILABLE",
+    }
+)
 
 # ── Module-level Import Cache ──────────────────────────────────────────────────
 
@@ -127,6 +129,7 @@ _IMPORT_CACHE: dict[str, object] = {}
 
 
 # ── PEP 562: Unified Lazy Import ───────────────────────────────────────────────
+
 
 def __getattr__(name: str):
     """Unified PEP 562 lazy import — handles class exports and availability flags.
@@ -145,24 +148,28 @@ def __getattr__(name: str):
         if name == "METADATA_EXTRACTOR_AVAILABLE":
             try:
                 from . import metadata_extractor as _m
+
                 result = hasattr(_m, "UniversalMetadataExtractor")
             except ImportError:
                 result = False
         elif name == "STEGANOGRAPHY_AVAILABLE":
             try:
                 from . import stego_detector as _m
+
                 result = hasattr(_m, "StatisticalStegoDetector")
             except ImportError:
                 result = False
         elif name == "DIGITAL_GHOST_AVAILABLE":
             try:
                 from . import digital_ghost_detector as _m
+
                 result = hasattr(_m, "DigitalGhostDetector")
             except ImportError:
                 result = False
         else:  # GIT_FORENSICS_AVAILABLE
             try:
                 from . import git_forensics as _m
+
                 result = hasattr(_m, "GitForensicsDetector")
             except ImportError:
                 result = False

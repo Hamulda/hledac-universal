@@ -38,15 +38,12 @@ INVARIANTS (always-on, bounded, fail-safe):
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import threading
 import time as _time
 from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -55,9 +52,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------
-# Constants (shared across implementations)
-# -----------------------------------------------------------------------
 _EMBEDDING_DIM = 256
 _MEMORY_GUARD_GB = 6.0
 _MAX_ENTRIES = 50_000
@@ -75,18 +69,16 @@ _M1_MAX_ITERATIONS = 20
 _IVF_PQ_NPROBES_DEFAULT = 8
 
 
-# -----------------------------------------------------------------------
-# MLX compiled cosine similarity (shared across implementations)
-# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-# -----------------------------------------------------------------------
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
-from _core import aclose
+
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
+
 
 _mlx_cosine_similarity_batch: Any = None
 if _MLX_AVAILABLE:
@@ -94,9 +86,7 @@ if _MLX_AVAILABLE:
         import mlx.core as mx
 
         @mx.compile
-        def _mlx_cosine_similarity_batch_impl(
-            query_emb: "mx.array", candidates: "mx.array"
-        ) -> "mx.array":
+        def _mlx_cosine_similarity_batch_impl(query_emb: mx.array, candidates: mx.array) -> mx.array:
             """MLX-compiled batch cosine similarity for exact re-ranking.
 
             Args:
@@ -115,14 +105,11 @@ if _MLX_AVAILABLE:
         pass
 
 
-# -----------------------------------------------------------------------
-# Shared utilities (not ABC, concrete mixin helpers)
-# -----------------------------------------------------------------------
-
 def check_memory_guard(threshold_gb: float = _MEMORY_GUARD_GB) -> bool:
     """Return True if ANN init is safe (RSS below threshold)."""
     try:
         import psutil
+
         rss = psutil.Process().memory_info().rss
         return rss < threshold_gb * 1024**3
     except Exception:
@@ -149,7 +136,7 @@ def mlx_rerank(
         scores = _mlx_cosine_similarity_batch(q_mx, c_mx)
         scores_np = np.array(scores)
 
-        results = list(zip(candidate_indices, scores_np.tolist()))
+        results = list(zip(candidate_indices, scores_np.tolist(), strict=False))
         results.sort(key=lambda x: x[1], reverse=True)
         return results
     except Exception:
@@ -165,7 +152,7 @@ def _numpy_rerank(
     q = query_emb.astype(np.float32)
     q_norm = q / (np.linalg.norm(q) + 1e-8)
     results = []
-    for idx, vec in zip(candidate_indices, candidate_vectors):
+    for idx, vec in zip(candidate_indices, candidate_vectors, strict=False):
         v = vec.astype(np.float32)
         v_norm = v / (np.linalg.norm(v) + 1e-8)
         score = float(np.dot(q_norm, v_norm))
@@ -173,10 +160,6 @@ def _numpy_rerank(
     results.sort(key=lambda x: x[1], reverse=True)
     return results
 
-
-# -----------------------------------------------------------------------
-# Compaction scheduler (shared mixin, not ABC)
-# -----------------------------------------------------------------------
 
 class CompactionScheduler:
     """LanceDB/vector compaction scheduler — shared implementation.
@@ -250,10 +233,6 @@ class CompactionScheduler:
             self._compact_in_flight = False
 
 
-# -----------------------------------------------------------------------
-# Vector Index Base (ABC)
-# -----------------------------------------------------------------------
-
 class VectorIndexBase(ABC):
     """
     Abstract base for vector index implementations.
@@ -323,12 +302,7 @@ class VectorIndexBase(ABC):
 
     def close(self) -> None:
         """Cleanup resources. Override in subclass if needed."""
-        pass
 
-
-# -----------------------------------------------------------------------
-# USEARCH Engine (shared, not abstract)
-# -----------------------------------------------------------------------
 
 class USEARCHEngine:
     """
@@ -370,12 +344,12 @@ class USEARCHEngine:
 
             self._usearch_index = Index(
                 ndim=self._embed_dim,
-                metric='cos',
-                dtype='f32',
+                metric="cos",
+                dtype="f32",
                 connectivity=_USEARCH_CONNECTIVITY,
                 expansion_add=_USEARCH_EXPANSION_ADD,
                 expansion_search=_USEARCH_EXPANSION_SEARCH,
-    )
+            )
 
             self._usearch_labels = []
             for key, (emb, _meta) in vectors_data.items():
@@ -385,9 +359,8 @@ class USEARCHEngine:
 
             self._usearch_loaded = True
             logger.info(
-                f"[USEARCH] Built index: {len(self._usearch_labels)} vectors, "
-                f"connectivity={_USEARCH_CONNECTIVITY}"
-    )
+                f"[USEARCH] Built index: {len(self._usearch_labels)} vectors, connectivity={_USEARCH_CONNECTIVITY}"
+            )
         except ImportError:
             logger.debug("[USEARCH] USEARCH not available")
             self._usearch_loaded = False

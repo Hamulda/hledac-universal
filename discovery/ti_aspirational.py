@@ -1,4 +1,3 @@
-
 # Sprint F252 / F266: TI Feed Aspirational Registry
 # Sprint F266: Refactored to clear aspirational registry pattern.
 #
@@ -23,13 +22,11 @@
 # and replace the raise with actual REST/HTTP logic.
 
 
-
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +58,7 @@ class AspirationalAdapter(Exception):  # noqa: N818
             f"  auth: {self.auth_required}\n"
             f"  rate_limit: {self.rate_limit}\n"
             f"  source_type: {self.source_type}\n"
-    )
+        )
         if self.env_vars:
             base += f"  env_vars: {', '.join(self.env_vars)}\n"
         if self.implementation_notes:
@@ -118,8 +115,7 @@ class AlienVaultOTXAdapter(AspirationalAdapter):
     source_type = "otx_pulse"
     env_vars = ("HLEDAC_OTX_API_KEY",)
     implementation_notes = (
-        "Pulse DOR endpoint: GET /api/v1/pulses/dumplast/30days/. "
-        "Cassette replay supported (F239A pattern)."
+        "Pulse DOR endpoint: GET /api/v1/pulses/dumplast/30days/. Cassette replay supported (F239A pattern)."
     )
 
 
@@ -170,10 +166,7 @@ class IBMXForceAdapter(AspirationalAdapter):
     rate_limit = "50k/month (free tier)"
     source_type = "xforce_report"
     env_vars = ("HLEDAC_XFORCE_API_KEY", "HLEDAC_XFORCE_API_SECRET")
-    implementation_notes = (
-        "OAuth2 token exchange required. "
-        "Exchange API: GET /api/iocs/search?type=indicator"
-    )
+    implementation_notes = "OAuth2 token exchange required. Exchange API: GET /api/iocs/search?type=indicator"
 
 
 class PulseDiveAdapter(AspirationalAdapter):
@@ -195,10 +188,7 @@ class PulseDiveAdapter(AspirationalAdapter):
     rate_limit = "1k/day (free tier)"
     source_type = "pulse_dive"
     env_vars = ("HLEDAC_PULSEDIVE_API_KEY",)
-    implementation_notes = (
-        "IOC search: GET /api/ioc/search?q={query}. "
-        "Pulse lookup: GET /api/pulse/info/{pulse_id}"
-    )
+    implementation_notes = "IOC search: GET /api/ioc/search?q={query}. Pulse lookup: GET /api/pulse/info/{pulse_id}"
 
 
 # ── SourceAdapter Protocol (for reference) ─────────────────────────────────────

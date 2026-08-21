@@ -15,12 +15,9 @@ Seam: model_manager._create_*_engine factories return ModelEngine.
 Callers use the protocol, not concrete classes.
 """
 
-
-
 from typing import Any, TypeVar
-from _core import aclose
 
-T = TypeVar('T')  # PEP 696: TypeVar with default
+T = TypeVar("T")  # PEP 696: TypeVar with default
 
 
 class ModelEngine:

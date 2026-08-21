@@ -52,18 +52,21 @@ BOUNDS (M1 8GB safe):
 Feature flags: HLEDAC_ENABLE_CONTRADICTION_FEEDBACK=1 (default ON)
                HLEDAC_ENABLE_SOURCE_RELIABILITY=1 (default ON, META-008)
 """
+
 from __future__ import annotations
+
 import asyncio
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
 import logging
 import os
 import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from operator import attrgetter
 from typing import Any
-from operator import attrgetter, itemgetter
-from _core import aclose
+
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+
 logger = logging.getLogger(__name__)
 MAX_FINDINGS_PER_AUDIT: int = 200
 MAX_CONTRADICTIONS_PER_ENGINE: int = 50
@@ -71,35 +74,46 @@ AUDIT_TIMEOUT_S: float = 10.0
 RE_FETCH_CANDIDATES_MAX: int = 20
 CONTRADICTION_SEVERITY_THRESHOLD: float = 0.6
 AUTO_RETRACT_MAX: int = 10
-_ENABLE_CONTRADICTION_FEEDBACK: bool = os.environ.get('HLEDAC_ENABLE_CONTRADICTION_FEEDBACK', '1').lower() in ('1', 'true', 'yes', 'on')
+_ENABLE_CONTRADICTION_FEEDBACK: bool = os.environ.get("HLEDAC_ENABLE_CONTRADICTION_FEEDBACK", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 
 @dataclass(slots=True)
 class ContradictionSignal:
     """A single contradiction detected by one of the engines."""
+
     engine: str
-    entity_value: str = ''
-    entity_type: str = 'unknown'
+    entity_value: str = ""
+    entity_type: str = "unknown"
     severity: float = 0.0
-    contradiction_type: str = 'unknown'
-    claim_a: str = ''
-    claim_b: str = ''
-    description: str = ''
-    resolution_hint: str = ''
+    contradiction_type: str = "unknown"
+    claim_a: str = ""
+    claim_b: str = ""
+    description: str = ""
+    resolution_hint: str = ""
+
 
 @dataclass(slots=True)
 class ReFetchCandidate:
     """An entity that should be re-fetched due to contradiction."""
+
     entity_value: str
     entity_type: str
     severity: float = 0.0
     contradiction_count: int = 0
     engines: list[str] = field(default_factory=list)
-    reason: str = ''
+    reason: str = ""
     suggested_sources: list[str] = field(default_factory=list)
+
 
 @dataclass(slots=True)
 class ContradictionAuditResult:
     """Aggregated result from all contradiction engines."""
+
     audit_ts: float = 0.0
     findings_count: int = 0
     engines_run: int = 0
@@ -109,8 +123,9 @@ class ContradictionAuditResult:
     re_fetch_candidates: list[ReFetchCandidate] = field(default_factory=list)
     auto_retractions: list[str] = field(default_factory=list)
     quality_gate_passed: bool = True
-    quality_gate_reason: str = ''
+    quality_gate_reason: str = ""
     audit_duration_ms: float = 0.0
+
 
 class ContradictionFeedbackBridge:
     """Aggregates contradictions from all 4+ engines and feeds back.
@@ -122,7 +137,18 @@ class ContradictionFeedbackBridge:
     Thread safety: all aggregation under asyncio.Lock.
     Fail-soft: any engine failure -> skip that engine, continue with others.
     """
-    __slots__ = ('_enabled', '_lock', '_subscribers', '_audit_count', '_total_contradictions', '_total_re_fetches', '_last_audit_ts', '_retract_callback', '_retract_count')
+
+    __slots__ = (
+        "_enabled",
+        "_lock",
+        "_subscribers",
+        "_audit_count",
+        "_total_contradictions",
+        "_total_re_fetches",
+        "_last_audit_ts",
+        "_retract_callback",
+        "_retract_count",
+    )
 
     def __init__(self) -> None:
         self._enabled: bool = _ENABLE_CONTRADICTION_FEEDBACK
@@ -179,9 +205,11 @@ class ContradictionFeedbackBridge:
         """
         self._retract_callback = callback
         if callback is not None:
-            logger.info('[ContradictionFeedback] Auto-retract callback registered')
+            logger.info("[ContradictionFeedback] Auto-retract callback registered")
 
-    async def _run_auto_retraction(self, findings: list[dict[str, Any]], signals: list[ContradictionSignal], sprint_id: str='') -> list[str]:
+    async def _run_auto_retraction(
+        self, findings: list[dict[str, Any]], signals: list[ContradictionSignal], sprint_id: str = ""
+    ) -> list[str]:
         """[META-008] Run auto-retraction: ConsistencyVerifier + SourceReliability.
 
         Called at the end of run_contradiction_audit() after re-fetch publish.
@@ -196,39 +224,53 @@ class ContradictionFeedbackBridge:
             List of source_ids that were auto-retracted.
         """
         if self._retract_callback is None:
-            logger.debug('[ContradictionFeedback] Auto-retract skipped: no callback registered')
+            logger.debug("[ContradictionFeedback] Auto-retract skipped: no callback registered")
             return []
         try:
-            from hledac.universal.knowledge.consistency_verifier import ConsistencyVerifier, get_consistency_verifier
+            from hledac.universal.knowledge.consistency_verifier import ConsistencyVerifier
             from hledac.universal.knowledge.source_reliability import get_source_reliability_tracker
         except ImportError as e:
-            logger.debug('[ContradictionFeedback] Auto-retract modules not available: %s', e)
+            logger.debug("[ContradictionFeedback] Auto-retract modules not available: %s", e)
             return []
         decisions = verifier.check_batch(findings, signals)
         if not decisions:
-            logger.debug('[ContradictionFeedback] Auto-retract: no sources meet criteria')
+            logger.debug("[ContradictionFeedback] Auto-retract: no sources meet criteria")
             return []
         try:
             tracker = get_source_reliability_tracker()
             await tracker.record_decisions(decisions)
         except Exception as e:
-            logger.debug('[ContradictionFeedback] record_decisions failed (fail-soft): %s', e)
+            logger.debug("[ContradictionFeedback] record_decisions failed (fail-soft): %s", e)
         decisions = decisions[:AUTO_RETRACT_MAX]
         retracted: list[str] = []
         for decision in decisions:
             try:
                 result = await self._retract_callback(decision.source_id)
                 if result and isinstance(result, dict):
-                    facts_retracted = result.get('facts_retracted', 0)
+                    facts_retracted = result.get("facts_retracted", 0)
                     if facts_retracted > 0:
                         retracted.append(decision.source_id)
                         self._retract_count += 1
                         await tracker.mark_auto_retracted(decision.source_id, sprint_id=sprint_id)
-                        logger.info("[ContradictionFeedback] AUTO-RETRACTED source '%s': %s (dissent=%d, ratio=%.3f, facts_retracted=%d)", decision.source_id, decision.reason, decision.dissent_count, decision.ratio, facts_retracted)
+                        logger.info(
+                            "[ContradictionFeedback] AUTO-RETRACTED source '%s': %s (dissent=%d, ratio=%.3f, facts_retracted=%d)",
+                            decision.source_id,
+                            decision.reason,
+                            decision.dissent_count,
+                            decision.ratio,
+                            facts_retracted,
+                        )
                     else:
-                        logger.debug("[ContradictionFeedback] Auto-retract '%s': callback returned 0 facts_retracted", decision.source_id)
+                        logger.debug(
+                            "[ContradictionFeedback] Auto-retract '%s': callback returned 0 facts_retracted",
+                            decision.source_id,
+                        )
                 else:
-                    logger.debug("[ContradictionFeedback] Auto-retract '%s': callback returned unexpected: %s", decision.source_id, type(result).__name__)
+                    logger.debug(
+                        "[ContradictionFeedback] Auto-retract '%s': callback returned unexpected: %s",
+                        decision.source_id,
+                        type(result).__name__,
+                    )
             except Exception as e:
                 logger.warning("[ContradictionFeedback] Auto-retract '%s' failed: %s", decision.source_id, e)
         return retracted
@@ -247,12 +289,14 @@ class ContradictionFeedbackBridge:
                     queue.put_nowait(candidate)
                 notified += 1
             except asyncio.QueueFull:
-                logger.debug('[ContradictionFeedback] Queue full for %s, dropping %d candidates', name, len(candidates))
+                logger.debug("[ContradictionFeedback] Queue full for %s, dropping %d candidates", name, len(candidates))
             except Exception as e:
-                logger.debug('[ContradictionFeedback] Publish to %s failed: %s', name, e)
+                logger.debug("[ContradictionFeedback] Publish to %s failed: %s", name, e)
         return notified
 
-    async def run_contradiction_audit(self, findings: list[dict[str, Any]], sprint_id: str='') -> ContradictionAuditResult:
+    async def run_contradiction_audit(
+        self, findings: list[dict[str, Any]], sprint_id: str = ""
+    ) -> ContradictionAuditResult:
         """Run all contradiction engines against a set of findings.
 
         Args:
@@ -264,34 +308,42 @@ class ContradictionFeedbackBridge:
             ContradictionAuditResult with aggregated signals and re-fetch candidates.
         """
         if not self._enabled or not findings:
-            return ContradictionAuditResult(audit_ts=_time.time(), findings_count=len(findings), quality_gate_passed=True)
+            return ContradictionAuditResult(
+                audit_ts=_time.time(), findings_count=len(findings), quality_gate_passed=True
+            )
         t0 = _time.monotonic()
         findings = findings[:MAX_FINDINGS_PER_AUDIT]
         tasks: dict[str, asyncio.Task[Any]] = {}
         engines_available: list[str] = []
         try:
-            tasks['adversarial'] = safe_create_task(self._run_adversarial_verifier(findings), name='contradiction:adversarial')
-            engines_available.append('adversarial')
+            tasks["adversarial"] = safe_create_task(
+                self._run_adversarial_verifier(findings), name="contradiction:adversarial"
+            )
+            engines_available.append("adversarial")
         except Exception:
             pass
         try:
-            tasks['insight'] = safe_create_task(self._run_insight_engine(findings), name='contradiction:insight')
-            engines_available.append('insight')
+            tasks["insight"] = safe_create_task(self._run_insight_engine(findings), name="contradiction:insight")
+            engines_available.append("insight")
         except Exception:
             pass
         try:
-            tasks['dempster_shafer'] = safe_create_task(self._run_dempster_shafer(findings), name='contradiction:dempster_shafer')
-            engines_available.append('dempster_shafer')
+            tasks["dempster_shafer"] = safe_create_task(
+                self._run_dempster_shafer(findings), name="contradiction:dempster_shafer"
+            )
+            engines_available.append("dempster_shafer")
         except Exception:
             pass
         try:
-            tasks['evidence_network'] = safe_create_task(self._run_evidence_network(findings), name='contradiction:evidence_network')
-            engines_available.append('evidence_network')
+            tasks["evidence_network"] = safe_create_task(
+                self._run_evidence_network(findings), name="contradiction:evidence_network"
+            )
+            engines_available.append("evidence_network")
         except Exception:
             pass
         try:
-            tasks['graph_rag'] = safe_create_task(self._run_graph_rag(findings), name='contradiction:graph_rag')
-            engines_available.append('graph_rag')
+            tasks["graph_rag"] = safe_create_task(self._run_graph_rag(findings), name="contradiction:graph_rag")
+            engines_available.append("graph_rag")
         except Exception:
             pass
         all_signals: list[ContradictionSignal] = []
@@ -305,30 +357,44 @@ class ContradictionFeedbackBridge:
                     engines_run += 1
                 else:
                     engines_failed += 1
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 engines_failed += 1
             except Exception as e:
-                logger.debug('[ContradictionFeedback] %s engine failed: %s', engine_name, e)
+                logger.debug("[ContradictionFeedback] %s engine failed: %s", engine_name, e)
                 engines_failed += 1
         entity_signals: dict[str, list[ContradictionSignal]] = {}
         for signal in all_signals:
-            key = signal.entity_value or f'{signal.claim_a}|{signal.claim_b}'
+            key = signal.entity_value or f"{signal.claim_a}|{signal.claim_b}"
             if key not in entity_signals:
                 entity_signals[key] = []
             entity_signals[key].append(signal)
         re_fetch_candidates: list[ReFetchCandidate] = []
         for entity_key, sigs in entity_signals.items():
-            max_severity = max((s.severity for s in sigs))
+            max_severity = max(s.severity for s in sigs)
             if max_severity < CONTRADICTION_SEVERITY_THRESHOLD:
                 continue
             primary = sigs[0]
             engines_used = list({s.engine for s in sigs})
-            candidate = ReFetchCandidate(entity_value=primary.entity_value or entity_key, entity_type=primary.entity_type, severity=max_severity, contradiction_count=len(sigs), engines=engines_used, reason=f"Contradiction detected by {len(engines_used)} engine(s): {', '.join(engines_used)}", suggested_sources=_suggest_alternative_sources(primary.entity_type))
+            candidate = ReFetchCandidate(
+                entity_value=primary.entity_value or entity_key,
+                entity_type=primary.entity_type,
+                severity=max_severity,
+                contradiction_count=len(sigs),
+                engines=engines_used,
+                reason=f"Contradiction detected by {len(engines_used)} engine(s): {', '.join(engines_used)}",
+                suggested_sources=_suggest_alternative_sources(primary.entity_type),
+            )
             re_fetch_candidates.append(candidate)
-        re_fetch_candidates.sort(key=attrgetter('severity'), reverse=True)
+        re_fetch_candidates.sort(key=attrgetter("severity"), reverse=True)
         re_fetch_candidates = re_fetch_candidates[:RE_FETCH_CANDIDATES_MAX]
-        quality_gate_passed = len(re_fetch_candidates) == 0 or max((c.severity for c in re_fetch_candidates), default=0) < 0.8
-        quality_gate_reason = 'OK' if quality_gate_passed else f'BLOCKED: {len(re_fetch_candidates)} high-severity contradictions require re-fetch'
+        quality_gate_passed = (
+            len(re_fetch_candidates) == 0 or max((c.severity for c in re_fetch_candidates), default=0) < 0.8
+        )
+        quality_gate_reason = (
+            "OK"
+            if quality_gate_passed
+            else f"BLOCKED: {len(re_fetch_candidates)} high-severity contradictions require re-fetch"
+        )
         notified = 0
         if re_fetch_candidates:
             notified = await self._publish(re_fetch_candidates)
@@ -336,15 +402,38 @@ class ContradictionFeedbackBridge:
         try:
             auto_retracted = await self._run_auto_retraction(findings, all_signals, sprint_id)
         except Exception as e:
-            logger.debug('[ContradictionFeedback] Auto-retraction failed (fail-soft): %s', e)
+            logger.debug("[ContradictionFeedback] Auto-retraction failed (fail-soft): %s", e)
         async with self._lock:
             self._audit_count += 1
             self._total_contradictions += len(all_signals)
             self._total_re_fetches += len(re_fetch_candidates)
             self._last_audit_ts = _time.time()
         duration_ms = (_time.monotonic() - t0) * 1000
-        logger.info('[ContradictionFeedback] Audit #%d: %d findings -> %d contradictions (%d engines run, %d failed) -> %d re-fetch candidates (%d subscribers notified) in %.1fms | quality_gate=%s', self._audit_count, len(findings), len(all_signals), engines_run, engines_failed, len(re_fetch_candidates), notified, duration_ms, quality_gate_reason)
-        return ContradictionAuditResult(audit_ts=_time.time(), findings_count=len(findings), engines_run=engines_run, engines_failed=engines_failed, total_contradictions=len(all_signals), signals=all_signals[:MAX_CONTRADICTIONS_PER_ENGINE * len(tasks)], re_fetch_candidates=re_fetch_candidates, auto_retractions=auto_retracted, quality_gate_passed=quality_gate_passed, quality_gate_reason=quality_gate_reason, audit_duration_ms=duration_ms)
+        logger.info(
+            "[ContradictionFeedback] Audit #%d: %d findings -> %d contradictions (%d engines run, %d failed) -> %d re-fetch candidates (%d subscribers notified) in %.1fms | quality_gate=%s",
+            self._audit_count,
+            len(findings),
+            len(all_signals),
+            engines_run,
+            engines_failed,
+            len(re_fetch_candidates),
+            notified,
+            duration_ms,
+            quality_gate_reason,
+        )
+        return ContradictionAuditResult(
+            audit_ts=_time.time(),
+            findings_count=len(findings),
+            engines_run=engines_run,
+            engines_failed=engines_failed,
+            total_contradictions=len(all_signals),
+            signals=all_signals[: MAX_CONTRADICTIONS_PER_ENGINE * len(tasks)],
+            re_fetch_candidates=re_fetch_candidates,
+            auto_retractions=auto_retracted,
+            quality_gate_passed=quality_gate_passed,
+            quality_gate_reason=quality_gate_reason,
+            audit_duration_ms=duration_ms,
+        )
 
     async def _run_adversarial_verifier(self, findings: list[dict[str, Any]]) -> list[ContradictionSignal] | None:
         """Run AdversarialVerifier.detect_contradictions().
@@ -357,23 +446,47 @@ class ContradictionFeedbackBridge:
         try:
             from hledac.universal.hledac_hypothesis.adversarial import AdversarialVerifier
             from hledac.universal.hledac_hypothesis.types.evidence import Evidence
+
             try:
                 from hledac.universal.brain import HypothesisEngine
+
                 hypothesis_engine = HypothesisEngine()
-            except (ImportError, TypeError, Exception):
+            except ImportError, TypeError, Exception:
                 hypothesis_engine = None
             if hypothesis_engine is None:
                 return None
             verifier = AdversarialVerifier(hypothesis_engine=hypothesis_engine)
-            evidence_list = [Evidence(evidence_id=f'ev_{uuid.uuid7().hex[:12]}', source=f.get('source_type', 'unknown'), content=f.get('payload_text', '') or '', timestamp=datetime.now(UTC), reliability=f.get('confidence', 0.5)) for f in findings if f.get('payload_text')][:MAX_FINDINGS_PER_AUDIT]
+            evidence_list = [
+                Evidence(
+                    evidence_id=f"ev_{uuid.uuid7().hex[:12]}",
+                    source=f.get("source_type", "unknown"),
+                    content=f.get("payload_text", "") or "",
+                    timestamp=datetime.now(UTC),
+                    reliability=f.get("confidence", 0.5),
+                )
+                for f in findings
+                if f.get("payload_text")
+            ][:MAX_FINDINGS_PER_AUDIT]
             if not evidence_list:
                 return None
             contradictions = verifier.detect_contradictions(evidence_list)
-            return [ContradictionSignal(engine='adversarial', entity_value=getattr(c, 'claim_a', '')[:100] if hasattr(c, 'claim_a') else '', entity_type='claim', severity=float(getattr(c, 'severity', 0.5)), contradiction_type=getattr(c, 'contradiction_type', 'negation'), claim_a=getattr(c, 'claim_a', ''), claim_b=getattr(c, 'claim_b', ''), description=getattr(c, 'resolution_notes', '')) for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]]
+            return [
+                ContradictionSignal(
+                    engine="adversarial",
+                    entity_value=getattr(c, "claim_a", "")[:100] if hasattr(c, "claim_a") else "",
+                    entity_type="claim",
+                    severity=float(getattr(c, "severity", 0.5)),
+                    contradiction_type=getattr(c, "contradiction_type", "negation"),
+                    claim_a=getattr(c, "claim_a", ""),
+                    claim_b=getattr(c, "claim_b", ""),
+                    description=getattr(c, "resolution_notes", ""),
+                )
+                for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]
+            ]
         except ImportError:
             return None
         except Exception as e:
-            logger.debug('[ContradictionFeedback] AdversarialVerifier error: %s', e)
+            logger.debug("[ContradictionFeedback] AdversarialVerifier error: %s", e)
             return None
 
     async def _run_insight_engine(self, findings: list[dict[str, Any]]) -> list[ContradictionSignal] | None:
@@ -384,14 +497,29 @@ class ContradictionFeedbackBridge:
         """
         try:
             from hledac.universal.brain.insight_engine import InsightEngine
+
             engine = InsightEngine()
-            data = [{k: v for k, v in f.items() if k in ('payload_text', 'source_type', 'confidence')} for f in findings[:MAX_FINDINGS_PER_AUDIT]]
+            data = [
+                {k: v for k, v in f.items() if k in ("payload_text", "source_type", "confidence")}
+                for f in findings[:MAX_FINDINGS_PER_AUDIT]
+            ]
             contradictions = engine._find_contradictions(data)
-            return [ContradictionSignal(engine='insight', entity_value=getattr(c, 'statement_a', '')[:100], entity_type='statement', severity=float(getattr(c, 'severity', 0.5)), contradiction_type='negation', claim_a=getattr(c, 'statement_a', ''), claim_b=getattr(c, 'statement_b', '')) for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]]
+            return [
+                ContradictionSignal(
+                    engine="insight",
+                    entity_value=getattr(c, "statement_a", "")[:100],
+                    entity_type="statement",
+                    severity=float(getattr(c, "severity", 0.5)),
+                    contradiction_type="negation",
+                    claim_a=getattr(c, "statement_a", ""),
+                    claim_b=getattr(c, "statement_b", ""),
+                )
+                for c in contradictions[:MAX_CONTRADICTIONS_PER_ENGINE]
+            ]
         except ImportError:
             return None
         except Exception as e:
-            logger.debug('[ContradictionFeedback] InsightEngine error: %s', e)
+            logger.debug("[ContradictionFeedback] InsightEngine error: %s", e)
             return None
 
     async def _run_dempster_shafer(self, findings: list[dict[str, Any]]) -> list[ContradictionSignal] | None:
@@ -405,20 +533,29 @@ class ContradictionFeedbackBridge:
         """
         try:
             from hledac.universal.brain.evidence_fusion import DempsterShafer
+
             engine = DempsterShafer()
             for f in findings[:MAX_FINDINGS_PER_AUDIT]:
-                source = f.get('source_type', 'unknown')
-                conf = f.get('confidence', 0.5)
-                finding_id = f.get('id', None) or None
+                source = f.get("source_type", "unknown")
+                conf = f.get("confidence", 0.5)
+                finding_id = f.get("id", None) or None
                 if conf > 0:
                     engine.add_evidence(hypothesis=source, mass=conf, source_weight=conf, source_id=finding_id)
             if engine.detect_contradiction(threshold=0.5):
-                return [ContradictionSignal(engine='dempster_shafer', entity_type='hypothesis', severity=min(engine.conflict_mass(), 1.0), contradiction_type='source_conflict', description=f'Conflict mass: {engine.conflict_mass():.3f}')]
+                return [
+                    ContradictionSignal(
+                        engine="dempster_shafer",
+                        entity_type="hypothesis",
+                        severity=min(engine.conflict_mass(), 1.0),
+                        contradiction_type="source_conflict",
+                        description=f"Conflict mass: {engine.conflict_mass():.3f}",
+                    )
+                ]
             return None
         except ImportError:
             return None
         except Exception as e:
-            logger.debug('[ContradictionFeedback] DempsterShafer error: %s', e)
+            logger.debug("[ContradictionFeedback] DempsterShafer error: %s", e)
             return None
 
     async def _run_evidence_network(self, findings: list[dict[str, Any]]) -> list[ContradictionSignal] | None:
@@ -429,17 +566,27 @@ class ContradictionFeedbackBridge:
         """
         try:
             from hledac.universal.advanced_web.evidence_network_analyzer import EvidenceNetworkAnalyzer
+
             analyzer = EvidenceNetworkAnalyzer()
             signals: list[ContradictionSignal] = []
-            n = min(len(findings), int(MAX_FINDINGS_PER_AUDIT ** 0.5))
+            n = min(len(findings), int(MAX_FINDINGS_PER_AUDIT**0.5))
             for i in range(n):
                 for j in range(i + 1, n):
                     fa = findings[i]
                     fb = findings[j]
                     try:
                         result = await analyzer.detect_contradictions(fa, fb)
-                        if result and result.get('contradicts'):
-                            signals.append(ContradictionSignal(engine='evidence_network', entity_value=str(result.get('key', '')), entity_type=str(result.get('key', 'entity')), severity=float(result.get('confidence', 0.5)), contradiction_type='numeric', description=str(result.get('reason', ''))))
+                        if result and result.get("contradicts"):
+                            signals.append(
+                                ContradictionSignal(
+                                    engine="evidence_network",
+                                    entity_value=str(result.get("key", "")),
+                                    entity_type=str(result.get("key", "entity")),
+                                    severity=float(result.get("confidence", 0.5)),
+                                    contradiction_type="numeric",
+                                    description=str(result.get("reason", "")),
+                                )
+                            )
                     except Exception:
                         continue
                     if len(signals) >= MAX_CONTRADICTIONS_PER_ENGINE:
@@ -450,7 +597,7 @@ class ContradictionFeedbackBridge:
         except ImportError:
             return None
         except Exception as e:
-            logger.debug('[ContradictionFeedback] EvidenceNetwork error: %s', e)
+            logger.debug("[ContradictionFeedback] EvidenceNetwork error: %s", e)
             return None
 
     async def _run_graph_rag(self, findings: list[dict[str, Any]]) -> list[ContradictionSignal] | None:
@@ -461,33 +608,67 @@ class ContradictionFeedbackBridge:
         """
         try:
             from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+
             try:
                 orchestrator = GraphRAGOrchestrator(knowledge_layer=None)
-            except (TypeError, Exception):
+            except TypeError, Exception:
                 return None
-            facts = [{'source': f.get('source_type', 'unknown'), 'claim': (f.get('payload_text', '') or '')[:500], 'confidence': f.get('confidence', 0.5)} for f in findings[:MAX_FINDINGS_PER_AUDIT]]
+            facts = [
+                {
+                    "source": f.get("source_type", "unknown"),
+                    "claim": (f.get("payload_text", "") or "")[:500],
+                    "confidence": f.get("confidence", 0.5),
+                }
+                for f in findings[:MAX_FINDINGS_PER_AUDIT]
+            ]
             contested, primary, counter = orchestrator._detect_contradictions(facts)
             if contested and counter:
                 signals: list[ContradictionSignal] = []
                 for cp in counter[:MAX_CONTRADICTIONS_PER_ENGINE]:
-                    signals.append(ContradictionSignal(engine='graph_rag', entity_type='graph_fact', severity=0.7, contradiction_type='source_conflict', description=str(cp)[:200] if cp else 'counter-narrative detected'))
+                    signals.append(
+                        ContradictionSignal(
+                            engine="graph_rag",
+                            entity_type="graph_fact",
+                            severity=0.7,
+                            contradiction_type="source_conflict",
+                            description=str(cp)[:200] if cp else "counter-narrative detected",
+                        )
+                    )
                 return signals if signals else None
             return None
         except ImportError:
             return None
         except Exception as e:
-            logger.debug('[ContradictionFeedback] GraphRAG error: %s', e)
+            logger.debug("[ContradictionFeedback] GraphRAG error: %s", e)
             return None
 
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry counters."""
-        return {'audit_count': self._audit_count, 'total_contradictions': self._total_contradictions, 'total_re_fetches': self._total_re_fetches, 'last_audit_ts': self._last_audit_ts, 'subscribers': len(self._subscribers), 'retract_callback_set': self._retract_callback is not None, 'total_retractions': self._retract_count}
+        return {
+            "audit_count": self._audit_count,
+            "total_contradictions": self._total_contradictions,
+            "total_re_fetches": self._total_re_fetches,
+            "last_audit_ts": self._last_audit_ts,
+            "subscribers": len(self._subscribers),
+            "retract_callback_set": self._retract_callback is not None,
+            "total_retractions": self._retract_count,
+        }
+
 
 def _suggest_alternative_sources(entity_type: str) -> list[str]:
     """Suggest alternative source types for re-fetch based on entity type."""
-    suggestions: dict[str, list[str]] = {'domain': ['CT', 'passive_dns', 'BGP', 'Shodan', 'Censys'], 'ip': ['Shodan', 'Censys', 'BGP', 'passive_dns'], 'hash': ['VirusTotal', 'MalwareBazaar', 'ThreatFox'], 'url': ['Wayback', 'CommonCrawl', 'urlscan.io'], 'email': ['Hunter.io', 'Dehashed', 'HaveIBeenPwned']}
-    return suggestions.get(entity_type, ['CT', 'Wayback', 'passive_dns'])
+    suggestions: dict[str, list[str]] = {
+        "domain": ["CT", "passive_dns", "BGP", "Shodan", "Censys"],
+        "ip": ["Shodan", "Censys", "BGP", "passive_dns"],
+        "hash": ["VirusTotal", "MalwareBazaar", "ThreatFox"],
+        "url": ["Wayback", "CommonCrawl", "urlscan.io"],
+        "email": ["Hunter.io", "Dehashed", "HaveIBeenPwned"],
+    }
+    return suggestions.get(entity_type, ["CT", "Wayback", "passive_dns"])
+
+
 _contradiction_bridge: ContradictionFeedbackBridge | None = None
+
 
 def get_contradiction_bridge() -> ContradictionFeedbackBridge:
     """Return the shared ContradictionFeedbackBridge singleton."""

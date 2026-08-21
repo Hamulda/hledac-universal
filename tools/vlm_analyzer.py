@@ -15,14 +15,13 @@ import os
 import tempfile
 from typing import Any
 
-from hledac.universal.utils._patterns import make_lazy_lock_classmethod  # F320-REFACTOR-2
+from hledac.universal.utils._patterns import make_lazy_lock_classmethod
 
 logger = logging.getLogger(__name__)
 
 # ISSUE-08 FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 # ISSUE-08 FIX: Lazy mlx_vlm import helpers — zero-cost until first VLM use
 _vlm_generate: Any = None
@@ -38,6 +37,7 @@ def _is_mlx_vlm_available() -> bool:
         try:
             from mlx_vlm import generate as _gen
             from mlx_vlm import load as _load
+
             _vlm_generate = _gen
             _vlm_load = _load
             return True
@@ -62,7 +62,6 @@ def _get_vlm_load():
 
 class VLMUnavailableError(Exception):
     """Raised when no local VLM is configured on M1 8GB."""
-    pass
 
 
 class VLMAnalyzer:
@@ -120,9 +119,7 @@ class VLMAnalyzer:
                 return False
 
             try:
-                cls._model, cls._processor = await asyncio.to_thread(
-                    _get_vlm_load(), model_id
-    )
+                cls._model, cls._processor = await asyncio.to_thread(_get_vlm_load(), model_id)
                 logger.info(f"[VLMAnalyzer] Model loaded: {model_id}")
                 return True
             except Exception as e:
@@ -143,8 +140,10 @@ class VLMAnalyzer:
                     cls._processor = None
                     try:
                         import mlx.core as mx
+
                         mx.eval([])  # F300-MLX: barrier BEFORE gc.collect()
                         import gc
+
                         gc.collect()  # F183C: uvolni Python objekty PO GPU flush
                         if hasattr(mx, "clear_cache"):
                             mx.clear_cache()
@@ -156,11 +155,7 @@ class VLMAnalyzer:
                 except Exception as e:
                     logger.warning(f"[VLMAnalyzer] Unload failed: {e}")
 
-    async def analyze(
-        self,
-        image_bytes: bytes,
-        prompt: str = "Describe this image in detail for OSINT."
-    ) -> str:
+    async def analyze(self, image_bytes: bytes, prompt: str = "Describe this image in detail for OSINT.") -> str:
         """
         Analyze image bytes using VLM.
 
@@ -174,6 +169,7 @@ class VLMAnalyzer:
         # Memory check - skip if under pressure
         try:
             import psutil
+
             if psutil.Process().memory_info().rss > 5.0 * 1024**3:
                 logger.warning("[VLMAnalyzer] Skipping due to memory pressure")
                 return ""
@@ -197,13 +193,8 @@ class VLMAnalyzer:
             # Generate description
             # ISSUE-08 FIX: Use lazy _get_vlm_generate() instead of module-level vlm_generate
             result = await asyncio.to_thread(
-                _get_vlm_generate(),
-                self._model,
-                self._processor,
-                image=tmp_path,
-                prompt=prompt,
-                max_tokens=300
-    )
+                _get_vlm_generate(), self._model, self._processor, image=tmp_path, prompt=prompt, max_tokens=300
+            )
 
             return result if result else ""
 
@@ -212,7 +203,6 @@ class VLMAnalyzer:
             return ""
 
         finally:
-            # Cleanup temp file
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
@@ -220,10 +210,7 @@ class VLMAnalyzer:
                     pass
 
 
-async def analyze_image_vlm(
-    image_bytes: bytes,
-    prompt: str = "Describe this image in detail for OSINT."
-) -> str:
+async def analyze_image_vlm(image_bytes: bytes, prompt: str = "Describe this image in detail for OSINT.") -> str:
     """Async wrapper for VLM image analysis."""
     analyzer = VLMAnalyzer()
     return await analyzer.analyze(image_bytes, prompt)

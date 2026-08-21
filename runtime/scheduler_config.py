@@ -8,26 +8,26 @@ All changes are backward-compatible: the original class remains in
 runtime/sprint_scheduler.py and is re-imported / aliased there.
 This file is the canonical home for the type definitions.
 """
+
 import logging
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Final, Protocol
-import msgspec
+from typing import Any, Protocol
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class IntCounterLayoutProto(Protocol):
     """Minimal duck-typed interface for IntCounterLayout (used in hot-path properties)."""
 
-    def get(self, key: str) -> int:
-        ...
+    def get(self, key: str) -> int: ...
 
-    def set(self, key: str, value: int) -> None:
-        ...
+    def set(self, key: str, value: int) -> None: ...
 
-    def bump(self, name: str, n: int) -> int:
-        ...
+    def bump(self, name: str, n: int) -> int: ...
+
 
 class SourceTier(Enum):
     SURFACE = auto()
@@ -37,18 +37,25 @@ class SourceTier(Enum):
     OTHER = auto()
 
     def __repr__(self) -> str:
-        return f'SourceTier.{self.name}'
+        return f"SourceTier.{self.name}"
+
+
 _TIER_ORDER = [SourceTier.SURFACE, SourceTier.STRUCTURED_TI, SourceTier.DEEP, SourceTier.ARCHIVE, SourceTier.OTHER]
+
 
 class EarlyExitClass(Struct):
     """Canonical early-exit classification labels."""
-    NATURAL = 'natural'
-    FEED_DOMINANT = 'feed_dominant'
-    NONFEED_ONLY = 'nonfeed_only'
-    PREWINDUP_TIMEOUT = 'prewindup_timeout'
-    ABORT = 'abort'
-    UNKNOWN = 'unknown'
+
+    NATURAL = "natural"
+    FEED_DOMINANT = "feed_dominant"
+    NONFEED_ONLY = "nonfeed_only"
+    PREWINDUP_TIMEOUT = "prewindup_timeout"
+    ABORT = "abort"
+    UNKNOWN = "unknown"
+
+
 _UNSET: Any = object()
+
 
 class SprintSchedulerConfig(Struct):
     """Configuration for one sprint run.
@@ -56,6 +63,7 @@ class SprintSchedulerConfig(Struct):
     STEP 1 extracted from sprint_scheduler.py (33 449 LOC → modular package).
     F350M-R / Issue #P2.
     """
+
     sprint_duration_s: float = 1800.0
     windup_lead_s: float = 180.0
     cycle_sleep_s: float = 5.0
@@ -64,7 +72,7 @@ class SprintSchedulerConfig(Struct):
     max_parallel_sources: int = 4
     stop_on_first_accepted: bool = False
     export_enabled: bool = True
-    export_dir: str = ''
+    export_dir: str = ""
     max_entries_per_cycle: int = 50
     max_hypothesis_depth: int = 3
     max_hypothesis_queries: int = 10
@@ -79,7 +87,7 @@ class SprintSchedulerConfig(Struct):
     source_tier_map: dict[str, SourceTier] = field(default_factory=dict)
     acquisition_profile: str | None = None
     require_nonfeed_corrob_for_early_exit: bool = False
-    sensitive_query_transport: str = 'auto'
+    sensitive_query_transport: str = "auto"
     predecessor_sprint_id: str | None = None
     deep_research_enabled: bool = False
     extreme_mode: bool = False
@@ -113,7 +121,7 @@ class SprintSchedulerConfig(Struct):
         """
         if self.windup_lead_s != 180.0:
             result = float(min(45.0, self.windup_lead_s))
-            logger.info('[WINDUP] final_windup=%.1fs (explicit)', result)
+            logger.info("[WINDUP] final_windup=%.1fs (explicit)", result)
             return result
         if self.aggressive_mode:
             ratio = 0.15
@@ -125,7 +133,7 @@ class SprintSchedulerConfig(Struct):
             ratio = 0.3
         raw = self.sprint_duration_s * ratio
         result = float(max(30.0, min(180.0, raw)))
-        logger.info('[WINDUP] lead=%.1fs', result)
+        logger.info("[WINDUP] lead=%.1fs", result)
         return result
 
     def windup_for_cycle(self, cycle_time_ema: float) -> float:

@@ -25,22 +25,17 @@ If import fails, we fall back to Python-only implementation.
 from __future__ import annotations
 
 from typing import Final
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Rust Import (lazy, fail-safe)
-# ---------------------------------------------------------------------------
 
 _circuit_breaker_rust = None
 
 try:
     from hledac_rust_extensions import (
-        circuit_breaker_is_open,
-        circuit_breaker_record_success,
-        circuit_breaker_record_failure,
-        circuit_breaker_half_open_probe,
         circuit_breaker_clear_all,
         circuit_breaker_get_stats,
+        circuit_breaker_half_open_probe,
+        circuit_breaker_is_open,
+        circuit_breaker_record_failure,
+        circuit_breaker_record_success,
     )
 
     _circuit_breaker_rust = {
@@ -56,18 +51,10 @@ except ImportError:
     _circuit_breaker_rust = None
 
 
-# ---------------------------------------------------------------------------
-# Constants (M1 8GB calibrated)
-# ---------------------------------------------------------------------------
-
 _FAILURE_THRESHOLD: Final[int] = 5
 _HALF_OPEN_PROBES: Final[int] = 3
 _RECOVERY_TIMEOUT_S: Final[float] = 30.0
 
-
-# ---------------------------------------------------------------------------
-# Public API (matches transport.circuit_breaker domain_breaker_* interface)
-# ---------------------------------------------------------------------------
 
 def is_open(domain: str) -> bool:
     """Check if circuit is OPEN (blocked) for domain.
@@ -147,11 +134,7 @@ def get_stats(domain: str) -> tuple[int, int, int]:
     return _python_fallback_get_stats(domain)
 
 
-# ---------------------------------------------------------------------------
-# Python Fallback (delegates to transport.circuit_breaker)
-# ---------------------------------------------------------------------------
-
-_python_fallback_breaker_cache: dict[str, "_PythonFallbackState"] = {}
+_python_fallback_breaker_cache: dict[str, _PythonFallbackState] = {}
 
 
 class _PythonFallbackState:
@@ -196,7 +179,6 @@ def _python_fallback_is_open(domain: str) -> bool:
 
 def _python_fallback_record_success(domain: str) -> None:
     """Python fallback for record_success."""
-    import time
 
     if domain not in _python_fallback_breaker_cache:
         return
@@ -257,10 +239,6 @@ def _python_fallback_get_stats(domain: str) -> tuple[int, int, int]:
     age = int(time.monotonic() - s.last_failure) if s.last_failure > 0 else 0
     return (s.state, s.failure_count, age)
 
-
-# ---------------------------------------------------------------------------
-# Diagnostics
-# ---------------------------------------------------------------------------
 
 def is_rust_available() -> bool:
     """Return True if Rust circuit breaker is available."""

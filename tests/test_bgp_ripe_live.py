@@ -15,14 +15,12 @@ Invariant (F234):
   - 30s timeout per IP
 """
 
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from _core import aclose
-
 
 # ── Fake httpx Response ─────────────────────────────────────────────────────────
+
 
 class FakeHttpxResponse:
     """Fake httpx.Response — status_code + async json()."""
@@ -36,6 +34,7 @@ class FakeHttpxResponse:
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────────
+
 
 class TestEnrichIpAsFindingRfc1918:
     """RFC1918 / private IPs are NEVER sent to RIPE (F234 invariant)."""
@@ -82,30 +81,28 @@ class TestEnrichIpAsFindingCanonicalFinding:
         from hledac.universal.network.bgp_monitor import enrich_ip_as_finding
 
         # Mock _ipfs_checked_get to return canned RIPE responses
-        prefix_resp = FakeHttpxResponse({
-            "data": {
-                "prefixes": [
-                    {"asn": "15169", "prefix": "8.8.8.0/24", "holder": "GOOGLE, US"}
-                ]
-            }
-        })
-        whois_resp = FakeHttpxResponse({
-            "data": {
-                "country": "US",
-                "objects": {
-                    "object": [
-                        {
-                            "attributes": {
-                                "attribute": [
-                                    {"name": "org-name", "value": "Google LLC"},
-                                    {"name": "abuse-mailbox", "value": "abuse@example.com"},
-                                ]
+        prefix_resp = FakeHttpxResponse(
+            {"data": {"prefixes": [{"asn": "15169", "prefix": "8.8.8.0/24", "holder": "GOOGLE, US"}]}}
+        )
+        whois_resp = FakeHttpxResponse(
+            {
+                "data": {
+                    "country": "US",
+                    "objects": {
+                        "object": [
+                            {
+                                "attributes": {
+                                    "attribute": [
+                                        {"name": "org-name", "value": "Google LLC"},
+                                        {"name": "abuse-mailbox", "value": "abuse@example.com"},
+                                    ]
+                                }
                             }
-                        }
-                    ]
+                        ]
+                    },
                 }
             }
-        })
+        )
 
         async def fake_checked_get(session, url, *, timeout=None, failure_kind=None):
             if "prefix-overview" in url:
@@ -119,12 +116,15 @@ class TestEnrichIpAsFindingCanonicalFinding:
         breaker_mock.allowed = True
         breaker_mock.reason = "test"
 
-        with patch(
-            "hledac.universal.network.ipfs_client._ipfs_checked_get",
-            side_effect=fake_checked_get,
-        ), patch(
-            "hledac.universal.transport.circuit_breaker.domain_breaker_check",
-            return_value=breaker_mock,
+        with (
+            patch(
+                "hledac.universal.network.ipfs_client._ipfs_checked_get",
+                side_effect=fake_checked_get,
+            ),
+            patch(
+                "hledac.universal.transport.circuit_breaker.domain_breaker_check",
+                return_value=breaker_mock,
+            ),
         ):
             findings = await enrich_ip_as_finding("8.8.8.8")
 

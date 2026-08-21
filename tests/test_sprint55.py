@@ -9,30 +9,32 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from hledac.universal.utils.asyncx import safe_gather_fire_and_forget
-from _core import aclose
 
-sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
+sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 
 
 # =============================================================================
 # ANE Embedder Tests
 # =============================================================================
 
+
 class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
     """Testy pro ANE-akcelerovaný embedder."""
 
-    async def test_ane_embedder_init(self):
+    async def test_ane_embedder_init(self) -> None:
         """Ověří inicializaci ANEEmbedder."""
         from hledac.universal.brain.ane_embedder import ANEEmbedder
+
         embedder = ANEEmbedder(model_name="test_model", hidden_dim=768)
         self.assertEqual(embedder.model_name, "test_model")
         self.assertEqual(embedder.hidden_dim, 768)
         self.assertFalse(embedder._loaded)
 
-    async def test_ane_embedder_load(self):
+    async def test_ane_embedder_load(self) -> None:
         """Ověří, že ANEEmbedder.load() se pokusí načíst existující CoreML model."""
         from hledac.universal.brain.ane_embedder import ANEEmbedder
-        with patch('hledac.universal.brain.ane_embedder.ANE_AVAILABLE', True):
+
+        with patch("hledac.universal.brain.ane_embedder.ANE_AVAILABLE", True):
             embedder = ANEEmbedder()
             # Mock coreml_path exists and CoreML model can be loaded
             mock_path = MagicMock(exists=MagicMock(return_value=True))
@@ -42,17 +44,18 @@ class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
             mock_model_instance = MagicMock()
             mock_coreml.NSURL.fileURLWithPath_.return_value = MagicMock()
             mock_coreml.MLModel.modelWithContentsOfURL_error_.return_value = (mock_model_instance, None)
-            with patch.dict('sys.modules', {'coremltools': MagicMock()}):
-                with patch('hledac.universal.brain.ane_embedder._CoreML', mock_coreml):
-                    with patch('hledac.universal.brain.ane_embedder._Foundation', MagicMock()):
+            with patch.dict("sys.modules", {"coremltools": MagicMock()}):
+                with patch("hledac.universal.brain.ane_embedder._CoreML", mock_coreml):
+                    with patch("hledac.universal.brain.ane_embedder._Foundation", MagicMock()):
                         await embedder.load()
                         # If load succeeds via CoreML, _loaded is True
                         # (if CoreML fails, MLX fallback may succeed — still _loaded=True)
                         self.assertTrue(embedder._loaded)
 
-    async def test_ane_fallback(self):
+    async def test_ane_fallback(self) -> None:
         """Ověří, že když ANE embedder není načten, vrací hash fallback embeddings."""
         from hledac.universal.brain.ane_embedder import ANEEmbedder
+
         embedder = ANEEmbedder()
         # Without loading, embed() should fall through to hash fallback (no NotImplementedError)
         # Sprint F228B: embed() no longer raises NotImplementedError — uses hash fallback
@@ -61,10 +64,11 @@ class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
         # _loaded stays False (no model), but embed still works via hash fallback
         self.assertFalse(embedder.is_loaded)
 
-    async def test_ane_conversion_trigger(self):
+    async def test_ane_conversion_trigger(self) -> None:
         """Zavolá convert_to_ane() a ověří, že vytvoří očekávaný soubor."""
         from hledac.universal.brain.ane_embedder import ANEEmbedder
-        with patch('hledac.universal.brain.ane_embedder.ANE_AVAILABLE', True):
+
+        with patch("hledac.universal.brain.ane_embedder.ANE_AVAILABLE", True):
             embedder = ANEEmbedder()
             # Mock path doesn't exist initially
             mock_path = MagicMock()
@@ -72,7 +76,7 @@ class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
             mock_path.touch = MagicMock()
             embedder.coreml_path = mock_path
 
-            with patch('asyncio.sleep', AsyncMock()):
+            with patch("asyncio.sleep", AsyncMock()):
                 result = await embedder.convert_to_ane()
                 # Placeholder always succeeds
                 self.assertTrue(result)
@@ -82,21 +86,24 @@ class TestANEEmbedder(unittest.IsolatedAsyncioTestCase):
 # GNN Predictor Tests (Mock-based)
 # =============================================================================
 
+
 class TestGNNPredictor(unittest.IsolatedAsyncioTestCase):
     """Testy pro GNN prediktor (bez reálného MLX)."""
 
-    async def test_gnn_init(self):
+    async def test_gnn_init(self) -> None:
         """Ověří inicializaci GNNPredictor."""
-        with patch('hledac.universal.brain.gnn_predictor.MLX_GNN_AVAILABLE', False):
+        with patch("hledac.universal.brain.gnn_predictor.MLX_GNN_AVAILABLE", False):
             from hledac.universal.brain.gnn_predictor import GNNPredictor
+
             # Should raise when MLX not available
             with self.assertRaises(RuntimeError):
                 GNNPredictor(in_dim=64, hidden_dim=32, out_dim=1)
 
-    async def test_gnn_mock_training(self):
+    async def test_gnn_mock_training(self) -> None:
         """Otestuje mock GNN bez reálného MLX."""
         # Just test the wrapper class
         from hledac.universal.intel.relationship_discovery import GNNPredictorWrapper
+
         wrapper = GNNPredictorWrapper(in_dim=64, hidden_dim=32)
         self.assertEqual(wrapper.in_dim, 64)
         self.assertIsNone(wrapper.predictor)
@@ -106,13 +113,15 @@ class TestGNNPredictor(unittest.IsolatedAsyncioTestCase):
 # IncrementalHNSW Tests
 # =============================================================================
 
+
 class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
     """Testy pro inkrementální HNSW."""
 
-    async def test_hnsw_init(self):
+    async def test_hnsw_init(self) -> None:
         """Ověří inicializaci IncrementalHNSW."""
         try:
             from hledac.universal.tools.hnsw_builder import IncrementalHNSW
+
             hnsw = IncrementalHNSW(dim=128, max_elements=1000)
             self.assertEqual(hnsw.dim, 128)
             self.assertEqual(hnsw.max_elements, 1000)
@@ -120,7 +129,7 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
         except ImportError:
             self.skipTest("hnswlib not available")
 
-    async def test_hnsw_incremental(self):
+    async def test_hnsw_incremental(self) -> None:
         """Přidá 100 vektorů a ověří, že počet v indexu odpovídá."""
         try:
             from hledac.universal.tools.hnsw_builder import IncrementalHNSW
@@ -130,13 +139,14 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
         hnsw = IncrementalHNSW(dim=128, max_elements=1000)
 
         import numpy as np
+
         vectors = np.random.randn(100, 128).astype(np.float32)
         ids = [f"vec_{i}" for i in range(100)]
 
         await hnsw.add_items(vectors, ids)
         self.assertEqual(hnsw.get_count(), 100)
 
-    async def test_hnsw_concurrent(self):
+    async def test_hnsw_concurrent(self) -> None:
         """Spustí souběžně 5 úloh přidávajících vektory a ověří konzistenci."""
         try:
             from hledac.universal.tools.hnsw_builder import IncrementalHNSW
@@ -147,7 +157,7 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
 
         import numpy as np
 
-        async def add_batch(batch_id):
+        async def add_batch(batch_id) -> None:
             vectors = np.random.randn(10, 64).astype(np.float32)
             ids = [f"vec_{batch_id}_{i}" for i in range(10)]
             await hnsw.add_items(vectors, ids)
@@ -158,7 +168,7 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
         # Should have 50 vectors total
         self.assertEqual(hnsw.get_count(), 50)
 
-    async def test_hnsw_lock(self):
+    async def test_hnsw_lock(self) -> None:
         """Ověří, že asyncio.Lock je vytvořen."""
         try:
             from hledac.universal.tools.hnsw_builder import IncrementalHNSW
@@ -173,41 +183,46 @@ class TestIncrementalHNSW(unittest.IsolatedAsyncioTestCase):
 # Resource Allocator Tests
 # =============================================================================
 
+
 class TestResourceAllocator(unittest.IsolatedAsyncioTestCase):
     """Testy pro ResourceAllocator."""
 
-    async def test_can_use_ane(self):
+    async def test_can_use_ane(self) -> None:
         """Ověří, že can_use_ane() vrací True při nízké zátěži GPU."""
         from hledac.universal.coordinators.resource_allocator import IntelligentResourceAllocator
 
-        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:  # noqa: E501
+        with patch(
+            "hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config"
+        ) as mock_config:  # noqa: E501
             mock_config.return_value = {
-                'scaling': {'scale_up_threshnew': 0.8, 'scale_down_threshnew': 0.3},
-                'optimization': {'m1_specific': True, 'mlx_acceleration': True}
+                "scaling": {"scale_up_threshnew": 0.8, "scale_down_threshnew": 0.3},
+                "optimization": {"m1_specific": True, "mlx_acceleration": True},
             }
 
             allocator = IntelligentResourceAllocator()
 
             # Mock get_current_capacity to return low GPU usage
-            with patch.object(allocator, 'get_current_capacity', AsyncMock(return_value=MagicMock(gpu_usage=0.3))):
-                with patch('hledac.universal.brain.ane_embedder.ANE_AVAILABLE', True):
+            with patch.object(allocator, "get_current_capacity", AsyncMock(return_value=MagicMock(gpu_usage=0.3))):
+                with patch("hledac.universal.brain.ane_embedder.ANE_AVAILABLE", True):
                     result = await allocator.can_use_ane()
                     self.assertTrue(result)
 
-    async def test_can_use_ane_high_load(self):
+    async def test_can_use_ane_high_load(self) -> None:
         """Ověří, že can_use_ane() vrací False při vysoké zátěži GPU."""
         from hledac.universal.coordinators.resource_allocator import IntelligentResourceAllocator
 
-        with patch('hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config') as mock_config:  # noqa: E501
+        with patch(
+            "hledac.universal.coordinators.resource_allocator.IntelligentResourceAllocator._load_config"
+        ) as mock_config:  # noqa: E501
             mock_config.return_value = {
-                'scaling': {'scale_up_threshnew': 0.8, 'scale_down_threshnew': 0.3},
-                'optimization': {'m1_specific': True, 'mlx_acceleration': True}
+                "scaling": {"scale_up_threshnew": 0.8, "scale_down_threshnew": 0.3},
+                "optimization": {"m1_specific": True, "mlx_acceleration": True},
             }
 
             allocator = IntelligentResourceAllocator()
 
-            with patch.object(allocator, 'get_current_capacity', AsyncMock(return_value=MagicMock(gpu_usage=0.9))):
-                with patch('hledac.universal.brain.ane_embedder.ANE_AVAILABLE', True):
+            with patch.object(allocator, "get_current_capacity", AsyncMock(return_value=MagicMock(gpu_usage=0.9))):
+                with patch("hledac.universal.brain.ane_embedder.ANE_AVAILABLE", True):
                     result = await allocator.can_use_ane()
                     self.assertFalse(result)
 
@@ -216,20 +231,21 @@ class TestResourceAllocator(unittest.IsolatedAsyncioTestCase):
 # Global Scheduler Tests
 # =============================================================================
 
+
 class TestGlobalScheduler(unittest.IsolatedAsyncioTestCase):
     """Testy pro GlobalPriorityScheduler."""
 
-    async def test_schedule_background(self):
+    async def test_schedule_background(self) -> None:
         """Ověří, že schedule_background nastaví prioritu 8."""
         from hledac.universal.orchestrator.global_scheduler import GlobalPriorityScheduler, register_task
 
-        def dummy_task():
+        def dummy_task() -> None:
             pass
 
-        register_task('bg_test', dummy_task)
+        register_task("bg_test", dummy_task)
 
         sched = GlobalPriorityScheduler(max_workers=1)
-        sched.schedule_background('bg_test', 'arg1')
+        sched.schedule_background("bg_test", "arg1")
 
         # Check that task was scheduled with priority 8
         with sched._task_lock:
@@ -239,21 +255,21 @@ class TestGlobalScheduler(unittest.IsolatedAsyncioTestCase):
 
         sched.shutdown(wait=False)
 
-    async def test_priority_ordering(self):
+    async def test_priority_ordering(self) -> None:
         """Ověří, že úlohy s vyšší prioritou (nižší číslo) se zpracují dříve."""
         from hledac.universal.orchestrator.global_scheduler import GlobalPriorityScheduler, register_task
 
-        def task(prio):
+        def task(prio) -> None:
             pass
 
-        register_task('test_prio', task)
+        register_task("test_prio", task)
 
         sched = GlobalPriorityScheduler(max_workers=1)
 
         # Schedule in reverse order
-        sched.schedule(3, 'test_prio', 3)
-        sched.schedule(1, 'test_prio', 1)
-        sched.schedule(2, 'test_prio', 2)
+        sched.schedule(3, "test_prio", 3)
+        sched.schedule(1, "test_prio", 1)
+        sched.schedule(2, "test_prio", 2)
 
         # Check ordering
         with sched._task_lock:
@@ -268,10 +284,11 @@ class TestGlobalScheduler(unittest.IsolatedAsyncioTestCase):
 # Relationship Discovery GNN Tests
 # =============================================================================
 
+
 class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
     """Testy pro GNN integraci v RelationshipDiscoveryEngine."""
 
-    async def test_enable_gnn(self):
+    async def test_enable_gnn(self) -> None:
         """Ověří, že enable_gnn() inicializuje GNN prediktor."""
         from hledac.universal.intel.relationship_discovery import RelationshipDiscoveryEngine
 
@@ -280,7 +297,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(engine.gnn_predictor)
 
-    async def test_gnn_switching(self):
+    async def test_gnn_switching(self) -> None:
         """Otestuje, že pro graf s >=500 uzly se použije GNN."""
         from hledac.universal.intel.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
@@ -294,12 +311,12 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
         mock_scheduler = MagicMock()
         mock_scheduler.schedule = MagicMock()
 
-        with patch.object(engine, 'gnn_predictor', None):
+        with patch.object(engine, "gnn_predictor", None):
             await engine.enable_gnn(mock_scheduler)
             # Should have tried to schedule training
             self.assertIsNotNone(engine.gnn_predictor)
 
-    async def test_gnn_disabled_on_small_graph(self):
+    async def test_gnn_disabled_on_small_graph(self) -> None:
         """Ověří, že při počtu uzlů pod prahem se GNN netrénuje."""
         from hledac.universal.intel.relationship_discovery import Entity, EntityType, RelationshipDiscoveryEngine
 
@@ -311,7 +328,7 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 
         mock_scheduler = MagicMock()
 
-        with patch.object(engine, 'gnn_predictor', None):
+        with patch.object(engine, "gnn_predictor", None):
             await engine.enable_gnn(mock_scheduler)
             # Should not have scheduled training due to small graph
             # (enable_gnn will still create the predictor, but won't schedule training)
@@ -322,10 +339,11 @@ class TestRelationshipDiscoveryGNN(unittest.IsolatedAsyncioTestCase):
 # Integration Tests
 # =============================================================================
 
+
 class TestModelManagerIntegration(unittest.IsolatedAsyncioTestCase):
     """Testy pro integraci ModelManager s ANE/MLX."""
 
-    async def test_get_embedder_returns_function(self):
+    async def test_get_embedder_returns_function(self) -> None:
         """Ověří, že get_embedder vrací funkci."""
         from hledac.universal.brain.model_manager import ModelManager
 
@@ -337,5 +355,5 @@ class TestModelManagerIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result)  # ModernBERTEmbedder exists
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

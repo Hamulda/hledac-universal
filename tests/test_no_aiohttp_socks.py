@@ -15,7 +15,6 @@ import os
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 
 def _find_aiohttp_socks_imports(file_path: Path) -> list[str]:
@@ -39,14 +38,14 @@ def _find_aiohttp_socks_imports(file_path: Path) -> list[str]:
         # import aiohttp_socks
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if 'aiohttp_socks' in alias.name:
+                if "aiohttp_socks" in alias.name:
                     problems.append(f"  import: {ast.unparse(node)}")
         # from x import aiohttp_socks, from aiohttp_socks import x
         elif isinstance(node, ast.ImportFrom):
-            if node.module and 'aiohttp_socks' in node.module:
+            if node.module and "aiohttp_socks" in node.module:
                 problems.append(f"  import from: {ast.unparse(node)}")
             for alias in node.names:
-                if 'aiohttp_socks' in alias.name:
+                if "aiohttp_socks" in alias.name:
                     problems.append(f"  import from: {ast.unparse(node)}")
 
     return problems
@@ -57,18 +56,28 @@ def _iter_python_files(repo_root: Path) -> list[Path]:
     paths = []
     # Exclude common non-source directories
     exclude_dirs = {
-        '__pycache__', '.pytest_cache', '.mypy_cache',
-        '.venv', '.git', 'node_modules', 'htmlcov',
-        '.tox', 'build', 'dist', '.egg-info',
-        '.claude', '.vtcode', 'archive',
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".venv",
+        ".git",
+        "node_modules",
+        "htmlcov",
+        ".tox",
+        "build",
+        "dist",
+        ".egg-info",
+        ".claude",
+        ".vtcode",
+        "archive",
     }
     # Use os.walk to avoid following symlinks (rglob can traverse outside project via symlinks)
     for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = [d for d in dirnames if d not in exclude_dirs and not d.startswith('.')]
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs and not d.startswith(".")]
         for fname in filenames:
-            if fname.endswith('.py'):
+            if fname.endswith(".py"):
                 p = Path(dirpath) / fname
-                if 'probe_' not in p.name and not p.name.startswith('test_imports'):
+                if "probe_" not in p.name and not p.name.startswith("test_imports"):
                     paths.append(p)
     return sorted(paths)
 
@@ -107,16 +116,16 @@ def test_pyproject_toml_no_aiohttp_socks_dep() -> None:
     content = toml_path.read_text()
 
     # Check for any aiohttp-socks reference (but not in comments)
-    lines = content.split('\n')
+    lines = content.split("\n")
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith('#'):
+        if stripped.startswith("#"):
             continue
-        if 'aiohttp-socks' in stripped or 'aiohttp_socks' in stripped:
+        if "aiohttp-socks" in stripped or "aiohttp_socks" in stripped:
             pytest.fail(
                 f"pyproject.toml still references 'aiohttp-socks': {line.strip()}\n"
                 "F4XX/C5: Remove aiohttp-socks from pyproject.toml dependencies."
-    )
+            )
 
 
 def test_httpx_socks_available() -> None:
@@ -127,6 +136,5 @@ def test_httpx_socks_available() -> None:
         import httpx_socks  # noqa: F401
     except ImportError:
         pytest.fail(
-            "httpx-socks not installed — required for Tor/I2P after F4XX/C5 migration. "
-            "Install with: uv add httpx-socks"
-    )
+            "httpx-socks not installed — required for Tor/I2P after F4XX/C5 migration. Install with: uv add httpx-socks"
+        )

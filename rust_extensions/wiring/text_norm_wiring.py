@@ -23,6 +23,7 @@ M1 8GB Safety:
     - Batch sizes capped to BATCH_HARD_CAP=50,000
     - Graceful fallback on any error
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,8 +34,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ─── Rust backend availability ─────────────────────────────────────────────────
 
 _rust_available: bool = False
 _rust_module = None
@@ -52,8 +51,6 @@ except Exception as e:
     logger.debug(f"Text norm: Rust backend not available: {e}")
     _rust_module = None
 
-
-# ─── Python fallback implementations ──────────────────────────────────────────
 
 def _python_nfc_normalize(text: str) -> str:
     """
@@ -106,9 +103,6 @@ def _python_batch_nfc_normalize(texts: list[str]) -> list[str]:
 def _python_batch_strip_diacritics(texts: list[str]) -> list[str]:
     """Python fallback: batch diacritic stripping."""
     return [_python_strip_diacritics(t) for t in texts]
-
-
-# ─── Public API ───────────────────────────────────────────────────────────────
 
 
 def nfc_normalize(text: str) -> str:

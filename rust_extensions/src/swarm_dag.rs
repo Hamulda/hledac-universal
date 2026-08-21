@@ -75,10 +75,6 @@ use crate::async_runtime;
 use std::thread;
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Constants — M1 8GB safe bounds
-// ---------------------------------------------------------------------------
-
 /// Max worker threads (one per logical core on M1 Air).
 const MAX_WORKERS: usize = 8;
 /// Max workers per task type.
@@ -107,10 +103,6 @@ const INIT_FETCH_WORKERS: usize = 2;
 const INIT_PARSE_WORKERS: usize = 2;
 const INIT_ANALYZE_WORKERS: usize = 2;
 const INIT_GRAPH_WORKERS: usize = 2;
-
-// ---------------------------------------------------------------------------
-// Task types
-// ---------------------------------------------------------------------------
 
 /// Task type identifiers exposed to Python.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,10 +163,6 @@ pub struct TaskPayload {
     pub payload_bytes: Vec<u8>,
     pub submitted_at: Instant,
 }
-
-// ---------------------------------------------------------------------------
-// ROI Signal — exponential moving average
-// ---------------------------------------------------------------------------
 
 /// EMA ROI signal for one task type.
 /// Thread-safe: updates via atomic operations.
@@ -254,10 +242,6 @@ impl EmaRoiSignal {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Per-task-type channel registry
-// ---------------------------------------------------------------------------
-
 /// One channel per task type: (sender, receiver).
 /// All workers for a type share the same channel.
 /// Python injects tasks via the sender.
@@ -287,10 +271,6 @@ impl TaskChannel {
         self.rx.recv_deadline(deadline).ok()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Adaptive Rebalancer
-// ---------------------------------------------------------------------------
 
 /// Adaptive Rebalancer
 ///
@@ -341,7 +321,6 @@ impl Rebalancer {
 
         let mut changed = false;
 
-        // Fetch vs Parse rebalance
         if parse_roi > 0.0 && fetch_roi > parse_roi * ROI_STEAL_THRESHOLD {
             let parse_w = self.parse_workers.load(Ordering::Acquire);
             let fetch_w = self.fetch_workers.load(Ordering::Acquire);
@@ -364,10 +343,6 @@ impl Rebalancer {
         changed
     }
 }
-
-// ---------------------------------------------------------------------------
-// Worker handle abstraction (tokio vs std::thread)
-// ---------------------------------------------------------------------------
 
 // MODERN-13: Abstract over tokio and std::thread handles
 // Available unconditionally so both tokio and std::thread paths compile
@@ -423,10 +398,6 @@ use worker_handle::{join, WorkerHandle};
 // Legacy alias for non-tokio builds (kept for compatibility, though unreachable)
 #[cfg(not(feature = "advanced"))]
 use std::thread::JoinHandle as WorkerHandle;
-
-// ---------------------------------------------------------------------------
-// Worker context
-// ---------------------------------------------------------------------------
 
 struct WorkerContext {
     id: usize,
@@ -518,10 +489,6 @@ impl WorkerContext {
         }).await);
     }
 }
-
-// ---------------------------------------------------------------------------
-// WorkStealingDAG — main PyO3 class
-// ---------------------------------------------------------------------------
 
 /// Work-Stealing Task DAG with ROI-based adaptive pool sizing.
 ///
@@ -849,10 +816,6 @@ impl WorkStealingDAG {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SwarmDAG — Python-friendly wrapper with lazy initialization
-// ---------------------------------------------------------------------------
-
 /// Python-friendly wrapper around WorkStealingDAG.
 /// Respects HLEDAC_ENABLE_SWARM_DAG env var, lazy initialization.
 #[pyclass(name = "SwarmDAG", unsendable)]
@@ -959,10 +922,6 @@ impl SwarmDAG {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TaskType>()?;

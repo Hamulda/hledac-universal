@@ -1,26 +1,28 @@
 """Tests for scorecard _task_dedup metrics correctness."""
+
 import pytest
-from unittest.mock import MagicMock
 
 from runtime.scorecard import ScorecardBuilder
-from _core import aclose
 
 
 class MockFinding:
     """Minimal CanonicalFinding-like object for testing."""
-    def __init__(self, source_type: str = "public"):
+
+    def __init__(self, source_type: str = "public") -> None:
         self.source_type = source_type
 
 
 class MockSprintReport:
     """Minimal SprintReport-like object for testing."""
-    def __init__(self, findings):
+
+    def __init__(self, findings) -> None:
         self.findings = findings
 
 
 class MockStore:
     """DuckDBShadowStore-like mock for testing get_dedup_runtime_status."""
-    def __init__(self, dedup_status: dict):
+
+    def __init__(self, dedup_status: dict) -> None:
         self._dedup_status = dedup_status
 
     def get_dedup_runtime_status(self) -> dict:
@@ -39,10 +41,10 @@ class TestTaskDedupMetrics:
             phase_timings={},
             sprint_id="test-sprint",
             analyst_brief=None,
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_task_dedup_ioc_val_incremented(self):
+    async def test_task_dedup_ioc_val_incremented(self) -> None:
         """ioc_val should equal the number of findings iterated in the loop."""
         findings = [MockFinding("public"), MockFinding("passive"), MockFinding("ct")]
         sprint_report = MockSprintReport(findings=findings)
@@ -52,10 +54,10 @@ class TestTaskDedupMetrics:
 
         assert scorecard._results.get("ioc_nodes") == 3, (
             f"Expected ioc_nodes=3, got {scorecard._results.get('ioc_nodes')}"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_task_dedup_fallback_ioc_count(self):
+    async def test_task_dedup_fallback_ioc_count(self) -> None:
         """Fallback branch should set both accepted and ioc from dedup dict."""
         dedup_status = {"accepted_count": 5, "ioc_count": 10}
         store = MockStore(dedup_status=dedup_status)
@@ -65,15 +67,13 @@ class TestTaskDedupMetrics:
 
         await scorecard._task_dedup()
 
-        assert scorecard._results.get("accepted") == 5, (
-            f"Expected accepted=5, got {scorecard._results.get('accepted')}"
-    )
+        assert scorecard._results.get("accepted") == 5, f"Expected accepted=5, got {scorecard._results.get('accepted')}"
         assert scorecard._results.get("ioc_nodes") == 10, (
             f"Expected ioc_nodes=10, got {scorecard._results.get('ioc_nodes')}"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_task_dedup_accepted_in_loop(self):
+    async def test_task_dedup_accepted_in_loop(self) -> None:
         """accepted should also be incremented in the findings loop."""
         findings = [MockFinding("public"), MockFinding("ct"), MockFinding("dns")]
         sprint_report = MockSprintReport(findings=findings)
@@ -81,6 +81,4 @@ class TestTaskDedupMetrics:
 
         await scorecard._task_dedup()
 
-        assert scorecard._results.get("accepted") == 3, (
-            f"Expected accepted=3, got {scorecard._results.get('accepted')}"
-    )
+        assert scorecard._results.get("accepted") == 3, f"Expected accepted=3, got {scorecard._results.get('accepted')}"

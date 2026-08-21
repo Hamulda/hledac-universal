@@ -13,19 +13,11 @@ Seed type → lane mapping:
   entity → PUBLIC (public provider rescue)
 """
 
-
-
 from collections.abc import Sequence
-from dataclasses import dataclass
-import msgspec
+from typing import Any
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import Any
-from _core import aclose
-
-# ----------------------------------------------------------------------
-# Output DTOs
-# ----------------------------------------------------------------------
 
 
 class LanePlanItem(Struct, frozen=True):
@@ -46,10 +38,6 @@ class PivotLanePlan(Struct, frozen=True):
     reason: str
 
 
-# ----------------------------------------------------------------------
-# Priority constants
-# ----------------------------------------------------------------------
-
 _PRIORITY_DOMAIN_DOH: float = 0.80
 _PRIORITY_DOMAIN_CT: float = 0.85
 _PRIORITY_DOMAIN_WAYBACK: float = 0.70
@@ -63,11 +51,6 @@ _PRIORITY_IP_PASSIVE_DNS: float = 0.75
 _PRIORITY_IP_DOH_REVERSE: float = 0.60  # lower — conditional
 
 _PRIORITY_ENTITY_PUBLIC: float = 0.70
-
-
-# ----------------------------------------------------------------------
-# Core planner
-# ----------------------------------------------------------------------
 
 
 def plan_lanes_for_pivot_seeds(
@@ -100,7 +83,7 @@ def plan_lanes_for_pivot_seeds(
             items=(),
             skipped=(),
             reason="no_seeds",
-    )
+        )
 
     items: list[LanePlanItem] = []
     skipped: list[str] = []
@@ -113,7 +96,6 @@ def plan_lanes_for_pivot_seeds(
         if not seed_value or not seed_type:
             continue
 
-        # --- domain → DOH + CT + WAYBACK + PASSIVE_DNS ---
         if seed_type == "domain":
             _plan_domain(
                 seed_value,
@@ -124,9 +106,8 @@ def plan_lanes_for_pivot_seeds(
                 enable_ct=enable_ct,
                 enable_wayback=enable_wayback,
                 enable_passive_dns=enable_passive_dns,
-    )
+            )
 
-        # --- url → WAYBACK + PUBLIC ---
         elif seed_type == "url":
             _plan_url(
                 seed_value,
@@ -134,9 +115,8 @@ def plan_lanes_for_pivot_seeds(
                 items,
                 seen_pairs,
                 enable_wayback=enable_wayback,
-    )
+            )
 
-        # --- ip → BGP + PASSIVE_DNS + DOH reverse ---
         elif seed_type in ("ip", "ipv4"):
             _plan_ip(
                 seed_value,
@@ -146,13 +126,11 @@ def plan_lanes_for_pivot_seeds(
                 enable_doh=enable_doh,
                 enable_passive_dns=enable_passive_dns,
                 enable_bgp=enable_bgp,
-    )
+            )
 
-        # --- hash → no-op (unsupported in this scope) ---
         elif seed_type in ("hash", "md5", "sha1", "sha256"):
             skipped.append(seed_value)
 
-        # --- entity → PUBLIC rescue ---
         elif seed_type == "entity":
             _plan_entity(seed_value, seed_type, items, seen_pairs)
 
@@ -167,11 +145,6 @@ def plan_lanes_for_pivot_seeds(
         skipped=tuple(skipped),
         reason=_build_reason(items, skipped, len(seeds)),
     )
-
-
-# ----------------------------------------------------------------------
-# Per-type planners
-# ----------------------------------------------------------------------
 
 
 def _add_lane_item(
@@ -198,7 +171,7 @@ def _add_lane_item(
                 seed_type=seed_type,
                 priority=priority,
                 reason=reason,
-    )
+            )
         )
 
 
@@ -214,14 +187,32 @@ def _plan_domain(
     enable_passive_dns: bool,
 ) -> None:
     """Domain → DOH + CT + WAYBACK + PASSIVE_DNS."""
-    _add_lane_item(items, seen_pairs, "DOH", seed_value, seed_type,
-                    _PRIORITY_DOMAIN_DOH, "domain_doh_lookup", enabled=enable_doh)
-    _add_lane_item(items, seen_pairs, "CT", seed_value, seed_type,
-                    _PRIORITY_DOMAIN_CT, "domain_ct_lookup", enabled=enable_ct)
-    _add_lane_item(items, seen_pairs, "WAYBACK", seed_value, seed_type,
-                    _PRIORITY_DOMAIN_WAYBACK, "domain_wayback_archive", enabled=enable_wayback)
-    _add_lane_item(items, seen_pairs, "PASSIVE_DNS", seed_value, seed_type,
-                    _PRIORITY_DOMAIN_PASSIVE_DNS, "domain_passive_dns", enabled=enable_passive_dns)
+    _add_lane_item(
+        items, seen_pairs, "DOH", seed_value, seed_type, _PRIORITY_DOMAIN_DOH, "domain_doh_lookup", enabled=enable_doh
+    )
+    _add_lane_item(
+        items, seen_pairs, "CT", seed_value, seed_type, _PRIORITY_DOMAIN_CT, "domain_ct_lookup", enabled=enable_ct
+    )
+    _add_lane_item(
+        items,
+        seen_pairs,
+        "WAYBACK",
+        seed_value,
+        seed_type,
+        _PRIORITY_DOMAIN_WAYBACK,
+        "domain_wayback_archive",
+        enabled=enable_wayback,
+    )
+    _add_lane_item(
+        items,
+        seen_pairs,
+        "PASSIVE_DNS",
+        seed_value,
+        seed_type,
+        _PRIORITY_DOMAIN_PASSIVE_DNS,
+        "domain_passive_dns",
+        enabled=enable_passive_dns,
+    )
 
 
 def _plan_url(
@@ -233,10 +224,17 @@ def _plan_url(
     enable_wayback: bool,
 ) -> None:
     """Url → WAYBACK + PUBLIC."""
-    _add_lane_item(items, seen_pairs, "WAYBACK", seed_value, seed_type,
-                    _PRIORITY_URL_WAYBACK, "url_wayback_archive", enabled=enable_wayback)
-    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type,
-                    _PRIORITY_URL_PUBLIC, "url_public_fetch")
+    _add_lane_item(
+        items,
+        seen_pairs,
+        "WAYBACK",
+        seed_value,
+        seed_type,
+        _PRIORITY_URL_WAYBACK,
+        "url_wayback_archive",
+        enabled=enable_wayback,
+    )
+    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type, _PRIORITY_URL_PUBLIC, "url_public_fetch")
 
 
 def _plan_ip(
@@ -250,12 +248,22 @@ def _plan_ip(
     enable_bgp: bool,
 ) -> None:
     """Ip → BGP + PASSIVE_DNS + DOH reverse (lower priority)."""
-    _add_lane_item(items, seen_pairs, "BGP", seed_value, seed_type,
-                    _PRIORITY_IP_BGP, "ip_bgp_lookup", enabled=enable_bgp)
-    _add_lane_item(items, seen_pairs, "PASSIVE_DNS", seed_value, seed_type,
-                    _PRIORITY_IP_PASSIVE_DNS, "ip_passive_dns", enabled=enable_passive_dns)
-    _add_lane_item(items, seen_pairs, "DOH", seed_value, seed_type,
-                    _PRIORITY_IP_DOH_REVERSE, "ip_doh_reverse", enabled=enable_doh)
+    _add_lane_item(
+        items, seen_pairs, "BGP", seed_value, seed_type, _PRIORITY_IP_BGP, "ip_bgp_lookup", enabled=enable_bgp
+    )
+    _add_lane_item(
+        items,
+        seen_pairs,
+        "PASSIVE_DNS",
+        seed_value,
+        seed_type,
+        _PRIORITY_IP_PASSIVE_DNS,
+        "ip_passive_dns",
+        enabled=enable_passive_dns,
+    )
+    _add_lane_item(
+        items, seen_pairs, "DOH", seed_value, seed_type, _PRIORITY_IP_DOH_REVERSE, "ip_doh_reverse", enabled=enable_doh
+    )
 
 
 def _plan_entity(
@@ -265,8 +273,7 @@ def _plan_entity(
     seen_pairs: set[tuple[str, str]],
 ) -> None:
     """Entity → PUBLIC (public provider rescue)."""
-    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type,
-                    _PRIORITY_ENTITY_PUBLIC, "entity_public_rescue")
+    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type, _PRIORITY_ENTITY_PUBLIC, "entity_public_rescue")
 
 
 def _plan_dark_surface_pivot(
@@ -311,13 +318,17 @@ def _plan_dark_surface_pivot(
             continue  # I2P requires I2P
 
         seen_pairs.add(pair)
-        items.append(LanePlanItem(
-            lane=dark_lane,
-            seed_value=seed_value,
-            seed_type="dark_query",
-            priority=dq.priority,
-            reason=f"dark_{dq.query_type.value}__{dq.reasoning[:50]}" if dq.reasoning else f"dark_{dq.query_type.value}",  # noqa: E501
-        ))
+        items.append(
+            LanePlanItem(
+                lane=dark_lane,
+                seed_value=seed_value,
+                seed_type="dark_query",
+                priority=dq.priority,
+                reason=f"dark_{dq.query_type.value}__{dq.reasoning[:50]}"
+                if dq.reasoning
+                else f"dark_{dq.query_type.value}",  # noqa: E501
+            )
+        )
 
 
 def _build_reason(items: list[LanePlanItem], skipped: list[str], total_seeds: int) -> str:

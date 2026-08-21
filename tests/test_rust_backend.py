@@ -12,41 +12,56 @@ Tests:
   8. Singleton identity preserved across imports
 """
 
-
 import pytest
-from _core import aclose
 
 
 class TestRustBackendModule:
     """Module-level import and singleton tests."""
 
-    def test_import_no_error(self):
+    def test_import_no_error(self) -> None:
         """RustBackend imports without ImportError."""
         from _core.rust_backend import RustBackend, rust
+
         assert rust is not None
         assert isinstance(rust, RustBackend)
 
-    def test_singleton_identity(self):
+    def test_singleton_identity(self) -> None:
         """RustBackend() returns the same instance."""
         from _core.rust_backend import RustBackend
+
         r1 = RustBackend()
         r2 = RustBackend()
         assert r1 is r2
 
-    def test_is_available_is_bool(self):
+    def test_is_available_is_bool(self) -> None:
         """is_available is a bool."""
         from _core.rust_backend import rust
+
         assert isinstance(rust.is_available, bool)
 
-    def test_all_domains_accessible(self):
+    def test_all_domains_accessible(self) -> None:
         """All 18 domain properties are accessible."""
         from _core.rust_backend import rust
 
         domains = [
-            "bloom", "url", "hash", "rolling_hash", "simhash",
-            "quality", "ioc", "graph", "hot_edges", "ip",
-            "html", "ioc_dedup", "int_counter", "simd",
-            "aho", "evidence", "madvise", "memory",
+            "bloom",
+            "url",
+            "hash",
+            "rolling_hash",
+            "simhash",
+            "quality",
+            "ioc",
+            "graph",
+            "hot_edges",
+            "ip",
+            "html",
+            "ioc_dedup",
+            "int_counter",
+            "simd",
+            "aho",
+            "evidence",
+            "madvise",
+            "memory",
             "sprint_policies",
             "deobfuscate",
         ]
@@ -59,7 +74,7 @@ class TestRustBackendModule:
 class TestRustBackendQualityFallback:
     """Quality gate domain — Python fallback tests."""
 
-    def test_batch_entropy_basic(self):
+    def test_batch_entropy_basic(self) -> None:
         """batch_entropy returns correct Shannon entropy values."""
         from _core.rust_backend import rust
 
@@ -72,7 +87,7 @@ class TestRustBackendQualityFallback:
         # Empty string returns 0.0
         assert result[2] == 0.0
 
-    def test_compute_entropy_single(self):
+    def test_compute_entropy_single(self) -> None:
         """compute_entropy returns correct value."""
         from _core.rust_backend import rust
 
@@ -84,14 +99,14 @@ class TestRustBackendQualityFallback:
         # All different chars = max entropy
         assert result2 > 0.0
 
-    def test_normalize_quality_text(self):
+    def test_normalize_quality_text(self) -> None:
         """normalize_quality_text strips and lowercases."""
         from _core.rust_backend import rust
 
         result = rust.quality.normalize_quality_text("  Hello   WORLD  ")
         assert result == "hello world"
 
-    def test_dedup_fingerprint_returns_hex(self):
+    def test_dedup_fingerprint_returns_hex(self) -> None:
         """dedup_fingerprint returns a hex string."""
         from _core.rust_backend import rust
 
@@ -99,7 +114,7 @@ class TestRustBackendQualityFallback:
         assert isinstance(result, str)
         assert len(result) == 32  # BLAKE2b-128 = 16 bytes = 32 hex chars
 
-    def test_batch_dedup_fingerprints(self):
+    def test_batch_dedup_fingerprints(self) -> None:
         """batch_dedup_fingerprints returns list of hex strings."""
         from _core.rust_backend import rust
 
@@ -114,27 +129,30 @@ class TestRustBackendQualityFallback:
 class TestRustBackendUrlFallback:
     """URL engine domain — Python fallback tests."""
 
-    def test_classify_url_clearnet(self):
+    def test_classify_url_clearnet(self) -> None:
         """classify_url returns (kind, host) tuple for https URLs."""
         from _core.rust_backend import rust
 
         assert rust.url.classify_url("https://example.com") == ("clearnet", "example.com")
         assert rust.url.classify_url("http://example.com") == ("clearnet", "example.com")
 
-    def test_classify_url_onion(self):
+    def test_classify_url_onion(self) -> None:
         """classify_url returns (kind, host) tuple for .onion URLs."""
         from _core.rust_backend import rust
 
         assert rust.url.classify_url("http://example.onion") == ("onion", "example.onion")
-        assert rust.url.classify_url("https://duckduckgogg42xjoc72x3srys37fes5hlvsu2rkzipb752artr2jo7tkjyd.onion") == ("onion", "duckduckgogg42xjoc72x3srys37fes5hlvsu2rkzipb752artr2jo7tkjyd.onion")
+        assert rust.url.classify_url("https://duckduckgogg42xjoc72x3srys37fes5hlvsu2rkzipb752artr2jo7tkjyd.onion") == (
+            "onion",
+            "duckduckgogg42xjoc72x3srys37fes5hlvsu2rkzipb752artr2jo7tkjyd.onion",
+        )
 
-    def test_classify_url_i2p(self):
+    def test_classify_url_i2p(self) -> None:
         """classify_url returns (kind, host) tuple for .i2p URLs."""
         from _core.rust_backend import rust
 
         assert rust.url.classify_url("http://example.i2p") == ("i2p", "example.i2p")
 
-    def test_is_valid_url(self):
+    def test_is_valid_url(self) -> None:
         """is_valid_url validates URLs correctly."""
         from _core.rust_backend import rust
 
@@ -142,7 +160,7 @@ class TestRustBackendUrlFallback:
         assert rust.url.is_valid_url("not-a-url") is False
         assert rust.url.is_valid_url("") is False
 
-    def test_filter_valid_urls(self):
+    def test_filter_valid_urls(self) -> None:
         """filter_valid_urls filters a list."""
         from _core.rust_backend import rust
 
@@ -152,13 +170,13 @@ class TestRustBackendUrlFallback:
         assert len(result) == 1
         assert result == ["https://example.com"]
 
-    def test_extract_domain(self):
+    def test_extract_domain(self) -> None:
         """extract_domain extracts the domain."""
         from _core.rust_backend import rust
 
         assert rust.url.extract_domain("https://www.example.com/path?q=1") == "www.example.com"
 
-    def test_batch_classify(self):
+    def test_batch_classify(self) -> None:
         """batch_classify returns list of (kind, host) tuples."""
         from _core.rust_backend import rust
 
@@ -170,7 +188,7 @@ class TestRustBackendUrlFallback:
 class TestRustBackendBloomFallback:
     """Bloom filter domain — Python fallback tests."""
 
-    def test_bloom_filter_add_contains(self):
+    def test_bloom_filter_add_contains(self) -> None:
         """BloomFilter add/contains work."""
         from _core.rust_backend import rust
 
@@ -180,7 +198,7 @@ class TestRustBackendBloomFallback:
         assert "item1" in bf
         assert "item2" not in bf
 
-    def test_bloom_filter_len(self):
+    def test_bloom_filter_len(self) -> None:
         """BloomFilter __len__ works."""
         from _core.rust_backend import rust
 
@@ -189,7 +207,7 @@ class TestRustBackendBloomFallback:
         bf.add("b")
         assert len(bf) == 2
 
-    def test_url_set(self):
+    def test_url_set(self) -> None:
         """UrlSet add/contains work."""
         from _core.rust_backend import rust
 
@@ -199,7 +217,7 @@ class TestRustBackendBloomFallback:
         assert us.contains("https://other.com") is False
         assert us.len() == 1
 
-    def test_url_set_add_batch_parallel(self):
+    def test_url_set_add_batch_parallel(self) -> None:
         """UrlSet add_batch uses rayon parallel FNV-1a hashing."""
         from _core.rust_backend import rust
 
@@ -220,7 +238,7 @@ class TestRustBackendBloomFallback:
 class TestRustBackendHashFallback:
     """Hash domain — Python fallback tests."""
 
-    def test_content_hasher(self):
+    def test_content_hasher(self) -> None:
         """ContentHasher produces hex strings via static methods."""
         from _core.rust_backend import rust
 
@@ -228,7 +246,7 @@ class TestRustBackendHashFallback:
         assert isinstance(result, str)
         assert len(result) == 16  # xxhash64 produces 16 hex chars
 
-    def test_xxhash_64(self):
+    def test_xxhash_64(self) -> None:
         """content_hash_64 returns integer."""
         from _core.rust_backend import rust
 
@@ -236,7 +254,7 @@ class TestRustBackendHashFallback:
         assert isinstance(result, int)
         assert result >= 0
 
-    def test_batch_content_hash(self):
+    def test_batch_content_hash(self) -> None:
         """batch_content_hash returns list of ints."""
         from _core.rust_backend import rust
 
@@ -249,7 +267,7 @@ class TestRustBackendHashFallback:
 class TestRustBackendIocFallback:
     """IOC extraction domain — Python fallback tests."""
 
-    def test_extract_iocs(self):
+    def test_extract_iocs(self) -> None:
         """extract_iocs returns dict of IOC type -> list of values (grouped format)."""
         from _core.rust_backend import rust
 
@@ -275,7 +293,7 @@ class TestRustBackendIocFallback:
             assert "1.2.3.4" in values
             assert "user@example.org" in values
 
-    def test_nfc_normalize(self):
+    def test_nfc_normalize(self) -> None:
         """nfc_normalize normalizes Unicode."""
         from _core.rust_backend import rust
 
@@ -287,14 +305,14 @@ class TestRustBackendIocFallback:
 class TestRustBackendSimhashFallback:
     """SimHash domain — Python fallback tests."""
 
-    def test_compute_simhash(self):
+    def test_compute_simhash(self) -> None:
         """compute_simhash returns integer."""
         from _core.rust_backend import rust
 
         result = rust.simhash.compute_simhash("hello world")
         assert isinstance(result, int)
 
-    def test_batch_compute_simhash(self):
+    def test_batch_compute_simhash(self) -> None:
         """batch_compute_simhash returns list of ints."""
         from _core.rust_backend import rust
 
@@ -307,7 +325,7 @@ class TestRustBackendSimhashFallback:
 class TestRustBackendMemoryFallback:
     """Memory probe domain — Python fallback tests."""
 
-    def test_available_memory(self):
+    def test_available_memory(self) -> None:
         """available_memory returns int >= 0."""
         from _core.rust_backend import rust
 
@@ -315,7 +333,7 @@ class TestRustBackendMemoryFallback:
         assert isinstance(result, int)
         assert result >= 0
 
-    def test_total_memory(self):
+    def test_total_memory(self) -> None:
         """total_memory returns int > 0."""
         from _core.rust_backend import rust
 
@@ -323,7 +341,7 @@ class TestRustBackendMemoryFallback:
         assert isinstance(result, int)
         assert result > 0
 
-    def test_madvise_unsupported_returns_false(self):
+    def test_madvise_unsupported_returns_false(self) -> None:
         """advise_free returns False on non-macOS or when Rust ext unavailable."""
         from _core.rust_backend import rust
 
@@ -335,7 +353,7 @@ class TestRustBackendMemoryFallback:
 class TestRustBackendHotEdgesFallback:
     """Hot edges domain — Python fallback tests."""
 
-    def test_hot_edge_counter(self):
+    def test_hot_edge_counter(self) -> None:
         """HotEdgeCounter bump_edge and drain work."""
         from _core.rust_backend import rust
 
@@ -347,14 +365,12 @@ class TestRustBackendHotEdgesFallback:
         counter.drain_dirty()
         assert counter.pending_count() == 0
 
-    def test_int_counter_layout(self):
+    def test_int_counter_layout(self) -> None:
         """IntCounterLayout get/set/bump work."""
         from _core.rust_backend import rust
 
         # Rust API: IntCounterLayoutRust takes field_names list, not size int
-        layout = rust.int_counter.IntCounterLayoutRust(
-            ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"]
-    )
+        layout = rust.int_counter.IntCounterLayoutRust(["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"])
         layout.set("f3", 100)
         assert layout.get("f3") == 100
         layout.bump("f3", 1)
@@ -364,7 +380,7 @@ class TestRustBackendHotEdgesFallback:
 class TestRustBackendRollingHashFallback:
     """Rolling hash domain — Python fallback tests."""
 
-    def test_rolling_hash_engine(self):
+    def test_rolling_hash_engine(self) -> None:
         """RollingHashEngine hash and roll work."""
         from _core.rust_backend import rust
 
@@ -382,7 +398,7 @@ class TestRustBackendRollingHashFallback:
 class TestRustBackendSimdFallback:
     """SIMD domain — Python fallback tests."""
 
-    def test_cosine_similarity(self):
+    def test_cosine_similarity(self) -> None:
         """cosine_similarity returns float."""
         from _core.rust_backend import rust
 
@@ -400,7 +416,7 @@ class TestRustBackendSimdFallback:
 class TestRustBackendMadviseFallback:
     """Madvise domain — Python fallback tests."""
 
-    def test_madvise_returns_bool(self):
+    def test_madvise_returns_bool(self) -> None:
         """madvise_on_mmap_region returns bool (no-op in fallback)."""
         from _core.rust_backend import rust
 
@@ -411,7 +427,7 @@ class TestRustBackendMadviseFallback:
 class TestRustBackendGraphFallback:
     """Graph traversal domain — Python fallback tests."""
 
-    def test_batch_graph_traverse_returns_list(self):
+    def test_batch_graph_traverse_returns_list(self) -> None:
         """batch_graph_traverse returns list of dicts (or None on invalid path)."""
         from _core.rust_backend import rust
 
@@ -425,7 +441,7 @@ class TestRustBackendGraphFallback:
 class TestRustBackendEvidenceFallback:
     """Evidence domain — Python fallback tests."""
 
-    def test_chain_hash(self):
+    def test_chain_hash(self) -> None:
         """chain_hash returns tuple of strings."""
         from _core.rust_backend import rust
 
@@ -441,7 +457,7 @@ class TestRustBackendEvidenceFallback:
 class TestRustBackendAhoFallback:
     """Aho-Corasick domain — Python fallback tests."""
 
-    def test_aho_matcher(self):
+    def test_aho_matcher(self) -> None:
         """AhoCorasickMatcher.scan returns list of matches."""
         from _core.rust_backend import rust
 
@@ -454,7 +470,7 @@ class TestRustBackendAhoFallback:
 class TestRustBackendIpFallback:
     """IP parsing domain — Python fallback tests."""
 
-    def test_parse_ip_fast(self):
+    def test_parse_ip_fast(self) -> None:
         """parse_ip_fast returns normalized IP string or None (Rust) / tuple (Python fallback)."""
         from _core.rust_backend import rust
 
@@ -469,14 +485,14 @@ class TestRustBackendIpFallback:
             assert isinstance(result, str)
             assert result == "192.168.1.1"
 
-    def test_is_private_ip(self):
+    def test_is_private_ip(self) -> None:
         """is_private_ip returns bool."""
         from _core.rust_backend import rust
 
         assert rust.ip.is_private_ip("192.168.1.1") is True
         assert rust.ip.is_public_ip("8.8.8.8") is True
 
-    def test_cidr_contains(self):
+    def test_cidr_contains(self) -> None:
         """cidr_contains returns bool."""
         from _core.rust_backend import rust
 
@@ -487,7 +503,7 @@ class TestRustBackendIpFallback:
 class TestRustBackendIocDedupFallback:
     """IOC dedup domain — Python fallback tests."""
 
-    def test_ioc_dedup_store(self):
+    def test_ioc_dedup_store(self) -> None:
         """IocDedupStore add/contains work."""
         from _core.rust_backend import rust
 
@@ -498,7 +514,7 @@ class TestRustBackendIocDedupFallback:
         assert store.contains("domain", "example.com") is True
         assert store.contains("domain", "other.com") is False
 
-    def test_ioc_dedup_store_add_batch_parallel(self):
+    def test_ioc_dedup_store_add_batch_parallel(self) -> None:
         """IocDedupStore add_batch uses rayon parallel hashing."""
         from _core.rust_backend import rust
 
@@ -515,7 +531,7 @@ class TestRustBackendIocDedupFallback:
 
         assert store.len() == 100
 
-    def test_ioc_dedup_store_batch_insert_alias(self):
+    def test_ioc_dedup_store_batch_insert_alias(self) -> None:
         """batch_insert is an alias for add_batch."""
         from _core.rust_backend import rust
 
@@ -530,7 +546,7 @@ class TestRustBackendIocDedupFallback:
 class TestRustBackendHtmlFallback:
     """HTML parsing domain — Python fallback tests."""
 
-    def test_html_extract(self):
+    def test_html_extract(self) -> None:
         """html_extract returns dict with links, emails, title."""
         from _core.rust_backend import rust
 
@@ -545,21 +561,21 @@ class TestRustBackendHtmlFallback:
 class TestRustBackendSprintPoliciesFallback:
     """Sprint policies domain — Python fallback tests (F5.2)."""
 
-    def test_sprint_policies_domain_accessible(self):
+    def test_sprint_policies_domain_accessible(self) -> None:
         """sprint_policies domain is accessible."""
         from _core.rust_backend import rust
 
         sp = rust.sprint_policies
         assert sp is not None
 
-    def test_feed_dominance_guard_factory(self):
+    def test_feed_dominance_guard_factory(self) -> None:
         """FeedDominanceGuard factory method works."""
         from _core.rust_backend import rust
 
         guard = rust.sprint_policies.FeedDominanceGuard()
         assert guard is not None
 
-    def test_feed_dominance_guard_compute_balanced(self):
+    def test_feed_dominance_guard_compute_balanced(self) -> None:
         """FeedDominanceGuard.compute returns balanced result."""
         from _core.rust_backend import rust
 
@@ -567,19 +583,19 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.95,
             min_nonfeed_findings=5,
             strict=False,
-    )
+        )
         # Balanced: 50% feed, 50% nonfeed
         result = guard.compute(
             total_accepted=10,
             feed_accepted=5,
             nonfeed_accepted=5,
-    )
+        )
         assert result.feed_dominance_ratio == 0.5
         assert result.feed_dominance_class == "balanced"
         assert result.guard_triggered is False
         assert result.block_early_exit is False
 
-    def test_feed_dominance_guard_compute_feed_dominant(self):
+    def test_feed_dominance_guard_compute_feed_dominant(self) -> None:
         """FeedDominanceGuard.compute detects feed dominance."""
         from _core.rust_backend import rust
 
@@ -587,19 +603,19 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.8,
             min_nonfeed_findings=5,
             strict=False,
-    )
+        )
         # Feed dominant: 90% feed
         result = guard.compute(
             total_accepted=10,
             feed_accepted=9,
             nonfeed_accepted=1,
-    )
+        )
         assert result.feed_dominance_ratio == 0.9
         assert result.feed_dominance_class == "feed_dominant"
         assert result.guard_triggered is True
         assert result.should_recommend_nonfeed_diagnostic is True
 
-    def test_feed_dominance_guard_strict_blocks_early_exit(self):
+    def test_feed_dominance_guard_strict_blocks_early_exit(self) -> None:
         """FeedDominanceGuard strict=True blocks early exit when guard triggered."""
         from _core.rust_backend import rust
 
@@ -607,7 +623,7 @@ class TestRustBackendSprintPoliciesFallback:
             dominance_ratio_threshold=0.94,  # Lower threshold so guard triggers at 0.95
             min_nonfeed_findings=5,
             strict=True,
-    )
+        )
         # Guard triggered (95% feed > 94% threshold) but nonfeed < min_nonfeed_findings
         # and no escape hatch → should block early exit
         result = guard.compute(
@@ -616,12 +632,12 @@ class TestRustBackendSprintPoliciesFallback:
             nonfeed_accepted=1,
             eligible_nonfeed_lanes_terminal=False,
             nonfeed_diagnostic_timed_out=False,
-    )
+        )
         assert result.feed_dominance_ratio == 0.95
         assert result.guard_triggered is True
         assert result.block_early_exit is True
 
-    def test_feed_dominance_guard_zero_findings(self):
+    def test_feed_dominance_guard_zero_findings(self) -> None:
         """FeedDominanceGuard.compute handles zero findings."""
         from _core.rust_backend import rust
 
@@ -630,13 +646,13 @@ class TestRustBackendSprintPoliciesFallback:
             total_accepted=0,
             feed_accepted=0,
             nonfeed_accepted=0,
-    )
+        )
         assert result.feed_dominance_ratio == 0.0
         assert result.feed_dominance_class == "balanced"
         assert result.guard_triggered is False
         assert result.block_early_exit is False
 
-    def test_feed_dominance_guard_ratio_class(self):
+    def test_feed_dominance_guard_ratio_class(self) -> None:
         """FeedDominanceGuard.ratio_class returns correct class."""
         from _core.rust_backend import rust
 
@@ -646,14 +662,14 @@ class TestRustBackendSprintPoliciesFallback:
         assert guard.ratio_class(0.96) == "feed_dominant"
         assert guard.ratio_class(0.5) == "balanced"
 
-    def test_lane_budget_pool_factory(self):
+    def test_lane_budget_pool_factory(self) -> None:
         """LaneBudgetPool factory method works."""
         from _core.rust_backend import rust
 
         pool = rust.sprint_policies.LaneBudgetPool()
         assert pool is not None
 
-    def test_lane_budget_pool_allocate_consume(self):
+    def test_lane_budget_pool_allocate_consume(self) -> None:
         """LaneBudgetPool allocate and consume work."""
         from _core.rust_backend import rust
 
@@ -665,7 +681,7 @@ class TestRustBackendSprintPoliciesFallback:
         assert stats["allocated_s"] == 10.0
         assert stats["consumed_s"] == 3.5
 
-    def test_lane_budget_pool_release(self):
+    def test_lane_budget_pool_release(self) -> None:
         """LaneBudgetPool release works."""
         from _core.rust_backend import rust
 
@@ -677,7 +693,7 @@ class TestRustBackendSprintPoliciesFallback:
         stats = pool.get_lane_stats()["public"]
         assert stats["released_s"] == 6.5
 
-    def test_lane_budget_pool_get_utilization(self):
+    def test_lane_budget_pool_get_utilization(self) -> None:
         """LaneBudgetPool get_utilization returns float."""
         from _core.rust_backend import rust
 
@@ -689,7 +705,7 @@ class TestRustBackendSprintPoliciesFallback:
         assert 0.0 <= util <= 1.0
         assert util == pytest.approx(0.5)
 
-    def test_lane_budget_pool_timeout(self):
+    def test_lane_budget_pool_timeout(self) -> None:
         """LaneBudgetPool release increments timeout_count."""
         from _core.rust_backend import rust
 
@@ -701,7 +717,7 @@ class TestRustBackendSprintPoliciesFallback:
         stats = pool.get_lane_stats()["public"]
         assert stats["timeout_count"] == 2
 
-    def test_compute_dominance_convenience(self):
+    def test_compute_dominance_convenience(self) -> None:
         """compute_dominance convenience method works."""
         from _core.rust_backend import rust
 
@@ -710,7 +726,7 @@ class TestRustBackendSprintPoliciesFallback:
             total_accepted=100,
             feed_accepted=96,
             nonfeed_accepted=4,
-    )
+        )
         assert "feed_dominance_ratio" in result
         assert result["feed_dominance_ratio"] == 0.96
         assert "guard_triggered" in result
@@ -720,60 +736,68 @@ class TestRustBackendSprintPoliciesFallback:
 class TestRustBackendDeobfuscateFallback:
     """Deobfuscation domain — Python fallback tests."""
 
-    def test_deobfuscate_domain_accessible(self):
+    def test_deobfuscate_domain_accessible(self) -> None:
         """deobfuscate domain is accessible."""
         from _core.rust_backend import rust
+
         d = rust.deobfuscate
         assert d is not None
 
-    def test_decode_base64(self):
+    def test_decode_base64(self) -> None:
         """decode_ioc_candidates decodes base64."""
         from _core.rust_backend import rust
-        # 'aGVsbG8gd29ybGQ=' is 'hello world' in base64
-        result = rust.deobfuscate.decode('aGVsbG8gd29ybGQ=')
-        assert 'hello world' in result.candidates
-        assert result.layers_stripped >= 1
-        assert 'base64' in result.encodings_detected
 
-    def test_decode_hex(self):
+        # 'aGVsbG8gd29ybGQ=' is 'hello world' in base64
+        result = rust.deobfuscate.decode("aGVsbG8gd29ybGQ=")
+        assert "hello world" in result.candidates
+        assert result.layers_stripped >= 1
+        assert "base64" in result.encodings_detected
+
+    def test_decode_hex(self) -> None:
         """decode_ioc_candidates decodes hex."""
         from _core.rust_backend import rust
-        # '68656c6c6f' is 'hello' in hex
-        result = rust.deobfuscate.decode('68656c6c6f')
-        assert 'hello' in result.candidates
-        assert 'hex' in result.encodings_detected
 
-    def test_decode_url_percent(self):
+        # '68656c6c6f' is 'hello' in hex
+        result = rust.deobfuscate.decode("68656c6c6f")
+        assert "hello" in result.candidates
+        assert "hex" in result.encodings_detected
+
+    def test_decode_url_percent(self) -> None:
         """decode_ioc_candidates decodes URL percent encoding."""
         from _core.rust_backend import rust
-        result = rust.deobfuscate.decode('hello%20world')
-        assert 'hello world' in result.candidates
-        assert 'url_percent' in result.encodings_detected
 
-    def test_decode_empty(self):
+        result = rust.deobfuscate.decode("hello%20world")
+        assert "hello world" in result.candidates
+        assert "url_percent" in result.encodings_detected
+
+    def test_decode_empty(self) -> None:
         """decode_ioc_candidates handles empty string."""
         from _core.rust_backend import rust
-        result = rust.deobfuscate.decode('')
+
+        result = rust.deobfuscate.decode("")
         assert result.candidates == []
 
-    def test_batch_decode(self):
+    def test_batch_decode(self) -> None:
         """batch_decode_ioc_candidates processes multiple texts."""
         from _core.rust_backend import rust
-        texts = ['aGVsbG8=', 'V29ybGQ=']  # 'Hello', 'World' in base64
+
+        texts = ["aGVsbG8=", "V29ybGQ="]  # 'Hello', 'World' in base64
         results = rust.deobfuscate.batch_decode(texts)
         assert len(results) == 2
-        assert 'Hello' in results[0].candidates
-        assert 'World' in results[1].candidates
+        assert "Hello" in results[0].candidates
+        assert "World" in results[1].candidates
 
-    def test_telemetry(self):
+    def test_telemetry(self) -> None:
         """telemetry returns tuple of ints."""
         from _core.rust_backend import rust
+
         t = rust.deobfuscate.telemetry()
         assert isinstance(t, tuple)
         assert len(t) == 3
         assert all(isinstance(x, int) for x in t)
 
-    def test_reset_telemetry(self):
+    def test_reset_telemetry(self) -> None:
         """reset_telemetry runs without error."""
         from _core.rust_backend import rust
+
         rust.deobfuscate.reset_telemetry()  # Should not raise

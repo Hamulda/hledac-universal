@@ -15,13 +15,12 @@ M1 UMA: when Metal-backed, the same physical pages back both the Rust MTLBuffer
 and the MLX array — no copy, no L2 cache eviction.
 """
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from _core import aclose
 
 if TYPE_CHECKING:
-    import mlx.core as mx
+    pass
 
 __all__ = ["SharedTensor"]
 
@@ -34,6 +33,7 @@ def _get_mx():
     """
     try:
         import mlx.core as _mx
+
         return _mx
     except ImportError:
         return None
@@ -44,6 +44,7 @@ def _get_shared_buf():
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         return SharedMetalBuffer
     except ImportError:
@@ -97,7 +98,7 @@ class SharedTensor:
         buf: Any,
         shape: tuple[int, ...],
         dtype: str = "float32",
-    ) -> "SharedTensor":
+    ) -> SharedTensor:
         """Create a SharedTensor backed by a SharedMetalBuffer (SILICON-04).
 
         On M1 UMA, the MLX array shares the same physical pages as the
@@ -138,7 +139,7 @@ class SharedTensor:
         cls,
         vectors: list[np.ndarray],
         dtype: str = "float32",
-    ) -> "SharedTensor":
+    ) -> SharedTensor:
         """Batch-allocate a Metal buffer and create SharedTensor (SILICON-04).
 
         Optimized for ANN reranking: N candidate vectors → one Metal buffer
@@ -238,10 +239,6 @@ class SharedTensor:
             self._array = None
             self._mx_cached = False
 
-    # ------------------------------------------------------------------------
-    # NEXTGEN-02: Arrow IPC Zero-Copy Mmap Path
-    # ------------------------------------------------------------------------
-
     @classmethod
     def from_mmap(
         cls,
@@ -249,7 +246,7 @@ class SharedTensor:
         shape: tuple[int, ...],
         dtype: str = "float32",
         offset: int = 0,
-    ) -> "SharedTensor":
+    ) -> SharedTensor:
         """
         NEXTGEN-02: Create SharedTensor from memory-mapped Arrow IPC file.
 
@@ -301,7 +298,6 @@ class SharedTensor:
         if mlx_dtype is None:
             raise ValueError(f"Unknown MLX dtype: {dtype}")
 
-        # Create MLX array via mmap
         inst = object.__new__(cls)
         inst._metal_buf = None  # No SharedMetalBuffer for pure mmap path
         inst._shape = shape
@@ -318,10 +314,9 @@ class SharedTensor:
             # MLX mmap failed - likely unsupported file format or API changed
             # Fall back to numpy path (still avoids Python list allocation)
             import logging as _log
-            _log.getLogger("SharedTensor").debug(
-                "[NEXTGEN-02] MLX mmap failed (%s), falling back to numpy path", e
-    )
-            
+
+            _log.getLogger("SharedTensor").debug("[NEXTGEN-02] MLX mmap failed (%s), falling back to numpy path", e)
+
             if not os.path.exists(path):
                 raise FileNotFoundError(f"File not found: {path}")
 
@@ -343,7 +338,7 @@ class SharedTensor:
         cls,
         path: str,
         column_index: int = 0,
-    ) -> "SharedTensor":
+    ) -> SharedTensor:
         """
         NEXTGEN-02: Create SharedTensor from Arrow IPC mmap file.
 
@@ -372,22 +367,21 @@ class SharedTensor:
 
         with open(path, "rb") as f:
             import mmap
+
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped:
                 reader = _pa.ipc.open_stream(_io.BytesIO(mmapped))
                 batch = reader.read_record_batch()
 
                 if column_index >= batch.num_columns:
-                    raise ValueError(
-                        f"column_index {column_index} out of range (max: {batch.num_columns - 1})"
-    )
+                    raise ValueError(f"column_index {column_index} out of range (max: {batch.num_columns - 1})")
 
-                # Extract column as numpy array
                 column = batch.column(column_index)
                 arr_np = column.to_numpy()
 
                 # Determine dtype from Arrow column type
                 # PyArrow type objects have .id attribute for fast comparison
                 import pyarrow as _pa
+
                 arrow_type = column.type
                 dtype_map = {
                     _pa.float32(): "float32",
@@ -417,6 +411,4 @@ class SharedTensor:
 
     def __repr__(self) -> str:
         backing = "metal" if self._metal_buf is not None else "array"
-        return (
-            f"SharedTensor(shape={self._shape}, dtype={self._dtype}, backing={backing})"
-    )
+        return f"SharedTensor(shape={self._shape}, dtype={self._dtype}, backing={backing})"

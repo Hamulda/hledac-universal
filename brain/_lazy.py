@@ -32,9 +32,6 @@ don't go through ModelManager. Do NOT route Hermes/GLINER/ModernBERT through
 this module — use ModelManager instead.
 """
 
-from hledac.universal.utils.asyncx import safe_create_task
-from hledac.universal.utils.cache import PyCacheDict
-
 import asyncio
 import gc
 import logging
@@ -43,7 +40,8 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from hledac.universal._core.locks import LockCategory, make_lock
-from _core import aclose
+from hledac.universal.utils.asyncx import safe_create_task
+from hledac.universal.utils.cache import PyCacheDict
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +54,7 @@ def _get_available_mb() -> float:
     """Non-raising available memory check."""
     try:
         import psutil
+
         return psutil.virtual_memory().available / 1024 / 1024
     except ImportError:
         return float("inf")  # psutil not available → don't block
@@ -68,8 +67,10 @@ def _mlx_clear() -> None:
       gc.collect() -> mx.eval([]) -> mx.clear_cache() -> gc.collect()
     """
     try:
-        import mlx.core as mx
         import gc
+
+        import mlx.core as mx
+
         gc.collect()
         mx.eval([])
         # Modern-first: mx.clear_cache() — mlx >= 0.20, no fallback needed
@@ -149,6 +150,7 @@ class LazyModel[T]:
         try:
             # sample_uma_status is sync and lightweight (TTL-cached psutil reads)
             from hledac.universal._core.resource_governor import sample_uma_status
+
             uma = sample_uma_status()
             match uma.state:
                 case "critical":
@@ -187,8 +189,10 @@ class LazyModel[T]:
         if self._min_findings > 0 and findings_count < self._min_findings:
             logger.debug(
                 "[lazy:%s] skipped — findings=%d < min=%d",
-                self._name, findings_count, self._min_findings,
-    )
+                self._name,
+                findings_count,
+                self._min_findings,
+            )
             return None
 
         # Fast path: already loaded
@@ -210,8 +214,10 @@ class LazyModel[T]:
             if avail < effective_min:
                 logger.warning(
                     "[lazy:%s] MEMORY GUARD — available=%.0fMB < threshold=%.0fMB (adaptive), refusing load",
-                    self._name, avail, effective_min,
-    )
+                    self._name,
+                    avail,
+                    effective_min,
+                )
                 return None
 
             # Issue #21: Drain pending MLX evaluations BEFORE loading new model.
@@ -278,8 +284,10 @@ class LazyModel[T]:
             if self._load_count > self._scheduled_load_gen:
                 logger.debug(
                     "[lazy:%s] stale evict skipped (load_gen=%d > scheduled=%d)",
-                    self._name, self._load_count, self._scheduled_load_gen,
-    )
+                    self._name,
+                    self._load_count,
+                    self._scheduled_load_gen,
+                )
                 self._evict_task = None
                 return
 
@@ -290,8 +298,9 @@ class LazyModel[T]:
                     if await instance.is_busy():
                         logger.debug(
                             "[lazy:%s] busy — rescheduling eviction (TTL=%.0fs)",
-                            self._name, self._ttl,
-    )
+                            self._name,
+                            self._ttl,
+                        )
                         self._reset_evict_timer()
                         return
                 except Exception:  # noqa: BLE001
@@ -303,8 +312,10 @@ class LazyModel[T]:
             self._evict_count += 1
             logger.debug(
                 "[lazy:%s] evicted (evict #%d, TTL=%.0fs)",
-                self._name, self._evict_count, self._ttl,
-    )
+                self._name,
+                self._evict_count,
+                self._ttl,
+            )
 
         # gc.collect() + _mlx_clear() outside the lock, in to_thread
         # This avoids holding the lock while blocking the event loop
@@ -348,6 +359,7 @@ class LazyModel[T]:
 
 # ── Pre-configured instances ─────────────────────────────────────────
 
+
 def _make_lazy_registry() -> dict[str, LazyModel]:
     """
     Factory pro všechny brain/ lazy models.
@@ -355,36 +367,41 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
     """
 
     def _hermes3():
-        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine  # type: ignore
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+
         return DeepHermes3Engine()
 
     def _ner():
-        from hledac.universal.brain.ner_engine import NEREngine  # type: ignore
+        from hledac.universal.brain.ner_engine import NEREngine
+
         return NEREngine()
 
     def _gnn():
-        from hledac.universal.brain.gnn_predictor import GNNPredictor  # type: ignore
+        from hledac.universal.brain.gnn_predictor import GNNPredictor
+
         return GNNPredictor()
 
     def _ane():
-        from hledac.universal.brain.ane_embedder import ANEEmbedder  # type: ignore
+        from hledac.universal.brain.ane_embedder import ANEEmbedder
+
         return ANEEmbedder()
 
     def _moe():
-        from hledac.universal.brain.moe_router import MoERouter  # type: ignore
+        from hledac.universal.brain.moe_router import MoERouter
+
         return MoERouter()
 
     def _modernbert():
-        from hledac.universal.brain.modernbert_engine import ModernBertEngine  # type: ignore
+        from hledac.universal.brain.modernbert_engine import ModernBertEngine
+
         return ModernBertEngine()
 
     return {
-        "hermes3":    LazyModel(_hermes3, ttl_seconds=90,  name="hermes3"),
-        "ner":        LazyModel(_ner,     ttl_seconds=300, name="ner"),
-        "gnn":        LazyModel(_gnn,     ttl_seconds=120, name="gnn",
-                               conditional_min_findings=50),
-        "ane":        LazyModel(_ane,     ttl_seconds=600, name="ane"),
-        "moe_router": LazyModel(_moe,     ttl_seconds=180, name="moe_router"),
+        "hermes3": LazyModel(_hermes3, ttl_seconds=90, name="hermes3"),
+        "ner": LazyModel(_ner, ttl_seconds=300, name="ner"),
+        "gnn": LazyModel(_gnn, ttl_seconds=120, name="gnn", conditional_min_findings=50),
+        "ane": LazyModel(_ane, ttl_seconds=600, name="ane"),
+        "moe_router": LazyModel(_moe, ttl_seconds=180, name="moe_router"),
         "modernbert": LazyModel(_modernbert, ttl_seconds=180, name="modernbert"),
     }
 
@@ -395,7 +412,7 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
 # Registry is small (7 entries), TTL of 600s matches longest model TTL (ane:600s).
 # lru_cache(maxsize=None) would grow unbounded over 24h sprint → M1 swap.
 _registry_lock = make_lock(LockCategory.CACHE, "brain_lazy._registry_lock")
-_registry_cache: "PyCacheDict[None, dict[str, LazyModel]]" = PyCacheDict(2, 600.0)
+_registry_cache: PyCacheDict[None, dict[str, LazyModel]] = PyCacheDict(2, 600.0)
 
 
 def _get_registry() -> dict[str, LazyModel]:

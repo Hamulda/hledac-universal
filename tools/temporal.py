@@ -7,7 +7,6 @@ import time
 from collections import OrderedDict
 from typing import Any
 from urllib.parse import urlparse
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ def _evict_oldest() -> None:
         # next(iter(...)) is the first-inserted key in O(1)
         oldest_url = next(iter(_previous_versions))
         del _previous_versions[oldest_url]
-    except (StopIteration, KeyError):  # noqa: BLE001
+    except StopIteration, KeyError:  # noqa: BLE001
         # Empty dict — nothing to evict
         pass
     except Exception as e:
@@ -39,14 +38,9 @@ def _evict_oldest() -> None:
 
 def record_previous_version(url: str, content_hash: str, title: str) -> None:
     """Store previous version data for a URL."""
-    # Update existing entry + bump to most-recently-inserted
     if url in _previous_versions:
         _previous_versions.move_to_end(url)
-    _previous_versions[url] = {
-        "content_hash": content_hash,
-        "title": title,
-        "timestamp": time.time()
-    }
+    _previous_versions[url] = {"content_hash": content_hash, "title": title, "timestamp": time.time()}
     # Enforce boundedness: evict oldest if over limit.
     # O(1) per eviction via OrderedDict insertion-order iteration.
     while len(_previous_versions) > MAX_TRACKED_URLS:
@@ -71,7 +65,7 @@ def detect_drift(url: str, current_content_hash: str, current_title: str) -> dic
             "previous": prev,
             "current": {"content_hash": current_content_hash, "title": current_title},
             "changes": changes,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
     return None
 

@@ -14,12 +14,10 @@ Tests are hermetic: they bypass the full sprint pipeline by stubbing
 _run_internal() so the guard logic is exercised in isolation.
 """
 
-
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from _core import aclose
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +28,7 @@ def _import_scheduler() -> Any:
         SprintScheduler,
         SprintSchedulerConfig,
     )
+
     return SprintScheduler, SprintSchedulerConfig
 
 
@@ -84,7 +83,7 @@ async def test_sprint_depth_raises_at_limit() -> None:
             lifecycle=MagicMock(),
             sources=[],
             query="test",
-    )
+        )
 
     # _run_internal must NOT have been called — guard fires first
     sched._run_internal.assert_not_awaited()  # type: ignore[attr-defined]
@@ -106,7 +105,7 @@ async def test_sprint_depth_decrements_in_finally() -> None:
             lifecycle=MagicMock(),
             sources=[],
             query="test",
-    )
+        )
 
     # Critical: depth must NOT leak across the exception
     assert sched._sprint_depth == 0
@@ -124,7 +123,7 @@ async def test_sprint_depth_decrements_on_recursion_error() -> None:
             lifecycle=MagicMock(),
             sources=[],
             query="test",
-    )
+        )
 
     # depth was 5 going in, guard decrements once before raising → still 5
     assert sched._sprint_depth == 5

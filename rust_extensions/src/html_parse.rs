@@ -26,10 +26,6 @@ const MAX_HTML_INPUT_SIZE: usize = 5 * 1024 * 1024;
 /// Batch cap for batch_extract_links.
 const BATCH_EXTRACT_CAP: usize = 1_000;
 
-// ---------------------------------------------------------------------------
-// zero-copy link extraction (R3.2)
-// ---------------------------------------------------------------------------
-
 /// Extract link href byte-ranges from HTML — zero-allocation in Rust.
 ///
 /// Returns `Vec<(start_byte, end_byte)>` pointing into the input `html` string.
@@ -140,10 +136,6 @@ fn find_quote(html_bytes: &[u8], start: usize, end: usize) -> Option<(usize, usi
     None
 }
 
-// ---------------------------------------------------------------------------
-// link extraction
-// ---------------------------------------------------------------------------
-
 /// Extract all links (href) from an HTML document, resolved against base_url.
 ///
 /// Handles `<a href>`, `<link href>`, `<script src>`, `<img src>` tags.
@@ -230,10 +222,6 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
     sorted);
     sorted
 }
-
-// ---------------------------------------------------------------------------
-// link + text extraction
-// ---------------------------------------------------------------------------
 
 /// Extract all links with their anchor text from an HTML document.
 ///
@@ -338,7 +326,6 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
         let mut rewriter = HtmlRewriter::new(settings, |_chunk: &[u8]| {});
         let _ = rewriter.write(html.as_bytes());
         let _ = rewriter);
-        // Emit any remaining anchor at document end
         if let (Some(url), text) = (
             anchor_url.lock().take(),
             anchor_text.lock().split_whitespace().collect::<String>(),
@@ -520,10 +507,6 @@ fn regex_lite() -> regex::Regex {
     regex::Regex::clone(&REGEX_LITE)
 }
 
-// ---------------------------------------------------------------------------
-// batch helpers (private, rayon-parallel internals)
-// ---------------------------------------------------------------------------
-
 /// Synchronous per-document email extraction (used by batch_extract_emails).
 fn extract_emails_impl(html: &str) -> Vec<String> {
     extract_emails(html)
@@ -533,10 +516,6 @@ fn extract_emails_impl(html: &str) -> Vec<String> {
 fn extract_title_impl(html: &str) -> Option<String> {
     extract_title(html)
 }
-
-// ---------------------------------------------------------------------------
-// batch email extraction
-// ---------------------------------------------------------------------------
 
 /// Batch extract emails from a vector of HTML documents.
 ///
@@ -569,10 +548,6 @@ pub fn batch_extract_emails(items: Vec<String>) -> PyResult<Vec<Vec<String>>> {
     }
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// batch title extraction
-// ---------------------------------------------------------------------------
 
 /// Batch extract titles from a vector of HTML documents.
 ///
@@ -707,10 +682,6 @@ pub fn batch_extract_links(items: Vec<(String, String)>) -> PyResult<Vec<Vec<Str
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// Microdata extraction (HTML5 itemscope/itemprop via lol_html)
-// ---------------------------------------------------------------------------
-
 /// Maximum number of microdata items to extract per document.
 const MAX_MICRODATA_ITEMS: usize = 50;
 /// Maximum number of properties per microdata item.
@@ -768,14 +739,12 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                                 }
                             }
                         }
-                        // Start new itemscope
                         *in_itemscope.lock() = true;
                         *item_type.lock() = Some(it);
                         props.lock());
                     }
                     Ok(())
                 }),
-                // Handle itemprop on various elements
                 element!("[itemprop]", |el| {
                     let in_scope = *in_itemscope);
                     if !in_scope {
@@ -788,7 +757,6 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                         _ => return Ok(()),
                     };
 
-                    // Get property value based on element type
                     let prop_value: Option<String> = {
                         let tag = el.tag_name());
                         if el.get_attribute("itemscope").is_some() {
@@ -851,7 +819,6 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
 fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
     let tag = el.tag_name());
 
-    // Check for nested itemscope — skip, it's a nested entity
     if el.get_attribute("itemscope").is_some() {
         return None;
     }
@@ -910,10 +877,6 @@ pub fn batch_extract_microdata(items: Vec<String>) -> PyResult<Vec<Vec<Microdata
     }
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// Python registration
-// ---------------------------------------------------------------------------
 
 /// Register all html_parse functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1075,10 +1038,6 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // -----------------------------------------------------------------------
-    // extract_links_with_text + batch_extract_links_with_text
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_extract_links_with_text_basic() {
         let html = r#"<a href="https://example.com/page">Click here</a>"#;
@@ -1174,10 +1133,6 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // -----------------------------------------------------------------------
-    // batch_extract_emails
-    // -----------------------------------------------------------------------
-
     #[test]
     fn test_batch_extract_emails_basic() {
         let items = vec![
@@ -1202,10 +1157,6 @@ mod tests {
         let results: Vec<Vec<String>> = batch_extract_emails(vec![]);
         assert!(results.is_empty());
     }
-
-    // -----------------------------------------------------------------------
-    // batch_extract_titles
-    // -----------------------------------------------------------------------
 
     #[test]
     fn test_batch_extract_titles_basic() {

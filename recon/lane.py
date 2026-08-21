@@ -3,15 +3,8 @@ intelligence/lane.py — F320+: Base Intelligence Lane Architecture
 
 Abstract base class + LaneSpec for the 20+ intelligence lane submodules.
 
-
-
-
-
-
-
 Eliminates duplicated scaffolding: TransportManager, dedup, rate limiting,
 circuit breakers, canonical finding emission.
-
 
 Cutting-edge solution:
 - abc.ABC with typing.Protocol shapes for runtime + structural typing
@@ -32,27 +25,20 @@ Usage:
             ...
 """
 
-
 import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import TYPE_CHECKING, Any
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 if TYPE_CHECKING:
-    from typing import Protocol
+    pass
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# LaneSpec — budget contract for SprintScheduler Allocator
-# ---------------------------------------------------------------------------
 
 
 class LaneSpec(Struct, frozen=True):
@@ -66,13 +52,9 @@ class LaneSpec(Struct, frozen=True):
         concurrent_queries: Max simultaneous queries for this lane.
         cost_estimate_per_query: Relative cost (1 = baseline unit).
     """
+
     concurrent_queries: int = 3
     cost_estimate_per_query: int = 1
-
-
-# ---------------------------------------------------------------------------
-# LaneContext — runtime context passed to every lane
-# ---------------------------------------------------------------------------
 
 
 class LaneContext(Struct):
@@ -81,16 +63,12 @@ class LaneContext(Struct):
 
     Equivalent to SidecarContext but scoped to lane primitives.
     """
+
     query: str  # Original sprint query
     sprint_id: str
     sprint_mode: str  # aggressive / active / passive / research
     memory_pressure: float = 0.0  # RSS / max_rss ratio
     findings: list[Any] = field(default_factory=list)  # CanonicalFinding list
-
-
-# ---------------------------------------------------------------------------
-# ResolveResult — output of the resolve phase
-# ---------------------------------------------------------------------------
 
 
 class ResolveResult(Struct):
@@ -102,14 +80,10 @@ class ResolveResult(Struct):
         kind: One of "url", "ipv4", "ipv6", "domain", "bitcoin", "ethereum", "onion"
         metadata: Arbitrary auxiliary data from resolution.
     """
+
     resolved: str
     kind: str  # url | ipv4 | ipv6 | domain | bitcoin | ethereum | onion | raw
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# FetchResult — output of the fetch phase
-# ---------------------------------------------------------------------------
 
 
 class FetchResult(Struct):
@@ -124,17 +98,13 @@ class FetchResult(Struct):
         elapsed_ms: Time taken in milliseconds.
         error: Error message if fetch failed.
     """
+
     url: str
     status_code: int
     body: str | bytes = ""
     headers: dict[str, str] = field(default_factory=dict)
     elapsed_ms: float = 0.0
     error: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# ParsedResult — output of the parse phase
-# ---------------------------------------------------------------------------
 
 
 class ParsedResult(Struct):
@@ -148,16 +118,12 @@ class ParsedResult(Struct):
         confidence: Confidence score 0.0-1.0.
         metadata: Arbitrary parse-time metadata.
     """
+
     iocs: dict[str, list[str]] = field(default_factory=dict)
     raw_payload: str = ""
     title: str | None = None
     confidence: float = 0.5
     metadata: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# DedupResult — output of the dedup phase
-# ---------------------------------------------------------------------------
 
 
 class DedupResult(Struct):
@@ -168,13 +134,9 @@ class DedupResult(Struct):
         is_duplicate: True if this item was already seen.
         content: The content to emit (same as input if not duplicate).
     """
+
     is_duplicate: bool
     content: Any  # Same as input content
-
-
-# ---------------------------------------------------------------------------
-# BaseIntelligenceLane — abstract base class
-# ---------------------------------------------------------------------------
 
 
 class BaseIntelligenceLane(ABC):
@@ -234,19 +196,11 @@ class BaseIntelligenceLane(ABC):
         }
         self._semaphore: Any | None = None  # asyncio.Semaphore, set lazily
 
-    # -------------------------------------------------------------------------
-    # Availability
-    # -------------------------------------------------------------------------
-
     def is_available(self) -> bool:
         """Check env gate. Override for dep checks."""
         if self.env_gate:
             return os.getenv(self.env_gate, "").lower() in ("1", "true", "yes", "on")
         return True
-
-    # -------------------------------------------------------------------------
-    # Phase 1: Resolve
-    # -------------------------------------------------------------------------
 
     @abstractmethod
     async def resolve(self, target: str, ctx: LaneContext) -> ResolveResult:
@@ -262,10 +216,6 @@ class BaseIntelligenceLane(ABC):
         """
         ...
 
-    # -------------------------------------------------------------------------
-    # Phase 2: Fetch
-    # -------------------------------------------------------------------------
-
     @abstractmethod
     async def fetch(self, resolved: ResolveResult, ctx: LaneContext) -> FetchResult:
         """
@@ -279,10 +229,6 @@ class BaseIntelligenceLane(ABC):
             FetchResult with body, status, headers, elapsed_ms.
         """
         ...
-
-    # -------------------------------------------------------------------------
-    # Phase 3: Parse
-    # -------------------------------------------------------------------------
 
     @abstractmethod
     async def parse(self, fetch_result: FetchResult, ctx: LaneContext) -> ParsedResult:
@@ -298,10 +244,6 @@ class BaseIntelligenceLane(ABC):
         """
         ...
 
-    # -------------------------------------------------------------------------
-    # Phase 4: Dedup
-    # -------------------------------------------------------------------------
-
     def _get_bloom_filter(self) -> Any:
         """
         Lazy-initialize RotatingBloomFilter.
@@ -311,24 +253,29 @@ class BaseIntelligenceLane(ABC):
         if self._bloom_filter is None:
             try:
                 from hledac.universal.utils.bloom_filter import RotatingBloomFilter
+
                 self._bloom_filter = RotatingBloomFilter(
                     max_elements=self.MAX_BLOOM_ENTRIES,
                     error_rate=0.01,
-    )
+                )
             except Exception:
                 # Fallback: simple bounded set (not thread-safe but lanes are async)
                 class _FallbackBloom:
                     __slots__ = ("_set", "_max")
-                    def __init__(self, max_count: int):
+
+                    def __init__(self, max_count: int) -> None:
                         self._set: set[str] = set()
                         self._max = max_count
+
                     def add(self, item: str) -> None:
                         if len(self._set) >= self._max:
                             # FIFO eviction
                             self._set.pop()
                         self._set.add(item)
+
                     def __contains__(self, item: str) -> bool:
                         return item in self._set
+
                 self._bloom_filter = _FallbackBloom(self.MAX_BLOOM_ENTRIES)
         return self._bloom_filter
 
@@ -374,10 +321,6 @@ class BaseIntelligenceLane(ABC):
         self._cache[key] = content
         return DedupResult(is_duplicate=False, content=content)
 
-    # -------------------------------------------------------------------------
-    # Phase 5: Emit
-    # -------------------------------------------------------------------------
-
     async def emit(
         self,
         parsed: ParsedResult,
@@ -402,11 +345,9 @@ class BaseIntelligenceLane(ABC):
         ts_now = time.time()
         finding_id_prefix = self.sidecar_id[:4]
 
-        # Build payload text
         title = parsed.title or self.sidecar_id
         payload = f"{title}\n{parsed.raw_payload[:3000]}"
 
-        # Emit one finding per IOC type found
         for ioc_type, values in parsed.iocs.items():
             if not values:
                 continue
@@ -420,7 +361,7 @@ class BaseIntelligenceLane(ABC):
                     ts=ts_now,
                     provenance=(self.sidecar_id, ctx.sprint_id),
                     payload_text=f"{ioc_type}:{value}\n{payload[:500]}",
-    )
+                )
                 findings.append(finding)
 
         # If no IOCs, emit one generic finding
@@ -435,15 +376,11 @@ class BaseIntelligenceLane(ABC):
                     ts=ts_now,
                     provenance=(self.sidecar_id, ctx.sprint_id),
                     payload_text=payload,
-    )
+                )
             )
 
         self._stats["findings_emitted"] += len(findings)
         return findings
-
-    # -------------------------------------------------------------------------
-    # Run — orchestrates all 5 phases
-    # -------------------------------------------------------------------------
 
     async def run(self, target: str, ctx: LaneContext) -> list[CanonicalFinding]:
         """
@@ -466,25 +403,20 @@ class BaseIntelligenceLane(ABC):
         # sequentially when multiple SprintScheduler lanes are active.
         async with self._get_semaphore():
             try:
-                # Phase 1: Resolve
                 resolved = await self.resolve(target, ctx)
 
-                # Phase 2: Fetch
                 fetch_result = await self.fetch(resolved, ctx)
                 if fetch_result.error:
                     self._stats["fetch_fail"] += 1
                     return []
                 self._stats["fetch_ok"] += 1
 
-                # Phase 3: Parse
                 parsed = await self.parse(fetch_result, ctx)
 
-                # Phase 4: Dedup
                 dedup_result = await self.dedup(parsed, ctx)
                 if dedup_result.is_duplicate:
                     return []
 
-                # Phase 5: Emit
                 findings = await self.emit(parsed, ctx)
                 return findings
 
@@ -492,18 +424,17 @@ class BaseIntelligenceLane(ABC):
                 self._stats["errors"] += 1
                 logger.warning(
                     "BaseIntelligenceLane(%s).run(%r): fail-soft",
-                    self.sidecar_id, target, exc_info=True,
-    )
+                    self.sidecar_id,
+                    target,
+                    exc_info=True,
+                )
                 return []
-
-    # -------------------------------------------------------------------------
-    # Shared primitives for subclasses
-    # -------------------------------------------------------------------------
 
     def _get_semaphore(self) -> Any:
         """Get or create asyncio.Semaphore for concurrent_queries."""
         if self._semaphore is None:
             import asyncio
+
             self._semaphore = asyncio.Semaphore(self.lane_spec.concurrent_queries)
         return self._semaphore
 
@@ -516,6 +447,7 @@ class BaseIntelligenceLane(ABC):
             rate: Minimum seconds between requests.
         """
         import asyncio
+
         now = time.monotonic()
         last_call = self._cache.get(f"_rate_{key}", 0.0)
         wait = rate - (now - last_call)
@@ -531,6 +463,7 @@ class BaseIntelligenceLane(ABC):
         """
         try:
             from hledac.universal.transport.circuit_breaker import domain_breaker_check
+
             return domain_breaker_check(domain)
         except Exception:
             return None
@@ -539,6 +472,7 @@ class BaseIntelligenceLane(ABC):
         """Record success to circuit breaker."""
         try:
             from hledac.universal.transport.circuit_breaker import domain_breaker_record_success
+
             domain_breaker_record_success(domain)
         except Exception:  # noqa: BLE001
             pass
@@ -547,6 +481,7 @@ class BaseIntelligenceLane(ABC):
         """Record failure to circuit breaker."""
         try:
             from hledac.universal.transport.circuit_breaker import domain_breaker_record_failure
+
             domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=kind)
         except Exception:  # noqa: BLE001
             pass
@@ -557,12 +492,11 @@ class BaseIntelligenceLane(ABC):
 
     def _reset_stats(self) -> None:
         """Reset lane statistics."""
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
 
 
 # Shared regex patterns for IOC extraction (M1 8GB: compiled once, reused across lanes)
 import re as _re
-from _core import aclose
 
 BTC_ADDRESS_PATTERN = _re.compile(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}")
 """Bitcoin address regex: bc1 bech32, 1/3 Legacy P2PKH"""

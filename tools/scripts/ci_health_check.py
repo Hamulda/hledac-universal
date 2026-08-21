@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-from _core import aclose
 
 
 def check_import(module_path: str, name: str) -> bool:
@@ -15,9 +14,12 @@ def check_import(module_path: str, name: str) -> bool:
         text=True,
     )
     # Filter warnings from output
-    stderr_lines = [l for l in result.stderr.split('\n')  # noqa: E741
-                   if l and not l.startswith('WARNING:') and not l.startswith('UserWarning')]
-    stderr = '\n'.join(stderr_lines).strip()
+    stderr_lines = [
+        l
+        for l in result.stderr.split("\n")  # noqa: E741
+        if l and not l.startswith("WARNING:") and not l.startswith("UserWarning")
+    ]
+    stderr = "\n".join(stderr_lines).strip()
 
     if result.returncode != 0:
         print(f"FAIL: {name}")
@@ -28,7 +30,7 @@ def check_import(module_path: str, name: str) -> bool:
     return True
 
 
-def main():
+def main() -> int:
     """Run all CI health checks."""
     checks = [
         ("hledac.universal.runtime.sprint_scheduler", "SprintScheduler"),

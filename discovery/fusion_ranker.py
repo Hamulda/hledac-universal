@@ -3,8 +3,6 @@ Discovery Result Fusion Ranker — RRF + MMR + Source-Family Diversity.
 
 Sprint F206AP: Providerless Discovery Fusion Ranker
 
-
-
 Algorithm:
   1. URL-normalised dedup (using existing _normalize_url_for_dedup)
   2. RRF over provider rank (k=60)
@@ -18,28 +16,31 @@ Algorithm:
 No numpy/pandas. M1-safe pure Python.
 """
 
-
-
 import re
 import time
-from urllib.parse import urlparse, urlunsplit as _urlunsplit
+from urllib.parse import urlparse
+from urllib.parse import urlunsplit as _urlunsplit
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
-from _core import aclose
-
-
-# ---------------------------------------------------------------------------
-# URL normalisation helpers (copied from duckduckgo_adapter to avoid import
-# chain: fusion_ranker → duckduckgo_adapter → circuit_breaker → lock conflict)
-# AP-03: keeps fusion_ranker testable without triggering the lock registry
-# conflict that conftest's hermetic sys.modules cleanup causes.
-# ---------------------------------------------------------------------------
 
 _TRACKING_PARAM_PREFIXES: tuple[str, ...] = (
-    "utm_", "fbclid", "gclid", "msclkid", "dclid", "twclid", "at_",
-    "_ga", "_gl", "mc_cid", "mc_eid", "oly_enc_id", "oly_anon_id",
-    "ref_src", "ref_url", "source",
-    )
+    "utm_",
+    "fbclid",
+    "gclid",
+    "msclkid",
+    "dclid",
+    "twclid",
+    "at_",
+    "_ga",
+    "_gl",
+    "mc_cid",
+    "mc_eid",
+    "oly_enc_id",
+    "oly_anon_id",
+    "ref_src",
+    "ref_url",
+    "source",
+)
 
 
 def _is_tracking_param(param: str) -> bool:
@@ -94,10 +95,6 @@ def _normalize_url_for_dedup(raw_url: str) -> str:
         return lower
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 _RRF_K = 60  # standard RRF damping parameter
 _MAX_SOURCE_FAMILY_RATIO = 0.5  # max 50% from one family
 _MAX_PER_HOST = 3  # max 3 per host
@@ -107,10 +104,6 @@ _BOOST_HISTORICAL = 0.15  # boost for historical source_family
 _BOOST_ARCHIVE_NOVELTY = 0.1  # boost for newer archive snapshots (higher ts)
 _BOOST_QUERY_TITLE_EXACT = 0.2  # boost when title contains full query terms
 _BOOST_IOC_DOMAIN = 0.25  # boost when URL domain matches IOC-like patterns
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def fuse_discovery_hits(
@@ -142,21 +135,20 @@ def fuse_discovery_hits(
             provider_name=None,
             provider_chain=(),
             source_family=None,
-    )
+        )
 
     # Collect all hits with provenance
     # F271D: attribute access through .result for CascadeResult wrapper
     all_hits: list[_FusableHit] = []
     for batch in provider_results:
-        _result = getattr(batch, 'result', batch)
-        _batch_hits = getattr(_result, 'hits', None) or getattr(batch, 'hits', ())
+        _result = getattr(batch, "result", batch)
+        _batch_hits = getattr(_result, "hits", None) or getattr(batch, "hits", ())
         if _batch_hits:
             all_hits.extend(_FusableHit(hit=h, batch=batch) for h in _batch_hits)
 
     if not all_hits:
         return _empty_fused_result(provider_results)
 
-    # Step 1: URL-normalised dedup — keep first occurrence
     norm_to_hit: dict[str, _FusableHit] = {}
     for fhit in all_hits:
         norm = _normalize_url_for_dedup(fhit.hit.url)
@@ -165,19 +157,15 @@ def fuse_discovery_hits(
 
     deduped: list[_FusableHit] = list(norm_to_hit.values())
 
-    # Step 2: Score each hit with RRF + boosts
     scored: list[_ScoredHit] = []
     for fhit in deduped:
         score = _compute_fusion_score(fhit)
         scored.append(_ScoredHit(fhit=fhit, combined_score=score))
 
-    # Step 3: Sort by score descending, url ascending (deterministic tiebreak)
     scored.sort(key=lambda x: (-x.combined_score, x.fhit.hit.url))
 
-    # Step 4: Apply diversity caps and build final list
     final_hits = _apply_diversity_caps(scored, max_results)
 
-    # Build combined provider chain
     combined_chain = _combine_provider_chains(provider_results)
     combined_family = _infer_combined_source_family(provider_results)
 
@@ -186,17 +174,19 @@ def fuse_discovery_hits(
     # F271D: attribute access through .result for CascadeResult wrapper
     psd: list[dict] = []
     for batch in provider_results:
-        _result = getattr(batch, 'result', batch)
-        _batch_hits = getattr(_result, 'hits', None) or getattr(batch, 'hits', ())
+        _result = getattr(batch, "result", batch)
+        _batch_hits = getattr(_result, "hits", None) or getattr(batch, "hits", ())
         if _batch_hits and batch.provider_status_debug:
             for entry in batch.provider_status_debug:
                 if isinstance(entry, dict):
-                    psd.append({
-                        "provider": entry.get("provider", "?"),
-                        "state": "production",
-                        "selected": True,
-                        "reason": "fusion_provider",
-                    })
+                    psd.append(
+                        {
+                            "provider": entry.get("provider", "?"),
+                            "state": "production",
+                            "selected": True,
+                            "reason": "fusion_provider",
+                        }
+                    )
 
     return DiscoveryBatchResult(
         hits=tuple(final_hits),
@@ -206,11 +196,6 @@ def fuse_discovery_hits(
         elapsed_s=None,
         provider_status_debug=psd if psd else None,
     )
-
-
-# ---------------------------------------------------------------------------
-# Internal types
-# ---------------------------------------------------------------------------
 
 
 class _FusableHit:
@@ -231,11 +216,6 @@ class _ScoredHit:
     def __init__(self, fhit: _FusableHit, combined_score: float) -> None:
         self.fhit = fhit
         self.combined_score = combined_score
-
-
-# ---------------------------------------------------------------------------
-# Score computation
-# ---------------------------------------------------------------------------
 
 
 def _compute_fusion_score(fhit: _FusableHit) -> float:
@@ -284,11 +264,6 @@ def _compute_fusion_score(fhit: _FusableHit) -> float:
         score += _BOOST_IOC_DOMAIN
 
     return score
-
-
-# ---------------------------------------------------------------------------
-# Diversity capping
-# ---------------------------------------------------------------------------
 
 
 def _apply_diversity_caps(scored: list[_ScoredHit], max_results: int) -> list[DiscoveryHit]:
@@ -356,11 +331,6 @@ def _apply_diversity_caps(scored: list[_ScoredHit], max_results: int) -> list[Di
     return [s.fhit.hit for s in selected]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _get_host(url: str) -> str:
     """Extract lower-case host from URL."""
     try:
@@ -399,8 +369,8 @@ def _combine_provider_chains(batches: list[DiscoveryBatchResult]) -> tuple[str, 
     seen: set[str] = set()
     result: list[str] = []
     for batch in batches:
-        _result = getattr(batch, 'result', batch)
-        _chain = getattr(_result, 'provider_chain', None) or getattr(batch, 'provider_chain', ()) or ()
+        _result = getattr(batch, "result", batch)
+        _chain = getattr(_result, "provider_chain", None) or getattr(batch, "provider_chain", ()) or ()
         for provider in _chain:
             if provider not in seen:
                 seen.add(provider)
@@ -413,9 +383,9 @@ def _infer_combined_source_family(batches: list[DiscoveryBatchResult]) -> str | 
     # F271D: attribute access through .result for CascadeResult wrapper
     families = set()
     for b in batches:
-        _result = getattr(b, 'result', b)
-        _family = getattr(_result, 'source_family', None) or getattr(b, 'source_family', None)
-        _hits = getattr(_result, 'hits', None) or getattr(b, 'hits', ())
+        _result = getattr(b, "result", b)
+        _family = getattr(_result, "source_family", None) or getattr(b, "source_family", None)
+        _hits = getattr(_result, "hits", None) or getattr(b, "hits", ())
         if _family and _hits:
             families.add(_family)
     if not families:
@@ -435,24 +405,28 @@ def _empty_fused_result(batches: list[DiscoveryBatchResult]) -> DiscoveryBatchRe
     psd: list[dict] = []
     for batch in batches:
         # F271D: attribute access through .result for CascadeResult wrapper
-        _result = getattr(batch, 'result', batch)
-        _provider_name = getattr(_result, 'provider_name', None) or getattr(batch, 'provider_name', None)
+        _result = getattr(batch, "result", batch)
+        _provider_name = getattr(_result, "provider_name", None) or getattr(batch, "provider_name", None)
         if _provider_name:
-            psd.append({
-                "provider": _provider_name,
-                "state": "production",
-                "selected": True,
-                "reason": "fusion_zero_hits",
-            })
+            psd.append(
+                {
+                    "provider": _provider_name,
+                    "state": "production",
+                    "selected": True,
+                    "reason": "fusion_zero_hits",
+                }
+            )
         elif batch.provider_status_debug:
             for entry in batch.provider_status_debug:
                 if isinstance(entry, dict):
-                    psd.append({
-                        "provider": entry.get("provider", "?"),
-                        "state": "production",
-                        "selected": True,
-                        "reason": "fusion_zero_hits",
-                    })
+                    psd.append(
+                        {
+                            "provider": entry.get("provider", "?"),
+                            "state": "production",
+                            "selected": True,
+                            "reason": "fusion_zero_hits",
+                        }
+                    )
     return DiscoveryBatchResult(
         hits=(),
         provider_name="fusion",

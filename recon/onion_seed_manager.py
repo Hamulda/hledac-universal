@@ -1,20 +1,23 @@
 """
 OnionSeedManager — curated .onion seed list management + Ahmia discovery.
 """
+
 import logging
 import re
 import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 import httpx
+
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
-from _core import aclose
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
-_RE_ONION_V3 = re.compile('\\b[a-z2-7]{56}\\.onion\\b')
-_RE_ONION_V2 = re.compile('\\b[a-z2-7]{16}\\.onion\\b')
+_RE_ONION_V3 = re.compile("\\b[a-z2-7]{56}\\.onion\\b")
+_RE_ONION_V2 = re.compile("\\b[a-z2-7]{16}\\.onion\\b")
 
 # NEW-MEM-004: Onion seed content cap for M1 8GB safety
 _MAX_ONION_BYTES: int = 2 * 1024 * 1024  # 2MB cap for onion pages
@@ -30,19 +33,25 @@ async def _read_text_with_cap(resp: httpx.Response, cap: int = _MAX_ONION_BYTES)
     except Exception:
         return ""
 
+
 class OnionSeedManager:
     """
     Spravuje .onion seed list pro dark web crawling.
 
     B4: CURATED_SEEDS — hardcoded, veřejné read-only indexované zdroje.
     """
-    CURATED_SEEDS: list[str] = ['http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/wiki/', 'http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/']
-    __slots__ = tuple(('_path', '_seeds'))
 
-    def __init__(self, seeds_path: Path | None=None) -> None:
+    CURATED_SEEDS: list[str] = [
+        "http://zqktlwiuavvvqqt4ybvgvi7tyo4hjl5xgfuvpdf6otjiycgwqbym2qad.onion/wiki/",
+        "http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/",
+    ]
+    __slots__ = ("_path", "_seeds")
+
+    def __init__(self, seeds_path: Path | None = None) -> None:
         if seeds_path is None:
             from hledac.universal.paths import TOR_ROOT
-            seeds_path = TOR_ROOT / 'onion_seeds.json'
+
+            seeds_path = TOR_ROOT / "onion_seeds.json"
         self._path: Path = seeds_path
         self._seeds: set[str] = set(self.CURATED_SEEDS)
 
@@ -52,19 +61,19 @@ class OnionSeedManager:
             return
         try:
             data = _msgspec_loads(self._path.read_text())
-            loaded = set(data.get('seeds', []))
+            loaded = set(data.get("seeds", []))
             self._seeds |= loaded
-            logger.debug(f'Loaded {len(loaded)} seeds from disk (total: {len(self._seeds)})')
+            logger.debug(f"Loaded {len(loaded)} seeds from disk (total: {len(self._seeds)})")
         except Exception as e:
-            logger.warning(f'Seed load failed: {e}')
+            logger.warning(f"Seed load failed: {e}")
 
     async def save(self) -> None:
         """Persistovat seeds na disk."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._path.write_text(_msgspec_dumps_str({'seeds': list(self._seeds), 'ts': time.time()}))
+            self._path.write_text(_msgspec_dumps_str({"seeds": list(self._seeds), "ts": time.time()}))
         except Exception as e:
-            logger.warning(f'Seed save failed: {e}')
+            logger.warning(f"Seed save failed: {e}")
 
     def add_seed(self, url: str) -> None:
         """
@@ -72,10 +81,10 @@ class OnionSeedManager:
 
         B4 invariant: přijímáme pouze http(s) URLs obsahující .onion.
         """
-        if '.onion' in url and url.startswith('http'):
+        if ".onion" in url and url.startswith("http"):
             self._seeds.add(url)
 
-    def get_seeds(self, limit: int=10) -> list[str]:
+    def get_seeds(self, limit: int = 10) -> list[str]:
         """
         Vrátit seeds pro crawling — curated seeds first.
 
@@ -85,7 +94,7 @@ class OnionSeedManager:
         rest = [s for s in self._seeds if s not in self.CURATED_SEEDS]
         return (curated + rest)[:limit]
 
-    async def discover_from_ahmia(self, query: str, session: object | None=None) -> list[str]:
+    async def discover_from_ahmia(self, query: str, session: object | None = None) -> list[str]:
         """
         Přidat nové onion seeds z Ahmia clearnet search.
 
@@ -93,18 +102,20 @@ class OnionSeedManager:
         otherwise creates a temporary one.
         B6: 15s timeout per Ahmia request.
         """
-        ahmia_url = f'https://ahmia.fi/search/?q={urllib.parse.quote(query)}'
+        ahmia_url = f"https://ahmia.fi/search/?q={urllib.parse.quote(query)}"
         try:
             if session is None:
                 _sess = httpx.AsyncClient(timeout=httpx.Timeout(15.0))
                 async with _sess:
-                    async with _sess.get(ahmia_url, headers={'User-Agent': 'Hledac/1.0 OSINT research tool'}) as resp:
+                    async with _sess.get(ahmia_url, headers={"User-Agent": "Hledac/1.0 OSINT research tool"}) as resp:
                         if resp.status_code != 200:
                             return []
                         # NEW-MEM-004: Use capped read for Ahmia search (HTML, cap at 1MB)
                         html = await _read_text_with_cap(resp, cap=1024 * 1024)
             else:
-                async with session.get(ahmia_url, timeout=httpx.Timeout(15.0), headers={'User-Agent': 'Hledac/1.0 OSINT research tool'}) as resp:
+                async with session.get(
+                    ahmia_url, timeout=httpx.Timeout(15.0), headers={"User-Agent": "Hledac/1.0 OSINT research tool"}
+                ) as resp:
                     if resp.status_code != 200:
                         return []
                     # NEW-MEM-004: Use capped read for Ahmia search (HTML, cap at 1MB)
@@ -114,7 +125,7 @@ class OnionSeedManager:
                 new_seeds.update(pattern.findall(html))
             discovered: list[str] = []
             for seed in new_seeds:
-                url = f'http://{seed}/'
+                url = f"http://{seed}/"
                 if url not in self._seeds:
                     self.add_seed(url)
                     discovered.append(url)
@@ -122,13 +133,13 @@ class OnionSeedManager:
                 logger.info(f"Ahmia discovered {len(discovered)} new seeds for '{query}'")
             return discovered
         except Exception as e:
-            logger.warning(f'Ahmia discovery failed: {e}')
+            logger.warning(f"Ahmia discovery failed: {e}")
             return []
 
     async def discover_via_tor(self, query: str, tor_session: httpx.AsyncClient) -> list[str]:
         """Ahmia .onion discovery přes Tor.
         Fallback na clearnet Ahmia pokud Tor nedostupný."""
-        AHMIA_ONION = 'juhanurmihxlp77nkq76byazcldy2hmbbj3j3jbcrpvzmntbxnjbxqd.onion'
+        AHMIA_ONION = "juhanurmihxlp77nkq76byazcldy2hmbbj3j3jbcrpvzmntbxnjbxqd.onion"
         q_enc = urllib.parse.quote_plus(query)
 
         async def _fetch(url: str, sess: httpx.AsyncClient) -> str:
@@ -136,20 +147,21 @@ class OnionSeedManager:
                 r.raise_for_status()
                 # NEW-MEM-004: Use capped read for onion pages
                 return await _read_text_with_cap(r)
-        html = ''
+
+        html = ""
         try:
-            html = await _fetch(f'http://{AHMIA_ONION}/search/?q={q_enc}', tor_session)
-            logger.info(f'Ahmia .onion discovery: got {len(html)} chars')
+            html = await _fetch(f"http://{AHMIA_ONION}/search/?q={q_enc}", tor_session)
+            logger.info(f"Ahmia .onion discovery: got {len(html)} chars")
         except Exception as e:
-            logger.warning(f'Ahmia .onion failed: {e} — trying clearnet fallback')
+            logger.warning(f"Ahmia .onion failed: {e} — trying clearnet fallback")
             try:
                 _sess = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
                 async with _sess:
-                    html = await _fetch(f'https://ahmia.fi/search/?q={q_enc}', _sess)
+                    html = await _fetch(f"https://ahmia.fi/search/?q={q_enc}", _sess)
             except Exception as e2:
-                logger.warning(f'Ahmia clearnet also failed: {e2}')
+                logger.warning(f"Ahmia clearnet also failed: {e2}")
                 return []
-        onion_re = re.compile('([a-z2-7]{56}\\.onion)', re.IGNORECASE)
+        onion_re = re.compile("([a-z2-7]{56}\\.onion)", re.IGNORECASE)
         found = list(set(onion_re.findall(html)))
         logger.info(f"Ahmia discovery '{query}': found {len(found)} .onion addresses")
         for addr in found:

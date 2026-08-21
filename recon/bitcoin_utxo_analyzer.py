@@ -2,12 +2,6 @@
 Bitcoin UTXO Graph Analyzer
 ===========================
 
-
-
-
-
-
-
 ISSUE [UNINDEXED]-009: Native UTXO graph analysis for Bitcoin forensics.
 
 Provides:
@@ -40,24 +34,18 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# --- Lazy igraph import (M1-optimized C-core, same pattern as utils/graph_utils.py) ---
 _igraph: Any = None
 _IGRAPH_AVAILABLE: bool = False
 try:
     import igraph as _igraph
+
     _IGRAPH_AVAILABLE = True
 except ImportError:
     _igraph = None
     logger.debug("igraph not available — UTXO graph analysis disabled (fallback to heuristics)")
-
-
-# ---------------------------------------------------------------------------
-# Constants (M1 8GB bounded)
-# ---------------------------------------------------------------------------
 
 # Hard cap on number of nodes in the UTXO graph to prevent OOM.
 # Each igraph node uses ~100-200 bytes, so 100K nodes ≈ 20MB.
@@ -68,12 +56,7 @@ MAX_TRANSACTIONS: int = 10_000
 
 # Change address detection thresholds.
 CHANGE_ADDRESS_MIN_SATOSHI: int = 546  # dust limit
-ROUND_AMOUNT_TOLERANCE: float = 1e-8   # for detecting near-integer BTC amounts
-
-
-# ---------------------------------------------------------------------------
-# Data Structures
-# ---------------------------------------------------------------------------
+ROUND_AMOUNT_TOLERANCE: float = 1e-8  # for detecting near-integer BTC amounts
 
 
 @dataclass(slots=True)
@@ -135,11 +118,6 @@ class UTXOGraphAnalysis:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# UTXOGraph — Core UTXO Graph Analyzer
-# ---------------------------------------------------------------------------
-
-
 class UTXOGraph:
     """
     Native Bitcoin UTXO graph analyzer using igraph.
@@ -179,10 +157,6 @@ class UTXOGraph:
         self._clusters: list[UTXOCluster] = []
         self._change_addresses: list[ChangeAddressResult] = []
 
-    # ------------------------------------------------------------------
-    # UTXO Graph Building Helpers
-    # ------------------------------------------------------------------
-
     def _collect_addresses_and_txs(
         self, transactions: list[dict[str, Any]], tx_count: int
     ) -> tuple[set[str], list[dict[str, Any]]]:
@@ -214,9 +188,8 @@ class UTXOGraph:
 
             if len(addr_set) > MAX_UTXO_NODES:
                 logger.warning(
-                    f"UTXO graph: address count ({len(addr_set)}) exceeds MAX_UTXO_NODES "
-                    f"({MAX_UTXO_NODES}), truncating"
-    )
+                    f"UTXO graph: address count ({len(addr_set)}) exceeds MAX_UTXO_NODES ({MAX_UTXO_NODES}), truncating"
+                )
                 break
 
         return addr_set, valid_txs
@@ -238,14 +211,12 @@ class UTXOGraph:
                     node_type="address",
                     value_satoshis=value,
                     metadata={"address": addr},
-    )
+                )
             )
             self._address_to_id[addr] = node_id_counter[addr_node_id]
             self._id_to_address[node_id_counter[addr_node_id]] = addr
 
-    def _build_graph_nodes(
-        self, valid_txs: list[dict[str, Any]], max_nodes: int
-    ) -> tuple[list[UTXONode], int]:
+    def _build_graph_nodes(self, valid_txs: list[dict[str, Any]], max_nodes: int) -> tuple[list[UTXONode], int]:
         """
         Build graph nodes from valid transactions.
 
@@ -274,7 +245,7 @@ class UTXOGraph:
                         node_type="tx",
                         timestamp=tx_data.get("time", tx_data.get("block_time", 0)),
                         metadata={"txid": txid},
-    )
+                    )
                 )
             self._tx_to_id[txid] = node_id_counter[tx_node_id]
             self._id_to_tx[node_id_counter[tx_node_id]] = txid
@@ -314,9 +285,7 @@ class UTXOGraph:
                 relevant_txs.append(tx_data)
         return relevant_txs
 
-    def _build_graph_edges(
-        self, valid_txs: list[dict[str, Any]]
-    ) -> list[UTXOEdge]:
+    def _build_graph_edges(self, valid_txs: list[dict[str, Any]]) -> list[UTXOEdge]:
         """
         Build edges from valid transactions using already-populated mappings.
 
@@ -341,7 +310,7 @@ class UTXOGraph:
                             target_id=f"tx:{txid}",
                             value_satoshis=int(inp.get("value", 0)),
                             is_coinbase=is_coinbase,
-    )
+                        )
                     )
 
             # Output edges: tx -> address
@@ -354,14 +323,12 @@ class UTXOGraph:
                             target_id=f"addr:{addr}",
                             value_satoshis=int(out.get("value", 0)),
                             is_coinbase=is_coinbase,
-    )
+                        )
                     )
 
         return edges
 
-    def _build_tx_to_inputs_map(
-        self, valid_txs: list[dict[str, Any]]
-    ) -> dict[int, list[int]]:
+    def _build_tx_to_inputs_map(self, valid_txs: list[dict[str, Any]]) -> dict[int, list[int]]:
         """Build tx -> input addresses mapping for clustering."""
         tx_to_inputs: dict[int, list[int]] = {}
         for tx_data in valid_txs:
@@ -381,9 +348,7 @@ class UTXOGraph:
                 tx_to_inputs[tx_vid] = inputs
         return tx_to_inputs
 
-    def _build_projection_edges(
-        self, tx_to_inputs: dict[int, list[int]]
-    ) -> list[tuple[int, int]]:
+    def _build_projection_edges(self, tx_to_inputs: dict[int, list[int]]) -> list[tuple[int, int]]:
         """Build address-address projection edges."""
         projection_edges: list[tuple[int, int]] = []
         addr_to_pid: dict[int, int] = {}
@@ -392,34 +357,30 @@ class UTXOGraph:
                 if addr_a not in addr_to_pid:
                     pid = len(addr_to_pid)
                     addr_to_pid[addr_a] = pid
-                for addr_b in inputs[i + 1:]:
+                for addr_b in inputs[i + 1 :]:
                     if addr_b not in addr_to_pid:
                         pid = len(addr_to_pid)
                         addr_to_pid[addr_b] = pid
                     projection_edges.append((addr_to_pid[addr_a], addr_to_pid[addr_b]))
         return projection_edges
 
-    def _run_connected_components(
-        self, projection_edges: list[tuple[int, int]], addr_to_pid: dict[int, int]
-    ) -> Any:
+    def _run_connected_components(self, projection_edges: list[tuple[int, int]], addr_to_pid: dict[int, int]) -> Any:
         """Run connected components on projection graph."""
         try:
             projection_graph = _igraph.Graph(
                 n=len(addr_to_pid),
                 edges=projection_edges,
                 directed=False,
-    )
+            )
         except Exception as e:
             logger.error(f"Failed to build projection graph: {e}")
             return None
         return projection_graph.components(mode=_igraph.WEAK)
 
-    def _extract_clusters(
-        self, components: Any, addr_to_pid: dict[int, int]
-    ) -> list[UTXOCluster]:
+    def _extract_clusters(self, components: Any, addr_to_pid: dict[int, int]) -> list[UTXOCluster]:
         """Extract UTXOCluster objects from components."""
         clusters: list[UTXOCluster] = []
-        for comp_idx, component in enumerate(components):
+        for _comp_idx, component in enumerate(components):
             member_count = len(component)
             if member_count < 2:
                 continue
@@ -439,24 +400,18 @@ class UTXOGraph:
             confidence = min(0.95, 0.5 + member_count * 0.05)
             if len(txids) >= 3:
                 confidence = min(0.95, confidence + 0.1)
-            cluster_id = _generate_cluster_id(addresses)
+            _generate_cluster_id(addresses)
             clusters.append(UTXOCluster(...))
         return clusters
 
-    # ------------------------------------------------------------------
-    # Graph Construction
-    # ------------------------------------------------------------------
-
-    def _build_igraph_from_nodes_edges(
-        self, nodes: list[UTXONode], edge_list: list[tuple[int, int]]
-    ) -> bool:
+    def _build_igraph_from_nodes_edges(self, nodes: list[UTXONode], edge_list: list[tuple[int, int]]) -> bool:
         """Build igraph from nodes and edges. Returns True on success."""
         try:
             self._graph = _igraph.Graph(
                 n=len(nodes),
                 edges=edge_list,
                 directed=True,
-    )
+            )
             # Attach vertex attributes
             self._graph.vs["node_id"] = [n.node_id for n in nodes]
             self._graph.vs["node_type"] = [n.node_type for n in nodes]
@@ -468,9 +423,7 @@ class UTXOGraph:
             logger.error(f"Failed to build igraph UTXO graph: {e}")
             return False
 
-    def _build_edge_list_from_edges(
-        self, edges: list[UTXOEdge]
-    ) -> list[tuple[int, int]]:
+    def _build_edge_list_from_edges(self, edges: list[UTXOEdge]) -> list[tuple[int, int]]:
         """Build igraph edge list from UTXOEdge objects."""
         edge_list: list[tuple[int, int]] = []
         for e in edges:
@@ -515,29 +468,19 @@ class UTXOGraph:
         # Build nodes (updates self._tx_to_id, self._id_to_tx, etc.)
         nodes, self._tx_counter = self._build_graph_nodes(valid_txs, max_nodes)
         logger.info(
-            f"UTXO graph: {len(nodes)} nodes ({self._tx_counter} tx, "
-            f"{len(self._address_to_id)} unique addresses)"
-    )
+            f"UTXO graph: {len(nodes)} nodes ({self._tx_counter} tx, {len(self._address_to_id)} unique addresses)"
+        )
 
-        # Build edges and convert to igraph format
         edges = self._build_graph_edges(valid_txs)
         edge_list = self._build_edge_list_from_edges(edges)
 
-        # Build igraph
         if not self._build_igraph_from_nodes_edges(nodes, edge_list):
             return False
 
         elapsed = (time.monotonic() - start_time) * 1000
-        logger.info(
-            f"UTXO graph built: {self._graph.vcount()} nodes, "
-            f"{self._graph.ecount()} edges in {elapsed:.1f}ms"
-    )
+        logger.info(f"UTXO graph built: {self._graph.vcount()} nodes, {self._graph.ecount()} edges in {elapsed:.1f}ms")
 
         return True
-
-    # ------------------------------------------------------------------
-    # Change Address Detection
-    # ------------------------------------------------------------------
 
     def _detect_round_output_heuristic(self, v_idx: int) -> tuple[float, bool]:
         """Check round output heuristic."""
@@ -607,7 +550,7 @@ class UTXOGraph:
             confidence=confidence,
             heuristic="+".join(heuristics) if heuristics else "none",
             metadata={"in_degree": in_deg, "out_degree": out_deg, "total_degree": deg},
-    )
+        )
 
     def _detect_change_addresses(self) -> list[ChangeAddressResult]:
         """
@@ -633,11 +576,7 @@ class UTXOGraph:
             return []
 
         results: list[ChangeAddressResult] = []
-        addr_indices = [
-            v.index
-            for v in self._graph.vs
-            if v["node_type"] == "address"
-        ]
+        addr_indices = [v.index for v in self._graph.vs if v["node_type"] == "address"]
         if not addr_indices:
             return results
 
@@ -655,12 +594,8 @@ class UTXOGraph:
         logger.info(
             f"Change address detection: {sum(1 for r in results if r.is_change)}/{len(results)} "
             f"addresses classified as change"
-    )
+        )
         return results
-
-    # ------------------------------------------------------------------
-    # Multi-Input Clustering (Connected Components)
-    # ------------------------------------------------------------------
 
     def _cluster_by_common_input_graph(self) -> list[UTXOCluster]:
         """
@@ -685,13 +620,18 @@ class UTXOGraph:
         for v in self._graph.vs:
             if v["node_type"] != "tx":
                 continue
-            inputs = [nb for nb in self._graph.neighbors(v.index, mode=_igraph.IN)
-                      if self._graph.vs[nb]["node_type"] == "address"]
+            inputs = [
+                nb
+                for nb in self._graph.neighbors(v.index, mode=_igraph.IN)
+                if self._graph.vs[nb]["node_type"] == "address"
+            ]
             if len(inputs) >= 2:
                 tx_to_inputs[v.index] = inputs
         return tx_to_inputs
 
-    def _build_projection_graph(self, tx_to_inputs: dict[int, list[int]]) -> tuple[list[tuple[int, int]], dict[int, int], dict[int, int]]:
+    def _build_projection_graph(
+        self, tx_to_inputs: dict[int, list[int]]
+    ) -> tuple[list[tuple[int, int]], dict[int, int], dict[int, int]]:
         """Build address-address projection edges."""
         projection_edges: list[tuple[int, int]] = []
         addr_to_pid: dict[int, int] = {}
@@ -702,7 +642,7 @@ class UTXOGraph:
                 if addr_a not in addr_to_pid:
                     addr_to_pid[addr_a] = len(addr_to_pid)
                     pid_to_addr[addr_to_pid[addr_a]] = addr_a
-                for addr_b in inputs[i + 1:]:
+                for addr_b in inputs[i + 1 :]:
                     if addr_b not in addr_to_pid:
                         addr_to_pid[addr_b] = len(addr_to_pid)
                         pid_to_addr[addr_to_pid[addr_b]] = addr_b
@@ -737,7 +677,7 @@ class UTXOGraph:
                         "shared_tx_count": len(txids),
                         "component_index": comp_idx,
                     },
-    )
+                )
             )
         clusters.sort(key=lambda c: len(c.addresses), reverse=True)
         return clusters
@@ -788,38 +728,30 @@ class UTXOGraph:
         logger.info(
             f"UTXO clustering: {len(clusters)} clusters found "
             f"({sum(len(c.addresses) for c in clusters)} addresses) in {elapsed:.1f}ms"
-    )
+        )
 
     def _cluster_by_connected_components_impl(self) -> list[UTXOCluster]:
         start_time = time.monotonic()
 
-        # Step 1: Build address co-input projection
         tx_to_inputs = self._build_tx_to_inputs()
         if not tx_to_inputs:
             logger.info("No multi-input transactions found for clustering")
             return []
 
-        # Step 2: Build the address-address projection graph
         projection_edges, addr_to_pid, pid_to_addr = self._build_projection_graph(tx_to_inputs)
         if not projection_edges:
             logger.info("No projection edges created — addresses do not share inputs")
             return []
 
-        # Step 3: Run connected components
         components = self._run_connected_components(len(addr_to_pid), projection_edges)
         if components is None:
             return []
         logger.info(f"Connected components: {len(components)}")
 
-        # Step 4: Build cluster objects (sorted by size)
         clusters = self._build_clusters_from_components(components, pid_to_addr)
         self._clusters = clusters
         self._log_clustering_results(clusters, start_time)
         return clusters
-
-    # ------------------------------------------------------------------
-    # Peel Chain Detection
-    # ------------------------------------------------------------------
 
     def _detect_peel_chains(self) -> list[UTXOCluster]:
         """
@@ -843,26 +775,26 @@ class UTXOGraph:
         txid = tx_node_id[3:] if tx_node_id.startswith("tx:") else tx_node_id
         if txid in processed_txs:
             return None
-        
+
         out_neighbors = self._graph.neighbors(tx_idx, mode=_igraph.OUT)
         addr_outputs = [nb for nb in out_neighbors if self._graph.vs[nb]["node_type"] == "address"]
         if len(addr_outputs) < 2:
             return None
-        
+
         output_values = [(out, self._graph.vs[out]["value_satoshis"]) for out in addr_outputs]
         output_values.sort(key=lambda x: x[1], reverse=True)
         if len(output_values) < 2:
             return None
-        
+
         large_out, large_val = output_values[0]
         small_val = output_values[-1][1]
         if small_val == 0:
             return None
-        
+
         ratio = large_val / small_val
         if ratio <= 5.0:
             return None
-        
+
         large_addr = self._graph.vs[large_out]["node_id"]
         return (txid, large_out, large_addr, ratio)
 
@@ -879,7 +811,7 @@ class UTXOGraph:
             candidate = self._find_peel_chain_candidate(tx_idx, processed_txs)
             if candidate is None:
                 continue
-            
+
             txid, large_out, large_addr, ratio = candidate
             large_addr_value = large_addr[5:] if large_addr.startswith("addr:") else large_addr
             chain_addresses = [large_addr_value]
@@ -902,22 +834,20 @@ class UTXOGraph:
                         transactions=chain_txs,
                         confidence=min(0.85, 0.4 + len(chain_txs) * 0.1),
                         cluster_type="peel_chain",
-                        metadata={"value_ratio": ratio, "chain_length": len(chain_txs),
-                                "large_value_btc": large_val / 100_000_000.0,
-                                "small_value_btc": small_val / 100_000_000.0,
-                            },
-    )
+                        metadata={
+                            "value_ratio": ratio,
+                            "chain_length": len(chain_txs),
+                            "large_value_btc": large_val / 100_000_000.0,
+                            "small_value_btc": small_val / 100_000_000.0,
+                        },
                     )
+                )
 
             processed_txs.add(txid)
 
         logger.info(f"Peel chain detection: {len(peel_chains)} chains found")
         self._clusters.extend(peel_chains)
         return peel_chains
-
-    # ------------------------------------------------------------------
-    # Main Analysis Entry Point
-    # ------------------------------------------------------------------
 
     def analyze_utxo_graph(
         self,
@@ -948,9 +878,8 @@ class UTXOGraph:
                 change_addresses=[],
                 processing_time_ms=(time.monotonic() - start_time) * 1000,
                 metadata={"error": "igraph not available"},
-    )
+            )
 
-        # Build graph
         success = self._build_utxo_graph(transactions)
         if not success:
             return UTXOGraphAnalysis(
@@ -960,7 +889,7 @@ class UTXOGraph:
                 change_addresses=[],
                 processing_time_ms=(time.monotonic() - start_time) * 1000,
                 metadata={"error": "graph construction failed"},
-    )
+            )
 
         # Detect change addresses
         change_results: list[ChangeAddressResult] = []
@@ -984,10 +913,7 @@ class UTXOGraph:
                 membership = undirected.community_label_propagation()
                 communities_set = set(membership.membership)
                 community_count = len(communities_set)
-                largest_community_size = max(
-                    (sum(1 for m in membership.membership if m == c))
-                    for c in communities_set
-    )
+                largest_community_size = max((sum(1 for m in membership.membership if m == c)) for c in communities_set)
             except Exception as e:
                 logger.debug(f"Community detection skipped: {e}")
 
@@ -1006,11 +932,7 @@ class UTXOGraph:
                 "unique_addresses": len(self._address_to_id),
                 "algorithm": "igraph_c_core",
             },
-    )
-
-    # ------------------------------------------------------------------
-    # Convenience: cluster addresses via graph traversal (API-free)
-    # ------------------------------------------------------------------
+        )
 
     def cluster_addresses_graph(
         self,
@@ -1059,20 +981,13 @@ class UTXOGraph:
         return result_clusters
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _is_round_btc(value: float, tolerance: float = ROUND_AMOUNT_TOLERANCE) -> bool:
     """Check if a BTC amount is a 'round number' (integer, 0.1, 0.5, etc.)."""
     if value <= 0:
         return False
-    # Check common round values
     for rv in [0.001, 0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0]:
         if abs(value - rv) < tolerance:
             return True
-    # Check integer values
     if abs(value - round(value)) < tolerance:
         return True
     return False
@@ -1083,11 +998,6 @@ def _generate_cluster_id(addresses: list[str]) -> str:
     sorted_addrs = sorted(addresses)
     hash_input = "".join(sorted_addrs).encode()
     return hashlib.sha256(hash_input).hexdigest()[:16]
-
-
-# ---------------------------------------------------------------------------
-# Module-level Convenience Functions
-# ---------------------------------------------------------------------------
 
 
 def analyze_bitcoin_transactions(

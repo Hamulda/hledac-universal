@@ -16,7 +16,6 @@ _normalize_url_for_dedup from duckduckgo_adapter.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from unittest.mock import AsyncMock, patch
@@ -24,12 +23,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
-from _core import aclose
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_hit(url: str, title: str = "", snippet: str = "", source: str = "search") -> DiscoveryHit:
     return DiscoveryHit(
@@ -65,36 +63,42 @@ def _make_result(
 # Unit tests: _get_fusion_mode() — no module imports, pure env parsing
 # ---------------------------------------------------------------------------
 
+
 class TestCascadeFusionModeGetter:
     """AP-03: Unit tests for _get_fusion_mode() env var parsing."""
 
     def test_get_fusion_mode_first_wins(self) -> None:
         """CASCADE_FUSION_MODE=first_wins returns 'first_wins'."""
         from hledac.universal.discovery.cascade import _get_fusion_mode
+
         with patch.dict(os.environ, {"CASCADE_FUSION_MODE": "first_wins"}, clear=True):
             assert _get_fusion_mode() == "first_wins"
 
     def test_get_fusion_mode_fuse_always(self) -> None:
         """CASCADE_FUSION_MODE=fuse_always returns 'fuse_always'."""
         from hledac.universal.discovery.cascade import _get_fusion_mode
+
         with patch.dict(os.environ, {"CASCADE_FUSION_MODE": "fuse_always"}, clear=True):
             assert _get_fusion_mode() == "fuse_always"
 
     def test_get_fusion_mode_fuse_on_empty(self) -> None:
         """CASCADE_FUSION_MODE=fuse_on_empty returns 'fuse_on_empty'."""
         from hledac.universal.discovery.cascade import _get_fusion_mode
+
         with patch.dict(os.environ, {"CASCADE_FUSION_MODE": "fuse_on_empty"}, clear=True):
             assert _get_fusion_mode() == "fuse_on_empty"
 
     def test_get_fusion_mode_unknown_kept_as_is(self) -> None:
         """Unknown CASCADE_FUSION_MODE values are returned as-is (fallback in caller)."""
         from hledac.universal.discovery.cascade import _get_fusion_mode
+
         with patch.dict(os.environ, {"CASCADE_FUSION_MODE": "invalid_xyz"}, clear=True):
             assert _get_fusion_mode() == "invalid_xyz"
 
     def test_get_fusion_mode_default_is_first_wins(self) -> None:
         """Without CASCADE_FUSION_MODE set, defaults to 'first_wins'."""
         from hledac.universal.discovery.cascade import _get_fusion_mode
+
         env_clean = {k: v for k, v in os.environ.items() if k != "CASCADE_FUSION_MODE"}
         with patch.dict(os.environ, env_clean, clear=True):
             assert _get_fusion_mode() == "first_wins"
@@ -103,6 +107,7 @@ class TestCascadeFusionModeGetter:
 # ---------------------------------------------------------------------------
 # Fusion ranker integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestFusionRankerIntegration:
     """AP-03: fuse_discovery_hits combines hits from all providers (standalone)."""
@@ -113,17 +118,19 @@ class TestFusionRankerIntegration:
 
         results = [
             _make_result(
-                (_make_hit("https://ddg1.example.com", "DDG 1"),
-                 _make_hit("https://ddg2.example.com", "DDG 2")),
-                "duckduckgo", source_family="search"
+                (_make_hit("https://ddg1.example.com", "DDG 1"), _make_hit("https://ddg2.example.com", "DDG 2")),
+                "duckduckgo",
+                source_family="search",
             ),
             _make_result(
                 (_make_hit("https://hf1.example.com", "HF 1", source="historical"),),
-                "historical_frontier", source_family="historical"
+                "historical_frontier",
+                source_family="historical",
             ),
             _make_result(
                 (_make_hit("https://wb1.example.com", "WB 1", source="archive"),),
-                "wayback_cdx", source_family="archive"
+                "wayback_cdx",
+                source_family="archive",
             ),
         ]
 
@@ -193,6 +200,7 @@ class TestFusionRankerIntegration:
 # (patches only _get_fusion_mode, avoiding full cascade module import)
 # ---------------------------------------------------------------------------
 
+
 class TestCascadeFusionDecisionTree:
     """
     Test the AP-03 fusion decision tree logic directly.
@@ -217,8 +225,16 @@ class TestCascadeFusionDecisionTree:
         with (
             patch.object(cascade_mod, "_get_fusion_mode", return_value="fuse_always"),
             patch.object(cascade_mod, "_run_ddg", AsyncMock(return_value=_make_result((ddg_hit,), "duckduckgo"))),
-            patch.object(cascade_mod, "_run_historical_frontier", AsyncMock(return_value=_make_result((hf_hit,), "historical_frontier", source_family="historical"))),
-            patch.object(cascade_mod, "_run_wayback_cdx", AsyncMock(return_value=_make_result((wb_hit,), "wayback_cdx", source_family="archive"))),
+            patch.object(
+                cascade_mod,
+                "_run_historical_frontier",
+                AsyncMock(return_value=_make_result((hf_hit,), "historical_frontier", source_family="historical")),
+            ),
+            patch.object(
+                cascade_mod,
+                "_run_wayback_cdx",
+                AsyncMock(return_value=_make_result((wb_hit,), "wayback_cdx", source_family="archive")),
+            ),
             patch.object(cascade_mod, "_run_dht", no_dht),
         ):
             result = await cascade_mod._async_search_sequential("test", max_results=20, timeout_s=10.0)
@@ -238,9 +254,29 @@ class TestCascadeFusionDecisionTree:
 
         with (
             patch.object(cascade_mod, "_get_fusion_mode", return_value="first_wins"),
-            patch.object(cascade_mod, "_run_ddg", AsyncMock(return_value=_make_result((_make_hit("https://ddg.example.com", "DDG"),), "duckduckgo"))),
-            patch.object(cascade_mod, "_run_historical_frontier", AsyncMock(return_value=_make_result((_make_hit("https://hf.example.com", "HF"),), "historical_frontier", source_family="historical"))),
-            patch.object(cascade_mod, "_run_wayback_cdx", AsyncMock(return_value=_make_result((_make_hit("https://wb.example.com", "WB"),), "wayback_cdx", source_family="archive"))),
+            patch.object(
+                cascade_mod,
+                "_run_ddg",
+                AsyncMock(return_value=_make_result((_make_hit("https://ddg.example.com", "DDG"),), "duckduckgo")),
+            ),
+            patch.object(
+                cascade_mod,
+                "_run_historical_frontier",
+                AsyncMock(
+                    return_value=_make_result(
+                        (_make_hit("https://hf.example.com", "HF"),), "historical_frontier", source_family="historical"
+                    )
+                ),
+            ),
+            patch.object(
+                cascade_mod,
+                "_run_wayback_cdx",
+                AsyncMock(
+                    return_value=_make_result(
+                        (_make_hit("https://wb.example.com", "WB"),), "wayback_cdx", source_family="archive"
+                    )
+                ),
+            ),
             patch.object(cascade_mod, "_run_dht", no_dht),
         ):
             result = await cascade_mod._async_search_sequential("test", max_results=20, timeout_s=10.0)
@@ -259,9 +295,29 @@ class TestCascadeFusionDecisionTree:
 
         with (
             patch.object(cascade_mod, "_get_fusion_mode", return_value="fuse_on_empty"),
-            patch.object(cascade_mod, "_run_ddg", AsyncMock(return_value=_make_result((_make_hit("https://ddg.example.com", "DDG"),), "duckduckgo"))),
-            patch.object(cascade_mod, "_run_historical_frontier", AsyncMock(return_value=_make_result((_make_hit("https://hf.example.com", "HF"),), "historical_frontier", source_family="historical"))),
-            patch.object(cascade_mod, "_run_wayback_cdx", AsyncMock(return_value=_make_result((_make_hit("https://wb.example.com", "WB"),), "wayback_cdx", source_family="archive"))),
+            patch.object(
+                cascade_mod,
+                "_run_ddg",
+                AsyncMock(return_value=_make_result((_make_hit("https://ddg.example.com", "DDG"),), "duckduckgo")),
+            ),
+            patch.object(
+                cascade_mod,
+                "_run_historical_frontier",
+                AsyncMock(
+                    return_value=_make_result(
+                        (_make_hit("https://hf.example.com", "HF"),), "historical_frontier", source_family="historical"
+                    )
+                ),
+            ),
+            patch.object(
+                cascade_mod,
+                "_run_wayback_cdx",
+                AsyncMock(
+                    return_value=_make_result(
+                        (_make_hit("https://wb.example.com", "WB"),), "wayback_cdx", source_family="archive"
+                    )
+                ),
+            ),
             patch.object(cascade_mod, "_run_dht", no_dht),
         ):
             result = await cascade_mod._async_search_sequential("test", max_results=20, timeout_s=10.0)
@@ -276,14 +332,22 @@ class TestCascadeFusionDecisionTree:
         from hledac.universal.discovery import cascade as cascade_mod
 
         async def dht_hit(*_a: object, **_kw: object) -> DiscoveryBatchResult:
-            return _make_result((_make_hit("https://dht.example.com", "DHT", source="dht_discovery"),), "dht", source_family="dht_discovery")
+            return _make_result(
+                (_make_hit("https://dht.example.com", "DHT", source="dht_discovery"),),
+                "dht",
+                source_family="dht_discovery",
+            )
 
         empty = _make_result((), "duckduckgo", error="ddg_empty")
         hf_hit = _make_hit("https://hf.example.com", "HF")
         with (
             patch.object(cascade_mod, "_get_fusion_mode", return_value="fuse_on_empty"),
             patch.object(cascade_mod, "_run_ddg", AsyncMock(return_value=empty)),
-            patch.object(cascade_mod, "_run_historical_frontier", AsyncMock(return_value=_make_result((hf_hit,), "historical_frontier", source_family="historical"))),
+            patch.object(
+                cascade_mod,
+                "_run_historical_frontier",
+                AsyncMock(return_value=_make_result((hf_hit,), "historical_frontier", source_family="historical")),
+            ),
             patch.object(cascade_mod, "_run_wayback_cdx", AsyncMock(return_value=_make_result((), "wayback_cdx"))),
             patch.object(cascade_mod, "_run_dht", dht_hit),
         ):
@@ -298,6 +362,7 @@ class TestCascadeFusionDecisionTree:
 # ---------------------------------------------------------------------------
 # Recall benchmark: fusion vs first_wins
 # ---------------------------------------------------------------------------
+
 
 class TestCascadeFusionRecall:
     """AP-03: Benchmark — fusion má výrazně lepší hit recall než first_wins."""

@@ -13,13 +13,10 @@ This shim exists only to provide a graceful ImportError for legacy callers
 NO PRODUCTION CALLERS — DO NOT USE IN NEW CODE.
 """
 
-
-
 # Re-export the canonical symbols so that old test files / probe imports
 # that do ``from hledac.universal.runtime.memory_watchdog import PressureLevel``
 # get the real enum without modification.
 from hledac.universal.coordinators.enums import MemoryPressureLevel
-from _core import aclose
 
 __all__ = ["MemoryWatchdog", "PressureLevel"]
 
@@ -51,7 +48,7 @@ class MemoryWatchdog:
             "Use utils.uma_budget.UmaWatchdog for production code.",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
 
     def start(self) -> None:
         pass

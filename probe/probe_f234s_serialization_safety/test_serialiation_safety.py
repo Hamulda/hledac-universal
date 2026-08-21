@@ -51,22 +51,19 @@ OWNED FILES:
   - probe_f234s_serialization_safety/
 """
 
-
-
+# Load utils/serialization.py directly to avoid utils/__init__.py which imports aiohttp
+import importlib.util
 import json
 import sys
 import traceback
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any
 
-# Load utils/serialization.py directly to avoid utils/__init__.py which imports aiohttp
-import importlib.util
 _serialization_spec = importlib.util.spec_from_file_location(
-    "serialization",
-    str(Path(__file__).parent.parent / "utils" / "serialization.py")
-    )
+    "serialization", str(Path(__file__).parent.parent / "utils" / "serialization.py")
+)
 _serialization_mod = importlib.util.module_from_spec(_serialization_spec)
 _serialization_spec.loader.exec_module(_s_mod := _serialization_mod)
 _safe_dataclass_to_dict = _s_mod._safe_dataclass_to_dict
@@ -112,6 +109,7 @@ def assert_json_serializable(obj, description: str = "") -> None:
 # 1. Self-referential dataclass (cycle without RecursionError)
 # ---------------------------------------------------------------------------
 
+
 class Color(Enum):
     RED = "red"
     GREEN = "green"
@@ -121,8 +119,8 @@ class Color(Enum):
 @dataclass
 class SelfRef:
     name: str
-    parent: "SelfRef | None" = None
-    children: list["SelfRef"] = field(default_factory=list)
+    parent: SelfRef | None = None
+    children: list[SelfRef] = field(default_factory=list)
 
 
 def test_self_referential_dataclass() -> None:
@@ -133,10 +131,7 @@ def test_self_referential_dataclass() -> None:
     a.parent = b  # cycle
 
     # _safe_dataclass_to_dict must not RecursionError
-    assert_no_exception(
-        _safe_dataclass_to_dict, a,
-        description="self-referential dataclass (cycle)"
-    )
+    assert_no_exception(_safe_dataclass_to_dict, a, description="self-referential dataclass (cycle)")
     result = _safe_dataclass_to_dict(a)
     assert_json_serializable(result, "self-referential dataclass output")
 
@@ -177,6 +172,7 @@ def test_nested_dataclass_with_enum() -> None:
 # 3. pathlib.Path in dataclass field
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PathHolder:
     path: Path
@@ -196,6 +192,7 @@ def test_pathlib_path() -> None:
 # ---------------------------------------------------------------------------
 # 4. Tuples / lists / dicts
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Container:
@@ -224,19 +221,21 @@ def test_tuples_lists_dicts() -> None:
 # 5. msgspec.Struct-like object (duck-typed)
 # ---------------------------------------------------------------------------
 
+
 class FakeMsgspecStruct:
     """
     Fake msgspec.Struct for testing.
     msgspec.Struct has __slots__, no __dict__, and may raise on asdict().
     We test that our function handles it gracefully.
     """
+
     __slots__ = ("name", "value")
 
-    def __init__(self, name: str, value: int):
+    def __init__(self, name: str, value: int) -> None:
         self.name = name
         self.value = value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"FakeMsgspecStruct(name={self.name!r}, value={self.value})"
 
 
@@ -263,7 +262,8 @@ def test_struct_like_object() -> None:
 # 6. LiveMeasurementResult with self-referential live_kpi
 # ---------------------------------------------------------------------------
 
-class MockEnum(str, Enum):
+
+class MockEnum(StrEnum):
     LIVE = "live"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -274,6 +274,7 @@ def make_mock_live_measurement_result():
     Build a minimal LiveMeasurementResult-alike dataclass locally
     to avoid import issues with live_measurement_schema.py (requires hledac.universal.utils).
     """
+
     @dataclass
     class MockLiveMeasurementResult:
         measurement_id: str
@@ -333,10 +334,7 @@ def test_live_measurement_self_referential_live_kpi() -> None:
     )
 
     # to_json() must not raise
-    assert_no_exception(
-        result.to_json,
-        description="LiveMeasurementResult.to_json() with self-ref live_kpi"
-    )
+    assert_no_exception(result.to_json, description="LiveMeasurementResult.to_json() with self-ref live_kpi")
 
     j = result.to_json()
     parsed = json.loads(j)
@@ -381,8 +379,7 @@ def test_live_measurement_nested_dataclass_like_acquisition_report() -> None:
     )
 
     assert_no_exception(
-        result.to_json,
-        description="LiveMeasurementResult.to_json() with nested dataclass-like acquisition_report"
+        result.to_json, description="LiveMeasurementResult.to_json() with nested dataclass-like acquisition_report"
     )
 
     j = result.to_json()
@@ -393,6 +390,7 @@ def test_live_measurement_nested_dataclass_like_acquisition_report() -> None:
 # ---------------------------------------------------------------------------
 # 7. LiveMeasurementResult with enum fields and tuples
 # ---------------------------------------------------------------------------
+
 
 def test_live_measurement_enum_and_tuple_fields() -> None:
     MockLiveMeasurementResult = make_mock_live_measurement_result()
@@ -425,6 +423,7 @@ def test_live_measurement_enum_and_tuple_fields() -> None:
 # ---------------------------------------------------------------------------
 # 8. research_quality_score.py — _safe_dataclass_to_dict usage
 # ---------------------------------------------------------------------------
+
 
 def test_research_quality_score_serialization() -> None:
     # Define local dataclasses that mirror the actual EvidenceDepth and ScoreComponents
@@ -492,6 +491,7 @@ def test_research_quality_score_serialization() -> None:
 # 9. m1_sustained_sprint.py — BenchmarkResult serialization
 # ---------------------------------------------------------------------------
 
+
 def test_benchmark_result_serialization() -> None:
     @dataclass
     class BenchmarkResult:
@@ -519,6 +519,7 @@ def test_benchmark_result_serialization() -> None:
 # 10. safe_to_json API
 # ---------------------------------------------------------------------------
 
+
 def test_safe_to_json_api() -> None:
     @dataclass
     class Simple:
@@ -537,7 +538,6 @@ def test_safe_to_json_api() -> None:
 # ---------------------------------------------------------------------------
 
 import re
-from _core import aclose
 
 ALLOWED_MEASUREMENT_FILES = [
     "benchmarks/live_measurement_schema.py",
@@ -554,7 +554,7 @@ def test_no_unsafe_asdict_in_measurement_files() -> None:
     Only _safe_dataclass_to_dict or safe_to_json should be used in hot paths.
     """
     repo_root = Path(__file__).parent.parent
-    unsafe_pattern = re.compile(r'dataclasses\.asdict\s*\(')
+    unsafe_pattern = re.compile(r"dataclasses\.asdict\s*\(")
 
     failures: list[str] = []
     for rel_path in ALLOWED_MEASUREMENT_FILES:
@@ -565,9 +565,7 @@ def test_no_unsafe_asdict_in_measurement_files() -> None:
         content = full_path.read_text()
         matches = unsafe_pattern.findall(content)
         if matches:
-            failures.append(
-                f"{rel_path}: contains {len(matches)} unsafe dataclasses.asdict() call(s)"
-    )
+            failures.append(f"{rel_path}: contains {len(matches)} unsafe dataclasses.asdict() call(s)")
 
     if failures:
         _FAILED.append("FAIL: unsafe asdict() found:\n" + "\n".join(failures))
@@ -578,6 +576,7 @@ def test_no_unsafe_asdict_in_measurement_files() -> None:
 # ---------------------------------------------------------------------------
 # 12. safe_to_json with cycle at dict level
 # ---------------------------------------------------------------------------
+
 
 def test_safe_to_json_dict_cycle() -> None:
     """safe_to_json should handle dict-level cycles via _make_serializable."""
@@ -595,6 +594,7 @@ def test_safe_to_json_dict_cycle() -> None:
 # ---------------------------------------------------------------------------
 # 13. Acquisition semantics NOT changed (smoke test)
 # ---------------------------------------------------------------------------
+
 
 def test_acquisition_semantics_unchanged() -> None:
     """
@@ -639,6 +639,7 @@ def test_acquisition_semantics_unchanged() -> None:
 # Run all tests
 # ---------------------------------------------------------------------------
 
+
 def run_tests() -> None:
     tests = [
         test_self_referential_dataclass,
@@ -663,9 +664,9 @@ def run_tests() -> None:
         except Exception:  # noqa: BLE001
             _FAILED.append(f"EXCEPTION in {t.__name__}: {traceback.format_exc()}")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"F234S Serialization Safety — {len(_PASSED)} passed, {len(_FAILED)} failed")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     for msg in _PASSED:
         print(f"  {msg}")

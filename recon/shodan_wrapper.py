@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING, Final
 import httpx
 
 from hledac.universal.transport.session_pool import session_pool
-from _core import aclose
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding  # noqa: F401
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 
 """
@@ -95,7 +94,7 @@ async def search_shodan(
         url = SHODAN_FREE_API
         params = {"key": "free", "query": query, "per_page": min(limit, 100)}
 
-    client_timeout = httpx.Timeout(30)
+    httpx.Timeout(30)
 
     async def _do_request() -> dict | None:
         """Perform one HTTP request to Shodan."""
@@ -213,7 +212,7 @@ async def search_shodan_to_findings(
             ts=ts_now,
             provenance=("shodan_search", query, ip, str(port)),
             payload_text=f"{ip}:{port} {banner[:200]}{'...' if len(banner) > 200 else ''} hostname={hostname_str}",
-    )
+        )
         findings.append(finding)
 
     return findings, raw_results

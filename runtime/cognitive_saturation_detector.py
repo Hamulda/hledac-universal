@@ -35,7 +35,6 @@ import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -52,33 +51,32 @@ _ENABLED: bool = os.environ.get("HLEDAC_ENABLE_COGNITIVE_SATURATION", "1") != "0
 # Maximum entries in deque (4 per second × window_s, capped for memory)
 _MAX_ENTRIES: int = int(_WINDOW_S * 4)
 
-
 # ── Fast hashing ───────────────────────────────────────────────────────────────
+
 
 def _get_hash_func():
     """Return fastest available hash function.
-    
+
     Prefers xxhash.xxh3_64 (10-20× faster than blake2b) when available.
     Falls back to hashlib.blake2b for cross-platform compatibility.
     """
     try:
         import xxhash
+
         return lambda s: xxhash.xxh3_64(s.encode()).intdigest()
     except ImportError:  # noqa: BLE001
         pass
-    
+
     # Fallback: blake2b is fast and available in stdlib
     import hashlib
-    return lambda s: int.from_bytes(
-        hashlib.blake2b(s.encode(), digest_size=8).digest(),
-        "little"
-    )
+
+    return lambda s: int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "little")
 
 
 _hash_entity: callable = _get_hash_func()
 
-
 # ── Detector class ─────────────────────────────────────────────────────────────
+
 
 class CognitiveSaturationDetector:
     """
@@ -104,12 +102,12 @@ class CognitiveSaturationDetector:
         "_window_s",
         "_persist_s",
         "_min_active_s",
-        "_entries",           # deque[(entity_hash: int, timestamp: float)]
-        "_seen_hashes",      # set[int] — hashes in current window for O(1) dedup
-        "_zero_since",       # float | None — when discovery rate dropped to zero
-        "_triggered",        # bool — whether detector has fired
-        "_total_reports",    # int — telemetry: total reports seen
-        "_unique_reports",   # int — telemetry: unique entities reported
+        "_entries",  # deque[(entity_hash: int, timestamp: float)]
+        "_seen_hashes",  # set[int] — hashes in current window for O(1) dedup
+        "_zero_since",  # float | None — when discovery rate dropped to zero
+        "_triggered",  # bool — whether detector has fired
+        "_total_reports",  # int — telemetry: total reports seen
+        "_unique_reports",  # int — telemetry: unique entities reported
     )
 
     def __init__(
@@ -132,7 +130,6 @@ class CognitiveSaturationDetector:
         Raises:
             ValueError: If window_s, persist_s, or min_active_s are negative.
         """
-        # Validate parameters
         _window_s = window_s if window_s is not None else _WINDOW_S
         _persist_s = persist_s if persist_s is not None else _PERSIST_S
         _min_active_s = min_active_s if min_active_s is not None else _MIN_ACTIVE_S
@@ -206,7 +203,7 @@ class CognitiveSaturationDetector:
             ioc_type or "unknown",
             entity_value[:64] if len(entity_value) > 64 else entity_value,
             len(self._seen_hashes),
-    )
+        )
 
     def should_enter_windup(self, elapsed_active_s: float, now_monotonic: float | None = None) -> bool:
         """
@@ -251,8 +248,10 @@ class CognitiveSaturationDetector:
             logger.debug(
                 "[COGNITIVE_SATURATION] Zero-discovery period started at t=%.1fs "
                 "(elapsed_active_s=%.1f, window_s=%.1f)",
-                now, elapsed_active_s, self._window_s,
-    )
+                now,
+                elapsed_active_s,
+                self._window_s,
+            )
             return False
 
         # Check if we've been at zero long enough
@@ -270,7 +269,7 @@ class CognitiveSaturationDetector:
                 elapsed_active_s,
                 self._total_reports,
                 self._unique_reports,
-    )
+            )
             return True
 
         return False
@@ -336,7 +335,7 @@ class CognitiveSaturationDetector:
             f"in_window={len(self._entries)}, "
             f"unique_total={self._unique_reports}"
             f")"
-    )
+        )
 
 
 # ── Global Registry ────────────────────────────────────────────────────────────

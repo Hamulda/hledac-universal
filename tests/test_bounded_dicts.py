@@ -17,7 +17,6 @@ from __future__ import annotations
 import pytest
 
 from runtime.context.bounded_dicts import BoundedLRUDict
-from _core import aclose
 
 
 class TestBoundedLRUDictEviction:
@@ -68,7 +67,7 @@ class TestBoundedLRUDictEviction:
         d["c"] = True  # MRU
         d["a"] = True  # duplicate: order -> b, c, a
         d["d"] = True  # evict LRU (b)
-        assert d.get("a") is True   # survived
+        assert d.get("a") is True  # survived
         assert d.get("b") is None  # evicted
         assert d.evicted_count == 1
 
@@ -83,7 +82,7 @@ class TestBoundedLRUDictPromote:
         d["y"] = True
         d["z"] = True
         _ = d.get("x")  # read without promotion — x still LRU
-        d["w"] = True   # x should be evicted
+        d["w"] = True  # x should be evicted
         assert d.get("x") is None
         assert d.evicted_count == 1
 
@@ -94,8 +93,8 @@ class TestBoundedLRUDictPromote:
         d["q"] = True  # middle
         d["r"] = True  # MRU
         _ = d.get("p")  # read without promotion — p still LRU
-        d.promote("p")   # explicit promotion
-        d["s"] = True   # q is now LRU (p was promoted)
+        d.promote("p")  # explicit promotion
+        d["s"] = True  # q is now LRU (p was promoted)
         assert d.get("q") is None  # evicted
         assert d.get("p") is True  # survived
 

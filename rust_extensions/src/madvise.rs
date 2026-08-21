@@ -33,12 +33,6 @@ use pyo3::prelude::*;
 use std::ptr::null_mut;
 use std::sync::{Mutex, OnceLock};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// R4-06 FIX: Cached Mmap — eliminates full open/mmap/madvise/unmap/close cycle
-// per call. Cache key = path, value = (file_size, mapped_ptr, mapped_len).
-// LRU(32) prevents unbounded growth on pathological workloads.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Global mmap cache: OnceLock + Mutex<LruCache> for process lifetime.
 /// LRU(32) cap: 32 × ~10MB LMDB region ≈ 320MB max resident (M1 8GB safe).
 static MMAP_CACHE: OnceLock<Mutex<LruCache<String, CachedMmap>>> = OnceLock::new();
@@ -439,7 +433,6 @@ pub fn mmap_hugepage(path: &str, read_only: bool) -> (usize, usize) {
             return (0usize, 0usize);
         }
 
-        // Get file size
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         if unsafe { libc::fstat(fd, &mut st) } < 0 {
             unsafe { libc::close(fd) };

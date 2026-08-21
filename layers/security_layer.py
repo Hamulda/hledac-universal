@@ -8,6 +8,7 @@ This module is DEPRECATED. Import from `layers.security` instead:
 
 This file exists for backward compatibility only and will be removed in a future version.
 """
+
 import warnings
 
 # Deprecation warning for direct imports
@@ -19,19 +20,19 @@ warnings.warn(
 
 # Re-export from consolidated module
 from layers.security import (
-    SecurityLayer,
-    MissionAudit,
     AuditEntry,
-    StringObfuscator,
+    MissionAudit,
     ResearchObfuscator,
     SecureDestructor,
+    SecurityLayer,
+    StringObfuscator,
 )
 
 __all__ = [
-    'SecurityLayer',
-    'MissionAudit',
-    'AuditEntry',
-    'StringObfuscator',
-    'ResearchObfuscator',
-    'SecureDestructor',
+    "SecurityLayer",
+    "MissionAudit",
+    "AuditEntry",
+    "StringObfuscator",
+    "ResearchObfuscator",
+    "SecureDestructor",
 ]

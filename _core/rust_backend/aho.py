@@ -9,7 +9,6 @@ Used for IOC extraction from unstructured text.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -21,11 +20,6 @@ try:
     _AHOCORASICK_AVAILABLE = True
 except ImportError:
     _AHOCORASICK_AVAILABLE = False
-
-
-# =============================================================================
-# Aho-Corasick Domain
-# =============================================================================
 
 
 class _RustAhoDomain:
@@ -76,14 +70,14 @@ class _PythonAhoCorasick:
         if self._automaton is not None:
             # Use ahocorasick library
             results: list[tuple[int, int, str]] = []
-            for end, (idx, pattern) in self._automaton.iter(text):
+            for end, (_idx, pattern) in self._automaton.iter(text):
                 start = end - len(pattern) + 1
                 results.append((start, end + 1, pattern))
             return results
         else:
             # Pure Python fallback: O(n*m) substring search
             results: list[tuple[int, int, str]] = []
-            for i, pattern in enumerate(self._patterns):
+            for _i, pattern in enumerate(self._patterns):
                 start = 0
                 while True:
                     pos = text.find(pattern, start)

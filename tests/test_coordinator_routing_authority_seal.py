@@ -12,20 +12,20 @@ Canonical truth: SprintScheduler.run() creates coordinators via direct class
 imports, not via registry/catalog routing.
 """
 
-
 import re
 import unittest
 from pathlib import Path
-from _core import aclose
 
 # Paths that are allowed to import the legacy routing chain
-EXEMPT_PREFIXES = frozenset([
-    "docs/",
-    "tests/",
-    "legacy/",
-    "coordinators/",
-    "layers/",
-])
+EXEMPT_PREFIXES = frozenset(
+    [
+        "docs/",
+        "tests/",
+        "legacy/",
+        "coordinators/",
+        "layers/",
+    ]
+)
 
 # Forbidden imports — legacy routing chain
 FORBIDDEN = {
@@ -79,7 +79,9 @@ def _find_violations():
         for forbidden_name in FORBIDDEN:
             # Match "from X import CoordinatorRegistry" or "import CoordinatorRegistry"
             # Require import keyword to avoid matching comments
-            pattern = rf"^[^#\n]*(?:from\s+\S+\s+import\s+[^\n]*\b{forbidden_name}\b|import\s+[^\n]*\b{forbidden_name}\b)"  # noqa: E501
+            pattern = (
+                rf"^[^#\n]*(?:from\s+\S+\s+import\s+[^\n]*\b{forbidden_name}\b|import\s+[^\n]*\b{forbidden_name}\b)"  # noqa: E501
+            )
             if re.search(pattern, content, re.MULTILINE):
                 violations.append((str(path.relative_to(base)), forbidden_name))
 
@@ -89,7 +91,7 @@ def _find_violations():
 class TestCoordinatorRoutingAuthoritySeal(unittest.TestCase):
     """Architecture seal: canonical runtime must not use legacy routing chain."""
 
-    def test_no_forbidden_imports_in_canonical_runtime(self):
+    def test_no_forbidden_imports_in_canonical_runtime(self) -> None:
         """
         Canonical sprint runtime modules must NOT import the legacy routing chain.
 
@@ -110,16 +112,18 @@ class TestCoordinatorRoutingAuthoritySeal(unittest.TestCase):
 class TestCoordinatorCatalogActive(unittest.TestCase):
     """Verify CoordinatorCatalog is the active lazy-loading surface."""
 
-    def test_catalog_exists_and_loadable(self):
+    def test_catalog_exists_and_loadable(self) -> None:
         """CoordinatorCatalog must be importable and functional."""
         from hledac.universal.coordinators._catalog import catalog
+
         self.assertIsNotNone(catalog)
         self.assertTrue(hasattr(catalog, "load"))
         self.assertTrue(hasattr(catalog, "get"))
 
-    def test_catalog_load_works(self):
+    def test_catalog_load_works(self) -> None:
         """CoordinatorCatalog.load() must be able to load a coordinator."""
         from hledac.universal.coordinators._catalog import catalog
+
         result = catalog.load("UniversalMemoryCoordinator")
         self.assertIsNotNone(result)
 
@@ -127,7 +131,7 @@ class TestCoordinatorCatalogActive(unittest.TestCase):
 class TestBrokenArtifactAwareness(unittest.TestCase):
     """Document broken artifacts without blocking the test suite."""
 
-    def test_check_universal_coordinators_awareness(self):
+    def test_check_universal_coordinators_awareness(self) -> None:
         """
         Document that _check_universal_coordinators is undefined.
 
@@ -151,22 +155,19 @@ class TestBrokenArtifactAwareness(unittest.TestCase):
             self.skipTest(
                 f"Known broken artifact: _check_universal_coordinators called {call_count}x "
                 f"but undefined. See docs/audits/COORDINATOR_ROUTING_AUTHORITY_AUDIT.md"
-    )
+            )
 
 
 class TestMixinArchitectureRemoved(unittest.TestCase):
     """Architecture seal: no coordinator uses mixin classes."""
 
-    def test_mixins_file_does_not_exist(self):
+    def test_mixins_file_does_not_exist(self) -> None:
         """coordinators/mixins.py must not exist."""
         base = _base_path()
         mixins_path = base / "coordinators" / "mixins.py"
-        self.assertFalse(
-            mixins_path.exists(),
-            "coordinators/mixins.py must be deleted — dead mixin architecture"
-    )
+        self.assertFalse(mixins_path.exists(), "coordinators/mixins.py must be deleted — dead mixin architecture")
 
-    def test_no_coordinator_inherits_from_mixin(self):
+    def test_no_coordinator_inherits_from_mixin(self) -> None:
         """No coordinator class may inherit from mixin classes."""
         base = _base_path()
         violations = []
@@ -189,26 +190,29 @@ class TestMixinArchitectureRemoved(unittest.TestCase):
                 if "OperationTrackingMixin" in line or "LoadFactorMixin" in line or "MemoryPressureMixin" in line:
                     violations.append(f"{path.name}:{line_no}")
 
-        self.assertEqual(
-            violations, [],
-            "Mixin inheritance found:\n" + "\n".join(violations)
-    )
+        self.assertEqual(violations, [], "Mixin inheritance found:\n" + "\n".join(violations))
 
-    def test_universal_coordinator_has_inline_implementations(self):
+    def test_universal_coordinator_has_inline_implementations(self) -> None:
         """UniversalCoordinator must have track_operation, get_load_factor, check_memory_pressure."""
         import sys
+
         # Project root is parent.parent of test file (tests/ -> universal/ -> project/)
         base = _base_path()
         project_root = base.parent.parent
         sys.path.insert(0, str(project_root))
         try:
             from hledac.universal.coordinators.base import UniversalCoordinator
+
             # Check methods exist on the class (not abstract, inlined from former mixins)
             self.assertTrue(hasattr(UniversalCoordinator, "track_operation"))
             self.assertTrue(hasattr(UniversalCoordinator, "get_load_factor"))
             self.assertTrue(hasattr(UniversalCoordinator, "check_memory_pressure"))
             # Verify they are not abstract methods
-            self.assertFalse(UniversalCoordinator.track_operation.__isabstractmethod__ if hasattr(UniversalCoordinator.track_operation, "__isabstractmethod__") else False)  # noqa: E501
+            self.assertFalse(
+                UniversalCoordinator.track_operation.__isabstractmethod__
+                if hasattr(UniversalCoordinator.track_operation, "__isabstractmethod__")
+                else False
+            )  # noqa: E501
         finally:
             sys.path.pop(0)
 

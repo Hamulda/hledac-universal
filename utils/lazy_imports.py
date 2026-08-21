@@ -18,31 +18,106 @@ Example:
     >>> torch.tensor([1, 2, 3])  # Now it's loaded
     >>> print(manager.get_stats())
 """
+
 import functools
 import importlib
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import Any
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
-_ALLOWED_LAZY_MODULES: frozenset[str] = frozenset({'os', 'json', 'time', 're', 'sys', 'logging', 'asyncio', 'threading', 'pathlib', 'functools', 'collections', 'copy', 'inspect', 'traceback', 'warnings', 'weakref', 'types', 'gc', 'io', 'abc', 'contextlib', 'mlx', 'mlx.core', 'mlx_lm', 'numpy', 'pandas', 'scipy', 'aiohttp', 'httpx', 'curl_cffi', 'requests', 'duckdb', 'lancedb', 'lmdb', 'sqlite3', 'igraph', 'orjson', 'msgspec', 'pydantic', 'cryptography', 'hashlib', 'hmac', 'secrets', 'nodriver', 'playwright', 'arxiv', 'openalex', 'unpaywall', 'core', 'torch', 'transformers', 'sentence_transformers', 'zstandard', 'zlib', 'gzip', 'bz2', 'lz4', 'psutil', 'yara_python', 'hledac.universal', 'hledac.universal.brain', 'hledac.universal.knowledge', 'hledac.universal.fetching', 'hledac.universal.discovery', 'hledac.universal.coordinators'})
+_ALLOWED_LAZY_MODULES: frozenset[str] = frozenset(
+    {
+        "os",
+        "json",
+        "time",
+        "re",
+        "sys",
+        "logging",
+        "asyncio",
+        "threading",
+        "pathlib",
+        "functools",
+        "collections",
+        "copy",
+        "inspect",
+        "traceback",
+        "warnings",
+        "weakref",
+        "types",
+        "gc",
+        "io",
+        "abc",
+        "contextlib",
+        "mlx",
+        "mlx.core",
+        "mlx_lm",
+        "numpy",
+        "pandas",
+        "scipy",
+        "aiohttp",
+        "httpx",
+        "curl_cffi",
+        "requests",
+        "duckdb",
+        "lancedb",
+        "lmdb",
+        "sqlite3",
+        "igraph",
+        "orjson",
+        "msgspec",
+        "pydantic",
+        "cryptography",
+        "hashlib",
+        "hmac",
+        "secrets",
+        "nodriver",
+        "playwright",
+        "arxiv",
+        "openalex",
+        "unpaywall",
+        "core",
+        "torch",
+        "transformers",
+        "sentence_transformers",
+        "zstandard",
+        "zlib",
+        "gzip",
+        "bz2",
+        "lz4",
+        "psutil",
+        "yara_python",
+        "hledac.universal",
+        "hledac.universal.brain",
+        "hledac.universal.knowledge",
+        "hledac.universal.fetching",
+        "hledac.universal.discovery",
+        "hledac.universal.coordinators",
+    }
+)
+
 
 def _validate_lazy_module(name: str) -> None:
     """Validate module name against whitelist. Raises ImportError if not allowed."""
     if name not in _ALLOWED_LAZY_MODULES:
-        raise ImportError(f"Module '{name}' not in whitelist. Dynamic module loading requires explicit allowlisting. Allowed modules: {(sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES')}")
+        raise ImportError(
+            f"Module '{name}' not in whitelist. Dynamic module loading requires explicit allowlisting. Allowed modules: {(sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES')}"
+        )
+
 
 class LazyLoadStats(Struct):
     """Statistics for lazy loading performance."""
+
     total_loads: int = 0
     total_time: float = 0.0
     loaded_modules: set[str] = field(default_factory=set)
     failed_modules: set[str] = field(default_factory=set)
     cache_hits: int = 0
+
 
 class LazyLoader:
     """
@@ -51,9 +126,10 @@ class LazyLoader:
     Delays expensive imports until actually needed, improving startup time.
     Tracks usage statistics for performance monitoring.
     """
-    __slots__ = tuple(('_load_time', '_loaded', '_manager', '_module', '_module_name'))
 
-    def __init__(self, module_name: str, manager: LazyImportManager):
+    __slots__ = ("_load_time", "_loaded", "_manager", "_module", "_module_name")
+
+    def __init__(self, module_name: str, manager: LazyImportManager) -> None:
         """
         Initialize lazy loader.
 
@@ -81,10 +157,10 @@ class LazyLoader:
             self._manager.stats.total_loads += 1
             self._manager.stats.total_time += self._load_time
             self._manager.stats.loaded_modules.add(self._module_name)
-            logger.debug(f'Lazy loaded module: {self._module_name} in {self._load_time:.4f}s')
+            logger.debug(f"Lazy loaded module: {self._module_name} in {self._load_time:.4f}s")
         except ImportError as e:
             self._manager.stats.failed_modules.add(self._module_name)
-            logger.error(f'Failed to lazy load module {self._module_name}: {e}')
+            logger.error(f"Failed to lazy load module {self._module_name}: {e}")
             raise
         return self._module
 
@@ -106,15 +182,17 @@ class LazyLoader:
         """Get time taken to load module."""
         return self._load_time
 
+
 class LazyImportManager:
     """
     Manager for lazy imports.
 
     Central registry for lazy-loaded modules with statistics tracking.
     """
-    __slots__ = tuple(('_loaders', 'stats'))
 
-    def __init__(self):
+    __slots__ = ("_loaders", "stats")
+
+    def __init__(self) -> None:
         """Initialize lazy import manager."""
         self._loaders: dict[str, LazyLoader] = {}
         self.stats = LazyLoadStats()
@@ -135,7 +213,15 @@ class LazyImportManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Get lazy loading statistics."""
-        return {'total_loads': self.stats.total_loads, 'total_time': self.stats.total_time, 'avg_load_time': self.stats.total_time / max(self.stats.total_loads, 1), 'loaded_modules': list(self.stats.loaded_modules), 'failed_modules': list(self.stats.failed_modules), 'cache_hits': self.stats.cache_hits, 'registered_modules': list(self._loaders.keys())}
+        return {
+            "total_loads": self.stats.total_loads,
+            "total_time": self.stats.total_time,
+            "avg_load_time": self.stats.total_time / max(self.stats.total_loads, 1),
+            "loaded_modules": list(self.stats.loaded_modules),
+            "failed_modules": list(self.stats.failed_modules),
+            "cache_hits": self.stats.cache_hits,
+            "registered_modules": list(self._loaders.keys()),
+        }
 
     def reset_stats(self) -> None:
         """Reset statistics."""
@@ -165,7 +251,10 @@ class LazyImportManager:
         for name in self._loaders:
             results[name] = self.preload(name)
         return results
+
+
 _global_manager: LazyImportManager | None = None
+
 
 def get_lazy_import_manager() -> LazyImportManager:
     """Get global lazy import manager."""
@@ -173,6 +262,7 @@ def get_lazy_import_manager() -> LazyImportManager:
     if _global_manager is None:
         _global_manager = LazyImportManager()
     return _global_manager
+
 
 def lazy_import(module_name: str) -> LazyLoader:
     """
@@ -192,6 +282,7 @@ def lazy_import(module_name: str) -> LazyLoader:
     """
     manager = get_lazy_import_manager()
     return manager.register(module_name)
+
 
 def lazy_import_decorator(module_name: str):
     """
@@ -214,8 +305,19 @@ def lazy_import_decorator(module_name: str):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             module = lazy_import(module_name)
-            kwargs[module_name.split('.')[-1]] = module
+            kwargs[module_name.split(".")[-1]] = module
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
-__all__ = ['LazyLoadStats', 'LazyLoader', 'LazyImportManager', 'get_lazy_import_manager', 'lazy_import', 'lazy_import_decorator']
+
+
+__all__ = [
+    "LazyLoadStats",
+    "LazyLoader",
+    "LazyImportManager",
+    "get_lazy_import_manager",
+    "lazy_import",
+    "lazy_import_decorator",
+]

@@ -48,13 +48,13 @@ from __future__ import annotations
 
 # Core exports (backward compatible)
 from metrics_registry._core import (
-    TTLCache,
-    LRUCache,
+    _GRAMMAR_KEYS,
     METRIC_NAMES,
+    LRUCache,
     MetricSnapshot,
+    TTLCache,
     _AsyncBatchFlusher,
     _BoundedCounter,
-    _GRAMMAR_KEYS,
 )
 from metrics_registry.registry import (
     MetricsRegistry,
@@ -80,24 +80,6 @@ __all__ = [
 ]
 
 
-# =============================================================================
-# Lazy Area Registration
-# =============================================================================
-#
-# Metrics are registered on first use, not at import time.
-# This reduces startup overhead and memory footprint.
-#
-# Each area module has:
-# - Metric name constants
-# - register_area(registry) function
-# - Area-specific metric functions
-#
-# Usage:
-#     registry = create_metrics_registry(...)
-#     registry.inc('http_fetch_latency_ms', ...)  # HTTP area auto-registers
-#     registry.inc('mlx_cache_hits', ...)         # ML area auto-registers
-#
-
 class _LazyAreaRegistry:
     """
     Lazy area registry that registers metrics on first use.
@@ -117,7 +99,6 @@ class _LazyAreaRegistry:
         if area_name in self._registered_areas:
             return
 
-        # Import area module lazily
         import importlib
 
         try:

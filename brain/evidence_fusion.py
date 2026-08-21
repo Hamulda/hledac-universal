@@ -28,8 +28,6 @@ import time
 import uuid
 
 from hledac.universal.brain.jtms import EvidenceRecord
-from _core import aclose
-
 
 
 class DempsterShafer:
@@ -40,10 +38,9 @@ class DempsterShafer:
     When a source is retracted, only affected hypothesis masses are recomputed.
     """
 
-    __slots__ = ('hypotheses', 'masses', 'unknown', 'conflict',
-                 '_evidence_log', '_source_index', '_dirty')
+    __slots__ = ("hypotheses", "masses", "unknown", "conflict", "_evidence_log", "_source_index", "_dirty")
 
-    def __init__(self, hypotheses: set[str] | None = None):
+    def __init__(self, hypotheses: set[str] | None = None) -> None:
         self.hypotheses = hypotheses or set()
         self.masses: dict[str, float] = dict.fromkeys(self.hypotheses, 0.0)
         self.unknown = 1.0
@@ -59,8 +56,9 @@ class DempsterShafer:
             self.hypotheses.add(hypothesis)
             self.masses[hypothesis] = 0.0
 
-    def add_evidence(self, hypothesis: str, mass: float, source_weight: float = 1.0,
-                     source_id: str | None = None) -> str:
+    def add_evidence(
+        self, hypothesis: str, mass: float, source_weight: float = 1.0, source_id: str | None = None
+    ) -> str:
         """
         Add evidence for a hypothesis with source weight.
 
@@ -81,7 +79,6 @@ class DempsterShafer:
         if source_id is None:
             source_id = "anonymous"
 
-        # Log evidence for SHAFER-2 revision
         record = EvidenceRecord(
             evidence_id=evidence_id,
             hypothesis=hypothesis,
@@ -89,10 +86,9 @@ class DempsterShafer:
             source_weight=source_weight,
             source_id=source_id,
             timestamp=time.time(),
-    )
+        )
         self._evidence_log.append(record)
 
-        # Update source index
         if source_id not in self._source_index:
             self._source_index[source_id] = []
         self._source_index[source_id].append(evidence_id)
@@ -135,10 +131,8 @@ class DempsterShafer:
         if evidence_idx is None:
             return False
 
-        # Remove from log
         evidence = self._evidence_log.pop(evidence_idx)
 
-        # Remove from source index
         if evidence.source_id in self._source_index:
             try:
                 self._source_index[evidence.source_id].remove(evidence_id)
@@ -168,7 +162,6 @@ class DempsterShafer:
         evidence_ids = self._source_index[source_id].copy()
         retracted_count = 0
 
-        # Remove all evidence from this source
         for evidence_id in evidence_ids:
             for idx, ev in enumerate(self._evidence_log):
                 if ev.evidence_id == evidence_id:
@@ -176,7 +169,6 @@ class DempsterShafer:
                     retracted_count += 1
                     break
 
-        # Clean up source index
         if source_id in self._source_index:
             del self._source_index[source_id]
 
@@ -238,18 +230,18 @@ class DempsterShafer:
     def to_dict(self) -> dict:
         """Serialize state including evidence log for SHAFER-2 revision."""
         return {
-            'hypotheses': list(self.hypotheses),
-            'masses': self.masses,
-            'unknown': self.unknown,
-            'conflict': self.conflict,
-            'evidence_log': [
+            "hypotheses": list(self.hypotheses),
+            "masses": self.masses,
+            "unknown": self.unknown,
+            "conflict": self.conflict,
+            "evidence_log": [
                 {
-                    'evidence_id': ev.evidence_id,
-                    'hypothesis': ev.hypothesis,
-                    'mass': ev.mass,
-                    'source_weight': ev.source_weight,
-                    'source_id': ev.source_id,
-                    'timestamp': ev.timestamp,
+                    "evidence_id": ev.evidence_id,
+                    "hypothesis": ev.hypothesis,
+                    "mass": ev.mass,
+                    "source_weight": ev.source_weight,
+                    "source_id": ev.source_id,
+                    "timestamp": ev.timestamp,
                 }
                 for ev in self._evidence_log
             ],
@@ -258,22 +250,22 @@ class DempsterShafer:
     @classmethod
     def from_dict(cls, d: dict) -> DempsterShafer:
         """Restore from dict including evidence log for SHAFER-2 revision."""
-        ds = cls(hypotheses=set(d.get('hypotheses', [])))
-        ds.masses = dict(d.get('masses', {}))
-        ds.unknown = d.get('unknown', 1.0)
-        ds.conflict = d.get('conflict', 0.0)
+        ds = cls(hypotheses=set(d.get("hypotheses", [])))
+        ds.masses = dict(d.get("masses", {}))
+        ds.unknown = d.get("unknown", 1.0)
+        ds.conflict = d.get("conflict", 0.0)
 
         # Restore evidence log
-        evidence_log_data = d.get('evidence_log', [])
+        evidence_log_data = d.get("evidence_log", [])
         for ev_data in evidence_log_data:
             record = EvidenceRecord(
-                evidence_id=ev_data['evidence_id'],
-                hypothesis=ev_data['hypothesis'],
-                mass=ev_data['mass'],
-                source_weight=ev_data['source_weight'],
-                source_id=ev_data['source_id'],
-                timestamp=ev_data['timestamp'],
-    )
+                evidence_id=ev_data["evidence_id"],
+                hypothesis=ev_data["hypothesis"],
+                mass=ev_data["mass"],
+                source_weight=ev_data["source_weight"],
+                source_id=ev_data["source_id"],
+                timestamp=ev_data["timestamp"],
+            )
             ds._evidence_log.append(record)
             if record.source_id not in ds._source_index:
                 ds._source_index[record.source_id] = []

@@ -7,18 +7,12 @@ Covers: quality tiers, fetch budgets, shopping noise filters, threat patterns,
 No I/O, no async, no external dependencies except stdlib + urllib.parse.
 """
 
-
 import re
 import urllib.parse
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
-
-# -----------------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------------
 
 MAX_EXTRACTED_TEXT_CHARS: int = 200_000
 """Hard cap on extracted text size per page."""
@@ -56,10 +50,10 @@ _QUALITY_TIER_SKIP = "SKIP_WEAK"
 _DISCOVERY_SIGNAL_SCORE_THRESHOLD: float = 0.3
 
 # Adaptive fetch budget tiers: multiplier on base fetch_timeout_s
-_FETCH_BUDGET_STRONG: float = 1.25   # very_good or discovery_score >= 0.7
-_FETCH_BUDGET_NORMAL: float = 1.0    # ok, good
-_FETCH_BUDGET_WEAK: float = 0.65     # weak_low_signal, low discovery score
-_FETCH_BUDGET_SKIP: float = 0.0       # SKIP_WEAK — dead until Fix A in F150J
+_FETCH_BUDGET_STRONG: float = 1.25  # very_good or discovery_score >= 0.7
+_FETCH_BUDGET_NORMAL: float = 1.0  # ok, good
+_FETCH_BUDGET_WEAK: float = 0.65  # weak_low_signal, low discovery score
+_FETCH_BUDGET_SKIP: float = 0.0  # SKIP_WEAK — dead until Fix A in F150J
 
 # Sprint F161B: pre-fetch text-length gate — BEFORE budget is spent
 _PRE_FETCH_TEXT_MIN_CHARS: int = 80  # F275: lowered from 150 to catch metadata-rich thin pages
@@ -78,7 +72,7 @@ _CT_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-
 _CC_QUERY_IS_DOMAIN_RE: re.Pattern = re.compile(
     r"^(?:\*\.)?[a-zA-Z0-9][a-zA-Z0-9.*-]*\.[a-zA-Z]{2,}$"
     r"|^(?:site|domain):"
-    )
+)
 """Regex for CommonCrawl CDX lookup — supports wildcards and site:/domain: operators."""
 
 # Sprint F161B: discovery false-positive band — legitimate signal but no conversion
@@ -93,11 +87,11 @@ _DISCOVERY_SKIP_THRESHOLD: float = 0.15
 _MAX_BOOTSTRAP_URLS: int = 5
 """Max bootstrap URLs per query (domain-sourced)."""
 _BOOTSTRAP_DEFAULT_URLS: list[str] = [
-    "",                        # https://domain/
-    "/www.",                   # https://www.domain/
-    "/.well-known/security.txt",   # deterministic security policy endpoint
-    "/robots.txt",                  # robots directive
-    "/sitemap.xml",                 # sitemap reference
+    "",  # https://domain/
+    "/www.",  # https://www.domain/
+    "/.well-known/security.txt",  # deterministic security policy endpoint
+    "/robots.txt",  # robots directive
+    "/sitemap.xml",  # sitemap reference
 ]
 """Ordered list of URL path templates for deterministic bootstrap."""
 
@@ -118,10 +112,6 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
 ]
 """Static rescue source list for non-domain threat/malware/ransomware queries."""
 
-# -----------------------------------------------------------------------------
-# F221H: Public Discovery Relevance / Shopping Noise Filter
-# -----------------------------------------------------------------------------
-
 _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
     "trendyol.com",
     "pazarama.com",
@@ -131,7 +121,7 @@ _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
     "gittigidiyor.com",
     "cimri.com",
     "akakce.com",
-    )
+)
 
 _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/gp/bestsellers/",
@@ -151,7 +141,7 @@ _SHOPPING_NOISE_PATHS: tuple[str, ...] = (
     "/offers/",
     "/home-improvement",
     "/home-and-garden",
-    )
+)
 
 _SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
     "/cart/",
@@ -159,7 +149,7 @@ _SHOPPING_NOISE_PATHS_STRICT: tuple[str, ...] = (
     "/buy/",
     "/sale/",
     "/offers/",
-    )
+)
 
 _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "cisa.gov",
@@ -185,11 +175,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
     "thecyberwire.com",
     "bleepinguid.com",
     "ransomware.live",
-    )
-
-# -----------------------------------------------------------------------------
-# Helper functions (pure, no I/O)
-# -----------------------------------------------------------------------------
+)
 
 
 def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
@@ -228,9 +214,7 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
     return False, "public_relevance_pass"
 
 
-def _filter_public_noise(
-    hits: list | tuple, is_threat_query: bool
-) -> tuple[list, list[tuple[str, str]]]:
+def _filter_public_noise(hits: list | tuple, is_threat_query: bool) -> tuple[list, list[tuple[str, str]]]:
     """Filter shopping/e-commerce noise from public discovery hits.
 
     Returns:
@@ -260,7 +244,7 @@ def _filter_public_noise(
 _IP_PAT = re.compile(
     r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^"
     r"[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$"
-    )
+)
 _CVE_PAT = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 _THREAT_PAT = re.compile(
     r"^(?:"
@@ -272,7 +256,7 @@ _THREAT_PAT = re.compile(
     r"poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic"
     r")$",
     re.IGNORECASE,
-    )
+)
 _EXTENDED_PAT = re.compile(
     r"^(?:"
     r"meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|"
@@ -280,7 +264,7 @@ _EXTENDED_PAT = re.compile(
     r"sidecopy|callback|triangle|temp|sofacy|平原"
     r")$",
     re.IGNORECASE,
-    )
+)
 _THREAT_KW_PAT = re.compile(
     r"^(?:"
     r"ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|"
@@ -289,7 +273,7 @@ _THREAT_KW_PAT = re.compile(
     r"Ransomware|Malware|ThreatActor|CVE|APT"
     r")$",
     re.IGNORECASE,
-    )
+)
 _OSINT_KW_PAT = re.compile(
     r"^(?:"
     r"osint|osint infrastructure|infrastructure|telemetry|leak|"
@@ -298,7 +282,7 @@ _OSINT_KW_PAT = re.compile(
     r"recon|scanning|fingerprint|iot|ics|scada"
     r")$",
     re.IGNORECASE,
-    )
+)
 _OSINT_MULTI_PAT = re.compile(
     r"^(?:"
     r"osint[_\s]?infrastructure|infrastructure[_\s]?osint|"
@@ -306,7 +290,7 @@ _OSINT_MULTI_PAT = re.compile(
     r"threat[_\s]?intel|threat[_\s]?hunting"
     r")$",
     re.IGNORECASE,
-    )
+)
 
 
 def _is_threat_query(query: str) -> bool:
@@ -323,7 +307,7 @@ def _is_threat_query(query: str) -> bool:
     # Strip prefix operators
     for prefix in ("site:", "domain:", "url:", "asn:", "ip:", "vpn:", "tor:"):
         if q.lower().startswith(prefix):
-            q = q[len(prefix):].strip()
+            q = q[len(prefix) :].strip()
             break
 
     # IP address check
@@ -343,7 +327,6 @@ def _is_threat_query(query: str) -> bool:
     if first_token and _THREAT_PAT.match(first_token):
         return True
 
-    # Check any token in the query
     for token in re.split(r"[\s\-_]+", q):
         if len(token) >= 4 and _THREAT_PAT.match(token):
             return True

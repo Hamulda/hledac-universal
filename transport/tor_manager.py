@@ -1,13 +1,14 @@
 """TorManager – lightweight Tor controller wrapper with circuit isolation."""
+
 import asyncio
 import importlib.util
 import logging
 import time
 from pathlib import Path
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-_STEM_SPEC = importlib.util.find_spec('stem')
+_STEM_SPEC = importlib.util.find_spec("stem")
 STEM_AVAILABLE = _STEM_SPEC is not None
 if STEM_AVAILABLE:
     from stem import Signal
@@ -16,15 +17,19 @@ else:
     Signal = None
     Controller = None
 
+
 class TorManager:
     """Manages Tor circuits with bounded concurrency and isolation."""
+
     MAX_CIRCUITS = 5
     CIRCUIT_REUSE_SECONDS = 60
     DEFAULT_CONTROL_PORT = 9051
-    __slots__ = tuple(('_available', '_circuits', '_control_password', '_control_port', '_controller', '_data_dir', '_lock'))
+    __slots__ = ("_available", "_circuits", "_control_password", "_control_port", "_controller", "_data_dir", "_lock")
 
-    def __init__(self, data_dir: Path | None=None, control_port: int=DEFAULT_CONTROL_PORT, control_password: str=''):
-        self._data_dir = data_dir or Path.home() / '.hledac' / 'tor_state'
+    def __init__(
+        self, data_dir: Path | None = None, control_port: int = DEFAULT_CONTROL_PORT, control_password: str = ""
+    ) -> None:
+        self._data_dir = data_dir or Path.home() / ".hledac" / "tor_state"
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._control_port = control_port
         self._control_password = control_password
@@ -46,10 +51,10 @@ class TorManager:
                 await loop.run_in_executor(None, lambda: self._controller.authenticate(password=self._control_password))
             else:
                 await asyncio.to_thread(self._controller.authenticate)
-            logger.info(f'[TOR] Controller connected on port {self._control_port}')
+            logger.info(f"[TOR] Controller connected on port {self._control_port}")
             return True
         except Exception as e:
-            logger.warning(f'[TOR] Connection failed: {e}')
+            logger.warning(f"[TOR] Connection failed: {e}")
             self._controller = None
             return False
 
@@ -63,20 +68,24 @@ class TorManager:
             now = time.monotonic()
             if domain in self._circuits:
                 circuit = self._circuits[domain]
-                if circuit.get('expires_at', 0) > now:
-                    return circuit['id']
+                if circuit.get("expires_at", 0) > now:
+                    return circuit["id"]
                 else:
                     del self._circuits[domain]
             if len(self._circuits) >= self.MAX_CIRCUITS:
-                oldest = min(self._circuits.items(), key=lambda x: x[1]['created_at'])
+                oldest = min(self._circuits.items(), key=lambda x: x[1]["created_at"])
                 del self._circuits[oldest[0]]
             try:
                 loop = asyncio.get_running_loop()
                 circ_id = await loop.run_in_executor(None, lambda: self._controller.new_circuit())
-                self._circuits[domain] = {'id': circ_id, 'created_at': now, 'expires_at': now + self.CIRCUIT_REUSE_SECONDS}
+                self._circuits[domain] = {
+                    "id": circ_id,
+                    "created_at": now,
+                    "expires_at": now + self.CIRCUIT_REUSE_SECONDS,
+                }
                 return circ_id
             except Exception as e:
-                logger.warning(f'[TOR] Circuit creation failed for {domain}: {e}')
+                logger.warning(f"[TOR] Circuit creation failed for {domain}: {e}")
                 return None
 
     async def rotate_circuit(self) -> bool:
@@ -92,16 +101,16 @@ class TorManager:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, lambda: self._controller.signal(Signal.NEWNYM))
             await asyncio.sleep(1)
-            logger.info('[TOR] Circuit rotated successfully')
+            logger.info("[TOR] Circuit rotated successfully")
             return True
         except Exception as e:
-            logger.error(f'[TOR] rotate_circuit failed: {e}')
+            logger.error(f"[TOR] rotate_circuit failed: {e}")
             return False
 
-    async def close(self):
+    async def close(self) -> None:
         """Close Tor controller."""
         if self._controller and self._controller.is_alive():
             try:
                 await asyncio.to_thread(self._controller.close)
             except Exception as e:
-                logger.warning(f'[TOR] Close failed: {e}')
+                logger.warning(f"[TOR] Close failed: {e}")

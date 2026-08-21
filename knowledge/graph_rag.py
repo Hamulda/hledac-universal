@@ -2,10 +2,6 @@
 GraphRAGOrchestrator - Multi-Hop Reasoning for KuzuDB
 =======================================================
 
-
-
-
-
 ROLE: Consumer/Orchestrator (NOT backend owner)
 ============================================
 Tento modul je consumer/orchestrator pro multi-hop reasoning.
@@ -32,21 +28,24 @@ DEPRECATED - source module deleted:
     - Network metrics
     - Key path analysis
 """
+
 import asyncio
-import threading
-from hledac.universal.utils.asyncx import parallel_ok
-from hledac.universal.utils.sync_bridge import run_sync_async
 import logging
 import re
+import threading
 from collections import deque
-from dataclasses import dataclass, field
-import msgspec
-from hledac.universal.compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from functools import partial
-from typing import Any, Literal
 from operator import attrgetter, itemgetter
+from typing import Any, Literal
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import parallel_ok
+from hledac.universal.utils.sync_bridge import run_sync_async
+
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     np = None
@@ -55,29 +54,34 @@ except ImportError:
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # GraphRAGOrchestrator: rss_mb=400, peak_mb=600 (embedding + k-hop traversal)
 from hledac.universal._core.capability_cost import register_capability_cost
-register_capability_cost("graphragorchestrator", rss_mb=400, peak_mb=600, tier="heavy", tags=("graph", "rag", "embedding"))
+
+register_capability_cost(
+    "graphragorchestrator", rss_mb=400, peak_mb=600, tier="heavy", tags=("graph", "rag", "embedding")
+)
+
 
 def _get_numpy():
     """Lazy getter for numpy with availability check."""
     return np
+
+
 logger = logging.getLogger(__name__)
 from hledac.universal.utils.graph_utils import lazy_ig
-from _core import aclose
+
 
 def _check_ram_for_igraph() -> bool:
     """M1 8GB: skip igraph if RAM headroom < 500MB."""
     try:
         import psutil
-        available_gb = psutil.virtual_memory().available / 1024 ** 3
+
+        available_gb = psutil.virtual_memory().available / 1024**3
         if available_gb < 0.5:
-            logger.debug(f'GraphRAGOrchestrator: RAM headroom {available_gb:.1f}GB < 0.5GB, skipping igraph')
+            logger.debug(f"GraphRAGOrchestrator: RAM headroom {available_gb:.1f}GB < 0.5GB, skipping igraph")
             return False
     except Exception:  # noqa: BLE001
         pass
     return True
 
-
-# ─── Governor QoS integration ─────────────────────────────────────────────────
 
 def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
     """
@@ -96,6 +100,7 @@ def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
     """
     try:
         from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
+
         level = get_current_degradation_level()
         if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
             return 1
@@ -106,6 +111,7 @@ def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
 
 class CentralityScores(Struct):
     """Centrality analysis results for a node."""
+
     node_id: str
     degree: float = 0.0
     betweenness: float = 0.0
@@ -114,16 +120,20 @@ class CentralityScores(Struct):
     pagerank: float = 0.0
     overall_influence: float = 0.0
 
+
 class Community(Struct):
     """Detected community in the graph."""
+
     community_id: int
     nodes: list[str] = field(default_factory=list)
     cohesion_score: float = 0.0
-    dominant_type: str = 'mixed'
+    dominant_type: str = "mixed"
     key_characteristics: list[str] = field(default_factory=list)
+
 
 class GraphContradiction(Struct):
     """Contradiction detected in the graph."""
+
     node_a_id: str
     node_b_id: str
     node_a_content: str
@@ -131,6 +141,7 @@ class GraphContradiction(Struct):
     contradiction_type: str
     severity: float
     resolution_suggestions: list[str] = field(default_factory=list)
+
 
 class GraphRAGOrchestrator:
     """
@@ -146,12 +157,13 @@ class GraphRAGOrchestrator:
     Performs multi-hop search over knowledge graph to find
     relationships that aren't visible in single documents.
     """
+
     MAX_QUEUE_LENGTH = 100
     MAX_VISITED_NODES = 500
     MAX_EXPANSION_PER_NODE = 10
-    __slots__ = tuple(('_embedder', '_embedder_lock', '_score_semaphore', '_score_semaphore_lock', 'knowledge_layer'))
+    __slots__ = ("_embedder", "_embedder_lock", "_score_semaphore", "_score_semaphore_lock", "knowledge_layer")
 
-    def __init__(self, knowledge_layer):
+    def __init__(self, knowledge_layer) -> None:
         """
         Initialize GraphRAG orchestrator.
 
@@ -163,7 +175,7 @@ class GraphRAGOrchestrator:
         self._embedder_lock = None
         self._score_semaphore: asyncio.Semaphore | None = None
         self._score_semaphore_lock = None
-        logger.info('GraphRAGOrchestrator initialized')
+        logger.info("GraphRAGOrchestrator initialized")
 
     async def _get_embedder(self):
         """
@@ -180,10 +192,11 @@ class GraphRAGOrchestrator:
                 if self._embedder is None:
                     try:
                         from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
                         self._embedder = get_mlx_embedder()
-                        logger.debug('[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton')
+                        logger.debug("[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton")
                     except Exception as e:
-                        logger.warning(f'Failed to get shared embedder: {e}')
+                        logger.warning(f"Failed to get shared embedder: {e}")
                         return None
         return self._embedder
 
@@ -195,10 +208,13 @@ class GraphRAGOrchestrator:
             async with self._score_semaphore_lock:
                 if self._score_semaphore is None:
                     from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
                     self._score_semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
         return self._score_semaphore
 
-    async def score_path(self, path: list[str], hypothesis: str, hypothesis_emb: list[float] | None=None, max_nodes: int=10) -> float:
+    async def score_path(
+        self, path: list[str], hypothesis: str, hypothesis_emb: list[float] | None = None, max_nodes: int = 10
+    ) -> float:
         """
         Score a path in the knowledge graph based on:
         - Path length (shorter is better)
@@ -215,6 +231,7 @@ class GraphRAGOrchestrator:
             Score between 0 and 1
         """
         import numpy as np
+
         if len(path) < 2:
             return 0.0
         nodes_to_score = path[:max_nodes]
@@ -229,13 +246,16 @@ class GraphRAGOrchestrator:
                     if node:
                         emb = node.embedding if node.embedding else None
                         conf = None
-                        if node.metadata and 'confidence' in node.metadata:
-                            conf = float(node.metadata['confidence'])
+                        if node.metadata and "confidence" in node.metadata:
+                            conf = float(node.metadata["confidence"])
                         return (node_id, emb, conf)
                 except Exception:  # noqa: BLE001
                     pass
                 return (node_id, None, None)
-        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await parallel_ok(*[fetch_node_with_semaphore(n) for n in nodes_to_score], label='graph_rag:score_node_embeddings')
+
+        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await parallel_ok(
+            *[fetch_node_with_semaphore(n) for n in nodes_to_score], label="graph_rag:score_node_embeddings"
+        )
         node_embeddings: list[np.ndarray] = []
         confidences: list[float] = []
         for result in fetch_results:
@@ -259,7 +279,9 @@ class GraphRAGOrchestrator:
                         try:
                             emb_result = await asyncio.to_thread(embedder.embed_document, hypothesis)
                             if emb_result is not None and emb_result:
-                                hypothesis_emb = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
+                                hypothesis_emb = (
+                                    emb_result.tolist() if hasattr(emb_result, "tolist") else list(emb_result)
+                                )
                             else:
                                 hypothesis_emb = [0.0] * 384
                         except Exception:
@@ -268,16 +290,19 @@ class GraphRAGOrchestrator:
                         hypothesis_arr = np.array(hypothesis_emb)
                         norm_hyp = np.linalg.norm(hypothesis_arr)
                         if norm_hyp > 0:
-                            sims = [np.dot(hypothesis_arr, emb) / (norm_hyp * np.linalg.norm(emb) + 1e-08) for emb in node_embeddings]
+                            sims = [
+                                np.dot(hypothesis_arr, emb) / (norm_hyp * np.linalg.norm(emb) + 1e-08)
+                                for emb in node_embeddings
+                            ]
                             relevance_score = float(np.mean(sims))
         except Exception as e:
-            logger.debug(f'score_path relevance computation failed: {e}')
+            logger.debug(f"score_path relevance computation failed: {e}")
             relevance_score = 0.5
         credibility = sum(confidences) / len(confidences) if confidences else 0.5
         final_score = 0.4 * length_score + 0.4 * relevance_score + 0.2 * credibility
         return float(max(0.0, min(1.0, final_score)))
 
-    async def score_paths_parallel(self, paths: list[list[str]], hypothesis: str, max_nodes: int=10) -> list[float]:
+    async def score_paths_parallel(self, paths: list[list[str]], hypothesis: str, max_nodes: int = 10) -> list[float]:
         """
         Score multiple paths in parallel with bounded concurrency.
 
@@ -300,18 +325,32 @@ class GraphRAGOrchestrator:
             if embedder is not None:
                 emb_result = await asyncio.to_thread(embedder.embed_document, hypothesis)
                 if emb_result is not None and len(emb_result) > 0:
-                    hypothesis_emb = emb_result.tolist() if hasattr(emb_result, 'tolist') else list(emb_result)
+                    hypothesis_emb = emb_result.tolist() if hasattr(emb_result, "tolist") else list(emb_result)
         except Exception as e:
-            logger.debug(f'score_paths_parallel: hypothesis embedding failed: {e}')
+            logger.debug(f"score_paths_parallel: hypothesis embedding failed: {e}")
         semaphore = await self._get_score_semaphore()
 
         async def score_with_semaphore(path: list[str]) -> float:
             async with semaphore:
                 return await self.score_path(path, hypothesis, hypothesis_emb, max_nodes)
-        results = await parallel_ok(*[score_with_semaphore(path) for path in paths], label='graph_rag:score_paths_parallel')
+
+        results = await parallel_ok(
+            *[score_with_semaphore(path) for path in paths], label="graph_rag:score_paths_parallel"
+        )
         return [float(r) if isinstance(r, (int, float)) else 0.0 for r in results]
 
-    async def multi_hop_search(self, query: str, hops: int=2, max_nodes: int=20, timeline: bool=False, time_min: str | None=None, time_max: str | None=None, prefer_recent: bool=True, bucket: str='month', max_timeline_points: int=12) -> dict[str, Any]:
+    async def multi_hop_search(
+        self,
+        query: str,
+        hops: int = 2,
+        max_nodes: int = 20,
+        timeline: bool = False,
+        time_min: str | None = None,
+        time_max: str | None = None,
+        prefer_recent: bool = True,
+        bucket: str = "month",
+        max_timeline_points: int = 12,
+    ) -> dict[str, Any]:
         """
         Perform multi-hop search over the knowledge graph with path evidence.
 
@@ -344,18 +383,20 @@ class GraphRAGOrchestrator:
         """
         # [FINAL]-019-06: Cap hops under CRITICAL/MINIMAL QoS to reduce traversal cost.
         hops = get_degradation_safe_max_hops(hops)
-        logger.info(f"🔍 Multi-hop search: query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}, prefer_recent={prefer_recent}")
+        logger.info(
+            f"🔍 Multi-hop search: query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}, prefer_recent={prefer_recent}"
+        )
         seed_entities: set[str] = set()
         visited: set[str] = set()
         paths: list[dict[str, Any]] = []
         all_facts: list[dict[str, Any]] = []
         initial_results = await self.knowledge_layer.search(query, limit=10)
-        logger.info(f'  Hop 0: Found {len(initial_results)} initial nodes')
+        logger.info(f"  Hop 0: Found {len(initial_results)} initial nodes")
         seed_doc_entities: set[str] = set()
         if initial_results:
             top_doc = initial_results[0][0]
             seed_doc_entities = self._extract_entities_from_node(top_doc)
-            logger.debug(f'  Seed doc entities: {len(seed_doc_entities)}')
+            logger.debug(f"  Seed doc entities: {len(seed_doc_entities)}")
         for node, similarity in initial_results:
             node_id = node.id
             if node_id in visited:
@@ -363,9 +404,31 @@ class GraphRAGOrchestrator:
             visited.add(node_id)
             node_entities = self._extract_entities_from_node(node)
             seed_entities.update(node_entities)
-            fact = {'content': node.content, 'node_id': node_id, 'node_type': node.node_type.value, 'hop': 0, 'similarity': similarity, 'path': [node_id], 'path_content': [node.content], 'relations': [], 'metadata': node.metadata, 'evidence_ids': [node_id], 'novelty_score': 0.0, 'novelty_failed': False}
+            fact = {
+                "content": node.content,
+                "node_id": node_id,
+                "node_type": node.node_type.value,
+                "hop": 0,
+                "similarity": similarity,
+                "path": [node_id],
+                "path_content": [node.content],
+                "relations": [],
+                "metadata": node.metadata,
+                "evidence_ids": [node_id],
+                "novelty_score": 0.0,
+                "novelty_failed": False,
+            }
             all_facts.append(fact)
-            paths.append({'nodes': [node_id], 'node_types': [node.node_type.value], 'relations': [], 'score': similarity, 'evidence_ids': [node_id], 'hop': 0})
+            paths.append(
+                {
+                    "nodes": [node_id],
+                    "node_types": [node.node_type.value],
+                    "relations": [],
+                    "score": similarity,
+                    "evidence_ids": [node_id],
+                    "hop": 0,
+                }
+            )
         # MODERN-36 PERFORMANCE OPTIMIZATION: Parallel hop traversal
         # Run multiple hops concurrently to reduce latency for deep graph queries
         # Limit concurrency to 3 hops at a time to balance parallelism with memory
@@ -376,7 +439,7 @@ class GraphRAGOrchestrator:
         async def _traverse_hop_async(hop: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             """
             Async wrapper for hop traversal with semaphore-based concurrency control.
-            
+
             MODERN-36 FIX: Runs _traverse_hop_with_paths in a thread pool executor
             to avoid blocking the event loop during synchronous I/O operations.
             """
@@ -384,48 +447,48 @@ class GraphRAGOrchestrator:
                 # Use lock to safely read/write visited set across async boundary
                 async with _visited_lock:
                     current_visited = visited.copy()
-                    current_len = len(visited)
+                    len(visited)
 
                 # MODERN-36 FIX: Run synchronous traversal in thread pool
                 # This prevents blocking the event loop during graph traversal
                 # which involves I/O-bound get_node and get_related_sync calls
                 new_facts, new_paths = await asyncio.to_thread(
-                    self._traverse_hop_with_paths,
-                    current_visited, hop, max_nodes, seed_entities, seed_doc_entities
+                    self._traverse_hop_with_paths, current_visited, hop, max_nodes, seed_entities, seed_doc_entities
                 )
 
-                # Update visited with lock
                 async with _visited_lock:
                     for fact in new_facts:
-                        if 'node_id' in fact and fact['node_id'] not in visited:
-                            visited.add(fact['node_id'])
+                        if "node_id" in fact and fact["node_id"] not in visited:
+                            visited.add(fact["node_id"])
 
                 return new_facts, new_paths
 
-        # Run hops in parallel with controlled concurrency
         if hops > 1:
             import asyncio
+
             hop_tasks = [_traverse_hop_async(hop) for hop in range(1, hops + 1)]
             # Use gather to run hops in parallel (semaphore limits concurrency)
             hop_results = await asyncio.gather(*hop_tasks, return_exceptions=True)
 
             for i, result in enumerate(hop_results):
                 if isinstance(result, Exception):
-                    logger.warning(f'Hop {i+1} traversal failed: {result}')
+                    logger.warning(f"Hop {i + 1} traversal failed: {result}")
                     continue
                 new_facts, new_paths = result
                 all_facts.extend(new_facts)
                 paths.extend(new_paths)
-                logger.info(f'  Hop {i+1}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
+                logger.info(f"  Hop {i + 1}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths")
                 if len(visited) >= max_nodes:
                     break
         else:
             # Single hop - use original sequential path
             for hop in range(1, hops + 1):
-                new_facts, new_paths = self._traverse_hop_with_paths(visited, hop, max_nodes, seed_entities, seed_doc_entities)
+                new_facts, new_paths = self._traverse_hop_with_paths(
+                    visited, hop, max_nodes, seed_entities, seed_doc_entities
+                )
                 all_facts.extend(new_facts)
                 paths.extend(new_paths)
-                logger.info(f'  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
+                logger.info(f"  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths")
                 if len(visited) >= max_nodes:
                     break
         all_facts = self._deduplicate_facts(all_facts)
@@ -433,7 +496,7 @@ class GraphRAGOrchestrator:
         novel_facts = []
         novelty_failed_count = 0
         for fact in all_facts[:max_nodes]:
-            if fact.get('novelty_failed', False):
+            if fact.get("novelty_failed", False):
                 novelty_failed_count += 1
             novel_facts.append(fact)
         if time_min or time_max:
@@ -450,11 +513,26 @@ class GraphRAGOrchestrator:
         paths = paths[:max_nodes]
         primary_paths = primary_paths[:10]
         counter_paths = counter_paths[:5]
-        logger.info(f'[GRAPH MULTIHOP] total_facts={len(all_facts)}, novel_facts={len(novel_facts)}, novelty_failed={novelty_failed_count}, paths={len(paths)}, contested={contested}, counter_paths={len(counter_paths)}, narratives={len(narratives)}, timeline_points={len(timeline_points)}, drift_events={len(drift_events)}')
-        result = {'insights': primary_paths, 'paths': paths, 'summary_text': summary_text, 'novelty_stats': {'total_facts': len(all_facts), 'novel_facts': len(novel_facts), 'novelty_failed': novelty_failed_count, 'seed_entities': len(seed_entities)}, 'contested': contested, 'counter_paths': counter_paths, 'narratives': narratives}
+        logger.info(
+            f"[GRAPH MULTIHOP] total_facts={len(all_facts)}, novel_facts={len(novel_facts)}, novelty_failed={novelty_failed_count}, paths={len(paths)}, contested={contested}, counter_paths={len(counter_paths)}, narratives={len(narratives)}, timeline_points={len(timeline_points)}, drift_events={len(drift_events)}"
+        )
+        result = {
+            "insights": primary_paths,
+            "paths": paths,
+            "summary_text": summary_text,
+            "novelty_stats": {
+                "total_facts": len(all_facts),
+                "novel_facts": len(novel_facts),
+                "novelty_failed": novelty_failed_count,
+                "seed_entities": len(seed_entities),
+            },
+            "contested": contested,
+            "counter_paths": counter_paths,
+            "narratives": narratives,
+        }
         if timeline:
-            result['timeline_points'] = timeline_points
-            result['drift_events'] = drift_events
+            result["timeline_points"] = timeline_points
+            result["drift_events"] = drift_events
         return result
 
     def _run_async_safe(self, coro):
@@ -474,7 +552,18 @@ class GraphRAGOrchestrator:
             return loop.run_until_complete(coro)
         return run_sync_async(coro)
 
-    def multi_hop_search_sync(self, query: str, hops: int=2, max_nodes: int=20, timeline: bool=False, time_min: str | None=None, time_max: str | None=None, prefer_recent: bool=True, bucket: str='month', max_timeline_points: int=12) -> dict[str, Any]:
+    def multi_hop_search_sync(
+        self,
+        query: str,
+        hops: int = 2,
+        max_nodes: int = 20,
+        timeline: bool = False,
+        time_min: str | None = None,
+        time_max: str | None = None,
+        prefer_recent: bool = True,
+        bucket: str = "month",
+        max_timeline_points: int = 12,
+    ) -> dict[str, Any]:
         """
         Synchronous version of multi-hop search with path evidence.
 
@@ -497,16 +586,18 @@ class GraphRAGOrchestrator:
         """
         # [FINAL]-019-06: Cap hops under CRITICAL/MINIMAL QoS.
         hops = get_degradation_safe_max_hops(hops)
-        logger.info(f"🔍 Multi-hop search (sync): query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}")
+        logger.info(
+            f"🔍 Multi-hop search (sync): query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}"
+        )
         seed_entities: set[str] = set()
         visited: set[str] = set()
         paths: list[dict[str, Any]] = []
         all_facts: list[dict[str, Any]] = []
-        if hasattr(self.knowledge_layer, 'search_sync'):
+        if hasattr(self.knowledge_layer, "search_sync"):
             initial_results = self.knowledge_layer.search_sync(query, limit=10)
         else:
             initial_results = self._run_async_safe(self.knowledge_layer.search(query, limit=10))
-        logger.info(f'  Hop 0: Found {len(initial_results)} initial nodes')
+        logger.info(f"  Hop 0: Found {len(initial_results)} initial nodes")
         seed_doc_entities: set[str] = set()
         if initial_results:
             top_doc = initial_results[0][0]
@@ -518,14 +609,38 @@ class GraphRAGOrchestrator:
             visited.add(node_id)
             node_entities = self._extract_entities_from_node(node)
             seed_entities.update(node_entities)
-            fact = {'content': node.content, 'node_id': node_id, 'node_type': node.node_type.value, 'hop': 0, 'similarity': similarity, 'path': [node_id], 'path_content': [node.content], 'relations': [], 'metadata': node.metadata, 'evidence_ids': [node_id], 'novelty_score': 0.0, 'novelty_failed': False}
+            fact = {
+                "content": node.content,
+                "node_id": node_id,
+                "node_type": node.node_type.value,
+                "hop": 0,
+                "similarity": similarity,
+                "path": [node_id],
+                "path_content": [node.content],
+                "relations": [],
+                "metadata": node.metadata,
+                "evidence_ids": [node_id],
+                "novelty_score": 0.0,
+                "novelty_failed": False,
+            }
             all_facts.append(fact)
-            paths.append({'nodes': [node_id], 'node_types': [node.node_type.value], 'relations': [], 'score': similarity, 'evidence_ids': [node_id], 'hop': 0})
+            paths.append(
+                {
+                    "nodes": [node_id],
+                    "node_types": [node.node_type.value],
+                    "relations": [],
+                    "score": similarity,
+                    "evidence_ids": [node_id],
+                    "hop": 0,
+                }
+            )
         for hop in range(1, hops + 1):
-            new_facts, new_paths = self._traverse_hop_with_paths(visited, hop, max_nodes, seed_entities, seed_doc_entities)
+            new_facts, new_paths = self._traverse_hop_with_paths(
+                visited, hop, max_nodes, seed_entities, seed_doc_entities
+            )
             all_facts.extend(new_facts)
             paths.extend(new_paths)
-            logger.info(f'  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths')
+            logger.info(f"  Hop {hop}: Found {len(new_facts)} new nodes, {len(new_paths)} new paths")
             if len(visited) >= max_nodes:
                 break
         all_facts = self._deduplicate_facts(all_facts)
@@ -533,7 +648,7 @@ class GraphRAGOrchestrator:
         novel_facts = []
         novelty_failed_count = 0
         for fact in all_facts[:max_nodes]:
-            if fact.get('novelty_failed', False):
+            if fact.get("novelty_failed", False):
                 novelty_failed_count += 1
             novel_facts.append(fact)
         if time_min or time_max:
@@ -550,14 +665,29 @@ class GraphRAGOrchestrator:
         paths = paths[:max_nodes]
         primary_paths = primary_paths[:10]
         counter_paths = counter_paths[:5]
-        logger.info(f'[GRAPH MULTIHOP] total_facts={len(all_facts)}, novel_facts={len(novel_facts)}, novelty_failed={novelty_failed_count}, contested={contested}, counter_paths={len(counter_paths)}, narratives={len(narratives)}, timeline_points={len(timeline_points)}')
-        result = {'insights': primary_paths, 'paths': paths, 'summary_text': summary_text, 'novelty_stats': {'total_facts': len(all_facts), 'novel_facts': len(novel_facts), 'novelty_failed': novelty_failed_count, 'seed_entities': len(seed_entities)}, 'contested': contested, 'counter_paths': counter_paths, 'narratives': narratives}
+        logger.info(
+            f"[GRAPH MULTIHOP] total_facts={len(all_facts)}, novel_facts={len(novel_facts)}, novelty_failed={novelty_failed_count}, contested={contested}, counter_paths={len(counter_paths)}, narratives={len(narratives)}, timeline_points={len(timeline_points)}"
+        )
+        result = {
+            "insights": primary_paths,
+            "paths": paths,
+            "summary_text": summary_text,
+            "novelty_stats": {
+                "total_facts": len(all_facts),
+                "novel_facts": len(novel_facts),
+                "novelty_failed": novelty_failed_count,
+                "seed_entities": len(seed_entities),
+            },
+            "contested": contested,
+            "counter_paths": counter_paths,
+            "narratives": narratives,
+        }
         if timeline:
-            result['timeline_points'] = timeline_points
-            result['drift_events'] = drift_events
+            result["timeline_points"] = timeline_points
+            result["drift_events"] = drift_events
         return result
 
-    def _traverse_hop(self, visited: set[str], hop: int, max_nodes: int, max_edges: int=500) -> list[dict[str, Any]]:
+    def _traverse_hop(self, visited: set[str], hop: int, max_nodes: int, max_edges: int = 500) -> list[dict[str, Any]]:
         """
         Traverse one hop in the graph with RAM-efficient frontier management.
 
@@ -577,7 +707,7 @@ class GraphRAGOrchestrator:
             if edges_traversed >= max_edges or len(visited) >= max_nodes:
                 break
             related = self.knowledge_layer.get_related_sync(node_id, max_depth=1)
-            edges = related.get('edges', [])
+            edges = related.get("edges", [])
             for edge in edges:
                 if edges_traversed >= max_edges:
                     break
@@ -585,7 +715,7 @@ class GraphRAGOrchestrator:
                 related_id = edge.target_id if edge.source_id == node_id else edge.source_id
                 if related_id in visited:
                     continue
-                related_node = related.get('nodes', {}).get(related_id)
+                related_node = related.get("nodes", {}).get(related_id)
                 if not related_node:
                     continue
                 visited.add(related_id)
@@ -596,7 +726,14 @@ class GraphRAGOrchestrator:
                     path = [source_node.content, related_node.content]
                 else:
                     path = [related_node.content]
-                fact = {'content': related_node.content, 'node_type': related_node.node_type.value, 'hop': hop, 'similarity': 1.0 - hop * 0.2, 'path': path, 'metadata': related_node.metadata}
+                fact = {
+                    "content": related_node.content,
+                    "node_type": related_node.node_type.value,
+                    "hop": hop,
+                    "similarity": 1.0 - hop * 0.2,
+                    "path": path,
+                    "metadata": related_node.metadata,
+                }
                 new_facts.append(fact)
         return new_facts
 
@@ -613,11 +750,11 @@ class GraphRAGOrchestrator:
         seen = set()
         unique_facts = []
         for fact in facts:
-            content = fact['content'].lower().strip()
+            content = fact["content"].lower().strip()
             if content not in seen:
                 seen.add(content)
                 unique_facts.append(fact)
-        logger.debug(f'Deduplicated: {len(facts)} -> {len(unique_facts)} facts')
+        logger.debug(f"Deduplicated: {len(facts)} -> {len(unique_facts)} facts")
         return unique_facts
 
     def _rank_facts(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -632,17 +769,20 @@ class GraphRAGOrchestrator:
         """
 
         def calculate_score(fact: dict[str, Any]) -> float:
-            similarity = fact.get('similarity', 0.5)
-            hop = fact.get('hop', 0)
-            node_type = fact.get('node_type', 'fact')
-            type_bonus = {'fact': 1.0, 'entity': 0.9, 'concept': 0.8, 'event': 0.7, 'url': 0.5, 'document': 0.6}.get(node_type, 0.5)
+            similarity = fact.get("similarity", 0.5)
+            hop = fact.get("hop", 0)
+            node_type = fact.get("node_type", "fact")
+            type_bonus = {"fact": 1.0, "entity": 0.9, "concept": 0.8, "event": 0.7, "url": 0.5, "document": 0.6}.get(
+                node_type, 0.5
+            )
             hop_penalty = max(0, 1.0 - hop * 0.15)
             score = similarity * type_bonus * hop_penalty
             return score
+
         ranked_facts = sorted(facts, key=calculate_score, reverse=True)
         return ranked_facts
 
-    def ask_with_reasoning(self, question: str, hops: int=2, max_nodes: int=20) -> dict[str, Any]:
+    def ask_with_reasoning(self, question: str, hops: int = 2, max_nodes: int = 20) -> dict[str, Any]:
         """
         Ask a question with multi-hop reasoning.
 
@@ -657,18 +797,35 @@ class GraphRAGOrchestrator:
             Dictionary with facts and reasoning paths
         """
         result = self.multi_hop_search(question, hops=hops, max_nodes=max_nodes)
-        facts = result.get('insights', [])
-        paths = result.get('paths', [])
+        facts = result.get("insights", [])
+        paths = result.get("paths", [])
         reasoning_paths = []
         for fact in facts:
-            if 'path_content' in fact and len(fact['path_content']) > 1:
-                path_str = ' -> '.join(fact['path_content'])
-                reasoning_paths.append({'path': path_str, 'hop': fact.get('hop', 1), 'content': fact.get('content', ''), 'novelty_score': fact.get('novelty_score', 0.0), 'novelty_failed': fact.get('novelty_failed', False)})
-        output = {'question': question, 'facts': facts, 'reasoning_paths': reasoning_paths, 'graph_paths': paths, 'summary': result.get('summary_text', ''), 'novelty_stats': result.get('novelty_stats', {}), 'fact_count': len(facts), 'path_count': len(reasoning_paths)}
-        logger.info(f'🧠 Reasoning complete: {len(facts)} facts, {len(reasoning_paths)} paths')
+            if "path_content" in fact and len(fact["path_content"]) > 1:
+                path_str = " -> ".join(fact["path_content"])
+                reasoning_paths.append(
+                    {
+                        "path": path_str,
+                        "hop": fact.get("hop", 1),
+                        "content": fact.get("content", ""),
+                        "novelty_score": fact.get("novelty_score", 0.0),
+                        "novelty_failed": fact.get("novelty_failed", False),
+                    }
+                )
+        output = {
+            "question": question,
+            "facts": facts,
+            "reasoning_paths": reasoning_paths,
+            "graph_paths": paths,
+            "summary": result.get("summary_text", ""),
+            "novelty_stats": result.get("novelty_stats", {}),
+            "fact_count": len(facts),
+            "path_count": len(reasoning_paths),
+        }
+        logger.info(f"🧠 Reasoning complete: {len(facts)} facts, {len(reasoning_paths)} paths")
         return output
 
-    async def find_connections(self, entity1: str, entity2: str, max_hops: int=3) -> list[dict[str, Any]]:
+    async def find_connections(self, entity1: str, entity2: str, max_hops: int = 3) -> list[dict[str, Any]]:
         """
         Find connection paths between two entities (async, parallel node fetch).
 
@@ -688,17 +845,21 @@ class GraphRAGOrchestrator:
         import hashlib
 
         def get_entity_id(name: str) -> str:
-            return hashlib.sha256(name.encode('utf-8')).hexdigest()[:16]
+            return hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+
         entity1_id = get_entity_id(entity1)
         entity2_id = get_entity_id(entity2)
         from hledac.universal.runtime.worker_pool import get_rust_pool
-        pool = get_rust_pool('io')
+
+        pool = get_rust_pool("io")
         bfs_fn = partial(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
         paths = await pool.submit(bfs_fn)
         logger.info(f"Found {len(paths)} paths between '{entity1}' and '{entity2}'")
         return paths
 
-    def _find_paths_bfs(self, start_id: str, target_id: str, max_hops: int, current_path: list[str], visited: set[str]) -> list[dict[str, Any]]:
+    def _find_paths_bfs(
+        self, start_id: str, target_id: str, max_hops: int, current_path: list[str], visited: set[str]
+    ) -> list[dict[str, Any]]:
         """
         BFS to find paths between nodes (runs in thread pool).
 
@@ -711,13 +872,19 @@ class GraphRAGOrchestrator:
         current_path.append(start_id)
         visited.add(start_id)
         if start_id == target_id:
-            node_contents = [node.content for node_id in current_path if (node := self.knowledge_layer._backend.get_node(node_id)) and node.content]
-            paths.append({'path': ' -> '.join(node_contents), 'length': len(current_path) - 1})
+            node_contents = [
+                node.content
+                for node_id in current_path
+                if (node := self.knowledge_layer._backend.get_node(node_id)) and node.content
+            ]
+            paths.append({"path": " -> ".join(node_contents), "length": len(current_path) - 1})
         else:
             related = self.knowledge_layer.get_related(start_id, max_depth=1)
-            for related_id in related.get('nodes', {}):
+            for related_id in related.get("nodes", {}):
                 if related_id not in visited:
-                    sub_paths = self._find_paths_bfs(related_id, target_id, max_hops, current_path.copy(), visited.copy())
+                    sub_paths = self._find_paths_bfs(
+                        related_id, target_id, max_hops, current_path.copy(), visited.copy()
+                    )
                     paths.extend(sub_paths)
         current_path.pop()
         visited.discard(start_id)
@@ -731,7 +898,7 @@ class GraphRAGOrchestrator:
             Dictionary with statistics
         """
         stats = self.knowledge_layer.get_statistics()
-        stats['graph_rag_initialized'] = True
+        stats["graph_rag_initialized"] = True
         return stats
 
     def shutdown(self) -> None:
@@ -741,9 +908,8 @@ class GraphRAGOrchestrator:
         (io_pool, cpu_pool) are process-level singletons managed by Rust.
         No explicit shutdown needed from Python side.
         """
-        pass
 
-    def calculate_centrality(self, node_ids: list[str] | None=None, top_k: int=10) -> list[CentralityScores]:
+    def calculate_centrality(self, node_ids: list[str] | None = None, top_k: int = 10) -> list[CentralityScores]:
         """
         Calculate centrality measures for nodes in the graph.
 
@@ -769,25 +935,35 @@ class GraphRAGOrchestrator:
             scores = CentralityScores(node_id=node_id)
             if ig_centrality and node_id in ig_centrality:
                 c = ig_centrality[node_id]
-                scores.degree = c.get('degree', 0.0)
-                scores.betweenness = c.get('betweenness', 0.0)
-                scores.closeness = c.get('closeness', 0.0)
-                scores.eigenvector = c.get('eigenvector', 0.0)
-                scores.pagerank = c.get('pagerank', 0.0)
+                scores.degree = c.get("degree", 0.0)
+                scores.betweenness = c.get("betweenness", 0.0)
+                scores.closeness = c.get("closeness", 0.0)
+                scores.eigenvector = c.get("eigenvector", 0.0)
+                scores.pagerank = c.get("pagerank", 0.0)
             else:
                 if node_id in adjacency:
                     scores.degree = len(adjacency[node_id]) / max(n - 1, 1)
-                scores.betweenness = self._get_centrality_metric(node_id, 'betweenness', adjacency, node_ids, ig_centrality)
-                scores.closeness = self._get_centrality_metric(node_id, 'closeness', adjacency, node_ids, ig_centrality)
-                scores.eigenvector = self._get_centrality_metric(node_id, 'eigenvector', adjacency, node_ids, ig_centrality)
-                scores.pagerank = self._get_centrality_metric(node_id, 'pagerank', adjacency, node_ids, ig_centrality)
-            scores.overall_influence = scores.degree * 0.15 + scores.betweenness * 0.25 + scores.closeness * 0.2 + scores.eigenvector * 0.2 + scores.pagerank * 0.2
+                scores.betweenness = self._get_centrality_metric(
+                    node_id, "betweenness", adjacency, node_ids, ig_centrality
+                )
+                scores.closeness = self._get_centrality_metric(node_id, "closeness", adjacency, node_ids, ig_centrality)
+                scores.eigenvector = self._get_centrality_metric(
+                    node_id, "eigenvector", adjacency, node_ids, ig_centrality
+                )
+                scores.pagerank = self._get_centrality_metric(node_id, "pagerank", adjacency, node_ids, ig_centrality)
+            scores.overall_influence = (
+                scores.degree * 0.15
+                + scores.betweenness * 0.25
+                + scores.closeness * 0.2
+                + scores.eigenvector * 0.2
+                + scores.pagerank * 0.2
+            )
             centrality_scores.append(scores)
         centrality_scores.sort(key=attrgetter("overall_influence"), reverse=True)
-        logger.info(f'Calculated centrality for {len(centrality_scores)} nodes (igraph={bool(ig_centrality)})')
+        logger.info(f"Calculated centrality for {len(centrality_scores)} nodes (igraph={bool(ig_centrality)})")
         return centrality_scores[:top_k]
 
-    def detect_communities(self, num_communities: int=3) -> list[Community]:
+    def detect_communities(self, num_communities: int = 3) -> list[Community]:
         """
         Detect communities in the knowledge graph.
 
@@ -822,10 +998,10 @@ class GraphRAGOrchestrator:
             community.key_characteristics = self._extract_community_characteristics(node_list)
             enriched_communities.append(community)
         enriched_communities.sort(key=attrgetter("cohesion_score"), reverse=True)
-        logger.info(f'Detected {len(enriched_communities)} communities')
+        logger.info(f"Detected {len(enriched_communities)} communities")
         return enriched_communities
 
-    def find_contradictions(self, confidence_threshold: float=0.7) -> list[GraphContradiction]:
+    def find_contradictions(self, confidence_threshold: float = 0.7) -> list[GraphContradiction]:
         """
         Find contradictions between nodes in the graph.
 
@@ -848,7 +1024,7 @@ class GraphRAGOrchestrator:
             if not node:
                 continue
             related = self.knowledge_layer.get_related(node_id, max_depth=1)
-            for related_id, related_node in related.get('nodes', {}).items():
+            for related_id, related_node in related.get("nodes", {}).items():
                 pair_key = tuple(sorted([node_id, related_id]))
                 if pair_key in checked_pairs:
                     continue
@@ -857,10 +1033,12 @@ class GraphRAGOrchestrator:
                 if contradiction and contradiction.severity >= confidence_threshold:
                     contradictions.append(contradiction)
         contradictions.sort(key=attrgetter("severity"), reverse=True)
-        logger.info(f'Found {len(contradictions)} contradictions')
+        logger.info(f"Found {len(contradictions)} contradictions")
         return contradictions
 
-    async def analyze_key_paths(self, start_node_id: str, target_node_id: str, max_hops: int=3) -> list[dict[str, Any]]:
+    async def analyze_key_paths(
+        self, start_node_id: str, target_node_id: str, max_hops: int = 3
+    ) -> list[dict[str, Any]]:
         """
         Analyze key paths between two nodes (async).
 
@@ -878,12 +1056,16 @@ class GraphRAGOrchestrator:
         Returns:
             List of paths with confidence scores
         """
-        paths = await self.find_connections(self._get_node_content(start_node_id) or start_node_id, self._get_node_content(target_node_id) or target_node_id, max_hops=max_hops)
+        paths = await self.find_connections(
+            self._get_node_content(start_node_id) or start_node_id,
+            self._get_node_content(target_node_id) or target_node_id,
+            max_hops=max_hops,
+        )
         for path in paths:
-            path_length = path.get('length', 0)
-            path['confidence'] = max(0.3, 1.0 - path_length * 0.2)
-            path['is_key_path'] = path_length <= 2
-        paths.sort(key=attrgetter("get")('confidence', 0), reverse=True)
+            path_length = path.get("length", 0)
+            path["confidence"] = max(0.3, 1.0 - path_length * 0.2)
+            path["is_key_path"] = path_length <= 2
+        paths.sort(key=attrgetter("get")("confidence", 0), reverse=True)
         return paths
 
     def calculate_network_metrics(self) -> dict[str, Any]:
@@ -905,14 +1087,22 @@ class GraphRAGOrchestrator:
             return {}
         adjacency = self._build_adjacency_list(node_ids)
         num_nodes = len(node_ids)
-        num_edges = sum((len(neighbors) for neighbors in adjacency.values())) // 2
+        num_edges = sum(len(neighbors) for neighbors in adjacency.values()) // 2
         max_edges = num_nodes * (num_nodes - 1) // 2
         density = num_edges / max_edges if max_edges > 0 else 0
         avg_degree = 2 * num_edges / num_nodes if num_nodes > 0 else 0
         clustering = self._calculate_clustering_coefficient(adjacency, node_ids)
         avg_path_length = self._calculate_average_path_length(adjacency, node_ids)
-        metrics = {'num_nodes': num_nodes, 'num_edges': num_edges, 'density': density, 'average_degree': avg_degree, 'clustering_coefficient': clustering, 'average_path_length': avg_path_length, 'connectivity': 'high' if density > 0.3 else 'medium' if density > 0.1 else 'low'}
-        logger.info(f'Network metrics: {metrics}')
+        metrics = {
+            "num_nodes": num_nodes,
+            "num_edges": num_edges,
+            "density": density,
+            "average_degree": avg_degree,
+            "clustering_coefficient": clustering,
+            "average_path_length": avg_path_length,
+            "connectivity": "high" if density > 0.3 else "medium" if density > 0.1 else "low",
+        }
+        logger.info(f"Network metrics: {metrics}")
         return metrics
 
     def _get_all_node_ids(self) -> list[str]:
@@ -924,7 +1114,7 @@ class GraphRAGOrchestrator:
         adjacency = {node_id: set() for node_id in node_ids}
         for node_id in node_ids:
             related = self.knowledge_layer.get_related(node_id, max_depth=1)
-            for related_id in related.get('nodes', {}).keys():
+            for related_id in related.get("nodes", {}).keys():
                 if related_id in adjacency:
                     adjacency[node_id].add(related_id)
         return adjacency
@@ -984,7 +1174,9 @@ class GraphRAGOrchestrator:
         except Exception:
             return fallback
 
-    def _calculate_centrality_igraph(self, adjacency: dict[str, set[str]], all_nodes: list[str]) -> dict[str, dict[str, float]]:
+    def _calculate_centrality_igraph(
+        self, adjacency: dict[str, set[str]], all_nodes: list[str]
+    ) -> dict[str, dict[str, float]]:
         """Calculate all centrality metrics via Rust rayon (primary) or igraph C-core (fallback).
 
         Returns {node_id: {degree, betweenness, closeness, eigenvector, pagerank}}.
@@ -998,8 +1190,11 @@ class GraphRAGOrchestrator:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _rust_ext = rust.raw.module
-            adj_list: list[tuple[str, list[str]]] = [(node_id, list(neighbors)) for node_id, neighbors in adjacency.items()]
+            adj_list: list[tuple[str, list[str]]] = [
+                (node_id, list(neighbors)) for node_id, neighbors in adjacency.items()
+            ]
             rust_result = _rust_ext.batch_centrality_all(adj_list)
             if rust_result:
                 return dict(rust_result)
@@ -1016,7 +1211,7 @@ class GraphRAGOrchestrator:
         n = g.vcount()
         scores: dict[str, dict[str, float]] = {}
         try:
-            strength_list = list(g.strength(vertices=list(range(n)), weights=None, mode='all', loops=True))
+            strength_list = list(g.strength(vertices=list(range(n)), weights=None, mode="all", loops=True))
         except Exception:
             strength_list = list(g.degree())
         degree_norm = self._normalize_max(strength_list, [0.0] * n)
@@ -1029,7 +1224,7 @@ class GraphRAGOrchestrator:
         between_norm = self._normalize_max(between_list, [0.0] * n)
 
         try:
-            closeness_list = list(g.closeness(vertices=None, mode='all', cutoff=None))
+            closeness_list = list(g.closeness(vertices=None, mode="all", cutoff=None))
         except Exception:
             closeness_list = [0.0] * n
 
@@ -1045,15 +1240,21 @@ class GraphRAGOrchestrator:
             pr_list = []
         pr_norm = self._normalize_max(pr_list, [0.0] * n)
 
-        names = g.vs['name']
+        names = g.vs["name"]
         for i, name in enumerate(names):
-            scores[str(name)] = {'degree': degree_norm[i] if i < len(degree_norm) else 0.0, 'betweenness': between_norm[i] if i < len(between_norm) else 0.0, 'closeness': closeness_list[i] if i < len(closeness_list) else 0.0, 'eigenvector': ev_norm[i] if i < len(ev_norm) else 0.0, 'pagerank': pr_norm[i] if i < len(pr_norm) else 0.0}
+            scores[str(name)] = {
+                "degree": degree_norm[i] if i < len(degree_norm) else 0.0,
+                "betweenness": between_norm[i] if i < len(between_norm) else 0.0,
+                "closeness": closeness_list[i] if i < len(closeness_list) else 0.0,
+                "eigenvector": ev_norm[i] if i < len(ev_norm) else 0.0,
+                "pagerank": pr_norm[i] if i < len(pr_norm) else 0.0,
+            }
         return scores
 
     def _get_centrality_metric(
         self,
         node_id: str,
-        metric: Literal['betweenness', 'closeness', 'eigenvector', 'pagerank'],
+        metric: Literal["betweenness", "closeness", "eigenvector", "pagerank"],
         adjacency: dict[str, set[str]],
         all_nodes: list[str],
         _cached_centrality: dict[str, dict[str, float]] | None = None,
@@ -1073,7 +1274,9 @@ class GraphRAGOrchestrator:
         centrality = self._calculate_centrality_igraph(adjacency, all_nodes)
         return centrality.get(node_id, {}).get(metric, 0.0)
 
-    def _label_propagation_igraph(self, adjacency: dict[str, set[str]], node_ids: list[str], num_communities: int) -> dict[int, list[str]] | None:
+    def _label_propagation_igraph(
+        self, adjacency: dict[str, set[str]], node_ids: list[str], num_communities: int
+    ) -> dict[int, list[str]] | None:
         """Community detection via igraph C-core label propagation (5-10x faster).
 
         Returns None on igraph unavailable / RAM constraint.
@@ -1089,7 +1292,7 @@ class GraphRAGOrchestrator:
         try:
             membership = g.community_label_propagation()
             communities: dict[int, list[str]] = {}
-            for i, name in enumerate(g.vs['name']):
+            for i, name in enumerate(g.vs["name"]):
                 label = membership[i] if isinstance(membership, (list, tuple)) else membership.membership[i]
                 if label not in communities:
                     communities[label] = []
@@ -1097,10 +1300,12 @@ class GraphRAGOrchestrator:
             sorted_comms = sorted(communities.items(), key=lambda x: len(x[1]), reverse=True)
             return {i: nodes for i, (_, nodes) in enumerate(sorted_comms[:num_communities])}
         except Exception as e:
-            logger.debug(f'GraphRAGOrchestrator: igraph label propagation failed: {e}')
+            logger.debug(f"GraphRAGOrchestrator: igraph label propagation failed: {e}")
             return None
 
-    def _label_propagation(self, adjacency: dict[str, set[str]], node_ids: list[str], num_communities: int) -> dict[int, list[str]]:
+    def _label_propagation(
+        self, adjacency: dict[str, set[str]], node_ids: list[str], num_communities: int
+    ) -> dict[int, list[str]]:
         """Simple label propagation for community detection."""
         labels = {node: i for i, node in enumerate(node_ids)}
         for _ in range(10):
@@ -1146,17 +1351,23 @@ class GraphRAGOrchestrator:
                 type_counts[node_type] = type_counts.get(node_type, 0) + 1
         if type_counts:
             dominant = max(type_counts, key=type_counts.get)
-            characteristics.append(f'dominant_type:{dominant}')
+            characteristics.append(f"dominant_type:{dominant}")
             if len(type_counts) > 1:
-                characteristics.append('mixed_types')
-        characteristics.append(f'size:{len(node_list)}')
+                characteristics.append("mixed_types")
+        characteristics.append(f"size:{len(node_list)}")
         return characteristics
 
     def _analyze_contradiction(self, node_a: Any, node_b: Any) -> GraphContradiction | None:
         """Analyze if two nodes contradict each other."""
         content_a = node_a.content.lower()
         content_b = node_b.content.lower()
-        contradiction_indicators = [('not ', ''), ('never ', 'always '), ('no ', 'yes '), ('false', 'true'), ('impossible', 'possible')]
+        contradiction_indicators = [
+            ("not ", ""),
+            ("never ", "always "),
+            ("no ", "yes "),
+            ("false", "true"),
+            ("impossible", "possible"),
+        ]
         for neg_a, neg_b in contradiction_indicators:
             has_neg_a = neg_a in content_a if neg_a else neg_a not in content_a
             has_neg_b = neg_b in content_b if neg_b else neg_b not in content_b
@@ -1165,7 +1376,19 @@ class GraphRAGOrchestrator:
                 words_b = set(content_b.split())
                 common_words = words_a & words_b
                 if len(common_words) > 3:
-                    return GraphContradiction(node_a_id=node_a.id, node_b_id=node_b.id, node_a_content=node_a.content, node_b_content=node_b.content, contradiction_type='factual', severity=0.7, resolution_suggestions=['Verify source reliability', 'Check temporal context', 'Consider scope differences'])
+                    return GraphContradiction(
+                        node_a_id=node_a.id,
+                        node_b_id=node_b.id,
+                        node_a_content=node_a.content,
+                        node_b_content=node_b.content,
+                        contradiction_type="factual",
+                        severity=0.7,
+                        resolution_suggestions=[
+                            "Verify source reliability",
+                            "Check temporal context",
+                            "Consider scope differences",
+                        ],
+                    )
         return None
 
     def _calculate_clustering_coefficient(self, adjacency: dict[str, set[str]], node_ids: list[str]) -> float:
@@ -1215,22 +1438,30 @@ class GraphRAGOrchestrator:
         """
         entities = set()
         content = node.content
-        if node.node_type.value == 'entity':
+        if node.node_type.value == "entity":
             entities.add(node.content.lower().strip())
-        capitalized = re.findall('\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', content)
+        capitalized = re.findall("\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b", content)
         for entity in capitalized:
             entities.add(entity.lower().strip())
         if node.metadata:
-            if 'entities' in node.metadata:
-                for ent in node.metadata['entities']:
+            if "entities" in node.metadata:
+                for ent in node.metadata["entities"]:
                     entities.add(str(ent).lower().strip())
-            if 'title' in node.metadata:
-                title_entities = re.findall('\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', node.metadata['title'])
+            if "title" in node.metadata:
+                title_entities = re.findall("\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b", node.metadata["title"])
                 for ent in title_entities:
                     entities.add(ent.lower().strip())
         return entities
 
-    def _traverse_hop_with_paths(self, visited: set[str], hop: int, max_nodes: int, seed_entities: set[str], seed_doc_entities: set[str], max_edges: int=500) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    def _traverse_hop_with_paths(
+        self,
+        visited: set[str],
+        hop: int,
+        max_nodes: int,
+        seed_entities: set[str],
+        seed_doc_entities: set[str],
+        max_edges: int = 500,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Traverse one hop with full path tracking.
 
@@ -1258,7 +1489,7 @@ class GraphRAGOrchestrator:
             if edges_traversed >= max_edges or len(visited) >= max_nodes:
                 break
             related = self.knowledge_layer.get_related_sync(node_id, max_depth=1)
-            edges = related.get('edges', [])
+            edges = related.get("edges", [])
             for edge in edges:
                 if edges_traversed >= max_edges:
                     break
@@ -1266,7 +1497,7 @@ class GraphRAGOrchestrator:
                 related_id = edge.target_id if edge.source_id == node_id else edge.source_id
                 if related_id in visited:
                     continue
-                related_node = related.get('nodes', {}).get(related_id)
+                related_node = related.get("nodes", {}).get(related_id)
                 if not related_node:
                     continue
                 visited.add(related_id)
@@ -1284,21 +1515,44 @@ class GraphRAGOrchestrator:
                 novelty_failed = not (has_new_entity or has_multi_hop_path)
                 if novelty_failed:
                     novelty_score = 0.0
-                edge_evidence_id = edge.metadata.get('evidence_id') if edge.metadata else None
+                edge_evidence_id = edge.metadata.get("evidence_id") if edge.metadata else None
                 if edge_evidence_id:
                     path_evidence_ids = [edge_evidence_id]
                 else:
-                    path_evidence_ids = [related_node.metadata.get('evidence_id', related_id)]
-                fact = {'content': related_node.content, 'node_id': related_id, 'node_type': related_node.node_type.value, 'hop': hop, 'similarity': 1.0 - hop * 0.2, 'path': current_path_ids, 'path_content': current_path_content, 'relations': [edge.edge_type.value], 'metadata': related_node.metadata, 'evidence_ids': path_evidence_ids, 'novelty_score': novelty_score, 'novelty_failed': novelty_failed, 'novel_entities': list(novel_entities)[:5], 'edge_metadata': edge.metadata}
+                    path_evidence_ids = [related_node.metadata.get("evidence_id", related_id)]
+                fact = {
+                    "content": related_node.content,
+                    "node_id": related_id,
+                    "node_type": related_node.node_type.value,
+                    "hop": hop,
+                    "similarity": 1.0 - hop * 0.2,
+                    "path": current_path_ids,
+                    "path_content": current_path_content,
+                    "relations": [edge.edge_type.value],
+                    "metadata": related_node.metadata,
+                    "evidence_ids": path_evidence_ids,
+                    "novelty_score": novelty_score,
+                    "novelty_failed": novelty_failed,
+                    "novel_entities": list(novel_entities)[:5],
+                    "edge_metadata": edge.metadata,
+                }
                 new_facts.append(fact)
-                path_entry = {'nodes': current_path_ids, 'node_types': [self._get_node_type(nid) for nid in current_path_ids], 'relations': [edge.edge_type.value], 'score': 1.0 - hop * 0.2, 'evidence_ids': path_evidence_ids, 'hop': hop, 'novelty_failed': novelty_failed}
+                path_entry = {
+                    "nodes": current_path_ids,
+                    "node_types": [self._get_node_type(nid) for nid in current_path_ids],
+                    "relations": [edge.edge_type.value],
+                    "score": 1.0 - hop * 0.2,
+                    "evidence_ids": path_evidence_ids,
+                    "hop": hop,
+                    "novelty_failed": novelty_failed,
+                }
                 new_paths.append(path_entry)
         return (new_facts, new_paths)
 
     def _get_node_type(self, node_id: str) -> str:
         """Get node type for a node ID."""
         node = self.knowledge_layer._backend.get_node(node_id)
-        return node.node_type.value if node else 'unknown'
+        return node.node_type.value if node else "unknown"
 
     def _rank_facts_with_novelty(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
@@ -1312,19 +1566,24 @@ class GraphRAGOrchestrator:
         """
 
         def calculate_score(fact: dict[str, Any]) -> float:
-            similarity = fact.get('similarity', 0.5)
-            hop = fact.get('hop', 0)
-            novelty = fact.get('novelty_score', 0.0)
-            node_type = fact.get('node_type', 'fact')
-            type_bonus = {'fact': 1.0, 'entity': 0.9, 'concept': 0.8, 'event': 0.7, 'url': 0.5, 'document': 0.6}.get(node_type, 0.5)
+            similarity = fact.get("similarity", 0.5)
+            hop = fact.get("hop", 0)
+            novelty = fact.get("novelty_score", 0.0)
+            node_type = fact.get("node_type", "fact")
+            type_bonus = {"fact": 1.0, "entity": 0.9, "concept": 0.8, "event": 0.7, "url": 0.5, "document": 0.6}.get(
+                node_type, 0.5
+            )
             hop_penalty = max(0, 1.0 - hop * 0.15)
             novelty_bonus = 1.0 + novelty * 0.25
             score = similarity * type_bonus * hop_penalty * novelty_bonus
             return score
+
         ranked_facts = sorted(facts, key=calculate_score, reverse=True)
         return ranked_facts
 
-    def _detect_contradictions(self, facts: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
+    def _detect_contradictions(
+        self, facts: list[dict[str, Any]]
+    ) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Detect contradictions in facts using lightweight heuristics.
 
@@ -1349,14 +1608,14 @@ class GraphRAGOrchestrator:
         """Extract (subject, predicate, object, fact) tuples from facts using relation patterns."""
         claims: list[tuple[str, str, str, dict[str, Any]]] = []
         relation_patterns = [
-            (r'(.+?)\s+is\s+(.+?)(?:\.|$)', 'is'),
-            (r'(.+?)\s+has\s+(.+?)(?:\.|$)', 'has'),
-            (r'(.+?)\s+located\s+in\s+(.+?)(?:\.|$)', 'located_in'),
-            (r'(.+?)\s+was\s+(.+?)(?:\.|$)', 'was'),
-            (r'(.+?)\s+has\s+a\s+(.+?)(?:\.|$)', 'has_a'),
+            (r"(.+?)\s+is\s+(.+?)(?:\.|$)", "is"),
+            (r"(.+?)\s+has\s+(.+?)(?:\.|$)", "has"),
+            (r"(.+?)\s+located\s+in\s+(.+?)(?:\.|$)", "located_in"),
+            (r"(.+?)\s+was\s+(.+?)(?:\.|$)", "was"),
+            (r"(.+?)\s+has\s+a\s+(.+?)(?:\.|$)", "has_a"),
         ]
         for fact in facts:
-            content = fact.get('content', '').lower().strip()
+            content = fact.get("content", "").lower().strip()
             if not content:
                 continue
             for pattern, predicate in relation_patterns:
@@ -1368,7 +1627,9 @@ class GraphRAGOrchestrator:
                     break
         return claims
 
-    def _find_semantic_contradictions(self, claims: list[tuple[str, str, str, dict[str, Any]]]) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
+    def _find_semantic_contradictions(
+        self, claims: list[tuple[str, str, str, dict[str, Any]]]
+    ) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
         """Find contradictions from same (subject, predicate) with different objects."""
         contradictions: list[tuple[dict[str, Any], dict[str, Any], str]] = []
         claim_groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
@@ -1380,19 +1641,21 @@ class GraphRAGOrchestrator:
             unique_objects = {obj for obj, _ in obj_facts}
             if len(unique_objects) < 2:
                 continue
-            sorted_facts = sorted(obj_facts, key=lambda x: x[1].get('similarity', 0.5), reverse=True)
+            sorted_facts = sorted(obj_facts, key=lambda x: x[1].get("similarity", 0.5), reverse=True)
             primary_obj, primary_fact = sorted_facts[0]
             counter_obj, counter_fact = sorted_facts[1]
-            contradictions.append((primary_fact, counter_fact, f'{subject} {predicate} {primary_obj} vs {counter_obj}'))
+            contradictions.append((primary_fact, counter_fact, f"{subject} {predicate} {primary_obj} vs {counter_obj}"))
         return contradictions
 
-    def _find_negation_contradictions(self, facts: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
+    def _find_negation_contradictions(
+        self, facts: list[dict[str, Any]]
+    ) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
         """Find contradictions from explicit negation patterns between fact pairs."""
         contradictions: list[tuple[dict[str, Any], dict[str, Any], str]] = []
-        negation_patterns = [('is', 'is not'), ('has', 'has no'), ('can', 'cannot'), ('will', 'will not')]
+        negation_patterns = [("is", "is not"), ("has", "has no"), ("can", "cannot"), ("will", "will not")]
         for i, fact_a in enumerate(facts):
-            content_a = fact_a.get('content', '').lower()
-            for fact_b in facts[i + 1:]:
+            content_a = fact_a.get("content", "").lower()
+            for fact_b in facts[i + 1 :]:
                 if contradiction := self._check_negation_pair(content_a, fact_a, fact_b, negation_patterns):
                     contradictions.append(contradiction)
         return contradictions
@@ -1401,17 +1664,17 @@ class GraphRAGOrchestrator:
         self, content_a: str, fact_a: dict[str, Any], fact_b: dict[str, Any], negation_patterns: list[tuple[str, str]]
     ) -> tuple[dict[str, Any], dict[str, Any], str] | None:
         """Check if two facts contradict via negation patterns. Returns contradiction tuple or None."""
-        content_b = fact_b.get('content', '').lower()
+        content_b = fact_b.get("content", "").lower()
         for pos, neg in negation_patterns:
-            a_has_pos = f' {pos} ' in f' {content_a} '
-            b_has_neg = f' {neg} ' in f' {content_b} '
-            a_has_neg = f' {neg} ' in f' {content_a} '
-            b_has_pos = f' {pos} ' in f' {content_b} '
+            a_has_pos = f" {pos} " in f" {content_a} "
+            b_has_neg = f" {neg} " in f" {content_b} "
+            a_has_neg = f" {neg} " in f" {content_a} "
+            b_has_pos = f" {pos} " in f" {content_b} "
             if (a_has_pos and b_has_neg) or (a_has_neg and b_has_pos):
                 words_a = set(content_a.split()) - {pos, neg}
                 words_b = set(content_b.split()) - {pos, neg}
                 if len(words_a & words_b) >= 3:
-                    return (fact_a, fact_b, f'negation: {pos} vs {neg}')
+                    return (fact_a, fact_b, f"negation: {pos} vs {neg}")
         return None
 
     def _build_contradiction_paths(
@@ -1422,18 +1685,26 @@ class GraphRAGOrchestrator:
         counter_paths: list[dict[str, Any]] = []
         seen_primary_nodes: set[str] = set()
         for primary_fact, counter_fact, reason in contradictions:
-            if primary_fact.get('node_id') not in seen_primary_nodes:
+            if primary_fact.get("node_id") not in seen_primary_nodes:
                 primary_paths.append(primary_fact)
-                seen_primary_nodes.add(primary_fact.get('node_id', ''))
-            counter_paths.append({**counter_fact, 'contradiction_reason': reason, 'contradicts': primary_fact.get('node_id')})
-        seen_counter_nodes = {c.get('node_id') for c in counter_paths}
+                seen_primary_nodes.add(primary_fact.get("node_id", ""))
+            counter_paths.append(
+                {**counter_fact, "contradiction_reason": reason, "contradicts": primary_fact.get("node_id")}
+            )
+        seen_counter_nodes = {c.get("node_id") for c in counter_paths}
         for fact in facts:
-            if fact not in primary_paths and fact.get('node_id') not in seen_counter_nodes:
+            if fact not in primary_paths and fact.get("node_id") not in seen_counter_nodes:
                 primary_paths.append(fact)
-        logger.info(f'[CONTRADICTION] Found {len(contradictions)} contradictions: {[r for _, _, r in contradictions]}')
+        logger.info(f"[CONTRADICTION] Found {len(contradictions)} contradictions: {[r for _, _, r in contradictions]}")
         return (True, primary_paths, counter_paths)
 
-    def _generate_path_summary(self, facts: list[dict[str, Any]], query: str, contested: bool=False, counter_paths: list[dict[str, Any]] | None=None) -> str:
+    def _generate_path_summary(
+        self,
+        facts: list[dict[str, Any]],
+        query: str,
+        contested: bool = False,
+        counter_paths: list[dict[str, Any]] | None = None,
+    ) -> str:
         """
         Generate human-readable summary of graph paths.
 
@@ -1447,39 +1718,41 @@ class GraphRAGOrchestrator:
             Summary text (Hermes-friendly)
         """
         if not facts:
-            return f'No relevant information found for: {query}'
-        lines = [f'Graph analysis for: {query}', '']
+            return f"No relevant information found for: {query}"
+        lines = [f"Graph analysis for: {query}", ""]
         if contested and counter_paths:
-            lines.append('⚠️  CONTRADICTORY EVIDENCE DETECTED:')
-            lines.append('Multiple sources provide conflicting information:')
+            lines.append("⚠️  CONTRADICTORY EVIDENCE DETECTED:")
+            lines.append("Multiple sources provide conflicting information:")
             for i, counter in enumerate(counter_paths[:2], 1):
-                counter.get('contradiction_reason', 'conflict')
+                counter.get("contradiction_reason", "conflict")
                 lines.append(f"  Variant {i}: {counter.get('content', '')[:80]}...")
-            lines.append('')
+            lines.append("")
         by_hop: dict[int, list[dict[str, Any]]] = {}
         for fact in facts:
-            hop = fact.get('hop', 0)
+            hop = fact.get("hop", 0)
             by_hop.setdefault(hop, []).append(fact)
         for hop in sorted(by_hop.keys()):
             hop_facts = by_hop[hop]
             if hop == 0:
-                lines.append(f'Direct matches ({len(hop_facts)}):')
+                lines.append(f"Direct matches ({len(hop_facts)}):")
             else:
-                lines.append(f'Hop {hop} connections ({len(hop_facts)}):')
+                lines.append(f"Hop {hop} connections ({len(hop_facts)}):")
             for fact in hop_facts[:3]:
-                content = fact['content'][:100] + '...' if len(fact['content']) > 100 else fact['content']
-                novelty_flag = ' [NOVEL]' if fact.get('novelty_score', 0) > 0.3 else ''
-                lines.append(f'  • {content}{novelty_flag}')
-                if fact.get('path_content') and len(fact['path_content']) > 1:
-                    path_str = ' -> '.join([p[:30] + '...' if len(p) > 30 else p for p in fact['path_content']])
-                    lines.append(f'    Path: {path_str}')
-                if fact.get('evidence_ids'):
-                    evidence_str = ', '.join(fact['evidence_ids'][:2])
-                    lines.append(f'    Evidence: {evidence_str}...')
-            lines.append('')
-        return '\n'.join(lines)
+                content = fact["content"][:100] + "..." if len(fact["content"]) > 100 else fact["content"]
+                novelty_flag = " [NOVEL]" if fact.get("novelty_score", 0) > 0.3 else ""
+                lines.append(f"  • {content}{novelty_flag}")
+                if fact.get("path_content") and len(fact["path_content"]) > 1:
+                    path_str = " -> ".join([p[:30] + "..." if len(p) > 30 else p for p in fact["path_content"]])
+                    lines.append(f"    Path: {path_str}")
+                if fact.get("evidence_ids"):
+                    evidence_str = ", ".join(fact["evidence_ids"][:2])
+                    lines.append(f"    Evidence: {evidence_str}...")
+            lines.append("")
+        return "\n".join(lines)
 
-    def _filter_by_time(self, facts: list[dict[str, Any]], time_min: str | None, time_max: str | None) -> list[dict[str, Any]]:
+    def _filter_by_time(
+        self, facts: list[dict[str, Any]], time_min: str | None, time_max: str | None
+    ) -> list[dict[str, Any]]:
         """
         Filter facts by time range.
 
@@ -1495,17 +1768,18 @@ class GraphRAGOrchestrator:
 
         def get_timestamp(fact: dict[str, Any]) -> datetime | None:
             """Extract timestamp from fact metadata."""
-            metadata = fact.get('metadata', {})
-            ts_str = metadata.get('fetched_at') or metadata.get('published_at')
+            metadata = fact.get("metadata", {})
+            ts_str = metadata.get("fetched_at") or metadata.get("published_at")
             if ts_str:
                 try:
-                    return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                 except (ValueError, AttributeError) as _e:
-                    logger.debug('fail-soft suppression: get_timestamp (min): %s', _e, exc_info=True)
+                    logger.debug("fail-soft suppression: get_timestamp (min): %s", _e, exc_info=True)
             return None
+
         filtered = []
-        min_dt = datetime.fromisoformat(time_min.replace('Z', '+00:00')) if time_min else None
-        max_dt = datetime.fromisoformat(time_max.replace('Z', '+00:00')) if time_max else None
+        min_dt = datetime.fromisoformat(time_min.replace("Z", "+00:00")) if time_min else None
+        max_dt = datetime.fromisoformat(time_max.replace("Z", "+00:00")) if time_max else None
         for fact in facts:
             ts = get_timestamp(fact)
             if ts is None:
@@ -1532,14 +1806,15 @@ class GraphRAGOrchestrator:
 
         def get_timestamp(fact: dict[str, Any]) -> datetime:
             """Extract timestamp from fact metadata."""
-            metadata = fact.get('metadata', {})
-            ts_str = metadata.get('fetched_at') or metadata.get('published_at')
+            metadata = fact.get("metadata", {})
+            ts_str = metadata.get("fetched_at") or metadata.get("published_at")
             if ts_str:
                 try:
-                    return datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                 except (ValueError, AttributeError) as _e:
-                    logger.debug('fail-soft suppression: get_timestamp (max): %s', _e, exc_info=True)
+                    logger.debug("fail-soft suppression: get_timestamp (max): %s", _e, exc_info=True)
             return datetime.min
+
         newest = max((get_timestamp(f) for f in facts), default=datetime.min)
         if newest == datetime.min:
             return facts
@@ -1549,7 +1824,7 @@ class GraphRAGOrchestrator:
             age_days = (newest - ts).days if ts != datetime.min else 365
             recency_boost = max(0, 1.0 - age_days / 30) * 0.2
             fact_copy = fact.copy()
-            fact_copy['similarity'] = fact.get('similarity', 0.5) * (1.0 + recency_boost)
+            fact_copy["similarity"] = fact.get("similarity", 0.5) * (1.0 + recency_boost)
             boosted.append(fact_copy)
         boosted.sort(key=itemgetter("similarity"), reverse=True)
         return boosted
@@ -1568,22 +1843,24 @@ class GraphRAGOrchestrator:
         """
         from collections import defaultdict
         from datetime import datetime
+
         max_points = min(max_points, 12)
 
         def get_bucket_key(fact: dict[str, Any]) -> str | None:
             """Get time bucket key for fact."""
-            metadata = fact.get('metadata', {})
-            ts_str = metadata.get('fetched_at') or metadata.get('published_at')
+            metadata = fact.get("metadata", {})
+            ts_str = metadata.get("fetched_at") or metadata.get("published_at")
             if not ts_str:
                 return None
             try:
-                dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                if bucket == 'year':
-                    return dt.strftime('%Y')
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if bucket == "year":
+                    return dt.strftime("%Y")
                 else:
-                    return dt.strftime('%Y-%m')
-            except (ValueError, AttributeError):
+                    return dt.strftime("%Y-%m")
+            except ValueError, AttributeError:
                 return None
+
         bucket_facts: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for fact in facts:
             key = get_bucket_key(fact)
@@ -1593,19 +1870,29 @@ class GraphRAGOrchestrator:
         timeline_points = []
         for bucket_key in sorted_buckets[:max_points]:
             facts_in_bucket = bucket_facts[bucket_key]
-            top_paths = sorted(facts_in_bucket, key=attrgetter("get")('similarity', 0), reverse=True)[:3]
+            top_paths = sorted(facts_in_bucket, key=attrgetter("get")("similarity", 0), reverse=True)[:3]
             key_claims = []
             for fact in facts_in_bucket[:5]:
-                content = fact.get('content', '')
-                key_claims.append(content[:100] + '...' if len(content) > 100 else content)
+                content = fact.get("content", "")
+                key_claims.append(content[:100] + "..." if len(content) > 100 else content)
             evidence_ids = set()
             for fact in facts_in_bucket:
-                for eid in fact.get('evidence_ids', []):
+                for eid in fact.get("evidence_ids", []):
                     evidence_ids.add(eid)
                 if len(evidence_ids) >= 20:
                     break
-            notes = f'{len(facts_in_bucket)} facts, {len(evidence_ids)} unique evidence sources'
-            timeline_points.append({'bucket': bucket_key, 'top_paths': [{'content': p.get('content', '')[:100], 'score': p.get('similarity', 0)} for p in top_paths], 'key_claims': key_claims[:5], 'evidence_ids': list(evidence_ids)[:20], 'notes': notes})
+            notes = f"{len(facts_in_bucket)} facts, {len(evidence_ids)} unique evidence sources"
+            timeline_points.append(
+                {
+                    "bucket": bucket_key,
+                    "top_paths": [
+                        {"content": p.get("content", "")[:100], "score": p.get("similarity", 0)} for p in top_paths
+                    ],
+                    "key_claims": key_claims[:5],
+                    "evidence_ids": list(evidence_ids)[:20],
+                    "notes": notes,
+                }
+            )
         return timeline_points
 
     def _detect_drift(self, facts: list[dict[str, Any]], bucket: str) -> list[dict[str, Any]]:
@@ -1621,20 +1908,21 @@ class GraphRAGOrchestrator:
         """
         from collections import defaultdict
         from datetime import datetime
+
         claims_with_ts = []
         for fact in facts:
-            claim = self._extract_claim(fact.get('content', ''))
+            claim = self._extract_claim(fact.get("content", ""))
             if not claim:
                 continue
-            metadata = fact.get('metadata', {})
-            ts_str = metadata.get('fetched_at') or metadata.get('published_at')
+            metadata = fact.get("metadata", {})
+            ts_str = metadata.get("fetched_at") or metadata.get("published_at")
             if not ts_str:
                 continue
             try:
-                ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
-                bucket_key = ts.strftime('%Y-%m') if bucket == 'month' else ts.strftime('%Y')
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                bucket_key = ts.strftime("%Y-%m") if bucket == "month" else ts.strftime("%Y")
                 claims_with_ts.append((claim, bucket_key, fact))
-            except (ValueError, AttributeError):
+            except ValueError, AttributeError:
                 continue
         claim_groups: dict[tuple, list[tuple]] = defaultdict(list)
         for (subject, predicate, obj), bucket_key, fact in claims_with_ts:
@@ -1648,7 +1936,17 @@ class GraphRAGOrchestrator:
             obj_facts[0][1]
             for obj, bucket_key, fact in obj_facts[1:]:
                 if obj != prev_obj:
-                    drift_events.append({'subject': subject, 'predicate': predicate, 'before': prev_obj, 'after': obj, 'bucket_change': bucket_key, 'supporting_evidence_ids': fact.get('evidence_ids', [])[:10], 'confidence': fact.get('similarity', 0.5)})
+                    drift_events.append(
+                        {
+                            "subject": subject,
+                            "predicate": predicate,
+                            "before": prev_obj,
+                            "after": obj,
+                            "bucket_change": bucket_key,
+                            "supporting_evidence_ids": fact.get("evidence_ids", [])[:10],
+                            "confidence": fact.get("similarity", 0.5),
+                        }
+                    )
                     prev_obj = obj
                 if len(drift_events) >= 10:
                     break
@@ -1667,7 +1965,13 @@ class GraphRAGOrchestrator:
             Tuple of (subject, predicate, object) or None
         """
         content_lower = content.lower().strip()
-        patterns = [('(.+?)\\s+is\\s+(.+?)(?:\\.|$)', 'is'), ('(.+?)\\s+has\\s+(.+?)(?:\\.|$)', 'has'), ('(.+?)\\s+was\\s+(.+?)(?:\\.|$)', 'was'), ('(.+?)\\s+located\\s+in\\s+(.+?)(?:\\.|$)', 'located_in'), ('(.+?)\\s+located\\s+at\\s+(.+?)(?:\\.|$)', 'located_at')]
+        patterns = [
+            ("(.+?)\\s+is\\s+(.+?)(?:\\.|$)", "is"),
+            ("(.+?)\\s+has\\s+(.+?)(?:\\.|$)", "has"),
+            ("(.+?)\\s+was\\s+(.+?)(?:\\.|$)", "was"),
+            ("(.+?)\\s+located\\s+in\\s+(.+?)(?:\\.|$)", "located_in"),
+            ("(.+?)\\s+located\\s+at\\s+(.+?)(?:\\.|$)", "located_at"),
+        ]
         for pattern, predicate in patterns:
             match = re.search(pattern, content_lower)
             if match:
@@ -1692,7 +1996,9 @@ class GraphRAGOrchestrator:
         narratives = self._build_narratives(primary_paths, counter_paths)
         return (contested, primary_paths[:10], counter_paths[:5], narratives[:3])
 
-    def _build_narratives(self, primary_paths: list[dict[str, Any]], counter_paths: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_narratives(
+        self, primary_paths: list[dict[str, Any]], counter_paths: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Build competing narratives from contradictory evidence.
 
@@ -1709,29 +2015,51 @@ class GraphRAGOrchestrator:
         primary_evidence = []
         primary_domains = set()
         for fact in primary_paths[:5]:
-            primary_evidence.extend(fact.get('evidence_ids', []))
-            url = fact.get('metadata', {}).get('url', '')
+            primary_evidence.extend(fact.get("evidence_ids", []))
+            url = fact.get("metadata", {}).get("url", "")
             if url:
-                domain = url.split('/')[2] if '://' in url else url.split('/')[0]
+                domain = url.split("/")[2] if "://" in url else url.split("/")[0]
                 primary_domains.add(domain)
         primary_confidence = self._calculate_narrative_confidence(primary_paths[:5], primary_evidence, primary_domains)
         primary_summary = self._summarize_narrative(primary_paths[:3])
-        narratives.append({'narrative_id': 'A', 'summary': primary_summary, 'support_paths': primary_paths[:5], 'support_evidence_ids': list(set(primary_evidence))[:25], 'confidence': primary_confidence, 'notes': f'supported by {len(primary_domains)} unique source domains, {len(set(primary_evidence))} unique evidence items'})
+        narratives.append(
+            {
+                "narrative_id": "A",
+                "summary": primary_summary,
+                "support_paths": primary_paths[:5],
+                "support_evidence_ids": list(set(primary_evidence))[:25],
+                "confidence": primary_confidence,
+                "notes": f"supported by {len(primary_domains)} unique source domains, {len(set(primary_evidence))} unique evidence items",
+            }
+        )
         if counter_paths:
             counter_evidence = []
             counter_domains = set()
             for fact in counter_paths[:5]:
-                counter_evidence.extend(fact.get('evidence_ids', []))
-                url = fact.get('metadata', {}).get('url', '')
+                counter_evidence.extend(fact.get("evidence_ids", []))
+                url = fact.get("metadata", {}).get("url", "")
                 if url:
-                    domain = url.split('/')[2] if '://' in url else url.split('/')[0]
+                    domain = url.split("/")[2] if "://" in url else url.split("/")[0]
                     counter_domains.add(domain)
-            counter_confidence = self._calculate_narrative_confidence(counter_paths[:5], counter_evidence, counter_domains)
+            counter_confidence = self._calculate_narrative_confidence(
+                counter_paths[:5], counter_evidence, counter_domains
+            )
             counter_summary = self._summarize_narrative(counter_paths[:3])
-            narratives.append({'narrative_id': 'B', 'summary': counter_summary, 'support_paths': counter_paths[:5], 'support_evidence_ids': list(set(counter_evidence))[:25], 'confidence': counter_confidence, 'notes': f'alternative view supported by {len(counter_domains)} unique source domains'})
+            narratives.append(
+                {
+                    "narrative_id": "B",
+                    "summary": counter_summary,
+                    "support_paths": counter_paths[:5],
+                    "support_evidence_ids": list(set(counter_evidence))[:25],
+                    "confidence": counter_confidence,
+                    "notes": f"alternative view supported by {len(counter_domains)} unique source domains",
+                }
+            )
         return narratives
 
-    def _calculate_narrative_confidence(self, paths: list[dict[str, Any]], evidence_ids: list[str], domains: set[str]) -> float:
+    def _calculate_narrative_confidence(
+        self, paths: list[dict[str, Any]], evidence_ids: list[str], domains: set[str]
+    ) -> float:
         """
         Calculate narrative confidence score (0-1).
 
@@ -1746,13 +2074,13 @@ class GraphRAGOrchestrator:
         unique_evidence = len(set(evidence_ids))
         evidence_score = min(1.0, unique_evidence / 5) * 0.4
         domain_score = min(1.0, len(domains) / 3) * 0.3
-        avg_similarity = sum((p.get('similarity', 0.5) for p in paths)) / len(paths)
+        avg_similarity = sum(p.get("similarity", 0.5) for p in paths) / len(paths)
         similarity_score = avg_similarity * 0.2
         content_hashes = set()
         echo_count = 0
         for p in paths:
-            metadata = p.get('metadata', {})
-            hash_ring = metadata.get('content_hash_ring', [])
+            metadata = p.get("metadata", {})
+            hash_ring = metadata.get("content_hash_ring", [])
             for h in hash_ring:
                 if h in content_hashes:
                     echo_count += 1
@@ -1766,21 +2094,21 @@ class GraphRAGOrchestrator:
         Generate 1-3 sentence summary of narrative.
         """
         if not paths:
-            return 'No clear narrative found.'
+            return "No clear narrative found."
         contents = []
         for p in paths[:3]:
-            content = p.get('content', '')
+            content = p.get("content", "")
             if content:
-                first_sentence = content.split('.')[0] + '.' if '.' in content else content[:100]
+                first_sentence = content.split(".")[0] + "." if "." in content else content[:100]
                 contents.append(first_sentence)
         if len(contents) == 1:
             return contents[0]
         elif len(contents) == 2:
-            return f'{contents[0]} Additionally, {contents[1].lower()}'
+            return f"{contents[0]} Additionally, {contents[1].lower()}"
         else:
-            return f'{contents[0]} {contents[1]} This view also suggests {contents[2].lower()}'
+            return f"{contents[0]} {contents[1]} This view also suggests {contents[2].lower()}"
 
-    async def multi_hop_search_streaming(self, query: str, hops: int=2, max_nodes: int=20):
+    async def multi_hop_search_streaming(self, query: str, hops: int = 2, max_nodes: int = 20):
         """
         Streaming version of multi-hop search that yields nodes as they are discovered.
 
@@ -1810,9 +2138,9 @@ class GraphRAGOrchestrator:
             try:
                 await worker_task
             except asyncio.CancelledError as _e:
-                logger.debug('fail-soft suppression: multi_hop_search_streaming (cancel): %s', _e, exc_info=True)
+                logger.debug("fail-soft suppression: multi_hop_search_streaming (cancel): %s", _e, exc_info=True)
 
-    async def _traversal_worker(self, query: str, hops: int, max_nodes: int, queue: asyncio.Queue):
+    async def _traversal_worker(self, query: str, hops: int, max_nodes: int, queue: asyncio.Queue) -> None:
         """
         Worker that performs graph traversal and pushes discovered nodes to queue.
 
@@ -1835,7 +2163,16 @@ class GraphRAGOrchestrator:
                 visited.add(node_id)
                 node_entities = self._extract_entities_from_node(node)
                 seed_entities.update(node_entities)
-                node_data = {'content': node.content, 'node_id': node_id, 'node_type': node.node_type.value, 'hop': 0, 'similarity': similarity, 'path': [node_id], 'relations': [], 'metadata': node.metadata}
+                node_data = {
+                    "content": node.content,
+                    "node_id": node_id,
+                    "node_type": node.node_type.value,
+                    "hop": 0,
+                    "similarity": similarity,
+                    "path": [node_id],
+                    "relations": [],
+                    "metadata": node.metadata,
+                }
                 await queue.put(node_data)
             for hop in range(1, hops + 1):
                 if len(visited) >= max_nodes:
@@ -1846,9 +2183,9 @@ class GraphRAGOrchestrator:
                         break
                     await queue.put(fact)
         except asyncio.CancelledError as _e:
-            logger.debug('fail-soft suppression: _traversal_worker (cancel): %s', _e, exc_info=True)
+            logger.debug("fail-soft suppression: _traversal_worker (cancel): %s", _e, exc_info=True)
         except Exception as e:
-            logger.warning(f'Traversal worker error: {e}')
+            logger.warning(f"Traversal worker error: {e}")
         finally:
             await queue.put(None)
 
@@ -1881,57 +2218,56 @@ class GraphRAGOrchestrator:
         """
         import orjson
 
-        nodes: list[dict[str, Any]] = subgraph.get('nodes', [])
-        edges: list[dict[str, Any]] = subgraph.get('edges', [])
-        stats: dict[str, Any] = subgraph.get('stats', {})
-        seed_value: str = subgraph.get('seed_value', '')
-        seed_type: str = subgraph.get('seed_type', '')
-        k: int = subgraph.get('k', 0)
-        truncated: bool = subgraph.get('truncated', False)
+        nodes: list[dict[str, Any]] = subgraph.get("nodes", [])
+        edges: list[dict[str, Any]] = subgraph.get("edges", [])
+        stats: dict[str, Any] = subgraph.get("stats", {})
+        seed_value: str = subgraph.get("seed_value", "")
+        seed_type: str = subgraph.get("seed_type", "")
+        k: int = subgraph.get("k", 0)
+        truncated: bool = subgraph.get("truncated", False)
 
         # Cap query_context independently
-        qc = (query_context or '(none)')[:200]
+        qc = (query_context or "(none)")[:200]
 
         # Compact node catalog: id → {t, v, c}
         # Cap node count by budget (~120 bytes per node serialized)
         max_node_count = max(1, max_output_bytes // 120)
         node_catalog: dict[str, dict[str, Any]] = {}
         for n in nodes[:max_node_count]:
-            val = str(n.get('value', ''))[:max_node_value_len]
-            node_catalog[n['id']] = {
-                't': n.get('ioc_type', '?'),
-                'v': val,
-                'c': round(n.get('confidence', 1.0), 2),
+            val = str(n.get("value", ""))[:max_node_value_len]
+            node_catalog[n["id"]] = {
+                "t": n.get("ioc_type", "?"),
+                "v": val,
+                "c": round(n.get("confidence", 1.0), 2),
             }
 
         # Degree ranking for key-node insights
         degree: dict[str, int] = {}
         for e in edges:
-            degree[e['source_id']] = degree.get(e['source_id'], 0) + 1
-            degree[e['target_id']] = degree.get(e['target_id'], 0) + 1
+            degree[e["source_id"]] = degree.get(e["source_id"], 0) + 1
+            degree[e["target_id"]] = degree.get(e["target_id"], 0) + 1
 
         key_nodes = sorted(degree.items(), key=lambda x: -x[1])[:10]
         key_node_list: list[dict[str, Any]] = [
-            {'id': nid, 'deg': d, 'v': node_catalog.get(nid, {}).get('v', '?')}
-            for nid, d in key_nodes
+            {"id": nid, "deg": d, "v": node_catalog.get(nid, {}).get("v", "?")} for nid, d in key_nodes
         ]
 
         # Measure fixed overhead (seed, query, topology, key_nodes, empty edges)
         skeleton = {
-            'graph': {
-                'seed': f'{seed_value[:max_node_value_len]} ({seed_type})',
-                'radius': k,
-                'query': qc,
-                'topology': {
-                    'nodes': stats.get('total_nodes', 0),
-                    'edges': stats.get('total_edges', 0),
-                    'density': stats.get('density', 0),
-                    'max_degree': stats.get('max_degree', 0),
-                    'truncated': truncated,
+            "graph": {
+                "seed": f"{seed_value[:max_node_value_len]} ({seed_type})",
+                "radius": k,
+                "query": qc,
+                "topology": {
+                    "nodes": stats.get("total_nodes", 0),
+                    "edges": stats.get("total_edges", 0),
+                    "density": stats.get("density", 0),
+                    "max_degree": stats.get("max_degree", 0),
+                    "truncated": truncated,
                 },
-                'key_nodes': key_node_list,
-                'nodes': node_catalog,
-                'edges': [],
+                "key_nodes": key_node_list,
+                "nodes": node_catalog,
+                "edges": [],
             },
         }
         skeleton_blob = orjson.dumps(skeleton, option=orjson.OPT_APPEND_NEWLINE)
@@ -1941,20 +2277,20 @@ class GraphRAGOrchestrator:
         # Fill edges within budget (capped at 200)
         compact_edges: list[dict[str, str]] = []
         for e in edges[:200]:
-            src_cat = node_catalog.get(e['source_id'], {})
-            dst_cat = node_catalog.get(e['target_id'], {})
-            compact_edges.append({
-                's': src_cat.get('v', '?'),
-                'd': dst_cat.get('v', '?'),
-                'st': str(e.get('source_type', '?'))[:40],
-            })
+            src_cat = node_catalog.get(e["source_id"], {})
+            dst_cat = node_catalog.get(e["target_id"], {})
+            compact_edges.append(
+                {
+                    "s": src_cat.get("v", "?"),
+                    "d": dst_cat.get("v", "?"),
+                    "st": str(e.get("source_type", "?"))[:40],
+                }
+            )
             # ~80 bytes per edge (two values + type + JSON overhead)
             if len(compact_edges) * 80 > budget:
                 break
 
-        skeleton['graph']['edges'] = compact_edges
-        json_blob: str = orjson.dumps(
-            skeleton, option=orjson.OPT_APPEND_NEWLINE
-        ).decode('utf-8')
+        skeleton["graph"]["edges"] = compact_edges
+        json_blob: str = orjson.dumps(skeleton, option=orjson.OPT_APPEND_NEWLINE).decode("utf-8")
 
-        return f'<|im_start|>system\n{json_blob}<|im_end|>'
+        return f"<|im_start|>system\n{json_blob}<|im_end|>"

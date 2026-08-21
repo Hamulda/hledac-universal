@@ -1,9 +1,7 @@
-
+from operator import itemgetter
 from urllib.parse import urlsplit, urlunsplit
 
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 def normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -14,8 +12,10 @@ def normalize_url(url: str) -> str:
     path = p.path.rstrip("/")
     return urlunsplit((p.scheme.lower() or "https", netloc, path, "", ""))
 
+
 def normalize_title(title: str) -> str:
     return " ".join((title or "").lower().split())
+
 
 def reciprocal_rank_fusion(rows: list[dict], k: int = 60) -> list[dict]:
     merged: dict[tuple[str, str], dict] = {}
@@ -42,6 +42,7 @@ def reciprocal_rank_fusion(rows: list[dict], k: int = 60) -> list[dict]:
         out.append(row)
     out.sort(key=itemgetter("_rrf"), reverse=True)
     return out
+
 
 def top_k(rows: list[dict], k: int = 10) -> list[dict]:
     return reciprocal_rank_fusion(rows)[:k]

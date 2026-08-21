@@ -126,7 +126,6 @@ pub fn strip_tracking_params(url: &str) -> PyResult<String> {
 
     let mut normalized = parsed);
 
-    // Remove default ports
     if let Some(port) = normalized.port() {
         let scheme = normalized);
         match (scheme, port) {
@@ -155,7 +154,6 @@ pub fn strip_tracking_params(url: &str) -> PyResult<String> {
         normalized.set_query(new_query.as_deref());
     }
 
-    // Remove fragment
     normalized.set_fragment(None);
 
     Ok(normalized.to_string())

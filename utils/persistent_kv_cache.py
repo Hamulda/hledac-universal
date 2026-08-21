@@ -3,7 +3,6 @@ PersistentKVCache — Sprint KV Cache Persistence.
 
 Persistent KV cache napříč sprinty pomocí LMDB metadata index +
 
-
 safetensors na disku. Eliminuje repeated prefill náklady při
 restartování procesu.
 
@@ -37,22 +36,17 @@ M1 8GB BOUNDS:
 Author: Sprint KV-PERSIST
 """
 
-
-
 import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.lru_cache import LRUCache  # noqa: I001
+import msgspec
 
-import msgspec  # noqa: E402 (lazy, ok at module level for msgpack encode/decode)
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.lru_cache import LRUCache
 
 if TYPE_CHECKING:
     pass
@@ -73,7 +67,7 @@ def _get_lmdb_async() -> Any:
                 lmdb_async_delete,
                 lmdb_async_put,
                 lmdb_async_scan_prefix,
-    )
+            )
 
             _lmdb_async = {
                 "put": lmdb_async_put,
@@ -84,9 +78,6 @@ def _get_lmdb_async() -> Any:
             _lmdb_async = {}
     return _lmdb_async
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────────────────
 
 _DEFAULT_CACHE_DIR = Path.home() / ".hledac" / "cache" / "mlx_kv_cache"
 _CACHE_SUBDIR = "cache"
@@ -96,10 +87,6 @@ _MAX_SIZE_GB = 1.0  # 1 GiB hard cap on disk usage
 _MAX_ENTRIES = 256  # LRU eviction trigger
 _ENTRY_TTL_S = 7 * 24 * 3600  # 7 days TTL
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CacheEntry dataclass
-# ─────────────────────────────────────────────────────────────────────────────
 
 class CacheEntry(Struct):
     """Metadata entry for one cached KV cache. F350M-R: gc=False for M1 8GB."""
@@ -120,10 +107,6 @@ class CacheEntry(Struct):
         dec = msgspec.msgpack.Decoder(cls)
         return dec.decode(data)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PersistentKVCache
-# ─────────────────────────────────────────────────────────────────────────────
 
 class PersistentKVCache:
     """
@@ -172,10 +155,6 @@ class PersistentKVCache:
         self._lock: asyncio.Lock | None = None
         self._xxhash: Any = None
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Singleton
-    # ─────────────────────────────────────────────────────────────────────────
-
     @classmethod
     def get_instance(cls, **kwargs: Any) -> PersistentKVCache:
         """Get or create the singleton PersistentKVCache instance."""
@@ -190,16 +169,12 @@ class PersistentKVCache:
             cls._instance._close()
             cls._instance = None
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Initialization
-    # ─────────────────────────────────────────────────────────────────────────
-
     def _init_lmdb(self) -> None:
         """Initialize LMDB metadata index."""
         import lmdb  # type: ignore
 
         try:
-            from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock, _chmod_lmdb_path
+            from hledac.universal.knowledge.lmdb_boot_guard import _chmod_lmdb_path, cleanup_stale_lmdb_lock
 
             meta_path = self._cache_dir / _META_LMDB
             cleanup_stale_lmdb_lock(meta_path)
@@ -209,7 +184,6 @@ class PersistentKVCache:
 
             # SEC-02: umask + explicit mode=0o600 so files are never world-readable
             import os
-            import stat as _stat
 
             _old_umask = os.umask(0o077)
             try:
@@ -221,7 +195,7 @@ class PersistentKVCache:
                     create=True,
                     max_dbs=1,
                     mode=0o600,
-    )
+                )
                 # SEC-02: double-enforce to cover all LMDB-created files
                 _chmod_lmdb_path(meta_path.parent)
             finally:
@@ -231,7 +205,7 @@ class PersistentKVCache:
             logger.info(
                 "[PKV] LMDB metadata index initialized at %s",
                 meta_path,
-    )
+            )
         except Exception as e:
             logger.warning("[PKV] LMDB init failed: %s, running without metadata index", e)
             self._initialized = False
@@ -247,7 +221,6 @@ class PersistentKVCache:
                 return
             # Run LMDB init in thread to avoid blocking event loop
             await asyncio.to_thread(self._init_lmdb)
-            # Load existing LRU order from LMDB
             await asyncio.to_thread(self._load_lru_order)
 
     def _close(self) -> None:
@@ -261,15 +234,12 @@ class PersistentKVCache:
             self._lmdb_db = None
             self._initialized = False
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # xxhash lazy import
-    # ─────────────────────────────────────────────────────────────────────────
-
     def _get_xxhash(self) -> Any:
         """Lazy xxhash import."""
         if self._xxhash is None:
             try:
                 import xxhash
+
                 self._xxhash = xxhash
             except ImportError:
                 self._xxhash = False
@@ -281,10 +251,6 @@ class PersistentKVCache:
         if xxh:
             return xxh.xxh64(prompt).hexdigest()[:16]
         return hashlib.sha256(prompt.encode()).hexdigest()[:16]
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # LRU order management
-    # ─────────────────────────────────────────────────────────────────────────
 
     def _load_lru_order(self) -> None:
         """Load LRU order from LMDB at startup."""
@@ -313,7 +279,7 @@ class PersistentKVCache:
                 "[PKV] Loaded %d entries, total=%.1fMB",
                 len(self._lru_order),
                 self._total_bytes / 1024 / 1024,
-    )
+            )
         except Exception as e:
             logger.debug("[PKV] Failed to load LRU order: %s", e)
 
@@ -360,6 +326,7 @@ class PersistentKVCache:
             if async_lmdb:
                 await async_lmdb["delete"](self._lmdb_env, key_bytes)
             else:
+
                 def _delete_lmdb() -> None:
                     with self._lmdb_env.begin(write=True) as txn:
                         txn.delete(key_bytes, db=self._lmdb_db)
@@ -372,10 +339,6 @@ class PersistentKVCache:
         except Exception as e:
             logger.debug("[PKV] Evict failed for %s: %s", key, e)
         return freed
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Public API: save / load / check
-    # ─────────────────────────────────────────────────────────────────────────
 
     async def save(
         self,
@@ -430,7 +393,7 @@ class PersistentKVCache:
                 created_at=time.time(),
                 last_accessed=time.time(),
                 token_count=token_count,
-    )
+            )
 
             if self._lmdb_env is not None:
                 # P4-3: Rust backend with py.allow_threads() GIL release
@@ -441,6 +404,7 @@ class PersistentKVCache:
                 if async_lmdb:
                     await async_lmdb["put"](self._lmdb_env, key_bytes, value_bytes)
                 else:
+
                     def _write_lmdb() -> None:
                         with self._lmdb_env.begin(write=True) as txn:
                             txn.put(key_bytes, value_bytes, db=self._lmdb_db)
@@ -455,7 +419,7 @@ class PersistentKVCache:
                 key,
                 size_bytes / 1024,
                 self._total_bytes / 1024 / 1024,
-    )
+            )
             return True
 
         except Exception as e:
@@ -482,6 +446,7 @@ class PersistentKVCache:
         entry: CacheEntry | None = None
         if self._lmdb_env is not None:
             try:
+
                 def _read_lmdb() -> CacheEntry | None:
                     with self._lmdb_env.begin() as txn:
                         value = txn.get(key.encode(), db=self._lmdb_db)
@@ -512,7 +477,7 @@ class PersistentKVCache:
                 cache, metadata = load_prompt_cache(
                     str(st_path),
                     return_metadata=True,
-    )
+                )
                 tok_count = 0
                 if isinstance(metadata, dict):
                     tok_count = metadata.get("token_count", 0)
@@ -531,6 +496,7 @@ class PersistentKVCache:
                 if async_lmdb:
                     await async_lmdb["put"](self._lmdb_env, key_bytes, value_bytes)
                 else:
+
                     def _update_lmdb() -> None:
                         with self._lmdb_env.begin(write=True) as txn:
                             txn.put(key_bytes, value_bytes, db=self._lmdb_db)
@@ -581,10 +547,6 @@ class PersistentKVCache:
         """Close the cache manager."""
         self._close()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Module-level convenience
-# ─────────────────────────────────────────────────────────────────────────────
 
 _pkv_instance: PersistentKVCache | None = None
 

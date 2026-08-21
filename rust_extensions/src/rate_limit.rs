@@ -15,10 +15,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Default NVD rate: 5 req / 30s (bez API key)
 const DEFAULT_RATE: usize = 5;
 /// NVD rate s API key: 50 req / 30s
@@ -27,10 +23,6 @@ const API_KEY_RATE: usize = 50;
 const WINDOW_SECS: f64 = 30.0;
 /// Refill check interval (cooperative sleep granularity)
 const REFILL_INTERVAL_MS: u64 = 50;
-
-// ---------------------------------------------------------------------------
-// TokenBucketState — sdílený stav
-// ---------------------------------------------------------------------------
 
 struct TokenBucketState {
     /// Dostupné tokeny
@@ -110,10 +102,6 @@ impl TokenBucketState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Python třída NvdRateLimiter
-// ---------------------------------------------------------------------------
-
 /// NVD API Rate Limiter using token bucket algorithm.
 ///
 /// ISSUE #016: Replaces Python asyncio.Semaphore with Rust crossbeam-channel
@@ -184,10 +172,6 @@ impl NvdRateLimiter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// General Purpose Rate Limiter for Discovery Adapters
-// ---------------------------------------------------------------------------
-
 /// General-purpose token bucket rate limiter for discovery adapters.
 ///
 /// ISSUE 24: Replaces Python RateLimiter in discovery/base.py.
@@ -246,10 +230,6 @@ impl RustGeneralRateLimiter {
         self.state.tokens.load(Ordering::Acquire)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module entry point
-// ---------------------------------------------------------------------------
 
 pub fn register_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NvdRateLimiter>()?;

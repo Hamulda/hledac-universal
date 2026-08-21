@@ -18,16 +18,17 @@ M1 8GB invariants:
 - MAX_PREDICTIONS = 20 per call
 - Always-on, bounded, fail-safe
 """
+
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
+from operator import attrgetter
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.layers.temporal_signal_layer import TemporalEvent, TemporalSignalLayer, event_from_finding_like
-from operator import attrgetter, itemgetter
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 MAX_PREDICTIONS = 20
 MAX_HISTORY_PER_TYPE = 256
@@ -38,8 +39,10 @@ CONFIDENCE_BOOST_BURST = 2.0
 MIN_EVENTS_FOR_PATTERN = 5
 PEAK_HOUR_TOLERANCE = 2
 
+
 class IOCPrediction(Struct, frozen=True):
     """Single IOC prediction from temporal analysis."""
+
     ioc_value: str
     ioc_type: str
     confidence: float
@@ -48,8 +51,10 @@ class IOCPrediction(Struct, frozen=True):
     predicted_at: float
     expires_at: float
 
+
 class _PatternStats(Struct):
     """Per-(ioc_type, source) rolling pattern statistics."""
+
     hour_counts: list[int] = field(default_factory=lambda: [0] * 24)
     dow_counts: list[int] = field(default_factory=lambda: [0] * 7)
     total_events: int = 0
@@ -58,6 +63,7 @@ class _PatternStats(Struct):
     peak_hour: int = -1
     peak_dow: int = -1
     events: deque[float] = field(default_factory=lambda: deque(maxlen=MAX_HISTORY_PER_TYPE))
+
 
 class TemporalIOCPredictor:
     """
@@ -77,9 +83,25 @@ class TemporalIOCPredictor:
     - Pure Python only (no numpy, no pandas)
     - M1 8GB safe: <10MB RAM for patterns
     """
-    __slots__ = tuple(('_duckdb', '_flush_interval', '_last_flush', '_live_events', '_lru_keys', '_max_predictions', '_patterns', '_stats', '_temporal'))
 
-    def __init__(self, temporal_layer: TemporalSignalLayer | None=None, duckdb_store: Any=None, max_predictions: int=MAX_PREDICTIONS):
+    __slots__ = (
+        "_duckdb",
+        "_flush_interval",
+        "_last_flush",
+        "_live_events",
+        "_lru_keys",
+        "_max_predictions",
+        "_patterns",
+        "_stats",
+        "_temporal",
+    )
+
+    def __init__(
+        self,
+        temporal_layer: TemporalSignalLayer | None = None,
+        duckdb_store: Any = None,
+        max_predictions: int = MAX_PREDICTIONS,
+    ) -> None:
         self._temporal = temporal_layer or TemporalSignalLayer()
         self._duckdb = duckdb_store
         self._max_predictions = max_predictions
@@ -88,9 +110,15 @@ class TemporalIOCPredictor:
         self._live_events: deque[TemporalEvent] = deque(maxlen=256)
         self._last_flush = time.time()
         self._flush_interval = FLUSH_INTERVAL_S
-        self._stats = {'predictions_generated': 0, 'predictions_used': 0, 'events_observed': 0, 'pattern_builds': 0, 'duckdb_queries': 0}
+        self._stats = {
+            "predictions_generated": 0,
+            "predictions_used": 0,
+            "events_observed": 0,
+            "pattern_builds": 0,
+            "duckdb_queries": 0,
+        }
 
-    async def predict_next_iocs(self, top_k: int | None=None) -> list[dict]:
+    async def predict_next_iocs(self, top_k: int | None = None) -> list[dict]:
         """
         Generate temporal predictions for next IOC fetches.
 
@@ -124,11 +152,31 @@ class TemporalIOCPredictor:
                 is_live_burst = ioc_val in live_burst_keys
                 final_conf = conf * (CONFIDENCE_BOOST_BURST if is_live_burst else 1.0)
                 final_conf = min(final_conf, 1.0)
-                predictions.append(IOCPrediction(ioc_value=ioc_val, ioc_type=ioc_type, confidence=final_conf, source_node=source, prediction_method=method, predicted_at=now, expires_at=now + PREDICTION_HORIZON_S))
+                predictions.append(
+                    IOCPrediction(
+                        ioc_value=ioc_val,
+                        ioc_type=ioc_type,
+                        confidence=final_conf,
+                        source_node=source,
+                        prediction_method=method,
+                        predicted_at=now,
+                        expires_at=now + PREDICTION_HORIZON_S,
+                    )
+                )
         for score in live_scores[:10]:
             if score.burst_score < 0.6:
                 continue
-            predictions.append(IOCPrediction(ioc_value=score.key, ioc_type=self._infer_ioc_type(score.key), confidence=score.burst_score * CONFIDENCE_BOOST_BURST, source_node=score.family, prediction_method='burst', predicted_at=now, expires_at=now + 120.0))
+            predictions.append(
+                IOCPrediction(
+                    ioc_value=score.key,
+                    ioc_type=self._infer_ioc_type(score.key),
+                    confidence=score.burst_score * CONFIDENCE_BOOST_BURST,
+                    source_node=score.family,
+                    prediction_method="burst",
+                    predicted_at=now,
+                    expires_at=now + 120.0,
+                )
+            )
         for (ioc_type, source), pat in self._patterns.items():
             if pat.total_events < MIN_EVENTS_FOR_PATTERN * 2:
                 continue
@@ -139,7 +187,17 @@ class TemporalIOCPredictor:
                     next_predicted = last_ts + mean_gap
                     if 0 <= next_predicted - now <= PREDICTION_HORIZON_S:
                         conf = 0.5 + 0.3 * min(pat.total_events / 50, 1.0)
-                        predictions.append(IOCPrediction(ioc_value=self._pattern_key_to_ioc_value((ioc_type, source)), ioc_type=ioc_type, confidence=min(conf, 1.0), source_node=source, prediction_method='periodicity', predicted_at=now, expires_at=now + mean_gap * 1.5))
+                        predictions.append(
+                            IOCPrediction(
+                                ioc_value=self._pattern_key_to_ioc_value((ioc_type, source)),
+                                ioc_type=ioc_type,
+                                confidence=min(conf, 1.0),
+                                source_node=source,
+                                prediction_method="periodicity",
+                                predicted_at=now,
+                                expires_at=now + mean_gap * 1.5,
+                            )
+                        )
         deduped: dict[str, IOCPrediction] = {}
         for p in predictions:
             existing = deduped.get(p.ioc_value)
@@ -147,8 +205,17 @@ class TemporalIOCPredictor:
                 deduped[p.ioc_value] = p
         sorted_preds = sorted(deduped.values(), key=attrgetter("confidence"), reverse=True)
         result = sorted_preds[:max_k]
-        self._stats['predictions_generated'] += len(result)
-        return [{'ioc_value': p.ioc_value, 'ioc_type': p.ioc_type, 'confidence': p.confidence, 'source_node': p.source_node, 'prediction_method': p.prediction_method} for p in result]
+        self._stats["predictions_generated"] += len(result)
+        return [
+            {
+                "ioc_value": p.ioc_value,
+                "ioc_type": p.ioc_type,
+                "confidence": p.confidence,
+                "source_node": p.source_node,
+                "prediction_method": p.prediction_method,
+            }
+            for p in result
+        ]
 
     def observe_findings(self, findings: list[Any]) -> None:
         """
@@ -168,9 +235,9 @@ class TemporalIOCPredictor:
                 self._temporal.observe(event)
                 self._update_pattern_stats(event)
                 self._live_events.append(event)
-                self._stats['events_observed'] += 1
+                self._stats["events_observed"] += 1
             except Exception as e:
-                logger.debug(f'[P3-2] observe_findings: failed to process finding: {e}')
+                logger.debug(f"[P3-2] observe_findings: failed to process finding: {e}")
 
     async def record_prefetch_outcome(self, ioc_value: str, success: bool, bytes_downloaded: int) -> None:
         """
@@ -184,13 +251,13 @@ class TemporalIOCPredictor:
             bytes_downloaded: Bytes downloaded (0 if failed)
         """
         confirmed = success and bytes_downloaded > 0
-        self._temporal.observe_confirmation(ioc_value, confirmed, source='prefetch')
+        self._temporal.observe_confirmation(ioc_value, confirmed, source="prefetch")
         if confirmed:
             try:
-                event = TemporalEvent(ts=time.time(), key=ioc_value, family='prefetch', source='prefetch', weight=1.0)
+                event = TemporalEvent(ts=time.time(), key=ioc_value, family="prefetch", source="prefetch", weight=1.0)
                 self._update_pattern_stats(event)
             except Exception as e:
-                logger.debug(f'[P3-2] record_prefetch_outcome: {e}')
+                logger.debug(f"[P3-2] record_prefetch_outcome: {e}")
 
     async def _ensure_patterns_loaded(self) -> None:
         """Load or refresh pattern statistics from DuckDB historical data."""
@@ -199,7 +266,7 @@ class TemporalIOCPredictor:
         try:
             await self._load_patterns_from_duckdb()
         except Exception as e:
-            logger.debug(f'[P3-2] _ensure_patterns_loaded: DuckDB query failed: {e}')
+            logger.debug(f"[P3-2] _ensure_patterns_loaded: DuckDB query failed: {e}")
 
     async def _load_patterns_from_duckdb(self) -> None:
         """
@@ -210,17 +277,18 @@ class TemporalIOCPredictor:
         """
         if self._duckdb is None:
             return
-        self._stats['duckdb_queries'] += 1
+        self._stats["duckdb_queries"] += 1
         try:
-            query = '\n                SELECT\n                    source_family,\n                    ioc_type,\n                    EXTRACT(HOUR FROM to_timestamp(timestamp))::INTEGER as hour,\n                    EXTRACT(DOW FROM to_timestamp(timestamp))::INTEGER as dow,\n                    COUNT(*) as cnt\n                FROM findings\n                WHERE timestamp > UNIX_TIMESTAMP() - 7 * 86400\n                GROUP BY source_family, ioc_type, hour, dow\n                ORDER BY source_family, ioc_type, cnt DESC\n                LIMIT 1000\n            '
-            conn = getattr(self._duckdb, '_conn', None)
+            query = "\n                SELECT\n                    source_family,\n                    ioc_type,\n                    EXTRACT(HOUR FROM to_timestamp(timestamp))::INTEGER as hour,\n                    EXTRACT(DOW FROM to_timestamp(timestamp))::INTEGER as dow,\n                    COUNT(*) as cnt\n                FROM findings\n                WHERE timestamp > UNIX_TIMESTAMP() - 7 * 86400\n                GROUP BY source_family, ioc_type, hour, dow\n                ORDER BY source_family, ioc_type, cnt DESC\n                LIMIT 1000\n            "
+            conn = getattr(self._duckdb, "_conn", None)
             if conn is None:
                 return
             import asyncio
+
             rows = await asyncio.to_thread(self._execute_query, conn, query)
             for row in rows:
-                source_family = row[0] or 'unknown'
-                ioc_type = row[1] or 'domain'
+                source_family = row[0] or "unknown"
+                ioc_type = row[1] or "domain"
                 hour = int(row[2]) if row[2] is not None else 0
                 dow = int(row[3]) if row[3] is not None else 0
                 cnt = int(row[4]) if row[4] is not None else 0
@@ -240,9 +308,9 @@ class TemporalIOCPredictor:
                     pat.peak_hour = hour
                 if pat.peak_dow < 0 or pat.dow_counts[dow] > pat.dow_counts[pat.peak_dow]:
                     pat.peak_dow = dow
-            self._stats['pattern_builds'] += 1
+            self._stats["pattern_builds"] += 1
         except Exception as e:
-            logger.debug(f'[P3-2] _load_patterns_from_duckdb: {e}')
+            logger.debug(f"[P3-2] _load_patterns_from_duckdb: {e}")
 
     def _execute_query(self, conn: Any, query: str) -> list:
         """Execute DuckDB query and return rows."""
@@ -262,18 +330,21 @@ class TemporalIOCPredictor:
                 return
             records = []
             for e in events:
-                records.append({'timestamp': e.ts, 'key': e.key, 'family': e.family, 'source': e.source, 'weight': e.weight})
-            write_method = getattr(self._duckdb, 'async_ingest_findings_batch', None)
+                records.append(
+                    {"timestamp": e.ts, "key": e.key, "family": e.family, "source": e.source, "weight": e.weight}
+                )
+            write_method = getattr(self._duckdb, "async_ingest_findings_batch", None)
             if write_method is not None:
                 import asyncio
+
                 await asyncio.to_thread(write_method, records)
             self._live_events.clear()
         except Exception as e:
-            logger.debug(f'[P3-2] _flush_to_duckdb: {e}')
+            logger.debug(f"[P3-2] _flush_to_duckdb: {e}")
 
     def _update_pattern_stats(self, event: TemporalEvent) -> None:
         """Update rolling pattern statistics for an event."""
-        key = (event.family, 'generic')
+        key = (event.family, "generic")
         pat = self._patterns.get(key)
         if pat is None:
             if len(self._patterns) >= 512:
@@ -306,7 +377,9 @@ class TemporalIOCPredictor:
             in_peak = current_dow == pat.peak_dow or pat.dow_counts[pat.peak_dow] < pat.total_events * 0.3
         return in_peak
 
-    def _compute_confidence(self, pat: _PatternStats, current_hour: int, current_dow: int, in_peak_window: bool) -> float:
+    def _compute_confidence(
+        self, pat: _PatternStats, current_hour: int, current_dow: int, in_peak_window: bool
+    ) -> float:
         """
         Compute prediction confidence based on historical patterns.
 
@@ -321,7 +394,9 @@ class TemporalIOCPredictor:
         conf = base + peak_boost * 0.3 + hour_activity * 0.2 + dow_activity * 0.1
         return min(conf, 1.0)
 
-    def _predict_iocs_for_time(self, ioc_type: str, source: str, pat: _PatternStats, max_iocs: int) -> list[tuple[str, str]]:
+    def _predict_iocs_for_time(
+        self, ioc_type: str, source: str, pat: _PatternStats, max_iocs: int
+    ) -> list[tuple[str, str]]:
         """
         Predict IOC values likely to appear at the given time.
 
@@ -330,9 +405,9 @@ class TemporalIOCPredictor:
         """
         predictions = []
         if pat.events:
-            sample_key = f'{source}:{ioc_type}'
+            sample_key = f"{source}:{ioc_type}"
             for _ in range(min(max_iocs, 3)):
-                predictions.append((sample_key, 'time_of_day'))
+                predictions.append((sample_key, "time_of_day"))
         return predictions[:max_iocs]
 
     def _pattern_key_to_ioc_value(self, key: tuple[str, str]) -> str:
@@ -347,14 +422,19 @@ class TemporalIOCPredictor:
 
     def _infer_ioc_type(self, key: str) -> str:
         """Infer IOC type from key string."""
-        if ':' in key:
-            return key.split(':')[-1]
-        if '.' in key:
-            return 'domain'
-        if key.startswith(('http://', 'https://')):
-            return 'url'
-        return 'entity'
+        if ":" in key:
+            return key.split(":")[-1]
+        if "." in key:
+            return "domain"
+        if key.startswith(("http://", "https://")):
+            return "url"
+        return "entity"
 
     def get_stats(self) -> dict[str, Any]:
         """Return predictor statistics."""
-        return {**self._stats, 'patterns_loaded': len(self._patterns), 'live_events_buffered': len(self._live_events), 'temporal_layer_size': self._temporal.get_state_size()}
+        return {
+            **self._stats,
+            "patterns_loaded": len(self._patterns),
+            "live_events_buffered": len(self._live_events),
+            "temporal_layer_size": self._temporal.get_state_size(),
+        }

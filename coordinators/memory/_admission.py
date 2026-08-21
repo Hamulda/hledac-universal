@@ -10,21 +10,23 @@ Composable admission policy that decides:
 
 Extracted from memory_coordinator.py (F320 refactor).
 """
+
 from dataclasses import dataclass
 from enum import Enum
-from _core import aclose
 
 
 class CacheLevel(Enum):
     """Cache levels for three-tier storage."""
-    HOT = 'hot'      # L1 memory (RAM)
-    WARM = 'warm'    # L2 disk (SSD cache)
-    COLD = 'cold'    # L3 archival
+
+    HOT = "hot"  # L1 memory (RAM)
+    WARM = "warm"  # L2 disk (SSD cache)
+    COLD = "cold"  # L3 archival
 
 
 @dataclass(frozen=True, slots=True)
 class AdmissionDecision:
     """Result of admission policy evaluation."""
+
     cache_level: CacheLevel
     ttl_seconds: int
     priority: int  # 1-10, higher = more important

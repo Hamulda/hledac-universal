@@ -59,7 +59,6 @@ HLEDAC_HOT_EDGES=1   opt-out (default ON — unset or any value ≠ "0" enables)
 HLEDAC_HOT_EDGES_MAP_SIZE_MB   override 8 MB default
 """
 
-
 import functools
 import logging
 import os
@@ -115,10 +114,8 @@ if _RUST_COUNTERS_AVAILABLE:
     IntCounterLayoutRust = _get_rust_backend().int_counter.IntCounterLayoutRust
     bulk_bump_aggregate = _get_rust_backend().hot_edges.bulk_bump_aggregate
     bulk_snapshot_dict = _get_rust_backend().hot_edges.bulk_snapshot_dict
-    _build_layout_rust = getattr(_get_rust_backend().hot_edges, 'build_layout', None)
-    _EDGE_COUNTER_L1: Any = HotEdgeCounterRust(
-        flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50"))
-    )
+    _build_layout_rust = getattr(_get_rust_backend().hot_edges, "build_layout", None)
+    _EDGE_COUNTER_L1: Any = HotEdgeCounterRust(flush_threshold=int(os.environ.get("HLEDAC_HOT_EDGES_L1_FLUSH", "50")))
     _L1_AVAILABLE = True
 else:
     IntCounterLayoutRust: type | None = None  # type: ignore[valid-type]
@@ -129,23 +126,18 @@ else:
     _EDGE_COUNTER_L1: Any | None = None
     _L1_AVAILABLE = False
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 # Sprint P1-3: 8 MB default (was 32 MB). With ~43 edges per sprint the DB is <10 KB —
 # 32 MB was 6400× overhead. 8 MB covers 1000+ edges easily. Override via
 # HLEDAC_HOT_EDGES_MAP_SIZE_MB if needed.
 _LMDB_PATH: Path = LMDB_ROOT / "hot_edges.lmdb"
-_LMDB_MAP_SIZE: int = int(
-    os.environ.get("HLEDAC_HOT_EDGES_MAP_SIZE_MB", "8")
-) * 1024 * 1024
+_LMDB_MAP_SIZE: int = int(os.environ.get("HLEDAC_HOT_EDGES_MAP_SIZE_MB", "8")) * 1024 * 1024
 _KEY_PREFIX: bytes = b"hot:"
 
 MAX_HOT_NEIGHBORS_PER_NODE: int = 50
 MAX_HOT_NODES: int = 10_000
 # SWARM-010: Use FeatureFlags for hot edges enable
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 HOT_EDGES_ENABLED: bool = FeatureFlags.get(FeatureFlag.HOT_EDGES)
 
 # P6-3 + MODERN-35: Denormalized edge buffer for batched writes.
@@ -223,7 +215,7 @@ class SprintDenormBuffer:
                 self._buffer = buffer + self._buffer
         return result
 
-    async def __aenter__(self) -> "SprintDenormBuffer":
+    async def __aenter__(self) -> SprintDenormBuffer:
         """Enter sprint context — buffer is already fresh on construction."""
         return self
 
@@ -270,9 +262,7 @@ def clear_denorm_buffer() -> None:
         buf._flushed_size = 0
 
 
-def _flush_denorm_buffer_internal(
-    buffer: list[tuple[int, int, str, str]]
-) -> bool:
+def _flush_denorm_buffer_internal(buffer: list[tuple[int, int, str, str]]) -> bool:
     """
     Internal flush function that operates on a provided buffer.
 
@@ -292,18 +282,14 @@ def _flush_denorm_buffer_internal(
 
         env = _open_env()
         if env is None:
-            logger.warning(
-                f"[HOT-EDGES] LMDB env unavailable, preserving {len(buffer)} edges for retry"
-    )
+            logger.warning(f"[HOT-EDGES] LMDB env unavailable, preserving {len(buffer)} edges for retry")
             return False
 
         with env.begin(write=True) as txn:
             for src_id, deltas_in in by_src.items():
                 key = _make_key(src_id)
                 existing = txn.get(key)
-                existing_denorm = bool(
-                    existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM
-    )
+                existing_denorm = bool(existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM)
 
                 if existing is None:
                     neighbors_denorm: list[tuple[int, int, str, str]] = deltas_in.copy()
@@ -355,16 +341,13 @@ def _flush_denorm_buffer_to_lmdb() -> bool:
     """
     return _get_denorm_buffer().flush()
 
+
 # Counter encoding — 8 bytes unsigned int, little-endian.
 # Picked for: zero allocations, native int.from_bytes on M1 ARM64.
 # (Currently the counter is encoded via msgspec list — kept here as
 # a reference for a future binary fast-path that may live in Rust.)
 _UINT64_MAX: int = 0xFFFFFFFFFFFFFFFF
 
-
-# ---------------------------------------------------------------------------
-# Lazy module-level env (thread-safe via LMDB internal locking)
-# ---------------------------------------------------------------------------
 
 _ENV = None  # type: ignore[var-annotated]
 _ENV_OPEN_FAILED = False
@@ -401,6 +384,7 @@ def _open_env():
     _init_rust_compression()
     try:
         from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
         _LMDB_PATH.parent.mkdir(parents=True, exist_ok=True)
         # POTENTIAL-3 Fix: Use critical=False for consistent fast crash-inconsistent pattern
         # hot edges cache is recoverable — fast writes acceptable
@@ -410,8 +394,8 @@ def _open_env():
             readahead=False,
             critical=False,  # recoverable data — fast writes acceptable
             max_dbs=1,
-    )
-        logger.debug(f"[HOT-EDGES] LMDB env opened at {_LMDB_PATH} ({_LMDB_MAP_SIZE // (1024*1024)} MB)")
+        )
+        logger.debug(f"[HOT-EDGES] LMDB env opened at {_LMDB_PATH} ({_LMDB_MAP_SIZE // (1024 * 1024)} MB)")
         return _ENV
     except Exception as e:
         _ENV_OPEN_FAILED = True
@@ -421,9 +405,6 @@ def _open_env():
 
 _COUNTER_KEY: bytes = b"nodes:count"
 
-# ---------------------------------------------------------------------------
-# Node counter helpers (enforces MAX_HOT_NODES)
-# ---------------------------------------------------------------------------
 
 def _get_node_count(env) -> int:
     """Return current unique src_id count. Returns 0 on error/miss."""
@@ -437,6 +418,7 @@ def _get_node_count(env) -> int:
         pass
     return 0
 
+
 def _inc_node_count(env) -> int:
     """Atomically increment node count. Returns new count. Fails silently."""
     try:
@@ -449,6 +431,7 @@ def _inc_node_count(env) -> int:
             return new_count
     except Exception:
         return -1
+
 
 def _dec_node_count(env) -> int:
     """Atomically decrement node count. Returns new count. Fails silently."""
@@ -464,16 +447,12 @@ def _dec_node_count(env) -> int:
         return -1
 
 
-# ---------------------------------------------------------------------------
-# Encoding helpers
-# ---------------------------------------------------------------------------
-
 # Sprint F265B-III: Compress LMDB pages with lz4 (fast) + zstd (ratio).
 # Wire format: [marker=0x00/0x01/0x02][payload].
 # Opt-in via HLEDAC_HOT_EDGES_COMPRESS=1 (default ON when rust ext available).
 # SWARM-010: Use FeatureFlags for compression enable
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
-from _core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _HOT_EDGES_COMPRESS = FeatureFlags.get(FeatureFlag.HOT_EDGES_COMPRESS)
 _compress_available = False
 _decompress_available = False
@@ -492,21 +471,27 @@ _rust_init_done = False
 def _init_rust_compression() -> None:
     """Lazy initialization of Rust compression functions."""
     global _rust_batch_compress, _rust_batch_decompress, _rust_compress, _rust_decompress
-    global _compress_available, _decompress_available, _batch_compress_available, _batch_decompress_available, _rust_init_done
+    global \
+        _compress_available, \
+        _decompress_available, \
+        _batch_compress_available, \
+        _batch_decompress_available, \
+        _rust_init_done
     if _rust_init_done:  # Already initialized
         return
     _rust_init_done = True
     try:
         from hledac.universal._core.rust_backend import rust
-        _rust_batch_compress = getattr(rust.raw, 'batch_compress_pages', None)
-        _rust_batch_decompress = getattr(rust.raw, 'batch_decompress_pages', None)
-        _rust_compress = getattr(rust.raw, 'compress_page', None)
-        _rust_decompress = getattr(rust.raw, 'decompress_page', None)
+
+        _rust_batch_compress = getattr(rust.raw, "batch_compress_pages", None)
+        _rust_batch_decompress = getattr(rust.raw, "batch_decompress_pages", None)
+        _rust_compress = getattr(rust.raw, "compress_page", None)
+        _rust_decompress = getattr(rust.raw, "decompress_page", None)
         _compress_available = _rust_compress is not None
         _decompress_available = _rust_decompress is not None
         _batch_compress_available = _rust_batch_compress is not None
         _batch_decompress_available = _rust_batch_decompress is not None
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         pass
 
 
@@ -549,10 +534,6 @@ def _encode_neighbors(neighbors: list[tuple[int, int]]) -> bytes:
         # Compression failed — store uncompressed.
         return encoded
 
-
-# ---------------------------------------------------------------------------
-# Batch helpers — Rust batch compression (Sprint P3-2)
-# ---------------------------------------------------------------------------
 
 def _decode_neighbors_batch(
     blobs: list[bytes],
@@ -601,10 +582,7 @@ def _encode_neighbors_batch(
     if not neighbors_list:
         return []
     # Encode to msgspec first (CPU-bound, no parallelism benefit)
-    encoded_list: list[bytes] = [
-        _msgspec_encode([list(pair) for pair in neighbors])
-        for neighbors in neighbors_list
-    ]
+    encoded_list: list[bytes] = [_msgspec_encode([list(pair) for pair in neighbors]) for neighbors in neighbors_list]
     if _HOT_EDGES_COMPRESS and _batch_compress_available and len(encoded_list) > 1:
         try:
             return _rust_batch_compress(encoded_list)
@@ -613,10 +591,6 @@ def _encode_neighbors_batch(
             pass
     return [_encode_neighbors(neighbors) for neighbors in neighbors_list]
 
-
-# ---------------------------------------------------------------------------
-# Public API — write path
-# ---------------------------------------------------------------------------
 
 def _record_edge_lmdb(
     src_id: int,
@@ -649,9 +623,7 @@ def _record_edge_lmdb(
             if existing is None:
                 # ── New node: first edge ever ─────────────────────────────────
                 if use_denorm:
-                    neighbors_denorm: list[tuple[int, int, str, str]] = [
-                        (dst_id, 1, dst_value, dst_ioc_type)
-                    ]
+                    neighbors_denorm: list[tuple[int, int, str, str]] = [(dst_id, 1, dst_value, dst_ioc_type)]
                     neighbors_denorm.sort(key=lambda p: (-p[1], p[0]))
                     txn.put(key, _encode_neighbors_denorm(neighbors_denorm))
                 else:
@@ -755,7 +727,7 @@ def _flush_l1_to_lmdb() -> bool:
                         neighbors = []
 
                 # Build nmap for O(1) dst lookup
-                nmap: dict[int, int] = {nid: cnt for nid, cnt in neighbors}
+                nmap: dict[int, int] = dict(neighbors)
 
                 for dst_id, delta, _ in deltas_in:
                     nmap[dst_id] = nmap.get(dst_id, 0) + delta
@@ -812,7 +784,7 @@ def _flush_l1_to_lmdb_from_drain(dirty: list[tuple[int, int, int]]) -> bool:
                         neighbors = []
 
                 # Build nmap for O(1) dst lookup
-                nmap: dict[int, int] = {nid: cnt for nid, cnt in neighbors}
+                nmap: dict[int, int] = dict(neighbors)
 
                 for dst_id, delta, _ in deltas_in:
                     nmap[dst_id] = nmap.get(dst_id, 0) + delta
@@ -892,13 +864,7 @@ def record_edge(
     return _record_edge_lmdb(src_id, dst_id)
 
 
-# ---------------------------------------------------------------------------
-# Public API — read path
-# ---------------------------------------------------------------------------
-
-def get_hot_neighbors(
-    src_id: int, top_n: int = MAX_HOT_NEIGHBORS_PER_NODE
-) -> list[tuple[int, int]]:
+def get_hot_neighbors(src_id: int, top_n: int = MAX_HOT_NEIGHBORS_PER_NODE) -> list[tuple[int, int]]:
     """
     O(1) LMDB lookup of top-N (dst_id, count) for src_id.
 
@@ -937,15 +903,6 @@ def get_hot_neighbors(
         return []
 
 
-# ─── Sprint F265-U6: Denormalized hot neighbors (value + ioc_type embedded) ───
-# Wire format v2: [version=0x03][count:N][entry_0...entry_N]
-# entry = (dst_id:u64, count:u64, value_len:u16, value:utf8, ioc_type_len:u8, ioc_type:utf8)
-# Benefits:
-#   • Eliminates 1 DuckDB SQL round-trip per find_entity_history call
-#   • Single LMDB O(1) lookup returns everything needed for the hot path
-#   • value + ioc_type stored once per edge (at write time, during record_edge)
-#   • Backward compat: v1 blobs (marker 0x00/0x01/0x02) decoded normally, extended to v2 on next write
-#   • M1 8GB: 50 neighbors × (~50B value + 15B ioc_type + 24B overhead) ≈ 4.5 KB/node — well within 8 MB budget
 _VERSION_DENORM = 0x03
 _WIRE_MARKER_DENORM = 0x03
 
@@ -1022,9 +979,7 @@ def _encode_neighbors_denorm(
         return _encode_neighbors([(nid, cnt) for nid, cnt, _, _ in neighbors])
 
 
-def get_hot_neighbors_denorm(
-    src_id: int, top_n: int = MAX_HOT_NEIGHBORS_PER_NODE
-) -> list[tuple[int, int, str, str]]:
+def get_hot_neighbors_denorm(src_id: int, top_n: int = MAX_HOT_NEIGHBORS_PER_NODE) -> list[tuple[int, int, str, str]]:
     """
     O(1) LMDB lookup of top-N denormalized neighbors for src_id.
 
@@ -1092,6 +1047,7 @@ def get_node_id_by_value(value: str) -> int | None:
         return None
     try:
         from hledac.universal.graph.quantum_pathfinder import _stable_node_id
+
         return _stable_node_id(value)
     except Exception:
         return None
@@ -1117,6 +1073,7 @@ def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
         import duckdb
 
         from hledac.universal.paths import get_ioc_db_path
+
         conn = duckdb.connect(str(get_ioc_db_path()), read_only=True)
         # M1 8GB: memory_limit + threads + preserve_insertion_order (read-only, conservative)
         try:
@@ -1131,9 +1088,7 @@ def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
         return None
 
 
-def lookup_ioc_values_by_ids(
-    node_ids: list[int]
-) -> dict[int, dict]:
+def lookup_ioc_values_by_ids(node_ids: list[int]) -> dict[int, dict]:
     """
     Batch-resolve node_ids → IOC value/type/confidence.
 
@@ -1157,18 +1112,11 @@ def lookup_ioc_values_by_ids(
         # noqa: B608 — placeholders are integer-count-derived, node_ids are internal int list, read-only query
         cur = con.execute(sql, node_ids)
         cols = [c[0] for c in cur.description]
-        return {
-            int(row[0]): dict(zip(cols, row, strict=False))
-            for row in cur.fetchall()
-        }
+        return {int(row[0]): dict(zip(cols, row, strict=False)) for row in cur.fetchall()}
     except Exception as e:
         logger.debug(f"[HOT-EDGES] lookup_ioc_values_by_ids failed: {e}")
         return {}
 
-
-# ---------------------------------------------------------------------------
-# Admin / test helpers
-# ---------------------------------------------------------------------------
 
 def clear_all() -> bool:
     """Drop ALL hot edges (testing only). Returns True on success."""
@@ -1327,6 +1275,7 @@ class HotEdgesAtomicWriter:
 
         try:
             from collections import defaultdict
+
             by_src: dict[int, list[tuple[int, int, str, str]]] = defaultdict(list)
             for src_id, dst_id, dst_value, dst_ioc_type in self._buffer:
                 by_src[src_id].append((dst_id, 1, dst_value, dst_ioc_type))
@@ -1340,9 +1289,7 @@ class HotEdgesAtomicWriter:
                 for src_id, deltas_in in by_src.items():
                     key = _make_key(src_id)
                     existing = txn.get(key)
-                    existing_denorm = bool(
-                        existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM
-    )
+                    existing_denorm = bool(existing and len(existing) > 0 and existing[0] == _WIRE_MARKER_DENORM)
 
                     if existing is None:
                         neighbors_denorm = deltas_in.copy()
@@ -1370,9 +1317,7 @@ class HotEdgesAtomicWriter:
 
                     sorted_neighbors = sorted(nmap.items(), key=lambda p: (-p[1][0], p[0]))
                     sorted_neighbors = sorted_neighbors[:MAX_HOT_NEIGHBORS_PER_NODE]
-                    final = [
-                        (nid, cnt, val, typ) for nid, (cnt, val, typ) in sorted_neighbors
-                    ]
+                    final = [(nid, cnt, val, typ) for nid, (cnt, val, typ) in sorted_neighbors]
                     txn.put(key, _encode_neighbors_denorm(final))
 
             flushed_count = len(self._buffer)
@@ -1425,8 +1370,7 @@ def delete_hot_edge(src_id: int, dst_id: int) -> bool:
             if marker == _WIRE_MARKER_DENORM:
                 neighbors = _decode_neighbors_denorm(existing) or []
                 original_len = len(neighbors)
-                neighbors = [(nid, cnt, val, typ) for nid, cnt, val, typ in neighbors
-                             if nid != dst_id]
+                neighbors = [(nid, cnt, val, typ) for nid, cnt, val, typ in neighbors if nid != dst_id]
                 if len(neighbors) == original_len:
                     return False  # Edge not found
                 if not neighbors:

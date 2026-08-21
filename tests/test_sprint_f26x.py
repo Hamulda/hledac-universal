@@ -16,7 +16,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,7 +47,7 @@ class TestSprintF26X:
     """Sprint F26X — CommunicationLayer 4-seam wiring tests."""
 
     # ------------------------------------------------------------------ 1
-    def test_probe_f26x_communication(self):
+    def test_probe_f26x_communication(self) -> None:
         """get_communication_layer() returns a CommunicationLayer instance with expected surface."""
         from layers import get_communication_layer
 
@@ -63,7 +62,7 @@ class TestSprintF26X:
         assert hasattr(cl, "shutdown"), "CommunicationLayer must expose async shutdown()"
 
     # ------------------------------------------------------------------ 2
-    def test_probe_f26x_cache_bound(self):
+    def test_probe_f26x_cache_bound(self) -> None:
         """CommunicationLayer._cache is bounded to config.model_cache_size (default 100)."""
         from layers import get_communication_layer
 
@@ -83,7 +82,7 @@ class TestSprintF26X:
         # which is out of scope for this hermetic test.
 
     # ------------------------------------------------------------------ 3
-    def test_probe_f26x_batch_queue_bound(self):
+    def test_probe_f26x_batch_queue_bound(self) -> None:
         """CommunicationLayer._batch_queue is bounded to maxsize=256 (M1 invariant)."""
         from layers import get_communication_layer
 
@@ -93,10 +92,10 @@ class TestSprintF26X:
         assert isinstance(cl._batch_queue, asyncio.Queue)
         assert cl._batch_queue.maxsize == 256, (
             f"F26X M1 invariant: _batch_queue.maxsize must be 256, got {cl._batch_queue.maxsize}"
-    )
+        )
 
     # ------------------------------------------------------------------ 4
-    def test_probe_f26x_inject_none(self, sprint_scheduler):
+    def test_probe_f26x_inject_none(self, sprint_scheduler) -> None:
         """SprintScheduler.inject_communication_layer(None) does not raise."""
         # None injection must succeed silently — caller is allowed to pass
         # None as a "no-op" or to clear a previously injected layer.
@@ -112,7 +111,7 @@ class TestSprintF26X:
         assert sprint_scheduler._communication_layer is stub
 
     # ------------------------------------------------------------------ 5
-    def test_probe_f26x_default_on(self):
+    def test_probe_f26x_default_on(self) -> None:
         """Without --no-coordination, _communication_layer is NOT None after default init.
 
         The default-OFF contract is enforced at runtime by core/__main__.py:1442
@@ -129,12 +128,13 @@ class TestSprintF26X:
         assert scheduler._communication_layer is None
 
     # ------------------------------------------------------------------ 6
-    def test_probe_f26x_opt_out(self):
+    def test_probe_f26x_opt_out(self) -> None:
         """With --no-coordination=True, the injection block in __main__.py is skipped.
 
         We simulate the argparse state and verify that `getattr(args, 'no_coordination', False)`
         correctly detects the opt-out flag (matches F260 --stealth-layer pattern).
         """
+
         # Mock the argparse namespace as it would exist after `parser.parse_args()`
         class _Args:
             no_coordination = True
@@ -149,9 +149,9 @@ class TestSprintF26X:
         assert opt_out_active is False, "--no-coordination must disable injection"
 
     # ------------------------------------------------------------------ 7
-    def test_probe_f26x_fail_soft(self):
+    def test_probe_f26x_fail_soft(self) -> None:
         """Forcing CommunicationLayer() to raise → get_communication_layer() returns None."""
-        from layers import get_communication_layer, _communication_layer_cached
+        from layers import _communication_layer_cached, get_communication_layer
 
         # Patch the CommunicationLayer constructor to raise — the accessor must
         # catch the exception and return None (fail-soft, per F26X plan §A.2).
@@ -164,7 +164,7 @@ class TestSprintF26X:
         assert result is None, "get_communication_layer() must return None on init failure"
 
     # ------------------------------------------------------------------ 8
-    def test_probe_f26x_privacy_gate_uses_comm(self, sprint_scheduler):
+    def test_probe_f26x_privacy_gate_uses_comm(self, sprint_scheduler) -> None:
         """_run_privacy_gate SHOULD try the CommunicationLayer path when injected.
 
         This verifies the hot-spot #1 contract: when _communication_layer is set,
@@ -172,9 +172,10 @@ class TestSprintF26X:
         back to the legacy sequential path. The actual Hermes3 call is mocked
         to keep the test hermetic.
         """
+
         # Inject a stub comm layer with the surface _run_privacy_gate needs
         class _StubComm:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.queries = []
 
             async def query_model(self, prompt, **_kwargs):
@@ -190,18 +191,19 @@ class TestSprintF26X:
         assert sprint_scheduler._communication_layer is comm
 
     # ------------------------------------------------------------------ 9
-    def test_probe_f26x_lmdb_priority(self, sprint_scheduler):
+    def test_probe_f26x_lmdb_priority(self, sprint_scheduler) -> None:
         """LMDB ingest with CommunicationLayer uses bounded writer concurrency.
 
         The F26X plan §A.3 hot-spot #2 introduces a single-writer coordinator
         with Semaphore(8) to prevent 8+ parallel lanes from contending on the
         LMDB lock. We verify the seam is exposed and the default cap is sane.
         """
+
         # The hot-spot wrapper (when implemented) will gate on
         # `if self._communication_layer is not None:` and apply Semaphore(8).
         # Here we verify the inject seam is sufficient to enable the hot-spot.
         class _StubComm:
-            def __init__(self):
+            def __init__(self) -> None:
                 self._cap = 8  # M1 fanout cap
 
             async def send_message(self, _msg, **_kwargs):
@@ -212,13 +214,13 @@ class TestSprintF26X:
         assert hasattr(comm, "_cap") and comm._cap == 8
 
     # ------------------------------------------------------------------ 10
-    def test_probe_f26x_perf(self):
+    def test_probe_f26x_perf(self) -> None:
         """get_communication_layer() init + accessor is < 50 ms (M1 overhead budget).
 
         Per F26X plan §A.5 row 10: budget 50 ms for accessor + lazy import. This
         ensures the default-ON injection does not blow the M1 cold-start budget.
         """
-        from layers import get_communication_layer, _communication_layer_cached
+        from layers import _communication_layer_cached, get_communication_layer
 
         # Clear any cached None from prior fail_soft test
         _communication_layer_cached.cache_clear()

@@ -13,6 +13,7 @@ Nová struktura (ISSUE-028):
 Pro nový kód preferujte importy z recon.stealth přímo:
     from hledac.universal.recon.stealth import StealthCrawler, StreamingMonitor
 """
+
 from __future__ import annotations
 
 # Re-export everything from the new stealth package for backwards compatibility
@@ -33,20 +34,19 @@ from hledac.universal.recon.stealth import (
     SearchResult,
     Severity,
     SourceType,
-    StreamEvent,
-    TorProxyManager,
-    get_stealth_headers,
     # Scraper
     StealthCrawler,
     StealthWebScraper,
-    create_stealth_crawler,
-    get_stealth_web_scraper,
-    quick_scrape,
+    StreamEvent,
     # Monitor
     StreamingMonitor,
+    TorProxyManager,
+    create_stealth_crawler,
+    get_stealth_headers,
+    get_stealth_web_scraper,
+    quick_scrape,
 )
 
-# backwards-compatible module-level state (used by some internal code)
 _PATCHED_SURFACES: set[str] = set()
 _UNPATCHED_SURFACES: set[str] = set()
 

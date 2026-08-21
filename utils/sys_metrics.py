@@ -15,24 +15,20 @@ psutil.swap_memory() in application code is a bug — use these instead.
 M1 8GB safe: ~0 bytes extra RAM, async by design.
 """
 
-import asyncio
 import logging
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
-from hledac.universal._core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.resource_governor import (
+    _get_cached_psutil_async,
+    _read_swap_memory_sync,
+    _read_virtual_memory_sync,
+)
 
 if TYPE_CHECKING:
-    import psutil
     from typing import Any
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
 
 
 class SystemMemory(Struct, frozen=True):
@@ -44,7 +40,7 @@ class SystemMemory(Struct, frozen=True):
     percent: float  # 0-100
 
     @classmethod
-    def from_psutil(cls, vm: Any) -> "SystemMemory":
+    def from_psutil(cls, vm: Any) -> SystemMemory:
         """Build from psutil.virtual_memory() result."""
         total = getattr(vm, "total", 0)
         available = getattr(vm, "available", 0)
@@ -54,7 +50,7 @@ class SystemMemory(Struct, frozen=True):
             available_gib=available / (1024**3),
             used_gib=used / (1024**3),
             percent=getattr(vm, "percent", 0.0),
-    )
+        )
 
 
 class SwapMemory(Struct, frozen=True):
@@ -65,18 +61,13 @@ class SwapMemory(Struct, frozen=True):
     percent: float  # 0-100
 
     @classmethod
-    def from_psutil(cls, sm: Any) -> "SwapMemory":
+    def from_psutil(cls, sm: Any) -> SwapMemory:
         """Build from psutil.swap_memory() result."""
         return cls(
             total_gib=getattr(sm, "total", 0) / (1024**3),
             used_gib=getattr(sm, "used", 0) / (1024**3),
             percent=getattr(sm, "percent", 0.0),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Async canonical entry points — all psutil access MUST go through here
-# ---------------------------------------------------------------------------
+        )
 
 
 async def system_memory() -> SystemMemory:
@@ -112,11 +103,6 @@ async def swap_memory() -> SwapMemory:
     except Exception as e:
         logger.debug(f"swap_memory() failed: {e}")
         return SwapMemory(0.0, 0.0, 0.0)
-
-
-# ---------------------------------------------------------------------------
-# Rust-native probes — zero syscall, no psutil dependency
-# ---------------------------------------------------------------------------
 
 
 async def process_rss_gib() -> float:
@@ -185,11 +171,6 @@ async def metal_active_memory_gib() -> float:
     except Exception:  # noqa: BLE001
         pass
     return 0.0
-
-
-# ---------------------------------------------------------------------------
-# Sync fallbacks — for use in __init__ / non-async contexts ONLY
-# ---------------------------------------------------------------------------
 
 
 def system_memory_sync() -> SystemMemory:

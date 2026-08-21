@@ -24,25 +24,22 @@ from __future__ import annotations
 import ast
 import re
 
-import pytest
-from _core import aclose
-
 
 class TestF04StaticAnalysis:
     """Verify _do_preview TaskGroup is removed via AST analysis."""
 
-    def test_no_do_preview_function(self):
+    def test_no_do_preview_function(self) -> None:
         """_do_preview async function must not exist in fetch_coordinator.py."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             source = f.read()
 
         tree = ast.parse(source)
 
         class FuncFinder(ast.NodeVisitor):
-            def __init__(self):
+            def __init__(self) -> None:
                 self.found = []
 
-            def visit_AsyncFunctionDef(self, node):
+            def visit_AsyncFunctionDef(self, node) -> None:
                 if "_do_preview" in node.name:
                     self.found.append(node.name)
                 self.generic_visit(node)
@@ -51,25 +48,25 @@ class TestF04StaticAnalysis:
         visitor.visit(tree)
         assert not visitor.found, f"Found preview functions: {visitor.found}"
 
-    def test_no_preview_task_creation(self):
+    def test_no_preview_task_creation(self) -> None:
         """No create_task with 'preview' in name should exist."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             source = f.read()
 
-        matches = re.findall(r'create_task\s*\([^)]*preview[^)]*\)', source, re.IGNORECASE)
+        matches = re.findall(r"create_task\s*\([^)]*preview[^)]*\)", source, re.IGNORECASE)
         assert not matches, f"Found preview task creation: {matches}"
 
-    def test_no_preview_text_variable(self):
+    def test_no_preview_text_variable(self) -> None:
         """_preview_text assignment must not exist."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             source = f.read()
 
         matches = re.findall(r"_preview_text\s*=", source)
         assert not matches, f"Found _preview_text assignment: {matches}"
 
-    def test_no_httpx_preview_in_fetch_block(self):
+    def test_no_httpx_preview_in_fetch_block(self) -> None:
         """No httpx-based preview fetch inside the fetch block."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             lines = f.readlines()
 
         in_fetch_block = False
@@ -88,9 +85,9 @@ class TestF04StaticAnalysis:
 
         assert not preview_in_fetch, "httpx preview import found in fetch block"
 
-    def test_single_curl_fetch_pattern(self):
+    def test_single_curl_fetch_pattern(self) -> None:
         """Single await _fetch_with_curl call in the fetch block (no TaskGroup)."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             source = f.read()
 
         # After F-04, should have: result = await self._fetch_with_curl
@@ -98,12 +95,12 @@ class TestF04StaticAnalysis:
         tree = ast.parse(source)
 
         class CurlAwaitFinder(ast.NodeVisitor):
-            def __init__(self):
+            def __init__(self) -> None:
                 self.await_curl_count = 0
                 self.in_taskgroup = False
                 self.taskgroup_depth = 0
 
-            def visit_AsyncWith(self, node):
+            def visit_AsyncWith(self, node) -> None:
                 # Check if it's a TaskGroup
                 for item in node.items:
                     if isinstance(item.context_expr, ast.Name) and "TaskGroup" in ast.unparse(item.context_expr):
@@ -116,7 +113,7 @@ class TestF04StaticAnalysis:
                         if self.taskgroup_depth == 0:
                             self.in_taskgroup = False
 
-            def visit_Await(self, node):
+            def visit_Await(self, node) -> None:
                 if isinstance(node.value, ast.Call):
                     call_str = ast.unparse(node.value)
                     if "_fetch_with_curl" in call_str and not self.in_taskgroup:
@@ -127,18 +124,18 @@ class TestF04StaticAnalysis:
         visitor.visit(tree)
         assert visitor.await_curl_count >= 1, "Should have at least one await _fetch_with_curl call"
 
-    def test_no_taskgroup_with_preview_and_curl(self):
+    def test_no_taskgroup_with_preview_and_curl(self) -> None:
         """TaskGroup must not contain both curl and preview tasks."""
-        with open("coordinators/fetch_coordinator.py", "r") as f:
+        with open("coordinators/fetch_coordinator.py") as f:
             source = f.read()
 
         tree = ast.parse(source)
 
         class TaskGroupChecker(ast.NodeVisitor):
-            def __init__(self):
+            def __init__(self) -> None:
                 self.violations = []
 
-            def visit_AsyncWith(self, node):
+            def visit_AsyncWith(self, node) -> None:
                 for item in node.items:
                     if isinstance(item.context_expr, ast.Name) and "TaskGroup" in ast.unparse(item.context_expr):
                         task_names = []
@@ -159,12 +156,13 @@ class TestF04StaticAnalysis:
 class TestF04IsJsHeavyLogic:
     """Test _is_js_heavy URL + HTML detection logic (pure unit)."""
 
-    def test_js_heavy_url_indicators(self):
+    def test_js_heavy_url_indicators(self) -> None:
         """URL heuristic detects known JS framework paths."""
+
         # Test the URL detection logic inline
         def is_js_heavy_url(url: str) -> bool:
-            js_indicators = ['react', 'vue', 'angular', 'next', 'nuxt', 'svelte']
-            return any((ind in url.lower() for ind in js_indicators))
+            js_indicators = ["react", "vue", "angular", "next", "nuxt", "svelte"]
+            return any(ind in url.lower() for ind in js_indicators)
 
         assert is_js_heavy_url("https://example-react.vercel.app/") is True
         assert is_js_heavy_url("https://foo.vuejs.org/") is True
@@ -173,22 +171,23 @@ class TestF04IsJsHeavyLogic:
         assert is_js_heavy_url("https://cdn.example.com/app.js") is False
         assert is_js_heavy_url("https://example.com/blog/article") is False
 
-    def test_js_heavy_html_indicators(self):
+    def test_js_heavy_html_indicators(self) -> None:
         """HTML content detection for JS frameworks."""
+
         def is_js_heavy_html(html: str) -> bool:
-            if '<script' in html.lower() and len(html) < 5000:
+            if "<script" in html.lower() and len(html) < 5000:
                 return True
-            if 'data-reactroot' in html or 'ng-version' in html:
+            if "data-reactroot" in html or "ng-version" in html:
                 return True
             return False
 
-        assert is_js_heavy_html('<html><body><script>alert(1)</script></body></html>') is True
-        assert is_js_heavy_html('<html data-reactroot><div id=root></div></html>') is True
+        assert is_js_heavy_html("<html><body><script>alert(1)</script></body></html>") is True
+        assert is_js_heavy_html("<html data-reactroot><div id=root></div></html>") is True
         assert is_js_heavy_html('<html ng-version="17"><body>Angular</body></html>') is True
-        assert is_js_heavy_html('<html><body><p>Hello world</p></body></html>') is False
-        assert is_js_heavy_html('<html><body>' + 'x' * 10000 + '</body></html>') is False  # too long
+        assert is_js_heavy_html("<html><body><p>Hello world</p></body></html>") is False
+        assert is_js_heavy_html("<html><body>" + "x" * 10000 + "</body></html>") is False  # too long
 
-    def test_performance_100_urls_no_extra_calls(self):
+    def test_performance_100_urls_no_extra_calls(self) -> None:
         """
         100 URLs: only 100 curl calls (no parallel preview).
 

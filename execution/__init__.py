@@ -6,8 +6,6 @@ Obsahuje:
 - ActionRegistry: Registr akcí
 """
 
-
 from .ghost_executor import ActionType, GhostExecutor
-from _core import aclose
 
 __all__ = ["GhostExecutor", "ActionType"]

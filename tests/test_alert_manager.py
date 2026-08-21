@@ -10,7 +10,6 @@ Covers 4 anti-patterns:
 Always-on, bounded, fail-safe. M1 8GB UMA safe.
 """
 
-import asyncio
 import time
 
 import pytest
@@ -39,12 +38,14 @@ class TestAlertDeduplication:
         """First alert should fire."""
         # Clear the global registry
         from hledac.universal.monitoring.alert_manager import _ALERT_REGISTRY
+
         _ALERT_REGISTRY.clear()
         assert _should_fire_alert("test_alert", cooldown_s=60.0) is True
 
     def test_should_fire_alert_after_cooldown(self) -> None:
         """Alert should fire after cooldown expires."""
         from hledac.universal.monitoring.alert_manager import _ALERT_REGISTRY
+
         _ALERT_REGISTRY.clear()
         _should_fire_alert("test_alert", cooldown_s=0.1)
         time.sleep(0.15)
@@ -53,6 +54,7 @@ class TestAlertDeduplication:
     def test_should_not_fire_alert_within_cooldown(self) -> None:
         """Alert should not fire within cooldown window."""
         from hledac.universal.monitoring.alert_manager import _ALERT_REGISTRY
+
         _ALERT_REGISTRY.clear()
         _should_fire_alert("test_alert", cooldown_s=60.0)
         assert _should_fire_alert("test_alert", cooldown_s=60.0) is False
@@ -242,7 +244,7 @@ class TestAlertManagerIntegration:
         manager = AlertManager()
         called = False
 
-        def handler(_alert):
+        def handler(_alert) -> None:
             nonlocal called
             called = True
 

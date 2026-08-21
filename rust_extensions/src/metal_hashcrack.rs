@@ -35,8 +35,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
-// ─── M1 8GB Memory Budget ─────────────────────────────────────────────────
-
 /// Maximum GPU buffer allocation per crack call (64 MB).
 const GPU_BUFFER_LIMIT: u64 = 64 * 1024 * 1024;
 
@@ -59,8 +57,6 @@ const GPU_CHUNK_SIZE: u64 = 1000;
 /// 256 threads × 32 SIMD width = 8 SIMD groups per threadgroup (M1 optimum).
 const GPU_THREADS_PER_GROUP: u64 = 256;
 
-// ─── Global Allocated Bytes Tracker ───────────────────────────────────────
-
 static GPU_ALLOCATED: AtomicU64 = AtomicU64::new(0);
 
 fn track_alloc(bytes: u64) -> bool {
@@ -76,8 +72,6 @@ fn track_free(bytes: u64) {
     GPU_ALLOCATED.fetch_sub(bytes, Ordering::SeqCst);
 }
 
-// ─── Stats ────────────────────────────────────────────────────────────────
-
 #[derive(Default)]
 struct CrackerStats {
     gpu_attempts: AtomicU64,
@@ -92,8 +86,6 @@ struct CrackerStats {
 }
 
 static STATS: LazyLock<CrackerStats> = LazyLock::new(CrackerStats::default);
-
-// ─── MSL MD5 Kernel Source ────────────────────────────────────────────────
 
 /// Optimized Metal Shading Language kernel for MD5 dictionary attack.
 ///
@@ -130,8 +122,6 @@ static STATS: LazyLock<CrackerStats> = LazyLock::new(CrackerStats::default);
 /// The .metal source is compiled from `shaders/crack_md5_kernel.metal`
 /// via `include_str!` at Rust compile time (no runtime filesystem access).
 const MD5_KERNEL_SRC: &str = include_str!("../shaders/crack_md5_kernel.metal");
-
-// ─── CPU Hash Implementations ────────────────────────────────────────────
 
 /// Optimized MD5 implementation for CPU fallback.
 /// Produces identical output to Python's hashlib.md5(word.encode()).hexdigest().
@@ -175,7 +165,6 @@ fn cpu_md5(input: &[u8]) -> [u8; 16] {
     msg.resize(total_len - 8, 0);
     msg.extend_from_slice(&bit_len.to_le_bytes());
 
-    // Process blocks
     let mut a: u32 = 0x67452301;
     let mut b: u32 = 0xefcdab89;
     let mut c: u32 = 0x98badcfe;
@@ -359,8 +348,6 @@ fn parse_hex_target_u32(hex: &str) -> Option<[u32; 4]> {
     ])
 }
 
-// ─── CPU Backend: Rayon-parallel Hash Cracking ────────────────────────────
-
 /// Crack MD5 hash using Rayon parallel CPU search.
 /// Falls back to sequential for small wordlists (<64 candidates).
 fn cpu_crack_md5(target_hex: &str, wordlist: &[String]) -> Option<String> {
@@ -394,7 +381,6 @@ fn cpu_crack_md5(target_hex: &str, wordlist: &[String]) -> Option<String> {
 fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
     use sha2::{Digest, Sha256};
 
-    // Parse target — SHA-256 hex is 64 chars
     let hex = target_hex.trim());
     if hex.len() != 64 {
         return None;
@@ -433,8 +419,6 @@ fn cpu_crack_sha256(target_hex: &str, wordlist: &[String]) -> Option<String> {
         }
     })
 }
-
-// ─── GPU Backend (Metal, feature-gated) ───────────────────────────────────
 
 /// Metal GPU cracker state — only available on macOS with `metal` feature.
 #[cfg(feature = "metal")]
@@ -517,7 +501,6 @@ mod gpu {
             let start = Instant::now();
             STATS.gpu_attempts.fetch_add(1, Ordering::Relaxed);
 
-            // Build concatenated word buffer + offset/length arrays
             let mut worddata: Vec<u8> = Vec::new();
             let mut offsets: Vec<u32> = Vec::with_capacity(candidates.len());
             let mut lengths: Vec<u32> = Vec::with_capacity(candidates.len());
@@ -647,8 +630,6 @@ mod gpu {
         }
     }
 }
-
-// ─── PyO3 PyClass: MetalHashCracker ──────────────────────────────────────
 
 /// Python-facing hash cracker with Metal GPU + CPU NEON backends.
 ///
@@ -835,7 +816,6 @@ impl MetalHashCracker {
                         results.insert(target_hex.clone(), Some(matched));
                     }
                 }
-                // Remove found targets from CPU fallback set
                 let remaining: Vec<&String> =
                     targets.iter().filter(|t| results[*t].is_none()));
                 if remaining.is_empty() {
@@ -960,8 +940,6 @@ impl MetalHashCracker {
         // For now, just reset the counter.
     }
 }
-
-// ─── Module Registration ─────────────────────────────────────────────────
 
 /// Register MetalHashCracker class with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -12,15 +12,18 @@ Usage:
     manager.add("evil.com", "domain", 0.9)
     is_new = manager.add("evil.com", "domain", 0.8)  # False - duplicate
 """
+
 import logging
 from pathlib import Path
 from typing import Any
+
 logger = logging.getLogger(__name__)
 _RUST_AVAILABLE = False
 _IocDedupStore: Any = None
 _ioc_dedup_from_bytes: Any = None
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
+
 if rust.is_available:
     _IocDedupStore = rust.raw.IocDedupStore
     _ioc_dedup_from_bytes = rust.raw.ioc_dedup_from_bytes
@@ -28,7 +31,8 @@ if rust.is_available:
 else:
     _RUST_AVAILABLE = False
 if not _RUST_AVAILABLE:
-    logger.debug('hledac_rust_extensions not available - using pure Python fallback')
+    logger.debug("hledac_rust_extensions not available - using pure Python fallback")
+
 
 class IocDedupManager:
     """Manages IOC deduplication across sprints with persistence.
@@ -40,9 +44,10 @@ class IocDedupManager:
         persist_path: Path to persistence file (LMDB-compatible bytes)
         sprint_id: Initial sprint number
     """
-    __slots__ = tuple(('_sprint_id', '_store', 'persist_path'))
 
-    def __init__(self, persist_path: str | None=None, sprint_id: int=0):
+    __slots__ = ("_sprint_id", "_store", "persist_path")
+
+    def __init__(self, persist_path: str | None = None, sprint_id: int = 0) -> None:
         self.persist_path = Path(persist_path) if persist_path else None
         self._sprint_id = sprint_id
         self._store: Any = self._load_or_create()
@@ -54,10 +59,10 @@ class IocDedupManager:
                 data = self.persist_path.read_bytes()
                 assert _ioc_dedup_from_bytes is not None
                 store = _ioc_dedup_from_bytes(list(data))
-                logger.info(f'Loaded IOC dedup store: {store.stats()}')
+                logger.info(f"Loaded IOC dedup store: {store.stats()}")
                 return store
             except Exception as e:
-                logger.warning(f'Failed to load IOC dedup store: {e} - creating new')
+                logger.warning(f"Failed to load IOC dedup store: {e} - creating new")
         if _RUST_AVAILABLE:
             assert _IocDedupStore is not None
             return _IocDedupStore(sprint_id=self._sprint_id)
@@ -73,10 +78,10 @@ class IocDedupManager:
             self.persist_path.write_bytes(data)
             return True
         except Exception as e:
-            logger.error(f'Failed to persist IOC dedup store: {e}')
+            logger.error(f"Failed to persist IOC dedup store: {e}")
             return False
 
-    def add(self, value: str, ioc_type: str, confidence: float=0.5) -> bool:
+    def add(self, value: str, ioc_type: str, confidence: float = 0.5) -> bool:
         """Add IOC - returns True if NEW, False if duplicate.
 
         Args:
@@ -126,15 +131,17 @@ class IocDedupManager:
         """Clear all entries."""
         self._store.clear()
 
+
 class _PythonIocDedupStore:
     """Pure Python fallback for IOC deduplication.
 
     Used when hledac_rust_extensions is not installed.
     Provides same interface as Rust IocDedupStore.
     """
-    __slots__ = tuple(('_entries', '_sprint_id', '_total_deduped', '_total_seen'))
 
-    def __init__(self, sprint_id: int=0):
+    __slots__ = ("_entries", "_sprint_id", "_total_deduped", "_total_seen")
+
+    def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
         self._entries: dict[tuple[str, str], dict] = {}
         self._total_seen = 0
@@ -143,20 +150,20 @@ class _PythonIocDedupStore:
     def _normalize(self, value: str, ioc_type: str) -> str:
         """Normalize IOC value by type."""
         if not value:
-            return ''
+            return ""
         lower = value.lower()
-        if ioc_type in ('domain', 'fqdn'):
-            return lower.lstrip('www.')
-        elif ioc_type in ('md5', 'sha1', 'sha256', 'sha2'):
+        if ioc_type in ("domain", "fqdn"):
+            return lower.lstrip("www.")
+        elif ioc_type in ("md5", "sha1", "sha256", "sha2"):
             return lower
-        elif ioc_type == 'cve':
+        elif ioc_type == "cve":
             return value.upper()
-        elif ioc_type in ('ip', 'ipv4'):
-            parts = value.split('.')
-            return '.'.join((str(int(p)) if p.isdigit() else p for p in parts))
+        elif ioc_type in ("ip", "ipv4"):
+            parts = value.split(".")
+            return ".".join(str(int(p)) if p.isdigit() else p for p in parts)
         return value
 
-    def add(self, value: str, ioc_type: str, confidence: float=0.5) -> bool:
+    def add(self, value: str, ioc_type: str, confidence: float = 0.5) -> bool:
         """Add IOC - returns True if NEW."""
         self._total_seen += 1
         if not value:
@@ -165,12 +172,18 @@ class _PythonIocDedupStore:
         key = (ioc_type.lower(), normalized)
         if key in self._entries:
             entry = self._entries[key]
-            entry['last_seen_sprint'] = self._sprint_id
-            entry['occurrence_count'] += 1
-            entry['confidence_max'] = max(entry['confidence_max'], confidence)
+            entry["last_seen_sprint"] = self._sprint_id
+            entry["occurrence_count"] += 1
+            entry["confidence_max"] = max(entry["confidence_max"], confidence)
             self._total_deduped += 1
             return False
-        self._entries[key] = {'normalized_value': normalized, 'first_seen_sprint': self._sprint_id, 'last_seen_sprint': self._sprint_id, 'occurrence_count': 1, 'confidence_max': confidence}
+        self._entries[key] = {
+            "normalized_value": normalized,
+            "first_seen_sprint": self._sprint_id,
+            "last_seen_sprint": self._sprint_id,
+            "occurrence_count": 1,
+            "confidence_max": confidence,
+        }
         return True
 
     def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
@@ -199,7 +212,7 @@ class _PythonIocDedupStore:
 
     def get_by_type(self, ioc_type: str) -> list[str]:
         """Get all IOCs of type."""
-        return [v['normalized_value'] for t, v in self._entries.items() if t[0] == ioc_type.lower()]
+        return [v["normalized_value"] for t, v in self._entries.items() if t[0] == ioc_type.lower()]
 
     def clear(self) -> None:
         """Clear all."""
@@ -208,11 +221,7 @@ class _PythonIocDedupStore:
         self._total_deduped = 0
 
 
-# ---------------------------------------------------------------------------
-# Singleton factory (F320: Refactored to use centralized pattern)
-# ---------------------------------------------------------------------------
 from hledac.universal.utils._patterns import module_singleton_getter
-from _core import aclose
 
 
 def _make_global_manager(persist_path: str | None) -> IocDedupManager:
@@ -224,7 +233,7 @@ def _make_global_manager(persist_path: str | None) -> IocDedupManager:
 _get_global_manager = module_singleton_getter(
     singleton_name="_global_manager",
     factory=lambda: _make_global_manager(None),
-    )
+)
 
 
 def get_global_manager(persist_path: str | None = None) -> IocDedupManager:

@@ -17,8 +17,8 @@ NOTE:
   Banner grab performs active TCP probing for service fingerprinting.
   Currently a stub - needs integration with masscan/nmap for real implementation.
 """
+
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from _core import aclose
 
 
 # FIX-5: Inherit from DarknetSidecarAdapter for proper capability handling

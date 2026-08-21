@@ -67,53 +67,81 @@ M1 8GB Safety:
   - Circuit breaker state checked with atomic bool — no lock contention on hot path
   - Bounded telemetry: max 1000 entries in fallback log
 """
+
 from __future__ import annotations
-import collections
+
 import logging
 import random
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any
-from utils._patterns import cosine_similarity, batch_cosine_similarity  # noqa: E402, Generic, TypeVar
-from collections.abc import Callable
-from operator import attrgetter, itemgetter
-from otel._buffer import BoundedRing
-from _core._util import aclose
+
 from _core.locks import LockCategory, register_lock
+from otel._buffer import BoundedRing
+from utils._patterns import batch_cosine_similarity
+
 if TYPE_CHECKING:
     pass
-T = TypeVar('T')
+T = TypeVar("T")
 logger = logging.getLogger(__name__)
 FAILURE_THRESHOLD: int = 3
 RECOVERY_TIMEOUT_S: float = 30.0
 HALF_OPEN_SUCCESS_THRESHOLD: int = 2
 MAX_TELEMETRY_ENTRIES: int = 1000
-FFI_MODULE_GRAPH_TRAVERSE: str = 'graph_traverse'
-FFI_MODULE_FINDING_COLLAPSER: str = 'finding_collapser'
-FFI_MODULE_CONSISTENCY_VERIFIER: str = 'consistency_verifier'
-FFI_MODULE_XXHASH: str = 'xxhash_ext'
-FFI_MODULE_DEDUP_BLOOM: str = 'dedup_bloom'
-FFI_MODULE_SIMD_SIMILARITY: str = 'simd_similarity'
-FFI_MODULE_LINK_PREDICTOR: str = 'link_predictor'
-FFI_MODULE_MLX_INFERENCE: str = 'mlx_inference'
-FFI_MODULE_MEDIA_DECODE: str = 'media_decode'
-FFI_MODULE_MEDIA_TRANSCRIBE: str = 'media_transcribe'
-FFI_MODULE_OCR_FRAME: str = 'ocr_frame'
-FFI_MODULE_SIMHASH: str = 'simhash'
-__all__ = ['UniversalCircuitBreaker', 'FFIState', 'FFIFallbackEvent', 'FFICallResult', 'call_or_fallback', 'get_ffi_circuit_breaker', 'reset_ffi_circuit_breaker', 'register_fallback', 'FFI_MODULE_GRAPH_TRAVERSE', 'FFI_MODULE_FINDING_COLLAPSER', 'FFI_MODULE_CONSISTENCY_VERIFIER', 'FFI_MODULE_XXHASH', 'FFI_MODULE_DEDUP_BLOOM', 'FFI_MODULE_SIMD_SIMILARITY', 'FFI_MODULE_LINK_PREDICTOR', 'FFI_MODULE_MLX_INFERENCE', 'FFI_MODULE_MEDIA_DECODE', 'FFI_MODULE_MEDIA_TRANSCRIBE', 'FFI_MODULE_OCR_FRAME', 'FFI_MODULE_SIMHASH', 'TelemetryRingBuffer']
+FFI_MODULE_GRAPH_TRAVERSE: str = "graph_traverse"
+FFI_MODULE_FINDING_COLLAPSER: str = "finding_collapser"
+FFI_MODULE_CONSISTENCY_VERIFIER: str = "consistency_verifier"
+FFI_MODULE_XXHASH: str = "xxhash_ext"
+FFI_MODULE_DEDUP_BLOOM: str = "dedup_bloom"
+FFI_MODULE_SIMD_SIMILARITY: str = "simd_similarity"
+FFI_MODULE_LINK_PREDICTOR: str = "link_predictor"
+FFI_MODULE_MLX_INFERENCE: str = "mlx_inference"
+FFI_MODULE_MEDIA_DECODE: str = "media_decode"
+FFI_MODULE_MEDIA_TRANSCRIBE: str = "media_transcribe"
+FFI_MODULE_OCR_FRAME: str = "ocr_frame"
+FFI_MODULE_SIMHASH: str = "simhash"
+__all__ = [
+    "UniversalCircuitBreaker",
+    "FFIState",
+    "FFIFallbackEvent",
+    "FFICallResult",
+    "call_or_fallback",
+    "get_ffi_circuit_breaker",
+    "reset_ffi_circuit_breaker",
+    "register_fallback",
+    "FFI_MODULE_GRAPH_TRAVERSE",
+    "FFI_MODULE_FINDING_COLLAPSER",
+    "FFI_MODULE_CONSISTENCY_VERIFIER",
+    "FFI_MODULE_XXHASH",
+    "FFI_MODULE_DEDUP_BLOOM",
+    "FFI_MODULE_SIMD_SIMILARITY",
+    "FFI_MODULE_LINK_PREDICTOR",
+    "FFI_MODULE_MLX_INFERENCE",
+    "FFI_MODULE_MEDIA_DECODE",
+    "FFI_MODULE_MEDIA_TRANSCRIBE",
+    "FFI_MODULE_OCR_FRAME",
+    "FFI_MODULE_SIMHASH",
+    "TelemetryRingBuffer",
+]
+
 
 class FFIState(Enum):
     """FFI circuit breaker state."""
-    CLOSED = 'closed'
-    HALF_OPEN = 'half_open'
-    OPEN = 'open'
+
+    CLOSED = "closed"
+    HALF_OPEN = "half_open"
+    OPEN = "open"
+
 
 @dataclass(frozen=True, slots=True)
 class FFIFallbackEvent:
     """Telemetry event for FFI fallback activation."""
+
     timestamp: float
     module: str
     from_state: str
@@ -121,6 +149,7 @@ class FFIFallbackEvent:
     reason: str
     rust_path: str
     duration_ms: float | None = None
+
 
 class TelemetryRingBuffer(BoundedRing[str, FFIFallbackEvent]):
     """
@@ -133,16 +162,17 @@ class TelemetryRingBuffer(BoundedRing[str, FFIFallbackEvent]):
     Note: Uses circular array internally (different from BoundedRing's
     OrderedDict) for optimal memory efficiency in high-frequency telemetry.
     """
-    __slots__ = ('_buffer', '_head', '_size', '_hits', '_misses', '_evictions')
 
-    def __init__(self, capacity: int=MAX_TELEMETRY_ENTRIES) -> None:
-        object.__setattr__(self, '_buffer', [None] * capacity)
-        object.__setattr__(self, '_head', 0)
-        object.__setattr__(self, '_size', 0)
-        object.__setattr__(self, '_hits', 0)
-        object.__setattr__(self, '_misses', 0)
-        object.__setattr__(self, '_evictions', 0)
-        object.__setattr__(self, '_lock', threading.RLock())
+    __slots__ = ("_buffer", "_head", "_size", "_hits", "_misses", "_evictions")
+
+    def __init__(self, capacity: int = MAX_TELEMETRY_ENTRIES) -> None:
+        object.__setattr__(self, "_buffer", [None] * capacity)
+        object.__setattr__(self, "_head", 0)
+        object.__setattr__(self, "_size", 0)
+        object.__setattr__(self, "_hits", 0)
+        object.__setattr__(self, "_misses", 0)
+        object.__setattr__(self, "_evictions", 0)
+        object.__setattr__(self, "_lock", threading.RLock())
 
     def append(self, event: FFIFallbackEvent) -> None:
         """Append event to ring buffer."""
@@ -157,9 +187,9 @@ class TelemetryRingBuffer(BoundedRing[str, FFIFallbackEvent]):
 
     def get(self, key: str) -> FFIFallbackEvent | None:
         """Not supported for circular buffer — use get_recent() instead."""
-        raise NotImplementedError('TelemetryRingBuffer does not support key-based lookup')
+        raise NotImplementedError("TelemetryRingBuffer does not support key-based lookup")
 
-    def get_recent(self, n: int=100) -> list[FFIFallbackEvent]:
+    def get_recent(self, n: int = 100) -> list[FFIFallbackEvent]:
         """Get N most recent events."""
         with self._lock:
             if self._size == 0:
@@ -174,16 +204,16 @@ class TelemetryRingBuffer(BoundedRing[str, FFIFallbackEvent]):
                     result.append(event)
             return result
 
-    def get_by_module(self, module: str, n: int=50) -> list[FFIFallbackEvent]:
+    def get_by_module(self, module: str, n: int = 50) -> list[FFIFallbackEvent]:
         """Get recent events for a specific module."""
         return [e for e in self.get_recent(n * 2) if e.module == module][:n]
 
     def clear(self) -> None:
         """Clear all events."""
         with self._lock:
-            object.__setattr__(self, '_buffer', [None] * len(self._buffer))
-            object.__setattr__(self, '_head', 0)
-            object.__setattr__(self, '_size', 0)
+            object.__setattr__(self, "_buffer", [None] * len(self._buffer))
+            object.__setattr__(self, "_head", 0)
+            object.__setattr__(self, "_size", 0)
 
     def __len__(self) -> int:
         with self._lock:
@@ -191,46 +221,73 @@ class TelemetryRingBuffer(BoundedRing[str, FFIFallbackEvent]):
 
     def stats(self) -> dict[str, int]:
         with self._lock:
-            return {'size': self._size, 'capacity': len(self._buffer), 'hits': self._hits, 'misses': self._misses, 'evictions': self._evictions}
+            return {
+                "size": self._size,
+                "capacity": len(self._buffer),
+                "hits": self._hits,
+                "misses": self._misses,
+                "evictions": self._evictions,
+            }
+
+
 _telemetry_ring: TelemetryRingBuffer = TelemetryRingBuffer()
 
-def _emit_fallback_event(module: str, from_state: FFIState, to_state: FFIState, reason: str, rust_path: str, duration_ms: float | None=None) -> None:
+
+def _emit_fallback_event(
+    module: str, from_state: FFIState, to_state: FFIState, reason: str, rust_path: str, duration_ms: float | None = None
+) -> None:
     """Emit FFI fallback telemetry event."""
-    event = FFIFallbackEvent(timestamp=time.time(), module=module, from_state=from_state.value, to_state=to_state.value, reason=reason, rust_path=rust_path, duration_ms=duration_ms)
+    event = FFIFallbackEvent(
+        timestamp=time.time(),
+        module=module,
+        from_state=from_state.value,
+        to_state=to_state.value,
+        reason=reason,
+        rust_path=rust_path,
+        duration_ms=duration_ms,
+    )
     _telemetry_ring.append(event)
-    logger.warning('[FFI-CB] module=%s state=%s→%s reason=%s path=%s', module, from_state.value, to_state.value, reason, rust_path)
+    logger.warning(
+        "[FFI-CB] module=%s state=%s→%s reason=%s path=%s", module, from_state.value, to_state.value, reason, rust_path
+    )
+
 
 def _metrics_increment(metric: str) -> None:
     """Fire-and-forget metric increment."""
     try:
         from metrics_registry import get_metrics_registry
+
         get_metrics_registry().inc(metric)
     except Exception:
         pass
+
 
 @dataclass(frozen=True, slots=True)
 class FFICallResult(Generic[T]):
     """
     Result of an FFI call with fallback tracking.
-    
+
     Attributes:
         success: Whether the call succeeded (Rust or Python fallback)
         value: The result value, or None if no-op
         path: Which path was used: "rust_simd", "python_native", "noop"
         error: Error message if any
     """
+
     value: T | None
     path: str
     error: str | None = None
     success: bool = True
 
+
 @dataclass(slots=True)
 class _ModuleBreaker:
     """
     Per-module circuit breaker state.
-    
+
     Thread-safe via _lock (RLock for reentrancy).
     """
+
     module: str
     failure_threshold: int = FAILURE_THRESHOLD
     recovery_timeout: float = RECOVERY_TIMEOUT_S
@@ -238,7 +295,7 @@ class _ModuleBreaker:
     _failure_count: int = field(default=0, init=False)
     _half_open_successes: int = field(default=0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
-    _last_failure_reason: str = field(default='', init=False)
+    _last_failure_reason: str = field(default="", init=False)
     _state_lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _state_entered_at: float = field(default_factory=time.monotonic, init=False)
 
@@ -265,7 +322,7 @@ class _ModuleBreaker:
             elif self._state == FFIState.CLOSED:
                 self._failure_count = 0
 
-    def record_failure(self, reason: str='') -> None:
+    def record_failure(self, reason: str = "") -> None:
         """Record failure and potentially trip circuit."""
         with self._state_lock:
             self._failure_count += 1
@@ -284,12 +341,14 @@ class _ModuleBreaker:
         self._state_entered_at = time.monotonic()
         if prev != new_state:
             if new_state == FFIState.OPEN:
-                _emit_fallback_event(self.module, prev, new_state, self._last_failure_reason or 'threshold_exceeded', 'python_native')
-                _metrics_increment('ffi_circuit_breaker_open_total')
+                _emit_fallback_event(
+                    self.module, prev, new_state, self._last_failure_reason or "threshold_exceeded", "python_native"
+                )
+                _metrics_increment("ffi_circuit_breaker_open_total")
             elif new_state == FFIState.HALF_OPEN:
-                _metrics_increment('ffi_circuit_breaker_half_open_total')
+                _metrics_increment("ffi_circuit_breaker_half_open_total")
             elif new_state == FFIState.CLOSED:
-                _metrics_increment('ffi_circuit_breaker_closed_total')
+                _metrics_increment("ffi_circuit_breaker_closed_total")
 
     def get_state(self) -> FFIState:
         """Get current state."""
@@ -299,17 +358,29 @@ class _ModuleBreaker:
     def get_snapshot(self) -> dict[str, Any]:
         """Get state snapshot for diagnostics."""
         with self._state_lock:
-            return {'module': self.module, 'state': self._state.value, 'failure_count': self._failure_count, 'half_open_successes': self._half_open_successes, 'last_failure_time': self._last_failure_time, 'last_failure_reason': self._last_failure_reason, 'recovery_timeout_s': self.recovery_timeout}
+            return {
+                "module": self.module,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "half_open_successes": self._half_open_successes,
+                "last_failure_time": self._last_failure_time,
+                "last_failure_reason": self._last_failure_reason,
+                "recovery_timeout_s": self.recovery_timeout,
+            }
+
+
 FallbackFn = Callable[..., Any]
 NoopFn = Callable[..., Any]
+
 
 class FallbackRegistry:
     """
     Registry of Python native fallbacks and no-op implementations.
-    
+
     Maps module name → (python_fallback_fn, noop_fn).
     """
-    __slots__ = ('_fallbacks', '_lock')
+
+    __slots__ = ("_fallbacks", "_lock")
 
     def __init__(self) -> None:
         self._fallbacks: dict[str, tuple[FallbackFn, NoopFn]] = {}
@@ -324,12 +395,15 @@ class FallbackRegistry:
         """Get fallback functions for module."""
         with self._lock:
             return self._fallbacks.get(module, (None, None))
+
+
 _fallback_registry: FallbackRegistry = FallbackRegistry()
+
 
 def register_fallback(module: str, python_fallback: FallbackFn, noop: NoopFn) -> None:
     """
     Register Python fallback and no-op for a module.
-    
+
     Usage:
         register_fallback(
             FFI_MODULE_GRAPH_TRAVERSE,
@@ -339,49 +413,51 @@ def register_fallback(module: str, python_fallback: FallbackFn, noop: NoopFn) ->
     """
     _fallback_registry.register(module, python_fallback, noop)
 
+
 class UniversalCircuitBreaker:
     """
     Universal FFI circuit breaker with Rust → Python → No-op cascade.
-    
+
     Per-module circuit breaker state machine:
       CLOSED → (threshold failures) → OPEN → (recovery timeout) → HALF_OPEN
                 ↑                                                              │
                 └──────────────── (HALF_OPEN failure) ────────────────────────┘
-    
+
     When OPEN:
       1. Try Python native fallback
       2. If Python also fails, use No-op
       3. After recovery timeout, probe with Rust again (HALF_OPEN)
-    
+
     M1 8GB Safety:
       - Atomic state checks (no lock on hot path)
       - Bounded telemetry ring buffer
       - Per-module state (not global)
-    
+
     Usage:
         cb = get_ffi_circuit_breaker()
-        
+
         # Register fallbacks
         register_fallback(
             FFI_MODULE_GRAPH_TRAVERSE,
             python_batch_graph_traverse,
             lambda *args, **kwargs: {},
     )
-        
+
         # Wrap FFI calls
         result: FFICallResult = cb.call_or_fallback(
             module=FFI_MODULE_GRAPH_TRAVERSE,
             rust_fn=lambda: rust.batch_graph_traverse(db_path, values, max_hops),
             rust_args=(db_path, values, max_hops),
     )
-        
+
         if result.success:
             data = result.value
         else:
             # result.path == "noop" or error
             pass
     """
-    __slots__ = ('_breakers', '_lock')
+
+    __slots__ = ("_breakers", "_lock")
 
     def __init__(self) -> None:
         self._breakers: dict[str, _ModuleBreaker] = {}
@@ -397,14 +473,14 @@ class UniversalCircuitBreaker:
     def call_or_fallback(self, module: str, rust_fn: Callable[[], T], *args: Any, **kwargs: Any) -> FFICallResult[T]:
         """
         Call Rust function with automatic fallback cascade.
-        
+
         Cascade: Rust SIMD → Python Native → No-op
-        
+
         Args:
             module: FFI module name (e.g., FFI_MODULE_GRAPH_TRAVERSE)
             rust_fn: Lambda/callable wrapping the Rust function
             *args, **kwargs: Arguments to pass to the functions
-        
+
         Returns:
             FFICallResult with value and path indicator
         """
@@ -416,14 +492,18 @@ class UniversalCircuitBreaker:
                 duration_ms = (time.monotonic() - start) * 1000
                 breaker.record_success()
                 if random.random() < 0.01:
-                    logger.debug(f'[FFI-CB] {module}: rust_simd success in {duration_ms:.2f}ms')
-                return FFICallResult(value=value, path='rust_simd', success=True)
+                    logger.debug(f"[FFI-CB] {module}: rust_simd success in {duration_ms:.2f}ms")
+                return FFICallResult(value=value, path="rust_simd", success=True)
             except Exception as e:
                 duration_ms = (time.monotonic() - start) * 1000
-                error_msg = f'{type(e).__name__}: {e}'
-                breaker.record_failure(f'exception: {error_msg}')
-                _emit_fallback_event(module, FFIState.CLOSED, FFIState.HALF_OPEN, f'exception: {error_msg}', 'python_native', duration_ms)
-                logger.warning(f'[FFI-CB] {module}: Rust failed after {duration_ms:.2f}ms, trying Python fallback: {error_msg}')
+                error_msg = f"{type(e).__name__}: {e}"
+                breaker.record_failure(f"exception: {error_msg}")
+                _emit_fallback_event(
+                    module, FFIState.CLOSED, FFIState.HALF_OPEN, f"exception: {error_msg}", "python_native", duration_ms
+                )
+                logger.warning(
+                    f"[FFI-CB] {module}: Rust failed after {duration_ms:.2f}ms, trying Python fallback: {error_msg}"
+                )
         python_fn, noop_fn = _fallback_registry.get_fallback(module)
         if python_fn is not None:
             start = time.monotonic()
@@ -431,24 +511,32 @@ class UniversalCircuitBreaker:
                 value = python_fn(*args, **kwargs)
                 duration_ms = (time.monotonic() - start) * 1000
                 breaker.record_success()
-                _emit_fallback_event(module, FFIState.OPEN, FFIState.HALF_OPEN, 'python_fallback_success', 'python_native', duration_ms)
-                _metrics_increment('ffi_fallback_python_total')
-                return FFICallResult(value=value, path='python_native', success=True)
+                _emit_fallback_event(
+                    module, FFIState.OPEN, FFIState.HALF_OPEN, "python_fallback_success", "python_native", duration_ms
+                )
+                _metrics_increment("ffi_fallback_python_total")
+                return FFICallResult(value=value, path="python_native", success=True)
             except Exception as e:
-                error_msg = f'{type(e).__name__}: {e}'
-                breaker.record_failure(f'python_exception: {error_msg}')
-                logger.warning(f'[FFI-CB] {module}: Python fallback also failed: {error_msg}')
+                error_msg = f"{type(e).__name__}: {e}"
+                breaker.record_failure(f"python_exception: {error_msg}")
+                logger.warning(f"[FFI-CB] {module}: Python fallback also failed: {error_msg}")
         if noop_fn is not None:
             try:
                 value = noop_fn(*args, **kwargs)
-                _metrics_increment('ffi_fallback_noop_total')
-                _emit_fallback_event(module, FFIState.OPEN, FFIState.OPEN, 'noop_activated', 'noop')
-                return FFICallResult(value=value, path='noop', success=True, error='Both Rust and Python failed, using no-op')
+                _metrics_increment("ffi_fallback_noop_total")
+                _emit_fallback_event(module, FFIState.OPEN, FFIState.OPEN, "noop_activated", "noop")
+                return FFICallResult(
+                    value=value, path="noop", success=True, error="Both Rust and Python failed, using no-op"
+                )
             except Exception as e:
-                _metrics_increment('ffi_fallback_noop_failed_total')
-                return FFICallResult(value=None, path='noop', success=False, error=f'No-op failed: {type(e).__name__}: {e}')
-        _metrics_increment('ffi_fallback_none_total')
-        return FFICallResult(value=None, path='noop', success=False, error=f'No fallback registered for module: {module}')
+                _metrics_increment("ffi_fallback_noop_failed_total")
+                return FFICallResult(
+                    value=None, path="noop", success=False, error=f"No-op failed: {type(e).__name__}: {e}"
+                )
+        _metrics_increment("ffi_fallback_none_total")
+        return FFICallResult(
+            value=None, path="noop", success=False, error=f"No fallback registered for module: {module}"
+        )
 
     def get_module_state(self, module: str) -> FFIState:
         """Get state of a specific module."""
@@ -472,18 +560,21 @@ class UniversalCircuitBreaker:
                 self._breakers[module]._failure_count = 0
                 self._breakers[module]._half_open_successes = 0
                 self._breakers[module]._last_failure_time = 0.0
-                _emit_fallback_event(module, FFIState.OPEN, FFIState.CLOSED, 'manual_reset', 'rust_simd')
+                _emit_fallback_event(module, FFIState.OPEN, FFIState.CLOSED, "manual_reset", "rust_simd")
 
     def reset_all(self) -> None:
         """Reset all circuit breakers."""
         with self._lock:
-            for module, breaker in self._breakers.items():
+            for _module, breaker in self._breakers.items():
                 breaker._state = FFIState.CLOSED
                 breaker._failure_count = 0
                 breaker._half_open_successes = 0
+
+
 _ffi_cb_instance: UniversalCircuitBreaker | None = None
 _ffi_cb_lock = threading.Lock()
 register_lock(LockCategory.METRICS, _ffi_cb_lock, "ffi_circuit_breaker._ffi_cb_lock")
+
 
 def get_ffi_circuit_breaker() -> UniversalCircuitBreaker:
     """Get or create the global FFI circuit breaker singleton."""
@@ -494,107 +585,138 @@ def get_ffi_circuit_breaker() -> UniversalCircuitBreaker:
                 _ffi_cb_instance = UniversalCircuitBreaker()
     return _ffi_cb_instance
 
+
 def reset_ffi_circuit_breaker() -> None:
     """Reset the global FFI circuit breaker singleton (for testing)."""
     global _ffi_cb_instance
     with _ffi_cb_lock:
         _ffi_cb_instance = None
 
+
 def call_or_fallback(module: str, rust_fn: Callable[[], T], *args: Any, **kwargs: Any) -> FFICallResult[T]:
     """
     Convenience wrapper for call_or_fallback.
-    
+
     Usage:
         result = call_or_fallback(
             FFI_MODULE_GRAPH_TRAVERSE,
             lambda: rust_batch_graph_traverse(db_path, values, max_hops),
             db_path, values, max_hops
     )
-        
+
         if result.success:
             data = result.value
     """
     return get_ffi_circuit_breaker().call_or_fallback(module, rust_fn, *args, **kwargs)
 
-def _python_batch_graph_traverse(db_path: str, values: list[str], max_hops: int=2) -> dict[str, list[dict[str, Any]]]:
+
+def _python_batch_graph_traverse(db_path: str, values: list[str], max_hops: int = 2) -> dict[str, list[dict[str, Any]]]:
     """
     Pure Python fallback for batch_graph_traverse.
-    
+
     Uses simple network traversal without DuckDB.
     Returns empty dict for each value (no-op behavior for unknown paths).
     """
     try:
         import networkx as nx
     except ImportError:
-        logger.warning('[FFI-CB] graph_traverse: networkx not available, returning empty results')
+        logger.warning("[FFI-CB] graph_traverse: networkx not available, returning empty results")
         return {v: [] for v in values}
     result: dict[str, list[dict[str, Any]]] = {}
     for value in values:
         result[value] = []
     return result
 
+
 def _python_collapse_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Pure Python fallback for finding_collapser.
-    
+
     Uses collections.defaultdict + sorted() instead of Rust HashMap.
     Returns original findings if collapse fails.
     """
     from collections import defaultdict
+
     if not findings:
         return []
     try:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for finding in findings:
-            entity_value = (finding.get('entity_value') or finding.get('ioc') or finding.get('value') or '').lower()
+            entity_value = (finding.get("entity_value") or finding.get("ioc") or finding.get("value") or "").lower()
             if entity_value:
                 groups[entity_value].append(finding)
         collapsed: list[dict[str, Any]] = []
         for entity_value, group in groups.items():
-            sorted_group = sorted(group, key=attrgetter('get')('confidence', f.get('score', 0.0)), reverse=True)
+            sorted_group = sorted(group, key=attrgetter("get")("confidence", f.get("score", 0.0)), reverse=True)
             for f in sorted_group[:20]:
                 collapsed.append(f)
         return collapsed
     except Exception as e:
-        logger.warning(f'[FFI-CB] finding_collapser: Python fallback failed: {e}')
+        logger.warning(f"[FFI-CB] finding_collapser: Python fallback failed: {e}")
         return findings
 
-def _python_check_consistency(findings: list[dict[str, Any]], max_findings: int=500) -> dict[str, Any]:
+
+def _python_check_consistency(findings: list[dict[str, Any]], max_findings: int = 500) -> dict[str, Any]:
     """
     Pure Python fallback for consistency_verifier.
-    
+
     Uses dataclass set comparison instead of Rust O(N) propositional logic.
     Returns empty contradiction list (no contradictions detected).
     """
     if not findings:
-        return {'clean': [], 'contradictory': [], 'disputed': [], 'contradictions': [], 'suspect_sources': [], 'entity_scores': {}, 'consistency_score': 1.0, 'facts_processed': 0, 'contradictions_found': 0}
-    return {'clean': findings[:max_findings], 'contradictory': [], 'disputed': [], 'contradictions': [], 'suspect_sources': [], 'entity_scores': {}, 'consistency_score': 1.0, 'facts_processed': len(findings[:max_findings]), 'contradictions_found': 0}
+        return {
+            "clean": [],
+            "contradictory": [],
+            "disputed": [],
+            "contradictions": [],
+            "suspect_sources": [],
+            "entity_scores": {},
+            "consistency_score": 1.0,
+            "facts_processed": 0,
+            "contradictions_found": 0,
+        }
+    return {
+        "clean": findings[:max_findings],
+        "contradictory": [],
+        "disputed": [],
+        "contradictions": [],
+        "suspect_sources": [],
+        "entity_scores": {},
+        "consistency_score": 1.0,
+        "facts_processed": len(findings[:max_findings]),
+        "contradictions_found": 0,
+    }
+
 
 def _python_xxh3_64_hex(data: bytes) -> str:
     """
     Pure Python fallback for xxhash_ext.
-    
+
     Uses hashlib.blake2b instead of Rust xxhash SIMD.
     """
     import hashlib
+
     return hashlib.blake2b(data, digest_size=8).hexdigest()
+
 
 def _python_xxh3_64_hex_from_hash_module(data: bytes) -> str:
     """
     Pure Python fallback using hash module's implementation.
-    
+
     This ensures consistent fallback behavior when xxhash_ext fails.
     """
     try:
         from hledac.universal._core.rust_backend.hash import _python_xxhash64_hex
+
         return _python_xxhash64_hex(data)
     except Exception:
         return hashlib.blake2b(data, digest_size=8).hexdigest()
 
+
 def _python_dedup_check_and_add(item: str, seen_set: set[str]) -> bool:
     """
     Pure Python fallback for dedup_bloom.
-    
+
     Uses Python set() with LRU-style eviction instead of RotatingBloomFilter.
     Returns False if item was already seen (allow duplicate detection).
     """
@@ -607,129 +729,154 @@ def _python_dedup_check_and_add(item: str, seen_set: set[str]) -> bool:
             seen_set.pop()
     return False
 
+
 def _python_batch_simd_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
     """
     Pure Python fallback for batch_simd_cosine_similarity.
-    
+
     Computes cosine similarity for multiple vectors without SIMD.
     """
     return batch_cosine_similarity(vectors, query)
+
 
 def _noop_simd_cosine_similarity(*args: Any, **kwargs: Any) -> float:
     """No-op for simd_cosine_similarity — returns 0.0 (no similarity)."""
     return 0.0
 
+
 def _noop_batch_simd_cosine_similarity(*args: Any, **kwargs: Any) -> list[float]:
     """No-op for batch_simd_cosine_similarity — returns empty list."""
     return []
 
-def _python_link_predict(db_path: str, min_adamic_adar: float=0.01, min_jaccard: float=0.1, max_candidates: int=10000, cross_type_only: bool=False) -> list[dict[str, Any]]:
+
+def _python_link_predict(
+    db_path: str,
+    min_adamic_adar: float = 0.01,
+    min_jaccard: float = 0.1,
+    max_candidates: int = 10000,
+    cross_type_only: bool = False,
+) -> list[dict[str, Any]]:
     """
     Pure Python fallback for link_predictor.
-    
+
     Uses simple neighbor-based algorithms without DuckDB optimization.
     M1 8GB: Bounded to max_candidates to prevent memory exhaustion.
     """
     try:
         import networkx as nx
     except ImportError:
-        logger.warning('[FFI-CB] link_predictor: networkx not available, returning empty results')
+        logger.warning("[FFI-CB] link_predictor: networkx not available, returning empty results")
         return []
     try:
-        G = nx.Graph()
+        nx.Graph()
         return []
     except Exception as e:
-        logger.warning(f'[FFI-CB] link_predictor: Python fallback failed: {e}')
+        logger.warning(f"[FFI-CB] link_predictor: Python fallback failed: {e}")
         return []
+
 
 def _noop_link_predict(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     """No-op for link_predictor — returns empty list."""
     return []
 
-def _python_mlx_generate(prompt: str, max_tokens: int=256, temperature: float=0.7) -> str:
+
+def _python_mlx_generate(prompt: str, max_tokens: int = 256, temperature: float = 0.7) -> str:
     """
     Pure Python fallback for MLX inference.
-    
+
     Returns empty string on failure — ensures pipeline continues.
     M1 8GB: No GPU memory allocation.
     """
-    logger.warning('[FFI-CB] mlx_inference: MLX unavailable, returning empty response')
-    return ''
+    logger.warning("[FFI-CB] mlx_inference: MLX unavailable, returning empty response")
+    return ""
+
 
 def _python_mlx_embed(text: str) -> list[float]:
     """
     Pure Python fallback for MLX embedding.
-    
+
     Returns zero vector on failure.
     """
     return [0.0] * 256
 
+
 def _noop_mlx_generate(*args: Any, **kwargs: Any) -> str:
     """No-op for mlx_generate — returns empty string."""
-    return ''
+    return ""
+
 
 def _noop_mlx_embed(*args: Any, **kwargs: Any) -> list[float]:
     """No-op for mlx_embed — returns zero vector."""
     return [0.0] * 256
 
-def _python_decode_audio(file_path: str, target_sample_rate: int=16000) -> tuple[Any, int] | None:
+
+def _python_decode_audio(file_path: str, target_sample_rate: int = 16000) -> tuple[Any, int] | None:
     """
     Pure Python fallback for media_decode.
-    
+
     Returns None — caller should handle gracefully.
     M1 8GB: No RAM allocation for audio buffer.
     """
-    logger.warning(f'[FFI-CB] media_decode: decode_audio unavailable for {file_path}')
+    logger.warning(f"[FFI-CB] media_decode: decode_audio unavailable for {file_path}")
     return None
 
-def _python_transcribe_audio(source: str | Any, sample_rate: int=16000) -> dict[str, Any]:
+
+def _python_transcribe_audio(source: str | Any, sample_rate: int = 16000) -> dict[str, Any]:
     """
     Pure Python fallback for media_transcribe.
-    
+
     Returns empty transcription result.
     """
-    return {'text': '', 'confidence': 0.0, 'duration_s': 0.0, 'segments': [], 'locale': 'unknown'}
+    return {"text": "", "confidence": 0.0, "duration_s": 0.0, "segments": [], "locale": "unknown"}
 
-def _python_extract_keyframes(file_path: str, interval_s: float=10.0, max_frames: int=120) -> list[bytes]:
+
+def _python_extract_keyframes(file_path: str, interval_s: float = 10.0, max_frames: int = 120) -> list[bytes]:
     """
     Pure Python fallback for keyframe extraction.
-    
+
     Returns empty list — no frames extracted.
     """
     return []
 
+
 def _python_ocr_frame(image_bytes: bytes) -> str:
     """
     Pure Python fallback for ocr_frame.
-    
+
     Returns empty string — no text recognized.
     """
-    return ''
+    return ""
+
 
 def _noop_decode_audio(*args: Any, **kwargs: Any) -> tuple[Any, int] | None:
     """No-op for decode_audio — returns None."""
     return None
 
+
 def _noop_transcribe_audio(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """No-op for transcribe_audio — returns empty result."""
-    return {'text': '', 'confidence': 0.0, 'duration_s': 0.0, 'segments': [], 'locale': 'unknown'}
+    return {"text": "", "confidence": 0.0, "duration_s": 0.0, "segments": [], "locale": "unknown"}
+
 
 def _noop_extract_keyframes(*args: Any, **kwargs: Any) -> list[bytes]:
     """No-op for extract_keyframes — returns empty list."""
     return []
 
+
 def _noop_ocr_frame(*args: Any, **kwargs: Any) -> str:
     """No-op for ocr_frame — returns empty string."""
-    return ''
+    return ""
+
 
 def _python_simhash_compute(text: str) -> int:
     """
     Pure Python fallback for simhash.
-    
+
     Uses MD5-based approximation of SimHash algorithm.
     M1 8GB: Safe, no external dependencies.
     """
     import hashlib
+
     if not text:
         return 0
     tokens = text.lower().split()
@@ -738,7 +885,7 @@ def _python_simhash_compute(text: str) -> int:
     v = [0] * 64
     for token in tokens:
         h = hashlib.md5(token.encode()).digest()
-        h64 = int.from_bytes(h[:8], byteorder='big')
+        h64 = int.from_bytes(h[:8], byteorder="big")
         for i in range(64):
             bit = h64 >> i & 1
             v[i] += 1 if bit else -1
@@ -748,30 +895,47 @@ def _python_simhash_compute(text: str) -> int:
             result |= 1 << i
     return result
 
+
 def _noop_simhash_compute(*args: Any, **kwargs: Any) -> int:
     """No-op for simhash — returns 0."""
     return 0
+
 
 def _noop_batch_graph_traverse(*args: Any, **kwargs: Any) -> dict[str, list]:
     """No-op for batch_graph_traverse — returns empty results."""
     return {}
 
+
 def _noop_collapse_findings(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     """No-op for collapse_findings — returns original findings."""
-    findings = args[0] if args else kwargs.get('findings', [])
+    findings = args[0] if args else kwargs.get("findings", [])
     return findings if isinstance(findings, list) else []
+
 
 def _noop_check_consistency(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """No-op for check_consistency — returns empty result."""
-    return {'clean': [], 'contradictory': [], 'disputed': [], 'contradictions': [], 'suspect_sources': [], 'entity_scores': {}, 'consistency_score': 1.0, 'facts_processed': 0, 'contradictions_found': 0}
+    return {
+        "clean": [],
+        "contradictory": [],
+        "disputed": [],
+        "contradictions": [],
+        "suspect_sources": [],
+        "entity_scores": {},
+        "consistency_score": 1.0,
+        "facts_processed": 0,
+        "contradictions_found": 0,
+    }
+
 
 def _noop_xxh3_64_hex(*args: Any, **kwargs: Any) -> str:
     """No-op for xxh3_64_hex — returns random hex."""
     return secrets.token_hex(8)
 
+
 def _noop_dedup_check_and_add(*args: Any, **kwargs: Any) -> bool:
     """No-op for dedup_bloom — always returns False (allow all)."""
     return False
+
 
 def _register_predefined_fallbacks() -> None:
     """Register all pre-defined Python native and no-op fallbacks."""
@@ -781,11 +945,15 @@ def _register_predefined_fallbacks() -> None:
     register_fallback(FFI_MODULE_CONSISTENCY_VERIFIER, _python_check_consistency, _noop_check_consistency)
     register_fallback(FFI_MODULE_XXHASH, _xxhash_fallback, _noop_xxh3_64_hex)
     register_fallback(FFI_MODULE_DEDUP_BLOOM, _python_dedup_check_and_add, _noop_dedup_check_and_add)
-    register_fallback(FFI_MODULE_SIMD_SIMILARITY, _python_batch_simd_cosine_similarity, _noop_batch_simd_cosine_similarity)
+    register_fallback(
+        FFI_MODULE_SIMD_SIMILARITY, _python_batch_simd_cosine_similarity, _noop_batch_simd_cosine_similarity
+    )
     register_fallback(FFI_MODULE_LINK_PREDICTOR, _python_link_predict, _noop_link_predict)
     register_fallback(FFI_MODULE_MLX_INFERENCE, _python_mlx_generate, _noop_mlx_generate)
     register_fallback(FFI_MODULE_MEDIA_DECODE, _python_decode_audio, _noop_decode_audio)
     register_fallback(FFI_MODULE_MEDIA_TRANSCRIBE, _python_transcribe_audio, _noop_transcribe_audio)
     register_fallback(FFI_MODULE_OCR_FRAME, _python_ocr_frame, _noop_ocr_frame)
     register_fallback(FFI_MODULE_SIMHASH, _python_simhash_compute, _noop_simhash_compute)
+
+
 _register_predefined_fallbacks()

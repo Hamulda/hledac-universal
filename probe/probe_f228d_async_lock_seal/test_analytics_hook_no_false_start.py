@@ -9,21 +9,21 @@ import inspect
 import threading
 
 import pytest
-from _core import aclose
 
 
 class TestAnalyticsHookWorkerLockSafety:
     """Tests for analytics_hook._worker_lock classification."""
 
-    def test_worker_lock_is_threading_lock(self):
+    def test_worker_lock_is_threading_lock(self) -> None:
         """_worker_lock must be threading.Lock (not asyncio.Lock)."""
         from knowledge.analytics_hook import _ShadowRecorder
+
         rec = _ShadowRecorder()
         assert isinstance(rec._worker_lock, threading.Lock), (
             "_worker_lock should be threading.Lock — it guards a sync flag"
-    )
+        )
 
-    def test_worker_lock_not_needed_for_async_context(self):
+    def test_worker_lock_not_needed_for_async_context(self) -> None:
         """
         _ensure_worker() is a sync def, not async def.
         It guards _worker_started with double-checked locking.
@@ -31,14 +31,15 @@ class TestAnalyticsHookWorkerLockSafety:
         No asyncio.Lock needed.
         """
         from knowledge.analytics_hook import _ShadowRecorder
+
         rec = _ShadowRecorder()
 
         # Verify _ensure_worker is NOT async def
         assert not inspect.iscoroutinefunction(rec._ensure_worker), (
             "_ensure_worker should not be async — it synchronously checks the loop"
-    )
+        )
 
-    def test_no_await_inside_worker_lock(self):
+    def test_no_await_inside_worker_lock(self) -> None:
         """
         SAFETY: No await occurs inside a _worker_lock block.
         _ensure_worker() does:
@@ -51,6 +52,7 @@ class TestAnalyticsHookWorkerLockSafety:
         All operations are sync; no await inside lock.
         """
         from knowledge.analytics_hook import _ShadowRecorder
+
         rec = _ShadowRecorder()
         source = inspect.getsource(rec._ensure_worker)
 
@@ -74,7 +76,7 @@ class TestAnalyticsHookWorkerLockSafety:
                 if stripped.startswith("await ") and "self._worker_lock" not in stripped:
                     pytest.fail(f"await found inside _worker_lock block: {stripped}")
 
-    def test_worker_lock_prevents_false_start(self):
+    def test_worker_lock_prevents_false_start(self) -> None:
         """
         _ensure_worker() double-checked locking prevents false-start.
         Without the lock, a race between two concurrent callers could set
@@ -82,6 +84,7 @@ class TestAnalyticsHookWorkerLockSafety:
         The lock ensures only one caller creates the task.
         """
         from knowledge.analytics_hook import _ShadowRecorder
+
         rec = _ShadowRecorder()
         source = inspect.getsource(rec._ensure_worker)
 
@@ -90,21 +93,17 @@ class TestAnalyticsHookWorkerLockSafety:
         assert "with self._worker_lock:" in source, "lock acquisition missing"
         # re-check after acquiring lock
         check_count = source.count("if self._worker_started:")
-        assert check_count >= 2, (
-            "Double-checked locking requires 2 checks: fast path + under-lock"
-    )
+        assert check_count >= 2, "Double-checked locking requires 2 checks: fast path + under-lock"
 
-    def test_worker_is_async_def(self):
+    def test_worker_is_async_def(self) -> None:
         """Verify _worker() is async def — started via create_task from sync context."""
         from knowledge.analytics_hook import _ShadowRecorder
-        rec = _ShadowRecorder()
-        assert inspect.iscoroutinefunction(rec._worker), (
-            "_worker should be async def — started via loop.create_task()"
-    )
 
-    def test_shadow_record_finding_is_sync(self):
+        rec = _ShadowRecorder()
+        assert inspect.iscoroutinefunction(rec._worker), "_worker should be async def — started via loop.create_task()"
+
+    def test_shadow_record_finding_is_sync(self) -> None:
         """shadow_record_finding() is sync — enqueues and returns immediately."""
         from knowledge.analytics_hook import shadow_record_finding
-        assert not inspect.iscoroutinefunction(shadow_record_finding), (
-            "shadow_record_finding should be sync (hot path)"
-    )
+
+        assert not inspect.iscoroutinefunction(shadow_record_finding), "shadow_record_finding should be sync (hot path)"

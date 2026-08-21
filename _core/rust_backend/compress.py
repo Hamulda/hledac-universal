@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Rust backend availability
-# =============================================================================
-
 _RUST_ZSTD_AVAILABLE = False
 _rust_compress_zstd: Any = None
 _rust_compress_decompress: Any = None
@@ -57,10 +53,6 @@ def _probe_rust_compress() -> None:
     _RUST_ZSTD_AVAILABLE = False
     logger.debug("[compress] Using Python zstd fallback")
 
-
-# =============================================================================
-# Python fallback (compression.zstd stdlib or zstandard package)
-# =============================================================================
 
 _python_zstd: Any = None
 _python_zstd_available = False
@@ -95,11 +87,6 @@ def _ensure_python_zstd() -> Any:
         return None
 
 
-# =============================================================================
-# Synchronous Rust wrappers (for batch operations)
-# =============================================================================
-
-
 def zstd_compress_sync(data: bytes, level: int = 3) -> bytes:
     """
     Synchronous zstd compression (Rust or Python fallback).
@@ -122,7 +109,9 @@ def zstd_compress_sync(data: bytes, level: int = 3) -> bytes:
     # Python fallback
     zstd_mod = _ensure_python_zstd()
     if zstd_mod is None:
-        raise RuntimeError("zstd compression not available (compression.zstd from Python 3.14+ or zstandard package required)")
+        raise RuntimeError(
+            "zstd compression not available (compression.zstd from Python 3.14+ or zstandard package required)"
+        )
 
     return zstd_mod.compress(data, level)
 
@@ -148,14 +137,11 @@ def zstd_decompress_sync(compressed: bytes) -> bytes:
     # Python fallback
     zstd_mod = _ensure_python_zstd()
     if zstd_mod is None:
-        raise RuntimeError("zstd decompression not available (compression.zstd from Python 3.14+ or zstandard package required)")
+        raise RuntimeError(
+            "zstd decompression not available (compression.zstd from Python 3.14+ or zstandard package required)"
+        )
 
     return zstd_mod.decompress(compressed)
-
-
-# =============================================================================
-# Async wrappers with asyncio.to_thread (GIL-safe hot path)
-# =============================================================================
 
 
 async def zstd_compress(data: bytes, level: int = 3) -> bytes:
@@ -188,11 +174,6 @@ async def zstd_decompress(compressed: bytes) -> bytes:
         decompressed bytes
     """
     return await asyncio.to_thread(zstd_decompress_sync, compressed)
-
-
-# =============================================================================
-# Length-prefixed framing (for msgspec_json compatibility)
-# =============================================================================
 
 
 async def zstd_compress_framed(obj: Any, level: int = 3) -> bytes:
@@ -242,11 +223,6 @@ async def zstd_decompress_framed(data: bytes | memoryview | bytearray) -> Any:
         raise ValueError(f"zstd_decompress_framed: length mismatch (prefix={raw_len}, actual={len(raw)})")
 
     return decode(raw)
-
-
-# =============================================================================
-# Domain factories (for rust.compress accessor)
-# =============================================================================
 
 
 class _RustCompressDomain:
@@ -337,10 +313,6 @@ def get_domain(ext: hledac_rust_extensions | None) -> _RustCompressDomain | _Pyt
         return _RustCompressDomain(ext)
     return _PythonCompressDomain()
 
-
-# =============================================================================
-# Module-level convenience functions (for direct import)
-# =============================================================================
 
 __all__ = [
     "zstd_compress",

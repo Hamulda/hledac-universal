@@ -7,12 +7,11 @@ ISSUE-11: Staleness Detection (Fail-Closed)
     - At import, verifies BUILD_MANIFEST hash against current source
     - If stale, raises RustExtensionStale (fail-closed) instead of silent degradation
     - Configuration: HLEDAC_RUST_STALE_MODE=soft|hard (default: hard)
-    
+
 ISSUE-2 (P0): Stale binary detection + fail-closed ABI gate
     - probe() now enforces abi_version >= _RUST_MIN_ABI_VERSION (fail-closed)
     - Capability probe validates reference symbol presence after import
     - .so mtime is tracked and logged if the binary changed since last probe
-
 
 ISSUE-040: ABI version checking (semver-like tuple)
     - Rust extension exports __abi_version__ as (major, minor, patch) tuple via lib.rs
@@ -39,19 +38,17 @@ ISSUE-01 (CRITICAL): Stale Rust extension — source freshness gate
     - Source hash stored in __source_hash__() for cross-session freshness verification
 """
 
-import importlib
 import json as _json
 import logging
 import os
 import platform
 import sys
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from pathlib import Path as _Path
+
+from compat.msgspec_gc_compat import Struct
 
 # ISSUE-11: Import Rust extension exceptions for fail-closed behavior
 from ._exceptions import RustExtensionStale
-from _core._util import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +129,7 @@ _BUILD_MANIFEST_PATH = _Path(_PROJECT_ROOT) / "rust_extensions" / "BUILD_MANIFES
 # - "soft": Log error and fall back to Python (for development)
 _RUST_STALE_MODE: str = os.environ.get("HLEDAC_RUST_STALE_MODE", "hard").lower()
 if _RUST_STALE_MODE not in ("hard", "soft"):
-    logger.warning(
-        f"[RustProbe] Invalid HLEDAC_RUST_STALE_MODE={_RUST_STALE_MODE}, "
-        f"using default 'hard'"
-    )
+    logger.warning(f"[RustProbe] Invalid HLEDAC_RUST_STALE_MODE={_RUST_STALE_MODE}, using default 'hard'")
     _RUST_STALE_MODE = "hard"
 
 # Cached source hash from last successful probe
@@ -146,10 +140,6 @@ _CAP_BUILD_MANIFEST_HASH: str | None = None
 _SOURCE_STALE_WARNED: bool = False
 
 
-# ============================================================================
-# ISSUE-01: Source Freshness Gate
-# ============================================================================
-
 def _get_rust_source_mtime() -> float | None:
     """
     Get the most recent mtime of any Rust source file in rust_extensions/src/.
@@ -159,7 +149,7 @@ def _get_rust_source_mtime() -> float | None:
         src_dir = _Path(_RUST_SRC_DIR)
         if not src_dir.exists():
             return None
-        
+
         # Find all .rs and .toml files
         max_mtime: float = 0.0
         for pattern in ["**/*.rs", "**/*.toml"]:
@@ -171,7 +161,7 @@ def _get_rust_source_mtime() -> float | None:
                             max_mtime = mtime
                     except OSError:
                         continue
-        
+
         return max_mtime if max_mtime > 0 else None
     except Exception:
         return None
@@ -260,16 +250,12 @@ def _load_ffi_manifest() -> dict | None:
     try:
         manifest_path = _Path(_FFI_MANIFEST_PATH)
         if manifest_path.exists():
-            with open(manifest_path, "r") as f:
+            with open(manifest_path) as f:
                 return _json.loads(f.read())
     except Exception:
         pass
     return None
 
-
-# ============================================================================
-# ISSUE-11: BUILD_MANIFEST — Build-time source hash for staleness detection
-# ============================================================================
 
 def _load_build_manifest() -> dict | None:
     """
@@ -285,7 +271,7 @@ def _load_build_manifest() -> dict | None:
     try:
         manifest_path = _Path(_BUILD_MANIFEST_PATH)
         if manifest_path.exists():
-            with open(manifest_path, "r") as f:
+            with open(manifest_path) as f:
                 return _json.loads(f.read())
     except Exception:
         pass
@@ -324,7 +310,7 @@ def _check_build_manifest_staleness() -> tuple[bool, str, str | None, str | None
             f"[RustProbe] BUILD_MANIFEST uses {algorithm}, expected blake2b-256. "
             f"Hash comparison may be unreliable. Rebuild manifest with: "
             f"python rust_extensions/build_manifest.py"
-    )
+        )
 
     manifest_hash = manifest.get("source_hash")
     if manifest_hash is None:
@@ -337,10 +323,15 @@ def _check_build_manifest_staleness() -> tuple[bool, str, str | None, str | None
 
     # Compare hashes
     if manifest_hash != current_hash:
-        return True, (
-            f"Source files have been modified since build. "
-            f"Build hash: {manifest_hash[:16]}..., Current: {current_hash[:16]}..."
-        ), manifest_hash, current_hash
+        return (
+            True,
+            (
+                f"Source files have been modified since build. "
+                f"Build hash: {manifest_hash[:16]}..., Current: {current_hash[:16]}..."
+            ),
+            manifest_hash,
+            current_hash,
+        )
 
     return False, "Source matches BUILD_MANIFEST", manifest_hash, current_hash
 
@@ -387,12 +378,9 @@ def _check_source_freshness() -> tuple[bool, str]:
                     f"Source files ({newer_count}) are newer than .so binary "
                     f"(source mtime: {src_mtime:.1f}, so mtime: {so_mtime:.1f}). "
                     f"Rebuild required."
-    )
+                )
             except Exception:
-                return True, (
-                    f"Source mtime ({src_mtime:.1f}) > .so mtime ({so_mtime:.1f}). "
-                    f"Rebuild required."
-    )
+                return True, (f"Source mtime ({src_mtime:.1f}) > .so mtime ({so_mtime:.1f}). Rebuild required.")
 
     # Check 3: FFI manifest hash (legacy fallback)
     manifest = _load_ffi_manifest()
@@ -405,7 +393,7 @@ def _check_source_freshness() -> tuple[bool, str]:
                 f"Source content hash mismatch (expected: {manifest_hash[:16]}..., "
                 f"current: {current_hash[:16]}...). "
                 f"Source files have been modified. Rebuild required."
-    )
+            )
 
     return False, "Source and binary are in sync"
 
@@ -426,7 +414,7 @@ def _get_staleness_details() -> tuple[str | None, str | None, str | None]:
             manifest.get("source_hash"),
             _compute_source_content_hash(),
             manifest.get("build_command"),
-    )
+        )
     return None, _compute_source_content_hash(), None
 
 
@@ -448,7 +436,7 @@ def _get_rebuild_instruction() -> str:
                 f"{cmd}\n\n"
                 f"# Install into Python:\n"
                 f"cd rust_extensions && maturin develop --release"
-    )
+            )
         return f"# Build command:\n{cmd}"
 
     # Fall back to platform-specific default
@@ -463,13 +451,13 @@ def _get_rebuild_instruction() -> str:
             "    cargo build --release --manifest-path rust_extensions/Cargo.toml\n\n"
             "# Then install into Python:\n"
             "cd rust_extensions && maturin develop --release"
-    )
+        )
     else:
         return (
             "cd rust_extensions && maturin develop --release\n\n"
             "# Or for direct cargo build:\n"
             "cargo build --release --manifest-path rust_extensions/Cargo.toml"
-    )
+        )
 
 
 class ProbeResult(Struct, frozen=True):
@@ -500,7 +488,7 @@ class ProbeResult(Struct, frozen=True):
             and self.version_tuple >= _RUST_MIN_VERSION
             and self.abi_version >= _RUST_MIN_ABI_VERSION
             and not self.source_stale  # ISSUE-01: source must be fresh
-    )
+        )
 
     @property
     def abi_major_mismatch(self) -> bool:
@@ -548,12 +536,11 @@ def _parse_version(ext: object | None) -> tuple[tuple[int, int, int], str]:
                 int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0,
                 int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0,
                 int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
-    )
+            )
     except Exception as e:
         logger.warning(
-            f"[RustProbe] __version_info__/__version__ raised {type(e).__name__}: {e}; "
-            f"treating version as unknown"
-    )
+            f"[RustProbe] __version_info__/__version__ raised {type(e).__name__}: {e}; treating version as unknown"
+        )
 
     return ver_tuple, ver_str
 
@@ -584,12 +571,9 @@ def _parse_abi_version(ext: object | None) -> tuple[int, int, int]:
                 logger.warning(
                     f"[RustProbe] __abi_version__() returned {type(result).__name__} "
                     f"(expected tuple or int); checking direct attribute"
-    )
+                )
         except Exception as e:
-            logger.warning(
-                f"[RustProbe] __abi_version__() raised {type(e).__name__}: {e}; "
-                f"ABI version unknown"
-    )
+            logger.warning(f"[RustProbe] __abi_version__() raised {type(e).__name__}: {e}; ABI version unknown")
 
     # Path 2: direct attribute (constant, not function)
     try:
@@ -601,9 +585,8 @@ def _parse_abi_version(ext: object | None) -> tuple[int, int, int]:
         # else: attribute is None or wrong type — return (0, 0, 0) below
     except Exception as e:
         logger.warning(
-            f"[RustProbe] __abi_version__ (direct attribute) raised {type(e).__name__}: {e}; "
-            f"ABI version unknown"
-    )
+            f"[RustProbe] __abi_version__ (direct attribute) raised {type(e).__name__}: {e}; ABI version unknown"
+        )
 
     return (0, 0, 0)
 
@@ -623,9 +606,8 @@ def _parse_py_version(ext: object | None) -> tuple[int, int, int] | None:
                 return (int(result[0]), int(result[1]), int(result[2]) if len(result) > 2 else 0)
     except Exception as e:
         logger.warning(
-            f"[RustProbe] __py_version__() raised {type(e).__name__}: {e}; "
-            f"Python version compiled-for unknown"
-    )
+            f"[RustProbe] __py_version__() raised {type(e).__name__}: {e}; Python version compiled-for unknown"
+        )
     return None
 
 
@@ -643,10 +625,7 @@ def _parse_apple_target(ext: object | None) -> str | None:
             if isinstance(result, str):
                 return result
     except Exception as e:
-        logger.warning(
-            f"[RustProbe] __apple_target__() raised {type(e).__name__}: {e}; "
-            f"Apple target unknown"
-    )
+        logger.warning(f"[RustProbe] __apple_target__() raised {type(e).__name__}: {e}; Apple target unknown")
     return None
 
 
@@ -691,7 +670,9 @@ def _so_mtime() -> float | None:
                 # ISSUE-03: NON-ABI3 build — single correct filename is cpython-314-darwin.so
                 # Build config: crate-type=["cdylib","rlib"] + pyo3/extension-module
                 # ABI3 builds (abi3-py3XX feature) would produce hledac_rust_extensions.abi3.so
-                expected_so = f"hledac_rust_extensions.cpython-{sys.version_info.major}{sys.version_info.minor}-darwin.so"
+                expected_so = (
+                    f"hledac_rust_extensions.cpython-{sys.version_info.major}{sys.version_info.minor}-darwin.so"
+                )
                 cand_path = os.path.join(os.path.dirname(path), expected_so)
                 if os.path.isfile(cand_path):
                     path = cand_path
@@ -741,7 +722,16 @@ def probe() -> ProbeResult:
     - Uses content hash for cross-session verification
     - Fail-closed: if source is newer than binary, extension is unavailable
     """
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES, _CAP_SOURCE_HASH, _SOURCE_STALE_WARNED
+    global \
+        _PROBED, \
+        _EXT, \
+        _SO_MTIME, \
+        _SO_MTIME_WARNED, \
+        _CAP_SCORE, \
+        _CAP_SO_MTIME, \
+        _CAP_FEATURES, \
+        _CAP_SOURCE_HASH, \
+        _SOURCE_STALE_WARNED
 
     # Compute source hash once for the session
     current_source_hash = _compute_source_content_hash()
@@ -754,17 +744,23 @@ def probe() -> ProbeResult:
         apple_tgt = _parse_apple_target(_EXT) if _EXT else None
         backend = "rust" if _PROBED else "python"
         return ProbeResult(
-            available=_PROBED, ext=_EXT, version_str=ver_str,
-            version_tuple=ver_tuple, abi_version=abi_ver,
-            abi_major=abi_ver[0], backend=backend,
-            capability_score=_CAP_SCORE, so_mtime=_CAP_SO_MTIME,
-            py_version=py_ver, apple_target=apple_tgt,
+            available=_PROBED,
+            ext=_EXT,
+            version_str=ver_str,
+            version_tuple=ver_tuple,
+            abi_version=abi_ver,
+            abi_major=abi_ver[0],
+            backend=backend,
+            capability_score=_CAP_SCORE,
+            so_mtime=_CAP_SO_MTIME,
+            py_version=py_ver,
+            apple_target=apple_tgt,
             features=_CAP_FEATURES,
             source_stale=(_PROBED and _CAP_SOURCE_HASH != current_source_hash),
             source_stale_reason="Source changed since probe" if _CAP_SOURCE_HASH != current_source_hash else "",
             source_hash=current_source_hash,
             rebuild_instruction=_get_rebuild_instruction(),
-    )
+        )
 
     # First call — do the probe
     _PROBED = False
@@ -778,7 +774,7 @@ def probe() -> ProbeResult:
             logger.debug(
                 f"[RustProbe] hledac_rust_extensions {ver_tuple} < "
                 f"required {_RUST_MIN_VERSION}; Python fallbacks enabled"
-    )
+            )
         else:
             abi_ver = _parse_abi_version(ext)
 
@@ -790,7 +786,7 @@ def probe() -> ProbeResult:
                     f"Extension was built with a newer ABI that requires a rebuild. "
                     f"Run: cd rust_extensions && maturin develop --release. "
                     f"Falling back to Python."
-    )
+                )
                 # Do NOT fall through — incompatible extension stays unavailable
             # ISSUE-2 P0: fail-closed ABI gate — ABI must be known and sufficient
             elif abi_ver < _RUST_MIN_ABI_VERSION:
@@ -799,7 +795,7 @@ def probe() -> ProbeResult:
                     f"required {_abi_tuple_str(_RUST_MIN_ABI_VERSION)}; binary is stale. "
                     f"Run: cd rust_extensions && maturin develop. "
                     f"Falling back to Python."
-    )
+                )
             else:
                 # ABI OK — do capability probe
                 cap_score = _check_capability(ext)
@@ -815,7 +811,7 @@ def probe() -> ProbeResult:
                         f"{apple_tgt}, running on {platform.platform()}. "
                         f"Rebuild required for this architecture. "
                         f"Run: cd rust_extensions && maturin develop --release."
-    )
+                    )
                     # Do NOT fall through — incompatible architecture stays unavailable
                 else:
                     # ISSUE-3.3: Python version mismatch check (warning only — ABI stable)
@@ -826,7 +822,7 @@ def probe() -> ProbeResult:
                                 f"[RustProbe] Python version mismatch: extension built for "
                                 f"{py_ver}, running under {py_version_info}. "
                                 f"May cause ABI issues. Rebuild recommended."
-    )
+                            )
 
                     # ISSUE-A: warn about .so mtime change only ONCE per session
                     if _SO_MTIME is not None and current_mtime is not None and current_mtime > _SO_MTIME:
@@ -835,7 +831,7 @@ def probe() -> ProbeResult:
                                 f"[RustProbe] .so mtime changed since last probe "
                                 f"(cached={_SO_MTIME}, current={current_mtime}); "
                                 f"a rebuild may be needed"
-    )
+                            )
                             _SO_MTIME_WARNED = True
 
                     if cap_score < _CAPABILITY_THRESHOLD:
@@ -844,7 +840,7 @@ def probe() -> ProbeResult:
                             f"threshold; {len(_REFERENCE_SYMBOLS)} reference symbols checked, "
                             f"{int(cap_score * len(_REFERENCE_SYMBOLS))} present. "
                             f"Binary is broken or partial build. Falling back to Python."
-    )
+                        )
                     else:
                         # ISSUE-01: Source freshness gate — fail-closed if source is newer than binary
                         is_stale, stale_reason = _check_source_freshness()
@@ -853,7 +849,6 @@ def probe() -> ProbeResult:
                             # ISSUE-11: Get detailed staleness info for exception
                             build_hash, current_hash, rebuild_cmd = _get_staleness_details()
 
-                            # Log regardless of mode
                             if not _SOURCE_STALE_WARNED:
                                 logger.error(
                                     f"[RustProbe] CRITICAL: Stale Rust extension detected!\n"
@@ -862,7 +857,7 @@ def probe() -> ProbeResult:
                                     f"  Source files have been modified since the binary was built.\n"
                                     f"  Falling back to Python (may be slow). For full performance:\n"
                                     f"  {_get_rebuild_instruction()}"
-    )
+                                )
                                 _SOURCE_STALE_WARNED = True
 
                             # ISSUE-11: FAIL-CLOSED behavior - raise exception in hard mode
@@ -872,7 +867,7 @@ def probe() -> ProbeResult:
                                     current_hash=current_hash,
                                     rebuild_command=rebuild_cmd or _get_rebuild_instruction(),
                                     reason=stale_reason,
-    )
+                                )
                             # Do NOT fall through — stale binary stays unavailable
                         else:
                             # All checks passed — mark extension as available
@@ -888,7 +883,7 @@ def probe() -> ProbeResult:
                                 f"(version {ver_str}, ABI {_abi_tuple_str(abi_ver)}, "
                                 f"capability {cap_score:.0%}, features={sorted(features)}, "
                                 f"apple_target={apple_tgt}, source_fresh=True)"
-    )
+                            )
     except Exception as e:
         # Catch ALL: ImportError, OSError, AttributeError, etc.
         logger.debug(f"[RustProbe] hledac_rust_extensions unavailable: {e}")
@@ -900,16 +895,22 @@ def probe() -> ProbeResult:
     cap_score = _check_capability(_EXT)
     current_mtime = _so_mtime() if _EXT else None
     backend = "rust" if _PROBED else "python"
-    
+
     # ISSUE-01: Check source freshness for the final result
     is_stale, stale_reason = _check_source_freshness() if _PROBED else (False, "")
-    
+
     return ProbeResult(
-        available=_PROBED, ext=_EXT, version_str=ver_str,
-        version_tuple=ver_tuple, abi_version=abi_ver,
-        abi_major=abi_ver[0], backend=backend,
-        capability_score=cap_score, so_mtime=current_mtime,
-        py_version=py_ver, apple_target=apple_tgt,
+        available=_PROBED,
+        ext=_EXT,
+        version_str=ver_str,
+        version_tuple=ver_tuple,
+        abi_version=abi_ver,
+        abi_major=abi_ver[0],
+        backend=backend,
+        capability_score=cap_score,
+        so_mtime=current_mtime,
+        py_version=py_ver,
+        apple_target=apple_tgt,
         features=frozenset(),
         source_stale=is_stale,
         source_stale_reason=stale_reason,
@@ -920,7 +921,16 @@ def probe() -> ProbeResult:
 
 def force_python() -> ProbeResult:
     """Force Python fallbacks (HLEDAC_FORCE_PYTHON=1)."""
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES, _CAP_SOURCE_HASH, _SOURCE_STALE_WARNED
+    global \
+        _PROBED, \
+        _EXT, \
+        _SO_MTIME, \
+        _SO_MTIME_WARNED, \
+        _CAP_SCORE, \
+        _CAP_SO_MTIME, \
+        _CAP_FEATURES, \
+        _CAP_SOURCE_HASH, \
+        _SOURCE_STALE_WARNED
     _PROBED = False
     _EXT = None
     _SO_MTIME = None
@@ -932,11 +942,17 @@ def force_python() -> ProbeResult:
     _SOURCE_STALE_WARNED = False
     logger.debug("[RustProbe] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1")
     return ProbeResult(
-        available=False, ext=None, version_str="unknown",
-        version_tuple=(0, 0, 0), abi_version=(0, 0, 0),
-        abi_major=0, backend="python",
-        capability_score=0.0, so_mtime=None,
-        py_version=None, apple_target=None,
+        available=False,
+        ext=None,
+        version_str="unknown",
+        version_tuple=(0, 0, 0),
+        abi_version=(0, 0, 0),
+        abi_major=0,
+        backend="python",
+        capability_score=0.0,
+        so_mtime=None,
+        py_version=None,
+        apple_target=None,
         features=frozenset(),
         source_stale=False,
         source_stale_reason="",
@@ -956,7 +972,7 @@ def force_rust() -> ProbeResult:
             f"[RustProbe] HLEDAC_FORCE_RUST=1 but Rust extension not compatible "
             f"(version={result.version_str}, ABI={_abi_tuple_str(result.abi_version)}, "
             f"source_stale={result.source_stale}); falling back to Python"
-    )
+        )
         _PROBED = False
         _EXT = None
         _SO_MTIME = None
@@ -966,17 +982,23 @@ def force_rust() -> ProbeResult:
         _CAP_FEATURES = frozenset()
         _CAP_SOURCE_HASH = None
         return ProbeResult(
-            available=False, ext=None, version_str=result.version_str,
-            version_tuple=result.version_tuple, abi_version=result.abi_version,
-            abi_major=result.abi_major, backend="python",
-            capability_score=0.0, so_mtime=None,
-            py_version=None, apple_target=None,
+            available=False,
+            ext=None,
+            version_str=result.version_str,
+            version_tuple=result.version_tuple,
+            abi_version=result.abi_version,
+            abi_major=result.abi_major,
+            backend="python",
+            capability_score=0.0,
+            so_mtime=None,
+            py_version=None,
+            apple_target=None,
             features=frozenset(),
             source_stale=result.source_stale,
             source_stale_reason=result.source_stale_reason,
             source_hash=result.source_hash,
             rebuild_instruction=result.rebuild_instruction,
-    )
+        )
     _PROBED = result.available
     _EXT = result.ext if result.available else None
     _SO_MTIME = result.so_mtime if result.available else None
@@ -990,7 +1012,16 @@ def force_rust() -> ProbeResult:
 
 def reset() -> None:
     """Reset probe cache — for testing only."""
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES, _CAP_SOURCE_HASH, _SOURCE_STALE_WARNED
+    global \
+        _PROBED, \
+        _EXT, \
+        _SO_MTIME, \
+        _SO_MTIME_WARNED, \
+        _CAP_SCORE, \
+        _CAP_SO_MTIME, \
+        _CAP_FEATURES, \
+        _CAP_SOURCE_HASH, \
+        _SOURCE_STALE_WARNED
     _PROBED = None
     _EXT = None
     _SO_MTIME = None

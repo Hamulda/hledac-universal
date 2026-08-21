@@ -3,8 +3,6 @@
 runtime/sidecar_orchestrator.py — F350M-R: Thin Facade Refactor
 ================================================================
 
-
-
 SidecarOrchestrator is a thin facade wiring three canonical layers:
 
 1. FindingSidecarBus  (sidecar_bus.py)  — accepted-finding sidecar registry/execution
@@ -58,34 +56,29 @@ ORPHANED TASK FIX (Issue #2):
     4. Proper cleanup of Mach ports and resource allocations
 """
 
-
-
 import asyncio as _asyncio
-
-from hledac.universal.utils.asyncx import parallel, safe_create_task, _check_gathered
-from hledac.universal.runtime.scheduler_v2._task_registry import (
-    TaskScope,
-    safe_create_task_tracked,
-    safe_create_managed_task,
-    )
 import logging
 import os as _os
 import time as _time
 from typing import Any
 
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
+from hledac.universal.runtime.scheduler_v2._task_registry import (
+    TaskScope,
+    safe_create_managed_task,
+)
 from hledac.universal.runtime.sidecar_bus import create_sidecar_bus
 from hledac.universal.runtime.sidecar_dispatcher import (
     DispatchOutcome,
     SidecarDispatcher,
-    )
+)
 from hledac.universal.runtime.sidecar_protocol import (
     AdvisoryCallable,
     AdvisoryPriority,
     SchedulerAdvisory,
     SidecarContext,
 )
-from _core import aclose
+from hledac.universal.utils.asyncx import parallel
 
 log = logging.getLogger(__name__)
 
@@ -102,10 +95,12 @@ def _get_otel_tracer() -> Any:
     if _OTEL_TRACER is None:
         try:
             from opentelemetry import trace
+
             _OTEL_TRACER = trace.get_tracer("hledac.sidecar")
         except Exception:
             _OTEL_TRACER = False
     return _OTEL_TRACER if _OTEL_TRACER else None
+
 
 # P0: Bounded concurrency for advisory sidecars (M1 8GB safe)
 # Advisory sidecary (IPFS, Tor, I2P, BGP, banner, DHT, Gopher, etc.) run in
@@ -124,7 +119,6 @@ _ADVISORY_SIDECAR_SEMAPHORE_LIMIT: int = 8
 # This semaphore caps concurrent plugin runs regardless of how many
 # @SidecarRegistry.register adapters are available.
 _PLUGIN_SIDECAR_SEMAPHORE_LIMIT: int = 4
-
 
 # P0: Shared semaphore for advisory sidecar concurrency control.
 # All advisory sidecar tasks share ONE semaphore to enforce the global
@@ -157,13 +151,14 @@ def _get_peak_coordinator():
     try:
         # Try co-scheduler first (UNIFIED-003)
         from hledac.universal._core.global_co_scheduler import (
-            get_co_scheduler,
             Subsystem,
-    )
+            get_co_scheduler,
+        )
         from hledac.universal._core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
-    )
+        )
+
         return get_co_scheduler(), ResourceClass, TaskPriority, Subsystem
     except ImportError:  # noqa: BLE001
         pass
@@ -172,7 +167,8 @@ def _get_peak_coordinator():
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
-    )
+        )
+
         return get_peak_coordinator(), ResourceClass, TaskPriority, None
     except ImportError:
         return None, None, None, None
@@ -211,7 +207,7 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
                     priority="low",
                     owner=f"sidecar:{name}",
                     timeout_s=5.0,
-    )
+                )
             else:
                 # Fall back to raw coordinator (backward compat)
                 peak_guard = await coordinator.acquire(
@@ -220,7 +216,7 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
                     priority=TaskPriority.LOW,
                     owner=f"sidecar:{name}",
                     timeout_s=5.0,
-    )
+                )
         except TimeoutError:
             log.debug("[UNIFIED-001] sidecar %s deferred: peak load timeout", name)
             return  # Fail-soft: skip sidecar under memory pressure
@@ -316,7 +312,8 @@ async def _run_bounded_plugin_sidecar(coro, sidecar_id: str) -> None:
     # UNIFIED-002: Reserve memory budget via AsyncUMAGuard
     guard = None
     try:
-        from hledac.universal._core.resource_governor import get_uma_guard, Priority
+        from hledac.universal._core.resource_governor import Priority, get_uma_guard
+
         guard = get_uma_guard()
     except Exception:
         guard = None
@@ -372,14 +369,10 @@ def _get_sprint_advisory_runner():
     if _SPRINT_ADVISORY_RUNNER is None:
         from hledac.universal.runtime.sprint_advisory_runner import (
             SprintAdvisoryRunner as _SAR,  # noqa: N814
-    )
+        )
+
         _SPRINT_ADVISORY_RUNNER = _SAR
     return _SPRINT_ADVISORY_RUNNER
-
-
-# ---------------------------------------------------------------------------
-# F350M-FED: Plugin Sidecar Context (duck-typed SidecarContext)
-# ---------------------------------------------------------------------------
 
 
 class _PluginSidecarContext:
@@ -429,6 +422,7 @@ class _PluginSidecarContext:
 # Each adapter wraps a SidecarOrchestrator method and implements AdvisoryCallable.
 
 import logging as _advisory_log
+
 _advisory_logger = _advisory_log.getLogger(__name__ + ".advisory")
 
 
@@ -451,7 +445,7 @@ class _BaseAdvisoryAdapter:
     priority: AdvisoryPriority = AdvisoryPriority.NORMAL
     capability: str = ""
 
-    def __init__(self, orchestrator: "SidecarOrchestrator") -> None:
+    def __init__(self, orchestrator: SidecarOrchestrator) -> None:
         self._orchestrator = orchestrator
 
     async def __call__(self, ctx: SidecarContext) -> list[Any]:
@@ -639,7 +633,7 @@ class WaybackCDXDeepAdapter(_BaseAdvisoryAdapter):
 
 
 def _build_advisory_adapters(
-    orchestrator: "SidecarOrchestrator",
+    orchestrator: SidecarOrchestrator,
 ) -> list[AdvisoryCallable]:
     """
     Build callable advisory adapters for all enabled sidecars.
@@ -720,11 +714,6 @@ async def _run_advisory_with_priority(
                 return []
 
 
-# ---------------------------------------------------------------------------
-# SidecarOrchestrator
-# ---------------------------------------------------------------------------
-
-
 class SidecarOrchestrator:
     """
     Thin facade wiring three canonical layers for sprint sidecar execution.
@@ -760,13 +749,14 @@ class SidecarOrchestrator:
         self._dispatcher = SidecarDispatcher(
             bus=self._bus,
             governor=governor,
-    )
+        )
         # ISSUE-005 FIX: Bind this SidecarOrchestrator to ContextVar so that
         # SchedulerBackedSidecarAdapter.run_async() can find sidecar methods.
         # SidecarOrchestrator hosts the _run_*_sidecar() methods, not SprintScheduler.
         from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler
+
         _bind_scheduler(self)
-        
+
         # [NEW-M13]: Subscribe to QoS changes for "sidecars" capability
         # This enables the governor to track sidecar compliance and force-cancel if needed.
         self._qos_subscribed = False
@@ -787,6 +777,7 @@ class SidecarOrchestrator:
         self._prewarmed = True
         try:
             from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+
             ensure_adapters_registered()
             await SidecarRegistry.prewarm_async()
         except Exception as e:
@@ -819,7 +810,7 @@ class SidecarOrchestrator:
             store,
             query,
             sprint_id,
-    )
+        )
         # Propagate skipped sidecars to result sink if the attribute exists
         if outcome.sidecars_skipped and hasattr(self._result, "sidecars_skipped"):
             existing = getattr(self._result, "sidecars_skipped", set())
@@ -839,9 +830,8 @@ class SidecarOrchestrator:
                 for entry in outcome.source_family_outcomes:
                     # Deduplicate by (family, lane) before appending
                     duplicate = any(
-                        e.get("family") == entry.get("family") and e.get("lane") == entry.get("lane")
-                        for e in existing
-    )
+                        e.get("family") == entry.get("family") and e.get("lane") == entry.get("lane") for e in existing
+                    )
                     if not duplicate:
                         existing.append(entry)
                 self._result.source_family_outcomes_list = existing
@@ -873,7 +863,8 @@ class SidecarOrchestrator:
         # be skipped during WINDUP/BATTERY/EMERGENCY modes — the governor already
         # sets sidecars_ok=False in QoSProfile for these levels.
         try:
-            from hledac.universal._core.resource_governor import get_current_degradation_level, QoSLevel
+            from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
+
             level = get_current_degradation_level()
             if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY, QoSLevel.WINDUP):
                 # [NEW-M13]: Acknowledge QoS change - sidecars are suppressed
@@ -881,20 +872,18 @@ class SidecarOrchestrator:
                 return  # All sidecars suppressed by QoS policy
         except Exception:  # noqa: BLE001
             pass  # fail-open: governor unavailable → allow sidecars
-        
+
         # [CRITICAL FIX]: Check if force-cancel was triggered by governor
         if self._sidecar_cancel_requested:
-            log.warning(
-                "[QoS-Sub] Sidecars cancelled: force-cancel requested by governor QoS subsystem"
-    )
+            log.warning("[QoS-Sub] Sidecars cancelled: force-cancel requested by governor QoS subsystem")
             # Reset the flag for next run
             self._sidecar_cancel_requested = False
             return
-        
+
         # NEW-M13-FIX: Subscribe to QoS once at first execution
         # (not on every call to run_advisory_runner)
         await self._ensure_qos_subscription()
-        
+
         # NOTE: We no longer explicitly acknowledge "running" here because:
         # 1. The subscription callback (_on_qos_change) handles ack automatically
         # 2. Explicit ack was causing duplicate callback invocations
@@ -917,7 +906,7 @@ class SidecarOrchestrator:
                     duckdb_store=getattr(self._scheduler, "_duckdb_store", None),
                     governor=getattr(self._scheduler, "_governor", None),
                     analyst_workbench=getattr(self._scheduler, "_analyst_workbench", None),
-    )
+                )
                 # Sprint F206BK: Gate pivot_executor via acquisition strategy
                 snapshot = getattr(self._scheduler, "_acquisition_plan", None)
                 if snapshot is not None:
@@ -925,7 +914,8 @@ class SidecarOrchestrator:
                         AcquisitionLane,
                         is_lane_enabled,
                         lane_skip_reason,
-    )
+                    )
+
                     if not is_lane_enabled(snapshot, AcquisitionLane.PIVOT_EXECUTOR):
                         reason = lane_skip_reason(snapshot, AcquisitionLane.PIVOT_EXECUTOR) or "unknown"
                         log.debug("[F206BK] pivot_executor skipped: %s", reason)
@@ -936,13 +926,13 @@ class SidecarOrchestrator:
             _outer_tg.create_task(
                 _run_sprint_advisory_branch(),
                 name="advisory:sprint_advisory_runner",
-    )
+            )
 
             # ── Branch B: CT → PassiveDNS one-hop pivot ───────────────────────
             _outer_tg.create_task(
                 self._run_ct_to_passivedns_pivot_advisory(),
                 name="advisory:ct_passivedns",
-    )
+            )
 
             # ═══════════════════════════════════════════════════════════════════════════
             # ISSUE #15 FIX: Branch C+D - Callable Adapter Pattern with parallel()
@@ -963,18 +953,15 @@ class SidecarOrchestrator:
                 - Parallel: all adapters run concurrently up to semaphore limits
                 - Testable: pure async callables, easy to mock
                 """
-                # Build callable adapters from orchestrator methods
                 adapters = _build_advisory_adapters(self)
 
                 if not adapters:
                     log.debug("[ISSUE #15] No advisory adapters enabled")
                     return
 
-                # Log enabled adapters
                 _enabled = [a.sidecar_id for a in adapters]
                 log.debug("[ISSUE #15] Enabled advisory adapters: %s", _enabled)
 
-                # Build SidecarContext for adapter execution
                 _ctx = SidecarContext(
                     query=getattr(self._scheduler, "_sprint_query", "") or "",
                     sprint_id=getattr(self._scheduler, "_sprint_id", "unknown") or "unknown",
@@ -993,10 +980,11 @@ class SidecarOrchestrator:
                 _normal_priority = [a for a in adapters if a.priority == AdvisoryPriority.NORMAL]
                 _low_priority = [a for a in adapters if a.priority == AdvisoryPriority.LOW]
 
-                # Log priority distribution
                 log.debug(
                     "[ISSUE #15] Priority distribution: HIGH=%d, NORMAL=%d, LOW=%d",
-                    len(_high_priority), len(_normal_priority), len(_low_priority)
+                    len(_high_priority),
+                    len(_normal_priority),
+                    len(_low_priority),
                 )
 
                 # Execute all adapters via parallel() with priority-aware concurrency
@@ -1004,7 +992,6 @@ class SidecarOrchestrator:
                 _tracer = _get_otel_tracer()
                 _sem = _get_advisory_semaphore()
 
-                # Build coroutine tasks from adapters
                 async def _run_adapter_with_tracing(adapter: AdvisoryCallable) -> list[Any]:
                     async with _sem:  # Semaphore per adapter call
                         if _tracer:
@@ -1038,7 +1025,7 @@ class SidecarOrchestrator:
                         _results = await parallel(_all_tasks, policy="log")
                         log.debug(
                             "[ISSUE #15] Advisory adapters completed: %d adapters executed",
-                            len([r for r in _results if r])
+                            len([r for r in _results if r]),
                         )
                     except _asyncio.CancelledError:
                         raise
@@ -1068,7 +1055,7 @@ class SidecarOrchestrator:
                     _outer_tg,
                     name="sprint:plugin_sidecars",
                     scope=TaskScope.SIDECAR_PLUGIN,
-    )
+                )
 
     async def run_plugin_sidecars(self, ctx: Any) -> None:
         """
@@ -1091,7 +1078,7 @@ class SidecarOrchestrator:
                 SidecarContext,
                 SidecarRegistry,
                 ensure_adapters_registered,
-    )
+            )
         except Exception as e:
             log.debug("[F350M-FED] SidecarRegistry import failed: %s", e)
             return
@@ -1109,15 +1096,15 @@ class SidecarOrchestrator:
                         # Memory pressure is 0..1, so budget is inverse
                         pressure = float(getattr(snap, "memory_pressure", 0.0) or 0.0)
                         memory_budget_mb = max(
-                            10, int(200 * (1.0 - pressure))  # 10..200MB
-    )
+                            10,
+                            int(200 * (1.0 - pressure)),  # 10..200MB
+                        )
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # fall back to default
 
             available = SidecarRegistry.get_available(memory_budget_mb)
             if not available:
-                log.debug("[F350M-FED] no plugin sidecars available "
-                          "(budget=%dMB)", memory_budget_mb)
+                log.debug("[F350M-FED] no plugin sidecars available (budget=%dMB)", memory_budget_mb)
                 return
 
             # Build a proper SidecarContext if we got a duck-typed one.
@@ -1130,10 +1117,8 @@ class SidecarOrchestrator:
                         sprint_id=str(getattr(ctx, "sprint_id", "unknown") or "unknown"),
                         findings=list(getattr(ctx, "findings", []) or []),
                         sprint_mode=str(getattr(ctx, "sprint_mode", "active") or "active"),
-                        memory_pressure=float(
-                            getattr(ctx, "memory_pressure", 0.0) or 0.0
-                        ),
-    )
+                        memory_pressure=float(getattr(ctx, "memory_pressure", 0.0) or 0.0),
+                    )
                 except Exception as e:
                     log.debug("[F350M-FED] cannot build SidecarContext: %s", e)
                     return
@@ -1152,7 +1137,7 @@ class SidecarOrchestrator:
                 _run_bounded_plugin_sidecar(
                     self._dispatch_plugin_sidecar(adapter, sidecar_ctx),
                     adapter.sidecar_id,
-    )
+                )
                 for adapter in available
             ]
             if run_coros:
@@ -1164,19 +1149,24 @@ class SidecarOrchestrator:
                         sidecar_id = getattr(adapter, "sidecar_id", f"plugin[{i}]") if adapter else f"plugin[{i}]"
                         log.warning(
                             "[ISSUE #027] plugin sidecar %s unexpected exception (fail-soft): %s: %s",
-                            sidecar_id, type(item).__name__, item,
-    )
+                            sidecar_id,
+                            type(item).__name__,
+                            item,
+                        )
                 except _asyncio.CancelledError:
                     # Propagate cancellation — gather() cancels all child coroutines on CancelledError
                     raise
         except Exception as e:
             log.warning(
                 "[F350M-FED] run_plugin_sidecars: fail-soft: %s: %s",
-                type(e).__name__, e,
-    )
+                type(e).__name__,
+                e,
+            )
 
     async def _dispatch_plugin_sidecar(
-        self, adapter: Any, ctx: Any,
+        self,
+        adapter: Any,
+        ctx: Any,
     ) -> None:
         """Dispatch a single plugin sidecar. Fail-soft. Returns nothing."""
         try:
@@ -1204,22 +1194,23 @@ class SidecarOrchestrator:
                             store=None,
                             query=getattr(ctx, "query", "") or "",
                             sprint_id=getattr(ctx, "sprint_id", "") or "",
-    )
+                        )
                     if total > 50:
                         log.debug(
                             "[F350M-FED] %s: %d findings capped to 50 (dropped %d)",
                             adapter.sidecar_id,
                             total,
                             total - 50,
-    )
+                        )
                 except Exception:  # noqa: BLE001
                     pass  # noqa: BLE001  # dispatcher may not be available
         except Exception as e:
             log.warning(
                 "[F350M-FED] plugin sidecar %s raised: %s: %s",
                 getattr(adapter, "sidecar_id", "?"),
-                type(e).__name__, e,
-    )
+                type(e).__name__,
+                e,
+            )
 
     def _build_plugin_sidecar_context(self) -> Any | None:
         """
@@ -1235,10 +1226,9 @@ class SidecarOrchestrator:
             # sprint_id may live in the scheduler config or result
             sprint_id = (
                 getattr(self._scheduler, "_sprint_id", None)
-                or getattr(getattr(self._scheduler, "_config", None),
-                           "sprint_id", None)
+                or getattr(getattr(self._scheduler, "_config", None), "sprint_id", None)
                 or "unknown"
-    )
+            )
             # findings live on the result_sink or are accumulated per-sprint
             findings = []
             try:
@@ -1247,20 +1237,14 @@ class SidecarOrchestrator:
             except Exception:
                 findings = []
             # sprint_mode
-            sprint_mode = (
-                getattr(getattr(self._scheduler, "_config", None),
-                        "sprint_mode", None)
-                or "active"
-    )
+            sprint_mode = getattr(getattr(self._scheduler, "_config", None), "sprint_mode", None) or "active"
             # memory_pressure from governor snapshot
             memory_pressure = 0.0
             try:
                 if self._governor is not None:
                     snap = getattr(self._governor, "snapshot", None)
                     if snap is not None:
-                        memory_pressure = float(
-                            getattr(snap, "memory_pressure", 0.0) or 0.0
-    )
+                        memory_pressure = float(getattr(snap, "memory_pressure", 0.0) or 0.0)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1273,16 +1257,16 @@ class SidecarOrchestrator:
                 findings=findings,
                 sprint_mode=sprint_mode,
                 memory_pressure=memory_pressure,
-    )
+            )
         except Exception as e:
             log.debug("[F350M-FED] build context failed: %s", e)
             return None
-
 
     def _check_memory_ok(self) -> bool:
         """Check if memory pressure is acceptable. Returns True to proceed, False to skip."""
         try:
             import psutil
+
             process = psutil.Process()
             mem_info = process.memory_info()
             rss_mb = mem_info.rss / 1024**2
@@ -1308,19 +1292,20 @@ class SidecarOrchestrator:
         """
         try:
             from hledac.universal._core.resource_governor import get_qos_subscription_registry
+
             registry = get_qos_subscription_registry()
             await registry.acknowledge(capability, success, reason)
         except Exception:  # noqa: BLE001
             pass  # Fail-soft: don't block sidecar execution on ack failure
-    
+
     async def _ensure_qos_subscription(self) -> None:
         """
         [NEW-M13]: Ensure sidecars are subscribed to QoS changes.
-        
+
         Subscribes to "sidecars" capability if not already subscribed.
         This is called before running sidecars to ensure the governor
         can track sidecar compliance and force-cancel if needed.
-        
+
         [CRITICAL FIX]: Now includes a cancel_fn that actually stops sidecar execution
         when the governor's force-cancel is triggered. This closes the loop where
         QoS enforcement was previously a no-op (just logging).
@@ -1328,47 +1313,41 @@ class SidecarOrchestrator:
         # Fast path: already subscribed
         if self._qos_subscribed:
             return
-        
+
         try:
             from hledac.universal._core.resource_governor import get_qos_subscription_registry
-            import asyncio
-            
+
             registry = get_qos_subscription_registry()
-            
+
             # NEW-M13-FIX: Use lock to prevent duplicate subscriptions
             # This is safe because _qos_subscribed is checked inside the try block
             if self._qos_subscribed:
                 return  # Another call just subscribed us
-            
+
             async def _on_qos_change(success: bool, reason: str) -> None:
                 """Callback when QoS level changes."""
                 if not success:
-                    log.warning(
-                        f"[QoS-Sub] Sidecars failed to comply with QoS change: {reason}"
-    )
-            
+                    log.warning(f"[QoS-Sub] Sidecars failed to comply with QoS change: {reason}")
+
             def _cancel_sidecars() -> None:
                 """
                 [CRITICAL FIX] Cancel function for sidecar force-cancel.
-                
+
                 This is called by the governor's QoSSubscriptionRegistry when:
                 1. Ack deadline expires without acknowledgment
                 2. Subsystem is marked as FAILED
-                
+
                 The function sets a flag that is checked by the running sidecar tasks
                 to stop execution cooperatively. This ensures:
                 - SidecarOrchestrator can finish any cleanup
                 - Tor/I2P/ARTI sessions are properly terminated
                 - No orphaned Mach ports or resource allocations
                 """
-                log.warning(
-                    f"[QoS-Sub] FORCE-CANCEL triggered for sidecars: "
-                    f"setting _sidecar_cancel_requested=True"
-    )
+                log.warning("[QoS-Sub] FORCE-CANCEL triggered for sidecars: setting _sidecar_cancel_requested=True")
                 self._sidecar_cancel_requested = True
                 # Note: Actual task cancellation happens via the TaskGroup structure
                 # when the outer task checks _sidecar_cancel_requested and raises CancelledError
-            
+
             # Subscribe with 2s deadline for acknowledgment
             # [CRITICAL FIX]: Now includes cancel_fn for actual cancellation
             await registry.register_subscription(
@@ -1376,18 +1355,21 @@ class SidecarOrchestrator:
                 ack_callback=_on_qos_change,
                 deadline_s=2.0,
                 cancel_fn=_cancel_sidecars,
-    )
+            )
             self._qos_subscribed = True
             log.debug("[QoS-Sub] Subscribed to sidecars capability with cancel support")
         except Exception as e:
             log.debug(f"[QoS-Sub] Failed to subscribe to QoS changes: {e}")
 
-    def _aggregate_finding_facets(self, findings: list[Any]) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, int]]:
+    def _aggregate_finding_facets(
+        self, findings: list[Any]
+    ) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, int]]:
         """Aggregate findings into entity, exposure, and pivot facets.
-        
+
         Returns: (entity_data, exposure_data, pivot_data, finding_counts)
         """
         import orjson
+
         entity_data: dict[str, dict[str, Any]] = {}
         exposure_data: dict[str, dict[str, Any]] = {}
         pivot_data: dict[str, dict[str, Any]] = {}
@@ -1453,13 +1435,15 @@ class SidecarOrchestrator:
                 }
             exposure_data[target_id]["count"] += 1
 
-    def _build_memory_payloads(self, entity_data: dict, exposure_data: dict, pivot_data: dict) -> tuple[dict, dict, dict]:
+    def _build_memory_payloads(
+        self, entity_data: dict, exposure_data: dict, pivot_data: dict
+    ) -> tuple[dict, dict, dict]:
         """Build bounded memory payloads from aggregated data."""
         from hledac.universal.knowledge.target_memory import (
             MAX_MEMORY_ENTITIES,
             MAX_MEMORY_EXPOSURES,
             MAX_MEMORY_PIVOTS,
-    )
+        )
 
         entity_facets: dict[str, Any] = {}
         for tid, data in entity_data.items():
@@ -1511,20 +1495,19 @@ class SidecarOrchestrator:
             return
 
         entity_data, exposure_data, pivot_data, finding_counts = self._aggregate_finding_facets(findings)
-        entity_facets, exposure_facets, pivot_facets = self._build_memory_payloads(entity_data, exposure_data, pivot_data)
+        entity_facets, exposure_facets, pivot_facets = self._build_memory_payloads(
+            entity_data, exposure_data, pivot_data
+        )
 
         # Bulk upsert: single pass over all target_ids
-        all_target_ids = (
-            set(entity_facets.keys())
-            | set(exposure_facets.keys())
-            | set(pivot_facets.keys())
-    )
+        all_target_ids = set(entity_facets.keys()) | set(exposure_facets.keys()) | set(pivot_facets.keys())
 
         try:
             from hledac.universal.intel.target_memory_service import (
                 TargetMemoryService,
                 TargetMemoryUpdate,
-    )
+            )
+
             if not hasattr(self, "_target_memory_service") or self._target_memory_service is None:
                 self._target_memory_service = TargetMemoryService(store)
             service = self._target_memory_service
@@ -1539,13 +1522,12 @@ class SidecarOrchestrator:
                         exposure_facets=exposure_facets.get(target_id),
                         pivot_facets=pivot_facets.get(target_id),
                         finding_count=finding_counts.get(target_id, 0),
-    )
+                    )
                     await service.update_target_memory(update)
                 except Exception as e:
                     log.debug("[F350M-FED] target memory update failed for %s: %s", target_id, e)
         except Exception as e:
             log.debug("[F350M-FED] target memory service unavailable: %s", e)
-
 
     def teardown(self) -> None:
         """Clear in-memory state. Called on sprint teardown."""
@@ -1553,13 +1535,15 @@ class SidecarOrchestrator:
             self._dispatcher.reset()
         if hasattr(self, "_target_memory_service"):
             self._target_memory_service = None
-        
+
         # NEW-M13-FIX: Cleanup QoS subscription on teardown
         # This prevents stale subscriptions from accumulating across sprints
         if hasattr(self, "_qos_subscribed") and self._qos_subscribed:
             try:
                 import asyncio
+
                 from hledac.universal._core.resource_governor import get_qos_subscription_registry
+
                 registry = get_qos_subscription_registry()
                 # [NEW-M13-FIX]: Use safe pattern for task creation in sync context
                 # This handles both async and sync teardown contexts
@@ -1569,9 +1553,9 @@ class SidecarOrchestrator:
                 except RuntimeError:
                     # No running event loop - schedule via call_soon_threadsafe
                     # This is safe for sync contexts (e.g., sprint teardown)
-                    def _unregister():
+                    def _unregister() -> None:
                         asyncio.create_task(registry.unregister_subscription("sidecars"))
-                    
+
                     try:
                         loop = asyncio.new_event_loop()
                         loop.call_soon(_unregister)
@@ -1581,15 +1565,16 @@ class SidecarOrchestrator:
                 self._qos_subscribed = False
             except Exception:  # noqa: BLE001
                 pass
-        
+
         # [CRITICAL FIX]: Reset cancel flag on teardown
         if hasattr(self, "_sidecar_cancel_requested"):
             self._sidecar_cancel_requested = False
 
         # F-ISSUE-005: Clear transport capability cache at teardown
         try:
-            from hledac.universal.transport.capability_registry import clear_capability_cache
             from hledac.universal.runtime.sidecars._darknet_base import clear_global_capability_cache
+            from hledac.universal.transport.capability_registry import clear_capability_cache
+
             clear_capability_cache()
             clear_global_capability_cache()
         except Exception:  # noqa: BLE001
@@ -1616,10 +1601,11 @@ class SidecarOrchestrator:
         try:
             from hledac.universal.intel.bgp_advisor_adapter import (
                 create_bgp_advisor_adapter,
-    )
+            )
+
             adapter = create_bgp_advisor_adapter()
             _ = adapter.analyze(self._result)
-        except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
+        except ImportError, ModuleNotFoundError, AttributeError:  # noqa: BLE001
             pass  # fail-safe: intelligence module unavailable
 
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
@@ -1627,10 +1613,11 @@ class SidecarOrchestrator:
         try:
             from hledac.universal.intel.wayback_cdx_deep_adapter import (
                 create_wayback_cdx_deep_adapter,
-    )
+            )
+
             adapter = create_wayback_cdx_deep_adapter()
             _ = await adapter.analyze(self._result)
-        except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
+        except ImportError, ModuleNotFoundError, AttributeError:  # noqa: BLE001
             pass  # fail-safe: intelligence module unavailable
 
     # ── F229: IPFS Discovery Sidecar ─────────────────────────────────────────
@@ -1639,21 +1626,22 @@ class SidecarOrchestrator:
         """F229: IPFS discovery — fetch unindexed content from IPFS network.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         CAPABILITY: Skips if IPFS gateway is not accessible (MISSING_IMPLEMENTATION).
         Full libp2p Kademlia/BitSwap requires rust p2p_harvest implementation.
-        
+
         Returns:
             List of CanonicalFinding objects (empty if capability not READY).
         """
         findings = []
-        
+
         # FIX-5: Check capability
         try:
             from hledac.universal.transport.capability_registry import (
-                get_capability,
                 TransportCapability,
-    )
+                get_capability,
+            )
+
             capability, reason = await get_capability("ipfs")
             if capability != TransportCapability.READY:
                 log.info("[F229] IPFS discovery skipped: %s (%s)", reason, capability.value)
@@ -1662,13 +1650,13 @@ class SidecarOrchestrator:
             log.debug("[F229] IPFS capability check failed: %s", e)
             return findings
 
-        # FIX-5: MISSING_IMPLEMENTATION — full IPFS (libp2p Kademlia/BitSwap) 
+        # FIX-5: MISSING_IMPLEMENTATION — full IPFS (libp2p Kademlia/BitSwap)
         # requires rust p2p_harvest. HTTP gateway-only is not real IPFS.
         log.info(
             "[F229] IPFS discovery: MISSING_IMPLEMENTATION — "
             "full libp2p Kademlia/BitSwap requires rust p2p_harvest. "
             "HTTP gateway-only mode is not IPFS."
-    )
+        )
         return findings
 
     # ── F251: Onion Discovery Sidecar ───────────────────────────────────────
@@ -1678,20 +1666,21 @@ class SidecarOrchestrator:
 
         FIX-5: This method now returns a list of findings instead of None.
         Uses ArtiTransport when available for in-process Tor connectivity.
-        
+
         CAPABILITY: Skips if Tor/Arti is not READY (STUB/UNAVAILABLE).
-        
+
         Returns:
             List of CanonicalFinding objects (empty if capability not READY).
         """
         findings = []
-        
+
         # FIX-5: Check capability
         try:
             from hledac.universal.transport.capability_registry import (
-                get_capability,
                 TransportCapability,
-    )
+                get_capability,
+            )
+
             capability, reason = await get_capability("tor")
             if capability != TransportCapability.READY:
                 log.info("[F251] Onion discovery skipped: %s (%s)", reason, capability.value)
@@ -1703,29 +1692,27 @@ class SidecarOrchestrator:
         # FIX-5: Use ArtiTransport for actual Tor/Onion discovery
         try:
             from hledac.universal.transport.arti_transport import ArtiTransport
-            from hledac.universal.transport.base import TransportConfig
-            
+
             arti = ArtiTransport()
             started = await arti.start()
             if not started:
                 log.info("[F251] Onion discovery: ArtiTransport failed to start")
                 return findings
-            
+
             # ArtiTransport is ready — log that we're ready to crawl
             log.info("[F251] Onion discovery: ArtiTransport ready (embedded or subprocess mode)")
             # Actual crawling would be implemented here using:
             # - List of known .onion sites
             # - ArtiTransport.fetch() for each target
             # - Parse results and emit CanonicalFinding objects
-            
-            # Cleanup
+
             await arti.stop()
-            
+
         except ImportError:
             log.debug("[F251] Onion discovery: ArtiTransport not available")
         except Exception as e:
             log.debug("[F251] Onion discovery error: %s", e)
-        
+
         return findings
 
     # ── F2P: I2P Discovery Sidecar ─────────────────────────────────────────
@@ -1735,20 +1722,21 @@ class SidecarOrchestrator:
 
         FIX-5: This method now returns a list of findings instead of None.
         Uses I2P SAM v3 when available for I2P eepsite connectivity.
-        
+
         CAPABILITY: Skips if I2P SAM is not READY (STUB/UNAVAILABLE).
-        
+
         Returns:
             List of CanonicalFinding objects (empty if capability not READY).
         """
         findings = []
-        
+
         # FIX-5: Check capability
         try:
             from hledac.universal.transport.capability_registry import (
-                get_capability,
                 TransportCapability,
-    )
+                get_capability,
+            )
+
             capability, reason = await get_capability("i2p")
             if capability != TransportCapability.READY:
                 log.info("[F2P] I2P discovery skipped: %s (%s)", reason, capability.value)
@@ -1759,30 +1747,29 @@ class SidecarOrchestrator:
 
         # FIX-5: I2P SAM ready — attempt discovery
         log.info("[F2P] I2P discovery: I2P SAM READY")
-        
+
         try:
             from hledac.universal.transport.i2p_transport import I2PTransport
-            
+
             i2p = I2PTransport()
             started = await i2p.start()
             if not started:
                 log.info("[F2P] I2P discovery: I2PTransport failed to start")
                 return findings
-            
+
             log.info("[F2P] I2P discovery: I2PTransport ready")
             # Actual eepsite crawling would be implemented here using:
             # - I2PTransport for SAM v3 connectivity
             # - List of known eepsites
             # - Parse results and emit CanonicalFinding objects
-            
-            # Cleanup
+
             await i2p.stop()
-            
+
         except ImportError:
             log.debug("[F2P] I2P discovery: I2PTransport not available")
         except Exception as e:
             log.debug("[F2P] I2P discovery error: %s", e)
-        
+
         return findings
 
     async def _run_bgp_enrichment_sidecar(self) -> None:
@@ -1800,34 +1787,33 @@ class SidecarOrchestrator:
         """F250F: CommonCrawl CDX domain discovery.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         CAPABILITY: MISSING_IMPLEMENTATION — CommonCrawl CDX API not integrated.
 
         Returns:
             List of CanonicalFinding objects (empty - not implemented).
         """
         findings = []
-        
+
         log.info(
             "[F250F] CommonCrawl CDX discovery: MISSING_IMPLEMENTATION — "
             "CommonCrawl CDX API not integrated with sidecar orchestrator"
-    )
+        )
         return findings
 
     async def _run_banner_grab_sidecar(self) -> list:
         """F229: Banner grab — active TCP probing for service fingerprinting.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         Returns:
             List of CanonicalFinding objects (empty - not implemented).
         """
         findings = []
-        
+
         log.info(
-            "[F229] Banner grab: MISSING_IMPLEMENTATION — "
-            "active TCP probing not integrated with sidecar orchestrator"
-    )
+            "[F229] Banner grab: MISSING_IMPLEMENTATION — active TCP probing not integrated with sidecar orchestrator"
+        )
         return findings
 
     # F214Q: DHT discovery sidecar
@@ -1835,21 +1821,22 @@ class SidecarOrchestrator:
         """F214Q: DHT torrent discovery via BitTorrent DHT network.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         CAPABILITY: Skips if DHT is not READY (STUB/MISSING_IMPLEMENTATION).
         Real DHT requires rust p2p_harvest for Kademlia/BitSwap implementation.
-        
+
         Returns:
             List of CanonicalFinding objects (empty if capability not READY).
         """
         findings = []
-        
+
         # FIX-5: Check capability
         try:
             from hledac.universal.transport.capability_registry import (
-                get_capability,
                 TransportCapability,
-    )
+                get_capability,
+            )
+
             capability, reason = await get_capability("dht")
             if capability != TransportCapability.READY:
                 if capability == TransportCapability.STUB:
@@ -1861,36 +1848,34 @@ class SidecarOrchestrator:
             log.debug("[F214Q] DHT capability check failed: %s", e)
             return findings
 
-        # FIX-5: MISSING_IMPLEMENTATION — full DHT (Kademlia/BitSwap) 
+        # FIX-5: MISSING_IMPLEMENTATION — full DHT (Kademlia/BitSwap)
         # requires rust p2p_harvest. Python Kademlia is simulated mode.
         log.info(
             "[F214Q] DHT discovery: MISSING_IMPLEMENTATION — "
             "full BitTorrent DHT requires rust p2p_harvest. "
             "Python Kademlia is in simulated mode (no real DHT network)."
-    )
+        )
         return findings
 
-    # F214R: Gopher discovery sidecar
-    # GopherTransport is fully implemented and functional (async Gopher protocol client).
-    # This method now performs actual Gopher discovery instead of being a no-op.
     async def _run_gopher_sidecar(self) -> list:
         """F214R: Gopher URL discovery.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         CAPABILITY: GopherTransport is READY when import succeeds.
 
         Returns:
             List of CanonicalFinding objects (empty - GopherTransport initialized).
         """
         findings = []
-        
+
         # FIX-5: Check capability
         try:
             from hledac.universal.transport.capability_registry import (
-                get_capability,
                 TransportCapability,
-    )
+                get_capability,
+            )
+
             capability, reason = await get_capability("gopher")
             if capability != TransportCapability.READY:
                 log.info("[F214R] Gopher discovery skipped: %s (%s)", reason, capability.value)
@@ -1904,7 +1889,7 @@ class SidecarOrchestrator:
         try:
             from hledac.universal.transport.gopher_transport import GopherTransport
 
-            gopher = GopherTransport()
+            GopherTransport()
             # FIX-5: MISSING_IMPLEMENTATION - full Gopher crawling requires:
             # - Known gophermap URLs to crawl
             # - Content parsing and index extraction
@@ -1914,7 +1899,7 @@ class SidecarOrchestrator:
             log.debug("[F214R] Gopher discovery: GopherTransport not available")
         except Exception as e:
             log.debug("[F214R] Gopher discovery error: %s", e)
-        
+
         return findings
 
     # F3FORENSICS: Digital ghost forensics sidecar
@@ -1922,16 +1907,16 @@ class SidecarOrchestrator:
         """F3FORENSICS: Digital ghost detection on file artifacts.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         Returns:
             List of CanonicalFinding objects (empty - not implemented).
         """
         findings = []
-        
+
         log.info(
             "[F3FORENSICS] Digital ghost detection: MISSING_IMPLEMENTATION — "
             "file artifact forensics not integrated with sidecar orchestrator"
-    )
+        )
         return findings
 
     # F3FORENSICS: Steganography forensics sidecar
@@ -1939,16 +1924,16 @@ class SidecarOrchestrator:
         """F3FORENSICS: Steganography detection on image artifacts.
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         Returns:
             List of CanonicalFinding objects (empty - not implemented).
         """
         findings = []
-        
+
         log.info(
             "[F3FORENSICS] Steganography detection: MISSING_IMPLEMENTATION — "
             "image steganography analysis not integrated with sidecar orchestrator"
-    )
+        )
         return findings
 
     # F252: TI feed advisory sidecar (NVD + CISA KEV)
@@ -1956,16 +1941,13 @@ class SidecarOrchestrator:
         """F252: TI feed advisory sidecar (NVD + CISA KEV).
 
         FIX-5: This method now returns a list of findings instead of None.
-        
+
         Returns:
             List of CanonicalFinding objects (empty - not implemented).
         """
         findings = []
-        
-        log.info(
-            "[F252] TI feed advisory: MISSING_IMPLEMENTATION — "
-            "NVD + CISA KEV integration not implemented"
-    )
+
+        log.info("[F252] TI feed advisory: MISSING_IMPLEMENTATION — NVD + CISA KEV integration not implemented")
         return findings
 
     # ADVERSARY-004: Hermes3 Auto-RE sidecar for unknown binary formats
@@ -1984,12 +1966,12 @@ class SidecarOrchestrator:
             List of CanonicalFinding objects (from AutoRESidecarAdapter).
         """
         findings = []
-        
-        from hledac.universal.runtime.sidecars.forensics._auto_re import (
-            AutoRESidecarAdapter,
-    )
+
         # FIX-5: SidecarContext is in runtime/sidecar_protocol.py, not scheduler_v2/protocol.py
         from hledac.universal.runtime.sidecar_protocol import SidecarContext
+        from hledac.universal.runtime.sidecars.forensics._auto_re import (
+            AutoRESidecarAdapter,
+        )
 
         adapter = AutoRESidecarAdapter()
         if not adapter.is_available():
@@ -2020,7 +2002,7 @@ class SidecarOrchestrator:
                 sprint_id=str(sprint_id),
                 findings=list(findings),
                 sprint_mode=str(sprint_mode),
-    )
+            )
         except Exception as e:
             log.warning("[AUTO-RE] failed to build SidecarContext: %s", e)
             return findings
@@ -2037,5 +2019,5 @@ class SidecarOrchestrator:
             findings = await adapter.run_async(ctx)
             return findings if findings else []
         except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Fail-soft
+            # noqa: BLE001  # Fail-soft
             return findings

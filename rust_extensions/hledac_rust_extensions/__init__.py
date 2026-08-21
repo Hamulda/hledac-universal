@@ -20,6 +20,7 @@ the already-initialised module from sys.modules.
 Acceptance: python -c "import hledac_rust_extensions; print(hledac_rust_extensions.__file__)"
 shows a path INSIDE site-packages when installed as a wheel.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -27,13 +28,8 @@ import os
 import sys
 import threading
 from typing import ClassVar
-from _core import aclose
 
 __version__ = "0.1.0"
-
-# ----------------------------------------------------------------------
-# Loading strategy detection
-# ----------------------------------------------------------------------
 
 
 def _is_editable_install() -> bool:
@@ -56,6 +52,7 @@ def _is_editable_install() -> bool:
     # then abi3.so for legacy compatibility, then .dylib for older builds.
     # maturin python-source="." places the .so inside the package dir.
     import sys
+
     py_ver = f"cpython-{sys.version_info.major}{sys.version_info.minor}-darwin"
     candidates_pkg = [
         f"hledac_rust_extensions.{py_ver}.so",
@@ -85,6 +82,7 @@ def _find_workspace_so() -> str | None:
     # ISSUE-014: Non-abi3 native wheel — check cp314-specific .so first,
     # then abi3.so for legacy, then .dylib for older builds.
     import sys
+
     py_ver = f"cpython-{sys.version_info.major}{sys.version_info.minor}-darwin"
     candidates_pkg = [
         f"hledac_rust_extensions.{py_ver}.so",
@@ -104,11 +102,6 @@ def _find_workspace_so() -> str | None:
         if os.path.isfile(so_path):
             return so_path
     return None
-
-
-# ----------------------------------------------------------------------
-# Module-level import lock — prevents concurrent exec_module race
-# ----------------------------------------------------------------------
 
 
 class _ImportLock:
@@ -138,11 +131,6 @@ class _ImportLock:
         _ImportLock._locks[self._key].release()
 
 
-# ----------------------------------------------------------------------
-# Core loading logic — runs exactly once, thread-safe
-# ----------------------------------------------------------------------
-
-
 def _load() -> None:
     """
     Thread-safe, idempotent module initialiser.
@@ -169,7 +157,7 @@ def _load() -> None:
             "Native extension not found. "
             "Run: cd rust_extensions && maturin develop  (dev)  or  "
             "cd rust_extensions && maturin build --release && uv pip install dist/*.whl  (prod)"
-    )
+        )
 
     _spec = importlib.util.spec_from_file_location("hledac_rust_extensions", so_path)
     if _spec is None:
@@ -194,11 +182,6 @@ def _reexport(mod: object) -> None:
     _all = [n for n in dir(mod) if not n.startswith("_")]
     globals()["__all__"] = _all
     globals().update((n, getattr(mod, n)) for n in _all)
-
-
-# ----------------------------------------------------------------------
-# Execute loading under lock
-# ----------------------------------------------------------------------
 
 
 _LOCK = _ImportLock("hledac_rust_extensions")

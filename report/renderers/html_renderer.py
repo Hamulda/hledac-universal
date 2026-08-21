@@ -5,21 +5,25 @@ Can use mistune as faster alternative.
 
 Falls back to basic regex-based conversion.
 """
+
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
 if TYPE_CHECKING:
     from pathlib import Path
-__all__ = ['HTMLRenderer']
+__all__ = ["HTMLRenderer"]
 try:
     import markdown_it
+
     _MARKDOWN_IT_AVAILABLE = True
 except ImportError:
     _MARKDOWN_IT_AVAILABLE = False
 try:
     import mistune
+
     _MISTUNE_AVAILABLE = True
 except ImportError:
     _MISTUNE_AVAILABLE = False
+
 
 class HTMLRenderer:
     """
@@ -32,21 +36,22 @@ class HTMLRenderer:
 
     Supports wrapping in full HTML document with optional CSS.
     """
-    __slots__ = tuple(('_css', '_full_document', '_parser', '_parser_name'))
 
-    def __init__(self, *, full_document: bool=True, css: str | None=None) -> None:
+    __slots__ = ("_css", "_full_document", "_parser", "_parser_name")
+
+    def __init__(self, *, full_document: bool = True, css: str | None = None) -> None:
         self._full_document = full_document
         self._css = css or self._default_css()
         self._parser: Any = None
-        self._parser_name: str = ''
+        self._parser_name: str = ""
         if _MISTUNE_AVAILABLE:
             self._parser = mistune.create_markdown()
-            self._parser_name = 'mistune'
+            self._parser_name = "mistune"
         elif _MARKDOWN_IT_AVAILABLE:
             self._parser = markdown_it.MarkdownIt()
-            self._parser_name = 'markdown-it'
+            self._parser_name = "markdown-it"
         else:
-            self._parser_name = 'regex'
+            self._parser_name = "regex"
 
     @staticmethod
     def _default_css() -> str:
@@ -56,7 +61,7 @@ class HTMLRenderer:
     def render(self, markdown: str) -> str:
         """Convert markdown string to HTML."""
         if not markdown:
-            return ''
+            return ""
         html_content = self._convert_markdown(markdown)
         if not self._full_document:
             return html_content
@@ -64,9 +69,9 @@ class HTMLRenderer:
 
     def _convert_markdown(self, markdown: str) -> str:
         """Convert markdown to HTML using available parser."""
-        if self._parser_name == 'mistune':
+        if self._parser_name == "mistune":
             return self._parser(markdown)
-        elif self._parser_name == 'markdown-it':
+        elif self._parser_name == "markdown-it":
             return self._parser.render(markdown)
         else:
             return self._basic_convert(markdown)
@@ -75,40 +80,40 @@ class HTMLRenderer:
     def _basic_convert(markdown: str) -> str:
         """Basic regex-based markdown to HTML conversion."""
         import re
+
         html = markdown
-        html = re.sub('```(\\w*)\\n(.*?)\\n```', '<pre><code>\\2</code></pre>', html, flags=re.DOTALL)
-        html = re.sub('`([^`]+)`', '<code>\\1</code>', html)
+        html = re.sub("```(\\w*)\\n(.*?)\\n```", "<pre><code>\\2</code></pre>", html, flags=re.DOTALL)
+        html = re.sub("`([^`]+)`", "<code>\\1</code>", html)
         for i in range(3, 0, -1):
-            html = re.sub(f"^{'#' * i} (.+)$", f'<h{i}>\\1</h{i}>', html, flags=re.MULTILINE)
-        html = re.sub('\\*\\*(.+?)\\*\\*', '<strong>\\1</strong>', html)
-        html = re.sub('\\*(.+?)\\*', '<em>\\1</em>', html)
-        html = re.sub('\\[([^\\]]+)\\]\\(([^)]+)\\)', '<a href="\\2">\\1</a>', html)
-        html = re.sub('^- (.+)$', '<li>\\1</li>', html, flags=re.MULTILINE)
-        html = re.sub('(<li>.*</li>\\n?)+', '<ul>\\g<0></ul>', html)
-        html = re.sub('\\n\\n+', '\n\n', html)
-        lines = html.split('\n\n')
+            html = re.sub(f"^{'#' * i} (.+)$", f"<h{i}>\\1</h{i}>", html, flags=re.MULTILINE)
+        html = re.sub("\\*\\*(.+?)\\*\\*", "<strong>\\1</strong>", html)
+        html = re.sub("\\*(.+?)\\*", "<em>\\1</em>", html)
+        html = re.sub("\\[([^\\]]+)\\]\\(([^)]+)\\)", '<a href="\\2">\\1</a>', html)
+        html = re.sub("^- (.+)$", "<li>\\1</li>", html, flags=re.MULTILINE)
+        html = re.sub("(<li>.*</li>\\n?)+", "<ul>\\g<0></ul>", html)
+        html = re.sub("\\n\\n+", "\n\n", html)
+        lines = html.split("\n\n")
         para_lines: list[str] = []
-        block_tags = {'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'pre', 'blockquote'}
         for line in lines:
             stripped = line.strip()
             if not stripped:
                 continue
-            if stripped.startswith('<'):
+            if stripped.startswith("<"):
                 para_lines.append(stripped)
             else:
-                para_lines.append(f'<p>{stripped}</p>')
-        return '\n'.join(para_lines)
+                para_lines.append(f"<p>{stripped}</p>")
+        return "\n".join(para_lines)
 
     def _wrap_document(self, html_content: str) -> str:
         """Wrap content in full HTML document."""
         return f'<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>Sprint Report</title>\n<style>{self._css}</style>\n</head>\n<body>\n{html_content}\n</body>\n</html>'
 
-    def render_to_file(self, markdown: str, path: Path | str, *, full_document: bool | None=None) -> Path:
+    def render_to_file(self, markdown: str, path: Path | str, *, full_document: bool | None = None) -> Path:
         """Render markdown to HTML file."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         use_full = full_document if full_document is not None else self._full_document
         html = self.render(markdown) if use_full else self._convert_markdown(markdown)
-        with open(path, 'w', encoding='utf-8') as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(html)
         return path

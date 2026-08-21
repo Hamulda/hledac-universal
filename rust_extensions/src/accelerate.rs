@@ -143,15 +143,6 @@ fn get_backend_str() -> &'static str {
     }
 }
 
-// ─── vDSP FFI declarations ────────────────────────────────────────────────────
-//
-// These are raw FFI bindings to Apple's Accelerate framework vDSP functions.
-// vDSP is part of the Accelerate framework and provides vector/matrix math.
-//
-// Gated by vdsp_unavailable cfg (set by build.rs on Darwin 25.5+).
-// When vDSP is unavailable (macOS 26.5+), this module is not compiled
-// and AccelerateBackend::VDSP falls back to scalar at runtime.
-
 #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
 #[allow(non_snake_case, nonstandard_style)]
 mod vDSP_ffi {
@@ -344,8 +335,6 @@ fn scalar_l2_norm(a: &[f32]) -> Result<f32, AccelerateError> {
     Ok(sum_sq.sqrt())
 }
 
-// ─── Python-callable functions ────────────────────────────────────────────────
-
 /// Initialize Accelerate subsystem.
 ///
 /// Returns: (available: bool, backend: str, error_message: Option<String>)
@@ -395,7 +384,6 @@ pub fn is_vdsp_available() -> bool {
 /// Returns: Cosine similarity (between -1 and 1)
 #[pyfunction]
 pub fn cosine_similarity(a: Vec<f32>, b: Vec<f32>, normalize: bool) -> Result<f32, PyErr> {
-    // Update telemetry
     {
         let mut telemetry = ACCELERATE_TELEMETRY.write();
         telemetry.cosine_calls += 1;
@@ -487,7 +475,6 @@ pub fn batch_cosine_similarity(
             )
         })?;
 
-    // Update telemetry
     {
         let mut telemetry = ACCELERATE_TELEMETRY.write();
         telemetry.cosine_calls += 1;
@@ -691,8 +678,6 @@ pub fn reset_telemetry() {
     *telemetry = AccelerateTelemetry::default();
 }
 
-// ─── Module registration ──────────────────────────────────────────────────────
-
 /// Register Accelerate module functions with PyO3 module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init))?;
@@ -710,8 +695,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

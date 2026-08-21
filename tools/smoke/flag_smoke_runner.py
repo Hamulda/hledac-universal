@@ -26,7 +26,6 @@ Usage:
     uv run --project . python tools/flag_smoke_runner.py --json
 """
 
-
 import argparse
 import json
 import os
@@ -34,17 +33,11 @@ import re
 import sys
 import time
 import tracemalloc
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from pathlib import Path
-from _core import aclose
+
 from compat.msgspec_gc_compat import Struct
 
-
-# ---------------------------------------------------------------------------
-# sys.path bootstrap — must run BEFORE any hledac.* / utils.* import.
-# Idempotent: safe to run when the path is already configured by the caller.
-# ---------------------------------------------------------------------------
 _THIS = Path(__file__).resolve()
 # ~/PycharmProjects/Hledac/ — parent of hledac/, needed for `hledac.*` imports.
 _REPO_ROOT = _THIS.parent.parent.parent
@@ -81,7 +74,7 @@ _SKIP_PATH_FRAGMENTS = (
     "/__pycache__/",
     "/site-packages/",
     "/.hledac/",
-    )
+)
 
 
 class FlagReport(Struct):
@@ -167,36 +160,23 @@ def _check_flag(flag: str) -> FlagReport:
         report.duration_s = time.monotonic() - started
         return report
 
-    # Cheap probe: use the canonical flag resolver (utils.flag_registry)
-    # to confirm the env var is observable. This is stdlib-only, M1-safe
-    # (no MLX, no DuckDB, no coordinator import chain) and aligns with
-    # the resolver used by F-FLAG-1/2 elsewhere in the codebase.
     os.environ[flag] = "1"
     try:
-        # Phase 3: lightweight probe — registry import is ~5ms, no
-        # transitive coordinator load.
-        from hledac.universal.utils.flag_registry import get_spec, is_flag_active  # noqa: F401
+        from hledac.universal.utils.flag_registry import get_spec, is_flag_active
 
         spec = get_spec(flag)
         observed = is_flag_active(flag)
         if not observed:
             report.status = "SILENT_NOOP"
-            report.detail = (
-                f"set in env ({os.environ.get(flag)!r}) but "
-                f"is_flag_active returned False"
-    )
+            report.detail = f"set in env ({os.environ.get(flag)!r}) but is_flag_active returned False"
         else:
             in_registry = " (in FLAG_REGISTRY)" if spec is not None else " (no spec)"
             report.status = "PASS"
-            report.detail = (
-                f"flag visible in {len(report.referenced_in)} files"
-                f"{in_registry}"
-    )
+            report.detail = f"flag visible in {len(report.referenced_in)} files{in_registry}"
     except Exception as exc:  # pragma: no cover — defensive
         report.status = "IMPORT_FAIL"
         report.detail = f"{type(exc).__name__}: {exc}"
     finally:
-        # Clean up so the next iteration starts from a known state.
         os.environ.pop(flag, None)
 
     report.peak_mem_mb = _stop_mem()

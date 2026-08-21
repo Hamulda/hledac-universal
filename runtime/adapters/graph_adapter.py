@@ -14,12 +14,10 @@ GHOST_INVARIANTS:
 - Always-on: no feature flags
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any
-from collections.abc import Iterator
 
 from hledac.universal.runtime.protocols.graph_protocol import GraphProtocol
-from _core import aclose
 
 
 class DuckPGQGraphAdapter(GraphProtocol):
@@ -47,8 +45,6 @@ class DuckPGQGraphAdapter(GraphProtocol):
             graph: DuckPGQGraph instance to wrap
         """
         self._graph = graph
-
-    # === TIER_A: Analytics ===
 
     async def upsert_ioc(
         self,
@@ -139,8 +135,6 @@ class DuckPGQGraphAdapter(GraphProtocol):
         except Exception:  # noqa: BLE001
             pass
 
-    # === TIER_S: STIX — DuckPGQGraph supports these (F271) ===
-
     async def buffer_ioc(
         self,
         ioc_type: str,
@@ -207,7 +201,6 @@ class DuckPGQGraphAdapter(GraphProtocol):
     def graph_stats(self) -> dict[str, int]:
         """DuckPGQGraph: graph_stats (F271)."""
         try:
-
             return {}
         except Exception:
             return {}
@@ -247,8 +240,6 @@ class IOCGraphAdapter(GraphProtocol):
             graph: IOCGraph instance to wrap
         """
         self._graph = graph
-
-    # === TIER_A: Analytics (IOCGraph partial support) ===
 
     async def upsert_ioc(
         self,
@@ -341,9 +332,6 @@ class IOCGraphAdapter(GraphProtocol):
 
     def checkpoint(self) -> None:
         """IOCGraph does not have a checkpoint — no-op."""
-        pass
-
-    # === TIER_S: STIX / Truth-write (full support) ===
 
     async def buffer_ioc(
         self,
@@ -458,8 +446,6 @@ class GraphFacade:
             self._store: Any = store._graph_store()
         else:
             self._store = store
-
-    # === TIER_A: Analytics — delegate to _ioc_graph slot ===
 
     async def upsert_ioc(
         self,
@@ -599,8 +585,6 @@ class GraphFacade:
                 graph.checkpoint()
             except Exception:  # noqa: BLE001
                 pass
-
-    # === TIER_S: STIX / Truth-write — check _stix_graph first, then _truth_write_graph ===
 
     async def buffer_ioc(
         self,

@@ -5,7 +5,6 @@ Tests that mlx imports are properly guarded and fail-soft when mlx is unavailabl
 Uses subprocess to ensure clean import environment per test.
 """
 
-
 import subprocess
 import sys
 import unittest
@@ -21,13 +20,9 @@ class TestMLXImportHardening(unittest.IsolatedAsyncioTestCase):
             # Pre-block all mlx modules — import of blocked module raises ImportError
             "for _mod in ['mlx', 'mlx.core', 'mlx.nn', 'mlx.optimizers',\n"
             "                'mlx.utils', 'mlx.lm', 'mlx._core', 'mlx._nn']:\n"
-            "    sys.modules[_mod] = None\n"
-            + code
-    )
-        result = subprocess.run(
-            [sys.executable, '-c', blocked_code],
-            capture_output=True, text=True, timeout=30
-    )
+            "    sys.modules[_mod] = None\n" + code
+        )
+        result = subprocess.run([sys.executable, "-c", blocked_code], capture_output=True, text=True, timeout=30)
         return result.returncode, result.stdout, result.stderr
 
     def _assert_mlx_unavailable(
@@ -52,11 +47,11 @@ class TestMLXImportHardening(unittest.IsolatedAsyncioTestCase):
         if extra_assertions:
             assertions.extend(extra_assertions)
 
-        code = f'''
+        code = f"""
 from hledac.universal.{module_name} import {module_name.split(".")[-1]}
 print("MLX_AVAILABLE:", {module_name.split(".")[-1]}.MLX_AVAILABLE)
 print("mx_none:", {module_name.split(".")[-1]}.mx is None)
-'''
+"""
         if extra_assertions:
             module_var = module_name.split(".")[-1]
             for extra in extra_assertions:
@@ -85,11 +80,11 @@ print("mx_none:", {module_name.split(".")[-1]}.mx is None)
         Returns:
             Tuple of (rc, stdout, stderr) for additional assertions.
         """
-        code = f'''
+        code = f"""
 from hledac.universal.{module_path} import {attr_name}
 print("MLX_AVAILABLE:", {attr_name}.MLX_AVAILABLE)
 print("mx_none:", {attr_name}.mx is None)
-'''
+"""
         if extra_attrs:
             for attr in extra_attrs:
                 code += f'print("{attr}_none:", {attr_name}.{attr} is None)\n'
@@ -103,33 +98,31 @@ print("mx_none:", {attr_name}.mx is None)
                 self.assertIn(f"{attr}_none: True\n", stdout)
         return rc, stdout, stderr
 
-    def test_ssm_reranker_imports_without_mlx(self):
+    def test_ssm_reranker_imports_without_mlx(self) -> None:
         """ssm_reranker.py imports successfully when mlx unavailable."""
-        self._assert_module_imports_without_mlx(
-            "prefetch.ssm_reranker", "ssm_reranker", extra_attrs=["nn"]
-    )
+        self._assert_module_imports_without_mlx("prefetch.ssm_reranker", "ssm_reranker", extra_attrs=["nn"])
 
-    def test_ssm_reranker_stub_raises_on_instantiation(self):
+    def test_ssm_reranker_stub_raises_on_instantiation(self) -> None:
         """SSMReranker stub raises ImportError when instantiated without mlx."""
-        code = '''
+        code = """
 from hledac.universal.prefetch import ssm_reranker
 try:
     ssm_reranker.SSMReranker()
     print("NO_ERROR")
 except ImportError as e:
     print("IMPORT_ERROR:", e)
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         self.assertIn("IMPORT_ERROR:", stdout)
 
-    def test_prefetch_oracle_imports_without_mlx(self):
+    def test_prefetch_oracle_imports_without_mlx(self) -> None:
         """prefetch_oracle.py imports successfully when mlx unavailable."""
         self._assert_module_imports_without_mlx("prefetch.prefetch_oracle", "prefetch_oracle")
 
-    def test_prefetch_oracle_methods_fail_soft(self):
+    def test_prefetch_oracle_methods_fail_soft(self) -> None:
         """prefetch_oracle.py methods degrade gracefully without mlx."""
-        code = '''
+        code = """
 from hledac.universal.prefetch import prefetch_oracle
 import numpy as np
 
@@ -149,19 +142,19 @@ features = oracle._extract_features_batch([
     {"url": "http://example.com", "type": "graph", "score": 0.5}
 ])
 print("features_is_numpy:", isinstance(features, np.ndarray))
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Method failed: {stderr}\nstdout: {stdout}")
         self.assertIn("emb_is_numpy: True\n", stdout)
         self.assertIn("features_is_numpy: True\n", stdout)
 
-    def test_qmix_imports_without_mlx(self):
+    def test_qmix_imports_without_mlx(self) -> None:
         """qmix.py imports successfully when mlx unavailable."""
         self._assert_module_imports_without_mlx("rl.qmix", "qmix")
 
-    def test_qmix_stubs_raise_on_instantiation(self):
+    def test_qmix_stubs_raise_on_instantiation(self) -> None:
         """qmix stubs raise ImportError when instantiated without mlx."""
-        code = '''
+        code = """
 from hledac.universal.rl import qmix
 for name, cls in [("QMixer", qmix.QMixer), ("QNetwork", qmix.QNetwork), ("QMIXAgent", qmix.QMIXAgent)]:
     try:
@@ -169,25 +162,25 @@ for name, cls in [("QMixer", qmix.QMixer), ("QNetwork", qmix.QNetwork), ("QMIXAg
         print(f"{name}:NO_ERROR")
     except ImportError:
         print(f"{name}:IMPORT_ERROR")
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         for name in ["QMixer", "QNetwork", "QMIXAgent"]:
             self.assertIn(f"{name}:IMPORT_ERROR\n", stdout)
 
-    def test_replay_buffer_imports_without_mlx(self):
+    def test_replay_buffer_imports_without_mlx(self) -> None:
         """replay_buffer.py imports successfully when mlx unavailable."""
-        code = '''
+        code = """
 from hledac.universal.rl import replay_buffer
 print("MLX_AVAILABLE:", replay_buffer.MLX_AVAILABLE)
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         self.assertIn("MLX_AVAILABLE: False\n", stdout)
 
-    def test_replay_buffer_sample_numpy_fallback(self):
+    def test_replay_buffer_sample_numpy_fallback(self) -> None:
         """MARLReplayBuffer.sample() returns numpy arrays when mlx unavailable."""
-        code = '''
+        code = """
 from hledac.universal.rl import replay_buffer
 import numpy as np
 
@@ -200,26 +193,26 @@ sample = buf.sample(1)
 print("states_numpy:", isinstance(sample["states"], np.ndarray))
 print("rewards_numpy:", isinstance(sample["rewards"], np.ndarray))
 print("dones_numpy:", isinstance(sample["dones"], np.ndarray))
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Method failed: {stderr}\nstdout: {stdout}")
         self.assertIn("states_numpy: True\n", stdout)
         self.assertIn("rewards_numpy: True\n", stdout)
         self.assertIn("dones_numpy: True\n", stdout)
 
-    def test_state_extractor_imports_without_mlx(self):
+    def test_state_extractor_imports_without_mlx(self) -> None:
         """state_extractor.py imports successfully when mlx unavailable."""
-        code = '''
+        code = """
 from hledac.universal.rl import state_extractor
 print("MLX_AVAILABLE:", state_extractor.MLX_AVAILABLE)
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         self.assertIn("MLX_AVAILABLE: False\n", stdout)
 
-    def test_state_extractor_extract_numpy_fallback(self):
+    def test_state_extractor_extract_numpy_fallback(self) -> None:
         """StateExtractor.extract() returns numpy when mlx unavailable."""
-        code = '''
+        code = """
 from hledac.universal.rl import state_extractor
 import numpy as np
 
@@ -229,30 +222,30 @@ global_state = {"queue_size": 10, "memory_pressure": 0.4}
 
 result = extractor.extract(thread_state, global_state)
 print("result_numpy:", isinstance(result, np.ndarray))
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Method failed: {stderr}\nstdout: {stdout}")
         self.assertIn("result_numpy: True\n", stdout)
 
-    def test_task_prioritizer_imports_without_mlx(self):
+    def test_task_prioritizer_imports_without_mlx(self) -> None:
         """task_prioritizer.py imports successfully when mlx unavailable."""
         self._assert_module_imports_without_mlx("research.task_prioritizer", "task_prioritizer")
 
-    def test_task_prioritizer_stub_raises_on_instantiation(self):
+    def test_task_prioritizer_stub_raises_on_instantiation(self) -> None:
         """TaskPrioritizer stub raises ImportError when instantiated without mlx."""
-        code = '''
+        code = """
 from hledac.universal.research import task_prioritizer
 try:
     task_prioritizer.TaskPrioritizer()
     print("NO_ERROR")
 except ImportError as e:
     print("IMPORT_ERROR:", e)
-'''
+"""
         rc, stdout, stderr = self._run_blocked(code)
         self.assertEqual(rc, 0, f"Import failed: {stderr}")
         self.assertIn("IMPORT_ERROR:", stdout)
 
-    def test_no_mlx_loaded_in_blocked_env(self):
+    def test_no_mlx_loaded_in_blocked_env(self) -> None:
         """Verify no real mlx modules are loaded when blocked.
 
         Note: sys.modules may have mlx keys as None (blocking mechanism),
@@ -280,22 +273,25 @@ print("ssm_available:", ssm_reranker.MLX_AVAILABLE)
 class TestF207CF207DRegression(unittest.TestCase):
     """Regression tests: F207C and F207D patterns still intact."""
 
-    def test_mlx_cache_guards_still_intact(self):
+    def test_mlx_cache_guards_still_intact(self) -> None:
         """Verify utils.mlx_cache.MLX_AVAILABLE pattern unchanged."""
         from hledac.universal.utils import mlx_cache
-        self.assertIn('MLX_AVAILABLE', dir(mlx_cache))
 
-    def test_distillation_engine_guards_pattern_intact(self):
+        self.assertIn("MLX_AVAILABLE", dir(mlx_cache))
+
+    def test_distillation_engine_guards_pattern_intact(self) -> None:
         """Verify brain.distillation_engine has MLX_AVAILABLE guard."""
         from hledac.universal.brain import distillation_engine
-        self.assertIn('MLX_AVAILABLE', dir(distillation_engine))
+
+        self.assertIn("MLX_AVAILABLE", dir(distillation_engine))
         self.assertIsInstance(distillation_engine.MLX_AVAILABLE, bool)
 
-    def test_moe_router_guards_still_intact(self):
+    def test_moe_router_guards_still_intact(self) -> None:
         """Verify brain.moe_router guards unchanged."""
         from hledac.universal.brain import moe_router
-        self.assertIn('MLX_AVAILABLE', dir(moe_router))
+
+        self.assertIn("MLX_AVAILABLE", dir(moe_router))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

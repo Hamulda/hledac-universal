@@ -6,7 +6,6 @@
 
 import re
 import sys
-from _core import aclose
 
 REVERT_FUNCS = r"safe_gather(?:_dropin|_fire_and_forget|_strict)?"
 
@@ -14,13 +13,13 @@ REVERT_FUNCS = r"safe_gather(?:_dropin|_fire_and_forget|_strict)?"
 PATTERN = re.compile(
     rf"\b({REVERT_FUNCS})\s*\(",
     re.MULTILINE,
-    )
+)
 
 # Match: `from utils.asyncx import ...`
 IMPORT_PATTERN = re.compile(
     r"^from\s+utils\.asyncx\s+import\s+[^\n]+$",
     re.MULTILINE,
-    )
+)
 
 
 def find_balanced_paren(text: str, start: int) -> int | None:
@@ -75,15 +74,14 @@ def revert_text(source: str) -> tuple[str, int]:
             r",\s*label\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^,)]+)\s*",
             "",
             args_text,
-    )
+        )
         args_text = re.sub(
             r"^\s*label\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^,)]+)\s*,\s*",
             "",
             args_text,
-    )
+        )
         args_text = args_text.strip().rstrip(",")
 
-        # Build replacement
         replacement = f"asyncio.gather({args_text}, return_exceptions=True)"
 
         # Splice
@@ -93,9 +91,8 @@ def revert_text(source: str) -> tuple[str, int]:
         n_reverted += 1
 
     # Strip safe_gather_* from imports
-    def fix_import(m):
+    def fix_import(m) -> str:
         text = m.group(0)
-        # Extract names
         body = re.sub(r"^from\s+utils\.asyncx\s+import\s+", "", text).strip()
         if body.startswith("(") and body.endswith(")"):
             body = body[1:-1]
@@ -107,13 +104,12 @@ def revert_text(source: str) -> tuple[str, int]:
 
     source = IMPORT_PATTERN.sub(fix_import, source)
 
-    # Remove leftover empty lines from dropped imports
     source = re.sub(r"\n\n\n+", "\n\n", source)
 
     return source, n_reverted
 
 
-def main(argv):
+def main(argv) -> int | None:
     if not argv:
         print("Usage: revert_gather_migration_text.py <file.py> [...]", file=sys.stderr)
         return 2
@@ -130,6 +126,7 @@ def main(argv):
         # Verify it parses now
         try:
             import ast
+
             ast.parse(new_source)
             print(f"✓ {path}: reverted {n} calls, parses OK")
         except SyntaxError as e:

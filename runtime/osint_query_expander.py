@@ -10,8 +10,6 @@ M1 safe: Pure Python dict, 0 MB RAM, 0 MB VRAM.
 Invariant: Always-on, no feature flags, deterministic, fail-safe.
 """
 
-
-
 __all__ = ["expand_osint_query", "OSINT_EXPANSION_TERMS", "MAX_VARIANTS"]
 
 # Max variants per expansion to stay within lane budget
@@ -156,7 +154,6 @@ def expand_osint_query(query: str, max_variants: int = MAX_VARIANTS) -> list[str
         variants: list[str] = []
         seen: set[str] = set()
 
-        # Check each token against OSINT expansion terms
         for token in tokens:
             if token in OSINT_EXPANSION_TERMS:
                 expansions = OSINT_EXPANSION_TERMS[token]

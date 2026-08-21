@@ -2,7 +2,6 @@
 Sprint Vector-Storage-Optimization — USEARCH Primary ANN with LanceDB Persistence
 ==================================================================================
 
-
 ROLE: Optional fast-path ANN index layered over SemanticDedupCache.
 Does NOT replace LMDB persistence — adds cosine-similarity ANN search
 for sub-1ms duplicate detection on cross-run data.
@@ -36,24 +35,18 @@ M1 MEMORY: ann_init() guarded by RSS < 6GB. Heavy LanceDB init skipped above thr
 INDEX BOUND: MAX_ANN_ENTRIES=50_000 — bounded table, oldest entries evicted on overflow.
 """
 
-
-
-import asyncio
 import logging
 import os
-
-from hledac.universal.utils.locks import LazyAsyncioLock
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 
+from hledac.universal.utils.locks import LazyAsyncioLock
+
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------
 _EMBEDDING_DIM = 256  # Must match embedding_pipeline._EMBEDDING_DIM
 _TABLE_NAME = "semantic_dedup_v1"
 _MAX_ENTRIES = 50_000  # Bounded ANN index (M1 8GB safety)
@@ -79,13 +72,6 @@ _M1_MAX_ITERATIONS = 20
 # Reduces RAM bandwidth on M1 UMA by ~97% vs nprobes=256
 _IVF_PQ_NPROBES_DEFAULT = 8
 
-# ----------------------------------------------------------------------------
-# BREAKTHROUGH #1: Binary Quantization for Sub-1ms ANN
-# ----------------------------------------------------------------------------
-# 1-bit binary embeddings: 256d float32 → 32B packed binary
-# Memory: 50K × 32B = 1.6 MB (vs 51.2 MB float32 = 32× compression)
-# Speed: NEON popcount for Hamming ~0.1ms vs 5-15ms float32 cosine
-
 # Binary quantization dimensions
 _BINARY_NUM_BYTES = (_EMBEDDING_DIM + 7) // 8  # 32 bytes for 256d
 
@@ -100,39 +86,22 @@ _MLX_RERANK_TOP_K = 5  # Gate MLX to top-5 only (negligible accuracy loss)
 # Binary similarity threshold for ANN (Hamming-based)
 _BINARY_MIN_SCORE = 0.85  # Hamming similarity threshold (slightly lower than cosine)
 
-# ----------------------------------------------------------------------------
-# NEXTGEN-04: Raw NEON Brute-Force + Memory-Mapped Binary DB
-# ----------------------------------------------------------------------------
-# Zero-overhead binary ANN: no USEARCH, no HNSW — pure brute-force scan.
-# Memory-mapped file format: [n_entries: u64][entries: 32B × n][metadata: JSON]
-#
-# Matryoshka progressive search levels:
-# - 8B prefix: threshold ≥ 0.80 (filters 1M → ~50K)
-# - 16B prefix: threshold ≥ 0.85 (filters 50K → ~5K)
-# - 32B full: threshold ≥ 0.90 (final results)
-# - MLX cosine: top-5 exact re-rank
-#
-# Performance: <2 ms for 1M entries on M1 P-core (single-threaded NEON)
-
 # Matryoshka search levels
 _MATRYOSHKA_LEVEL_8B = 0.80  # 8-byte prefix threshold
 _MATRYOSHKA_LEVEL_16B = 0.85  # 16-byte prefix threshold
 _MATRYOSHKA_LEVEL_32B = 0.90  # Full 32-byte threshold
 _MATRYOSHKA_RERANK_TOP_K = 5  # Top-K for MLX exact cosine re-rank
 
-
-# -----------------------------------------------------------------------
-# MLX compiled cosine similarity (GPU-accelerated re-ranking)
-# C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-# -----------------------------------------------------------------------
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE as _MLX_AVAILABLE
-from _core import aclose
+
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
+
 
 # C1-X FIX: Only import mlx if SSOT says it's available
 _mlx_cosine_similarity_batch: Any = None
@@ -161,10 +130,6 @@ if _MLX_AVAILABLE:
     except ImportError:
         pass
 
-
-# -----------------------------------------------------------------------
-# LanceDB + USEARCH ANN wrapper
-# -----------------------------------------------------------------------
 
 class _ANNIndex:
     """
@@ -297,28 +262,27 @@ class _ANNIndex:
         self._compact_in_flight: bool = False
 
         # Sprint F264D: IVF-PQ vector quantization (opt-in, M1 8GB friendly).
-        self._ivfpq_enabled: bool = (
-            os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
-    )
+        self._ivfpq_enabled: bool = os.environ.get("HLEDAC_LANCEDB_QUANTIZE", "0") == "1"
         # OPTIMIZED: Tuned for 256d vectors (256/8=32d per sub-vector)
         self._ivfpq_num_partitions: int = max(
             8, min(256, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS", str(_IVF_PQ_PARTITIONS))))
-    )
+        )
         self._ivfpq_num_sub_vectors: int = max(
             4, min(64, int(os.environ.get("HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS", str(_IVF_PQ_SUB_VECTORS))))
-    )
+        )
         self._ivfpq_trained: bool = False
 
         # Sprint F264E: adaptive auto-tuner
         try:
             from hledac.universal.knowledge.lancedb_auto_tuner import make_default_tuner
+
             self._autotune = make_default_tuner(
                 table_name="semantic_dedup_v1",
                 state_dir=db_path,
                 num_sub_vectors=self._ivfpq_num_sub_vectors,
                 vector_column="vector",
                 key_column="finding_key",
-    )
+            )
         except Exception:
             self._autotune = None
 
@@ -329,6 +293,7 @@ class _ANNIndex:
         """Return True if ANN init is safe (RSS below threshold)."""
         try:
             import psutil
+
             rss = psutil.Process().memory_info().rss
             return rss < _MEMORY_GUARD_GB * 1024**3
         except Exception:
@@ -360,18 +325,19 @@ class _ANNIndex:
                 row_count = self._table.count_rows()
                 logger.info(f"[ANN] Opened existing table with {row_count} rows")
             except Exception:
-                # Create new table with schema
                 import pyarrow as pa
 
                 # BREAKTHROUGH #1: Add bqv (binary quantized vectors) column
                 # 32 bytes = 256 bits (256d packed at 1-bit per dimension)
-                schema = pa.schema([
-                    pa.field("finding_key", pa.string()),  # BLAKE2b key
-                    pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
-                    pa.field("bqv", pa.binary(_BINARY_NUM_BYTES)),  # BREAKTHROUGH #1: packed binary (32B)
-                    pa.field("text_hash", pa.string()),  # SHA256 of original text
-                    pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
-                ])
+                schema = pa.schema(
+                    [
+                        pa.field("finding_key", pa.string()),  # BLAKE2b key
+                        pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
+                        pa.field("bqv", pa.binary(_BINARY_NUM_BYTES)),  # BREAKTHROUGH #1: packed binary (32B)
+                        pa.field("text_hash", pa.string()),  # SHA256 of original text
+                        pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
+                    ]
+                )
                 self._table = self._db.create_table(_TABLE_NAME, schema=schema)
                 logger.info(f"[ANN] Created new table at {self._db_path}")
 
@@ -381,32 +347,30 @@ class _ANNIndex:
                 row_count = self._table_multilingual.count_rows()
                 logger.info(f"[ANN] Opened multilingual table with {row_count} rows")
             except Exception:
-                # Create multilingual table with language field
                 import pyarrow as pa
 
                 # BREAKTHROUGH #1: Add bqv (binary quantized vectors) column
-                schema_multi = pa.schema([
-                    pa.field("finding_key", pa.string()),  # BLAKE2b key
-                    pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
-                    pa.field("bqv", pa.binary(_BINARY_NUM_BYTES)),  # BREAKTHROUGH #1: packed binary (32B)
-                    pa.field("text_hash", pa.string()),  # SHA256 of original text
-                    pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
-                    pa.field("language", pa.string()),  # SWARM-002: detected language
-                ])
-                self._table_multilingual = self._db.create_table(
-                    self._multilingual_table_name, schema=schema_multi
-    )
+                schema_multi = pa.schema(
+                    [
+                        pa.field("finding_key", pa.string()),  # BLAKE2b key
+                        pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
+                        pa.field("bqv", pa.binary(_BINARY_NUM_BYTES)),  # BREAKTHROUGH #1: packed binary (32B)
+                        pa.field("text_hash", pa.string()),  # SHA256 of original text
+                        pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
+                        pa.field("language", pa.string()),  # SWARM-002: detected language
+                    ]
+                )
+                self._table_multilingual = self._db.create_table(self._multilingual_table_name, schema=schema_multi)
                 logger.info(f"[ANN] Created multilingual table at {self._db_path}")
 
             # MRL-2: Initialize MRL truncator for multilingual embeddings
             # BGE-M3 1024d → truncate to 256d for USEARCH index compatibility
             try:
                 from hledac.universal._core.multilingual.mrl import MRLTruncator
+
                 self._mrl_truncator = MRLTruncator(
-                    source_dim=self._mrl_source_dim,
-                    target_dim=self._mrl_target_dim,
-                    normalize=True
-    )
+                    source_dim=self._mrl_source_dim, target_dim=self._mrl_target_dim, normalize=True
+                )
                 logger.info(f"[ANN] MRL truncator initialized: {self._mrl_source_dim}d → {self._mrl_target_dim}d")
             except ImportError:
                 self._mrl_truncator = None
@@ -450,7 +414,6 @@ class _ANNIndex:
         if self._table is None:
             return
 
-        # Build English index
         self._build_single_index(self._table, is_multilingual=False)
 
         # SWARM-002: Build multilingual index
@@ -467,7 +430,9 @@ class _ANNIndex:
         try:
             row_count = table.count_rows()
             if row_count < 100:  # Too few entries for meaningful index
-                logger.debug(f"[ANN] USEARCH skipped ({'multilingual' if is_multilingual else 'english'}): only {row_count} rows")
+                logger.debug(
+                    f"[ANN] USEARCH skipped ({'multilingual' if is_multilingual else 'english'}): only {row_count} rows"
+                )
                 return
 
             # ── SILICON-02: Try GPU-accelerated build (opt-in) ──────
@@ -476,7 +441,7 @@ class _ANNIndex:
                 from hledac.universal.knowledge.metal_hnsw import (
                     METAL_HNSW_ENABLED,
                     build_usearch_from_lancedb,
-    )
+                )
             except ImportError:
                 METAL_HNSW_ENABLED = False
                 build_usearch_from_lancedb = None  # type: ignore[assignment]
@@ -489,7 +454,7 @@ class _ANNIndex:
                         M=_USEARCH_CONNECTIVITY,
                         ef_construction=_USEARCH_EXPANSION_ADD,
                         max_elements=_MAX_ENTRIES,
-    )
+                    )
                     if gpu_index is not None and gpu_labels:
                         if is_multilingual:
                             self._usearch_index_multilingual = gpu_index
@@ -502,9 +467,11 @@ class _ANNIndex:
                             f"[ANN] Metal GPU HNSW built ({'multilingual' if is_multilingual else 'english'}): "
                             f"{len(gpu_labels)} vectors in {gpu_stats.get('build_time_s', 0):.2f}s "
                             f"(gpu_batches={gpu_stats.get('gpu_batches', 0)})"
-    )
+                        )
                 except Exception as e:
-                    logger.debug(f"[ANN] Metal GPU HNSW build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
+                    logger.debug(
+                        f"[ANN] Metal GPU HNSW build failed ({'multilingual' if is_multilingual else 'english'}): {e}"
+                    )
 
             if gpu_built:
                 return
@@ -512,27 +479,23 @@ class _ANNIndex:
             # ── CPU fallback: standard USearch build ─────────────
             from usearch.index import Index
 
-            # Fetch embeddings from LanceDB
-            data = table.to_lance().to_table(
-                columns=['finding_key', 'vector']
-            ).to_pydict()
+            data = table.to_lance().to_table(columns=["finding_key", "vector"]).to_pydict()
 
-            if len(data.get('vector', [])) == 0:
+            if len(data.get("vector", [])) == 0:
                 return
 
             usearch_index = Index(
                 ndim=self._embed_dim,
-                metric='cos',
-                dtype='f32',
+                metric="cos",
+                dtype="f32",
                 connectivity=_USEARCH_CONNECTIVITY,
                 expansion_add=_USEARCH_EXPANSION_ADD,
                 expansion_search=_USEARCH_EXPANSION_SEARCH,
-    )
+            )
 
-            # Build label mapping
             usearch_labels = []
             vectors = []
-            for i, (fk, emb) in enumerate(zip(data['finding_key'], data['vector'])):
+            for i, (fk, emb) in enumerate(zip(data["finding_key"], data["vector"], strict=False)):
                 usearch_labels.append(fk)
                 vectors.append(np.array(emb, dtype=np.float32))
                 usearch_index.add(i, vectors[-1])
@@ -547,9 +510,11 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] USEARCH index built (CPU, {'multilingual' if is_multilingual else 'english'}): "
                 f"{len(vectors)} vectors, connectivity={_USEARCH_CONNECTIVITY}"
-    )
+            )
         except ImportError:
-            logger.debug(f"[ANN] USEARCH not available ({'multilingual' if is_multilingual else 'english'}), using LanceDB brute-force only")
+            logger.debug(
+                f"[ANN] USEARCH not available ({'multilingual' if is_multilingual else 'english'}), using LanceDB brute-force only"
+            )
         except Exception as e:
             logger.debug(f"[ANN] USEARCH build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
             if is_multilingual:
@@ -558,10 +523,6 @@ class _ANNIndex:
             else:
                 self._usearch_index = None
                 self._usearch_labels = []
-
-    # ========================================================================
-    # BREAKTHROUGH #1: Binary Index Building
-    # ========================================================================
 
     def _build_binary_index(self) -> None:
         """Build USEARCH binary index from LanceDB data.
@@ -575,10 +536,8 @@ class _ANNIndex:
         if self._table is None:
             return
 
-        # Build binary index for English
         self._build_binary_single_index(self._table, is_multilingual=False)
 
-        # Build binary index for multilingual
         if self._table_multilingual is not None:
             self._build_binary_single_index(self._table_multilingual, is_multilingual=True)
 
@@ -596,45 +555,43 @@ class _ANNIndex:
         try:
             row_count = table.count_rows()
             if row_count < 100:
-                logger.debug(f"[ANN] Binary index skipped ({'multilingual' if is_multilingual else 'english'}): only {row_count} rows")
+                logger.debug(
+                    f"[ANN] Binary index skipped ({'multilingual' if is_multilingual else 'english'}): only {row_count} rows"
+                )
                 return
 
             from usearch.index import Index
 
-            # Fetch binary vectors from LanceDB
             try:
-                data = table.to_lance().to_table(
-                    columns=['finding_key', 'bqv']
-                ).to_pydict()
+                data = table.to_lance().to_table(columns=["finding_key", "bqv"]).to_pydict()
             except Exception:
                 # Fallback: generate binary from float32 vector
-                data = table.to_lance().to_table(
-                    columns=['finding_key', 'vector']
-                ).to_pydict()
+                data = table.to_lance().to_table(columns=["finding_key", "vector"]).to_pydict()
                 # Convert float32 to binary
                 from hledac.universal.embedding_pipeline import binary_quantize_single
+
                 binary_data = []
-                for vec in data.get('vector', []):
+                for vec in data.get("vector", []):
                     packed = binary_quantize_single(np.array(vec, dtype=np.float32))
                     binary_data.append(packed)
-                data['bqv'] = binary_data
+                data["bqv"] = binary_data
 
-            if len(data.get('bqv', [])) == 0:
+            if len(data.get("bqv", [])) == 0:
                 logger.debug(f"[ANN] Binary index: no bqv data for {'multilingual' if is_multilingual else 'english'}")
                 return
 
             # Create binary index with metric='ham' dtype='b1'
             usearch_binary_index = Index(
                 ndim=_BINARY_NUM_BYTES * 8,  # 256 bits
-                metric='ham',
-                dtype='b1',
+                metric="ham",
+                dtype="b1",
                 connectivity=_USEARCH_BINARY_CONNECTIVITY,
                 expansion_add=_USEARCH_BINARY_EXPANSION_ADD,
                 expansion_search=_USEARCH_BINARY_EXPANSION_SEARCH,
-    )
+            )
 
             usearch_binary_labels = []
-            for i, (fk, bqv) in enumerate(zip(data['finding_key'], data['bqv'])):
+            for i, (fk, bqv) in enumerate(zip(data["finding_key"], data["bqv"], strict=False)):
                 usearch_binary_labels.append(fk)
                 # BREAKTHROUGH #1 FIX: USEARCH b1 expects uint8 packed binary!
                 # This is the CORRECT format - packed bits, not 0.0/1.0 per dimension.
@@ -656,7 +613,7 @@ class _ANNIndex:
                                 dim_idx = byte_idx * 8 + bit_idx
                                 if dim_idx < _EMBEDDING_DIM and dim_idx < len(bqv_arr):
                                     if bqv_arr[dim_idx]:
-                                        bqv_np[byte_idx] |= (1 << (7 - bit_idx))
+                                        bqv_np[byte_idx] |= 1 << (7 - bit_idx)
                 usearch_binary_index.add(i, bqv_np)
 
             if is_multilingual:
@@ -669,9 +626,9 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] Binary index built ({'multilingual' if is_multilingual else 'english'}): "
                 f"{len(usearch_binary_labels)} vectors, metric=ham, dtype=b1"
-    )
+            )
         except ImportError:
-            logger.debug(f"[ANN] USEARCH not available for binary index")
+            logger.debug("[ANN] USEARCH not available for binary index")
         except Exception as e:
             logger.debug(f"[ANN] Binary index build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
             if is_multilingual:
@@ -692,13 +649,9 @@ class _ANNIndex:
             logger.info(
                 f"[ANN] lancedb.table_opened table=semantic_dedup_v1 "
                 f"rows={row_count} size_mb={size_mb:.2f} path={self._db_path}"
-    )
+            )
         except Exception as e:
             logger.debug(f"[ANN] lancedb.table_opened log failed: {e}")
-
-    # ------------------------------------------------------------------
-    # BREAKTHROUGH #1: LanceDB Migration
-    # ------------------------------------------------------------------
 
     def _migrate_bqv_column(self) -> None:
         """Check and log bqv column status for LanceDB tables.
@@ -710,6 +663,7 @@ class _ANNIndex:
 
         Thread-safe via lock.
         """
+
         def _check_single_table(table, is_multilingual: bool = False) -> None:
             """Check bqv column status for a single table."""
             table_name = self._multilingual_table_name if is_multilingual else _TABLE_NAME
@@ -718,7 +672,7 @@ class _ANNIndex:
                 schema = table.schema
                 field_names = [f.name for f in schema]
 
-                if 'bqv' in field_names:
+                if "bqv" in field_names:
                     logger.debug(f"[ANN] {table_name}: bqv column present in schema")
                 else:
                     logger.debug(f"[ANN] {table_name}: bqv column not in schema (will compute from float32)")
@@ -729,11 +683,9 @@ class _ANNIndex:
             except Exception as e:
                 logger.debug(f"[ANN] {table_name}: schema check failed: {e}")
 
-        # Check English table
         if self._table is not None:
             _check_single_table(self._table, is_multilingual=False)
 
-        # Check multilingual table
         if self._table_multilingual is not None:
             _check_single_table(self._table_multilingual, is_multilingual=True)
 
@@ -749,9 +701,7 @@ class _ANNIndex:
             try:
                 row_count = self._table.count_rows()
                 if row_count < 256:
-                    logger.debug(
-                        f"[ANN] IVF-PQ skipped: only {row_count} rows"
-    )
+                    logger.debug(f"[ANN] IVF-PQ skipped: only {row_count} rows")
                     self._ivfpq_trained = True
                     return
 
@@ -762,12 +712,12 @@ class _ANNIndex:
                     num_sub_vectors=getattr(self, "_ivfpq_num_sub_vectors", _IVF_PQ_SUB_VECTORS),
                     vector_column_name="vector",
                     max_iterations=_M1_MAX_ITERATIONS,
-    )
+                )
                 self._ivfpq_trained = True
                 logger.info(
                     f"[ANN] IVF-PQ trained: partitions={getattr(self, '_ivfpq_num_partitions', _IVF_PQ_PARTITIONS)} "
                     f"sub_vectors={getattr(self, '_ivfpq_num_sub_vectors', _IVF_PQ_SUB_VECTORS)}"
-    )
+                )
             except Exception as e:
                 self._ivfpq_trained = True
                 logger.warning(f"[ANN] IVF-PQ training failed: {e}")
@@ -797,7 +747,7 @@ class _ANNIndex:
             q = query_emb.astype(np.float32)
             q_norm = q / (np.linalg.norm(q) + 1e-8)
             results = []
-            for idx, vec in zip(candidate_indices, candidate_vectors):
+            for idx, vec in zip(candidate_indices, candidate_vectors, strict=False):
                 v = vec.astype(np.float32)
                 v_norm = v / (np.linalg.norm(v) + 1e-8)
                 score = float(np.dot(q_norm, v_norm))
@@ -808,23 +758,7 @@ class _ANNIndex:
         try:
             mx.eval([])  # Barrier before Metal ops
 
-            # SILICON-04 MODERN-23: Fast-path using SharedTensor.from_batch()
-            # -------------------------------------------------------------------------
-            # Architecture: Arrow/numpy batch → Metal buffer → MLX array (M1 UMA zero-copy)
-            #
-            # Path 1 (SharedTensor, preferred):
-            #   candidate_vectors → np.stack → SharedMetalBuffer → MLX array
-            #   - One contiguous Metal buffer for all candidates
-            #   - MLX accesses MTLBuffer pages directly (no additional copy on M1 UMA)
-            #
-            # Path 2 (Fallback, always works):
-            #   candidate_vectors → np.stack → mx.array()
-            #   - Standard MLX allocation path
-            #
-            # For 100 candidates × 256d × 4B = 100KB: 99% fewer L2 cache evictions
-            # -------------------------------------------------------------------------
-            # Type annotation uses string to avoid issues with mx imported in try block
-            c_mx: "mx.array"
+            c_mx: mx.array
             try:
                 # MODERN-23: Use SharedTensor for zero-copy Metal buffer backing
                 # This is the preferred path on M1 with metal_shared_buf available.
@@ -843,7 +777,7 @@ class _ANNIndex:
             scores = _mlx_cosine_similarity_batch(q_mx, c_mx)
             scores_np = np.array(scores)
 
-            results = list(zip(candidate_indices, scores_np.tolist()))
+            results = list(zip(candidate_indices, scores_np.tolist(), strict=False))
             results.sort(key=lambda x: x[1], reverse=True)
             return results
         except Exception:
@@ -851,17 +785,13 @@ class _ANNIndex:
             q = query_emb.astype(np.float32)
             q_norm = q / (np.linalg.norm(q) + 1e-8)
             results = []
-            for idx, vec in zip(candidate_indices, candidate_vectors):
+            for idx, vec in zip(candidate_indices, candidate_vectors, strict=False):
                 v = vec.astype(np.float32)
                 v_norm = v / (np.linalg.norm(v) + 1e-8)
                 score = float(np.dot(q_norm, v_norm))
                 results.append((idx, score))
             results.sort(key=lambda x: x[1], reverse=True)
             return results
-
-    # ------------------------------------------------------------------
-    # Helper methods for ann_search (reduce cyclomatic complexity)
-    # ------------------------------------------------------------------
 
     def _collect_usearch_candidates(
         self, query_np: np.ndarray, fetch_limit: int
@@ -893,12 +823,14 @@ class _ANNIndex:
             if usearch_keys and self._table is not None:
                 with self._lock:
                     try:
-                        # Fetch vectors for all USEARCH keys in one query
-                        result_df = self._table.to_lance().query().where(
-                            f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})"
-                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+                        result_df = (
+                            self._table.to_lance()
+                            .query()
+                            .where(f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})")
+                            .select(["finding_key", "vector", "text_hash"])
+                            .to_list()
+                        )
 
-                        # Build lookup map
                         vector_map: dict[str, tuple[list[float], str]] = {}
                         for row in result_df:
                             fk = row.get("finding_key", "")
@@ -907,7 +839,6 @@ class _ANNIndex:
                                 th = row.get("text_hash", "")
                                 vector_map[fk] = (vec, th)
 
-                        # Update candidates with actual vectors
                         for fk in usearch_keys:
                             if fk in vector_map:
                                 vec, th = vector_map[fk]
@@ -940,7 +871,7 @@ class _ANNIndex:
                     .nprobes(_IVF_PQ_NPROBES_DEFAULT)
                     .limit(fetch_limit)
                     .to_list()
-    )
+                )
             except TypeError:
                 # Fallback for LanceDB versions without nprobes on builder
                 results = (
@@ -948,7 +879,7 @@ class _ANNIndex:
                     .metric("cosine")
                     .limit(fetch_limit)
                     .to_list()
-    )
+                )
 
         candidates: dict[str, tuple[list[float], str, float]] = {}
         for r in results:
@@ -1010,10 +941,13 @@ class _ANNIndex:
             if usearch_keys and self._table_multilingual is not None:
                 with self._lock:
                     try:
-                        # Fetch vectors for all multilingual USEARCH keys
-                        result_df = self._table_multilingual.to_lance().query().where(
-                            f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})"
-                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+                        result_df = (
+                            self._table_multilingual.to_lance()
+                            .query()
+                            .where(f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})")
+                            .select(["finding_key", "vector", "text_hash"])
+                            .to_list()
+                        )
 
                         vector_map: dict[str, tuple[list[float], str]] = {}
                         for row in result_df:
@@ -1053,7 +987,7 @@ class _ANNIndex:
                     .nprobes(_IVF_PQ_NPROBES_DEFAULT)
                     .limit(fetch_limit)
                     .to_list()
-    )
+                )
             except TypeError:
                 # Fallback for LanceDB versions without nprobes on builder
                 results = (
@@ -1061,7 +995,7 @@ class _ANNIndex:
                     .metric("cosine")
                     .limit(fetch_limit)
                     .to_list()
-    )
+                )
 
         candidates: dict[str, tuple[list[float], str, float]] = {}
         for r in results:
@@ -1074,10 +1008,6 @@ class _ANNIndex:
             if vec:
                 candidates[fk] = (vec, th, dist)
         return candidates
-
-    # ------------------------------------------------------------------
-    # BREAKTHROUGH #1: Binary Search Methods
-    # ------------------------------------------------------------------
 
     def _collect_binary_usearch_candidates(
         self, query_emb: np.ndarray, fetch_limit: int, is_multilingual: bool = False
@@ -1102,6 +1032,7 @@ class _ANNIndex:
             # This is the CORRECT format - USEARCH stores binary internally as packed bits.
             # Previous workaround (0.0/1.0 per dimension) defeats memory savings.
             from hledac.universal.embedding_pipeline import binary_quantize_single
+
             # Get packed bytes (32 bytes for 256d)
             bqv_packed = binary_quantize_single(query_emb)
             # Convert to uint8 array for USEARCH
@@ -1120,13 +1051,16 @@ class _ANNIndex:
                     candidates[fk] = ([], "", score)
                     usearch_keys.append(fk)
 
-            # Fetch actual float32 vectors from LanceDB for re-ranking
             if usearch_keys and target_table is not None:
                 with self._lock:
                     try:
-                        result_df = target_table.to_lance().query().where(
-                            f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})"
-                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+                        result_df = (
+                            target_table.to_lance()
+                            .query()
+                            .where(f"finding_key IN ({','.join(repr(k) for k in usearch_keys)})")
+                            .select(["finding_key", "vector", "text_hash"])
+                            .to_list()
+                        )
 
                         vector_map: dict[str, tuple[list[float], str]] = {}
                         for row in result_df:
@@ -1149,10 +1083,6 @@ class _ANNIndex:
             logger.debug(f"[ANN] Binary USEARCH search failed: {e}")
             return {}
 
-    # ========================================================================
-    # NEXTGEN-04: Raw NEON Brute-Force Binary Search
-    # ========================================================================
-
     def _init_binary_raw_db(self) -> None:
         """Initialize raw NEON binary DB (mmap) from LanceDB data.
 
@@ -1165,7 +1095,6 @@ class _ANNIndex:
             return
 
         try:
-            # Initialize path
             self._binary_raw_path = self._db_path / "binary_raw.bin"
 
             # Check if we have entries to export
@@ -1178,11 +1107,12 @@ class _ANNIndex:
             if self._binary_raw_path.exists():
                 try:
                     from hledac.universal._core.rust_backend import rust
+
                     bm = rust.raw.binary_matryoshka
                     if bm is not None:
                         result = bm.open_binary_database(str(self._binary_raw_path))
-                        if result is not None and 'num_entries' in result:
-                            self._binary_raw_n_entries = int(result['num_entries'])
+                        if result is not None and "num_entries" in result:
+                            self._binary_raw_n_entries = int(result["num_entries"])
                             self._binary_raw_loaded = True
                             logger.info(f"[ANN] Binary raw DB opened: {self._binary_raw_n_entries} entries")
                             return
@@ -1211,19 +1141,16 @@ class _ANNIndex:
             if self._binary_raw_path is None:
                 self._binary_raw_path = self._db_path / "binary_raw.bin"
 
-            # Fetch all embeddings and metadata
-            data = self._table.to_lance().to_table(
-                columns=['finding_key', 'vector', 'text_hash']
-            ).to_pydict()
+            data = self._table.to_lance().to_table(columns=["finding_key", "vector", "text_hash"]).to_pydict()
 
-            if len(data.get('vector', [])) == 0:
+            if len(data.get("vector", [])) == 0:
                 self._binary_raw_loaded = False
                 return
 
             # Quantize embeddings to binary
-            embeddings = data.get('vector', [])
-            finding_keys = data.get('finding_key', [])
-            text_hashes = data.get('text_hash', [])
+            embeddings = data.get("vector", [])
+            finding_keys = data.get("finding_key", [])
+            text_hashes = data.get("text_hash", [])
 
             if not embeddings:
                 self._binary_raw_loaded = False
@@ -1231,21 +1158,19 @@ class _ANNIndex:
 
             # Flatten embeddings for Rust (create_binary_database does internal batch quantization)
             import itertools
+
             embeddings_flat = list(itertools.chain.from_iterable(embeddings))
 
             # Create binary database (Rust does NEON batch quantization internally)
             from hledac.universal._core.rust_backend import rust
+
             bm = rust.raw.binary_matryoshka
             if bm is None:
                 logger.warning("[ANN] Rust binary_matryoshka unavailable, skipping binary DB rebuild")
                 self._binary_raw_loaded = False
                 return
             n_entries = bm.create_binary_database(
-                str(self._binary_raw_path),
-                embeddings_flat,
-                len(embeddings),
-                finding_keys,
-                text_hashes
+                str(self._binary_raw_path), embeddings_flat, len(embeddings), finding_keys, text_hashes
             )
 
             self._binary_raw_n_entries = n_entries
@@ -1321,9 +1246,7 @@ class _ANNIndex:
 
             # Insert all fingerprints into LSH index
             # batch_insert expects List[(doc_id: str, fingerprint: int)]
-            items: list[tuple[str, int]] = [
-                (finding_keys[i], fp) for i, fp in enumerate(fingerprints)
-            ]
+            items: list[tuple[str, int]] = [(finding_keys[i], fp) for i, fp in enumerate(fingerprints)]
             lsh_index.batch_insert(items)
 
             # Store LSH state
@@ -1332,7 +1255,9 @@ class _ANNIndex:
             self._lsh_enabled = True
             self._lsh_n_entries = n_entries
 
-            logger.info(f"[ANN] LSH index built: {n_entries} entries (tables={num_tables}, rows={num_rows}), ~95% recall")
+            logger.info(
+                f"[ANN] LSH index built: {n_entries} entries (tables={num_tables}, rows={num_rows}), ~95% recall"
+            )
         except Exception as e:
             logger.debug(f"[ANN] LSH index build failed: {e}")
             self._lsh_enabled = False
@@ -1373,7 +1298,6 @@ class _ANNIndex:
             # Insert into LSH index
             self._lsh_index.insert(finding_key, fingerprints[0])
 
-            # Update mapping
             self._lsh_fk_to_idx[finding_key] = index
             self._lsh_n_entries += 1
 
@@ -1438,9 +1362,7 @@ class _ANNIndex:
                         lsh_results = self._lsh_index.query(query_fp, max_results=1000)
                         # Convert finding_keys to database indices
                         candidate_indices = [
-                            self._lsh_fk_to_idx[fk]
-                            for fk, _ in lsh_results
-                            if fk in self._lsh_fk_to_idx
+                            self._lsh_fk_to_idx[fk] for fk, _ in lsh_results if fk in self._lsh_fk_to_idx
                         ]
                         logger.debug(f"[ANN] LSH pre-filter: {len(candidate_indices)} candidates")
                 except Exception as e:
@@ -1462,11 +1384,7 @@ class _ANNIndex:
             else:
                 # Full scan (no LSH or LSH disabled)
                 results = bm.search_binary_database(
-                    str(self._binary_raw_path),
-                    query_emb.tolist(),
-                    top_k,
-                    min_similarity,
-                    use_ml=True
+                    str(self._binary_raw_path), query_emb.tolist(), top_k, min_similarity, use_ml=True
                 )
 
             if not results:
@@ -1474,19 +1392,21 @@ class _ANNIndex:
 
             candidates: dict[str, tuple[list[float], str, float]] = {}
 
-            # Fetch float32 vectors from LanceDB for re-ranking
-            finding_keys = [r.get('finding_key', '') for r in results if r.get('finding_key')]
+            finding_keys = [r.get("finding_key", "") for r in results if r.get("finding_key")]
             similarity_scores = {
-                r.get('finding_key', ''): float(r.get('similarity', 0.0))
-                for r in results if r.get('finding_key')
+                r.get("finding_key", ""): float(r.get("similarity", 0.0)) for r in results if r.get("finding_key")
             }
 
             if finding_keys and self._table is not None:
                 with self._lock:
                     try:
-                        result_df = self._table.to_lance().query().where(
-                            f"finding_key IN ({','.join(repr(k) for k in finding_keys)})"
-                        ).select(["finding_key", "vector", "text_hash"]).to_list()
+                        result_df = (
+                            self._table.to_lance()
+                            .query()
+                            .where(f"finding_key IN ({','.join(repr(k) for k in finding_keys)})")
+                            .select(["finding_key", "vector", "text_hash"])
+                            .to_list()
+                        )
 
                         vector_map: dict[str, tuple[list[float], str]] = {}
                         for row in result_df:
@@ -1508,10 +1428,6 @@ class _ANNIndex:
         except Exception as e:
             logger.debug(f"[ANN] Binary NEON search failed: {e}")
             return {}
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def ann_search(
         self,
@@ -1571,8 +1487,8 @@ class _ANNIndex:
             candidates: dict[str, tuple[list[float], str, float]] = {}
 
             # SWARM-002: Determine which indexes to search based on language
-            search_english = language is None or language == 'en'
-            search_multilingual = language is not None and language != 'en'
+            search_english = language is None or language == "en"
+            search_multilingual = language is not None and language != "en"
 
             query_np = np.array(emb_norm, dtype=np.float32)
 
@@ -1580,16 +1496,15 @@ class _ANNIndex:
             # Use top_k * 4 for initial fetch to balance recall vs latency
             # Binary quantization is lossy, so we fetch more candidates for re-ranking
             if search_english and self._binary_raw_loaded:
-                neon_candidates = self._collect_binary_neon_candidates(
-                    query_np, top_k * 4, _BINARY_MIN_SCORE
-    )
+                neon_candidates = self._collect_binary_neon_candidates(query_np, top_k * 4, _BINARY_MIN_SCORE)
                 if neon_candidates:
                     candidates.update(neon_candidates)
                     logger.debug(f"[ANN] NEON binary search: {len(neon_candidates)} candidates")
 
-            # Step 2: BREAKTHROUGH #1 - Fallback to binary USEARCH index
             if search_english and not candidates:
-                english_binary = self._collect_binary_usearch_candidates(query_np, binary_fetch_limit, is_multilingual=False)
+                english_binary = self._collect_binary_usearch_candidates(
+                    query_np, binary_fetch_limit, is_multilingual=False
+                )
                 if english_binary:
                     candidates.update(english_binary)
                 else:
@@ -1600,7 +1515,9 @@ class _ANNIndex:
                     candidates.update(english_float)
 
             if search_multilingual:
-                multilingual_binary = self._collect_binary_usearch_candidates(query_np, binary_fetch_limit, is_multilingual=True)
+                multilingual_binary = self._collect_binary_usearch_candidates(
+                    query_np, binary_fetch_limit, is_multilingual=True
+                )
                 if multilingual_binary:
                     candidates.update(multilingual_binary)
                 else:
@@ -1612,20 +1529,16 @@ class _ANNIndex:
             if not candidates:
                 return []
 
-            # Step 2: Optional graph-aware filtering
             candidates = self._apply_graph_filter_if_needed(candidates, graph_filter)
             if not candidates:
                 return []
 
-            # Step 3: BREAKTHROUGH #1 - MLX cosine re-ranking on top-K only
-            # Binary ANN provides fast approximate ranking; MLX exact cosine refines top candidates.
-            # Gating to top-5 minimizes GPU overhead while preserving accuracy.
             candidate_items = list(candidates.items())
-            
+
             # Use Rust SIMD for batch Hamming scoring if available (fastest path)
-            rust_hamming_used = False
             try:
                 from hledac.universal.embedding_pipeline import batch_hamming_similarity
+
                 if len(candidate_items) > 1:
                     # Collect float32 vectors for batch hamming
                     candidate_vectors = []
@@ -1634,14 +1547,11 @@ class _ANNIndex:
                             candidate_vectors.append(np.array(vec, dtype=np.float32))
                         else:
                             candidate_vectors.append(np.zeros(self._embed_dim, dtype=np.float32))
-                    
+
                     # Stack and compute batch hamming
                     candidates_np = np.stack(candidate_vectors)
-                    hamming_scores = batch_hamming_similarity(
-                        np.array(emb_norm, dtype=np.float32),
-                        candidates_np
-    )
-                    
+                    hamming_scores = batch_hamming_similarity(np.array(emb_norm, dtype=np.float32), candidates_np)
+
                     # Combine with USEARCH binary scores
                     combined = []
                     for i, (fk, data) in enumerate(candidate_items):
@@ -1650,39 +1560,31 @@ class _ANNIndex:
                         # Weighted average: 0.5 Rust SIMD + 0.5 USEARCH binary
                         approx_score = 0.5 * h_score + 0.5 * old_score
                         combined.append((i, approx_score, data))
-                    
+
                     # Sort by approximate score and take top candidates for re-ranking
                     combined.sort(key=lambda x: x[1], reverse=True)
                     top_indices = [x[0] for x in combined[:_MLX_RERANK_TOP_K]]
-                    rust_hamming_used = True
             except Exception:
                 # Fallback: use simple binary score for initial ranking
                 top_indices = list(range(min(_MLX_RERANK_TOP_K, len(candidate_items))))
-            
+
             # MLX re-ranking only on top candidates
             top_vectors = []
             for idx in top_indices:
                 v = candidate_items[idx][1][0]  # Get float32 vector
-                top_vectors.append(
-                    np.array(v, dtype=np.float32) if v
-                    else np.zeros(self._embed_dim, dtype=np.float32)
-    )
-            
+                top_vectors.append(np.array(v, dtype=np.float32) if v else np.zeros(self._embed_dim, dtype=np.float32))
+
             # MLX re-rank only top-K for final precision
             final_reranked = self._mlx_rerank(np.array(emb_norm, dtype=np.float32), top_indices, top_vectors)
 
-            # Step 4: Build output with score thresholding
             output = []
             for idx, score in final_reranked[:top_k]:
                 fk, (_, th, _dist) = candidate_items[idx]
                 score = max(0.0, min(1.0, score))
                 if score >= _MIN_SCORE:
-                    output.append({
-                        "finding_key": fk,
-                        "text_hash": th or "",
-                        "score": score,
-                        "language": language or "en"
-                    })
+                    output.append(
+                        {"finding_key": fk, "text_hash": th or "", "score": score, "language": language or "en"}
+                    )
 
             return output
 
@@ -1718,7 +1620,7 @@ class _ANNIndex:
                 emb = emb.squeeze(0)
 
             # SWARM-002: Route to appropriate table based on language
-            is_multilingual = language is not None and language != 'en'
+            is_multilingual = language is not None and language != "en"
             target_table = self._table_multilingual if is_multilingual else self._table
 
             # MRL-2: Truncate multilingual embeddings to target dimension
@@ -1733,15 +1635,20 @@ class _ANNIndex:
             # Import binary quantization from embedding_pipeline
             try:
                 from hledac.universal.embedding_pipeline import binary_quantize_single
+
                 bqv_packed = binary_quantize_single(emb)
             except Exception:
                 # Fallback: zeros if quantization fails
-                bqv_packed = b'\x00' * _BINARY_NUM_BYTES
+                bqv_packed = b"\x00" * _BINARY_NUM_BYTES
 
             target_usearch = self._usearch_index_multilingual if is_multilingual else self._usearch_index
             target_labels = self._usearch_labels_multilingual if is_multilingual else self._usearch_labels
-            target_binary_usearch = self._usearch_binary_index_multilingual if is_multilingual else self._usearch_binary_index
-            target_binary_labels = self._usearch_binary_labels_multilingual if is_multilingual else self._usearch_binary_labels
+            target_binary_usearch = (
+                self._usearch_binary_index_multilingual if is_multilingual else self._usearch_binary_index
+            )
+            target_binary_labels = (
+                self._usearch_binary_labels_multilingual if is_multilingual else self._usearch_binary_labels
+            )
 
             # Add to LanceDB (source of truth for persistence)
             row = {
@@ -1772,7 +1679,6 @@ class _ANNIndex:
                         target_labels.append(finding_key)
                     except Exception as e:
                         logger.error(f"[ANN] USEARCH upsert FAILED (vector not added): {e}")
-                        # Increment desync counter for observability
                         self._usearch_desync_count += 1
 
                 # BREAKTHROUGH #1: Add to binary index (metric='ham', dtype='b1')
@@ -1804,14 +1710,14 @@ class _ANNIndex:
                         current_num_partitions=self._ivfpq_num_partitions,
                         current_num_sub_vectors=self._ivfpq_num_sub_vectors,
                         inserts_delta=1,
-    )
+                    )
                     if result.changed():
                         self._ivfpq_num_partitions = result.new_partitions
                         self._ivfpq_num_sub_vectors = result.new_num_sub_vectors
                         logger.info(
                             f"[ANN] auto-tune: partitions={result.old_partitions}->{result.new_partitions} "
                             f"sub_vectors={result.old_num_sub_vectors}->{result.new_num_sub_vectors}"
-    )
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1883,7 +1789,9 @@ class _ANNIndex:
                             self._usearch_binary_index = None
                             self._usearch_binary_labels = []
                         self._build_binary_single_index(self._table, is_multilingual=False)
-                        logger.debug(f"[ANN] Binary index rebuilt after eviction: {len(self._usearch_binary_labels)} entries")
+                        logger.debug(
+                            f"[ANN] Binary index rebuilt after eviction: {len(self._usearch_binary_labels)} entries"
+                        )
                     except Exception as e:
                         logger.warning(f"[ANN] Binary index rebuild failed: {e}")
                         # Fallback: clear binary index to prevent desync
@@ -1898,7 +1806,9 @@ class _ANNIndex:
                 count_multi = self._table_multilingual.count_rows()
                 if count_multi > _MAX_ENTRIES:
                     to_delete = int(count_multi * 0.1)
-                    oldest_multi = self._table_multilingual.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
+                    oldest_multi = (
+                        self._table_multilingual.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
+                    )
                     keys_to_delete = oldest_multi["finding_key"].to_pylist()
 
                     # MRL-2 FIX: Same approach for multilingual index
@@ -1929,7 +1839,9 @@ class _ANNIndex:
                             self._usearch_binary_index_multilingual = None
                             self._usearch_binary_labels_multilingual = []
                         self._build_binary_single_index(self._table_multilingual, is_multilingual=True)
-                        logger.debug(f"[ANN] Binary multilingual index rebuilt after eviction: {len(self._usearch_binary_labels_multilingual)} entries")
+                        logger.debug(
+                            f"[ANN] Binary multilingual index rebuilt after eviction: {len(self._usearch_binary_labels_multilingual)} entries"
+                        )
                     except Exception as e:
                         logger.warning(f"[ANN] Binary multilingual index rebuild failed: {e}")
                         self._usearch_binary_index_multilingual = None
@@ -1944,6 +1856,7 @@ class _ANNIndex:
         if self._table is None:
             return
         import time as _t
+
         now = _t.time()
         count_due = self._insert_count_since_compact >= 1000
         time_due = (now - self._last_compact_ts) >= 3600.0
@@ -2006,17 +1919,17 @@ class _ANNIndex:
                 except Exception:
                     pass
             return {
-                'usearch_desync_count': self._usearch_desync_count,
-                'usearch_index_size': usearch_size,
-                'usearch_labels_size': len(self._usearch_labels) if self._usearch_labels else 0,
-                'lancedb_rows': lancedb_size,
+                "usearch_desync_count": self._usearch_desync_count,
+                "usearch_index_size": usearch_size,
+                "usearch_labels_size": len(self._usearch_labels) if self._usearch_labels else 0,
+                "lancedb_rows": lancedb_size,
             }
         except Exception:
             return {
-                'usearch_desync_count': self._usearch_desync_count,
-                'usearch_index_size': 0,
-                'usearch_labels_size': 0,
-                'lancedb_rows': 0,
+                "usearch_desync_count": self._usearch_desync_count,
+                "usearch_index_size": 0,
+                "usearch_labels_size": 0,
+                "lancedb_rows": 0,
             }
 
     def get_binary_index_stats(self) -> dict[str, int | bool]:
@@ -2047,19 +1960,19 @@ class _ANNIndex:
                     pass
 
             return {
-                'binary_index_size': binary_size,
-                'binary_labels_size': len(self._usearch_binary_labels) if self._usearch_binary_labels else 0,
-                'float_index_size': float_size,
-                'float_labels_size': len(self._usearch_labels) if self._usearch_labels else 0,
-                'sizes_match': binary_size == float_size,
+                "binary_index_size": binary_size,
+                "binary_labels_size": len(self._usearch_binary_labels) if self._usearch_binary_labels else 0,
+                "float_index_size": float_size,
+                "float_labels_size": len(self._usearch_labels) if self._usearch_labels else 0,
+                "sizes_match": binary_size == float_size,
             }
         except Exception:
             return {
-                'binary_index_size': 0,
-                'binary_labels_size': 0,
-                'float_index_size': 0,
-                'float_labels_size': 0,
-                'sizes_match': False,
+                "binary_index_size": 0,
+                "binary_labels_size": 0,
+                "float_index_size": 0,
+                "float_labels_size": 0,
+                "sizes_match": False,
             }
 
     def get_binary_raw_stats(self) -> dict[str, int | bool | str]:
@@ -2079,17 +1992,17 @@ class _ANNIndex:
                 size_mb = self._binary_raw_path.stat().st_size / (1024 * 1024)
 
             return {
-                'loaded': self._binary_raw_loaded,
-                'n_entries': self._binary_raw_n_entries,
-                'path': str(self._binary_raw_path) if self._binary_raw_path else "",
-                'file_size_mb': round(size_mb, 2),
+                "loaded": self._binary_raw_loaded,
+                "n_entries": self._binary_raw_n_entries,
+                "path": str(self._binary_raw_path) if self._binary_raw_path else "",
+                "file_size_mb": round(size_mb, 2),
             }
         except Exception:
             return {
-                'loaded': False,
-                'n_entries': 0,
-                'path': "",
-                'file_size_mb': 0.0,
+                "loaded": False,
+                "n_entries": 0,
+                "path": "",
+                "file_size_mb": 0.0,
             }
 
     def prewarm(self, top_k: int = 128) -> None:
@@ -2150,10 +2063,6 @@ class _ANNIndex:
             self._boot_error = None
             self._initialized = False
 
-
-# -----------------------------------------------------------------------
-# Public facade
-# -----------------------------------------------------------------------
 
 _ann_index: _ANNIndex | None = None
 _ann_index_lock = threading.Lock()

@@ -18,14 +18,8 @@ import json
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-# =============================================================================
-# Key Definitions (Data-Driven)
-# =============================================================================
 
 ACQUISITION_KEYS = (
     "public_terminal_stage", "public_discovered", "public_accepted_findings",
@@ -74,10 +68,6 @@ PRODUCT_KEYS = (
     )
 
 
-# =============================================================================
-# Data Class Configuration
-# =============================================================================
-
 @dataclass(frozen=True, slots=True)
 class SectionDef:
     """Immutable section definition."""
@@ -85,10 +75,6 @@ class SectionDef:
     keys: tuple[str, ...]
     format_dict: bool = False
 
-
-# =============================================================================
-# Section Registry
-# =============================================================================
 
 SECTIONS: tuple[SectionDef, ...] = (
     SectionDef("ACQUISITION REPORT (all keys)", (), format_dict=True),
@@ -103,10 +89,6 @@ SECTIONS: tuple[SectionDef, ...] = (
     SectionDef("PRODUCT VALUE (selected)", PRODUCT_KEYS),
     )
 
-
-# =============================================================================
-# Formatter Functions
-# =============================================================================
 
 def _format_value(value: object, max_str_len: int = 200) -> str:
     """Format a single value with type awareness."""
@@ -131,10 +113,6 @@ def _format_section_header(title: str, width: int = 60) -> str:
     """Format a section header."""
     return f"\n{'=' * width}\n{title}\n{'=' * width}"
 
-
-# =============================================================================
-# Reporter Class
-# =============================================================================
 
 class DeepSprintReporter:
     """
@@ -302,10 +280,6 @@ class DeepSprintReporter:
         self.report_product()
         return self
 
-
-# =============================================================================
-# Main Entry Point
-# =============================================================================
 
 def main() -> None:
     """Main entry point for CLI usage."""

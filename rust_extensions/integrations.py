@@ -70,22 +70,15 @@ M1 8GB Safety:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-
-# ---------------------------------------------------------------------------
-# Centralized Rust Backend Access (Lazy Import - ISSUE-007 FIX)
-# ---------------------------------------------------------------------------
-# Lazy import to avoid circular dependency issues with _core.rust_backend
 _rust_backend = None
-
 
 def _get_rust_backend():
     """Lazy getter for rust backend."""
@@ -95,12 +88,10 @@ def _get_rust_backend():
             from _core.rust_backend import rust as _rb
             _rust_backend = _rb
         except Exception:
-            # Return a dummy object that indicates unavailability
             class NoRust:
                 is_available = False
             _rust_backend = NoRust()
     return _rust_backend
-
 
 def _rust_available(module_name: str) -> bool:
     """Check if a Rust module is available."""
@@ -113,16 +104,6 @@ def _rust_available(module_name: str) -> bool:
         )
     except Exception:
         return False
-
-
-# ============================================================================
-# 1. QUALITY GATE INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/quality_gate.rs
-# Purpose: NEON-accelerated entropy, normalization, fingerprinting
-# Target: knowledge/quality_assessment.py QualityAssessor
-# ============================================================================
-
 
 class QualityGateIntegration:
     """
@@ -226,10 +207,8 @@ class QualityGateIntegration:
         except Exception:  # noqa: BLE001
             return [self.dedup_fingerprint(t) for t in texts]
 
-
 # Singleton instance
 _quality_gate: QualityGateIntegration | None = None
-
 
 def get_quality_gate() -> QualityGateIntegration:
     """Get the singleton QualityGateIntegration instance."""
@@ -237,16 +216,6 @@ def get_quality_gate() -> QualityGateIntegration:
     if _quality_gate is None:
         _quality_gate = QualityGateIntegration()
     return _quality_gate
-
-
-# ============================================================================
-# 2. TEXT SIMILARITY INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/text_similarity.rs
-# Purpose: Trigram Jaccard similarity for clustering
-# Target: recon/temporal_archaeologist.py temporal entity resolution
-# ============================================================================
-
 
 class TextSimilarityIntegration:
     """
@@ -350,10 +319,8 @@ class TextSimilarityIntegration:
         groups.sort(key=lambda g: g[0])
         return groups
 
-
 # Singleton instance
 _text_similarity: TextSimilarityIntegration | None = None
-
 
 def get_text_similarity() -> TextSimilarityIntegration:
     """Get the singleton TextSimilarityIntegration instance."""
@@ -361,16 +328,6 @@ def get_text_similarity() -> TextSimilarityIntegration:
     if _text_similarity is None:
         _text_similarity = TextSimilarityIntegration()
     return _text_similarity
-
-
-# ============================================================================
-# 3. CIRCUIT BREAKER INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/circuit_breaker.rs
-# Purpose: Per-domain circuit breaker for fault tolerance
-# Target: fetching/ network resilience
-# ============================================================================
-
 
 class CircuitBreakerIntegration:
     """
@@ -447,10 +404,8 @@ class CircuitBreakerIntegration:
         except Exception:  # noqa: BLE001
             return {"state": "error"}
 
-
 # Singleton instance
 _circuit_breaker: CircuitBreakerIntegration | None = None
-
 
 def get_circuit_breaker() -> CircuitBreakerIntegration:
     """Get the singleton CircuitBreakerIntegration instance."""
@@ -458,16 +413,6 @@ def get_circuit_breaker() -> CircuitBreakerIntegration:
     if _circuit_breaker is None:
         _circuit_breaker = CircuitBreakerIntegration()
     return _circuit_breaker
-
-
-# ============================================================================
-# 4. LSH INDEX INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/lsh_index.rs
-# Purpose: LSH near-duplicate detection
-# Target: knowledge/ioc_dedup.py near-duplicate detection
-# ============================================================================
-
 
 class LSHIndexIntegration:
     """
@@ -557,16 +502,6 @@ class LSHIndexIntegration:
             for doc_id, fp in items:
                 self.insert(doc_id, fp)
 
-
-# ============================================================================
-# 5. ADAPTIVE SCHEDULER INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/adaptive_scheduler.rs
-# Purpose: MLX-aware thread scheduling
-# Target: _core/rust_backend/pools.py thread pool sizing
-# ============================================================================
-
-
 class AdaptiveSchedulerIntegration:
     """
     Facade for adaptive_scheduler.rs Rust module.
@@ -643,10 +578,8 @@ class AdaptiveSchedulerIntegration:
         except Exception:  # noqa: BLE001
             return {"cpu": 2, "io": 1, "mixed_max": 0}
 
-
 # Singleton instance
 _adaptive_scheduler: AdaptiveSchedulerIntegration | None = None
-
 
 def get_adaptive_scheduler() -> AdaptiveSchedulerIntegration:
     """Get the singleton AdaptiveSchedulerIntegration instance."""
@@ -654,16 +587,6 @@ def get_adaptive_scheduler() -> AdaptiveSchedulerIntegration:
     if _adaptive_scheduler is None:
         _adaptive_scheduler = AdaptiveSchedulerIntegration()
     return _adaptive_scheduler
-
-
-# ============================================================================
-# 6. ACCELERATE INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/accelerate.rs
-# Purpose: vDSP cosine similarity for embeddings
-# Target: brain/ner_engine.py embedding similarity
-# ============================================================================
-
 
 class AccelerateIntegration:
     """
@@ -733,10 +656,8 @@ class AccelerateIntegration:
         # Pure Python fallback - always available
         return [self.cosine_similarity(query, c) for c in candidates]
 
-
 # Singleton instance
 _accelerate: AccelerateIntegration | None = None
-
 
 def get_accelerate() -> AccelerateIntegration:
     """Get the singleton AccelerateIntegration instance."""
@@ -744,16 +665,6 @@ def get_accelerate() -> AccelerateIntegration:
     if _accelerate is None:
         _accelerate = AccelerateIntegration()
     return _accelerate
-
-
-# ============================================================================
-# 7. GRAPH ANALYTICS INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/graph_analytics.rs
-# Purpose: Louvain community detection, PageRank
-# Target: knowledge/ioc_graph.py community detection
-# ============================================================================
-
 
 class GraphAnalyticsIntegration:
     """
@@ -844,10 +755,8 @@ class GraphAnalyticsIntegration:
         except Exception:  # noqa: BLE001
             return {}
 
-
 # Singleton instance
 _graph_analytics: GraphAnalyticsIntegration | None = None
-
 
 def get_graph_analytics() -> GraphAnalyticsIntegration:
     """Get the singleton GraphAnalyticsIntegration instance."""
@@ -855,16 +764,6 @@ def get_graph_analytics() -> GraphAnalyticsIntegration:
     if _graph_analytics is None:
         _graph_analytics = GraphAnalyticsIntegration()
     return _graph_analytics
-
-
-# ============================================================================
-# 7b. GRAPH TRAVERSAL INTEGRATION (C5)
-# ============================================================================
-# Source: rust_extensions/src/graph_traverse.rs
-# Purpose: Petgraph-powered DuckDB graph traversal (10x faster than SQL CTE)
-# Target: knowledge/graph/context_graph.py
-# ============================================================================
-
 
 class GraphTraverseIntegration:
     """
@@ -1101,10 +1000,8 @@ class GraphTraverseIntegration:
         except Exception:  # noqa: BLE001
             return False
 
-
 # Singleton instance
 _graph_traverse: GraphTraverseIntegration | None = None
-
 
 def get_graph_traverse() -> GraphTraverseIntegration:
     """Get the singleton GraphTraverseIntegration instance."""
@@ -1112,16 +1009,6 @@ def get_graph_traverse() -> GraphTraverseIntegration:
     if _graph_traverse is None:
         _graph_traverse = GraphTraverseIntegration()
     return _graph_traverse
-
-
-# ============================================================================
-# 8. CLAIMS EXTRACTION INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/claims_extraction.rs
-# Purpose: Sentence splitting, polarity, confidence
-# Target: brain/research_hypothesis_engine.py hypothesis confidence
-# ============================================================================
-
 
 class ClaimsExtractionIntegration:
     """
@@ -1193,10 +1080,8 @@ class ClaimsExtractionIntegration:
         except Exception:  # noqa: BLE001
             return []
 
-
 # Singleton instance
 _claims_extraction: ClaimsExtractionIntegration | None = None
-
 
 def get_claims_extraction() -> ClaimsExtractionIntegration:
     """Get the singleton ClaimsExtractionIntegration instance."""
@@ -1204,16 +1089,6 @@ def get_claims_extraction() -> ClaimsExtractionIntegration:
     if _claims_extraction is None:
         _claims_extraction = ClaimsExtractionIntegration()
     return _claims_extraction
-
-
-# ============================================================================
-# 9. SIMD SIMILARITY INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/simd_similarity.rs
-# Purpose: SIMD batch cosine similarity for re-ranking
-# Target: intel/ re-ranking embeddings
-# ============================================================================
-
 
 class SIMDSimilarityIntegration:
     """
@@ -1357,10 +1232,8 @@ class SIMDSimilarityIntegration:
 
         return scores
 
-
 # Singleton instance
 _simd_similarity: SIMDSimilarityIntegration | None = None
-
 
 def get_simd_similarity() -> SIMDSimilarityIntegration:
     """Get the singleton SIMDSimilarityIntegration instance."""
@@ -1368,16 +1241,6 @@ def get_simd_similarity() -> SIMDSimilarityIntegration:
     if _simd_similarity is None:
         _simd_similarity = SIMDSimilarityIntegration()
     return _simd_similarity
-
-
-# ============================================================================
-# 10. TELEMETRY INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/telemetry_agg.rs
-# Purpose: Lock-free metrics, HDR histograms
-# Target: otel/ metrics collection
-# ============================================================================
-
 
 class TelemetryIntegration:
     """
@@ -1444,7 +1307,6 @@ class TelemetryIntegration:
             except Exception:  # noqa: BLE001
                 pass
         return TelemetryGauge(name, None, initial_value)
-
 
 class TelemetryCounter:
     """
@@ -1513,7 +1375,6 @@ class TelemetryCounter:
                 pass
         return (self._python_count, self._python_bytes)
 
-
 class TelemetryGauge:
     """
     Volatile gauge for current-value telemetry.
@@ -1562,7 +1423,6 @@ class TelemetryGauge:
         """
         # Rust gauge doesn't have direct read API - return Python-tracked value
         return self._python_value
-
 
 class TelemetryHistogram:
     """
@@ -1657,12 +1517,6 @@ class TelemetryHistogram:
             "p99_ms": sorted_samples[int(n * 0.99)] / 1_000_000,
         }
 
-
-# ============================================================================
-# 11. URL ENGINE INTEGRATION
-# ============================================================================
-
-
 class URLEngineIntegration:
     """
     Integration for Rust url_engine module.
@@ -1717,9 +1571,7 @@ class URLEngineIntegration:
                 pass
         return url
 
-
 _url_engine_instance: URLEngineIntegration | None = None
-
 
 def get_url_engine() -> URLEngineIntegration:
     """Get singleton URL engine integration."""
@@ -1727,12 +1579,6 @@ def get_url_engine() -> URLEngineIntegration:
     if _url_engine_instance is None:
         _url_engine_instance = URLEngineIntegration()
     return _url_engine_instance
-
-
-# ============================================================================
-# 12. CONTENT HASHER INTEGRATION
-# ============================================================================
-
 
 class ContentHasherIntegration:
     """
@@ -1790,9 +1636,7 @@ class ContentHasherIntegration:
             import hashlib
             return hashlib.sha256(data).digest()[:8].hex()
 
-
 _content_hasher_instance: ContentHasherIntegration | None = None
-
 
 def get_content_hasher() -> ContentHasherIntegration:
     """Get singleton content hasher integration."""
@@ -1800,12 +1644,6 @@ def get_content_hasher() -> ContentHasherIntegration:
     if _content_hasher_instance is None:
         _content_hasher_instance = ContentHasherIntegration()
     return _content_hasher_instance
-
-
-# ============================================================================
-# 13. TLS METADATA INTEGRATION
-# ============================================================================
-
 
 class TLSMetadataIntegration:
     """
@@ -1849,9 +1687,7 @@ class TLSMetadataIntegration:
         sha256_hex = hashlib.sha256(der_bytes).hexdigest() if der_bytes else None
         return (sans, capped_issuer, sha256_hex)
 
-
 _tls_metadata_instance: TLSMetadataIntegration | None = None
-
 
 def get_tls_metadata() -> TLSMetadataIntegration:
     """Get singleton TLS metadata integration."""
@@ -1859,12 +1695,6 @@ def get_tls_metadata() -> TLSMetadataIntegration:
     if _tls_metadata_instance is None:
         _tls_metadata_instance = TLSMetadataIntegration()
     return _tls_metadata_instance
-
-
-# ============================================================================
-# 14. IOC DEDUP INTEGRATION
-# ============================================================================
-
 
 class IOCDedupIntegration:
     """
@@ -1890,7 +1720,6 @@ class IOCDedupIntegration:
             except Exception:  # noqa: BLE001
                 pass
         return IOCDedupStore(None)
-
 
 class IOCDedupStore:
     """IOC deduplication store with mmap-backed persistence."""
@@ -1923,9 +1752,7 @@ class IOCDedupStore:
                 pass
         return (ioc_type.lower(), value.lower()) in self._python_store
 
-
 _ioc_dedup_instance: IOCDedupIntegration | None = None
-
 
 def get_ioc_dedup() -> IOCDedupIntegration:
     """Get singleton IOC dedup integration."""
@@ -1933,16 +1760,6 @@ def get_ioc_dedup() -> IOCDedupIntegration:
     if _ioc_dedup_instance is None:
         _ioc_dedup_instance = IOCDedupIntegration()
     return _ioc_dedup_instance
-
-
-# ============================================================================
-# 15. SIGNAL BATCH INTEGRATION
-# ============================================================================
-# Source: rust_extensions/src/signal_batch.rs
-# Purpose: NEON-accelerated batch signal processing
-# Target: pipeline/feed/_scan_stage.py feed quality scoring
-# ============================================================================
-
 
 class SignalBatchIntegration:
     """
@@ -2243,9 +2060,7 @@ class SignalBatchIntegration:
         # Combined signal
         return (entropy_score * 0.4) + (length_score * 0.6)
 
-
 _signal_batch_instance: SignalBatchIntegration | None = None
-
 
 def get_signal_batch() -> SignalBatchIntegration:
     """Get singleton signal batch integration."""
@@ -2253,17 +2068,6 @@ def get_signal_batch() -> SignalBatchIntegration:
     if _signal_batch_instance is None:
         _signal_batch_instance = SignalBatchIntegration()
     return _signal_batch_instance
-
-
-# ============================================================================
-# 12. AIMD INTEGRATION (C13)
-# ============================================================================
-# Source: rust_extensions/src/aimd_controller.rs
-# Purpose: Lock-free AIMD controller for adaptive HTTP fetch concurrency
-# Target: coordinators/performance_coordinator.py
-# Benefit: Lock-free atomic window; 20% faster adaptation to network conditions
-# ============================================================================
-
 
 class AIMDIntegration:
     """
@@ -2306,7 +2110,6 @@ class AIMDIntegration:
         try:
             from hledac_rust_extensions import PyAIMDController
 
-            # Create Rust controller with clamped initial window
             clamped = max(min_window, min(initial_window, max_window))
             self._controller = PyAIMDController(clamped)
             self._available = True
@@ -2400,7 +2203,6 @@ class AIMDIntegration:
             "rust_available": self._available,
             "stats": self.stats(),
         }
-
 
 class _PythonAIMDController:
     """
@@ -2501,10 +2303,8 @@ class _PythonAIMDController:
         result["active"] = self._active
         return result
 
-
 # Singleton instance
 _aimd: AIMDIntegration | None = None
-
 
 def get_aimd(initial_window: float = 4.0, min_window: float = 1.0, max_window: float = 16.0) -> AIMDIntegration:
     """
@@ -2524,18 +2324,6 @@ def get_aimd(initial_window: float = 4.0, min_window: float = 1.0, max_window: f
     if _aimd is None:
         _aimd = AIMDIntegration(initial_window, min_window, max_window)
     return _aimd
-
-
-# ============================================================================
-# 16. DEOBFUSCATE INTEGRATION (C14)
-# ============================================================================
-# Source: rust_extensions/src/deobfuscate.rs
-# Purpose: CyberChef-style IOC deobfuscation pipeline
-# Target: knowledge/ioc_processor.py (IOC extraction pipeline)
-# Benefit: +25% recall on defanged/encoded IOC (phishing, paste sites)
-# M1 8GB: NEON SIMD entropy probe, rayon 2 threads, 16MB scan buffer cap
-# ============================================================================
-
 
 class DeobfuscateIntegration:
     """
@@ -2712,8 +2500,6 @@ class DeobfuscateIntegration:
             except Exception:  # noqa: BLE001
                 pass
 
-    # ─── Python fallback implementations ───────────────────────────────────────
-
     @staticmethod
     def _python_fallback(text: str) -> list[str]:
         """
@@ -2806,9 +2592,7 @@ class DeobfuscateIntegration:
                 result.append(c)
         return result
 
-
 _deobfuscate_instance: DeobfuscateIntegration | None = None
-
 
 def get_deobfuscate() -> DeobfuscateIntegration:
     """
@@ -2823,11 +2607,6 @@ def get_deobfuscate() -> DeobfuscateIntegration:
     if _deobfuscate_instance is None:
         _deobfuscate_instance = DeobfuscateIntegration()
     return _deobfuscate_instance
-
-
-# ============================================================================
-# EXPORTS
-# ============================================================================
 
 __all__ = [
     # Integration classes
@@ -2873,18 +2652,7 @@ __all__ = [
     "get_mpsc",  # G5.MPSC_POOL: Factory function
 ]
 
-
-# ============================================================================
-# G5.MPSC_POOL: Multi-Producer Single-Consumer Pool Integration
-# ============================================================================
-# Source: rust_extensions/src/mpsc_pool.rs
-# Purpose: Bounded MPSC queue replacing asyncio.Queue for fetch coordinator
-# Target: coordinators/fetch_coordinator.py:_micro_sprint_queue, _entropy_bridge_queue
-# Benefit: Lock-free via crossbeam, ARM LSE atomics, zero-copy serialization
-
-
 _mpsc_instance: "MPSCIntegration | None" = None
-
 
 class MPSCIntegration:
     """
@@ -2935,7 +2703,6 @@ class MPSCIntegration:
 
         cap = capacity or self._default_capacity
         return get_mpsc_queue(cap)
-
 
 def get_mpsc() -> MPSCIntegration:
     """

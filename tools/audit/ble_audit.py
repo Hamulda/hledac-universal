@@ -25,7 +25,6 @@ import json
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
 
 # TOML config — lazy import to avoid hard dependency
 try:
@@ -54,9 +53,20 @@ class BLEAuditConfig(NamedTuple):
 
 DEFAULT_CONFIG = BLEAuditConfig(
     exclude_dirs=(
-        "__pycache__", ".venv", ".venv-test", "probe_", ".claude", ".git",
-        ".mypy_cache", ".pytest_cache", ".hypothesis", "archive", "stubs",
-        "tests/.archive", "tests/probe_f", "tests/probe_p",
+        "__pycache__",
+        ".venv",
+        ".venv-test",
+        "probe_",
+        ".claude",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".hypothesis",
+        "archive",
+        "stubs",
+        "tests/.archive",
+        "tests/probe_f",
+        "tests/probe_p",
     ),
     exclude_files=(),
     allow_exception_tuples=True,
@@ -64,7 +74,7 @@ DEFAULT_CONFIG = BLEAuditConfig(
     allow_noqa_comments=True,
     logger_lookahead_lines=5,
     ci_threshold=0,
-    )
+)
 
 
 def load_config(config_path: Path) -> BLEAuditConfig:
@@ -96,8 +106,12 @@ def is_excluded(path: Path, config: BLEAuditConfig) -> bool:
             return True
     # Check directory exclusions — works for both relative and absolute paths
     for exdir in config.exclude_dirs:
-        if (f"/{exdir}/" in s or s.endswith(f"/{exdir}") or
-                s.startswith(f"{exdir}/") or f"/{exdir}/" in s.replace("\\", "/")):
+        if (
+            f"/{exdir}/" in s
+            or s.endswith(f"/{exdir}")
+            or s.startswith(f"{exdir}/")
+            or f"/{exdir}/" in s.replace("\\", "/")
+        ):
             return True
     return False
 
@@ -106,7 +120,7 @@ def get_source_lines(path: Path) -> list[str]:
     """Read source file lines for context analysis."""
     try:
         return path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return []
 
 
@@ -120,9 +134,7 @@ def has_noqa_comment(source_lines: list[str], lineno: int, config: BLEAuditConfi
     return "# noqa: BLE001" in line
 
 
-def has_logger_in_block(
-    source_lines: list[str], except_lineno: int, config: BLEAuditConfig
-) -> bool:
+def has_logger_in_block(source_lines: list[str], except_lineno: int, config: BLEAuditConfig) -> bool:
     """Check if there's a logger.* call within N lines after the except handler."""
     if not config.allow_logged_exceptions:
         return False
@@ -137,14 +149,10 @@ def has_logger_in_block(
         # Skip blank lines and comments
         if not stripped or stripped.startswith("#"):
             continue
-        if "logger." in line and any(
-            lvl in line for lvl in ("warning", "error", "debug", "info", "exception")
-        ):
+        if "logger." in line and any(lvl in line for lvl in ("warning", "error", "debug", "info", "exception")):
             return True
         # Also check for _logger (private loggers)
-        if "_logger." in line and any(
-            lvl in line for lvl in ("warning", "error", "debug", "info", "exception")
-        ):
+        if "_logger." in line and any(lvl in line for lvl in ("warning", "error", "debug", "info", "exception")):
             return True
     return False
 
@@ -180,7 +188,7 @@ def audit_file(path: Path, config: BLEAuditConfig) -> list[Violation]:
         source = path.read_text(encoding="utf-8")
         source_lines = source.splitlines(keepends=True)
         tree = ast.parse(source)
-    except (SyntaxError, OSError):
+    except SyntaxError, OSError:
         return []
 
     for node in ast.walk(tree):
@@ -195,11 +203,15 @@ def audit_file(path: Path, config: BLEAuditConfig) -> list[Violation]:
 
             # Bare except: - always a violation
             if is_bare_exception(handler):
-                violations.append(Violation(
-                    path, lineno, "bare_except",
-                    source_lines[lineno - 1].strip() if lineno > 0 else "",
-                    "bare except clause — must specify exception type(s)"
-                ))
+                violations.append(
+                    Violation(
+                        path,
+                        lineno,
+                        "bare_except",
+                        source_lines[lineno - 1].strip() if lineno > 0 else "",
+                        "bare except clause — must specify exception type(s)",
+                    )
+                )
                 continue
 
             # Exception tuple (X, Y): - allowed
@@ -212,18 +224,26 @@ def audit_file(path: Path, config: BLEAuditConfig) -> list[Violation]:
                     continue
                 # except Exception: pass - violation
                 if len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass):
-                    violations.append(Violation(
-                        path, lineno, "exception_pass",
-                        source_lines[lineno - 1].strip() if lineno > 0 else "",
-                        "except Exception: pass — add logging or use specific exception"
-                    ))
+                    violations.append(
+                        Violation(
+                            path,
+                            lineno,
+                            "exception_pass",
+                            source_lines[lineno - 1].strip() if lineno > 0 else "",
+                            "except Exception: pass — add logging or use specific exception",
+                        )
+                    )
                     continue
                 # except Exception: without logger - violation
-                violations.append(Violation(
-                    path, lineno, "broad_exception",
-                    source_lines[lineno - 1].strip() if lineno > 0 else "",
-                    "except Exception: without logging — use specific exception or add logger.*"
-                ))
+                violations.append(
+                    Violation(
+                        path,
+                        lineno,
+                        "broad_exception",
+                        source_lines[lineno - 1].strip() if lineno > 0 else "",
+                        "except Exception: without logging — use specific exception or add logger.*",
+                    )
+                )
                 continue
 
             # Specific exception (single, not Exception base class) - allowed
@@ -282,22 +302,12 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="BLE001 Audit Tool — Issue D5")
+    parser.add_argument("--ci", action="store_true", help="CI mode: compare against baseline, fail on NEW violations")
     parser.add_argument(
-        "--ci", action="store_true",
-        help="CI mode: compare against baseline, fail on NEW violations"
+        "--update-baseline", action="store_true", help="Update the baseline file with current violations"
     )
-    parser.add_argument(
-        "--update-baseline", action="store_true",
-        help="Update the baseline file with current violations"
-    )
-    parser.add_argument(
-        "--generate-baseline", action="store_true",
-        help="Generate baseline if it doesn't exist"
-    )
-    parser.add_argument(
-        "root", nargs="?", default=".",
-        help="Root directory to audit (default: .)"
-    )
+    parser.add_argument("--generate-baseline", action="store_true", help="Generate baseline if it doesn't exist")
+    parser.add_argument("root", nargs="?", default=".", help="Root directory to audit (default: .)")
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -306,7 +316,7 @@ def main() -> int:
 
     config = load_config(config_path)
 
-    print(f"BLE Audit (Issue D5)")
+    print("BLE Audit (Issue D5)")
     print(f"  Config: {config_path if config_path.exists() else 'default'}")
     print(f"  Root: {root}")
     print(f"  CI threshold: {config.ci_threshold}")
@@ -359,7 +369,7 @@ def main() -> int:
             by_file[key] = []
         by_file[key].append(v)
 
-    print(f"\nViolations by file:")
+    print("\nViolations by file:")
     for fpath, viols in sorted(by_file.items()):
         print(f"\n{fpath} ({len(viols)} violations):")
         for v in viols:

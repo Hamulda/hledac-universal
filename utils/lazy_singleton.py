@@ -20,7 +20,6 @@ import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import TypeVar
-from _core import aclose
 
 __all__ = ["LazySingleton", "AsyncLazySingleton"]
 
@@ -80,9 +79,7 @@ class AsyncLazySingleton:
 
     def __init__(self, factory: Callable[[], T]) -> None:
         self._factory = factory
-        self._ctx_var: ContextVar[dict[int, T] | None] = ContextVar(
-            f"_AsyncLazySingleton_{id(self)}", default=None
-    )
+        self._ctx_var: ContextVar[dict[int, T] | None] = ContextVar(f"_AsyncLazySingleton_{id(self)}", default=None)
 
     def __call__(self) -> T:
         instances = self._ctx_var.get()

@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from multimodal.evidence_triage import EvidenceTriageCoordinator, TriageFacets
-from _core import aclose
 
 
 class TestFOCATriageIntegration:
@@ -73,7 +72,7 @@ class TestFOCATriageIntegration:
         return {"pptx": pptx_result, "email": email_result}
 
     @pytest.mark.asyncio
-    async def test_pptx_metadata_wired_to_facets(self, mock_extractor, tmp_path):
+    async def test_pptx_metadata_wired_to_facets(self, mock_extractor, tmp_path) -> None:
         """Test PPTX metadata flows into TriageFacets.metadata."""
         # Create a dummy PPTX file
         pptx_path = tmp_path / "test.pptx"
@@ -102,7 +101,7 @@ class TestFOCATriageIntegration:
         await coordinator.close()
 
     @pytest.mark.asyncio
-    async def test_email_metadata_wired_to_facets(self, mock_extractor, tmp_path):
+    async def test_email_metadata_wired_to_facets(self, mock_extractor, tmp_path) -> None:
         """Test Email metadata flows into TriageFacets.metadata."""
         # Create a dummy EML file
         eml_path = tmp_path / "test.eml"
@@ -127,7 +126,7 @@ class TestFOCATriageIntegration:
         await coordinator.close()
 
     @pytest.mark.asyncio
-    async def test_triage_facets_has_metadata_field(self):
+    async def test_triage_facets_has_metadata_field(self) -> None:
         """Test TriageFacets has metadata dict field."""
         facets = TriageFacets()
         assert hasattr(facets, "metadata")
@@ -173,7 +172,7 @@ class TestFOCAMacroExtraction:
 class TestFOCABounds:
     """Test FOCA bounds are enforced."""
 
-    def test_pptx_metadata_bounds(self):
+    def test_pptx_metadata_bounds(self) -> None:
         """Test PPTXMetadata respects bounds."""
         from forensics.metadata_extractor import MAX_MACRO_URLS, MAX_SPEAKER_NOTES, PPTXMetadata
 
@@ -195,7 +194,7 @@ class TestFOCABounds:
 class TestFOCADocumentIntelligenceSeam:
     """Test FOCA integration with DocumentIntelligenceEngine OfficeDocumentAnalyzer."""
 
-    def test_office_analyzer_has_analyze_async(self):
+    def test_office_analyzer_has_analyze_async(self) -> None:
         """Test OfficeDocumentAnalyzer has async analyze method."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
 
@@ -204,7 +203,7 @@ class TestFOCADocumentIntelligenceSeam:
         assert callable(analyzer.analyze_async)
 
     @pytest.mark.asyncio
-    async def test_office_analyzer_analyze_async_merges_foca(self, tmp_path):
+    async def test_office_analyzer_analyze_async_merges_foca(self, tmp_path) -> None:
         """Test analyze_async() calls FOCA extractor and merges into raw_metadata."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
 
@@ -227,7 +226,7 @@ class TestFOCADocumentIntelligenceSeam:
         # FOCA data should be in raw_metadata['foca']
         assert "foca" in analysis.metadata.raw_metadata or analysis.metadata.author == "Test Author"
 
-    def test_office_analyzer_analyze_sync_works(self, tmp_path):
+    def test_office_analyzer_analyze_sync_works(self, tmp_path) -> None:
         """Test sync analyze() still works without FOCA (no async needed)."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
 
@@ -250,7 +249,7 @@ class TestFOCADocumentIntelligenceSeam:
         assert analysis.metadata.author == "Sync Author"
 
     @pytest.mark.asyncio
-    async def test_office_analyzer_foca_merge_does_not_crash_on_missing_extractor(self, tmp_path):
+    async def test_office_analyzer_foca_merge_does_not_crash_on_missing_extractor(self, tmp_path) -> None:
         """Test FOCA merge fails gracefully when extractor unavailable."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
 
@@ -269,7 +268,7 @@ class TestFOCADocumentIntelligenceSeam:
         assert analysis is not None
 
     @pytest.mark.asyncio
-    async def test_office_analyzer_close_fail_safe(self):
+    async def test_office_analyzer_close_fail_safe(self) -> None:
         """Test close() is async and fail-safe."""
         from intelligence.document_intelligence import OfficeDocumentAnalyzer
 
@@ -283,7 +282,7 @@ class TestFOCADocumentIntelligenceSeam:
 class TestFOCAConfidenceScoring:
     """Test FOCA scoring integration in ForensicsEnricher."""
 
-    def test_score_foca_findings_returns_float(self):
+    def test_score_foca_findings_returns_float(self) -> None:
         """Test _score_foca_findings returns a float."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -292,7 +291,7 @@ class TestFOCAConfidenceScoring:
         assert isinstance(result, float)
         assert 0.0 <= result <= 0.3
 
-    def test_score_foca_findings_with_pptx_macros(self):
+    def test_score_foca_findings_with_pptx_macros(self) -> None:
         """Test PPTX macro URLs contribute to FOCA score."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -310,7 +309,7 @@ class TestFOCAConfidenceScoring:
         score = enricher._score_foca_findings(enrichment)
         assert score >= 0.1  # macro_urls gives 0.1
 
-    def test_score_foca_findings_with_email_infrastructure(self):
+    def test_score_foca_findings_with_email_infrastructure(self) -> None:
         """Test Email infrastructure signals contribute to FOCA score."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -323,7 +322,7 @@ class TestFOCAConfidenceScoring:
         score = enricher._score_foca_findings(enrichment)
         assert score >= 0.15  # originating_ip=0.1, dkim=0.05, attachments=0.05
 
-    def test_score_foca_findings_with_cad_technical(self):
+    def test_score_foca_findings_with_cad_technical(self) -> None:
         """Test CAD technical signals contribute to FOCA score."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -332,7 +331,7 @@ class TestFOCAConfidenceScoring:
         score = enricher._score_foca_findings(enrichment)
         assert score >= 0.15  # autocad=0.1, coords=0.05
 
-    def test_score_foca_findings_capped_at_0_3(self):
+    def test_score_foca_findings_capped_at_0_3(self) -> None:
         """Test FOCA score is capped at 0.3."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -352,7 +351,7 @@ class TestFOCAConfidenceScoring:
         score = enricher._score_foca_findings(enrichment)
         assert score <= 0.3
 
-    def test_score_foca_findings_empty_enrichment(self):
+    def test_score_foca_findings_empty_enrichment(self) -> None:
         """Test empty enrichment returns 0.0."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -364,7 +363,7 @@ class TestFOCAConfidenceScoring:
 class TestFOCAConfidenceIntegration:
     """Test FOCA confidence modifier integration with confidence scoring pipeline."""
 
-    def test_foca_confidence_modifier_in_enrichment_result(self):
+    def test_foca_confidence_modifier_in_enrichment_result(self) -> None:
         """Test enrich() returns foca_confidence_modifier when FOCA data present."""
         from unittest.mock import MagicMock
 
@@ -398,7 +397,7 @@ class TestFOCAConfidenceIntegration:
         no_foca_modifier = enricher._score_foca_findings({})
         assert no_foca_modifier == 0.0
 
-    def test_foca_modifier_clamps_at_max_0_3(self):
+    def test_foca_modifier_clamps_at_max_0_3(self) -> None:
         """Test FOCA modifier is capped at 0.3 even with all signals present."""
         from forensics.enrichment_service import ForensicsEnricher
 
@@ -431,7 +430,7 @@ class TestFOCAConfidenceIntegration:
         assert score == 0.3
         assert score <= 0.3  # Explicit cap check
 
-    def test_foca_modifier_absent_without_foca_data(self):
+    def test_foca_modifier_absent_without_foca_data(self) -> None:
         """Test foca_confidence_modifier is absent when no FOCA data in enrichment."""
         from unittest.mock import MagicMock
 
@@ -463,7 +462,7 @@ class TestFOCAConfidenceIntegration:
             # If enrichment returned, modifier should be 0.0
             assert result.get("foca_confidence_modifier", 0.0) == 0.0
 
-    def test_foca_confidence_does_not_exceed_1_0(self):
+    def test_foca_confidence_does_not_exceed_1_0(self) -> None:
         """Test FOCA modifier added to base confidence never exceeds 1.0."""
         from forensics.enrichment_service import ForensicsEnricher
 

@@ -11,12 +11,7 @@ Tests for runtime/_legacy_role_based_pools.py — deprecated role-based executor
 Run with: pytest tests/test_role_based_pools.py -v
 """
 
-import asyncio
-import gc
-import sys
-
 import pytest
-from _core import aclose
 
 
 class TestRoleBasedPools:

@@ -2,7 +2,6 @@
 Role-Based Pool Executor — DEPRECATED (R-18)
 ============================================
 
-
 .. deprecated::
     This module is deprecated as of R-18. Use the dedicated modules instead:
     - ``runtime.lmdb_pool`` for LMDB operations (``run_lmdb``)
@@ -73,11 +72,10 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import os
 import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from hledac.universal._core.isolated_executors import (
     IsolatedDuckDBExecutor,
@@ -85,7 +83,7 @@ from hledac.universal._core.isolated_executors import (
     get_duckdb_executor,
     get_mlx_executor,
     is_pep734_available,
-    )
+)
 from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
 from hledac.universal.utils.asyncx import safe_wait_for
 
@@ -115,14 +113,10 @@ _EMBED_FALLBACK_WORKERS: int = 2  # Embedding fallback pool (when PEP 734 unavai
 _DUCKDB_FALLBACK_WORKERS: int = 4  # DuckDB fallback pool (when PEP 734 unavailable)
 
 # LMDB pool configuration — shared with runtime.lmdb_pool
-from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
-from _core import aclose
 
 
 class RAMBudgetExceeded(Exception):
     """Raised when a role's RAM budget would be exceeded."""
-
-    pass
 
 
 # ------------------------------------------------------------------|
@@ -228,14 +222,12 @@ class RoleBasedPools:
                 return
             self._initialized = True
 
-            # Initialize semaphores
             self._embed_semaphore = asyncio.Semaphore(_EMBED_WORKERS)
             self._db_semaphore = asyncio.Semaphore(_DB_WORKERS)
             self._hash_semaphore = asyncio.Semaphore(_HASH_WORKERS)
             self._regex_semaphore = asyncio.Semaphore(_REGEX_WORKERS)
             self._async_io_semaphore = asyncio.Semaphore(_ASYNC_IO_WORKERS)
 
-            # Initialize async locks
             self._async_locks = {
                 "hash": asyncio.Lock(),
                 "embed": asyncio.Lock(),
@@ -248,24 +240,24 @@ class RoleBasedPools:
             self._hash_executor = ThreadPoolExecutor(
                 max_workers=_HASH_WORKERS,
                 thread_name_prefix="hledac-hash",
-    )
+            )
             self._regex_executor = ThreadPoolExecutor(
                 max_workers=_REGEX_WORKERS,
                 thread_name_prefix="hledac-regex",
-    )
+            )
             self._async_io_executor = ThreadPoolExecutor(
                 max_workers=_ASYNC_IO_WORKERS,
                 thread_name_prefix="hledac-async-io",
-    )
+            )
             # P2-1: Dedicated pools replacing unbounded asyncio.to_thread defaults
             self._duckdb_fallback_executor = ThreadPoolExecutor(
                 max_workers=_DUCKDB_FALLBACK_WORKERS,
                 thread_name_prefix="hledac-duckdb-fb",
-    )
+            )
             self._embed_fallback_executor = ThreadPoolExecutor(
                 max_workers=_EMBED_FALLBACK_WORKERS,
                 thread_name_prefix="hledac-embed-fb",
-    )
+            )
 
             # PEP 734 executors (Python 3.14+, memory-isolated)
             if is_pep734_available():
@@ -341,7 +333,7 @@ class RoleBasedPools:
         lock_getter: Callable[[], Coroutine[Any, Any, asyncio.Lock]],
         executor: ThreadPoolExecutor,
         label: str,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         *args: Any,
         timeout: float | None = None,
         **kwargs: Any,
@@ -369,7 +361,7 @@ class RoleBasedPools:
     def _run_role_a_sync[T](
         self,
         executor: ThreadPoolExecutor,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         *args: Any,
         **kwargs: Any,
     ) -> T | None:
@@ -391,7 +383,7 @@ class RoleBasedPools:
 
     async def run_hash[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -419,12 +411,15 @@ class RoleBasedPools:
             self._get_hash_lock,
             self._hash_executor,  # type: ignore[arg-type]
             "hash",
-            fn, *args, timeout=timeout, **kwargs
-    )
+            fn,
+            *args,
+            timeout=timeout,
+            **kwargs,
+        )
 
     def run_hash_sync[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         **kwargs: Any,
@@ -439,7 +434,7 @@ class RoleBasedPools:
 
     async def _run_embed_impl(
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -465,19 +460,15 @@ class RoleBasedPools:
             loop = asyncio.get_running_loop()
             try:
                 if timeout is not None:
-                    coro = loop.run_in_executor(
-                        self._embed_fallback_executor, lambda: fn(*args, **kwargs)
-    )
+                    coro = loop.run_in_executor(self._embed_fallback_executor, lambda: fn(*args, **kwargs))
                     return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
-                return await loop.run_in_executor(
-                    self._embed_fallback_executor, lambda: fn(*args, **kwargs)
-    )
+                return await loop.run_in_executor(self._embed_fallback_executor, lambda: fn(*args, **kwargs))
             except Exception:
                 return None
 
     async def run_embed[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -504,11 +495,10 @@ class RoleBasedPools:
         # RAM budget check (M1 8GB)
         if not self._check_embed_ram_budget():
             warnings.warn(
-                "Embedding budget exceeded (MLX memory > 1.5 GiB or system RAM < 1 GiB), "
-                "deferring embedding work",
+                "Embedding budget exceeded (MLX memory > 1.5 GiB or system RAM < 1 GiB), deferring embedding work",
                 RuntimeWarning,
                 stacklevel=2,
-    )
+            )
             gc.collect()
             if not self._check_embed_ram_budget():
                 return None  # Still over budget after GC
@@ -525,7 +515,7 @@ class RoleBasedPools:
 
     async def _run_db_impl(
         self,
-        fn: "Callable[..., Any]",
+        fn: Callable[..., Any],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -557,19 +547,15 @@ class RoleBasedPools:
             loop = asyncio.get_running_loop()
             try:
                 if timeout is not None:
-                    coro = loop.run_in_executor(
-                        self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-    )
+                    coro = loop.run_in_executor(self._duckdb_fallback_executor, lambda: fn(*args, **kwargs))
                     return await safe_wait_for(coro, timeout=timeout, label=label)
-                return await loop.run_in_executor(
-                    self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-    )
+                return await loop.run_in_executor(self._duckdb_fallback_executor, lambda: fn(*args, **kwargs))
             except Exception:
                 return None
 
     async def run_db(
         self,
-        fn: "Callable[..., list[dict[str, Any]]]",
+        fn: Callable[..., list[dict[str, Any]]],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -596,24 +582,21 @@ class RoleBasedPools:
         # RAM budget check
         if not self._check_db_ram_budget():
             warnings.warn(
-                "DuckDB RAM budget exceeded (system RAM < 500 MB), "
-                "deferring DB work",
+                "DuckDB RAM budget exceeded (system RAM < 500 MB), deferring DB work",
                 RuntimeWarning,
                 stacklevel=2,
-    )
+            )
             return None
 
         assert self._db_semaphore is not None
 
         async with self._db_semaphore:
             async with await self._get_db_lock():
-                return await self._run_db_impl(
-                    fn, *args, timeout=timeout, label="role_pool:db", **kwargs
-    )
+                return await self._run_db_impl(fn, *args, timeout=timeout, label="role_pool:db", **kwargs)
 
     async def run_db_write(
         self,
-        fn: "Callable[..., Any]",
+        fn: Callable[..., Any],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -640,20 +623,17 @@ class RoleBasedPools:
         # RAM budget check
         if not self._check_db_ram_budget():
             warnings.warn(
-                "DuckDB write RAM budget exceeded (system RAM < 500 MB), "
-                "deferring DB write work",
+                "DuckDB write RAM budget exceeded (system RAM < 500 MB), deferring DB write work",
                 RuntimeWarning,
                 stacklevel=2,
-    )
+            )
             return None
 
         assert self._db_semaphore is not None
 
         async with self._db_semaphore:
             async with await self._get_db_lock():
-                return await self._run_db_impl(
-                    fn, *args, timeout=timeout, label="role_pool:db_write", **kwargs
-    )
+                return await self._run_db_impl(fn, *args, timeout=timeout, label="role_pool:db_write", **kwargs)
 
     # ------------------------------------------------------------------|
     # Role: REGEX — Pattern matching (CPU-bound)                       |
@@ -661,7 +641,7 @@ class RoleBasedPools:
 
     async def run_regex[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -689,12 +669,15 @@ class RoleBasedPools:
             self._get_regex_lock,
             self._regex_executor,  # type: ignore[arg-type]
             "regex",
-            fn, *args, timeout=timeout, **kwargs
-    )
+            fn,
+            *args,
+            timeout=timeout,
+            **kwargs,
+        )
 
     def run_regex_sync[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         **kwargs: Any,
@@ -709,7 +692,7 @@ class RoleBasedPools:
 
     async def run_async_io[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -734,8 +717,11 @@ class RoleBasedPools:
             self._get_async_io_lock,
             self._async_io_executor,  # type: ignore[arg-type]
             "async_io",
-            fn, *args, timeout=timeout, **kwargs
-    )
+            fn,
+            *args,
+            timeout=timeout,
+            **kwargs,
+        )
 
     # ------------------------------------------------------------------|
     # Role: LMDB — Key-value store I/O (I/O-bound, 1 writer)          |
@@ -743,7 +729,7 @@ class RoleBasedPools:
 
     async def run_lmdb[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -762,7 +748,7 @@ class RoleBasedPools:
 
     def run_lmdb_sync[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         **kwargs: Any,
@@ -784,7 +770,7 @@ class RoleBasedPools:
 
     async def _run_batch[T, R](
         self,
-        fn: "Callable[[T], R]",
+        fn: Callable[[T], R],
         items: list[T],
         *,
         role: str,
@@ -820,12 +806,12 @@ class RoleBasedPools:
             [wrap(item) for item in items],  # type: ignore[arg-type]
             concurrency=concurrency,
             ctx=f"role_pool:{role}_batch",
-    )
+        )
         return [r for r in result.ok if r is not None]
 
     async def run_hash_batch[T, R](
         self,
-        fn: "Callable[[T], R]",
+        fn: Callable[[T], R],
         items: list[T],
         *,
         timeout: float | None = None,
@@ -835,7 +821,7 @@ class RoleBasedPools:
 
     async def run_regex_batch[T, R](
         self,
-        fn: "Callable[[T], R]",
+        fn: Callable[[T], R],
         items: list[T],
         *,
         timeout: float | None = None,
@@ -937,7 +923,7 @@ async def _deprecated_pool_wrapper[T](
     shim_name: str,
     canonical_name: str,
     pools_method: Callable[..., Coroutine[Any, Any, T]],  # type: ignore[misc]
-    fn: "Callable[..., T]",
+    fn: Callable[..., T],
     /,
     *args: Any,
     **kwargs: Any,
@@ -957,18 +943,16 @@ async def _deprecated_pool_wrapper[T](
     return await pools_method(pools, fn, *args, **kwargs)
 
 
-async def run_in_hash_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
+async def run_in_hash_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Backward-compat shim for run_in_cpu_pool (hash role).
 
     DEPRECATED: Use RoleBasedPools.run_hash() instead.
     """
-    return await _deprecated_pool_wrapper(
-        "run_in_hash_pool", "run_hash", RoleBasedPools.run_hash, fn, *args, **kwargs
-    )
+    return await _deprecated_pool_wrapper("run_in_hash_pool", "run_hash", RoleBasedPools.run_hash, fn, *args, **kwargs)
 
 
-async def run_in_regex_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
+async def run_in_regex_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Backward-compat shim for run_in_cpu_pool (regex role).
 
@@ -979,7 +963,7 @@ async def run_in_regex_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: 
     )
 
 
-async def run_in_embed_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
+async def run_in_embed_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Backward-compat shim for embedding role.
 
@@ -991,7 +975,7 @@ async def run_in_embed_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: 
 
 
 async def run_in_db_pool(
-    fn: "Callable[..., list[dict[str, Any]]]",
+    fn: Callable[..., list[dict[str, Any]]],
     /,
     *args: Any,
     **kwargs: Any,
@@ -1001,6 +985,4 @@ async def run_in_db_pool(
 
     DEPRECATED: Use RoleBasedPools.run_db() instead.
     """
-    return await _deprecated_pool_wrapper(
-        "run_in_db_pool", "run_db", RoleBasedPools.run_db, fn, *args, **kwargs
-    )
+    return await _deprecated_pool_wrapper("run_in_db_pool", "run_db", RoleBasedPools.run_db, fn, *args, **kwargs)

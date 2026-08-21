@@ -49,12 +49,10 @@ M1 8GB Optimized:
 - Incremental timeline building
 - Memory-efficient diff algorithms
 """
-import asyncio
 import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
@@ -64,10 +62,8 @@ import httpx
 from urllib.parse import quote, urlparse
 import numpy as np
 from hledac.universal.utils.asyncx import parallel_ok
-from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
-from operator import attrgetter, itemgetter
-from _core import aclose
+from operator import attrgetter
 logger = logging.getLogger(__name__)
 
 # NEW-MEM-005: Archive content cap for M1 8GB safety

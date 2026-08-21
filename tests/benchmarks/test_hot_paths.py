@@ -7,14 +7,11 @@ These tests run with: pytest tests/benchmarks/ -v --benchmark-only
 M1 8GB budget: each benchmark target <5ms for the hot-path input size.
 """
 
-import pytest
-from _core import aclose
-
 
 class TestIOCCanonical:
     """Benchmark: IOC extraction from structured text."""
 
-    def test_ioc_extract_10kb(self, benchmark):
+    def test_ioc_extract_10kb(self, benchmark) -> None:
         """Rust fast_ioc_extract on 10KB HTML snippet."""
         from hledac.universal._core.rust_backend import rust
 
@@ -23,13 +20,12 @@ class TestIOCCanonical:
             "<p>Contact us at info@example.com or visit https://www.example.org/path?q=1</p>"
             "<p>IP: 192.168.1.1 and 2001:db8::1</p>"
             "<p>Hash: a3f5c2d1e4b6f8a9c0d1e2f3a4b5c6d7e8f9a0b</p>"
-            "<p>Another domain test.example.com and 10.0.0.255</p>"
-            + "<p>Long content " * 200 + "</p>"
-    )
+            "<p>Another domain test.example.com and 10.0.0.255</p>" + "<p>Long content " * 200 + "</p>"
+        )
         result = benchmark(rust.ioc.extract_iocs_flat, text)
         assert isinstance(result, list)
 
-    def test_ioc_extract_100kb(self, benchmark):
+    def test_ioc_extract_100kb(self, benchmark) -> None:
         """Rust fast_ioc_extract on 100KB text block."""
         from hledac.universal._core.rust_backend import rust
 
@@ -38,7 +34,7 @@ class TestIOCCanonical:
             "IP: 192.168.1.1 | 2001:db8::1 | "
             "a3f5c2d1e4b6f8a9c0d1e2f3a4b5c6d7e8f9a0b | "
             "test.example.com | 10.0.0.255 | "
-    )
+        )
         text = (chunk + "\n") * 2500  # ~100KB
         result = benchmark(rust.ioc.extract_iocs_flat, text)
         assert isinstance(result, list)
@@ -47,7 +43,7 @@ class TestIOCCanonical:
 class TestURLCanonical:
     """Benchmark: URL canonicalization."""
 
-    def test_canonical_url_single(self, benchmark):
+    def test_canonical_url_single(self, benchmark) -> None:
         """Single URL canonicalization."""
         from hledac.universal.tools.url_dedup import normalize_url
 
@@ -55,19 +51,16 @@ class TestURLCanonical:
         result = benchmark(normalize_url, url)
         assert isinstance(result, str)
 
-    def test_canonicalize_batch_50(self, benchmark):
+    def test_canonicalize_batch_50(self, benchmark) -> None:
         """Batch canonicalize: 50 URLs."""
         from hledac.universal.tools.url_dedup import normalize_url_parallel
 
-        urls = [
-            f"https://www.example{i}.com:443/path/to/resource?b=2&a={i}#frag{i}"
-            for i in range(50)
-        ]
+        urls = [f"https://www.example{i}.com:443/path/to/resource?b=2&a={i}#frag{i}" for i in range(50)]
         result = benchmark(normalize_url_parallel, urls)
         assert isinstance(result, list)
         assert len(result) == 50
 
-    def test_fingerprint_url(self, benchmark):
+    def test_fingerprint_url(self, benchmark) -> None:
         """URL dedup fingerprint: xxhash3-64."""
         from hledac.universal.tools.url_dedup import fingerprint_url
 
@@ -79,7 +72,7 @@ class TestURLCanonical:
 class TestBloomFilterDedup:
     """Benchmark: BloomFilter URL dedup throughput."""
 
-    def test_bloom_filter_add_batch_1k(self, benchmark):
+    def test_bloom_filter_add_batch_1k(self, benchmark) -> None:
         """Add 1K URLs to BloomFilter."""
         from hledac_rust_extensions import BloomFilter  # type: ignore[unresolved-import]
 
@@ -89,7 +82,7 @@ class TestBloomFilterDedup:
         assert isinstance(result, list)
         assert len(result) == 1000
 
-    def test_bloom_filter_check_batch_1k(self, benchmark):
+    def test_bloom_filter_check_batch_1k(self, benchmark) -> None:
         """Check 1K URLs in BloomFilter with 50% hit rate."""
         from hledac_rust_extensions import BloomFilter  # type: ignore[unresolved-import]
 
@@ -103,7 +96,7 @@ class TestBloomFilterDedup:
         assert isinstance(result, list)
         assert len(result) == 1000
 
-    def test_rotating_bloom_filter_dedup(self, benchmark):
+    def test_rotating_bloom_filter_dedup(self, benchmark) -> None:
         """RotatingBloomFilter URL dedup path."""
         from hledac.universal.tools.url_dedup import RotatingBloomFilter, fingerprint_url
 
@@ -121,7 +114,7 @@ class TestBloomFilterDedup:
 class TestEntropy:
     """Benchmark: Shannon entropy computation (NEON-accelerated on M1)."""
 
-    def test_entropy_small_text(self, benchmark):
+    def test_entropy_small_text(self, benchmark) -> None:
         """Entropy of ~1KB text."""
         from hledac.universal._core.rust_backend import rust
 
@@ -130,7 +123,7 @@ class TestEntropy:
         assert isinstance(result, float)
         assert 0.0 <= result <= 8.0
 
-    def test_entropy_large_text(self, benchmark):
+    def test_entropy_large_text(self, benchmark) -> None:
         """Entropy of ~100KB random-ish text."""
         from hledac.universal._core.rust_backend import rust
 
@@ -143,7 +136,7 @@ class TestEntropy:
 class TestHashing:
     """Benchmark: Fast non-crypto hashing."""
 
-    def test_xxhash3_64(self, benchmark):
+    def test_xxhash3_64(self, benchmark) -> None:
         """xxhash3-64 of canonical URL (as bytes)."""
         from hledac.universal._core.rust_backend import rust
 
@@ -151,7 +144,7 @@ class TestHashing:
         result = benchmark(rust.hash.xxh3_64_hex, data)
         assert isinstance(result, str)
 
-    def test_xxhash3_64_batch_100(self, benchmark):
+    def test_xxhash3_64_batch_100(self, benchmark) -> None:
         """Batch xxhash3-64: 100 byte strings."""
         from hledac.universal._core.rust_backend import rust
 

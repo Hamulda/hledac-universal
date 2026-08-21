@@ -13,7 +13,6 @@ async def start(
     **kwargs: Any,
 ) -> Browser:
     """Launch a headless Chrome browser instance."""
-    ...
 
 # Alias
 async def launch(
@@ -24,7 +23,6 @@ async def launch(
     **kwargs: Any,
 ) -> Browser:
     """Alias for start()."""
-    ...
 
 class Browser:
     """Headless Chrome browser instance."""
@@ -37,6 +35,7 @@ class Browser:
 
 class Page:
     """A single tab/page in the browser."""
+
     url: str
     async def __aenter__(self) -> Page: ...
     async def __aexit__(self, *args: Any) -> None: ...
@@ -62,7 +61,6 @@ async def start(
     **kwargs: Any,
 ) -> Browser:
     """Launch a headless Chrome browser instance."""
-    ...
 
 # Alias
 async def launch(
@@ -73,7 +71,6 @@ async def launch(
     **kwargs: Any,
 ) -> Browser:
     """Alias for start()."""
-    ...
 
 # Alias for compatibility with code that imports uc
 uc = Any  # type: ignore[misc]

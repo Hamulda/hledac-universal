@@ -16,12 +16,16 @@ Fail-soft: invalid/corrupt envelope degrades to plain finding (no crash).
 
 M1 safe: pure Python, no model load, no JS renderer.
 """
+
 import logging
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
-from _core import aclose
-__all__ = ['FindingEnvelope', 'MAX_ENVELOPE_SIZE', 'envelope_size_guard', 'serialize_envelope', 'deserialize_envelope']
+
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+
+__all__ = ["FindingEnvelope", "MAX_ENVELOPE_SIZE", "envelope_size_guard", "serialize_envelope", "deserialize_envelope"]
 logger = logging.getLogger(__name__)
 MAX_ENVELOPE_SIZE: int = 4098
+
 
 class FindingEnvelope:
     """
@@ -51,14 +55,22 @@ class FindingEnvelope:
         - chain_refs is list[str], may be empty
         - Serialized JSON must fit within MAX_ENVELOPE_SIZE bytes
     """
+
     audit_reason: str
     evidence_pointers: list[str]
     signal_facets: dict[str, float]
     suggested_pivots: list[dict]
     chain_refs: list[str]
-    __slots__ = tuple(('audit_reason', 'chain_refs', 'evidence_pointers', 'signal_facets', 'suggested_pivots'))
+    __slots__ = ("audit_reason", "chain_refs", "evidence_pointers", "signal_facets", "suggested_pivots")
 
-    def __init__(self, audit_reason: str='', evidence_pointers: list[str] | None=None, signal_facets: dict[str, float] | None=None, suggested_pivots: list[dict] | None=None, chain_refs: list[str] | None=None) -> None:
+    def __init__(
+        self,
+        audit_reason: str = "",
+        evidence_pointers: list[str] | None = None,
+        signal_facets: dict[str, float] | None = None,
+        suggested_pivots: list[dict] | None = None,
+        chain_refs: list[str] | None = None,
+    ) -> None:
         self.audit_reason = audit_reason
         self.evidence_pointers = evidence_pointers if evidence_pointers is not None else []
         self.signal_facets = signal_facets if signal_facets is not None else {}
@@ -67,7 +79,14 @@ class FindingEnvelope:
 
     def is_populated(self) -> bool:
         """True if envelope carries any meaningful metadata beyond default empty."""
-        return bool(self.audit_reason or self.evidence_pointers or self.signal_facets or self.suggested_pivots or self.chain_refs)
+        return bool(
+            self.audit_reason
+            or self.evidence_pointers
+            or self.signal_facets
+            or self.suggested_pivots
+            or self.chain_refs
+        )
+
 
 def envelope_size_guard(envelope: FindingEnvelope) -> bool:
     """
@@ -78,6 +97,7 @@ def envelope_size_guard(envelope: FindingEnvelope) -> bool:
     """
     try:
         import orjson
+
         raw = orjson.dumps(envelope)
     except Exception:
         try:
@@ -85,6 +105,7 @@ def envelope_size_guard(envelope: FindingEnvelope) -> bool:
         except Exception:
             return False
     return len(raw) <= MAX_ENVELOPE_SIZE
+
 
 def serialize_envelope(envelope: FindingEnvelope) -> str | None:
     """
@@ -97,20 +118,34 @@ def serialize_envelope(envelope: FindingEnvelope) -> str | None:
         return None
     try:
         import orjson
-        raw = orjson.dumps({'audit_reason': envelope.audit_reason, 'evidence_pointers': envelope.evidence_pointers, 'signal_facets': envelope.signal_facets, 'suggested_pivots': envelope.suggested_pivots, 'chain_refs': envelope.chain_refs})
+
+        raw = orjson.dumps(
+            {
+                "audit_reason": envelope.audit_reason,
+                "evidence_pointers": envelope.evidence_pointers,
+                "signal_facets": envelope.signal_facets,
+                "suggested_pivots": envelope.suggested_pivots,
+                "chain_refs": envelope.chain_refs,
+            }
+        )
     except Exception:
         try:
             raw = _msgspec_encode(envelope.__dict__)
         except Exception:
-            logger.warning('[ENVELOPE] serialize failed — will degrade to plain finding')
+            logger.warning("[ENVELOPE] serialize failed — will degrade to plain finding")
             return None
     if len(raw) > MAX_ENVELOPE_SIZE:
-        logger.warning('[ENVELOPE] envelope size %d exceeds MAX_ENVELOPE_SIZE %d — will degrade to plain finding', len(raw), MAX_ENVELOPE_SIZE)
+        logger.warning(
+            "[ENVELOPE] envelope size %d exceeds MAX_ENVELOPE_SIZE %d — will degrade to plain finding",
+            len(raw),
+            MAX_ENVELOPE_SIZE,
+        )
         return None
     try:
-        return raw.decode('utf-8')
+        return raw.decode("utf-8")
     except Exception:
         return None
+
 
 def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
     """
@@ -124,18 +159,27 @@ def deserialize_envelope(payload_text: str | None) -> FindingEnvelope | None:
     data: dict = {}
     try:
         import orjson
+
         data = orjson.loads(payload_text)
     except Exception:
         try:
             data = _msgspec_decode(payload_text)
         except Exception:
-            if payload_text.strip().startswith('{'):
-                logger.warning('[ENVELOPE] deserialize failed for payload_text (malformed JSON) — will degrade to plain finding')
+            if payload_text.strip().startswith("{"):
+                logger.warning(
+                    "[ENVELOPE] deserialize failed for payload_text (malformed JSON) — will degrade to plain finding"
+                )
             return None
     if not isinstance(data, dict):
         return None
-    audit_reason = data.get('audit_reason', '')
+    audit_reason = data.get("audit_reason", "")
     if not isinstance(audit_reason, str) or not audit_reason:
-        logger.debug('[ENVELOPE] payload_text has no audit_reason — treating as legacy finding')
+        logger.debug("[ENVELOPE] payload_text has no audit_reason — treating as legacy finding")
         return None
-    return FindingEnvelope(audit_reason=audit_reason, evidence_pointers=data.get('evidence_pointers', []), signal_facets=data.get('signal_facets', {}), suggested_pivots=data.get('suggested_pivots', []), chain_refs=data.get('chain_refs', []))
+    return FindingEnvelope(
+        audit_reason=audit_reason,
+        evidence_pointers=data.get("evidence_pointers", []),
+        signal_facets=data.get("signal_facets", {}),
+        suggested_pivots=data.get("suggested_pivots", []),
+        chain_refs=data.get("chain_refs", []),
+    )

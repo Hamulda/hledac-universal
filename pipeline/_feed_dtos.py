@@ -22,9 +22,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import field as msgspec_field
 
-# === Feed Quality Metrics ===
 
 class FeedQualityMetrics(Struct, frozen=True):
     """Kvalita + adapter bands — extracted from FeedIngestContext."""
@@ -49,8 +49,6 @@ class FeedQualityMetrics(Struct, frozen=True):
     language_mismatch: bool = False
     temporal_feed_vocabulary_mismatch: bool = False
 
-
-# === Feed Fallback Metrics ===
 
 class FeedFallbackMetrics(Struct, frozen=True):
     """Fallback economics — extracted from FeedIngestContext.
@@ -92,8 +90,6 @@ class FeedFallbackMetrics(Struct, frozen=True):
     fallback_value_ratio: float = 0.0
 
 
-# === Feed Economics Verdict ===
-
 class FeedEconomicsVerdict(Struct, frozen=True):
     """Rich ratio + squandered_high_usefulness — extracted from FeedIngestContext."""
 
@@ -113,8 +109,6 @@ class FeedEconomicsVerdict(Struct, frozen=True):
     feed_economics_tuple: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
     winning_source_breakdown: dict[str, int] = msgspec_field(default_factory=dict)
 
-
-# === Feed Telemetry ===
 
 class FeedTelemetry(Struct, frozen=True):
     """Signal stage + samples + zero_signal_reason — extracted from FeedIngestContext."""
@@ -146,8 +140,6 @@ class FeedTelemetry(Struct, frozen=True):
     feed_branch_verdict: dict[str, Any] = msgspec_field(default_factory=dict)
 
 
-# === Pure decision functions (candidates for Rust migration) ===
-# Constants shared between Python fallback classifiers and Rust implementation
 _MIN_ARTICLE_FALLBACK_CHARS: int = 150
 
 
@@ -183,13 +175,10 @@ def classify_fallback_decision_python(
             True,
             False,
             "feed-native already carried hits",
-    )
+        )
 
     if not article_fallback_attempted:
-        if (
-            assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS
-            and quality_band in ("high", "medium")
-        ):
+        if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_band in ("high", "medium"):
             return (
                 "skipped_high_quality",
                 False,
@@ -197,11 +186,8 @@ def classify_fallback_decision_python(
                 False,
                 False,
                 f"high quality ({quality_band}), assembled {assembled_text_len} chars",
-    )
-        if (
-            adapter_source_priority_bias >= 0.1
-            and assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS
-        ):
+            )
+        if adapter_source_priority_bias >= 0.1 and assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS:
             return (
                 "skipped_adapter_bias",
                 False,
@@ -209,7 +195,7 @@ def classify_fallback_decision_python(
                 False,
                 False,
                 f"adapter source_priority_bias={adapter_source_priority_bias:.2f}",
-    )
+            )
         return (
             "no_fetch_warranted",
             False,
@@ -217,29 +203,19 @@ def classify_fallback_decision_python(
             False,
             False,
             f"assembled={assembled_text_len}, quality={quality_band}",
-    )
+        )
 
-    if (
-        metadata_boost
-        and not language_mismatch
-        and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS
-    ):
+    if metadata_boost and not language_mismatch and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS:
         if post_fallback_findings_count > 0:
             return ("forced_metadata_mismatch", True, True, False, True, "")
         return ("forced_no_yield", True, True, True, False, "")
 
-    if (
-        assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS
-        and quality_band == "low"
-    ):
+    if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_band == "low":
         if post_fallback_findings_count > 0:
             return ("aged_structured_yield", True, True, False, True, "")
         return ("aged_structured_no_yield", True, True, True, False, "")
 
-    if (
-        adapter_metadata_richness_band == "high"
-        and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS
-    ):
+    if adapter_metadata_richness_band == "high" and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS:
         if post_fallback_findings_count > 0:
             return ("forced_adapter_metadata", True, True, False, True, "")
         return ("forced_adapter_no_yield", True, True, True, False, "")
@@ -322,11 +298,7 @@ def compute_feed_economics_verdict_python(
         return ("no_signal", int(feed_signal_present), fallback_useful, fallback_waste, 0)
 
     rich_ratio = findings_rich / total_findings if total_findings > 0 else 0.0
-    waste_ratio = (
-        fallback_waste / (fallback_useful + fallback_waste)
-        if (fallback_useful + fallback_waste) > 0
-        else 0.0
-    )
+    waste_ratio = fallback_waste / (fallback_useful + fallback_waste) if (fallback_useful + fallback_waste) > 0 else 0.0
 
     if rich_ratio >= 0.7:
         verdict_tag = "feed_lean"
@@ -421,10 +393,10 @@ def compute_feed_branch_verdict_python(
     return verdict
 
 
-# === Try to import Rust-accelerated versions ===
 try:
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     _rust = rust.raw.module
 
     if hasattr(_rust, "feed_decision_classify"):
@@ -436,8 +408,8 @@ except Exception:
 
 
 import sys as _sys
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 
 def _make_rust_wrapper(rust_fn_name: str) -> Any:
@@ -463,8 +435,6 @@ compute_feed_branch_hint = _make_rust_wrapper("feed_branch_hint")
 compute_feed_economics_verdict = _make_rust_wrapper("feed_economics_verdict")
 compute_feed_branch_verdict = _make_rust_wrapper("feed_branch_verdict")
 
-# === G6: Batch Fallback Decision (Tier 2 Rust via signal_batch) ===
-
 # Lazy import for Rust batch fallback
 _batch_fallback_decide: Any = None
 _has_rust_batch: bool | None = None
@@ -477,6 +447,7 @@ def _get_rust_batch_fallback():
         _has_rust_batch = False
         try:
             from rust_extensions.wiring.signal_batch_wiring import batch_fallback_decide as _fn
+
             _batch_fallback_decide = _fn
             _has_rust_batch = True
         except Exception:
@@ -532,9 +503,7 @@ def batch_classify_fallback_decisions(
             pass  # Fall through to Python
 
     # Python fallback: per-item classification
-    return [
-        _classify_fallback_decision_from_dict(d) for d in decisions
-    ]
+    return [_classify_fallback_decision_from_dict(d) for d in decisions]
 
 
 def _classify_fallback_decision_from_dict(params: dict[str, Any]) -> FallbackDecision:
@@ -547,7 +516,7 @@ def _classify_fallback_decision_from_dict(params: dict[str, Any]) -> FallbackDec
     quality_band = params.get("quality_band", "unknown")
     metadata_boost = params.get("metadata_boost", False)
     language_mismatch = params.get("language_mismatch", False)
-    article_fallback_used = params.get("article_fallback_used", False)
+    params.get("article_fallback_used", False)
     article_fallback_attempted = params.get("article_fallback_attempted", False)
     post_fallback_findings_count = params.get("post_fallback_findings_count", 0)
     adapter_source_priority_bias = params.get("adapter_source_priority_bias", 0.0)
@@ -663,10 +632,6 @@ def _classify_fallback_decision_from_dict(params: dict[str, Any]) -> FallbackDec
         helpful=False,
     )
 
-
-
-
-# === Fallback Decision (moved from live_feed_pipeline.py) ===
 
 class FallbackDecision(Struct, frozen=True):
     """Structured fallback decision output.

@@ -43,25 +43,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _url_engine_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "url_engine")
     and getattr(_rust_backend, "url_engine", None) is not None
 )
 
-# Get module reference
 _url_engine = getattr(_rust_backend, "url_engine", None) if _url_engine_available else None
-
-
-# =============================================================================
-# URL Normalization Functions
-# =============================================================================
-
 
 def normalize_url(url: str) -> str:
     """
@@ -92,7 +83,6 @@ def normalize_url(url: str) -> str:
     # Python fallback
     return _python_normalize_url(url)
 
-
 def _python_normalize_url(url: str) -> str:
     """Pure Python URL normalization fallback."""
     from urllib.parse import urlparse, urlencode, parse_qs
@@ -103,7 +93,6 @@ def _python_normalize_url(url: str) -> str:
     scheme = parsed.scheme.lower()
     netloc = parsed.netloc.lower().split("@")[-1]  # Remove auth
 
-    # Remove default port
     if ":" in netloc:
         host_port = netloc.rsplit(":", 1)
         if len(host_port) == 2:
@@ -121,7 +110,6 @@ def _python_normalize_url(url: str) -> str:
 
     # Reconstruct URL without fragment
     return f"{scheme}://{netloc}{parsed.path}?{sorted_query if query else ''}"
-
 
 def fingerprint_url(url: str) -> int:
     """
@@ -150,7 +138,6 @@ def fingerprint_url(url: str) -> int:
     # Python fallback
     return _python_fingerprint_url(url)
 
-
 def _python_fingerprint_url(url: str) -> int:
     """Pure Python URL fingerprint fallback using xxhash."""
     try:
@@ -163,7 +150,6 @@ def _python_fingerprint_url(url: str) -> int:
 
         normalized = _python_normalize_url(url)
         return int(hashlib.sha256(normalized.encode()).hexdigest()[:16], 16)
-
 
 def strip_tracking_params(url: str) -> str:
     """
@@ -195,7 +181,6 @@ def strip_tracking_params(url: str) -> str:
 
     # Python fallback
     return _python_strip_tracking_params(url)
-
 
 # Common tracking parameters (matching Rust TRACKING_PARAMS)
 _TRACKING_PARAMS: set[str] = {
@@ -232,7 +217,6 @@ _TRACKING_PARAMS: set[str] = {
     "aff_id",
 }
 
-
 def _python_strip_tracking_params(url: str) -> str:
     """Pure Python tracking parameter stripping fallback."""
     from urllib.parse import urlparse, urlencode, parse_qs
@@ -247,7 +231,6 @@ def _python_strip_tracking_params(url: str) -> str:
 
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{query}"
 
-
 def get_tracking_params() -> list[str]:
     """
     Get list of tracking parameters stripped by strip_tracking_params().
@@ -260,15 +243,9 @@ def get_tracking_params() -> list[str]:
 
     return list(_TRACKING_PARAMS)
 
-
 def url_engine_available() -> bool:
     """Check if Rust URL engine is available."""
     return _url_engine_available
-
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     "normalize_url",

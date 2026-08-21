@@ -19,7 +19,7 @@ from hledac_hypothesis.hypothesisgenerator import (
 
 
 class MockFinding:
-    def __init__(self, finding_id: str, payload_text: str):
+    def __init__(self, finding_id: str, payload_text: str) -> None:
         self.finding_id = finding_id
         self.payload_text = payload_text
 
@@ -29,14 +29,14 @@ class MockFinding:
 # ---------------------------------------------------------------------------
 
 
-def test_HLEDAC_ENABLE_DSPY_defaults_to_false():  # noqa: N802
+def test_HLEDAC_ENABLE_DSPY_defaults_to_false() -> None:  # noqa: N802
     """HLEDAC_ENABLE_DSPY is False when env var is not set."""
     # HLEDAC_ENABLE_DSPY reflects current process env — may be set externally
     # The module-level constant reflects the current environment state at import
     assert HLEDAC_ENABLE_DSPY in (True, False)
 
 
-def test_heuristic_generate_returns_valid_research_hypothesis_list():
+def test_heuristic_generate_returns_valid_research_hypothesis_list() -> None:
     """
     _heuristic_generate returns a list of ResearchHypothesis objects.
     """
@@ -50,12 +50,9 @@ def test_heuristic_generate_returns_valid_research_hypothesis_list():
     assert all(isinstance(h, ResearchHypothesis) for h in result)
 
 
-def test_heuristic_generate_with_ip_findings():
+def test_heuristic_generate_with_ip_findings() -> None:
     """IP findings → entity_expansion hypotheses with /16 subnet pivot seeds."""
-    findings = [
-        MockFinding("f1", f"indicator 8.8.8.{i} resolved to mail.example.com")
-        for i in range(5)
-    ]
+    findings = [MockFinding("f1", f"indicator 8.8.8.{i} resolved to mail.example.com") for i in range(5)]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=1)
     ip_hypotheses = [h for h in result if "8.8.8" in h.hypothesis_text]
     assert len(ip_hypotheses) >= 1
@@ -64,7 +61,7 @@ def test_heuristic_generate_with_ip_findings():
         assert h.confidence == 0.65  # IP entity_expansion confidence
 
 
-def test_heuristic_generate_with_domain_findings():
+def test_heuristic_generate_with_domain_findings() -> None:
     """Domain findings → entity_expansion hypotheses with parent TLD pivot seeds."""
     findings = [
         MockFinding("f1", "subdomain.example.com resolved"),
@@ -78,7 +75,7 @@ def test_heuristic_generate_with_domain_findings():
         assert h.confidence == 0.6  # domain entity_expansion confidence
 
 
-def test_heuristic_generate_with_hash_findings():
+def test_heuristic_generate_with_hash_findings() -> None:
     """Hash findings → lateral hypotheses with hash pivot seeds."""
     findings = [
         MockFinding("f1", "file abc123def456789012345678901234ab hash detected in breach"),
@@ -89,7 +86,7 @@ def test_heuristic_generate_with_hash_findings():
     assert any(h.hypothesis_type == "lateral" for h in result)
 
 
-def test_heuristic_generate_with_email_findings():
+def test_heuristic_generate_with_email_findings() -> None:
     """Email findings → adversarial hypotheses with leak: pivot seeds."""
     findings = [
         MockFinding("f1", "admin@evil-corp.com credentials exposed in leak"),
@@ -100,7 +97,7 @@ def test_heuristic_generate_with_email_findings():
     assert any(h.hypothesis_type == "adversarial" for h in result)
 
 
-def test_heuristic_generate_seed_expansion():
+def test_heuristic_generate_seed_expansion() -> None:
     """Current seeds present → seed-expansion hypothesis added."""
     findings = [
         MockFinding("f1", "8.8.8.8 DNS response"),
@@ -110,7 +107,7 @@ def test_heuristic_generate_seed_expansion():
     assert len(seed_hyps) >= 1
 
 
-def test_heuristic_generate_sprint_depth_temporal():
+def test_heuristic_generate_sprint_depth_temporal() -> None:
     """sprint_depth > 1 → temporal hypotheses included."""
     findings = [
         MockFinding("f1", "example.com WHOIS created 2020-01-01"),
@@ -123,7 +120,7 @@ def test_heuristic_generate_sprint_depth_temporal():
     assert len(temporal_d2) >= 0  # pass-through is valid
 
 
-def test_generate_without_dspy_calls_heuristic(monkeypatch):
+def test_generate_without_dspy_calls_heuristic(monkeypatch) -> None:
     """
     With HLEDAC_ENABLE_DSPY unset, generate() calls _heuristic_generate,
     not the DSPy path.
@@ -142,7 +139,7 @@ def test_generate_without_dspy_calls_heuristic(monkeypatch):
     assert any(h.hypothesis_type == "entity_expansion" for h in result)
 
 
-def test_load_dspy_program_returns_none_when_not_enabled(monkeypatch):
+def test_load_dspy_program_returns_none_when_not_enabled(monkeypatch) -> None:
     """
     _load_dspy_program returns None when HLEDAC_ENABLE_DSPY env var is not set.
     (DSPy loading is env-gated and fail-soft.)

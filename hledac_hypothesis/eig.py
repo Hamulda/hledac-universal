@@ -15,12 +15,10 @@ belief state and a posterior after a hypothetical action. The returned EIG
 is the expected entropy reduction in nats.
 """
 
-
 import math
 from typing import Any
 
 from hledac_hypothesis.dempster_shafer import DempsterShafer
-from _core import aclose
 
 
 class EIGCalculator:

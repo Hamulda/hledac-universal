@@ -36,11 +36,11 @@ ABI Versioning Policy (R-23):
     - Minor/patch mismatch je backward-compatible (log warning)
     - Python-side kontrola při importu: viz core.rust_backend._prober.probe()
 """
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from typing import Any
@@ -50,10 +50,10 @@ logger = logging.getLogger(__name__)
 # Konstanty musí odpovídat Rust ABI_VERSION v lib.rs:625
 _LEGACY_EXPECTED_ABI: tuple[int, int, int] = (1, 0, 0)
 _LEGACY_EXPECTED_ABI_MAJOR: int = 1
-_legacy_backend_instance: "_LegacyRustBackend | None" = None
+_legacy_backend_instance: _LegacyRustBackend | None = None
 
 
-def get_legacy_backend() -> "_LegacyRustBackend":
+def get_legacy_backend() -> _LegacyRustBackend:
     """
     Vrací cached _LegacyRustBackend instanci (singleton).
 
@@ -86,7 +86,7 @@ class _LegacyRustBackend:
         self._probe_result = _rust_probe()
 
         # Lazy-load AccelBackend — načítá se až při prvním delegovaném volání
-        self._accel: "Any" = None
+        self._accel: Any = None
 
     @property
     def is_available(self) -> bool:

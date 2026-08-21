@@ -12,19 +12,18 @@ Usage:
     )
     results = await orch.run("https://example.com/feed.xml")
 """
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.pipeline._soa_types import FindingBatch
 from hledac.universal.pipeline._stage_graph import StageOrchestrator, StageResult
 from hledac.universal.pipeline.feed._assemble_stage import AssembleStage
 from hledac.universal.pipeline.feed._build_feed_stage import BuildFeedStage
 from hledac.universal.pipeline.feed._dedup_stage import DedupStage
 from hledac.universal.pipeline.feed._fetch_feed_stage import FetchFeedStage
 from hledac.universal.pipeline.feed._scan_stage import ScanStage
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -78,10 +77,13 @@ class FeedPipelineOrchestrator:
 
         # Wire up stages in execution order
         stages = [
-            ("fetch_feed", FetchFeedStage(
-                timeout_s=35.0,
-                max_bytes=2_000_000,
-            )),
+            (
+                "fetch_feed",
+                FetchFeedStage(
+                    timeout_s=35.0,
+                    max_bytes=2_000_000,
+                ),
+            ),
             ("assemble", AssembleStage()),
             ("scan", ScanStage()),
             ("dedup", self._dedup_stage),  # shared instance
@@ -114,11 +116,10 @@ class FeedPipelineOrchestrator:
         # Reset dedup state for this run
         self._dedup_stage.reset()
 
-        # Run orchestrator with feed_url as initial input
         results = await self._orchestrator.run(
             initial_input=feed_url,
             max_batch_size=kwargs.get("max_batch_size", 256),
-    )
+        )
 
         return results
 

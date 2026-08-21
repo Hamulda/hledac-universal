@@ -16,13 +16,12 @@ Architecture: M1 8GB optimized, Python 3.14+ compatible
 from __future__ import annotations
 
 import pytest
-from _core import aclose
 
 
 class TestDarknetURLDetection:
     """Test dark web URL detection patterns."""
 
-    def test_onion_v3_detection(self):
+    def test_onion_v3_detection(self) -> None:
         """Onion v3 URLs (56 char base32) must be detected."""
         from recon.onion_seed_manager import _RE_ONION_V3
 
@@ -36,7 +35,7 @@ class TestDarknetURLDetection:
             match = _RE_ONION_V3.search(url)
             assert match is not None, f"Failed to detect v3 onion in: {url}"
 
-    def test_onion_v2_detection(self):
+    def test_onion_v2_detection(self) -> None:
         """Onion v2 URLs (16 char base32) must be detected."""
         from recon.onion_seed_manager import _RE_ONION_V2
 
@@ -50,7 +49,7 @@ class TestDarknetURLDetection:
             match = _RE_ONION_V2.search(url)
             assert match is not None, f"Failed to detect v2 onion in: {url}"
 
-    def test_clearnet_urls_not_detected(self):
+    def test_clearnet_urls_not_detected(self) -> None:
         """Clearnet URLs must NOT be detected as .onion."""
         from recon.onion_seed_manager import _RE_ONION_V3
 
@@ -68,7 +67,7 @@ class TestDarknetURLDetection:
 class TestTorTransportAvailability:
     """Test TorTransport availability detection."""
 
-    def test_tor_transport_import(self):
+    def test_tor_transport_import(self) -> None:
         """TorTransport must be importable."""
         try:
             from transport.tor_transport import TorTransport
@@ -77,7 +76,7 @@ class TestTorTransportAvailability:
         except ImportError:
             pytest.skip("TorTransport not available in this environment")
 
-    def test_tor_transport_available_property(self):
+    def test_tor_transport_available_property(self) -> None:
         """TorTransport.available must be a boolean."""
         try:
             from transport.tor_transport import TorTransport
@@ -87,7 +86,7 @@ class TestTorTransportAvailability:
         except ImportError:
             pytest.skip("TorTransport not available in this environment")
 
-    def test_tor_transport_not_available_without_config(self):
+    def test_tor_transport_not_available_without_config(self) -> None:
         """TorTransport must report unavailable when Tor is not running."""
         try:
             from transport.tor_transport import TorTransport
@@ -107,14 +106,14 @@ class TestTorTransportAvailability:
 class TestDarknetConnector:
     """Test _darknet_connector in FetchCoordinator."""
 
-    def test_fetch_coordinator_darknet_connector_exists(self):
+    def test_fetch_coordinator_darknet_connector_exists(self) -> None:
         """FetchCoordinator must have _darknet_connector attribute."""
         from coordinators.fetch_coordinator import FetchCoordinator
 
         coordinator = FetchCoordinator(config=None)
         assert hasattr(coordinator, "_darknet_connector")
 
-    def test_fetch_coordinator_tor_transport_enabled(self):
+    def test_fetch_coordinator_tor_transport_enabled(self) -> None:
         """_tor_transport_enabled must be False when Tor not configured."""
         from coordinators.fetch_coordinator import FetchCoordinator
 
@@ -123,7 +122,7 @@ class TestDarknetConnector:
         # Default is False (fail-closed for Tor)
         assert coordinator._tor_transport_enabled is False
 
-    def test_fetch_coordinator_gopher_transport_enabled(self):
+    def test_fetch_coordinator_gopher_transport_enabled(self) -> None:
         """_gopher_transport_enabled must be False when Gopher not configured."""
         from coordinators.fetch_coordinator import FetchCoordinator
 
@@ -136,13 +135,13 @@ class TestDarknetConnector:
 class TestOnionSeedManager:
     """Test OnionSeedManager for curated .onion seed management."""
 
-    def test_onion_seed_manager_import(self):
+    def test_onion_seed_manager_import(self) -> None:
         """OnionSeedManager must be importable."""
         from recon.onion_seed_manager import OnionSeedManager
 
         assert OnionSeedManager is not None
 
-    def test_onion_seed_manager_curated_seeds_exist(self):
+    def test_onion_seed_manager_curated_seeds_exist(self) -> None:
         """OnionSeedManager must have CURATED_SEEDS."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -151,7 +150,7 @@ class TestOnionSeedManager:
         assert isinstance(seeds, list)
         assert len(seeds) > 0, "Must have at least one curated seed"
 
-    def test_curated_seeds_are_valid_onion_urls(self):
+    def test_curated_seeds_are_valid_onion_urls(self) -> None:
         """All CURATED_SEEDS must be valid .onion URLs."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -159,7 +158,7 @@ class TestOnionSeedManager:
             assert ".onion" in seed, f"Seed missing .onion: {seed}"
             assert seed.startswith("http"), f"Seed must start with http: {seed}"
 
-    def test_add_seed_validates_onion(self):
+    def test_add_seed_validates_onion(self) -> None:
         """add_seed() must validate .onion domain."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -170,7 +169,7 @@ class TestOnionSeedManager:
         manager.add_seed(valid_url)
         assert valid_url in manager.get_seeds()
 
-    def test_add_seed_rejects_clearnet(self):
+    def test_add_seed_rejects_clearnet(self) -> None:
         """add_seed() must reject clearnet URLs."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -189,7 +188,7 @@ class TestOnionSeedManager:
 class TestFailClosedBehavior:
     """Test fail-closed security model for dark web operations."""
 
-    def test_http3_lane_rejects_dark_web(self):
+    def test_http3_lane_rejects_dark_web(self) -> None:
         """fetch_http3_aioquic must reject .onion URLs (UDP cannot proxy through Tor)."""
         try:
             from transport.http3_lane import fetch_http3_aioquic, is_dark_web_url
@@ -205,7 +204,7 @@ class TestFailClosedBehavior:
         except ImportError:
             pytest.skip("http3_lane not available")
 
-    def test_is_dark_web_url_function(self):
+    def test_is_dark_web_url_function(self) -> None:
         """is_dark_web_url() must correctly identify dark web URLs."""
         try:
             from transport.http3_lane import is_dark_web_url
@@ -224,7 +223,7 @@ class TestFailClosedBehavior:
         except ImportError:
             pytest.skip("http3_lane not available")
 
-    def test_fetch_coordinator_no_tor_means_fail_closed(self):
+    def test_fetch_coordinator_no_tor_means_fail_closed(self) -> None:
         """When Tor not available, dark web fetch must fail closed."""
         from coordinators.fetch_coordinator import FetchCoordinator
 
@@ -240,7 +239,7 @@ class TestFailClosedBehavior:
 class TestOnionDiscovery:
     """Test .onion discovery functionality."""
 
-    def test_get_seeds_returns_list(self):
+    def test_get_seeds_returns_list(self) -> None:
         """get_seeds() must return a list."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -249,7 +248,7 @@ class TestOnionDiscovery:
 
         assert isinstance(seeds, list)
 
-    def test_get_seeds_respects_limit(self):
+    def test_get_seeds_respects_limit(self) -> None:
         """get_seeds(limit=N) must return at most N seeds."""
         from recon.onion_seed_manager import OnionSeedManager
 
@@ -258,12 +257,13 @@ class TestOnionDiscovery:
 
         assert len(seeds) <= 5
 
-    def test_discover_from_ahmia_returns_list(self):
+    def test_discover_from_ahmia_returns_list(self) -> None:
         """discover_from_ahmia() must return a list (may be empty on network error)."""
         import asyncio
+
         from recon.onion_seed_manager import OnionSeedManager
 
-        async def _test():
+        async def _test() -> None:
             manager = OnionSeedManager()
             # May return empty list if network unavailable
             result = await manager.discover_from_ahmia("bitcoin")

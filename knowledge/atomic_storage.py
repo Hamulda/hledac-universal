@@ -1,11 +1,9 @@
 """Re-export stub — canonical source is legacy.atomic_storage."""
 
-
 import warnings as _warnings
 
 _warnings.warn(
-    "hledac.universal.knowledge.atomic_storage is DEPRECATED. "
-    "Use hledac.universal.knowledge.duckdb_store instead.",
+    "hledac.universal.knowledge.atomic_storage is DEPRECATED. Use hledac.universal.knowledge.duckdb_store instead.",
     DeprecationWarning,
     stacklevel=2,
 )
@@ -51,4 +49,3 @@ __all__ = [
     "StanceScorer",
     "ZSTD_AVAILABLE",
 ]
-

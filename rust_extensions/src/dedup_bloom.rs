@@ -28,10 +28,6 @@ use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 // RUST-PANIC-001 FIX: use release_gil_py for panic-safe GIL release
 use crate::gil::release_gil_py;
 
-// ---------------------------------------------------------------------------
-// Global counters for health endpoint (no synchronization needed — atomics)
-// ---------------------------------------------------------------------------
-
 static GLOBAL_INSTANCES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_ITEMS_ADDED: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_CAPACITY: AtomicU64 = AtomicU64::new(0);
@@ -425,7 +421,6 @@ impl DistributedBloomFilter {
 
     /// Add an item, return true if new
     pub fn add(&mut self, item: &[u8]) -> bool {
-        // Update frequency sketch
         self.sketch.update(item);
 
         // Try to add to each tier
@@ -475,7 +470,6 @@ impl DistributedBloomFilter {
             })?;
         let mut writer = BufWriter::new(file);
 
-        // Write header
         writer
             .write_all(&FILE_MAGIC.to_le_bytes())
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
@@ -483,7 +477,6 @@ impl DistributedBloomFilter {
             .write_all(&[FILE_VERSION])
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
 
-        // Write tier data
         for tier in &self.tiers {
             let tier_data = tier.to_bytes();
             let compressed = lz4_compress(&tier_data);
@@ -496,7 +489,6 @@ impl DistributedBloomFilter {
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Write error: {}", e)))?;
         }
 
-        // Write sketch
         let sketch_data = self.sketch.to_bytes();
         let sketch_len = (sketch_data.len() as u32);
         writer
@@ -587,7 +579,6 @@ impl DistributedBloomFilter {
     pub fn to_bytes_compressed(&self) -> PyResult<Vec<u8>> {
         let mut buf = Vec::new();
 
-        // Write header
         buf.extend_from_slice(&FILE_MAGIC.to_le_bytes());
         buf.push(FILE_VERSION);
 
@@ -600,7 +591,6 @@ impl DistributedBloomFilter {
             buf.extend_from_slice(&compressed);
         }
 
-        // Write sketch
         let sketch_data = self.sketch.to_bytes();
         let sketch_len = (sketch_data.len() as u32);
         buf.extend_from_slice(&sketch_len);
@@ -929,10 +919,6 @@ mod tests {
         assert!(filter.contains(b"https://example0.com"));
     }
 }
-
-// ============================================================================
-// Python Module Registration
-// ============================================================================
 
 /// Register DedupBloom (DistributedBloomFilter) in the parent module.
 ///

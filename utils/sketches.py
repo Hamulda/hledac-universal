@@ -11,17 +11,18 @@ MLX-accelerated streaming sketches for bounded-memory frequency estimation:
 
 M1 8GB optimized: GPU-speed sketch ops, zero-copy LMDB I/O.
 """
+
 import hashlib
 import heapq
 import logging
 import pathlib
 from collections import OrderedDict
 from typing import Any
+
 logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 try:
     import mlx.core as mx
@@ -30,10 +31,12 @@ except ImportError:
 
 try:
     import lmdb
+
     LMDB_AVAILABLE = True
 except ImportError:
     lmdb = None
     LMDB_AVAILABLE = False
+
 
 class HybridFrequencySketch:
     """
@@ -42,9 +45,28 @@ class HybridFrequencySketch:
     - SpaceSaving heap for exact top-K counts
     - LMDB persistent store + LRU cache for rare items
     """
-    __slots__ = tuple(('_item_set', 'depth', 'exact_counts', 'heap', 'lmdb_env', 'lru_cache', 'lru_size', 'table', 'top_k', 'width'))
 
-    def __init__(self, sketch_width: int=2 ** 16, sketch_depth: int=5, top_k: int=1024, lru_size: int=512, lmdb_path: str | None=None):
+    __slots__ = (
+        "_item_set",
+        "depth",
+        "exact_counts",
+        "heap",
+        "lmdb_env",
+        "lru_cache",
+        "lru_size",
+        "table",
+        "top_k",
+        "width",
+    )
+
+    def __init__(
+        self,
+        sketch_width: int = 2**16,
+        sketch_depth: int = 5,
+        top_k: int = 1024,
+        lru_size: int = 512,
+        lmdb_path: str | None = None,
+    ) -> None:
         self.width = sketch_width
         self.depth = sketch_depth
         self.top_k = top_k
@@ -61,17 +83,18 @@ class HybridFrequencySketch:
         if LMDB_AVAILABLE and lmdb_path:
             try:
                 from hledac.universal.paths import open_lmdb
+
                 self.lmdb_env = open_lmdb(pathlib.Path(lmdb_path), map_size=100 * 1024 * 1024)
             except Exception as e:
-                logger.warning(f'Failed to open LMDB: {e}')
+                logger.warning(f"Failed to open LMDB: {e}")
                 self.lmdb_env = None
 
     def _hash(self, item: str, seed: int) -> int:
         """Return sketch index for given seed."""
-        h = hashlib.sha256(f'{seed}:{item}'.encode()).digest()
-        return int.from_bytes(h[:8], 'big') % self.width
+        h = hashlib.sha256(f"{seed}:{item}".encode()).digest()
+        return int.from_bytes(h[:8], "big") % self.width
 
-    def _update_sketch(self, item: str, count: int=1) -> None:
+    def _update_sketch(self, item: str, count: int = 1) -> None:
         """Add count to sketch table (vectorized in MLX).
 
         Uses mx.arange + mx.at for true vectorization without Python loops.
@@ -88,7 +111,7 @@ class HybridFrequencySketch:
                 idx = self._hash(item, d)
                 self.table[d][idx] += count
 
-    def _update_spacesaving(self, item: str, count: int=1) -> None:
+    def _update_spacesaving(self, item: str, count: int = 1) -> None:
         """Update exact counts via SpaceSaving algorithm."""
         if item in self.exact_counts:
             old_count = self.exact_counts[item]
@@ -147,7 +170,7 @@ class HybridFrequencySketch:
                 with self.lmdb_env.begin(write=True) as txn:
                     txn.put(item.encode(), str(count).encode())
             except Exception as e:
-                logger.warning(f'LMDB write failed: {e}')
+                logger.warning(f"LMDB write failed: {e}")
 
     def _retrieve_from_cold(self, item: str) -> int | None:
         """Retrieve count from LRU or LMDB."""
@@ -164,10 +187,10 @@ class HybridFrequencySketch:
                         self.lru_cache.move_to_end(item)
                         return count
             except Exception as e:
-                logger.warning(f'LMDB read failed: {e}')
+                logger.warning(f"LMDB read failed: {e}")
         return None
 
-    def add(self, item: str, count: int=1) -> None:
+    def add(self, item: str, count: int = 1) -> None:
         """Increment count for an item."""
         self._update_sketch(item, count)
         self._update_spacesaving(item, count)
@@ -195,7 +218,7 @@ class HybridFrequencySketch:
             mean_noise = sum(noise_vals) // len(noise_vals)
         return max(0, int(min_count) - int(mean_noise))
 
-    def get_top_k(self, k: int=10) -> list[tuple[str, int]]:
+    def get_top_k(self, k: int = 10) -> list[tuple[str, int]]:
         """Get top K items by exact count."""
         count_map: dict[str, int] = {}
         for neg_count, item in self.heap:
@@ -222,40 +245,41 @@ class HybridFrequencySketch:
             try:
                 self.lmdb_env.close()
             except Exception as e:
-                logger.warning(f'LMDB close failed: {e}')
+                logger.warning(f"LMDB close failed: {e}")
             finally:
                 self.lmdb_env = None
 
-_COMMvQ_VALID_DTYPES = frozenset({'bfloat16', 'float16', 'float32'})
+
+_COMMvQ_VALID_DTYPES = frozenset({"bfloat16", "float16", "float32"})
 
 
 def _commvq_get_dtype(cache) -> Any | None:
     """Extract dtype from cache tensor or first element of list."""
-    import mlx.core as mx
     if isinstance(cache, list):
         first_elem = cache[0] if cache else None
         if isinstance(first_elem, tuple):
             first_tensor = first_elem[0]
-            return getattr(first_tensor, 'dtype', None)
-        return getattr(first_elem, 'dtype', None)
-    return getattr(cache, 'dtype', None)
+            return getattr(first_tensor, "dtype", None)
+        return getattr(first_elem, "dtype", None)
+    return getattr(cache, "dtype", None)
 
 
 def _commvq_validate_dtype(cache) -> bool:
     """Validate that cache has supported MLX dtype."""
     import mlx.core as mx
+
     try:
         mx.eval(cache)
     except Exception as e:
-        logger.warning(f'Cannot evaluate cache: {e}')
+        logger.warning(f"Cannot evaluate cache: {e}")
         return False
 
     dtype = _commvq_get_dtype(cache)
     if dtype is None:
-        logger.warning('CommVQ: Cannot determine cache dtype')
+        logger.warning("CommVQ: Cannot determine cache dtype")
         return False
     if str(dtype) not in _COMMvQ_VALID_DTYPES:
-        logger.warning(f'CommVQ requires bfloat16/float16/float32 cache, got {dtype}')
+        logger.warning(f"CommVQ requires bfloat16/float16/float32 cache, got {dtype}")
         return False
     return True
 
@@ -266,9 +290,9 @@ def _commvq_extract_shape(cache) -> Any | None:
         first_elem = cache[0]
         if isinstance(first_elem, tuple):
             first_tensor = first_elem[0]
-            return getattr(first_tensor, 'shape', None)
-        return getattr(first_elem, 'shape', None)
-    return getattr(cache, 'shape', None)
+            return getattr(first_tensor, "shape", None)
+        return getattr(first_elem, "shape", None)
+    return getattr(cache, "shape", None)
 
 
 def _commvq_validate_and_extract_shape(cache) -> tuple[Any, Any] | None:
@@ -284,6 +308,7 @@ def _commvq_validate_and_extract_shape(cache) -> tuple[Any, Any] | None:
 def _commvq_flatten_cache(cache, orig_shape) -> Any:
     """Flatten cache tensor(s) into (N, D) matrix for quantization."""
     import mlx.core as mx
+
     if isinstance(cache, list):
         all_tensors = []
         for item in cache:
@@ -302,6 +327,7 @@ def _commvq_flatten_cache(cache, orig_shape) -> Any:
 def _commvq_quantize_group(group, bits: int) -> tuple[Any, Any] | None:
     """Run k-means quantization on a single group. Returns (centroids, indices)."""
     import mlx.core as mx
+
     if group.size == 0:
         return None
     n_clusters = 1 << bits
@@ -322,13 +348,13 @@ def _commvq_quantize_group(group, bits: int) -> tuple[Any, Any] | None:
     return centroids, final_indices
 
 
-def commvq_quantize(cache, bits: int=2):
+def commvq_quantize(cache, bits: int = 2):
     """
     CommVQ 2-bit KV cache quantization (87.5% savings, MLX-native).
     Uses group-wise k-means with 10 iterations (fast on M1 GPU).
     """
     if not MLX_AVAILABLE:
-        logger.warning('CommVQ requires MLX, skipping quantization')
+        logger.warning("CommVQ requires MLX, skipping quantization")
         return cache
     try:
         result = _commvq_validate_and_extract_shape(cache)
@@ -348,26 +374,28 @@ def commvq_quantize(cache, bits: int=2):
             if quantized is not None:
                 compressed_groups.append(quantized)
 
-        logger.info(f'[CommVQ] Compressed {n_groups} groups, 87.5% theoretical savings')
-        return ('commvq_compressed', compressed_groups, orig_shape)
+        logger.info(f"[CommVQ] Compressed {n_groups} groups, 87.5% theoretical savings")
+        return ("commvq_compressed", compressed_groups, orig_shape)
     except Exception as e:
-        logger.warning(f'CommVQ failed: {e}')
+        logger.warning(f"CommVQ failed: {e}")
         return cache
+
 
 class ExactCounterFallback:
     """Fallback exact counter when MLX and hybrid are unavailable."""
-    __slots__ = tuple(('_counts',))
 
-    def __init__(self):
+    __slots__ = ("_counts",)
+
+    def __init__(self) -> None:
         self._counts: dict[str, int] = {}
 
-    def add(self, item: str, count: int=1) -> None:
+    def add(self, item: str, count: int = 1) -> None:
         self._counts[item] = self._counts.get(item, 0) + count
 
     def estimate(self, item: str) -> int:
         return self._counts.get(item, 0)
 
-    def get_top_k(self, k: int=10) -> list[tuple[str, int]]:
+    def get_top_k(self, k: int = 10) -> list[tuple[str, int]]:
         sorted_items = sorted(self._counts.items(), key=lambda x: x[1], reverse=True)
         return sorted_items[:k]
 

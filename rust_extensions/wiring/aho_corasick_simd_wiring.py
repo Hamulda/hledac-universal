@@ -90,7 +90,6 @@ from rust_extensions.wiring.aho_corasick_simd_wiring import (
     get_simd_matcher,
 )
 
-# Create matcher with IOC patterns
 matcher = SIMDAhoCorasickMatcher.from_ioc_patterns()
 
 # Scan single text
@@ -111,32 +110,23 @@ from dataclasses import dataclass as _dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 # D4: Centralized Rust access via core.rust_backend (R6 pattern)
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _SIMD_AHO_AVAILABLE = (
     _rust_backend.is_available
     and _rust_backend.raw is not None
     and _rust_backend.raw.aho_corasick_simd is not None
 )
 
-# Get raw module reference
 _SIMD_AHO_MODULE = getattr(_rust_backend.raw, "aho_corasick_simd", None) if _SIMD_AHO_AVAILABLE else None
 
 # Module-level singleton matcher (lazy-initialized)
 _cached_matcher: "SIMDAhoCorasickMatcher | None" = None
 _matcher_lock: asyncio.Lock | None = None
-
-
-# =============================================================================
-# SIMDMatch — Python equivalent of Rust SIMDMatch
-# =============================================================================
-
 
 @_dataclass(frozen=True, slots=True)
 class SIMDMatch:
@@ -161,7 +151,6 @@ class SIMDMatch:
             confidence=getattr(rust_match, "confidence", 1.0),
         )
 
-
 @_dataclass(frozen=True, slots=True)
 class ScanStats:
     """Scanning statistics from SIMD Aho-Corasick."""
@@ -185,11 +174,6 @@ class ScanStats:
             throughput_mbps=getattr(rust_stats, "throughput_mbps", 0.0),
         )
 
-
-# =============================================================================
-# IOC Pattern Registry — maps pattern types to labels
-# =============================================================================
-
 # D4 FIX: Aho-Corasick does LITERAL string matching, NOT regex.
 # For proper IOC detection, we use SUBSTRING LITERALS that appear in real IOCs.
 # Python regex validation is still needed to verify full format (e.g., valid IP octets).
@@ -205,11 +189,9 @@ class ScanStats:
 # CRITICAL: SIMD pre-filter + Python regex validation is REQUIRED for accuracy.
 
 _IOC_PATTERNS: list[str] = [
-    # === CVE patterns (prefixes that appear in real CVEs) ===
     "CVE-20",           # CVE prefix - matches CVE-2021-, CVE-2022-, CVE-2023-, CVE-2024-, CVE-2025-
     "cve-20",           # lowercase variant for case-insensitive matching
 
-    # === Domain patterns (TLDs and common prefixes) ===
     ".com",              # Common TLD
     ".org",              # Common TLD
     ".net",              # Common TLD
@@ -222,24 +204,20 @@ _IOC_PATTERNS: list[str] = [
     "ftp.",              # FTP prefix
     "mail.",             # Mail prefix
 
-    # === URL scheme patterns ===
     "https://",          # HTTPS scheme
     "http://",           # HTTP scheme
     "ftps://",           # FTPS scheme
     "ftp://",            # FTP scheme
     "://",               # Generic scheme separator
 
-    # === Email patterns (common separators) ===
     "@",                 # Email at-sign (must be combined with domain validation)
     ".gov.",             # Government domain
     ".edu.",             # Educational domain
 
-    # === Onion/I2P special domains ===
     ".onion",            # Tor hidden service
     ".i2p",              # I2P domain
     ".bit",              # Namecoin TLD
 
-    # === IP address patterns (common private ranges) ===
     "192.168.",          # Class C private
     "10.",               # Class A private
     "172.16.",           # Class B private (16-31 range)
@@ -251,12 +229,9 @@ _IOC_PATTERNS: list[str] = [
     "fc00:",             # IPv6 unique local
     "fd00:",             # IPv6 unique local
 
-    # === Hash patterns (hex substrings - Python validates full format) ===
-    # Using common hex sequences found in MD5/SHA hashes
     "0123456789abcdef",  # Hex digit sequence
     "abcdef0123456789",  # Reversed hex digit sequence
 
-    # === Protocol patterns ===
     ".exe",              # Executable extension
     ".dll",              # DLL extension
     ".so",               # Shared library extension
@@ -283,12 +258,6 @@ _IOC_LABELS: list[str] = [
     # Protocol patterns
     "file", "file", "file", "file", "file", "file",
 ]
-
-
-# =============================================================================
-# SIMDAhoCorasickMatcher — Python wrapper with Python fallback
-# =============================================================================
-
 
 class SIMDAhoCorasickMatcher:
     """
@@ -508,12 +477,6 @@ class SIMDAhoCorasickMatcher:
                 pass
         return None
 
-
-# =============================================================================
-# Python Fallback — pure Python SIMD-like behavior using ahocorasick
-# =============================================================================
-
-
 class _PythonAhoSIMDFallback:
     """
     Python fallback for SIMD Aho-Corasick.
@@ -706,12 +669,6 @@ class _PythonAhoSIMDFallback:
                 return True
         return False
 
-
-# =============================================================================
-# Global Matcher Singleton — lazy initialization
-# =============================================================================
-
-
 async def _get_matcher_async() -> SIMDAhoCorasickMatcher:
     """Async factory for global SIMD matcher singleton."""
     global _cached_matcher, _matcher_lock
@@ -728,7 +685,6 @@ async def _get_matcher_async() -> SIMDAhoCorasickMatcher:
             logger.info("SIMDAhoCorasick singleton initialized (patterns=%d, rust=%s)",
                        _cached_matcher.pattern_count, _cached_matcher.available)
         return _cached_matcher
-
 
 def get_simd_matcher() -> SIMDAhoCorasickMatcher:
     """
@@ -749,18 +705,11 @@ def get_simd_matcher() -> SIMDAhoCorasickMatcher:
 
     return _cached_matcher
 
-
 def reset_simd_matcher() -> None:
     """Reset the global matcher singleton (for testing)."""
     global _cached_matcher, _matcher_lock
     _cached_matcher = None
     _matcher_lock = None
-
-
-# =============================================================================
-# Convenience Functions
-# =============================================================================
-
 
 def scan_text_simd(
     text: str,
@@ -784,7 +733,6 @@ def scan_text_simd(
     _matcher = matcher or get_simd_matcher()
     return _matcher.scan(text, boundary_policy)
 
-
 async def scan_text_simd_async(
     text: str,
     matcher: SIMDAhoCorasickMatcher | None = None,
@@ -806,7 +754,6 @@ async def scan_text_simd_async(
 
     _matcher = matcher or await _get_matcher_async()
     return await asyncio.to_thread(_matcher.scan, text, boundary_policy)
-
 
 def scan_batch_simd(
     texts: list[str],
@@ -830,7 +777,6 @@ def scan_batch_simd(
     _matcher = matcher or get_simd_matcher()
     return _matcher.scan_batch(texts, boundary_policy)
 
-
 async def scan_batch_simd_async(
     texts: list[str],
     matcher: SIMDAhoCorasickMatcher | None = None,
@@ -852,7 +798,6 @@ async def scan_batch_simd_async(
 
     _matcher = matcher or await _get_matcher_async()
     return await asyncio.to_thread(_matcher.scan_batch, texts, boundary_policy)
-
 
 def ioc_prefilter(
     text: str,
@@ -889,7 +834,6 @@ def ioc_prefilter(
 
     return results
 
-
 def ioc_prefilter_batch(
     texts: list[str],
     matcher: SIMDAhoCorasickMatcher | None = None,
@@ -921,11 +865,6 @@ def ioc_prefilter_batch(
         final_results.append(results)
 
     return final_results
-
-
-# =============================================================================
-# Wiring Status
-# =============================================================================
 
 # D4: SIMD Aho-Corasick wiring status
 AHO_CORASICK_SIMD_WIRING_STATUS: str = (

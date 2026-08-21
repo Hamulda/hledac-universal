@@ -82,7 +82,7 @@ def run_tests():
     print("[PASS] CDXDeepSearchResult structure")
 
     # Test 7: WaybackCDXDeepSearch.search (live network)
-    async def test_search():
+    async def test_search() -> None:
         searcher = WaybackCDXDeepSearch()
         res = await searcher.search(
             ["example.com"],
@@ -98,7 +98,7 @@ def run_tests():
     asyncio.run(test_search())
 
     # Test 8: WaybackCDXDeepSearch.search_batch
-    async def test_batch():
+    async def test_batch() -> None:
         searcher = WaybackCDXDeepSearch()
         results = await searcher.search_batch(
             ["example.com", "google.com"],
@@ -114,7 +114,7 @@ def run_tests():
     asyncio.run(test_batch())
 
     # Test 9: cdx_deep_search (live network)
-    async def test_cdx():
+    async def test_cdx() -> None:
         async with httpx.AsyncClient() as session:
             results = await cdx_deep_search("example.com", session, match_type="domain", limit=20)
         assert isinstance(results, list)
@@ -125,7 +125,7 @@ def run_tests():
     asyncio.run(test_cdx())
 
     # Test 10: cdx_deep_search_batch
-    async def test_batch_fn():
+    async def test_batch_fn() -> None:
         async with httpx.AsyncClient() as session:
             results = await cdx_deep_search_batch(
                 ["example.com", "google.com"],

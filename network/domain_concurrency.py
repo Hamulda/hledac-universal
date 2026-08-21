@@ -12,21 +12,15 @@ provides smooth, probabilistic exploration with exponential reward smoothing.
 Authoritative arms: network/domain_concurrency.py
 """
 
-
-
 from __future__ import annotations
 
 import math
 import secrets
 from typing import Any
-from _core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
-# =============================================================================
-# Arm Definition — Fibonacci-like conservative concurrency levels
-# =============================================================================
 ARM_VALUES: list[int] = [1, 2, 3, 5, 8]
 N_ARMS: int = len(ARM_VALUES)
 
@@ -68,10 +62,6 @@ class DomainConcurrencyBandit:
         self._selected_arm: int = 2  # default: arms[2] = 3
         # Track if we hit 429 since last select_arm() call
         self._hit429_since_last_select: bool = False
-
-    # -------------------------------------------------------------------------
-    # Softmax action selection
-    # -------------------------------------------------------------------------
 
     def _softmax_probs(self) -> list[float]:
         """
@@ -116,13 +106,7 @@ class DomainConcurrencyBandit:
         self._hit429_since_last_select = False
         return self._selected_arm
 
-    # -------------------------------------------------------------------------
-    # Reward function
-    # -------------------------------------------------------------------------
-
-    def _compute_reward(
-        self, latency_ms: float, status_code: int, got_captcha: bool = False
-    ) -> float:
+    def _compute_reward(self, latency_ms: float, status_code: int, got_captcha: bool = False) -> float:
         """
         Compute reward from a single outcome observation.
 
@@ -149,13 +133,7 @@ class DomainConcurrencyBandit:
 
         return speed_reward * (1.0 - detection_penalty)
 
-    # -------------------------------------------------------------------------
-    # Outcome recording and learning
-    # -------------------------------------------------------------------------
-
-    def record_outcome(
-        self, arm_idx: int, latency_ms: float, status_code: int, got_captcha: bool = False
-    ) -> None:
+    def record_outcome(self, arm_idx: int, latency_ms: float, status_code: int, got_captcha: bool = False) -> None:
         """
         Record an outcome and update bandit preferences.
 
@@ -201,10 +179,6 @@ class DomainConcurrencyBandit:
                 # Other arms: push preference DOWN proportional to softmax prob
                 self._preferences[i] -= _ALPHA * advantage * probs[i]
 
-    # -------------------------------------------------------------------------
-    # Public accessors
-    # -------------------------------------------------------------------------
-
     @property
     def current_limit(self) -> int:
         """
@@ -232,9 +206,7 @@ class DomainConcurrencyBandit:
             "current_limit": ARM_VALUES[self._selected_arm],
             "consecutive_429": self._consecutive_429,
             "is_emergency_mode": self._consecutive_429 > 2,
-            "arm_probabilities": {
-                f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)
-            },
+            "arm_probabilities": {f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)},
             "preferences": [round(p, 4) for p in self._preferences],
         }
 
@@ -244,15 +216,12 @@ class DomainConcurrencyBandit:
         Exposes consecutive_429 as a monitoring metric for alerting.
         When consecutive_429 > 2, arm[0] (min concurrency=1) is enforced.
         """
-        import math
         probs = self._softmax_probs()
         return {
             "selected_arm": self._selected_arm,
             "current_limit": ARM_VALUES[self._selected_arm],
             "consecutive_429": self._consecutive_429,
             "is_emergency_mode": self._consecutive_429 > 2,
-            "arm_probabilities": {
-                f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)
-            },
+            "arm_probabilities": {f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)},
             "preferences": [round(p, 4) for p in self._preferences],
         }

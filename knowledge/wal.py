@@ -2,7 +2,6 @@
 WAL Manager — Sprint F216G refactor
 F272: Optional UnifiedLMDBStore support for reduced mmap overhead.
 
-
 ROLE: Owns LMDB for pending sync markers, deadletters, and WAL replay.
 
 Separated from DuckDBShadowStore so WAL bugs are isolatable by testing
@@ -46,17 +45,20 @@ CHECKPOINT PROTOCOL (FLOW-03 — at-least-once delivery):
     before Phase 2 completes, the next recovery will fail gracefully (no
     checkpoint, WAL truth exists → pending-sync marker written).
 """
+
 import asyncio
 import atexit
 import os
 import time as _time
 import weakref
 from typing import TYPE_CHECKING, Any
+
 import orjson
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.tools.lmdb_kv import LMDBKVStore
-__all__ = ['WALManager']
+__all__ = ["WALManager"]
+
 
 class WALManager:
     """
@@ -71,13 +73,27 @@ class WALManager:
     F272: Supports UnifiedLMDBStore via HLEDAC_WAL_UNIFIED=1 (default).
           Uses separate LMDB file when HLEDAC_WAL_UNIFIED=0.
     """
-    MAX_PENDING_SYNC_MARKERS: int = 10000
-    DEAD_LETTER_PREFIX: str = 'deadletter_ingest:'
-    PREWRITE_PREFIX: str = 'prewrite:'
-    CHECKPOINT_PREFIX: str = 'checkpoint:'
-    __slots__ = tuple(('_compact_interval_s', '_compact_write_threshold', '_finalize_handle', '_initialized', '_last_compact_ts', '_map_size', '_unified_store', '_use_unified', '_wal_lmdb', '_wal_path', '_write_count_since_compact', '__weakref__'))
 
-    def __init__(self, wal_path: str, *, map_size: int=256 * 1024 * 1024, unified_store: Any=None) -> None:
+    MAX_PENDING_SYNC_MARKERS: int = 10000
+    DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
+    PREWRITE_PREFIX: str = "prewrite:"
+    CHECKPOINT_PREFIX: str = "checkpoint:"
+    __slots__ = (
+        "_compact_interval_s",
+        "_compact_write_threshold",
+        "_finalize_handle",
+        "_initialized",
+        "_last_compact_ts",
+        "_map_size",
+        "_unified_store",
+        "_use_unified",
+        "_wal_lmdb",
+        "_wal_path",
+        "_write_count_since_compact",
+        "__weakref__",
+    )
+
+    def __init__(self, wal_path: str, *, map_size: int = 256 * 1024 * 1024, unified_store: Any = None) -> None:
         """
         Args:
             wal_path: Absolute path to the WAL LMDB directory.
@@ -89,11 +105,11 @@ class WALManager:
         self._unified_store = unified_store
         self._wal_lmdb: LMDBKVStore | None = None
         self._initialized: bool = False
-        self._use_unified: bool = os.environ.get('HLEDAC_WAL_UNIFIED', '1') == '1' and unified_store is not None
-        self._compact_interval_s: float = float(os.environ.get('HLEDAC_WAL_COMPACT_INTERVAL_S', '3600'))
+        self._use_unified: bool = os.environ.get("HLEDAC_WAL_UNIFIED", "1") == "1" and unified_store is not None
+        self._compact_interval_s: float = float(os.environ.get("HLEDAC_WAL_COMPACT_INTERVAL_S", "3600"))
         self._last_compact_ts: float = 0.0
         self._write_count_since_compact: int = 0
-        self._compact_write_threshold: int = int(os.environ.get('HLEDAC_WAL_COMPACT_WRITE_THRESHOLD', '5000'))
+        self._compact_write_threshold: int = int(os.environ.get("HLEDAC_WAL_COMPACT_WRITE_THRESHOLD", "5000"))
         self._finalize_handle: weakref.finalize | None = None
 
     def initialize(self) -> None:
@@ -104,6 +120,7 @@ class WALManager:
             self._wal_lmdb = None
         else:
             from hledac.universal.tools.lmdb_kv import LMDBKVStore
+
             # F1 FIX: WAL data must be crash-consistent even in opt-out path
             # critical=True ensures sync=True, metasync=True, writemap=False
             self._wal_lmdb = LMDBKVStore(path=self._wal_path, map_size=self._map_size, critical=True)
@@ -119,13 +136,13 @@ class WALManager:
                 pass
             self._wal_lmdb = None
         self._initialized = False
-        if hasattr(self, '_finalize_handle') and self._finalize_handle is not None:
+        if hasattr(self, "_finalize_handle") and self._finalize_handle is not None:
             try:
                 self._finalize_handle.detach()
             except Exception:  # noqa: BLE001
                 pass
             self._finalize_handle = None
-        if hasattr(self, '_atexit_registered') and self._atexit_registered:
+        if hasattr(self, "_atexit_registered") and self._atexit_registered:
             try:
                 atexit.unregister(self._atexit_cleanup)
             except Exception:  # noqa: BLE001
@@ -144,23 +161,23 @@ class WALManager:
 
     def _key_finding(self, finding_id: str) -> str:
         """Build finding key."""
-        return f'finding:{finding_id}'
+        return f"finding:{finding_id}"
 
     def _key_pending_sync(self, finding_id: str) -> str:
         """Build pending sync marker key."""
-        return f'pending_duckdb_sync:{finding_id}'
+        return f"pending_duckdb_sync:{finding_id}"
 
     def _key_deadletter(self, finding_id: str) -> str:
         """Build deadletter key."""
-        return f'{self.DEAD_LETTER_PREFIX}{finding_id}'
+        return f"{self.DEAD_LETTER_PREFIX}{finding_id}"
 
     def _key_prewrite(self, finding_id: str) -> str:
         """FLOW-03: Build prewrite marker key."""
-        return f'{self.PREWRITE_PREFIX}{finding_id}'
+        return f"{self.PREWRITE_PREFIX}{finding_id}"
 
     def _key_checkpoint(self, finding_id: str) -> str:
         """FLOW-03: Build checkpoint marker key."""
-        return f'{self.CHECKPOINT_PREFIX}{finding_id}'
+        return f"{self.CHECKPOINT_PREFIX}{finding_id}"
 
     def wal_write_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> bool:
         """
@@ -173,9 +190,15 @@ class WALManager:
         """
         if not self._initialized:
             self.initialize()
-        value = {'id': finding_id, 'query': query, 'source_type': source_type, 'confidence': confidence, 'ts': _time.time()}
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+        }
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', self._key_finding(finding_id), value)
+            return self._unified_store.put_str("wal", self._key_finding(finding_id), value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -189,7 +212,7 @@ class WALManager:
     def wal_get_finding(self, finding_id: str) -> dict[str, Any] | None:
         """Get a WAL truth record by finding_id."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.get_str('wal', self._key_finding(finding_id))
+            return self._unified_store.get_str("wal", self._key_finding(finding_id))
         if self._wal_lmdb is None:
             return None
         try:
@@ -212,9 +235,15 @@ class WALManager:
         if not self._initialized:
             self.initialize()
         self._evict_oldest_pending_markers(self.MAX_PENDING_SYNC_MARKERS - 1)
-        value = {'id': finding_id, 'query': query, 'source_type': source_type, 'confidence': confidence, 'ts': _time.time()}
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+        }
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', self._key_pending_sync(finding_id), value)
+            return self._unified_store.put_str("wal", self._key_pending_sync(finding_id), value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -235,7 +264,7 @@ class WALManager:
         if self._use_unified and self._unified_store is not None:
             # FIX: Use sub-prefix scan instead of full-namespace scan
             # scan_prefix('wal:pending_duckdb_sync') only returns matching entries
-            all_entries = self._unified_store.scan_prefix('wal:pending_duckdb_sync')
+            all_entries = self._unified_store.scan_prefix("wal:pending_duckdb_sync")
             return [value for _, value in all_entries]
         if self._wal_lmdb is None:
             return []
@@ -244,14 +273,18 @@ class WALManager:
             if env is None:
                 return []
             results = []
-            prefix = self._key_pending_sync('')
-            prefix_bytes = prefix.encode('utf-8')
+            prefix = self._key_pending_sync("")
+            prefix_bytes = prefix.encode("utf-8")
             with env.begin(write=False, buffers=True) as txn:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
                         # S-02: avoid bytes() copy when key_bytes IS already bytes
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(prefix):
                             break
                         try:
@@ -271,7 +304,7 @@ class WALManager:
         Called by a future recovery sprint after the DuckDB write succeeds.
         """
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.delete('wal', self._key_pending_sync(finding_id))
+            return self._unified_store.delete("wal", self._key_pending_sync(finding_id))
         if self._wal_lmdb is None:
             return False
         try:
@@ -293,9 +326,9 @@ class WALManager:
         """
         if not self._initialized:
             self.initialize()
-        value = {'id': finding_id, 'ts': _time.time()}
+        value = {"id": finding_id, "ts": _time.time()}
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', self._key_prewrite(finding_id), value)
+            return self._unified_store.put_str("wal", self._key_prewrite(finding_id), value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -318,9 +351,9 @@ class WALManager:
         """
         if not self._initialized:
             self.initialize()
-        value = {'id': finding_id, 'ts': _time.time()}
+        value = {"id": finding_id, "ts": _time.time()}
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', self._key_checkpoint(finding_id), value)
+            return self._unified_store.put_str("wal", self._key_checkpoint(finding_id), value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -341,7 +374,7 @@ class WALManager:
         Returns True if deletion succeeded.
         """
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.delete('wal', self._key_prewrite(finding_id))
+            return self._unified_store.delete("wal", self._key_prewrite(finding_id))
         if self._wal_lmdb is None:
             return False
         try:
@@ -358,7 +391,7 @@ class WALManager:
         needs replay or can be skipped.
         """
         if self._use_unified and self._unified_store is not None:
-            val = self._unified_store.get_str('wal', self._key_checkpoint(finding_id))
+            val = self._unified_store.get_str("wal", self._key_checkpoint(finding_id))
             return val is not None
         if self._wal_lmdb is None:
             return False
@@ -381,17 +414,17 @@ class WALManager:
         if self._use_unified and self._unified_store is not None:
             # FIX: Use sub-prefix scan instead of full-namespace scan
             # scan_prefix('wal:prewrite') only returns matching entries
-            all_entries = self._unified_store.scan_prefix('wal:prewrite')
+            all_entries = self._unified_store.scan_prefix("wal:prewrite")
             results: list[dict[str, Any]] = []
             for key, value in all_entries:
                 # key is 'prewrite:{fid}' from the scan
                 # FIX: Extract finding_id from key (remove 'prewrite:' prefix)
                 # before calling _key_checkpoint to get correct 'checkpoint:{fid}' key
                 if key.startswith(self.PREWRITE_PREFIX):
-                    finding_id = key[len(self.PREWRITE_PREFIX):]
+                    finding_id = key[len(self.PREWRITE_PREFIX) :]
                 else:
                     finding_id = key
-                if not self._unified_store.get_str('wal', self._key_checkpoint(finding_id)):
+                if not self._unified_store.get_str("wal", self._key_checkpoint(finding_id)):
                     results.append(value)
             return results
         if self._wal_lmdb is None:
@@ -402,7 +435,7 @@ class WALManager:
                 return []
             results = []
             prefix = self.PREWRITE_PREFIX
-            prefix_bytes = prefix.encode('utf-8')
+            prefix_bytes = prefix.encode("utf-8")
 
             # P6-2: Collect items first, then batch-lookup checkpoints.
             # LMDB does NOT support nested transactions. The old code created
@@ -413,21 +446,25 @@ class WALManager:
                 cursor = txn.cursor()
                 if cursor.set_range(prefix_bytes):
                     for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(prefix):
                             break
-                        fid = key[len(prefix):]
+                        fid = key[len(prefix) :]
                         items.append((fid, key_bytes, value_bytes))
 
             if not items:
                 return results
 
             # Batch-lookup all checkpoints in a single transaction
-            checkpoint_keys = [self._key_checkpoint(fid) for fid, _, _ in items]
+            [self._key_checkpoint(fid) for fid, _, _ in items]
             with env.begin(write=False, buffers=True) as txn:
                 for fid, key_bytes, value_bytes in items:
                     checkpoint_key = self._key_checkpoint(fid)
-                    chk_val = txn.get(checkpoint_key.encode('utf-8'))
+                    chk_val = txn.get(checkpoint_key.encode("utf-8"))
                     if chk_val is None:
                         # No checkpoint → needs recovery
                         try:
@@ -445,7 +482,7 @@ class WALManager:
     def wal_get_pending_marker(self, finding_id: str) -> dict[str, Any] | None:
         """Get a single pending marker value by finding_id."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.get_str('wal', self._key_pending_sync(finding_id))
+            return self._unified_store.get_str("wal", self._key_pending_sync(finding_id))
         if self._wal_lmdb is None:
             return None
         try:
@@ -453,7 +490,9 @@ class WALManager:
         except Exception:
             return None
 
-    def wal_write_deadletter_marker(self, finding_id: str, query: str, source_type: str, confidence: float, error: str, retry_count: int) -> bool:
+    def wal_write_deadletter_marker(
+        self, finding_id: str, query: str, source_type: str, confidence: float, error: str, retry_count: int
+    ) -> bool:
         """
         Write a marker to the dead-letter namespace after max retries exceeded.
 
@@ -462,9 +501,17 @@ class WALManager:
         """
         if self._wal_lmdb is None and (not self._use_unified):
             return False
-        value = {'id': finding_id, 'query': query, 'source_type': source_type, 'confidence': confidence, 'ts': _time.time(), 'error': error, 'retry_count': retry_count}
+        value = {
+            "id": finding_id,
+            "query": query,
+            "source_type": source_type,
+            "confidence": confidence,
+            "ts": _time.time(),
+            "error": error,
+            "retry_count": retry_count,
+        }
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', self._key_deadletter(finding_id), value)
+            return self._unified_store.put_str("wal", self._key_deadletter(finding_id), value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -477,7 +524,7 @@ class WALManager:
         Delete a dead-letter marker (used when replay succeeds later).
         """
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.delete('wal', self._key_deadletter(finding_id))
+            return self._unified_store.delete("wal", self._key_deadletter(finding_id))
         if self._wal_lmdb is None:
             return False
         try:
@@ -489,9 +536,8 @@ class WALManager:
     def _decode_key(key_bytes: bytes) -> str:
         """Decode key bytes to string, handling both bytes and bytearray."""
         if isinstance(key_bytes, bytes):
-            return key_bytes.decode('utf-8')
-        return bytes(key_bytes).decode('utf-8')
-
+            return key_bytes.decode("utf-8")
+        return bytes(key_bytes).decode("utf-8")
 
     @staticmethod
     def _evict_unified_path(
@@ -504,15 +550,15 @@ class WALManager:
         """
         try:
             # FIX: Use sub-prefix scan instead of full-namespace scan
-            all_entries = unified_store.scan_prefix('wal:pending_duckdb_sync')
+            all_entries = unified_store.scan_prefix("wal:pending_duckdb_sync")
             pending = list(all_entries)  # scan_prefix returns list already
             if len(pending) <= keep_count:
                 return 0
-            pending.sort(key=lambda x: x[1].get('ts', 0))
-            to_evict = pending[:len(pending) - keep_count]
+            pending.sort(key=lambda x: x[1].get("ts", 0))
+            to_evict = pending[: len(pending) - keep_count]
             for key, _ in to_evict:
                 # key format: 'pending_duckdb_sync:{fid}'
-                unified_store.delete('wal', key)
+                unified_store.delete("wal", key)
             return len(to_evict)
         except Exception:
             return 0
@@ -538,7 +584,7 @@ class WALManager:
                 return 0
             for key_bytes, _ in cursor.iternext():
                 key = WALManager._decode_key(key_bytes)
-                if not key.startswith(prefix.decode('utf-8')):
+                if not key.startswith(prefix.decode("utf-8")):
                     break
                 total_count += 1
 
@@ -549,7 +595,7 @@ class WALManager:
 
         # Bounded heap to find oldest entries
         oldest_keys: list[tuple[float, str]] = []
-        prefix_str = prefix.decode('utf-8')
+        prefix_str = prefix.decode("utf-8")
 
         with env.begin(write=False, buffers=True) as txn:
             cursor = txn.cursor()
@@ -560,7 +606,7 @@ class WALManager:
                         break
                     try:
                         value = orjson.loads(value_bytes)
-                        ts = value.get('ts', 0.0)
+                        ts = value.get("ts", 0.0)
                         if len(oldest_keys) < evict_count:
                             heapq.heappush(oldest_keys, (ts, key))
                         elif ts < oldest_keys[0][0]:
@@ -571,12 +617,11 @@ class WALManager:
         if not oldest_keys:
             return 0
 
-        # Delete in single write transaction
         keys_to_evict = [key for _, key in oldest_keys]
         deleted = 0
         with env.begin(write=True) as txn:
             for key in keys_to_evict:
-                if txn.delete(key.encode('utf-8')):
+                if txn.delete(key.encode("utf-8")):
                     deleted += 1
         return deleted
 
@@ -600,8 +645,8 @@ class WALManager:
             env = self._wal_lmdb._env
             if env is None:
                 return 0
-            prefix = self._key_pending_sync('')
-            prefix_bytes = prefix.encode('utf-8')
+            prefix = self._key_pending_sync("")
+            prefix_bytes = prefix.encode("utf-8")
             return WALManager._evict_lmdb_path(env, prefix_bytes, keep_count)
         except Exception:
             return 0
@@ -609,7 +654,7 @@ class WALManager:
     def wal_delete(self, key: str) -> bool:
         """Delete a WAL entry by key."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.delete('wal', key)
+            return self._unified_store.delete("wal", key)
         if self._wal_lmdb is None:
             return False
         return self._wal_lmdb.delete(key)
@@ -617,7 +662,7 @@ class WALManager:
     def wal_put(self, key: str, value: dict) -> bool:
         """Put a raw WAL entry."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.put_str('wal', key, value)
+            return self._unified_store.put_str("wal", key, value)
         if self._wal_lmdb is None:
             return False
         try:
@@ -628,18 +673,18 @@ class WALManager:
     def wal_put_many(self, items: list[tuple[str, dict]]) -> list[bool]:
         """Put multiple raw WAL entries. Returns per-item success list."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.putmany_str('wal', items)
+            return self._unified_store.putmany_str("wal", items)
         if self._wal_lmdb is None:
             return [False] * len(items)
         results = self._wal_lmdb.put_many(items)
         if any(results):
-            self._write_count_since_compact += sum((1 for r in results if r))
+            self._write_count_since_compact += sum(1 for r in results if r)
         return results
 
     def wal_get(self, key: str) -> dict | None:
         """Get a raw WAL entry."""
         if self._use_unified and self._unified_store is not None:
-            return self._unified_store.get_str('wal', key)
+            return self._unified_store.get_str("wal", key)
         if self._wal_lmdb is None:
             return None
         return self._wal_lmdb.get(key)
@@ -663,7 +708,8 @@ class WALManager:
         if not time_elapsed and (not count_exceeded):
             return None
         from hledac.universal.knowledge.lmdb_boot_guard import compact_lmdb
-        env = getattr(self._wal_lmdb, '_env', None)
+
+        env = getattr(self._wal_lmdb, "_env", None)
         if env is None:
             return None
         result = compact_lmdb(env)
@@ -705,7 +751,7 @@ class WALManager:
         Deprecated: Use _ensure_cleanup() instead (weakref.finalize).
         Kept for backward compat.
         """
-        if not hasattr(self, '_atexit_registered'):
+        if not hasattr(self, "_atexit_registered"):
             self._atexit_registered = True
             atexit.register(self._atexit_cleanup)
 
@@ -737,7 +783,7 @@ class WALManager:
         In Python 3.14+ __del__ is not guaranteed to run, so _ensure_cleanup()
         (via weakref.finalize) is the canonical cleanup path.
         """
-        if hasattr(self, '_finalize_handle') and self._finalize_handle is not None:
+        if hasattr(self, "_finalize_handle") and self._finalize_handle is not None:
             try:
                 self._finalize_handle()
             except Exception:  # noqa: BLE001

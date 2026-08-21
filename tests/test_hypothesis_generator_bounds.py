@@ -21,7 +21,7 @@ from hledac_hypothesis.hypothesisgenerator import (
 class MockFinding:
     """Minimal CanonicalFinding-like for testing."""
 
-    def __init__(self, finding_id: str, payload_text: str):
+    def __init__(self, finding_id: str, payload_text: str) -> None:
         self.finding_id = finding_id
         self.payload_text = payload_text
 
@@ -31,19 +31,16 @@ class MockFinding:
 # ---------------------------------------------------------------------------
 
 
-def test_MAX_HYPOTHESES_is_10():  # noqa: N802
+def test_MAX_HYPOTHESES_is_10() -> None:  # noqa: N802
     """Hard cap: generate() never returns more than 10 hypotheses."""
     assert MAX_HYPOTHESES == 10
 
 
-def test_generate_respects_max_hypotheses_cap():
+def test_generate_respects_max_hypotheses_cap() -> None:
     """
     Feed 20 IP findings → expect at most 10 hypotheses returned.
     """
-    findings = [
-        MockFinding(f"fid_{i}", f"indicator 8.8.8.{i} resolved to example.com")
-        for i in range(20)
-    ]
+    findings = [MockFinding(f"fid_{i}", f"indicator 8.8.8.{i} resolved to example.com") for i in range(20)]
     gen = HypothesisGenerator(graph=None)
     result = gen.generate(findings, current_seeds=["test-domain.com"], sprint_depth=1)
     assert len(result) <= MAX_HYPOTHESES
@@ -55,12 +52,12 @@ def test_generate_respects_max_hypotheses_cap():
 # ---------------------------------------------------------------------------
 
 
-def test_MAX_SEEDS_PER_HYPOTHESIS_is_5():  # noqa: N802
+def test_MAX_SEEDS_PER_HYPOTHESIS_is_5() -> None:  # noqa: N802
     """Each hypothesis pivot_seeds tuple never exceeds 5 items."""
     assert MAX_SEEDS_PER_HYPOTHESIS == 5
 
 
-def test_hypothesis_pivot_seeds_never_exceed_5():
+def test_hypothesis_pivot_seeds_never_exceed_5() -> None:
     """
     Feed findings that trigger all hypothesis types → verify no hypothesis
     gets more than 5 pivot seeds.
@@ -82,7 +79,7 @@ def test_hypothesis_pivot_seeds_never_exceed_5():
 # ---------------------------------------------------------------------------
 
 
-def test_empty_findings_and_seeds_returns_single_fallback():
+def test_empty_findings_and_seeds_returns_single_fallback() -> None:
     """
     Empty findings + empty seeds → returns exactly 1 fallback hypothesis (not empty, not crash).
     Fail-soft guarantee: generate() always returns >= 1.
@@ -94,7 +91,7 @@ def test_empty_findings_and_seeds_returns_single_fallback():
     assert all(isinstance(h, ResearchHypothesis) for h in result)
 
 
-def test_empty_findings_with_seeds_returns_valid_hypotheses():
+def test_empty_findings_with_seeds_returns_valid_hypotheses() -> None:
     """Empty findings but seeds present → returns valid hypotheses (not crash)."""
     gen = HypothesisGenerator(graph=None)
     result = gen.generate(findings=[], current_seeds=["lockbit3.tw"], sprint_depth=1)
@@ -106,7 +103,7 @@ def test_empty_findings_with_seeds_returns_valid_hypotheses():
     assert any("lockbit3.tw" in t or "Seed" in t for t in texts)
 
 
-def test_heuristic_generate_empty_findings_returns_empty():
+def test_heuristic_generate_empty_findings_returns_empty() -> None:
     """
     _heuristic_generate with no IOCs extracted → returns empty list (caller handles fail-soft).
     """
@@ -122,7 +119,7 @@ def test_heuristic_generate_empty_findings_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_hypotheses_have_required_fields():
+def test_hypotheses_have_required_fields() -> None:
     """Every returned hypothesis has all required dataclass fields."""
     findings = [
         MockFinding("f1", "192.168.1.1 at 8.8.8.8"),
@@ -141,7 +138,7 @@ def test_hypotheses_have_required_fields():
         assert isinstance(h.hypothesis_type, str)
 
 
-def test_hypothesis_types_are_valid():
+def test_hypothesis_types_are_valid() -> None:
     """Returned hypotheses use known type strings."""
     VALID_TYPES = {"entity_expansion", "temporal", "lateral", "adversarial"}  # noqa: N806
     findings = [
@@ -156,7 +153,7 @@ def test_hypothesis_types_are_valid():
         assert h.hypothesis_type in VALID_TYPES
 
 
-def test_sprint_depth_affects_temporal_hypothesis():
+def test_sprint_depth_affects_temporal_hypothesis() -> None:
     """
     sprint_depth=1 → no temporal hypotheses.
     sprint_depth=2+ → temporal hypotheses may appear.

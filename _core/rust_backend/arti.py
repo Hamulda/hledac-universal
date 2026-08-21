@@ -13,7 +13,6 @@ Benefits vs subprocess Arti (arti_transport.py):
 Usage:
     from hledac.universal._core.rust_backend import rust
 
-    # Check availability
     if rust.arti is not None:
         node = rust.arti.ArtiNode()
         node.start()  # Bootstrap Tor
@@ -46,7 +45,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from hledac.universal._core.rust_backend import rust
-from _core._util import aclose
 
 if TYPE_CHECKING:
     pass
@@ -84,7 +82,9 @@ class ArtiBridge:
     """
 
     __slots__ = (
-        '_node', '_is_running', '_lock',
+        "_node",
+        "_is_running",
+        "_lock",
     )
 
     def __init__(
@@ -101,11 +101,10 @@ class ArtiBridge:
         """
         if not _is_available:
             raise RuntimeError(
-                "ArtiNode not available. Compile with --features embedded_tor "
-                "or set HLEDAC_ENABLE_EMBEDDED_TOR=1"
-    )
+                "ArtiNode not available. Compile with --features embedded_tor or set HLEDAC_ENABLE_EMBEDDED_TOR=1"
+            )
 
-        self._node: "ArtiNode" | None = _ArtiNode(data_dir)  # type: ignore
+        self._node: ArtiNode | None = _ArtiNode(data_dir)  # type: ignore
         self._is_running: bool = False
         self._lock = asyncio.Lock()
 
@@ -200,14 +199,14 @@ class ArtiBridge:
                 self._node = None
                 self._is_running = False
 
-    def __enter__(self) -> "ArtiBridge":
+    def __enter__(self) -> ArtiBridge:
         self.start()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    async def __aenter__(self) -> "ArtiBridge":
+    async def __aenter__(self) -> ArtiBridge:
         await self.start_async()
         return self
 

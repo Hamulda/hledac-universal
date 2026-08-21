@@ -29,17 +29,14 @@ import logging
 import threading
 import time as _time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from hledac.universal.utils.locks import LazyAsyncioLock
 
 from hledac.universal._core.locks import LockCategory, register_lock
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +82,6 @@ def get_mx():
 # Sentinel for unset lazy module reference
 _MISSING = object()
 
-
-# ---------------------------------------------------------------------------
-# Centralized lazy-accessor for mlx_memory package.
-# Replaces per-class _get_mlx_memory() lazy-import patterns (ISSUE-F330-DUP).
-# ---------------------------------------------------------------------------
 
 _mlx_memory_module: Any = _MISSING
 

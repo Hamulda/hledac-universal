@@ -71,10 +71,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 type NoHashHasher = std::collections::hash_map::DefaultHasher;
 type FactMap = HashMap<(String, String), Vec<Fact>, BuildHasherDefault<NoHashHasher>>;
 
-// ---------------------------------------------------------------------------
-// Data Structures
-// ---------------------------------------------------------------------------
-
 /// A single fact extracted from a finding.
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Fact {
@@ -391,14 +387,12 @@ impl Finding {
     /// Scans text, snippet, title, and source_url for domain-like patterns.
     /// Returns the first domain found that is not the current entity itself.
     fn parent_domain(&self) -> Option<String> {
-        // Check source_url first — most reliable
         if let Some(ref url) = self.source_url {
             if let Some(domain) = extract_domain_from_url(url) {
                 return Some(domain);
             }
         }
 
-        // Check provenance items
         if let Some(ref prov) = self.provenance {
             for item in prov {
                 if let Some(domain) = extract_domain_from_text(item) {
@@ -412,7 +406,6 @@ impl Finding {
             }
         }
 
-        // Check text content
         let text_content = self
             .text
             .clone()
@@ -433,10 +426,6 @@ impl Finding {
         None
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helper Functions
-// ---------------------------------------------------------------------------
 
 /// Get current Unix timestamp in seconds.
 fn current_timestamp() -> i64 {
@@ -519,7 +508,6 @@ fn extract_domain_from_text(text: &str) -> Option<String> {
     for w in &words {
         let w = w.trim_matches(|c: char| c.is_ascii_punctuation());
         if w.contains('.') && !looks_like_ip(w) && w.len() > 4 && w.len() <= 253 {
-            // Check that parts look like valid domain labels
             let parts: Vec<&str> = w.split('.').collect();
             if parts.len() >= 2 && parts.iter().all(|p| !p.is_empty() && p.len() <= 63) {
                 return Some(normalize_domain(w));
@@ -549,10 +537,6 @@ fn extract_filename_from_url(url: &str) -> Option<String> {
         None
     }
 }
-
-// ---------------------------------------------------------------------------
-// Core Contradiction Detection
-// ---------------------------------------------------------------------------
 
 /// Extract facts from findings for contradiction detection.
 ///
@@ -605,7 +589,6 @@ fn extract_facts(findings: &[Finding]) -> Vec<Fact> {
 
         // For hash findings: link to parent filename from text/source_url
         if ioc_type == "sha256" || ioc_type == "md5" || ioc_type == "sha1" {
-            // Extract filename from source_url
             if let Some(ref url) = finding.source_url {
                 if let Some(filename) = extract_filename_from_url(url) {
                     facts.push(Fact::new(&filename, &ioc_type, &entity, &source, timestamp));
@@ -648,7 +631,6 @@ fn detect_group_contradictions(
 
     let values: Vec<String> = value_groups.keys().cloned().collect();
 
-    // Check for contradictions between different values
     for i in 0..values.len() {
         for j in (i + 1)..values.len() {
             let value_a = &values[i];
@@ -656,7 +638,6 @@ fn detect_group_contradictions(
             let facts_a = &value_groups[value_a];
             let facts_b = &value_groups[value_b];
 
-            // Get representative sources
             let source_a = &facts_a[0].source;
             let source_b = &facts_b[0].source;
 
@@ -689,7 +670,6 @@ fn detect_group_contradictions(
         }
     }
 
-    // Check for temporal inconsistencies within each value group
     for (_value, group_facts) in &value_groups {
         if group_facts.len() < 2 {
             continue;
@@ -854,7 +834,6 @@ fn apply_tri_source_voting(
         return (None, None, Vec::new());
     }
 
-    // Check for 1:1:1 split
     let mut value_counts: HashMap<String, usize> = HashMap::new();
     for (_source, vals) in &source_values {
         if vals.len() == 1 {
@@ -972,10 +951,6 @@ fn compute_entity_consistency_score(facts: &[Fact], contradictions: &[Contradict
     (1.0 - max_severity + source_bonus).max(0.0).min(1.0)
 }
 
-// ---------------------------------------------------------------------------
-// Main Verification Logic
-// ---------------------------------------------------------------------------
-
 /// Process a batch of findings and detect propositional contradictions.
 pub fn check_batch(findings_json: &[u8]) -> ConsistencyResult {
     // Deserialize findings
@@ -993,7 +968,6 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         return ConsistencyResult::default();
     }
 
-    // Extract facts from findings
     let facts = extract_facts(findings);
 
     // Group facts by (entity, attribute)
@@ -1007,13 +981,11 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
     let mut suspect_sources: Vec<SuspectSource> = Vec::new();
     let mut entity_scores: HashMap<String, f32> = Default::default();
 
-    // Phase 1: Detect contradictions FIRST (before classifying as clean)
     for ((entity, attribute), group_facts) in &groups {
         if group_facts.len() < 2 {
             continue; // Will classify as clean in Phase 2
         }
 
-        // Check for tri-source voting patterns first
         let (disputed_finding, suspect, voting_contradictions) =
             apply_tri_source_voting(entity, attribute, group_facts);
 
@@ -1071,7 +1043,6 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         }
     }
 
-    // Phase 2: Classify remaining findings as clean
     for finding in findings {
         let fid = finding.finding_id.as_deref().unwrap_or_default();
         let entity = finding.entity_value.as_deref().unwrap_or_default();
@@ -1089,7 +1060,6 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         }
     }
 
-    // Build result vectors from ID sets
     let clean: Vec<CleanFinding> = clean_ids
         .iter()
         .map(|fid| {
@@ -1180,10 +1150,6 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PyO3 Bindings
-// ---------------------------------------------------------------------------
-
 static _VERIFIER_LOCK: RwLock<()> = RwLock::new(());
 
 #[pyfunction]
@@ -1223,7 +1189,6 @@ pub fn check_finding_consistency(findings_json: &[u8], max_findings: usize) -> P
     // Apply batch limit
     let findings: Vec<Finding> = findings.into_iter().take(max_findings).collect();
 
-    // Process
     let result = check_batch_findings(&findings);
 
     // Serialize result
@@ -1287,7 +1252,6 @@ pub fn quick_consistency_check(entity: &str, attribute: &str, values_json: &[u8]
         return Ok(1.0);
     }
 
-    // Build facts
     let timestamp = current_timestamp();
     let facts: Vec<Fact> = values
         .iter()
@@ -1301,10 +1265,6 @@ pub fn quick_consistency_check(entity: &str, attribute: &str, values_json: &[u8]
     let score = compute_entity_consistency_score(&facts, &contradictions);
     Ok(score)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

@@ -14,40 +14,25 @@ Rationale:
   the degree-centrality seeds from get_top_nodes_by_degree().
 """
 
-
-
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hledac.universal.paths import LMDB_ROOT
-from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_nocache_on_path  # R-03: was madv_free_reusable_on_path (broken)
+from hledac.universal.tools.file_cache import apply_nocache_to_path, madv_nocache_on_path
 from hledac.universal.utils.msgspec_json import decode, encode
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _LMDB_PATH: Path = LMDB_ROOT / "sprint_seeds.lmdb"
 _LMDB_MAP_SIZE: int = 256 * 1024 * 1024  # 256 MB
 _KEY_PREFIX: bytes = b"seeds:"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _make_key(sprint_id: str) -> bytes:
     """Encode sprint_id as LMDB key."""
     return f"{_KEY_PREFIX.decode()}{sprint_id}".encode()
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 async def async_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
     """
@@ -67,7 +52,7 @@ async def async_save_sprint_seeds(sprint_id: str, seeds: list[str]) -> None:
         store = AsyncLMDBKVStore(
             path=_LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
-    )
+        )
         key = _make_key(sprint_id)
         val = encode(seeds)
         await store.put(key.decode(), val)
@@ -95,7 +80,7 @@ async def async_load_sprint_seeds(sprint_id: str) -> list[str]:
         store = AsyncLMDBKVStore(
             path=_LMDB_PATH,
             map_size=_LMDB_MAP_SIZE,
-    )
+        )
         key = _make_key(sprint_id)
         raw = await store.get(key.decode())
         if raw is None:

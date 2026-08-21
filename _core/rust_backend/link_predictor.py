@@ -16,12 +16,10 @@ M1 8GB safe: bounded to MAX_BATCH_NODES=10_000, runs during TEARDOWN phase.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions.link_predictor import (
         LinkPredictionBatch,
-        LinkPredictorConfig,
         PredictedEdgePy,
     )
 
@@ -31,6 +29,7 @@ try:
         FFI_MODULE_LINK_PREDICTOR,
         get_ffi_circuit_breaker,
     )
+
     _FFI_CB_AVAILABLE = True
 except ImportError:
     _FFI_CB_AVAILABLE = False
@@ -46,21 +45,20 @@ def _python_link_predict(
 ) -> list[dict[str, Any]]:
     """
     [SAFE-3] Pure Python fallback for link prediction.
-    
+
     Uses simple neighbor-based algorithms without DuckDB optimization.
     M1 8GB: Bounded to max_candidates to prevent memory exhaustion.
     """
-    # Import graph library lazily
     try:
         import networkx as nx
     except ImportError:
         return []
-    
+
     try:
         # Simple graph construction from db_path (placeholder)
         # In production, this would parse actual graph data
-        G = nx.Graph()
-        
+        nx.Graph()
+
         # Return empty predictions for now (no graph data available)
         # This ensures pipeline continuity without crashing
         return []
@@ -71,7 +69,7 @@ def _python_link_predict(
 class _LinkPredictorDomain:
     """
     SWARM-003: Link prediction domain with Rust-first implementation.
-    
+
     [SAFE-3] Uses FFI circuit breaker for panic recovery.
 
     Uses hledac_rust_extensions.link_predictor module for:
@@ -79,7 +77,7 @@ class _LinkPredictorDomain:
     - predict_links_for_node(): Node-specific predictions
     """
 
-    __slots__ = ('_ext', '_ffi_cb')
+    __slots__ = ("_ext", "_ffi_cb")
 
     def __init__(self, ext: object | None) -> None:
         self._ext = ext
@@ -117,6 +115,7 @@ class _LinkPredictorDomain:
 
         # [SAFE-3] Use circuit breaker for link prediction
         if self._ffi_cb is not None:
+
             def rust_call() -> list[dict[str, Any]]:
                 result: LinkPredictionBatch = self._ext.predict_links(
                     db_path,
@@ -124,24 +123,29 @@ class _LinkPredictorDomain:
                     min_jaccard=min_jaccard,
                     max_candidates=max_candidates,
                     cross_type_only=cross_type_only,
-    )
+                )
                 return [
                     {
-                        'src_id': e.src_id,
-                        'dst_id': e.dst_id,
-                        'adamic_adar': e.adamic_adar,
-                        'jaccard': e.jaccard,
-                        'pref_attach': e.preferential_attachment,
-                        'common_neighbors': e.common_neighbors,
-                        'method': e.method,
+                        "src_id": e.src_id,
+                        "dst_id": e.dst_id,
+                        "adamic_adar": e.adamic_adar,
+                        "jaccard": e.jaccard,
+                        "pref_attach": e.preferential_attachment,
+                        "common_neighbors": e.common_neighbors,
+                        "method": e.method,
                     }
                     for e in result.edges
                 ]
-            
+
             cb_result = self._ffi_cb.call_or_fallback(
-                FFI_MODULE_LINK_PREDICTOR, rust_call,
-                db_path, min_adamic_adar, min_jaccard, max_candidates, cross_type_only
-    )
+                FFI_MODULE_LINK_PREDICTOR,
+                rust_call,
+                db_path,
+                min_adamic_adar,
+                min_jaccard,
+                max_candidates,
+                cross_type_only,
+            )
             if cb_result.success:
                 return cb_result.value  # type: ignore[return-value]
             return _python_link_predict(db_path, min_adamic_adar, min_jaccard, max_candidates, cross_type_only)
@@ -153,16 +157,16 @@ class _LinkPredictorDomain:
                 min_jaccard=min_jaccard,
                 max_candidates=max_candidates,
                 cross_type_only=cross_type_only,
-    )
+            )
             return [
                 {
-                    'src_id': e.src_id,
-                    'dst_id': e.dst_id,
-                    'adamic_adar': e.adamic_adar,
-                    'jaccard': e.jaccard,
-                    'pref_attach': e.preferential_attachment,
-                    'common_neighbors': e.common_neighbors,
-                    'method': e.method,
+                    "src_id": e.src_id,
+                    "dst_id": e.dst_id,
+                    "adamic_adar": e.adamic_adar,
+                    "jaccard": e.jaccard,
+                    "pref_attach": e.preferential_attachment,
+                    "common_neighbors": e.common_neighbors,
+                    "method": e.method,
                 }
                 for e in result.edges
             ]
@@ -200,16 +204,16 @@ class _LinkPredictorDomain:
                 top_k=top_k,
                 min_adamic_adar=min_adamic_adar,
                 min_jaccard=min_jaccard,
-    )
+            )
             return [
                 {
-                    'src_id': e.src_id,
-                    'dst_id': e.dst_id,
-                    'adamic_adar': e.adamic_adar,
-                    'jaccard': e.jaccard,
-                    'pref_attach': e.preferential_attachment,
-                    'common_neighbors': e.common_neighbors,
-                    'method': e.method,
+                    "src_id": e.src_id,
+                    "dst_id": e.dst_id,
+                    "adamic_adar": e.adamic_adar,
+                    "jaccard": e.jaccard,
+                    "pref_attach": e.preferential_attachment,
+                    "common_neighbors": e.common_neighbors,
+                    "method": e.method,
                 }
                 for e in result
             ]

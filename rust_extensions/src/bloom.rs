@@ -228,7 +228,6 @@ impl BloomFilter {
         }
         self.items_added += n;
 
-        // Return one bool per item.
         results.into_iter().map(|(_, is_new)| is_new).collect()
     }
 
@@ -343,45 +342,6 @@ pub fn bloom_check_batch(items: Vec<String>, capacity: usize) -> Vec<bool> {
     let mut filter = BloomFilter::new(capacity, 0.01);
     filter.add_batch_impl(items)
 }
-
-// ===========================================================================
-// MmapBloomFilter — file-backed persistent Bloom filter (F266-U1)
-// ===========================================================================
-//
-// Design goals:
-//   - Persist URL/fingerprint dedup state across process restart (no
-//     re-fetch storm after `uv run python -m hledac.universal` restarts).
-//   - Cold-start cost: zero (no Rust alloc, no Python bytearray warm-up).
-//   - Working set: pages are demand-paged. On a 10M-item filter the
-//     total mmap region is ~12 MB but only the touched pages occupy
-//     physical RAM — exactly what a hot dedup loop needs.
-//   - Bounded: capacity is fixed at creation. Adding past capacity
-//     increases false positive rate (clamped at 2x nominal FPR).
-//   - Fail-soft: every public method swallows IO errors and returns
-//     "definitely not present" so a corrupted mmap never crashes the
-//     sprint. Callers can re-build the filter from primary state.
-//
-// File format (little-endian, fixed-width):
-//   Offset  Size  Field
-//   ------  ----  ---------------------------------------------------------
-//        0     4  magic   = b"HBLM"  (Hledac Bloom Mmap)
-//        4     1  version = 0x01
-//        5     1  num_hashes  (k, derived at creation)
-//        6     2  reserved (zero, alignment)
-//        8     8  capacity    (n, expected elements)
-//       16     8  num_bits    (m, bitmap size in bits, u64-aligned)
-//       24     8  items_added (counter, monotonically increasing)
-//       32    32  reserved (zero — pads header to 64 bytes for u64 alignment)
-//       64   m/8  bitmap     (m bits, stored as m/8 bytes, u64-aligned length)
-//
-// Total file size = 64 + ceil(m / 64) * 8 bytes.
-//
-// Concurrency: NOT thread-safe at the bit level. The Python wrapper
-// uses `threading.Lock` if multi-threaded access is required (see
-// `tools/url_dedup.py::MmapBloomFilterAdapter`). For single-threaded
-// sprint loops, no lock is needed.
-//
-// Linux + macOS only. No Windows.
 
 // libc provides mmap/munmap/msync/madvise/close and POSIX constants.
 // Using libc::mmap etc. instead of manual extern "C" declarations (R-08 fix).
@@ -768,8 +728,6 @@ impl MmapBloomFilter {
             return vec![];
         }
 
-        // Phase 1: parallel xxHash3-64 hashing (read-only, safe with RwLock read guard).
-        // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
         let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
             release_gil(py, std::panic::AssertUnwindSafe(|| {
@@ -788,7 +746,6 @@ impl MmapBloomFilter {
         });
         drop(ptr_guard); // Release read guard before write
 
-        // Phase 2: sequential bitmap mutation (write lock held briefly).
         let mut new_count = 0usize;
         {
             let _write_guard = self.ptr.write();
@@ -1023,25 +980,6 @@ impl MmapBloomFilter {
         self.byte_len
     }
 }
-
-// ===========================================================================
-// RotatingMmapBloomFilter — two-generation mmap-backed Bloom filter (F288+)
-// ===========================================================================
-//
-// Fixes the Python-side race condition where RotatingBloomFilter in
-// knowledge/dedup.py checks `os.path.exists(path)` before constructing
-// MmapBloomFilter — between the check and the open, another process can
-// delete or recreate the file, causing EIO or stale handle.
-//
-// RotatingMmapBloomFilter owns BOTH generations inside Rust:
-//   - paths[0] = active generation
-//   - paths[1] = previous (read-only for lookups)
-//
-// Rotation is a simple index swap — no file deletion, no race.
-//
-// Python calls rotate() when active reaches capacity.
-//
-// M1 8GB safe: demand-paged mmap, two files max (~24 MB total for 100K items).
 
 #[pyclass(unsendable)]
 pub struct RotatingMmapBloomFilter {

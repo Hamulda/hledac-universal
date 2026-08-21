@@ -5,23 +5,18 @@ All implementations live in this package directly.
 The compat/ layer has been eliminated.
 """
 
-
 # Key management
-from hledac.universal.security.key_manager import KeyManager  # noqa: F401, E402
+# ADVERSARY-001-INTERNAL-007: Artifact verifier
+from hledac.universal.security.artifact_verifier import (
+    VERIFIED_ARTIFACTS,
+    ArtifactInstallResult,
+    ArtifactManifest,
+    ArtifactVerifier,
+    get_artifact_verifier,
+)  # noqa: F401, E402
 
-# Post-Quantum Cryptography
-from hledac.universal.security.quantum_resistant_crypto import QuantumResistantCrypto  # noqa: F401, E402
-
-# Stealth / anonymity
-from hledac.universal.security.stealth_engine import StealthEngine  # noqa: F401, E402
-from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer  # noqa: F401, E402
-from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine  # noqa: F401, E402
-
-# Threat intelligence
-from hledac.universal.security.threat_intelligence import ThreatIntelligence  # noqa: F401, E402
-
-# ZKP research (simulation mode on M1)
-from hledac.universal.security.zkp_research_engine import ZKPResearchEngine  # noqa: F401, E402
+# Real implementations from security/
+from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401, E402
 
 # Ephemeral state annihilation (ADVERSARY-005)
 from hledac.universal.security.ephemeral_wipe import (
@@ -29,9 +24,24 @@ from hledac.universal.security.ephemeral_wipe import (
     register_mlock_region,
     unregister_mlock_region,
 )  # noqa: F401, E402
+from hledac.universal.security.key_manager import KeyManager  # noqa: F401, E402
 
-# Real implementations from security/
-from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401, E402
+# ADVERSARY-001: Tiered media sandbox
+from hledac.universal.security.media_sandbox import (
+    SANDBOX_ENABLED,
+    FileRiskLevel,
+    IsolationConfig,
+    MediaRiskProfile,
+    MediaSandboxCoordinator,
+    SandboxResult,
+    SandboxTier,
+    get_sandbox_coordinator,
+    profile_file_risk,
+    run_whisper_in_subprocess,
+)  # noqa: F401, E402
+
+# Post-Quantum Cryptography
+from hledac.universal.security.quantum_resistant_crypto import QuantumResistantCrypto  # noqa: F401, E402
 from hledac.universal.security.ram_vault import RamDiskVault  # noqa: F401, E402
 from hledac.universal.security.secrets_scrubber import (
     redact_censys_credentials,
@@ -45,28 +55,16 @@ from hledac.universal.security.secrets_scrubber import (
     scrub_secrets,
 )  # noqa: F401, E402
 
-# ADVERSARY-001: Tiered media sandbox
-from hledac.universal.security.media_sandbox import (
-    MediaSandboxCoordinator,
-    SandboxTier,
-    SandboxResult,
-    FileRiskLevel,
-    MediaRiskProfile,
-    profile_file_risk,
-    get_sandbox_coordinator,
-    IsolationConfig,
-    SANDBOX_ENABLED,
-    run_whisper_in_subprocess,
-)  # noqa: F401, E402
+# Stealth / anonymity
+from hledac.universal.security.stealth_engine import StealthEngine  # noqa: F401, E402
+from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer  # noqa: F401, E402
 
-# ADVERSARY-001-INTERNAL-007: Artifact verifier
-from hledac.universal.security.artifact_verifier import (
-    ArtifactVerifier,
-    ArtifactInstallResult,
-    ArtifactManifest,
-    get_artifact_verifier,
-    VERIFIED_ARTIFACTS,
-)  # noqa: F401, E402
+# Threat intelligence
+from hledac.universal.security.threat_intelligence import ThreatIntelligence  # noqa: F401, E402
+from hledac.universal.security.zero_attribution_engine import ZeroAttributionEngine  # noqa: F401, E402
+
+# ZKP research (simulation mode on M1)
+from hledac.universal.security.zkp_research_engine import ZKPResearchEngine  # noqa: F401, E402
 
 __all__ = [
     "ArtifactInstallResult",

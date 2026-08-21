@@ -14,12 +14,9 @@ Run:
 
 from __future__ import annotations
 
-import time
-
 import msgspec
 
 from runtime.scheduler_v2.acquisition import CycleResult
-from _core import aclose
 
 
 def _normalize_value_old(value):
@@ -51,7 +48,7 @@ def _normalize_value_new(value):
 class TestNormalizePayloadMsgspecStruct:
     """P3-4: _normalize_payload must handle msgspec.Struct without dropping fields."""
 
-    def test_struct_field_is_not_dropped(self):
+    def test_struct_field_is_not_dropped(self) -> None:
         """Before fix: Struct fields were returned as object refs (non-serializable).
         After fix: Struct fields are converted to dict via to_builtins()."""
         result = CycleResult(
@@ -59,16 +56,14 @@ class TestNormalizePayloadMsgspecStruct:
             aggressive_mode=True,
             feed_results=(True, 10),
             public_results=(True, 20, 2),
-    )
+        )
         payload = {"cycle_result": result, "plain_field": "hello", "count": 42}
 
         normalized_old = _normalize_value_old(payload["cycle_result"])
         normalized_new = _normalize_value_new(payload["cycle_result"])
 
         # Old behavior: Struct returned as-is (breaks orjson.dumps)
-        assert not isinstance(
-            normalized_old, dict
-        ), "Old behavior should return Struct as object"
+        assert not isinstance(normalized_old, dict), "Old behavior should return Struct as object"
 
         # New behavior: Struct converted to dict (serializable)
         assert isinstance(normalized_new, dict)
@@ -76,7 +71,7 @@ class TestNormalizePayloadMsgspecStruct:
         assert normalized_new["aggressive_mode"] is True
         assert normalized_new["feed_results"] == (True, 10)
 
-    def test_normalize_payload_struct_in_list(self):
+    def test_normalize_payload_struct_in_list(self) -> None:
         """Struct in a list field must also be converted."""
         from evidence_log import _normalize_payload
 
@@ -92,7 +87,7 @@ class TestNormalizePayloadMsgspecStruct:
         # Plain dict in list is preserved
         assert normalized["results"][1] == {"plain": "dict"}
 
-    def test_normalize_value_is_deterministic(self):
+    def test_normalize_value_is_deterministic(self) -> None:
         """Two calls with same Struct must produce equal dicts."""
         result = CycleResult(
             cycle_ok=True,
@@ -102,7 +97,7 @@ class TestNormalizePayloadMsgspecStruct:
             aimd_window=0.5,
             aimd_successes=50,
             aimd_failures=5,
-    )
+        )
 
         d1 = msgspec.to_builtins(result)
         d2 = msgspec.to_builtins(result)
@@ -111,7 +106,7 @@ class TestNormalizePayloadMsgspecStruct:
         assert d1["cycle_ok"] is True
         assert d1["feed_results"] == (True, 5)
 
-    def test_builtins_preserves_all_cycle_result_fields(self):
+    def test_builtins_preserves_all_cycle_result_fields(self) -> None:
         """All CycleResult fields survive to_builtins round-trip."""
         result = CycleResult(
             cycle_ok=False,
@@ -124,7 +119,7 @@ class TestNormalizePayloadMsgspecStruct:
             aimd_successes=200,
             aimd_failures=50,
             error="timeout",
-    )
+        )
 
         d = msgspec.to_builtins(result)
 
@@ -139,7 +134,7 @@ class TestNormalizePayloadMsgspecStruct:
         assert d["aimd_failures"] == 50
         assert d["error"] == "timeout"
 
-    def test_normalize_payload_struct_in_nested_dict(self):
+    def test_normalize_payload_struct_in_nested_dict(self) -> None:
         """Struct in deeply nested dict is converted."""
         from evidence_log import _normalize_payload
 

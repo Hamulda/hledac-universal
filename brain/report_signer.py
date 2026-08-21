@@ -25,23 +25,19 @@ Integration points:
 - report/engine.py: multi-format report rendering
 - layers/security_layer.py: MissionAudit chain (optional co-signing)
 """
+
 from __future__ import annotations
 
 import base64
 import logging
-import os
 import threading
 import time
 from pathlib import Path
 from typing import Any
-from _core import aclose
+
 from _core.lock_registry import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _ALGORITHM = "ed25519"
 _SCHEMA_VERSION = "1"
@@ -50,16 +46,16 @@ _KEY_BASENAME = "report_signer_ed25519"
 
 # Signature XML template - appended to Markdown reports or embedded in JSON
 _SIGNATURE_TEMPLATE = (
-    '\n\n<!-- SOVEREIGN-009: Ed25519 Report Signature -->\n'
-    '<signature\n'
+    "\n\n<!-- SOVEREIGN-009: Ed25519 Report Signature -->\n"
+    "<signature\n"
     '  algorithm="{algorithm}"\n'
     '  schema_version="{schema_version}"\n'
     '  timestamp="{timestamp}"\n'
     '  report_hash="{report_hash}"\n'
     '  public_key="{public_key_b64}"\n'
     '  base64="{signature_b64}"\n'
-    '/>\n'
-    )
+    "/>\n"
+)
 
 # JSON signature block for structured exports
 _JSON_SIGNATURE_TEMPLATE = {
@@ -72,11 +68,6 @@ _JSON_SIGNATURE_TEMPLATE = {
         "signature_b64": "",
     }
 }
-
-
-# ---------------------------------------------------------------------------
-# ReportSigner
-# ---------------------------------------------------------------------------
 
 
 class ReportSigner:
@@ -134,24 +125,23 @@ class ReportSigner:
                 return True
 
             try:
+                from cryptography.hazmat.primitives import serialization
                 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                     Ed25519PrivateKey,
-    )
-                from cryptography.hazmat.primitives import serialization
+                )
 
                 # Try to load existing keypair
                 priv_path = self._key_dir / f"{_KEY_BASENAME}.priv"
                 pub_path = self._key_dir / f"{_KEY_BASENAME}.pub"
 
                 if priv_path.exists() and pub_path.exists():
-                    # Load existing keys
                     priv_bytes = priv_path.read_bytes()
                     self._private_key = Ed25519PrivateKey.from_private_bytes(priv_bytes)
                     self._public_key = self._private_key.public_key()
                     pub_bytes = self._public_key.public_bytes(
                         serialization.Encoding.Raw,
                         serialization.PublicFormat.Raw,
-    )
+                    )
                     self._public_key_b64 = base64.b64encode(pub_bytes).decode("ascii")
                     logger.info("ReportSigner: loaded existing Ed25519 keypair")
                 else:
@@ -163,7 +153,7 @@ class ReportSigner:
                     pub_bytes = self._public_key.public_bytes(
                         serialization.Encoding.Raw,
                         serialization.PublicFormat.Raw,
-    )
+                    )
                     self._public_key_b64 = base64.b64encode(pub_bytes).decode("ascii")
 
                     # Persist keys
@@ -172,7 +162,7 @@ class ReportSigner:
                         serialization.Encoding.Raw,
                         serialization.PrivateFormat.Raw,
                         serialization.NoEncryption(),
-    )
+                    )
                     priv_path.write_bytes(priv_bytes)
                     pub_path.write_bytes(pub_bytes)
 
@@ -180,7 +170,7 @@ class ReportSigner:
                     try:
                         priv_path.chmod(0o600)
                         pub_path.chmod(0o644)
-                    except (OSError, NotImplementedError):  # noqa: BLE001
+                    except OSError, NotImplementedError:  # noqa: BLE001
                         pass  # Windows or restricted filesystem
 
                     logger.info("ReportSigner: generated new Ed25519 keypair")
@@ -208,7 +198,6 @@ class ReportSigner:
 
         try:
             import hashlib
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
             # Canonical representation: UTF-8 bytes
             report_bytes = report_content.encode("utf-8")
@@ -231,7 +220,7 @@ class ReportSigner:
                 report_hash=report_hash,
                 public_key_b64=self._public_key_b64,
                 signature_b64=signature_b64,
-    )
+            )
 
             signed_content = report_content + signature_block
             logger.debug(f"ReportSigner: signed report ({len(report_bytes)} bytes)")
@@ -257,13 +246,14 @@ class ReportSigner:
 
         try:
             import hashlib
+
             import orjson
 
             # Canonical JSON representation (sorted keys, no whitespace)
             canonical_bytes = orjson.dumps(
                 report_dict,
                 option=orjson.OPT_SORT_KEYS,
-    )
+            )
 
             # Compute report hash
             report_hash = hashlib.sha256(canonical_bytes).hexdigest()
@@ -369,10 +359,6 @@ class ReportSigner:
             return ""
         return self._public_key_b64
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
 
 _signer_instance: ReportSigner | None = None
 

@@ -18,9 +18,8 @@ Invariants tested:
 from __future__ import annotations
 
 import asyncio
-import gc
+
 import pytest
-from _core import aclose
 
 
 class TestTaskRegistryWinddown:
@@ -29,7 +28,7 @@ class TestTaskRegistryWinddown:
     @pytest.mark.asyncio
     async def test_cancel_all_reaches_50_tasks(self) -> None:
         """cancel_all() skutecne zrusi vsech 50 registered tasks."""
-        from runtime.scheduler_v2._task_registry import TaskRegistry, get_task_registry
+        from runtime.scheduler_v2._task_registry import TaskRegistry
 
         # Use fresh registry for this test
         registry = TaskRegistry()
@@ -103,7 +102,9 @@ class TestTaskRegistryWinddown:
 
         # Register tasks in two different scopes
         for i in range(5):
-            registry.register(f"prelude:{i}", asyncio.create_task(dummy(), name=f"prelude:{i}"), scope=TaskScope.PRELUDE)
+            registry.register(
+                f"prelude:{i}", asyncio.create_task(dummy(), name=f"prelude:{i}"), scope=TaskScope.PRELUDE
+            )
         for i in range(5):
             registry.register(f"windup:{i}", asyncio.create_task(dummy(), name=f"windup:{i}"), scope=TaskScope.WINDUP)
 
@@ -151,6 +152,7 @@ class TestTaskRegistryWinddown:
         registry = TaskRegistry()
         # Use a fresh registry so we don't conflict with singleton
         import runtime.scheduler_v2._task_registry as _tr
+
         _tr._registry = registry  # override singleton for this test
 
         async def quick_task() -> int:
@@ -170,7 +172,9 @@ class TestTaskRegistryWinddown:
 
         # Task should be auto-unregistered after done callback fires
         counts = registry.get_counts()
-        assert counts["active_tasks"] == 0, f"Expected 0, got {counts['active_tasks']} (task should be auto-unregistered)"
+        assert counts["active_tasks"] == 0, (
+            f"Expected 0, got {counts['active_tasks']} (task should be auto-unregistered)"
+        )
 
         # Restore singleton
         _tr._registry = None
@@ -178,7 +182,7 @@ class TestTaskRegistryWinddown:
     @pytest.mark.asyncio
     async def test_fire_and_forget_tracked_task(self) -> None:
         """safe_create_task_tracked vytvari sledovany task."""
-        from runtime.scheduler_v2._task_registry import safe_create_task_tracked, TaskScope, get_task_registry
+        from runtime.scheduler_v2._task_registry import TaskScope, get_task_registry, safe_create_task_tracked
 
         registry = get_task_registry()
         registry.reset()  # Clear any previous state
@@ -191,11 +195,13 @@ class TestTaskRegistryWinddown:
             background_work(),
             name="test:background",
             scope=TaskScope.ACQUISITION,
-    )
+        )
 
         counts = registry.get_counts()
         assert counts["active_tasks"] == 1, f"Expected 1 tracked task, got {counts['active_tasks']}"
-        assert counts["by_scope"].get(TaskScope.ACQUISITION, 0) == 1, f"Expected 1 task in ACQUISITION scope, got {counts['by_scope'].get(TaskScope.ACQUISITION, 0)}"
+        assert counts["by_scope"].get(TaskScope.ACQUISITION, 0) == 1, (
+            f"Expected 1 task in ACQUISITION scope, got {counts['by_scope'].get(TaskScope.ACQUISITION, 0)}"
+        )
 
         # Cancel it
         await registry.cancel_scope(TaskScope.ACQUISITION, timeout=0.5)

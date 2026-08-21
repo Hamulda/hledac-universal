@@ -1,18 +1,21 @@
 import asyncio
 import logging
 import os
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for  # noqa: F401 — safe_wait_for used for migration
-
 import threading
+
+from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+
 logger = logging.getLogger(__name__)
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
-    import lz4.frame
+    pass
 import msgspec.json as _json
-from _core import aclose
+
 _lz4_fn: Any | None = None
+
 
 def _init_lz4() -> bool:
     """Lazy init of Rust lz4 via rust.hot_edges domain."""
@@ -21,19 +24,23 @@ def _init_lz4() -> bool:
         return True
     try:
         from hledac.universal._core import rust_backend
+
         be = rust_backend.rust
         if be.is_available:
-            domain = getattr(be, 'hot_edges', None)
+            domain = getattr(be, "hot_edges", None)
             if domain is not None:
-                fn = getattr(domain, 'lz4_compress_jsonl_batch', None)
+                fn = getattr(domain, "lz4_compress_jsonl_batch", None)
                 if fn is not None:
                     _lz4_fn = fn
                     return True
     except Exception:  # noqa: BLE001
         pass
     return False
+
+
 _lz4_frame_available: bool | None = None
 _lz4_frame_compress: Any | None = None
+
 
 def _lz4_compress_python(lines: list[bytes]) -> bytes:
     """Python fallback: join lines, compress via lz4.frame or zlib."""
@@ -41,25 +48,30 @@ def _lz4_compress_python(lines: list[bytes]) -> bytes:
     if _lz4_frame_available is None:
         try:
             import lz4.frame
+
             _lz4_frame_compress = lz4.frame.compress
             _lz4_frame_available = True
         except ImportError:
             _lz4_frame_available = False
     if not lines:
-        return b''
-    combined = b'\n'.join(lines)
+        return b""
+    combined = b"\n".join(lines)
     if _lz4_frame_available and _lz4_frame_compress is not None:
         return _lz4_frame_compress(combined)
     else:
         import zlib
-        return zlib.compress(combined, 6)
-_JSONL_LZ4_ENABLED = os.environ.get('HLEDAC_JSONL_LZ4', '1') == '1'
-_JSONL_LZ4_BATCH_SIZE = int(os.environ.get('HLEDAC_JSONL_LZ4_BATCH', '256'))
-_JSONL_LZ4_QUEUE_MAX = int(os.environ.get('HLEDAC_JSONL_LZ4_QUEUE', '1000'))
-_JSONL_LZ4_FLUSH_BYTES = int(os.environ.get('HLEDAC_JSONL_LZ4_FLUSH', str(32 * 1024)))
-_JSONL_LZ4_COMPRESS_THRESHOLD = int(os.environ.get('HLEDAC_JSONL_LZ4_MIN_COMPRESS', '512'))
 
-_JSONL_LZ4_WRITE_TIMEOUT_S = float(os.environ.get('HLEDAC_JSONL_LZ4_WRITE_TIMEOUT', '5.0'))
+        return zlib.compress(combined, 6)
+
+
+_JSONL_LZ4_ENABLED = os.environ.get("HLEDAC_JSONL_LZ4", "1") == "1"
+_JSONL_LZ4_BATCH_SIZE = int(os.environ.get("HLEDAC_JSONL_LZ4_BATCH", "256"))
+_JSONL_LZ4_QUEUE_MAX = int(os.environ.get("HLEDAC_JSONL_LZ4_QUEUE", "1000"))
+_JSONL_LZ4_FLUSH_BYTES = int(os.environ.get("HLEDAC_JSONL_LZ4_FLUSH", str(32 * 1024)))
+_JSONL_LZ4_COMPRESS_THRESHOLD = int(os.environ.get("HLEDAC_JSONL_LZ4_MIN_COMPRESS", "512"))
+
+_JSONL_LZ4_WRITE_TIMEOUT_S = float(os.environ.get("HLEDAC_JSONL_LZ4_WRITE_TIMEOUT", "5.0"))
+
 
 class LZ4JSONLWriter:
     """
@@ -91,9 +103,38 @@ class LZ4JSONLWriter:
         [I5] Bounded memory: max 1000 lines * ~1 KB ~= 1 MB queue
         [I6] S1-09: write_line() returns False on timeout (caller decides backpressure response); write_stream() returns count of queued lines
     """
-    __slots__ = tuple(('_active_file', '_batch_size', '_closed', '_compress', '_file_jsonl', '_file_zst', '_flush_bytes', '_lock', '_lz4_available', '_lz4_fn', '_path', '_path_jsonl', '_path_zst', '_pending_bytes', '_pending_lines', '_queue', '_writer_task', '_write_timeout'))
 
-    def __init__(self, path: Path, *, compress: bool=_JSONL_LZ4_ENABLED, batch_size: int=_JSONL_LZ4_BATCH_SIZE, queue_max: int=_JSONL_LZ4_QUEUE_MAX, flush_bytes: int=_JSONL_LZ4_FLUSH_BYTES, write_timeout: float=_JSONL_LZ4_WRITE_TIMEOUT_S) -> None:
+    __slots__ = (
+        "_active_file",
+        "_batch_size",
+        "_closed",
+        "_compress",
+        "_file_jsonl",
+        "_file_zst",
+        "_flush_bytes",
+        "_lock",
+        "_lz4_available",
+        "_lz4_fn",
+        "_path",
+        "_path_jsonl",
+        "_path_zst",
+        "_pending_bytes",
+        "_pending_lines",
+        "_queue",
+        "_writer_task",
+        "_write_timeout",
+    )
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        compress: bool = _JSONL_LZ4_ENABLED,
+        batch_size: int = _JSONL_LZ4_BATCH_SIZE,
+        queue_max: int = _JSONL_LZ4_QUEUE_MAX,
+        flush_bytes: int = _JSONL_LZ4_FLUSH_BYTES,
+        write_timeout: float = _JSONL_LZ4_WRITE_TIMEOUT_S,
+    ) -> None:
         self._path = Path(path)
         self._compress = compress and _JSONL_LZ4_ENABLED
         self._batch_size = batch_size
@@ -107,8 +148,8 @@ class LZ4JSONLWriter:
         self._lz4_fn = _lz4_fn if self._compress else None
         self._file_zst: Any = None
         self._file_jsonl: Any = None
-        self._active_file: str = 'zst'
-        self._path_zst = Path(str(self._path) + '.zst')
+        self._active_file: str = "zst"
+        self._path_zst = Path(str(self._path) + ".zst")
         self._path_jsonl = self._path
         self._lock = threading.Lock()
         self._write_timeout = write_timeout
@@ -125,18 +166,19 @@ class LZ4JSONLWriter:
             line_bytes = _json.encode(obj)
         except Exception:
             import orjson
+
             line_bytes = orjson.dumps(obj)
         self._ensure_writer_started()
         try:
             await safe_wait_for(self._queue.put(line_bytes), timeout=self._write_timeout)
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # S1-09 FIX: return False instead of silently dropping. Caller decides
             # whether to retry, buffer locally, or propagate backpressure upstream.
-            logger.warning('[LZ4] write_line timed out after %.1fs, queue full', self._write_timeout)
+            logger.warning("[LZ4] write_line timed out after %.1fs, queue full", self._write_timeout)
             return False
 
-    async def write_stream(self, source: AsyncGenerator[dict[str, Any], None]) -> int:
+    async def write_stream(self, source: AsyncGenerator[dict[str, Any]]) -> int:
         """Stream objects from an async generator into the writer.
 
         Returns:
@@ -151,10 +193,10 @@ class LZ4JSONLWriter:
                 try:
                     await safe_wait_for(self._queue.put(_json.encode(obj)), timeout=self._write_timeout)
                     written += 1
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # S1-09 FIX: count skipped lines instead of silently continuing.
                     # Caller can inspect return value to detect backpressure.
-                    logger.warning('[LZ4] write_stream timed out after %.1fs, skipping line', self._write_timeout)
+                    logger.warning("[LZ4] write_stream timed out after %.1fs, skipping line", self._write_timeout)
                     continue
         except asyncio.CancelledError:
             await self.close()
@@ -169,8 +211,8 @@ class LZ4JSONLWriter:
         if self._writer_task is not None:
             await self._queue.put(None)
             try:
-                await safe_wait_for(self._writer_task, timeout=5.0, label='_writer_task')
-            except asyncio.TimeoutError:
+                await safe_wait_for(self._writer_task, timeout=5.0, label="_writer_task")
+            except TimeoutError:
                 self._writer_task.cancel()
             except asyncio.CancelledError:  # noqa: BLE001
                 pass
@@ -179,7 +221,7 @@ class LZ4JSONLWriter:
     def _ensure_writer_started(self) -> None:
         """Lazily start the background writer task."""
         if self._writer_task is None:
-            self._writer_task = safe_create_task(self._writer_loop(), name='lz4_writer:loop')
+            self._writer_task = safe_create_task(self._writer_loop(), name="lz4_writer:loop")
 
     async def _writer_loop(self) -> None:
         """Background loop: drain queue, batch, compress, write."""
@@ -216,7 +258,6 @@ class LZ4JSONLWriter:
                 await self._write_raw_batch(lines)
             except Exception:
                 self._pending_bytes = 0
-                pass
 
     def _should_compress(self, _lines: list[bytes]) -> bool:
         return self._pending_bytes >= _JSONL_LZ4_COMPRESS_THRESHOLD
@@ -228,6 +269,7 @@ class LZ4JSONLWriter:
             if self._lz4_fn is not None:
                 return self._lz4_fn(lines)
             return _lz4_compress_python(lines)
+
         try:
             compressed = await asyncio.to_thread(_compress)
         except Exception:
@@ -235,28 +277,28 @@ class LZ4JSONLWriter:
             return
         if self._file_zst is None:
             path = str(self._path_zst)
-            self._file_zst = open(path, 'ab', buffering=8192)
-            self._active_file = 'zst'
+            self._file_zst = open(path, "ab", buffering=8192)
+            self._active_file = "zst"
         with self._lock:
             try:
                 self._file_zst.write(compressed)
                 self._file_zst.flush()
             except Exception:
                 self._file_zst = None
-                self._active_file = 'jsonl'
+                self._active_file = "jsonl"
                 await self._write_raw_batch(lines)
 
     async def _write_raw_batch(self, lines: list[bytes]) -> None:
         """Write raw JSONL lines (no compression)."""
         if self._file_jsonl is None:
             path = str(self._path_jsonl)
-            self._file_jsonl = open(path, 'a', buffering=8192, encoding='utf-8')
-            self._active_file = 'jsonl'
+            self._file_jsonl = open(path, "a", buffering=8192, encoding="utf-8")
+            self._active_file = "jsonl"
         with self._lock:
             try:
                 for line in lines:
-                    self._file_jsonl.write(line.decode('utf-8', errors='replace'))
-                    self._file_jsonl.write('\n')
+                    self._file_jsonl.write(line.decode("utf-8", errors="replace"))
+                    self._file_jsonl.write("\n")
                 self._file_jsonl.flush()
             except Exception:  # noqa: BLE001
                 pass
@@ -272,7 +314,8 @@ class LZ4JSONLWriter:
         self._file_zst = None
         self._file_jsonl = None
 
-async def stream_to_lz4_jsonl(source: AsyncGenerator[dict[str, Any], None], path: Path, **kwargs: Any) -> Path:
+
+async def stream_to_lz4_jsonl(source: AsyncGenerator[dict[str, Any]], path: Path, **kwargs: Any) -> Path:
     """
     Stream objects from an async generator directly to a compressed JSONL file.
 
@@ -287,7 +330,9 @@ async def stream_to_lz4_jsonl(source: AsyncGenerator[dict[str, Any], None], path
     writer = LZ4JSONLWriter(path, **kwargs)
     await writer.write_stream(source)
     await writer.close()
-    if writer._active_file == 'jsonl':
+    if writer._active_file == "jsonl":
         return writer._path_jsonl
     return writer._path_zst
-__all__ = ['LZ4JSONLWriter', 'stream_to_lz4_jsonl']
+
+
+__all__ = ["LZ4JSONLWriter", "stream_to_lz4_jsonl"]

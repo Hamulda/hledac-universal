@@ -8,14 +8,14 @@ Responsibilities:
 Input: FeedEntryBatch
 Output: FeedAssembledBatch (entry_urls, assembled_texts, assembled_text_lens, quality_signals)
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedAssembledBatch, FeedEntryBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +38,7 @@ class AssembleStage:
     def name(self) -> str:
         return "assemble"
 
-    async def process(
-        self, input_batch: FeedEntryBatch | None
-    ) -> tuple[FeedAssembledBatch, dict[str, Any]]:
+    async def process(self, input_batch: FeedEntryBatch | None) -> tuple[FeedAssembledBatch, dict[str, Any]]:
         """Assemble feed entry texts.
 
         Args:
@@ -79,7 +77,7 @@ class AssembleStage:
                 if not assembled:
                     telemetry["entries_empty"] += 1
 
-            except Exception as exc:
+            except Exception:
                 telemetry["assemble_errors"] += 1
                 assembled_texts.append("")
                 assembled_text_lens.append(0)
@@ -90,7 +88,7 @@ class AssembleStage:
             assembled_texts=assembled_texts,
             assembled_text_lens=assembled_text_lens,
             quality_signals=quality_signals,
-    )
+        )
 
         return batch, telemetry
 
@@ -100,7 +98,7 @@ class AssembleStage:
             assembled_texts=[],
             assembled_text_lens=[],
             quality_signals=[],
-    )
+        )
 
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:
@@ -123,7 +121,6 @@ def _strip_html_tags(text: str) -> str:
     if not text:
         return ""
 
-    # Remove script and style elements
     text = _SCRIPT_TAG_RE.sub("", text)
     text = _STYLE_TAG_RE.sub("", text)
 

@@ -5,19 +5,20 @@ Tests backpressure behavior:
 - S1-11: StreamHandler stream_tokens() wraps put() with 1s timeout, skips on saturation
 - S1-12: ContinuousBatchEngine.generate() wraps put() with 5s timeout
 """
+
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+
 import pytest
 
-from hledac.universal.brain._inference.stream_handler import StreamHandler, StreamConfig
-from _core import aclose
-
+from hledac.universal.brain._inference.stream_handler import StreamConfig, StreamHandler
 
 # ============================================================================
 # S1-11: StreamHandler Backpressure Tests
 # ============================================================================
+
 
 class TestStreamHandlerBackpressure:
     """S1-11: StreamHandler must not deadlock when queue is saturated."""
@@ -59,8 +60,6 @@ class TestStreamHandlerBackpressure:
     async def test_stream_tokens_stats_tracked(self) -> None:
         """StreamHandler tracks stream_errors when tokens are skipped."""
         handler = StreamHandler(StreamConfig(queue_size=1))
-
-        initial_errors = handler._stats.stream_errors
 
         # Very slow consumer with small queue
         async def slow_generator() -> AsyncIterator[str]:

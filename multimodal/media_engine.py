@@ -2,10 +2,6 @@
 [SILICON]-02: Apple Media Engine Integration — Audio/Video Decoding + Transcription
 ====================================================================================
 
-
-
-
-
 Zero-dependency (beyond PyObjC stdlib frameworks) integration with Apple's
 hardware-accelerated media pipeline on M1:
 
@@ -47,47 +43,45 @@ Lazy import: AVFoundation + Speech imported only when first method is called.
 from __future__ import annotations
 
 import asyncio
-import threading
 import logging
 import os
 import tempfile
+import threading
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 log = logging.getLogger(__name__)
 
 # ── M1 8GB bounds ─────────────────────────────────────────────────────────────
-_MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024      # 100 MB
-_MAX_VIDEO_FILE_BYTES = 500 * 1024 * 1024      # 500 MB
-_MAX_AUDIO_BUFFER_SAMPLES = 50 * 1024 * 1024    # 50M samples (~12 min @ 16kHz mono)
-_KEYFRAME_INTERVAL_S = 10.0                     # extract I-frame every 10s
-_MAX_KEYFRAMES = 120                            # max 20 min of video
-_TARGET_SAMPLE_RATE = 16000                     # 16kHz mono for speech recognition
-_SPEECH_LOCALE = "en-US"                        # default recognition language
+_MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
+_MAX_VIDEO_FILE_BYTES = 500 * 1024 * 1024  # 500 MB
+_MAX_AUDIO_BUFFER_SAMPLES = 50 * 1024 * 1024  # 50M samples (~12 min @ 16kHz mono)
+_KEYFRAME_INTERVAL_S = 10.0  # extract I-frame every 10s
+_MAX_KEYFRAMES = 120  # max 20 min of video
+_TARGET_SAMPLE_RATE = 16000  # 16kHz mono for speech recognition
+_SPEECH_LOCALE = "en-US"  # default recognition language
 
 # [SAFE-3] Adaptive timeout configuration
 # Base timeout: 60s for small files, scales with file size up to max
-_SPEECH_RECOGNITION_TIMEOUT_BASE_S = 60.0      # Base timeout: 60s
-_SPEECH_RECOGNITION_TIMEOUT_MAX_S = 300.0      # Max timeout: 5 min (reduced from 10 min)
-_SPEECH_TIMEOUT_SCALE_FACTOR = 1.0             # 1 second per MB
+_SPEECH_RECOGNITION_TIMEOUT_BASE_S = 60.0  # Base timeout: 60s
+_SPEECH_RECOGNITION_TIMEOUT_MAX_S = 300.0  # Max timeout: 5 min (reduced from 10 min)
+_SPEECH_TIMEOUT_SCALE_FACTOR = 1.0  # 1 second per MB
 
 # [SAFE-3] Video transcription aggregation deadline
-_VIDEO_TRANSCRIBE_DEADLINE_S = 180.0            # 3 min total for video transcription
-_MAX_OCR_FRAMES_PER_DEADLINE = 30              # Max frames to OCR within deadline
+_VIDEO_TRANSCRIBE_DEADLINE_S = 180.0  # 3 min total for video transcription
+_MAX_OCR_FRAMES_PER_DEADLINE = 30  # Max frames to OCR within deadline
 
 
 def _compute_adaptive_speech_timeout(file_path: str) -> float:
     """
     [SAFE-3] Compute adaptive speech recognition timeout based on file size.
-    
+
     Formula: min(BASE + file_size_mb * SCALE, MAX)
-    
+
     Examples:
       - 10 MB file: 60 + 10 = 70s
       - 50 MB file: 60 + 50 = 110s
@@ -102,15 +96,43 @@ def _compute_adaptive_speech_timeout(file_path: str) -> float:
     except OSError:
         return _SPEECH_RECOGNITION_TIMEOUT_BASE_S
 
+
 # ── Audio/video extensions ────────────────────────────────────────────────────
-_AUDIO_EXTENSIONS: frozenset[str] = frozenset({
-    '.mp3', '.aac', '.m4a', '.flac', '.wav', '.ogg', '.opus',
-    '.wma', '.aiff', '.aif', '.alac', '.ac3', '.amr', '.caf',
-})
-_VIDEO_EXTENSIONS: frozenset[str] = frozenset({
-    '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.flv',
-    '.wmv', '.3gp', '.3g2', '.ts', '.mts', '.m2ts',
-})
+_AUDIO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".mp3",
+        ".aac",
+        ".m4a",
+        ".flac",
+        ".wav",
+        ".ogg",
+        ".opus",
+        ".wma",
+        ".aiff",
+        ".aif",
+        ".alac",
+        ".ac3",
+        ".amr",
+        ".caf",
+    }
+)
+_VIDEO_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".mp4",
+        ".mkv",
+        ".mov",
+        ".avi",
+        ".webm",
+        ".m4v",
+        ".flv",
+        ".wmv",
+        ".3gp",
+        ".3g2",
+        ".ts",
+        ".mts",
+        ".m2ts",
+    }
+)
 
 # ── Lazy framework singletons ─────────────────────────────────────────────────
 _AVFoundation: Any | None = None
@@ -127,23 +149,27 @@ def _ensure_frameworks() -> bool:
         return True
     try:
         import AVFoundation as _avf
+
         _AVFoundation = _avf
     except ImportError:
         log.debug("[SILICON-02] AVFoundation not available — audio/video decode disabled")
         return False
     try:
         import Speech as _sp
+
         _Speech = _sp
     except ImportError:
         log.debug("[SILICON-02] Speech framework not available — transcription disabled")
         # Speech is optional — decode still works without it
     try:
         import Vision as _vis
+
         _Vision = _vis
     except ImportError:
         log.debug("[SILICON-02] Vision framework not available — video frame OCR disabled")
     try:
         import AppKit as _ak
+
         _AppKit = _ak
     except ImportError:
         log.debug("[SILICON-02] AppKit not available — some NSData paths may fail")
@@ -153,8 +179,10 @@ def _ensure_frameworks() -> bool:
 
 # ── Public types ──────────────────────────────────────────────────────────────
 
+
 class MediaFormatInfo(Struct, frozen=True):
     """Probed format info — no decode, metadata only."""
+
     file_path: str
     media_type: str  # "audio" | "video" | "unknown"
     duration_s: float | None = None
@@ -171,6 +199,7 @@ class MediaFormatInfo(Struct, frozen=True):
 
 class TranscriptionResult(Struct, frozen=True):
     """Speech-to-text result from SFSpeechRecognizer."""
+
     text: str = ""
     confidence: float = 0.0
     duration_s: float = 0.0
@@ -180,6 +209,7 @@ class TranscriptionResult(Struct, frozen=True):
 
 class VideoTranscriptionResult(Struct, frozen=True):
     """Combined audio transcription + video frame OCR result."""
+
     audio_transcript: str = ""
     audio_confidence: float = 0.0
     duration_s: float = 0.0
@@ -189,6 +219,7 @@ class VideoTranscriptionResult(Struct, frozen=True):
 
 
 # ── MediaDecoder ──────────────────────────────────────────────────────────────
+
 
 class MediaDecoder:
     """
@@ -211,12 +242,12 @@ class MediaDecoder:
     """
 
     __slots__ = (
-        '_decode_lock',
-        '_governor',
-        '_speech_recognizer',
-        '_speech_locale',
-        '_speech_available',
-        '_initialized',
+        "_decode_lock",
+        "_governor",
+        "_speech_recognizer",
+        "_speech_locale",
+        "_speech_available",
+        "_initialized",
     )
 
     def __init__(
@@ -251,13 +282,12 @@ class MediaDecoder:
                 try:
                     self._speech_recognizer = _Speech.SFSpeechRecognizer.alloc().initWithLocale_(
                         _Speech.NSLocale.alloc().initWithLocaleIdentifier_(self._speech_locale)
-    )
-                    self._speech_recognizer.setDefaultTaskHint_(
-                        _Speech.SFSpeechRecognitionTaskHintDictation
-    )
+                    )
+                    self._speech_recognizer.setDefaultTaskHint_(_Speech.SFSpeechRecognitionTaskHintDictation)
                     self._speech_available = True
-                    log.info("[SILICON-02] SFSpeechRecognizer initialized (locale=%s, ANE-accelerated)",
-                             self._speech_locale)
+                    log.info(
+                        "[SILICON-02] SFSpeechRecognizer initialized (locale=%s, ANE-accelerated)", self._speech_locale
+                    )
                 except Exception as exc:
                     log.warning("[SILICON-02] Speech recognizer init failed: %s", exc)
                     self._speech_available = False
@@ -275,6 +305,7 @@ class MediaDecoder:
     def _check_ram_guard(self) -> bool:
         """Check UMA headroom for heavy media decode."""
         from hledac.universal.multimodal import check_ram_guard
+
         return check_ram_guard(self._governor)
 
     # ── Format probe ───────────────────────────────────────────────────────
@@ -294,7 +325,7 @@ class MediaDecoder:
             ns_url = _AVFoundation.NSURL.fileURLWithPath_(file_path)
             asset = _AVFoundation.AVAsset.assetWithURL_(ns_url)
             dur = asset.duration()
-            dur_s = float(dur.value) / float(dur.timescale) if hasattr(dur, 'timescale') and dur.timescale else None
+            dur_s = float(dur.value) / float(dur.timescale) if hasattr(dur, "timescale") and dur.timescale else None
 
             audio_codec = None
             audio_channels = None
@@ -303,7 +334,7 @@ class MediaDecoder:
             video_w = None
             video_h = None
             video_fps = None
-            container = Path(file_path).suffix.lower().lstrip('.')
+            container = Path(file_path).suffix.lower().lstrip(".")
 
             # Audio tracks
             audio_tracks = asset.tracksWithMediaType_(_AVFoundation.AVMediaTypeAudio)
@@ -313,9 +344,7 @@ class MediaDecoder:
                 if fmt_descs and len(fmt_descs) > 0:
                     desc = fmt_descs[0]
                     try:
-                        audio_codec = str(
-                            _AVFoundation.CMFormatDescriptionGetMediaSubType(desc)
-    )
+                        audio_codec = str(_AVFoundation.CMFormatDescriptionGetMediaSubType(desc))
                     except Exception:  # noqa: BLE001
                         pass
                     try:
@@ -334,9 +363,7 @@ class MediaDecoder:
                 if fmt_descs and len(fmt_descs) > 0:
                     desc = fmt_descs[0]
                     try:
-                        video_codec = str(
-                            _AVFoundation.CMFormatDescriptionGetMediaSubType(desc)
-    )
+                        video_codec = str(_AVFoundation.CMFormatDescriptionGetMediaSubType(desc))
                     except Exception:  # noqa: BLE001
                         pass
                     dims = _AVFoundation.CMVideoFormatDescriptionGetDimensions(desc)
@@ -344,9 +371,11 @@ class MediaDecoder:
                     video_h = int(dims.height)
                 video_fps = float(vt.nominalFrameRate()) if vt.nominalFrameRate() > 0 else None
 
-            media_type = "video" if video_tracks and len(video_tracks) > 0 else (
-                "audio" if audio_tracks and len(audio_tracks) > 0 else "unknown"
-    )
+            media_type = (
+                "video"
+                if video_tracks and len(video_tracks) > 0
+                else ("audio" if audio_tracks and len(audio_tracks) > 0 else "unknown")
+            )
 
             file_size = 0
             try:
@@ -367,7 +396,7 @@ class MediaDecoder:
                 video_fps=video_fps,
                 container_format=container,
                 file_size_bytes=file_size,
-    )
+            )
         except Exception as exc:
             log.debug("[SILICON-02] probe_format failed for %s: %s", file_path, exc)
             return MediaFormatInfo(file_path=file_path, media_type="unknown")
@@ -426,7 +455,6 @@ class MediaDecoder:
                     log.debug("[SILICON-02] AVAssetReader init failed for %s", file_path)
                     return None
 
-                # Configure output: LPCM float32, mono, target sample rate
                 output_settings = {
                     _AVFoundation.AVFormatIDKey: _AVFoundation.kAudioFormatLinearPCM,
                     _AVFoundation.AVLinearPCMBitDepthKey: 32,
@@ -437,14 +465,13 @@ class MediaDecoder:
                 }
                 reader_output = _AVFoundation.AVAssetReaderTrackOutput.alloc().initWithTrack_outputSettings_(
                     track, output_settings
-    )
+                )
                 if not reader.canAddOutput_(reader_output):
                     log.debug("[SILICON-02] Cannot add output for %s", file_path)
                     return None
                 reader.addOutput_(reader_output)
                 if not reader.startReading():
-                    log.debug("[SILICON-02] startReading failed for %s: %s",
-                              file_path, reader.error())
+                    log.debug("[SILICON-02] startReading failed for %s: %s", file_path, reader.error())
                     return None
 
                 chunks: list[np.ndarray] = []
@@ -467,8 +494,8 @@ class MediaDecoder:
                             raw_bytes = _AVFoundation.CMBlockBufferCopyDataBytes(
                                 block_buffer,
                                 0,  # atOffset
-                                data_len  # totalLength
-    )
+                                data_len,  # totalLength
+                            )
                             arr = np.frombuffer(bytes(raw_bytes), dtype=np.float32)
                         except Exception:
                             # Fallback: get data pointer directly (zero-copy when possible)
@@ -484,8 +511,11 @@ class MediaDecoder:
                             allowed = _MAX_AUDIO_BUFFER_SAMPLES - (total_samples - len(arr))
                             if allowed > 0:
                                 chunks.append(arr[:allowed])
-                            log.debug("[SILICON-02] Audio truncated at %d samples for %s",
-                                      _MAX_AUDIO_BUFFER_SAMPLES, file_path)
+                            log.debug(
+                                "[SILICON-02] Audio truncated at %d samples for %s",
+                                _MAX_AUDIO_BUFFER_SAMPLES,
+                                file_path,
+                            )
                             break
                         chunks.append(arr)
                     finally:
@@ -568,18 +598,14 @@ class MediaDecoder:
             #   SFSpeechURLRecognitionRequest for files
             #   SFSpeechAudioBufferRecognitionRequest for streams
             # WAV path is simpler and self-cleaning via tempfile.
-            result_text: str = ""
-            result_confidence: float = 0.0
             segments: list[dict[str, Any]] = []
 
             def _transcribe_sync() -> tuple[str, float, list[dict[str, Any]]]:
-                import struct
                 import wave
 
-                # Write WAV to temp file
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                     tmp_path = tmp.name
-                    with wave.open(tmp_path, 'wb') as wf:
+                    with wave.open(tmp_path, "wb") as wf:
                         wf.setnchannels(1)
                         wf.setsampwidth(4)  # float32 = 4 bytes
                         wf.setframerate(sr)
@@ -602,14 +628,16 @@ class MediaDecoder:
                     result_container: dict[str, Any] = {"text": "", "confidence": 0.0, "segments": []}
                     done_event = threading.Event()
 
-                    def _handler(result, error):
+                    def _handler(result, error) -> None:
                         if error is not None:
                             log.debug("[SILICON-02] Transcription error: %s", error)
                             result_container["error"] = str(error)
                             done_event.set()  # wake the polling thread
                             return
                         if result is not None:
-                            result_container["text"] = str(result.bestTranscription().formattedString()) if result.bestTranscription() else ""
+                            result_container["text"] = (
+                                str(result.bestTranscription().formattedString()) if result.bestTranscription() else ""
+                            )
                             segments_list = result.bestTranscription().segments() if result.bestTranscription() else []
                             confidences = []
                             for seg in segments_list:
@@ -636,13 +664,16 @@ class MediaDecoder:
                     # unlike time.sleep() which keeps the GIL held.
                     # Also: if the handler fires first, we wake immediately (no wasted sleep).
                     # [SAFE-3] Use adaptive timeout based on file size
-                    speech_timeout = _compute_adaptive_speech_timeout(source) if isinstance(source, str) else _SPEECH_RECOGNITION_TIMEOUT_BASE_S
+                    speech_timeout = (
+                        _compute_adaptive_speech_timeout(source)
+                        if isinstance(source, str)
+                        else _SPEECH_RECOGNITION_TIMEOUT_BASE_S
+                    )
                     deadline = _time.monotonic() + speech_timeout
                     while not done_event.wait(timeout=0.05):
                         if _time.monotonic() > deadline:
                             task.cancel()
-                            log.debug("[SILICON-02] Transcription timed out after %.0fs (adaptive)",
-                                      speech_timeout)
+                            log.debug("[SILICON-02] Transcription timed out after %.0fs (adaptive)", speech_timeout)
                             break
                         # loop continues on timeout; exit when done_event.set() was called
 
@@ -651,7 +682,7 @@ class MediaDecoder:
                         result_container.get("text", ""),
                         result_container.get("confidence", 0.0),
                         result_container.get("segments", []),
-    )
+                    )
                 finally:
                     try:
                         os.unlink(tmp_path)
@@ -665,7 +696,7 @@ class MediaDecoder:
                 duration_s=dur_s,
                 segments=segments,
                 locale=self._speech_locale,
-    )
+            )
             # [SILICON-02b] If SFSpeechRecognizer returned empty text, try WhisperEngine
             if not text.strip():
                 log.debug("[SILICON-02] SFSpeechRecognizer returned empty — trying WhisperEngine")
@@ -696,7 +727,7 @@ class MediaDecoder:
         try:
             from hledac.universal.multimodal.whisper_transcriber import (
                 transcribe_audio as whisper_transcribe,
-    )
+            )
 
             # Determine audio file path
             if isinstance(source, str):
@@ -713,18 +744,17 @@ class MediaDecoder:
                 str(audio_path),
                 language=None,  # auto-detect
                 model_size="tiny",
-    )
+            )
 
             if result is None or not result.text.strip():
                 return TranscriptionResult()
 
             log.info(
-                "[SILICON-02b] WhisperEngine fallback succeeded: "
-                "%d chars, lang=%s, engine=%s",
+                "[SILICON-02b] WhisperEngine fallback succeeded: %d chars, lang=%s, engine=%s",
                 len(result.text),
                 result.language,
                 result.engine_detail,
-    )
+            )
 
             # Map whisper result to MediaEngine TranscriptionResult
             segments = [
@@ -743,7 +773,7 @@ class MediaDecoder:
                 duration_s=result.duration_s,
                 segments=segments,
                 locale=f"whisper-{result.language}",
-    )
+            )
 
         except ImportError:
             log.debug("[SILICON-02b] WhisperEngine not importable")
@@ -793,6 +823,7 @@ class MediaDecoder:
             return []
 
         try:
+
             def _extract_sync() -> list[bytes]:
                 ns_url = _AVFoundation.NSURL.fileURLWithPath_(file_path)
                 asset = _AVFoundation.AVAsset.assetWithURL_(ns_url)
@@ -803,13 +834,11 @@ class MediaDecoder:
                 generator.setAppliesPreferredTrackTransform_(True)
                 generator.setMaximumSize_(
                     _AVFoundation.CGSizeMake(640, 360)  # thumbnail size — keeps RAM low
-    )
+                )
                 generator.setRequestedTimeToleranceBefore_(
                     _AVFoundation.CMTimeMake(1, 2)  # 0.5s tolerance
-    )
-                generator.setRequestedTimeToleranceAfter_(
-                    _AVFoundation.CMTimeMake(1, 2)
-    )
+                )
+                generator.setRequestedTimeToleranceAfter_(_AVFoundation.CMTimeMake(1, 2))
 
                 frames: list[bytes] = []
                 time = 0.0
@@ -826,9 +855,7 @@ class MediaDecoder:
                         # Convert CGImage to JPEG bytes via NSBitmapImageRep
                         rep = _AppKit.NSBitmapImageRep.alloc().initWithCGImage_(cg_image)
                         if rep is not None:
-                            jpeg_data = rep.representationUsingType_properties_(
-                                _AppKit.NSBitmapImageFileTypeJPEG, {}
-    )
+                            jpeg_data = rep.representationUsingType_properties_(_AppKit.NSBitmapImageFileTypeJPEG, {})
                             if jpeg_data is not None:
                                 frames.append(bytes(jpeg_data))
                     time += interval_s
@@ -896,6 +923,7 @@ class MediaDecoder:
             return []
 
         try:
+
             def _extract_sync() -> list[dict[str, Any]]:
                 """Extract frames as CVPixelBuffer via AVAssetReader."""
                 try:
@@ -940,16 +968,18 @@ class MediaDecoder:
                 # Use AVVideoPixelBufferAttributes for CVPixelBuffer output
                 # NOT AVVideoCodecKey — that specifies encoder output, not decoder output
                 try:
-                    from CoreVideo import kCVPixelBufferPixelFormatTypeKey
-                    from CoreVideo import kCVPixelBufferWidthKey
-                    from CoreVideo import kCVPixelBufferHeightKey
-                    from CoreVideo import kCVPixelBufferIOSurfacePropertiesKey
+                    from CoreVideo import (
+                        kCVPixelBufferHeightKey,
+                        kCVPixelBufferIOSurfacePropertiesKey,
+                        kCVPixelBufferPixelFormatTypeKey,
+                        kCVPixelBufferWidthKey,
+                    )
                 except ImportError:
                     # Fallback: use string keys
-                    kCVPixelBufferPixelFormatTypeKey = 'PixelFormatType'
-                    kCVPixelBufferWidthKey = 'Width'
-                    kCVPixelBufferHeightKey = 'Height'
-                    kCVPixelBufferIOSurfacePropertiesKey = 'IOSurfaceProperties'
+                    kCVPixelBufferPixelFormatTypeKey = "PixelFormatType"
+                    kCVPixelBufferWidthKey = "Width"
+                    kCVPixelBufferHeightKey = "Height"
+                    kCVPixelBufferIOSurfacePropertiesKey = "IOSurfaceProperties"
 
                 pixel_format = _CV.kCVPixelFormatType_32BGRA
                 # AVVideoSettings: Use AVVideoPixelBufferAttributes for CVPixelBuffer output
@@ -966,7 +996,7 @@ class MediaDecoder:
 
                 reader_output = _AVFoundation.AVAssetReaderTrackOutput.alloc().initWithTrack_outputSettings_(
                     video_track, output_settings
-    )
+                )
 
                 if not reader.canAddOutput_(reader_output):
                     log.debug("[IO-4] Cannot add output for %s", file_path)
@@ -989,14 +1019,17 @@ class MediaDecoder:
                     # SAFE-5: Early exit when frame limit reached
                     if len(all_frames) >= max_all_frames:
                         break
-                        
+
                     sample_buffer = reader_output.copyNextSampleBuffer()
                     if sample_buffer is None:
                         break
                     try:
-                        # Get frame timestamp from CMSampleBuffer
                         presentation_time = _AVFoundation.CMSampleBufferGetPresentationTimeStamp(sample_buffer)
-                        timestamp_s = float(presentation_time.value) / float(presentation_time.timescale) if presentation_time.timescale else 0.0
+                        timestamp_s = (
+                            float(presentation_time.value) / float(presentation_time.timescale)
+                            if presentation_time.timescale
+                            else 0.0
+                        )
 
                         # Extract CVPixelBuffer from CMSampleBuffer
                         # CVPixelBufferGetImageBuffer returns IOSurface-backed CVPixelBuffer
@@ -1007,13 +1040,15 @@ class MediaDecoder:
                             pb_height = int(_CV.CVPixelBufferGetHeight(pixel_buffer))
                             pb_bytes_per_row = int(_CV.CVPixelBufferGetBytesPerRow(pixel_buffer))
 
-                            all_frames.append({
-                                'pixel_buffer': pixel_buffer,
-                                'timestamp_s': timestamp_s,
-                                'width': pb_width,
-                                'height': pb_height,
-                                'bytes_per_row': pb_bytes_per_row,
-                            })
+                            all_frames.append(
+                                {
+                                    "pixel_buffer": pixel_buffer,
+                                    "timestamp_s": timestamp_s,
+                                    "width": pb_width,
+                                    "height": pb_height,
+                                    "bytes_per_row": pb_bytes_per_row,
+                                }
+                            )
                     finally:
                         pass  # CMSampleBuffer is autoreleased
 
@@ -1024,17 +1059,17 @@ class MediaDecoder:
                 # Use float arithmetic for time iteration to handle fractional intervals
                 num_intervals = int(dur_s / interval_s) + 1 if interval_s > 0 else 1
                 num_intervals = min(num_intervals, max_frames)
-                
+
                 for idx in range(num_intervals):
                     target_time = idx * interval_s
                     if target_time > dur_s:
                         break
                     # Find nearest frame to target time
                     best_idx = 0
-                    best_diff = float('inf')
+                    best_diff = float("inf")
                     for i, frame in enumerate(all_frames):
                         if i not in sampled_indices:
-                            diff = abs(frame['timestamp_s'] - target_time)
+                            diff = abs(frame["timestamp_s"] - target_time)
                             if diff < best_diff:
                                 best_diff = diff
                                 best_idx = i
@@ -1044,8 +1079,11 @@ class MediaDecoder:
 
                 log.debug(
                     "[IO-4] Extracted %d CVPixelBuffer frames from %s (%.1fs × %d frames)",
-                    len(frames), file_path, interval_s, max_frames
-    )
+                    len(frames),
+                    file_path,
+                    interval_s,
+                    max_frames,
+                )
                 return frames
 
             if _AVFoundation is not None:
@@ -1079,7 +1117,7 @@ class MediaDecoder:
         if _Vision is None:
             return "", 0.0
 
-        languages = languages or ['en-US']
+        languages = languages or ["en-US"]
 
         try:
             import CoreImage as _CI
@@ -1100,9 +1138,11 @@ class MediaDecoder:
                 results_holder: list = []
 
                 class Handler:
-                    __slots__ = ('_results',)
-                    def __init__(self):
+                    __slots__ = ("_results",)
+
+                    def __init__(self) -> None:
                         self._results = results_holder
+
                     def __call__(self, request, error):
                         if error is not None:
                             return
@@ -1117,9 +1157,8 @@ class MediaDecoder:
                 try:
                     # VNImageRequestHandler with CIImage (zero-copy)
                     handler_obj = _Vision.VNImageRequestHandler.alloc().initWithCVPixelBuffer_options_(
-                        pixel_buffer,
-                        {_Vision.VNImageOptionApplyOrientationCorrection: True}
-    )
+                        pixel_buffer, {_Vision.VNImageOptionApplyOrientationCorrection: True}
+                    )
                     handler_obj.performRequests_error_([vn_request], None)
                 except Exception:
                     return "", 0.0
@@ -1136,7 +1175,7 @@ class MediaDecoder:
                         texts.append(txt)
                         confidences.append(conf)
 
-                full_text = '\n'.join(texts)
+                full_text = "\n".join(texts)
                 avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
                 return full_text, avg_conf
 
@@ -1159,7 +1198,7 @@ class MediaDecoder:
         Args:
             pixel_buffer: CVPixelBuffer from extract_keyframes_zero_copy()
             max_faces: Maximum number of faces to detect (default: 5)
-            use_facenet: If True, uses actual FaceNet ANE model. 
+            use_facenet: If True, uses actual FaceNet ANE model.
                          If False or FaceNet not registered, uses placeholder embeddings.
 
         Returns:
@@ -1170,13 +1209,14 @@ class MediaDecoder:
         """
         if _Vision is None:
             return [], [], []
-        
+
         # NEXTGEN-03: Check if FaceNet model is available and loaded
         facenet_loaded = False
         if use_facenet:
             try:
                 from hledac.universal._core.rust_backend import rust
-                if hasattr(rust, 'ane') and hasattr(rust.ane, 'facenet_is_registered'):
+
+                if hasattr(rust, "ane") and hasattr(rust.ane, "facenet_is_registered"):
                     facenet_loaded = rust.ane.facenet_is_registered()
                     if not facenet_loaded:
                         log.debug("[NEXTGEN-03] FaceNet model not loaded, using placeholder embeddings")
@@ -1193,8 +1233,9 @@ class MediaDecoder:
             def _extract_faces_sync() -> tuple[list[list[float]], list[float], list[tuple[int, int, int, int]]]:
                 # Local timestamp for unique embeddings (prevents collision)
                 import time as _time_module
+
                 timestamp_s = _time_module.time()
-                
+
                 # Create CIImage from IOSurface (zero-copy)
                 try:
                     ci_image = _CI.CIImage.imageWithCVPixelBuffer_(pixel_buffer)
@@ -1209,9 +1250,11 @@ class MediaDecoder:
                 results_holder: list = []
 
                 class FaceHandler:
-                    __slots__ = ('_results',)
-                    def __init__(self):
+                    __slots__ = ("_results",)
+
+                    def __init__(self) -> None:
                         self._results = results_holder
+
                     def __call__(self, request, error):
                         if error is not None:
                             return
@@ -1222,9 +1265,8 @@ class MediaDecoder:
 
                 try:
                     handler_obj = _Vision.VNImageRequestHandler.alloc().initWithCVPixelBuffer_options_(
-                        pixel_buffer,
-                        {_Vision.VNImageOptionApplyOrientationCorrection: True}
-    )
+                        pixel_buffer, {_Vision.VNImageOptionApplyOrientationCorrection: True}
+                    )
                     handler_obj.performRequests_error_([face_request], None)
                 except Exception:
                     return [], [], []
@@ -1232,12 +1274,10 @@ class MediaDecoder:
                 if not results_holder or not results_holder[0]:
                     return [], [], []
 
-                # Get face regions
                 faces = list(results_holder[0])[:max_faces]
                 if not faces:
                     return [], [], []
 
-                # Extract face regions and generate embeddings
                 for face in faces:
                     bbox = face.boundingBox()
                     conf = float(face.confidence())
@@ -1283,7 +1323,7 @@ class MediaDecoder:
         NEXTGEN-03: In production, this calls FaceNet via CoreML/ANE.
         For now, generates a deterministic embedding from face metadata
         plus timestamp to prevent collision for identical detections at different times.
-        
+
         FIX: Added timestamp_s parameter to prevent identical embeddings
         for identical face detections at different timestamps.
         """
@@ -1297,6 +1337,7 @@ class MediaDecoder:
 
         # Generate normalized embedding using seed
         import random
+
         rng = random.Random(seed)
         embedding = [rng.uniform(-1.0, 1.0) for _ in range(512)]
 
@@ -1336,54 +1377,56 @@ class MediaDecoder:
             await self.initialize()
 
         result: dict[str, Any] = {
-            'file_path': file_path,
-            'frame_texts': [],
-            'face_embeddings': [],
-            'face_confidences': [],
-            'audio_transcript': '',
-            'audio_confidence': 0.0,
+            "file_path": file_path,
+            "frame_texts": [],
+            "face_embeddings": [],
+            "face_confidences": [],
+            "audio_transcript": "",
+            "audio_confidence": 0.0,
         }
 
-        # Extract frames
         frames = await self.extract_keyframes_zero_copy(file_path)
         if not frames:
             log.debug("[NEXTGEN-03] No frames extracted from %s", file_path)
             return result
 
-        # Process each frame
         for frame in frames:
-            pixel_buffer = frame['pixel_buffer']
-            timestamp = frame['timestamp_s']
+            pixel_buffer = frame["pixel_buffer"]
+            timestamp = frame["timestamp_s"]
 
             # OCR
             if extract_text:
                 text, conf = await self.ocr_pixelbuffer_frame(pixel_buffer)
                 if text:
-                    result['frame_texts'].append({
-                        'text': text,
-                        'confidence': conf,
-                        'timestamp': timestamp,
-                    })
+                    result["frame_texts"].append(
+                        {
+                            "text": text,
+                            "confidence": conf,
+                            "timestamp": timestamp,
+                        }
+                    )
 
             # Face detection and embedding
             if extract_faces:
                 embeddings, confidences, bboxes = await self.extract_face_embeddings(pixel_buffer)
                 if embeddings:
-                    for emb, conf, bbox in zip(embeddings, confidences, bboxes):
-                        result['face_embeddings'].append({
-                            'embedding': emb,
-                            'confidence': conf,
-                            'bounding_box': bbox,
-                            'timestamp': timestamp,
-                        })
-                        result['face_confidences'].append(conf)
+                    for emb, conf, bbox in zip(embeddings, confidences, bboxes, strict=False):
+                        result["face_embeddings"].append(
+                            {
+                                "embedding": emb,
+                                "confidence": conf,
+                                "bounding_box": bbox,
+                                "timestamp": timestamp,
+                            }
+                        )
+                        result["face_confidences"].append(conf)
 
         # Audio transcription
         if extract_voice:
             try:
                 transcript = await self.transcribe(file_path)
-                result['audio_transcript'] = transcript.text
-                result['audio_confidence'] = transcript.confidence
+                result["audio_transcript"] = transcript.text
+                result["audio_confidence"] = transcript.confidence
             except Exception as exc:
                 log.debug("[NEXTGEN-03] Audio transcription failed: %s", exc)
 
@@ -1400,7 +1443,7 @@ class MediaDecoder:
     ) -> VideoTranscriptionResult:
         """
         [IO-4] Full video intelligence via zero-copy CVPixelBuffer pipeline.
-        
+
         [SAFE-3] Aggregation deadline enforcement:
           - Total transcription bounded to _VIDEO_TRANSCRIBE_DEADLINE_S
           - OCR frames limited to _MAX_OCR_FRAMES_PER_DEADLINE
@@ -1434,7 +1477,7 @@ class MediaDecoder:
         transcript = await self.transcribe(file_path)
         audio_elapsed = _time.monotonic() - audio_start
         remaining_deadline -= audio_elapsed
-        
+
         audio_text = transcript.text
         audio_confidence = transcript.confidence
         dur_s = transcript.duration_s
@@ -1454,15 +1497,15 @@ class MediaDecoder:
                 frame_texts=[],
                 frame_timestamps=[],
                 frame_count=0,
-    )
+            )
 
         frames = await self.extract_keyframes_zero_copy(file_path)
-        
+
         # [SAFE-3] Limit frames to process within deadline
         estimated_ocr_per_frame = 2.0  # seconds
         max_frames_by_deadline = max(1, int(remaining_deadline / estimated_ocr_per_frame))
         max_frames_to_process = min(len(frames), _MAX_OCR_FRAMES_PER_DEADLINE, max_frames_by_deadline)
-        
+
         if not frames:
             # Fallback to JPEG path
             log.debug("[IO-4] Zero-copy extraction failed, falling back to JPEG path")
@@ -1485,18 +1528,18 @@ class MediaDecoder:
             # Zero-copy OCR path
             for i in range(min(max_frames_to_process, len(frames))):
                 frame_data = frames[i]
-                ts = frame_data['timestamp_s']
-                pixel_buffer = frame_data['pixel_buffer']
-                
+                ts = frame_data["timestamp_s"]
+                pixel_buffer = frame_data["pixel_buffer"]
+
                 frame_start = _time.monotonic()
                 ocr_text, _ = await self.ocr_pixelbuffer_frame(pixel_buffer, ocr_languages)
                 frame_elapsed = _time.monotonic() - frame_start
-                
+
                 if ocr_text:
                     frame_texts.append(ocr_text)
                     frame_timestamps.append(ts)
                 frame_count += 1
-                
+
                 remaining_deadline -= frame_elapsed
                 if remaining_deadline <= 0:
                     log.debug("[IO-4] Video transcription deadline exceeded during zero-copy OCR")
@@ -1505,8 +1548,9 @@ class MediaDecoder:
         overall_elapsed = _time.monotonic() - overall_start
         log.debug(
             "[IO-4] Video transcription (zero-copy) completed in %.1fs (deadline: %.1fs)",
-            overall_elapsed, _VIDEO_TRANSCRIBE_DEADLINE_S
-    )
+            overall_elapsed,
+            _VIDEO_TRANSCRIBE_DEADLINE_S,
+        )
 
         return VideoTranscriptionResult(
             audio_transcript=audio_text,
@@ -1515,7 +1559,7 @@ class MediaDecoder:
             frame_texts=frame_texts,
             frame_timestamps=frame_timestamps,
             frame_count=frame_count,
-    )
+        )
 
     # ── Video transcription (audio + frames) ────────────────────────────────
 
@@ -1528,7 +1572,7 @@ class MediaDecoder:
           - frame_texts: Vision OCR on each keyframe
 
         Fail-safe: partial results returned even if one path fails.
-        
+
         [SAFE-3] Aggregation deadline:
           - Total transcription bounded to _VIDEO_TRANSCRIBE_DEADLINE_S
           - OCR frames limited to _MAX_OCR_FRAMES_PER_DEADLINE
@@ -1546,7 +1590,7 @@ class MediaDecoder:
         transcript = await self.transcribe(file_path)
         audio_elapsed = _time.monotonic() - audio_start
         remaining_deadline -= audio_elapsed
-        
+
         audio_text = transcript.text
         audio_confidence = transcript.confidence
         dur_s = transcript.duration_s
@@ -1566,49 +1610,51 @@ class MediaDecoder:
                 frame_texts=[],
                 frame_timestamps=[],
                 frame_count=0,
-    )
+            )
 
         frames = await self.extract_keyframes(file_path)
-        
+
         # [SAFE-3] Limit frames to process within deadline
         # Estimate ~2s per OCR frame, so estimate how many we can process
         estimated_ocr_per_frame = 2.0  # seconds
         max_frames_by_deadline = max(1, int(remaining_deadline / estimated_ocr_per_frame))
         max_frames_to_process = min(len(frames), _MAX_OCR_FRAMES_PER_DEADLINE, max_frames_by_deadline)
-        
+
         log.debug(
             "[SILICON-02] Video OCR: %d frames available, processing max %d within deadline (%.1fs remaining)",
-            len(frames), max_frames_to_process, remaining_deadline
-    )
-        
+            len(frames),
+            max_frames_to_process,
+            remaining_deadline,
+        )
+
         for i in range(min(max_frames_to_process, len(frames))):
             frame_bytes = frames[i]
             ts = i * _KEYFRAME_INTERVAL_S
-            
+
             # [SAFE-3] Check deadline before each OCR call
             frame_start = _time.monotonic()
             ocr_text = await self._ocr_frame(frame_bytes)
             frame_elapsed = _time.monotonic() - frame_start
-            
+
             if ocr_text:
                 frame_texts.append(ocr_text)
                 frame_timestamps.append(ts)
             frame_count += 1
-            
+
             # [SAFE-3] Update remaining deadline and check if we should continue
             remaining_deadline -= frame_elapsed
             if remaining_deadline <= 0:
                 log.debug(
-                    "[SILICON-02] Video transcription deadline exceeded after %d frames, stopping OCR",
-                    frame_count
-    )
+                    "[SILICON-02] Video transcription deadline exceeded after %d frames, stopping OCR", frame_count
+                )
                 break
 
         overall_elapsed = _time.monotonic() - overall_start
         log.debug(
             "[SILICON-02] Video transcription completed in %.1fs (deadline: %.1fs)",
-            overall_elapsed, _VIDEO_TRANSCRIBE_DEADLINE_S
-    )
+            overall_elapsed,
+            _VIDEO_TRANSCRIBE_DEADLINE_S,
+        )
 
         return VideoTranscriptionResult(
             audio_transcript=audio_text,
@@ -1617,13 +1663,14 @@ class MediaDecoder:
             frame_texts=frame_texts,
             frame_timestamps=frame_timestamps,
             frame_count=frame_count,
-    )
+        )
 
     async def _ocr_frame(self, image_bytes: bytes) -> str:
         """Run Vision OCR on a single frame. Returns recognized text or empty string."""
         if _Vision is None:
             return ""
         try:
+
             def _ocr_sync() -> str:
                 if _AppKit is None:
                     return ""
@@ -1635,9 +1682,11 @@ class MediaDecoder:
                 results_holder: list = []
 
                 class Handler:
-                    __slots__ = ('_results',)
-                    def __init__(self):
+                    __slots__ = ("_results",)
+
+                    def __init__(self) -> None:
                         self._results = results_holder
+
                     def __call__(self, request, error):
                         if error is not None:
                             return
@@ -1646,7 +1695,7 @@ class MediaDecoder:
                 handler = Handler()
                 vn_request = _Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(handler)
                 vn_request.setRecognitionLevel_(_Vision.VNRequestTextRecognitionLevelFast)
-                vn_request.setRecognitionLanguages_(['en-US'])
+                vn_request.setRecognitionLanguages_(["en-US"])
                 vn_request.setUsesLanguageCorrection_(False)
 
                 try:
@@ -1666,7 +1715,7 @@ class MediaDecoder:
                     conf = float(obs.confidence())
                     if conf > 0.3:  # filter low-confidence OCR
                         texts.append(txt)
-                return '\n'.join(texts)
+                return "\n".join(texts)
 
             return await asyncio.to_thread(_ocr_sync)
         except Exception as exc:
@@ -1698,16 +1747,14 @@ class MediaDecoder:
         try:
             from hledac.universal._core.rust_backend import rust
 
-            # Get dimensions
-            pb_width = int(pixel_buffer.pixelWidth()) if hasattr(pixel_buffer, 'pixelWidth') else 0
-            pb_height = int(pixel_buffer.pixelHeight()) if hasattr(pixel_buffer, 'pixelHeight') else 0
-            pb_bytes_per_row = int(pixel_buffer.bytesPerRow()) if hasattr(pixel_buffer, 'bytesPerRow') else 0
+            pb_width = int(pixel_buffer.pixelWidth()) if hasattr(pixel_buffer, "pixelWidth") else 0
+            pb_height = int(pixel_buffer.pixelHeight()) if hasattr(pixel_buffer, "pixelHeight") else 0
+            int(pixel_buffer.bytesPerRow()) if hasattr(pixel_buffer, "bytesPerRow") else 0
 
             if pb_width == 0 or pb_height == 0:
                 log.debug("[IO-4] pixelbuffer_to_mlx_array: invalid dimensions")
                 return None
 
-            # Get IOSurface pointer from CVPixelBuffer
             iosurface_info = extract_iosurface_from_pixelbuffer(pixel_buffer)
             if iosurface_info is None:
                 log.debug("[IO-4] pixelbuffer_to_mlx_array: failed to get IOSurface")
@@ -1716,12 +1763,12 @@ class MediaDecoder:
             # Create SharedMetalBuffer from IOSurface (true zero-copy)
             SharedMetalBuffer = rust.raw.SharedMetalBuffer
             buf = SharedMetalBuffer.from_iosurface(
-                iosurface_info['iosurface_ptr'],
-                iosurface_info['width'],
-                iosurface_info['height'],
-                iosurface_info['bytes_per_row'],
-                iosurface_info['pixel_format'],
-    )
+                iosurface_info["iosurface_ptr"],
+                iosurface_info["width"],
+                iosurface_info["height"],
+                iosurface_info["bytes_per_row"],
+                iosurface_info["pixel_format"],
+            )
 
             if buf is None:
                 log.debug("[IO-4] pixelbuffer_to_mlx_array: SharedMetalBuffer.from_iosurface failed")
@@ -1744,7 +1791,6 @@ class MediaDecoder:
             shape = (height, width, 4)  # HWC format
 
             try:
-                # Create MLX array with zero-copy path
                 mx_arr = buf.to_mlx_array(list(shape), mx.float32)
                 return mx_arr
             except Exception as exc:
@@ -1762,6 +1808,7 @@ class MediaDecoder:
         """Lazy MLX import."""
         try:
             import mlx.core as mx
+
             return mx
         except ImportError:
             return None
@@ -1793,9 +1840,7 @@ class MediaDecoder:
             Empty list on error.
         """
         # First get CVPixelBuffer frames
-        frames = await self.extract_keyframes_zero_copy(
-            file_path, interval_s, max_frames, target_size
-    )
+        frames = await self.extract_keyframes_zero_copy(file_path, interval_s, max_frames, target_size)
 
         if not frames:
             return []
@@ -1803,25 +1848,25 @@ class MediaDecoder:
         # Convert each frame to MLX array
         result = []
         for frame_data in frames:
-            pixel_buffer = frame_data['pixel_buffer']
-            timestamp_s = frame_data['timestamp_s']
+            pixel_buffer = frame_data["pixel_buffer"]
+            timestamp_s = frame_data["timestamp_s"]
 
             mx_arr = await self.pixelbuffer_to_mlx_array(pixel_buffer, target_size)
             if mx_arr is not None:
-                result.append({
-                    'mlx_array': mx_arr,
-                    'timestamp_s': timestamp_s,
-                    'shape': tuple(mx_arr.shape) if hasattr(mx_arr, 'shape') else None,
-                })
+                result.append(
+                    {
+                        "mlx_array": mx_arr,
+                        "timestamp_s": timestamp_s,
+                        "shape": tuple(mx_arr.shape) if hasattr(mx_arr, "shape") else None,
+                    }
+                )
 
-        log.debug(
-            "[IO-4] Extracted %d MLX arrays from %s",
-            len(result), file_path
-    )
+        log.debug("[IO-4] Extracted %d MLX arrays from %s", len(result), file_path)
         return result
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
+
 
 def is_audio_file(file_path: str) -> bool:
     """Check if file has a supported audio extension."""
@@ -1880,6 +1925,7 @@ def is_iosurface_bridge_available() -> bool:
 
     try:
         from hledac.universal._core.rust_backend import rust
+
         available, device_name = rust.iosurface_bridge.is_iosurface_bridge_available()
         _iosurface_bridge_available = available
         if available:
@@ -1916,14 +1962,15 @@ def extract_iosurface_from_pixelbuffer(pixel_buffer: Any) -> dict[str, Any] | No
 
     try:
         from hledac.universal._core.rust_backend import rust
+
         desc = rust.iosurface_bridge.get_iosurface_from_pixelbuffer(int(pixel_buffer))
         if desc is not None:
             return {
-                'iosurface_ptr': desc.iosurface_ptr,
-                'width': desc.width,
-                'height': desc.height,
-                'bytes_per_row': desc.bytes_per_row,
-                'pixel_format': desc.pixel_format,
+                "iosurface_ptr": desc.iosurface_ptr,
+                "width": desc.width,
+                "height": desc.height,
+                "bytes_per_row": desc.bytes_per_row,
+                "pixel_format": desc.pixel_format,
             }
         return None
     except Exception as exc:
@@ -1955,14 +2002,15 @@ def create_shared_buffer_from_pixelbuffer(pixel_buffer: Any) -> Any | None:
 
     try:
         from hledac.universal._core.rust_backend import rust
+
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         buf = SharedMetalBuffer.from_iosurface(
-            iosurface_info['iosurface_ptr'],
-            iosurface_info['width'],
-            iosurface_info['height'],
-            iosurface_info['bytes_per_row'],
-            iosurface_info['pixel_format'],
-    )
+            iosurface_info["iosurface_ptr"],
+            iosurface_info["width"],
+            iosurface_info["height"],
+            iosurface_info["bytes_per_row"],
+            iosurface_info["pixel_format"],
+        )
         return buf
     except Exception as exc:
         log.debug("[IO-4] create_shared_buffer_from_pixelbuffer failed: %s", exc)

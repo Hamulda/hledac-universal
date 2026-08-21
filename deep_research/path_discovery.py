@@ -3,16 +3,13 @@ Path Discovery - Shadow Walker Algorithm
 Integrated from hledac/scanners/deep_probe.py
 """
 
-
-
-
-
 import logging
 import re
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class PathPattern(ABC):
     """Abstract base class for path patterns."""
@@ -25,11 +22,13 @@ class PathPattern(ABC):
     def get_pattern_type(self) -> str:
         pass
 
+
 class DatePathPattern(PathPattern):
     """Pattern for date-based paths."""
-    __slots__ = tuple(('years',))
 
-    def __init__(self, years: list[int]):
+    __slots__ = ("years",)
+
+    def __init__(self, years: list[int]) -> None:
         self.years = sorted(set(years))
 
     def generate_predictions(self) -> list[tuple[str, float]]:
@@ -38,61 +37,67 @@ class DatePathPattern(PathPattern):
             return predictions
         next_year = max(self.years) + 1
         if next_year <= 2030:
-            predictions.append((f'/{next_year}/', 0.8))
+            predictions.append((f"/{next_year}/", 0.8))
         prev_year = min(self.years) - 1
         if prev_year >= 1990:
-            predictions.append((f'/{prev_year}/', 0.6))
+            predictions.append((f"/{prev_year}/", 0.6))
         return predictions
 
     def get_pattern_type(self) -> str:
-        return 'date'
+        return "date"
+
 
 class SequentialPathPattern(PathPattern):
     """Pattern for sequential number paths."""
-    __slots__ = tuple(('numbers',))
 
-    def __init__(self, numbers: list[int]):
+    __slots__ = ("numbers",)
+
+    def __init__(self, numbers: list[int]) -> None:
         self.numbers = sorted(set(numbers))
 
     def generate_predictions(self) -> list[tuple[str, float]]:
         predictions = []
         if len(self.numbers) < 2:
             return predictions
-        diffs = [b - a for a, b in zip(self.numbers, self.numbers[1:])]
+        diffs = [b - a for a, b in zip(self.numbers, self.numbers[1:], strict=False)]
         if not diffs:
             return predictions
         most_common_step = max(set(diffs), key=diffs.count)
         next_num = int(self.numbers[-1] + most_common_step)
         if next_num <= 10000:
-            predictions.append((f'/{next_num}/', 0.7))
+            predictions.append((f"/{next_num}/", 0.7))
         return predictions
 
     def get_pattern_type(self) -> str:
-        return 'sequential'
+        return "sequential"
+
 
 class FilePathPattern(PathPattern):
     """Pattern for file type paths."""
-    __slots__ = tuple(('extensions',))
 
-    def __init__(self, extensions: list[str]):
+    __slots__ = ("extensions",)
+
+    def __init__(self, extensions: list[str]) -> None:
         self.extensions = list({ext.lower() for ext in extensions})
 
     def generate_predictions(self) -> list[tuple[str, float]]:
         predictions = []
-        common_dirs = ['data', 'files', 'documents', 'reports', 'research']
+        common_dirs = ["data", "files", "documents", "reports", "research"]
         for ext in self.extensions:
             for dir_name in common_dirs:
-                predictions.append((f'/{dir_name}/file.{ext}', 0.5))
+                predictions.append((f"/{dir_name}/file.{ext}", 0.5))
         return predictions
 
     def get_pattern_type(self) -> str:
-        return 'file'
+        return "file"
+
 
 class PathPatternAnalyzer:
     """Analyzes path patterns to predict new paths."""
-    __slots__ = tuple(('patterns',))
 
-    def __init__(self):
+    __slots__ = ("patterns",)
+
+    def __init__(self) -> None:
         self.patterns: list[PathPattern] = []
 
     def analyze_patterns(self, paths: list[str]) -> list[PathPattern]:
@@ -110,7 +115,7 @@ class PathPatternAnalyzer:
         return patterns
 
     def _extract_date_pattern(self, paths: list[str]) -> DatePathPattern | None:
-        year_pattern = re.compile('/(\\d{4})/')
+        year_pattern = re.compile("/(\\d{4})/")
         years = []
         for path in paths:
             matches = year_pattern.findall(path)
@@ -120,7 +125,7 @@ class PathPatternAnalyzer:
         return None
 
     def _extract_sequential_pattern(self, paths: list[str]) -> SequentialPathPattern | None:
-        number_pattern = re.compile('/(\\d+)/')
+        number_pattern = re.compile("/(\\d+)/")
         sequences = []
         for path in paths:
             matches = number_pattern.findall(path)
@@ -132,22 +137,26 @@ class PathPatternAnalyzer:
     def _extract_file_pattern(self, paths: list[str]) -> FilePathPattern | None:
         extensions = []
         for path in paths:
-            if '.' in path:
-                ext = path.split('.')[-1].lower()
-                if ext in ['pdf', 'doc', 'docx', 'txt', 'csv', 'xml', 'json']:
+            if "." in path:
+                ext = path.split(".")[-1].lower()
+                if ext in ["pdf", "doc", "docx", "txt", "csv", "xml", "json"]:
                     extensions.append(ext)
         if extensions:
             return FilePathPattern(list(set(extensions)))
         return None
 
+
 class ShadowWalkerAlgorithm:
     """Shadow Walker algorithm for intelligent path prediction."""
-    __slots__ = tuple(('pattern_analyzer',))
 
-    def __init__(self):
+    __slots__ = ("pattern_analyzer",)
+
+    def __init__(self) -> None:
         self.pattern_analyzer = PathPatternAnalyzer()
 
-    def predict_next_paths(self, base_url: str, known_paths: list[str], max_predictions: int=20) -> list[tuple[str, float]]:
+    def predict_next_paths(
+        self, base_url: str, known_paths: list[str], max_predictions: int = 20
+    ) -> list[tuple[str, float]]:
         if not known_paths:
             return []
         predictions = []
@@ -166,7 +175,18 @@ class ShadowWalkerAlgorithm:
                 seen_urls.add(url)
         return unique_predictions[:max_predictions]
 
-def predict_hidden_paths(base_url: str, known_paths: list[str], max_predictions: int=20) -> list[tuple[str, float]]:
+
+def predict_hidden_paths(base_url: str, known_paths: list[str], max_predictions: int = 20) -> list[tuple[str, float]]:
     algorithm = ShadowWalkerAlgorithm()
     return algorithm.predict_next_paths(base_url, known_paths, max_predictions)
-__all__ = ['PathPattern', 'DatePathPattern', 'SequentialPathPattern', 'FilePathPattern', 'PathPatternAnalyzer', 'ShadowWalkerAlgorithm', 'predict_hidden_paths']
+
+
+__all__ = [
+    "PathPattern",
+    "DatePathPattern",
+    "SequentialPathPattern",
+    "FilePathPattern",
+    "PathPatternAnalyzer",
+    "ShadowWalkerAlgorithm",
+    "predict_hidden_paths",
+]

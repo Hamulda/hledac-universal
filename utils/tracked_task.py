@@ -24,15 +24,12 @@ Usage:
         await t
 """
 
-
-
 import asyncio
 import logging
-from typing import Any
 from collections.abc import Callable, Coroutine
+from typing import Any
 
 from hledac.universal.utils.asyncx import safe_create_task
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +113,7 @@ class TrackedTask:
                 try:
                     self._on_exception(exc)
                 except Exception as callback_err:
-                    logger.warning(
-                        f"[TrackedTask] Exception callback failed for {self._name}: {callback_err}"
-    )
+                    logger.warning(f"[TrackedTask] Exception callback failed for {self._name}: {callback_err}")
             logger.debug(f"[TrackedTask] Completed with error: {self._name}")
         else:
             logger.debug(f"[TrackedTask] Completed: {self._name}")

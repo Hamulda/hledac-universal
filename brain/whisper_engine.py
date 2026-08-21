@@ -2,9 +2,6 @@
 brain/whisper_engine.py — Whisper.cpp CoreML/ANE Speech-to-Text Engine
 ======================================================================
 
-
-
-
 SILICON-02b: whisper.cpp transcription accelerated by CoreML/Apple Neural Engine.
 Complements the existing SFSpeechRecognizer (SILICON-02) with:
   - 99-language support (vs 60+ for SFSpeechRecognizer)
@@ -61,14 +58,12 @@ import time as time_module
 from pathlib import Path
 from typing import Any, Literal
 
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import safe_wait_for
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
-
 logger = logging.getLogger(__name__)
-
-# ─── Constants ───────────────────────────────────────────────────────────────
 
 _MODEL_CACHE_DIR = Path.home() / ".cache" / "hledac" / "whisper_models"
 _MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -102,14 +97,15 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 # M1 8GB bounds
-_TARGET_SAMPLE_RATE = 16000      # whisper.cpp expects 16kHz
+_TARGET_SAMPLE_RATE = 16000  # whisper.cpp expects 16kHz
 _MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024  # 100 MB max input file
-_WHISPER_THREADS = 4             # whisper.cpp thread count (P+E cores on M1)
-_TRANSCRIBE_TIMEOUT_S = 600.0    # 10 min max per transcription
+_WHISPER_THREADS = 4  # whisper.cpp thread count (P+E cores on M1)
+_TRANSCRIBE_TIMEOUT_S = 600.0  # 10 min max per transcription
 _MODEL_DOWNLOAD_TIMEOUT_S = 300.0  # 5 min max for model download
 
 # Runtime feature flags
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _WHISPER_ENABLED_BY_ENV = FeatureFlags.get(FeatureFlag.WHISPER)
 _WHISPER_DISABLED_BY_ENV = FeatureFlags.get(FeatureFlag.DISABLE_WHISPER)
 
@@ -119,10 +115,10 @@ _COREML_MODEL_URLS: dict[str, str] = {
     "base": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-encoder.mlmodelc.zip",
 }
 
-# ─── Public types ────────────────────────────────────────────────────────────
 
 class TranscriptionSegment(Struct, frozen=True):
     """Single transcribed segment with timing and confidence."""
+
     start_s: float = 0.0
     end_s: float = 0.0
     text: str = ""
@@ -131,6 +127,7 @@ class TranscriptionSegment(Struct, frozen=True):
 
 class TranscriptionResult(Struct, frozen=True):
     """Complete transcription result from whisper.cpp."""
+
     text: str = ""
     language: str = "en"
     duration_s: float = 0.0
@@ -145,10 +142,8 @@ class TranscriptionResult(Struct, frozen=True):
 # whisper (tiny model): rss_mb=70, peak_mb=114 (CoreML encoder + runtime)
 # whisper (base model): rss_mb=114, peak_mb=154
 from hledac.universal._core.capability_cost import register_capability_cost
-from _core import aclose
-register_capability_cost("whisperengine", rss_mb=70, peak_mb=114, tier="medium", tags=("speech", "gpu", "ane"))
 
-# ─── Lazy capability detection ───────────────────────────────────────────────
+register_capability_cost("whisperengine", rss_mb=70, peak_mb=114, tier="medium", tags=("speech", "gpu", "ane"))
 
 _whispercpp_available: bool | None = None
 _whispercpp: Any = None
@@ -171,6 +166,7 @@ def _check_ane() -> bool:
         return False
     try:
         import coremltools as ct
+
         ver = tuple(int(p) for p in ct.__version__.split(".")[:2] if p.isdigit())
         _ANE_available = bool(ver and ver >= (6, 0))
     except ImportError:
@@ -185,6 +181,7 @@ def _check_whispercpp() -> bool:
         return _whispercpp_available
     try:
         from whispercpp import Whisper
+
         _whispercpp = Whisper
         _whispercpp_available = True
         logger.info("[WhisperEngine] whispercpp package available")
@@ -205,9 +202,9 @@ def _check_ffmpeg() -> bool:
             ["ffmpeg", "-version"],
             capture_output=True,
             timeout=5,
-    )
+        )
         _ffmpeg_available = result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         _ffmpeg_available = False
     if _ffmpeg_available:
         logger.debug("[WhisperEngine] ffmpeg available for audio conversion")
@@ -227,6 +224,7 @@ def is_whisper_available() -> bool:
     # never blocks whisper (the governor sets whisper_ok=False explicitly in those modes).
     try:
         from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
+
         level = get_current_degradation_level()
         if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
             return False
@@ -236,8 +234,6 @@ def is_whisper_available() -> bool:
         return False
     return _check_whispercpp()
 
-
-# ─── Audio conversion ────────────────────────────────────────────────────────
 
 async def _convert_to_wav_16khz(
     input_path: Path,
@@ -256,34 +252,38 @@ async def _convert_to_wav_16khz(
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-y",
-            "-i", str(input_path),
-            "-ar", str(_TARGET_SAMPLE_RATE),
-            "-ac", "1",
-            "-sample_fmt", "s16",
-            "-f", "wav",
-            "-loglevel", "error",
+            "-i",
+            str(input_path),
+            "-ar",
+            str(_TARGET_SAMPLE_RATE),
+            "-ac",
+            "1",
+            "-sample_fmt",
+            "s16",
+            "-f",
+            "wav",
+            "-loglevel",
+            "error",
             str(output_path),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
-    )
+        )
         _, stderr = await safe_wait_for(
             proc.communicate(),
             timeout=60.0,
-    )
+        )
         if proc.returncode != 0:
             err_text = stderr.decode()[:200] if stderr else "unknown error"
             logger.warning("[WhisperEngine] ffmpeg conversion failed: %s", err_text)
             return None
         if output_path.exists() and output_path.stat().st_size > 0:
             return output_path
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("[WhisperEngine] ffmpeg conversion timed out")
     except Exception as exc:
         logger.warning("[WhisperEngine] ffmpeg conversion error: %s", exc)
     return None
 
-
-# ─── Model download & cache ──────────────────────────────────────────────────
 
 async def _download_model_ggml(model_size: str) -> Path | None:
     """Download ggml model from HuggingFace. Returns path or None."""
@@ -294,7 +294,6 @@ async def _download_model_ggml(model_size: str) -> Path | None:
 
     target_path = _MODEL_CACHE_DIR / config["ggml_name"]
     if target_path.exists():
-        # Validate checksum
         if _validate_ggml_model(target_path, config):
             return target_path
         else:
@@ -308,6 +307,7 @@ async def _download_model_ggml(model_size: str) -> Path | None:
         # Use httpx through the project's transport layer if available
         try:
             from hledac.universal.fetching.public_fetcher import fetch_content
+
             content = await fetch_content(url, timeout=_MODEL_DOWNLOAD_TIMEOUT_S)
             if content:
                 target_path.write_bytes(content)
@@ -318,17 +318,22 @@ async def _download_model_ggml(model_size: str) -> Path | None:
         if not target_path.exists():
             # Final fallback: subprocess curl
             proc = await asyncio.create_subprocess_exec(
-                "curl", "-L", "-o", str(target_path),
-                "--connect-timeout", "30",
-                "--max-time", str(_MODEL_DOWNLOAD_TIMEOUT_S),
+                "curl",
+                "-L",
+                "-o",
+                str(target_path),
+                "--connect-timeout",
+                "30",
+                "--max-time",
+                str(_MODEL_DOWNLOAD_TIMEOUT_S),
                 url,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
-    )
+            )
             _, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=_MODEL_DOWNLOAD_TIMEOUT_S + 30,
-    )
+            )
             if proc.returncode != 0:
                 err = stderr.decode()[:200] if stderr else "unknown"
                 logger.error("[WhisperEngine] Model download failed: %s", err)
@@ -336,15 +341,18 @@ async def _download_model_ggml(model_size: str) -> Path | None:
                 return None
 
         if target_path.exists() and _validate_ggml_model(target_path, config):
-            logger.info("[WhisperEngine] Downloaded whisper %s model (%d MB)",
-                        model_size, target_path.stat().st_size // (1024 * 1024))
+            logger.info(
+                "[WhisperEngine] Downloaded whisper %s model (%d MB)",
+                model_size,
+                target_path.stat().st_size // (1024 * 1024),
+            )
             return target_path
         else:
             logger.error("[WhisperEngine] Model download validation failed for %s", model_size)
             target_path.unlink(missing_ok=True)
             return None
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("[WhisperEngine] Model download timed out for %s", model_size)
         target_path.unlink(missing_ok=True)
         return None
@@ -362,8 +370,7 @@ def _validate_ggml_model(path: Path, config: dict[str, Any]) -> bool:
     expected_mb = config["size_mb"]
     # Allow ±30% tolerance (network conditions, ggml vs CoreML split)
     if file_size_mb < expected_mb * 0.5 or file_size_mb > expected_mb * 2.5:
-        logger.debug("[WhisperEngine] Model size mismatch: %.1f MB vs ~%d MB expected",
-                     file_size_mb, expected_mb)
+        logger.debug("[WhisperEngine] Model size mismatch: %.1f MB vs ~%d MB expected", file_size_mb, expected_mb)
         return False
     # Check ggml magic number ("ggml" at offset 0 or "ggmf" for older formats)
     # [INTERNAL]-009 perf: read only 4 bytes header, not entire file (~39-74 MB)
@@ -394,6 +401,7 @@ async def _download_coreml_zip(url: str, zip_path: Path, timeout_s: int) -> bool
     """Download CoreML zip using fetch_content or curl fallback."""
     try:
         from hledac.universal.fetching.public_fetcher import fetch_content
+
         content = await fetch_content(url, timeout=timeout_s)
         if content:
             zip_path.write_bytes(content)
@@ -406,9 +414,14 @@ async def _download_coreml_zip(url: str, zip_path: Path, timeout_s: int) -> bool
 async def _curl_download_coreml(url: str, zip_path: Path, timeout_s: int) -> bool:
     """Download CoreML zip using curl as fallback."""
     proc = await asyncio.create_subprocess_exec(
-        "curl", "-L", "-o", str(zip_path),
-        "--connect-timeout", "30",
-        "--max-time", str(timeout_s),
+        "curl",
+        "-L",
+        "-o",
+        str(zip_path),
+        "--connect-timeout",
+        "30",
+        "--max-time",
+        str(timeout_s),
         url,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
@@ -434,6 +447,7 @@ async def _extract_coreml_model(
     if not zip_path.exists() or zip_path.stat().st_size == 0:
         return None
     import zipfile
+
     extract_dir = _MODEL_CACHE_DIR / f"_extract_{model_size}"
     extract_dir.mkdir(exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -487,15 +501,12 @@ async def _ensure_coreml_model(
     if coreml_url is None:
         return None
 
-    logger.info(
-        "[WhisperEngine] Downloading pre-converted CoreML %s model...", model_size
-    )
+    logger.info("[WhisperEngine] Downloading pre-converted CoreML %s model...", model_size)
     zip_path = _MODEL_CACHE_DIR / f"{coreml_name}.zip"
     if not await _download_coreml_zip(coreml_url, zip_path, _MODEL_DOWNLOAD_TIMEOUT_S):
         if not await _curl_download_coreml(coreml_url, zip_path, _MODEL_DOWNLOAD_TIMEOUT_S):
             return None
 
-    # Extract and install
     if extracted := await _extract_coreml_model(zip_path, coreml_path, model_size):
         return extracted
 
@@ -512,8 +523,6 @@ async def _ensure_coreml_model(
     return None
 
 
-# ─── WhisperEngine ───────────────────────────────────────────────────────────
-
 class WhisperEngine:
     """
     whisper.cpp transcription engine with CoreML/ANE acceleration.
@@ -529,17 +538,17 @@ class WhisperEngine:
     """
 
     __slots__ = (
-        '_model',
-        '_model_size',
-        '_coreml_available',
-        '_coreml_loaded',
-        '_whisper_params',
-        '_init_lock',
-        '_transcribe_lock',
-        '_initialized',
-        '_ggml_path',
-        '_coreml_path',
-        '_temp_dirs',   # [INTERNAL]-009: was dynamic attribute leak — added to __slots__
+        "_model",
+        "_model_size",
+        "_coreml_available",
+        "_coreml_loaded",
+        "_whisper_params",
+        "_init_lock",
+        "_transcribe_lock",
+        "_initialized",
+        "_ggml_path",
+        "_coreml_path",
+        "_temp_dirs",  # [INTERNAL]-009: was dynamic attribute leak — added to __slots__
     )
 
     def __init__(self) -> None:
@@ -553,7 +562,7 @@ class WhisperEngine:
         self._initialized: bool = False
         self._ggml_path: Path | None = None
         self._coreml_path: Path | None = None
-        self._temp_dirs: list[str] = []   # [INTERNAL]-009: proper init in __slots__
+        self._temp_dirs: list[str] = []  # [INTERNAL]-009: proper init in __slots__
 
     def _get_init_lock(self) -> asyncio.Lock:
         if self._init_lock is None:
@@ -589,8 +598,7 @@ class WhisperEngine:
                 return self._model is not None
 
             if not _check_whispercpp():
-                logger.warning("[WhisperEngine] whispercpp not installed — "
-                             "install with: uv pip install whispercpp")
+                logger.warning("[WhisperEngine] whispercpp not installed — install with: uv pip install whispercpp")
                 self._initialized = True
                 return False
 
@@ -598,13 +606,12 @@ class WhisperEngine:
             try:
                 from hledac.universal.brain.ane_embedder import (
                     get_mlx_family_mutex,
-    )
+                )
+
                 mutex = get_mlx_family_mutex()
                 config = _MODEL_CONFIGS.get(model_size, _MODEL_CONFIGS["tiny"])
                 if not mutex.try_acquire_embed_ane(config["size_mb"]):
-                    logger.warning(
-                        "[WhisperEngine] ANE slot busy (LLM active) — retry later"
-    )
+                    logger.warning("[WhisperEngine] ANE slot busy (LLM active) — retry later")
                     self._initialized = True
                     return False
                 self._coreml_available = _check_ane()
@@ -613,7 +620,6 @@ class WhisperEngine:
 
             self._model_size = model_size
 
-            # Step 1: Download ggml model
             ggml_path = await _download_model_ggml(model_size)
             if ggml_path is None:
                 logger.error("[WhisperEngine] Failed to download %s model", model_size)
@@ -621,17 +627,15 @@ class WhisperEngine:
                 return False
             self._ggml_path = ggml_path
 
-            # Step 2: Set up CoreML model if ANE available
             if self._coreml_available and not force_cpu:
                 coreml_path = await _ensure_coreml_model(ggml_path, model_size)
                 if coreml_path is not None and coreml_path.exists():
                     self._coreml_path = coreml_path
                     logger.info("[WhisperEngine] CoreML model ready: %s", coreml_path)
 
-            # Step 3: Free old model if switching sizes
             if self._model is not None:
                 try:
-                    if hasattr(self._model, 'free'):
+                    if hasattr(self._model, "free"):
                         self._model.free()
                 except Exception:  # noqa: BLE001
                     pass
@@ -640,30 +644,26 @@ class WhisperEngine:
                     "[WhisperEngine] Freed old %s model for %s switch",
                     self._model_size if self._model_size != model_size else model_size,
                     model_size,
-    )
+                )
 
-            # Step 4: Initialize whisper.cpp model
             try:
                 Whisper = _whispercpp
                 self._model = Whisper(str(ggml_path))
 
-                # Set up whisper params
-                if hasattr(self._model, 'params'):
+                if hasattr(self._model, "params"):
                     self._whisper_params = self._model.params
                     # CoreML auto-detection: whisper.cpp checks for
                     # ggml-{size}-encoder.mlmodelc next to the model file
                     if self._coreml_path is not None:
                         logger.info(
-                            "[WhisperEngine] whisper.cpp initialized — "
-                            "%s model + CoreML ANE encoder",
+                            "[WhisperEngine] whisper.cpp initialized — %s model + CoreML ANE encoder",
                             model_size,
-    )
+                        )
                     else:
                         logger.info(
-                            "[WhisperEngine] whisper.cpp initialized — "
-                            "%s model (CPU-only)",
+                            "[WhisperEngine] whisper.cpp initialized — %s model (CPU-only)",
                             model_size,
-    )
+                        )
                 else:
                     self._whisper_params = None
                     logger.info("[WhisperEngine] whisper.cpp initialized — %s", model_size)
@@ -683,7 +683,7 @@ class WhisperEngine:
         async with self._get_init_lock():
             if self._model is not None:
                 try:
-                    if hasattr(self._model, 'free'):
+                    if hasattr(self._model, "free"):
                         self._model.free()
                 except Exception:  # noqa: BLE001
                     pass
@@ -692,7 +692,6 @@ class WhisperEngine:
             self._initialized = False
             self._coreml_loaded = False
 
-            # Clean up temp dirs from audio conversion
             for tmp_dir in self._temp_dirs:
                 try:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -704,8 +703,9 @@ class WhisperEngine:
             try:
                 from hledac.universal.brain.ane_embedder import (
                     get_mlx_family_mutex,
-    )
-                get_mlx_family_mutex().release('embed_ane')
+                )
+
+                get_mlx_family_mutex().release("embed_ane")
             except ImportError:  # noqa: BLE001
                 pass
 
@@ -745,7 +745,6 @@ class WhisperEngine:
                 if audio_path is None:
                     return None
 
-                # Check file size
                 try:
                     file_size = audio_path.stat().st_size
                     if file_size > _MAX_AUDIO_FILE_BYTES:
@@ -753,7 +752,7 @@ class WhisperEngine:
                             "[WhisperEngine] Audio file too large: %d MB (max %d MB)",
                             file_size // (1024 * 1024),
                             _MAX_AUDIO_FILE_BYTES // (1024 * 1024),
-    )
+                        )
                         return None
                     if file_size == 0:
                         logger.warning("[WhisperEngine] Empty audio file")
@@ -762,7 +761,6 @@ class WhisperEngine:
                     logger.warning("[WhisperEngine] Cannot stat audio file: %s", exc)
                     return None
 
-                # Run transcription with timeout
                 result = await safe_wait_for(
                     asyncio.to_thread(
                         self._transcribe_sync,
@@ -772,7 +770,7 @@ class WhisperEngine:
                         word_timestamps,
                     ),
                     timeout=_TRANSCRIBE_TIMEOUT_S,
-    )
+                )
 
                 duration = time_module.monotonic() - start_time
                 if result:
@@ -782,23 +780,22 @@ class WhisperEngine:
                         engine="whisper_cpp",
                         model_size=model_size,
                         coreml_used=self._coreml_loaded,
-    )
+                    )
                     logger.info(
-                        "[WhisperEngine] Transcribed %.1fs audio in %.1fs "
-                        "(CoreML=%s, lang=%s, confidence=%.2f)",
+                        "[WhisperEngine] Transcribed %.1fs audio in %.1fs (CoreML=%s, lang=%s, confidence=%.2f)",
                         result.duration_s,
                         duration,
                         self._coreml_loaded,
                         result.language,
                         result.confidence,
-    )
+                    )
                 return result
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[WhisperEngine] Transcription timed out after %.0fs",
                     _TRANSCRIBE_TIMEOUT_S,
-    )
+                )
                 return None
             except Exception as exc:
                 logger.warning("[WhisperEngine] Transcription failed: %s", exc)
@@ -816,7 +813,6 @@ class WhisperEngine:
             if self._model is None:
                 return None
 
-            # Build params
             params_kwargs: dict[str, Any] = {
                 "language": language or "auto",
                 "translate": translate,
@@ -829,7 +825,7 @@ class WhisperEngine:
             # Run whisper.cpp transcription
             # The whispercpp package API:
             #   model.transcribe(file_path, **params) → list[dict]
-            transcribe_fn = getattr(self._model, 'transcribe', None)
+            transcribe_fn = getattr(self._model, "transcribe", None)
             if transcribe_fn is None:
                 logger.error("[WhisperEngine] Model has no transcribe method")
                 return None
@@ -839,7 +835,6 @@ class WhisperEngine:
             if not segments_raw:
                 return TranscriptionResult(text="", language=language or "en")
 
-            # Parse segments
             segments: list[TranscriptionSegment] = []
             full_text_parts: list[str] = []
             total_confidence = 0.0
@@ -855,12 +850,14 @@ class WhisperEngine:
                 conf = float(seg.get("confidence", 0.0))
 
                 full_text_parts.append(text)
-                segments.append(TranscriptionSegment(
-                    start_s=start,
-                    end_s=end,
-                    text=text,
-                    confidence=conf,
-                ))
+                segments.append(
+                    TranscriptionSegment(
+                        start_s=start,
+                        end_s=end,
+                        text=text,
+                        confidence=conf,
+                    )
+                )
                 total_confidence += conf
                 if end > audio_duration:
                     audio_duration = end
@@ -869,9 +866,7 @@ class WhisperEngine:
                 if "language" in seg:
                     detected_language = str(seg["language"])
 
-            avg_confidence = (
-                total_confidence / len(segments) if segments else 0.0
-    )
+            avg_confidence = total_confidence / len(segments) if segments else 0.0
 
             return TranscriptionResult(
                 text=" ".join(full_text_parts),
@@ -879,7 +874,7 @@ class WhisperEngine:
                 duration_s=audio_duration,
                 confidence=avg_confidence,
                 segments=segments,
-    )
+            )
 
         except Exception as exc:
             logger.warning("[WhisperEngine] _transcribe_sync error: %s", exc)
@@ -942,8 +937,6 @@ class WhisperEngine:
         return None
 
 
-# ─── Module-level singleton accessor ─────────────────────────────────────────
-
 _whisper_engine: WhisperEngine | None = None
 _engine_lock = asyncio.Lock()
 
@@ -957,8 +950,6 @@ async def get_whisper_engine() -> WhisperEngine:
                 _whisper_engine = WhisperEngine()
     return _whisper_engine
 
-
-# ─── Convenience function ────────────────────────────────────────────────────
 
 async def transcribe_audio(
     source: str | Path | bytes,

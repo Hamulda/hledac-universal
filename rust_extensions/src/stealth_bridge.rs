@@ -119,10 +119,6 @@ use pyo3::prelude::*;
 #[cfg(feature = "stealth_bridge")]
 use crate::async_bridge::future_into_py;
 
-// ============================================================================
-// DNS Resolution Bridge
-// ============================================================================
-
 /// Async DNS resolution bridge for curl_cffi_fetch.py.
 ///
 /// curl_cffi handles JA3/TLS impersonation in Python, but DNS resolution
@@ -222,18 +218,6 @@ pub fn dns_resolve_batch_async(
     })
 }
 
-// ============================================================================
-// QUIC Backend Detection (informational only)
-// ============================================================================
-//
-// NOTE: Actual QUIC/HTTP3 is handled by http3_lane.py which routes to:
-//   - NwQuicTransportAdapter (macOS arm64) → nw_quic_lane.py
-//   - QuinnRustlsTransportAdapter (Linux/x86_64) → rust.quic.fetch_async()
-//   - AioquicTransportAdapter (fallback)
-//
-// This function is informational only - it reports which QUIC backend is
-// available but does NOT perform the actual HTTP/3 fetch.
-
 /// Check which QUIC backend is available on this platform.
 ///
 /// Returns which QUIC backend is available:
@@ -276,17 +260,6 @@ pub fn supports_curl_cffi_quic() -> bool {
     // This is available on all platforms where curl_cffi works
     true
 }
-
-// ============================================================================
-// Binary Metadata Encoding (NOT actual Arrow IPC)
-// ============================================================================
-//
-// NOTE: These functions use a simple binary format, NOT Arrow IPC.
-// For actual Arrow IPC serialization, use rust_extensions/src/arrow_batch_builder.rs
-// which provides true Arrow IPC RecordBatch encoding via the `arrow` crate.
-//
-// This module provides lightweight binary encoding for HTTP response metadata
-// as a convenience, not as a replacement for Arrow IPC.
 
 /// Encode HTTP response metadata to a simple binary format.
 ///
@@ -413,10 +386,6 @@ pub fn decode_response_metadata_arrow(
     Ok((url, status, headers, timing_ms))
 }
 
-// ============================================================================
-// P2P Harvest Bridge (delegates to p2p_harvest module)
-// ============================================================================
-
 /// NEXTGEN-01: P2P harvest bridge — delegates to p2p_harvest::harvest.
 ///
 /// Provides a convenience function in the stealth_bridge module for P2P OSINT.
@@ -466,10 +435,6 @@ pub fn get_p2p_protocol_status() -> std::collections::HashMap<String, bool> {
     }
     status
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 /// Register stealth_bridge functions with the Python module.
 ///

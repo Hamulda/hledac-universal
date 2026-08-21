@@ -25,16 +25,16 @@ M1 8GB safe: Hermes3 ~4s MLX, sandbox ~1s subprocess.
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.runtime.sidecars._base import BaseSidecarAdapter
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
-from _core import aclose
+from hledac.universal.runtime.sidecars._base import BaseSidecarAdapter
 
 if TYPE_CHECKING:
     from hledac.universal.brain.auto_re.parser_forge import AutoREResult
+
     # FIX-5: SidecarContext is in runtime/sidecar_protocol.py, not scheduler_v2/protocol.py
     from hledac.universal.runtime.sidecar_protocol import SidecarContext
 
@@ -70,11 +70,11 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
     priority: int = _AUTO_RE_SIDECAR_PRIORITY
 
     # Per-instance attempt counter (reset at sprint start)
-    __slots__ = tuple((
+    __slots__ = (
         "_attempt_count",
         "_engine",
         "_sprint_reset_at",
-    ))
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,19 +84,18 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
 
     def is_available(self) -> bool:
         """Check env gate directly — bypasses LaneRegistry (no auto_re lane exists)."""
-        return os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0").strip().lower() in (
-            "1", "true", "yes"
-    )
+        return os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0").strip().lower() in ("1", "true", "yes")
 
     def reset_sprint(self) -> None:
         """Reset per-sprint attempt counter. Called by SidecarOrchestrator on sprint start."""
         import time as _time
+
         self._attempt_count = 0
         self._sprint_reset_at = _time.monotonic()
 
     # ── BaseSidecarAdapter ──────────────────────────────────────────────────────
 
-    async def run_async(self, ctx: "SidecarContext") -> list[Any]:
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """
         Run the AutoRE sidecar for all queued unknown binaries.
 
@@ -105,6 +104,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         """
         # Reset if we've been idle for >1h (sprint boundary approximation)
         import time as _time
+
         now = _time.monotonic()
         if now - self._sprint_reset_at > 3600:
             self._attempt_count = 0
@@ -116,12 +116,13 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 "[AUTO-RE] Rate limit: %d/%d attempts used",
                 self._attempt_count,
                 _MAX_AUTO_RE_ATTEMPTS_PER_SPRINT,
-    )
+            )
             return []
 
         # Lazy engine init
         if self._engine is None:
             from hledac.universal.brain.auto_re.parser_forge import get_auto_re_engine
+
             self._engine = get_auto_re_engine()
 
         if self._engine is None or not self._engine.enabled:
@@ -140,7 +141,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
             len(unknown_candidates),
             self._attempt_count + 1,
             _MAX_AUTO_RE_ATTEMPTS_PER_SPRINT,
-    )
+        )
 
         # Process each candidate (up to rate limit)
         findings: list[Any] = []
@@ -160,7 +161,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
 
     def _collect_unknown_candidates(
         self,
-        ctx: "SidecarContext",
+        ctx: SidecarContext,
     ) -> list[tuple[str, bytes]]:
         """
         Pull unknown-binary candidates from the sidecar context.
@@ -206,10 +207,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 content = getattr(md, "content", None)
                 file_type = getattr(md, "file_type", None)
                 # Only include UNKNOWN types (if file_type is available)
-                if file_type is not None and not (
-                    hasattr(file_type, "value")
-                    and file_type.value == "UNKNOWN"
-                ):
+                if file_type is not None and not (hasattr(file_type, "value") and file_type.value == "UNKNOWN"):
                     continue
 
             # Dict-style finding
@@ -220,11 +218,8 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 if file_type and file_type != "UNKNOWN":
                     continue
                 file_path = (
-                    raw_meta.get("file_path")
-                    or raw_meta.get("path")
-                    or finding.get("file_path")
-                    or finding.get("path")
-    )
+                    raw_meta.get("file_path") or raw_meta.get("path") or finding.get("file_path") or finding.get("path")
+                )
                 content = raw_meta.get("content") or finding.get("content")
 
             if file_path and content and isinstance(content, bytes) and file_path not in seen_paths:
@@ -238,7 +233,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         self,
         file_path: str,
         content: bytes,
-        ctx: "SidecarContext",
+        ctx: SidecarContext,
     ) -> list[Any]:
         """
         Process a single unknown binary through all 5 AutoRE stages.
@@ -246,7 +241,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         Returns:
             List of CanonicalFinding objects from parsed IOCs.
         """
-        result: "AutoREResult | None" = None
+        result: AutoREResult | None = None
         try:
             result = await self._engine.process_unknown_binary(file_path, content)
         except Exception as e:
@@ -259,7 +254,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 file_path,
                 getattr(result, "stage", "?"),
                 getattr(result, "error", ""),
-    )
+            )
             return []
 
         # Convert ParsedIOC → finding dict
@@ -267,9 +262,9 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
 
     def _iocs_to_findings(
         self,
-        result: "AutoREResult",
+        result: AutoREResult,
         file_path: str,
-        ctx: "SidecarContext",
+        ctx: SidecarContext,
     ) -> list[Any]:
         """
         Convert AutoRE Stage-D IOCs into finding dicts.
@@ -285,6 +280,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         if result.parser_source:
             try:
                 from pathlib import Path
+
                 audit_dir = Path.home() / ".cache" / "hledac" / "auto_re"
                 audit_path = str(audit_dir / f"{result.file_hash}.json")
             except Exception:  # noqa: BLE001
@@ -317,12 +313,13 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
 
     def _upsert_graph_async(
         self,
-        ctx: "SidecarContext",
+        ctx: SidecarContext,
         findings: list[dict[str, Any]],
     ) -> None:
         """Fire-and-forget graph upsert. Non-blocking."""
         try:
             import asyncio
+
             loop = asyncio.get_running_loop()
             loop.create_task(self._upsert_graph_loop(findings))
         except Exception:  # noqa: BLE001
@@ -335,6 +332,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
         """
         try:
             from hledac.universal.knowledge.graph_service import DuckPGQGraph
+
             graph = DuckPGQGraph.get_instance()
             for finding in findings:
                 # [META]-012: Extract observed_at from finding timestamp
@@ -345,6 +343,6 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                     confidence=finding.get("confidence", 0.5),
                     source=finding["source"],
                     observed_at=observed_at,
-    )
+                )
         except Exception as e:
             logger.debug("[AUTO-RE] graph upsert failed: %s", e)

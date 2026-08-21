@@ -28,15 +28,17 @@ Usage:
 No new feature flags. Always-on, bounded (max 2 pending batches),
 fail-safe (legacy fallback na jakoukoli chybu).
 """
+
 import asyncio
-import threading
-from hledac.universal.utils.asyncx import parallel
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
+from hledac.universal.utils.asyncx import parallel
+
 if TYPE_CHECKING:
     from .duckdb_store import DuckDBShadowStore
-__all__ = ['PipelinedIngestor']
+__all__ = ["PipelinedIngestor"]
 logger = logging.getLogger(__name__)
 
 # ISSUE-026: threading.local is CORRECT here — not contextvars.
@@ -45,6 +47,7 @@ logger = logging.getLogger(__name__)
 # See mlx_memory/_core.py for rationale on thread-local vs contextvars.
 _arrow_loop_local = threading.local()
 
+
 def _get_or_create_arrow_loop() -> asyncio.AbstractEventLoop:
     """Get or create a reusable event loop for the current thread.
 
@@ -52,11 +55,12 @@ def _get_or_create_arrow_loop() -> asyncio.AbstractEventLoop:
     asyncio.new_event_loop() + loop.close() in _call_async_arrow_wrapper.
     Thread-local ensures no cross-thread contamination.
     """
-    loop = getattr(_arrow_loop_local, 'loop', None)
+    loop = getattr(_arrow_loop_local, "loop", None)
     if loop is None or loop.is_closed():
         loop = asyncio.new_event_loop()
         _arrow_loop_local.loop = loop
     return loop
+
 
 def _call_async_arrow_wrapper(store: Any, findings: list[Any]) -> list[Any]:
     """
@@ -70,11 +74,14 @@ def _call_async_arrow_wrapper(store: Any, findings: list[Any]) -> list[Any]:
         result = loop.run_until_complete(store.async_record_canonical_findings_batch_arrow(findings))
         return result
     except Exception as e:
-        logger.error('[PIPELINE arrow-wrapper] exception: %s', e)
+        logger.error("[PIPELINE arrow-wrapper] exception: %s", e)
         return []
+
+
 CHUNK_SIZE = 1024
 _PIPELINE_QUEUE_MAXSIZE = 2
 _EXECUTOR_TIMEOUT_S = 30.0
+
 
 class PipelinedIngestor:
     """
@@ -87,9 +94,10 @@ class PipelinedIngestor:
     - Fail-safe: jakákoli chyba → legacy fallback
     - Žádné nové feature flagy, always-on
     """
-    __slots__ = tuple(('_store', '_wal'))
 
-    def __init__(self, duckdb_store: DuckDBShadowStore, wal_manager: Any | None=None) -> None:
+    __slots__ = ("_store", "_wal")
+
+    def __init__(self, duckdb_store: DuckDBShadowStore, wal_manager: Any | None = None) -> None:
         self._store = duckdb_store
         self._wal = wal_manager
 
@@ -115,6 +123,7 @@ class PipelinedIngestor:
             if _pipeline_queue is None:
                 _pipeline_queue = asyncio.Queue(maxsize=_PIPELINE_QUEUE_MAXSIZE)
             return _pipeline_queue
+
         pending_tasks: list[tuple[list[int], asyncio.Task]] = []
         for chunk_start in range(0, n, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, n)
@@ -126,20 +135,24 @@ class PipelinedIngestor:
             async def _storage_task(batch_findings: list[Any], batch_indices: list[int], q_ref: asyncio.Queue) -> None:
                 try:
                     stored = await self._write_batch_parallel(batch_findings)
-                    for idx, result in zip(batch_indices, stored):
+                    for idx, result in zip(batch_indices, stored, strict=False):
                         results[idx] = result
                 finally:
                     q_ref.task_done()
+
             await q.put(None)
             # F350M-R ISSUE #31: safe_create_task with eager_start=True (WAL Arrow storage is hot path)
             from hledac.universal.utils.asyncx import safe_create_task
-            task = safe_create_task(_storage_task(chunk_findings, list(range(chunk_start, chunk_end)), q), eager_start=True)
+
+            task = safe_create_task(
+                _storage_task(chunk_findings, list(range(chunk_start, chunk_end)), q), eager_start=True
+            )
             pending_tasks.append((list(range(chunk_start, chunk_end)), task))
         for _indices, task in pending_tasks:
             try:
                 await task
             except Exception:
-                logger.warning('[PIPELINE] pending storage task failed')
+                logger.warning("[PIPELINE] pending storage task failed")
         return results
 
     async def _write_batch_parallel(self, findings: list[Any]) -> list[Any]:
@@ -157,25 +170,34 @@ class PipelinedIngestor:
             return []
         loop = asyncio.get_running_loop()
         wal_future = loop.run_in_executor(self._store._wal_executor, self._wal_put_many_sync, findings)
-        duckdb_future = loop.run_in_executor(self._store._duckdb_arrow_executor, _call_async_arrow_wrapper, self._store, findings)
+        duckdb_future = loop.run_in_executor(
+            self._store._duckdb_arrow_executor, _call_async_arrow_wrapper, self._store, findings
+        )
         wal_ok_or_exc: bool | Any
         duckdb_result: list[Any] | Any
-        _result = await parallel([wal_future, duckdb_future], taskgroup=True, policy='collect', ctx='pipelined_ingestor:wal_duckdb')
+        _result = await parallel(
+            [wal_future, duckdb_future], taskgroup=True, policy="collect", ctx="pipelined_ingestor:wal_duckdb"
+        )
         gathered = _result.ok
         wal_ok_or_exc, duckdb_result = gathered
         if isinstance(wal_ok_or_exc, Exception):
-            logger.warning('[PIPELINE] WAL executor raised %s, falling back to legacy', type(wal_ok_or_exc).__name__)
+            logger.warning("[PIPELINE] WAL executor raised %s, falling back to legacy", type(wal_ok_or_exc).__name__)
             return await self._legacy_ingest(findings)
         wal_ok: bool = wal_ok_or_exc
         if isinstance(duckdb_result, Exception):
-            logger.warning('[PIPELINE] DuckDB executor raised %s, falling back to legacy', type(duckdb_result).__name__)
+            logger.warning("[PIPELINE] DuckDB executor raised %s, falling back to legacy", type(duckdb_result).__name__)
             return await self._legacy_ingest(findings)
         if not wal_ok:
-            logger.warning('[PIPELINE] WAL phase failed (wal_ok=False), falling back to legacy for %d findings', len(findings))
+            logger.warning(
+                "[PIPELINE] WAL phase failed (wal_ok=False), falling back to legacy for %d findings", len(findings)
+            )
             return await self._legacy_ingest(findings)
         if duckdb_result and isinstance(duckdb_result, list):
             return duckdb_result
-        logger.warning('[PIPELINE] DuckDB Arrow returned empty/invalid result, falling back to legacy for %d findings', len(findings))
+        logger.warning(
+            "[PIPELINE] DuckDB Arrow returned empty/invalid result, falling back to legacy for %d findings",
+            len(findings),
+        )
         return await self._legacy_ingest(findings)
 
     def _wal_put_many_sync(self, findings: list[Any]) -> bool:
@@ -184,18 +206,18 @@ class PipelinedIngestor:
             wal = self._wal
             if wal is None:
                 return False
-            items = [(f'finding:{f.finding_id}', self._fingerprint_payload(f)) for f in findings]
+            items = [(f"finding:{f.finding_id}", self._fingerprint_payload(f)) for f in findings]
             if not items:
                 return True
             # P0-3 Fix: wal_put_many returns list[bool]; check with all() not truthiness
             # bool([False, False]) = True (truthy list!) but all([False, False]) = False
-            wal_results = wal.wal_put_many(items) if hasattr(wal, 'wal_put_many') else False
+            wal_results = wal.wal_put_many(items) if hasattr(wal, "wal_put_many") else False
             lmdb_ok = all(wal_results) if isinstance(wal_results, list) else bool(wal_results)
             if not lmdb_ok:
-                logger.warning('[PIPELINE WAL] batch WAL failed for %d items', len(items))
+                logger.warning("[PIPELINE WAL] batch WAL failed for %d items", len(items))
             return lmdb_ok
         except Exception as e:
-            logger.error('[PIPELINE WAL] exception: %s', e)
+            logger.error("[PIPELINE WAL] exception: %s", e)
             return False
 
     def _duckdb_arrow_sync(self, findings: list[Any]) -> tuple[int, str | None]:
@@ -203,19 +225,39 @@ class PipelinedIngestor:
         try:
             return self._store._sync_record_canonical_findings_batch_arrow(findings)
         except Exception as e:
-            logger.error('[PIPELINE DuckDB] exception: %s', e)
-            return (0, 'pipeline_duckdb_exception')
+            logger.error("[PIPELINE DuckDB] exception: %s", e)
+            return (0, "pipeline_duckdb_exception")
 
     async def _legacy_ingest(self, findings: list[Any]) -> list[Any]:
         """Fail-open legacy fallback pres async_record_canonical_findings_batch."""
         try:
             return await self._store.async_record_canonical_findings_batch(findings)
         except Exception as e:
-            logger.error('[PIPELINE] legacy fallback failed: %s', e)
+            logger.error("[PIPELINE] legacy fallback failed: %s", e)
             from .duckdb_store import ActivationResult
-            return [ActivationResult(finding_id=str(f.finding_id), lmdb_success=False, duckdb_success=None, lmdb_key=f'finding:{f.finding_id}', desync=False, error=f'pipeline_legacy_failed:{e}', accepted=False) for f in findings]
+
+            return [
+                ActivationResult(
+                    finding_id=str(f.finding_id),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.finding_id}",
+                    desync=False,
+                    error=f"pipeline_legacy_failed:{e}",
+                    accepted=False,
+                )
+                for f in findings
+            ]
 
     @staticmethod
     def _fingerprint_payload(f: Any) -> dict[str, Any]:
         """Sestavit WAL payload pro jeden finding."""
-        return {'id': f.finding_id, 'query': f.query, 'source_type': f.source_type, 'confidence': f.confidence, 'ts': f.ts, 'provenance': f.provenance, 'payload_text': getattr(f, 'payload_text', None)}
+        return {
+            "id": f.finding_id,
+            "query": f.query,
+            "source_type": f.source_type,
+            "confidence": f.confidence,
+            "ts": f.ts,
+            "provenance": f.provenance,
+            "payload_text": getattr(f, "payload_text", None),
+        }

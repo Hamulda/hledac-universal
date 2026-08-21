@@ -15,6 +15,7 @@ Wraps research operations with privacy protections:
 
 Based on research_privacy_enhancer concept from integration files.
 """
+
 import hashlib
 import logging
 import re
@@ -25,23 +26,24 @@ from dataclasses import field
 from enum import Enum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.project_types import PrivacyLevel
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
+
 class DataRetention(Enum):
     """Data retention policies."""
-    SESSION = 'session'
-    SHORT = 'short'
-    MEDIUM = 'medium'
-    LONG = 'long'
+
+    SESSION = "session"
+    SHORT = "short"
+    MEDIUM = "medium"
+    LONG = "long"
+
 
 class PrivacyConfig(Struct):
     """Configuration for privacy-enhanced research."""
+
     level: PrivacyLevel = PrivacyLevel.ENHANCED
     retention: DataRetention = DataRetention.SESSION
     anonymize_requests: bool = True
@@ -52,8 +54,10 @@ class PrivacyConfig(Struct):
     allowed_domains: list[str] = field(default_factory=list)
     blocked_terms: list[str] = field(default_factory=list)
 
+
 class AuditRecord(Struct, frozen=True):
     """Audit record for research operation."""
+
     timestamp: float
     operation_id: str
     operation_type: str
@@ -63,20 +67,25 @@ class AuditRecord(Struct, frozen=True):
     retention_until: float
     metadata: dict[str, Any] = field(default_factory=dict)
 
+
 class AnonymizedRequest(Struct, frozen=True):
     """Anonymized research request."""
+
     original_query: str
     anonymized_query: str
     operation_id: str
     privacy_level: PrivacyLevel
     context: dict[str, Any] = field(default_factory=dict)
 
+
 class SanitizedResult(Struct, frozen=True):
     """Sanitized research result."""
+
     data: Any
     pii_detected: bool
     sanitized_fields: list[str]
     confidence_score: float
+
 
 class PrivacyEnhancedResearch:
     """
@@ -94,25 +103,24 @@ class PrivacyEnhancedResearch:
         ...     research_func=actual_research_function
         ... )
     """
+
     # Pre-compiled PII patterns for O(1) reuse (performance optimization)
     PII_PATTERNS: list[tuple[str, str]] = [
-        (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]'),
-        (r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]'),
-        (r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b', '[CARD]'),
-        (r'\b\d{3}-\d{3}-\d{4}\b', '[PHONE]'),
+        (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[EMAIL]"),
+        (r"\b\d{3}-\d{2}-\d{4}\b", "[SSN]"),
+        (r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", "[CARD]"),
+        (r"\b\d{3}-\d{3}-\d{4}\b", "[PHONE]"),
     ]
     # Compiled versions for O(1) regex match/sub
-    _PII_COMPILED: list[tuple[re.Pattern, str]] = [
-        (re.compile(p), r) for p, r in PII_PATTERNS
-    ]
-    __slots__ = ('_active_sessions', '_audit_log', '_operation_counter', 'config')
+    _PII_COMPILED: list[tuple[re.Pattern, str]] = [(re.compile(p), r) for p, r in PII_PATTERNS]
+    __slots__ = ("_active_sessions", "_audit_log", "_operation_counter", "config")
 
-    def __init__(self, config: PrivacyConfig | None=None) -> None:
+    def __init__(self, config: PrivacyConfig | None = None) -> None:
         self.config = config or PrivacyConfig()
         self._audit_log: deque[AuditRecord] = deque(maxlen=2048)
         self._active_sessions: dict[str, float] = {}
         self._operation_counter = 0
-        logger.info(f'PrivacyEnhancedResearch initialized (level: {self.config.level.value})')
+        logger.info(f"PrivacyEnhancedResearch initialized (level: {self.config.level.value})")
 
     async def execute(self, query: str, research_func: Callable, **kwargs: Any) -> dict[str, Any]:
         """
@@ -127,14 +135,19 @@ class PrivacyEnhancedResearch:
             Sanitized research results
         """
         self._operation_counter += 1
-        operation_id = f'priv_{self._operation_counter}_{int(time.time())}'
+        operation_id = f"priv_{self._operation_counter}_{int(time.time())}"
         try:
             if self.config.anonymize_requests:
                 anon_request = self._anonymize_query(query, operation_id)
                 search_query = anon_request.anonymized_query
             else:
                 search_query = query
-                anon_request = AnonymizedRequest(original_query=query, anonymized_query=query, operation_id=operation_id, privacy_level=self.config.level)
+                anon_request = AnonymizedRequest(
+                    original_query=query,
+                    anonymized_query=query,
+                    operation_id=operation_id,
+                    privacy_level=self.config.level,
+                )
             start_time = time.time()
             raw_result = await research_func(search_query, **kwargs)
             duration = time.time() - start_time
@@ -143,16 +156,48 @@ class PrivacyEnhancedResearch:
                 result_data = sanitized.data
             else:
                 result_data = raw_result
-                sanitized = SanitizedResult(data=raw_result, pii_detected=False, sanitized_fields=[], confidence_score=1.0)
+                sanitized = SanitizedResult(
+                    data=raw_result, pii_detected=False, sanitized_fields=[], confidence_score=1.0
+                )
             if self.config.audit_logging:
-                self._log_audit(operation_id=operation_id, operation_type='research', anon_request=anon_request, result_count=self._count_results(result_data), duration=duration)
+                self._log_audit(
+                    operation_id=operation_id,
+                    operation_type="research",
+                    anon_request=anon_request,
+                    result_count=self._count_results(result_data),
+                    duration=duration,
+                )
             retention_until = self._calculate_retention()
             self._active_sessions[operation_id] = retention_until
-            return {'operation_id': operation_id, 'data': result_data, 'privacy_info': {'level': self.config.level.value, 'anonymized': self.config.anonymize_requests, 'sanitized': self.config.sanitize_results, 'pii_detected': sanitized.pii_detected, 'sanitized_fields': sanitized.sanitized_fields, 'retention_until': retention_until}, 'metadata': {'duration': duration, 'query_hash': self._hash_query(query)}}
+            return {
+                "operation_id": operation_id,
+                "data": result_data,
+                "privacy_info": {
+                    "level": self.config.level.value,
+                    "anonymized": self.config.anonymize_requests,
+                    "sanitized": self.config.sanitize_results,
+                    "pii_detected": sanitized.pii_detected,
+                    "sanitized_fields": sanitized.sanitized_fields,
+                    "retention_until": retention_until,
+                },
+                "metadata": {"duration": duration, "query_hash": self._hash_query(query)},
+            }
         except Exception as e:
-            logger.error(f'Privacy research failed: {e}')
+            logger.error(f"Privacy research failed: {e}")
             if self.config.audit_logging:
-                self._log_audit(operation_id=operation_id, operation_type='research_failed', anon_request=AnonymizedRequest(original_query=query, anonymized_query='[FAILED]', operation_id=operation_id, privacy_level=self.config.level), result_count=0, duration=0, error=str(e))
+                self._log_audit(
+                    operation_id=operation_id,
+                    operation_type="research_failed",
+                    anon_request=AnonymizedRequest(
+                        original_query=query,
+                        anonymized_query="[FAILED]",
+                        operation_id=operation_id,
+                        privacy_level=self.config.level,
+                    ),
+                    result_count=0,
+                    duration=0,
+                    error=str(e),
+                )
             raise
 
     def _anonymize_query(self, query: str, operation_id: str) -> AnonymizedRequest:
@@ -168,8 +213,14 @@ class PrivacyEnhancedResearch:
                     hashed_words.append(hashlib.sha256(word.encode()).hexdigest()[:8])
                 else:
                     hashed_words.append(word)
-            anonymized = ' '.join(hashed_words)
-        return AnonymizedRequest(original_query=query, anonymized_query=anonymized, operation_id=operation_id, privacy_level=self.config.level, context={'anonymized_at': time.time(), 'original_length': len(query)})
+            anonymized = " ".join(hashed_words)
+        return AnonymizedRequest(
+            original_query=query,
+            anonymized_query=anonymized,
+            operation_id=operation_id,
+            privacy_level=self.config.level,
+            context={"anonymized_at": time.time(), "original_length": len(query)},
+        )
 
     def _sanitize_results(self, data: Any) -> SanitizedResult:
         """Sanitize results to remove PII."""
@@ -184,7 +235,7 @@ class PrivacyEnhancedResearch:
                     pii_detected = True
                     value = pattern.sub(replacement, value)
             if value != original:
-                sanitized_fields.append(f'string_field_{len(sanitized_fields)}')
+                sanitized_fields.append(f"string_field_{len(sanitized_fields)}")
             return value
 
         def recursive_sanitize(obj: Any) -> Any:
@@ -196,19 +247,51 @@ class PrivacyEnhancedResearch:
                 return [recursive_sanitize(item) for item in obj]
             else:
                 return obj
-        sanitized_data = recursive_sanitize(data)
-        return SanitizedResult(data=sanitized_data, pii_detected=pii_detected, sanitized_fields=sanitized_fields, confidence_score=0.95 if not pii_detected else 0.8)
 
-    def _log_audit(self, operation_id: str, operation_type: str, anon_request: AnonymizedRequest, result_count: int, duration: float, error: str | None=None) -> None:
+        sanitized_data = recursive_sanitize(data)
+        return SanitizedResult(
+            data=sanitized_data,
+            pii_detected=pii_detected,
+            sanitized_fields=sanitized_fields,
+            confidence_score=0.95 if not pii_detected else 0.8,
+        )
+
+    def _log_audit(
+        self,
+        operation_id: str,
+        operation_type: str,
+        anon_request: AnonymizedRequest,
+        result_count: int,
+        duration: float,
+        error: str | None = None,
+    ) -> None:
         """Log audit record."""
-        record = AuditRecord(timestamp=time.time(), operation_id=operation_id, operation_type=operation_type, privacy_level=self.config.level, anonymized_query=anon_request.anonymized_query, result_count=result_count, retention_until=self._calculate_retention(), metadata={'duration': duration, 'error': error, 'query_hash': self._hash_query(anon_request.original_query)})
+        record = AuditRecord(
+            timestamp=time.time(),
+            operation_id=operation_id,
+            operation_type=operation_type,
+            privacy_level=self.config.level,
+            anonymized_query=anon_request.anonymized_query,
+            result_count=result_count,
+            retention_until=self._calculate_retention(),
+            metadata={
+                "duration": duration,
+                "error": error,
+                "query_hash": self._hash_query(anon_request.original_query),
+            },
+        )
         self._audit_log.append(record)
-        logger.debug(f'Audit logged: {operation_id} ({operation_type})')
+        logger.debug(f"Audit logged: {operation_id} ({operation_type})")
 
     def _calculate_retention(self) -> float:
         """Calculate retention timestamp."""
         now = time.time()
-        retention_hours = {DataRetention.SESSION: 0.5, DataRetention.SHORT: 1, DataRetention.MEDIUM: 24, DataRetention.LONG: 168}
+        retention_hours = {
+            DataRetention.SESSION: 0.5,
+            DataRetention.SHORT: 1,
+            DataRetention.MEDIUM: 24,
+            DataRetention.LONG: 168,
+        }
         return now + retention_hours[self.config.retention] * 3600
 
     def _hash_query(self, query: str) -> str:
@@ -220,14 +303,14 @@ class PrivacyEnhancedResearch:
         if isinstance(data, list):
             return len(data)
         elif isinstance(data, dict):
-            if 'results' in data:
-                return len(data['results'])
-            elif 'items' in data:
-                return len(data['items'])
+            if "results" in data:
+                return len(data["results"])
+            elif "items" in data:
+                return len(data["items"])
             return len(data)
         return 1
 
-    def get_audit_log(self, operation_type: str | None=None, limit: int=100) -> tuple[AuditRecord, ...]:
+    def get_audit_log(self, operation_type: str | None = None, limit: int = 100) -> tuple[AuditRecord, ...]:
         """Get audit log with optional filtering."""
         records = self._audit_log
         if operation_type:
@@ -251,9 +334,22 @@ class PrivacyEnhancedResearch:
 
     def get_privacy_stats(self) -> dict[str, Any]:
         """Get privacy statistics."""
-        return {'config': {'level': self.config.level.value, 'retention': self.config.retention.value, 'anonymize_requests': self.config.anonymize_requests, 'sanitize_results': self.config.sanitize_results, 'audit_logging': self.config.audit_logging}, 'operations': {'total': len(self._audit_log), 'active_sessions': len(self._active_sessions)}, 'audit_log_size': len(self._audit_log)}
+        return {
+            "config": {
+                "level": self.config.level.value,
+                "retention": self.config.retention.value,
+                "anonymize_requests": self.config.anonymize_requests,
+                "sanitize_results": self.config.sanitize_results,
+                "audit_logging": self.config.audit_logging,
+            },
+            "operations": {"total": len(self._audit_log), "active_sessions": len(self._active_sessions)},
+            "audit_log_size": len(self._audit_log),
+        }
 
-async def private_research(query: str, research_func: Callable, level: PrivacyLevel=PrivacyLevel.ENHANCED, **kwargs: Any) -> dict[str, Any]:
+
+async def private_research(
+    query: str, research_func: Callable, level: PrivacyLevel = PrivacyLevel.ENHANCED, **kwargs: Any
+) -> dict[str, Any]:
     """
     Quick privacy-enhanced research.
 

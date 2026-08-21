@@ -18,13 +18,13 @@ Na rozdíl od původního ModelManager, tento:
 
 Facade pattern: ModelManager deleguje na tuto službu.
 """
+
 from __future__ import annotations
 
 import asyncio
 import gc
 import inspect
 import logging
-import time
 from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -32,12 +32,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from enum import Enum
 
-from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_failure, record_model_success
-from hledac.universal.brain.model_lifecycle import ensure_mlx_runtime_initialized
+from hledac.universal.brain.model_inference_guard import check_model_allowed, record_model_success
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
-from _core import aclose
 
 if TYPE_CHECKING:
     from enum import Enum
@@ -45,7 +43,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Model size estimates (GB)
-_MODEL_SIZES_GB = {'hermes': 1.75, 'modernbert': 0.5, 'gliner': 0.3}
+_MODEL_SIZES_GB = {"hermes": 1.75, "modernbert": 0.5, "gliner": 0.3}
 _UNLOAD_TIMEOUT_S: float = 5.0
 
 
@@ -53,6 +51,7 @@ def _get_current_rss_gb() -> float:
     """Get current RSS memory in GB. Used for memory guard checks."""
     try:
         import psutil
+
         return psutil.Process().memory_info().rss / 1000000000.0
     except Exception:
         return 0.0
@@ -65,10 +64,10 @@ def _check_rss_before_load(model_key: str, max_rss_gb: float = 6.0) -> float:
     threshold = max_rss_gb - model_size
     if current_rss > threshold:
         raise MemoryPressureError(
-            f'[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB '
-            f'(max_rss_gb={max_rss_gb}, model={model_key}, size~{model_size}GB). '
-            f'Skipping model load.'
-    )
+            f"[MODEL MEMORY] RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB "
+            f"(max_rss_gb={max_rss_gb}, model={model_key}, size~{model_size}GB). "
+            f"Skipping model load."
+        )
     return current_rss
 
 
@@ -79,14 +78,17 @@ def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
     dropped = rss_before - rss_after
     noop_threshold = model_size * 0.5
     if rss_before < noop_threshold:
-        logger.debug(f'[MODEL MEMORY] Unload was a no-op for {model_key} '
-                      f'(rss_before={rss_before:.2f}GB < expected~{model_size:.2f}GB)')
+        logger.debug(
+            f"[MODEL MEMORY] Unload was a no-op for {model_key} "
+            f"(rss_before={rss_before:.2f}GB < expected~{model_size:.2f}GB)"
+        )
         return
     if dropped < noop_threshold:
-        logger.warning(f'[MODEL MEMORY] RSS did not drop after unload: '
-                       f'dropped={dropped:.2f}GB, expected~{model_size:.2f}GB')
+        logger.warning(
+            f"[MODEL MEMORY] RSS did not drop after unload: dropped={dropped:.2f}GB, expected~{model_size:.2f}GB"
+        )
     else:
-        logger.info(f'[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})')
+        logger.info(f"[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})")
 
 
 class ModelLifecycleManager:
@@ -104,7 +106,7 @@ class ModelLifecycleManager:
     - _lock: asyncio.Lock (pro thread-safety)
     """
 
-    __slots__ = ('_loaded_models', '_current_model', '_model_factories', '_lock', '_model_locks')
+    __slots__ = ("_loaded_models", "_current_model", "_model_factories", "_lock", "_model_locks")
 
     def __init__(self) -> None:
         self._loaded_models: dict[str, Any] = {}
@@ -131,36 +133,37 @@ class ModelLifecycleManager:
         model_key = model_name.lower()
         decision = check_model_allowed(model_key)
         if not decision.allowed:
-            raise RuntimeError(f'model inference blocked: {model_key}, retry after {decision.retry_after_s:.1f}s')
+            raise RuntimeError(f"model inference blocked: {model_key}, retry after {decision.retry_after_s:.1f}s")
 
         async with self._model_locks[model_key]:
             if model_key not in self._model_factories:
-                raise ValueError(f'Unknown model: {model_name}')
+                raise ValueError(f"Unknown model: {model_name}")
 
             from hledac.universal.brain.model_lifecycle import ensure_mlx_runtime_initialized
+
             ensure_mlx_runtime_initialized()
 
             if self._is_model_loaded(model_key):
                 self._current_model = self._get_model_type(model_key)
-                logger.debug(f'Model {model_name} already loaded')
+                logger.debug(f"Model {model_name} already loaded")
                 return self._get_loaded_model(self._get_model_type(model_key))
 
             # Swap: unload current model first
             if self._current_model is not None:
-                logger.info(f'[PHASE SWITCH] Releasing {self._current_model.name} before loading {model_name}')
+                logger.info(f"[PHASE SWITCH] Releasing {self._current_model.name} before loading {model_name}")
                 unload_task = safe_create_task(self._release_current_async())
                 if unload_task:
                     try:
                         await unload_task
                     except Exception as e:
-                        logger.warning(f'[PHASE SWITCH] Unload error: {e}')
+                        logger.warning(f"[PHASE SWITCH] Unload error: {e}")
 
             factory = self._model_factories[model_key]
             model = factory()
             self._set_loaded_model(self._get_model_type(model_key), model)
             self._current_model = self._get_model_type(model_key)
             record_model_success(model_key)
-            logger.info(f'[MODEL LOAD] {model_name} loaded successfully')
+            logger.info(f"[MODEL LOAD] {model_name} loaded successfully")
             return model
 
     async def release_model(self, model_name: str) -> None:
@@ -168,9 +171,9 @@ class ModelLifecycleManager:
         async with self._lock:
             model_type = self._get_model_type(model_name.lower())
             if model_type is None:
-                raise ValueError(f'Unknown model: {model_name}')
+                raise ValueError(f"Unknown model: {model_name}")
             if not self._is_model_loaded(model_name.lower()):
-                logger.debug(f'Model {model_name} not loaded')
+                logger.debug(f"Model {model_name} not loaded")
                 return
             await self._release_model_async(model_type, model_name)
 
@@ -188,21 +191,23 @@ class ModelLifecycleManager:
         self, model: Any, model_type: Any, model_name: str, rss_before: float
     ) -> None:
         """Shared helper: unload model + verify RSS delta."""
-        if model is not None and hasattr(model, 'unload'):
-            logger.info(f'[MODEL RELEASE] {model_name} start')
+        if model is not None and hasattr(model, "unload"):
+            logger.info(f"[MODEL RELEASE] {model_name} start")
             try:
-                unload_coro = model.unload() if inspect.iscoroutinefunction(model.unload) else asyncio.to_thread(model.unload)
+                unload_coro = (
+                    model.unload() if inspect.iscoroutinefunction(model.unload) else asyncio.to_thread(model.unload)
+                )
                 try:
                     async with asyncio.timeout(_UNLOAD_TIMEOUT_S):
                         await unload_coro
                 except asyncio.CancelledError:
                     raise
                 except TimeoutError:
-                    logger.warning('[MODEL] Unload timed out after %.1fs for %s', _UNLOAD_TIMEOUT_S, model_name)
+                    logger.warning("[MODEL] Unload timed out after %.1fs for %s", _UNLOAD_TIMEOUT_S, model_name)
                 except Exception as e:
-                    logger.error(f'Failed to release model {model_name}: {e}')
+                    logger.error(f"Failed to release model {model_name}: {e}")
                 else:
-                    logger.info(f'[MODEL RELEASE] {model_name} done')
+                    logger.info(f"[MODEL RELEASE] {model_name} done")
             finally:
                 await self._cleanup_memory_async(model_type, engine=model)
         _verify_rss_after_unload(model_name.lower(), rss_before)
@@ -213,6 +218,7 @@ class ModelLifecycleManager:
         gc.collect()
         try:
             from hledac.universal.utils.mlx_memory import _get_mlx_core
+
             mx = _get_mlx_core()
             if mx is not None:
                 mx.eval([])
@@ -242,7 +248,7 @@ class ModelLifecycleManager:
 
     async def release_all(self) -> None:
         """Async uvolnění všech modelů z paměti."""
-        logger.info('Releasing all models...')
+        logger.info("Releasing all models...")
         async with self._lock:
             last_released: Any = None
             last_engine: Any = None
@@ -253,7 +259,7 @@ class ModelLifecycleManager:
             self._current_model = None
             if last_engine is not None:
                 await self._cleanup_memory_async(last_released, engine=last_engine)
-            logger.info('✓ All models released')
+            logger.info("✓ All models released")
 
     def is_loaded(self, model_key: str) -> bool:
         """Check if model is currently loaded."""
@@ -280,9 +286,11 @@ class ModelLifecycleManager:
         """Get ModelType enum from string key. Override in subclass."""
         # This should be overridden or the enum passed in constructor
         from enum import auto
+
         class ModelType(Enum):
             HERMES = auto()
             MODERNBERT = auto()
             GLINER = auto()
-        key_map = {'hermes': ModelType.HERMES, 'modernbert': ModelType.MODERNBERT, 'gliner': ModelType.GLINER}
+
+        key_map = {"hermes": ModelType.HERMES, "modernbert": ModelType.MODERNBERT, "gliner": ModelType.GLINER}
         return key_map.get(model_key.lower())

@@ -16,14 +16,17 @@ IMPORTANT:
   - This adapter does NOT reset session state (that's handled by the scheduler).
   - _get_graph_signal, _pivot_ioc_graph, enqueue_pivot stay in the scheduler.
 """
+
 import logging
 from itertools import combinations
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     pass
 from hledac.universal.utils.ioc_extract import classify_ioc
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class SprintGraphAccumulator:
     """
@@ -37,7 +40,8 @@ class SprintGraphAccumulator:
 
     Fail-soft: graph errors must NOT prevent sprint continuation.
     """
-    __slots__ = tuple(('_gs_mod',))
+
+    __slots__ = ("_gs_mod",)
 
     def __init__(self, graph_service_module=None) -> None:
         """
@@ -50,10 +54,11 @@ class SprintGraphAccumulator:
     def _get_graph_service(self):
         if self._gs_mod is None:
             from hledac.universal.knowledge import graph_service as gs
+
             self._gs_mod = gs
         return self._gs_mod
 
-    def accumulate_findings(self, findings: list, sprint_id: str='') -> int:
+    def accumulate_findings(self, findings: list, sprint_id: str = "") -> int:
         """
         Accumulate findings into the graph.
 
@@ -70,29 +75,29 @@ class SprintGraphAccumulator:
             return 0
         rows: list[tuple[str, str, float, str]] = []
         for finding in findings:
-            fid = getattr(finding, 'finding_id', None)
+            fid = getattr(finding, "finding_id", None)
             if not fid:
                 continue
-            src_type = getattr(finding, 'source_type', 'unknown') or 'unknown'
-            ioc_type = getattr(finding, 'finding_type', None) or src_type
-            raw_confidence = getattr(finding, 'confidence', 0.5) or 0.5
+            src_type = getattr(finding, "source_type", "unknown") or "unknown"
+            ioc_type = getattr(finding, "finding_type", None) or src_type
+            raw_confidence = getattr(finding, "confidence", 0.5) or 0.5
             confidence = max(0.0, min(1.0, float(raw_confidence)))
             classification = classify_ioc(ioc_type, src_type)
-            if classification == 'seed':
+            if classification == "seed":
                 confidence = 1.0
-                source = f'seed:{sprint_id}' if sprint_id else 'seed'
+                source = f"seed:{sprint_id}" if sprint_id else "seed"
             else:
-                source = sprint_id or ''
+                source = sprint_id or ""
             rows.append((fid, ioc_type, confidence, source))
         if not rows:
             return 0
         try:
             gs = self._get_graph_service()
             gs.upsert_ioc_batch(rows)
-            self._create_co_source_edges(findings, gs, sprint_id or '')
+            self._create_co_source_edges(findings, gs, sprint_id or "")
             return len(rows)
         except Exception:
-            logger.warning('[GraphAccumulator] upsert_ioc_batch failed, returning 0')
+            logger.warning("[GraphAccumulator] upsert_ioc_batch failed, returning 0")
             return 0
 
     def _create_co_source_edges(self, findings: list, gs, sprint_id: str) -> None:
@@ -106,14 +111,15 @@ class SprintGraphAccumulator:
         Bounded: MAX_EDGES_PER_SPRINT=200 to avoid O(n²) blowup on large batches.
         """
         from collections import defaultdict
+
         _max_edges_per_sprint = 200
         try:
             by_source: dict[str, list[str]] = defaultdict(list)
             for f in findings:
-                fid = getattr(f, 'finding_id', None)
+                fid = getattr(f, "finding_id", None)
                 if not fid:
                     continue
-                src = getattr(f, 'source_type', 'unknown') or 'unknown'
+                src = getattr(f, "source_type", "unknown") or "unknown"
                 by_source[src].append(fid)
             edges_created = 0
             for _src, fids in by_source.items():
@@ -123,7 +129,7 @@ class SprintGraphAccumulator:
                     if edges_created >= _max_edges_per_sprint:
                         return
                     try:
-                        gs.upsert_relation(fid_a, fid_b, 'co_source', weight=0.5, evidence=f'sprint:{sprint_id}')
+                        gs.upsert_relation(fid_a, fid_b, "co_source", weight=0.5, evidence=f"sprint:{sprint_id}")
                         edges_created += 1
                     except Exception:  # noqa: BLE001
                         pass
@@ -149,6 +155,7 @@ class SprintGraphAccumulator:
         """
         try:
             from urllib.parse import urlparse
+
             target = ioc_value
             try:
                 parsed = urlparse(ioc_value)
@@ -157,7 +164,6 @@ class SprintGraphAccumulator:
             except Exception:  # noqa: BLE001
                 pass
             gs = self._get_graph_service()
-            gs.upsert_relation(ioc_value, target, rel_type='pivot', weight=1.0, evidence='pivot')
+            gs.upsert_relation(ioc_value, target, rel_type="pivot", weight=1.0, evidence="pivot")
         except Exception:
-            logger.warning('[GraphAccumulator] buffer_pivot_relation failed, swallowing')
-            pass
+            logger.warning("[GraphAccumulator] buffer_pivot_relation failed, swallowing")

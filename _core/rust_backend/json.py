@@ -11,21 +11,15 @@ from __future__ import annotations
 
 import json as _json
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
 
-# =============================================================================
-# JSON Domain
-# =============================================================================
-
-
 class _RustJsonDomain:
     """
     A10: Rust serde_json wrapper for 3-4× faster JSON serialization.
-    
+
     Rust serde_json_rs takes pre-serialized JSON strings (from Python json.dumps)
     and re-serializes with proper formatting/sorting. This avoids double-work:
     1. Python serializes complex objects (datetimes, UUIDs, etc.) to JSON string
@@ -40,7 +34,7 @@ class _RustJsonDomain:
     def _serialize_first(self, data: Any) -> str:
         """
         A10: Pre-serialize Python object to JSON string before Rust re-serialization.
-        
+
         This is the correct pattern for serde_json_rs which takes string input,
         not dict. Python json.dumps handles complex Python types (datetime, UUID).
         """
@@ -49,7 +43,7 @@ class _RustJsonDomain:
     def pretty_sorted(self, data: Any) -> str:
         """
         A10: Pretty JSON with sorted keys using Rust serde_json.
-        
+
         Pattern: Python json.dumps → Rust serde_json_pretty_sorted (re-serialize)
         """
         json_str = self._serialize_first(data)
@@ -58,7 +52,7 @@ class _RustJsonDomain:
     def compact_sorted(self, data: Any) -> str:
         """
         A10: Compact JSON with sorted keys using Rust serde_json.
-        
+
         Pattern: Python json.dumps → Rust serde_json_compact_sorted (re-serialize)
         """
         json_str = self._serialize_first(data)
@@ -67,7 +61,7 @@ class _RustJsonDomain:
     def pretty(self, data: Any) -> str:
         """
         A10: Pretty JSON using Rust serde_json.
-        
+
         Pattern: Python json.dumps → Rust serde_json_pretty (re-serialize)
         """
         json_str = self._serialize_first(data)
@@ -76,7 +70,7 @@ class _RustJsonDomain:
     def compact(self, data: Any) -> str:
         """
         A10: Compact JSON using Rust serde_json.
-        
+
         Pattern: Python json.dumps → Rust serde_json_compact (re-serialize)
         """
         json_str = self._serialize_first(data)
@@ -113,7 +107,7 @@ class _RustJsonDomain:
     def dumps_compact_bytes(self, data: Any) -> bytes:
         """
         A10: Serialize to compact JSON bytes using Rust serde_json.
-        
+
         Uses serde_json_dumps_compact_bytes which accepts Python dict directly.
         """
         return self._ext.serde_json_dumps_compact_bytes(data)
@@ -121,7 +115,7 @@ class _RustJsonDomain:
     def dumps_pretty_bytes(self, data: Any, sort_keys: bool = False) -> bytes:
         """
         A10: Serialize to pretty JSON bytes using Rust serde_json.
-        
+
         Uses serde_json_dumps_pretty_bytes which accepts Python dict directly.
         """
         return self._ext.serde_json_dumps_pretty_bytes(data)
@@ -130,7 +124,7 @@ class _RustJsonDomain:
 class _PythonJsonDomain:
     """
     Python fallback for JSON operations using stdlib json.
-    
+
     Used when Rust serde_json is not available. Provides the same interface
     as _RustJsonDomain for transparent fallback.
     """

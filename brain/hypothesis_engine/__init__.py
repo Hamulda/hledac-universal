@@ -17,7 +17,6 @@ The pip ``hypothesis`` package (property-based testing) is unrelated to
 this module and lives in site-packages.
 """
 
-
 # Re-export everything from consolidated hledac_hypothesis
 from hledac_hypothesis._types import (
     CO_OCCURRENCE_FP16,

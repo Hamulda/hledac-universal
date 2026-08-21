@@ -516,8 +516,6 @@ mod tests {
         );
     }
 
-    // ─── IPv6 Boundary Tests (P1 fix) ───────────────────────────────────────
-
     #[test]
     fn test_ipv6_loopback_at_start() {
         // P1 fix: ::1 at string start (was NO MATCH before boundary fix)

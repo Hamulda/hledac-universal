@@ -36,10 +36,6 @@ use pyo3::prelude::*;
 use crate::gil::release_gil;
 use crate::pools::cpu_pool;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Maximum streaming size per operation (50 MB - matches native_db.rs:53)
 const MAX_STREAM_BYTES: usize = 50 * 1024 * 1024;
 
@@ -52,10 +48,6 @@ const S3_PAGE_SIZE: i32 = 1000;
 /// File type flags for rsync output
 const RSYNC_DIR_PREFIX: &str = "cd";
 const RSYNC_FILE_PREFIX: &str = "cd+++++++++";
-
-// ============================================================================
-// Data Structures
-// ============================================================================
 
 /// Entry representing a file/directory in storage
 #[derive(Debug, Clone)]
@@ -147,18 +139,10 @@ pub struct StorageConfig {
     pub max_entries: Option<usize>,
 }
 
-// ============================================================================
-// Storage Backend Traits
-// ============================================================================
-
 trait StorageBackend {
     fn scan(&self, config: &StorageConfig) -> PyResult<ScanResult>;
     fn list_entries(&self, config: &StorageConfig) -> PyResult<Vec<StorageEntry>>;
 }
-
-// ============================================================================
-// Local/Rsync Backend
-// ============================================================================
 
 struct LocalBackend;
 
@@ -290,10 +274,6 @@ fn entries_exceed_limit<F>(_callback: &mut F, _max_entries: usize) -> bool where
     false
 }
 
-// ============================================================================
-// S3 Backend
-// ============================================================================
-
 struct S3Backend {
     region: String,
     credentials: Option<(String, String)>,
@@ -353,10 +333,6 @@ impl StorageBackend for S3Backend {
         ))
     }
 }
-
-// ============================================================================
-// MinIO Backend
-// ============================================================================
 
 struct MinIOBackend {
     endpoint: String,
@@ -424,10 +400,6 @@ impl StorageBackend for MinIOBackend {
     }
 }
 
-// ============================================================================
-// Rsync Manifest Parser
-// ============================================================================
-
 /// Parse rsync output manifest
 fn parse_rsync_manifest(manifest_path: &Path) -> PyResult<Vec<StorageEntry>> {
     let file = File::open(manifest_path).map_err(|e| {
@@ -464,7 +436,6 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
         return None;
     }
 
-    // Check for directory marker
     if line.starts_with("cd") || line.starts_with("cd ") || line.starts_with("cd/") {
         let path = line
             .trim_start_matches("cd")
@@ -484,9 +455,7 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
         });
     }
 
-    // Check for file marker
     if line.starts_with("-") || line.starts_with("f") {
-        // Parse file permissions, owner, size, path
         let parts: Vec<&str> = line.split_whitespace());
 
         if parts.len() >= 3 {
@@ -507,10 +476,6 @@ fn parse_rsync_line(line: &str) -> Option<StorageEntry> {
 
     None
 }
-
-// ============================================================================
-// Main Scanner
-// ============================================================================
 
 #[pyclass]
 pub struct UnindexedScanner {

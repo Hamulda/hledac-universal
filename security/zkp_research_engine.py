@@ -15,32 +15,35 @@ Interface expected by security_coordinator.py:
 - async verify_proof(proof) -> bool
 - async cleanup()
 """
+
 import logging
 import secrets
 import time
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 SIMULATION_MODE = True
 
+
 class ZKPResearchEngine:
     """
-    Zero-Knowledge Proof research engine (simulation mode).
+       Zero-Knowledge Proof research engine (simulation mode).
 
-    PRODUCTION: requires py-ecc or circom (not yet M1-compatible with Python 3.14+).
-    CURRENT MODE: Simulated ZKP — logs proofs but does not compute real ZK proofs.
+       PRODUCTION: requires py-ecc or circom (not yet M1-compatible with Python 3.14+).
+       CURRENT MODE: Simulated ZKP — logs proofs but does not compute real ZK proofs.
 
-    The simulation:
-    - generate_proof: Returns a "proof" struct that passes downstream type checks
-    - verify_proof: Always returns True in simulation mode (with warning log)
-    - Includes SIMULATION_MODE flag in all responses for telemetry
+       The simulation:
+       - generate_proof: Returns a "proof" struct that passes downstream type checks
+       - verify_proof: Always returns True in simulation mode (with warning log)
+       - Includes SIMULATION_MODE flag in all responses for telemetry
 
-    Real implementation can be dropped in when:
- - py-ecc supports M1 ARM + Python 3.14+
-    - circom compilation works on M1
-    - snarkjs WASM bindings stable
+       Real implementation can be dropped in when:
+    - py-ecc supports M1 ARM + Python 3.14+
+       - circom compilation works on M1
+       - snarkjs WASM bindings stable
     """
-    __slots__ = tuple(('_initialized', '_proof_count', '_simulation_mode', '_verified_count'))
+
+    __slots__ = ("_initialized", "_proof_count", "_simulation_mode", "_verified_count")
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize ZKP engine in simulation mode."""
@@ -48,12 +51,14 @@ class ZKPResearchEngine:
         self._proof_count = 0
         self._verified_count = 0
         self._simulation_mode = True
-        logger.warning('ZKPResearchEngine: Running in SIMULATION MODE. No real ZK proofs are computed. Set HLEDAC_ENABLE_ZKP=1 when py-ecc/circom M1 support is available.')
+        logger.warning(
+            "ZKPResearchEngine: Running in SIMULATION MODE. No real ZK proofs are computed. Set HLEDAC_ENABLE_ZKP=1 when py-ecc/circom M1 support is available."
+        )
 
     async def initialize(self) -> None:
         """Initialize ZKP engine — simulation mode requires no setup."""
         self._initialized = True
-        logger.info('ZKPResearchEngine: Initialized (simulation mode)')
+        logger.info("ZKPResearchEngine: Initialized (simulation mode)")
 
     async def generate_proof(self, statement: str, witness: dict[str, Any]) -> dict[str, Any]:
         """
@@ -88,8 +93,25 @@ class ZKPResearchEngine:
         self._proof_count += 1
         proof_id = secrets.token_hex(16)
         timestamp = time.time()
-        logger.debug(f'ZKPResearchEngine: generate_proof #{self._proof_count} (statement={statement[:50]}..., proof_id={proof_id[:16]}...)')
-        return {'proof_id': proof_id, 'statement': statement, 'witness_type': type(witness).__name__, 'witness_keys': list(witness.keys()) if witness else [], 'proof_type': 'groth16', 'simulation_mode': True, 'valid': True, 'timestamp': timestamp, 'proof_data': {'a': secrets.token_hex(32), 'b': secrets.token_hex(64), 'c': secrets.token_hex(32), 'public_signals': [secrets.token_hex(16)]}}
+        logger.debug(
+            f"ZKPResearchEngine: generate_proof #{self._proof_count} (statement={statement[:50]}..., proof_id={proof_id[:16]}...)"
+        )
+        return {
+            "proof_id": proof_id,
+            "statement": statement,
+            "witness_type": type(witness).__name__,
+            "witness_keys": list(witness.keys()) if witness else [],
+            "proof_type": "groth16",
+            "simulation_mode": True,
+            "valid": True,
+            "timestamp": timestamp,
+            "proof_data": {
+                "a": secrets.token_hex(32),
+                "b": secrets.token_hex(64),
+                "c": secrets.token_hex(32),
+                "public_signals": [secrets.token_hex(16)],
+            },
+        }
 
     async def verify_proof(self, proof: dict[str, Any]) -> dict[str, Any]:
         """
@@ -120,19 +142,34 @@ class ZKPResearchEngine:
         self._verified_count += 1
         timestamp = time.time()
         start = time.monotonic()
-        proof_id = proof.get('proof_id', 'unknown')
-        is_simulation = proof.get('simulation_mode', False)
+        proof_id = proof.get("proof_id", "unknown")
+        is_simulation = proof.get("simulation_mode", False)
         if is_simulation:
-            logger.debug(f"ZKPResearchEngine: verify_proof #{self._verified_count} (simulation proof, proof_id={(proof_id[:16] if proof_id != 'unknown' else '?')}...)")
+            logger.debug(
+                f"ZKPResearchEngine: verify_proof #{self._verified_count} (simulation proof, proof_id={(proof_id[:16] if proof_id != 'unknown' else '?')}...)"
+            )
         else:
-            logger.warning(f'ZKPResearchEngine: verify_proof #{self._verified_count} (REAL proof in simulation mode — verification skipped)')
+            logger.warning(
+                f"ZKPResearchEngine: verify_proof #{self._verified_count} (REAL proof in simulation mode — verification skipped)"
+            )
         elapsed_ms = (time.monotonic() - start) * 1000
-        return {'valid': True, 'simulation_mode': True, 'proof_id': proof_id, 'timestamp': timestamp, 'verification_time_ms': elapsed_ms, 'note': 'Simulation mode — real verification skipped'}
+        return {
+            "valid": True,
+            "simulation_mode": True,
+            "proof_id": proof_id,
+            "timestamp": timestamp,
+            "verification_time_ms": elapsed_ms,
+            "note": "Simulation mode — real verification skipped",
+        }
 
     async def cleanup(self) -> None:
         """Cleanup ZKP resources — no-op in simulation mode."""
-        logger.info(f'ZKPResearchEngine: Cleanup — {self._proof_count} proofs generated, {self._verified_count} verifications (all simulation)')
+        logger.info(
+            f"ZKPResearchEngine: Cleanup — {self._proof_count} proofs generated, {self._verified_count} verifications (all simulation)"
+        )
         self._initialized = False
         self._proof_count = 0
         self._verified_count = 0
-__all__ = ['ZKPResearchEngine', 'SIMULATION_MODE']
+
+
+__all__ = ["ZKPResearchEngine", "SIMULATION_MODE"]

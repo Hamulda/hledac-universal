@@ -18,26 +18,23 @@ M1 8GB Constraints:
 
 Usage:
     from hledac.universal._core.rust_backend import rust
-    
-    # Check availability
+
     rust.whisper.is_available()
-    
+
     # Transcribe audio
     result = rust.whisper.transcribe("/path/to/audio.wav", model_size="tiny")
     # result: {text, language, duration_s, confidence, segments, coreml_used, ...}
-    
+
     # Batch transcription (for multi-page PDF audio)
     results = rust.whisper.batch_transcribe(["audio1.wav", "audio2.wav"], model_size="tiny")
     # results: {results: [...], total_files: 2, successful: 2, ...}
-    
+
     # Verify ANE usage
     verification = rust.whisper.verify_ane()
     # verification: {ane_available: True, hardware_path: 'Apple Neural Engine (ANE)', ...}
-    
-    # Get model cache directory
+
     cache_dir = rust.whisper.get_cache_dir()
-    
-    # Get available models
+
     models = rust.whisper.get_available_models()
     # models: ["tiny", "base"] or ["tiny", "base", "medium"] with feature gate
 """
@@ -45,8 +42,6 @@ Usage:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -137,9 +132,7 @@ class _RustWhisperDomain:
             Dict with: results, total_files, successful, failed,
                       total_latency_s, average_latency_s
         """
-        return self._ext.batch_transcribe(
-            audio_paths, model_size, language, n_threads, max_concurrent
-        )
+        return self._ext.batch_transcribe(audio_paths, model_size, language, n_threads, max_concurrent)
 
     def verify_ane(self) -> dict[str, Any]:
         """
@@ -205,7 +198,7 @@ class _PythonWhisperDomain:
             raise NotImplementedError(
                 "Rust whisper module not available. "
                 "Install with: pip install whispercpp or build Rust extension with whisper feature"
-    )
+            )
 
     def transcribe_with_timestamps(
         self,
@@ -246,16 +239,16 @@ def _get_python_domain() -> _PythonWhisperDomain:
 
 def __getattr__(name: str) -> Any:
     """Lazy attribute access for domain switching.
-    
+
     Handles attribute errors gracefully to avoid infinite recursion
     when the Rust module is not available.
     """
     # These are accessed from rust.whisper.*
     try:
         rust_domain = _get_rust_domain()
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         rust_domain = None
-    
+
     if name == "is_available":
         if rust_domain:
             return rust_domain.is_available()
@@ -280,16 +273,12 @@ def __getattr__(name: str) -> Any:
         if rust_domain:
             return rust_domain.batch_transcribe
         raise AttributeError(
-            "batch_transcribe requires Rust whisper module. "
-            "Build Rust extension with whisper feature."
+            "batch_transcribe requires Rust whisper module. Build Rust extension with whisper feature."
         )
     elif name == "verify_ane":
         if rust_domain:
             return rust_domain.verify_ane
-        raise AttributeError(
-            "verify_ane requires Rust whisper module. "
-            "Build Rust extension with whisper feature."
-        )
+        raise AttributeError("verify_ane requires Rust whisper module. Build Rust extension with whisper feature.")
     elif name == "is_medium_available":
         if rust_domain:
             return rust_domain.is_medium_available()
@@ -298,7 +287,6 @@ def __getattr__(name: str) -> Any:
         if rust_domain:
             return rust_domain._ext.extract_voiceprint
         raise AttributeError(
-            "extract_voiceprint requires Rust whisper module. "
-            "Build Rust extension with whisper feature."
+            "extract_voiceprint requires Rust whisper module. Build Rust extension with whisper feature."
         )
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

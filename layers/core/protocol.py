@@ -11,17 +11,17 @@ Design principles:
 
 M1 8GB: All layer I/O is lazy — no heavy imports at module load.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import socket
-from abc import abstractmethod
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
+from dataclasses import field
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from compat.msgspec_gc_compat import Struct
+
 try:
     from hledac.universal.utils.asyncx import safe_create_task
 except ImportError:
@@ -86,7 +86,8 @@ class LayerContext:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
-    __slots__ = ('_services', '_meta', '_lock')
+
+    __slots__ = ("_services", "_meta", "_lock")
 
     def __init__(self) -> None:
         self._services: dict[str, Any] = {}
@@ -111,40 +112,41 @@ class LayerContext:
 
     @property
     def sprint_id(self) -> str | None:
-        return self._meta.get('sprint_id')
+        return self._meta.get("sprint_id")
 
     @property
     def query(self) -> str | None:
-        return self._meta.get('query')
+        return self._meta.get("query")
 
     @property
     def mode(self) -> str | None:
-        return self._meta.get('mode')
+        return self._meta.get("mode")
 
     @property
     def memory_pressure(self) -> float:
         """Current memory pressure 0.0–1.0."""
-        return self._meta.get('memory_pressure', 0.0)
+        return self._meta.get("memory_pressure", 0.0)
 
     @memory_pressure.setter
     def memory_pressure(self, value: float) -> None:
-        self._meta['memory_pressure'] = max(0.0, min(1.0, value))
+        self._meta["memory_pressure"] = max(0.0, min(1.0, value))
 
     @property
     def cancel_event(self) -> asyncio.Event:
         """Cancellation event for this sprint."""
-        return self._meta.get('cancel_event', asyncio.Event())
+        return self._meta.get("cancel_event", asyncio.Event())
 
 
 class LayerEvent(Struct, frozen=True, gc=False):
     """Event that propagates through the LayerStack. F350M-R: gc=False for M1 8GB."""
+
     type: str
     data: dict[str, Any] = field(default_factory=dict)
     halted: bool = False
 
     def halt(self) -> None:
         """Stop propagation to subsequent layers."""
-        object.__setattr__(self, 'halted', True)
+        object.__setattr__(self, "halted", True)
 
 
 class LayerStack:
@@ -160,7 +162,8 @@ class LayerStack:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
-    __slots__ = tuple(('_ctx', '_layers', '_lock', '_mounted'))
+
+    __slots__ = ("_ctx", "_layers", "_lock", "_mounted")
 
     def __init__(self) -> None:
         self._layers: list[Layer] = []
@@ -192,7 +195,7 @@ class LayerStack:
     def get(self, name: str) -> Layer | None:
         """Get layer by layer_name."""
         for layer in self._layers:
-            if getattr(layer, 'layer_name', None) == name:
+            if getattr(layer, "layer_name", None) == name:
                 return layer
         return None
 
@@ -211,29 +214,29 @@ class LayerStack:
         from hledac.universal.utils.asyncx import safe_wait_for
 
         if self._mounted:
-            logger.warning('LayerStack already mounted')
+            logger.warning("LayerStack already mounted")
             return
         self._ctx = ctx
         mounted: list[Layer] = []
         for layer in self._layers:
-            name = getattr(layer, 'layer_name', repr(layer))
+            name = getattr(layer, "layer_name", repr(layer))
             try:
-                logger.debug(f'Mounting layer: {name}')
-                await safe_wait_for(layer.mount(ctx), timeout=30.0, label=f'mount:{name}')
+                logger.debug(f"Mounting layer: {name}")
+                await safe_wait_for(layer.mount(ctx), timeout=30.0, label=f"mount:{name}")
                 mounted.append(layer)
             except Exception as e:
-                logger.error(f'Layer mount failed: {name} — {e}')
+                logger.error(f"Layer mount failed: {name} — {e}")
                 for rollback in reversed(mounted):
-                    rname = getattr(rollback, 'layer_name', repr(rollback))
+                    rname = getattr(rollback, "layer_name", repr(rollback))
                     try:
-                        await safe_wait_for(rollback.unmount(ctx), timeout=10.0, label=f'unmount:{rname}')
+                        await safe_wait_for(rollback.unmount(ctx), timeout=10.0, label=f"unmount:{rname}")
                     except Exception as rollback_err:
-                        logger.warning(f'Rollback unmount failed: {rname} — {rollback_err}')
+                        logger.warning(f"Rollback unmount failed: {rname} — {rollback_err}")
                 self._layers.clear()
                 self._mounted = False
                 raise
         self._mounted = True
-        logger.info(f'LayerStack mounted ({len(self._layers)} layers)')
+        logger.info(f"LayerStack mounted ({len(self._layers)} layers)")
 
     async def unmount(self, ctx: LayerContext) -> None:
         """
@@ -246,13 +249,13 @@ class LayerStack:
         if not self._mounted:
             return
         for layer in reversed(self._layers):
-            name = getattr(layer, 'layer_name', repr(layer))
+            name = getattr(layer, "layer_name", repr(layer))
             try:
-                await safe_wait_for(layer.unmount(ctx), timeout=10.0, label=f'unmount:{name}')
+                await safe_wait_for(layer.unmount(ctx), timeout=10.0, label=f"unmount:{name}")
             except Exception as e:
-                logger.warning(f'Layer unmount error: {name} — {e}')
+                logger.warning(f"Layer unmount error: {name} — {e}")
         self._mounted = False
-        logger.info('LayerStack unmounted')
+        logger.info("LayerStack unmounted")
 
     async def process_all(self, ctx: LayerContext, data: Any) -> Any:
         """
@@ -270,11 +273,11 @@ class LayerStack:
         """
         result = data
         for layer in self._layers:
-            name = getattr(layer, 'layer_name', repr(layer))
+            name = getattr(layer, "layer_name", repr(layer))
             try:
                 result = await layer.process(ctx, result)
             except Exception as e:
-                logger.warning(f'Layer process error: {name} — {e}')
+                logger.warning(f"Layer process error: {name} — {e}")
                 await layer.rollback(ctx, e)
         return result
 
@@ -294,13 +297,13 @@ class LayerStack:
         for layer in self._layers:
             if event.halted:
                 break
-            name = getattr(layer, 'layer_name', repr(layer))
+            name = getattr(layer, "layer_name", repr(layer))
             try:
-                result = await safe_wait_for(layer.process(ctx, event), timeout=30.0, label=f'on_event:{name}')
+                result = await safe_wait_for(layer.process(ctx, event), timeout=30.0, label=f"on_event:{name}")
                 if result is None:
                     event.halt()
             except Exception as e:
-                logger.warning(f'Layer on_event error: {name} — {e}')
+                logger.warning(f"Layer on_event error: {name} — {e}")
         return event
 
     async def broadcast(self, ctx: LayerContext, event_type: str, data: dict[str, Any] | None = None) -> LayerEvent:
@@ -339,15 +342,14 @@ async def create_uds_server(
         asyncio.Server instance
     """
     loop = asyncio.get_running_loop()
-    server = await loop.create_unix_server(
-        lambda: _UDSProtocol(handler), path, backlog=backlog
-    )
+    server = await loop.create_unix_server(lambda: _UDSProtocol(handler), path, backlog=backlog)
     return server
 
 
 class _UDSProtocol(asyncio.Protocol):
     """One-shot protocol — read msgpack, call handler, close."""
-    __slots__ = ('_handler', '_buffer', '_transport')
+
+    __slots__ = ("_handler", "_buffer", "_transport")
 
     def __init__(self, handler: Callable[[Any], Coroutine[Any, Any, None]]) -> None:
         self._handler = handler
@@ -363,7 +365,7 @@ class _UDSProtocol(asyncio.Protocol):
             import msgspec
 
             msg = msgspec.msgpack.decode(self._buffer, type=LayerEvent)
-            safe_create_task(self._handler(msg), name='layer_protocol:msg_handler')
+            safe_create_task(self._handler(msg), name="layer_protocol:msg_handler")
         except Exception:
             return
         finally:
@@ -398,20 +400,16 @@ async def uds_fetch(
     try:
         import msgspec
 
-        reader, writer = await safe_wait_for(
-            asyncio.open_unix_connection(path), timeout=timeout, label='uds_connect'
-        )
+        reader, writer = await safe_wait_for(asyncio.open_unix_connection(path), timeout=timeout, label="uds_connect")
         try:
             writer.write(msgspec.msgpack.encode(message))
             await writer.drain()
-            response_bytes = await safe_wait_for(
-                reader.read(65536), timeout=timeout, label='uds_read'
-            )
+            response_bytes = await safe_wait_for(reader.read(65536), timeout=timeout, label="uds_read")
             if response_bytes:
                 return msgspec.msgpack.decode(response_bytes, type=LayerEvent)
         finally:
             writer.close()
             await writer.wait_closed()
     except Exception as e:
-        logger.debug(f'UDS fetch failed: {e}')
+        logger.debug(f"UDS fetch failed: {e}")
         return None

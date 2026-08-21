@@ -12,28 +12,24 @@ Metrics: elapsed_ms, output length parity.
 No network, no browser — fully hermetic.
 """
 
-
-
-import json
 import html as _html
+import json
 import os
 import re
-import time
-from pathlib import Path
 
 # Fix module import path so benchmark can run standalone
 # benchmark is at .../hledac/universal/probe_f214opt_selectolax/benchmark_selectolax.py
 # hledac is at /Users/vojtechhamada/PycharmProjects/Hledac/hledac/
 # so we need to add /Users/vojtechhamada/PycharmProjects/Hledac/ to sys.path
 import sys
+import time
+from pathlib import Path
+
 _benchmark_dir = os.path.dirname(os.path.abspath(__file__))  # .../hledac/universal/probe_f214opt_selectolax/
 # Go up 3 levels: probe_f214opt_selectolax -> universal -> hledac -> project root
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(_benchmark_dir)))
 sys.path.insert(0, _project_root)
 
-# ---------------------------------------------------------------------------
-# Synthetic HTML generators
-# ---------------------------------------------------------------------------
 
 def make_synthetic_html(size_kb: int) -> str:
     """Generate synthetic HTML of approximately the target size."""
@@ -96,15 +92,11 @@ def make_synthetic_html(size_kb: int) -> str:
     return full_html
 
 
-# ---------------------------------------------------------------------------
-# Legacy fallback (pure regex — from content_extractor.py original)
-# ---------------------------------------------------------------------------
-
 _RE_SCRIPT_STYLE_LEGACY = re.compile(
     r"<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|"
     r"<noscript[^>]*>.*?</noscript>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 _RE_TAG_LEGACY = re.compile(r"<[^>]+>")
 _RE_WS_LEGACY = re.compile(r"\s+")
 
@@ -118,21 +110,12 @@ def legacy_regex_extract(html: str) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# html_to_text_fast (under test)
-# ---------------------------------------------------------------------------
-
 from hledac.universal.utils.html_text_fast import html_to_text_fast
-from _core import aclose
-
-
-# ---------------------------------------------------------------------------
-# BeautifulSoup path (for comparison where available)
-# ---------------------------------------------------------------------------
 
 BS4_AVAILABLE = False
 try:
     from bs4 import BeautifulSoup
+
     BS4_AVAILABLE = True
 except ImportError:  # noqa: BLE001
     pass  # noqa: BLE001  # fail-soft suppression: module
@@ -140,27 +123,23 @@ except ImportError:  # noqa: BLE001
 
 def legacy_bs4_extract(html: str) -> str:
     """Original BeautifulSoup path from content_extractor.py."""
-    soup = BeautifulSoup(html, 'html.parser')
-    for tag in soup(['script', 'style', 'noscript']):
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
     main_content = ""
-    for selector in ['main', 'article', '[role="main"]', '.content', '.post-content', '.entry-content', '#content']:
+    for selector in ["main", "article", '[role="main"]', ".content", ".post-content", ".entry-content", "#content"]:
         content_elem = soup.select_one(selector)
         if content_elem:
-            main_content = content_elem.get_text(separator=' ', strip=True)
+            main_content = content_elem.get_text(separator=" ", strip=True)
             break
     if not main_content:
-        body = soup.find('body')
+        body = soup.find("body")
         if body:
-            main_content = body.get_text(separator=' ', strip=True)
+            main_content = body.get_text(separator=" ", strip=True)
         else:
-            main_content = soup.get_text(separator=' ', strip=True)
-    return re.sub(r'\s+', ' ', main_content).strip()
+            main_content = soup.get_text(separator=" ", strip=True)
+    return re.sub(r"\s+", " ", main_content).strip()
 
-
-# ---------------------------------------------------------------------------
-# Benchmark runner
-# ---------------------------------------------------------------------------
 
 def benchmark(name: str, fn, html: str, iterations: int = 20) -> dict:
     """Run benchmark and return stats."""
@@ -217,7 +196,9 @@ def run_benchmarks() -> list[dict]:
             bs4_out = legacy_bs4_extract(html)
             regex_out = legacy_regex_extract(html)
             print(f"  output lengths — fast:{len(fast_out)} bs4:{len(bs4_out)} regex:{len(regex_out)}")
-            print(f"  fast≈bs4: {abs(len(fast_out) - len(bs4_out)) < 50} | fast≈regex: {abs(len(fast_out) - len(regex_out)) < 50}")
+            print(
+                f"  fast≈bs4: {abs(len(fast_out) - len(bs4_out)) < 50} | fast≈regex: {abs(len(fast_out) - len(regex_out)) < 50}"
+            )
         else:
             print("  legacy_bs4: not available (bs4 not installed)")
 
@@ -226,20 +207,24 @@ def run_benchmarks() -> list[dict]:
 
 if __name__ == "__main__":
     import sys
+
     results = run_benchmarks()
     print("\n=== All benchmarks complete ===")
 
-    # Write JSON report
     report_dir = Path(__file__).parent
     json_path = report_dir / "selectolax_fast_path.json"
     with open(json_path, "w") as f:
-        json.dump({
-            "benchmark": "F214OPT-A selectolax fast path",
-            "units": {"elapsed_ms": "milliseconds", "size_kb": "kilobytes"},
-            "iterations_per_test": 20,
-            "results": results,
-            "selectolax_available": False,  # runtime check
-            "bs4_available": BS4_AVAILABLE,
-        }, f, indent=2)
+        json.dump(
+            {
+                "benchmark": "F214OPT-A selectolax fast path",
+                "units": {"elapsed_ms": "milliseconds", "size_kb": "kilobytes"},
+                "iterations_per_test": 20,
+                "results": results,
+                "selectolax_available": False,  # runtime check
+                "bs4_available": BS4_AVAILABLE,
+            },
+            f,
+            indent=2,
+        )
     print(f"JSON report: {json_path}")
     sys.exit(0)

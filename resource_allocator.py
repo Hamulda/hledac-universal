@@ -2,9 +2,6 @@
 Resource Allocator with Predictive Modeling
 ==========================================
 
-
-
-
 ROLE: Canonical REQUEST-LEVEL BUDGETING / CONCURRENCY PRIMITIVE (not a sampler or governor).
 
 This module provides:
@@ -24,23 +21,23 @@ uma_budget.py absolute-MB thresholds. These serve different purposes:
 - uma_budget.py: absolute system+MLX used (Calibrated for M1 8GB UMA)
 - resource_allocator.py: percent-based system pressure (for AdaptiveSemaphore decisions)
 """
+
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-import msgspec
+from operator import attrgetter
+from typing import Any
+
 from compat.msgspec_gc_compat import Struct
-from typing import Any, Self
 from hledac.universal._core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal._core.psutil_shim import process as _process
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB, UmaBudget
 from hledac.universal.fetching.memory_budget_gate import _rss_gib as _cached_rss_gib
 from hledac.universal.utils.config_introspection import safe_attr_get
-from operator import attrgetter, itemgetter
+from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB, UmaBudget
+
 logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
 
@@ -54,11 +51,13 @@ def _get_mx() -> Any | None:
     """
     # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
 
 
 class ResourceBudget(Struct):
     """Resource budget for a request."""
+
     ram_mb: int
     time_sec: float
     priority: int
@@ -67,9 +66,10 @@ class ResourceBudget(Struct):
     # C-9 fix: task reference umožňuje task.cancel() při emergency brake
     task: Any = None
 
+
 class ResourceExhausted(Exception):
     """Raised when resources cannot be allocated."""
-    pass
+
 
 class ResourceAllocator:
     """
@@ -86,28 +86,44 @@ class ResourceAllocator:
 
     NEW-M4 Fix: All RSS limits now derive from SSOT UmaBudget to eliminate sprawl.
     """
+
     MAX_CONCURRENT: int = 3
     MAX_RAM_GB: float = M1_FETCH_SOFT_CEILING_GB
     SOFT_PREEMPT_RAM_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # ~5.94 GiB (NEW-M4)
     # MEM-UMA-002: Explicit RSS limits for reactive throttling (NEW-M4 SSOT fix)
-    RSS_SOFT_LIMIT_GIB: float = UmaBudget.THRESHOLD_WARN_GIB   # ~5.94 GiB — 95% of ceiling
+    RSS_SOFT_LIMIT_GIB: float = UmaBudget.THRESHOLD_WARN_GIB  # ~5.94 GiB — 95% of ceiling
     RSS_HARD_LIMIT_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB — HARD CEILING (NEW-M4)
     WARMUP_QUERIES: int = 5
-    __slots__ = tuple(('active_requests', 'coeffs', 'history', 'total_ram_mb', 'warmup_counter', '_throttle_level', '_saved_max_concurrent'))
+    __slots__ = (
+        "active_requests",
+        "coeffs",
+        "history",
+        "total_ram_mb",
+        "warmup_counter",
+        "_throttle_level",
+        "_saved_max_concurrent",
+    )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_requests: dict[str, ResourceBudget] = {}
         self.total_ram_mb: float = 0.0
         self.history: list[tuple[list[float], float]] = []
         self.coeffs: Any | None = None
         self.warmup_counter: int = 0
-        self._throttle_level: int = 0  # MEM-UMA-002: 0=normal, 1=soft_throttled, 2=hard_throttled (set on HARD before raising)
+        self._throttle_level: int = (
+            0  # MEM-UMA-002: 0=normal, 1=soft_throttled, 2=hard_throttled (set on HARD before raising)
+        )
 
     def _extract_features(self, ctx: Any) -> list[float]:
         """Extract feature vector for RAM prediction."""
-        return [float(len(safe_attr_get(ctx, 'query') or '')) or 100.0, float(safe_attr_get(ctx, 'depth') or 1.0), float(len(safe_attr_get(ctx, 'selected_sources', []))), float(safe_attr_get(ctx, 'complexity_score', 0.5))]
+        return [
+            float(len(safe_attr_get(ctx, "query") or "")) or 100.0,
+            float(safe_attr_get(ctx, "depth") or 1.0),
+            float(len(safe_attr_get(ctx, "selected_sources", []))),
+            float(safe_attr_get(ctx, "complexity_score", 0.5)),
+        ]
 
-    def _update_model(self):
+    def _update_model(self) -> None:
         """Update MLX linear regression model from history."""
         if len(self.history) < self.WARMUP_QUERIES:
             self.warmup_counter += 1
@@ -121,9 +137,9 @@ class ResourceAllocator:
             ones = mx.ones((X.shape[0], 1))
             X = mx.concatenate([X, ones], axis=1)
             self.coeffs, _, _, _ = mx.linalg.lstsq(X, y, rcond=None)
-            logger.debug(f'Updated MLX prediction model with {len(self.history)} samples')
+            logger.debug(f"Updated MLX prediction model with {len(self.history)} samples")
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.warning(f'Failed to update MLX model: {e}')
+            logger.warning(f"Failed to update MLX model: {e}")
             self.coeffs = None
 
     def predict_ram(self, ctx: Any) -> float:
@@ -138,7 +154,7 @@ class ResourceAllocator:
             prediction = float(mx.sum(features * self.coeffs))
             return max(100.0, prediction)
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.warning(f'RAM prediction failed: {e}')
+            logger.warning(f"RAM prediction failed: {e}")
             return _FALLBACK_RAM_ESTIMATE_MB
 
     def can_accept(self, ctx: Any) -> bool:
@@ -158,27 +174,29 @@ class ResourceAllocator:
     def acquire(self, request_id: str, ctx: Any, priority: int, task: Any = None) -> ResourceBudget:
         """Acquire resources for a new request."""
         if not self.can_accept(ctx):
-            raise ResourceExhausted(f'Cannot accept request {request_id}: resources exhausted')
+            raise ResourceExhausted(f"Cannot accept request {request_id}: resources exhausted")
         predicted = self.predict_ram(ctx)
-        budget = ResourceBudget(ram_mb=int(predicted), time_sec=300.0, priority=priority, request_id=request_id, context=ctx, task=task)
+        budget = ResourceBudget(
+            ram_mb=int(predicted), time_sec=300.0, priority=priority, request_id=request_id, context=ctx, task=task
+        )
         self.active_requests[request_id] = budget
         self.total_ram_mb += predicted
-        logger.debug(f'Allocated {predicted:.0f} MB for request {request_id} (priority {priority})')
+        logger.debug(f"Allocated {predicted:.0f} MB for request {request_id} (priority {priority})")
         return budget
 
-    def release(self, request_id: str, actual_ram_mb: float):
+    def release(self, request_id: str, actual_ram_mb: float) -> None:
         """Release resources and record actual usage for learning."""
         if request_id in self.active_requests:
             budget = self.active_requests.pop(request_id)
             self.total_ram_mb -= budget.ram_mb
-            ctx = getattr(budget, 'context', None)
+            ctx = getattr(budget, "context", None)
             if ctx is not None:
                 features = self._extract_features(ctx)
                 self.history.append((features, actual_ram_mb))
                 if len(self.history) > 100:
                     self.history = self.history[-50:]
             self._update_model()
-            logger.debug(f'Released request {request_id}, actual RAM: {actual_ram_mb:.0f} MB')
+            logger.debug(f"Released request {request_id}, actual RAM: {actual_ram_mb:.0f} MB")
 
     def _check_rss_and_throttle(self) -> None:
         """
@@ -199,20 +217,15 @@ class ResourceAllocator:
             # HARD LIMIT: UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
             if current_rss >= self.RSS_HARD_LIMIT_GIB:
                 logger.critical(
-                    f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
-                    f"({self.RSS_HARD_LIMIT_GIB} GiB)"
-    )
-                raise MemoryError(
-                    f"M1 8GB SWAP limit: RSS={current_rss:.2f}GiB >= "
-                    f"{self.RSS_HARD_LIMIT_GIB}GiB"
-    )
+                    f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit ({self.RSS_HARD_LIMIT_GIB} GiB)"
+                )
+                raise MemoryError(f"M1 8GB SWAP limit: RSS={current_rss:.2f}GiB >= {self.RSS_HARD_LIMIT_GIB}GiB")
 
             # SOFT LIMIT: >= THRESHOLD_WARN ~5.94 GiB — reduce concurrency by 50%
             if current_rss >= self.RSS_SOFT_LIMIT_GIB:
                 if self._throttle_level < 1:
                     old_limit = self.MAX_CONCURRENT
                     new_limit = max(1, old_limit // 2)
-                    # Save original for hysteresis-based recovery
                     self._saved_max_concurrent = old_limit
                     self.MAX_CONCURRENT = new_limit
                     self._throttle_level = 1
@@ -220,17 +233,14 @@ class ResourceAllocator:
                         f"[MEM-UMA-002-SOFT] RSS {current_rss:.2f} GiB >= SOFT limit "
                         f"({self.RSS_SOFT_LIMIT_GIB} GiB) — reduced concurrency "
                         f"{old_limit} -> {new_limit}"
-    )
+                    )
                 # Cancel lowest priority task to free memory immediately
                 if self.active_requests:
-                    lowest = max(
-                        self.active_requests.values(), key=attrgetter("priority")
-    )
+                    lowest = max(self.active_requests.values(), key=attrgetter("priority"))
                     self.cancel(lowest.request_id)
                     logger.info(
-                        f"[MEM-UMA-002-SOFT] Cancelled {lowest.request_id} "
-                        f"to free memory (RSS: {current_rss:.2f} GiB)"
-    )
+                        f"[MEM-UMA-002-SOFT] Cancelled {lowest.request_id} to free memory (RSS: {current_rss:.2f} GiB)"
+                    )
         except MemoryError:
             raise
         except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
@@ -255,12 +265,12 @@ class ResourceAllocator:
                 logger.critical(
                     f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
                     f"({self.RSS_HARD_LIMIT_GIB} GiB) — emergency heap flush"
-    )
+                )
                 await self._emergency_heap_flush()
                 raise MemoryError(
                     f"M1 8GB SWAP limit exceeded: RSS={current_rss:.2f}GiB >= "
                     f"{self.RSS_HARD_LIMIT_GIB}GiB. Sprint abort required."
-    )
+                )
 
             # SOFT LIMIT: throttle with hysteresis-based recovery
             if current_rss >= self.RSS_SOFT_LIMIT_GIB:
@@ -282,7 +292,7 @@ class ResourceAllocator:
                         f"[MEM-UMA-002-RECOVER] RSS {current_rss:.2f} GiB < "
                         f"{self.RSS_SOFT_LIMIT_GIB - hysteresis_gap:.1f} GiB "
                         f"(hysteresis). Restored concurrency (was level={old_level})"
-    )
+                    )
         except MemoryError:
             raise
         except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
@@ -310,37 +320,43 @@ class ResourceAllocator:
 
             # 2. Aggressive garbage collection
             import gc
+
             gc.collect()
 
             # 3. Log final RSS
             if _PSUTIL_AVAILABLE:
                 proc = _process()
                 if proc is not None:
-                    final_rss = proc.memory_info().rss / (1024 ** 3)
-                    logger.info(
-                        f"[MEM-UMA-002] Emergency flush done. RSS: {final_rss:.2f} GiB"
-    )
+                    final_rss = proc.memory_info().rss / (1024**3)
+                    logger.info(f"[MEM-UMA-002] Emergency flush done. RSS: {final_rss:.2f} GiB")
         except Exception as e:  # noqa: BLE001 — best-effort; flush failure is non-fatal
             logger.error(f"[MEM-UMA-002] Emergency heap flush failed: {e}")
 
-    def cancel(self, request_id: str):
+    def cancel(self, request_id: str) -> None:
         """Cancel a specific request. C-9 fix: volá task.cancel() pokud je task known."""
         if request_id in self.active_requests:
             budget = self.active_requests.pop(request_id)
             self.total_ram_mb -= budget.ram_mb
-            task = getattr(budget, 'task', None)
+            task = getattr(budget, "task", None)
             if task is not None:
                 try:
                     task.cancel()
-                    logger.info(f'Cancelled request {request_id} via task.cancel()')
+                    logger.info(f"Cancelled request {request_id} via task.cancel()")
                 except Exception:  # noqa: BLE001 — best-effort; task.cancel() failure is non-fatal
-                    logger.info(f'Cancelled request {request_id} (task.cancel() failed)')
+                    logger.info(f"Cancelled request {request_id} (task.cancel() failed)")
             else:
-                logger.info(f'Cancelled request {request_id}')
+                logger.info(f"Cancelled request {request_id}")
 
     def get_stats(self) -> dict[str, Any]:
         """Get current allocator statistics."""
-        return {'active_requests': len(self.active_requests), 'total_ram_mb': self.total_ram_mb, 'warmup_counter': self.warmup_counter, 'history_size': len(self.history), 'model_ready': self.coeffs is not None}
+        return {
+            "active_requests": len(self.active_requests),
+            "total_ram_mb": self.total_ram_mb,
+            "warmup_counter": self.warmup_counter,
+            "history_size": len(self.history),
+            "model_ready": self.coeffs is not None,
+        }
+
 
 def get_memory_pressure_level() -> str:
     """
@@ -353,17 +369,20 @@ def get_memory_pressure_level() -> str:
     """
     try:
         from hledac.universal.utils.concurrency import AdaptiveWorkerPool
+
         pool = AdaptiveWorkerPool._instance
         if pool is not None:
             return _uma_state_to_pressure_level(pool.get_uma_state())
     except Exception:  # noqa: BLE001 — best-effort; UMA state check failure returns 'normal'
         pass
-    return 'normal'
+    return "normal"
+
 
 def _uma_state_to_pressure_level(state: str) -> str:
     """Map UMA state string to legacy pressure level string."""
-    mapping = {'ok': 'normal', 'soft_warn': 'normal', 'warn': 'warn', 'critical': 'critical', 'emergency': 'critical'}
-    return mapping.get(state, 'normal')
+    mapping = {"ok": "normal", "soft_warn": "normal", "warn": "warn", "critical": "critical", "emergency": "critical"}
+    return mapping.get(state, "normal")
+
 
 def get_recommended_concurrency() -> dict[str, int]:
     """
@@ -376,26 +395,40 @@ def get_recommended_concurrency() -> dict[str, int]:
     pool = None
     try:
         from hledac.universal.utils.concurrency import AdaptiveWorkerPool
+
         pool = AdaptiveWorkerPool._instance
     except Exception:  # noqa: BLE001 — best-effort; pool import failure falls back to legacy limits
         pass
-    if pool is not None and level != 'normal':
+    if pool is not None and level != "normal":
         fetch = pool.get_fetch_limit()
         workers = pool.get_max_workers()
-        if level == 'critical':
+        if level == "critical":
             import gc
+
             gc.collect()
-        return {'fetch': max(4, fetch), 'parse_workers': max(1, workers), 'ml_jobs': workers, 'browser': 0 if level == 'critical' else 1}
-    concurrency = {'normal': {'fetch': 20, 'parse_workers': 4, 'ml_jobs': 1, 'browser': 1}, 'warn': {'fetch': 8, 'parse_workers': 2, 'ml_jobs': 1, 'browser': 0}, 'critical': {'fetch': 2, 'parse_workers': 1, 'ml_jobs': 0, 'browser': 0}}[level]
-    if concurrency['fetch'] < 4:
-        concurrency['fetch'] = 4
+        return {
+            "fetch": max(4, fetch),
+            "parse_workers": max(1, workers),
+            "ml_jobs": workers,
+            "browser": 0 if level == "critical" else 1,
+        }
+    concurrency = {
+        "normal": {"fetch": 20, "parse_workers": 4, "ml_jobs": 1, "browser": 1},
+        "warn": {"fetch": 8, "parse_workers": 2, "ml_jobs": 1, "browser": 0},
+        "critical": {"fetch": 2, "parse_workers": 1, "ml_jobs": 0, "browser": 0},
+    }[level]
+    if concurrency["fetch"] < 4:
+        concurrency["fetch"] = 4
     return concurrency
 
 
-from hledac.universal.utils.asyncx import safe_wait_for
 import platform
+
+from hledac.universal.utils.asyncx import safe_wait_for
+
 _CONCURRENCY_FLOOR = 1
 _CONCURRENCY_CEILING = 3
+
 
 def get_adaptive_concurrency() -> int:
     """
@@ -403,7 +436,7 @@ def get_adaptive_concurrency() -> int:
     M1 8GB: max 3, min 1.
     """
     pressure_str = get_memory_pressure_level()
-    pressure_map = {'normal': 0.0, 'warn': 0.6, 'critical': 0.9}
+    pressure_map = {"normal": 0.0, "warn": 0.6, "critical": 0.9}
     pressure = pressure_map.get(pressure_str, 0.0)
     if pressure < 0.4:
         return _CONCURRENCY_CEILING
@@ -413,6 +446,7 @@ def get_adaptive_concurrency() -> int:
         return 1
     else:
         return _CONCURRENCY_FLOOR
+
 
 class AdaptiveSemaphore:
     """
@@ -430,10 +464,11 @@ class AdaptiveSemaphore:
     - When limit drops below active holders, new acquires are rejected immediately.
     - No background cleanup tasks needed.
     """
-    _CEILING = _CONCURRENCY_CEILING
-    __slots__ = tuple(('_active_holders', '_check_interval', '_effective_limit', '_last_check', '_lock', '_sem'))
 
-    def __init__(self, initial_limit: int=_CONCURRENCY_CEILING) -> None:
+    _CEILING = _CONCURRENCY_CEILING
+    __slots__ = ("_active_holders", "_check_interval", "_effective_limit", "_last_check", "_lock", "_sem")
+
+    def __init__(self, initial_limit: int = _CONCURRENCY_CEILING) -> None:
         self._effective_limit = initial_limit
         self._sem = asyncio.Semaphore(self._CEILING)
         self._active_holders = 0
@@ -472,7 +507,7 @@ class AdaptiveSemaphore:
                         # undo our own release before propagating.
                         self._sem.release()
                         raise
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # Timed out waiting for a slot — retry from top of loop
                         # (will re-check effective_limit after next _compute)
                         _did_release = False
@@ -502,32 +537,34 @@ class AdaptiveSemaphore:
         """For testing / diagnostics only."""
         return self._active_holders
 
+
 def get_mlx_memory_mb() -> float:
     """
     Vrátí aktuální MLX cache usage v MB.
     Funguje pouze na macOS/Darwin s MLX.
     """
-    if platform.system() != 'Darwin':
+    if platform.system() != "Darwin":
         return 0.0
     try:
         mx = _get_mx()
         if mx is None:
             return 0.0
-        if hasattr(mx.metal, 'get_cache_memory'):
+        if hasattr(mx.metal, "get_cache_memory"):
             return mx.get_cache_memory() / (1024 * 1024)
-        elif hasattr(mx.metal, 'get_active_memory'):
+        elif hasattr(mx.metal, "get_active_memory"):
             return mx.get_active_memory() / (1024 * 1024)
     except Exception:  # noqa: BLE001 — best-effort; MLX memory check failure returns 0.0
         pass
     return 0.0
 
-def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
+
+def clear_mlx_cache_if_needed(threshold_mb: float = 500.0) -> bool:
     """
     Uvolni MLX cache pokud přesahuje threshold.
     Vrací True pokud byl cache vyčištěn.
     M1: cache > 500MB = čas uklidit.
     """
-    if platform.system() != 'Darwin':
+    if platform.system() != "Darwin":
         return False
     try:
         mx = _get_mx()
@@ -537,16 +574,19 @@ def clear_mlx_cache_if_needed(threshold_mb: float=500.0) -> bool:
         if cache_mb > threshold_mb:
             mx.eval([])
             import gc
+
             gc.collect()
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-            elif hasattr(mx.metal, 'clear_cache'):
+            elif hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
             gc.collect()
             return True
     except Exception:  # noqa: BLE001 — best-effort; MLX cache clear failure is non-fatal
         pass
     return False
+
+
 from hledac.universal.utils.concurrency import FETCH_SEMAPHORE, adjust_fetch_workers
-from _core import aclose
-__all__ = ['FETCH_SEMAPHORE', 'adjust_fetch_workers', 'AdaptiveSemaphore']
+
+__all__ = ["FETCH_SEMAPHORE", "adjust_fetch_workers", "AdaptiveSemaphore"]

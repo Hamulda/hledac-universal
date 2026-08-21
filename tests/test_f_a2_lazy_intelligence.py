@@ -18,13 +18,11 @@ Hermetic tests verifying:
 All tests run offline — no network, no MLX, no heavy deps loaded.
 """
 
-
 import importlib
 import sys
 import time
 
 import pytest
-from _core import aclose
 
 
 # Force the package to be importable; conftest already does this in CI.
@@ -35,6 +33,7 @@ def reload_intelligence():
     cached = sys.modules.get("intelligence")
     sys.modules.pop("intelligence", None)
     import intelligence
+
     yield intelligence
     # restore original
     sys.modules["intelligence"] = cached
@@ -48,7 +47,7 @@ def reload_intelligence():
 class TestSprintFA2ColdImport:
     """Cold ``import intelligence`` should NOT pay for submodule imports."""
 
-    def test_cold_import_under_120ms(self, reload_intelligence):
+    def test_cold_import_under_120ms(self, reload_intelligence) -> None:
         """Hermetic: no submodule import should fire on ``import intelligence``.
 
         Original code: ~206ms (21 try/except blocks + 25 import lines).
@@ -61,11 +60,9 @@ class TestSprintFA2ColdImport:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         # generous bound; on M1 cold start this is ~26ms
         assert elapsed_ms < 120, f"cold import took {elapsed_ms:.1f}ms (>120ms)"
-        assert mod._lazy_stats()["resolved_count"] == 0, (
-            "no specs should be resolved on cold import"
-    )
+        assert mod._lazy_stats()["resolved_count"] == 0, "no specs should be resolved on cold import"
 
-    def test_cold_import_does_not_load_submodules(self, reload_intelligence):
+    def test_cold_import_does_not_load_submodules(self, reload_intelligence) -> None:
         """Verify spec table + PEP 562 path is wired (no eager module load).
 
         Probe: import intelligence fresh, then check that no spec
@@ -88,53 +85,54 @@ class TestSprintFA2ColdImport:
 class TestSprintFA2FlagAccess:
     """All 21 ``XXX_AVAILABLE`` flags are accessible via ``intelligence.X``."""
 
-    @pytest.mark.parametrize("flag", [
-        "ARCHIVE_AVAILABLE",
-        "TEMPORAL_AVAILABLE",
-        "CRAWLER_AVAILABLE",
-        "WEB_INTEL_AVAILABLE",
-        "ACADEMIC_SEARCH_AVAILABLE",
-        "DATA_LEAK_HUNTER_AVAILABLE",
-        "CRYPTO_AVAILABLE",
-        "DOCUMENT_INTELLIGENCE_AVAILABLE",
-        "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
-        "TIMELINE_SYNTHESIZER_AVAILABLE",
-        "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE",
-        "EXPOSED_SERVICE_HUNTER_AVAILABLE",
-        "OPEN_SOURCE_COLLECTORS_AVAILABLE",
-        "ACADEMIC_DISCOVERY_AVAILABLE",
-        "PASTEBIN_MONITOR_AVAILABLE",
-        "RELATIONSHIP_DISCOVERY_AVAILABLE",
-        "PATTERN_MINING_AVAILABLE",
-        "IDENTITY_STITCHING_AVAILABLE",
-        "BLOCKCHAIN_FORENSICS_AVAILABLE",
-        "INPUT_DETECTOR_AVAILABLE",
-        "WORKFLOW_ORCHESTRATOR_AVAILABLE",
-    ])
-    def test_flag_returns_bool(self, reload_intelligence, flag):
-        value = getattr(reload_intelligence, flag)
-        assert isinstance(value, bool), (
-            f"{flag} returned {type(value).__name__}, expected bool"
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "ARCHIVE_AVAILABLE",
+            "TEMPORAL_AVAILABLE",
+            "CRAWLER_AVAILABLE",
+            "WEB_INTEL_AVAILABLE",
+            "ACADEMIC_SEARCH_AVAILABLE",
+            "DATA_LEAK_HUNTER_AVAILABLE",
+            "CRYPTO_AVAILABLE",
+            "DOCUMENT_INTELLIGENCE_AVAILABLE",
+            "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
+            "TIMELINE_SYNTHESIZER_AVAILABLE",
+            "TEMPORAL_ARCHAEOLOGIST_ADAPTER_AVAILABLE",
+            "EXPOSED_SERVICE_HUNTER_AVAILABLE",
+            "OPEN_SOURCE_COLLECTORS_AVAILABLE",
+            "ACADEMIC_DISCOVERY_AVAILABLE",
+            "PASTEBIN_MONITOR_AVAILABLE",
+            "RELATIONSHIP_DISCOVERY_AVAILABLE",
+            "PATTERN_MINING_AVAILABLE",
+            "IDENTITY_STITCHING_AVAILABLE",
+            "BLOCKCHAIN_FORENSICS_AVAILABLE",
+            "INPUT_DETECTOR_AVAILABLE",
+            "WORKFLOW_ORCHESTRATOR_AVAILABLE",
+        ],
     )
+    def test_flag_returns_bool(self, reload_intelligence, flag) -> None:
+        value = getattr(reload_intelligence, flag)
+        assert isinstance(value, bool), f"{flag} returned {type(value).__name__}, expected bool"
 
 
 class TestSprintFA2NameAccess:
     """Class/function names are accessible and trigger lazy load."""
 
-    def test_accessing_class_triggers_spec_load(self, reload_intelligence):
+    def test_accessing_class_triggers_spec_load(self, reload_intelligence) -> None:
         """Probing: only the owning spec loads on first access."""
         # Pastebin is a real dep in this repo; first access triggers load
         _ = reload_intelligence.PasteFinding
         stats = reload_intelligence._lazy_stats()
         assert "PASTEBIN_MONITOR_AVAILABLE" in stats["loaded"]
 
-    def test_accessing_nonexistent_raises_attribute_error(self, reload_intelligence):
+    def test_accessing_nonexistent_raises_attribute_error(self, reload_intelligence) -> None:
         with pytest.raises(AttributeError) as exc_info:
             reload_intelligence.NonExistent_FA2Test  # noqa: B018
         assert "NonExistent_FA2Test" in str(exc_info.value)
         assert "intelligence" in str(exc_info.value)
 
-    def test_hasattr_returns_false_for_missing(self, reload_intelligence):
+    def test_hasattr_returns_false_for_missing(self, reload_intelligence) -> None:
         assert hasattr(reload_intelligence, "NonExistent_FA2Test") is False
         assert hasattr(reload_intelligence, "ARCHIVE_AVAILABLE") is True
 
@@ -147,30 +145,37 @@ class TestSprintFA2NameAccess:
 class TestSprintFA2DirAndAll:
     """``__dir__`` + ``__all__`` give a complete view of the package."""
 
-    def test_dir_contains_all_lazy_names(self, reload_intelligence):
+    def test_dir_contains_all_lazy_names(self, reload_intelligence) -> None:
         d = set(dir(reload_intelligence))
         # Spot check a few representative names from each spec category
         for n in [
-            "ARCHIVE_AVAILABLE", "ArchiveDiscovery",
-            "TimelineSynthesizer", "MAX_TIMELINE_EVENTS",
-            "PasteFinding", "pastebin_run",
-            "BlockchainForensics", "BlockchainPatternType",
-            "IntelligentInputDetector", "InputAnalysis",
-            "WorkflowOrchestrator", "ComprehensiveReport",
+            "ARCHIVE_AVAILABLE",
+            "ArchiveDiscovery",
+            "TimelineSynthesizer",
+            "MAX_TIMELINE_EVENTS",
+            "PasteFinding",
+            "pastebin_run",
+            "BlockchainForensics",
+            "BlockchainPatternType",
+            "IntelligentInputDetector",
+            "InputAnalysis",
+            "WorkflowOrchestrator",
+            "ComprehensiveReport",
         ]:
             assert n in d, f"dir() missing {n}"
 
-    def test_all_has_no_duplicates(self, reload_intelligence):
+    def test_all_has_no_duplicates(self, reload_intelligence) -> None:
         all_list = reload_intelligence.__all__
         assert len(all_list) == len(set(all_list)), (
-            f"__all__ has duplicates: "
-            f"{[n for n in all_list if all_list.count(n) > 1]}"
-    )
+            f"__all__ has duplicates: {[n for n in all_list if all_list.count(n) > 1]}"
+        )
 
-    def test_all_contains_availability_flags(self, reload_intelligence):
+    def test_all_contains_availability_flags(self, reload_intelligence) -> None:
         for f in [
-            "ARCHIVE_AVAILABLE", "CRYPTO_AVAILABLE",
-            "TIMELINE_SYNTHESIZER_AVAILABLE", "PASTEBIN_MONITOR_AVAILABLE",
+            "ARCHIVE_AVAILABLE",
+            "CRYPTO_AVAILABLE",
+            "TIMELINE_SYNTHESIZER_AVAILABLE",
+            "PASTEBIN_MONITOR_AVAILABLE",
         ]:
             assert f in reload_intelligence.__all__, f"__all__ missing {f}"
 
@@ -183,7 +188,7 @@ class TestSprintFA2DirAndAll:
 class TestSprintFA2NameCollisions:
     """Names imported from multiple submodules: last spec wins."""
 
-    def test_anomaly_resolves_to_last_spec(self, reload_intelligence):
+    def test_anomaly_resolves_to_last_spec(self, reload_intelligence) -> None:
         """`Anomaly` is in pattern_mining AND workflow_orchestrator.
         Last spec (workflow_orchestrator) wins, matching original.
         """
@@ -196,7 +201,7 @@ class TestSprintFA2NameCollisions:
             # last spec loaded but missing → None fallback fires
             assert value is None
 
-    def test_pattern_resolves_to_input_detector(self, reload_intelligence):
+    def test_pattern_resolves_to_input_detector(self, reload_intelligence) -> None:
         """`Pattern` in pattern_mining AND input_detector.
         input_detector is last → wins. Returns the class or None.
         """
@@ -217,7 +222,7 @@ class TestSprintFA2NullFallbacks:
     in their original except branches. Preserve that contract.
     """
 
-    def test_input_detector_null_fallback_on_missing_dep(self, reload_intelligence):
+    def test_input_detector_null_fallback_on_missing_dep(self, reload_intelligence) -> None:
         """Simulate a missing submodule by patching import_module.
 
         Verifies that when ``import_module`` raises (transitive ImportError),
@@ -229,9 +234,8 @@ class TestSprintFA2NullFallbacks:
 
         # Reset internal state to force re-attempt
         from intelligence import _LAZY_SPECS, _RESOLVED_SPECS
-        spec_input = next(
-            s for s in _LAZY_SPECS if s[1] == "INPUT_DETECTOR_AVAILABLE"
-    )
+
+        spec_input = next(s for s in _LAZY_SPECS if s[1] == "INPUT_DETECTOR_AVAILABLE")
         # Remove from resolved so _load_spec will re-run
         _RESOLVED_SPECS.discard(spec_input)
         # Also clear the cached globals so the test reflects a clean state
@@ -273,7 +277,7 @@ class TestSprintFA2NullFallbacks:
 class TestSprintFA2Idempotency:
     """Repeated attribute access should NOT re-import."""
 
-    def test_repeated_access_does_not_reimport(self, reload_intelligence):
+    def test_repeated_access_does_not_reimport(self, reload_intelligence) -> None:
 
         # First access loads the spec
         _ = reload_intelligence.PasteFinding
@@ -282,6 +286,7 @@ class TestSprintFA2Idempotency:
 
         # Capture import_module call count via wrapper
         import intelligence as _mod
+
         orig = _mod.importlib.import_module
         calls = {"n": 0}
 
@@ -299,10 +304,7 @@ class TestSprintFA2Idempotency:
             _mod.importlib.import_module = orig
 
         # No new import_module call should have happened for pastebin
-        assert calls["n"] == 0, (
-            f"expected 0 re-imports, got {calls['n']} "
-            f"(spec should be cached after first load)"
-    )
+        assert calls["n"] == 0, f"expected 0 re-imports, got {calls['n']} (spec should be cached after first load)"
         stats_after = reload_intelligence._lazy_stats()
         assert stats_after["resolved_count"] == resolved_first
 
@@ -319,30 +321,29 @@ class TestSprintFA2Parity:
     # regardless of whether their dep is installed in the test env.
     ALWAYS_PRESENT = [
         # Flags
-        "ARCHIVE_AVAILABLE", "TEMPORAL_AVAILABLE", "CRYPTO_AVAILABLE",
-        "PASTEBIN_MONITOR_AVAILABLE", "INPUT_DETECTOR_AVAILABLE",
+        "ARCHIVE_AVAILABLE",
+        "TEMPORAL_AVAILABLE",
+        "CRYPTO_AVAILABLE",
+        "PASTEBIN_MONITOR_AVAILABLE",
+        "INPUT_DETECTOR_AVAILABLE",
         "WORKFLOW_ORCHESTRATOR_AVAILABLE",
         # Lazy internals
         "_lazy_stats",
     ]
 
-    def test_always_present_names(self, reload_intelligence):
+    def test_always_present_names(self, reload_intelligence) -> None:
         for n in self.ALWAYS_PRESENT:
-            assert n in reload_intelligence.__all__, (
-                f"__all__ missing required public name: {n}"
-    )
-            assert n in dir(reload_intelligence), (
-                f"dir() missing required public name: {n}"
-    )
+            assert n in reload_intelligence.__all__, f"__all__ missing required public name: {n}"
+            assert n in dir(reload_intelligence), f"dir() missing required public name: {n}"
 
-    def test_module_is_package(self, reload_intelligence):
+    def test_module_is_package(self, reload_intelligence) -> None:
         """`intelligence` is a package, not a module — sanity check."""
         # A package's __file__ ends with __init__.py
         assert reload_intelligence.__file__ is not None
         assert reload_intelligence.__file__.endswith("__init__.py")
         assert reload_intelligence.__name__ == "intelligence"
 
-    def test_getattr_raises_for_unknown_with_module_prefix(self, reload_intelligence):
+    def test_getattr_raises_for_unknown_with_module_prefix(self, reload_intelligence) -> None:
         """Error message must include both module + attribute name."""
         with pytest.raises(AttributeError) as exc_info:
             reload_intelligence.zzz_nonexistent_zzz  # noqa: B018
@@ -359,17 +360,20 @@ class TestSprintFA2Parity:
 class TestSprintFA2DiagnosticStats:
     """``_lazy_stats`` returns a useful diagnostic snapshot."""
 
-    def test_stats_shape(self, reload_intelligence):
+    def test_stats_shape(self, reload_intelligence) -> None:
         stats = reload_intelligence._lazy_stats()
         assert set(stats.keys()) == {
-            "loaded", "pending", "resolved_count", "total_count",
+            "loaded",
+            "pending",
+            "resolved_count",
+            "total_count",
         }
         assert isinstance(stats["loaded"], list)
         assert isinstance(stats["pending"], list)
         assert isinstance(stats["resolved_count"], int)
         assert isinstance(stats["total_count"], int)
 
-    def test_stats_progresses_on_access(self, reload_intelligence):
+    def test_stats_progresses_on_access(self, reload_intelligence) -> None:
         # cold state
         s0 = reload_intelligence._lazy_stats()
         assert s0["resolved_count"] == 0
@@ -380,13 +384,13 @@ class TestSprintFA2DiagnosticStats:
         assert s1["resolved_count"] >= 1
         assert s1["resolved_count"] == s0["resolved_count"] + 1
 
-    def test_stats_loaded_pending_partition(self, reload_intelligence):
+    def test_stats_loaded_pending_partition(self, reload_intelligence) -> None:
         """``loaded`` and ``pending`` partition the full spec list."""
         for _ in range(3):
             _ = reload_intelligence.ARCHIVE_AVAILABLE
             _ = reload_intelligence.TEMPORAL_AVAILABLE
         stats = reload_intelligence._lazy_stats()
-        all_flags = set(stats["loaded"]) | set(stats["pending"])
+        set(stats["loaded"]) | set(stats["pending"])
         assert len(stats["loaded"]) + len(stats["pending"]) == stats["total_count"]
         # No overlap between loaded and pending
         assert not (set(stats["loaded"]) & set(stats["pending"]))

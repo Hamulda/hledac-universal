@@ -8,18 +8,20 @@ Implements:
 
 Uses unified_diff for text differences and zlib for compression.
 """
+
 import difflib
 import logging
 import re
 import struct
 import zlib
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-DELTA_MAGIC = b'DELT'
+DELTA_MAGIC = b"DELT"
 VERSION = 1
 MAX_CHARS = 200000
 MAX_LINES = 20000
 MAX_OUTPUT_CHARS = 300000
+
 
 class DeltaCompressor:
     """
@@ -33,9 +35,10 @@ class DeltaCompressor:
     - Delta length (4 bytes)
     - Delta data (variable)
     """
-    __slots__ = tuple(('compress', 'logger'))
 
-    def __init__(self, compress: bool=True):
+    __slots__ = ("compress", "logger")
+
+    def __init__(self, compress: bool = True) -> None:
         """
         Initialize delta compressor.
 
@@ -45,7 +48,9 @@ class DeltaCompressor:
         self.compress = compress
         self.logger = logging.getLogger(__name__)
 
-    def make_text_delta(self, base: str, newer: str, *, max_chars: int=MAX_CHARS, max_lines: int=MAX_LINES) -> bytes:
+    def make_text_delta(
+        self, base: str, newer: str, *, max_chars: int = MAX_CHARS, max_lines: int = MAX_LINES
+    ) -> bytes:
         """
         Create delta from base to newer text.
 
@@ -62,33 +67,33 @@ class DeltaCompressor:
         newer = newer[:max_chars]
         base_lines = base.splitlines(keepends=True)[:max_lines]
         newer_lines = newer.splitlines(keepends=True)[:max_lines]
-        diff = list(difflib.unified_diff(base_lines, newer_lines, fromfile='base', tofile='newer', lineterm=''))
-        diff_text = ''.join(diff)
+        diff = list(difflib.unified_diff(base_lines, newer_lines, fromfile="base", tofile="newer", lineterm=""))
+        diff_text = "".join(diff)
         if len(diff_text) >= len(newer):
             return self._encode_full(newer)
         if self.compress:
             try:
-                compressed = zlib.compress(diff_text.encode('utf-8'), level=6)
+                compressed = zlib.compress(diff_text.encode("utf-8"), level=6)
                 if len(compressed) < len(diff_text):
-                    return self._encode_delta(diff_text.encode('utf-8'), len(base), compressed=True)
+                    return self._encode_delta(diff_text.encode("utf-8"), len(base), compressed=True)
             except Exception as e:
-                self.logger.warning(f'Compression failed: {e}')
-        return self._encode_delta(diff_text.encode('utf-8'), len(base), compressed=False)
+                self.logger.warning(f"Compression failed: {e}")
+        return self._encode_delta(diff_text.encode("utf-8"), len(base), compressed=False)
 
     def _encode_delta(self, diff_bytes: bytes, original_len: int, compressed: bool) -> bytes:
         """Encode delta with header."""
         flags = 1 if compressed else 0
-        header = struct.pack('>4sBBII', DELTA_MAGIC, VERSION, flags, original_len, len(diff_bytes))
+        header = struct.pack(">4sBBII", DELTA_MAGIC, VERSION, flags, original_len, len(diff_bytes))
         return header + diff_bytes
 
     def _encode_full(self, text: str) -> bytes:
         """Encode full text (no delta)."""
-        text_bytes = text.encode('utf-8')
+        text_bytes = text.encode("utf-8")
         compressed = zlib.compress(text_bytes, level=6)
-        header = struct.pack('>4sBBII', DELTA_MAGIC, VERSION, 128, len(text_bytes), len(compressed))
+        header = struct.pack(">4sBBII", DELTA_MAGIC, VERSION, 128, len(text_bytes), len(compressed))
         return header + compressed
 
-    def apply_text_delta(self, base: str, delta: bytes, *, max_output_chars: int=MAX_OUTPUT_CHARS) -> str:
+    def apply_text_delta(self, base: str, delta: bytes, *, max_output_chars: int = MAX_OUTPUT_CHARS) -> str:
         """
         Apply delta to reconstruct newer text.
 
@@ -104,35 +109,35 @@ class DeltaCompressor:
             return base
         try:
             header = delta[:14]
-            magic, version, flags, original_len, delta_len = struct.unpack('>4sBBII', header)
+            magic, version, flags, original_len, delta_len = struct.unpack(">4sBBII", header)
             if magic != DELTA_MAGIC:
-                self.logger.warning('Invalid delta magic')
+                self.logger.warning("Invalid delta magic")
                 return base
             if version != VERSION:
-                self.logger.warning(f'Unsupported delta version: {version}')
+                self.logger.warning(f"Unsupported delta version: {version}")
                 return base
-            delta_data = delta[14:14 + delta_len]
+            delta_data = delta[14 : 14 + delta_len]
         except Exception as e:
-            self.logger.warning(f'Failed to parse delta header: {e}')
+            self.logger.warning(f"Failed to parse delta header: {e}")
             return base
         if flags & 128:
             try:
                 text = zlib.decompress(delta_data)
-                return text.decode('utf-8')[:max_output_chars]
+                return text.decode("utf-8")[:max_output_chars]
             except Exception as e:
-                self.logger.warning(f'Failed to decompress full text: {e}')
+                self.logger.warning(f"Failed to decompress full text: {e}")
                 return base
         if flags & 1:
             try:
-                diff_text = zlib.decompress(delta_data).decode('utf-8')
+                diff_text = zlib.decompress(delta_data).decode("utf-8")
             except Exception as e:
-                self.logger.warning(f'Failed to decompress delta: {e}')
+                self.logger.warning(f"Failed to decompress delta: {e}")
                 return base
         else:
             try:
-                diff_text = delta_data.decode('utf-8')
+                diff_text = delta_data.decode("utf-8")
             except Exception as e:
-                self.logger.warning(f'Failed to decode delta: {e}')
+                self.logger.warning(f"Failed to decode delta: {e}")
                 return base
         try:
             base_lines = base.splitlines(keepends=True)
@@ -142,8 +147,8 @@ class DeltaCompressor:
             i = 0
             while i < len(diff_lines):
                 line = diff_lines[i]
-                if line.startswith('@@'):
-                    hunk_match = re.match('@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@', line)
+                if line.startswith("@@"):
+                    hunk_match = re.match("@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@", line)
                     if not hunk_match:
                         i += 1
                         continue
@@ -152,11 +157,11 @@ class DeltaCompressor:
                     i += 1
                     hunk_remove = []
                     hunk_add = []
-                    while i < len(diff_lines) and (not diff_lines[i].startswith('@@')):
+                    while i < len(diff_lines) and (not diff_lines[i].startswith("@@")):
                         hunk_line = diff_lines[i]
-                        if hunk_line.startswith('-'):
+                        if hunk_line.startswith("-"):
                             hunk_remove.append(hunk_line[1:])
-                        elif hunk_line.startswith('+'):
+                        elif hunk_line.startswith("+"):
                             hunk_add.append(hunk_line[1:])
                         i += 1
                     insert_pos = base_start + offset
@@ -169,11 +174,12 @@ class DeltaCompressor:
                     offset += len(hunk_add) - base_count
                 else:
                     i += 1
-            result = ''.join(result_lines)
+            result = "".join(result_lines)
             return result[:max_output_chars]
         except Exception as e:
-            self.logger.warning(f'Failed to apply delta: {e}')
+            self.logger.warning(f"Failed to apply delta: {e}")
             return base
+
 
 def make_delta(base: str, newer: str) -> bytes:
     """
@@ -188,6 +194,7 @@ def make_delta(base: str, newer: str) -> bytes:
     """
     compressor = DeltaCompressor()
     return compressor.make_text_delta(base, newer)
+
 
 def apply_delta(base: str, delta: bytes) -> str:
     """

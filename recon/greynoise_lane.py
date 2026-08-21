@@ -17,25 +17,23 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
+import asyncio
 import logging
 import os
 import time
 from typing import Any
 
-import asyncio
 import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+from hledac.universal.security.secrets_scrubber import safe_error_log
 from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
-    )
+)
 from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
-
-from hledac.universal.security.secrets_scrubber import redact_greynoise_key, safe_error_log
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +43,7 @@ RATE_LIMIT_KEY = "greynoise_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Gaussian sigma = 0.6s gives decorrelated inter-request intervals.
-_GREYNOISE_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_GREYNOISE_JITTER_SIGMA_S', '0.6'))
+_GREYNOISE_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_GREYNOISE_JITTER_SIGMA_S", "0.6"))
 
 # F266: Circuit breaker — domain for GreyNoise API
 _CB_DOMAIN = "api.greynoise.io"
@@ -137,8 +135,10 @@ async def query_greynoise_ip(
     if _sigma > 0:
         try:
             from hledac.universal._core.telemetry.context_state import is_blitz_mode
+
             if not is_blitz_mode():
                 import random as _rng
+
                 await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
         except Exception:  # noqa: BLE001
             pass  # fail-soft: jitter is best-effort
@@ -175,7 +175,7 @@ async def query_greynoise_ip(
                                 ts=ts_now,
                                 provenance=("greynoise_intel", ip, "not_found"),
                                 payload_text=f"{ip} classification=not_found message='IP not in GreyNoise database'",
-    )
+                            )
                         ], {}
                     if resp.status_code == 429:
                         logger.warning("[GREYNOISE] Community API rate limit hit")

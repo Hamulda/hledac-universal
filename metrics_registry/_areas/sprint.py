@@ -29,14 +29,16 @@ if TYPE_CHECKING:
 
 # ── Metric Names ───────────────────────────────────────────────────────────────
 
-SPRINT_METRIC_NAMES = frozenset([
-    'sprint_budget_elapsed_ms',
-    'sprint_budget_remaining_ms',
-    'sprint_budget_phase',
-    'sprint_phase_duration_avg_ms',
-    'sprint_phase_duration_p50_ms',
-    'sprint_phase_duration_p95_ms',
-])
+SPRINT_METRIC_NAMES = frozenset(
+    [
+        "sprint_budget_elapsed_ms",
+        "sprint_budget_remaining_ms",
+        "sprint_budget_phase",
+        "sprint_phase_duration_avg_ms",
+        "sprint_phase_duration_p50_ms",
+        "sprint_phase_duration_p95_ms",
+    ]
+)
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -45,12 +47,12 @@ _registered: dict[int, bool] = {}  # registry id -> registered status
 _registered_lock = threading.Lock()
 
 
-def register_area(registry: "MetricsRegistry") -> None:
+def register_area(registry: MetricsRegistry) -> None:
     """
     Register Sprint area metrics with the registry.
 
     Called automatically by the lazy area registry on first use.
-    
+
     ISSUE-18 fix: Thread-safe per-registry tracking instead of global flag.
     """
     registry_id = id(registry)
@@ -61,7 +63,7 @@ def register_area(registry: "MetricsRegistry") -> None:
 
 
 def record_sprint_budget(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     elapsed_ms: float,
     remaining_ms: float,
     phase: str,
@@ -75,13 +77,13 @@ def record_sprint_budget(
         remaining_ms: Remaining time in milliseconds
         phase: Current sprint phase name
     """
-    registry.set_gauge('sprint_budget_elapsed_ms', elapsed_ms)
-    registry.set_gauge('sprint_budget_remaining_ms', remaining_ms)
-    registry.set_gauge('sprint_budget_phase', float(hash(phase) % 1000))
+    registry.set_gauge("sprint_budget_elapsed_ms", elapsed_ms)
+    registry.set_gauge("sprint_budget_remaining_ms", remaining_ms)
+    registry.set_gauge("sprint_budget_phase", float(hash(phase) % 1000))
 
 
 def record_phase_duration(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     avg_ms: float | None = None,
     p50_ms: float | None = None,
     p95_ms: float | None = None,
@@ -96,8 +98,8 @@ def record_phase_duration(
         p95_ms: p95 duration in milliseconds
     """
     if avg_ms is not None:
-        registry.set_gauge('sprint_phase_duration_avg_ms', avg_ms)
+        registry.set_gauge("sprint_phase_duration_avg_ms", avg_ms)
     if p50_ms is not None:
-        registry.set_gauge('sprint_phase_duration_p50_ms', p50_ms)
+        registry.set_gauge("sprint_phase_duration_p50_ms", p50_ms)
     if p95_ms is not None:
-        registry.set_gauge('sprint_phase_duration_p95_ms', p95_ms)
+        registry.set_gauge("sprint_phase_duration_p95_ms", p95_ms)

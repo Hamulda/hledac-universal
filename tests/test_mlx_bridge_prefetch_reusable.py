@@ -15,16 +15,16 @@ of Metal memory. Now computes prefill directly without caching (fire-and-forget)
 Run: pytest tests/test_mlx_bridge_prefetch_reusable.py -v
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 import importlib
-from _core import aclose
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestMLXBridgePrefetchReusable:
     """Test suite for M-06: mlx_bridge prefetch (P1-9: no caching)."""
 
-    def test_prefetch_uses_correct_api_no_generate(self):
+    def test_prefetch_uses_correct_api_no_generate(self) -> None:
         """
         ACCEPTANCE: Verify _sync_prefetch does NOT call mlx_lm.generate.
 
@@ -32,24 +32,23 @@ class TestMLXBridgePrefetchReusable:
         The fix uses make_prompt_cache + model(mx.array, cache=cache) + mx.eval.
         """
         import brain.mlx_bridge as mlx_bridge_mod
+
         importlib.reload(mlx_bridge_mod)
 
         mock_engine = MagicMock()
         mock_engine._model = MagicMock()
         mock_engine._tokenizer = MagicMock()
-        mock_engine._tokenizer.apply_chat_template = MagicMock(
-            return_value="<|im_start|>user\ntest<|im_end|>\n"
-    )
+        mock_engine._tokenizer.apply_chat_template = MagicMock(return_value="<|im_start|>user\ntest<|im_end|>\n")
         mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
 
         mock_cache = MagicMock()
 
-        with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.5, "normal")):
-            with patch('mlx_lm.models.cache.make_prompt_cache', return_value=mock_cache) as mock_make:
-                with patch('mlx.core.eval', return_value=None) as mock_eval:
+        with patch("utils.mlx_memory.get_mlx_memory_pressure", return_value=(0.5, "normal")):
+            with patch("mlx_lm.models.cache.make_prompt_cache", return_value=mock_cache) as mock_make:
+                with patch("mlx.core.eval", return_value=None) as mock_eval:
                     # Patch mx.array to return a mock that can be called with cache=
                     mock_tokens = MagicMock()
-                    with patch('mlx.core.array', return_value=mock_tokens):
+                    with patch("mlx.core.array", return_value=mock_tokens):
                         result = mlx_bridge_mod._sync_prefetch(mock_engine, "test prompt")
 
         # Should return the prompt on success
@@ -61,7 +60,7 @@ class TestMLXBridgePrefetchReusable:
         # Should call mx.eval to settle lazy ops
         assert mock_eval.call_count >= 1, "Should call mx.eval at least once"
 
-    def test_prefetch_computes_without_caching(self):
+    def test_prefetch_computes_without_caching(self) -> None:
         """
         P1-9 FIX: Verify every call recomputes (no caching).
 
@@ -69,48 +68,49 @@ class TestMLXBridgePrefetchReusable:
         that every call to _sync_prefetch recomputes the prefill.
         """
         import brain.mlx_bridge as mlx_bridge_mod
+
         importlib.reload(mlx_bridge_mod)
 
         mock_engine = MagicMock()
         mock_engine._model = MagicMock()
         mock_engine._tokenizer = MagicMock()
-        mock_engine._tokenizer.apply_chat_template = MagicMock(
-            return_value="<|im_start|>user\ntest<|im_end|>\n"
-    )
+        mock_engine._tokenizer.apply_chat_template = MagicMock(return_value="<|im_start|>user\ntest<|im_end|>\n")
         mock_engine._tokenizer.encode = MagicMock(return_value=[1, 2, 3, 4, 5])
 
         mock_cache = MagicMock()
 
         # Multiple calls with same prompt should each recompute
         for i in range(3):
-            with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.5, "normal")):
-                with patch('mlx_lm.models.cache.make_prompt_cache', return_value=mock_cache) as mock_make:
-                    with patch('mlx.core.eval', return_value=None):
-                        with patch('mlx.core.array', return_value=MagicMock()):
+            with patch("utils.mlx_memory.get_mlx_memory_pressure", return_value=(0.5, "normal")):
+                with patch("mlx_lm.models.cache.make_prompt_cache", return_value=mock_cache) as mock_make:
+                    with patch("mlx.core.eval", return_value=None):
+                        with patch("mlx.core.array", return_value=MagicMock()):
                             result = mlx_bridge_mod._sync_prefetch(mock_engine, "same prompt")
 
-            assert result == "same prompt", f"Call {i+1}: Should return prompt"
+            assert result == "same prompt", f"Call {i + 1}: Should return prompt"
             # Each call should recompute (no caching)
-            assert mock_make.call_count == 1, f"Call {i+1}: Should recompute each time"
+            assert mock_make.call_count == 1, f"Call {i + 1}: Should recompute each time"
 
-    def test_prefetch_skipped_on_critical_memory(self):
+    def test_prefetch_skipped_on_critical_memory(self) -> None:
         """Verify prefetch is skipped when memory pressure is CRITICAL."""
         import brain.mlx_bridge as mlx_bridge_mod
+
         importlib.reload(mlx_bridge_mod)
 
         mock_engine = MagicMock()
         mock_engine._model = MagicMock()
         mock_engine._tokenizer = MagicMock()
 
-        with patch('utils.mlx_memory.get_mlx_memory_pressure', return_value=(0.95, "CRITICAL")):
+        with patch("utils.mlx_memory.get_mlx_memory_pressure", return_value=(0.95, "CRITICAL")):
             result = mlx_bridge_mod._sync_prefetch(mock_engine, "any prompt")
 
         assert result == "", "Should return empty string on CRITICAL memory"
         mock_engine._model.assert_not_called()
 
-    def test_prefetch_skipped_when_model_not_loaded(self):
+    def test_prefetch_skipped_when_model_not_loaded(self) -> None:
         """Verify prefetch is skipped when model is None."""
         import brain.mlx_bridge as mlx_bridge_mod
+
         importlib.reload(mlx_bridge_mod)
 
         mock_engine = MagicMock()

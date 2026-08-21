@@ -45,7 +45,6 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from hledac.universal._core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
 
 # TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
 # Falls back to a no-op when OTel is not installed (safe for all code paths).
@@ -56,12 +55,14 @@ except ImportError:
     def current_otel_context() -> dict | None:
         return None
 
+
 # ISSUE #014: Memory-aware — uses sample_uma_status() + ConcurrencyPreset at runtime
 try:
     from hledac.universal._core.resource_governor import (
         ConcurrencyPreset,
         sample_uma_status,
     )
+
     _GOVERNOR_AVAILABLE = True
 except ImportError:
     _GOVERNOR_AVAILABLE = False
@@ -92,6 +93,7 @@ class RayonChannels:
     R6: Centralized Rust access via core.rust_backend.
     P0-4 FIX: rayon_drop_channel for explicit Arc release to prevent UAF/double-free.
     """
+
     submit: Any
     join: Any
     abort: Any
@@ -108,6 +110,7 @@ def get_rayon_channels() -> RayonChannels:
         Handles must be released via drop channel after use to prevent memory leaks.
     """
     from hledac.universal._core.rust_backend import rust
+
     return RayonChannels(
         submit=rust.raw.rayon_submit_channel,
         join=rust.raw.rayon_join_channel,
@@ -117,12 +120,12 @@ def get_rayon_channels() -> RayonChannels:
 
 
 # Module-level singletons — initialised on first use (lazy).
-_pool: "SharedWorkerPool | None" = None
-_rust_pool: "RustWorkerPool | None" = None
+_pool: SharedWorkerPool | None = None
+_rust_pool: RustWorkerPool | None = None
 _pool_lock = make_lock(LockCategory.CACHE, "worker_pool._pool_lock")
 
 
-def get_shared_pool() -> "SharedWorkerPool":
+def get_shared_pool() -> SharedWorkerPool:
     """Return the shared Python ThreadPoolExecutor singleton, creating on first call."""
     global _pool
     if _pool is not None:
@@ -140,10 +143,10 @@ PoolType = Literal["cpu", "io", "mixed", "simd", "mlx", "graph"]
 # NEXTGEN-03 FIX: Track pools per type using dict, not single singleton.
 # Previously only one pool was tracked globally, causing issues when
 # multiple pool types were used simultaneously.
-_rust_pools: dict[PoolType, "RustWorkerPool"] = {}
+_rust_pools: dict[PoolType, RustWorkerPool] = {}
 
 
-def get_rust_pool(pool_type: PoolType = "cpu") -> "RustWorkerPool":
+def get_rust_pool(pool_type: PoolType = "cpu") -> RustWorkerPool:
     """Return a RustWorkerPool singleton for the given pool type.
 
     NEXTGEN-03: Extended pool types for asymmetric topology-aware scheduling.
@@ -168,6 +171,7 @@ def get_rust_pool(pool_type: PoolType = "cpu") -> "RustWorkerPool":
             # __init__ runs on Python init thread, not rayon worker thread.
             try:
                 from hledac.universal.utils.cpu_affinity import get_affinity
+
                 aff = get_affinity()
                 logger.debug(
                     "[RustWorkerPool] [F5 telemetry] pool=%s affinity=%s mask=%d darwin=%s",
@@ -217,7 +221,7 @@ class SharedWorkerPool:
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="hledac-shared",
-    )
+        )
         self._active_count = 0
         self._async_lock: asyncio.Lock | None = None
         self._last_state: str | None = None
@@ -254,7 +258,7 @@ class SharedWorkerPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=target_workers,
                 thread_name_prefix="hledac-shared",
-    )
+            )
             self._max_workers = target_workers
             # Give in-flight tasks a chance to complete before shutting down old executor
             old_executor.shutdown(wait=False)
@@ -265,7 +269,7 @@ class SharedWorkerPool:
             self._async_lock = asyncio.Lock()
         return self._async_lock
 
-    async def run(self, func: "Callable[..., T]", /, *args: Any, timeout: float | None = None, **kwargs: Any) -> T:
+    async def run(self, func: Callable[..., T], /, *args: Any, timeout: float | None = None, **kwargs: Any) -> T:
         """Run a blocking callable on the shared executor, returning a Future.
 
         This is the preferred replacement for `asyncio.to_thread()`.
@@ -292,7 +296,9 @@ class SharedWorkerPool:
             # This is better than crashing with ThreadPoolExecutor(max_workers=0)
             self._last_state = "emergency"
             if timeout is not None:
-                return await safe_wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout, label="worker_pool_emergency")
+                return await safe_wait_for(
+                    asyncio.to_thread(func, *args, **kwargs), timeout=timeout, label="worker_pool_emergency"
+                )
             return await asyncio.to_thread(func, *args, **kwargs)
 
         if self._should_reconfigure(target_workers):
@@ -330,10 +336,6 @@ class SharedWorkerPool:
         _pool = None
 
 
-# ---------------------------------------------------------------------------
-# ISSUE #032: RustWorkerPool — rayon-backed pool with cancelable Future
-# ---------------------------------------------------------------------------
-
 _RUST_AVAILABLE: bool | None = None
 
 
@@ -349,8 +351,13 @@ def _check_rust_rayon_available() -> bool:
         return _RUST_AVAILABLE
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     raw = rust.raw
-    if raw.rayon_submit_channel is not None and raw.rayon_join_channel is not None and raw.rayon_abort_channel is not None:
+    if (
+        raw.rayon_submit_channel is not None
+        and raw.rayon_join_channel is not None
+        and raw.rayon_abort_channel is not None
+    ):
         _RUST_AVAILABLE = True
     else:
         _RUST_AVAILABLE = False
@@ -400,6 +407,7 @@ class RustWorkerPool:
         """F5: Apply CPU affinity based on pool type. MODERN-26."""
         try:
             from hledac.universal.utils.cpu_affinity import set_affinity
+
             set_affinity(self._pool_type)
         except Exception:
             pass  # Fail-safe: affinity is best-effort
@@ -416,7 +424,7 @@ class RustWorkerPool:
 
     async def submit(
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -446,11 +454,10 @@ class RustWorkerPool:
         if not self._check_available():
             # Fallback: use SharedWorkerPool
             warnings.warn(
-                f"Rust rayon channel dispatch unavailable, falling back to SharedWorkerPool "
-                f"for {self._pool_type} pool",
+                f"Rust rayon channel dispatch unavailable, falling back to SharedWorkerPool for {self._pool_type} pool",
                 RuntimeWarning,
                 stacklevel=2,
-    )
+            )
             return await get_shared_pool().run(fn, *args, timeout=timeout, **kwargs)
 
         # R6: Centralized Rust access via core.rust_backend
@@ -476,11 +483,11 @@ class RustWorkerPool:
             # Parse hex strings to integers; filter "0"*N all-zeros as "no trace"
             try:
                 trace_id: int | None = int(trace_id_raw, 16) if trace_id_raw and trace_id_raw != "0" * 32 else None
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 trace_id = None
             try:
                 span_id: int | None = int(span_id_raw, 16) if span_id_raw and span_id_raw != "0" * 16 else None
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 span_id = None
         else:
             trace_id = None
@@ -490,6 +497,7 @@ class RustWorkerPool:
 
         def _do_submit() -> int:
             """Run in asyncio-to_thread worker: submit work to rayon dispatcher and return handle."""
+
             # F5 FIX: Set affinity INSIDE the rayon worker thread (not Python init thread).
             # __init__ timing bug: _apply_pool_affinity() called in __init__ only affected
             # the Python init/main thread — not the rayon workers that execute fn.
@@ -498,6 +506,7 @@ class RustWorkerPool:
             def _fn_with_affinity() -> Any:
                 try:
                     from hledac.universal.utils.cpu_affinity import set_affinity
+
                     set_affinity(self._pool_type)
                 except Exception:
                     pass  # Fail-safe: affinity is best-effort
@@ -511,7 +520,7 @@ class RustWorkerPool:
                 (),
                 trace_id,
                 span_id,
-    )
+            )
 
         try:
             # Submit to rayon dispatcher via channel in background thread, get opaque handle
@@ -524,9 +533,7 @@ class RustWorkerPool:
                     return result  # type: ignore[return-value]
                 except RuntimeError as e:
                     if "aborted" in str(e).lower() or "timed out" in str(e).lower():
-                        raise RuntimeError(
-                            f"Rayon {self._pool_type} task was aborted: {e}"
-                        ) from None
+                        raise RuntimeError(f"Rayon {self._pool_type} task was aborted: {e}") from None
                     raise
 
             if timeout is not None:
@@ -556,7 +563,7 @@ class RustWorkerPool:
             async with async_lock:
                 self._active_count -= 1
 
-    def submit_sync(self, fn: "Callable[..., T]", /, *args: Any, n_items: int = 0) -> T | None:
+    def submit_sync(self, fn: Callable[..., T], /, *args: Any, n_items: int = 0) -> T | None:
         """Synchronous submit — blocks until complete. For use in non-async contexts.
 
         ISSUE 3.1: Uses rayon_submit_channel (crossbeam-channel dispatch).
@@ -582,6 +589,7 @@ class RustWorkerPool:
         def _fn_with_affinity_sync() -> Any:
             try:
                 from hledac.universal.utils.cpu_affinity import set_affinity
+
                 set_affinity(self._pool_type)
             except Exception:
                 pass  # Fail-safe: affinity is best-effort
@@ -592,9 +600,7 @@ class RustWorkerPool:
             return rayon_join_channel(handle, None)
         except RuntimeError as e:
             if "aborted" in str(e).lower() or "timed out" in str(e).lower():
-                raise RuntimeError(
-                    f"Rayon {self._pool_type} task was aborted: {e}"
-                ) from None
+                raise RuntimeError(f"Rayon {self._pool_type} task was aborted: {e}") from None
             raise
         except Exception:
             # Best-effort abort on unexpected errors (e.g. Rust panic).
@@ -636,11 +642,7 @@ class RustWorkerPool:
         _rust_pool = None
 
 
-# ---------------------------------------------------------------------------
-# Public helpers — preferred entry points
-# ---------------------------------------------------------------------------
-
-async def cpu_bound(func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T:
+async def cpu_bound(func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """Await a CPU-bound synchronous function on the shared pool.
 
     .. deprecated::
@@ -663,7 +665,7 @@ async def cpu_bound(func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T
     return await get_shared_pool().run(func, *args, **kwargs)
 
 
-async def io_bound(func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T:
+async def io_bound(func: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """Await an I/O-bound synchronous function on the shared pool.
 
     Use instead of `await asyncio.to_thread(func, *args)` for any
@@ -672,13 +674,9 @@ async def io_bound(func: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T:
     return await get_shared_pool().run(func, *args, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# ISSUE #032: run_in_pool — drop-in replacement for loop.run_in_executor
-# ---------------------------------------------------------------------------
-
 async def run_in_pool(
     pool_type: Literal["cpu", "io", "mixed"],
-    fn: "Callable[..., T]",
+    fn: Callable[..., T],
     /,
     *args: Any,
     n_items: int = 0,

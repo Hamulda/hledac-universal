@@ -3,8 +3,6 @@
 Replaces feedparser (7-15 ms/fed sync overhead) with selectolax MyHTML (~3-5 ms/fed).
 Fully async-native: no sync blocking in the pipeline.
 
-
-
 M1 8GB advantage:
   • ~12 MB RSS stack elimination (feedparser + sgmllib deps removed)
   • Zero sync blocker in async pipeline
@@ -22,6 +20,7 @@ Security:
 
 Sprint F320-8 — Issue #8: feedparser removal
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,20 +31,16 @@ from typing import Any
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
+
     _SELECTOLAX_AVAILABLE = True
 except ImportError:
     _SelectolaxHTMLParser: Any = None  # type: ignore[assignment]
     _SELECTOLAX_AVAILABLE = False
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import xxhash
-from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
 
-# ---------------------------------------------------------------------------
-# DTO — msgspec.Struct for zero-allocation downstream consumption
-# ---------------------------------------------------------------------------
 
 class FeedEntry(Struct, frozen=True):
     """Single parsed feed entry — msgspec.Struct for direct FeedPipelineEntryResult use."""
@@ -64,12 +59,9 @@ class FeedEntry(Struct, frozen=True):
     entry_hash: str
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 _XML_ENTITY_RE = re.compile(r"<!ENTITY|<!DOCTYPE", re.IGNORECASE)
 _ISO_Z_RE = re.compile(r"Z$")
+
 
 # ISO 8601 normalization helpers
 def _normalize_iso(raw: str) -> str:
@@ -96,6 +88,7 @@ def _parse_timestamp(raw: str | None) -> float | None:
     # Try RFC 2822 (RSS pubDate) via email.utils
     try:
         from email.utils import parsedate_to_datetime
+
         dt = parsedate_to_datetime(raw)
         return dt.timestamp()
     except Exception:  # noqa: BLE001
@@ -215,9 +208,9 @@ def _sanitize_xml(raw: str) -> str:
 
     while i < n:
         c = raw[i]
-        if c == "<" and raw[i:i+prefix_len_doctype].lower() == "<!doctype":
+        if c == "<" and raw[i : i + prefix_len_doctype].lower() == "<!doctype":
             i = _skip_doctype_block(raw, i)
-        elif c == "<" and raw[i:i+prefix_len_entity].lower() == "<!entity":
+        elif c == "<" and raw[i : i + prefix_len_entity].lower() == "<!entity":
             i = _skip_entity_block(raw, i)
         else:
             result.append(c)
@@ -225,10 +218,6 @@ def _sanitize_xml(raw: str) -> str:
 
     return "".join(result)
 
-
-# ---------------------------------------------------------------------------
-# RSS 2.0 parser via selectolax
-# ---------------------------------------------------------------------------
 
 def _selectolax_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     """Parse RSS 2.0 feed using selectolax MyHTML (C backend).
@@ -247,7 +236,6 @@ def _selectolax_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
     entries: list[FeedEntry] = []
 
-    # Extract channel metadata
     channel = parser.css_first("channel")
     if channel is None:
         return []
@@ -255,7 +243,6 @@ def _selectolax_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     channel_title = _tag_text(channel, "title")
     channel_language = _tag_text(channel, "language")
 
-    # Iterate items
     items = channel.css("item")
     for item in items:
         title = _tag_text(item, "title")
@@ -278,27 +265,25 @@ def _selectolax_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
         published_raw = pub_date or ""
 
-        entries.append(FeedEntry(
-            feed_url=feed_url,
-            entry_url=entry_url,
-            title=title or "",
-            link=link or "",
-            description=description or "",
-            published_raw=published_raw,
-            published_ts=published_ts,
-            author=author or "",
-            content=content,
-            language=channel_language or "",
-            feed_title=channel_title or "",
-            entry_hash=_entry_hash(title or "", published_raw),
-        ))
+        entries.append(
+            FeedEntry(
+                feed_url=feed_url,
+                entry_url=entry_url,
+                title=title or "",
+                link=link or "",
+                description=description or "",
+                published_raw=published_raw,
+                published_ts=published_ts,
+                author=author or "",
+                content=content,
+                language=channel_language or "",
+                feed_title=channel_title or "",
+                entry_hash=_entry_hash(title or "", published_raw),
+            )
+        )
 
     return entries
 
-
-# ---------------------------------------------------------------------------
-# Atom 1.0 parser via selectolax
-# ---------------------------------------------------------------------------
 
 def _selectolax_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
     """Parse Atom 1.0 feed using selectolax MyHTML (C backend).
@@ -321,7 +306,6 @@ def _selectolax_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
     feed_title = _tag_text(parser, "title")
     feed_language = _tag_text(parser, "language") or ""
 
-    # Iterate entries
     for entry in parser.css("entry"):
         title = _tag_text(entry, "title")
         summary = _tag_text(entry, "summary")
@@ -353,27 +337,25 @@ def _selectolax_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
 
         published_ts = _parse_timestamp(published_raw)
 
-        entries.append(FeedEntry(
-            feed_url=feed_url,
-            entry_url=entry_url or "",
-            title=title or "",
-            link=entry_url or "",
-            description=summary or "",
-            published_raw=published_raw,
-            published_ts=published_ts,
-            author=author or "",
-            content=content,
-            language=feed_language or "",
-            feed_title=feed_title or "",
-            entry_hash=_entry_hash(title or "", published_raw),
-        ))
+        entries.append(
+            FeedEntry(
+                feed_url=feed_url,
+                entry_url=entry_url or "",
+                title=title or "",
+                link=entry_url or "",
+                description=summary or "",
+                published_raw=published_raw,
+                published_ts=published_ts,
+                author=author or "",
+                content=content,
+                language=feed_language or "",
+                feed_title=feed_title or "",
+                entry_hash=_entry_hash(title or "", published_raw),
+            )
+        )
 
     return entries
 
-
-# ---------------------------------------------------------------------------
-# HTMLParser fallback (stdlib, no selectolax needed)
-# ---------------------------------------------------------------------------
 
 # Tag → field extractor for RSS channel metadata
 _RSS_CHANNEL_HANDLERS: dict[str, callable] = {}
@@ -388,12 +370,15 @@ def _init_rss_channel_handlers() -> None:
         def handler(state: dict, tag: str, elem) -> None:
             if not state.get(field_name):
                 state[field_name] = (elem.text or "").strip()
+
         return handler
 
-    _RSS_CHANNEL_HANDLERS.update({
-        "title": make_text_handler("channel_title"),
-        "language": make_text_handler("channel_language"),
-    })
+    _RSS_CHANNEL_HANDLERS.update(
+        {
+            "title": make_text_handler("channel_title"),
+            "language": make_text_handler("channel_language"),
+        }
+    )
 
 
 def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
@@ -418,7 +403,6 @@ def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     if channel is None:
         return []
 
-    # Extract channel metadata using dispatch
     channel_state: dict[str, str] = {"channel_title": "", "channel_language": ""}
     entries: list[FeedEntry] = []
 
@@ -428,7 +412,9 @@ def _stdlib_rss_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
         if handler:
             handler(channel_state, ln, ch)
         elif ln == "item":
-            entry = _parse_stdlib_rss_entry(ch, feed_url, channel_state["channel_title"], channel_state["channel_language"])
+            entry = _parse_stdlib_rss_entry(
+                ch, feed_url, channel_state["channel_title"], channel_state["channel_language"]
+            )
             if entry:
                 entries.append(entry)
 
@@ -465,9 +451,7 @@ def _find_entry_author(child) -> str:
     return ""
 
 
-def _parse_stdlib_entry(
-    child, feed_url: str, feed_title: str, feed_language: str
-) -> FeedEntry | None:
+def _parse_stdlib_entry(child, feed_url: str, feed_title: str, feed_language: str) -> FeedEntry | None:
     """Parse a single Atom entry element into a FeedEntry."""
     title = summary = content = published = updated = ""
     for ec in child:
@@ -516,9 +500,7 @@ _RSS_ITEM_TAG_HANDLERS: dict[str, tuple[str, int]] = {
 }
 
 
-def _parse_stdlib_rss_entry(
-    ch, feed_url: str, channel_title: str, channel_language: str
-) -> FeedEntry | None:
+def _parse_stdlib_rss_entry(ch, feed_url: str, channel_title: str, channel_language: str) -> FeedEntry | None:
     """Parse a single RSS item element into a FeedEntry using dispatch table."""
     # Collect fields via dispatch
     fields: dict[str, str] = {}
@@ -578,10 +560,6 @@ def _stdlib_atom_feed(text: str, feed_url: str) -> list[FeedEntry]:
 
     return entries
 
-
-# ---------------------------------------------------------------------------
-# Helper utilities
-# ---------------------------------------------------------------------------
 
 def _tag_text(parent, tag: str) -> str:
     """Return text of first matching CSS tag, or empty string."""
@@ -643,10 +621,6 @@ def _normalize_url(raw: str | None) -> str:
     except Exception:
         return raw.strip()
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def parse_rss(text: str, feed_url: str = "") -> list[FeedEntry]:
     """Parse RSS 2.0 feed from raw text (bytes or str).
@@ -718,17 +692,14 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
     stripped = text.strip()
     if stripped.startswith("<rss") or "<channel>" in stripped[:500]:
         return parse_rss(text, feed_url)
-    if '<feed' in stripped[:200] or stripped.startswith("<?xml"):
-        # Check for Atom signature
-        if "xmlns=\"http://www.w3.org/2005/Atom\"" in stripped[:1000] or "<feed" in stripped[:200]:
+    if "<feed" in stripped[:200] or stripped.startswith("<?xml"):
+        if 'xmlns="http://www.w3.org/2005/Atom"' in stripped[:1000] or "<feed" in stripped[:200]:
             return parse_atom(text, feed_url)
         # Could be RSS with XML declaration
         return parse_rss(text, feed_url)
     # Heuristic: default to RSS (most common)
     return parse_rss(text, feed_url)
 
-
-# ---- Batch async API for feed_parser ----
 
 # NOTE: Removed module-level ThreadPoolExecutor singleton (AP-08 fix).
 # asyncio.to_thread() uses the built-in Python thread pool, which:
@@ -738,7 +709,6 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 #   - Requires no atexit registration (pool lifetime = process lifetime)
 # Previous pattern: shared pool with max_workers set at first call → all
 # subsequent calls with different max_concurrency were capped at that value.
-
 
 _RUST_SANITIZE_AVAILABLE: bool = False
 try:
@@ -753,6 +723,7 @@ except Exception:
 
 class _FeedParseTask(Struct, frozen=True):
     """Single feed parse task for batch processing. M1 8GB: msgspec.Struct for 5-7× faster init + no GC overhead."""
+
     text: str
     feed_url: str
 
@@ -793,14 +764,16 @@ async def parse_feeds_async(
     texts = [t.text for t in tasks]
     if _RUST_SANITIZE_AVAILABLE and len(texts) >= 32 and _batch_sanitize_xml is not None:
         from hledac.universal.utils.executor_decorator import offload_to
+
         sanitized_texts = await offload_to("duckdb_pool", _batch_sanitize_xml, texts)
         tasks = [
-            _FeedParseTask(sanitized, task.feed_url)
-            for sanitized, task in zip(sanitized_texts, tasks)
+            _FeedParseTask(sanitized, task.feed_url) for sanitized, task in zip(sanitized_texts, tasks, strict=False)
         ]
 
-    from hledac.universal.utils.asyncx import parallel_ok
     from typing import cast
+
+    from hledac.universal.utils.asyncx import parallel_ok
+
     # parallel_ok: returns list[T] (successes only), exceptions silently dropped.
     result = await parallel_ok(
         *[_parse_with_semaphore(task) for task in tasks],

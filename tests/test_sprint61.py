@@ -12,12 +12,11 @@ import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from _core import aclose
 
 
 # Test transport base
 class TestTransportBase:
-    def test_transport_abstract_methods(self):
+    def test_transport_abstract_methods(self) -> None:
         from hledac.universal.transport.base import Transport
 
         # Transport je abstraktní třída
@@ -33,7 +32,7 @@ class TestTorTransport:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_tor_transport_init(self, temp_dir):
+    async def test_tor_transport_init(self, temp_dir) -> None:
         from hledac.universal.transport.tor_transport import TorTransport
 
         tor = TorTransport(data_dir=temp_dir)
@@ -42,26 +41,27 @@ class TestTorTransport:
         assert tor.socks_port == 9050
 
     @pytest.mark.asyncio
-    async def test_tor_transport_start_fallback(self, temp_dir):
+    async def test_tor_transport_start_fallback(self, temp_dir) -> None:
         from hledac.universal.transport.tor_transport import TorTransport
 
         tor = TorTransport(data_dir=temp_dir)
         # Mock Tor process to fail
-        with patch('asyncio.create_subprocess_exec', side_effect=FileNotFoundError()):
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError()):
             await tor.start()
 
-        assert tor.security_level == 'local'
+        assert tor.security_level == "local"
         assert tor.onion_address is not None
 
     @pytest.mark.asyncio
-    async def test_tor_transport_fetch_no_nameerror(self, temp_dir):
+    async def test_tor_transport_fetch_no_nameerror(self, temp_dir) -> None:
         """
         Issue #15: TorTransport.fetch called with undefined `config` variable.
         Acceptance: .onion URL → TorTransport.fetch called → žádný NameError.
         """
         from unittest.mock import AsyncMock, patch
-        from hledac.universal.transport.tor_transport import TorTransport
+
         from hledac.universal.transport.base import TransportConfig
+        from hledac.universal.transport.tor_transport import TorTransport
 
         tor = TorTransport(data_dir=temp_dir)
 
@@ -78,7 +78,9 @@ class TestTorTransport:
             "content": b"<html>test</html>",
         }
 
-        with patch("hledac.universal.transport.curl_cffi_fetch.fetch_via_curl_cffi", new_callable=AsyncMock) as mock_fetch:
+        with patch(
+            "hledac.universal.transport.curl_cffi_fetch.fetch_via_curl_cffi", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = mock_result
 
             config = TransportConfig(url="http://example.onion/", timeout_s=75.0, max_bytes=10 * 1024 * 1024)
@@ -98,7 +100,7 @@ class TestNymTransport:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_nym_transport_init(self, temp_dir):
+    async def test_nym_transport_init(self, temp_dir) -> None:
         from hledac.universal.transport.nym_transport import NymTransport
 
         nym = NymTransport(data_dir=temp_dir)
@@ -108,7 +110,7 @@ class TestNymTransport:
         assert nym.circuit_breaker_open is False
 
     @pytest.mark.asyncio
-    async def test_nym_circuit_breaker(self, temp_dir):
+    async def test_nym_circuit_breaker(self, temp_dir) -> None:
         from hledac.universal.transport.nym_transport import NymTransport
 
         nym = NymTransport(data_dir=temp_dir)
@@ -127,7 +129,7 @@ class TestNymTransport:
 
 class TestInMemoryTransport:
     @pytest.mark.asyncio
-    async def test_inmemory_transport_init(self):
+    async def test_inmemory_transport_init(self) -> None:
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         transport = InMemoryTransport(node_id="test_node")
@@ -136,7 +138,7 @@ class TestInMemoryTransport:
         assert transport.peers == {}
 
     @pytest.mark.asyncio
-    async def test_inmemory_transport_start_stop(self):
+    async def test_inmemory_transport_start_stop(self) -> None:
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         transport = InMemoryTransport(node_id="test_node")
@@ -145,7 +147,7 @@ class TestInMemoryTransport:
         await transport.stop()
 
     @pytest.mark.asyncio
-    async def test_inmemory_transport_send_message(self):
+    async def test_inmemory_transport_send_message(self) -> None:
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
         node_a = InMemoryTransport(node_id="A")
@@ -178,17 +180,17 @@ class TestNymPolicy:
     @pytest.fixture
     def mock_tor_transport(self):
         tor = MagicMock()
-        tor.security_level = 'tor'
+        tor.security_level = "tor"
         return tor
 
     @pytest.fixture
     def mock_nym_transport(self):
         nym = MagicMock()
-        nym.security_level = 'nym'
+        nym.security_level = "nym"
         return nym
 
     @pytest.mark.asyncio
-    async def test_nym_policy_init(self, mock_governor, mock_tor_transport, mock_nym_transport):
+    async def test_nym_policy_init(self, mock_governor, mock_tor_transport, mock_nym_transport) -> None:
         from hledac.universal.policy.nym_policy import NymPolicy
 
         policy = NymPolicy(mock_governor, mock_tor_transport, mock_nym_transport)
@@ -199,22 +201,23 @@ class TestNymPolicy:
         assert policy.exploration_rate == 0.1
 
     @pytest.mark.asyncio
-    async def test_nym_policy_select_transport_critical(self, mock_governor, mock_tor_transport, mock_nym_transport):
+    async def test_nym_policy_select_transport_critical(
+        self, mock_governor, mock_tor_transport, mock_nym_transport
+    ) -> None:
         from hledac.universal.policy.nym_policy import NymPolicy, RiskLevel
 
         policy = NymPolicy(mock_governor, mock_tor_transport, mock_nym_transport)
 
         # CRITICAL risk + long time should select Nym
         transport, params = await policy.select_transport(
-            RiskLevel.CRITICAL, time_budget=60, sensitivity=0.8,
-            need_cover_traffic=True, request_id="req1"
-    )
+            RiskLevel.CRITICAL, time_budget=60, sensitivity=0.8, need_cover_traffic=True, request_id="req1"
+        )
         assert transport == mock_nym_transport
-        assert params['cover_traffic'] is True
+        assert params["cover_traffic"] is True
 
 
 class TestEncryption:
-    def test_encrypt_decrypt_aes_gcm(self):
+    def test_encrypt_decrypt_aes_gcm(self) -> None:
         from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm
 
         key = os.urandom(32)  # 256-bit key
@@ -227,7 +230,7 @@ class TestEncryption:
         decrypted = decrypt_aes_gcm(key, encrypted, aad)
         assert decrypted == plaintext
 
-    def test_encrypt_decrypt_different_aad(self):
+    def test_encrypt_decrypt_different_aad(self) -> None:
         from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm
 
         key = os.urandom(32)
@@ -250,7 +253,7 @@ class TestKeyManager:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_key_manager_init(self, temp_dir):
+    async def test_key_manager_init(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -258,7 +261,7 @@ class TestKeyManager:
         assert km._current_version == 1  # Starts at 1 (real implementation)
 
     @pytest.mark.asyncio
-    async def test_key_manager_master_key_returns_tuple(self, temp_dir):
+    async def test_key_manager_master_key_returns_tuple(self, temp_dir) -> None:
         """get_master_key() returns (key, salt, version) or raises NotImplementedError."""
         from hledac.universal.security.key_manager import KeyManager
 
@@ -274,7 +277,7 @@ class TestKeyManager:
             pass
 
     @pytest.mark.asyncio
-    async def test_key_manager_bucket_key(self, temp_dir):
+    async def test_key_manager_bucket_key(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -288,7 +291,7 @@ class TestKeyManager:
         assert len(bucket_key1) == 32
 
     @pytest.mark.asyncio
-    async def test_key_manager_different_buckets(self, temp_dir):
+    async def test_key_manager_different_buckets(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -300,7 +303,7 @@ class TestKeyManager:
         assert key1 != key2
 
     @pytest.mark.asyncio
-    async def test_key_manager_hkdf_derivation(self, temp_dir):
+    async def test_key_manager_hkdf_derivation(self, temp_dir) -> None:
         """HKDF-SHA256 derives different keys for different buckets from same master."""
         from hledac.universal.security.key_manager import KeyManager, _hkdf_sha256
 
@@ -309,17 +312,17 @@ class TestKeyManager:
             master_key, _, _ = await km.get_master_key()
         except NotImplementedError:
             # Test HKDF directly without Keychain
-            master_key = b'\x00' * 32
+            master_key = b"\x00" * 32
 
-        bucket_a = _hkdf_sha256(master_key, b'a', b'a', 32)
-        bucket_b = _hkdf_sha256(master_key, b'b', b'b', 32)
+        bucket_a = _hkdf_sha256(master_key, b"a", b"a", 32)
+        bucket_b = _hkdf_sha256(master_key, b"b", b"b", 32)
         assert bucket_a != bucket_b
         # Same inputs produce same output
-        assert bucket_a == _hkdf_sha256(master_key, b'a', b'a', 32)
+        assert bucket_a == _hkdf_sha256(master_key, b"a", b"a", 32)
 
 
 class TestPeerRegistry:
-    def test_peer_registry_add_peer(self):
+    def test_peer_registry_add_peer(self) -> None:
         from hledac.universal.federated.peer_registry import PeerRegistry
 
         registry = PeerRegistry()
@@ -327,10 +330,10 @@ class TestPeerRegistry:
 
         peer = registry.get_peer("peer1")
         assert peer is not None
-        assert peer['tor'] == "localhost:9050"
-        assert peer['nym'] == "nym123"
+        assert peer["tor"] == "localhost:9050"
+        assert peer["nym"] == "nym123"
 
-    def test_peer_registry_get_endpoint(self):
+    def test_peer_registry_get_endpoint(self) -> None:
         from hledac.universal.federated.peer_registry import PeerRegistry
 
         registry = PeerRegistry()
@@ -342,7 +345,7 @@ class TestPeerRegistry:
         assert tor_ep == "localhost:9050"
         assert nym_ep is None
 
-    def test_peer_registry_remove_peer(self):
+    def test_peer_registry_remove_peer(self) -> None:
         from hledac.universal.federated.peer_registry import PeerRegistry
 
         registry = PeerRegistry()
@@ -360,7 +363,7 @@ class TestModelStore:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_model_store_save_load(self, temp_dir):
+    async def test_model_store_save_load(self, temp_dir) -> None:
         import mlx.core as mx
 
         from hledac.universal.federated.model_store_v2 import ModelStore
@@ -370,10 +373,7 @@ class TestModelStore:
         store = ModelStore(km, db_path=f"{temp_dir}/models.lmdb")
 
         # Save a model
-        weights = {
-            "layer1": mx.array([1.0, 2.0, 3.0]),
-            "layer2": mx.array([[1.0, 2.0], [3.0, 4.0]])
-        }
+        weights = {"layer1": mx.array([1.0, 2.0, 3.0]), "layer2": mx.array([[1.0, 2.0], [3.0, 4.0]])}
         await store.save_model("model_v1", weights)
 
         # Load the model
@@ -394,7 +394,7 @@ class TestFederatedCoordinatorV2:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_federated_coordinator_init(self, temp_dir):
+    async def test_federated_coordinator_init(self, temp_dir) -> None:
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
         from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
@@ -413,15 +413,15 @@ class TestFederatedCoordinatorV2:
             nym_transport=nym_transport,
             nym_policy=nym_policy,
             key_manager=km,
-            model_provider=model_provider
-    )
+            model_provider=model_provider,
+        )
 
         assert coordinator.node_id == "node1"
         assert coordinator.peer_registry is not None
         assert coordinator.store is not None
 
     @pytest.mark.asyncio
-    async def test_federated_coordinator_start_stop(self, temp_dir):
+    async def test_federated_coordinator_start_stop(self, temp_dir) -> None:
         from hledac.universal.federated.federated_coordinator_v2 import FederatedCoordinatorV2
         from hledac.universal.security.key_manager import KeyManager
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
@@ -435,8 +435,8 @@ class TestFederatedCoordinatorV2:
             nym_transport=None,
             nym_policy=None,
             key_manager=km,
-            model_provider=lambda: {}
-    )
+            model_provider=lambda: {},
+        )
 
         await coordinator.start()
         await coordinator.stop()

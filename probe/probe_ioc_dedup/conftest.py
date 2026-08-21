@@ -1,9 +1,7 @@
 """Pytest configuration for probe_ioc_dedup tests."""
 
-
 import sys
 from pathlib import Path
-from _core import aclose
 
 # Add project root to sys.path for imports like `from tools.ioc_dedup`
 project_root = Path(__file__).parent.parent

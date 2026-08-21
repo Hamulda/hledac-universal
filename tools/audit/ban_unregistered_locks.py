@@ -16,14 +16,13 @@ Fix: Use make_lock() factory or register_lock() helper from core.locks
 
 Run: python tools/audit/ban_unregistered_locks.py [--fix]
 """
+
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import sys
 from pathlib import Path
-from _core import aclose
-
 
 # Patterns that indicate a lock is registered or not module-level
 REGISTER_PATTERNS = {
@@ -42,8 +41,16 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
     """Find module-level threading.Lock() calls without registration."""
     violations = []
     skip_dirs = {
-        "__pycache__", ".venv", ".venv-test", "archive", "probe_", "tests/archive",
-        ".git", ".claude", "tools/migrate", "tests",
+        "__pycache__",
+        ".venv",
+        ".venv-test",
+        "archive",
+        "probe_",
+        "tests/archive",
+        ".git",
+        ".claude",
+        "tools/migrate",
+        "tests",
     }
     skip_files = {
         "core/locks.py",  # The lock registry itself
@@ -57,7 +64,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             continue
         try:
             content = py_file.read_text()
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             continue
 
         try:
@@ -67,7 +74,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 
         # Track which locks are registered in this file
         registered_locks: set[str] = set()
-        
+
         # First pass: collect registered lock names
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -77,19 +84,19 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
                     func_name = node.func.id
                 elif isinstance(node.func, ast.Attribute):
                     func_name = node.func.attr
-                
+
                 if func_name in ("register_lock", "make_lock"):
                     # Extract lock name (usually second or third argument)
                     for arg in node.args:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             registered_locks.add(arg.value)
                             break
-        
+
         # Second pass: find threading.Lock() and threading.RLock() at module level
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            
+
             # Check if it's threading.Lock() or threading.RLock()
             is_lock_call = False
             if isinstance(node.func, ast.Attribute):
@@ -118,12 +125,14 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 
             # Check if this lock is registered
             lineno = node.lineno
-            
+
             # Simple heuristic: if there's a register_lock or make_lock call near this,
             # it's likely registered. More accurate would be to track variable names.
             # For now, flag all module-level threading.Lock() calls
-            
-            violations.append((py_file, lineno, f"threading.{node.func.attr}() at module level without clear registration"))
+
+            violations.append(
+                (py_file, lineno, f"threading.{node.func.attr}() at module level without clear registration")
+            )
 
     return violations
 
@@ -131,7 +140,9 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ban unregistered threading.Lock() at module level")
     parser.add_argument("--fix", action="store_true", help="Auto-fix violations (not yet implemented)")
-    parser.add_argument("--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+    )
     args = parser.parse_args()
 
     violations = find_violations(args.root)

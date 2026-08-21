@@ -10,6 +10,7 @@ ISSUE-037 решения:
 3. Proper mx.eval() + mx.metal.clear_cache() pro M1 Metal cache management
 4. Batched forward pass místo per-neuron loop
 """
+
 from __future__ import annotations
 
 import time
@@ -17,7 +18,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import mlx.core as _mlx_module
     import coremltools as _ct_module
 
 # --------------------------------------------------------------------------- #
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 # --------------------------------------------------------------------------- #
 # Optional CoreML — fail-soft (imported lazily in methods, not at module level)
@@ -41,6 +40,7 @@ def _ct_models() -> Any:
         return _ct_module
     try:
         import coremltools as ct
+
         _ct_module = ct
         COREML_AVAILABLE = True
         return ct
@@ -57,6 +57,7 @@ def _mx_arrays() -> Any:
     # ISSUE-08 FIX: Lazy import mlx.core via SSOT
     if MLX_AVAILABLE:
         from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
         return _get_mx_from_core()
     raise RuntimeError("MLX not available — cannot call _mx_arrays()")
 
@@ -71,7 +72,7 @@ _SPIKE_BENCHMARK_THRESHOLD_MS: float = 100.0
 class LIFNeuron:
     """Leaky Integrate-and-Fire neuron pro CPU fallback."""
 
-    __slots__ = tuple(("last_spike", "potential", "tau", "threshold"))
+    __slots__ = ("last_spike", "potential", "tau", "threshold")
 
     def __init__(self, threshold: float = 0.7, tau: float = 0.1) -> None:
         self.threshold = threshold
@@ -80,9 +81,7 @@ class LIFNeuron:
         self.last_spike = 0.0
 
     def forward(self, input_current: float, dt: float = 0.01) -> float:
-        self.potential = (
-            self.potential * (1 - dt / self.tau) + input_current * dt
-    )
+        self.potential = self.potential * (1 - dt / self.tau) + input_current * dt
         if self.potential > self.threshold:
             spike = self.potential
             self.potential = 0.0
@@ -98,14 +97,11 @@ class LIFNeuron:
 class SpikePriorityNetwork:
     """Síť LIF neuronů pro CPU fallback (pokud MLX > 100ms)."""
 
-    __slots__ = tuple(("n_neurons", "neurons"))
+    __slots__ = ("n_neurons", "neurons")
 
     def __init__(self, n_neurons: int = 8) -> None:
         self.n_neurons = n_neurons
-        self.neurons = [
-            LIFNeuron(threshold=0.5 + i * 0.1, tau=0.05 + i * 0.02)
-            for i in range(n_neurons)
-        ]
+        self.neurons = [LIFNeuron(threshold=0.5 + i * 0.1, tau=0.05 + i * 0.02) for i in range(n_neurons)]
 
     def forward(self, input_val: float) -> list[float]:
         return [n.forward(input_val) for n in self.neurons]
@@ -115,9 +111,7 @@ class SpikePriorityNetwork:
             n.reset()
 
     def get_spike_count(self) -> int:
-        return sum(
-            1 for n in self.neurons if n.potential == 0 and n.last_spike > 0
-    )
+        return sum(1 for n in self.neurons if n.potential == 0 and n.last_spike > 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -134,19 +128,17 @@ class MLXSpikeNetwork:
     - Batched vectorized forward pass (žádný Python loop)
     """
 
-    __slots__ = tuple(
-        (
-            "_ane_model",
-            "_ane_model_path",
-            "_benchmarked",
-            "_cpu_net",
-            "_fallback_mode",
-            "_inference_cache",
-            "_n_neurons",
-            "_potentials",
-            "_taus",
-            "_thresholds",
-    )
+    __slots__ = (
+        "_ane_model",
+        "_ane_model_path",
+        "_benchmarked",
+        "_cpu_net",
+        "_fallback_mode",
+        "_inference_cache",
+        "_n_neurons",
+        "_potentials",
+        "_taus",
+        "_thresholds",
     )
 
     def __init__(
@@ -158,9 +150,7 @@ class MLXSpikeNetwork:
             raise RuntimeError("MLX not available")
 
         self._n_neurons = n_neurons
-        self._ane_model_path: Path | None = (
-            Path(ane_model_path) if ane_model_path else None
-    )
+        self._ane_model_path: Path | None = Path(ane_model_path) if ane_model_path else None
         self._ane_model: Any = None
         self._benchmarked = False
         self._fallback_mode = False
@@ -171,9 +161,7 @@ class MLXSpikeNetwork:
 
         # Use helper for type-narrowed access
         _mlx = _mx_arrays()
-        self._thresholds = _mlx.array(
-            [0.5 + i * 0.1 for i in range(n_neurons)]
-    )
+        self._thresholds = _mlx.array([0.5 + i * 0.1 for i in range(n_neurons)])
         self._taus = _mlx.array([0.05 + i * 0.02 for i in range(n_neurons)])
         self._potentials = _mlx.zeros(n_neurons)
 
@@ -187,9 +175,7 @@ class MLXSpikeNetwork:
             return
         try:
             _ct = _ct_models()
-            self._ane_model = _ct.models.MLModel(
-                str(self._ane_model_path)
-    )
+            self._ane_model = _ct.models.MLModel(str(self._ane_model_path))
             # ANE lives on Neural Engine, not GPU — clean Metal cache
             if MLX_AVAILABLE:
                 try:
@@ -256,20 +242,18 @@ class MLXSpikeNetwork:
         inputs = _mlx.full(self._n_neurons, input_val)
         dt = 0.01
 
-        self._potentials = (
-            self._potentials * (1 - dt / self._taus) + inputs * dt
-    )
+        self._potentials = self._potentials * (1 - dt / self._taus) + inputs * dt
 
         spikes = _mlx.where(
             self._potentials > self._thresholds,
             self._potentials,
             _mlx.zeros(self._n_neurons),
-    )
+        )
         self._potentials = _mlx.where(
             spikes > 0,
             _mlx.zeros(self._n_neurons),
             self._potentials,
-    )
+        )
 
         return list(spikes)
 
@@ -315,10 +299,7 @@ class MLXSpikeNetwork:
         self._inference_cache["last_ms"] = elapsed_ms
 
         # Adaptive fallback: cold start může threshold překročit jednorázově
-        if (
-            elapsed_ms > _SPIKE_BENCHMARK_THRESHOLD_MS
-            and not self._fallback_mode
-        ):
+        if elapsed_ms > _SPIKE_BENCHMARK_THRESHOLD_MS and not self._fallback_mode:
             self._fallback_mode = True
 
         return result
@@ -326,7 +307,6 @@ class MLXSpikeNetwork:
     def reset(self) -> None:
         self._potentials = _mx_arrays().zeros(self._n_neurons)
 
-    # ---- A/B testing + introspection ----
     @property
     def fallback_mode(self) -> bool:
         """True pokud používá CPU fallback."""

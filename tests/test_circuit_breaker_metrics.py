@@ -6,6 +6,7 @@ Verifies:
 2. Recovery timeout → HALF_OPEN state + circuit_breaker_half_open_count incremented
 3. Success in HALF_OPEN → CLOSED state + circuit_breaker_recovery_success incremented
 """
+
 import time
 
 from transport.circuit_breaker import (
@@ -20,20 +21,23 @@ from transport.circuit_breaker import (
 class TestCircuitBreakerMetrics:
     """Test circuit breaker state transitions and metrics wiring."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Reset global breaker state before each test."""
         clear_all_breakers()
 
-    def test_failure_threshold_opens_circuit_and_increments_metric(self):
+    def test_failure_threshold_opens_circuit_and_increments_metric(self) -> None:
         """3 consecutive failures → OPEN, circuit_breaker_open_count incremented."""
         domain = "test-metrics-failure.example.com"
         cb = get_breaker(domain)
 
         incremental_calls = []
         original = _metrics_safe_increment
-        def track(name):
+
+        def track(name) -> None:
             incremental_calls.append(name)
+
         import transport.circuit_breaker as cb_mod
+
         cb_mod._metrics_safe_increment = track
 
         for _ in range(CIRCUIT_FAILURE_THRESHOLD):
@@ -45,7 +49,7 @@ class TestCircuitBreakerMetrics:
         assert "circuit_breaker_state_transitions" in incremental_calls
         assert "circuit_breaker_open_count" in incremental_calls
 
-    def test_half_open_transition_after_recovery_timeout(self):
+    def test_half_open_transition_after_recovery_timeout(self) -> None:
         """Recovery timeout expires → HALF_OPEN, circuit_breaker_half_open_count incremented."""
         domain = "test-metrics-recovery.example.com"
         cb = get_breaker(domain)
@@ -56,9 +60,12 @@ class TestCircuitBreakerMetrics:
 
         incremental_calls = []
         original = _metrics_safe_increment
-        def track(name):
+
+        def track(name) -> None:
             incremental_calls.append(name)
+
         import transport.circuit_breaker as cb_mod
+
         cb_mod._metrics_safe_increment = track
 
         cb.recovery_timeout = 0.05  # 50ms
@@ -71,7 +78,7 @@ class TestCircuitBreakerMetrics:
         assert "circuit_breaker_state_transitions" in incremental_calls
         assert "circuit_breaker_half_open_count" in incremental_calls
 
-    def test_success_in_half_open_closes_circuit_and_recovery_success_metric(self):
+    def test_success_in_half_open_closes_circuit_and_recovery_success_metric(self) -> None:
         """Success in HALF_OPEN → CLOSED, circuit_breaker_recovery_success incremented."""
         domain = "test-metrics-success.example.com"
         cb = get_breaker(domain)
@@ -85,9 +92,12 @@ class TestCircuitBreakerMetrics:
 
         incremental_calls = []
         original = _metrics_safe_increment
-        def track(name):
+
+        def track(name) -> None:
             incremental_calls.append(name)
+
         import transport.circuit_breaker as cb_mod
+
         cb_mod._metrics_safe_increment = track
 
         cb.record_success()
@@ -98,7 +108,7 @@ class TestCircuitBreakerMetrics:
         assert "circuit_breaker_state_transitions" in incremental_calls
         assert "circuit_breaker_recovery_success" in incremental_calls
 
-    def test_half_open_max_probes_returns_to_open(self):
+    def test_half_open_max_probes_returns_to_open(self) -> None:
         """In HALF_OPEN, probe failure → returns to OPEN."""
         domain = "test-metrics-probe-fail.example.com"
         cb = get_breaker(domain)
@@ -112,9 +122,12 @@ class TestCircuitBreakerMetrics:
 
         incremental_calls = []
         original = _metrics_safe_increment
-        def track(name):
+
+        def track(name) -> None:
             incremental_calls.append(name)
+
         import transport.circuit_breaker as cb_mod
+
         cb_mod._metrics_safe_increment = track
 
         cb.record_failure(is_timeout=False, failure_kind="probe_failure")
@@ -124,7 +137,7 @@ class TestCircuitBreakerMetrics:
         assert cb.get_state() == "open"
         assert "circuit_breaker_open_count" in incremental_calls
 
-    def test_per_domain_stats_returns_dict(self):
+    def test_per_domain_stats_returns_dict(self) -> None:
         """per_domain_stats() returns well-formed dict for debug dashboard."""
         clear_all_breakers()
         domain = "test-per-domain-stats.example.com"
@@ -141,16 +154,18 @@ class TestCircuitBreakerMetrics:
         assert "last_failure_kind" in entry
         assert "recovery_timeout_s" in entry
 
-    def test_metrics_fire_and_forget_never_blocks_circuit_logic(self):
+    def test_metrics_fire_and_forget_never_blocks_circuit_logic(self) -> None:
         """Metric increment failure must not affect CB state or logic."""
         domain = "test-fire-and-forget.example.com"
         cb = get_breaker(domain)
 
         import transport.circuit_breaker as cb_mod
+
         original = cb_mod._metrics_safe_increment
 
         def fail_incr(_n: str) -> None:
             raise RuntimeError("metrics unavailable")
+
         cb_mod._metrics_safe_increment = fail_incr
 
         cb.record_failure(is_timeout=False, failure_kind="test")
@@ -160,14 +175,16 @@ class TestCircuitBreakerMetrics:
         cb_mod._metrics_safe_increment = original
         assert cb.get_state() == "open"
 
+
 class TestCircuitBreakerFSMTransitions:
     """FSM state transition tests: CLOSED→OPEN→HALF_OPEN→CLOSED with transition counter."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         clear_all_breakers()
         self._recorded_transitions: list[str] = []
 
         import transport.circuit_breaker as cb_mod
+
         self._orig_incr = cb_mod._metrics_safe_increment
 
         def track(name: str) -> None:
@@ -177,12 +194,13 @@ class TestCircuitBreakerFSMTransitions:
 
         cb_mod._metrics_safe_increment = track
 
-    def teardown_method(self):
+    def teardown_method(self) -> None:
         import transport.circuit_breaker as cb_mod
+
         cb_mod._metrics_safe_increment = self._orig_incr
         clear_all_breakers()
 
-    def test_n_consecutive_failures_opens_breaker(self):
+    def test_n_consecutive_failures_opens_breaker(self) -> None:
         """N consecutive failures → breaker enters OPEN state."""
         domain = "test-fsm-failures.example.com"
         cb = get_breaker(domain)
@@ -196,7 +214,7 @@ class TestCircuitBreakerFSMTransitions:
         count = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert count == 1
 
-    def test_cooldown_expires_goes_to_half_open(self):
+    def test_cooldown_expires_goes_to_half_open(self) -> None:
         """After recovery_timeout expires → breaker enters HALF_OPEN state."""
         domain = "test-fsm-cooldown.example.com"
         cb = get_breaker(domain)
@@ -215,7 +233,7 @@ class TestCircuitBreakerFSMTransitions:
         count = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert count == 1
 
-    def test_success_in_half_open_closes_breaker(self):
+    def test_success_in_half_open_closes_breaker(self) -> None:
         """Success in HALF_OPEN → breaker returns to CLOSED state."""
         domain = "test-fsm-success.example.com"
         cb = get_breaker(domain)
@@ -236,7 +254,7 @@ class TestCircuitBreakerFSMTransitions:
         count = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert count == 1
 
-    def test_full_cycle_transition_counter_total(self):
+    def test_full_cycle_transition_counter_total(self) -> None:
         """Complete CLOSED→OPEN→HALF_OPEN→CLOSED cycle yields 3 transition events."""
         domain = "test-fsm-full-cycle.example.com"
         cb = get_breaker(domain)
@@ -259,7 +277,7 @@ class TestCircuitBreakerFSMTransitions:
         total = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert total == 3
 
-    def test_success_in_open_transitions_to_closed(self):
+    def test_success_in_open_transitions_to_closed(self) -> None:
         """Success while OPEN immediately transitions to CLOSED (standard CB behavior)."""
         domain = "test-fsm-open-noop.example.com"
         cb = get_breaker(domain)
@@ -275,7 +293,7 @@ class TestCircuitBreakerFSMTransitions:
         count = sum(1 for t in self._recorded_transitions if t == "circuit_breaker_state_transitions")
         assert count == 0  # Transition metric only fires for HALF_OPEN→CLOSED
 
-    def test_failure_in_half_open_immediately_opens(self):
+    def test_failure_in_half_open_immediately_opens(self) -> None:
         """Failure in HALF_OPEN → immediate OPEN (no HALF_OPEN→CLOSED first)."""
         domain = "test-fsm-halfopen-fail.example.com"
         cb = get_breaker(domain)
@@ -296,7 +314,7 @@ class TestCircuitBreakerFSMTransitions:
 
     # === Warmup vs Production Separation Tests ===
 
-    def test_warmup_failures_do_not_trip_production_circuit(self):
+    def test_warmup_failures_do_not_trip_production_circuit(self) -> None:
         """3 warmup failures → circuit stays CLOSED (separate tracking)."""
         domain = "warmup-test.example.com"
         cb = get_breaker(domain)
@@ -310,7 +328,7 @@ class TestCircuitBreakerFSMTransitions:
         # But warmup counter should be incremented
         assert cb._warmup_failure_count == 3
 
-    def test_production_failures_after_warmup_trip_normally(self):
+    def test_production_failures_after_warmup_trip_normally(self) -> None:
         """Warmup failures + production failures → trips at correct threshold."""
         domain = "mixed-test.example.com"
         cb = get_breaker(domain)
@@ -332,7 +350,7 @@ class TestCircuitBreakerFSMTransitions:
         assert cb._failure_count == 3
         assert cb._warmup_failure_count == 2  # warmup unchanged
 
-    def test_mark_warmup_done_resets_warmup_counter(self):
+    def test_mark_warmup_done_resets_warmup_counter(self) -> None:
         """mark_warmup_done() resets warmup_failure_count to 0."""
         domain = "mark-done-test.example.com"
         cb = get_breaker(domain)
@@ -349,7 +367,7 @@ class TestCircuitBreakerFSMTransitions:
         assert cb._warmup_failure_count == 0
         assert cb._failure_count == 0
 
-    def test_warmup_failure_recorded_in_snapshot(self):
+    def test_warmup_failure_recorded_in_snapshot(self) -> None:
         """Snapshot includes warmup_failure_count."""
         domain = "snapshot-test.example.com"
         cb = get_breaker(domain)
@@ -361,7 +379,7 @@ class TestCircuitBreakerFSMTransitions:
         assert snapshot.warmup_failure_count == 2
         assert snapshot.failure_count == 0  # production unaffected
 
-    def test_warmup_failure_kind_logged(self):
+    def test_warmup_failure_kind_logged(self) -> None:
         """Warmup failures set last_failure_kind to warmup_* prefix."""
         domain = "kind-log-test.example.com"
         cb = get_breaker(domain)
@@ -375,7 +393,7 @@ class TestCircuitBreakerFSMTransitions:
         cb.record_failure(is_warmup=True, is_timeout=True, failure_kind="")
         assert cb._last_failure_kind == "warmup_timeout"
 
-    def test_warmup_and_production_counters_independent(self):
+    def test_warmup_and_production_counters_independent(self) -> None:
         """Warmup and production failure counters are fully independent."""
         domain = "independent-test.example.com"
         cb = get_breaker(domain)
@@ -397,7 +415,7 @@ class TestCircuitBreakerFSMTransitions:
         # Warmup counter still intact (not reset by trip)
         assert cb._warmup_failure_count == 2
 
-    def test_per_domain_stats_includes_warmup_count(self):
+    def test_per_domain_stats_includes_warmup_count(self) -> None:
         """per_domain_stats() includes warmup_failure_count."""
         domain = "stats-warmup.example.com"
         cb = get_breaker(domain)
@@ -414,7 +432,7 @@ class TestCircuitBreakerFSMTransitions:
 class TestModelCircuitBreakerReset:
     """Tests for ModelCircuitBreaker.reset() — GAP-3/1 fix."""
 
-    def test_reset_closes_open_breaker(self):
+    def test_reset_closes_open_breaker(self) -> None:
         """After 3 failures (OPEN), reset() → is_open() == False."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -426,7 +444,7 @@ class TestModelCircuitBreakerReset:
         breaker.reset()
         assert breaker.is_open() is False
 
-    def test_reset_clears_failure_count(self):
+    def test_reset_clears_failure_count(self) -> None:
         """reset() zeroes _failure_count."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -438,7 +456,7 @@ class TestModelCircuitBreakerReset:
         breaker.reset()
         assert breaker._failure_count == 0
 
-    def test_reset_clears_last_failure_time(self):
+    def test_reset_clears_last_failure_time(self) -> None:
         """reset() zeroes _last_failure_time."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -449,7 +467,7 @@ class TestModelCircuitBreakerReset:
         breaker.reset()
         assert breaker._last_failure_time == 0.0
 
-    def test_reset_clears_last_failure_kind(self):
+    def test_reset_clears_last_failure_kind(self) -> None:
         """reset() empties _last_failure_kind."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -460,7 +478,7 @@ class TestModelCircuitBreakerReset:
         breaker.reset()
         assert breaker._last_failure_kind == ""
 
-    def test_reset_idempotent(self):
+    def test_reset_idempotent(self) -> None:
         """Calling reset() twice on already-closed breaker is safe."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -470,7 +488,7 @@ class TestModelCircuitBreakerReset:
         assert breaker.is_open() is False
         assert breaker._failure_count == 0
 
-    def test_reset_thread_safe_no_attribute_error(self):
+    def test_reset_thread_safe_no_attribute_error(self) -> None:
         """reset() is callable without AttributeError — the original GAP-3/1 bug."""
         from transport.circuit_breaker import ModelCircuitBreaker
 
@@ -485,7 +503,7 @@ class TestModelCircuitBreakerReset:
         breaker.reset()
         assert breaker.is_open() is False
 
-    def test_reset_all_fields_cleared(self):
+    def test_reset_all_fields_cleared(self) -> None:
         """After reset(), all failure-tracking fields are cleared."""
         from transport.circuit_breaker import ModelCircuitBreaker
 

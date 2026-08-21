@@ -13,13 +13,10 @@ Tests verify the async-safe bounded cache implementation:
 
 All tests use real asyncio (no mocks) to verify actual behavior.
 """
+
 from __future__ import annotations
 
 import asyncio
-import gc
-import weakref
-from collections.abc import Awaitable
-from typing import Any
 
 import pytest
 
@@ -30,10 +27,10 @@ from utils.async_cache import (
     cached_awaitable,
 )
 
-
 # ---------------------------------------------------------------------------
 # Invariant [1]: async_cached rejects sync def
 # ---------------------------------------------------------------------------
+
 
 def test_async_cached_rejects_sync_def() -> None:
     """[1] async_cached raises AsyncCacheError when decorating sync function."""
@@ -43,18 +40,20 @@ def test_async_cached_rejects_sync_def() -> None:
 
 def test_async_cached_rejects_sync_def_unqualified() -> None:
     """[1] async_cached works with getattr fallback for __qualname__."""
+
     # Local functions have __qualname__ in Python 3
     def anon_sync(x: str) -> str:
         return x.upper()
 
     # getattr safely handles both __qualname__ and __name__
-    name = getattr(anon_sync, '__qualname__', getattr(anon_sync, '__name__', '<anon>'))
-    assert '<locals>' in name  # Local function qualname contains '<locals>'
+    name = getattr(anon_sync, "__qualname__", getattr(anon_sync, "__name__", "<anon>"))
+    assert "<locals>" in name  # Local function qualname contains '<locals>'
 
 
 # ---------------------------------------------------------------------------
 # Invariant [2]: Per-key single-flight (concurrent calls serialize)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_single_flight_serialization() -> None:
@@ -90,10 +89,7 @@ async def test_single_flight_with_exception() -> None:
         await asyncio.sleep(0.02)
         raise ValueError("boom")
 
-    callers = [
-        asyncio.create_task(cache.acquire("key", compute=failing_compute))
-        for _ in range(3)
-    ]
+    callers = [asyncio.create_task(cache.acquire("key", compute=failing_compute)) for _ in range(3)]
     results = await asyncio.gather(*callers, return_exceptions=True)
 
     # All should get the same error
@@ -105,6 +101,7 @@ async def test_single_flight_with_exception() -> None:
 # ---------------------------------------------------------------------------
 # Invariant [3]: Different keys don't contend
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_contention_different_keys() -> None:
@@ -135,6 +132,7 @@ async def test_no_contention_different_keys() -> None:
 # ---------------------------------------------------------------------------
 # Invariant [4]: LRU eviction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_lru_eviction() -> None:
@@ -170,10 +168,13 @@ async def test_lru_with_acquire() -> None:
     # Helper to avoid default arg issues
     async def make_1() -> int:
         return 1
+
     async def make_2() -> int:
         return 2
+
     async def make_3() -> int:
         return 3
+
     async def make_4() -> int:
         return 4
 
@@ -194,6 +195,7 @@ async def test_lru_with_acquire() -> None:
 # Invariant [5]: Fail-safe on lock creation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fail_safe_get_set() -> None:
     """[5] Fail-safe: get/set work even if lock creation partially fails."""
@@ -213,6 +215,7 @@ async def test_fail_safe_get_set() -> None:
 # ---------------------------------------------------------------------------
 # Invariant [6]: No asyncio.Lock at module import
 # ---------------------------------------------------------------------------
+
 
 def test_no_lock_at_module_level() -> None:
     """[6] AsyncLRUCache doesn't create locks at init time."""
@@ -239,6 +242,7 @@ async def test_locks_created_lazily() -> None:
 # Invariant [7]: Dict args raise immediately
 # ---------------------------------------------------------------------------
 
+
 def test_dict_key_raises_on_construction() -> None:
     """[7] AsyncLRUCache raises AsyncCacheError on dict key construction."""
     cache = AsyncLRUCache[dict[str, int], str](maxsize=10)
@@ -264,6 +268,7 @@ async def test_dict_key_raises_on_get() -> None:
 @pytest.mark.asyncio
 async def test_async_cached_dict_arg_raises() -> None:
     """[7] async_cached raises AsyncCacheError when called with dict arg."""
+
     @async_cached(maxsize=128)
     async def fetch(url: str) -> str:
         return f"result for {url}"
@@ -280,6 +285,7 @@ async def test_async_cached_dict_arg_raises() -> None:
 # ---------------------------------------------------------------------------
 # Invariant [8]: Per-key lock dict bounded
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_lock_dict_bounded() -> None:
@@ -311,6 +317,7 @@ async def test_lock_dict_eviction_lru() -> None:
 # Additional behavior tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_acquire_without_compute_raises() -> None:
     """acquire() without compute raises KeyError for unknown key."""
@@ -329,6 +336,7 @@ async def test_clear_works() -> None:
 
     async def make_10() -> int:
         return 10
+
     await cache.acquire("a", compute=make_10)  # touch
 
     cache.clear()
@@ -381,6 +389,7 @@ async def test_on_evict_callback() -> None:
 @pytest.mark.asyncio
 async def test_decorator_cache_clear() -> None:
     """decorator.cache_clear() works for test isolation."""
+
     @async_cached(maxsize=3)
     async def cached_fn(x: str) -> int:
         return len(x)
@@ -433,6 +442,7 @@ async def test_repr() -> None:
 # ---------------------------------------------------------------------------
 # Negative tests — verify edge cases don't crash
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_empty_key() -> None:

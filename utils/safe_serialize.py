@@ -39,30 +39,29 @@ Bounded, fail-safe. Returns None on any error.
 from __future__ import annotations
 
 import logging
-import typing
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 logger = logging.getLogger(__name__)
+
 
 # msgspec schema for safe function calls
 class FuncCall(Struct):
     """Safe function call payload — msgspec.Struct for zero-copy decode."""
+
     func: str  # "module.attr" format
     args: tuple[Any, ...] = ()
     kwargs: dict[str, Any] = {}
 
-# -----------------------------------------------------------------------------
-# Function registry — explicit whitelist of allowed functions
-# -----------------------------------------------------------------------------
 
 # Registry: func_name -> callable
 # Only functions in this registry can be called via decode_and_execute()
 _FUNCTION_REGISTRY: dict[str, Callable[..., Any]] = {}
+
 
 def register_function(name: str, func: Callable[..., Any]) -> None:
     """
@@ -74,6 +73,7 @@ def register_function(name: str, func: Callable[..., Any]) -> None:
         func: The callable to register.
     """
     _FUNCTION_REGISTRY[name] = func
+
 
 def register_module_funcs(module_name: str, module: Any, func_names: list[str]) -> None:
     """
@@ -90,9 +90,6 @@ def register_module_funcs(module_name: str, module: Any, func_names: list[str]) 
         if callable(attr):
             _FUNCTION_REGISTRY[full_name] = attr
 
-# -----------------------------------------------------------------------------
-# Public API
-# -----------------------------------------------------------------------------
 
 def encode_call(func_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> bytes:
     """
@@ -149,31 +146,52 @@ def decode_and_execute(payload: bytes) -> Any | None:
         return None
 
 
-# -----------------------------------------------------------------------------
-# Pre-populate registry with known-safe internal functions
-# These are the only functions that can be called via decode_and_execute()
-# -----------------------------------------------------------------------------
-
 def _populate_registry() -> None:
     """Populate registry with known-safe functions. Called once at module load."""
     # Import here to avoid circular imports and to defer heavy imports
     # DuckDB core functions — duckdb is an optional dependency
     try:
         import duckdb
-        register_module_funcs("duckdb", duckdb, [
-            "execute", "sql", "query", "read_csv", "read_parquet",
-            "register", "unregister", "close", "connect",
-        ])
+
+        register_module_funcs(
+            "duckdb",
+            duckdb,
+            [
+                "execute",
+                "sql",
+                "query",
+                "read_csv",
+                "read_parquet",
+                "register",
+                "unregister",
+                "close",
+                "connect",
+            ],
+        )
     except ImportError:
         logger.debug("[safe_serialize] duckdb not available, skipping registration")
 
     # NumPy core functions — numpy is an optional dependency
     try:
         import numpy
-        register_module_funcs("numpy", numpy, [
-            "array", "zeros", "ones", "empty", "save", "load",
-            "concatenate", "stack", "sum", "mean", "std",
-        ])
+
+        register_module_funcs(
+            "numpy",
+            numpy,
+            [
+                "array",
+                "zeros",
+                "ones",
+                "empty",
+                "save",
+                "load",
+                "concatenate",
+                "stack",
+                "sum",
+                "mean",
+                "std",
+            ],
+        )
     except ImportError:
         logger.debug("[safe_serialize] numpy not available, skipping registration")
 
@@ -187,5 +205,6 @@ def _populate_registry() -> None:
     #     register_function("my_module.my_function", my_function)
     # except ImportError:
     #     pass
+
 
 _populate_registry()

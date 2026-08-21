@@ -10,20 +10,19 @@ Responsibilities:
 Input: ScoredBatch (urls, quality_signals, usable_signals, value_tiers, ...)
 Output: MatchedBatch (urls, matched_pattern_counts, matched_pattern_labels, ...)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal._core.rust_backend.ioc_stream import (
-    get_ioc_scanner,
     get_scanner_stats,
     scan_bytes_with_ioc_scanner,
-    )
+)
 from hledac.universal.pipeline._soa_types import MatchedBatch, ScoredBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +45,7 @@ class MatchStage:
     def name(self) -> str:
         return "match"
 
-    async def process(
-        self, input_batch: ScoredBatch | None
-    ) -> tuple[MatchedBatch, dict[str, Any]]:
+    async def process(self, input_batch: ScoredBatch | None) -> tuple[MatchedBatch, dict[str, Any]]:
         """Match patterns in scored pages.
 
         Args:
@@ -70,13 +67,10 @@ class MatchStage:
 
         # Filter to usable pages only
         usable_indices = [
-            i
-            for i, usable in enumerate(input_batch.usable_signals)
-            if usable and i < len(input_batch.urls)
+            i for i, usable in enumerate(input_batch.usable_signals) if usable and i < len(input_batch.urls)
         ]
 
         if not usable_indices:
-            # Return empty results for all URLs
             matched_pattern_counts = [0] * len(input_batch.urls)
             matched_pattern_labels: list[list[str]] = [[] for _ in input_batch.urls]
             errors = [None] * len(input_batch.urls)
@@ -102,11 +96,11 @@ class MatchStage:
         simd_results = await _simd_scan_batch(
             texts=usable_texts,
             concurrency=self._match_concurrency,
-    )
+        )
         match_results = await _match_batch(
             texts=usable_texts,
             concurrency=self._match_concurrency,
-    )
+        )
 
         # Build result arrays (all URLs, not just usable)
         matched_pattern_counts = [0] * len(input_batch.urls)
@@ -122,7 +116,7 @@ class MatchStage:
 
                 # Combine regex + SIMD hits
                 combined_count = result["count"] + simd_result["count"]
-                
+
                 # Deduplicate labels across both scanners (case-insensitive)
                 seen_labels: set[str] = set()
                 combined_labels: list[str] = []
@@ -149,7 +143,7 @@ class MatchStage:
 
         # HEIST-01: Telemetry for SIMD scan stats
         telemetry["simd_total_hits"] = simd_total
-        
+
         # Scanner stats: availability, pattern count, automaton size
         scanner_stats = get_scanner_stats()
         telemetry["simd_scanner_available"] = scanner_stats["available"]
@@ -161,7 +155,7 @@ class MatchStage:
             matched_pattern_counts=matched_pattern_counts,
             matched_pattern_labels=matched_pattern_labels,
             errors=errors,
-    )
+        )
 
         return batch, telemetry
 
@@ -171,7 +165,7 @@ class MatchStage:
             matched_pattern_counts=[],
             matched_pattern_labels=[],
             errors=[],
-    )
+        )
 
 
 async def _match_batch(
@@ -214,7 +208,7 @@ def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
         from hledac.universal.pipeline.live_public_pipeline import (
             _SYNC_MATCH_TEXT,
             _ensure_patched,
-    )
+        )
 
         _ensure_patched()
 
@@ -229,10 +223,6 @@ def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Pattern match failed for text[{idx}]: {exc}")
         return {"count": 0, "labels": [], "error": str(exc)}
-
-
-# HEIST-01: SIMD IOC Scanning via Rust Aho-Corasick NEON
-# ---------------------------------------------------------------------------
 
 
 async def _simd_scan_batch(

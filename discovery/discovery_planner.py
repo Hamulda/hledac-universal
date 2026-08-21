@@ -23,33 +23,43 @@ Planner:
 
 Pure Python. No ML hot path. M1-safe.
 """
+
 import asyncio
 import logging
 import random
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 from hledac.universal.discovery.base import DiscoveryBatchResult
-from hledac.universal.discovery.provider_stats import PROVIDER_CAPABILITIES, PROVIDER_COST_ESTIMATE, PROVIDER_NAMES, ProviderStatsRegistry, get_provider_stats_registry
-from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+from hledac.universal.discovery.provider_stats import (
+    PROVIDER_CAPABILITIES,
+    PROVIDER_COST_ESTIMATE,
+    PROVIDER_NAMES,
+    ProviderStatsRegistry,
+    get_provider_stats_registry,
+)
+
 _MIN_RELIABILITY = 0.05
 _EXPLORATION_PROB = 0.1
 _COST_MULTIPLIER = 1.5
 _MAX_PROVIDERS_PER_CALL = 8
+
 
 class ProviderCapabilityState(Enum):
     """Discovery provider operational state.
 
     Used to prevent stub providers from being silently treated as production.
     """
-    PRODUCTION = 'production'
-    ADVISORY_STUB = 'advisory_stub'
-    NOT_WIRED = 'not_wired'
-    DISABLED = 'disabled'
+
+    PRODUCTION = "production"
+    ADVISORY_STUB = "advisory_stub"
+    NOT_WIRED = "not_wired"
+    DISABLED = "disabled"
+
 
 def get_provider_state(name: str) -> ProviderCapabilityState:
     """Resolve provider to its capability state.
@@ -63,9 +73,9 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
       4. PRODUCTION: fully wired
     """
     cap = PROVIDER_CAPABILITIES.get(name, {})
-    is_stub = cap.get('is_stub', False)
-    requires_context = cap.get('requires_context', False)
-    production_enabled = cap.get('production_enabled', False)
+    is_stub = cap.get("is_stub", False)
+    requires_context = cap.get("requires_context", False)
+    production_enabled = cap.get("production_enabled", False)
     if is_stub and (not requires_context):
         return ProviderCapabilityState.ADVISORY_STUB
     if requires_context:
@@ -74,19 +84,24 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
         return ProviderCapabilityState.DISABLED
     return ProviderCapabilityState.PRODUCTION
 
+
 class ProviderPlan(Struct):
     """Plan for a single discovery call."""
+
     provider: str
     max_results: int
     timeout_s: float
     estimated_cost_ms: float
 
+
 class ProviderStatusDebug(Struct, frozen=True):
     """Why a provider was selected or skipped."""
+
     provider: str
     state: ProviderCapabilityState
     selected: bool
     reason: str
+
 
 def serialize_provider_status_debug(debug_entries: list[ProviderStatusDebug] | list[dict]) -> list[dict]:
     """
@@ -101,16 +116,32 @@ def serialize_provider_status_debug(debug_entries: list[ProviderStatusDebug] | l
     result = []
     for entry in debug_entries:
         if isinstance(entry, ProviderStatusDebug):
-            result.append({'provider': entry.provider, 'state': entry.state.value if hasattr(entry.state, 'value') else str(entry.state), 'selected': entry.selected, 'reason': entry.reason})
+            result.append(
+                {
+                    "provider": entry.provider,
+                    "state": entry.state.value if hasattr(entry.state, "value") else str(entry.state),
+                    "selected": entry.selected,
+                    "reason": entry.reason,
+                }
+            )
         elif isinstance(entry, dict):
-            state = entry.get('state')
-            if hasattr(state, 'value'):
+            state = entry.get("state")
+            if hasattr(state, "value"):
                 state = state.value
-            result.append({'provider': entry.get('provider', ''), 'state': state if state is not None else str(state), 'selected': entry.get('selected', False), 'reason': entry.get('reason', '')})
+            result.append(
+                {
+                    "provider": entry.get("provider", ""),
+                    "state": state if state is not None else str(state),
+                    "selected": entry.get("selected", False),
+                    "reason": entry.get("reason", ""),
+                }
+            )
     return result
+
 
 class DiscoveryPlan(Struct, frozen=True):
     """Full plan for a sprint discovery pass."""
+
     plans: list[ProviderPlan]
     estimated_total_ms: float
     remaining_budget_ms: float
@@ -123,41 +154,54 @@ class DiscoveryPlan(Struct, frozen=True):
     def serialized_provider_status_debug(self) -> list[dict]:
         """Return JSON-safe representation of provider_status_debug."""
         return serialize_provider_status_debug(self.provider_status_debug)
+
+
 _ProviderRunner = Any
+
 
 async def _run_ddg_mojeek(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
+
     try:
         async with asyncio.timeout(min(timeout_s, 20.0)):
             return await async_search_public_web(query, max_results=max_results, timeout_s=timeout_s)
     except TimeoutError:
-        return _timeout_result('ddg_mojeek', timeout_s)
+        return _timeout_result("ddg_mojeek", timeout_s)
+
 
 async def _run_historical_frontier(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     from hledac.universal.discovery.historical_frontier import async_search_historical_frontier
+
     try:
         async with asyncio.timeout(min(timeout_s, 3.0)):
             return await async_search_historical_frontier(query, max_results=max_results, timeout_s=min(timeout_s, 3.0))
     except TimeoutError:
-        return _timeout_result('historical_frontier', timeout_s)
+        return _timeout_result("historical_frontier", timeout_s)
+
 
 async def _run_wayback_cdx(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     from hledac.universal.discovery.wayback_cdx_adapter import async_search_wayback_cdx
+
     try:
         async with asyncio.timeout(min(timeout_s, 15.0)):
             return await async_search_wayback_cdx(query, max_results=max_results, timeout_s=timeout_s)
     except TimeoutError:
-        return _timeout_result('wayback_cdx', timeout_s)
+        return _timeout_result("wayback_cdx", timeout_s)
+
 
 async def _run_wayback_sitemap(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     from hledac.universal.discovery.wayback_sitemap_adapter import async_search_wayback_sitemap
+
     try:
         async with asyncio.timeout(min(timeout_s, 30.0)):
             return await async_search_wayback_sitemap(query, max_results=max_results, timeout_s=timeout_s)
     except TimeoutError:
-        return _timeout_result('wayback_sitemap', timeout_s)
+        return _timeout_result("wayback_sitemap", timeout_s)
 
-async def _run_commoncrawl_cdx(query: str, max_results: int, timeout_s: float, include_stub: bool=False) -> DiscoveryBatchResult:
+
+async def _run_commoncrawl_cdx(
+    query: str, max_results: int, timeout_s: float, include_stub: bool = False
+) -> DiscoveryBatchResult:
     """
     CommonCrawl CDX — uses same adapter as Wayback, different endpoint.
 
@@ -167,58 +211,126 @@ async def _run_commoncrawl_cdx(query: str, max_results: int, timeout_s: float, i
     """
     del query, max_results, timeout_s
     if not include_stub:
-        return DiscoveryBatchResult(hits=(), error='commoncrawl_cdx_not_selected_include_stub=False', error_type='stub_not_production', provider_name='commoncrawl_cdx', provider_chain=('commoncrawl_cdx',), source_family=None, elapsed_s=0.0)
-    return DiscoveryBatchResult(hits=(), error='commoncrawl_cdx_no_real_endpoint', error_type='stub_not_production', provider_name='commoncrawl_cdx', provider_chain=('commoncrawl_cdx',), source_family=None, elapsed_s=0.0)
+        return DiscoveryBatchResult(
+            hits=(),
+            error="commoncrawl_cdx_not_selected_include_stub=False",
+            error_type="stub_not_production",
+            provider_name="commoncrawl_cdx",
+            provider_chain=("commoncrawl_cdx",),
+            source_family=None,
+            elapsed_s=0.0,
+        )
+    return DiscoveryBatchResult(
+        hits=(),
+        error="commoncrawl_cdx_no_real_endpoint",
+        error_type="stub_not_production",
+        provider_name="commoncrawl_cdx",
+        provider_chain=("commoncrawl_cdx",),
+        source_family=None,
+        elapsed_s=0.0,
+    )
+
 
 async def _run_feed_pivots(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     del query, max_results, timeout_s
-    return DiscoveryBatchResult(hits=(), error='feed_pivots_no_pipeline_context', error_type='not_wired', provider_name='feed_pivots', provider_chain=('feed_pivots',), source_family=None, elapsed_s=0.0)
+    return DiscoveryBatchResult(
+        hits=(),
+        error="feed_pivots_no_pipeline_context",
+        error_type="not_wired",
+        provider_name="feed_pivots",
+        provider_chain=("feed_pivots",),
+        source_family=None,
+        elapsed_s=0.0,
+    )
+
 
 async def _run_ct_pivots(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     from .crtsh_adapter import call_crtsh
+
     try:
         result, outcome = await call_crtsh(query=query, max_results=max_results, timeout_s=timeout_s)
-        logger.debug(f'[ct_pivots] outcome: attempted={outcome.attempted} raw={outcome.raw_count} built={outcome.built_count} error={outcome.error} timeout={outcome.timeout} duration_s={outcome.duration_s:.3f}')
+        logger.debug(
+            f"[ct_pivots] outcome: attempted={outcome.attempted} raw={outcome.raw_count} built={outcome.built_count} error={outcome.error} timeout={outcome.timeout} duration_s={outcome.duration_s:.3f}"
+        )
         return result
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='ct_pivots', provider_chain=('ct_pivots',), source_family='ct', elapsed_s=0.0)
+        return DiscoveryBatchResult(
+            hits=(),
+            error=str(e),
+            error_type="provider_exception",
+            provider_name="ct_pivots",
+            provider_chain=("ct_pivots",),
+            source_family="ct",
+            elapsed_s=0.0,
+        )
+
 
 async def _run_circl_pdns(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     """AP-05: CIRCL PDNS adapter — wired into discovery planner."""
     from .circl_pdns_adapter import async_search_circl_pdns
+
     try:
         return await async_search_circl_pdns(query, max_results=max_results, timeout_s=timeout_s)
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=0.0)
+        return DiscoveryBatchResult(
+            hits=(),
+            error=str(e),
+            error_type="provider_exception",
+            provider_name="circl_pdns",
+            provider_chain=("circl_pdns",),
+            source_family="pdns",
+            elapsed_s=0.0,
+        )
+
 
 async def _run_tvnews(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
     """AP-05: TV News adapter — wired into discovery planner."""
     from .tvnews_adapter import async_search_tvnews
+
     try:
         return await async_search_tvnews(query, max_results=max_results, timeout_s=timeout_s)
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='tvnews', provider_chain=('tvnews',), source_family='tvnews', elapsed_s=0.0)
+        return DiscoveryBatchResult(
+            hits=(),
+            error=str(e),
+            error_type="provider_exception",
+            provider_name="tvnews",
+            provider_chain=("tvnews",),
+            source_family="tvnews",
+            elapsed_s=0.0,
+        )
+
 
 _RUNNERS: dict[str, _ProviderRunner] = {
-    'ddg_mojeek': _run_ddg_mojeek,
-    'historical_frontier': _run_historical_frontier,
-    'wayback_cdx': _run_wayback_cdx,
-    'wayback_sitemap': _run_wayback_sitemap,
-    'commoncrawl_cdx': _run_commoncrawl_cdx,
-    'feed_pivots': _run_feed_pivots,
-    'ct_pivots': _run_ct_pivots,
-    'circl_pdns': _run_circl_pdns,
-    'tvnews': _run_tvnews,
+    "ddg_mojeek": _run_ddg_mojeek,
+    "historical_frontier": _run_historical_frontier,
+    "wayback_cdx": _run_wayback_cdx,
+    "wayback_sitemap": _run_wayback_sitemap,
+    "commoncrawl_cdx": _run_commoncrawl_cdx,
+    "feed_pivots": _run_feed_pivots,
+    "ct_pivots": _run_ct_pivots,
+    "circl_pdns": _run_circl_pdns,
+    "tvnews": _run_tvnews,
 }
 
+
 def _timeout_result(provider: str, timeout_s: float) -> DiscoveryBatchResult:
-    return DiscoveryBatchResult(hits=(), error=f'{provider}_timeout', error_type='timeout', provider_name=provider, provider_chain=(provider,), source_family=None, elapsed_s=timeout_s)
+    return DiscoveryBatchResult(
+        hits=(),
+        error=f"{provider}_timeout",
+        error_type="timeout",
+        provider_name=provider,
+        provider_chain=(provider,),
+        source_family=None,
+        elapsed_s=timeout_s,
+    )
+
 
 class DiscoveryPlanner:
     """
@@ -229,9 +341,27 @@ class DiscoveryPlanner:
 
     Deterministic when seeded. Stateless (reads from registry only).
     """
-    __slots__ = tuple(('_cost_multiplier', '_exploration_prob', '_include_stub_providers', '_max_providers', '_min_reliability', '_registry', '_rng'))
 
-    def __init__(self, registry: ProviderStatsRegistry | None=None, seed: int | None=None, exploration_prob: float=_EXPLORATION_PROB, min_reliability: float=_MIN_RELIABILITY, max_providers: int=_MAX_PROVIDERS_PER_CALL, cost_multiplier: float=_COST_MULTIPLIER, include_stub_providers: bool=False) -> None:
+    __slots__ = (
+        "_cost_multiplier",
+        "_exploration_prob",
+        "_include_stub_providers",
+        "_max_providers",
+        "_min_reliability",
+        "_registry",
+        "_rng",
+    )
+
+    def __init__(
+        self,
+        registry: ProviderStatsRegistry | None = None,
+        seed: int | None = None,
+        exploration_prob: float = _EXPLORATION_PROB,
+        min_reliability: float = _MIN_RELIABILITY,
+        max_providers: int = _MAX_PROVIDERS_PER_CALL,
+        cost_multiplier: float = _COST_MULTIPLIER,
+        include_stub_providers: bool = False,
+    ) -> None:
         self._registry = registry or get_provider_stats_registry()
         self._rng = random.Random(seed)
         self._exploration_prob = exploration_prob
@@ -240,23 +370,27 @@ class DiscoveryPlanner:
         self._cost_multiplier = cost_multiplier
         self._include_stub_providers = include_stub_providers
 
-    def _determine_provider_state(self, name: str, pipeline_context_available: bool) -> tuple[ProviderCapabilityState, str]:
+    def _determine_provider_state(
+        self, name: str, pipeline_context_available: bool
+    ) -> tuple[ProviderCapabilityState, str]:
         """Determine provider capability state and reason."""
         cap = PROVIDER_CAPABILITIES.get(name, {})
-        is_stub = cap.get('is_stub', False)
-        requires_context = cap.get('requires_context', False)
-        production_enabled = cap.get('production_enabled', False)
+        is_stub = cap.get("is_stub", False)
+        requires_context = cap.get("requires_context", False)
+        production_enabled = cap.get("production_enabled", False)
         if is_stub and not requires_context:
-            return ProviderCapabilityState.ADVISORY_STUB, 'advisory_stub_no_real_endpoint'
+            return ProviderCapabilityState.ADVISORY_STUB, "advisory_stub_no_real_endpoint"
         if requires_context:
             if pipeline_context_available:
-                return ProviderCapabilityState.PRODUCTION, 'production_wired_pipeline_context_available'
-            return ProviderCapabilityState.NOT_WIRED, 'pipeline_context_not_available'
+                return ProviderCapabilityState.PRODUCTION, "production_wired_pipeline_context_available"
+            return ProviderCapabilityState.NOT_WIRED, "pipeline_context_not_available"
         if not production_enabled:
             return ProviderCapabilityState.DISABLED, f"disabled_reason={cap.get('disabled_reason', 'unknown')}"
-        return ProviderCapabilityState.PRODUCTION, 'production_wired'
+        return ProviderCapabilityState.PRODUCTION, "production_wired"
 
-    def _filter_providers(self, pipeline_context_available: bool) -> list[tuple[float, str, float, ProviderCapabilityState, str]]:
+    def _filter_providers(
+        self, pipeline_context_available: bool
+    ) -> list[tuple[float, str, float, ProviderCapabilityState, str]]:
         """Filter and score all providers, returning eligible ones."""
         scored = []
         for stats in (self._registry.get(name) for name in PROVIDER_NAMES):
@@ -265,9 +399,14 @@ class DiscoveryPlanner:
             state, reason = self._determine_provider_state(stats.name, pipeline_context_available)
             if not stats.is_healthy:
                 continue
-            if state == ProviderCapabilityState.NOT_WIRED and not (self._include_stub_providers and pipeline_context_available):
+            if state == ProviderCapabilityState.NOT_WIRED and not (
+                self._include_stub_providers and pipeline_context_available
+            ):
                 continue
-            if state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED) and not self._include_stub_providers:
+            if (
+                state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED)
+                and not self._include_stub_providers
+            ):
                 continue
             if state in (ProviderCapabilityState.ADVISORY_STUB, ProviderCapabilityState.DISABLED):
                 reason = f"advisory_stub_included_reason={PROVIDER_CAPABILITIES.get(stats.name, {}).get('disabled_reason', 'unknown')}"
@@ -278,7 +417,13 @@ class DiscoveryPlanner:
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored
 
-    def plan(self, query: str, remaining_time_budget_s: float, target_results: int=20, pipeline_context_available: bool=False) -> DiscoveryPlan:
+    def plan(
+        self,
+        query: str,
+        remaining_time_budget_s: float,
+        target_results: int = 20,
+        pipeline_context_available: bool = False,
+    ) -> DiscoveryPlan:
         """Build a DiscoveryPlan for the given query and remaining budget."""
         remaining_ms = remaining_time_budget_s * 1000.0
         plans: list[ProviderPlan] = []
@@ -288,26 +433,68 @@ class DiscoveryPlanner:
         budget_limit = remaining_ms * 0.85
         for score, name, est_cost, state, reason in scored:
             if len(plans) >= self._max_providers:
-                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason='max_providers_reached'))
+                debug.append(
+                    ProviderStatusDebug(provider=name, state=state, selected=False, reason="max_providers_reached")
+                )
                 continue
             if estimated_total_ms + est_cost > budget_limit:
-                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'budget_exceeded_remaining={remaining_ms - estimated_total_ms:.0f}ms'))
+                debug.append(
+                    ProviderStatusDebug(
+                        provider=name,
+                        state=state,
+                        selected=False,
+                        reason=f"budget_exceeded_remaining={remaining_ms - estimated_total_ms:.0f}ms",
+                    )
+                )
                 continue
             if self._rng.random() < self._exploration_prob and len(scored) > 2:
-                debug.append(ProviderStatusDebug(provider=name, state=state, selected=False, reason=f'exploration_skipped_original_score={score:.4f}'))
+                debug.append(
+                    ProviderStatusDebug(
+                        provider=name,
+                        state=state,
+                        selected=False,
+                        reason=f"exploration_skipped_original_score={score:.4f}",
+                    )
+                )
                 mid = len(scored) // 2
                 pick_idx = self._rng.randint(mid, len(scored) - 1)
                 _, picked_name, picked_est_cost, picked_state, _ = scored[pick_idx]
                 if estimated_total_ms + picked_est_cost <= budget_limit:
-                    plans.append(ProviderPlan(provider=picked_name, max_results=max(5, min(target_results, 50)), timeout_s=max(1.0, min(picked_est_cost / 1000.0 * 0.9, 30.0)), estimated_cost_ms=picked_est_cost))
+                    plans.append(
+                        ProviderPlan(
+                            provider=picked_name,
+                            max_results=max(5, min(target_results, 50)),
+                            timeout_s=max(1.0, min(picked_est_cost / 1000.0 * 0.9, 30.0)),
+                            estimated_cost_ms=picked_est_cost,
+                        )
+                    )
                     estimated_total_ms += picked_est_cost
-                    debug.append(ProviderStatusDebug(provider=picked_name, state=picked_state, selected=True, reason=f'exploration_selected_score={scored[pick_idx][0]:.4f}'))
+                    debug.append(
+                        ProviderStatusDebug(
+                            provider=picked_name,
+                            state=picked_state,
+                            selected=True,
+                            reason=f"exploration_selected_score={scored[pick_idx][0]:.4f}",
+                        )
+                    )
                 continue
             timeout_s = max(1.0, min(est_cost / 1000.0 * 0.9, 30.0))
-            plans.append(ProviderPlan(provider=name, max_results=max(5, min(target_results, 50)), timeout_s=timeout_s, estimated_cost_ms=est_cost))
+            plans.append(
+                ProviderPlan(
+                    provider=name,
+                    max_results=max(5, min(target_results, 50)),
+                    timeout_s=timeout_s,
+                    estimated_cost_ms=est_cost,
+                )
+            )
             estimated_total_ms += est_cost
             debug.append(ProviderStatusDebug(provider=name, state=state, selected=True, reason=reason))
-        return DiscoveryPlan(plans=plans, estimated_total_ms=estimated_total_ms, remaining_budget_ms=remaining_ms - estimated_total_ms, provider_status_debug=debug)
+        return DiscoveryPlan(
+            plans=plans,
+            estimated_total_ms=estimated_total_ms,
+            remaining_budget_ms=remaining_ms - estimated_total_ms,
+            provider_status_debug=debug,
+        )
 
     async def execute(self, query: str, plan: DiscoveryPlan) -> list[DiscoveryBatchResult]:
         """
@@ -322,30 +509,44 @@ class DiscoveryPlanner:
             runner = _RUNNERS.get(p.provider)
             if runner is None:
                 continue
-            if p.provider == 'commoncrawl_cdx':
+            if p.provider == "commoncrawl_cdx":
                 task = runner(query, p.max_results, p.timeout_s, include_stub=self._include_stub_providers)
             else:
                 task = runner(query, p.max_results, p.timeout_s)
             tasks.append((p.provider, task))
         results: list[DiscoveryBatchResult] = []
-        _build = await parallel([t[1] for t in tasks], concurrency=4, policy="collect", ctx='discovery_planner:617')
+        _build = await parallel([t[1] for t in tasks], concurrency=4, policy="collect", ctx="discovery_planner:617")
         ok_results = _build.ok
-        assert len(ok_results) == len(tasks), f'parallel result count mismatch: got {len(ok_results)}, expected {len(tasks)}'
+        assert len(ok_results) == len(tasks), (
+            f"parallel result count mismatch: got {len(ok_results)}, expected {len(tasks)}"
+        )
         for (provider, _), result in zip(tasks, ok_results, strict=True):
-            if hasattr(result, 'hits') and hasattr(result, 'elapsed_s'):
+            if hasattr(result, "hits") and hasattr(result, "elapsed_s"):
                 unique_hosts = len({hit.url for hit in result.hits})
-                self._registry.record_success(provider, latency_ms=(result.elapsed_s or 0) * 1000, hits=result.hits, unique_hosts=unique_hosts)
+                self._registry.record_success(
+                    provider, latency_ms=(result.elapsed_s or 0) * 1000, hits=result.hits, unique_hosts=unique_hosts
+                )
                 results.append(result)
             elif isinstance(result, asyncio.TimeoutError):
                 self._registry.record_timeout(provider)
                 results.append(_timeout_result(provider, 30.0))
             else:
                 exc = result if isinstance(result, BaseException) else None
-                self._registry.record_failure(provider, error_type=type(exc).__name__ if exc else 'unknown')
-                results.append(DiscoveryBatchResult(hits=(), error=f'{provider}_exception', error_type='provider_exception', provider_name=provider, provider_chain=(provider,), source_family=None, elapsed_s=0.0))
+                self._registry.record_failure(provider, error_type=type(exc).__name__ if exc else "unknown")
+                results.append(
+                    DiscoveryBatchResult(
+                        hits=(),
+                        error=f"{provider}_exception",
+                        error_type="provider_exception",
+                        provider_name=provider,
+                        provider_chain=(provider,),
+                        source_family=None,
+                        elapsed_s=0.0,
+                    )
+                )
         return results
 
-    async def search(self, query: str, remaining_time_budget_s: float, target_results: int=20) -> DiscoveryPlan:
+    async def search(self, query: str, remaining_time_budget_s: float, target_results: int = 20) -> DiscoveryPlan:
         """
         Plan and execute in one call. Returns the plan (with estimated costs)
         and results are written to registry.
@@ -354,7 +555,9 @@ class DiscoveryPlanner:
         await self.execute(query, plan)
         return plan
 
-    async def multi_search(self, queries: list[str], remaining_time_budget_s: float=30.0, target_results: int=20) -> list[DiscoveryPlan]:
+    async def multi_search(
+        self, queries: list[str], remaining_time_budget_s: float = 30.0, target_results: int = 20
+    ) -> list[DiscoveryPlan]:
         """
         Plan and execute discovery for multiple queries in parallel.
 
@@ -382,21 +585,31 @@ class DiscoveryPlanner:
             plan = self.plan(q, remaining_time_budget_s, target_results)
             await self.execute(q, plan)
             return plan
+
         plans: list[DiscoveryPlan] = []
-        _build = await parallel([_plan_and_execute(q) for q in queries], concurrency=5, policy="collect", ctx='discovery_planner:multi_search')
+        _build = await parallel(
+            [_plan_and_execute(q) for q in queries],
+            concurrency=5,
+            policy="collect",
+            ctx="discovery_planner:multi_search",
+        )
         ok_results = _build.ok
         for r in ok_results:
             if isinstance(r, DiscoveryPlan):
                 plans.append(r)
         return plans
+
+
 _default_planner: DiscoveryPlanner | None = None
 
-def get_discovery_planner(registry: ProviderStatsRegistry | None=None, seed: int | None=None) -> DiscoveryPlanner:
+
+def get_discovery_planner(registry: ProviderStatsRegistry | None = None, seed: int | None = None) -> DiscoveryPlanner:
     """Get the default planner instance."""
     global _default_planner
     if _default_planner is None:
         _default_planner = DiscoveryPlanner(registry=registry, seed=seed)
     return _default_planner
+
 
 def reset_discovery_planner() -> None:
     """Reset the global planner (for testing)."""

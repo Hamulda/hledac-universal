@@ -3,29 +3,16 @@ DeepHermes3Engine — LLM-based decision making with ChatML formatting.
 
 DeepHermes 3 3B 4bit with deep thinking support is the default primary reasoning model.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 Supports ChatML formatting, AI-driven query analysis, and research synthesis.
 
 NOTE (Sprint 8VH): brain/inference_engine.py is functionally distinct:
   - inference_engine: abductive reasoning, evidence chaining, entity resolution, inference rules
   - deephermes3_engine: LLM-based decision making, ChatML, structured generation
 """
+
 from __future__ import annotations
+
 import asyncio
-import atexit
 import concurrent.futures
 import gc
 import hashlib
@@ -35,43 +22,56 @@ import os
 import threading
 import time
 import weakref
-from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
-from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
+
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.sync_bridge import stream_via_queue
+from hledac.universal.brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor, BatchStats
+from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
+from hledac.universal.brain._hermes_cache import hermes_cache
+from hledac.universal.brain._unified_cache import UnifiedCacheManager
+from hledac.universal.brain.model_state import ModelLoadState, ModelState, get_state_observer
+from hledac.universal.compat.pydantic_compat import (
+    get_model_fields as _get_model_fields,
+)
+from hledac.universal.compat.pydantic_compat import (
+    get_schema as _pydantic_get_schema,
+)
+from hledac.universal.compat.pydantic_compat import (
+    is_msgspec_struct,
+    is_pydantic_model,
+)
+from hledac.universal.compat.pydantic_compat import (
+    model_construct as _pydantic_construct,
+)
 
 # ROADMAP-006: Pydantic v2 compatibility layer
 from hledac.universal.compat.pydantic_compat import (
     model_validate as _pydantic_validate,
-    model_validate_json as _pydantic_validate_json,
-    model_construct as _pydantic_construct,
-    get_schema as _pydantic_get_schema,
-    get_model_fields as _get_model_fields,
-    is_pydantic_model,
-    is_msgspec_struct,
 )
+from hledac.universal.compat.pydantic_compat import (
+    model_validate_json as _pydantic_validate_json,
+)
+from hledac.universal.utils.asyncx import safe_wait_for
+from hledac.universal.utils.cache import PyCacheDict
 
 # MODERN-35 Fix: Import CPU affinity utilities for MLX Metal operations
 from hledac.universal.utils.cpu_affinity import (
-    set_mlx_affinity,
     is_apple_silicon,
-    )
-from hledac.universal.utils.cache import PyCacheDict
-from hledac.universal.utils.lru_cache import LRUCache, SlidingWindowKVCache
-from hledac.universal.brain._unified_cache import UnifiedCacheManager
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
+    set_mlx_affinity,
+)
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
-from hledac.universal.brain._hermes_cache import hermes_cache
-from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
-from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem, BatchStats
-from hledac.universal.brain.model_state import ModelState, ModelLoadState, get_state_observer
-_otel_primary = lazy('otel.instrumented')
-_otel_fallback = lazy('hledac.universal.telemetry.instrumented')
+from hledac.universal.utils.lru_cache import LRUCache, SlidingWindowKVCache
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode_fast as _msgspec_encode_fast
+
+_otel_primary = lazy("otel.instrumented")
+_otel_fallback = lazy("hledac.universal.telemetry.instrumented")
+
 
 def _otel_resolver() -> Any:
     """Resolve otel.instrumented with chained fallback."""
@@ -79,34 +79,38 @@ def _otel_resolver() -> Any:
     if result is not None:
         return result
     return _otel_fallback()
+
+
 _otel_instrumented = _otel_resolver()
-T = TypeVar('T')
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     # Forward references for type checking only (avoid circular/havy runtime imports)
-    from hledac.universal.brain.prompt_bandit import PromptBandit
     from mlx_lm import Model as MLXModel
     from mlx_lm import TokenizerWrapper as MLXTokenizer
+
+    from hledac.universal._core.mlx_unified_scheduler import MLXUnifiedScheduler
+    from hledac.universal.brain._inference.generate import GenerationFacade
+    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
     from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
     from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
-    from hledac.universal._core.mlx_unified_scheduler import MLXUnifiedScheduler
-    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
-    from hledac.universal.brain._inference.generate import GenerationFacade
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # Hermes3 (4bit): rss_mb=2000, peak_mb=2200 (model weights + KV cache)
 # Hermes3 is the heaviest single capability — always CRITICAL tier.
 from hledac.universal._core.capability_cost import register_capability_cost
+
 register_capability_cost("deephermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
 register_capability_cost("hermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
 
 # R3: Hermes executor pools via centralized R1 resource pool (lazy import)
-_get_hermes_prep_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_prep_executor')
-_get_hermes_post_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_post_executor')
-_get_hermes_inference_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_inference_executor')
-_get_hermes_compile_exec = lazy_callable('hledac.universal._core.resource_pool.get_hermes_compile_executor')
+_get_hermes_prep_exec = lazy_callable("hledac.universal._core.resource_pool.get_hermes_prep_executor")
+_get_hermes_post_exec = lazy_callable("hledac.universal._core.resource_pool.get_hermes_post_executor")
+_get_hermes_inference_exec = lazy_callable("hledac.universal._core.resource_pool.get_hermes_inference_executor")
+_get_hermes_compile_exec = lazy_callable("hledac.universal._core.resource_pool.get_hermes_compile_executor")
 _xxh3_func: Callable[[str], str] | None = None
 _xxh3_func_batch: Callable[..., list[str]] | None = None
+
 
 def _get_xxh3_hex(data: str) -> str:
     """Return 16-char xxh3-64 hex fingerprint via Rust backend."""
@@ -114,6 +118,7 @@ def _get_xxh3_hex(data: str) -> str:
     if _xxh3_func is None:
         try:
             from hledac.universal._core.rust_backend import rust
+
             _xxh3_func = rust.hash.ContentHasher.xxh3_64_hex
         except Exception:
             return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
@@ -121,6 +126,7 @@ def _get_xxh3_hex(data: str) -> str:
         return _xxh3_func(data.encode())
     except Exception:
         return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
+
 
 def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
     """
@@ -132,6 +138,7 @@ def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
     if _xxh3_func_batch is None:
         try:
             from hledac.universal._core.rust_backend import rust
+
             _xxh3_func_batch = rust.hash.batch_xxh3_64_hex
         except Exception:
             _xxh3_func_batch = None
@@ -155,19 +162,20 @@ class PriorityQueueAdapter:
         self._config = BatchConfig(
             max_size=engine._batch_max_size,
             default_flush_interval=engine._batch_default_flush_interval,
-    )
+        )
         self._batch_processor = BatchProcessor(self._config)
 
     async def submit(self, item: BatchItem) -> asyncio.Future:
         """Submit BatchItem to engine's PriorityQueue (converted to 4-tuple)."""
         import itertools
+
         tie = next(itertools.count())
         schema_key = item.response_model.__name__ if item.response_model else "None"
         payload = {
-            'type': 'structured',
-            'prompt': item.prompt,
-            'response_model': item.response_model,
-            'future': item.future,
+            "type": "structured",
+            "prompt": item.prompt,
+            "response_model": item.response_model,
+            "future": item.future,
         }
         await self._engine._batch_queue.put((item.priority, tie, schema_key, payload))
         return item.future
@@ -182,9 +190,10 @@ class PriorityQueueAdapter:
         return self._batch_processor.get_stats()
 
 
-WARMUP_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'warmup'
+WARMUP_CACHE_DIR = Path.home() / ".hledac" / "cache" / "warmup"
 
-def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None=None) -> Path:
+
+def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None = None) -> Path:
     """Compute cache file path from system_prompt fingerprint (xxhash-xxh3_64, first 16 chars).
 
     P2-1: Uses xxhash-xxh3_64 instead of MLX float operations for stable hashing
@@ -194,12 +203,13 @@ def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None=No
     if few_shot_examples:
         for ex in few_shot_examples[:3]:
             parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-    canonical = '\n'.join(parts)
+    canonical = "\n".join(parts)
     prompt_hash = _get_xxh3_hex(canonical)
     WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return WARMUP_CACHE_DIR / f'warmup_{prompt_hash}.safetensors'
+    return WARMUP_CACHE_DIR / f"warmup_{prompt_hash}.safetensors"
 
-async def warmup_or_skip(engine: DeepHermes3Engine, system_prompt: str, few_shot_examples: list | None=None) -> bool:
+
+async def warmup_or_skip(engine: DeepHermes3Engine, system_prompt: str, few_shot_examples: list | None = None) -> bool:
     """Skip warmup if unexpired cache exists for this prompt fingerprint.
 
     P2-1: Returns True if cache hit (warmup skipped), False if cache miss
@@ -210,10 +220,10 @@ async def warmup_or_skip(engine: DeepHermes3Engine, system_prompt: str, few_shot
     cache_path = _get_warmup_cache_path(system_prompt, few_shot_examples)
     if not cache_path.exists():
         return False
-    expected_hash = cache_path.stem.removeprefix('warmup_')
+    expected_hash = cache_path.stem.removeprefix("warmup_")
     try:
         if await engine._restore_warmup_cache(cache_path, expected_hash):
-            logger.info(f'[WARMUP] Cache hit: {cache_path.name} (hash={expected_hash[:8]})')
+            logger.info(f"[WARMUP] Cache hit: {cache_path.name} (hash={expected_hash[:8]})")
             return True
     except Exception:  # noqa: BLE001
         pass
@@ -222,25 +232,40 @@ async def warmup_or_skip(engine: DeepHermes3Engine, system_prompt: str, few_shot
     except Exception:  # noqa: BLE001
         pass
     return False
-_fallback_sanitize_resolver = lazy('..security.pii_gate.fallback_sanitize')
 
-def fallback_sanitize(text: str, max_length: int=8192) -> str:
+
+_fallback_sanitize_resolver = lazy("..security.pii_gate.fallback_sanitize")
+
+
+def fallback_sanitize(text: str, max_length: int = 8192) -> str:
     """Standalone stub when security.pii_gate unavailable."""
     resolver = _fallback_sanitize_resolver()
     if resolver is not None:
         return resolver(text, max_length)
-    return text[:max_length] if text else ''
-is_emergency_unload_requested = lazy('..model_lifecycle.is_emergency_unload_requested')
-sanitize_prompt_injection_patterns = lazy('.prompt_injection_validator.sanitize_prompt_injection_patterns')
-sanitize_for_llm = lazy('.prompt_injection_validator.sanitize_for_llm')
+    return text[:max_length] if text else ""
+
+
+is_emergency_unload_requested = lazy("..model_lifecycle.is_emergency_unload_requested")
+sanitize_prompt_injection_patterns = lazy(".prompt_injection_validator.sanitize_prompt_injection_patterns")
+sanitize_for_llm = lazy(".prompt_injection_validator.sanitize_for_llm")
 import re as _re_pi
 
-_mx_resolver = lazy('mlx.core')
+_mx_resolver = lazy("mlx.core")
 MLX_AVAILABLE = _mx_resolver() is not None
 mx = _mx_resolver() if MLX_AVAILABLE else None
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024
-from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for, parallel
-_INJECTION_PATTERNS: list = [_re_pi.compile('ignore\\s+(?:all\\s+)?previous\\s+(?:instructions?|commands?)', _re_pi.I), _re_pi.compile('(?:system|prompt)\\s*:\\s*you\\s+are\\s+(?:now\\s+)?a', _re_pi.I), _re_pi.compile('#{3,}\\s*system\\s*[:\\s]', _re_pi.I), _re_pi.compile('<\\|system\\|>', _re_pi.I), _re_pi.compile('\\bROLE\\s*:\\s*(?:admin|root|superuser)', _re_pi.I), _re_pi.compile('(?:jailbreak|DAN|do\\s+anything\\s+now)', _re_pi.I), _re_pi.compile('```\\s*system', _re_pi.I)]
+from hledac.universal.utils.asyncx import parallel
+
+_INJECTION_PATTERNS: list = [
+    _re_pi.compile("ignore\\s+(?:all\\s+)?previous\\s+(?:instructions?|commands?)", _re_pi.I),
+    _re_pi.compile("(?:system|prompt)\\s*:\\s*you\\s+are\\s+(?:now\\s+)?a", _re_pi.I),
+    _re_pi.compile("#{3,}\\s*system\\s*[:\\s]", _re_pi.I),
+    _re_pi.compile("<\\|system\\|>", _re_pi.I),
+    _re_pi.compile("\\bROLE\\s*:\\s*(?:admin|root|superuser)", _re_pi.I),
+    _re_pi.compile("(?:jailbreak|DAN|do\\s+anything\\s+now)", _re_pi.I),
+    _re_pi.compile("```\\s*system", _re_pi.I),
+]
+
 
 def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
     """GAP-5: Detect prompt injection patterns in user-controlled input.
@@ -252,25 +277,28 @@ def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
         return (bool(matched), matched)
     except Exception:
         return (False, [])
-check_model_allowed = lazy_callable('hledac.universal.brain.model_inference_guard.check_model_allowed')
-classify_failure_kind = lazy('hledac.universal.brain.model_inference_guard.classify_failure_kind')
-record_model_failure = lazy('hledac.universal.brain.model_inference_guard.record_model_failure')
-record_model_success = lazy('hledac.universal.brain.model_inference_guard.record_model_success')
-_lane_priority_resolver = lazy('hledac.universal._core.mlx_unified_scheduler.LanePriority')
-_get_thermal_generation_params = lazy('hledac.universal.brain.adaptive_context_policy.get_thermal_generation_params')
+
+
+check_model_allowed = lazy_callable("hledac.universal.brain.model_inference_guard.check_model_allowed")
+classify_failure_kind = lazy("hledac.universal.brain.model_inference_guard.classify_failure_kind")
+record_model_failure = lazy("hledac.universal.brain.model_inference_guard.record_model_failure")
+record_model_success = lazy("hledac.universal.brain.model_inference_guard.record_model_success")
+_lane_priority_resolver = lazy("hledac.universal._core.mlx_unified_scheduler.LanePriority")
+_get_thermal_generation_params = lazy("hledac.universal.brain.adaptive_context_policy.get_thermal_generation_params")
 logger = logging.getLogger(__name__)
-_outlines_resolver = lazy('outlines')
+_outlines_resolver = lazy("outlines")
 _outlines_module = _outlines_resolver()
 OUTLINES_AVAILABLE = _outlines_module is not None
 if OUTLINES_AVAILABLE:
-    _outlines_Generator = getattr(_outlines_module, 'Generator', None)
+    _outlines_Generator = getattr(_outlines_module, "Generator", None)
     if _outlines_Generator is None:
         OUTLINES_AVAILABLE = False
-        logger.warning('outlines not installed — grammar-constrained decoding disabled')
+        logger.warning("outlines not installed — grammar-constrained decoding disabled")
 else:
-    logger.warning('outlines not installed — grammar-constrained decoding disabled')
+    logger.warning("outlines not installed — grammar-constrained decoding disabled")
 KV_CACHE_AVAILABLE = False
 _hermes = hermes_cache()
+
 
 def _maybe_evict_hermes_cache(reason: str) -> bool:
     """
@@ -287,12 +315,15 @@ def _maybe_evict_hermes_cache(reason: str) -> bool:
         return False
     result = cache._evict_model_internal()
     if result is not None:
-        logger.debug(f'[HERMES] LRU eviction ({reason}): {result}')
+        logger.debug(f"[HERMES] LRU eviction ({reason}): {result}")
         return True
     return False
+
+
 HERMES_TIMEOUT_DEFAULT_S = 60.0
 HERMES_TIMEOUT_MIN_S = 1.0
 HERMES_TIMEOUT_MAX_S = 300.0
+
 
 def _get_hermes_timeout_s() -> float:
     """
@@ -303,30 +334,35 @@ def _get_hermes_timeout_s() -> float:
         Falls back to HERMES_TIMEOUT_DEFAULT_S on invalid/missing env.
     """
     try:
-        raw = float(os.environ.get('HLEDAC_HERMES_TIMEOUT_S', HERMES_TIMEOUT_DEFAULT_S))
+        raw = float(os.environ.get("HLEDAC_HERMES_TIMEOUT_S", HERMES_TIMEOUT_DEFAULT_S))
         if raw <= 0:
             return HERMES_TIMEOUT_DEFAULT_S
         return max(HERMES_TIMEOUT_MIN_S, min(raw, HERMES_TIMEOUT_MAX_S))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return HERMES_TIMEOUT_DEFAULT_S
+
+
 _DSPY_AVAILABLE = False
 try:
     import dspy
+
     from .dspy_signatures import DarkQuerySignature, HypothesisSignature, is_dspy_available
+
     _DSPY_AVAILABLE = is_dspy_available()
 except ImportError:
     DarkQuerySignature = None
     HypothesisSignature = None
     _DSPY_AVAILABLE = False
-HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '0') == '1' and _DSPY_AVAILABLE
+HLEDAC_ENABLE_DSPY = os.environ.get("HLEDAC_ENABLE_DSPY", "0") == "1" and _DSPY_AVAILABLE
 
 # SWARM-010: Use FeatureFlags for MLX prewarm
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
-from _core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _MLX_PREWARM_ENABLED = FeatureFlags.get(FeatureFlag.MLX_PREWARM)
 _MLX_PREWARM_LAST_UNLOAD_TIME: float | None = None
 _MLX_PREWARM_SKIP_THRESHOLD_S = 60.0
 _mlx_prewarm_active: bool = False
+
 
 def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
     """
@@ -341,30 +377,37 @@ def _safe_mlx_eval_and_clear_cache(reason: str) -> dict:
     Returns:
         dict with keys: cleared (bool), reason (str), error (str or None)
     """
-    result = {'cleared': False, 'reason': reason, 'error': None}
+    result = {"cleared": False, "reason": reason, "error": None}
     try:
-        import mlx.core as _mx
         import gc
+
+        import mlx.core as _mx
+
         gc.collect()
         try:
             _mx.eval([])
         except Exception as _e:
-            result['error'] = f'eval_failed:{_e}'
+            result["error"] = f"eval_failed:{_e}"
         try:
-            if hasattr(_mx, 'clear_cache'):
+            if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
-                result['cleared'] = True
+                result["cleared"] = True
         except Exception as _e:
-            result['error'] = f"{result['error']};clear_cache_failed:{_e}" if result['error'] else f'clear_cache_failed:{_e}'
+            result["error"] = (
+                f"{result['error']};clear_cache_failed:{_e}" if result["error"] else f"clear_cache_failed:{_e}"
+            )
         gc.collect()
     except Exception as _e:
-        result['error'] = f'import_failed:{_e}'
+        result["error"] = f"import_failed:{_e}"
     return result
+
+
 try:
     from ..utils.mlx_cache import MLX_AVAILABLE as _MLX_AVAILABLE_GLOBAL
 except ImportError:
     try:
         import mlx.core as mx
+
         _MLX_AVAILABLE_GLOBAL = True
     except ImportError:
         _MLX_AVAILABLE_GLOBAL = False
@@ -378,25 +421,32 @@ M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024
 STREAM_BUFFER_SIZE = 32
 STREAM_MIN_BUFFER = 8
 
+
 class DeepHermesConfig(Struct):
     """Konfigurace pro DeepHermes-3"""
-    model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
+
+    model_path: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
     temperature: float = 0.3
     max_tokens: int = 2048
     context_window: int = 8192
     max_parallel_prefill: int = 1
 
+
 class _DecisionOutput(Struct, frozen=True):
     """Decision output for research agent — GC-free msgspec.Struct."""
+
     action: str
     reasoning: str
     params: dict[str, str] = msgspec.field(default_factory=dict)
     complete: bool = False
 
+
 class _SynthesisOutput(Struct, frozen=True):
     """Synthesis output — GC-free msgspec.Struct."""
+
     report: str
     confidence: float = 0.0
+
 
 def _verify_metal_cache_warm() -> bool:
     """
@@ -407,6 +457,7 @@ def _verify_metal_cache_warm() -> bool:
     """
     try:
         import mlx.core as _mx
+
         try:
             _mx.eval([])
         except Exception:
@@ -414,6 +465,7 @@ def _verify_metal_cache_warm() -> bool:
         return _mx.get_active_memory() > 500 * 1024 * 1024
     except Exception:
         return False
+
 
 def parse_thinking_output(response: str) -> dict[str, str]:
     """
@@ -427,14 +479,15 @@ def parse_thinking_output(response: str) -> dict[str, str]:
         - thinking: content between <think> and </think> (stripped), empty if not present
         - answer: remaining text after <think>...</think> block (stripped)
     """
-    match = _re_pi.search('<think>(.*?)</think>', response, _re_pi.DOTALL)
+    match = _re_pi.search("<think>(.*?)</think>", response, _re_pi.DOTALL)
     if match:
         thinking = match.group(1).strip()
-        answer = response[match.end():].strip()
+        answer = response[match.end() :].strip()
     else:
-        thinking = ''
+        thinking = ""
         answer = response.strip()
-    return {'thinking': thinking, 'answer': answer}
+    return {"thinking": thinking, "answer": answer}
+
 
 class DeepHermes3Engine:
     """
@@ -447,12 +500,102 @@ class DeepHermes3Engine:
         {user_message}<|im_end|>
         <|im_start|>assistant
     """
+
     # Duplicate __slots__ removed - see line 367
-    _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
+    _DEEP_THINKING_PREFIX = "You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem."
 
-    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_cache_manager', '_closed', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_draft_tokenizer', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_executors_shared', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_pipeline', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_triage_mode', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    __slots__ = (
+        "_active_iteration_count",
+        "_age_bump_interval",
+        "_batch_default_flush_interval",
+        "_batch_flush_interval",
+        "_batch_high_pressure_depth",
+        "_batch_max_size",
+        "_batch_medium_pressure_depth",
+        "_batch_queue",
+        "_batch_tie_breaker",
+        "_batch_worker_shutting_down",
+        "_batch_worker_task",
+        "_cache_manager",
+        "_closed",
+        "_compile_executor",
+        "_compile_in_progress",
+        "_draft_model_name",
+        "_draft_tokenizer",
+        "_generation_since_clear",
+        "_draft_model_obj",
+        "_ema_alpha",
+        "_executors_shared",
+        "_flush_cycle_count",
+        "_force_kv_quantize",
+        "_generation_facade",
+        "_idle_unload_timeout_s",
+        "_inference_executor",
+        "_inference_semaphore",
+        "_inference_active",
+        "_key_locks",
+        "_kv_bits",
+        "_kv_cache_enabled",
+        "_kv_cache_mgr",
+        "_batch_adapter",
+        "_kv_cache_pool",
+        "_kv_cache_pool_maxsize",
+        "_kv_cache_pool_memory_mb",
+        "_kv_cache_pool_stats",
+        "_lazy_ops_eval_count",
+        "_kv_cache_stats",
+        "_last_age_bump",
+        "_last_bandit_arm",
+        "_last_clear_at",
+        "_last_inference_at",
+        "_lora_adapter_path",
+        "_lora_cache_stats",
+        "_max_kv_size",
+        "_metal_device",
+        "_mlx_batcher",
+        "_mlx_scheduler",
+        "_mlx_worker_thread",
+        "_model",
+        "_model_breaker",
+        "_model_ever_loaded",
+        "_num_draft_tokens",
+        "_outlines_generators",
+        "_outlines_model",
+        "_paged_kv_cache",
+        "_paged_kv_keep",
+        "_pending_futures",
+        "_pipeline",
+        "_post_executor",
+        "_prep_executor",
+        "_prefix_cache",
+        "_prefix_cache_maxsize",
+        "_prefix_cache_stats",
+        "_prompt_bandit",
+        "_prompt_cache",
+        "_sanitize_for_llm",
+        "_session_cache_maxsize",
+        "_session_cache_memory_mb",
+        "_session_cache_pool",
+        "_session_cache_stats",
+        "_speculative_enabled",
+        "_state_observer",
+        "_stream_cancelled",
+        "_supports_draft",
+        "_supports_kv_quant",
+        "_supports_stream_generate",
+        "_system_prompt",
+        "_system_prompt_cache",
+        "_system_prompt_hash",
+        "_telemetry_counters",
+        "_telemetry_ema",
+        "_triage_mode",
+        "_tokenizer",
+        "_warmup_cache",
+        "_warmup_prompt_hash",
+        "config",
+    )
 
-    def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
+    def __init__(self, model_path: str | None = None, sanitize_for_llm: Callable[[str], str] | None = None) -> None:
         """
         Initialize DeepHermes3Engine.
 
@@ -469,16 +612,16 @@ class DeepHermes3Engine:
         self._kv_cache_enabled = False
         self._prompt_cache = None
         self._max_kv_size = 8192
-        self._kv_bits = int(os.getenv('GHOST_KV_BITS', '4'))
-        self._paged_kv_cache = os.getenv('HLEDAC_PAGED_KV_CACHE', '0') == '1'
+        self._kv_bits = int(os.getenv("GHOST_KV_BITS", "4"))
+        self._paged_kv_cache = os.getenv("HLEDAC_PAGED_KV_CACHE", "0") == "1"
         # Paged KV keep: support both new HLEDAC_PAGED_KV_KEEP_TOKENS and legacy HLEDAC_PAGED_KV_KEEP
-        _raw_keep = os.getenv('HLEDAC_PAGED_KV_KEEP_TOKENS', '') or os.getenv('HLEDAC_PAGED_KV_KEEP', '')
+        _raw_keep = os.getenv("HLEDAC_PAGED_KV_KEEP_TOKENS", "") or os.getenv("HLEDAC_PAGED_KV_KEEP", "")
         self._paged_kv_keep: int
         try:
             self._paged_kv_keep = max(0, int(_raw_keep)) if _raw_keep.strip() else 64
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._paged_kv_keep = 64
-        self._force_kv_quantize = os.getenv('HLEDAC_KV_QUANTIZE', '0') == '1'
+        self._force_kv_quantize = os.getenv("HLEDAC_KV_QUANTIZE", "0") == "1"
         self._outlines_model = None
         self._outlines_generators = {}
         self._draft_model_obj = None
@@ -490,24 +633,24 @@ class DeepHermes3Engine:
         self._supports_draft = False
         self._triage_mode = False
         self._supports_kv_quant = False
-        self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
+        self._kv_cache_stats = {"cache_uses": 0, "cache_prefills": 1, "quantized_count": 0, "parallel_prefills": 0}
         self._system_prompt_cache = None
         self._last_inference_at: float | None = None
         self._generation_since_clear: int = 0  # L-04: throttle mx.clear_cache()
         self._last_clear_at: float | None = None
         self._model_ever_loaded: bool = False
-        self._system_prompt = 'You are a helpful research assistant.'
-        _raw_max_kv = os.environ.get('HLEDAC_KV_CACHE_POOL_MAXSIZE', '')
+        self._system_prompt = "You are a helpful research assistant."
+        _raw_max_kv = os.environ.get("HLEDAC_KV_CACHE_POOL_MAXSIZE", "")
         try:
             _kv_max = int(_raw_max_kv) if _raw_max_kv.strip() else None
             self._kv_cache_pool_maxsize: int = max(1, _kv_max) if _kv_max is not None else 4
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._kv_cache_pool_maxsize: int = 4
-        _raw_mem = os.environ.get('HLEDAC_KV_CACHE_POOL_MEMORY_MB', '')
+        _raw_mem = os.environ.get("HLEDAC_KV_CACHE_POOL_MEMORY_MB", "")
         try:
             _mem_mb = int(_raw_mem) if _raw_mem.strip() else None
             self._kv_cache_pool_memory_mb: int = max(32, _mem_mb) if _mem_mb is not None else 256
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._kv_cache_pool_memory_mb: int = 256
         self._kv_cache_pool: SlidingWindowKVCache[str, tuple[Any, float, int]] = SlidingWindowKVCache(
             max_size=self._kv_cache_pool_maxsize,
@@ -515,32 +658,53 @@ class DeepHermes3Engine:
             decay_base=0.85,
             token_interval_s=5.0,
             thread_safe=False,
-    )
-        self._kv_cache_pool_stats = {'pool_maxsize': self._kv_cache_pool_maxsize, 'pool_memory_mb': self._kv_cache_pool_memory_mb, 'pool_hits': 0, 'pool_misses': 0, 'pool_evictions': 0, 'pool_evictions_memory': 0}
+        )
+        self._kv_cache_pool_stats = {
+            "pool_maxsize": self._kv_cache_pool_maxsize,
+            "pool_memory_mb": self._kv_cache_pool_memory_mb,
+            "pool_hits": 0,
+            "pool_misses": 0,
+            "pool_evictions": 0,
+            "pool_evictions_memory": 0,
+        }
         self._key_locks: PyCacheDict[str, threading.Lock] = PyCacheDict(1024, 300.0)
-        _raw_session_mem = os.getenv('HLEDAC_SESSION_CACHE_MEMORY_MB', '')
+        _raw_session_mem = os.getenv("HLEDAC_SESSION_CACHE_MEMORY_MB", "")
         try:
             _session_mem_mb = int(_raw_session_mem) if _raw_session_mem.strip() else None
             self._session_cache_memory_mb: int = max(32, _session_mem_mb) if _session_mem_mb is not None else 128
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._session_cache_memory_mb: int = 128
-        _raw_session_max = os.getenv('HLEDAC_SESSION_CACHE_MAXSIZE', '')
+        _raw_session_max = os.getenv("HLEDAC_SESSION_CACHE_MAXSIZE", "")
         try:
             _session_max = int(_raw_session_max) if _raw_session_max.strip() else None
             self._session_cache_maxsize: int = max(1, _session_max) if _session_max is not None else 8
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._session_cache_maxsize: int = 8
-        self._session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = LRUCache(max_size=self._session_cache_maxsize)
-        self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
-        _raw_max = os.environ.get('HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE', '')
+        self._session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = LRUCache(
+            max_size=self._session_cache_maxsize
+        )
+        self._session_cache_stats = {
+            "session_cache_hits": 0,
+            "session_cache_misses": 0,
+            "session_cache_evictions": 0,
+            "session_cache_memory_mb": self._session_cache_memory_mb,
+            "session_cache_maxsize": self._session_cache_maxsize,
+        }
+        _raw_max = os.environ.get("HLEDAC_HERMES_PREFIX_CACHE_MAXSIZE", "")
         try:
             _max = int(_raw_max) if _raw_max.strip() else None
             self._prefix_cache_maxsize: int = max(1, _max) if _max is not None else 64
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             self._prefix_cache_maxsize: int = 64
         self._prefix_cache: LRUCache[str, Any] = LRUCache(max_size=self._prefix_cache_maxsize)
-        self._idle_unload_timeout_s: float = float(os.getenv('HLEDAC_IDLE_UNLOAD_TIMEOUT_S', '1800.0'))
-        self._prefix_cache_stats = {'prefix_cache_maxsize': self._prefix_cache_maxsize, 'prefix_cache_size': 0, 'prefix_cache_evictions': 0, 'prefix_cache_hits': 0, 'prefix_cache_misses': 0}
+        self._idle_unload_timeout_s: float = float(os.getenv("HLEDAC_IDLE_UNLOAD_TIMEOUT_S", "1800.0"))
+        self._prefix_cache_stats = {
+            "prefix_cache_maxsize": self._prefix_cache_maxsize,
+            "prefix_cache_size": 0,
+            "prefix_cache_evictions": 0,
+            "prefix_cache_hits": 0,
+            "prefix_cache_misses": 0,
+        }
         # ROADMAP-001: UnifiedCacheManager - single lifecycle owner for all caches
         # Wraps existing cache objects to provide unified cleanup interface
         self._cache_manager: UnifiedCacheManager = UnifiedCacheManager(
@@ -581,21 +745,20 @@ class DeepHermes3Engine:
             # instead of creating raw, unmanaged ThreadPoolExecutor instances.
             # These pools are shared across all engine instances and centrally
             # shut down by domain_executors.shutdown_all().
-            logger.debug(
-                '[R5] R1 pool unavailable, falling back to domain_executors '
-                '(Issue 2 fix)'
-    )
+            logger.debug("[R5] R1 pool unavailable, falling back to domain_executors (Issue 2 fix)")
             from hledac.universal.utils.domain_executors import (
-                get_hermes_prep_fallback_executor,
-                get_hermes_post_fallback_executor,
                 get_hermes_inference_fallback_executor,
-    )
+                get_hermes_post_fallback_executor,
+                get_hermes_prep_fallback_executor,
+            )
+
             self._inference_executor = get_hermes_inference_fallback_executor()
             self._prep_executor = get_hermes_prep_fallback_executor()
             self._post_executor = get_hermes_post_fallback_executor()
             _executors_shared = True
         self._executors_shared = _executors_shared
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         self._inference_semaphore = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
         self._mlx_batcher: Any = None
         self._mlx_worker_thread: Any = None
@@ -603,7 +766,12 @@ class DeepHermes3Engine:
         self._compile_in_progress: bool = False
         self._compile_executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._lora_adapter_path: str | None = None
-        self._lora_cache_stats = {'lora_cache_hits': 0, 'lora_cache_misses': 0, 'lora_cache_evictions': 0, 'lora_applications': 0}
+        self._lora_cache_stats = {
+            "lora_cache_hits": 0,
+            "lora_cache_misses": 0,
+            "lora_cache_evictions": 0,
+            "lora_applications": 0,
+        }
         self._active_iteration_count: int = 0
         self._stream_cancelled: asyncio.Event = asyncio.Event()
         self._batch_queue = None
@@ -615,8 +783,31 @@ class DeepHermes3Engine:
         self._batch_flush_interval = self._batch_default_flush_interval
         self._batch_medium_pressure_depth = 64
         self._batch_high_pressure_depth = 192
-        self._telemetry_ema = {'enqueue_to_dispatch_ms': 0.0, 'dispatch_to_result_ms': 0.0, 'batch_size': 0, 'queue_depth': 0}
-        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_fallback_single': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'batch_shattered': 0, 'prompt_mismatch_flushes': 0, 'emergency_guard_triggered': 0, 'emergency_batch_rejected': 0, 'emergency_single_rejected': 0, 'emergency_pending_failed': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'metal_pressure_fast_flush': 0, 'cache_invalidation_count': 0, 'batch_worker_timeout_unload': 0}
+        self._telemetry_ema = {
+            "enqueue_to_dispatch_ms": 0.0,
+            "dispatch_to_result_ms": 0.0,
+            "batch_size": 0,
+            "queue_depth": 0,
+        }
+        self._telemetry_counters = {
+            "batch_submitted": 0,
+            "batch_executed": 0,
+            "batch_fallback_single": 0,
+            "schema_mismatch_flushes": 0,
+            "length_bin_mismatch_flushes": 0,
+            "batch_shattered": 0,
+            "prompt_mismatch_flushes": 0,
+            "emergency_guard_triggered": 0,
+            "emergency_batch_rejected": 0,
+            "emergency_single_rejected": 0,
+            "emergency_pending_failed": 0,
+            "adaptive_flush_default_entries": 0,
+            "adaptive_flush_medium_entries": 0,
+            "adaptive_flush_fast_entries": 0,
+            "metal_pressure_fast_flush": 0,
+            "cache_invalidation_count": 0,
+            "batch_worker_timeout_unload": 0,
+        }
         self._pending_futures = set()
         self._ema_alpha = 0.3
         self._flush_cycle_count = 0
@@ -627,12 +818,13 @@ class DeepHermes3Engine:
         self._batch_worker_shutting_down = False
         # F350M-R: Wire MetalDevice for M1 8GB GPU memory tracking
         # NOTE: Inline Metal memory tracking (mx.metal.get_active_memory) replaced by delegation
-        _metal_cls = lazy('brain._metal.metal_device.MetalDevice')
+        _metal_cls = lazy("brain._metal.metal_device.MetalDevice")
         self._metal_device: Any = _metal_cls() if _metal_cls else None
         self._model_breaker: ModelCircuitBreaker | None = None
         try:
             from hledac.universal.transport.circuit_breaker import ModelCircuitBreaker
-            self._model_breaker = ModelCircuitBreaker(model_id='hermes')
+
+            self._model_breaker = ModelCircuitBreaker(model_id="hermes")
         except Exception:  # noqa: BLE001
             pass
         self._prompt_bandit = None
@@ -642,7 +834,9 @@ class DeepHermes3Engine:
         self._inference_active = False
         self._closed = False
         # R3: Register with atexit for emergency executor cleanup (GC safety net)
-        weakref.finalize(self, self._cleanup_executors_sync, self._inference_executor, self._prep_executor, self._post_executor)
+        weakref.finalize(
+            self, self._cleanup_executors_sync, self._inference_executor, self._prep_executor, self._post_executor
+        )
 
     def _notify_state(self, load_state: ModelLoadState | None = None) -> None:
         """
@@ -659,14 +853,14 @@ class DeepHermes3Engine:
                 idle_seconds = 0.0
 
         batch_depth = 0
-        if hasattr(self, '_batch_queue') and self._batch_queue is not None:
+        if hasattr(self, "_batch_queue") and self._batch_queue is not None:
             try:
                 batch_depth = self._batch_queue.qsize()
             except Exception:  # noqa: BLE001
                 pass
 
         pending = 0
-        if hasattr(self, '_pending_futures') and self._pending_futures:
+        if hasattr(self, "_pending_futures") and self._pending_futures:
             try:
                 pending = len(self._pending_futures)
             except Exception:  # noqa: BLE001
@@ -692,7 +886,7 @@ class DeepHermes3Engine:
             batch_queue_depth=batch_depth,
             pending_futures=pending,
             inference_active=self._inference_active,
-    )
+        )
         self._state_observer.notify(state)
 
     def _get_prompt_bandit(self):
@@ -700,16 +894,20 @@ class DeepHermes3Engine:
         if self._prompt_bandit is None:
             try:
                 from hledac.universal.brain.prompt_bandit import PromptBandit
-                self._prompt_bandit = PromptBandit(lambda_reg=0.01, persist_path=str(Path.home() / '.hledac' / 'hermes_prompt_bandit.json'))
-                logger.debug('PromptBandit initialized for Hermes3Engine')
+
+                self._prompt_bandit = PromptBandit(
+                    lambda_reg=0.01, persist_path=str(Path.home() / ".hledac" / "hermes_prompt_bandit.json")
+                )
+                logger.debug("PromptBandit initialized for Hermes3Engine")
             except ImportError:
                 self._prompt_bandit = None
-                logger.debug('PromptBandit not available')
+                logger.debug("PromptBandit not available")
         return self._prompt_bandit
 
     def init_model_breaker(self, model_id: str) -> None:
         """GAP-3/1: Initialize per-model circuit breaker."""
         from hledac.universal.transport.circuit_breaker import ModelCircuitBreaker
+
         self._model_breaker = ModelCircuitBreaker(model_id=model_id)
 
     @property
@@ -733,13 +931,14 @@ class DeepHermes3Engine:
         if self._batch_worker_task is None:
             self._batch_queue = asyncio.PriorityQueue(maxsize=256)
             import itertools
+
             self._batch_tie_breaker = itertools.count()
             self._pending_futures = set()
             self._batch_worker_shutting_down = False
             self._batch_worker_task = safe_create_task(self._batch_worker())
-            logger.debug('Batch worker started')
+            logger.debug("Batch worker started")
 
-    async def _shutdown_batch_worker(self, timeout: float=3.0) -> None:
+    async def _shutdown_batch_worker(self, timeout: float = 3.0) -> None:
         """
         Sprint 7K: Bounded batch worker shutdown — max 3.0s, fail-pending-futures.
 
@@ -754,8 +953,8 @@ class DeepHermes3Engine:
             return
         for fut in list(self._pending_futures):
             if not fut.done():
-                fut.set_exception(RuntimeError('emergency_unload_requested'))
-                self._telemetry_counters['emergency_pending_failed'] += 1
+                fut.set_exception(RuntimeError("emergency_unload_requested"))
+                self._telemetry_counters["emergency_pending_failed"] += 1
         self._pending_futures.clear()
         self._batch_worker_shutting_down = True
         self._batch_worker_task.cancel()
@@ -773,15 +972,17 @@ class DeepHermes3Engine:
             # We detach it so the caller can proceed without leaking the reference.
             self._batch_worker_task = None
             self._batch_queue = None
-            self._telemetry_counters['batch_worker_timeout_unload'] += 1
-            logger.warning('[A5-05] Batch worker did not cancel within %.1fs — MLX ops still running, detaching', timeout)
+            self._telemetry_counters["batch_worker_timeout_unload"] += 1
+            logger.warning(
+                "[A5-05] Batch worker did not cancel within %.1fs — MLX ops still running, detaching", timeout
+            )
         except asyncio.CancelledError:
             self._batch_worker_task = None
             self._batch_queue = None
             raise
         self._batch_worker_task = None
         self._batch_queue = None
-        logger.debug('Batch worker shutdown complete (Sprint 7K)')
+        logger.debug("Batch worker shutdown complete (Sprint 7K)")
 
     @property
     def batch_processor(self) -> PriorityQueueAdapter:
@@ -793,7 +994,15 @@ class DeepHermes3Engine:
             self._batch_adapter = PriorityQueueAdapter(self)
         return self._batch_adapter
 
-    async def _submit_structured_batch(self, prompt: str, response_model: type[T], priority: float=1.0, temperature: float=0.1, max_tokens: int=1024, system_msg: str | None=None) -> asyncio.Future[T]:
+    async def _submit_structured_batch(
+        self,
+        prompt: str,
+        response_model: type[T],
+        priority: float = 1.0,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        system_msg: str | None = None,
+    ) -> asyncio.Future[T]:
         """
         Sprint 7E: Submit a structured output request to the batch queue.
 
@@ -811,20 +1020,29 @@ class DeepHermes3Engine:
             Future that resolves to the structured result
         """
         if is_emergency_unload_requested is not None and is_emergency_unload_requested():
-            self._telemetry_counters['emergency_batch_rejected'] += 1
-            raise RuntimeError('emergency_unload_requested')
+            self._telemetry_counters["emergency_batch_rejected"] += 1
+            raise RuntimeError("emergency_unload_requested")
         import itertools
+
         await self._ensure_batch_worker()
         schema_key = response_model.__name__
-        payload: dict = {'type': 'structured', 'prompt': prompt, 'response_model': response_model, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'future': None}
+        payload: dict = {
+            "type": "structured",
+            "prompt": prompt,
+            "response_model": response_model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "system_msg": system_msg,
+            "future": None,
+        }
         future = asyncio.Future()
-        payload['future'] = future
+        payload["future"] = future
         if len(self._pending_futures) >= MAX_PENDING_FUTURES:
             done_futures = [f for f in self._pending_futures if f.done()]
             if done_futures:
                 self._pending_futures.discard(done_futures[0])
             else:
-                raise RuntimeError('pending_futures overflow')
+                raise RuntimeError("pending_futures overflow")
         self._pending_futures.add(future)
 
         def _safe_discard(f: asyncio.Future) -> None:
@@ -832,19 +1050,23 @@ class DeepHermes3Engine:
                 self._pending_futures.discard(f)
             except Exception:  # noqa: BLE001
                 pass
+
         future.add_done_callback(_safe_discard)
-        if not hasattr(self.__class__, '_batch_tie_breaker'):
+        if not hasattr(self.__class__, "_batch_tie_breaker"):
             self.__class__._batch_tie_breaker = itertools.count()
         tie = next(self._batch_tie_breaker)
         future._enqueue_ns = time.monotonic_ns()  # type: ignore[attr-defined]
         assert isinstance(self._batch_queue, asyncio.PriorityQueue)
         await self._batch_queue.put((priority, tie, schema_key, payload))
-        self._telemetry_ema['enqueue_to_dispatch_ms'] = self._ema_alpha * 0.0 + (1 - self._ema_alpha) * self._telemetry_ema.get('enqueue_to_dispatch_ms', 0.0)
+        self._telemetry_ema["enqueue_to_dispatch_ms"] = self._ema_alpha * 0.0 + (
+            1 - self._ema_alpha
+        ) * self._telemetry_ema.get("enqueue_to_dispatch_ms", 0.0)
         return future
 
     async def _batch_worker(self) -> None:
         """Background worker that processes batches with schema-awareness + prompt/length segregation."""
         import itertools
+
         itertools.count()
         while True:
             # A5-05 FIX: Cooperative cancellation checkpoint.
@@ -857,8 +1079,8 @@ class DeepHermes3Engine:
                 break
             if self._should_emergency_shutdown():
                 break
-            if getattr(self, '_batch_worker_shutting_down', False):
-                self._cancel_all_pending_futures('engine_unloaded')
+            if getattr(self, "_batch_worker_shutting_down", False):
+                self._cancel_all_pending_futures("engine_unloaded")
                 break
             try:
                 items, current_schema_key, current_prompt_hash, current_length_bin = await self._collect_batch()
@@ -868,22 +1090,24 @@ class DeepHermes3Engine:
                 if self._flush_cycle_count - self._last_age_bump >= self._age_bump_interval:
                     self._last_age_bump = self._flush_cycle_count
                     await self._age_bump_queue()
-                self._telemetry_ema['queue_depth'] = self._batch_queue.qsize()
+                self._telemetry_ema["queue_depth"] = self._batch_queue.qsize()
                 t0 = time.monotonic()
                 await self._process_batch(items)
                 dispatch_ms = (time.monotonic() - t0) * 1000
-                self._telemetry_ema['batch_size'] = len(items)
-                self._telemetry_ema['dispatch_to_result_ms'] = self._ema_alpha * dispatch_ms + (1 - self._ema_alpha) * self._telemetry_ema['dispatch_to_result_ms']
+                self._telemetry_ema["batch_size"] = len(items)
+                self._telemetry_ema["dispatch_to_result_ms"] = (
+                    self._ema_alpha * dispatch_ms + (1 - self._ema_alpha) * self._telemetry_ema["dispatch_to_result_ms"]
+                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f'Batch worker error: {e}')
+                logger.warning(f"Batch worker error: {e}")
 
     def _should_emergency_shutdown(self) -> bool:
         """Check if batch worker should emergency shutdown."""
         if is_emergency_unload_requested is not None and is_emergency_unload_requested():
-            self._cancel_all_pending_futures('emergency_unload_requested')
-            self._telemetry_counters['emergency_pending_failed'] += len(self._pending_futures)
+            self._cancel_all_pending_futures("emergency_unload_requested")
+            self._telemetry_counters["emergency_pending_failed"] += len(self._pending_futures)
             self._pending_futures.clear()
             return True
         return False
@@ -906,10 +1130,14 @@ class DeepHermes3Engine:
         pressure_tier = "normal"
         if queue_depth > self._batch_high_pressure_depth:
             pressure_tier = "critical"
-            self._telemetry_counters['backpressure_critical_cycles'] = self._telemetry_counters.get('backpressure_critical_cycles', 0) + 1
+            self._telemetry_counters["backpressure_critical_cycles"] = (
+                self._telemetry_counters.get("backpressure_critical_cycles", 0) + 1
+            )
         elif queue_depth > self._batch_medium_pressure_depth:
             pressure_tier = "high"
-            self._telemetry_counters['backpressure_high_cycles'] = self._telemetry_counters.get('backpressure_high_cycles', 0) + 1
+            self._telemetry_counters["backpressure_high_cycles"] = (
+                self._telemetry_counters.get("backpressure_high_cycles", 0) + 1
+            )
 
         try:
             async with asyncio.timeout(flush_interval):
@@ -923,14 +1151,16 @@ class DeepHermes3Engine:
         if pressure_tier == "critical" and first_priority > 5:
             # Critical pressure: defer low-priority items (priority > 5)
             await self._batch_queue.put(first_item)
-            self._telemetry_counters['backpressure_deferred_low_priority'] = self._telemetry_counters.get('backpressure_deferred_low_priority', 0) + 1
+            self._telemetry_counters["backpressure_deferred_low_priority"] = (
+                self._telemetry_counters.get("backpressure_deferred_low_priority", 0) + 1
+            )
             return [], None, None, None
 
         current_schema_key = first_item[2]
         items = [first_item]
         first_payload = first_item[3]
-        first_prompt = first_payload.get('prompt', '')
-        first_system_msg = first_payload.get('system_msg')
+        first_prompt = first_payload.get("prompt", "")
+        first_system_msg = first_payload.get("system_msg")
         current_prompt_hash = self._compute_system_prompt_hash(first_system_msg)
         current_length_bin = self._compute_length_bin(first_prompt)
         while len(items) < self._batch_max_size:
@@ -940,27 +1170,29 @@ class DeepHermes3Engine:
                 item_priority = item[0]
                 item_schema = item[2]
                 item_payload = item[3]
-                item_prompt = item_payload.get('prompt', '')
-                item_system_msg = item_payload.get('system_msg')
+                item_prompt = item_payload.get("prompt", "")
+                item_system_msg = item_payload.get("system_msg")
                 item_prompt_hash = self._compute_system_prompt_hash(item_system_msg)
                 item_length_bin = self._compute_length_bin(item_prompt)
 
                 # G2: Backpressure — skip low-priority items under high/critical pressure
                 if pressure_tier in ("high", "critical") and item_priority > 5:
-                    self._telemetry_counters['backpressure_skipped_low_priority'] = self._telemetry_counters.get('backpressure_skipped_low_priority', 0) + 1
+                    self._telemetry_counters["backpressure_skipped_low_priority"] = (
+                        self._telemetry_counters.get("backpressure_skipped_low_priority", 0) + 1
+                    )
                     continue  # Skip this item, don't add to batch
 
                 if item_schema != current_schema_key:
                     await self._batch_queue.put(item)
-                    self._telemetry_counters['schema_mismatch_flushes'] += 1
+                    self._telemetry_counters["schema_mismatch_flushes"] += 1
                     break
                 if item_prompt_hash != current_prompt_hash:
                     await self._batch_queue.put(item)
-                    self._telemetry_counters['prompt_mismatch_flushes'] += 1
+                    self._telemetry_counters["prompt_mismatch_flushes"] += 1
                     break
                 if item_length_bin != current_length_bin:
                     await self._batch_queue.put(item)
-                    self._telemetry_counters['length_bin_mismatch_flushes'] += 1
+                    self._telemetry_counters["length_bin_mismatch_flushes"] += 1
                     break
                 items.append(item)
             except TimeoutError:
@@ -975,14 +1207,14 @@ class DeepHermes3Engine:
             metal_pressure: Current Metal cache pressure (0.0-1.0), used for F-10 tracking
         """
         if flush_interval >= 1.9:
-            self._telemetry_counters['adaptive_flush_default_entries'] += 1
+            self._telemetry_counters["adaptive_flush_default_entries"] += 1
         elif flush_interval >= 0.9:
-            self._telemetry_counters['adaptive_flush_medium_entries'] += 1
+            self._telemetry_counters["adaptive_flush_medium_entries"] += 1
         else:
-            self._telemetry_counters['adaptive_flush_fast_entries'] += 1
+            self._telemetry_counters["adaptive_flush_fast_entries"] += 1
         # F-10: Track metal-pressure-triggered fast flushes
         if flush_interval <= 0.5 and metal_pressure > 0.80:
-            self._telemetry_counters['metal_pressure_fast_flush'] += 1
+            self._telemetry_counters["metal_pressure_fast_flush"] += 1
 
     def _current_flush_interval(self) -> float:
         """Sprint 7I: Adaptive flush interval — 3-tier policy based on queue depth.
@@ -1021,9 +1253,10 @@ class DeepHermes3Engine:
         """
         try:
             import mlx.core as mx
+
             cache_memory = mx.get_cache_memory()
             info = mx.device_info()
-            max_working_set = info.get('max_recommended_working_set_size', 0)
+            max_working_set = info.get("max_recommended_working_set_size", 0)
             if max_working_set > 0:
                 return min(cache_memory / max_working_set, 1.0)
         except Exception:  # noqa: BLE001
@@ -1059,15 +1292,15 @@ class DeepHermes3Engine:
         """Sprint 7G: Length binning — short/medium/long to prevent padding waste."""
         tokens_est = len(prompt) // 4
         if tokens_est < 256:
-            return 'short'
+            return "short"
         elif tokens_est < 1024:
-            return 'medium'
-        return 'long'
+            return "medium"
+        return "long"
 
     def _compute_system_prompt_hash(self, system_msg: str | None) -> str:
         """Sprint 7G: Hash of system prompt for segregation."""
         if not system_msg:
-            return 'default'
+            return "default"
         return hashlib.md5(system_msg.encode(), usedforsecurity=False).hexdigest()[:8]
 
     async def _age_bump_queue(self) -> None:
@@ -1108,17 +1341,17 @@ class DeepHermes3Engine:
             except asyncio.CancelledError:
                 return
             try:
-                if group[0][0].get('type') == 'structured':
+                if group[0][0].get("type") == "structured":
                     await self._process_structured_batch(group)
-                elif group[0][0].get('type') == 'generate':
+                elif group[0][0].get("type") == "generate":
                     for payload, _ in group:
-                        future = payload.get('future')
+                        future = payload.get("future")
                         if future and (not future.done()):
-                            future.set_result({'processed': True})
+                            future.set_result({"processed": True})
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.debug(f'Batch process error for schema {schema_key}: {e}')
+                logger.debug(f"Batch process error for schema {schema_key}: {e}")
 
     async def _process_structured_batch(self, items: list) -> None:
         """
@@ -1134,21 +1367,23 @@ class DeepHermes3Engine:
         I/O wait (async dispatch) with GPU computation.
         """
         tasks = [self._run_structured_single(payload) for payload, _ in items]
-        _batch_result = await parallel(tasks, policy="log", ctx='deephermes3:structured_batch')
+        _batch_result = await parallel(tasks, policy="log", ctx="deephermes3:structured_batch")
         results = _batch_result.ok
-        has_exception = any((isinstance(r, Exception) for r in results))
+        has_exception = any(isinstance(r, Exception) for r in results)
         if has_exception:
-            self._telemetry_counters['batch_shattered'] += 1
-            logger.debug(f'[STRUCTURED] Batch shattered: {sum((1 for r in results if isinstance(r, Exception)))} exceptions')
+            self._telemetry_counters["batch_shattered"] += 1
+            logger.debug(
+                f"[STRUCTURED] Batch shattered: {sum(1 for r in results if isinstance(r, Exception))} exceptions"
+            )
         for payload, result in zip([p for p, _ in items], results, strict=False):
-            future = payload.get('future')
+            future = payload.get("future")
             if future and (not future.done()):
                 future._resolve_ns = time.monotonic_ns()
                 if isinstance(result, Exception):
                     future.set_exception(result)
                 else:
                     future.set_result(result)
-        self._telemetry_counters['batch_executed'] += 1
+        self._telemetry_counters["batch_executed"] += 1
 
     async def _execute_structured_batch(self, items: list) -> list:
         """
@@ -1174,15 +1409,15 @@ class DeepHermes3Engine:
         Each stage overlaps with GPU execution — when prompt N is being
         generated, prompt N+1 is being prepped and prompt N-1 is being parsed.
         """
-        prompt = payload.get('prompt')
-        response_model = payload.get('response_model')
-        temperature = payload.get('temperature', 0.1)
-        max_tokens = payload.get('max_tokens', 1024)
-        system_msg = payload.get('system_msg')
+        prompt = payload.get("prompt")
+        response_model = payload.get("response_model")
+        temperature = payload.get("temperature", 0.1)
+        max_tokens = payload.get("max_tokens", 1024)
+        system_msg = payload.get("system_msg")
 
         # Stage 1: CPU prep — parallel across prompts (prep pool, 3 workers)
         loop = asyncio.get_running_loop()
-        system = system_msg or 'You are a helpful assistant.'
+        system = system_msg or "You are a helpful assistant."
 
         def _sync_prep() -> tuple[str, str]:
             """Stage 1: CPU prep — returns (formatted_prompt, raw_sanitized).
@@ -1198,23 +1433,36 @@ class DeepHermes3Engine:
             try:
                 validation_result = sanitize_prompt_injection_patterns(raw_sanitized)
                 if validation_result.suspicious:
-                    _high_risk = any(p in validation_result.patterns for p in (
-                        'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                        'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                        'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                        'structural_repeated_delimiters', 'structural_html_comment',
-                    ))
+                    _high_risk = any(
+                        p in validation_result.patterns
+                        for p in (
+                            "ignore_previous_instructions",
+                            "disregard_instructions",
+                            "forget_instructions",
+                            "system_prompt_injection",
+                            "developer_message_injection",
+                            "you_are_chatgpt",
+                            "you_are_an_ai",
+                            "as_an_ai",
+                            "jailbreak",
+                            "dan",
+                            "structural_repeated_delimiters",
+                            "structural_html_comment",
+                        )
+                    )
                     if _high_risk:
                         # Block high-risk injection: do NOT let it through even sanitized
                         logger.warning(
-                            f'[LLM-01-BLOCK] High-risk prompt injection in structured output: {validation_result.patterns}')
+                            f"[LLM-01-BLOCK] High-risk prompt injection in structured output: {validation_result.patterns}"
+                        )
                         raise RuntimeError(
-                            f'[LLM-01] Structured prompt injection REJECTED: {validation_result.patterns[:3]}')
+                            f"[LLM-01] Structured prompt injection REJECTED: {validation_result.patterns[:3]}"
+                        )
                     logger.warning(
                         "[PROMPT-INJECTION] Detected patterns in structured prompt: %s. Reason: %s",
                         validation_result.patterns,
                         validation_result.reason,
-    )
+                    )
                     sanitized = validation_result.safe_text
                 else:
                     sanitized = validation_result.safe_text
@@ -1222,8 +1470,8 @@ class DeepHermes3Engine:
                 raise
             except Exception:
                 # LLM-01 fail-safe: reject on any internal error
-                logger.error('[LLM-01] Structured prompt injection validation failed internally')
-                raise RuntimeError('[LLM-01] Structured prompt injection validation internal error')
+                logger.error("[LLM-01] Structured prompt injection validation failed internally")
+                raise RuntimeError("[LLM-01] Structured prompt injection validation internal error")
 
             sanitized = sanitized[:MAX_LLM_PROMPT_CHARS]
             formatted = self._format_chatml(system_msg=system, user_msg=sanitized)
@@ -1254,18 +1502,22 @@ class DeepHermes3Engine:
                 formatted_prompt = self._format_chatml(system_msg=system, user_msg=_truncated_sanitized)
                 batch_prompt_tokens = self._tokenizer.encode(formatted_prompt)
                 logger.warning(
-                    '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
-                    _prompt_len, len(batch_prompt_tokens), self.config.context_window, max_tokens
-    )
+                    "[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)",
+                    _prompt_len,
+                    len(batch_prompt_tokens),
+                    self.config.context_window,
+                    max_tokens,
+                )
 
         timeout_s = _get_hermes_timeout_s()
         # M-01: _run_inference returns (response, kv_cache_after); discard cache here
         raw_text, _ = await self._submit_inference(
             timeout_s, self._run_inference, formatted_prompt, temperature, max_tokens, None, None, batch_prompt_tokens
-    )
+        )
 
         # Stage 3: CPU post — parallel across prompts (post pool, 2 workers)
         import re as _re
+
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
 
         def _parse_structured() -> tuple[Any, str | None]:
@@ -1274,9 +1526,9 @@ class DeepHermes3Engine:
             F-04: On parse failure, extracts msgspec.DecodeError details and returns
             them as error_detail so the caller can re-prompt with correction context.
             """
-            match = _re.search(r'\{.*\}', raw_text, _re.DOTALL)
+            match = _re.search(r"\{.*\}", raw_text, _re.DOTALL)
             if not match:
-                return None, f'No JSON object found in output: {raw_text[:200]}'
+                return None, f"No JSON object found in output: {raw_text[:200]}"
             try:
                 data = _msgspec_decode(match.group())
                 return _pydantic_validate(schema_cls, data), None
@@ -1298,9 +1550,10 @@ class DeepHermes3Engine:
                 raw_text=raw_text,
                 parse_error=parse_error,
                 max_correction_rounds=2,
-    )
+            )
         return parse_result
-    async def flush_all(self, timeout: float=5.0) -> int:
+
+    async def flush_all(self, timeout: float = 5.0) -> int:
         """
         Drain all pending items from the batch queue.
 
@@ -1326,10 +1579,6 @@ class DeepHermes3Engine:
             await self._process_batch(items)
         return drained
 
-    # ------------------------------------------------------------------
-    # F-04: Self-correction retry on structured parse failure
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _extract_parse_error(exc: Exception, raw_text: str, schema_cls: type) -> str:
         """Extract structured error details from msgspec decode failure.
@@ -1345,19 +1594,19 @@ class DeepHermes3Engine:
         Returns:
             Error detail string for correction prompt.
         """
-        error_parts = [f'Parse error: {exc!r}']
+        error_parts = [f"Parse error: {exc!r}"]
         # Try to extract field-level details from msgspec.ValidationError
-        if hasattr(exc, 'msgspec_struct'):
-            struct_info = getattr(exc, 'msgspec_struct', None)
+        if hasattr(exc, "msgspec_struct"):
+            struct_info = getattr(exc, "msgspec_struct", None)
             if struct_info:
-                error_parts.append(f'Structure: {struct_info}')
-        if hasattr(exc, 'msgspec_fields'):
-            fields = getattr(exc, 'msgspec_fields', [])
+                error_parts.append(f"Structure: {struct_info}")
+        if hasattr(exc, "msgspec_fields"):
+            fields = getattr(exc, "msgspec_fields", [])
             if fields:
-                error_parts.append(f'Fields with issues: {fields}')
+                error_parts.append(f"Fields with issues: {fields}")
         # Include a snippet of the problematic output
-        snippet = raw_text[:300] if raw_text else '(empty)'
-        error_parts.append(f'LLM output snippet: {snippet}')
+        snippet = raw_text[:300] if raw_text else "(empty)"
+        error_parts.append(f"LLM output snippet: {snippet}")
         # Add schema field names to guide correction
         # ROADMAP-006: Use unified compat layer for field extraction
         try:
@@ -1365,8 +1614,8 @@ class DeepHermes3Engine:
         except Exception:  # noqa: BLE001
             field_names = []
         if field_names:
-            error_parts.append(f'Expected fields: {field_names}')
-        return ' | '.join(error_parts)
+            error_parts.append(f"Expected fields: {field_names}")
+        return " | ".join(error_parts)
 
     async def _structured_with_correction(
         self,
@@ -1402,19 +1651,19 @@ class DeepHermes3Engine:
         import re as _re
 
         for round_num in range(1, max_correction_rounds + 1):
-            logger.debug(f'[F-04] Correction round {round_num}/{max_correction_rounds}: {parse_error[:200]}')
+            logger.debug(f"[F-04] Correction round {round_num}/{max_correction_rounds}: {parse_error[:200]}")
 
             # Build correction prompt with error context
             # ROADMAP-006: Use unified compat layer for schema extraction
             schema_str = _pydantic_get_schema(response_model)
 
             correction_prompt = (
-                f'{prompt}\n\n'
-                f'PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n'
-                f'Please regenerate your response. Output ONLY valid JSON matching this schema:\n'
-                f'{schema_str}\n\n'
-                f'Do not include any explanation, only the JSON object.'
-    )
+                f"{prompt}\n\n"
+                f"PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n"
+                f"Please regenerate your response. Output ONLY valid JSON matching this schema:\n"
+                f"{schema_str}\n\n"
+                f"Do not include any explanation, only the JSON object."
+            )
 
             try:
                 text = await self.generate(
@@ -1422,17 +1671,17 @@ class DeepHermes3Engine:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_msg=system,
-    )
+                )
             except Exception as e:
                 # F-04 fix: don't break — continue to next correction round
                 # Preserve previous parse_error to give LLM context for next attempt
-                logger.debug(f'[F-04] Correction round {round_num} generation failed: {e}, trying next round')
+                logger.debug(f"[F-04] Correction round {round_num} generation failed: {e}, trying next round")
                 continue
 
             # Attempt to parse the corrected output
-            match = _re.search(r'\{.*\}', text, _re.DOTALL)
+            match = _re.search(r"\{.*\}", text, _re.DOTALL)
             if not match:
-                parse_error = f'No JSON object found in output: {text[:200]}'
+                parse_error = f"No JSON object found in output: {text[:200]}"
                 continue
 
             try:
@@ -1445,7 +1694,7 @@ class DeepHermes3Engine:
 
         # All correction rounds exhausted — fall back to default
         # ROADMAP-006: Use unified compat layer for construction
-        logger.warning(f'[F-04] All correction rounds exhausted, using fallback for {schema_cls.__name__}')
+        logger.warning(f"[F-04] All correction rounds exhausted, using fallback for {schema_cls.__name__}")
         return _pydantic_construct(schema_cls, **_get_model_fields(schema_cls))
 
     def _get_gpu_memory(self) -> int:
@@ -1454,7 +1703,8 @@ class DeepHermes3Engine:
             return 0
         try:
             import mlx.core as mx
-            if hasattr(mx, 'get_active_memory'):
+
+            if hasattr(mx, "get_active_memory"):
                 return mx.get_active_memory()
         except Exception:  # noqa: BLE001
             pass
@@ -1471,13 +1721,11 @@ class DeepHermes3Engine:
         Wrapped in asyncio.to_thread() to avoid blocking the event loop.
         """
         if self._model is not None and self._tokenizer is not None:
-            logger.debug('[HERMES] Model already loaded, skipping cache check')
+            logger.debug("[HERMES] Model already loaded, skipping cache check")
             return
-        if os.getenv('HLEDAC_HERMES_NO_CACHE', '0') == '1':
-            logger.debug('[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk')
-            model, tokenizer = await asyncio.to_thread(
-                __import__('mlx_lm').load, self.config.model_path
-    )
+        if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
+            logger.debug("[HERMES] HLEDAC_HERMES_NO_CACHE=1 — loading from disk")
+            model, tokenizer = await asyncio.to_thread(__import__("mlx_lm").load, self.config.model_path)
             self._model = model
             self._tokenizer = tokenizer
             return
@@ -1486,23 +1734,21 @@ class DeepHermes3Engine:
         result = cache.get_model(model_path)
         if result is not None:
             self._model, self._tokenizer = result
-            logger.debug('[HERMES] Model retrieved from cache (LRU updated), skipping reload')
+            logger.debug("[HERMES] Model retrieved from cache (LRU updated), skipping reload")
             return
-        logger.info(f'[HERMES] Loading model from disk: {model_path}')
-        model, tokenizer = await asyncio.to_thread(
-            __import__('mlx_lm').load, model_path
-    )
+        logger.info(f"[HERMES] Loading model from disk: {model_path}")
+        model, tokenizer = await asyncio.to_thread(__import__("mlx_lm").load, model_path)
         self._model = model
         self._tokenizer = tokenizer
         try:
-            if os.getenv('HLEDAC_HALF_PRECISION', '1') != '0':
+            if os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
                 model.set_dtype(mx.float16)  # type: ignore[union-attr]
-                logger.info('[HERMES] Model dtype set to float16 (half precision)')
+                logger.info("[HERMES] Model dtype set to float16 (half precision)")
         except Exception as e:
-            logger.warning('[HERMES] Could not set float16 dtype: %s', e)
+            logger.warning("[HERMES] Could not set float16 dtype: %s", e)
         cache.put_model(model_path, model, tokenizer)
         mc, lc = len(cache)  # type: ignore[arg-type]
-        logger.info(f'[HERMES] Model cached ({mc} models, {lc} loras)')
+        logger.info(f"[HERMES] Model cached ({mc} models, {lc} loras)")
         cache.start_monitor()
         self._compile_in_progress = True
         self._compile_model_warmup(model, tokenizer)
@@ -1527,6 +1773,7 @@ class DeepHermes3Engine:
         """
         try:
             import mlx.core as mx
+
             sample_tokens = [tokenizer.bos_id or 1] * 4
             dummy_input = mx.array([sample_tokens])
             if self._compile_executor is None:
@@ -1537,7 +1784,8 @@ class DeepHermes3Engine:
                     # R5 FIX: Fallback through domain_executors instead of raw TPE
                     from hledac.universal.utils.domain_executors import (
                         get_hermes_compile_fallback_executor,
-    )
+                    )
+
                     self._compile_executor = get_hermes_compile_fallback_executor()
 
             def _do_compile() -> None:
@@ -1552,15 +1800,16 @@ class DeepHermes3Engine:
                         except Exception:
                             _ = model(dummy_input)
                             mx.eval(_)
-                    logger.info('[HERMES] MLX compile warmup complete (JIT cache compiled)')
+                    logger.info("[HERMES] MLX compile warmup complete (JIT cache compiled)")
                 except Exception as _e:
-                    logger.warning(f'[HERMES] Compile warmup failed: {_e}')
+                    logger.warning(f"[HERMES] Compile warmup failed: {_e}")
                 finally:
                     self._compile_in_progress = False
+
             self._compile_executor.submit(_do_compile)
         except Exception as _e:
             self._compile_in_progress = False
-            logger.warning(f'[HERMES] MLX compile warmup failed: {_e} (first inference will be slower)')
+            logger.warning(f"[HERMES] MLX compile warmup failed: {_e} (first inference will be slower)")
 
     @classmethod
     def evict_model_cache(cls) -> None:
@@ -1573,7 +1822,7 @@ class DeepHermes3Engine:
         cache = hermes_cache()
         cache.clear_models()
         cache.clear_loras()
-        logger.info('[HERMES] Model + LoRA cache evicted via singleton')
+        logger.info("[HERMES] Model + LoRA cache evicted via singleton")
 
     async def initialize(self) -> None:
         """Inicializovat model"""
@@ -1582,54 +1831,61 @@ class DeepHermes3Engine:
             # Start model loading, cache prep, and outlines init in parallel
             # This reduces cold start from ~90s to ~45s on M1 8GB
             await self._ensure_model_loaded()
-            logger.info('✓ Hermes-3 loaded successfully')
+            logger.info("✓ Hermes-3 loaded successfully")
             # G2: Notify observers that model is loaded
             self._notify_state(ModelLoadState.LOADED)
             if self._model_breaker is not None:
                 self._model_breaker.reset()
-                logger.info('[GAP-3/1] Circuit breaker reset after successful model load')
+                logger.info("[GAP-3/1] Circuit breaker reset after successful model load")
             # ISSUE #5.5: Removed global KV_CACHE_AVAILABLE write — only self._kv_cache_enabled
             # is the authoritative instance flag. KV_CACHE_AVAILABLE at module level is a
             # static capability flag (True/False based on mlx_lm availability at import time),
             # not a mutable state that should be written at runtime.
             if KV_CACHE_AVAILABLE:
                 try:
-                    from mlx_lm.utils import make_prompt_cache  # type: ignore[attr-defined]
+                    from mlx_lm.utils import make_prompt_cache
+
                     self._prompt_cache = make_prompt_cache(self._model)
                     self._kv_cache_enabled = True
-                    logger.info('✓ Prompt cache initialized (MLX)')
+                    logger.info("✓ Prompt cache initialized (MLX)")
                 except Exception as e:
-                    logger.warning(f'Prompt cache init failed: {e}, continuing without it')
+                    logger.warning(f"Prompt cache init failed: {e}, continuing without it")
                     self._prompt_cache = None
                     self._kv_cache_enabled = False
             else:
-                logger.info('[HERMES] KV_CACHE not available – KV cache disabled')
+                logger.info("[HERMES] KV_CACHE not available – KV cache disabled")
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
                 self._kv_cache_enabled = False
             if OUTLINES_AVAILABLE:
                 try:
                     self._outlines_model = outlines.from_mlxlm(self._model, self._tokenizer)  # type: ignore[name-defined]
-                    logger.info('✓ Outlines model initialized')
+                    logger.info("✓ Outlines model initialized")
                 except Exception as e:
-                    logger.warning(f'Outlines init failed: {e}, continuing without it')
+                    logger.warning(f"Outlines init failed: {e}, continuing without it")
                     self._outlines_model = None
             _skip_draft = False
             # SWARM-010: Use FeatureFlags for spec decode disable
-            from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+            from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
             if FeatureFlags.get(FeatureFlag.DISABLE_SPEC_DECODE):
-                logger.info('[HERMES] Speculative decoding disabled by default on M1 8GB (HLEDAC_DISABLE_SPEC_DECODE=1)')
+                logger.info(
+                    "[HERMES] Speculative decoding disabled by default on M1 8GB (HLEDAC_DISABLE_SPEC_DECODE=1)"
+                )
                 _skip_draft = True
             if is_emergency_unload_requested is not None and is_emergency_unload_requested():
-                logger.warning('[HERMES] Emergency unload requested — skipping draft model init')
+                logger.warning("[HERMES] Emergency unload requested — skipping draft model init")
                 _skip_draft = True
             if not _skip_draft:
                 try:
                     from hledac.universal._core.resource_governor import sample_uma_status_async
+
                     _uma = await sample_uma_status_async()
-                    _uma_state = getattr(_uma, 'state', None)
-                    if _uma_state in ('critical', 'emergency'):
-                        logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
+                    _uma_state = getattr(_uma, "state", None)
+                    if _uma_state in ("critical", "emergency"):
+                        logger.warning(
+                            f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init"
+                        )
                         _skip_draft = True
                 except Exception:  # noqa: BLE001
                     pass
@@ -1637,60 +1893,62 @@ class DeepHermes3Engine:
                 await self._init_draft_model()
             safe_create_task(self._bg_warmup_caches())
         except Exception as e:
-            logger.error(f'Failed to load Hermes-3: {e}')
+            logger.error(f"Failed to load Hermes-3: {e}")
             raise
 
     async def initialize_parallel(self) -> None:
         """
         MODERN-36 PERFORMANCE OPTIMIZATION: Parallel initialization pipeline.
-        
+
         This method starts multiple initialization tasks in parallel to reduce
         cold start time from ~90s to ~45s on M1 8GB.
-        
+
         Parallel tasks:
         1. Model loading (disk I/O + Metal kernel compilation) - longest task
         2. KV cache preparation (async, starts after model load)
         3. Outlines initialization (CPU-bound, parallelizable)
-        
+
         Call this instead of initialize() when startup latency is critical.
         """
         try:
             # MODERN-36: Start model loading in background
             model_task = safe_create_task(self._ensure_model_loaded(), eager_start=True)
-            
+
             # Wait for model to be loaded, then parallelize remaining tasks
             await model_task
-            
+
             if self._model is None:
-                logger.warning('[HERMES] Model not loaded after parallel init')
+                logger.warning("[HERMES] Model not loaded after parallel init")
                 return
-            
+
             # MODERN-36: Parallel post-load initialization
             async def _init_kv_cache() -> None:
                 """Initialize KV cache after model is loaded."""
                 if KV_CACHE_AVAILABLE:
                     try:
                         from mlx_lm.utils import make_prompt_cache
+
                         self._prompt_cache = make_prompt_cache(self._model)
                         self._kv_cache_enabled = True
-                        logger.info('✓ Prompt cache initialized (MLX)')
+                        logger.info("✓ Prompt cache initialized (MLX)")
                     except Exception as e:
-                        logger.warning(f'Prompt cache init failed: {e}')
+                        logger.warning(f"Prompt cache init failed: {e}")
                         self._kv_cache_enabled = False
-            
+
             async def _init_outlines() -> None:
                 """Initialize Outlines model in parallel with KV cache."""
                 if OUTLINES_AVAILABLE:
                     try:
                         self._outlines_model = outlines.from_mlxlm(self._model, self._tokenizer)
-                        logger.info('✓ Outlines model initialized')
+                        logger.info("✓ Outlines model initialized")
                     except Exception as e:
-                        logger.warning(f'Outlines init failed: {e}')
-            
+                        logger.warning(f"Outlines init failed: {e}")
+
             async def _init_draft_conditional() -> None:
                 """Initialize draft model if conditions are met."""
                 _skip_draft = False
-                from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+                from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
                 if FeatureFlags.get(FeatureFlag.DISABLE_SPEC_DECODE):
                     _skip_draft = True
                 if is_emergency_unload_requested is not None and is_emergency_unload_requested():
@@ -1698,37 +1956,36 @@ class DeepHermes3Engine:
                 if not _skip_draft:
                     try:
                         from hledac.universal._core.resource_governor import sample_uma_status_async
+
                         _uma = await sample_uma_status_async()
-                        _uma_state = getattr(_uma, 'state', None)
-                        if _uma_state in ('critical', 'emergency'):
+                        _uma_state = getattr(_uma, "state", None)
+                        if _uma_state in ("critical", "emergency"):
                             _skip_draft = True
                     except Exception:
                         pass
                 if not _skip_draft:
                     await self._init_draft_model()
-            
-            # Run all post-load tasks in parallel
+
             results = await parallel(
                 [_init_kv_cache(), _init_outlines(), _init_draft_conditional()],
                 policy="log",
-                ctx="hermes:parallel_init"
+                ctx="hermes:parallel_init",
             )
-            
-            # Log any failures
+
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.warning(f'[HERMES] Parallel init task {i} failed: {result}')
-            
+                    logger.warning(f"[HERMES] Parallel init task {i} failed: {result}")
+
             # Background warmup (fire and forget)
             safe_create_task(self._bg_warmup_caches())
-            
-            logger.info('✓ Hermes-3 parallel initialization complete')
+
+            logger.info("✓ Hermes-3 parallel initialization complete")
             self._notify_state(ModelLoadState.LOADED)
             if self._model_breaker is not None:
                 self._model_breaker.reset()
-                
+
         except Exception as e:
-            logger.error(f'Failed to load Hermes-3 (parallel): {e}')
+            logger.error(f"Failed to load Hermes-3 (parallel): {e}")
             raise
 
     async def _init_draft_model(self) -> None:
@@ -1757,14 +2014,16 @@ class DeepHermes3Engine:
         _blitz_triage = False
         try:
             from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
-            if _is_blitz() and os.environ.get('HLEDAC_ENABLE_BLITZ_TRIAGE', '0') == '1':
+
+            if _is_blitz() and os.environ.get("HLEDAC_ENABLE_BLITZ_TRIAGE", "0") == "1":
                 _blitz_triage = True
         except Exception:  # noqa: BLE001
             pass
 
         # Check if speculative decoding is explicitly enabled
         # SWARM-010: Use FeatureFlags for spec decode enable
-        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
         enable_spec = FeatureFlags.get(FeatureFlag.ENABLE_SPEC_DECODE)
 
         # Neither spec decode nor blitz triage — skip model load entirely
@@ -1775,21 +2034,26 @@ class DeepHermes3Engine:
             self._draft_tokenizer = None
             self._supports_draft = False
             self._triage_mode = False
-            logger.info('[SPEC] Draft model disabled (M1 8GB safe mode, set HLEDAC_ENABLE_SPEC_DECODE=1 or HLEDAC_ENABLE_BLITZ_TRIAGE=1 to enable)')
+            logger.info(
+                "[SPEC] Draft model disabled (M1 8GB safe mode, set HLEDAC_ENABLE_SPEC_DECODE=1 or HLEDAC_ENABLE_BLITZ_TRIAGE=1 to enable)"
+            )
             return
 
-        _mode_label = 'BLITZ-TRIAGE' if _blitz_triage else 'SPEC'
+        _mode_label = "BLITZ-TRIAGE" if _blitz_triage else "SPEC"
 
         # SOVEREIGN-004: Check UMA before loading draft model
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
+
             uma_snap = get_uma_snapshot()
-            uma_usage_pct = uma_snap.get('uma_usage_pct', 0)
+            uma_usage_pct = uma_snap.get("uma_usage_pct", 0)
 
             # 85% threshold — evict draft model when approaching critical memory pressure
             # Note: 85% of 6.25 GiB ceiling ≈ 5.31 GiB, but we use percentage directly
             if uma_usage_pct > 85:
-                logger.warning(f'[{_mode_label}] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init')
+                logger.warning(
+                    f"[{_mode_label}] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init"
+                )
                 self._speculative_enabled = False
                 self._draft_model_name = None
                 self._draft_model_obj = None
@@ -1798,17 +2062,17 @@ class DeepHermes3Engine:
                 self._triage_mode = False
                 return
         except Exception as e:
-            logger.debug(f'[{_mode_label}] UMA check failed, proceeding with caution: {e}')
+            logger.debug(f"[{_mode_label}] UMA check failed, proceeding with caution: {e}")
 
         # SOVEREIGN-004: Use SmolLM-360M (200MB) instead of SmolLM-0.5B (700MB)
         # SmolLM-360M is 3.5× smaller, reducing Metal pressure significantly
-        DRAFT_MODEL = 'mlx-community/SmolLM-360M-Instruct-4bit'
+        DRAFT_MODEL = "mlx-community/SmolLM-360M-Instruct-4bit"
         DRAFT_MODEL_SIZE_MB = 200  # Expected size after 4-bit quantization
 
         try:
             from mlx_lm import load
 
-            logger.info(f'[{_mode_label}] Loading draft model {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB)')
+            logger.info(f"[{_mode_label}] Loading draft model {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB)")
 
             def _load_draft():
                 return load(DRAFT_MODEL)
@@ -1829,17 +2093,19 @@ class DeepHermes3Engine:
                 self._triage_mode = True
                 self._speculative_enabled = False
                 self._supports_draft = False  # Not for speculative decode
-                logger.info(f'[BLITZ-11] Triage model loaded: {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB) — fast binary classification')
+                logger.info(
+                    f"[BLITZ-11] Triage model loaded: {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB) — fast binary classification"
+                )
             else:
                 self._speculative_enabled = True
                 self._supports_draft = True
-                logger.info(f'[SPEC] Draft model loaded: {DRAFT_MODEL} (SOVEREIGN-004 safe mode)')
+                logger.info(f"[SPEC] Draft model loaded: {DRAFT_MODEL} (SOVEREIGN-004 safe mode)")
 
             # Register UMA watchdog callback for draft model eviction
             self._register_draft_eviction_callback()
 
         except Exception as e:
-            logger.warning(f'[{_mode_label}] Draft model load failed: {e}')
+            logger.warning(f"[{_mode_label}] Draft model load failed: {e}")
             self._speculative_enabled = False
             self._draft_model_name = None
             self._draft_model_obj = None
@@ -1857,41 +2123,40 @@ class DeepHermes3Engine:
         Uses the existing UmaWatchdog system with a custom callback class.
         """
         try:
-            from hledac.universal.utils.uma_budget import UmaWatchdogCallbacks, UmaWatchdog
+            from hledac.universal.utils.uma_budget import UmaWatchdog, UmaWatchdogCallbacks
 
             class DraftEvictionCallbacks(UmaWatchdogCallbacks):
                 """UMA watchdog callbacks that evict draft model on memory pressure."""
 
-                def __init__(self, engine_ref):
+                def __init__(self, engine_ref) -> None:
                     self._engine = engine_ref
 
                 def on_warn(self, snapshot: dict) -> None:
                     """Evict draft model on WARN (>= 6.0GB) to prevent cascade."""
-                    uma_usage_pct = snapshot.get('uma_usage_pct', 0)
+                    uma_usage_pct = snapshot.get("uma_usage_pct", 0)
                     if uma_usage_pct > 85 and self._engine._draft_model_obj is not None:
-                        logger.warning(f'[SPEC] UMA {uma_usage_pct}% > 85% — evicting draft model')
+                        logger.warning(f"[SPEC] UMA {uma_usage_pct}% > 85% — evicting draft model")
                         self._engine._evict_draft_model()
 
                 def on_critical(self, snapshot: dict) -> None:
                     """Evict draft model on CRITICAL (>= 6.5GB)."""
                     if self._engine._draft_model_obj is not None:
-                        logger.warning('[SPEC] UMA CRITICAL — evicting draft model')
+                        logger.warning("[SPEC] UMA CRITICAL — evicting draft model")
                         self._engine._evict_draft_model()
 
                 def on_emergency(self, snapshot: dict) -> None:
                     """Evict draft model on EMERGENCY (>= 7.0GB)."""
                     if self._engine._draft_model_obj is not None:
-                        logger.warning('[SPEC] UMA EMERGENCY — evicting draft model')
+                        logger.warning("[SPEC] UMA EMERGENCY — evicting draft model")
                         self._engine._evict_draft_model()
 
-            # Create and start watchdog with draft eviction callbacks
             callbacks = DraftEvictionCallbacks(self)
             self._draft_watchdog = UmaWatchdog(callbacks=callbacks, interval=1.0)
             self._draft_watchdog.start()
-            logger.debug('[SPEC] Registered draft model eviction watchdog')
+            logger.debug("[SPEC] Registered draft model eviction watchdog")
 
         except Exception as e:
-            logger.debug(f'[SPEC] Failed to register draft eviction watchdog: {e}')
+            logger.debug(f"[SPEC] Failed to register draft eviction watchdog: {e}")
 
     def _evict_draft_model(self) -> None:
         """
@@ -1907,7 +2172,7 @@ class DeepHermes3Engine:
 
         try:
             _was_triage = self._triage_mode
-            logger.info('[SPEC] Evicting draft model to free unified memory')
+            logger.info("[SPEC] Evicting draft model to free unified memory")
 
             # Clear draft model references
             self._draft_model_obj = None
@@ -1919,12 +2184,14 @@ class DeepHermes3Engine:
 
             # GHOST_INVARIANT F183C: correct cleanup order
             import gc
+
             gc.collect()
 
             # Barrier: flush GPU queue BEFORE clear_cache (MLX lazy eval)
             _mx_module = None
             try:
                 import mlx.core as _mx_module
+
                 _mx_module.eval([])  # Force GPU queue flush
             except Exception:  # noqa: BLE001
                 pass
@@ -1934,12 +2201,12 @@ class DeepHermes3Engine:
             try:
                 if _mx_module is None:
                     import mlx.core as _mx_module
-                if hasattr(_mx_module, 'metal'):
+                if hasattr(_mx_module, "metal"):
                     # Measure before clear
-                    before_mb = getattr(_mx_module.metal, 'get_cache_memory', lambda: None)() or 0
+                    before_mb = getattr(_mx_module.metal, "get_cache_memory", lambda: None)() or 0
                     _mx_module.metal.clear_cache()
                     # Measure after clear (approximate freed amount)
-                    after_mb = getattr(_mx_module.metal, 'get_cache_memory', lambda: 0)() or 0
+                    after_mb = getattr(_mx_module.metal, "get_cache_memory", lambda: 0)() or 0
                     freed_mb = max(0, (before_mb - after_mb) // (1024 * 1024))
             except Exception:  # noqa: BLE001
                 pass
@@ -1947,14 +2214,19 @@ class DeepHermes3Engine:
             gc.collect()  # Second GC pass for circular refs
 
             if freed_mb is not None and freed_mb > 0:
-                logger.info('[SPEC] Draft model evicted successfully (~%dMB freed)%s',
-                            freed_mb, ' [triage mode cleared]' if _was_triage else '')
+                logger.info(
+                    "[SPEC] Draft model evicted successfully (~%dMB freed)%s",
+                    freed_mb,
+                    " [triage mode cleared]" if _was_triage else "",
+                )
             else:
-                logger.info('[SPEC] Draft model evicted successfully [cache clear attempted]%s',
-                            ' [triage mode cleared]' if _was_triage else '')
+                logger.info(
+                    "[SPEC] Draft model evicted successfully [cache clear attempted]%s",
+                    " [triage mode cleared]" if _was_triage else "",
+                )
 
         except Exception as e:
-            logger.warning(f'[SPEC] Draft model eviction failed: {e}')
+            logger.warning(f"[SPEC] Draft model eviction failed: {e}")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # BLITZ-11: Triage Classifier — Fast binary relevance classification
@@ -2003,34 +2275,35 @@ class DeepHermes3Engine:
         """
         if not self._triage_mode or self._draft_model_obj is None:
             # Triage not available — pass-through (fail-open)
-            logger.debug('[BLITZ-11] triage_relevance: model not loaded, pass-through=True')
+            logger.debug("[BLITZ-11] triage_relevance: model not loaded, pass-through=True")
             return True
 
         # UMA budget check — skip triage if memory is tight
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
+
             _snap = get_uma_snapshot()
-            if _snap.get('uma_usage_pct', 0) > 85:
-                logger.debug('[BLITZ-11] triage_relevance: UMA > 85%%, pass-through=True')
+            if _snap.get("uma_usage_pct", 0) > 85:
+                logger.debug("[BLITZ-11] triage_relevance: UMA > 85%%, pass-through=True")
                 return True
         except Exception:  # noqa: BLE001
             pass
 
         # ── Build triage prompt ──────────────────────────────────────────
         # Truncate text to 512 chars — triage only needs signal, not full body
-        _text_snippet = text[:512].replace('\n', ' ').strip()
+        _text_snippet = text[:512].replace("\n", " ").strip()
         _query_clean = query[:128].strip()
 
         _prompt = (
-            '<|im_start|>system\n'
+            "<|im_start|>system\n"
             'You are a relevance classifier. Answer ONLY "YES" or "NO".\n'
-            '<|im_end|>\n'
-            '<|im_start|>user\n'
+            "<|im_end|>\n"
+            "<|im_start|>user\n"
             f'Is the following text relevant to the query "{_query_clean}"?\n\n'
-            f'Text: {_text_snippet}\n\n'
-            'Answer (YES or NO):<|im_end|>\n'
-            '<|im_start|>assistant\n'
-    )
+            f"Text: {_text_snippet}\n\n"
+            "Answer (YES or NO):<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
 
         try:
             import mlx.core as mx
@@ -2038,7 +2311,7 @@ class DeepHermes3Engine:
             _model = self._draft_model_obj
             _tok = self._draft_tokenizer
             if _tok is None:
-                logger.debug('[BLITZ-11] triage_relevance: no tokenizer, pass-through=True')
+                logger.debug("[BLITZ-11] triage_relevance: no tokenizer, pass-through=True")
                 return True
 
             # Tokenize
@@ -2053,25 +2326,23 @@ class DeepHermes3Engine:
             _logits = _model(_input_arr)
             mx.eval(_logits)
 
-            # Extract last-token logits
             _last_logits = _logits[0, -1, :]
 
-            # Get token IDs for "YES" and "NO"
-            _yes_id = _tok.encode("YES")[0] if hasattr(_tok, 'encode') else None
-            _no_id = _tok.encode("NO")[0] if hasattr(_tok, 'encode') else None
+            _yes_id = _tok.encode("YES")[0] if hasattr(_tok, "encode") else None
+            _no_id = _tok.encode("NO")[0] if hasattr(_tok, "encode") else None
 
             if _yes_id is None or _no_id is None:
                 # Fallback: generate a short completion and check
                 _gen_result = await self._triage_generate_fallback(_prompt, max_tokens)
                 _answer = _gen_result.strip().upper()
-                return _answer.startswith('YES')
+                return _answer.startswith("YES")
 
-            # Get log-probabilities for YES and NO
             _yes_logit = float(_last_logits[_yes_id].item())
             _no_logit = float(_last_logits[_no_id].item())
 
             # Softmax over just YES/NO
             import math
+
             _max_l = max(_yes_logit, _no_logit)
             _yes_exp = math.exp(_yes_logit - _max_l)
             _no_exp = math.exp(_no_logit - _max_l)
@@ -2080,28 +2351,27 @@ class DeepHermes3Engine:
 
             _relevant = _yes_prob >= threshold
             logger.debug(
-                '[BLITZ-11] triage_relevance: query=%.64s text=%.64s '
-                'p_yes=%.3f threshold=%.2f -> %s',
-                _query_clean, _text_snippet, _yes_prob, threshold,
-                'RELEVANT' if _relevant else 'IRRELEVANT'
-    )
+                "[BLITZ-11] triage_relevance: query=%.64s text=%.64s p_yes=%.3f threshold=%.2f -> %s",
+                _query_clean,
+                _text_snippet,
+                _yes_prob,
+                threshold,
+                "RELEVANT" if _relevant else "IRRELEVANT",
+            )
             return _relevant
 
         except Exception as e:
-            logger.warning(f'[BLITZ-11] triage_relevance failed: {e} — pass-through=True')
+            logger.warning(f"[BLITZ-11] triage_relevance failed: {e} — pass-through=True")
             return True  # Fail-open: let the text through
 
-    async def _triage_generate_fallback(
-        self, prompt: str, max_tokens: int = 4
-    ) -> str:
+    async def _triage_generate_fallback(self, prompt: str, max_tokens: int = 4) -> str:
         """BLITZ-11: Fallback generation-based triage when token ID lookup fails.
-        
+
         NEW-M2 FIX: Offload blocking MLX operations (mx.eval, mx.argmax) to thread pool.
         MLX releases GIL during Metal compute, so asyncio.to_thread is appropriate.
         """
         try:
             import mlx.core as mx
-            from mlx_lm.utils import generate_step
 
             _model = self._draft_model_obj
             _tok = self._draft_tokenizer
@@ -2135,38 +2405,49 @@ class DeepHermes3Engine:
             return
         try:
             from pathlib import Path
+
             from mlx_lm.models.cache import make_prompt_cache
-            _disk_cache = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
+
+            _disk_cache = Path.home() / ".hledac" / "cache" / "system_prompt_cache.npz"
             _has_disk = await asyncio.to_thread(_disk_cache.exists)
             self._system_prompt_cache = make_prompt_cache(self._model, max_kv_size=512)
             for layer in self._system_prompt_cache:
-                if hasattr(layer, 'quantize'):
+                if hasattr(layer, "quantize"):
                     self._supports_kv_quant = True
                     break
             if _has_disk and await self._load_cache():
-                logger.info('[CACHE] System prompt cache loaded from disk (prefill skipped)')
+                logger.info("[CACHE] System prompt cache loaded from disk (prefill skipped)")
                 return
             if self._supports_stream_generate:
                 import mlx_lm
-                from hledac.universal.utils.mlx_memory import get_metal_stream_context
-                from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
-                def _prefill():
+                from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
+                from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
+                def _prefill() -> None:
                     _mlx_lock = _get_mlx_inference_lock()
                     with get_metal_stream_context():
                         try:
                             import mlx.core as _mx
+
                             _mx.eval([])
                             with _mlx_lock:
-                                for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
+                                for _ in mlx_lm.stream_generate(
+                                    model=self._model,
+                                    tokenizer=self._tokenizer,
+                                    prompt=self._system_prompt,
+                                    prompt_cache=self._system_prompt_cache,
+                                    max_tokens=1,
+                                ):  # type: ignore[arg-type]
                                     pass
                         finally:
-                            _safe_mlx_eval_and_clear_cache('system_prompt_cache_prefill')
+                            _safe_mlx_eval_and_clear_cache("system_prompt_cache_prefill")
+
                 await asyncio.to_thread(_prefill)
-                self._kv_cache_stats['cache_prefills'] = 1
-            logger.info('[CACHE] System prompt cache initialized (cold prefill)')
+                self._kv_cache_stats["cache_prefills"] = 1
+            logger.info("[CACHE] System prompt cache initialized (cold prefill)")
         except Exception as e:
-            logger.warning(f'[CACHE] System prompt cache init failed: {e}')
+            logger.warning(f"[CACHE] System prompt cache init failed: {e}")
 
     async def _prefill_warmup_caches(self) -> None:
         """
@@ -2189,25 +2470,33 @@ class DeepHermes3Engine:
 
         Cold start improvement: ~1500ms parallel vs ~2000ms sequential
         """
-        max_parallel = getattr(self.config, 'max_parallel_prefill', 1)
+        max_parallel = getattr(self.config, "max_parallel_prefill", 1)
         try:
             import mlx.core as mx
+
             device_info = mx.metal.device_info()
-            device_name = device_info.get('device_name', '')
-            if 'Apple' in device_name:
+            device_name = device_info.get("device_name", "")
+            if "Apple" in device_name:
                 max_parallel = 1
-                logger.info('[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill', device_name)
+                logger.info("[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill", device_name)
         except Exception:  # noqa: BLE001
             pass
         if self._model is None or self._tokenizer is None:
             return
         if max_parallel < 2:
             await self._init_system_prompt_cache()
-            await self.warmup_prefix_cache(system_prompt=self._system_prompt, few_shot_examples=[{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}])
+            await self.warmup_prefix_cache(
+                system_prompt=self._system_prompt,
+                few_shot_examples=[
+                    {"user": "What is 2+2?", "assistant": "4"},
+                    {"user": "Capital of France?", "assistant": "Paris"},
+                ],
+            )
             return
         try:
             from pathlib import Path
-            _disk_cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
+
+            _disk_cache_path = Path.home() / ".hledac" / "cache" / "system_prompt_cache.npz"
             _has_sys_disk = await asyncio.to_thread(_disk_cache_path.exists)
             _has_warmup_disk = False
 
@@ -2215,50 +2504,65 @@ class DeepHermes3Engine:
                 """Prefill system prompt cache (512 KV)."""
                 try:
                     from mlx_lm.models.cache import make_prompt_cache
+
                     from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
                     self._system_prompt_cache = make_prompt_cache(self._model, max_kv_size=512)
                     if not self._supports_kv_quant:
                         for layer in self._system_prompt_cache:
-                            if hasattr(layer, 'quantize'):
+                            if hasattr(layer, "quantize"):
                                 self._supports_kv_quant = True
                                 break
                     if _has_sys_disk and await self._load_cache():
-                        logger.info('[P1-3] System prompt cache loaded from disk (parallel prefill skipped)')
+                        logger.info("[P1-3] System prompt cache loaded from disk (parallel prefill skipped)")
                         return True
                     if self._supports_stream_generate:
                         import mlx_lm
 
-                        def _do_prefill():
+                        def _do_prefill() -> None:
                             _mlx_lock = _get_mlx_inference_lock()  # type: ignore[name-defined]
                             with get_metal_stream_context():  # type: ignore[name-defined]
                                 try:
                                     import mlx.core as _mx
+
                                     _mx.eval([])
                                     with _mlx_lock:
-                                        for _ in mlx_lm.stream_generate(model=self._model, tokenizer=self._tokenizer, prompt=self._system_prompt, prompt_cache=self._system_prompt_cache, max_tokens=1):  # type: ignore[arg-type]
+                                        for _ in mlx_lm.stream_generate(
+                                            model=self._model,
+                                            tokenizer=self._tokenizer,
+                                            prompt=self._system_prompt,
+                                            prompt_cache=self._system_prompt_cache,
+                                            max_tokens=1,
+                                        ):  # type: ignore[arg-type]
                                             pass
                                 finally:
-                                    _safe_mlx_eval_and_clear_cache('system_prompt_cache_parallel_prefill')
+                                    _safe_mlx_eval_and_clear_cache("system_prompt_cache_parallel_prefill")
+
                         await asyncio.to_thread(_do_prefill)
-                        self._kv_cache_stats['cache_prefills'] += 1
-                    logger.info('[P1-3] System prompt cache prefill complete (parallel)')
+                        self._kv_cache_stats["cache_prefills"] += 1
+                    logger.info("[P1-3] System prompt cache prefill complete (parallel)")
                     return True
                 except Exception as e:
-                    logger.warning(f'[P1-3] System cache prefill failed: {e}')
+                    logger.warning(f"[P1-3] System cache prefill failed: {e}")
                     return False
 
             async def _prefill_warmup_cache() -> bool:
                 """Prefill warmup cache (~1000 tokens)."""
                 try:
                     from mlx_lm.models.cache import make_prompt_cache
+
                     from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
                     system_prompt = self._system_prompt
-                    few_shot_examples = [{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}]
-                    parts = [f'<|im_start|>system\n{system_prompt}<|im_end|>']
+                    few_shot_examples = [
+                        {"user": "What is 2+2?", "assistant": "4"},
+                        {"user": "Capital of France?", "assistant": "Paris"},
+                    ]
+                    parts = [f"<|im_start|>system\n{system_prompt}<|im_end|>"]
                     for ex in few_shot_examples[:3]:
                         parts.append(f"<|im_start|>user\n{ex.get('user', '')}<|im_end|>")
                         parts.append(f"<|im_start|>assistant\n{ex.get('assistant', '')}<|im_end|>")
-                    warmup_prompt = '\n'.join(parts)
+                    warmup_prompt = "\n".join(parts)
                     tokens = self._tokenizer.encode(warmup_prompt)  # type: ignore[union-attr]
                     token_count = len(tokens)
                     if token_count > 1000:
@@ -2266,71 +2570,97 @@ class DeepHermes3Engine:
                     canonical_parts = [system_prompt]
                     for ex in few_shot_examples[:3]:
                         canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-                    canonical_text = '\n'.join(canonical_parts)
+                    canonical_text = "\n".join(canonical_parts)
                     prompt_hash = _get_xxh3_hex(canonical_text)
-                    _warmup_disk_path = WARMUP_CACHE_DIR / f'warmup_{prompt_hash}.safetensors'
+                    _warmup_disk_path = WARMUP_CACHE_DIR / f"warmup_{prompt_hash}.safetensors"
                     _has_warmup_disk_now = await asyncio.to_thread(_warmup_disk_path.exists) if prompt_hash else False
                     if _has_warmup_disk_now:
                         if await self._restore_warmup_cache(_warmup_disk_path, prompt_hash):
-                            logger.info('[P1-3] Warmup cache restored from disk (parallel)')
+                            logger.info("[P1-3] Warmup cache restored from disk (parallel)")
                             return True
-                    logger.info(f'[P1-3] Building fresh warmup cache (~{token_count} tokens, parallel)...')
+                    logger.info(f"[P1-3] Building fresh warmup cache (~{token_count} tokens, parallel)...")
                     self._warmup_cache = make_prompt_cache(self._model, max_kv_size=max(token_count + 128, 1024))
                     self._warmup_prompt_hash = prompt_hash
                     kv_bits = self._get_adaptive_kv_bits()
                     if self._supports_kv_quant:
                         for layer in self._warmup_cache:
-                            if hasattr(layer, 'quantize'):
+                            if hasattr(layer, "quantize"):
                                 try:
                                     layer.quantize(group_size=64, bits=kv_bits)
                                 except Exception:  # noqa: BLE001
                                     pass
                     from mlx_lm import generate as mlx_generate
                     from mlx_lm.sample_utils import make_sampler
-                    _worker = getattr(self, '_mlx_worker_thread', None)
+
+                    _worker = getattr(self, "_mlx_worker_thread", None)
                     _worker_live = _worker is not None and _worker.is_active()
 
-                    def _do_generate():
+                    def _do_generate() -> None:
                         with get_metal_stream_context():
-                            mlx_generate(model=self._model, tokenizer=self._tokenizer, prompt=warmup_prompt, sampler=make_sampler(temp=0.3), max_tokens=1, kv_bits=kv_bits, prompt_cache=self._warmup_cache, verbose=False)
+                            mlx_generate(
+                                model=self._model,
+                                tokenizer=self._tokenizer,
+                                prompt=warmup_prompt,
+                                sampler=make_sampler(temp=0.3),
+                                max_tokens=1,
+                                kv_bits=kv_bits,
+                                prompt_cache=self._warmup_cache,
+                                verbose=False,
+                            )
+
                     if _worker_live:
                         try:
                             main_loop = asyncio.get_running_loop()
 
                             async def _coro_wrapper():
                                 return _do_generate()
+
                             inference_future = asyncio.run_coroutine_threadsafe(_coro_wrapper(), main_loop)
-                            await safe_wait_for(asyncio.wrap_future(inference_future), timeout=60.0, label='deephermes_main_thread')
-                        except (TimeoutError, RuntimeError):
+                            await safe_wait_for(
+                                asyncio.wrap_future(inference_future), timeout=60.0, label="deephermes_main_thread"
+                            )
+                        except TimeoutError, RuntimeError:
                             await asyncio.to_thread(_do_generate)
                     else:
                         await asyncio.to_thread(_do_generate)
-                    logger.info('[P1-3] Warmup cache prefill complete (parallel)')
+                    logger.info("[P1-3] Warmup cache prefill complete (parallel)")
                     return True
                 except Exception as e:
-                    logger.warning(f'[P1-3] Warmup cache prefill failed: {e}')
+                    logger.warning(f"[P1-3] Warmup cache prefill failed: {e}")
                     return False
-            _result = await parallel([_prefill_system_cache(), _prefill_warmup_cache()], taskgroup=True, policy='collect', ctx='deephermes3:parallel_prefill')
+
+            _result = await parallel(
+                [_prefill_system_cache(), _prefill_warmup_cache()],
+                taskgroup=True,
+                policy="collect",
+                ctx="deephermes3:parallel_prefill",
+            )
             results = _result.ok
             if len(results) > 1 and results[1] is True:
                 try:
                     await self._save_cache()
                 except Exception as _e:
-                    logger.debug(f'[P1-3] warmup cache save failed: {_e}')
-            successes = sum((1 for r in results if r is True))
+                    logger.debug(f"[P1-3] warmup cache save failed: {_e}")
+            successes = sum(1 for r in results if r is True)
             exceptions = [r for r in results if isinstance(r, Exception)]
             if exceptions:
-                logger.warning(f'[P1-3] {len(exceptions)} prefill exception(s): {exceptions}')
-            self._kv_cache_stats['parallel_prefills'] = successes
-            logger.info(f'[P1-3] Parallel prefill complete: {successes}/{len(results)} succeeded')
+                logger.warning(f"[P1-3] {len(exceptions)} prefill exception(s): {exceptions}")
+            self._kv_cache_stats["parallel_prefills"] = successes
+            logger.info(f"[P1-3] Parallel prefill complete: {successes}/{len(results)} succeeded")
         except Exception as e:
-            logger.warning(f'[P1-3] Parallel prefill failed: {e}, falling back to sequential')
+            logger.warning(f"[P1-3] Parallel prefill failed: {e}, falling back to sequential")
             await self._init_system_prompt_cache()
-            await self.warmup_prefix_cache(system_prompt=self._system_prompt, few_shot_examples=[{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}])
+            await self.warmup_prefix_cache(
+                system_prompt=self._system_prompt,
+                few_shot_examples=[
+                    {"user": "What is 2+2?", "assistant": "4"},
+                    {"user": "Capital of France?", "assistant": "Paris"},
+                ],
+            )
             try:
                 await self._save_cache()
             except Exception as _e:
-                logger.debug(f'[P1-3] sequential fallback cache save failed: {_e}')
+                logger.debug(f"[P1-3] sequential fallback cache save failed: {_e}")
 
     async def _bg_warmup_caches(self) -> None:
         """Background KV cache warmup — fires after sprint start, does not block.
@@ -2352,16 +2682,16 @@ class DeepHermes3Engine:
         try:
             await asyncio.sleep(5)
         except asyncio.CancelledError:
-            logger.debug('[P1-3] Background warmup cancelled (sprint ended early)')
+            logger.debug("[P1-3] Background warmup cancelled (sprint ended early)")
             return
         try:
-            logger.info('[P1-3] Starting background KV cache prefill (~5s after sprint start)...')
+            logger.info("[P1-3] Starting background KV cache prefill (~5s after sprint start)...")
             await self._prefill_warmup_caches()
-            logger.info('[P1-3] Background KV cache prefill complete')
+            logger.info("[P1-3] Background KV cache prefill complete")
         except asyncio.CancelledError:
-            logger.debug('[P1-3] Background warmup cancelled during prefill')
+            logger.debug("[P1-3] Background warmup cancelled during prefill")
         except Exception as e:
-            logger.warning(f'[P1-3] Background KV cache prefill failed: {e}')
+            logger.warning(f"[P1-3] Background KV cache prefill failed: {e}")
 
     async def _save_cache(self) -> None:
         """Save system prompt cache to disk (best-effort, non-blocking).
@@ -2377,7 +2707,8 @@ class DeepHermes3Engine:
         """
         try:
             from pathlib import Path
-            cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
+
+            cache_path = Path.home() / ".hledac" / "cache" / "system_prompt_cache.npz"
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
             except Exception:  # noqa: BLE001
@@ -2385,7 +2716,7 @@ class DeepHermes3Engine:
             warmup_cache = self._warmup_cache
             warmup_hash = self._warmup_prompt_hash
             if warmup_cache and warmup_hash:
-                warmup_path = WARMUP_CACHE_DIR / f'warmup_{warmup_hash}.safetensors'
+                warmup_path = WARMUP_CACHE_DIR / f"warmup_{warmup_hash}.safetensors"
                 try:
                     WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 except Exception:  # noqa: BLE001
@@ -2396,35 +2727,38 @@ class DeepHermes3Engine:
             async def _do_save() -> None:
                 if self._system_prompt_cache:
                     import mlx.core as mx
+
                     data: dict[str, Any] = {}
                     for i, layer in enumerate(self._system_prompt_cache):
-                        state = getattr(layer, 'state', None)
+                        state = getattr(layer, "state", None)
                         if state is None:
                             continue
                         try:
                             keys, values = state
                         except Exception:
                             continue
-                        data[f'layer_{i}_keys'] = keys
-                        data[f'layer_{i}_values'] = values
-                    if hasattr(self._system_prompt_cache, 'offset'):
+                        data[f"layer_{i}_keys"] = keys
+                        data[f"layer_{i}_values"] = values
+                    if hasattr(self._system_prompt_cache, "offset"):
                         try:
-                            data['_offset'] = mx.array([int(self._system_prompt_cache.offset)])  # type: ignore[union-attr]
+                            data["_offset"] = mx.array([int(self._system_prompt_cache.offset)])  # type: ignore[union-attr]
                         except Exception:  # noqa: BLE001
                             pass
                     if data:
                         mx.savez(str(cache_path), **data)
-                        logger.debug(f'[CACHE] Saved to {cache_path} ({len(self._system_prompt_cache)} layers)')
+                        logger.debug(f"[CACHE] Saved to {cache_path} ({len(self._system_prompt_cache)} layers)")
                 if warmup_cache and warmup_hash:
                     try:
                         from mlx_lm.models.cache import save_prompt_cache
-                        save_prompt_cache(str(warmup_path), warmup_cache, metadata={'prompt_hash': warmup_hash})
-                        logger.debug(f'[CACHE] Warmup cache saved ({len(warmup_cache)} layers)')
+
+                        save_prompt_cache(str(warmup_path), warmup_cache, metadata={"prompt_hash": warmup_hash})
+                        logger.debug(f"[CACHE] Warmup cache saved ({len(warmup_cache)} layers)")
                     except Exception as e:
-                        logger.debug(f'[CACHE] save_prompt_cache failed: {e}')
+                        logger.debug(f"[CACHE] save_prompt_cache failed: {e}")
+
             await asyncio.to_thread(_do_save)
         except Exception as e:
-            logger.debug(f'[CACHE] Save failed (non-critical): {e}')
+            logger.debug(f"[CACHE] Save failed (non-critical): {e}")
 
     async def _load_cache(self) -> bool:
         """Try to load cache from disk and restore into self._system_prompt_cache.
@@ -2442,32 +2776,35 @@ class DeepHermes3Engine:
             return False
         try:
             from pathlib import Path
+
             import mlx.core as mx
-            cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
+
+            cache_path = Path.home() / ".hledac" / "cache" / "system_prompt_cache.npz"
             if not cache_path.exists():
                 return False
 
             def _do_load() -> mx.ndarray:
                 return mx.load(str(cache_path))
+
             data = await asyncio.to_thread(_do_load)
             n_layers = len(self._system_prompt_cache)
             restored = 0
             for i in range(n_layers):
-                k_key = f'layer_{i}_keys'
-                v_key = f'layer_{i}_values'
+                k_key = f"layer_{i}_keys"
+                v_key = f"layer_{i}_values"
                 if k_key in data and v_key in data:
                     layer = self._system_prompt_cache[i]
-                    if hasattr(layer, 'keys') and hasattr(layer, 'values'):
+                    if hasattr(layer, "keys") and hasattr(layer, "values"):
                         try:
                             layer.keys = data[k_key]
                             layer.values = data[v_key]
                             restored += 1
                         except Exception as e:
-                            logger.debug(f'[CACHE] layer {i} restore failed: {e}')
-            if '_offset' in data and hasattr(self._system_prompt_cache, 'offset'):
+                            logger.debug(f"[CACHE] layer {i} restore failed: {e}")
+            if "_offset" in data and hasattr(self._system_prompt_cache, "offset"):
                 try:
-                    arr = data['_offset']
-                    if hasattr(arr, 'item'):
+                    arr = data["_offset"]
+                    if hasattr(arr, "item"):
                         offset_val = int(arr.item())
                     else:
                         offset_val = int(arr)
@@ -2475,15 +2812,15 @@ class DeepHermes3Engine:
                 except Exception:  # noqa: BLE001
                     pass
             if restored > 0:
-                logger.info(f'[CACHE] Loaded from {cache_path} ({restored}/{n_layers} layers restored)')
+                logger.info(f"[CACHE] Loaded from {cache_path} ({restored}/{n_layers} layers restored)")
                 return True
-            logger.debug(f'[CACHE] No layers restored from {cache_path}')
+            logger.debug(f"[CACHE] No layers restored from {cache_path}")
             return False
         except Exception as e:
-            logger.debug(f'[CACHE] Load failed: {e}')
+            logger.debug(f"[CACHE] Load failed: {e}")
             return False
 
-    def _format_chatml(self, system_msg: str, user_msg: str, history: list[dict[str, str]] | None=None) -> str:
+    def _format_chatml(self, system_msg: str, user_msg: str, history: list[dict[str, str]] | None = None) -> str:
         """
         Formátovat zprávu do ChatML formátu.
 
@@ -2496,15 +2833,15 @@ class DeepHermes3Engine:
             Formátovaný prompt
         """
         parts = []
-        parts.append(f'<|im_start|>system\n{system_msg}<|im_end|>')
+        parts.append(f"<|im_start|>system\n{system_msg}<|im_end|>")
         if history:
             for entry in history:
-                role = entry.get('role', 'user')
-                content = entry.get('content', '')
-                parts.append(f'<|im_start|>{role}\n{content}<|im_end|>')
-        parts.append(f'<|im_start|>user\n{user_msg}<|im_end|>')
-        parts.append('<|im_start|>assistant\n')
-        return '\n'.join(parts)
+                role = entry.get("role", "user")
+                content = entry.get("content", "")
+                parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+        parts.append(f"<|im_start|>user\n{user_msg}<|im_end|>")
+        parts.append("<|im_start|>assistant\n")
+        return "\n".join(parts)
 
     def _prep_generate(
         self,
@@ -2529,28 +2866,32 @@ class DeepHermes3Engine:
         Thread-safe: reads from shared state (no writes except cache append
         via move_to_end/popitem which are GIL-protected dict ops).
         """
-        sanitized = (sanitize_fn(prompt) if sanitize_fn else None) or fallback_sanitize(prompt, max_length=max_prompt_chars)
+        sanitized = (sanitize_fn(prompt) if sanitize_fn else None) or fallback_sanitize(
+            prompt, max_length=max_prompt_chars
+        )
         sanitized = sanitized[:max_prompt_chars]
         formatted = self._format_chatml(system_msg=system, user_msg=sanitized)
         formatted = formatted[:max_prompt_chars]
         prefix_tokens = None
-        cache_key = hashlib.sha256((system or '').encode()).hexdigest()
+        cache_key = hashlib.sha256((system or "").encode()).hexdigest()
         if cache_key in prefix_cache:
             # LRUCache.__getitem__ below automatically marks as MRU
-            prefix_cache_stats['prefix_cache_hits'] = prefix_cache_stats.get('prefix_cache_hits', 0) + 1
-            prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
-            logger.debug(f'[CACHE] Prefix cache hit for key {cache_key[:8]}')
+            prefix_cache_stats["prefix_cache_hits"] = prefix_cache_stats.get("prefix_cache_hits", 0) + 1
+            prefix_cache_stats["prefix_cache_size"] = len(prefix_cache)
+            logger.debug(f"[CACHE] Prefix cache hit for key {cache_key[:8]}")
         elif tokenizer:
             try:
                 prefix_tokens = tokenizer.encode(system)
                 # LRUCache.__setitem__ inserts at MRU position automatically
                 prefix_cache[cache_key] = prefix_tokens
-                prefix_cache_stats['prefix_cache_misses'] = prefix_cache_stats.get('prefix_cache_misses', 0) + 1
-                prefix_cache_stats['prefix_cache_size'] = len(prefix_cache)
+                prefix_cache_stats["prefix_cache_misses"] = prefix_cache_stats.get("prefix_cache_misses", 0) + 1
+                prefix_cache_stats["prefix_cache_size"] = len(prefix_cache)
                 while len(prefix_cache) > prefix_cache_maxsize:
                     evicted_key, _ = prefix_cache.popitem(last=False)  # type: ignore[call-arg]
-                    prefix_cache_stats['prefix_cache_evictions'] = prefix_cache_stats.get('prefix_cache_evictions', 0) + 1
-                    logger.debug(f'[CACHE] Prefix cache evicted key {evicted_key[:8]}')
+                    prefix_cache_stats["prefix_cache_evictions"] = (
+                        prefix_cache_stats.get("prefix_cache_evictions", 0) + 1
+                    )
+                    logger.debug(f"[CACHE] Prefix cache evicted key {evicted_key[:8]}")
             except Exception:  # noqa: BLE001
                 pass
         return formatted, None, tokenizer, prefix_tokens  # type: ignore[return-value]
@@ -2571,7 +2912,8 @@ class DeepHermes3Engine:
         """
         try:
             import mlx.core as mx
-            if hasattr(mx, 'get_active_memory'):
+
+            if hasattr(mx, "get_active_memory"):
                 mem_before = int(mx.get_active_memory())
                 _ = self._model(mx.array([tokens]), cache=cache)  # type: ignore[operator]
                 mx.eval(cache)
@@ -2602,12 +2944,14 @@ class DeepHermes3Engine:
             return None
         try:
             import time as _time_module
+
             from mlx_lm.models.cache import make_prompt_cache
+
             prompt_hash = hashlib.md5(system_prompt.encode()).hexdigest()
             if prompt_hash in self._kv_cache_pool:
                 # LRUCache.__getitem__ automatically marks as MRU
-                self._kv_cache_pool_stats['pool_hits'] += 1
-                logger.debug(f'[KV-CACHE][F289] Pool hit for system prompt hash {prompt_hash[:8]}')
+                self._kv_cache_pool_stats["pool_hits"] += 1
+                logger.debug(f"[KV-CACHE][F289] Pool hit for system prompt hash {prompt_hash[:8]}")
                 return self._kv_cache_pool[prompt_hash][0]
             lock = self._key_locks.get(prompt_hash)
             if lock is None:
@@ -2616,14 +2960,14 @@ class DeepHermes3Engine:
             with lock:
                 if prompt_hash in self._kv_cache_pool:
                     # LRUCache.__getitem__ automatically marks as MRU
-                    self._kv_cache_pool_stats['pool_hits'] += 1
+                    self._kv_cache_pool_stats["pool_hits"] += 1
                     return self._kv_cache_pool[prompt_hash][0]
-                self._kv_cache_pool_stats['pool_misses'] += 1
+                self._kv_cache_pool_stats["pool_misses"] += 1
                 tokens = self._tokenizer.encode(system_prompt)  # type: ignore[union-attr]
                 cache = make_prompt_cache(self._model)
                 cache_size = self._measure_kv_cache_bytes(cache, tokens)
                 pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
-                total_bytes = sum((entry[2] for entry in self._kv_cache_pool.values())) + cache_size
+                total_bytes = sum(entry[2] for entry in self._kv_cache_pool.values()) + cache_size
                 # F-06: Sliding window eviction — use SlidingWindowKVCache built-in
                 # token-based eviction (lowest tokens = least accessed recently).
                 # Memory-budget eviction still handled here (largest-first for bytes).
@@ -2635,37 +2979,41 @@ class DeepHermes3Engine:
                         self._kv_cache_pool.keys(),
                         key=lambda k: self._kv_cache_pool.get_tokens(k),
                         default=None,
-    )
+                    )
                     if evicted_key is None:
                         break
                     evicted_entry = self._kv_cache_pool.pop(evicted_key)
                     evicted_size = evicted_entry[2]
                     total_bytes -= evicted_size
-                    self._kv_cache_pool_stats['pool_evictions'] += 1
-                    self._kv_cache_pool_stats['pool_evictions_memory'] += evicted_size
-                    logger.debug(f'[KV-CACHE][F289] SW-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB, tokens={self._kv_cache_pool.get_tokens(evicted_key):.1f})')
+                    self._kv_cache_pool_stats["pool_evictions"] += 1
+                    self._kv_cache_pool_stats["pool_evictions_memory"] += evicted_size
+                    logger.debug(
+                        f"[KV-CACHE][F289] SW-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB, tokens={self._kv_cache_pool.get_tokens(evicted_key):.1f})"
+                    )
                 # Memory-budget eviction: largest entries first (existing policy, unchanged)
                 while total_bytes > pool_budget_bytes and len(self._kv_cache_pool) > 0:
                     evicted_key = max(
                         self._kv_cache_pool.keys(),
                         key=lambda k: self._kv_cache_pool[k][2] if self._kv_cache_pool[k][2] else 0,
                         default=None,
-    )
+                    )
                     if evicted_key is None:
                         break
                     evicted_entry = self._kv_cache_pool.pop(evicted_key)
                     evicted_size = evicted_entry[2]
                     total_bytes -= evicted_size
-                    self._kv_cache_pool_stats['pool_evictions'] += 1
-                    self._kv_cache_pool_stats['pool_evictions_memory'] += evicted_size
-                    logger.debug(f'[KV-CACHE][F289] MEM-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)')
+                    self._kv_cache_pool_stats["pool_evictions"] += 1
+                    self._kv_cache_pool_stats["pool_evictions_memory"] += evicted_size
+                    logger.debug(
+                        f"[KV-CACHE][F289] MEM-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)"
+                    )
                 self._kv_cache_pool[prompt_hash] = (cache, _time_module.monotonic(), cache_size)
                 self._system_prompt_cache = cache
                 self._system_prompt_hash = prompt_hash
-                logger.debug(f'[KV-CACHE][F289] System prompt cache built for hash {prompt_hash[:8]}')
+                logger.debug(f"[KV-CACHE][F289] System prompt cache built for hash {prompt_hash[:8]}")
                 return cache
         except Exception as e:
-            logger.warning(f'[KV-CACHE] Prefix cache failed: {e}')
+            logger.warning(f"[KV-CACHE] Prefix cache failed: {e}")
             return None
 
     def _get_session_cache(self, formatted_prompt: str) -> tuple[Any, str] | None:
@@ -2689,18 +3037,24 @@ class DeepHermes3Engine:
             prompt_hash = _get_xxh3_hex(formatted_prompt)
             if prompt_hash in self._session_cache_pool:
                 # LRUCache.__getitem__ automatically marks as MRU
-                self._session_cache_stats['session_cache_hits'] += 1
+                self._session_cache_stats["session_cache_hits"] += 1
                 # M-01: compute live hit ratio for telemetry
-                total = self._session_cache_stats['session_cache_hits'] + self._session_cache_stats['session_cache_misses']
-                self._session_cache_stats['session_cache_hit_ratio'] = float(self._session_cache_stats['session_cache_hits'] / total) if total > 0 else 0.0
-                logger.debug(f'[SESSION-CACHE] Hit for prompt hash {prompt_hash[:8]}')
+                total = (
+                    self._session_cache_stats["session_cache_hits"] + self._session_cache_stats["session_cache_misses"]
+                )
+                self._session_cache_stats["session_cache_hit_ratio"] = (
+                    float(self._session_cache_stats["session_cache_hits"] / total) if total > 0 else 0.0
+                )
+                logger.debug(f"[SESSION-CACHE] Hit for prompt hash {prompt_hash[:8]}")
                 return (self._session_cache_pool[prompt_hash][0], prompt_hash)
-            self._session_cache_stats['session_cache_misses'] += 1
-            total = self._session_cache_stats['session_cache_hits'] + self._session_cache_stats['session_cache_misses']
-            self._session_cache_stats['session_cache_hit_ratio'] = self._session_cache_stats['session_cache_hits'] / total if total > 0 else 0.0
+            self._session_cache_stats["session_cache_misses"] += 1
+            total = self._session_cache_stats["session_cache_hits"] + self._session_cache_stats["session_cache_misses"]
+            self._session_cache_stats["session_cache_hit_ratio"] = (
+                self._session_cache_stats["session_cache_hits"] / total if total > 0 else 0.0
+            )
             return None
         except Exception as e:
-            logger.debug(f'[SESSION-CACHE] Lookup failed: {e}')
+            logger.debug(f"[SESSION-CACHE] Lookup failed: {e}")
             return None
 
     def _store_session_cache(self, formatted_prompt: str, kv_cache: Any, cache_size: int) -> None:
@@ -2719,7 +3073,7 @@ class DeepHermes3Engine:
             return
         # M-01: reject None — storing None defeats session cache (every hit = full prefill)
         if kv_cache is None:
-            logger.debug('[SESSION-CACHE] Skipping store: kv_cache is None')
+            logger.debug("[SESSION-CACHE] Skipping store: kv_cache is None")
             return
         try:
             prompt_hash = _get_xxh3_hex(formatted_prompt)
@@ -2727,7 +3081,7 @@ class DeepHermes3Engine:
                 # LRUCache.__setitem__ will update and mark as MRU
                 return
             pool_budget_bytes = self._session_cache_memory_mb * 1024 * 1024
-            total_bytes = sum((entry[3] for entry in self._session_cache_pool.values())) + cache_size
+            total_bytes = sum(entry[3] for entry in self._session_cache_pool.values()) + cache_size
             while len(self._session_cache_pool) >= self._session_cache_maxsize or total_bytes > pool_budget_bytes:
                 if not self._session_cache_pool:
                     break
@@ -2735,14 +3089,16 @@ class DeepHermes3Engine:
                 evicted_size = self._session_cache_pool[evicted_key][3]
                 self._session_cache_pool.pop(evicted_key)
                 total_bytes -= evicted_size
-                self._session_cache_stats['session_cache_evictions'] += 1
-                logger.debug(f'[SESSION-CACHE] Evicted hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)')
+                self._session_cache_stats["session_cache_evictions"] += 1
+                logger.debug(
+                    f"[SESSION-CACHE] Evicted hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)"
+                )
             self._session_cache_pool[prompt_hash] = (kv_cache, prompt_hash, time.monotonic(), cache_size)
-            logger.debug(f'[SESSION-CACHE] Stored for hash {prompt_hash[:8]} (size={cache_size / 1024 / 1024:.1f}MB)')
+            logger.debug(f"[SESSION-CACHE] Stored for hash {prompt_hash[:8]} (size={cache_size / 1024 / 1024:.1f}MB)")
         except Exception as e:
-            logger.debug(f'[SESSION-CACHE] Store failed: {e}')
+            logger.debug(f"[SESSION-CACHE] Store failed: {e}")
 
-    def _get_kv_cache_kwargs(self, input_tokens: int | None=None, max_tokens: int | None=None) -> dict:
+    def _get_kv_cache_kwargs(self, input_tokens: int | None = None, max_tokens: int | None = None) -> dict:
         """
         Sprint G2: Delegates to brain.kv_cache_config.get_kv_cache_config().
 
@@ -2763,9 +3119,7 @@ class DeepHermes3Engine:
         if self._metal_device is not None:
             try:
                 stats = self._metal_device.get_stats()
-                metal_active_bytes = getattr(stats, "active_bytes", None) or getattr(
-                    stats, "metal_memory_bytes", None
-    )
+                metal_active_bytes = getattr(stats, "active_bytes", None) or getattr(stats, "metal_memory_bytes", None)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2784,12 +3138,14 @@ class DeepHermes3Engine:
             metal_active_bytes=metal_active_bytes,
             uma_state=uma_state,
             kv_bits_override=self._kv_bits,
-    )
+        )
 
         logger.debug(
             "[O1+F265C-METAL+F265H-EXT] KV cache: input_tokens=%s max_tokens=%s config=%s",
-            input_tokens, max_tokens, config,
-    )
+            input_tokens,
+            max_tokens,
+            config,
+        )
         return config.as_kwargs()
 
     def _get_adaptive_kv_bits(self) -> int:
@@ -2833,9 +3189,12 @@ class DeepHermes3Engine:
             metal_active_bytes=metal_active_bytes,
             uma_state=uma_state,
             kv_bits_override=self._kv_bits,
-    )
-        logger.debug("[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d",
-                      metal_active_bytes / (1024**3) if metal_active_bytes else 0.0, config.kv_bits)
+        )
+        logger.debug(
+            "[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d",
+            metal_active_bytes / (1024**3) if metal_active_bytes else 0.0,
+            config.kv_bits,
+        )
         return config.kv_bits
 
     def is_idle(self) -> bool:
@@ -2854,6 +3213,7 @@ class DeepHermes3Engine:
             return True
         try:
             import time as _time
+
             elapsed = _time.monotonic() - self._last_inference_at
             return elapsed >= self._idle_unload_timeout_s
         except Exception:
@@ -2879,7 +3239,15 @@ class DeepHermes3Engine:
                 except Exception:  # noqa: BLE001
                     pass
 
-    def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> dict:
+    def _build_generate_kwargs(
+        self,
+        formatted_prompt: str,
+        temp: float,
+        max_tok: int,
+        prefix_cache,
+        adapter_path: str | None = None,
+        prompt_tokens: list[int] | None = None,
+    ) -> dict:
         """
         Build mlx_lm.generate() kwargs — shared between stream and direct paths.
 
@@ -2901,15 +3269,19 @@ class DeepHermes3Engine:
         once and passing the tokens list.
         """
         from mlx_lm.sample_utils import make_sampler
+
         if self._kv_cache_enabled and prefix_cache is not None:
             kv_cache = prefix_cache
             self._quantize_kv_cache(kv_cache)
         elif self._kv_cache_enabled:
             if self._paged_kv_cache:
                 from mlx_lm.models.cache import RotatingKVCache
+
                 num_layers = len(self._model.layers)
                 kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
-                logger.debug('[B.KV] Paged KV cache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
+                logger.debug(
+                    "[B.KV] Paged KV cache: keep=%d, max_size=%d, layers=%d", self._paged_kv_keep, max_tok, num_layers
+                )
             else:
                 kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
             self._quantize_kv_cache(kv_cache)
@@ -2924,26 +3296,37 @@ class DeepHermes3Engine:
             if _lora_tuple is not None:
                 _active_model, _active_tokenizer = _lora_tuple
                 _active_adapter = adapter_path
-                self._lora_cache_stats['lora_applications'] += 1
+                self._lora_cache_stats["lora_applications"] += 1
         # M-03: Use pre-computed prompt_tokens if available (avoids double encode).
         # Note: when prompt_tokens is already computed, LoRA tokenizer swap is not needed
         # since we use the tokens directly — LoRA affects only new tokenization.
         _input_tokens_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
         _kv_kwargs = self._get_kv_cache_kwargs(input_tokens=_input_tokens_count, max_tokens=max_tok)
-        if _active_adapter is not None and 'max_kv_size' in _kv_kwargs:
-            _orig_size = _kv_kwargs['max_kv_size']
-            _kv_kwargs['max_kv_size'] = max(2048, _orig_size // 2)
-            logger.debug(f"[LoRA] KV cache reduced: {_orig_size} → {_kv_kwargs['max_kv_size']} (adapter={_active_adapter})")
+        if _active_adapter is not None and "max_kv_size" in _kv_kwargs:
+            _orig_size = _kv_kwargs["max_kv_size"]
+            _kv_kwargs["max_kv_size"] = max(2048, _orig_size // 2)
+            logger.debug(
+                f"[LoRA] KV cache reduced: {_orig_size} → {_kv_kwargs['max_kv_size']} (adapter={_active_adapter})"
+            )
         # M-03: Pass prompt_tokens directly to mlx_lm.generate() — avoids re-tokenizing
         _prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
         _kv_bits = self._get_adaptive_kv_bits()
-        generate_kwargs = {'model': _active_model, 'tokenizer': _active_tokenizer, 'prompt': _prompt_arg, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'kv_bits': _kv_bits, 'verbose': False, **_kv_kwargs}
+        generate_kwargs = {
+            "model": _active_model,
+            "tokenizer": _active_tokenizer,
+            "prompt": _prompt_arg,
+            "sampler": make_sampler(temp=temp),
+            "max_tokens": max_tok,
+            "kv_bits": _kv_bits,
+            "verbose": False,
+            **_kv_kwargs,
+        }
         if kv_cache is not None:
-            generate_kwargs['prompt_cache'] = kv_cache
+            generate_kwargs["prompt_cache"] = kv_cache
         if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
-            generate_kwargs['draft_model'] = self._draft_model_obj
-            generate_kwargs['num_draft_tokens'] = self._num_draft_tokens
-        self._kv_cache_stats['cache_uses'] += 1
+            generate_kwargs["draft_model"] = self._draft_model_obj
+            generate_kwargs["num_draft_tokens"] = self._num_draft_tokens
+        self._kv_cache_stats["cache_uses"] += 1
         return generate_kwargs
 
     # L-04: Throttling constants — mx.clear_cache() called at most every N generations
@@ -2979,7 +3362,7 @@ class DeepHermes3Engine:
         self._cache_manager.sync_session_cache(self._session_cache_pool)
         self._cache_manager.sync_prefix_cache(self._prefix_cache)
         self._cache_manager.clear_all_sync()
-        
+
         # Reset engine's cache references (manager's refs already cleared by clear_all_sync)
         self._prompt_cache = None
         self._system_prompt_cache = None
@@ -2988,8 +3371,8 @@ class DeepHermes3Engine:
         # Note: _kv_cache_pool, _session_cache_pool, _prefix_cache references remain
         # but their contents are cleared by clear_all_sync() through manager
         self._mlx_clear_and_timestamp(force_clear=True)
-        self._telemetry_counters['cache_invalidation_count'] += 1
-        logger.debug(f'[M-08] All prompt caches invalidated: {reason}')
+        self._telemetry_counters["cache_invalidation_count"] += 1
+        logger.debug(f"[M-08] All prompt caches invalidated: {reason}")
 
     def _mlx_clear_and_timestamp(self, force_clear: bool = False) -> None:
         """
@@ -3024,15 +3407,16 @@ class DeepHermes3Engine:
                 # CRITICAL (94%) and EMERGENCY (98%) require immediate relief
                 try:
                     from hledac.universal._core.resource_governor import sample_uma_status
+
                     _uma = sample_uma_status()
-                    _uma_state = getattr(_uma, 'state', 'ok')
-                    if _uma_state in ('critical', 'emergency'):
+                    _uma_state = getattr(_uma, "state", "ok")
+                    if _uma_state in ("critical", "emergency"):
                         _should_clear = True
                 except Exception:  # noqa: BLE001
                     pass  # fail-open: don't clear if sampling fails
 
-        # Update timestamp regardless of whether we clear
         import time as _time
+
         self._last_inference_at = _time.monotonic()
         self._last_clear_at = self._last_inference_at
 
@@ -3044,11 +3428,13 @@ class DeepHermes3Engine:
         self._generation_since_clear = 0
 
         try:
-            import mlx.core as _mx
             import gc as _gc
+
+            import mlx.core as _mx
+
             _gc.collect()
             _mx.eval([])
-            if hasattr(_mx, 'clear_cache'):
+            if hasattr(_mx, "clear_cache"):
                 _mx.clear_cache()
             _gc.collect()
         except Exception:  # noqa: BLE001
@@ -3072,27 +3458,26 @@ class DeepHermes3Engine:
             return
         if adapter_path is None:
             self._lora_adapter_path = None
-            logger.debug('[LoRA] Switched to base model (no adapter)')
+            logger.debug("[LoRA] Switched to base model (no adapter)")
             return
         cache = hermes_cache()
         lora_result = cache.get_lora(adapter_path)
         if lora_result is not None:
             self._lora_adapter_path = adapter_path
-            self._lora_cache_stats['lora_cache_hits'] += 1
-            logger.debug(f'[LoRA] Cache hit (LRU updated): {adapter_path}')
+            self._lora_cache_stats["lora_cache_hits"] += 1
+            logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
             return
         try:
             import mlx_lm
-            logger.info(f'[LoRA] Loading adapter: {adapter_path}')
-            lora_model, lora_tokenizer = await asyncio.to_thread(
-                mlx_lm.lora.load_lora_model, self._model, adapter_path
-    )
+
+            logger.info(f"[LoRA] Loading adapter: {adapter_path}")
+            lora_model, lora_tokenizer = await asyncio.to_thread(mlx_lm.lora.load_lora_model, self._model, adapter_path)
             cache.put_lora(adapter_path, lora_model, lora_tokenizer)
             self._lora_adapter_path = adapter_path
-            self._lora_cache_stats['lora_cache_misses'] += 1
-            logger.info(f'[LoRA] Adapter loaded and cached: {adapter_path}')
+            self._lora_cache_stats["lora_cache_misses"] += 1
+            logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
         except Exception as _e:
-            logger.warning(f'[LoRA] Failed to load adapter {adapter_path}: {_e}')
+            logger.warning(f"[LoRA] Failed to load adapter {adapter_path}: {_e}")
             self._lora_adapter_path = None
 
     def apply_lora_adapter(self, adapter_path: str | None) -> None:
@@ -3101,25 +3486,26 @@ class DeepHermes3Engine:
             return
         if adapter_path is None:
             self._lora_adapter_path = None
-            logger.debug('[LoRA] Switched to base model (no adapter)')
+            logger.debug("[LoRA] Switched to base model (no adapter)")
             return
         cache = hermes_cache()
         lora_result = cache.get_lora(adapter_path)
         if lora_result is not None:
             self._lora_adapter_path = adapter_path
-            self._lora_cache_stats['lora_cache_hits'] += 1
-            logger.debug(f'[LoRA] Cache hit (LRU updated): {adapter_path}')
+            self._lora_cache_stats["lora_cache_hits"] += 1
+            logger.debug(f"[LoRA] Cache hit (LRU updated): {adapter_path}")
             return
         try:
             import mlx_lm
-            logger.info(f'[LoRA] Loading adapter: {adapter_path}')
+
+            logger.info(f"[LoRA] Loading adapter: {adapter_path}")
             lora_model, lora_tokenizer = mlx_lm.lora.load_lora_model(self._model, adapter_path)
             cache.put_lora(adapter_path, lora_model, lora_tokenizer)
             self._lora_adapter_path = adapter_path
-            self._lora_cache_stats['lora_cache_misses'] += 1
-            logger.info(f'[LoRA] Adapter loaded and cached: {adapter_path}')
+            self._lora_cache_stats["lora_cache_misses"] += 1
+            logger.info(f"[LoRA] Adapter loaded and cached: {adapter_path}")
         except Exception as _e:
-            logger.warning(f'[LoRA] Failed to load adapter {adapter_path}: {_e}')
+            logger.warning(f"[LoRA] Failed to load adapter {adapter_path}: {_e}")
             self._lora_adapter_path = None
 
     def unload_lora_adapter(self) -> None:
@@ -3130,7 +3516,7 @@ class DeepHermes3Engine:
         cache = hermes_cache()
         cache.clear_loras()
         self._lora_adapter_path = None
-        logger.debug('[LoRA] All adapters unloaded')
+        logger.debug("[LoRA] All adapters unloaded")
 
     def get_lora_active_adapter(self) -> str | None:
         """Return the currently active LoRA adapter path, or None for base model."""
@@ -3139,7 +3525,7 @@ class DeepHermes3Engine:
     def get_lora_stats(self) -> dict:
         """Return LoRA cache telemetry (P0-04)."""
         cache = hermes_cache()
-        return {**self._lora_cache_stats, 'lora_active': self._lora_adapter_path, 'lora_cache_size': cache.lora_count}
+        return {**self._lora_cache_stats, "lora_active": self._lora_adapter_path, "lora_cache_size": cache.lora_count}
 
     def _get_lora_kwargs(self) -> dict:
         """
@@ -3156,8 +3542,8 @@ class DeepHermes3Engine:
         """
         if self._lora_adapter_path is None:
             return {}
-        self._lora_cache_stats['lora_applications'] += 1
-        return {'adapter_path': self._lora_adapter_path}
+        self._lora_cache_stats["lora_applications"] += 1
+        return {"adapter_path": self._lora_adapter_path}
 
     def _get_lora_kv_size(self, base_kv_kwargs: dict) -> dict:
         """
@@ -3171,14 +3557,23 @@ class DeepHermes3Engine:
         """
         if self._lora_adapter_path is None:
             return base_kv_kwargs
-        if 'max_kv_size' not in base_kv_kwargs:
+        if "max_kv_size" not in base_kv_kwargs:
             return base_kv_kwargs
-        current_size = base_kv_kwargs.get('max_kv_size', 8192)
+        current_size = base_kv_kwargs.get("max_kv_size", 8192)
         reduced_size = max(2048, current_size // 2)
-        logger.debug(f'[LoRA] KV cache reduced: {current_size} → {reduced_size} (LoRA active)')
-        return {**base_kv_kwargs, 'max_kv_size': reduced_size}
+        logger.debug(f"[LoRA] KV cache reduced: {current_size} → {reduced_size} (LoRA active)")
+        return {**base_kv_kwargs, "max_kv_size": reduced_size}
 
-    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None, adapter_path: str | None=None, prompt_tokens: list[int] | None=None, logits_processors: list[Any] | None=None) -> tuple[str, Any]:
+    def _run_inference(
+        self,
+        formatted_prompt: str,
+        temp: float,
+        max_tok: int,
+        prefix_cache=None,
+        adapter_path: str | None = None,
+        prompt_tokens: list[int] | None = None,
+        logits_processors: list[Any] | None = None,
+    ) -> tuple[str, Any]:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
 
@@ -3217,15 +3612,18 @@ class DeepHermes3Engine:
             stored in the session cache — NOT the input prefix_cache.
         """
         from mlx_lm import generate as mlx_generate
+
         # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
         from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
 
-        generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path, prompt_tokens=prompt_tokens)
+        generate_kwargs = self._build_generate_kwargs(
+            formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path, prompt_tokens=prompt_tokens
+        )
         # M-10: Add logits_processors for constrained JSON generation (xgrammar)
         if logits_processors:
-            generate_kwargs['logits_processors'] = logits_processors
+            generate_kwargs["logits_processors"] = logits_processors
         # M-01: capture kv_cache for return — needed by caller for session cache store
-        kv_cache_after = generate_kwargs.get('prompt_cache')
+        kv_cache_after = generate_kwargs.get("prompt_cache")
         _mlx_lock = _get_mlx_inference_lock()
         # U2-03 FIX: removed pre-inference mx.eval([]) — it blocked the main thread
         # (Path 2: run_coroutine_threadsafe). Post-inference _mlx_clear_and_timestamp()
@@ -3241,9 +3639,9 @@ class DeepHermes3Engine:
             with _mlx_lock:
                 response = mlx_generate(**generate_kwargs)
         except Exception as _err:
-            logger.warning('[P0-1] mlx_generate failed: %s', _err)
+            logger.warning("[P0-1] mlx_generate failed: %s", _err)
             self._mlx_clear_and_timestamp(force_clear=True)  # L-04: force clear after error (fragmented cache)
-            raise RuntimeError(f'MLX inference failed: {_err}') from _err
+            raise RuntimeError(f"MLX inference failed: {_err}") from _err
         self._generation_since_clear += 1  # L-04: increment BEFORE throttled clear
         self._mlx_clear_and_timestamp()  # L-04: throttled — clears only when threshold reached or HIGH pressure
         # M-01: return (response, kv_cache_after) so caller can store populated cache
@@ -3262,10 +3660,11 @@ class DeepHermes3Engine:
             return self._mlx_batcher
         try:
             from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
+
             worker = self._ensure_mlx_worker_thread()
             self._mlx_batcher = MLXBatchedExecutor(engine=self, worker_thread=worker)
         except Exception as _e:
-            logger.debug('[P0-2] MLXBatchedExecutor init skipped: %s', _e)
+            logger.debug("[P0-2] MLXBatchedExecutor init skipped: %s", _e)
             self._mlx_batcher = None
         return self._mlx_batcher
 
@@ -3281,12 +3680,13 @@ class DeepHermes3Engine:
             return self._mlx_worker_thread
         try:
             from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+
             if self._mlx_worker_thread is not None:
                 return self._mlx_worker_thread
             self._mlx_worker_thread = MLXWorkerThread()
             self._mlx_worker_thread.start()
         except Exception as _e:
-            logger.debug('[P0-3] MLXWorkerThread init skipped: %s', _e)
+            logger.debug("[P0-3] MLXWorkerThread init skipped: %s", _e)
             self._mlx_worker_thread = None
         return self._mlx_worker_thread
 
@@ -3319,13 +3719,14 @@ class DeepHermes3Engine:
             return self._mlx_scheduler
         try:
             from hledac.universal._core.mlx_unified_scheduler import MLXUnifiedScheduler
+
             worker = self._ensure_mlx_worker_thread()
             batcher = await self._ensure_mlx_batcher()
             self._mlx_scheduler = MLXUnifiedScheduler(llm_engine=self, worker_thread=worker, batcher=batcher)
             await self._mlx_scheduler.start()
-            logger.debug('[ISSUE-120] MLXUnifiedScheduler initialized')
+            logger.debug("[ISSUE-120] MLXUnifiedScheduler initialized")
         except Exception as _e:
-            logger.debug('[ISSUE-120] MLXUnifiedScheduler init skipped: %s', _e)
+            logger.debug("[ISSUE-120] MLXUnifiedScheduler init skipped: %s", _e)
             self._mlx_scheduler = None
         return self._mlx_scheduler
 
@@ -3354,14 +3755,15 @@ class DeepHermes3Engine:
         try:
             from hledac.universal.brain.inference_stage_pipeline import (
                 BoundedInferencePipeline,
-    )
+            )
+
             # Ensure MLX worker thread is started (pipeline inference worker
             # routes through worker.submit() for non-blocking main loop)
             self._ensure_mlx_worker_thread()
             self._pipeline = BoundedInferencePipeline(engine=self)
-            logger.debug('[Issue-17] BoundedInferencePipeline initialized')
+            logger.debug("[Issue-17] BoundedInferencePipeline initialized")
         except Exception as _e:
-            logger.debug('[Issue-17] BoundedInferencePipeline init skipped: %s', _e)
+            logger.debug("[Issue-17] BoundedInferencePipeline init skipped: %s", _e)
             self._pipeline = None
         return self._pipeline
 
@@ -3414,9 +3816,9 @@ class DeepHermes3Engine:
                 result = await worker.submit(self._run_inference_async(fn, *args, **kwargs), timeout=timeout)
                 return result
             except (TimeoutError, RuntimeError) as _worker_err:
-                logger.debug('[P0-2] worker submit failed (%s) — trying main thread path', _worker_err)
+                logger.debug("[P0-2] worker submit failed (%s) — trying main thread path", _worker_err)
             except Exception as _worker_err:
-                logger.debug('[P0-2] worker submit unexpected error (%s) — trying main thread path', _worker_err)
+                logger.debug("[P0-2] worker submit unexpected error (%s) — trying main thread path", _worker_err)
 
         # Path 2: Main-thread with retry (exponential backoff)
         result = await self._try_main_thread_inference_with_retry(timeout, fn, *args, **kwargs)
@@ -3426,7 +3828,11 @@ class DeepHermes3Engine:
         # Path 3: ThreadPoolExecutor fallback (last resort)
         async with self._inference_semaphore:
             loop = asyncio.get_running_loop()
-            return await safe_wait_for(loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)), timeout=timeout, label='deephermes_executor')
+            return await safe_wait_for(
+                loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)),
+                timeout=timeout,
+                label="deephermes_executor",
+            )
 
     async def _try_main_thread_inference_with_retry(self, timeout: float, fn, *args, **kwargs) -> str | None:
         """Retry loop for main-thread inference with exponential backoff.
@@ -3453,21 +3859,30 @@ class DeepHermes3Engine:
                 return await safe_wait_for(
                     loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)),
                     timeout=timeout,
-                    label='deephermes_inference'
-    )
+                    label="deephermes_inference",
+                )
             except TimeoutError:
                 if _attempt < _retries:
-                    logger.warning('[P2-7] main-thread inference timeout (attempt %d/%d), retrying in %.1fs', _attempt + 1, _retries + 1, _base_delay)
+                    logger.warning(
+                        "[P2-7] main-thread inference timeout (attempt %d/%d), retrying in %.1fs",
+                        _attempt + 1,
+                        _retries + 1,
+                        _base_delay,
+                    )
                     await asyncio.sleep(_base_delay)
                     _base_delay *= 1.5
                     # C2c-FIX: _mlx_clear_and_timestamp() calls mx.eval([]) which blocks
                     # the event loop for 1-50ms. Offload to thread pool.
-                    await asyncio.to_thread(self._mlx_clear_and_timestamp, True)  # L-04: force clear after timeout (fragmented KV cache)
+                    await asyncio.to_thread(
+                        self._mlx_clear_and_timestamp, True
+                    )  # L-04: force clear after timeout (fragmented KV cache)
                     continue
-                logger.warning('[P2-7] main-thread inference timeout after %d attempts — propagating', _retries + 1)
+                logger.warning("[P2-7] main-thread inference timeout after %d attempts — propagating", _retries + 1)
                 raise
             except Exception as _submit_err:
-                logger.debug('[P2-7] main-thread submit failed (attempt %d): %s — falling back', _attempt + 1, _submit_err)
+                logger.debug(
+                    "[P2-7] main-thread submit failed (attempt %d): %s — falling back", _attempt + 1, _submit_err
+                )
                 if _attempt >= _retries:
                     return None
                 await asyncio.sleep(_base_delay)
@@ -3475,7 +3890,6 @@ class DeepHermes3Engine:
                 continue
         return None
 
-    # ------------------------------------------------------------------
     async def _try_pipeline_path(
         self,
         prompt: str,
@@ -3493,11 +3907,14 @@ class DeepHermes3Engine:
             pipeline = await self._ensure_inference_pipeline()
             if pipeline is not None:
                 return await pipeline.submit(
-                    prompt=prompt, temperature=temperature,
-                    max_tokens=max_tokens, system_msg=system_msg, thinking=thinking,
-    )
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_msg=system_msg,
+                    thinking=thinking,
+                )
         except Exception as _pipeline_err:
-            logger.debug('[Issue-17] Pipeline routing failed, falling back: %s', _pipeline_err)
+            logger.debug("[Issue-17] Pipeline routing failed, falling back: %s", _pipeline_err)
         return None
 
     async def _try_scheduler_path(
@@ -3513,11 +3930,14 @@ class DeepHermes3Engine:
             if scheduler is not None:
                 LanePriority = _lane_priority_resolver()
                 return await scheduler.submit_inference(
-                    prompt=prompt, temperature=temperature,
-                    max_tokens=max_tokens or 1024, system_msg=system_msg,
-                    priority=LanePriority.INTERACTIVE)
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens or 1024,
+                    system_msg=system_msg,
+                    priority=LanePriority.INTERACTIVE,
+                )
         except Exception as _scheduler_err:
-            logger.debug('[ISSUE-120] Scheduler routing failed, falling back to batcher: %s', _scheduler_err)
+            logger.debug("[ISSUE-120] Scheduler routing failed, falling back to batcher: %s", _scheduler_err)
         return None
 
     async def _try_batcher_path(
@@ -3532,27 +3952,32 @@ class DeepHermes3Engine:
         try:
             batcher = await self._ensure_mlx_batcher()
             if batcher is not None and batcher.is_batch_safe(
-                prompt=prompt, system_msg=system_msg, priority=1.0,
+                prompt=prompt,
+                system_msg=system_msg,
+                priority=1.0,
                 active_iteration_count=self._active_iteration_count,
-                max_tokens=_max_tokens_for_batch):
+                max_tokens=_max_tokens_for_batch,
+            ):
                 return await batcher.execute(
-                    prompt=prompt, temperature=temperature,
-                    max_tokens=max_tokens, system_msg=system_msg, priority=1.0)
+                    prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=1.0
+                )
         except Exception as _batching_err:
-            logger.debug('[P0-2] batching routing failed, falling back to direct: %s', _batching_err)
+            logger.debug("[P0-2] batching routing failed, falling back to direct: %s", _batching_err)
         return None
 
     def _check_model_admission(self) -> None:
         """Check model admission and circuit breaker status."""
         if check_model_allowed is not None:
-            decision = check_model_allowed('hermes')
+            decision = check_model_allowed("hermes")
             if not decision.allowed:
-                raise RuntimeError(f'model inference blocked: hermes, retry after {decision.retry_after_s:.1f}s')
+                raise RuntimeError(f"model inference blocked: hermes, retry after {decision.retry_after_s:.1f}s")
 
         if self._model_breaker is not None and self._model_breaker.is_open():
             snap = self._model_breaker.get_snapshot()
-            raise RuntimeError(f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} "
-                             f"(failures={snap['failure_count']}, last={snap['last_failure_kind']!r})")
+            raise RuntimeError(
+                f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} "
+                f"(failures={snap['failure_count']}, last={snap['last_failure_kind']!r})"
+            )
 
     async def _direct_inference_path(
         self,
@@ -3568,21 +3993,27 @@ class DeepHermes3Engine:
         """Direct inference with full exception handling."""
         try:
             return await self._generate_direct(
-                prompt=prompt, temperature=temperature, max_tokens=max_tokens,
-                system_msg=system_msg, thinking=thinking, adapter_path=adapter_path,
-                logits_processors=logits_processors, prompt_tokens=prompt_tokens)
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_msg=system_msg,
+                thinking=thinking,
+                adapter_path=adapter_path,
+                logits_processors=logits_processors,
+                prompt_tokens=prompt_tokens,
+            )
         except TimeoutError:
-            logger.warning('Hermes inference timed out')
+            logger.warning("Hermes inference timed out")
             if record_model_failure is not None:
-                record_model_failure('hermes', failure_kind='timeout')
+                record_model_failure("hermes", failure_kind="timeout")
             raise
         except asyncio.CancelledError:
-            logger.warning('Hermes inference cancelled')
+            logger.warning("Hermes inference cancelled")
             raise
         except Exception as e:
             raise self._classify_and_record_failure(e)
 
-    @_otel_instrumented('hermes.generate', component='mlx')
+    @_otel_instrumented("hermes.generate", component="mlx")
     async def generate(
         self,
         prompt: str,
@@ -3616,14 +4047,16 @@ class DeepHermes3Engine:
         if self._model is None:
             await self._ensure_model_loaded()
             if self._model is None:
-                raise RuntimeError('Model not initialized — Hermes load failed')
+                raise RuntimeError("Model not initialized — Hermes load failed")
 
         # Guard: wait for ongoing compilation
         while self._compile_in_progress:
             await asyncio.sleep(0.1)
 
         # Try routing paths in order
-        if result := await self._try_pipeline_path(prompt, temperature, max_tokens, system_msg, thinking, adapter_path, logits_processors):
+        if result := await self._try_pipeline_path(
+            prompt, temperature, max_tokens, system_msg, thinking, adapter_path, logits_processors
+        ):
             return result
 
         if result := await self._try_scheduler_path(prompt, temperature, max_tokens, system_msg):
@@ -3637,14 +4070,16 @@ class DeepHermes3Engine:
 
         # Direct inference path
         return await self._direct_inference_path(
-            prompt, temperature, max_tokens, system_msg, thinking,
-            adapter_path, logits_processors, prompt_tokens,
-    )
+            prompt,
+            temperature,
+            max_tokens,
+            system_msg,
+            thinking,
+            adapter_path,
+            logits_processors,
+            prompt_tokens,
+        )
 
-    # ------------------------------------------------------------------
-    # _generate_direct: extracted from generate() to reduce complexity
-    # Complexity: 27 → ~8 (uses helper methods below)
-    # ------------------------------------------------------------------
     async def _generate_direct(
         self,
         prompt: str,
@@ -3663,24 +4098,20 @@ class DeepHermes3Engine:
         # ISSUE-015: Apply thermal generation parameters if under thermal pressure
         temp, max_tok = await self._apply_thermal_generation_params(temp, max_tok)
 
-        # ---- Context budget decision ----
         truncated = self._apply_context_budget_decision(prompt)
         if truncated is not None:
             prompt = truncated
 
-        # ---- Prompt injection detection (LLM-01 + GAP-5) ----
         prompt = self._validate_prompt_security(prompt)
         self._check_gap5_injection(prompt)
 
-        # ---- Bandit arm selection ----
         bandit, arm_used = self._select_bandit_arm()
 
-        # ---- Prompt formatting ----
         loop = asyncio.get_running_loop()
         sanitized_for_prep = prompt if isinstance(prompt, str) else str(prompt)
-        system_for_prep = system_msg or 'You are a helpful research assistant.'
+        system_for_prep = system_msg or "You are a helpful research assistant."
         if thinking:
-            system_for_prep = f'{self._DEEP_THINKING_PREFIX}\n\n{system_for_prep}'
+            system_for_prep = f"{self._DEEP_THINKING_PREFIX}\n\n{system_for_prep}"
         formatted_prompt, _, tokenizer, prefix_tokens = await loop.run_in_executor(
             self._prep_executor,
             self._prep_generate,
@@ -3692,36 +4123,39 @@ class DeepHermes3Engine:
             self._prefix_cache_maxsize,
             self._prefix_cache_stats,
             MAX_LLM_PROMPT_CHARS,
-    )
+        )
 
-        # ---- LoRA adapter ----
         if adapter_path is not None:
             await self.apply_lora_adapter_async(adapter_path)
 
-        logger.debug(f'Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}')
+        logger.debug(f"Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}")
 
-        # ---- KV cache resolution ----
         prefix_cache = self._resolve_kv_cache(system_msg, formatted_prompt)
         timeout_s = _get_hermes_timeout_s()
 
         # LLM-02/03: Token limit check and truncation if needed
         formatted_prompt, gen_prompt_tokens = self._truncate_token_overflow(
-            formatted_prompt, system_for_prep, max_tok, sanitized_for_prep)
+            formatted_prompt, system_for_prep, max_tok, sanitized_for_prep
+        )
 
-        # ---- Inference ----
-        # G2: Notify observers inference is starting
         self._inference_active = True
         self._notify_state(ModelLoadState.BUSY)
         response, populated_kv = await self._submit_inference(
-            timeout_s, self._run_inference, formatted_prompt, temp, max_tok,
-            prefix_cache, adapter_path, gen_prompt_tokens, logits_processors)
+            timeout_s,
+            self._run_inference,
+            formatted_prompt,
+            temp,
+            max_tok,
+            prefix_cache,
+            adapter_path,
+            gen_prompt_tokens,
+            logits_processors,
+        )
         # G2: Notify observers inference is complete
         self._inference_active = False
         self._notify_state()
 
-        # ---- Post-inference: cache KV, record success, update bandit ----
-        await self._handle_inference_result(
-            formatted_prompt, populated_kv, response, bandit, arm_used)
+        await self._handle_inference_result(formatted_prompt, populated_kv, response, bandit, arm_used)
 
         return response
 
@@ -3741,7 +4175,7 @@ class DeepHermes3Engine:
         if session_result is not None:
             cached_kv, _ = session_result
             prefix_cache = cached_kv
-            logger.debug('[SESSION-CACHE] Using cached KV for inference')
+            logger.debug("[SESSION-CACHE] Using cached KV for inference")
 
         return prefix_cache
 
@@ -3754,7 +4188,6 @@ class DeepHermes3Engine:
         arm_used: str,
     ) -> None:
         """Handle post-inference tasks: KV cache storage, success recording, bandit update."""
-        # ---- Store KV cache ----
         if self._kv_cache_enabled:
             session_result = self._get_session_cache(formatted_prompt)
             if session_result is None:
@@ -3764,52 +4197,44 @@ class DeepHermes3Engine:
                 except Exception:  # noqa: BLE001
                     pass
 
-        # ---- Record success ----
         if record_model_success is not None:
-            record_model_success('hermes')
+            record_model_success("hermes")
         if self._model_breaker is not None:
             self._model_breaker.record_success()
 
-        # ---- Update bandit reward ----
         if bandit is not None and arm_used and response:
             try:
                 response_len_norm = min(1.0, len(response) / 4000.0)
                 reward = response_len_norm * 0.8
                 bandit.update_reward(arm_used, reward, reward)
-                logger.debug(f'[GENERATE] Bandit reward: arm={arm_used} reward={reward:.3f}')
+                logger.debug(f"[GENERATE] Bandit reward: arm={arm_used} reward={reward:.3f}")
             except Exception as e:
-                logger.debug(f'[GENERATE] Bandit update failed: {e}')
+                logger.debug(f"[GENERATE] Bandit update failed: {e}")
 
     def _classify_and_record_failure(self, e: Exception) -> Exception:
         """Classify inference exception and record to telemetry/circuit breaker."""
         if record_model_failure is not None and classify_failure_kind is not None:
             kind = classify_failure_kind(e)
-            record_model_failure('hermes', failure_kind=kind)
+            record_model_failure("hermes", failure_kind=kind)
 
         if self._model_breaker is not None:
             if isinstance(e, (IndexError, KeyError)):
-                self._model_breaker.record_failure('internal_error')
+                self._model_breaker.record_failure("internal_error")
             else:
                 err_str = str(e).lower()
-                if 'memory' in err_str or 'oom' in err_str or 'alloc' in err_str:
-                    self._model_breaker.record_failure('oom')
-                elif 'timeout' in err_str or 'deadline' in err_str:
-                    self._model_breaker.record_failure('timeout')
-                elif 'metal' in err_str or 'gpu' in err_str:
-                    self._model_breaker.record_failure('metal_driver')
+                if "memory" in err_str or "oom" in err_str or "alloc" in err_str:
+                    self._model_breaker.record_failure("oom")
+                elif "timeout" in err_str or "deadline" in err_str:
+                    self._model_breaker.record_failure("timeout")
+                elif "metal" in err_str or "gpu" in err_str:
+                    self._model_breaker.record_failure("metal_driver")
                 else:
-                    self._model_breaker.record_failure('runtime_error')
+                    self._model_breaker.record_failure("runtime_error")
 
-        logger.error(f'Generation failed: {e}')
+        logger.error(f"Generation failed: {e}")
         return e
 
-    # ------------------------------------------------------------------
-    # Complexity-reduced helpers for _generate_direct (complexity: 27 → ~7)
-    # ------------------------------------------------------------------
-
-    async def _apply_thermal_generation_params(
-        self, temp: float, max_tok: int
-    ) -> tuple[float, int]:
+    async def _apply_thermal_generation_params(self, temp: float, max_tok: int) -> tuple[float, int]:
         """Apply thermal generation parameters if under thermal pressure."""
         try:
             thermal_params_fn = _get_thermal_generation_params()
@@ -3829,24 +4254,26 @@ class DeepHermes3Engine:
         if decide_context_budget is None or apply_context_budget is None:
             return None
         decision = decide_context_budget(prompt, requested_context_window=self.config.context_window)
-        if decision.mode == 'reject':
-            reason = f'[CONTEXT] memory_admission_blocked: {decision.reason}'
+        if decision.mode == "reject":
+            reason = f"[CONTEXT] memory_admission_blocked: {decision.reason}"
             if decision.uma_state:
-                reason += f' uma_state={decision.uma_state}'
+                reason += f" uma_state={decision.uma_state}"
             logger.warning(reason)
             if record_model_failure is not None:
-                record_model_failure('hermes', failure_kind='memory_admission_blocked')
-            raise RuntimeError(f'hermes context preflight rejected: {decision.reason}')
+                record_model_failure("hermes", failure_kind="memory_admission_blocked")
+            raise RuntimeError(f"hermes context preflight rejected: {decision.reason}")
         if decision.truncated:
             truncated = apply_context_budget(prompt, decision)
-            dbg = f'[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}'
+            dbg = f"[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}"
             if decision.uma_state:
-                dbg += f' uma_state={decision.uma_state}'
+                dbg += f" uma_state={decision.uma_state}"
             logger.debug(dbg)
-            self._telemetry_counters['adaptive_context_truncated'] = self._telemetry_counters.get('adaptive_context_truncated', 0) + 1
-            self._telemetry_counters['adaptive_context_mode'] = decision.mode
+            self._telemetry_counters["adaptive_context_truncated"] = (
+                self._telemetry_counters.get("adaptive_context_truncated", 0) + 1
+            )
+            self._telemetry_counters["adaptive_context_mode"] = decision.mode
             if decision.uma_state:
-                self._telemetry_counters['uma_state'] = decision.uma_state
+                self._telemetry_counters["uma_state"] = decision.uma_state
             return truncated
         return None
 
@@ -3859,48 +4286,61 @@ class DeepHermes3Engine:
         try:
             validation_result = sanitize_prompt_injection_patterns(prompt)
             if validation_result.suspicious:
-                _high_risk = any(p in validation_result.patterns for p in (
-                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                    'structural_repeated_delimiters', 'structural_html_comment',
-                ))
+                _high_risk = any(
+                    p in validation_result.patterns
+                    for p in (
+                        "ignore_previous_instructions",
+                        "disregard_instructions",
+                        "forget_instructions",
+                        "system_prompt_injection",
+                        "developer_message_injection",
+                        "you_are_chatgpt",
+                        "you_are_an_ai",
+                        "as_an_ai",
+                        "jailbreak",
+                        "dan",
+                        "structural_repeated_delimiters",
+                        "structural_html_comment",
+                    )
+                )
                 if _high_risk:
                     logger.warning(
-                        f'[LLM-01-BLOCK] High-risk prompt injection detected: {validation_result.patterns}. '
-                        f'Rejecting prompt (reason={validation_result.reason})')
-                    raise RuntimeError(
-                        f'[LLM-01] Prompt injection REJECTED: {validation_result.patterns[:3]}')
+                        f"[LLM-01-BLOCK] High-risk prompt injection detected: {validation_result.patterns}. "
+                        f"Rejecting prompt (reason={validation_result.reason})"
+                    )
+                    raise RuntimeError(f"[LLM-01] Prompt injection REJECTED: {validation_result.patterns[:3]}")
                 logger.warning(
-                    f'[P1G-A] prompt_injection_guard: suspicious=True, '
-                    f'patterns={validation_result.patterns}, reason={validation_result.reason}')
+                    f"[P1G-A] prompt_injection_guard: suspicious=True, "
+                    f"patterns={validation_result.patterns}, reason={validation_result.reason}"
+                )
             return validation_result.safe_text
         except RuntimeError:
             raise
         except Exception:
-            logger.error('[LLM-01] Prompt injection validation failed with internal error — rejecting prompt')
-            raise RuntimeError('[LLM-01] Prompt injection validation internal error')
+            logger.error("[LLM-01] Prompt injection validation failed with internal error — rejecting prompt")
+            raise RuntimeError("[LLM-01] Prompt injection validation internal error")
 
     def _check_gap5_injection(self, prompt: str) -> None:
         """GAP-5: Secondary detection layer - raises RuntimeError on injection."""
         is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
         if is_injection:
             logger.warning(
-                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — rejecting prompt (LLM-01 fail-safe)')
-            raise RuntimeError(f'[GAP-5] Prompt injection REJECTED: {patterns[:3]}')
+                f"GAP-5: Prompt injection patterns detected: {patterns[:3]} — rejecting prompt (LLM-01 fail-safe)"
+            )
+            raise RuntimeError(f"[GAP-5] Prompt injection REJECTED: {patterns[:3]}")
 
     def _select_bandit_arm(self) -> tuple[Any, str]:
         """Select bandit arm and return (bandit, arm_used)."""
         bandit = self._get_prompt_bandit()
-        arm_used = ''
+        arm_used = ""
         if bandit is not None:
             try:
                 arm_used = bandit.select_arm()
                 bandit.get_prompt_modifier(arm_used)
                 self._last_bandit_arm = arm_used
-                logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
+                logger.debug(f"[GENERATE] Bandit arm: {arm_used}")
             except Exception as e:
-                logger.debug(f'[GENERATE] Bandit select failed: {e}')
+                logger.debug(f"[GENERATE] Bandit select failed: {e}")
         return bandit, arm_used
 
     def _truncate_token_overflow(
@@ -3932,13 +4372,24 @@ class DeepHermes3Engine:
         new_len = len(new_tokens) if new_tokens else None
         if new_len is not None:
             logger.warning(
-                '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
-                prompt_len, new_len, self.config.context_window, max_tok
-    )
-            self._telemetry_counters['context_truncated'] = self._telemetry_counters.get('context_truncated', 0) + 1
+                "[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)",
+                prompt_len,
+                new_len,
+                self.config.context_window,
+                max_tok,
+            )
+            self._telemetry_counters["context_truncated"] = self._telemetry_counters.get("context_truncated", 0) + 1
         return new_formatted, new_len
 
-    async def generate_stream(self, prompt: str, max_tokens: int=512, system_msg: str | None=None, temperature: float | None=None, *, thinking: bool=True) -> AsyncIterator[str]:
+    async def generate_stream(
+        self,
+        prompt: str,
+        max_tokens: int = 512,
+        system_msg: str | None = None,
+        temperature: float | None = None,
+        *,
+        thinking: bool = True,
+    ) -> AsyncIterator[str]:
         """
         Async token stream for progressive output.
 
@@ -3961,62 +4412,83 @@ class DeepHermes3Engine:
         NEVER in load() per CLAUDE.md invariant (F265C-METAL fix).
         """
         if self._model is None:
-            logger.debug('[STREAM] model not initialised — yielding nothing')
+            logger.debug("[STREAM] model not initialised — yielding nothing")
             return
         if not _MLX_AVAILABLE_GLOBAL:
-            logger.debug('[STREAM] MLX unavailable — yielding nothing')
+            logger.debug("[STREAM] MLX unavailable — yielding nothing")
             return
         if not self._supports_stream_generate:
             try:
-                full = await self.generate(prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+                full = await self.generate(
+                    prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+                )
                 if full:
                     yield full
             except Exception as e:
-                logger.warning('[STREAM] fallback generate() failed: %s', e)
+                logger.warning("[STREAM] fallback generate() failed: %s", e)
             return
         try:
             temp = temperature if temperature is not None else self.config.temperature
             max_tok = max_tokens
-            system = system_msg or 'You are a helpful research assistant.'
+            system = system_msg or "You are a helpful research assistant."
             if thinking:
-                system = f'{self._DEEP_THINKING_PREFIX}\n\n{system}'
+                system = f"{self._DEEP_THINKING_PREFIX}\n\n{system}"
             sanitized_prompt = prompt[:MAX_LLM_PROMPT_CHARS]
             # LLM-01: ALWAYS sanitize via prompt injection validator (fail-safe, always-on)
             # No conditional — web content must NEVER reach LLM without sanitization
             try:
                 from hledac.universal.brain.prompt_injection_validator import sanitize_prompt_injection_patterns
+
                 validation_result = sanitize_prompt_injection_patterns(sanitized_prompt)
                 if validation_result.suspicious:
-                    _high_risk = any(p in validation_result.patterns for p in (
-                        'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                        'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                        'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                        'structural_repeated_delimiters', 'structural_html_comment',
-                    ))
+                    _high_risk = any(
+                        p in validation_result.patterns
+                        for p in (
+                            "ignore_previous_instructions",
+                            "disregard_instructions",
+                            "forget_instructions",
+                            "system_prompt_injection",
+                            "developer_message_injection",
+                            "you_are_chatgpt",
+                            "you_are_an_ai",
+                            "as_an_ai",
+                            "jailbreak",
+                            "dan",
+                            "structural_repeated_delimiters",
+                            "structural_html_comment",
+                        )
+                    )
                     if _high_risk:
-                        logger.warning('[LLM-01] generate_stream: high-risk prompt injection REJECTED: %s', validation_result.patterns[:3])
+                        logger.warning(
+                            "[LLM-01] generate_stream: high-risk prompt injection REJECTED: %s",
+                            validation_result.patterns[:3],
+                        )
                         return  # yields nothing — high-risk injection blocked
                     sanitized_prompt = validation_result.safe_text
-                    logger.warning('[LLM-01] generate_stream: suspicious prompt sanitized: %s', validation_result.patterns)
+                    logger.warning(
+                        "[LLM-01] generate_stream: suspicious prompt sanitized: %s", validation_result.patterns
+                    )
             except Exception:
-                logger.error('[LLM-01] generate_stream: prompt injection validation internal error — rejecting prompt')
+                logger.error("[LLM-01] generate_stream: prompt injection validation internal error — rejecting prompt")
                 return  # yields nothing — fail-safe rejection
+
             # Issue #14: Stage 1 — CPU prep in thread pool (parallel with GPU of prior prompt)
             def _sync_stream_prep() -> str:
                 sanitized = self._sanitize_for_llm(sanitized_prompt) if self._sanitize_for_llm else sanitized_prompt
                 return self._format_chatml(system, sanitized)[:MAX_LLM_PROMPT_CHARS]
+
             loop = asyncio.get_running_loop()
             formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_stream_prep)
             # M-03: Tokenize once in thread pool — avoids double encode in _stream_tokens
             try:
                 stream_prompt_tokens = await loop.run_in_executor(
                     None,  # default executor
-                    lambda: self._tokenizer.encode(formatted_prompt)
-    )
+                    lambda: self._tokenizer.encode(formatted_prompt),
+                )
             except Exception:
                 stream_prompt_tokens = None
         except Exception as e:
-            logger.warning('[STREAM] prompt formatting failed: %s', e)
+            logger.warning("[STREAM] prompt formatting failed: %s", e)
             return
         self._stream_cancelled.clear()
         session_result = self._get_session_cache(formatted_prompt)
@@ -4024,7 +4496,7 @@ class DeepHermes3Engine:
         if session_result is not None:
             cached_kv, _ = session_result
             stream_prefix_cache = cached_kv
-            logger.debug('[SESSION-CACHE] Stream using cached KV')
+            logger.debug("[SESSION-CACHE] Stream using cached KV")
         async with self._inference_semaphore:
             try:
                 async for token in stream_via_queue(
@@ -4036,53 +4508,61 @@ class DeepHermes3Engine:
                 self._stream_cancelled.set()
                 raise
             except Exception as e:
-                logger.warning('[STREAM] generate_stream failed: %s', e)
+                logger.warning("[STREAM] generate_stream failed: %s", e)
                 return
         try:
-            await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, 'generate_stream_post')
+            await asyncio.to_thread(_safe_mlx_eval_and_clear_cache, "generate_stream_post")
         except Exception:  # noqa: BLE001
             pass
 
-    # --- Stream helpers (CC-15: extracted for early-return / low-nesting) ---
-
-    def _stream_kwargs_for_kv(self, max_tok: int, prompt_tokens: list[int] | None, prefix_cache: Any=None) -> tuple[Any, dict]:
+    def _stream_kwargs_for_kv(
+        self, max_tok: int, prompt_tokens: list[int] | None, prefix_cache: Any = None
+    ) -> tuple[Any, dict]:
         """Build KV cache and stream kwargs for _stream_tokens. Returns (kv_cache, stream_kwargs)."""
         from mlx_lm.sample_utils import make_sampler
+
         kv_bits = self._get_adaptive_kv_bits()
         kv_cache: Any = None
         if self._kv_cache_enabled:
             if prefix_cache is not None:
                 kv_cache = prefix_cache
-                logger.debug('[STREAM] Reusing cached KV from session pool')
+                logger.debug("[STREAM] Reusing cached KV from session pool")
             elif self._paged_kv_cache:
                 from mlx_lm.models.cache import RotatingKVCache
+
                 num_layers = len(self._model.layers)
                 kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
-                logger.debug('[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
+                logger.debug(
+                    "[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d",
+                    self._paged_kv_keep,
+                    max_tok,
+                    num_layers,
+                )
             else:
                 from mlx_lm.models.cache import make_prompt_cache
+
                 kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
             if kv_cache is not None:
                 self._quantize_kv_cache(kv_cache)
         input_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
         kwargs: dict = {
-            'max_tokens': max_tok,
-            'sampler': make_sampler(temp=0.0),  # temp overridden by caller
-            'kv_bits': kv_bits,
+            "max_tokens": max_tok,
+            "sampler": make_sampler(temp=0.0),  # temp overridden by caller
+            "kv_bits": kv_bits,
             **self._get_kv_cache_kwargs(input_tokens=input_count, max_tokens=max_tok),
-            'verbose': False,
+            "verbose": False,
         }
         if kv_cache is not None:
-            kwargs['prompt_cache'] = kv_cache
+            kwargs["prompt_cache"] = kv_cache
         if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
-            kwargs['draft_model'] = self._draft_model_obj
-            kwargs['num_draft_tokens'] = self._num_draft_tokens
+            kwargs["draft_model"] = self._draft_model_obj
+            kwargs["num_draft_tokens"] = self._num_draft_tokens
         return kv_cache, kwargs
 
     @staticmethod
     def _decode_token(chunk: Any) -> str:
         """Decode mlx_lm token into string. Handles GenerationToken.text / tuple / raw."""
-        if hasattr(chunk, 'text'):
+        if hasattr(chunk, "text"):
             return chunk.text
         if isinstance(chunk, tuple) and len(chunk) >= 1:
             return chunk[0]
@@ -4096,8 +4576,10 @@ class DeepHermes3Engine:
         if eval_counter % EVAL_EVERY_N_TOKENS != 0:
             return False
         try:
-            import mlx.core as _m3_mx
             import gc as _gc
+
+            import mlx.core as _m3_mx
+
             _m3_mx.eval([])
             self._lazy_ops_eval_count += 1
             # EVAL_EVERY_N_TOKENS == CLEAR_GRANULARITY_TOKENS == 256, so this
@@ -4106,7 +4588,7 @@ class DeepHermes3Engine:
             if active > M3_METAL_PRESSURE_BYTES:
                 _gc.collect()
                 _m3_mx.eval([])
-                if hasattr(_m3_mx, 'clear_cache'):
+                if hasattr(_m3_mx, "clear_cache"):
                     _m3_mx.clear_cache()
                 _gc.collect()
                 return True
@@ -4117,9 +4599,16 @@ class DeepHermes3Engine:
     def _flush_token_buffer(self, buf: list[str]) -> Iterator[str]:
         """Flush buffered tokens as single chunk."""
         if buf:
-            yield ''.join(buf)
+            yield "".join(buf)
 
-    def _stream_tokens(self, formatted_prompt: str, max_tok: int, temp: float, prefix_cache: Any=None, prompt_tokens: list[int] | None=None) -> Iterator[str]:
+    def _stream_tokens(
+        self,
+        formatted_prompt: str,
+        max_tok: int,
+        temp: float,
+        prefix_cache: Any = None,
+        prompt_tokens: list[int] | None = None,
+    ) -> Iterator[str]:
         """
         Sync token generator — runs in asyncio.to_thread, safe for M1.
 
@@ -4154,18 +4643,20 @@ class DeepHermes3Engine:
         """
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
+
         from hledac.universal.utils.mlx_memory import get_metal_stream_context
 
         with get_metal_stream_context():
             # Early eval barrier
             try:
                 import mlx.core as _m3_mx
+
                 _m3_mx.eval([])
             except Exception:  # noqa: BLE001
                 pass
 
             _, stream_kwargs = self._stream_kwargs_for_kv(max_tok, prompt_tokens, prefix_cache)
-            stream_kwargs['sampler'] = make_sampler(temp=temp)
+            stream_kwargs["sampler"] = make_sampler(temp=temp)
 
             token_buffer: list[str] = []
             eval_counter = 0
@@ -4208,15 +4699,16 @@ class DeepHermes3Engine:
         Returns:
             Rozhodnutí o další akci
         """
-        query = context.get('query', '')
-        step = context.get('step', 0)
-        max_steps = context.get('max_steps', 20)
-        history = context.get('history', [])
+        query = context.get("query", "")
+        step = context.get("step", 0)
+        max_steps = context.get("max_steps", 20)
+        history = context.get("history", [])
         system_msg = 'You are a research orchestrator. Decide the next action to progress the research.\n\nAvailable actions:\n- search: Search for information\n- google: Google search\n- download: Download a file\n- deep_read: Read content from URL (secure)\n- research_paper: Search academic papers\n- osint_discovery: Discover hidden sources\n- archive_fallback: Check Wayback Machine\n- fact_check: Verify a claim\n- synthesize: Complete research and synthesize findings\n\nRespond in JSON format:\n{\n  "action": "action_name",\n  "params": {"key": "value"},\n  "reasoning": "why this action",\n  "complete": false\n}\n\nSet "complete": true when research is sufficiently comprehensive.'
-        history_str = _msgspec_encode_fast(history[-3:]).decode() if history else 'No previous actions'
-        prompt = f'Research query: {query}\nStep: {step}/{max_steps}\n\nHistory:\n{history_str}\n\nWhat should be the next action?'
+        history_str = _msgspec_encode_fast(history[-3:]).decode() if history else "No previous actions"
+        prompt = f"Research query: {query}\nStep: {step}/{max_steps}\n\nHistory:\n{history_str}\n\nWhat should be the next action?"
         decision_model = await self.generate_structured(prompt, _DecisionOutput, system_msg=system_msg, temperature=0.2)
         return msgspec.to_dict(decision_model)
+
     _PLAN_MAX_QUERY_CHARS = 2048
     _PLAN_MAX_HISTORY_ITEMS = 5
     _PLAN_MAX_CONTEXT_CHARS = 4096
@@ -4245,20 +4737,20 @@ class DeepHermes3Engine:
             Generated report text, or empty string if model not available
         """
         if self._model is None:
-            logger.warning('[GENERATE_REPORT] Model not loaded, skipping report generation')
-            return ''
-        bounded_query = str(query)[:self._SYNTH_MAX_QUERY_CHARS]
+            logger.warning("[GENERATE_REPORT] Model not loaded, skipping report generation")
+            return ""
+        bounded_query = str(query)[: self._SYNTH_MAX_QUERY_CHARS]
         # ISSUE [LLM-SEC-001]: Sanitize each context item before LLM consumption
         _sanitize_fn = sanitize_for_llm()
         truncated_contexts: list[str] = []
         total_len = 0
-        for item in context[:self._REPORT_MAX_ITEMS]:
+        for item in context[: self._REPORT_MAX_ITEMS]:
             # Sanitize web content: HTML strip + control chars + token limit
             if _sanitize_fn is not None:
                 sanitized_item = _sanitize_fn(str(item))
             else:
                 sanitized_item = str(item)
-            truncated = sanitized_item[:self._REPORT_MAX_ITEM_CHARS]
+            truncated = sanitized_item[: self._REPORT_MAX_ITEM_CHARS]
             if total_len + len(truncated) > self._REPORT_MAX_CONTEXT_CHARS:
                 remaining = self._REPORT_MAX_CONTEXT_CHARS - total_len
                 if remaining > 100:
@@ -4266,36 +4758,38 @@ class DeepHermes3Engine:
                 break
             truncated_contexts.append(truncated)
             total_len += len(truncated)
-        context_str = '\n---\n'.join(truncated_contexts)
+        context_str = "\n---\n".join(truncated_contexts)
         bandit = self._get_prompt_bandit()
-        arm_used = ''
-        modifier = ''
+        arm_used = ""
+        modifier = ""
         if bandit is not None:
             try:
                 arm_used = bandit.select_arm()
                 modifier = bandit.get_prompt_modifier(arm_used)
                 self._last_bandit_arm = arm_used
-                logger.debug(f'[GENERATE_REPORT] Bandit arm: {arm_used}')
+                logger.debug(f"[GENERATE_REPORT] Bandit arm: {arm_used}")
             except Exception as e:
-                logger.debug(f'[GENERATE_REPORT] Bandit select failed: {e}')
-        prompt = f'Research query: {bounded_query}\n\nPodklady pro analýze:\n{context_str}\n\nVytvoř strukturovaný OSINT report v češtině s následujícími sekcemi:\n1. Shrnutí (Executive Summary) - max 3 věty\n2. Klíčová zjištění (Key Findings) - hlavní IOC a poznatky\n3. Doporučení (Recommendations) - praktické kroky\n\nReport piš v češtině, buď konkrétní a stručný.{modifier}'
+                logger.debug(f"[GENERATE_REPORT] Bandit select failed: {e}")
+        prompt = f"Research query: {bounded_query}\n\nPodklady pro analýze:\n{context_str}\n\nVytvoř strukturovaný OSINT report v češtině s následujícími sekcemi:\n1. Shrnutí (Executive Summary) - max 3 věty\n2. Klíčová zjištění (Key Findings) - hlavní IOC a poznatky\n3. Doporučení (Recommendations) - praktické kroky\n\nReport piš v češtině, buď konkrétní a stručný.{modifier}"
         try:
-            report_text = await self.generate(prompt=prompt, temperature=0.3, max_tokens=1024, system_msg=self._REPORT_SYSTEM_PROMPT)
+            report_text = await self.generate(
+                prompt=prompt, temperature=0.3, max_tokens=1024, system_msg=self._REPORT_SYSTEM_PROMPT
+            )
             if bandit is not None and arm_used and report_text:
                 try:
                     response_len_norm = min(1.0, len(report_text) / 2000.0)
                     confidence = min(1.0, len(truncated_contexts) / max(1, self._REPORT_MAX_ITEMS))
                     reward = response_len_norm * confidence
                     bandit.update_reward(arm_used, reward, reward)
-                    logger.debug(f'[GENERATE_REPORT] Bandit reward: arm={arm_used} reward={reward:.3f}')
+                    logger.debug(f"[GENERATE_REPORT] Bandit reward: arm={arm_used} reward={reward:.3f}")
                 except Exception as e:
-                    logger.debug(f'[GENERATE_REPORT] Bandit update failed: {e}')
+                    logger.debug(f"[GENERATE_REPORT] Bandit update failed: {e}")
             return report_text
         except Exception as e:
-            logger.error(f'[GENERATE_REPORT] Failed: {e}')
-            return f'Report generation failed: {str(e)[:200]}'
+            logger.error(f"[GENERATE_REPORT] Failed: {e}")
+            return f"Report generation failed: {str(e)[:200]}"
 
-    async def generate_sprint_plan(self, query: str, context: dict[str, Any] | None=None) -> dict[str, Any]:
+    async def generate_sprint_plan(self, query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Sprint F150G: Thin runtime-facing wrapper for sprint planning.
 
@@ -4318,38 +4812,61 @@ class DeepHermes3Engine:
             - bounded (True if input was truncated)
         """
         if self._model is None:
-            return {'action': 'initialize', 'params': {'reason': 'model_not_loaded'}, 'reasoning': 'Hermes model not initialized', 'complete': False, 'plan_id': None, 'bounded': False}
+            return {
+                "action": "initialize",
+                "params": {"reason": "model_not_loaded"},
+                "reasoning": "Hermes model not initialized",
+                "complete": False,
+                "plan_id": None,
+                "bounded": False,
+            }
         ctx = context or {}
-        step = min(ctx.get('step', 0), 9999)
-        max_steps = min(ctx.get('max_steps', 20), 9999)
-        history = (ctx.get('history', []) or [])[-self._PLAN_MAX_HISTORY_ITEMS:]
-        goals = ctx.get('goals', '')
-        bounded_query = str(query)[:self._PLAN_MAX_QUERY_CHARS]
+        step = min(ctx.get("step", 0), 9999)
+        max_steps = min(ctx.get("max_steps", 20), 9999)
+        history = (ctx.get("history", []) or [])[-self._PLAN_MAX_HISTORY_ITEMS :]
+        goals = ctx.get("goals", "")
+        bounded_query = str(query)[: self._PLAN_MAX_QUERY_CHARS]
         query_was_truncated = len(str(query)) > self._PLAN_MAX_QUERY_CHARS
         bounded_history = []
         for h in history:
             if not isinstance(h, dict):
-                h = {'action': str(h)[:200] if h else ''}
-            entry = {'action': str(h.get('action', ''))[:200], 'result': str(h.get('result', ''))[:300] if h.get('result') else None}
+                h = {"action": str(h)[:200] if h else ""}
+            entry = {
+                "action": str(h.get("action", ""))[:200],
+                "result": str(h.get("result", ""))[:300] if h.get("result") else None,
+            }
             bounded_history.append(entry)
-        runtime_ctx = {'query': bounded_query, 'step': step, 'max_steps': max_steps, 'history': bounded_history}
+        runtime_ctx = {"query": bounded_query, "step": step, "max_steps": max_steps, "history": bounded_history}
         if goals:
-            runtime_ctx['goals'] = str(goals)[:self._PLAN_MAX_CONTEXT_CHARS]
+            runtime_ctx["goals"] = str(goals)[: self._PLAN_MAX_CONTEXT_CHARS]
         try:
             result = await self.decide_next_action(runtime_ctx)
             if not isinstance(result, dict):
-                result = {'action': None, 'params': {}, 'reasoning': str(result), 'complete': False}
-            for key in ('action', 'params', 'reasoning', 'complete'):
+                result = {"action": None, "params": {}, "reasoning": str(result), "complete": False}
+            for key in ("action", "params", "reasoning", "complete"):
                 if key not in result:
-                    result[key] = None if key != 'complete' else False
-            result['bounded'] = query_was_truncated
-            result['plan_id'] = f'plan_{int(time.time() * 1000)}'
+                    result[key] = None if key != "complete" else False
+            result["bounded"] = query_was_truncated
+            result["plan_id"] = f"plan_{int(time.time() * 1000)}"
             return result
         except Exception as e:
-            logger.warning(f'[SPRINT_PLAN] Failed: {e}')
-            return {'action': 'error', 'params': {'error': str(e)[:200]}, 'reasoning': 'generate_sprint_plan failed', 'complete': False, 'plan_id': None, 'bounded': query_was_truncated}
+            logger.warning(f"[SPRINT_PLAN] Failed: {e}")
+            return {
+                "action": "error",
+                "params": {"error": str(e)[:200]},
+                "reasoning": "generate_sprint_plan failed",
+                "complete": False,
+                "plan_id": None,
+                "bounded": query_was_truncated,
+            }
 
-    async def synthesize_findings(self, query: str, findings: list[Any], hypotheses: list[str] | None=None, context: dict[str, Any] | None=None) -> dict[str, Any]:
+    async def synthesize_findings(
+        self,
+        query: str,
+        findings: list[Any],
+        hypotheses: list[str] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Sprint F150G: Thin runtime-facing wrapper for synthesis.
 
@@ -4381,57 +4898,78 @@ class DeepHermes3Engine:
             - synthesis_id (str)
         """
         if self._model is None:
-            return {'report': 'Model not loaded', 'confidence': 0.0, 'sources_count': 0, 'hypotheses_evaluated': 0, 'bounded': False, 'synthesis_id': None}
+            return {
+                "report": "Model not loaded",
+                "confidence": 0.0,
+                "sources_count": 0,
+                "hypotheses_evaluated": 0,
+                "bounded": False,
+                "synthesis_id": None,
+            }
 
         # ── BLITZ-10: Triage pre-filter ──────────────────────────────────
         findings = await self._triage_findings_if_needed(query, findings)
-        bounded_query = str(query)[:self._SYNTH_MAX_QUERY_CHARS]
+        bounded_query = str(query)[: self._SYNTH_MAX_QUERY_CHARS]
         query_truncated = len(str(query)) > self._SYNTH_MAX_QUERY_CHARS
         bounded_findings = []
-        for f in findings[:self._SYNTH_MAX_FINDINGS]:
+        for f in findings[: self._SYNTH_MAX_FINDINGS]:
             if isinstance(f, dict):
-                finding_str = _msgspec_encode_fast(f).decode()[:self._SYNTH_MAX_FINDING_CHARS]
+                finding_str = _msgspec_encode_fast(f).decode()[: self._SYNTH_MAX_FINDING_CHARS]
             else:
-                finding_str = str(f)[:self._SYNTH_MAX_FINDING_CHARS]
+                finding_str = str(f)[: self._SYNTH_MAX_FINDING_CHARS]
             bounded_findings.append(finding_str)
         findings_truncated = len(findings) > self._SYNTH_MAX_FINDINGS
         bounded_hypotheses = []
         if hypotheses:
-            bounded_hypotheses = [str(h)[:500] for h in hypotheses[:self._SYNTH_MAX_HYPOTHESES]]
+            bounded_hypotheses = [str(h)[:500] for h in hypotheses[: self._SYNTH_MAX_HYPOTHESES]]
         hypotheses_truncated = len(hypotheses or []) > self._SYNTH_MAX_HYPOTHESES
-        history = (context or {}).get('history', [])
-        goals = (context or {}).get('goals', '')
-        runtime_ctx = {'query': bounded_query, 'history': history[-10:] if history else [], 'data': bounded_findings}
+        history = (context or {}).get("history", [])
+        goals = (context or {}).get("goals", "")
+        runtime_ctx = {"query": bounded_query, "history": history[-10:] if history else [], "data": bounded_findings}
         if goals:
-            runtime_ctx['goals'] = str(goals)[:self._SYNTH_MAX_CONTEXT_CHARS]
+            runtime_ctx["goals"] = str(goals)[: self._SYNTH_MAX_CONTEXT_CHARS]
         try:
             raw_report = await self.synthesize(runtime_ctx)
-            bounded_report = str(raw_report)[:self._SYNTH_MAX_OUTPUT_CHARS]
+            bounded_report = str(raw_report)[: self._SYNTH_MAX_OUTPUT_CHARS]
             output_truncated = len(str(raw_report)) > self._SYNTH_MAX_OUTPUT_CHARS
             confidence = min(1.0, len(bounded_findings) / max(1, self._SYNTH_MAX_FINDINGS))
-            return {'report': bounded_report, 'confidence': confidence, 'sources_count': len(bounded_findings), 'hypotheses_evaluated': len(bounded_hypotheses), 'bounded': query_truncated or findings_truncated or hypotheses_truncated or output_truncated, 'synthesis_id': f'synth_{int(time.time() * 1000)}'}
+            return {
+                "report": bounded_report,
+                "confidence": confidence,
+                "sources_count": len(bounded_findings),
+                "hypotheses_evaluated": len(bounded_hypotheses),
+                "bounded": query_truncated or findings_truncated or hypotheses_truncated or output_truncated,
+                "synthesis_id": f"synth_{int(time.time() * 1000)}",
+            }
         except Exception as e:
-            logger.warning(f'[GENERATE] Failed: {e}')
-            return {'report': f'Synthesis failed: {str(e)[:500]}', 'confidence': 0.0, 'sources_count': len(bounded_findings), 'hypotheses_evaluated': len(bounded_hypotheses), 'bounded': True, 'synthesis_id': None}
+            logger.warning(f"[GENERATE] Failed: {e}")
+            return {
+                "report": f"Synthesis failed: {str(e)[:500]}",
+                "confidence": 0.0,
+                "sources_count": len(bounded_findings),
+                "hypotheses_evaluated": len(bounded_hypotheses),
+                "bounded": True,
+                "synthesis_id": None,
+            }
 
     # ── BLITZ-10: FastPathTriage for synthesize_findings ────────────────────
 
-    async def _triage_findings_if_needed(
-        self, query: str, findings: list[Any]
-    ) -> list[Any]:
+    async def _triage_findings_if_needed(self, query: str, findings: list[Any]) -> list[Any]:
         """
         BLITZ-10: Pre-filter findings via FastPathTriage (defense-in-depth).
 
         Runs in thread pool. Fail-safe: returns all findings on any error.
         Gated by HLEDAC_TRIAGE_DISABLED=1 env var.
         """
-        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
         if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings
         if len(findings) <= 3:
             return findings  # too few to bother — all relevant by default
         try:
             from hledac.universal.brain.fast_path_triage import FastPathTriage
+
             triage = FastPathTriage(query)
             loop = asyncio.get_running_loop()
 
@@ -4444,13 +4982,14 @@ class DeepHermes3Engine:
                     texts.append(str(f))
 
             results = await loop.run_in_executor(None, lambda: triage.triage_batch(texts))
-            filtered = [f for f, keep in zip(findings, results) if keep]
+            filtered = [f for f, keep in zip(findings, results, strict=False) if keep]
 
             if len(filtered) < len(findings):
                 logger.info(
                     "[BLITZ-10/hermes] Triage filtered %d → %d findings",
-                    len(findings), len(filtered),
-    )
+                    len(findings),
+                    len(filtered),
+                )
             return filtered
         except Exception:
             return findings  # fail-safe: pass through unfiltered
@@ -4465,19 +5004,30 @@ class DeepHermes3Engine:
         Returns:
             Syntetizovaná odpověď
         """
-        query = context.get('query', '')
-        history = context.get('history', [])
-        data = context.get('data', [])
-        system_msg = 'You are a research synthesis expert. Create a comprehensive, well-structured answer based on the collected research data.  # noqa: E501\n\nYour answer should:\n- Be thorough and detailed\n- Cite sources where possible\n- Acknowledge limitations or gaps\n- Be objective and balanced\n- Use markdown formatting'
+        query = context.get("query", "")
+        history = context.get("history", [])
+        data = context.get("data", [])
+        system_msg = "You are a research synthesis expert. Create a comprehensive, well-structured answer based on the collected research data.  # noqa: E501\n\nYour answer should:\n- Be thorough and detailed\n- Cite sources where possible\n- Acknowledge limitations or gaps\n- Be objective and balanced\n- Use markdown formatting"
         data_summary = []
         for i, item in enumerate(data[-10:], 1):
-            data_summary.append(f'{i}. {_msgspec_encode_fast(item).decode()[:500]}')
+            data_summary.append(f"{i}. {_msgspec_encode_fast(item).decode()[:500]}")
         history_str = _msgspec_encode_fast(history).decode()[:2000]
-        prompt = f'Research Query: {query}\n\nCollected Data:\n{chr(10).join(data_summary)}\n\nExecution History:\n{history_str}\n\nSynthesize a comprehensive research report answering the query.'
-        synthesis_model = await self.generate_structured(prompt, _SynthesisOutput, system_msg=system_msg, max_tokens=4096)
+        prompt = f"Research Query: {query}\n\nCollected Data:\n{chr(10).join(data_summary)}\n\nExecution History:\n{history_str}\n\nSynthesize a comprehensive research report answering the query."
+        synthesis_model = await self.generate_structured(
+            prompt, _SynthesisOutput, system_msg=system_msg, max_tokens=4096
+        )
         return synthesis_model.report
 
-    async def generate_structured(self, prompt: str, response_model: type[T], temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, max_retries: int=2, priority: float=1.0) -> T:
+    async def generate_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
+        max_retries: int = 2,
+        priority: float = 1.0,
+    ) -> T:
         """
         Sprint 33+75+7G: Generate structured output using batch routing when safe.
 
@@ -4498,13 +5048,20 @@ class DeepHermes3Engine:
             Instance of response_model
         """
         if is_emergency_unload_requested is not None and is_emergency_unload_requested():
-            self._telemetry_counters['emergency_guard_triggered'] += 1
-            raise RuntimeError('emergency_unload_requested')
+            self._telemetry_counters["emergency_guard_triggered"] += 1
+            raise RuntimeError("emergency_unload_requested")
         timeout_s = max_tokens / 10.0 if max_tokens else None
         if self._is_batch_safe(response_model, priority, stream=False, timeout_s=timeout_s):
             try:
-                self._telemetry_counters['batch_submitted'] += 1
-                future = await self._submit_structured_batch(prompt=prompt, response_model=response_model, priority=priority, temperature=temperature or 0.1, max_tokens=max_tokens or 1024, system_msg=system_msg)
+                self._telemetry_counters["batch_submitted"] += 1
+                future = await self._submit_structured_batch(
+                    prompt=prompt,
+                    response_model=response_model,
+                    priority=priority,
+                    temperature=temperature or 0.1,
+                    max_tokens=max_tokens or 1024,
+                    system_msg=system_msg,
+                )
                 result = await future
                 schema_cls = response_model if isinstance(response_model, type) else type(response_model)
                 # ROADMAP-006: Use compat layer type detection
@@ -4516,8 +5073,8 @@ class DeepHermes3Engine:
                     # ROADMAP-006: Use unified compat layer for construction
                     return _pydantic_construct(schema_cls, **result) if isinstance(result, dict) else result
             except Exception as e:
-                logger.debug(f'[STRUCTURED] Batch path failed: {e}, falling back to direct')
-                self._telemetry_counters['batch_fallback_single'] += 1
+                logger.debug(f"[STRUCTURED] Batch path failed: {e}, falling back to direct")
+                self._telemetry_counters["batch_fallback_single"] += 1
         if OUTLINES_AVAILABLE and self._outlines_model is not None and (self._model is not None):
             try:
                 schema_key = response_model.__name__
@@ -4527,13 +5084,15 @@ class DeepHermes3Engine:
 
                 def _do_outlines_generate() -> str:
                     return generator(prompt)
+
                 result = await self._submit_inference(timeout=30.0, fn=_do_outlines_generate)
                 # ROADMAP-006: Use unified compat layer for JSON validation
                 # Note: model_validate_json is Pydantic v2 only, but Outlines path only applies to Pydantic models
                 return _pydantic_validate_json(response_model, result)
             except Exception as e:
-                logger.debug(f'[STRUCTURED] Outlines failed: {e}, falling back to JSON')
+                logger.debug(f"[STRUCTURED] Outlines failed: {e}, falling back to JSON")
         import re
+
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
         parse_error: str | None = None
         for attempt in range(max_retries + 1):
@@ -4543,16 +5102,16 @@ class DeepHermes3Engine:
             schema_str = _pydantic_get_schema(response_model)
             if attempt > 0 and parse_error:
                 json_prompt = (
-                    f'{prompt}\n\n'
-                    f'PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n'
-                    f'Please regenerate your response. Output ONLY valid JSON matching this schema:\n'
-                    f'{schema_str}\n\n'
-                    f'Do not include any explanation, only the JSON object.'
-    )
+                    f"{prompt}\n\n"
+                    f"PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n"
+                    f"Please regenerate your response. Output ONLY valid JSON matching this schema:\n"
+                    f"{schema_str}\n\n"
+                    f"Do not include any explanation, only the JSON object."
+                )
             else:
-                json_prompt = f'{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{schema_str}\n\nDo not include any other text. Output valid JSON only.'
+                json_prompt = f"{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{schema_str}\n\nDo not include any other text. Output valid JSON only."
             text = await self.generate(json_prompt, temperature=0.1, max_tokens=2048, system_msg=system_msg)
-            match = re.search(r'\{.*\}', text, re.DOTALL)
+            match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 try:
                     data = _msgspec_decode(match.group())
@@ -4562,23 +5121,23 @@ class DeepHermes3Engine:
                     # F-04: Extract structured error details for next correction round
                     parse_error = self._extract_parse_error(e, text, schema_cls)
                     if attempt < max_retries:
-                        logger.debug(f'JSON parse failed (attempt {attempt + 1}): {parse_error[:200]}')
+                        logger.debug(f"JSON parse failed (attempt {attempt + 1}): {parse_error[:200]}")
                         continue
             else:
-                parse_error = f'No JSON object found in output: {text[:200]}'
+                parse_error = f"No JSON object found in output: {text[:200]}"
         # All attempts exhausted — fall back to default construction
         # ROADMAP-006: Use unified compat layer for fallback construction
-        logger.warning(f'[STRUCTURED] All attempts failed, using fallback for {response_model.__name__}')
+        logger.warning(f"[STRUCTURED] All attempts failed, using fallback for {response_model.__name__}")
         return _pydantic_construct(response_model, **_get_model_fields(response_model))
 
     def invalidate_prefix_cache(self) -> None:
         """Clear the prefix cache (e.g., on model change)."""
         self._prefix_cache.clear()
-        self._prefix_cache_stats['prefix_cache_size'] = 0
-        self._prefix_cache_stats['prefix_cache_evictions'] = 0
-        self._prefix_cache_stats['prefix_cache_hits'] = 0
-        self._prefix_cache_stats['prefix_cache_misses'] = 0
-        logger.info('[CACHE] Prefix cache invalidated')
+        self._prefix_cache_stats["prefix_cache_size"] = 0
+        self._prefix_cache_stats["prefix_cache_evictions"] = 0
+        self._prefix_cache_stats["prefix_cache_hits"] = 0
+        self._prefix_cache_stats["prefix_cache_misses"] = 0
+        logger.info("[CACHE] Prefix cache invalidated")
 
     @property
     def kv_cache_manager(self) -> KVCacheManager:
@@ -4595,7 +5154,7 @@ class DeepHermes3Engine:
                 _kv_cache_pool=self._kv_cache_pool,
                 _session_cache_pool=self._session_cache_pool,
                 _prefix_cache=self._prefix_cache,
-    )
+            )
         return self._kv_cache_mgr
 
     @property
@@ -4631,7 +5190,7 @@ class DeepHermes3Engine:
                 tokenizer_getter=lambda: self._tokenizer,
                 metal_device=self._metal_device,
                 kv_cache=self._kv_cache_mgr,  # uses the wrapped KVCacheManager
-    )
+            )
         return self._generation_facade
 
     _BRIDGE_CHUNK_SIZE = 10
@@ -4656,23 +5215,29 @@ class DeepHermes3Engine:
             but skipped panic tasks have executed=False, skipped_panic=True).
         """
         from hledac.universal.planning.htn_planner import PlannerRuntimeResult
+
         if self._model is None:
-            return [PlannerRuntimeResult(task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error='model_not_loaded') for r in requests]
+            return [
+                PlannerRuntimeResult(
+                    task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error="model_not_loaded"
+                )
+                for r in requests
+            ]
         import msgspec
 
         class GenericResult(msgspec.Struct, kw_only=True):
-            result: str = ''
+            result: str = ""
             confidence: float = 0.5
 
         class FetchResult(GenericResult):
-            url: str = ''
+            url: str = ""
 
         class DeepReadResult(GenericResult):
-            url: str = ''
+            url: str = ""
             depth: int = 1
 
         class AnalyseResult(GenericResult):
-            source: str = ''
+            source: str = ""
 
         class SynthesizeResult(GenericResult):
             sources: list[str] = msgspec.field(default_factory=list)
@@ -4681,11 +5246,21 @@ class DeepHermes3Engine:
             branches: int = 1
 
         class ExplainResult(GenericResult):
-            topic: str = ''
+            topic: str = ""
 
         class HypothesisResult(GenericResult):
-            hypothesis: str = ''
-        _MODEL_REGISTRY = {'FetchResult': FetchResult, 'DeepReadResult': DeepReadResult, 'AnalyseResult': AnalyseResult, 'SynthesizeResult': SynthesizeResult, 'BranchResult': BranchResult, 'ExplainResult': ExplainResult, 'HypothesisResult': HypothesisResult, 'GenericResult': GenericResult}
+            hypothesis: str = ""
+
+        _MODEL_REGISTRY = {
+            "FetchResult": FetchResult,
+            "DeepReadResult": DeepReadResult,
+            "AnalyseResult": AnalyseResult,
+            "SynthesizeResult": SynthesizeResult,
+            "BranchResult": BranchResult,
+            "ExplainResult": ExplainResult,
+            "HypothesisResult": HypothesisResult,
+            "GenericResult": GenericResult,
+        }
         if response_models is None:
             response_models = _MODEL_REGISTRY
         results: list[PlannerRuntimeResult] = []
@@ -4693,24 +5268,45 @@ class DeepHermes3Engine:
         async def execute_single(req) -> PlannerRuntimeResult:
             """Execute a single PlannerRuntimeRequest via generate_structured."""
             if req.is_panic_deprioritized:
-                return PlannerRuntimeResult(task_id=req.task_id, executed=False, skipped_panic=True, hermes_output=None, error=None)
+                return PlannerRuntimeResult(
+                    task_id=req.task_id, executed=False, skipped_panic=True, hermes_output=None, error=None
+                )
             model_cls = response_models.get(req.response_model_name, GenericResult)
             t0 = time.monotonic_ns()
             try:
-                result = await self.generate_structured(prompt=req.prompt, response_model=model_cls, priority=req.priority, system_msg='You are a helpful research assistant.', max_tokens=1024)
+                result = await self.generate_structured(
+                    prompt=req.prompt,
+                    response_model=model_cls,
+                    priority=req.priority,
+                    system_msg="You are a helpful research assistant.",
+                    max_tokens=1024,
+                )
                 elapsed_s = (time.monotonic_ns() - t0) / 1000000000.0
-                output_text = result.result if hasattr(result, 'result') else str(result)
-                return PlannerRuntimeResult(task_id=req.task_id, executed=True, skipped_panic=False, hermes_output=output_text, error=None).copy(elapsed_s=elapsed_s)
+                output_text = result.result if hasattr(result, "result") else str(result)
+                return PlannerRuntimeResult(
+                    task_id=req.task_id, executed=True, skipped_panic=False, hermes_output=output_text, error=None
+                ).copy(elapsed_s=elapsed_s)
             except Exception as exc:
-                return PlannerRuntimeResult(task_id=req.task_id, executed=False, skipped_panic=False, hermes_output=None, error=str(exc))
+                return PlannerRuntimeResult(
+                    task_id=req.task_id, executed=False, skipped_panic=False, hermes_output=None, error=str(exc)
+                )
+
         for i in range(0, len(requests), self._BRIDGE_CHUNK_SIZE):
-            chunk = requests[i:i + self._BRIDGE_CHUNK_SIZE]
+            chunk = requests[i : i + self._BRIDGE_CHUNK_SIZE]
             chunk_tasks = [execute_single(req) for req in chunk]
-            _chunk_result = await parallel(chunk_tasks, policy="log", ctx='deephermes3_engine:2147')
+            _chunk_result = await parallel(chunk_tasks, policy="log", ctx="deephermes3_engine:2147")
             chunk_results = _chunk_result.ok
             for req, result in zip(chunk, chunk_results, strict=False):
                 if isinstance(result, Exception):
-                    results.append(PlannerRuntimeResult(task_id=req.task_id, executed=False, skipped_panic=False, hermes_output=None, error=f'bridge_exception:{result}'))
+                    results.append(
+                        PlannerRuntimeResult(
+                            task_id=req.task_id,
+                            executed=False,
+                            skipped_panic=False,
+                            hermes_output=None,
+                            error=f"bridge_exception:{result}",
+                        )
+                    )
                 else:
                     results.append(result)
             if i + self._BRIDGE_CHUNK_SIZE < len(requests):
@@ -4725,7 +5321,7 @@ class DeepHermes3Engine:
             try:
                 await self._pipeline.shutdown()
             except Exception as _e:
-                logger.debug('[Issue-17] Pipeline shutdown error: %s', _e)
+                logger.debug("[Issue-17] Pipeline shutdown error: %s", _e)
             self._pipeline = None
 
     async def _unload_batch_worker(self) -> None:
@@ -4737,44 +5333,50 @@ class DeepHermes3Engine:
     async def _unload_caches(self) -> None:
         """ROADMAP-001 Phase 3-6: Unified cache eviction via UnifiedCacheManager."""
         await self._save_cache()
-        
+
         # ROADMAP-001: Sync engine caches to manager before clearing
         self._cache_manager.sync_warmup_cache(self._warmup_cache)
         self._cache_manager.sync_prompt_cache(self._prompt_cache)
         self._cache_manager.sync_system_prompt_cache(self._system_prompt_cache)
-        
+
         # ROADMAP-001: Single call to clear_all() for complete cache cleanup
         cleared = await self._cache_manager.clear_all()
-        logger.debug('[ROADMAP-001] Caches evicted: %s', list(cleared.keys()))
-        
+        logger.debug("[ROADMAP-001] Caches evicted: %s", list(cleared.keys()))
+
         # Reset engine's cache references to None
         self._warmup_cache = None
         self._prompt_cache = None
         self._system_prompt_cache = None
         self._warmup_prompt_hash = None
-        
+
         # ROADMAP-001: Reset cache stats
-        self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
-        self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
+        self._kv_cache_stats = {"cache_uses": 0, "cache_prefills": 1, "quantized_count": 0, "parallel_prefills": 0}
+        self._session_cache_stats = {
+            "session_cache_hits": 0,
+            "session_cache_misses": 0,
+            "session_cache_evictions": 0,
+            "session_cache_memory_mb": self._session_cache_memory_mb,
+            "session_cache_maxsize": self._session_cache_maxsize,
+        }
 
     def _unload_executors(self) -> None:
         """Phase 7: Shutdown thread executors (non-shared only)."""
-        _shared = getattr(self, '_executors_shared', False)
+        _shared = getattr(self, "_executors_shared", False)
         if not _shared:
             self._inference_executor.shutdown(wait=True)
-            if hasattr(self, '_prep_executor') and self._prep_executor is not None:
+            if hasattr(self, "_prep_executor") and self._prep_executor is not None:
                 self._prep_executor.shutdown(wait=False)
                 self._prep_executor = None
-            if hasattr(self, '_post_executor') and self._post_executor is not None:
+            if hasattr(self, "_post_executor") and self._post_executor is not None:
                 self._post_executor.shutdown(wait=False)
                 self._post_executor = None
             if self._compile_executor is not None:
                 self._compile_executor.shutdown(wait=False)
                 self._compile_executor = None
         else:
-            if hasattr(self, '_prep_executor'):
+            if hasattr(self, "_prep_executor"):
                 self._prep_executor = None
-            if hasattr(self, '_post_executor'):
+            if hasattr(self, "_post_executor"):
                 self._post_executor = None
             self._compile_executor = None
 
@@ -4784,12 +5386,12 @@ class DeepHermes3Engine:
             try:
                 await self._mlx_batcher.shutdown()
             except Exception as _e:
-                logger.debug('[P0-2] batcher shutdown skipped: %s', _e)
+                logger.debug("[P0-2] batcher shutdown skipped: %s", _e)
         if self._mlx_worker_thread is not None:
             try:
                 self._mlx_worker_thread.shutdown(timeout=5.0)
             except Exception as _e:
-                logger.debug('[P0-3] worker thread shutdown skipped: %s', _e)
+                logger.debug("[P0-3] worker thread shutdown skipped: %s", _e)
         self._mlx_batcher = None
         self._mlx_worker_thread = None
 
@@ -4809,12 +5411,14 @@ class DeepHermes3Engine:
         if _MLX_PREWARM_ENABLED and _mlx_prewarm_active:
             try:
                 import time as _time
+
                 _MLX_PREWARM_LAST_UNLOAD_TIME = _time.monotonic()
             except Exception:  # noqa: BLE001
                 pass
-            logger.debug('[F267] MLX prewarm: skipping clear_cache, model kept warm')
+            logger.debug("[F267] MLX prewarm: skipping clear_cache, model kept warm")
         else:
             from hledac.universal.utils.mlx_memory import metal_reclaim
+
             metal_reclaim()
         _mlx_prewarm_active = False
 
@@ -4822,7 +5426,8 @@ class DeepHermes3Engine:
         """Phase 11: Release ANE mutex for LLM."""
         try:
             from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
-            get_ane_mlx_mutex().release('llm')
+
+            get_ane_mlx_mutex().release("llm")
         except Exception:  # noqa: BLE001
             pass
 
@@ -4833,7 +5438,7 @@ class DeepHermes3Engine:
 
         Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
         """
-        logger.info('Unloading Hermes-3...')
+        logger.info("Unloading Hermes-3...")
         await self._unload_pipeline()
         await self._unload_batch_worker()
         await self._unload_caches()
@@ -4844,7 +5449,7 @@ class DeepHermes3Engine:
         self._unload_ane_mutex()
         # G2: Notify observers that model is unloaded
         self._notify_state(ModelLoadState.UNLOADED)
-        logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')
+        logger.info("✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)")
 
     # ── R3: Async Context Manager + Lifecycle ──────────────────────────────────
 
@@ -4865,10 +5470,10 @@ class DeepHermes3Engine:
         Python 3.14: ThreadPoolExecutor.shutdown(cancel_futures=True) ensures
         pending futures are cancelled immediately, preventing stall on GC.
         """
-        for name, ex in (
-            ('inference', inference_executor),
-            ('prep', prep_executor),
-            ('post', post_executor),
+        for _name, ex in (
+            ("inference", inference_executor),
+            ("prep", prep_executor),
+            ("post", post_executor),
         ):
             if ex is not None:
                 try:
@@ -4897,12 +5502,8 @@ class DeepHermes3Engine:
             return
         self._closed = True
 
-        # Phase 1: Parallel bounded executor shutdown via TaskGroup
-        # R5: If executors are from shared pool (R1 or domain_executors), only clear
-        # local references — pool lifecycle managed centrally.
-        # If somehow still raw executors, shut them down explicitly.
         errors: list[tuple[str, str]] = []
-        _shared = getattr(self, '_executors_shared', False)
+        _shared = getattr(self, "_executors_shared", False)
 
         async def _shutdown_one(
             name: str,
@@ -4917,44 +5518,41 @@ class DeepHermes3Engine:
             if _shared:
                 return  # shared pool — skip shutdown, managed centrally
             try:
-                await asyncio.to_thread(
-                    executor.shutdown, wait=wait, cancel_futures=True
-    )
+                await asyncio.to_thread(executor.shutdown, wait=wait, cancel_futures=True)
             except Exception as exc:
                 errors.append((name, str(exc)))
 
         try:
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(_shutdown_one('inference', getattr(self, '_inference_executor', None), wait=True, timeout_s=5.0))
-                tg.create_task(_shutdown_one('prep', getattr(self, '_prep_executor', None), wait=False, timeout_s=2.0))
-                tg.create_task(_shutdown_one('post', getattr(self, '_post_executor', None), wait=False, timeout_s=2.0))
-                tg.create_task(_shutdown_one('compile', getattr(self, '_compile_executor', None), wait=False, timeout_s=1.0))
+                tg.create_task(
+                    _shutdown_one("inference", getattr(self, "_inference_executor", None), wait=True, timeout_s=5.0)
+                )
+                tg.create_task(_shutdown_one("prep", getattr(self, "_prep_executor", None), wait=False, timeout_s=2.0))
+                tg.create_task(_shutdown_one("post", getattr(self, "_post_executor", None), wait=False, timeout_s=2.0))
+                tg.create_task(
+                    _shutdown_one("compile", getattr(self, "_compile_executor", None), wait=False, timeout_s=1.0)
+                )
         except* Exception as eg:
             for exc in eg.exceptions:
-                errors.append(('taskgroup', str(exc)))
+                errors.append(("taskgroup", str(exc)))
 
         if errors:
-            logger.warning(
-                '[R3] aclose executor shutdown errors: %s',
-                ', '.join(f'{n}:{e}' for n, e in errors)
-    )
+            logger.warning("[R3] aclose executor shutdown errors: %s", ", ".join(f"{n}:{e}" for n, e in errors))
 
-        # Phase 2: Delegate model/cache teardown to canonical unload()
         if self._model is not None:
             try:
                 await self.unload()
             except Exception as exc:
-                logger.warning('[R3] aclose unload error: %s', exc)
+                logger.warning("[R3] aclose unload error: %s", exc)
 
-        # Phase 3: Clear remaining references for GC
         self._inference_executor = None  # type: ignore[assignment]
         self._prep_executor = None  # type: ignore[assignment]
         self._post_executor = None  # type: ignore[assignment]
         self._compile_executor = None
 
-        logger.info('[R3] DeepHermes3Engine aclose complete')
+        logger.info("[R3] DeepHermes3Engine aclose complete")
 
-    async def __aenter__(self) -> 'DeepHermes3Engine':
+    async def __aenter__(self) -> DeepHermes3Engine:
         """
         R3: Async context manager entry.
 
@@ -4988,11 +5586,11 @@ class DeepHermes3Engine:
         """
         try:
             self._cleanup_executors_sync(
-                getattr(self, '_inference_executor', None),
-                getattr(self, '_prep_executor', None),
-                getattr(self, '_post_executor', None),
-    )
-            if getattr(self, '_compile_executor', None) is not None:
+                getattr(self, "_inference_executor", None),
+                getattr(self, "_prep_executor", None),
+                getattr(self, "_post_executor", None),
+            )
+            if getattr(self, "_compile_executor", None) is not None:
                 try:
                     self._compile_executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[union-attr]
                 except Exception:  # noqa: BLE001
@@ -5040,53 +5638,60 @@ class DeepHermes3Engine:
         self._cache_manager.sync_warmup_cache(self._warmup_cache)
         self._cache_manager.sync_prompt_cache(self._prompt_cache)
         self._cache_manager.sync_system_prompt_cache(self._system_prompt_cache)
-        
+
         # ROADMAP-001: Reset MLX prompt caches via UnifiedCacheManager
         self._cache_manager.reset_prompt_caches()
-        
+
         # Clear engine references
         self._prompt_cache = None
         self._system_prompt_cache = None
         self._system_prompt_hash = None
-        
+
         if not keep_cache_pool:
             # ROADMAP-001: Clear KV pools via UnifiedCacheManager
             # Note: Manager's clear methods operate on the same cache objects (passed in __init__)
             self._cache_manager.clear_kv_cache()
             self._cache_manager.clear_session_cache()
             # Engine references point to same objects - no need for redundant clear
-            logger.debug('[F03][ROADMAP-001] KV cache pools cleared (keep_cache_pool=False)')
-        
+            logger.debug("[F03][ROADMAP-001] KV cache pools cleared (keep_cache_pool=False)")
+
         # ROADMAP-001: Always clear prefix cache (per-turn state)
         # Note: Manager operates on the same cache object - no redundant clear needed
         self._cache_manager.clear_prefix_cache()
-        
+
         # NEW-M3 FIX: Offload blocking mx.eval([]) to thread pool when in async context.
         # mx.eval([]) is fast but can block the event loop if called frequently.
         # Check for running loop and use to_thread to avoid blocking.
         try:
-            import mlx.core as mx
             import concurrent.futures
+
+            import mlx.core as mx
+
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 # No running loop — call directly (sync context)
                 mx.eval([])
             else:
-                # Running loop — offload to thread pool
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     pool.submit(mx.eval, [])
         except Exception:  # noqa: BLE001
             pass
-        
+
         # ROADMAP-001: Reset stats
-        self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
-        self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
-        
+        self._kv_cache_stats = {"cache_uses": 0, "cache_prefills": 1, "quantized_count": 0, "parallel_prefills": 0}
+        self._session_cache_stats = {
+            "session_cache_hits": 0,
+            "session_cache_misses": 0,
+            "session_cache_evictions": 0,
+            "session_cache_memory_mb": self._session_cache_memory_mb,
+            "session_cache_maxsize": self._session_cache_maxsize,
+        }
+
         if keep_cache_pool:
-            logger.debug('[F03][ROADMAP-001] Hermes3 session reset (KV pools preserved for cross-turn reuse)')
+            logger.debug("[F03][ROADMAP-001] Hermes3 session reset (KV pools preserved for cross-turn reuse)")
         else:
-            logger.debug('[F03][ROADMAP-001] Hermes3 session reset (KV pools cleared)')
+            logger.debug("[F03][ROADMAP-001] Hermes3 session reset (KV pools cleared)")
 
     async def get_current_model_name(self) -> str | None:
         """Return currently loaded model name, or None if no model loaded."""
@@ -5100,8 +5705,12 @@ class DeepHermes3Engine:
             pool_evictions, pool_evictions_memory (bytes), pool_current_bytes,
             pool_current_mb
         """
-        total_pool_bytes = sum((entry[2] for entry in self._kv_cache_pool.values()))
-        return {**self._kv_cache_pool_stats, 'pool_current_bytes': total_pool_bytes, 'pool_current_mb': total_pool_bytes / (1024 * 1024)}
+        total_pool_bytes = sum(entry[2] for entry in self._kv_cache_pool.values())
+        return {
+            **self._kv_cache_pool_stats,
+            "pool_current_bytes": total_pool_bytes,
+            "pool_current_mb": total_pool_bytes / (1024 * 1024),
+        }
 
     def get_inference_stats(self) -> dict:
         """Krok 1.2: Return MLX lazy ops counters and GPU memory metrics.
@@ -5122,11 +5731,17 @@ class DeepHermes3Engine:
                 _active_bytes = self._metal_device.get_active_memory() if self._metal_device else 0
             except Exception:  # noqa: BLE001
                 pass
-        return {'lazy_ops_eval_count': self._lazy_ops_eval_count, 'gpu_memory_active_bytes': _active_bytes, 'gpu_memory_active_gb': _active_bytes / 1024 ** 3, 'metal_pressure_fast_flush': self._telemetry_counters.get('metal_pressure_fast_flush', 0), 'pending_lazy_ops_estimate': self._lazy_ops_eval_count * EVAL_EVERY_N_TOKENS}
+        return {
+            "lazy_ops_eval_count": self._lazy_ops_eval_count,
+            "gpu_memory_active_bytes": _active_bytes,
+            "gpu_memory_active_gb": _active_bytes / 1024**3,
+            "metal_pressure_fast_flush": self._telemetry_counters.get("metal_pressure_fast_flush", 0),
+            "pending_lazy_ops_estimate": self._lazy_ops_eval_count * EVAL_EVERY_N_TOKENS,
+        }
 
     async def cancel_pending_model_tasks(self) -> None:
         """Cancel any in-flight generation tasks."""
-        task: asyncio.Task[None] | None = getattr(self, '_generation_task', None)
+        task: asyncio.Task[None] | None = getattr(self, "_generation_task", None)
         if task is not None:
             task.cancel()
             try:
@@ -5139,17 +5754,18 @@ class DeepHermes3Engine:
     async def load_model(self, model_id: str) -> bool:
         """Load specified model by path identifier (P0-04: uses HermesModelCache singleton)."""
         # M-08: Invalidate all caches BEFORE loading new model (prevents stale Metal allocations)
-        self._invalidate_all_prompt_caches(f'model_swap_start:{model_id}')
+        self._invalidate_all_prompt_caches(f"model_swap_start:{model_id}")
         cache = hermes_cache()
         result = cache.get_model(model_id)
         if result is not None:
             self._model, self._tokenizer = result
             self.config.model_path = model_id
-            logger.info(f'[HERMES] Model retrieved from cache (LRU updated): {model_id}')
+            logger.info(f"[HERMES] Model retrieved from cache (LRU updated): {model_id}")
             self._model_ever_loaded = True
             # Re-initialize prompt cache for cached model (engine-specific, not in hermes_cache LRU)
             try:
                 from mlx_lm.utils import make_prompt_cache
+
                 self._prompt_cache = make_prompt_cache(self._model)
                 self._kv_cache_enabled = True
             except Exception:
@@ -5157,19 +5773,21 @@ class DeepHermes3Engine:
                 self._kv_cache_enabled = False
             return True
         from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
+
         mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load
-            from mlx_lm.utils import make_prompt_cache  # type: ignore[attr-defined]
+            from mlx_lm.utils import make_prompt_cache
+
             mutex.acquire_mlx(model_size_mb=2000.0)
-            if os.getenv('HLEDAC_HERMES_NO_CACHE', '0') == '1':
+            if os.getenv("HLEDAC_HERMES_NO_CACHE", "0") == "1":
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
             else:
-                logger.info(f'[HERMES] Loading model from disk: {model_id}')
+                logger.info(f"[HERMES] Loading model from disk: {model_id}")
                 self._model, self._tokenizer = await asyncio.to_thread(load, model_id)
                 cache.put_model(model_id, self._model, self._tokenizer)
                 mc, lc = len(cache)  # type: ignore[arg-type]
-                logger.info(f'[HERMES] Model cached ({mc} models, {lc} loras)')
+                logger.info(f"[HERMES] Model cached ({mc} models, {lc} loras)")
             self.config.model_path = model_id
             # ISSUE #5.5: Removed global KV_CACHE_AVAILABLE write — only self._kv_cache_enabled
             # is authoritative. The module-level KV_CACHE_AVAILABLE is a static capability flag
@@ -5184,15 +5802,15 @@ class DeepHermes3Engine:
             # 1. _invalidate_all_prompt_caches() was already called at model_swap_start
             # 2. Fresh prompt_cache was just created via make_prompt_cache() above
             # 3. Stale KV/prompt from previous model already cleared by the start invalidation
-            logger.info(f'✓ Model loaded: {model_id}')
+            logger.info(f"✓ Model loaded: {model_id}")
             self._model_ever_loaded = True
             return True
         except Exception as e:
-            logger.warning(f'Model load failed for {model_id}: {e}')
+            logger.warning(f"Model load failed for {model_id}: {e}")
             raise
         finally:
             try:
-                mutex.release('llm')
+                mutex.release("llm")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -5202,15 +5820,17 @@ class DeepHermes3Engine:
             return 0.0
         try:
             import sys
+
             import mlx.core as mx
-            if isinstance(self._prompt_cache, tuple) and self._prompt_cache[0] == 'commvq_compressed':
+
+            if isinstance(self._prompt_cache, tuple) and self._prompt_cache[0] == "commvq_compressed":
                 compressed_groups = self._prompt_cache[1]
                 total_bytes = 0
                 for centroids, indices in compressed_groups:
                     total_bytes += centroids.nbytes + indices.nbytes
                 return total_bytes / (1024 * 1024)
             leaves = mx.tree_flatten(self._prompt_cache)
-            total_bytes = sum((l.nbytes if hasattr(l, 'nbytes') else sys.getsizeof(l) for l in leaves))
+            total_bytes = sum(l.nbytes if hasattr(l, "nbytes") else sys.getsizeof(l) for l in leaves)
             return total_bytes / (1024 * 1024)
         except Exception:
             return 0.0
@@ -5221,31 +5841,33 @@ class DeepHermes3Engine:
             return False
         try:
             from ..utils.sketches import commvq_quantize
+
             if not self._prompt_cache:
                 return False
             import mlx.core as mx
+
             try:
                 mx.eval(self._prompt_cache)
-                if hasattr(self._prompt_cache, 'dtype'):
+                if hasattr(self._prompt_cache, "dtype"):
                     if self._prompt_cache.dtype not in (mx.bfloat16, mx.float16, mx.float32):
-                        logger.debug(f'[KV-CACHE] Skip: cache dtype is {self._prompt_cache.dtype}')
+                        logger.debug(f"[KV-CACHE] Skip: cache dtype is {self._prompt_cache.dtype}")
                         return False
             except Exception as e:
-                logger.warning(f'[KV-CACHE] Cannot evaluate cache: {e}')
+                logger.warning(f"[KV-CACHE] Cannot evaluate cache: {e}")
                 return False
             compressed = commvq_quantize(self._prompt_cache, bits=2)
             if compressed is self._prompt_cache:
-                logger.debug('[KV-CACHE] Quantization returned original (fail-safe)')
+                logger.debug("[KV-CACHE] Quantization returned original (fail-safe)")
                 return False
             old_size = self._get_cache_size_mb()
             self._prompt_cache = compressed
             mx.eval(self._prompt_cache)
             new_size = self._get_cache_size_mb()
             savings = (old_size - new_size) / old_size * 100 if old_size > 0 else 0
-            logger.info(f'[KV-CACHE] Compressed: {old_size:.1f} MB -> {new_size:.1f} MB ({savings:.1f}% savings)')
+            logger.info(f"[KV-CACHE] Compressed: {old_size:.1f} MB -> {new_size:.1f} MB ({savings:.1f}% savings)")
             return True
         except Exception as e:
-            logger.warning(f'[KV-CACHE] Compression failed: {e}')
+            logger.warning(f"[KV-CACHE] Compression failed: {e}")
             return False
 
     async def _prune_kv_cache(self) -> bool:
@@ -5256,17 +5878,17 @@ class DeepHermes3Engine:
         if not self._kv_cache_enabled or self._prompt_cache is None:
             return False
         try:
-            if not hasattr(self._prompt_cache, 'offset'):
+            if not hasattr(self._prompt_cache, "offset"):
                 return False
             context_len = self._prompt_cache.offset
             if context_len <= 1024:
                 return False
             new_offset = int(context_len * 0.8)
             self._prompt_cache.offset = new_offset
-            logger.info(f'[PRUNE] Context {context_len} → {new_offset} tokens (saved {context_len - new_offset})')
+            logger.info(f"[PRUNE] Context {context_len} → {new_offset} tokens (saved {context_len - new_offset})")
             return True
         except Exception as e:
-            logger.warning(f'[PRUNE] Failed: {e}, falling back to compression')
+            logger.warning(f"[PRUNE] Failed: {e}, falling back to compression")
             return False
 
     @staticmethod
@@ -5277,58 +5899,76 @@ class DeepHermes3Engine:
         Uses GHOST_HERMES_SUSTAIN=1 env flag and inspects generate_fn signature
         to add only supported kwargs.
         """
-        sustain_flag = os.getenv('GHOST_HERMES_SUSTAIN', '0')
-        if sustain_flag != '1':
+        sustain_flag = os.getenv("GHOST_HERMES_SUSTAIN", "0")
+        if sustain_flag != "1":
             return {}
         try:
             sig = inspect.signature(generate_fn)
             param_names = set(sig.parameters.keys())
-            has_var_keyword = any((p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()))
+            has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         except Exception:
             param_names = set()
             has_var_keyword = False
         kwargs = {}
-        if 'max_kv_size' in param_names or has_var_keyword:
-            kwargs['max_kv_size'] = int(os.getenv('GHOST_KV_SIZE', '4096'))
-        if 'kv_cache_type' in param_names:
-            kwargs['kv_cache_type'] = 'rotating'
-        if 'attention_sink_size' in param_names:
-            kwargs['attention_sink_size'] = 4
+        if "max_kv_size" in param_names or has_var_keyword:
+            kwargs["max_kv_size"] = int(os.getenv("GHOST_KV_SIZE", "4096"))
+        if "kv_cache_type" in param_names:
+            kwargs["kv_cache_type"] = "rotating"
+        if "attention_sink_size" in param_names:
+            kwargs["attention_sink_size"] = 4
         return kwargs
 
     def _run_sustain_inference(self, formatted_prompt: str, temp: float, max_tok: int) -> str:
         """Run MLX inference with sustain mode (M1 8GB optimization)."""
         from mlx_lm import generate as mlx_generate
         from mlx_lm.sample_utils import make_sampler
+
         try:
-            from ..utils.mlx_memory import configure_mlx_limits, format_mlx_memory_snapshot, get_current_memory_tier, get_tier_config
+            from ..utils.mlx_memory import (
+                configure_mlx_limits,
+                format_mlx_memory_snapshot,
+                get_current_memory_tier,
+                get_tier_config,
+            )
+
             tier = get_current_memory_tier()
             config = get_tier_config(tier)
-            configure_mlx_limits(cache_limit_mb=config['cache_mb'], memory_limit_mb=config['buffer_mb'])
-            logger.debug(f'[SUSTAIN] PRE (tier={tier}): {format_mlx_memory_snapshot()}')
+            configure_mlx_limits(cache_limit_mb=config["cache_mb"], memory_limit_mb=config["buffer_mb"])
+            logger.debug(f"[SUSTAIN] PRE (tier={tier}): {format_mlx_memory_snapshot()}")
         except Exception as e:
-            logger.debug(f'[SUSTAIN] MLX limits configure failed: {e}')
+            logger.debug(f"[SUSTAIN] MLX limits configure failed: {e}")
         sustain_kwargs = self._build_sustain_generate_kwargs_for_test(mlx_generate)
-        generate_kwargs = {'model': self._model, 'tokenizer': self._tokenizer, 'prompt': formatted_prompt, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'verbose': False}
+        generate_kwargs = {
+            "model": self._model,
+            "tokenizer": self._tokenizer,
+            "prompt": formatted_prompt,
+            "sampler": make_sampler(temp=temp),
+            "max_tokens": max_tok,
+            "verbose": False,
+        }
         for k, v in sustain_kwargs.items():
             generate_kwargs[k] = v
-        if os.getenv('GHOST_PREFIX_CACHE_EXPERIMENT', '0') == '1':
+        if os.getenv("GHOST_PREFIX_CACHE_EXPERIMENT", "0") == "1":
             try:
                 from mlx_lm.models.cache import make_prompt_cache
+
                 kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-                generate_kwargs['prompt_cache'] = kv_cache
+                generate_kwargs["prompt_cache"] = kv_cache
             except Exception as e:
-                logger.debug(f'[SUSTAIN] prompt_cache experiment failed: {e}')
+                logger.debug(f"[SUSTAIN] prompt_cache experiment failed: {e}")
         response = mlx_generate(**generate_kwargs)
-        _safe_mlx_eval_and_clear_cache('sustain_inference')
+        _safe_mlx_eval_and_clear_cache("sustain_inference")
         try:
             from ..utils.mlx_memory import format_mlx_memory_snapshot
-            logger.debug(f'[SUSTAIN] POST: {format_mlx_memory_snapshot()}')
+
+            logger.debug(f"[SUSTAIN] POST: {format_mlx_memory_snapshot()}")
         except Exception:  # noqa: BLE001
             pass
         return response.strip()
 
-    async def warmup_prefix_cache(self, system_prompt: str='You are a helpful research assistant.', few_shot_examples: list | None=None) -> bool:
+    async def warmup_prefix_cache(
+        self, system_prompt: str = "You are a helpful research assistant.", few_shot_examples: list | None = None
+    ) -> bool:
         """
         Prefix-cache warmup: prefill KV cache s system prompt + few-shot examples.
 
@@ -5349,22 +5989,24 @@ class DeepHermes3Engine:
             True if warmup successful, False otherwise
         """
         if self._model is None or self._tokenizer is None:
-            logger.warning('[WARMUP] Model not loaded, skipping warmup')
+            logger.warning("[WARMUP] Model not loaded, skipping warmup")
             return False
         if few_shot_examples is None:
-            few_shot_examples = [{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}]
+            few_shot_examples = [
+                {"user": "What is 2+2?", "assistant": "4"},
+                {"user": "Capital of France?", "assistant": "Paris"},
+            ]
 
-        # Build warmup prompt from chat template
-        parts = [f'<|im_start|>system\n{system_prompt}<|im_end|>']
+        parts = [f"<|im_start|>system\n{system_prompt}<|im_end|>"]
         for ex in few_shot_examples[:3]:
             parts.append(f"<|im_start|>user\n{ex.get('user', '')}<|im_end|>")
             parts.append(f"<|im_start|>assistant\n{ex.get('assistant', '')}<|im_end|>")
-        warmup_prompt = '\n'.join(parts)
+        warmup_prompt = "\n".join(parts)
 
         tokens = self._tokenizer.encode(warmup_prompt)
         token_count = len(tokens)
         if token_count > 1000:
-            logger.warning(f'[WARMUP] Warmup prompt too long ({token_count} tokens), truncating')
+            logger.warning(f"[WARMUP] Warmup prompt too long ({token_count} tokens), truncating")
             warmup_prompt = self._tokenizer.decode(tokens[:1000])
 
         # Cache hit - skip warmup
@@ -5374,7 +6016,6 @@ class DeepHermes3Engine:
         # Compute stable prompt hash for cache key
         prompt_hash = self._compute_warmup_hash(system_prompt, few_shot_examples)
 
-        # Build and populate KV cache
         cache_success = await self._build_warmup_cache(warmup_prompt, token_count, prompt_hash)
         if not cache_success:
             return False
@@ -5382,8 +6023,8 @@ class DeepHermes3Engine:
         # Execute warmup generation (worker thread or inline)
         await self._execute_warmup_generation(warmup_prompt)
 
-        _safe_mlx_eval_and_clear_cache('warmup_prefill')
-        logger.info('[WARMUP] Prefix cache warmup complete (fresh build)')
+        _safe_mlx_eval_and_clear_cache("warmup_prefill")
+        logger.info("[WARMUP] Prefix cache warmup complete (fresh build)")
         return True
 
     def _compute_warmup_hash(self, system_prompt: str, few_shot_examples: list | None) -> str:
@@ -5392,7 +6033,7 @@ class DeepHermes3Engine:
         if few_shot_examples:
             for ex in few_shot_examples[:3]:
                 canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-        canonical_text = '\n'.join(canonical_parts)
+        canonical_text = "\n".join(canonical_parts)
 
         if XXHASH_AVAILABLE:
             return _get_xxh3_hex(canonical_text)
@@ -5402,22 +6043,25 @@ class DeepHermes3Engine:
         """Build and configure KV cache with optional quantization."""
         try:
             from mlx_lm.models.cache import make_prompt_cache
+
             self._warmup_cache = make_prompt_cache(self._model, max_kv_size=max(token_count + 128, 1024))
             self._warmup_prompt_hash = prompt_hash
             self._quantize_kv_cache(self._warmup_cache)
             return True
         except Exception as e:
-            logger.warning(f'[WARMUP] Cache build failed: {e}')
+            logger.warning(f"[WARMUP] Cache build failed: {e}")
             return False
 
     def _do_generate(self, warmup_prompt: str) -> None:
         """Synchronous warmup generation - extracted to reduce nesting."""
         from mlx_lm import generate as mlx_generate
         from mlx_lm.sample_utils import make_sampler
+
         from ..utils.mlx_memory import get_metal_stream_context
 
         with get_metal_stream_context():
             import mlx.core as _mx
+
             _mx.eval([])
             mlx_generate(
                 model=self._model,
@@ -5428,14 +6072,14 @@ class DeepHermes3Engine:
                 kv_bits=self._get_adaptive_kv_bits(),
                 prompt_cache=self._warmup_cache,
                 verbose=False,
-    )
+            )
 
     async def _execute_warmup_generation(self, warmup_prompt: str) -> None:
         """Execute warmup generation via worker thread or inline fallback.
 
         Extracts 4-level nested try/except logic into flat structure.
         """
-        _worker = getattr(self, '_mlx_worker_thread', None)
+        _worker = getattr(self, "_mlx_worker_thread", None)
         _worker_live = _worker is not None and _worker.is_active()
 
         if _worker_live:
@@ -5449,17 +6093,17 @@ class DeepHermes3Engine:
             coro = self._run_inference_async(lambda: self._do_generate(warmup_prompt))
             await self._worker.submit(coro, timeout=60.0)
         except RuntimeError as _no_loop:
-            logger.debug(f'[WARMUP] No running loop ({_no_loop}), using inline fallback')
+            logger.debug(f"[WARMUP] No running loop ({_no_loop}), using inline fallback")
             self._run_warmup_inline(warmup_prompt)
         except Exception as _warmup_exc:
-            logger.warning(f'[WARMUP] Worker thread warmup failed ({_warmup_exc}), continuing')
+            logger.warning(f"[WARMUP] Worker thread warmup failed ({_warmup_exc}), continuing")
 
     def _run_warmup_inline(self, warmup_prompt: str) -> None:
         """Run warmup inline when worker unavailable."""
         try:
             self._do_generate(warmup_prompt)
         except Exception as _warmup_exc:
-            logger.warning(f'[WARMUP] inline warmup failed ({_warmup_exc}), continuing')
+            logger.warning(f"[WARMUP] inline warmup failed ({_warmup_exc}), continuing")
 
     async def _restore_warmup_cache(self, cache_path: Path, prompt_hash: str) -> bool:
         """Restore warmup cache from disk if prompt hash matches.
@@ -5471,43 +6115,46 @@ class DeepHermes3Engine:
             return False
         try:
             from mlx_lm.models.cache import load_prompt_cache
+
             cache, metadata = load_prompt_cache(str(cache_path), return_metadata=True)
-            stored_hash = metadata.get('prompt_hash', None) if metadata else None
+            stored_hash = metadata.get("prompt_hash", None) if metadata else None
             if stored_hash is None:
                 return await self._restore_warmup_cache_legacy(cache_path, prompt_hash)
             if str(stored_hash) != prompt_hash:
-                logger.debug(f'[WARMUP] Cache hash mismatch: {stored_hash} != {prompt_hash}')
+                logger.debug(f"[WARMUP] Cache hash mismatch: {stored_hash} != {prompt_hash}")
                 return False
             self._warmup_cache = cache
             self._warmup_prompt_hash = prompt_hash
-            logger.debug(f'[WARMUP] Restored {len(cache)} layers via load_prompt_cache')
+            logger.debug(f"[WARMUP] Restored {len(cache)} layers via load_prompt_cache")
             return True
         except Exception as e:
-            logger.debug(f'[WARMUP] load_prompt_cache failed: {e}, trying legacy restore')
+            logger.debug(f"[WARMUP] load_prompt_cache failed: {e}, trying legacy restore")
             return await self._restore_warmup_cache_legacy(cache_path, prompt_hash)
 
     async def _restore_warmup_cache_legacy(self, cache_path: Path, prompt_hash: str) -> bool:
         """Legacy .npz restore for backward compatibility with existing warmup caches."""
         try:
             import mlx.core as mx
+
             data = mx.load(str(cache_path))
-            stored_hash = data.get('_prompt_hash', None)
+            stored_hash = data.get("_prompt_hash", None)
             if stored_hash is None:
                 return False
-            if hasattr(stored_hash, 'item'):
+            if hasattr(stored_hash, "item"):
                 stored_hash = str(stored_hash.item())
             if str(stored_hash) != prompt_hash:
                 return False
             from mlx_lm.models.cache import make_prompt_cache
-            n_tokens = len(self._tokenizer.encode('')) + 512
+
+            n_tokens = len(self._tokenizer.encode("")) + 512
             self._warmup_cache = make_prompt_cache(self._model, max_kv_size=n_tokens)
             self._warmup_prompt_hash = prompt_hash
             restored = 0
             for i, layer in enumerate(self._warmup_cache):
-                k_key = f'layer_{i}_keys'
-                v_key = f'layer_{i}_values'
+                k_key = f"layer_{i}_keys"
+                v_key = f"layer_{i}_values"
                 if k_key in data and v_key in data:
-                    if hasattr(layer, 'keys') and hasattr(layer, 'values'):
+                    if hasattr(layer, "keys") and hasattr(layer, "values"):
                         try:
                             layer.keys = data[k_key]
                             layer.values = data[v_key]
@@ -5515,11 +6162,11 @@ class DeepHermes3Engine:
                         except Exception:  # noqa: BLE001
                             pass
             if restored > 0:
-                logger.debug(f'[WARMUP] Restored {restored}/{len(self._warmup_cache)} layers (legacy)')
+                logger.debug(f"[WARMUP] Restored {restored}/{len(self._warmup_cache)} layers (legacy)")
                 return True
             return False
         except Exception as e:
-            logger.debug(f'[WARMUP] Legacy restore failed: {e}')
+            logger.debug(f"[WARMUP] Legacy restore failed: {e}")
             return False
 
     def _probe_outlines_capability(self) -> bool:
@@ -5534,11 +6181,12 @@ class DeepHermes3Engine:
         if self._outlines_model is None:
             return False
         try:
-            import outlines.generate as og
             import msgspec
+            import outlines.generate as og
 
             class _ProbeSchema(msgspec.Struct):
                 ok: bool
+
             gen = og.json(self._outlines_model, _ProbeSchema)
             return callable(gen)
         except Exception:
@@ -5553,7 +6201,10 @@ class DeepHermes3Engine:
         """
         try:
             import xgrammar as xg
-            return hasattr(xg, 'CompiledGrammar')
+
+            return hasattr(xg, "CompiledGrammar")
         except ImportError:
             return False
+
+
 Hermes3Engine = DeepHermes3Engine

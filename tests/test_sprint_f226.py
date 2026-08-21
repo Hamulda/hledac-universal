@@ -10,14 +10,13 @@ Verifies three seams from the public_fetcher audit:
   F. End-to-end: 25 in-flight × effective cap = bounded worst case
 """
 
-
 import asyncio
 import sys
 import types
+from typing import Never
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # A. BodyReadResult + CHUNKS_BUDGET — transport.body_limiter
@@ -27,29 +26,32 @@ from _core import aclose
 class TestBodyReadResult:
     """A. transport.body_limiter helper contract."""
 
-    def test_body_read_result_fields(self):
+    def test_body_read_result_fields(self) -> None:
         from hledac.universal.transport.body_limiter import BodyReadResult
+
         r = BodyReadResult(body=b"hello", total_read=5, truncated=False, chunks_consumed=1)
         assert r.body == b"hello"
         assert r.total_read == 5
         assert r.truncated is False
         assert r.chunks_consumed == 1
 
-    def test_body_read_result_is_frozen(self):
+    def test_body_read_result_is_frozen(self) -> None:
         """F226: BodyReadResult is immutable (frozen dataclass) — no in-place mutation."""
         from hledac.universal.transport.body_limiter import BodyReadResult
+
         r = BodyReadResult(body=b"x", total_read=1, truncated=False, chunks_consumed=1)
         with pytest.raises((AttributeError, Exception)):
             r.body = b"y"  # type: ignore[misc]
 
-    def test_chunks_budget_is_bounded(self):
+    def test_chunks_budget_is_bounded(self) -> None:
         """F226: CHUNKS_BUDGET guards against pathological sources."""
         from hledac.universal.transport.body_limiter import CHUNKS_BUDGET
+
         assert CHUNKS_BUDGET >= 1024
         assert CHUNKS_BUDGET <= 65536
 
     @pytest.mark.asyncio
-    async def test_read_body_with_cap_no_cap(self):
+    async def test_read_body_with_cap_no_cap(self) -> None:
         from hledac.universal.transport.body_limiter import read_body_with_cap
 
         async def gen():
@@ -61,7 +63,7 @@ class TestBodyReadResult:
         assert truncated is False
 
     @pytest.mark.asyncio
-    async def test_read_body_with_cap_truncates(self):
+    async def test_read_body_with_cap_truncates(self) -> None:
         from hledac.universal.transport.body_limiter import read_body_with_cap
 
         async def gen():
@@ -73,7 +75,7 @@ class TestBodyReadResult:
         assert truncated is True
 
     @pytest.mark.asyncio
-    async def test_read_body_respects_chunks_budget(self):
+    async def test_read_body_respects_chunks_budget(self) -> None:
         """F226: pathological source with millions of tiny chunks stops at CHUNKS_BUDGET."""
         from hledac.universal.transport.body_limiter import CHUNKS_BUDGET, read_body_with_cap
 
@@ -94,25 +96,28 @@ class TestBodyReadResult:
 class TestJSRendererSemaphore:
     """B. The shared Semaphore(1) ensures only 1 browser process at a time."""
 
-    def test_semaphore_exists_and_is_bounded(self):
+    def test_semaphore_exists_and_is_bounded(self) -> None:
         from hledac.universal.fetching.public_fetcher import _get_js_renderer_semaphore
+
         sem = _get_js_renderer_semaphore()
         assert isinstance(sem, asyncio.Semaphore)
         # Semaphore(1) — at most 1 acquire available
         # _value is implementation detail; just verify we can acquire+release once
         # and the second acquire would block (we test serialization below instead).
 
-    def test_semaphore_getter_returns_singleton(self):
+    def test_semaphore_getter_returns_singleton(self) -> None:
         """F226A: getter is idempotent within the same loop."""
         from hledac.universal.fetching.public_fetcher import _get_js_renderer_semaphore
+
         sem1 = _get_js_renderer_semaphore()
         sem2 = _get_js_renderer_semaphore()
         assert sem1 is sem2
 
     @pytest.mark.asyncio
-    async def test_semaphore_serializes_concurrent_acquires(self):
+    async def test_semaphore_serializes_concurrent_acquires(self) -> None:
         """F226A: two parallel acquires must serialize — one runs, one waits."""
         from hledac.universal.fetching.public_fetcher import _get_js_renderer_semaphore
+
         sem = _get_js_renderer_semaphore()
 
         order: list[str] = []
@@ -131,9 +136,10 @@ class TestJSRendererSemaphore:
         assert first_end_idx < second_start_idx
 
     @pytest.mark.asyncio
-    async def test_semaphore_releases_on_exception(self):
+    async def test_semaphore_releases_on_exception(self) -> Never:
         """F226A: Semaphore.release() happens via async-with even on exception."""
         from hledac.universal.fetching.public_fetcher import _get_js_renderer_semaphore
+
         sem = _get_js_renderer_semaphore()
 
         with pytest.raises(RuntimeError, match="boom"):
@@ -154,7 +160,7 @@ class TestCamoufoxNodriverSharedSemaphore:
     """B'. Both renderers must go through the SAME Semaphore(1)."""
 
     @pytest.mark.asyncio
-    async def test_camoufox_acquires_js_semaphore(self):
+    async def test_camoufox_acquires_js_semaphore(self) -> None:
         """F226A: _fetch_with_camoufox must wrap body in _JS_RENDERER_SEMAPHORE."""
         from hledac.universal.fetching import public_fetcher
 
@@ -166,12 +172,15 @@ class TestCamoufoxNodriverSharedSemaphore:
         fake_async_api = types.ModuleType("camoufox.async_api")
 
         class FakeAsyncCamoufox:
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args, **kwargs) -> None:
                 pass
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *args):
                 return False
+
             async def new_page(self):
                 raise NotImplementedError  # we never reach this — _camoufox_locked is patched
 
@@ -181,12 +190,10 @@ class TestCamoufoxNodriverSharedSemaphore:
         # Patch _camoufox_locked to verify the outer semaphore is held during the call.
         acquired_events: list[str] = []
 
-        async def fake_locked(url, timeout):
+        async def fake_locked(url, timeout) -> str:
             sem = public_fetcher._get_js_renderer_semaphore()
             try:
-                await asyncio.wait_for(
-                    sem.acquire(), timeout=0.05
-    )
+                await asyncio.wait_for(sem.acquire(), timeout=0.05)
                 acquired_events.append("nested_acquired")  # BAD — semaphore should be held
                 sem.release()
             except TimeoutError:
@@ -199,12 +206,11 @@ class TestCamoufoxNodriverSharedSemaphore:
 
         assert html == "<html/>", f"expected <html/>, got {html!r}"
         assert acquired_events == ["nested_blocked"], (
-            "Camoufox body must be wrapped in _JS_RENDERER_SEMAPHORE; "
-            f"observed: {acquired_events}"
-    )
+            f"Camoufox body must be wrapped in _JS_RENDERER_SEMAPHORE; observed: {acquired_events}"
+        )
 
     @pytest.mark.asyncio
-    async def test_nodriver_acquires_js_semaphore(self):
+    async def test_nodriver_acquires_js_semaphore(self) -> None:
         """F226A: _fetch_with_nodriver must wrap body in _JS_RENDERER_SEMAPHORE."""
         from hledac.universal.fetching import public_fetcher
 
@@ -222,12 +228,10 @@ class TestCamoufoxNodriverSharedSemaphore:
                 with patch.dict("os.environ", {"HLEDAC_ENABLE_NODRIVER": "1"}):
                     acquired_events: list[str] = []
 
-                    async def fake_nodriver_locked(url):
+                    async def fake_nodriver_locked(url) -> str:
                         sem = public_fetcher._get_js_renderer_semaphore()
                         try:
-                            await asyncio.wait_for(
-                                sem.acquire(), timeout=0.05
-    )
+                            await asyncio.wait_for(sem.acquire(), timeout=0.05)
                             acquired_events.append("nested_acquired")
                             sem.release()
                         except TimeoutError:
@@ -239,9 +243,8 @@ class TestCamoufoxNodriverSharedSemaphore:
 
         assert html == "<html/>"
         assert acquired_events == ["nested_blocked"], (
-            "nodriver body must be wrapped in _JS_RENDERER_SEMAPHORE; "
-            f"observed: {acquired_events}"
-    )
+            f"nodriver body must be wrapped in _JS_RENDERER_SEMAPHORE; observed: {acquired_events}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +255,7 @@ class TestCamoufoxNodriverSharedSemaphore:
 class TestEffectiveMaxBytes:
     """C. Adaptive cap halves MAX_BYTES_HARD on UMA critical."""
 
-    def test_normal_returns_max_bytes_hard(self):
+    def test_normal_returns_max_bytes_hard(self) -> None:
         """No pressure → 10MB ceiling."""
         from hledac.universal.fetching import public_fetcher
 
@@ -262,26 +265,23 @@ class TestEffectiveMaxBytes:
             assert (
                 public_fetcher._compute_effective_max_bytes(public_fetcher.MAX_BYTES_HARD)
                 == public_fetcher.MAX_BYTES_HARD
-    )
+            )
 
-    def test_critical_halves_cap(self):
+    def test_critical_halves_cap(self) -> None:
         """UMA critical → 5MB ceiling (MAX_BYTES_HARD_PRESSURE)."""
         from hledac.universal.fetching import public_fetcher
 
         with patch.object(public_fetcher, "_is_uma_critical", return_value=True):
-            assert (
-                public_fetcher._compute_effective_max_bytes(0)
-                == public_fetcher.MAX_BYTES_HARD_PRESSURE
-    )
+            assert public_fetcher._compute_effective_max_bytes(0) == public_fetcher.MAX_BYTES_HARD_PRESSURE
             # Request larger than pressure cap → clamp to pressure cap
             assert (
                 public_fetcher._compute_effective_max_bytes(public_fetcher.MAX_BYTES_HARD)
                 == public_fetcher.MAX_BYTES_HARD_PRESSURE
-    )
+            )
             # Request smaller than pressure cap → honor request
             assert public_fetcher._compute_effective_max_bytes(1_000_000) == 1_000_000
 
-    def test_constants_correct(self):
+    def test_constants_correct(self) -> None:
         """MAX_BYTES_HARD_PRESSURE = 5MB, MAX_BYTES_HARD = 10MB."""
         from hledac.universal.fetching import public_fetcher
 
@@ -290,14 +290,14 @@ class TestEffectiveMaxBytes:
         # Half the hard cap on pressure
         assert public_fetcher.MAX_BYTES_HARD_PRESSURE == public_fetcher.MAX_BYTES_HARD // 2
 
-    def test_negative_request_returns_pressure_cap(self):
+    def test_negative_request_returns_pressure_cap(self) -> None:
         """requested <= 0 → return effective cap (callers can detect no-cap intent)."""
         from hledac.universal.fetching import public_fetcher
 
         with patch.object(public_fetcher, "_is_uma_critical", return_value=True):
             assert public_fetcher._compute_effective_max_bytes(-1) == 5_000_000
 
-    def test_worst_case_under_critical_bounded(self):
+    def test_worst_case_under_critical_bounded(self) -> None:
         """25 in-flight × 5MB = 125MB — bounded under M1 8GB UMA pressure."""
         from hledac.universal.fetching import public_fetcher
 
@@ -309,7 +309,7 @@ class TestEffectiveMaxBytes:
             # Well within M1 8GB budget (~3GB available for fetch layer)
             assert worst_case < 150_000_000
 
-    def test_worst_case_normal(self):
+    def test_worst_case_normal(self) -> None:
         """25 in-flight × 10MB = 250MB (decimal) — default worst case."""
         from hledac.universal.fetching import public_fetcher
 
@@ -319,7 +319,7 @@ class TestEffectiveMaxBytes:
             # 25 × 10_000_000 = 250_000_000 bytes
             assert worst_case == 250_000_000
 
-    def test_is_uma_critical_import_fail_safe(self):
+    def test_is_uma_critical_import_fail_safe(self) -> None:
         """F226A: if uma_budget import fails, helper still works (no cap halving)."""
         # Simulate the import-time fallback by patching the module-level alias.
         from hledac.universal.fetching import public_fetcher
@@ -327,7 +327,7 @@ class TestEffectiveMaxBytes:
         original = public_fetcher._is_uma_critical
         try:
             # Inject a function that always raises (mimic sensor failure).
-            def _broken():
+            def _broken() -> Never:
                 raise RuntimeError("sensor offline")
 
             public_fetcher._is_uma_critical = _broken
@@ -347,7 +347,7 @@ class TestAiohttpBodyHelper:
     """D. The new helper must preserve XML recovery and size cap behavior."""
 
     @pytest.mark.asyncio
-    async def test_helper_truncates_at_max_bytes(self):
+    async def test_helper_truncates_at_max_bytes(self) -> None:
         from hledac.universal.fetching.public_fetcher import _read_aiohttp_body_with_peek
 
         async def gen():
@@ -361,7 +361,7 @@ class TestAiohttpBodyHelper:
         assert outcome.chunks_consumed >= 1
 
     @pytest.mark.asyncio
-    async def test_helper_reads_all_when_under_cap(self):
+    async def test_helper_reads_all_when_under_cap(self) -> None:
         from hledac.universal.fetching.public_fetcher import _read_aiohttp_body_with_peek
 
         async def gen():
@@ -375,7 +375,7 @@ class TestAiohttpBodyHelper:
         assert outcome.chunks_consumed == 2
 
     @pytest.mark.asyncio
-    async def test_helper_xml_recovery_on_first_chunk(self):
+    async def test_helper_xml_recovery_on_first_chunk(self) -> None:
         """F226B: enable_peek=True detects XML on first chunk (for CT recovery)."""
         from hledac.universal.fetching.public_fetcher import _read_aiohttp_body_with_peek
 
@@ -392,7 +392,7 @@ class TestAiohttpBodyHelper:
         assert outcome.body == xml_header + b"<channel/></rss>"
 
     @pytest.mark.asyncio
-    async def test_helper_no_peek_when_disabled(self):
+    async def test_helper_no_peek_when_disabled(self) -> None:
         from hledac.universal.fetching.public_fetcher import _read_aiohttp_body_with_peek
 
         async def gen():
@@ -412,7 +412,7 @@ class TestAiohttpPathDelegation:
     """E. Confirm the inline duplication is gone — single source of truth in body_limiter."""
 
     @pytest.mark.asyncio
-    async def test_helper_is_used_inside_public_fetcher(self):
+    async def test_helper_is_used_inside_public_fetcher(self) -> None:
         """F226B: public_fetcher's aiohttp path must call _read_aiohttp_body_with_peek."""
         from hledac.universal.fetching import public_fetcher
 
@@ -422,7 +422,7 @@ class TestAiohttpPathDelegation:
         assert hasattr(public_fetcher, "AiohttpBodyOutcome")
         assert hasattr(public_fetcher, "_peek_aiohttp_first_chunk")
 
-    def test_outcome_dataclass_is_frozen_slots(self):
+    def test_outcome_dataclass_is_frozen_slots(self) -> None:
         """AiohttpBodyOutcome is immutable + memory-efficient."""
         from hledac.universal.fetching.public_fetcher import AiohttpBodyOutcome
 
@@ -430,9 +430,13 @@ class TestAiohttpPathDelegation:
         assert hasattr(AiohttpBodyOutcome, "__slots__")
         # Frozen (immutable)
         o = AiohttpBodyOutcome(
-            body=b"", total_read=0, truncated=False,
-            chunks_consumed=0, xml_recovered=False, first_chunk_peeked=False,
-    )
+            body=b"",
+            total_read=0,
+            truncated=False,
+            chunks_consumed=0,
+            xml_recovered=False,
+            first_chunk_peeked=False,
+        )
         with pytest.raises((AttributeError, Exception)):
             o.body = b"x"  # type: ignore[misc]
 
@@ -445,7 +449,7 @@ class TestAiohttpPathDelegation:
 class TestF226Integration:
     """F. Worst-case 25 in-flight × effective cap stays under M1 budget."""
 
-    def test_25_inflight_under_critical_within_budget(self):
+    def test_25_inflight_under_critical_within_budget(self) -> None:
         from hledac.universal.fetching import public_fetcher
 
         with patch.object(public_fetcher, "_is_uma_critical", return_value=True):
@@ -455,7 +459,7 @@ class TestF226Integration:
             # Must be <= 125MB under pressure
             assert worst_case_mb <= 125, f"worst case {worst_case_mb}MB exceeds 125MB cap"
 
-    def test_25_inflight_normal_within_budget(self):
+    def test_25_inflight_normal_within_budget(self) -> None:
         from hledac.universal.fetching import public_fetcher
 
         with patch.object(public_fetcher, "_is_uma_critical", return_value=False):

@@ -24,56 +24,45 @@ Usage:
 
     result = await facade.fetch('https://example.com')
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
 from collections.abc import Callable
 from typing import Any, cast
 
-from hledac.universal.compat.msgspec_gc_compat import Struct
-
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel
 
 from .services import (
-    AIMDWindowService,
     AIMDConfig,
-    CircuitBreakerService,
-    DNSCacheService,
-    EntropyFeedbackService,
+    AIMDWindowService,
     EntropyConfig,
-    EvidenceSinkService,
+    EntropyFeedbackService,
     EvidenceConfig,
+    EvidenceSinkService,
     FetchOptions,
     FetchResult,
     FetchServiceConfig,
     FetchServiceRegistry,
-    MicroSprintService,
     MicroSprintConfig,
+    MicroSprintService,
     PrivacyAllocatorService,
     PrivacyConfig,
     PrivacyLevel,
-    RateLimiterService,
-    RetryPolicyService,
-    RetryConfig,
-    SpeculativePrefetchService,
     SpeculativeConfig,
+    SpeculativePrefetchService,
 )
-from hledac.universal._core import aclose
-from hledac.universal.compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Extended Configuration
-# =============================================================================
-
 class FetchCoordinatorConfig(Struct, frozen=True):
     """Configuration for FetchCoordinatorFacade. M1 8GB: msgspec.Struct for fast init."""
+
     max_concurrent: int = 10
     max_retries: int = 3
     timeout: float = 30.0
@@ -86,10 +75,6 @@ class FetchCoordinatorConfig(Struct, frozen=True):
     micro_sprint: MicroSprintConfig | None = None
     evidence: EvidenceConfig | None = None
 
-
-# =============================================================================
-# FetchCoordinatorFacade
-# =============================================================================
 
 class FetchCoordinatorFacade:
     """
@@ -108,23 +93,24 @@ class FetchCoordinatorFacade:
     All heavy logic is delegated to services in coordinators.fetch.services.
     This facade is ≤ 200 LOC of pure delegation + lifecycle.
     """
+
     __slots__ = (
-        '_config',
-        '_services',
+        "_config",
+        "_services",
         # Extended services
-        '_aimd',
-        '_privacy',
-        '_speculative',
-        '_entropy',
-        '_micro_sprint',
-        '_evidence',
+        "_aimd",
+        "_privacy",
+        "_speculative",
+        "_entropy",
+        "_micro_sprint",
+        "_evidence",
         # State
-        '_frontier',
-        '_processed_count',
-        '_urls_fetched',
-        '_evidence_ids',
-        '_running',
-        '_initialized',
+        "_frontier",
+        "_processed_count",
+        "_urls_fetched",
+        "_evidence_ids",
+        "_running",
+        "_initialized",
     )
 
     def __init__(
@@ -158,7 +144,6 @@ class FetchCoordinatorFacade:
         if self._initialized:
             return True
 
-        # Initialize base services
         base_config = FetchServiceConfig(
             enable_tor=FeatureFlags.get(FeatureFlag.TOR),
             enable_i2p=FeatureFlags.get(FeatureFlag.I2P),
@@ -171,14 +156,16 @@ class FetchCoordinatorFacade:
         self._services = FetchServiceRegistry(config=base_config)
         await self._services.initialize()
 
-        # Initialize extended services
         await self._initialize_extended_services()
 
         self._initialized = True
-        logger.info("FetchCoordinatorFacade initialized", extra={
-            'transports': self._services.get_enabled_transports(),
-            'services': self._get_service_names(),
-        })
+        logger.info(
+            "FetchCoordinatorFacade initialized",
+            extra={
+                "transports": self._services.get_enabled_transports(),
+                "services": self._get_service_names(),
+            },
+        )
         return True
 
     async def _initialize_extended_services(self) -> None:
@@ -212,17 +199,17 @@ class FetchCoordinatorFacade:
         """Get list of initialized service names."""
         services = []
         if self._aimd:
-            services.append('aimd')
+            services.append("aimd")
         if self._privacy:
-            services.append('privacy')
+            services.append("privacy")
         if self._speculative:
-            services.append('speculative')
+            services.append("speculative")
         if self._entropy:
-            services.append('entropy')
+            services.append("entropy")
         if self._micro_sprint:
-            services.append('micro_sprint')
+            services.append("micro_sprint")
         if self._evidence:
-            services.append('evidence')
+            services.append("evidence")
         return services
 
     async def fetch(self, url: str, options: FetchOptions | None = None) -> FetchResult:
@@ -254,12 +241,10 @@ class FetchCoordinatorFacade:
         transport_name = self._services.get_transport(url)
         domain = self._extract_domain(url)
 
-        # === Phase 1: Preflight Checks ===
         result = await self._preflight_phase(url, domain, transport_name)
         if result is not None:
             return result
 
-        # === Phase 2: Resource Acquisition ===
         try:
             # Privacy lane
             if self._privacy:
@@ -269,13 +254,9 @@ class FetchCoordinatorFacade:
             if self._aimd:
                 await self._aimd.acquire()
 
-            # === Phase 3: Execute Fetch ===
             start_time, fetch_result = await self._execute_fetch(url, options, transport_name)
 
-            # === Phase 4: Post-Fetch Processing ===
-            return await self._postfetch_phase(
-                url, domain, transport_name, start_time, fetch_result, options
-            )
+            return await self._postfetch_phase(url, domain, transport_name, start_time, fetch_result, options)
 
         except Exception as e:
             return await self._handle_fetch_error(url, domain, transport_name, e)
@@ -287,9 +268,7 @@ class FetchCoordinatorFacade:
             if self._privacy:
                 self._privacy.release_lane(PrivacyLevel.CLEAR)
 
-    async def _preflight_phase(
-        self, url: str, domain: str, transport_name: str
-    ) -> FetchResult | None:
+    async def _preflight_phase(self, url: str, domain: str, transport_name: str) -> FetchResult | None:
         """
         Execute preflight checks.
 
@@ -297,9 +276,7 @@ class FetchCoordinatorFacade:
         """
         # Privacy budget check
         if self._privacy:
-            allowed, reason, _retry_after = await self._privacy.check_budget(
-                url, PrivacyLevel.CLEAR
-            )
+            allowed, reason, _retry_after = await self._privacy.check_budget(url, PrivacyLevel.CLEAR)
             if not allowed:
                 return FetchResult(
                     success=False,
@@ -327,9 +304,7 @@ class FetchCoordinatorFacade:
 
         return None
 
-    async def _execute_fetch(
-        self, url: str, options: FetchOptions, transport_name: str
-    ) -> tuple[float, FetchResult]:
+    async def _execute_fetch(self, url: str, options: FetchOptions, transport_name: str) -> tuple[float, FetchResult]:
         """Execute the actual fetch operation. Returns (start_time, result)."""
         start_time = time.monotonic()
         transport = self._services.get_transport_object(transport_name)
@@ -373,7 +348,6 @@ class FetchCoordinatorFacade:
 
         # Speculative prefetch (async, non-blocking)
         if self._speculative and result.content and self._config.speculative:
-            # Queue links for future prefetch
             pass  # Integration point for streaming link extraction
 
         # Evidence creation
@@ -385,9 +359,7 @@ class FetchCoordinatorFacade:
                 headers=result.headers,
                 fetch_duration_ms=fetch_time_ms,
                 transport=transport_name,
-                entropy_score=(
-                    entropy_result.entropy_bits_per_byte if entropy_result else 0.0
-                ),
+                entropy_score=(entropy_result.entropy_bits_per_byte if entropy_result else 0.0),
             )
 
         return FetchResult(
@@ -400,15 +372,11 @@ class FetchCoordinatorFacade:
             fetch_time_ms=fetch_time_ms,
         )
 
-    async def _handle_fetch_error(
-        self, url: str, domain: str, transport_name: str, error: Exception
-    ) -> FetchResult:
+    async def _handle_fetch_error(self, url: str, domain: str, transport_name: str, error: Exception) -> FetchResult:
         """Handle fetch error."""
         # Record failure
         self._services.rate_limiter.record_failure(domain)
-        self._services.circuit_breaker.record_domain_failure(
-            domain, failure_kind=str(error)
-        )
+        self._services.circuit_breaker.record_domain_failure(domain, failure_kind=str(error))
 
         if self._aimd:
             await self._aimd.record_failure()
@@ -423,13 +391,11 @@ class FetchCoordinatorFacade:
     @staticmethod
     def _extract_domain(url: str) -> str:
         """Extract domain from URL."""
-        if '://' in url:
-            return url.split('/')[2].split(':')[0]
-        return url.split(':')[0]
+        if "://" in url:
+            return url.split("/")[2].split(":")[0]
+        return url.split(":")[0]
 
-    async def _fetch_clearnet(
-        self, url: str, options: FetchOptions
-    ) -> FetchResult:
+    async def _fetch_clearnet(self, url: str, options: FetchOptions) -> FetchResult:
         """Fetch via clearnet (httpx)."""
         import httpx
 
@@ -440,24 +406,18 @@ class FetchCoordinatorFacade:
                 success=True,
                 status_code=response.status_code,
                 content=response.content,
-                content_type=response.headers.get('content-type', ''),
+                content_type=response.headers.get("content-type", ""),
                 headers=dict(response.headers),
             )
-
-    # -------------------------------------------------------------------------
-    # Coordinator Interface
-    # -------------------------------------------------------------------------
 
     async def start(self, _ctx: dict[str, Any]) -> None:
         """Start the coordinator."""
         await self.initialize()
         self._running = True
 
-        # Start entropy consumer loop
         if self._entropy:
             await self._entropy.start_consumer()
 
-        # Start micro sprint loop
         if self._micro_sprint:
             await self._micro_sprint.start_sprint_loop()
 
@@ -470,20 +430,19 @@ class FetchCoordinatorFacade:
         if not self._running:
             await self.start(ctx)
 
-        urls_to_fetch = list(self._frontier)[:self._config.max_concurrent]
+        urls_to_fetch = list(self._frontier)[: self._config.max_concurrent]
 
         if not urls_to_fetch:
             return {
-                'urls_fetched': 0,
-                'evidence_ids': [],
-                'clusters_updated': 0,
-                'stop_reason': None,
+                "urls_fetched": 0,
+                "evidence_ids": [],
+                "clusters_updated": 0,
+                "stop_reason": None,
             }
 
         # Clear frontier
         self._frontier.clear()
 
-        # Fetch concurrently
         async def fetch_one(url: str) -> FetchResult:
             return await self.fetch(url)
 
@@ -496,7 +455,6 @@ class FetchCoordinatorFacade:
         )
         results: list[FetchResult] = cast(ParallelResult, _result).ok
 
-        # Process results
         evidence_ids = []
         for _url, result in zip(urls_to_fetch, results, strict=True):
             self._urls_fetched += 1
@@ -513,10 +471,10 @@ class FetchCoordinatorFacade:
             self._evidence_ids.append(evidence_id)
 
         return {
-            'urls_fetched': len([r for r in results if isinstance(r, FetchResult) and r.success]),
-            'evidence_ids': evidence_ids[:10],
-            'clusters_updated': 0,
-            'stop_reason': None,
+            "urls_fetched": len([r for r in results if isinstance(r, FetchResult) and r.success]),
+            "evidence_ids": evidence_ids[:10],
+            "clusters_updated": 0,
+            "stop_reason": None,
         }
 
     async def shutdown(self, _ctx: dict[str, Any] | None = None) -> None:
@@ -537,7 +495,6 @@ class FetchCoordinatorFacade:
         if self._aimd:
             await self._aimd.aclose()
 
-        # Process remaining evidence queue
         if self._evidence:
             await self._evidence.process_queue()
 
@@ -556,33 +513,29 @@ class FetchCoordinatorFacade:
     def get_stats(self) -> dict[str, Any]:
         """Get coordinator statistics."""
         stats = {
-            'frontier_size': len(self._frontier),
-            'urls_fetched': self._urls_fetched,
-            'evidence_ids_count': len(self._evidence_ids),
-            'running': self._running,
-            'initialized': self._initialized,
-            'services': self._get_service_names(),
+            "frontier_size": len(self._frontier),
+            "urls_fetched": self._urls_fetched,
+            "evidence_ids_count": len(self._evidence_ids),
+            "running": self._running,
+            "initialized": self._initialized,
+            "services": self._get_service_names(),
         }
 
         # Add service-specific stats
         if self._aimd:
-            stats['aimd'] = self._aimd.get_stats()
+            stats["aimd"] = self._aimd.get_stats()
         if self._privacy:
-            stats['privacy'] = self._privacy.get_stats()
+            stats["privacy"] = self._privacy.get_stats()
         if self._speculative:
-            stats['speculative'] = self._speculative.get_stats()
+            stats["speculative"] = self._speculative.get_stats()
         if self._entropy:
-            stats['entropy'] = self._entropy.get_stats()
+            stats["entropy"] = self._entropy.get_stats()
         if self._micro_sprint:
-            stats['micro_sprint'] = self._micro_sprint.get_stats()
+            stats["micro_sprint"] = self._micro_sprint.get_stats()
         if self._evidence:
-            stats['evidence'] = self._evidence.get_stats()
+            stats["evidence"] = self._evidence.get_stats()
 
         return stats
-
-    # -------------------------------------------------------------------------
-    # Service Accessors (for testing and advanced usage)
-    # -------------------------------------------------------------------------
 
     @property
     def aimd(self) -> AIMDWindowService | None:

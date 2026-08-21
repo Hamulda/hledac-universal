@@ -3,7 +3,6 @@ Exception Policy — centralized exception handling for Hledac Universal.
 
 Architecture (P1-01):
 
-
     - HOT_PATH (fetching, IOC extraction, evidence log): re_raise=False, always log with exc_info
     - COLD_PATH (initialization, shutdown): re_raise=True, surface to caller
     - NEVER bare `except: pass` — use explicit exception types
@@ -56,12 +55,10 @@ References:
     - Issue #8: Exception Handler Saturation & Diagnostic Blindness
 """
 
-import asyncio
 import logging
 import sys
 import typing
 from typing import Final
-from _core import aclose
 
 # Lazy import to avoid circular dependency - Severity is only loaded when accessed
 _Severity: type | None = None
@@ -71,16 +68,17 @@ def _get_severity() -> type:
     global _Severity
     if _Severity is None:
         from hledac.universal.utils.exception_severity import Severity as _S
+
         _Severity = _S
     return _Severity
 
+
 class _SeverityPlaceholder:
     """Placeholder for Severity when not imported."""
-    pass
+
 
 if typing.TYPE_CHECKING:
     from hledac.universal.utils.exception_severity import Severity as SeverityLevel
-    from collections.abc import Sequence
 
 __all__ = [
     "ExceptionPolicy",
@@ -94,14 +92,13 @@ __all__ = [
     "SeverityLevel",
 ]
 
-
 # ── Policy constants ────────────────────────────────────────────────────────
 
 HOT_PATH: Final[bool] = False  # log + continue (hot: fetching, IOC, evidence)
 COLD_PATH: Final[bool] = True  # re-raise to caller (cold: init, shutdown)
 
-
 # ── Site classification ─────────────────────────────────────────────────────
+
 
 def _is_hot_path_caller() -> bool:
     """
@@ -127,6 +124,7 @@ def is_hot_path() -> bool:
 
 
 # ── Core handler ───────────────────────────────────────────────────────────
+
 
 class ExceptionPolicy:
     """
@@ -161,7 +159,7 @@ class ExceptionPolicy:
         re_raise: bool | None = None,
         exc_info: bool = True,
         log_level: int | None = None,
-        severity: "SeverityLevel | None" = None,
+        severity: SeverityLevel | None = None,
         cascade_id: str = "",
     ) -> None:
         """
@@ -181,7 +179,6 @@ class ExceptionPolicy:
                       severity-based rate-limiting and structured event emission.
             cascade_id: Correlation ID for tracing across operations.
         """
-        # Get severity
         if severity is None:
             severity_obj = None
         else:
@@ -192,11 +189,7 @@ class ExceptionPolicy:
             if severity_obj is not None:
                 log_level = severity_obj.log_level
             else:
-                log_level = (
-                    ExceptionPolicy.HOT_PATH_LOG_LEVEL
-                    if not re_raise
-                    else ExceptionPolicy.COLD_PATH_LOG_LEVEL
-    )
+                log_level = ExceptionPolicy.HOT_PATH_LOG_LEVEL if not re_raise else ExceptionPolicy.COLD_PATH_LOG_LEVEL
 
         # P0 always re-raises
         if severity_obj is not None and severity_obj.name == "P0_CRITICAL":
@@ -207,18 +200,19 @@ class ExceptionPolicy:
         # Rate-limiting for P1-P4
         if severity_obj is not None:
             from hledac.universal.utils.silent_except_v2 import _get_bucket
+
             bucket = _get_bucket(context or "unknown", severity_obj)
             if not bucket.try_acquire():
                 return  # Rate-limited, skip log
 
             # Record event for diagnostics
             try:
-                from hledac.universal.utils.exception_diagnostics import get_diagnostics
-                from hledac.universal.utils.exception_severity import ExceptionEvent
                 import time
                 import uuid
 
-                # Extract location from traceback
+                from hledac.universal.utils.exception_diagnostics import get_diagnostics
+                from hledac.universal.utils.exception_severity import ExceptionEvent
+
                 file = ""
                 line = 0
                 try:
@@ -238,7 +232,7 @@ class ExceptionPolicy:
                     cascade_id=cascade_id,
                     severity=severity_obj,
                     scope=context or "unknown",
-                    category=context.split('.')[0] if context and '.' in context else context or "unknown",
+                    category=context.split(".")[0] if context and "." in context else context or "unknown",
                     exc_type=type(e).__name__,
                     exc_message=str(e)[:200],
                     exc_hash=f"{type(e).__name__}:{str(e)[:100]}",
@@ -250,7 +244,7 @@ class ExceptionPolicy:
                     outcome="re_raised" if re_raise else "swallowed",
                     file=file,
                     line=line,
-    )
+                )
                 get_diagnostics().record(event)
             except Exception:  # noqa: BLE001
                 pass  # Diagnostics failure should not affect main flow
@@ -269,8 +263,8 @@ class ExceptionPolicy:
 _logger_cache: dict[str, logging.Logger] = {}
 _logger = logging.getLogger("exception_policy")
 
-
 # ── Convenience helpers ───────────────────────────────────────────────────
+
 
 def exc_info(
     *exc_types: type[BaseException],
@@ -370,13 +364,8 @@ class _ExcInfoContext:
         # Explicit re_raise=True from cold-path callers overrides.
         re_raise = self._re_raise if self._re_raise is not None else False
 
-        # Log with structured info
         tag = f"[EXC] {self._context}" if self._context else "[EXC]"
-        log_level = (
-            ExceptionPolicy.HOT_PATH_LOG_LEVEL
-            if not re_raise
-            else ExceptionPolicy.COLD_PATH_LOG_LEVEL
-    )
+        log_level = ExceptionPolicy.HOT_PATH_LOG_LEVEL if not re_raise else ExceptionPolicy.COLD_PATH_LOG_LEVEL
         _logger.log(
             log_level,
             "%s: %s: %s",
@@ -384,7 +373,7 @@ class _ExcInfoContext:
             type(exc_val).__name__,
             exc_val,
             exc_info=True,
-    )
+        )
 
         if re_raise:
             raise exc_val
@@ -393,6 +382,7 @@ class _ExcInfoContext:
 
 
 # ── Severity re-export for convenience ────────────────────────────────────
+
 
 # Lazy load Severity to avoid circular dependency
 def __getattr__(name: str) -> typing.Any:

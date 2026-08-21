@@ -22,7 +22,6 @@ Always-on, bounded, fail-safe. No feature flags.
 """
 
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -127,7 +126,8 @@ def _flatten_pyo3_slot(
 
     # Flat format: [('v1','t1'), ('v2','t2')]
     if isinstance(slot, (tuple, list)) and all(
-        isinstance(x, (tuple, list)) and len(x) == 2 for x in slot  # type: ignore[union-attr]
+        isinstance(x, (tuple, list)) and len(x) == 2
+        for x in slot  # type: ignore[union-attr]
     ):
         for entry in slot:  # type: ignore[union-attr]
             if isinstance(entry, (tuple, list)) and len(entry) == 2:

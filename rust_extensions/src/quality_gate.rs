@@ -65,10 +65,6 @@ use crate::gil::{release_gil, release_gil_caught_panic};
 /// `hashlib.blake2b(digest_size=16)`.
 const BLAKE2B_128_LEN: usize = 16;
 
-// ---------------------------------------------------------------------------
-// Compiled regex patterns — one-time init, reused across all calls.
-// ---------------------------------------------------------------------------
-
 /// Non-printable characters EXCEPT whitespace (ord 9, 10, 13 = tab, LF, CR).
 /// Matches Python's `_normalize_for_quality` rule: "remove non-printable chars
 /// (ord < 32) that are NOT whitespace".
@@ -99,10 +95,6 @@ fn replace_all<'a>(regex: &Regex, haystack: &'a str, replacement: &str) -> Strin
     result
 }
 
-// ---------------------------------------------------------------------------
-// Normalization
-// ---------------------------------------------------------------------------
-
 /// Normalize text for entropy and dedup quality checks.
 ///
 /// Mirrors Python `_normalize_for_quality` 1:1:
@@ -128,14 +120,6 @@ pub fn normalize_quality_text(text: &str) -> String {
     // Strip remaining non-printable (ord < 32 excluding \t \n \r, plus \x7f).
     replace_all(&NON_PRINTABLE_RE, &ws_collapsed, "")
 }
-
-// ---------------------------------------------------------------------------
-// Shannon entropy (delegated to _entropy.rs)
-// ---------------------------------------------------------------------------
-// compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD
-// are now in _entropy.rs — imported via `use crate::_entropy::*` at the top.
-//
-// The #[pyfunction] wrappers below call into the shared helpers:
 
 /// Compute Shannon entropy in bits per character on the NORMALIZED text.
 ///
@@ -238,10 +222,6 @@ pub fn entropy(data: &[u8]) -> f64 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// BLAKE2b-128 hex (32 chars) — bit-identical to hashlib.blake2b(digest_size=16)
-// ---------------------------------------------------------------------------
-
 /// BLAKE2b-128 hex fingerprint of normalized text.
 ///
 /// Equivalent to:
@@ -297,10 +277,6 @@ fn blake2b_128_to_hex(result: &[u8]) -> String {
     }
     hex
 }
-
-// ---------------------------------------------------------------------------
-// Batch quality gate — full assessment in one Rayon-parallel call
-// ---------------------------------------------------------------------------
 
 /// ISSUE-002: Input struct for batch quality assessment.
 /// mirrors Python CanonicalFinding fields used by _assess_finding_quality_batch.
@@ -539,10 +515,6 @@ pub fn assess_findings_quality_batch(
     Ok(list)
 }
 
-// ---------------------------------------------------------------------------
-// Batch APIs (rayon-parallel via shared bounded pool)
-// ---------------------------------------------------------------------------
-
 /// Bound batch sizes to avoid pathological allocations on M1 8GB.
 /// Caller must chunk larger inputs (chunk loop is on Python side).
 const BATCH_HARD_CAP: usize = 4096;
@@ -737,10 +709,6 @@ fn validate_batch_slice(items: &[String]) -> usize {
     n
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 /// Register all quality-gate functions with the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize_quality_text))?;
@@ -756,10 +724,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(assess_findings_quality_batch))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests — verify Python-equivalent outputs
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

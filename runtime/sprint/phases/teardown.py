@@ -25,14 +25,9 @@ from ..types import SprintRunContext
 from ..cleanup import _fail_safe_async
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Power & Tasks
-# =============================================================================
 
 async def _teardown_power_and_tasks(ctx: SprintRunContext) -> None:
     """Release power assertion and cancel orphan tasks."""
@@ -48,10 +43,6 @@ async def _teardown_power_and_tasks(ctx: SprintRunContext) -> None:
         logger.debug('[SPRINT] Cancelled and drained %d orphan tasks', count)
 
 
-# =============================================================================
-# Dashboard
-# =============================================================================
-
 async def _teardown_dashboard(ctx: SprintRunContext) -> None:
     """Finish dashboard display."""
     if ctx.dashboard is not None:
@@ -60,20 +51,12 @@ async def _teardown_dashboard(ctx: SprintRunContext) -> None:
             ctx.dashboard.finish(ctx.result, elapsed_s)
 
 
-# =============================================================================
-# Scheduler
-# =============================================================================
-
 async def _teardown_scheduler(ctx: SprintRunContext) -> None:
     """Shutdown scheduler (F285 - Metal, LMDB, Hermes, transports)."""
     if ctx.scheduler is not None:
         with _fail_safe_async('debug', 'scheduler.aclose'):
             await ctx.scheduler.aclose(timeout_s=10.0)
 
-
-# =============================================================================
-# DuckDB
-# =============================================================================
 
 async def _teardown_duckdb(ctx: SprintRunContext) -> None:
     """DuckDB teardown maintenance (BLITZ-07/09)."""
@@ -84,10 +67,6 @@ async def _teardown_duckdb(ctx: SprintRunContext) -> None:
             ctx.store.set_journal_active_optimized(False)
             await ctx.store.run_journal_teardown()
 
-
-# =============================================================================
-# Evidence Log
-# =============================================================================
 
 async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
     """Close EvidenceLog and DuckDBStore in parallel."""
@@ -111,10 +90,6 @@ async def _teardown_evidence_log(ctx: SprintRunContext) -> None:
                 if _err is not None:
                     logger.debug(f'[TEARDOWN] Resource close error: {_err}')
 
-
-# =============================================================================
-# Transports
-# =============================================================================
 
 async def _teardown_transports(ctx: SprintRunContext) -> None:
     """Close all HTTP clients in parallel."""
@@ -140,10 +115,6 @@ async def _teardown_transports(ctx: SprintRunContext) -> None:
         if failed_transports:
             logger.debug(f'[TEARDOWN] transport close failures: {failed_transports}')
 
-
-# =============================================================================
-# Cleanup
-# =============================================================================
 
 async def _teardown_cleanup(ctx: SprintRunContext) -> None:
     """Final cleanup: ephemeral wipe, GC, checkpoints, lock."""
@@ -179,10 +150,6 @@ async def _teardown_cleanup(ctx: SprintRunContext) -> None:
             ctx.sprint_lock_mgr.release()
             logger.debug('[F266-LOCK] Released sprint lock')
 
-
-# =============================================================================
-# Main Teardown Phase
-# =============================================================================
 
 async def _run_sprint_teardown(ctx: SprintRunContext) -> None:
     """

@@ -18,7 +18,6 @@ from hledac.universal.tools.darknet import DarknetConnector  # noqa: E402
 from hledac.universal.tools.osint_frameworks import OSINTFrameworkRunner  # noqa: E402
 from hledac.universal.tools.paywall import PaywallBypass  # noqa: E402
 from hledac.universal.tools.session_manager import SessionManager  # noqa: E402
-from _core import aclose
 
 
 class TestSprint46:
@@ -27,7 +26,7 @@ class TestSprint46:
     # === Part A - Session Management ===
 
     @pytest.mark.asyncio
-    async def test_session_persistence(self):
+    async def test_session_persistence(self) -> None:
         """Session manager should save and retrieve cookies from LMDB."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with lmdb.open(tmpdir, map_size=10 * 1024 * 1024) as env:
@@ -39,7 +38,7 @@ class TestSprint46:
                 assert session["headers"]["X-Custom"] == "value"
 
     @pytest.mark.asyncio
-    async def test_session_injection(self):
+    async def test_session_injection(self) -> None:
         """Session should be injected into requests."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with lmdb.open(tmpdir, map_size=10 * 1024 * 1024) as env:
@@ -50,7 +49,7 @@ class TestSprint46:
                 assert session["cookies"]["session"] == "xyz789"
 
     @pytest.mark.asyncio
-    async def test_credential_rotation(self):
+    async def test_credential_rotation(self) -> None:
         """Should rotate credentials on 401/403."""
         with tempfile.TemporaryDirectory() as tmpdir:
             with lmdb.open(tmpdir, map_size=10 * 1024 * 1024) as env:
@@ -62,38 +61,38 @@ class TestSprint46:
 
     # === Part B - Paywall Bypass ===
 
-    def test_paywall_detection_nytimes(self):
+    def test_paywall_detection_nytimes(self) -> None:
         """Should detect NYT paywall."""
         pb = PaywallBypass()
         html = '<div class="gateway">Subscribe to continue reading</div>'
         assert pb.detect(html) == "nytimes"
 
-    def test_paywall_detection_wsj(self):
+    def test_paywall_detection_wsj(self) -> None:
         """Should detect WSJ paywall."""
         pb = PaywallBypass()
         html = '<section class="wsj-paywall">Subscriber exclusive content</section>'
         assert pb.detect(html) == "wsj"
 
-    def test_paywall_detection_medium(self):
+    def test_paywall_detection_medium(self) -> None:
         """Should detect Medium paywall."""
         pb = PaywallBypass()
         html = '<span class="member-only">Member-only story</span>'
         assert pb.detect(html) == "medium"
 
-    def test_paywall_no_detection(self):
+    def test_paywall_no_detection(self) -> None:
         """Should return None for normal content."""
         pb = PaywallBypass()
         html = "<p>Regular article content here...</p>"
         assert pb.detect(html) is None
 
     @pytest.mark.asyncio
-    async def test_archive_is(self):
+    async def test_archive_is(self) -> None:
         """Archive.is should return content."""
         pb = PaywallBypass()
         assert asyncio.iscoroutinefunction(pb.fetch_via_archive)
 
     @pytest.mark.asyncio
-    async def test_12ft_io(self):
+    async def test_12ft_io(self) -> None:
         """12ft.io should return content."""
         pb = PaywallBypass()
         assert asyncio.iscoroutinefunction(pb.fetch_via_12ft)
@@ -101,7 +100,7 @@ class TestSprint46:
     # === Part C - OSINT Frameworks ===
 
     @pytest.mark.asyncio
-    async def test_theharvester_not_installed(self):
+    async def test_theharvester_not_installed(self) -> None:
         """theHarvester should handle missing tool gracefully."""
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
@@ -109,7 +108,7 @@ class TestSprint46:
             assert results == []
 
     @pytest.mark.asyncio
-    async def test_theharvester_output_parsing(self):
+    async def test_theharvester_output_parsing(self) -> None:
         """Should parse theHarvester JSON output."""
         runner = OSINTFrameworkRunner()
         mock_json = '{"emails": [{"email": "test@test.com"}]}'
@@ -127,14 +126,14 @@ class TestSprint46:
                     assert findings[0]["source"] == "theHarvester"
 
     @pytest.mark.asyncio
-    async def test_sherlock_output_parsing(self):
+    async def test_sherlock_output_parsing(self) -> None:
         """Should parse Sherlock output."""
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             proc = AsyncMock()
             proc.communicate = AsyncMock(
                 return_value=(b"[+] https://twitter.com/testuser\n[+] https://github.com/testuser\n", b"")
-    )
+            )
             mock_exec.return_value = proc
             findings = await runner.run_sherlock("testuser")
             assert len(findings) == 2
@@ -142,7 +141,7 @@ class TestSprint46:
             assert findings[0]["source"] == "sherlock"
 
     @pytest.mark.asyncio
-    async def test_sherlock_not_installed(self):
+    async def test_sherlock_not_installed(self) -> None:
         """Sherlock should handle missing tool gracefully."""
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
@@ -150,7 +149,7 @@ class TestSprint46:
             assert results == []
 
     @pytest.mark.asyncio
-    async def test_osint_findings_structure(self):
+    async def test_osint_findings_structure(self) -> None:
         """OSINT findings should have proper structure."""
         runner = OSINTFrameworkRunner()
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
@@ -166,7 +165,7 @@ class TestSprint46:
     # === Part D - Darknet ===
 
     @pytest.mark.asyncio
-    async def test_tor_proxy(self):
+    async def test_tor_proxy(self) -> None:
         """Tor proxy connector should work."""
         try:
             from httpx_socks import AsyncProxyTransport
@@ -176,7 +175,7 @@ class TestSprint46:
         assert transport is not None
 
     @pytest.mark.asyncio
-    async def test_i2p_socket(self):
+    async def test_i2p_socket(self) -> None:
         """I2P socket should be configurable."""
         try:
             from httpx_socks import AsyncProxyTransport
@@ -186,28 +185,28 @@ class TestSprint46:
         assert transport is not None
 
     @pytest.mark.asyncio
-    async def test_liboqs_fallback(self):
+    async def test_liboqs_fallback(self) -> None:
         """liboqs should fallback gracefully if not installed."""
         dc = DarknetConnector()
         result = await dc.try_liboqs_handshake("example.com")
         assert isinstance(result, bool)
 
     @pytest.mark.asyncio
-    async def test_fetch_onion_requires_onion(self):
+    async def test_fetch_onion_requires_onion(self) -> None:
         """fetch_onion should only work for .onion URLs."""
         dc = DarknetConnector()
         result = await dc.fetch_onion("https://example.com")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_fetch_i2p_requires_i2p(self):
+    async def test_fetch_i2p_requires_i2p(self) -> None:
         """fetch_i2p should only work for .i2p URLs."""
         dc = DarknetConnector()
         result = await dc.fetch_i2p("https://example.com")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_darknet_not_available(self):
+    async def test_darknet_not_available(self) -> None:
         """Should handle missing darknet tools gracefully."""
         dc = DarknetConnector()
         result = await dc.fetch_via_tor("http://example.onion")

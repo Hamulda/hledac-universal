@@ -25,16 +25,19 @@ Usage:
     registry = get_cache_registry()
     sizes = registry.clear_all()
 """
+
 from __future__ import annotations
-import threading
+
 import logging
-from dataclasses import dataclass, field
-from typing import Any
+import threading
 from collections.abc import Callable
-from _core._util import aclose
+from dataclasses import dataclass
+from typing import Any
+
 logger = logging.getLogger(__name__)
 _broadcaster: Any = None
 _broadcaster_lock = threading.RLock()
+
 
 def _get_broadcaster():
     """Lazy accessor for MemoryPressureBroadcaster singleton."""
@@ -45,19 +48,23 @@ def _get_broadcaster():
         if _broadcaster is None:
             try:
                 from hledac.universal._core.memory_pressure import MemoryPressureBroadcaster
+
                 _broadcaster = MemoryPressureBroadcaster.get_instance()
             except Exception:
                 _broadcaster = False
     return _broadcaster if _broadcaster is not False else None
 
+
 @dataclass(slots=True)
 class CacheEntry:
     """A registered cache entry."""
+
     name: str
     get_size: Callable[[], int]
     clear: Callable[[], Any]
     memory_pressure_threshold: float = 0.85
-    _description: str = ''
+    _description: str = ""
+
 
 class GlobalCacheRegistry:
     """Centralized registry for all global caches.
@@ -66,17 +73,19 @@ class GlobalCacheRegistry:
 
     Thread-safe via double-checked locking (DCLP) pattern.
     """
-    __slots__ = ('_entries', '_lock', '_initialized')
+
+    __slots__ = ("_entries", "_lock", "_initialized")
 
     def __init__(self) -> None:
         self._entries: dict[str, CacheEntry] = {}
         self._lock = threading.RLock()
         self._initialized = True
-    _instance: 'GlobalCacheRegistry | None' = None
+
+    _instance: GlobalCacheRegistry | None = None
     _init_lock = threading.RLock()
 
     @classmethod
-    def get_instance(cls) -> 'GlobalCacheRegistry':
+    def get_instance(cls) -> GlobalCacheRegistry:
         """Return the singleton instance (lazy, thread-safe)."""
         if cls._instance is not None:
             return cls._instance
@@ -85,7 +94,15 @@ class GlobalCacheRegistry:
                 cls._instance = cls()
         return cls._instance
 
-    def register(self, name: str, get_size: Callable[[], int], clear: Callable[[], Any], *, memory_pressure_threshold: float=0.85, description: str='') -> None:
+    def register(
+        self,
+        name: str,
+        get_size: Callable[[], int],
+        clear: Callable[[], Any],
+        *,
+        memory_pressure_threshold: float = 0.85,
+        description: str = "",
+    ) -> None:
         """Register a cache with the global registry.
 
         Args:
@@ -97,9 +114,15 @@ class GlobalCacheRegistry:
         """
         with self._lock:
             if name in self._entries:
-                logger.debug(f'[GlobalCacheRegistry] overwriting existing entry: {name}')
-            self._entries[name] = CacheEntry(name=name, get_size=get_size, clear=clear, memory_pressure_threshold=memory_pressure_threshold, _description=description)
-            logger.debug(f'[GlobalCacheRegistry] registered: {name}' + (f' ({description})' if description else ''))
+                logger.debug(f"[GlobalCacheRegistry] overwriting existing entry: {name}")
+            self._entries[name] = CacheEntry(
+                name=name,
+                get_size=get_size,
+                clear=clear,
+                memory_pressure_threshold=memory_pressure_threshold,
+                _description=description,
+            )
+            logger.debug(f"[GlobalCacheRegistry] registered: {name}" + (f" ({description})" if description else ""))
 
     def unregister(self, name: str) -> bool:
         """Remove a cache from the registry.
@@ -109,7 +132,7 @@ class GlobalCacheRegistry:
         with self._lock:
             if name in self._entries:
                 del self._entries[name]
-                logger.debug(f'[GlobalCacheRegistry] unregistered: {name}')
+                logger.debug(f"[GlobalCacheRegistry] unregistered: {name}")
                 return True
             return False
 
@@ -128,11 +151,11 @@ class GlobalCacheRegistry:
                 size = entry.get_size()
                 sizes[name] = size
                 entry.clear()
-                logger.debug(f'[GlobalCacheRegistry] cleared: {name} ({size} entries)')
+                logger.debug(f"[GlobalCacheRegistry] cleared: {name} ({size} entries)")
             except Exception as e:
-                logger.warning(f'[GlobalCacheRegistry] clear failed for {name}: {e}')
+                logger.warning(f"[GlobalCacheRegistry] clear failed for {name}: {e}")
                 sizes[name] = -1
-        logger.info(f'[GlobalCacheRegistry] clear_all complete: {len(sizes)} caches processed')
+        logger.info(f"[GlobalCacheRegistry] clear_all complete: {len(sizes)} caches processed")
         return sizes
 
     def evict_by_pressure(self, threshold: float) -> dict[str, int]:
@@ -156,18 +179,24 @@ class GlobalCacheRegistry:
         """
         sizes: dict[str, int] = {}
         with self._lock:
-            matching = [(name, entry) for name, entry in self._entries.items() if entry.memory_pressure_threshold >= threshold]
+            matching = [
+                (name, entry) for name, entry in self._entries.items() if entry.memory_pressure_threshold >= threshold
+            ]
         for name, entry in matching:
             try:
                 size = entry.get_size()
                 sizes[name] = size
                 entry.clear()
-                logger.info(f'[GlobalCacheRegistry] pressure-evicted: {name} ({size} entries, threshold={entry.memory_pressure_threshold})')
+                logger.info(
+                    f"[GlobalCacheRegistry] pressure-evicted: {name} ({size} entries, threshold={entry.memory_pressure_threshold})"
+                )
             except Exception as e:
-                logger.warning(f'[GlobalCacheRegistry] pressure-evict failed for {name}: {e}')
+                logger.warning(f"[GlobalCacheRegistry] pressure-evict failed for {name}: {e}")
                 sizes[name] = -1
         if sizes:
-            logger.info(f'[GlobalCacheRegistry] pressure eviction complete: {len(sizes)} caches (threshold >= {threshold})')
+            logger.info(
+                f"[GlobalCacheRegistry] pressure eviction complete: {len(sizes)} caches (threshold >= {threshold})"
+            )
         return sizes
 
     def _ensure_broadcaster_registered(self) -> None:
@@ -182,7 +211,7 @@ class GlobalCacheRegistry:
         bc = _get_broadcaster()
         if bc is None:
             return
-        if 'global_cache_registry' in bc.list_registered():
+        if "global_cache_registry" in bc.list_registered():
             return
         bridge = _RegistryPressureBridge(self)
         bc.register(bridge)
@@ -194,7 +223,14 @@ class GlobalCacheRegistry:
             Dict mapping cache name → {size, threshold, description}
         """
         with self._lock:
-            return {name: {'size': entry.get_size(), 'threshold': entry.memory_pressure_threshold, 'description': entry._description} for name, entry in self._entries.items()}
+            return {
+                name: {
+                    "size": entry.get_size(),
+                    "threshold": entry.memory_pressure_threshold,
+                    "description": entry._description,
+                }
+                for name, entry in self._entries.items()
+            }
 
     def list_caches(self) -> list[str]:
         """Return list of registered cache names (sorted)."""
@@ -204,8 +240,11 @@ class GlobalCacheRegistry:
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)
+
+
 _registry: GlobalCacheRegistry | None = None
 _reg_lock = threading.RLock()
+
 
 def _get_registry() -> GlobalCacheRegistry:
     """Get or create the global registry instance."""
@@ -217,7 +256,15 @@ def _get_registry() -> GlobalCacheRegistry:
             _registry = GlobalCacheRegistry.get_instance()
         return _registry
 
-def register_cache(name: str, get_size: Callable[[], int], clear: Callable[[], Any], *, memory_pressure_threshold: float=0.85, description: str='') -> None:
+
+def register_cache(
+    name: str,
+    get_size: Callable[[], int],
+    clear: Callable[[], Any],
+    *,
+    memory_pressure_threshold: float = 0.85,
+    description: str = "",
+) -> None:
     """Register a cache with the global registry.
 
     Convenience wrapper around GlobalCacheRegistry.register().
@@ -226,28 +273,40 @@ def register_cache(name: str, get_size: Callable[[], int], clear: Callable[[], A
     MemoryPressureBroadcaster (idempotent).
     """
     registry = _get_registry()
-    registry.register(name=name, get_size=get_size, clear=clear, memory_pressure_threshold=memory_pressure_threshold, description=description)
+    registry.register(
+        name=name,
+        get_size=get_size,
+        clear=clear,
+        memory_pressure_threshold=memory_pressure_threshold,
+        description=description,
+    )
     registry._ensure_broadcaster_registered()
+
 
 def unregister_cache(name: str) -> bool:
     """Remove a cache from the global registry."""
     return _get_registry().unregister(name)
 
+
 def clear_all_caches() -> dict[str, int]:
     """Clear all registered caches. Returns size dict for debugging."""
     return _get_registry().clear_all()
+
 
 def get_cache_stats() -> dict[str, dict[str, Any]]:
     """Get statistics for all registered caches."""
     return _get_registry().get_registry_stats()
 
+
 def list_registered_caches() -> list[str]:
     """Return list of registered cache names."""
     return _get_registry().list_caches()
 
+
 def get_cache_registry() -> GlobalCacheRegistry:
     """Return the GlobalCacheRegistry singleton instance."""
     return _get_registry()
+
 
 class _RegistryPressureBridge:
     """
@@ -260,7 +319,8 @@ class _RegistryPressureBridge:
       - on_warn (HIGH):          evict caches with threshold >= 0.85
       - on_critical (CRITICAL):  evict ALL caches (threshold >= 0.0)
     """
-    __slots__ = ('_registry',)
+
+    __slots__ = ("_registry",)
 
     def __init__(self, registry: GlobalCacheRegistry) -> None:
         self._registry = registry
@@ -272,7 +332,7 @@ class _RegistryPressureBridge:
 
     @property
     def listener_name(self) -> str:
-        return 'global_cache_registry'
+        return "global_cache_registry"
 
     def on_soft_warn(self) -> None:
         """ELEVATED: evict caches with threshold >= 0.8."""
@@ -288,5 +348,15 @@ class _RegistryPressureBridge:
 
     def on_normal(self) -> None:
         """NORMAL: no action — caches refill naturally."""
-        pass
-__all__ = ['GlobalCacheRegistry', 'CacheEntry', 'register_cache', 'unregister_cache', 'clear_all_caches', 'get_cache_stats', 'list_registered_caches', 'get_cache_registry']
+
+
+__all__ = [
+    "GlobalCacheRegistry",
+    "CacheEntry",
+    "register_cache",
+    "unregister_cache",
+    "clear_all_caches",
+    "get_cache_stats",
+    "list_registered_caches",
+    "get_cache_registry",
+]

@@ -19,14 +19,12 @@ Běží v izolovaném prostředí bez MLX hardware.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
-from _core import aclose
 
 
 class _EncodeCounter:
     """Počítadlo volání tokenizer.encode()"""
 
-    def __init__(self, real_tokenizer):
+    def __init__(self, real_tokenizer) -> None:
         self._real = real_tokenizer
         self.call_count = 0
         self.last_result = list(range(128))  # Fake token list
@@ -44,58 +42,53 @@ class TestM03TokenizationOnce:
     místo string prompt, takže mlx_lm nemusí znovu tokenizovat.
     """
 
-    def test_deephermes3_build_kwargs_accepts_prompt_tokens(self):
+    def test_deephermes3_build_kwargs_accepts_prompt_tokens(self) -> None:
         """_build_generate_kwargs přijímá prompt_tokens parametr"""
-        from brain.deephermes3_engine import DeepHermes3Engine
-
         # Třída nemá __init__ — testujeme signaturu reflexí
         import inspect
+
+        from brain.deephermes3_engine import DeepHermes3Engine
+
         sig = inspect.signature(DeepHermes3Engine._build_generate_kwargs)
         params = list(sig.parameters.keys())
         assert "prompt_tokens" in params, (
-            f"_build_generate_kwargs musí mít prompt_tokens param. "
-            f"Aktuální parametry: {params}"
-    )
+            f"_build_generate_kwargs musí mít prompt_tokens param. Aktuální parametry: {params}"
+        )
 
-    def test_deephermes3_stream_tokens_accepts_prompt_tokens(self):
+    def test_deephermes3_stream_tokens_accepts_prompt_tokens(self) -> None:
         """_stream_tokens přijímá prompt_tokens parametr"""
+        import inspect
+
         from brain.deephermes3_engine import DeepHermes3Engine
 
-        import inspect
         sig = inspect.signature(DeepHermes3Engine._stream_tokens)
         params = list(sig.parameters.keys())
-        assert "prompt_tokens" in params, (
-            f"_stream_tokens musí mít prompt_tokens param. "
-            f"Aktuální parametry: {params}"
-    )
+        assert "prompt_tokens" in params, f"_stream_tokens musí mít prompt_tokens param. Aktuální parametry: {params}"
 
-    def test_synthesis_runner_uses_tokens_list(self):
+    def test_synthesis_runner_uses_tokens_list(self) -> None:
         """synthesis_runner předává List[int] do mlx_lm.generate"""
+        import inspect
+
         from brain.synthesis_runner import SynthesisRunner
 
-        import inspect
         source = inspect.getsource(SynthesisRunner._run_xgrammar_generation)
 
         # Ověř že kód používá _input_tokens_list
-        assert "_input_tokens_list" in source, (
-            "SynthesisRunner musí mít _input_tokens_list pro M-03 fix"
-    )
+        assert "_input_tokens_list" in source, "SynthesisRunner musí mít _input_tokens_list pro M-03 fix"
         # Ověř že mlx_lm.generate dostává tokens, ne formatted string
         assert "prompt=_input_tokens_list" in source, (
             "mlx_lm.generate musí dostat prompt=_input_tokens_list, ne prompt=formatted"
-    )
+        )
 
-    def test_deephermes3_run_inference_signature(self):
+    def test_deephermes3_run_inference_signature(self) -> None:
         """_run_inference přijímá prompt_tokens"""
+        import inspect
+
         from brain.deephermes3_engine import DeepHermes3Engine
 
-        import inspect
         sig = inspect.signature(DeepHermes3Engine._run_inference)
         params = list(sig.parameters.keys())
-        assert "prompt_tokens" in params, (
-            f"_run_inference musí mít prompt_tokens param. "
-            f"Aktuální parametry: {params}"
-    )
+        assert "prompt_tokens" in params, f"_run_inference musí mít prompt_tokens param. Aktuální parametry: {params}"
 
 
 class TestM03TokenCountInvariant:
@@ -107,7 +100,7 @@ class TestM03TokenCountInvariant:
     přímo — nevolá encode() znovu.
     """
 
-    def test_get_kv_cache_kwargs_with_prompt_tokens_skips_encode(self):
+    def test_get_kv_cache_kwargs_with_prompt_tokens_skips_encode(self) -> None:
         """S předaným prompt_tokens se _get_kv_cache_kwargs vyhne encode()"""
         # Local test — přímo testujeme logiku
         prompt_tokens = [1, 2, 3, 4, 5]

@@ -10,25 +10,32 @@ Sprint F202G — Pivot type mapping added
 Sprint F229 — SourceEntry dataclass with tier + acquisition_lane
 Sprint P1-12 — PEP 810 lazy loading: adapters loaded on first use, not at import.
 """
+
 import importlib
 from collections.abc import Callable
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
+
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.cache import PyCacheDict
-from _core import aclose
+
 
 class SourceEntry(Struct):
     """F229: Named source with tier and acquisition lane."""
+
     adapter: Callable[..., Any] | None = None
     tier: int = 1
-    acquisition_lane: str = 'passive_dns'
+    acquisition_lane: str = "passive_dns"
     _lazy_module: str | None = None
     _lazy_attr: str | None = None
     _loaded: bool = msgspec.field(default=False, omit=True)
+
+
 _SOURCE_REGISTRY: dict[str, SourceEntry] = {}
 
-def register_source_adapter(source_type: str, entry: SourceEntry, *, allow_override: bool=False) -> None:
+
+def register_source_adapter(source_type: str, entry: SourceEntry, *, allow_override: bool = False) -> None:
     """
     Register a SourceEntry for the given source_type.
 
@@ -48,8 +55,9 @@ def register_source_adapter(source_type: str, entry: SourceEntry, *, allow_overr
         If source_type is already registered and allow_override is False.
     """
     if source_type in _SOURCE_REGISTRY and (not allow_override):
-        raise ValueError(f'source_type already registered: {source_type}')
+        raise ValueError(f"source_type already registered: {source_type}")
     _SOURCE_REGISTRY[source_type] = entry
+
 
 def get_source_adapter(source_type: str) -> SourceEntry | None:
     """
@@ -73,30 +81,55 @@ def get_source_adapter(source_type: str) -> SourceEntry | None:
             resolved_adapter: Callable[..., Any] = getattr(mod, entry._lazy_attr)
             entry.adapter = resolved_adapter
             entry._loaded = True
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             entry._loaded = True
             entry.adapter = None
         return entry
     return entry
 
+
 def list_registered_source_types() -> list[str]:
     """Return sorted list of all registered source types."""
     _ensure_adapters_registered()
     return sorted(_SOURCE_REGISTRY.keys())
+
+
 _LAZY_SUBMODULES: dict[str, tuple[str, str]] = {
-    'circl_pdns_adapter': ('hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns'),
-    'dht_adapter':         ('hledac.universal.discovery.dht_adapter',         'async_search_dht'),
-    'ipfs_discovery':       ('hledac.universal.network.ipfs_client',            'ipfs_fetch_as_findings'),
+    "circl_pdns_adapter": ("hledac.universal.discovery.circl_pdns_adapter", "async_search_circl_pdns"),
+    "dht_adapter": ("hledac.universal.discovery.dht_adapter", "async_search_dht"),
+    "ipfs_discovery": ("hledac.universal.network.ipfs_client", "ipfs_fetch_as_findings"),
 }
 
 # PEP 810 lazy registration — register source adapters on first access, not at import.
 # This avoids eager module-level side-effects that trigger I/O in __init__ or
 # transitively-loaded submodules during `from discovery import *`.
 _LAZY_ADAPTERS: tuple[tuple[str, str, str, int, str, str], ...] = (
-    ('circl_pdns',     'hledac.universal.discovery.circl_pdns_adapter', 'async_search_circl_pdns', 1, 'passive_dns',  'hledac.universal.discovery.circl_pdns_adapter'),
-    ('dht_discovery',  'hledac.universal.discovery.dht_adapter',         'async_search_dht',         3, 'experimental', 'hledac.universal.discovery.dht_adapter'),
-    ('ipfs_discovery', 'hledac.universal.network.ipfs_client',            'ipfs_fetch_as_findings',    3, 'experimental', 'hledac.universal.network.ipfs_client'),
-    )
+    (
+        "circl_pdns",
+        "hledac.universal.discovery.circl_pdns_adapter",
+        "async_search_circl_pdns",
+        1,
+        "passive_dns",
+        "hledac.universal.discovery.circl_pdns_adapter",
+    ),
+    (
+        "dht_discovery",
+        "hledac.universal.discovery.dht_adapter",
+        "async_search_dht",
+        3,
+        "experimental",
+        "hledac.universal.discovery.dht_adapter",
+    ),
+    (
+        "ipfs_discovery",
+        "hledac.universal.network.ipfs_client",
+        "ipfs_fetch_as_findings",
+        3,
+        "experimental",
+        "hledac.universal.network.ipfs_client",
+    ),
+)
+
 
 def __getattr__(name: str) -> Any:
     """PEP 810: lazily import submodules on demand + lazy source-adapter registration."""
@@ -104,11 +137,12 @@ def __getattr__(name: str) -> Any:
         mod_path, attr_name = _LAZY_SUBMODULES[name]
         mod = importlib.import_module(mod_path)
         return getattr(mod, attr_name)
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def _ensure_adapters_registered() -> None:
     """Register all lazy adapters once (idempotent)."""
-    for (source_type, mod_path, attr_name, tier, lane, _lazy_mod) in _LAZY_ADAPTERS:
+    for source_type, mod_path, attr_name, tier, lane, _lazy_mod in _LAZY_ADAPTERS:
         if source_type not in _SOURCE_REGISTRY:
             register_source_adapter(
                 source_type,
@@ -120,9 +154,11 @@ def _ensure_adapters_registered() -> None:
                     _lazy_attr=attr_name,
                     _loaded=False,
                 ),
-    )
+            )
+
 
 _quality_cache: PyCacheDict[tuple[bool, bool, bool, str], int] = PyCacheDict(512, 300.0)
+
 
 def source_quality_score(parseable: bool, stable_schema: bool, identifier_rich: bool, source_tier: str) -> int:
     """
@@ -147,14 +183,38 @@ def source_quality_score(parseable: bool, stable_schema: bool, identifier_rich: 
         score += 25
     if identifier_rich:
         score += 20
-    if source_tier == 'structured_ti':
+    if source_tier == "structured_ti":
         score += 15
-    elif source_tier == 'surface':
+    elif source_tier == "surface":
         score += 5
     _quality_cache.set(key, score)
     return score
-PIVOT_TYPE_MAP: dict[str, str] = {'domain': 'domain', 'fqdn': 'domain', 'hostname': 'domain', 'ip': 'domain', 'ipv4': 'domain', 'ipv6': 'domain', 'md5': 'graph', 'sha1': 'graph', 'sha256': 'graph', 'sha512': 'graph', 'hash': 'graph', 'email': 'leak', 'email_addr': 'leak', 'url': 'archive', 'uri': 'archive', 'username': 'identity', 'handle': 'identity', 'name': 'identity', 'profile': 'identity', 'unknown': 'graph'}
+
+
+PIVOT_TYPE_MAP: dict[str, str] = {
+    "domain": "domain",
+    "fqdn": "domain",
+    "hostname": "domain",
+    "ip": "domain",
+    "ipv4": "domain",
+    "ipv6": "domain",
+    "md5": "graph",
+    "sha1": "graph",
+    "sha256": "graph",
+    "sha512": "graph",
+    "hash": "graph",
+    "email": "leak",
+    "email_addr": "leak",
+    "url": "archive",
+    "uri": "archive",
+    "username": "identity",
+    "handle": "identity",
+    "name": "identity",
+    "profile": "identity",
+    "unknown": "graph",
+}
 _pivot_type_cache: PyCacheDict[str, str] = PyCacheDict(128, 300.0)
+
 
 def get_pivot_type(ioc_type: str) -> str:
     """
@@ -169,9 +229,10 @@ def get_pivot_type(ioc_type: str) -> str:
     cached = _pivot_type_cache.get(ioc_type)
     if cached is not None:
         return cached
-    result = PIVOT_TYPE_MAP.get(ioc_type.lower(), 'graph')
+    result = PIVOT_TYPE_MAP.get(ioc_type.lower(), "graph")
     _pivot_type_cache.set(ioc_type, result)
     return result
+
 
 def get_pivot_task_types(pivot_type: str) -> list[str]:
     """
@@ -183,5 +244,11 @@ def get_pivot_task_types(pivot_type: str) -> list[str]:
     Returns:
         List of task type strings for the pivot queue
     """
-    task_map: dict[str, list[str]] = {'domain': ['domain_to_dns', 'domain_to_wayback', 'domain_to_pdns', 'domain_to_ct', 'rdap_lookup'], 'identity': ['identity_to_profile', 'identity_to_email', 'identity_to_social'], 'leak': ['paste_keyword_search', 'github_secret_scan', 'breach_check'], 'archive': ['wayback_search', 'commoncrawl_search'], 'graph': ['ioc_graph_traverse', 'threat_intel_lookup']}
-    return task_map.get(pivot_type, ['multi_engine_search'])
+    task_map: dict[str, list[str]] = {
+        "domain": ["domain_to_dns", "domain_to_wayback", "domain_to_pdns", "domain_to_ct", "rdap_lookup"],
+        "identity": ["identity_to_profile", "identity_to_email", "identity_to_social"],
+        "leak": ["paste_keyword_search", "github_secret_scan", "breach_check"],
+        "archive": ["wayback_search", "commoncrawl_search"],
+        "graph": ["ioc_graph_traverse", "threat_intel_lookup"],
+    }
+    return task_map.get(pivot_type, ["multi_engine_search"])

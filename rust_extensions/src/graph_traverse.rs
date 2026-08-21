@@ -491,10 +491,6 @@ pub fn drop_connections() -> PyResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// ISSUE-010: Graph Centrality & Community Detection
-// ---------------------------------------------------------------------------
-
 /// Hard cap on nodes for centrality/community computation (M1 8GB safe).
 const MAX_CENTRALITY_NODES: usize = 100_000;
 /// PageRank damping factor.
@@ -563,7 +559,6 @@ fn load_ioc_graph_from_db(
             return Some((node_ids, Vec::new(), name_to_idx));
         }
 
-        // Build adjacency from edges
         let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
         let mut edge_count: usize = 0;
         let max_edges: usize = 500_000; // M1 8GB bound
@@ -628,7 +623,6 @@ pub fn batch_graph_centrality<'py>(
         return Ok(dict);
     }
 
-    // Load graph
     let (node_ids, adj, _name_to_idx) = match load_ioc_graph_from_db(&db_path) {
         Some(data) => data,
         None => {
@@ -642,7 +636,6 @@ pub fn batch_graph_centrality<'py>(
         return Ok(dict);
     }
 
-    // Build name_to_idx from node_ids
     let mut name_to_idx: HashMap<String, usize> = HashMap::with_capacity(n);
     for (i, name) in node_ids.iter().enumerate() {
         name_to_idx.insert(name.clone(), i);
@@ -666,7 +659,6 @@ pub fn batch_graph_centrality<'py>(
             }
         }
 
-        // Check convergence
         let diff: f64 = pr
             .iter()
             .zip(new_pr.iter())
@@ -717,7 +709,6 @@ pub fn batch_graph_communities<'py>(
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
-    // Load graph
     let (node_ids, adj, _name_to_idx) = match load_ioc_graph_from_db(&db_path) {
         Some(data) => data,
         None => {
@@ -731,8 +722,6 @@ pub fn batch_graph_communities<'py>(
         return Ok(dict);
     }
 
-    // --- Label Propagation Algorithm ---
-    // Each node starts with its own label (community = index)
     let mut labels: Vec<usize> = (0..n));
 
     for _iter in 0..LP_MAX_ITER {
@@ -780,7 +769,6 @@ pub fn batch_graph_communities<'py>(
         label_map.insert(old_label, new_id as u32);
     }
 
-    // Build result
     for (i, node_id) in node_ids.iter().enumerate() {
         let comm_id = label_map.get(&labels[i]).copied().unwrap_or(0);
         let _ = dict.set_item(node_id, comm_id);

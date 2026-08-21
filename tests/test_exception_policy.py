@@ -11,13 +11,13 @@ Covers:
 
 import asyncio
 import logging
+
 import pytest
-from unittest.mock import MagicMock
 
 from utils.exception_policy import (
-    ExceptionPolicy,
-    HOT_PATH,
     COLD_PATH,
+    HOT_PATH,
+    ExceptionPolicy,
     exc_info,
     gexc,
     is_hot_path,
@@ -64,9 +64,7 @@ class TestExceptionPolicyHandle:
         assert len(caplog.records) == 1
         assert caplog.records[0].exc_info is None
 
-    def test_handle_uses_debug_level_when_not_reraise(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_handle_uses_debug_level_when_not_reraise(self, caplog: pytest.LogCaptureFixture) -> None:
         """Hot-path (re_raise=False) uses DEBUG level."""
         caplog.set_level(logging.DEBUG)
         e = RuntimeError("hot")
@@ -139,6 +137,7 @@ class TestIsHotPath:
 
     def test_is_hot_path_from_known_context(self) -> None:
         """is_hot_path() works when called from a known hot-path frame."""
+
         # Call from a function with a hot-path-sounding name
         def fetch_operation():
             return is_hot_path()
@@ -161,6 +160,7 @@ class TestPolicyConstants:
 
 # ── Integration: gexc() in real async context ──────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_gexc_in_async_context() -> None:
     """gexc() works inside async functions."""
@@ -173,5 +173,5 @@ async def test_gexc_in_async_context() -> None:
 async def test_exc_info_in_async_context() -> None:
     """exc_info() works inside async functions."""
     with exc_info(asyncio.TimeoutError, context="async_timeout"):
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
     # Caught and suppressed

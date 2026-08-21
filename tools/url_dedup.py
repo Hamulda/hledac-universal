@@ -3,18 +3,12 @@ URL Deduplication using RotatingBloomFilter
 
 Wrapper around probables.RotatingBloomFilter for URL deduplication.
 
-
-
-
-
-
 Provides bounded, memory-efficient URL tracking.
 
 Sprint 81 Fáze 3: xxhash support for faster non-crypto hashing.
 Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupling.
 """
 
-import hashlib  # noqa: F401 — kept for third-party
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
@@ -41,6 +35,7 @@ def _xxhash_module():
     """Get xxhash module if available, None otherwise."""
     return _xxhash_resolver()
 
+
 if TYPE_CHECKING:
     # Static-only import — never executed at runtime. Resolves MmapBloomFilter
     # to the typed stub (stubs/hledac_rust_extensions/__init__.pyi) so ty can
@@ -48,15 +43,6 @@ if TYPE_CHECKING:
     from hledac_rust_extensions import MmapBloomFilter as _MmapBloomFilterT
 else:
     _MmapBloomFilterT = object  # type: ignore[assignment,misc]  # runtime sentinel
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Conditional imports — every symbol below has an explicit type annotation
-# BEFORE the try-block so type checkers (ty/mypy/pyright) can resolve
-# `Symbol | None` across the import-success / ImportError split. Without
-# the up-front annotation, ty infers the success-path type only and
-# rejects the sentinel `= None` assignment.
-# ---------------------------------------------------------------------------
 
 # [DOC]-015: Lazy import with fallback chain — pyprobables → probables.
 # Zero cost until first RotatingBloomFilter instantiation.
@@ -95,9 +81,6 @@ def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
     return _PROBABLES_AVAILABLE
 
 
-# ---------------------------------------------------------------------------
-# F265C: Rust backend — centralized access via core.rust_backend
-# ---------------------------------------------------------------------------
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
 # Convenience availability flags for backward compatibility
@@ -164,10 +147,17 @@ if rust.is_available:
     rust_is_valid_url = raw.is_valid_url
     rust_normalize = raw.normalize
     rust_strip_tracking = raw.strip_tracking_params
-    _RUST_URL_ENGINE_AVAILABLE = all([
-        rust_canonicalize_batch, rust_extract_domain, rust_filter_valid,
-        rust_fingerprint, rust_is_valid_url, rust_normalize, rust_strip_tracking,
-    ])
+    _RUST_URL_ENGINE_AVAILABLE = all(
+        [
+            rust_canonicalize_batch,
+            rust_extract_domain,
+            rust_filter_valid,
+            rust_fingerprint,
+            rust_is_valid_url,
+            rust_normalize,
+            rust_strip_tracking,
+        ]
+    )
     if _tracking_params_fn is not None:
         try:
             _RUST_TRACKING_PARAMS = frozenset(_tracking_params_fn())
@@ -327,11 +317,6 @@ def create_rust_url_set() -> DeduplicationStrategy:
     return RustUrlSetAdapter()
 
 
-# =============================================================================
-# F266-U1: Mmap-backed persistent Bloom filter (cross-restart dedup state)
-# =============================================================================
-
-
 class MmapBloomFilterAdapter:
     """
     Thread-safe adapter wrapping Rust MmapBloomFilter.
@@ -369,7 +354,7 @@ class MmapBloomFilterAdapter:
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
                 "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
-    )
+            )
         # Enforce URL_ESTIMATE upper bound (same policy as in-memory filter).
         capacity = min(capacity, MAX_URL_ESTIMATE)
         self._path = path
@@ -385,7 +370,7 @@ class MmapBloomFilterAdapter:
             capacity=capacity,
             fp_rate=fp_rate,
             force_new=force_new,
-    )
+        )
         self._lock = threading.Lock()
 
     @property
@@ -538,26 +523,9 @@ def create_mmap_bloom_filter(
     return cast(DeduplicationStrategy, adapter)
 
 
-# =============================================================================
-# F266-U2: Cross-process persistent dedup cache with prewarm slots
-# =============================================================================
-# Similar to the session pool pattern (transport/prewarm_pool.py):
-#   - N-slot ring buffer of MmapBloomFilter instances
-#   - On a hit, the OTHER slot is re-prewarmed in the background
-#   - Bounded: exactly N filters, never grows
-#   - M1 8GB: ~N × 15 MB for N slots (4 slots ≈ 60 MB)
-#
-# The prewarm eliminates the 200-400 ms mmap page-fault cost on first access.
-# Cross-process: the same mmap file is used by all slots (MAP_SHARED semantics)
-# so concurrent processes see a consistent bitmap state.
-#
-# Fail-soft: any error → lazy runtime path (no prewarm, no exception).
-# Opt-out: HLEDAC_BLOOM_PREWARM=0 (default ON).
-# =============================================================================
-
 import os as _os2  # noqa: N812, E402
 import threading  # noqa: E402
-from typing import NamedTuple  # noqa: E402
+from typing import NamedTuple
 
 _HAVE_BLOOM_PREWARM = _os2.environ.get("HLEDAC_BLOOM_PREWARM", "1") != "0"
 _PREWARM_SLOTS = 4  # ring buffer size — 4 × ~15 MB = ~60 MB on M1 8GB
@@ -613,7 +581,7 @@ class CrossProcessBloomFilter:
         if not _RUST_MMAP_BLOOM_AVAILABLE:
             raise ImportError(
                 "MmapBloomFilter unavailable — Rust extension not built. Run `maturin develop` in rust_extensions/."
-    )
+            )
         self._path = path
         self._capacity = min(capacity, MAX_URL_ESTIMATE)
         self._fp_rate = fp_rate
@@ -634,7 +602,7 @@ class CrossProcessBloomFilter:
                     capacity=self._capacity,
                     fp_rate=fp_rate,
                     force_new=False,
-    )
+                )
                 self._slots.append(adapter)
             except Exception:
                 # Fail-soft: if any slot fails, we still have the others.
@@ -649,7 +617,7 @@ class CrossProcessBloomFilter:
                 target=self._prewarm_secondary,
                 daemon=True,
                 name="bloom-prewarm",
-    )
+            )
             self._bg_thread.start()
 
     def _prewarm_secondary(self) -> None:
@@ -683,7 +651,6 @@ class CrossProcessBloomFilter:
             return []
         slot = self._select_slot()
 
-        # Run the batch on the selected slot.
         results: list[bool]
         try:
             pairs = slot.check_and_add_batch(items)
@@ -705,7 +672,7 @@ class CrossProcessBloomFilter:
                     args=(bg_slot,),
                     daemon=True,
                     name="bloom-prewarm",
-    )
+                )
                 t.start()
 
         return results
@@ -887,7 +854,7 @@ def create_rotating_bloom_filter(
                         fp_rate=false_positive_rate,
                         force_new=False,  # P3-3: persist across sprints (cross-restart dedup)
                     ),
-    )
+                )
             except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001  # Fall through to in-memory Rust BloomFilter
 
@@ -896,13 +863,13 @@ def create_rotating_bloom_filter(
         return cast(
             DeduplicationStrategy,
             RustRotatingBloomFilter(est_elements, false_positive_rate),
-    )
+        )
 
     if not _PROBABLES_AVAILABLE:
         raise ImportError(
             "No BloomFilter implementation available — install hledac-rust-extensions "
             "(maturin develop) or probables: pip install probables"
-    )
+        )
     if _RotatingBloomFilter is None:
         raise ImportError("Neither 'probables' nor 'pyprobables' is installed")
     return cast(
@@ -936,11 +903,6 @@ def reset_default_bloom_filter() -> None:
     """Reset the default bloom filter (for testing)."""
     global _default_bloom
     _default_bloom = None
-
-
-# =============================================================================
-# Rust URL Engine Functions (normalized, fingerprint, strip_tracking)
-# =============================================================================
 
 
 # F7.2: Parallel batch URL normalization.
@@ -1033,7 +995,6 @@ def normalize_url(url: str) -> str:
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # NFC failure is non-fatal
 
-    # Remove default ports
     port = parsed.port
     if port == 80 and scheme == "http":
         port = None
@@ -1200,24 +1161,6 @@ def extract_domain(url: str) -> str | None:
         return None
 
 
-# =============================================================================
-# Sprint F-A5: Pre-fetch URL dedup gate
-# =============================================================================
-# Discovery stage returns 50 URLs from 3 search queries → ~30 unique.
-# Without this gate, FetchCoordinator pops all 150 from the frontier,
-# does a per-URL Bloom check inside the loop, and only then sees the
-# 120 dupes it must drop — wasted CPU + frontier churn. This helper
-# runs the dedup ONCE on the candidate list before submission, so
-# the fetch loop only sees unique URLs.
-#
-# M1 8 GB safety:
-#  - O(N) time, O(N) memory (the set of seen URLs only).
-#  - No new heavy deps; reuses the existing DeduplicationStrategy
-#    (Rust UrlSet preferred → O(1) FNV-1a contains/add).
-#  - No asyncio primitives — pure sync, safe to call from any context.
-# =============================================================================
-
-
 def dedupe_url_list(
     urls: list[str],
     filter_strategy: DeduplicationStrategy,
@@ -1297,7 +1240,7 @@ def dedupe_url_list(
         unique = []
         dropped = 0
         seen_in_input: set[str] = set()
-        for raw_url, key, is_new in zip(urls, keys, batch_results):
+        for raw_url, key, is_new in zip(urls, keys, batch_results, strict=False):
             if not raw_url:
                 dropped += 1
                 continue
@@ -1325,7 +1268,7 @@ def dedupe_url_list(
     seen_in_input: set[str] = set()
     dropped = 0
 
-    for raw_url, key in zip(urls, keys):
+    for raw_url, key in zip(urls, keys, strict=False):
         if not raw_url:
             dropped += 1
             continue

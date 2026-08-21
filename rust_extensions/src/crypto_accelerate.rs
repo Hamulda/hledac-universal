@@ -45,17 +45,6 @@ pub fn batch_sha256_hw(items: Vec<String>) -> Vec<String> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AES-GCM-256 batch encryption/decryption (F350M-R)
-// ---------------------------------------------------------------------------
-/// Batch AES-GCM-256 encryption/decryption via aes-gcm crate.
-///
-/// M1 8GB RAM characteristics:
-/// - AES-GCM is memory-light (~few KB overhead) — safe for batch operations
-/// - rayon parallel for batches >= 32 items
-/// - Key derivation via PBKDF2-HMAC-SHA256 (310,000 iterations, matching vault_manager.py)
-///
-/// Encrypted output format: nonce (12 bytes) || tag (16 bytes) || ciphertext
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
@@ -193,13 +182,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decrypt_aes_gcm_raw))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Single-item encryption with pre-derived key (security/encryption.py hot path)
-// ---------------------------------------------------------------------------
-// Unlike batch_encrypt_aes_gcm which does PBKDF2 key derivation, these functions
-// take a pre-derived 32-byte key. This avoids redundant PBKDF2 for callers that
-// already have the key (e.g., security/encryption.py).
 
 /// Encrypt single plaintext with pre-derived AES-256 key.
 /// Input key: 32 bytes (AES-256)

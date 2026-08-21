@@ -15,12 +15,9 @@ GHOST_INVARIANTS:
   - Fail-safe: returns default mission intent on error
 """
 
-
 from enum import Enum
 
 from .profile import is_mission_profile as _is_mission_profile_ssot
-from _core import aclose
-
 
 # ── Lane family map ─────────────────────────────────────────────────────────────────
 
@@ -31,7 +28,6 @@ _NONFEED_LANE_FAMILY_MAP: dict[str, str] = {
     "WAYBACK": "WAYBACK",
     "PASSIVE_DNS": "PASSIVE_DNS",
 }
-
 
 # ── MissionIntent ───────────────────────────────────────────────────────────────────
 
@@ -134,12 +130,12 @@ class NonfeedMissionController:
         """
         # Inline imports to avoid circular deps at module level
         # F208L version from lanes/__init__.py (not simple version from plan_builder)
-        from hledac.universal.runtime.scheduler.lanes import (
-            normalize_terminal_state,
-    )
         from hledac.universal.runtime.acquisition.lane_constants import (
             AcquisitionLane,
-    )
+        )
+        from hledac.universal.runtime.scheduler.lanes import (
+            normalize_terminal_state,
+        )
 
         if family == "PUBLIC":
             if public_outcome is None:
@@ -221,7 +217,6 @@ class NonfeedMissionController:
             return "complete"
         if skipped or error:
             return "terminal_no_evidence"
-        # Check for explicit terminal states that don't have evidence
         if terminal_state in (
             "FETCH_ZERO_SUCCESS",
             "QUALITY_REJECTED",
@@ -268,7 +263,7 @@ class NonfeedMissionController:
                     public_outcome,
                     ct_quarantine_count,
                     quality_rejection_ledger,
-    )
+                )
                 memory_skipped = family in memory_skipped_families
                 status = cls._evaluate_family_status(outcome, memory_skipped)
                 required_results[family] = {
@@ -285,7 +280,7 @@ class NonfeedMissionController:
                     public_outcome,
                     ct_quarantine_count,
                     quality_rejection_ledger,
-    )
+                )
                 memory_skipped = family in memory_skipped_families
                 status = cls._evaluate_family_status(outcome, memory_skipped)
                 optional_results[family] = {
@@ -296,9 +291,8 @@ class NonfeedMissionController:
 
             # Determine overall mission completeness
             all_required_complete = all(
-                r["status"] in ("complete", "terminal_no_evidence", "skipped")
-                for r in required_results.values()
-    )
+                r["status"] in ("complete", "terminal_no_evidence", "skipped") for r in required_results.values()
+            )
 
             return NonfeedMissionSnapshot(
                 acquisition_profile=acquisition_profile,
@@ -308,7 +302,7 @@ class NonfeedMissionController:
                 required_results=required_results,
                 optional_results=optional_results,
                 all_required_complete=all_required_complete,
-    )
+            )
         except Exception:
             return NonfeedMissionSnapshot(
                 acquisition_profile=acquisition_profile,
@@ -318,7 +312,7 @@ class NonfeedMissionController:
                 required_results={},
                 optional_results={},
                 all_required_complete=False,
-    )
+            )
 
     @classmethod
     def _derive_exit_reason(
@@ -335,17 +329,11 @@ class NonfeedMissionController:
         if snapshot.all_required_complete:
             return "MISSION_COMPLETE"
         required = snapshot.required_families
-        incomplete = [
-            f
-            for f in required
-            if snapshot.required_results.get(f, {}).get("status") == "unresolved"
-        ]
+        incomplete = [f for f in required if snapshot.required_results.get(f, {}).get("status") == "unresolved"]
         if incomplete:
             return f"INCOMPLETE:{','.join(incomplete)}"
         terminal_no_evidence = [
-            f
-            for f in required
-            if snapshot.required_results.get(f, {}).get("status") == "terminal_no_evidence"
+            f for f in required if snapshot.required_results.get(f, {}).get("status") == "terminal_no_evidence"
         ]
         if terminal_no_evidence:
             return f"TERMINAL_NO_EVIDENCE:{','.join(terminal_no_evidence)}"
@@ -385,7 +373,7 @@ class NonfeedMissionSnapshot:
         required_results: dict,
         optional_results: dict,
         all_required_complete: bool,
-    ):
+    ) -> None:
         self.acquisition_profile = acquisition_profile
         self.mission_intent = mission_intent
         self.required_families = required_families
@@ -408,7 +396,6 @@ class NonfeedMissionSnapshot:
 
 # ── Mission intent inference ───────────────────────────────────────────────────────
 
-
 _INFER_RE: __import__("re").compile(
     r"\b("
     r"domain|domian|domaain|domian"  # typo variants
@@ -419,7 +406,7 @@ _INFER_RE: __import__("re").compile(
     r"|url|website|web"
     r")\b",
     __import__("re").IGNORECASE,
-    )
+)
 
 
 def infer_mission_intent(query: str) -> str:

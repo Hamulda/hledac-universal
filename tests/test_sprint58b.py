@@ -7,15 +7,14 @@ import tempfile
 import unittest
 
 import numpy as np
-from _core import aclose
 
-sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac')
+sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac")
 
 
 class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
     """Testy pro post‑kvantovou kryptografii."""
 
-    async def test_pqc_fallback_init(self):
+    async def test_pqc_fallback_init(self) -> None:
         """Test #1: PQCProvider – fallback inicializace."""
         from hledac.universal.federated.post_quantum import PQCProvider
 
@@ -23,7 +22,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(pqc._sig_name)
         self.assertIsNotNone(pqc._kem_name)
 
-    async def test_pqc_sign_verify(self):
+    async def test_pqc_sign_verify(self) -> None:
         """Test #2: PQCProvider – sign a verify."""
         from hledac.universal.federated.post_quantum import PQCProvider
 
@@ -34,7 +33,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         pk = pqc.get_sign_public_key()
         self.assertTrue(pqc.verify(pk, message, signature))
 
-    async def test_pqc_kem_keypair(self):
+    async def test_pqc_kem_keypair(self) -> None:
         """Test #3: PQCProvider – KEM keypair generation."""
         from hledac.universal.federated.post_quantum import PQCProvider
 
@@ -44,7 +43,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(public)
         self.assertTrue(public)
 
-    async def test_pqc_encapsulate_decapsulate(self):
+    async def test_pqc_encapsulate_decapsulate(self) -> None:
         """Test #4: PQCProvider – KEM encapsulate/decapsulate."""
         from hledac.universal.federated.post_quantum import PQCProvider
 
@@ -52,7 +51,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
         public, _ = pqc.generate_kem_keypair()
 
         ciphertext, shared1 = pqc.encapsulate(public)
-        pqc.decapsulate(ciphertext, b'')
+        pqc.decapsulate(ciphertext, b"")
 
         # Pro X25519 fallback je ciphertext prázdný a shared je rovnou vrácen
         self.assertIsNotNone(shared1)
@@ -61,7 +60,7 @@ class TestPQCProvider(unittest.IsolatedAsyncioTestCase):
 class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
     """Testy pro secure aggregation."""
 
-    async def test_aggregator_init(self):
+    async def test_aggregator_init(self) -> None:
         """Test #5: SecureAggregator – inicializace."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
@@ -69,57 +68,60 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agg.node_id, "node1")
         self.assertEqual(len(agg.peer_ids), 3)
 
-    async def test_masking_mode(self):
+    async def test_masking_mode(self) -> None:
         """Test #6: SecureAggregator – masking režim."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
-        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode='masking')
+        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode="masking")
         agg.set_peer_ids(["node1", "node2", "node3"])
         agg.set_session_key("node2", b"test_key_12345678901234567890123456789012")
 
         update = {
-            'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32),
-            'layer2': np.array([4.0, 5.0], dtype=np.float32)
+            "layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            "layer2": np.array([4.0, 5.0], dtype=np.float32),
         }
 
         import mlx.core as mx
+
         mx_update = {k: mx.array(v) for k, v in update.items()}
 
         masked = agg.create_masked_update(mx_update, round=1)
 
-        self.assertIn('layer1', masked)
-        self.assertIn('layer2', masked)
+        self.assertIn("layer1", masked)
+        self.assertIn("layer2", masked)
 
-    async def test_shamir_shares(self):
+    async def test_shamir_shares(self) -> None:
         """Test #7: SecureAggregator – Shamir shares vytvoření."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
-        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode='shamir', threshold=2)
+        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode="shamir", threshold=2)
 
         update = {
-            'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            "layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32),
         }
 
         import mlx.core as mx
+
         mx_update = {k: mx.array(v) for k, v in update.items()}
 
         shares = agg.create_shamir_shares(mx_update, round=1)
 
         self.assertEqual(len(shares), 3)
         for peer in shares:
-            self.assertIn('layer1', shares[peer])
+            self.assertIn("layer1", shares[peer])
 
-    async def test_shamir_aggregation(self):
+    async def test_shamir_aggregation(self) -> None:
         """Test #8: SecureAggregator – Shamir aggregation."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
-        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode='shamir', threshold=2)
+        agg = SecureAggregator("node1", ["node1", "node2", "node3"], mode="shamir", threshold=2)
 
         update = {
-            'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            "layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32),
         }
 
         import mlx.core as mx
+
         mx_update = {k: mx.array(v) for k, v in update.items()}
 
         shares = agg.create_shamir_shares(mx_update, round=1)
@@ -128,9 +130,9 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
         result = agg.aggregate_shamir_shares(shares)
 
         self.assertIsNotNone(result)
-        self.assertIn('layer1', result)
+        self.assertIn("layer1", result)
 
-    async def test_modular_inverse(self):
+    async def test_modular_inverse(self) -> None:
         """Test #9: SecureAggregator – modulární inverze."""
         from hledac.universal.federated.secure_aggregator import P, SecureAggregator
 
@@ -141,7 +143,7 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
             inv = agg._mod_inv(a)
             self.assertEqual((a * inv) % P, 1)
 
-    async def test_shamir_lagrange(self):
+    async def test_shamir_lagrange(self) -> None:
         """Test #10: SecureAggregator – Lagrangeovy koeficienty modulo p."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
@@ -163,7 +165,7 @@ class TestSecureAggregator(unittest.IsolatedAsyncioTestCase):
 class TestSketches(unittest.IsolatedAsyncioTestCase):
     """Testy pro OSINT sketches."""
 
-    async def test_count_min_sketch(self):
+    async def test_count_min_sketch(self) -> None:
         """Test #11: Count-Min sketch – přidání a odhad."""
         from hledac.universal.federated.sketches import CountMinSketch
 
@@ -176,7 +178,7 @@ class TestSketches(unittest.IsolatedAsyncioTestCase):
         est = sketch.estimate("item1")
         self.assertGreaterEqual(est, 15)
 
-    async def test_count_min_serialization(self):
+    async def test_count_min_serialization(self) -> None:
         """Test #12: Count-Min sketch – serializace."""
         from hledac.universal.federated.sketches import CountMinSketch
 
@@ -188,7 +190,7 @@ class TestSketches(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sketch.estimate("item1"), sketch2.estimate("item1"))
 
-    async def test_minhash_sketch(self):
+    async def test_minhash_sketch(self) -> None:
         """Test #13: MinHash sketch – Jaccard odhad."""
         from hledac.universal.federated.sketches import MinHashSketch
 
@@ -206,7 +208,7 @@ class TestSketches(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(jaccard, 0.0)
         self.assertLessEqual(jaccard, 1.0)
 
-    async def test_simhash_sketch(self):
+    async def test_simhash_sketch(self) -> None:
         """Test #14: SimHash sketch – Hamming distance."""
         from hledac.universal.federated.sketches import SimHashSketch
 
@@ -223,7 +225,7 @@ class TestSketches(unittest.IsolatedAsyncioTestCase):
 class TestDPNoise(unittest.IsolatedAsyncioTestCase):
     """Testy pro differential privacy."""
 
-    async def test_dp_noise_init(self):
+    async def test_dp_noise_init(self) -> None:
         """Test #15: DPNoise – inicializace."""
         from hledac.universal.federated.differential_privacy import DPNoise
 
@@ -231,37 +233,34 @@ class TestDPNoise(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dp.epsilon, 1.0)
         self.assertGreater(dp.noise_scale, 0)
 
-    async def test_clip_update(self):
+    async def test_clip_update(self) -> None:
         """Test #16: DPNoise – gradient clipping."""
         from hledac.universal.federated.differential_privacy import DPNoise
 
         dp = DPNoise(epsilon=1.0)
-        weights = {
-            'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32),
-            'layer2': np.array([10.0], dtype=np.float32)
-        }
+        weights = {"layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32), "layer2": np.array([10.0], dtype=np.float32)}
 
         clipped = dp.clip_update(weights, max_norm=1.0)
 
         # layer1 norm = sqrt(1+4+9) = sqrt(14) < 3.74, neměla by se oříznout
         # layer2 norm = 10 > 1, měla by se oříznout na 1.0
-        self.assertTrue(np.allclose(clipped['layer2'], np.array([1.0], dtype=np.float32)))
+        self.assertTrue(np.allclose(clipped["layer2"], np.array([1.0], dtype=np.float32)))
 
-    async def test_add_noise(self):
+    async def test_add_noise(self) -> None:
         """Test #17: DPNoise – přidání šumu."""
         from hledac.universal.federated.differential_privacy import DPNoise
 
         dp = DPNoise(epsilon=1.0)
         weights = {
-            'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32),
+            "layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32),
         }
 
         noisy = dp.add_noise(weights)
 
         # Šum by měl změnit hodnoty
-        self.assertFalse(np.allclose(weights['layer1'], noisy['layer1']))
+        self.assertFalse(np.allclose(weights["layer1"], noisy["layer1"]))
 
-    async def test_rdp_calculator(self):
+    async def test_rdp_calculator(self) -> None:
         """Test #18: RDPCalculator – výpočet epsilon."""
         from hledac.universal.federated.differential_privacy import RDPCalculator
 
@@ -275,7 +274,7 @@ class TestTransport(unittest.IsolatedAsyncioTestCase):
     """Testy pro transport."""
 
     @unittest.skip("pytest asyncio race condition")
-    async def test_inmemory_transport(self):
+    async def test_inmemory_transport(self) -> None:
         """Test #19: InMemoryTransport – posílání zpráv."""
         from hledac.universal.tests.transports.inmemory_transport import InMemoryTransport
 
@@ -289,18 +288,18 @@ class TestTransport(unittest.IsolatedAsyncioTestCase):
 
         received = []
 
-        async def handler(msg):
+        async def handler(msg) -> None:
             received.append(msg)
 
-        t2.register_handler('test', handler)
+        t2.register_handler("test", handler)
 
-        await t1.send_message('node2', 'test', {'data': 'hello'}, 'sig')
+        await t1.send_message("node2", "test", {"data": "hello"}, "sig")
 
         # Process messages manually (poll)
         await t2.poll_once()
 
         self.assertEqual(len(received), 1)
-        self.assertEqual(received[0]['data'], 'hello')
+        self.assertEqual(received[0]["data"], "hello")
 
         await t1.stop()
         await t2.stop()
@@ -309,7 +308,7 @@ class TestTransport(unittest.IsolatedAsyncioTestCase):
 class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
     """Integrační testy."""
 
-    async def test_handshake_flow(self):
+    async def test_handshake_flow(self) -> None:
         """Test #20: Handshake flow – kompletní."""
         from hledac.universal.federated.post_quantum import PQCProvider
 
@@ -325,14 +324,14 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
         alice_pub = alice.get_sign_public_key()
         self.assertTrue(bob.verify(alice_pub, msg, sig))
 
-    async def test_secure_aggregation_round(self):
+    async def test_secure_aggregation_round(self) -> None:
         """Test #21: Kompletní secure aggregation round."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
         # 3 uzly
-        agg1 = SecureAggregator("node1", ["node1", "node2", "node3"], mode='masking')
-        agg2 = SecureAggregator("node2", ["node1", "node2", "node3"], mode='masking')
-        agg3 = SecureAggregator("node3", ["node1", "node2", "node3"], mode='masking')
+        agg1 = SecureAggregator("node1", ["node1", "node2", "node3"], mode="masking")
+        agg2 = SecureAggregator("node2", ["node1", "node2", "node3"], mode="masking")
+        agg3 = SecureAggregator("node3", ["node1", "node2", "node3"], mode="masking")
 
         # Nastavení klíčů
         key1 = b"key_node1_to_node2_12345678901234567890123456"
@@ -347,9 +346,10 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
         agg3.set_session_key("node2", key3)
 
         # Vytvoříme update
-        update = {'layer1': np.array([1.0, 2.0, 3.0], dtype=np.float32)}
+        update = {"layer1": np.array([1.0, 2.0, 3.0], dtype=np.float32)}
 
         import mlx.core as mx
+
         mx_update = {k: mx.array(v) for k, v in update.items()}
 
         # Každý node vytvoří maskovaný update
@@ -359,9 +359,9 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
 
         # Po sečtení by se masky měly vyrušit (při správném klíči)
         # Toto je zjednodušný test - reálná agregace by vyžadovala síťovou komunikaci
-        self.assertIn('layer1', masked1)
+        self.assertIn("layer1", masked1)
 
-    async def test_tofu_trust_flow(self):
+    async def test_tofu_trust_flow(self) -> None:
         """Test #22: TOFU trust flow."""
         from hledac.universal.federated.model_store import ModelStore
 
@@ -378,7 +378,7 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
 
             store.close()
 
-    async def test_evidence_log(self):
+    async def test_evidence_log(self) -> None:
         """Test #23: Evidence log – downgrade event."""
         from hledac.universal.federated.evidence_log import FederationEvidenceLog
 
@@ -389,23 +389,24 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
             summary={"reason": "Tor unavailable", "fallback": "localhost"},
             reasons=["tor_not_found"],
             refs={},
-            confidence=0.5
-    )
+            confidence=0.5,
+        )
 
         events = log.get_by_kind("federation_downgrade")
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].confidence, 0.5)
 
-    async def test_shamir_dropout_tolerance(self):
+    async def test_shamir_dropout_tolerance(self) -> None:
         """Test #24: Shamir – tolerance k výpadkům."""
         from hledac.universal.federated.secure_aggregator import SecureAggregator
 
-        agg = SecureAggregator("node1", ["node1", "node2", "node3", "node4"], mode='shamir', threshold=2)
+        agg = SecureAggregator("node1", ["node1", "node2", "node3", "node4"], mode="shamir", threshold=2)
 
-        update = {'layer1': np.array([5.0], dtype=np.float32)}
+        update = {"layer1": np.array([5.0], dtype=np.float32)}
 
         import mlx.core as mx
+
         mx_update = {k: mx.array(v) for k, v in update.items()}
 
         shares = agg.create_shamir_shares(mx_update, round=1)
@@ -420,7 +421,7 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(result)
 
-    async def test_sketch_salting(self):
+    async def test_sketch_salting(self) -> None:
         """Test #25: Sketch – per-session salting."""
         from hledac.universal.federated.sketches import CountMinSketch
 
@@ -441,5 +442,5 @@ class TestFederatedIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data1), len(data2))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

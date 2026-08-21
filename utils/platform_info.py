@@ -12,25 +12,23 @@ Designed to be:
 - Fast (<200ms for 1000 calls)
 """
 
-
-
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from enum import Enum
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 
 class DepCategory(Enum):
     """Dependency category/status."""
-    BASELINE_REQUIRED = "baseline_required"       # Required for core function
-    OPTIONAL_AVAILABLE = "optional_available"     # Installed and available
-    OPTIONAL_MISSING = "optional_missing"         # Not installed
-    PLATFORM_GUARDED = "platform_guarded"         # Depends on platform (e.g. MPS)
+
+    BASELINE_REQUIRED = "baseline_required"  # Required for core function
+    OPTIONAL_AVAILABLE = "optional_available"  # Installed and available
+    OPTIONAL_MISSING = "optional_missing"  # Not installed
+    PLATFORM_GUARDED = "platform_guarded"  # Depends on platform (e.g. MPS)
 
 
 class AccelerationStatus(Struct, frozen=True):
     """Status for a single acceleration dependency."""
+
     name: str
     available: bool
     category: DepCategory
@@ -41,6 +39,7 @@ class AccelerationStatus(Struct, frozen=True):
 
 class PlatformReport(Struct, frozen=True):
     """Full platform acceleration report."""
+
     statuses: dict[str, AccelerationStatus]
     summary: str
     missing_optional: list[str]
@@ -53,13 +52,10 @@ FALLBACK_RAM_ESTIMATE_MB: float = 500.0
 FALLBACK_RAM_ESTIMATE_GB: float = 0.5
 
 
-# ---------------------------------------------------------------------------
-# Individual probe functions (lazy — import only when needed)
-# ---------------------------------------------------------------------------
-
 def _probe_mlx() -> AccelerationStatus:
     try:
         import mlx.core as mx
+
         return AccelerationStatus(
             name="mlx",
             available=True,
@@ -67,7 +63,7 @@ def _probe_mlx() -> AccelerationStatus:
             version=getattr(mx, "__version__", "unknown"),
             install_hint=None,
             platform_note="Apple Silicon MLX accelerator",
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="mlx",
@@ -76,12 +72,13 @@ def _probe_mlx() -> AccelerationStatus:
             version=None,
             install_hint="pip install mlx",
             platform_note="Apple Silicon MLX (mlx community package)",
-    )
+        )
 
 
 def _probe_torch() -> AccelerationStatus:
     try:
         import torch
+
         mps_available = False
         mps_note = None
         try:
@@ -99,7 +96,7 @@ def _probe_torch() -> AccelerationStatus:
             version=torch.__version__,
             install_hint=None,
             platform_note=f"torch MPS available: {mps_available}" + (f" ({mps_note})" if mps_note else ""),
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="torch",
@@ -108,12 +105,13 @@ def _probe_torch() -> AccelerationStatus:
             version=None,
             install_hint="pip install torch --index-url https://download.pytorch.org/whl/cpu",
             platform_note="CPU-only PyTorch; MPS (Metal) requires Apple Silicon",
-    )
+        )
 
 
 def _probe_torch_mps() -> AccelerationStatus:
     try:
         import torch
+
         if not hasattr(torch.backends, "mps"):
             return AccelerationStatus(
                 name="torch_mps",
@@ -122,7 +120,7 @@ def _probe_torch_mps() -> AccelerationStatus:
                 version=None,
                 install_hint="torch is required for MPS",
                 platform_note="torch.backends.mps not available",
-    )
+            )
         available = torch.backends.mps.is_available()
         return AccelerationStatus(
             name="torch_mps",
@@ -131,7 +129,7 @@ def _probe_torch_mps() -> AccelerationStatus:
             version=None,
             install_hint=None if available else "Requires Apple Silicon Mac",
             platform_note="Metal Performance Shaders for torch on Apple Silicon",
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="torch_mps",
@@ -140,12 +138,13 @@ def _probe_torch_mps() -> AccelerationStatus:
             version=None,
             install_hint="pip install torch",
             platform_note="torch required for MPS probe",
-    )
+        )
 
 
 def _probe_fast_langdetect() -> AccelerationStatus:
     try:
         import fast_langdetect
+
         return AccelerationStatus(
             name="fast_langdetect",
             available=True,
@@ -153,7 +152,7 @@ def _probe_fast_langdetect() -> AccelerationStatus:
             version=getattr(fast_langdetect, "__version__", "unknown"),
             install_hint=None,
             platform_note="FTZ-format language detection (10x faster than langdetect)",
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="fast_langdetect",
@@ -162,12 +161,13 @@ def _probe_fast_langdetect() -> AccelerationStatus:
             version=None,
             install_hint="pip install fast-langdetect",
             platform_note="Language detection (optional acceleration)",
-    )
+        )
 
 
 def _probe_datasketch() -> AccelerationStatus:
     try:
         import datasketch
+
         ver = getattr(datasketch, "__version__", "unknown")
         return AccelerationStatus(
             name="datasketch",
@@ -176,7 +176,7 @@ def _probe_datasketch() -> AccelerationStatus:
             version=ver,
             install_hint=None,
             platform_note="MinHash LSH for near-duplicate detection",
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="datasketch",
@@ -185,12 +185,13 @@ def _probe_datasketch() -> AccelerationStatus:
             version=None,
             install_hint="pip install datasketch",
             platform_note="MinHash LSH (optional for relationship discovery)",
-    )
+        )
 
 
 def _probe_rapidfuzz() -> AccelerationStatus:
     try:
         import rapidfuzz
+
         return AccelerationStatus(
             name="rapidfuzz",
             available=True,
@@ -198,7 +199,7 @@ def _probe_rapidfuzz() -> AccelerationStatus:
             version=getattr(rapidfuzz, "__version__", "unknown"),
             install_hint=None,
             platform_note="C-based Levenshtein/Jaro-Winkler string matching",
-    )
+        )
     except ImportError:
         return AccelerationStatus(
             name="rapidfuzz",
@@ -207,12 +208,8 @@ def _probe_rapidfuzz() -> AccelerationStatus:
             version=None,
             install_hint="pip install rapidfuzz",
             platform_note="Fuzzy string matching (optional for identity stitching)",
-    )
+        )
 
-
-# ---------------------------------------------------------------------------
-# Main API
-# ---------------------------------------------------------------------------
 
 def get_optional_acceleration_status() -> PlatformReport:
     """
@@ -235,7 +232,8 @@ def get_optional_acceleration_status() -> PlatformReport:
         statuses[s.name] = s
 
     missing = [
-        s.name for s in statuses.values()
+        s.name
+        for s in statuses.values()
         if s.category in (DepCategory.OPTIONAL_MISSING, DepCategory.PLATFORM_GUARDED) and s.install_hint
     ]
 
@@ -247,7 +245,9 @@ def get_optional_acceleration_status() -> PlatformReport:
     summary_parts = []
     if statuses.get("mlx", AccelerationStatus("", False, DepCategory.OPTIONAL_MISSING, None, None, None)).available:
         summary_parts.append("MLX")
-    if statuses.get("torch_mps", AccelerationStatus("", False, DepCategory.PLATFORM_GUARDED, None, None, None)).available:  # noqa: E501
+    if statuses.get(
+        "torch_mps", AccelerationStatus("", False, DepCategory.PLATFORM_GUARDED, None, None, None)
+    ).available:  # noqa: E501
         summary_parts.append("torch.MPS")
     if missing:
         summary_parts.append(f"+{len(missing)} optional")

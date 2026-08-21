@@ -16,7 +16,6 @@ at import time (PEP 810 lazy imports).
 from __future__ import annotations
 
 import importlib
-import sys
 from typing import TYPE_CHECKING
 
 # ── Re-exported types (backward compat for v1 imports) ───────────────────────

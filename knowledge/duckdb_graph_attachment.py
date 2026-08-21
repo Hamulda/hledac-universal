@@ -24,8 +24,7 @@ RATIONALE:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, List
-from _core import aclose
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -104,15 +103,11 @@ class DuckDBGraphAttachment:
         """Return top N seed nodes for graph traversal."""
         return self._ensure().get_top_seed_nodes(n=n)
 
-    def get_connected_iocs(
-        self, ioc_value: str, max_hops: int = 2
-    ) -> list[dict[str, Any]]:
+    def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list[dict[str, Any]]:
         """Return IOC nodes connected to given IOC within max_hops."""
         return self._ensure().get_connected_iocs(ioc_value, max_hops=max_hops)
 
-    def get_connected_iocs_batch(
-        self, values: list[str], max_hops: int = 2
-    ) -> dict[str, list[dict[str, Any]]]:
+    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Batch graph traversal for multiple IOC values."""
         return self._ensure().get_connected_iocs_batch(values, max_hops=max_hops)
 
@@ -125,7 +120,7 @@ class DuckDBGraphAttachment:
         """Enrich findings with graph-derived context (aliases, relationships)."""
         return self._ensure().annotate_findings_with_graph_context(
             findings, max_hops=max_hops, max_annotations=max_annotations
-    )
+        )
 
     def get_analytics_graph_for_synthesis(self) -> Any:
         """Return analytics graph for synthesis layer."""
@@ -152,11 +147,9 @@ class DuckDBGraphAttachment:
             max_nodes=max_nodes,
             max_community_size=max_community_size,
             include_centrality=include_centrality,
-    )
+        )
 
-    def get_top_entities_for_ghost_global(
-        self, n: int = 100
-    ) -> list[tuple[str, str, float]]:
+    def get_top_entities_for_ghost_global(self, n: int = 100) -> list[tuple[str, str, float]]:
         """Return top N entities for ghost global identity resolution."""
         return self._ensure().get_top_entities_for_ghost_global(n=n)
 

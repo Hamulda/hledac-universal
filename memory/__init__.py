@@ -27,8 +27,6 @@ Example:
     result = await mgr.get("session123", "key1")
 """
 
-
-
 from .memory_manager import (
     MemoryManager,
     close_memory_manager,

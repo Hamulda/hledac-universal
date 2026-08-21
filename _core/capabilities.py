@@ -23,11 +23,9 @@ Adding a new dependency — one line:
 import importlib
 import importlib.util
 import logging
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
-from _core._util import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 __all__ = [
     "Capability",
@@ -271,11 +269,11 @@ FAST_LANGDETECT = Capability("fast_langdetect", "fast_langdetect", install_hint=
 # Rust extensions
 RUST_EXT = Capability(
     "rust_extensions", "hledac_rust_extensions", install_hint="Build rust extensions: uv run maturin develop"
-    )
+)
 
 # [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS preset
 H2_SAFARI_PRESET = Capability(
     "h2_safari_preset",
     "hledac_rust_extensions.h2_safari_preset",
-    install_hint="Build rust extensions: uv run maturin develop"
-    )
+    install_hint="Build rust extensions: uv run maturin develop",
+)

@@ -2,8 +2,6 @@
 """
 Gemini Protocol Transport — modern privacy-focused alternative internet.
 
-
-
 Gemini is a TLS-only protocol (port 1965) with simple text format.
 Has ~2000 active capsules with technical/scientific/niche content.
 
@@ -17,7 +15,6 @@ Key features:
   - Return list[CanonicalFinding] with source_type="gemini_content"
 """
 
-
 import asyncio
 import logging
 import re
@@ -25,13 +22,9 @@ import ssl
 import time
 import urllib.parse
 from typing import NamedTuple
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Constants
-# =============================================================================
 GEMINI_PORT: int = 1965
 GEMINI_DEFAULT_TIMEOUT: int = 20
 GEMINI_MAX_RESPONSE_SIZE: int = 1024 * 1024  # 1MB
@@ -52,6 +45,7 @@ def _get_gemini_ssl_context() -> ssl.SSLContext:
         ctx.verify_mode = ssl.CERT_NONE
         _GEMINI_SSL_CONTEXT = ctx
     return _GEMINI_SSL_CONTEXT
+
 
 # Bootstrap capsules
 GEMINI_BOOTSTRAP_HOSTS: list[str] = [
@@ -86,9 +80,6 @@ class GeminiFinding(NamedTuple):
     source_capsule: str
 
 
-# =============================================================================
-# Core Gemini Protocol (TLS)
-# =============================================================================
 async def _fetch_gemini_tcp(
     host: str,
     port: int,
@@ -109,7 +100,6 @@ async def _fetch_gemini_tcp(
     Returns:
         GeminiResponse with status, meta, body
     """
-    # Build Gemini URL for request line
     url = f"gemini://{host}:{port}{selector}" if port != 1965 else f"gemini://{host}{selector}"
 
     # Build request (Gemini simple request format)
@@ -124,9 +114,7 @@ async def _fetch_gemini_tcp(
     writer: asyncio.StreamWriter
 
     async with asyncio.timeout(timeout):
-        reader, writer = await asyncio.open_connection(
-            host, port, ssl=_get_gemini_ssl_context()
-    )
+        reader, writer = await asyncio.open_connection(host, port, ssl=_get_gemini_ssl_context())
         try:
             # Send protocol request — url/headers are internal, not user-supplied
             # noqa: B321 — gemini protocol request construction is internal-only
@@ -138,11 +126,8 @@ async def _fetch_gemini_tcp(
             header_line = header_line.decode("utf-8").strip()
 
             if not header_line:
-                return GeminiResponse(
-                    status=0, meta="", body="", content_type="", url=url
-    )
+                return GeminiResponse(status=0, meta="", body="", content_type="", url=url)
 
-            # Parse status and meta
             parts = header_line.split(" ", 1)
             status = int(parts[0]) if parts else 0
             meta = parts[1] if len(parts) > 1 else ""
@@ -151,7 +136,6 @@ async def _fetch_gemini_tcp(
             body = ""
             content_type = "text/plain"
 
-            # Check meta for content type
             if meta.startswith("text/gemini"):
                 content_type = "text/gemini"
             elif meta.startswith("text/markdown"):
@@ -174,15 +158,12 @@ async def _fetch_gemini_tcp(
                 body=body,
                 content_type=content_type,
                 url=url,
-    )
+            )
         finally:
             writer.close()
             await writer.wait_closed()
 
 
-# =============================================================================
-# Gemini URL Parsing
-# =============================================================================
 def parse_gemini_url(url: str) -> tuple[str, int, str]:
     """
     Parse Gemini URL into components.
@@ -215,9 +196,6 @@ def parse_gemini_url(url: str) -> tuple[str, int, str]:
     return host, port, selector
 
 
-# =============================================================================
-# Link Extraction from Gemtext
-# =============================================================================
 GEMINI_LINK_PATTERN = re.compile(r"=>\s*(\S+)(?:\s+(.+))?")
 
 
@@ -243,9 +221,6 @@ def extract_gemini_links(gemtext: str) -> list[tuple[str, str]]:
     return links
 
 
-# =============================================================================
-# Content Fetching
-# =============================================================================
 async def fetch_capsule_content(
     url_or_host: str,
     selector: str = "/",
@@ -280,9 +255,6 @@ async def fetch_capsule_content(
         return None
 
 
-# =============================================================================
-# Search
-# =============================================================================
 async def search_geminispace(query: str) -> list[GeminiFinding]:
     """
     Search Gemini capsules via Kennedy search engine.
@@ -302,7 +274,7 @@ async def search_geminispace(query: str) -> list[GeminiFinding]:
             "kennedy.gemi.dev",
             GEMINI_PORT,
             f"/search?q={encoded_query}",
-    )
+        )
 
         if resp.status >= 20 and resp.status < 30:
             links = extract_gemini_links(resp.body)
@@ -315,7 +287,7 @@ async def search_geminispace(query: str) -> list[GeminiFinding]:
                         url=url,
                         content_type="search_result",
                         source_capsule="kennedy.gemi.dev",
-    )
+                    )
                     findings.append(finding)
 
     except Exception as e:
@@ -324,9 +296,6 @@ async def search_geminispace(query: str) -> list[GeminiFinding]:
     return findings
 
 
-# =============================================================================
-# Capsule Crawling
-# =============================================================================
 async def crawl_capsule(
     url: str,
     max_pages: int = MAX_CRAWL_PAGES,
@@ -348,6 +317,7 @@ async def crawl_capsule(
     start_time = time.monotonic()
 
     from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     while to_visit and len(findings) < max_pages:
@@ -364,7 +334,6 @@ async def crawl_capsule(
                 resp = await _fetch_gemini_tcp(*parse_gemini_url(current_url))
 
                 if resp.status >= 20 and resp.status < 30:
-                    # Extract title from first heading
                     title = ""
                     for line in resp.body.split("\n")[:50]:
                         if line.startswith("# "):
@@ -379,10 +348,9 @@ async def crawl_capsule(
                         url=current_url,
                         content_type=resp.content_type,
                         source_capsule=parse_gemini_url(current_url)[0],
-    )
+                    )
                     findings.append(finding)
 
-                    # Queue discovered links
                     links = extract_gemini_links(resp.body)
                     for link_url, _ in links:
                         if len(to_visit) < 100 and link_url.startswith("gemini://"):
@@ -396,9 +364,6 @@ async def crawl_capsule(
     return findings
 
 
-# =============================================================================
-# As CanonicalFindings
-# =============================================================================
 async def geminispace_to_findings(
     query: str,
     max_pages: int = 10,
@@ -432,7 +397,6 @@ async def geminispace_to_findings(
                 continue
             seen_urls.add(result.url)
 
-            # Fetch full content
             content = await fetch_capsule_content(result.url)
             if content:
                 finding = CanonicalFinding(
@@ -443,7 +407,7 @@ async def geminispace_to_findings(
                     ts=time.time(),
                     provenance=(result.url,),
                     payload_text=content[:4096] if content else None,
-    )
+                )
                 findings.append(finding)
 
     except Exception as e:
@@ -452,9 +416,6 @@ async def geminispace_to_findings(
     return findings
 
 
-# =============================================================================
-# Bootstrap: Get Capsule Directory
-# =============================================================================
 async def get_capsule_index() -> list[str]:
     """
     Fetch list of known Gemini capsules from circumlunar.
@@ -469,7 +430,7 @@ async def get_capsule_index() -> list[str]:
             "gemini.circumlunar.space",
             GEMINI_PORT,
             "/capsules/",
-    )
+        )
 
         if resp.status >= 20 and resp.status < 30:
             links = extract_gemini_links(resp.body)

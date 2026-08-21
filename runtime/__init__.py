@@ -6,7 +6,7 @@ The legacy v1 module (33k LOC) is kept for exhaustiveness of type definitions
 until all types are migrated.
 
 Pattern (PEP 562):
-    from hledac.universal.runtime import SprintScheduler  # instant, no module load
+    from hledac.universal.runtime import SprintScheduler
     scheduler = SprintScheduler(...)   # triggers V2 import here
 
 Invariant: TYPE_CHECKING imports in callers are unaffected — static
@@ -14,8 +14,6 @@ type checkers resolve names at analysis time, not runtime.
 """
 
 import typing
-from _core._util import aclose
-
 
 # Re-exported symbols — add new entries here as the API grows.
 # Each entry is (module_path, import_name).
@@ -51,6 +49,7 @@ def __getattr__(name: str) -> typing.Any:
     mod_path, attr_name = pair
     # Inline import keeps the module out of sys.modules until actually used.
     from importlib import import_module
+
     mod = import_module(mod_path)
     val = getattr(mod, attr_name)
     # Cache in this module so subsequent accesses are O(1).

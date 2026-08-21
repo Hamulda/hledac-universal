@@ -1,27 +1,29 @@
 """Approximate prompt cache using trigram-based similarity."""
+
 import hashlib
 import logging
 import math
-
-
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from _core import aclose
+
 try:
     import xxhash
+
     XXHASH_AVAILABLE = True
 except ImportError:
     XXHASH_AVAILABLE = False
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
-CACHE_VERSION = 'v2'
-CACHE_NAMESPACE = 'pc'
+CACHE_VERSION = "v2"
+CACHE_NAMESPACE = "pc"
 logger = logging.getLogger(__name__)
+
 
 def _hash_key(text: str) -> str:
     """Generate cache key with versioned prefix (xxh3 on Apple Silicon)."""
@@ -29,16 +31,17 @@ def _hash_key(text: str) -> str:
         try:
             h = xxhash.xxh3_64(text.encode()).hexdigest()
         except AttributeError:
-            h = format(xxhash.xxh3_64(text.encode()).intdigest(), '016x')
-        return f'{CACHE_NAMESPACE}:{CACHE_VERSION}:{h}'
+            h = format(xxhash.xxh3_64(text.encode()).intdigest(), "016x")
+        return f"{CACHE_NAMESPACE}:{CACHE_VERSION}:{h}"
     else:
         h = hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
-        return f'{CACHE_NAMESPACE}:{CACHE_VERSION}:{h}'
+        return f"{CACHE_NAMESPACE}:{CACHE_VERSION}:{h}"
+
 
 class PromptCache:
-    __slots__ = ('_cache', '_max', '_embeddings', '_dim', '_ttl', '_lock')
+    __slots__ = ("_cache", "_max", "_embeddings", "_dim", "_ttl", "_lock")
 
-    def __init__(self, max_entries: int=500, embedding_dim: int=256):
+    def __init__(self, max_entries: int = 500, embedding_dim: int = 256) -> None:
         self._cache = OrderedDict()
         self._max = max_entries
         self._embeddings = OrderedDict()
@@ -47,18 +50,18 @@ class PromptCache:
         self._lock = threading.Lock()
         self._check_and_migrate_cache()
 
-    def _check_and_migrate_cache(self):
+    def _check_and_migrate_cache(self) -> None:
         """Clear old cache entries on version change."""
-        version_file = Path.home() / '.hledac' / 'prompt_cache_version.txt'
+        version_file = Path.home() / ".hledac" / "prompt_cache_version.txt"
         try:
             if version_file.exists() and version_file.read_text().strip() != CACHE_VERSION:
                 self._cache.clear()
                 self._embeddings.clear()
-                logger.info(f'Cache cleared: version mismatch -> {CACHE_VERSION}')
+                logger.info(f"Cache cleared: version mismatch -> {CACHE_VERSION}")
             version_file.parent.mkdir(parents=True, exist_ok=True)
             version_file.write_text(CACHE_VERSION)
         except Exception as e:
-            logger.warning(f'Cache migration check failed: {e}')
+            logger.warning(f"Cache migration check failed: {e}")
 
     def _get_embedding(self, text: str) -> list:
         """Generate trigram‑based approximate embedding."""
@@ -66,7 +69,7 @@ class PromptCache:
             if text in self._embeddings:
                 self._embeddings.move_to_end(text)
                 return self._embeddings[text]
-        trigrams = [text[i:i + 3].lower() for i in range(len(text) - 2)]
+        trigrams = [text[i : i + 3].lower() for i in range(len(text) - 2)]
         emb = [0.0] * self._dim
         _MAX_TRIGRAMS_PER_PROMPT = 100
         for trigram in trigrams[:_MAX_TRIGRAMS_PER_PROMPT]:
@@ -76,7 +79,7 @@ class PromptCache:
                 h = int(hashlib.md5(trigram.encode()).hexdigest()[:8], 16)
             bucket = h % self._dim
             emb[bucket] += 1.0
-        norm = math.sqrt(sum((x * x for x in emb)))
+        norm = math.sqrt(sum(x * x for x in emb))
         if norm > 0:
             emb = [x / norm for x in emb]
         with self._lock:
@@ -98,13 +101,13 @@ class PromptCache:
             return dot / (norm_a * norm_b)
         else:
             dot = sum((x * y for x, y in zip(a, b, strict=False)))
-            norm_a = math.sqrt(sum((x * x for x in a)))
-            norm_b = math.sqrt(sum((x * x for x in b)))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(x * x for x in b))
             if norm_a == 0 or norm_b == 0:
                 return 0.0
             return dot / (norm_a * norm_b)
 
-    def get(self, prompt: str, threshold: float=0.85) -> str | None:
+    def get(self, prompt: str, threshold: float = 0.85) -> str | None:
         """Získá odpověď z cache, pokud existuje podobný prompt."""
         now = time.time()
         with self._lock:
@@ -142,7 +145,7 @@ class PromptCache:
             return response
         return None
 
-    def set(self, prompt: str, response: str):
+    def set(self, prompt: str, response: str) -> None:
         """Uloží prompt‑response pár do cache."""
         now = time.time()
         with self._lock:
@@ -154,7 +157,7 @@ class PromptCache:
                 if oldest in self._embeddings:
                     del self._embeddings[oldest]
 
-    def invalidate_expired(self):
+    def invalidate_expired(self) -> None:
         """Odstraní expirované položky."""
         now = time.time()
         with self._lock:
@@ -163,6 +166,7 @@ class PromptCache:
                 del self._cache[p]
                 if p in self._embeddings:
                     del self._embeddings[p]
+
 
 class SystemPromptKVCache:
     """
@@ -176,7 +180,8 @@ class SystemPromptKVCache:
     a token-prefix cache as fallback — same prompt returns cached
     tokenization without re-tokenizing.
     """
-    __slots__ = tuple(('_cached_prompt', '_cached_tokens', '_lock'))
+
+    __slots__ = ("_cached_prompt", "_cached_tokens", "_lock")
 
     def __init__(self) -> None:
         self._cached_prompt: str | None = None
@@ -206,4 +211,6 @@ class SystemPromptKVCache:
         with self._lock:
             self._cached_prompt = None
             self._cached_tokens = None
+
+
 _SYSTEM_PROMPT_CACHE = SystemPromptKVCache()

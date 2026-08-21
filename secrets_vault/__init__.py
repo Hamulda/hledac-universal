@@ -14,6 +14,5 @@ Architecture:
 """
 
 from secrets_vault.vault import SecretVault
-from _core import aclose
 
 __all__ = ["SecretVault"]

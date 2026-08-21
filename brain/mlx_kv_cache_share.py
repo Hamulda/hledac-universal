@@ -17,23 +17,25 @@ What we CAN cache: Pre-tokenized token arrays (mx.array) for fixed prompt templa
 
 Invariant: system_msg template is fixed at model load time.
 """
+
 import asyncio
-from hledac.universal.utils.asyncx import safe_create_task
 import hashlib
 import logging
 import time as time_module
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import safe_create_task
+
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 
+
 class TokenizedPromptEntry(Struct):
     """Cached tokenized prompt array."""
+
     key: str
     tokens: list[int]
     model_path: str
@@ -42,12 +44,15 @@ class TokenizedPromptEntry(Struct):
     last_used: float = 0.0
     tokenize_time_ms: float = 0.0
 
+
 class PromptCacheStats(Struct):
     """Statistics for tokenized prompt cache."""
+
     cache_hits: int = 0
     cache_misses: int = 0
     prompts_cached: int = 0
     tokenize_time_saved_ms: float = 0.0
+
 
 class TokenizedPromptCache:
     """
@@ -63,7 +68,8 @@ class TokenizedPromptCache:
     - Tokens stored as list[int] (minimal memory: ~2KB per 500-token prompt)
     - Async-safe with asyncio.Lock
     """
-    __slots__ = tuple(('_cache', '_engine', '_initialized', '_lock', '_stats'))
+
+    __slots__ = ("_cache", "_engine", "_initialized", "_lock", "_stats")
 
     def __init__(self, engine: DeepHermes3Engine) -> None:
         self._engine = engine
@@ -111,25 +117,27 @@ class TokenizedPromptCache:
         try:
             tokens = await asyncio.to_thread(self._tokenize_sync, prompt)
             if tokens is None or not tokens:
-                logger.debug('PromptCache: tokenization returned empty')
+                logger.debug("PromptCache: tokenization returned empty")
                 return
             tokenize_ms = (time_module.time() - t0) * 1000
-            entry = TokenizedPromptEntry(key=key, tokens=tokens, model_path=model_path, template_len=len(tokens), tokenize_time_ms=tokenize_ms)
+            entry = TokenizedPromptEntry(
+                key=key, tokens=tokens, model_path=model_path, template_len=len(tokens), tokenize_time_ms=tokenize_ms
+            )
             self._cache[key] = entry
-            logger.debug(f'PromptCache: cached prompt (len={len(tokens)}, tokenize={tokenize_ms:.1f}ms)')
+            logger.debug(f"PromptCache: cached prompt (len={len(tokens)}, tokenize={tokenize_ms:.1f}ms)")
         except Exception as e:
-            logger.warning(f'PromptCache: tokenize failed: {e}')
+            logger.warning(f"PromptCache: tokenize failed: {e}")
 
     def _tokenize_sync(self, prompt: str) -> list[int] | None:
         """Synchronous tokenization using engine's tokenizer."""
         try:
-            tokenizer = getattr(self._engine, '_tokenizer', None)
+            tokenizer = getattr(self._engine, "_tokenizer", None)
             if tokenizer is None:
                 return None
             encoded = tokenizer.encode(prompt)
-            if hasattr(encoded, 'ids'):
+            if hasattr(encoded, "ids"):
                 return encoded.ids
-            if hasattr(encoded, '__iter__'):
+            if hasattr(encoded, "__iter__"):
                 return list(encoded)
             return None
         except Exception:
@@ -141,7 +149,7 @@ class TokenizedPromptCache:
             return
         lru_key = min(self._cache, key=lambda k: (self._cache[k].hits, self._cache[k].last_used))
         del self._cache[lru_key]
-        logger.debug(f'PromptCache: evicted LRU entry {lru_key[:8]}')
+        logger.debug(f"PromptCache: evicted LRU entry {lru_key[:8]}")
 
     async def get_tokens(self, prompt: str) -> tuple[list[int], float] | tuple[None, None]:
         """
@@ -152,7 +160,9 @@ class TokenizedPromptCache:
         """
         return await self.get_cached_tokens(prompt, system_msg=None)
 
-    async def get_cached_tokens(self, prompt: str, system_msg: str | None=None) -> tuple[list[int], float] | tuple[None, None]:
+    async def get_cached_tokens(
+        self, prompt: str, system_msg: str | None = None
+    ) -> tuple[list[int], float] | tuple[None, None]:
         """
         Get cached tokenized prompt.
 
@@ -164,7 +174,7 @@ class TokenizedPromptCache:
             (tokens, tokenize_time_saved_ms) if cached, or (None, None) on miss.
         """
         await self._ensure_initialized()
-        full_prompt = f'{system_msg}\n{prompt}' if system_msg else prompt
+        full_prompt = f"{system_msg}\n{prompt}" if system_msg else prompt
         model_path = self._engine.config.model_path
         key = self._compute_prompt_key(full_prompt, model_path)
         async with self._lock:
@@ -191,14 +201,19 @@ class TokenizedPromptCache:
 
     def get_stats(self) -> PromptCacheStats:
         """Return cache statistics."""
-        return PromptCacheStats(cache_hits=self._stats.cache_hits, cache_misses=self._stats.cache_misses, prompts_cached=len(self._cache), tokenize_time_saved_ms=self._stats.tokenize_time_saved_ms)
+        return PromptCacheStats(
+            cache_hits=self._stats.cache_hits,
+            cache_misses=self._stats.cache_misses,
+            prompts_cached=len(self._cache),
+            tokenize_time_saved_ms=self._stats.tokenize_time_saved_ms,
+        )
 
     def clear_cache(self) -> None:
         """Clear all cached prompts. Called after model swap."""
         self._cache.clear()
         self._stats = PromptCacheStats()
         self._initialized = False
-        logger.debug('PromptCache: cache cleared')
+        logger.debug("PromptCache: cache cleared")
 
     def cache_size(self) -> int:
         """Return current cache size."""

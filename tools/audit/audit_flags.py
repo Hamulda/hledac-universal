@@ -4,12 +4,12 @@ CI guard against new configuration flags.
 Compares current state with baseline file.
 Baseline is stored in hledac/universal/.flags_baseline.json
 """
+
 import ast
 import json
 import re
 import sys
 from pathlib import Path
-from _core import aclose
 
 # Root folder = hledac/universal
 ROOT = Path(__file__).parent.parent
@@ -53,7 +53,7 @@ def scan_all_flags() -> dict[str, list[str]]:
     return result
 
 
-def main():
+def main() -> int:
     current = scan_all_flags()
 
     if not current:
@@ -81,7 +81,7 @@ def main():
                         start = max(0, i - 3)
                         end = min(len(lines), i + 4)
                         context = "\n".join(lines[start:end])
-                        contexts.append(f"    {full_path}:{i+1}\n{context}\n")
+                        contexts.append(f"    {full_path}:{i + 1}\n{context}\n")
                         break
             new_flags[file] = contexts
 

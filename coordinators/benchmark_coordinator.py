@@ -8,4 +8,4 @@ Superseded by: benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
 raise ImportError(
     "hledac.universal.coordinators.benchmark_coordinator is deprecated and has been "
     "archived. Use benchmarks/live_measurement_kpi.py or other benchmarks/ scripts directly."
-    )
+)

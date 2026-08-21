@@ -33,15 +33,17 @@ M1 CRASH VECTORS (GHOST_INVARIANTS.md invariants)
 
 SOLUTION: Domain-specific bounded executors (see domain_executors.py)
 """
+
 import asyncio
 import functools
+from collections.abc import Awaitable, Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, cast
-from collections.abc import Awaitable, Callable, Coroutine
-from _core import aclose
-T = TypeVar('T')
 
-def run_sync_async(coro: Awaitable[T]) -> T:
+T = TypeVar("T")
+
+
+def run_sync_async[T](coro: Awaitable[T]) -> T:
     """
     Safely run a coroutine from synchronous code.
 
@@ -60,7 +62,6 @@ def run_sync_async(coro: Awaitable[T]) -> T:
         Exception: Any exception from the coroutine
 
     Example:
-        # In sync function called from CLI or signal handler:
         result = run_sync_async(my_async_function(arg1, arg2))
 
         # In async function (should await directly instead):
@@ -73,16 +74,17 @@ def run_sync_async(coro: Awaitable[T]) -> T:
         # Runner manages loop lifecycle internally and ensures cleanup.
         with asyncio.Runner() as runner:
             return runner.run(coro)
-    # Running loop: delegate to it via threadsafe submission.
     future = asyncio.run_coroutine_threadsafe(cast(Coroutine, coro), running_loop)
     return future.result()
 
-@functools.cache
-def _get_dedicated_thread_pool(max_workers: int=4) -> ThreadPoolExecutor:
-    """Cached dedicated thread pool for sync→async bridge operations."""
-    return ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='sync-bridge-pool')
 
-async def to_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+@functools.cache
+def _get_dedicated_thread_pool(max_workers: int = 4) -> ThreadPoolExecutor:
+    """Cached dedicated thread pool for sync→async bridge operations."""
+    return ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sync-bridge-pool")
+
+
+async def to_thread[T](func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """
     Run a blocking sync function in a dedicated thread pool.
 
@@ -106,7 +108,7 @@ async def to_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     return await loop.run_in_executor(pool, lambda: func(*args, **kwargs))
 
 
-async def to_thread_with_timeout(
+async def to_thread_with_timeout[T](
     func: Callable[..., T],
     *args: Any,
     timeout: float | None = None,
@@ -169,19 +171,21 @@ async def to_thread_with_timeout(
 # Lazy import for circuit breaker (avoids circular dependency at module load)
 _rayon_breaker = None
 
+
 def _get_rayon_breaker():
     """P7-2: Get or create the rayon circuit breaker."""
     global _rayon_breaker
     if _rayon_breaker is None:
         try:
             from hledac.universal._core.circuit_breaker_service import (
-                circuit_breaker_registry,
                 DEFAULT_MLX_CONFIG,
-    )
+                circuit_breaker_registry,
+            )
+
             _rayon_breaker = circuit_breaker_registry.get_breaker(
                 "rayon_pool",
                 config=DEFAULT_MLX_CONFIG,  # Use MLX config (similar failure profile)
-    )
+            )
         except Exception:
             return None
     return _rayon_breaker
@@ -194,7 +198,7 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
     ISSUE 3.1: Uses rayon_join_channel (crossbeam-channel dispatch).
     Runs in a thread via asyncio.to_thread so the event loop remains responsive.
     asyncio.timeout provides deadline-aware cancellation.
-    
+
     P7-2: Uses circuit breaker for fail-loud behavior on repeated failures.
     """
     # P7-2: Check circuit breaker before operation
@@ -205,13 +209,13 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
         except Exception:
             # Circuit is open — fail loud instead of silent degradation
             raise RuntimeError(
-                "Rayon pool circuit breaker is OPEN. "
-                "Rayon operations are temporarily unavailable."
+                "Rayon pool circuit breaker is OPEN. Rayon operations are temporarily unavailable."
             ) from None
 
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
         # Fallback: rayon not compiled — propagate the import error as RuntimeError
@@ -237,13 +241,13 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
             try:
                 result = await loop.run_in_executor(None, _join)
             except asyncio.CancelledError:
-                raise asyncio.TimeoutError(f"rayon_join_channel timed out after {timeout}s") from None
-        
+                raise TimeoutError(f"rayon_join_channel timed out after {timeout}s") from None
+
         # P7-2: Record success
         if breaker is not None:
             breaker.record_success()
         return result
-        
+
     except Exception as e:
         # P7-2: Record failure and re-raise (fail-loud)
         if breaker is not None:
@@ -251,7 +255,7 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
         raise
 
 
-async def to_thread_rayon(
+async def to_thread_rayon[T](
     pool_type: str,
     func: Callable[..., T],
     args: tuple[Any, ...],
@@ -297,8 +301,8 @@ async def to_thread_rayon(
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         rayon_submit_channel = rust.raw.rayon_submit_channel
-        rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
         raise RuntimeError(
             "hledac_rust_extensions.rayon_submit_channel unavailable (not compiled). "
@@ -315,6 +319,7 @@ async def to_thread_rayon(
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             rayon_abort_channel = rust.raw.rayon_abort_channel
             if rayon_abort_channel is not None:
                 rayon_abort_channel(handle)
@@ -328,13 +333,15 @@ async def to_thread_rayon(
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             rayon_drop_channel = rust.raw.rayon_drop_channel
             if rayon_drop_channel is not None:
                 rayon_drop_channel(handle)
         except BaseException:  # noqa: BLE001
             pass  # Best-effort — don't mask the original result/exception
 
-def run_in_executor_safe(executor: ThreadPoolExecutor | None, func: Callable[..., T], *args: Any) -> T:
+
+def run_in_executor_safe[T](executor: ThreadPoolExecutor | None, func: Callable[..., T], *args: Any) -> T:
     """
     Synchronous version of loop.run_in_executor for use in sync contexts.
 
@@ -353,4 +360,3 @@ def run_in_executor_safe(executor: ThreadPoolExecutor | None, func: Callable[...
         return func(*args)
     future = executor.submit(func, *args)
     return future.result()
-

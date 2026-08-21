@@ -9,7 +9,6 @@ NOT in the hledac-universal distribution (pyproject.toml only packages
 ``hledac.universal``).
 """
 
-
 from hledac.universal.config import (
     DeepResearchConfig,
     M1Presets,

@@ -17,20 +17,25 @@ Monitoruje:
 - Thermal status (M1)
 - System health
 """
+
 import logging
 from collections.abc import Callable
 from enum import Enum
+
 from hledac.universal._core.psutil_shim import psutil
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class SystemState(Enum):
     """Stavy systému"""
-    HEALTHY = 'healthy'
-    MEMORY_PRESSURE = 'memory_pressure'
-    THERMAL_THROTTLING = 'thermal_throttling'
-    DEGRADED = 'degraded'
-    RECOVERY = 'recovery'
+
+    HEALTHY = "healthy"
+    MEMORY_PRESSURE = "memory_pressure"
+    THERMAL_THROTTLING = "thermal_throttling"
+    DEGRADED = "degraded"
+    RECOVERY = "recovery"
+
 
 class SystemMonitor:
     """
@@ -42,9 +47,10 @@ class SystemMonitor:
     - State transitions
     - Callback system
     """
-    __slots__ = tuple(('_callbacks', '_state', 'memory_threshold', 'thermal_threshold'))
 
-    def __init__(self, memory_threshold: float=5500, thermal_threshold: float=85):
+    __slots__ = ("_callbacks", "_state", "memory_threshold", "thermal_threshold")
+
+    def __init__(self, memory_threshold: float = 5500, thermal_threshold: float = 85) -> None:
         self.memory_threshold = memory_threshold
         self.thermal_threshold = thermal_threshold
         self._state = SystemState.HEALTHY
@@ -85,21 +91,21 @@ class SystemMonitor:
                 self._transition_state(new_state)
             return self._state
         except Exception as e:
-            logger.error(f'Health check failed: {e}')
+            logger.error(f"Health check failed: {e}")
             return SystemState.DEGRADED
 
-    def _transition_state(self, new_state: SystemState):
+    def _transition_state(self, new_state: SystemState) -> None:
         """Přejít do nového stavu"""
         old_state = self._state
         self._state = new_state
-        logger.warning(f'System state transition: {old_state.value} → {new_state.value}')
+        logger.warning(f"System state transition: {old_state.value} → {new_state.value}")
         for callback in self._callbacks:
             try:
                 callback(old_state, new_state)
             except Exception as e:
-                logger.error(f'Callback error: {e}')
+                logger.error(f"Callback error: {e}")
 
-    def on_state_change(self, callback: Callable):
+    def on_state_change(self, callback: Callable) -> None:
         """Registrovat callback na změnu stavu"""
         self._callbacks.append(callback)
 
@@ -107,16 +113,22 @@ class SystemMonitor:
         """Získat statistiky systému"""
         try:
             if psutil is None:
-                return {'state': self._state.value}
+                return {"state": self._state.value}
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
-            stats = {'state': self._state.value, 'cpu_percent': cpu_percent, 'memory_percent': memory.percent, 'memory_used_mb': memory.used / (1024 * 1024), 'memory_available_mb': memory.available / (1024 * 1024)}
+            stats = {
+                "state": self._state.value,
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory.percent,
+                "memory_used_mb": memory.used / (1024 * 1024),
+                "memory_available_mb": memory.available / (1024 * 1024),
+            }
             try:
                 temps = psutil.sensors_temperatures()
                 if temps:
-                    stats['temperatures'] = {name: [e.current for e in entries] for name, entries in temps.items()}
+                    stats["temperatures"] = {name: [e.current for e in entries] for name, entries in temps.items()}
             except Exception:  # noqa: BLE001
                 pass
             return stats
         except Exception as e:
-            return {'error': str(e)}
+            return {"error": str(e)}

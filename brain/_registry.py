@@ -15,10 +15,8 @@ Circular Import Protection:
 Usage:
     from brain._registry import get_engine, is_available, list_engines
 
-    # Get engine instance
     engine = get_engine("inference_engine")
 
-    # Check availability
     if is_available("insight_engine"):
         from brain import InsightEngine
 
@@ -29,17 +27,15 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 
 class EngineLoadOrder(Enum):
     """Load order priority for engines with circular dependencies."""
@@ -49,7 +45,6 @@ class EngineLoadOrder(Enum):
     NORMAL = auto()  # Most engines
     HIGH = auto()  # Engines with complex dependencies
     LAZY = auto()  # Heaviest engines - only load when requested
-
 
 @dataclass(frozen=True, slots=True)
 class EngineSpec:
@@ -62,7 +57,6 @@ class EngineSpec:
     load_order: EngineLoadOrder = EngineLoadOrder.NORMAL
     dependencies: tuple[str, ...] = ()
     doc: str | None = None
-
 
 # SSOT: All brain engine registrations - add new engines here only
 _ENGINE_SPECS: dict[str, EngineSpec] = {
@@ -376,11 +370,9 @@ _ENGINE_SPECS: dict[str, EngineSpec] = {
     ),
 }
 
-
 # Module-level cache for loaded engine modules
 _loaded_modules: dict[str, Any] = {}
 _availability_cache: dict[str, bool | None] = {}
-
 
 def _resolve_dependencies(name: str) -> list[str]:
     """Resolve dependency order for engine loading."""
@@ -406,17 +398,14 @@ def _resolve_dependencies(name: str) -> list[str]:
         resolved.append(name)
     return resolved
 
-
 def _load_module(spec: EngineSpec) -> Any:
     """Lazily load a brain engine module."""
     if spec.name in _loaded_modules:
         return _loaded_modules[spec.name]
 
-    # Check availability first
     if spec.availability_flag and not is_available(spec.name):
         raise ImportError(f"Engine {spec.name} is not available ({spec.availability_flag}=False)")
 
-    # Import the module
     import importlib
 
     try:
@@ -427,7 +416,6 @@ def _load_module(spec: EngineSpec) -> Any:
     except ImportError as e:
         logger.warning(f"[REGISTRY] Failed to load engine {spec.name}: {e}")
         raise
-
 
 def _check_availability(spec: EngineSpec) -> bool | None:
     """Check if an engine is available (with caching)."""
@@ -444,7 +432,6 @@ def _check_availability(spec: EngineSpec) -> bool | None:
             _availability_cache[spec.name] = False
             return False
 
-    # Check the availability flag module-level
     try:
         import importlib
 
@@ -455,10 +442,6 @@ def _check_availability(spec: EngineSpec) -> bool | None:
     except ImportError:
         _availability_cache[spec.name] = False
         return False
-
-
-# ─── Public API ────────────────────────────────────────────────────────────────
-
 
 def get_engine(name: str) -> Any:
     """
@@ -491,7 +474,6 @@ def get_engine(name: str) -> Any:
     module = _load_module(spec)
     return module
 
-
 def get_engine_class(name: str, class_name: str | None = None) -> type:
     """
     Get a specific class from an engine module.
@@ -509,7 +491,6 @@ def get_engine_class(name: str, class_name: str | None = None) -> type:
         raise KeyError(f"No class specified for engine: {name}")
     return getattr(module, target)
 
-
 def is_available(name: str) -> bool | None:
     """
     Check if an engine is available.
@@ -520,7 +501,6 @@ def is_available(name: str) -> bool | None:
     if name not in _ENGINE_SPECS:
         return None
     return _check_availability(_ENGINE_SPECS[name])
-
 
 def list_engines(
     by_order: bool = False,
@@ -550,7 +530,6 @@ def list_engines(
         names = [n for n in names if is_available(n)]
     return names
 
-
 def preload_engines(*names: str) -> None:
     """
     Preload specific engines (eager loading).
@@ -571,14 +550,9 @@ def preload_engines(*names: str) -> None:
         except ImportError as e:
             logger.warning(f"[REGISTRY] Preload failed for {name}: {e}")
 
-
-# ─── Registry introspection ───────────────────────────────────────────────────
-
-
 def get_spec(name: str) -> EngineSpec | None:
     """Get the EngineSpec for a registered engine."""
     return _ENGINE_SPECS.get(name)
-
 
 def get_dependencies(name: str) -> tuple[str, ...]:
     """Get direct dependencies for an engine."""
@@ -586,24 +560,15 @@ def get_dependencies(name: str) -> tuple[str, ...]:
         return ()
     return _ENGINE_SPECS[name].dependencies
 
-
 def get_resolve_order(name: str) -> list[str]:
     """Get full dependency resolution order for an engine."""
     return _resolve_dependencies(name)
-
-
-# ─── Backward compatibility helpers ──────────────────────────────────────────
-
 
 def get_availability_flag(name: str) -> str | None:
     """Get the availability flag name for an engine (for legacy code)."""
     if name not in _ENGINE_SPECS:
         return None
     return _ENGINE_SPECS[name].availability_flag
-
-
-# ─── __getattr__ integration for brain/__init__.py ─────────────────────────────
-
 
 def lazy_getattr(name: str) -> Any:
     """

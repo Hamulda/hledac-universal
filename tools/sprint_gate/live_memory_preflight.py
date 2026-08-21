@@ -25,13 +25,13 @@ Usage:
     python -m tools.live_memory_preflight --md    # Markdown to stdout
     python -m tools.live_memory_preflight --json   # explicit JSON (default)
 """
+
 import argparse
 import json
 import sys
 import time
-from dataclasses import asdict, dataclass
-import msgspec
-from _core import aclose
+from dataclasses import asdict
+
 from compat.msgspec_gc_compat import Struct
 
 try:
@@ -44,14 +44,17 @@ except Exception:
             system_used_gib = 0.0
             system_available_gib = 0.0
             swap_used_gib = 0.0
-            state = 'ok'
+            state = "ok"
             io_only = False
             swap_detected = False
             rss_gib = 0.0
             metal_cache_limit_bytes = None
             metal_wired_limit_bytes = None
-            last_error = 'sample_uma_status unavailable'
+            last_error = "sample_uma_status unavailable"
+
         return _DummyStatus()
+
+
 try:
     from hledac.universal.utils.uma_budget import UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB, UMA_WARN_GIB, get_uma_snapshot
 except Exception:
@@ -60,10 +63,23 @@ except Exception:
     UMA_EMERGENCY_GIB = 7.0
 
     def get_uma_snapshot():
-        return {'uma_total_mb': 8192, 'system_used_mb': 0, 'system_available_mb': 0, 'mlx_active_mb': 0, 'uma_pressure_level': 'ok', 'is_warn': False, 'is_critical': False, 'is_emergency': False, 'uma_usage_pct': 0}
-VERDICT_READY_FOR_ACTIVE300 = 'READY_FOR_ACTIVE300'
-VERDICT_CLOSE_APPS_OR_RESTART = 'CLOSE_APPS_OR_RESTART'
-VERDICT_CRITICAL_DO_NOT_RUN = 'CRITICAL_DO_NOT_RUN'
+        return {
+            "uma_total_mb": 8192,
+            "system_used_mb": 0,
+            "system_available_mb": 0,
+            "mlx_active_mb": 0,
+            "uma_pressure_level": "ok",
+            "is_warn": False,
+            "is_critical": False,
+            "is_emergency": False,
+            "uma_usage_pct": 0,
+        }
+
+
+VERDICT_READY_FOR_ACTIVE300 = "READY_FOR_ACTIVE300"
+VERDICT_CLOSE_APPS_OR_RESTART = "CLOSE_APPS_OR_RESTART"
+VERDICT_CRITICAL_DO_NOT_RUN = "CRITICAL_DO_NOT_RUN"
+
 
 def _derive_verdict(state: str, swap_detected: bool) -> str:
     """
@@ -76,19 +92,21 @@ def _derive_verdict(state: str, swap_detected: bool) -> str:
         warn (no swap)     → READY_FOR_ACTIVE300
         ok                 → READY_FOR_ACTIVE300
     """
-    if state in ('critical', 'emergency'):
+    if state in ("critical", "emergency"):
         return VERDICT_CRITICAL_DO_NOT_RUN
-    if state == 'warn' and swap_detected:
+    if state == "warn" and swap_detected:
         return VERDICT_CLOSE_APPS_OR_RESTART
     return VERDICT_READY_FOR_ACTIVE300
+
 
 def _operator_action_for_verdict(verdict: str) -> str:
     """Human-readable recommended action for each verdict."""
     if verdict == VERDICT_CRITICAL_DO_NOT_RUN:
-        return 'restart or close heavy apps; rerun with --require-memory-ok'
+        return "restart or close heavy apps; rerun with --require-memory-ok"
     if verdict == VERDICT_CLOSE_APPS_OR_RESTART:
-        return 'close some apps to clear swap; rerun preflight'
-    return 'memory state OK — ready for active300 sprint'
+        return "close some apps to clear swap; rerun preflight"
+    return "memory state OK — ready for active300 sprint"
+
 
 class PreflightResult(Struct):
     verdict: str
@@ -111,6 +129,7 @@ class PreflightResult(Struct):
     def as_dict(self) -> dict:
         return dict(asdict(self).items())
 
+
 def run_preflight() -> PreflightResult:
     """
     Run memory preflight check and return structured result.
@@ -118,48 +137,105 @@ def run_preflight() -> PreflightResult:
     No network I/O. No process killing. No sudo.
     Reads only in-boundary memory samplers.
     """
-    sample_time_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    sample_time_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     error: str | None = None
     uma = sample_uma_status()
-    state = uma.state if uma.state else 'ok'
-    swap_detected = getattr(uma, 'swap_detected', False)
-    swap_used_gib = getattr(uma, 'swap_used_gib', 0.0)
-    system_used_gib = getattr(uma, 'system_used_gib', 0.0)
-    system_available_gib = getattr(uma, 'system_available_gib', 0.0)
-    io_only = getattr(uma, 'io_only', False)
+    state = uma.state if uma.state else "ok"
+    swap_detected = getattr(uma, "swap_detected", False)
+    swap_used_gib = getattr(uma, "swap_used_gib", 0.0)
+    system_used_gib = getattr(uma, "system_used_gib", 0.0)
+    system_available_gib = getattr(uma, "system_available_gib", 0.0)
+    io_only = getattr(uma, "io_only", False)
     snap = get_uma_snapshot()
-    mlx_active_mb = snap.get('mlx_active_mb', 0)
-    uma_usage_pct = snap.get('uma_usage_pct', 0)
-    pressure_level = snap.get('uma_pressure_level', 'ok')
+    mlx_active_mb = snap.get("mlx_active_mb", 0)
+    uma_usage_pct = snap.get("uma_usage_pct", 0)
+    pressure_level = snap.get("uma_pressure_level", "ok")
     verdict = _derive_verdict(state, swap_detected)
     recommended_action = _operator_action_for_verdict(verdict)
-    last_error = getattr(uma, 'last_error', None)
+    last_error = getattr(uma, "last_error", None)
     if last_error:
-        error = f'uma_sample: {last_error}'
-    return PreflightResult(verdict=verdict, uma_state=state, system_used_gib=round(system_used_gib, 3), system_available_gib=round(system_available_gib, 3), swap_used_gib=round(swap_used_gib, 3), swap_detected=swap_detected, io_only=io_only, mlx_active_mb=mlx_active_mb, uma_usage_pct=uma_usage_pct, pressure_level=pressure_level, thresholds_warn_gib=UMA_WARN_GIB, thresholds_critical_gib=UMA_CRITICAL_GIB, thresholds_emergency_gib=UMA_EMERGENCY_GIB, recommended_action=recommended_action, sample_time_iso=sample_time_iso, error=error)
+        error = f"uma_sample: {last_error}"
+    return PreflightResult(
+        verdict=verdict,
+        uma_state=state,
+        system_used_gib=round(system_used_gib, 3),
+        system_available_gib=round(system_available_gib, 3),
+        swap_used_gib=round(swap_used_gib, 3),
+        swap_detected=swap_detected,
+        io_only=io_only,
+        mlx_active_mb=mlx_active_mb,
+        uma_usage_pct=uma_usage_pct,
+        pressure_level=pressure_level,
+        thresholds_warn_gib=UMA_WARN_GIB,
+        thresholds_critical_gib=UMA_CRITICAL_GIB,
+        thresholds_emergency_gib=UMA_EMERGENCY_GIB,
+        recommended_action=recommended_action,
+        sample_time_iso=sample_time_iso,
+        error=error,
+    )
+
 
 def format_json(result: PreflightResult) -> str:
     """Serialize PreflightResult as JSON to stdout."""
     return json.dumps(result.as_dict(), indent=2)
 
+
 def format_markdown(result: PreflightResult) -> str:
     """Format PreflightResult as Markdown to stdout."""
     d = result.as_dict()
-    verdict = d['verdict']
-    emoji = {VERDICT_READY_FOR_ACTIVE300: '🟢', VERDICT_CLOSE_APPS_OR_RESTART: '🟡', VERDICT_CRITICAL_DO_NOT_RUN: '🔴'}.get(verdict, '⚪')
-    lines = ['# Memory Preflight Report', '', f'**Verdict:** {emoji} `{verdict}`', '', '## Memory State', '', f"- UMA state: `{d['uma_state']}`", f"- System used: {d['system_used_gib']} GiB", f"- System available: {d['system_available_gib']} GiB", f"- Swap used: {d['swap_used_gib']} GiB", f"- Swap detected: `{d['swap_detected']}`", f"- I/O-only mode: `{d['io_only']}`", '', '## MLX Memory', '', f"- MLX active: {d['mlx_active_mb']} MB", '', '## UMA Pressure', '', f"- Usage: {d['uma_usage_pct']}%", f"- Pressure level: `{d['pressure_level']}`", f"- Thresholds: warn={d['thresholds_warn_gib']} GiB, critical={d['thresholds_critical_gib']} GiB, emergency={d['thresholds_emergency_gib']} GiB", '', '## Recommendation', '', f"- **Action:** {d['recommended_action']}"]
-    if d['error']:
-        lines.extend(['', '## Errors', '', f"- {d['error']}"])
-    lines.extend(['', f"_Sample time: {d['sample_time_iso']}_"])
-    return '\n'.join(lines)
+    verdict = d["verdict"]
+    emoji = {
+        VERDICT_READY_FOR_ACTIVE300: "🟢",
+        VERDICT_CLOSE_APPS_OR_RESTART: "🟡",
+        VERDICT_CRITICAL_DO_NOT_RUN: "🔴",
+    }.get(verdict, "⚪")
+    lines = [
+        "# Memory Preflight Report",
+        "",
+        f"**Verdict:** {emoji} `{verdict}`",
+        "",
+        "## Memory State",
+        "",
+        f"- UMA state: `{d['uma_state']}`",
+        f"- System used: {d['system_used_gib']} GiB",
+        f"- System available: {d['system_available_gib']} GiB",
+        f"- Swap used: {d['swap_used_gib']} GiB",
+        f"- Swap detected: `{d['swap_detected']}`",
+        f"- I/O-only mode: `{d['io_only']}`",
+        "",
+        "## MLX Memory",
+        "",
+        f"- MLX active: {d['mlx_active_mb']} MB",
+        "",
+        "## UMA Pressure",
+        "",
+        f"- Usage: {d['uma_usage_pct']}%",
+        f"- Pressure level: `{d['pressure_level']}`",
+        f"- Thresholds: warn={d['thresholds_warn_gib']} GiB, critical={d['thresholds_critical_gib']} GiB, emergency={d['thresholds_emergency_gib']} GiB",
+        "",
+        "## Recommendation",
+        "",
+        f"- **Action:** {d['recommended_action']}",
+    ]
+    if d["error"]:
+        lines.extend(["", "## Errors", "", f"- {d['error']}"])
+    lines.extend(["", f"_Sample time: {d['sample_time_iso']}_"])
+    return "\n".join(lines)
+
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(prog='tools.live_memory_preflight', description='In-boundary memory preflight check. No network, no process kill, no sudo.', suggest_on_error=True, color=True)
-    parser.add_argument('--json', action='store_true', help='Output JSON (default)')
-    parser.add_argument('--md', action='store_true', help='Output Markdown instead of JSON')
+    parser = argparse.ArgumentParser(
+        prog="tools.live_memory_preflight",
+        description="In-boundary memory preflight check. No network, no process kill, no sudo.",
+        suggest_on_error=True,
+        color=True,
+    )
+    parser.add_argument("--json", action="store_true", help="Output JSON (default)")
+    parser.add_argument("--md", action="store_true", help="Output Markdown instead of JSON")
     return parser
 
-def main():
+
+def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args(sys.argv[1:])
     result = run_preflight()
@@ -173,5 +249,7 @@ def main():
     if result.verdict == VERDICT_CLOSE_APPS_OR_RESTART:
         sys.exit(1)
     sys.exit(0)
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     main()

@@ -71,8 +71,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
-// ─── IOSurface FFI Bindings (IO-4 Zero-Copy Extension) ──────────────────────
-
 /// IOSurfaceCreateMetalBuffer creates a Metal buffer that shares memory with
 /// an IOSurface. This is TRUE ZERO-COPY - no data is copied.
 ///
@@ -187,8 +185,6 @@ fn iosurface_buffer_supported() -> bool {
     false
 }
 
-// ─── Module-Level Python Imports (cached for efficiency) ───────────────────
-
 /// Cached Python modules for to_numpy() zero-copy path.
 /// Initialized lazily on first use, never recreated.
 static PYTHON_IMPORTS: LazyLock<RwLock<Option<PythonImports>>> =
@@ -277,8 +273,6 @@ fn dtype_str_to_elem_size(dtype: &str) -> Option<u64> {
     }
 }
 
-// ─── M1 8GB Memory Budget ─────────────────────────────────────────────────
-
 /// Maximum single buffer allocation (256 MB).
 pub const SHARED_BUF_MAX_SINGLE: u64 = 256 * 1024 * 1024;
 
@@ -287,8 +281,6 @@ pub const SHARED_BUF_TOTAL_BUDGET: u64 = 512 * 1024 * 1024;
 
 /// Minimum allocation size (4 KB — one page).
 const MIN_ALLOC: u64 = 4096;
-
-// ─── Global Tracker ───────────────────────────────────────────────────────
 
 static SHARED_BUF_ALLOCATED: AtomicU64 = AtomicU64::new(0);
 
@@ -305,16 +297,12 @@ fn track_free(bytes: u64) {
     SHARED_BUF_ALLOCATED.fetch_sub(bytes, Ordering::SeqCst);
 }
 
-// ─── Lazy Metal Device ────────────────────────────────────────────────────
-
 static METAL_DEVICE: LazyLock<RwLock<Option<metal::Device>>> =
     LazyLock::new(|| RwLock::new(metal::Device::system_default()));
 
 fn get_device() -> Option<metal::Device> {
     METAL_DEVICE.read().clone()
 }
-
-// ─── SharedMetalBuffer ────────────────────────────────────────────────────
 
 /// A Metal buffer with `StorageModeShared` that can be accessed from both
 /// Rust and Python (and via its raw pointer, from MLX).
@@ -381,7 +369,6 @@ impl SharedMetalBuffer {
 
         let size = std::cmp::max(size_bytes, MIN_ALLOC);
 
-        // Check global budget
         if !track_alloc(size) {
             return Err(pyo3::exceptions::PyMemoryError::new_err(format!(
                 "SharedMetalBuffer: global budget exceeded ({:.1} MB / {:.1} MB)",
@@ -416,7 +403,6 @@ impl SharedMetalBuffer {
     fn from_numpy(data: &Bound<'_, PyAny>) -> PyResult<Self> {
         let _py = data);
 
-        // Get array interface
         let arr_iface = data.call_method0("__array_interface__")?;
         let shape: Vec<usize> = arr_iface.getattr("shape")?.extract()?;
         let typestr: String = arr_iface.getattr("typestr")?.extract()?;
@@ -450,7 +436,6 @@ impl SharedMetalBuffer {
             pyo3::exceptions::PyRuntimeError::new_err("Metal device not available")
         })?;
 
-        // Get raw data pointer from numpy
         let data_ptr: usize = arr_iface
             .getattr("data")?
             .call_method0("__getitem__")?
@@ -534,7 +519,6 @@ impl SharedMetalBuffer {
             pyo3::exceptions::PyRuntimeError::new_err("Metal device not available")
         })?;
 
-        // Validate pixel format
         let bytes_per_pixel = match pixel_format {
             "BGRA" | "RGBA" | "bgra" | "rgba" => 4,
             "RGB" | "rgb" => 3,
@@ -548,7 +532,6 @@ impl SharedMetalBuffer {
             }
         };
 
-        // Validate dimensions match expected bytes
         let expected_bytes_per_row = width * bytes_per_pixel;
         if bytes_per_row < expected_bytes_per_row {
             track_free(total_bytes);
@@ -558,12 +541,6 @@ impl SharedMetalBuffer {
             )));
         }
 
-        // ─── IO-4 ZERO-COPY PATH ───────────────────────────────────────────────
-        // Try IOSurfaceCreateMetalBuffer first for TRUE ZERO-COPY.
-        // This creates a Metal buffer that SHARES IOSurface memory directly.
-        // No data is copied — both CPU and GPU access the same physical pages.
-        //
-        // Falls back to regular buffer + copy if FFI is unavailable.
         let buffer = if iosurface_ptr != 0 {
             // MODERN-28 FIX: Cast device to raw pointer using objc2-raw-macro pattern
             // metal::Device wraps an objc2 id pointer accessible via .as_raw() when
@@ -717,26 +694,22 @@ impl SharedMetalBuffer {
         // Use cached Python imports for efficiency (SB.8)
         let imports = get_python_imports(py)?;
         
-        // Create locals dict for code execution
         let globals = pyo3::types::PyDict::new(py);
         let builtins = py.import("builtins")?;
         globals.set_item("__builtins__", builtins)?;
         globals.set_item("ctypes", &imports.ctypes)?;
         globals.set_item("np", &imports.np)?;
 
-        // Create the ctypes pointer array and get buffer
         let ct_code = std::ffi::CString::new(
             format!("ct = ctypes.cast({}, ctypes.POINTER(ctypes.c_char * {})).contents", ptr, size)
         ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         py.run(&ct_code, Some(&globals), Some(&globals))?;
 
-        // Create memoryview from the ctypes array object
         let mv_code = std::ffi::CString::new("mv = memoryview(ct)").map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(e.to_string())
         })?;
         py.run(&mv_code, Some(&globals), Some(&globals))?;
 
-        // Get the memoryview object for numpy conversion
         let mv_obj = globals.get_item("mv")?;
 
         // Create numpy array from memoryview (zero-copy via PEP 3118)
@@ -893,8 +866,6 @@ impl Drop for SharedMetalBuffer {
     }
 }
 
-// ─── Module Stats ─────────────────────────────────────────────────────────
-
 #[derive(Default)]
 struct SharedBufStats {
     allocations: AtomicU64,
@@ -950,8 +921,6 @@ fn is_metal_shared_available() -> bool {
     get_device().is_some()
 }
 
-// ─── Module Registration ──────────────────────────────────────────────────
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // HashMap already imported at module level (line 54)
 
@@ -966,8 +935,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ─── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

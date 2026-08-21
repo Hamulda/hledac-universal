@@ -62,10 +62,6 @@ pub use elastic::{get_pool_metrics, PoolMetrics, PoolPhase};
 pub use io::{io_pool, io_pool_threads, resize_io_pool};
 pub use mixed::{mixed_pool, mixed_threshold};
 
-// ============================================================================
-// Unified Pool Trait
-// ============================================================================
-
 /// Unified interface for thread pools.
 ///
 /// This trait allows polymorphic pool usage and easier testing via mock pools.
@@ -81,10 +77,6 @@ pub trait ThreadPool: Send + Sync {
     /// Get pool name for logging.
     fn name(&self) -> &'static str;
 }
-
-// ============================================================================
-// Pool Kind Enum
-// ============================================================================
 
 /// Available pool kinds for unified operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,10 +108,6 @@ impl PoolKind {
         }
     }
 }
-
-// ============================================================================
-// Pool Statistics
-// ============================================================================
 
 /// Aggregated statistics from all pools.
 #[derive(Debug, Clone, Default)]

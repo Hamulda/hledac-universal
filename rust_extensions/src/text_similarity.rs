@@ -25,17 +25,9 @@ use pyo3::types::PyList;
 use rayon::prelude::*;
 use std::collections::HashSet;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const MAX_SNAPSHOTS: usize = 5000;
 const MAX_CONTENT_LEN: usize = 100_000;
 const DEFAULT_THRESHOLD: f32 = 0.8;
-
-// ---------------------------------------------------------------------------
-// Trigram Jaccard similarity
-// ---------------------------------------------------------------------------
 
 /// Compute character trigram set for a string.
 /// Returns up to max(3, s.len().saturating_sub(2)) trigrams.
@@ -69,10 +61,6 @@ fn trigram_jaccard(a: &str, b: &str) -> f32 {
         intersection as f32 / union as f32
     }
 }
-
-// ---------------------------------------------------------------------------
-// Parallel group building
-// ---------------------------------------------------------------------------
 
 /// Group snapshots by similarity threshold using parallel comparison.
 /// Returns groups of indices, each group = list of original snapshot indices.
@@ -131,7 +119,6 @@ pub fn group_similar_texts(
         return Ok(Vec::new());
     }
 
-    // Extract contents for parallel access.
     let contents: Vec<String> = items.iter().map(|(_, c)| c.clone()).collect();
 
     // Parallel group building:
@@ -275,10 +262,6 @@ impl UnionFind {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 pub fn register_functions(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
     m.add_function(pyo3::wrap_pyfunction!(group_similar_texts))?;

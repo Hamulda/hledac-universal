@@ -21,18 +21,16 @@ SRP Separation (ARCH-SRP-001):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, TypeVar
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
-from hledac.universal.brain._inference.stream_handler import StreamHandler
 from hledac.universal.brain._inference.generate import GenerationFacade
-from _core import aclose
+from hledac.universal.brain._inference.stream_handler import StreamHandler
 
 if TYPE_CHECKING:
     from typing import Any
 
 T = TypeVar("T")
-
 
 __all__ = [
     # Concrete implementations
@@ -64,7 +62,6 @@ class LLMEngine(Protocol):
                 self._prompt_builder = prompt_builder
 
             async def think(self, query: str) -> str:
-                # Build prompt externally
                 prompt = self._prompt_builder.format_chatml(
                     system_msg="You are helpful",
                     user_msg=query

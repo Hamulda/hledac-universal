@@ -16,13 +16,11 @@ These tests run as subprocesses so the actual sys.exit() exit code is
 observable — pytest process traps (SystemExit) would mask the code.
 """
 
-
 import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 HLEDAC_PARENT = "/Users/vojtechhamada/PycharmProjects/Hledac"
@@ -108,8 +106,7 @@ def test_nameerror_in_run_sprint_exits_3() -> None:
     )
     # The _MAIN_FATAL prefix is required for log-parser compatibility.
     assert "_MAIN_FATAL" in proc.stderr or "_MAIN_FATAL" in proc.stdout, (
-        f"_MAIN_FATAL prefix missing from logs\n"
-        f"stdout: {proc.stdout[-500:]}\nstderr: {proc.stderr[-500:]}"
+        f"_MAIN_FATAL prefix missing from logs\nstdout: {proc.stdout[-500:]}\nstderr: {proc.stderr[-500:]}"
     )
 
 
@@ -132,8 +129,7 @@ def test_importerror_in_run_sprint_exits_3() -> None:
     )
     proc = _run(patch_script, [])
     assert proc.returncode == 3, (
-        f"expected exit 3 (programmer error), got {proc.returncode}\n"
-        f"stderr: {proc.stderr[-500:]}"
+        f"expected exit 3 (programmer error), got {proc.returncode}\nstderr: {proc.stderr[-500:]}"
     )
 
 
@@ -150,9 +146,13 @@ def test_windup_guard_short_duration_exits_2() -> None:
     """
     proc = subprocess.run(
         [
-            PYTHON, "-m", "hledac.universal",
-            "--sprint", "exit_code_probe",
-            "--duration", "30",
+            PYTHON,
+            "-m",
+            "hledac.universal",
+            "--sprint",
+            "exit_code_probe",
+            "--duration",
+            "30",
         ],
         env=_cli_env(),
         capture_output=True,
@@ -167,8 +167,7 @@ def test_windup_guard_short_duration_exits_2() -> None:
     # F265C: also accept HARD_BLOCK (swap guard) which exits 2 before windup guard runs.
     combined = proc.stdout + proc.stderr
     assert "F221-ABORT" in combined or "windup" in combined.lower() or "HARD_BLOCK" in combined, (
-        f"windup guard diagnostic missing from logs\n"
-        f"combined: {combined[-500:]}"
+        f"windup guard diagnostic missing from logs\ncombined: {combined[-500:]}"
     )
 
 
@@ -186,10 +185,7 @@ def test_help_exits_0() -> None:
         text=True,
         timeout=30,
     )
-    assert proc.returncode == 0, (
-        f"expected exit 0 (--help), got {proc.returncode}\n"
-        f"stderr: {proc.stderr[-500:]}"
-    )
+    assert proc.returncode == 0, f"expected exit 0 (--help), got {proc.returncode}\nstderr: {proc.stderr[-500:]}"
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +215,7 @@ def test_keyboardinterrupt_exits_130() -> None:
         """
     )
     proc = _run(patch_script, [])
-    assert proc.returncode == 130, (
-        f"expected exit 130 (SIGINT), got {proc.returncode}\n"
-        f"stderr: {proc.stderr[-500:]}"
-    )
+    assert proc.returncode == 130, f"expected exit 130 (SIGINT), got {proc.returncode}\nstderr: {proc.stderr[-500:]}"
 
 
 def test_systemexit_not_swallowed_by_catchall() -> None:
@@ -248,6 +241,5 @@ def test_systemexit_not_swallowed_by_catchall() -> None:
     )
     proc = _run(patch_script, [])
     assert proc.returncode == 2, (
-        f"expected sys.exit(2) to propagate, got {proc.returncode}\n"
-        f"stderr: {proc.stderr[-500:]}"
+        f"expected sys.exit(2) to propagate, got {proc.returncode}\nstderr: {proc.stderr[-500:]}"
     )

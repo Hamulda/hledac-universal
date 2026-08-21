@@ -8,6 +8,7 @@ to save 5-10 MB per test x 21 tests = 100-200 MB on full suite.
 import asyncio
 import os
 import time
+from typing import Never
 from unittest.mock import patch
 
 import pytest
@@ -56,7 +57,7 @@ def _make_getaddrinfo_mock(mapping: dict[str, list[tuple]]):
 
 
 @pytest.mark.asyncio
-async def test_resolver_empty_input_returns_empty_dict():
+async def test_resolver_empty_input_returns_empty_dict() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     result = await r.resolve_many([])
@@ -64,7 +65,7 @@ async def test_resolver_empty_input_returns_empty_dict():
 
 
 @pytest.mark.asyncio
-async def test_resolver_dedupes_duplicate_hosts_in_input():
+async def test_resolver_dedupes_duplicate_hosts_in_input() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
@@ -82,7 +83,7 @@ async def test_resolver_dedupes_duplicate_hosts_in_input():
 
 
 @pytest.mark.asyncio
-async def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
+async def test_resolver_resolves_multiple_distinct_hosts_in_parallel() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
@@ -110,7 +111,7 @@ async def test_resolver_resolves_multiple_distinct_hosts_in_parallel():
 
 
 @pytest.mark.asyncio
-async def test_resolver_cache_hit_avoids_second_dns_call():
+async def test_resolver_cache_hit_avoids_second_dns_call() -> None:
     r = BatchDNSResolver()
     call_count = {"n": 0}
 
@@ -133,7 +134,7 @@ async def test_resolver_cache_hit_avoids_second_dns_call():
 
 
 @pytest.mark.asyncio
-async def test_resolver_lru_evicts_oldest_when_capacity_reached():
+async def test_resolver_lru_evicts_oldest_when_capacity_reached() -> None:
     r = BatchDNSResolver(max_cache=2, ttl_s=0.0)
     mock = _make_getaddrinfo_mock({f"h{i}.example": [(2, 1, 6, "", (f"10.0.0.{i}", 0))] for i in range(5)})
     with patch(
@@ -153,7 +154,7 @@ async def test_resolver_lru_evicts_oldest_when_capacity_reached():
 
 
 @pytest.mark.asyncio
-async def test_resolver_ttl_expiry_re_resolves_host():
+async def test_resolver_ttl_expiry_re_resolves_host() -> None:
     r = BatchDNSResolver(max_cache=10, ttl_s=0.05)
     call_count = {"n": 0}
 
@@ -172,7 +173,7 @@ async def test_resolver_ttl_expiry_re_resolves_host():
 
 
 @pytest.mark.asyncio
-async def test_resolver_ttl_zero_means_no_expiry():
+async def test_resolver_ttl_zero_means_no_expiry() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver(max_cache=10, ttl_s=0.0)
     call_count = {"n": 0}
@@ -195,12 +196,12 @@ async def test_resolver_ttl_zero_means_no_expiry():
 
 
 @pytest.mark.asyncio
-async def test_resolver_ipv4_literal_short_circuits():
+async def test_resolver_ipv4_literal_short_circuits() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     mock_called = {"n": False}
 
-    async def _fail_mock(host, port, **kwargs):
+    async def _fail_mock(host, port, **kwargs) -> Never:
         mock_called["n"] = True
         raise RuntimeError("DNS should not be called for literals")
 
@@ -215,7 +216,7 @@ async def test_resolver_ipv4_literal_short_circuits():
 
 
 @pytest.mark.asyncio
-async def test_resolver_ipv6_literal_short_circuits():
+async def test_resolver_ipv6_literal_short_circuits() -> None:
     """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
     r = BatchDNSResolver()
     result = await r.resolve_many(["::1"])
@@ -227,7 +228,7 @@ async def test_resolver_ipv6_literal_short_circuits():
 
 
 @pytest.mark.asyncio
-async def test_resolver_returns_partial_result_when_some_hosts_fail():
+async def test_resolver_returns_partial_result_when_some_hosts_fail() -> None:
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
         {
@@ -244,7 +245,7 @@ async def test_resolver_returns_partial_result_when_some_hosts_fail():
 
 
 @pytest.mark.asyncio
-async def test_resolver_does_not_cache_empty_dns_results():
+async def test_resolver_does_not_cache_empty_dns_results() -> None:
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock({})  # everything fails
     with patch(
@@ -260,7 +261,7 @@ async def test_resolver_does_not_cache_empty_dns_results():
 
 
 @pytest.mark.asyncio
-async def test_resolver_concurrency_cap_observed():
+async def test_resolver_concurrency_cap_observed() -> None:
     r = BatchDNSResolver(max_concurrent=2, max_cache=100, ttl_s=0.0)
     inflight = 0
     peak_inflight = 0
@@ -285,13 +286,13 @@ async def test_resolver_concurrency_cap_observed():
 # === Singleton + opt-out ===
 
 
-def test_singleton_returns_same_instance():
+def test_singleton_returns_same_instance() -> None:
     a = get_batch_dns_resolver()
     b = get_batch_dns_resolver()
     assert a is b
 
 
-def test_reset_drops_singleton():
+def test_reset_drops_singleton() -> None:
     a = get_batch_dns_resolver()
     reset_batch_dns_resolver()
     b = get_batch_dns_resolver()
@@ -299,7 +300,7 @@ def test_reset_drops_singleton():
 
 
 @pytest.mark.asyncio
-async def test_resolver_opt_out_returns_empty_dict(monkeypatch):
+async def test_resolver_opt_out_returns_empty_dict(monkeypatch) -> None:
     monkeypatch.setenv(ENV_OPT_OUT, "1")
     r = BatchDNSResolver()
     result = await r.resolve_many(["anywhere.example"])
@@ -307,7 +308,7 @@ async def test_resolver_opt_out_returns_empty_dict(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resolver_handles_empty_and_whitespace_hosts():
+async def test_resolver_handles_empty_and_whitespace_hosts() -> None:
     r = BatchDNSResolver()
     result = await r.resolve_many(["", "  ", "\t", "real.example"])
     assert "real.example" not in result or result["real.example"] == []
@@ -316,7 +317,7 @@ async def test_resolver_handles_empty_and_whitespace_hosts():
 # === Stats API ===
 
 
-def test_stats_init_at_zero():
+def test_stats_init_at_zero() -> None:
     r = BatchDNSResolver()
     s = r.stats()
     assert s == {
@@ -330,7 +331,7 @@ def test_stats_init_at_zero():
 
 
 @pytest.mark.asyncio
-async def test_stats_reset_zeros_counters_but_keeps_cache():
+async def test_stats_reset_zeros_counters_but_keeps_cache() -> None:
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
         {
@@ -350,7 +351,7 @@ async def test_stats_reset_zeros_counters_but_keeps_cache():
 
 
 @pytest.mark.asyncio
-async def test_clear_cache_drops_entries():
+async def test_clear_cache_drops_entries() -> None:
     r = BatchDNSResolver()
     mock = _make_getaddrinfo_mock(
         {
@@ -370,7 +371,7 @@ async def test_clear_cache_drops_entries():
 # === Bounds safety ===
 
 
-def test_resolver_clamps_constructor_args_to_safe_minimums():
+def test_resolver_clamps_constructor_args_to_safe_minimums() -> None:
     r = BatchDNSResolver(max_cache=0, max_concurrent=0, ttl_s=-1.0)
     assert r._cache_max == 1
     assert r._semaphore_max == 1
@@ -378,7 +379,7 @@ def test_resolver_clamps_constructor_args_to_safe_minimums():
 
 
 @pytest.mark.asyncio
-async def test_resolver_handles_large_batch_in_bounded_time():
+async def test_resolver_handles_large_batch_in_bounded_time() -> None:
     r = BatchDNSResolver(max_cache=10_000, max_concurrent=100, ttl_s=60.0)
     mapping = {f"h{i}.example": [(2, 1, 6, "", (f"10.0.{i // 256}.{i % 256}", 0))] for i in range(500)}
     mock = _make_getaddrinfo_mock(mapping)

@@ -28,6 +28,7 @@ M1 8GB: all data is tuples (immutable) — no RAM growth under load.
 
 # Deprecation warning
 import warnings
+
 warnings.warn(
     "layers.ua_rotator is deprecated and scheduled for integration into layers.communication or layers.stealth.",
     DeprecationWarning,
@@ -40,49 +41,79 @@ import threading
 from typing import Literal
 
 from hledac.universal._core.locks import LockCategory, register_lock
-from _core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
 __all__ = [
-    'get_random_ua',
-    'get_ua_for_profile',
-    'get_random_accept_language',
-    'get_random_accept_encoding',
-    'build_randomized_headers',
-    'UARotator',
+    "get_random_ua",
+    "get_ua_for_profile",
+    "get_random_accept_language",
+    "get_random_accept_encoding",
+    "build_randomized_headers",
+    "UARotator",
 ]
 
-# --------------------------------------------------------------------------------
-# Canonical UA pool — must match curl_cffi impersonate targets
-# --------------------------------------------------------------------------------
-# curl_cffi impersonate targets (from F263/F265B):
-#   chrome120-136, safari15_5-safari18_0, firefox109-136, edge99-edge101, okhttp4
-# Each tuple: (ua_substring_for_detection, full_ua_string)
-# UA must match the TLS fingerprint family — Chrome UA + Safari impersonate = detectable.
-
-_ChromeUA = tuple[str, str]   # (version_substring, full_ua)
+_ChromeUA = tuple[str, str]  # (version_substring, full_ua)
 _FirefoxUA = tuple[str, str]
 _SafariUA = tuple[str, str]
 _EdgeUA = tuple[str, str]
 
 # Chrome 124-136 stable (Windows/macOS/Linux/Android)
 _CHROME_UAS: tuple[_ChromeUA, ...] = (
-    ("Chrome/136.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"),
-    ("Chrome/136.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"),
-    ("Chrome/136.0.0.0", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"),
-    ("Chrome/135.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"),
-    ("Chrome/135.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"),
-    ("Chrome/134.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
-    ("Chrome/134.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
-    ("Chrome/133.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"),
-    ("Chrome/133.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"),
-    ("Chrome/124.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    ("Chrome/124.0.0.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    ("Chrome/124.0.0.0", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    ("Chrome/120.0.0.0", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"),
-    )
+    (
+        "Chrome/136.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/136.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/136.0.0.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/135.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/135.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/134.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/134.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/133.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/133.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/124.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/124.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/124.0.0.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ),
+    (
+        "Chrome/120.0.0.0",
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    ),
+)
 
 # Firefox 133-136 ESR (Windows/macOS/Linux)
 _FIREFOX_UAS: tuple[_FirefoxUA, ...] = (
@@ -94,24 +125,51 @@ _FIREFOX_UAS: tuple[_FirefoxUA, ...] = (
     ("Firefox/133.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"),
     ("Firefox/133.0", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"),
     ("Firefox/133.0", "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0"),
-    )
+)
 
 # Safari 17-18 (macOS Sonoma 14.4 / Sequoia 15 / iOS 17-18)
 _SAFARI_UAS: tuple[_SafariUA, ...] = (
-    ("Version/18.0 Safari/605.1.15", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"),
-    ("Version/17.4 Safari/605.1.15", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"),
-    ("Version/17.4 Safari/604.1", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
-    ("Version/17.4 Safari/604.1", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"),
-    )
+    (
+        "Version/18.0 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    ),
+    (
+        "Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    ),
+    (
+        "Version/17.4 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    ),
+    (
+        "Version/17.4 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    ),
+)
 
 # Edge 124-136 (Windows only — Edge is Chromium-based)
 _EDGE_UAS: tuple[_EdgeUA, ...] = (
-    ("Edg/136.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0"),
-    ("Edg/135.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"),
-    ("Edg/134.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0"),
-    ("Edg/133.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"),
-    ("Edg/124.0.0.0", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0"),
-    )
+    (
+        "Edg/136.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
+    ),
+    (
+        "Edg/135.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0",
+    ),
+    (
+        "Edg/134.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0",
+    ),
+    (
+        "Edg/133.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0",
+    ),
+    (
+        "Edg/124.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+    ),
+)
 
 # All pools flat — for _RNG.choice across all browsers
 _ALL_UAS: tuple[tuple[str, str], ...] = _CHROME_UAS + _FIREFOX_UAS + _SAFARI_UAS + _EDGE_UAS
@@ -127,7 +185,7 @@ _CURL_CFFI_TO_FAMILY: dict[str, tuple[tuple[tuple[str, str], ...], str]] = {
     "chrome131": (_CHROME_UAS, "Chrome/131"),
     "chrome124": (_CHROME_UAS, "Chrome/124"),
     "chrome120": (_CHROME_UAS, "Chrome/120"),
-    "chrome110": (_CHROME_UAS, "Chrome/120"),   # closest available
+    "chrome110": (_CHROME_UAS, "Chrome/120"),  # closest available
     "chrome99_android": (_CHROME_UAS, "Chrome/120"),  # Android UA maps to Chrome pool
     # Firefox family
     "firefox136": (_FIREFOX_UAS, "Firefox/136"),
@@ -147,9 +205,6 @@ _CURL_CFFI_TO_FAMILY: dict[str, tuple[tuple[tuple[str, str], ...], str]] = {
     "okhttp4": (_CHROME_UAS, "Chrome/120"),
 }
 
-# --------------------------------------------------------------------------------
-# Accept-Language pool (F229)
-# --------------------------------------------------------------------------------
 _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = (
     "en-US,en;q=0.9",
     "en-GB,en;q=0.8",
@@ -162,20 +217,13 @@ _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = (
     "fr-FR,fr;q=0.9,en;q=0.8",
     "ja-JP,ja;q=0.9,en;q=0.8",
     "zh-CN,zh;q=0.9,en;q=0.8",
-    )
+)
 
-# --------------------------------------------------------------------------------
-# Accept-Encoding
-# --------------------------------------------------------------------------------
 _ACCEPT_ENCODING_POOL: tuple[str, ...] = (
     "gzip, deflate, br",
     "gzip, deflate",
     "deflate, gzip, br",
-    )
-
-# --------------------------------------------------------------------------------
-# Module-level thread-safe helpers
-# --------------------------------------------------------------------------------
+)
 
 
 @register_lock(LockCategory.CACHE)
@@ -238,17 +286,13 @@ def get_random_accept_encoding() -> str:
         return _RNG.choice(_ACCEPT_ENCODING_POOL)
 
 
-# --------------------------------------------------------------------------------
-# Header builder
-# --------------------------------------------------------------------------------
-
 _OS_CHOICES = ('"Windows"', '"macOS"', '"Linux"', '"Android"', '"iOS"')
 _MOBILE_CHOICES = ("?0", "?1")
 _CHROME_TOKEN_CHOICES = (
     '"Chromium";v="136"',
     '"Google Chrome";v="136"',
     '"Not-A.Brand";v="99"',
-    )
+)
 
 
 def build_randomized_headers(
@@ -296,10 +340,6 @@ def build_randomized_headers(
         "Connection": "keep-alive",
     }
 
-
-# --------------------------------------------------------------------------------
-# Stateful UARotator class — for callers needing round-robin or filtering
-# --------------------------------------------------------------------------------
 
 class UARotator:
     """Stateful UA rotator with round-robin and platform/browser filtering.
@@ -372,12 +412,13 @@ class UARotator:
         """Create a rotator for a specific OS platform."""
         pf = platform.lower()
         filtered = [
-            ua for ua in _ALL_UAS
-            if (pf == "windows" and "Windows NT" in ua[1]) or
-               (pf == "macos" and "Macintosh" in ua[1] and "OS X" in ua[1]) or
-               (pf == "linux" and "X11" in ua[1] and "Linux" in ua[1]) or
-               (pf == "android" and "Android" in ua[1]) or
-               (pf == "ios" and ("iPhone" in ua[1] or "iPad" in ua[1]))
+            ua
+            for ua in _ALL_UAS
+            if (pf == "windows" and "Windows NT" in ua[1])
+            or (pf == "macos" and "Macintosh" in ua[1] and "OS X" in ua[1])
+            or (pf == "linux" and "X11" in ua[1] and "Linux" in ua[1])
+            or (pf == "android" and "Android" in ua[1])
+            or (pf == "ios" and ("iPhone" in ua[1] or "iPad" in ua[1]))
         ]
         return cls(pool=tuple(filtered) if filtered else _ALL_UAS)
 

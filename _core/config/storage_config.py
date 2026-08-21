@@ -20,15 +20,12 @@ Invariant tests (TestSprintISSUE033):
   INV: storage_config_msgspec_encodes — encodes/decodes via msgspec without error
 """
 
-
 from __future__ import annotations
 
 import os
 from typing import ClassVar
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core._util import aclose
 
 
 class StorageConfig(Struct, frozen=True, kw_only=True):
@@ -165,7 +162,7 @@ class StorageConfig(Struct, frozen=True, kw_only=True):
             duckdb_store_path=os.environ.get("HLEDAC_DUCKDB_STORE", ""),
             lmdb_store_path=os.environ.get("HLEDAC_LMDB_STORE", ""),
             lancedb_store_path=os.environ.get("HLEDAC_LANCEDB_STORE", ""),
-    )
+        )
 
     @classmethod
     def _detect_storage_mode(cls) -> str:
@@ -181,7 +178,7 @@ class StorageConfig(Struct, frozen=True, kw_only=True):
         """Parse env var as int, return default on failure."""
         try:
             return int(os.environ.get(name, str(default)))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return default
 
     def is_tmp_acceptable(self) -> bool:
@@ -199,10 +196,6 @@ class StorageConfig(Struct, frozen=True, kw_only=True):
         """Return True if RAM disk usage is acceptable."""
         return self.storage_mode in ("auto", "ramdisk")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Module-level singleton (lazy — constructed on first access)
-# ─────────────────────────────────────────────────────────────────────────────
 
 _storage_config: StorageConfig | None = None
 

@@ -1,15 +1,22 @@
-
-
 # Sprint F232A: Narrative builder stubs — TEMPORARY until component is restored
 from typing import Any
-from _core import aclose
 
 
 def _build_operator_brief(
-    pvs: Any, branch_value: Any, sprint_trend: Any, source_leaderboard: Any,
-    seeds_count: int, correlation: Any, runtime_truth: Any, feed_verdict: Any,
-    public_verdict: Any, signal_path: Any, hypothesis_pack: Any,
-    canonical_run_summary: Any, sprint_verdict: Any, synthesis_outcome_payload: Any
+    pvs: Any,
+    branch_value: Any,
+    sprint_trend: Any,
+    source_leaderboard: Any,
+    seeds_count: int,
+    correlation: Any,
+    runtime_truth: Any,
+    feed_verdict: Any,
+    public_verdict: Any,
+    signal_path: Any,
+    hypothesis_pack: Any,
+    canonical_run_summary: Any,
+    sprint_verdict: Any,
+    synthesis_outcome_payload: Any,
 ) -> dict:
     if not pvs:
         return {"operator_brief": "stub"}
@@ -49,8 +56,13 @@ def _derive_what_not_to_do(pvs: Any) -> list:
 
 
 def _derive_why_this_run_matters(
-    runtime_truth: Any, signal_path: Any, hypothesis_pack: Any,
-    canonical_run_summary: Any, sprint_verdict: Any, pvs: Any, correlation: Any
+    runtime_truth: Any,
+    signal_path: Any,
+    hypothesis_pack: Any,
+    canonical_run_summary: Any,
+    sprint_verdict: Any,
+    pvs: Any,
+    correlation: Any,
 ) -> str:
     if not pvs:
         return "Standard operational run"
@@ -68,15 +80,12 @@ def _get_branch_value(branch: Any) -> float:
     return 0.0
 
 
-def _derive_branch_truth(
-    feed_verdict: Any, public_verdict: Any, branch_value: Any
-) -> str:
+def _derive_branch_truth(feed_verdict: Any, public_verdict: Any, branch_value: Any) -> str:
     return "branch_truth: stub"
 
 
 def _derive_best_first_move(
-    runtime_truth: Any, signal_path: Any, canonical_run_summary: Any,
-    sprint_verdict: Any, pvs: Any, correlation: Any
+    runtime_truth: Any, signal_path: Any, canonical_run_summary: Any, sprint_verdict: Any, pvs: Any, correlation: Any
 ) -> str:
     if not pvs:
         return "Continue monitoring"

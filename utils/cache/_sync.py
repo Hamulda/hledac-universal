@@ -34,15 +34,14 @@ Usage
     # TTLCache for time-based expiration:
     cache = TTLCache(max_size=100, ttl=3600)  # 1 hour TTL
 """
+
 from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
-from typing import Generic, TypeVar, cast
+from typing import TypeVar
 
 from ._base import CacheMetrics, _OrderTracker
-from _core import aclose
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -50,7 +49,7 @@ V = TypeVar("V")
 __all__ = ["LRUCache", "TTLCache", "SlidingWindowKVCache"]
 
 
-class LRUCache(Generic[K, V]):
+class LRUCache[K, V]:
     """
     LRU Cache with O(1) operations using dict + list hybrid.
 
@@ -315,9 +314,7 @@ class TTLCache(LRUCache[K, V]):
         if self._ttl <= 0:
             return 0
         now = time.monotonic()
-        expired = [
-            k for k, ts in list(self._timestamps.items()) if now - ts > self._ttl
-        ]
+        expired = [k for k, ts in list(self._timestamps.items()) if now - ts > self._ttl]
         count = 0
         for key in expired:
             if key in self._data:
@@ -349,7 +346,7 @@ class TTLCache(LRUCache[K, V]):
 # ── Sliding Window KV Cache ───────────────────────────────────────────────────
 
 
-class SlidingWindowKVCache(Generic[K, V]):
+class SlidingWindowKVCache[K, V]:
     """
     F-06: Sliding window LRU cache for KV cache pools.
 
@@ -442,7 +439,7 @@ class SlidingWindowKVCache(Generic[K, V]):
         self._last_decay = now
         if intervals < 1:
             intervals = 1
-        factor = self._decay_base ** intervals
+        factor = self._decay_base**intervals
         for key in list(self._tokens.keys()):
             self._tokens[key] *= factor
 
@@ -496,10 +493,7 @@ class SlidingWindowKVCache(Generic[K, V]):
         return len(self._data)
 
     def __repr__(self) -> str:
-        return (
-            f"SlidingWindowKVCache(max_size={self._max_size}, "
-            f"window_tokens={self._window_tokens}, len={len(self)})"
-    )
+        return f"SlidingWindowKVCache(max_size={self._max_size}, window_tokens={self._window_tokens}, len={len(self)})"
 
     # ── LRU-specific operations ────────────────────────────────────────
 

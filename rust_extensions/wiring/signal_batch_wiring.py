@@ -32,10 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_signal_batch
 
-# Create singleton instance
 _signal_batch = get_signal_batch()
 
 
@@ -105,10 +103,7 @@ def batch_quality_score(
         List of (quality_signal, value_tier, waste_category, structural_quality,
                  is_fp, skip_reason) tuples per page.
     """
-    return _signal_batch.batch_quality_score(
-        text_lens, texts, fetch_errors, failure_stages
-    )
-
+    return _signal_batch.batch_quality_score(text_lens, texts, fetch_errors, failure_stages)
 
 
 def batch_fallback_decide(
@@ -137,7 +132,6 @@ def batch_fallback_decide(
     return _signal_batch.batch_fallback_decide(decisions)
 
 
-# Check availability at import time for logging
 if _signal_batch.available:
     logger.info("[SignalBatch] Rust signal_batch.rs integration: ENABLED")
 else:

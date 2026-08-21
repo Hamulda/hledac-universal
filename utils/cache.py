@@ -2,11 +2,6 @@
 PyCacheDict — Bounded TTL LRU cache replacing functools.lru_cache
 =================================================================
 
-
-
-
-
-
 M1 8GB safe: bounded OrderedDict with TTL eviction.
 Thread-safe via threading.RLock (reentrant — safe from signal handlers).
 
@@ -321,45 +316,13 @@ class PyCacheDict[K, V]:
                     f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s}, "
                     f"size={len(self._data)}, hits={self._hits}, misses={self._misses}, "
                     f"evictions={self._evictions}, expirations={self._expirations})"
-    )
+                )
         except Exception:
             return f"PyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# AsyncPyCacheDict — Async-safe bounded TTL LRU cache
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# ISSUE-13: async variant of PyCacheDict for async call sites.
-# Uses lazy asyncio.Lock() pattern — critical on macOS where Lock() at module
-# import time fails because there is no event loop in the importing thread.
-#
-# Design choices:
-#   • maxsize / ttl_s — identical semantics to PyCacheDict
-#   • asyncio.Lock via _get_lock() lazy helper — NEVER asyncio.Lock() at import
-#   • all async methods: get, set, touch, clear, purge_expired
-#   • __contains__ and stats are sync (they don't need the lock for reads)
-#   • fail-safe: any error returns None / False / empty list, never raises
-#   • Optional WeakValueDictionary backing for numpy array / embedding values
-#     (Python 3.14: values auto-GC'd when only WVD holds them)
-#
-# Usage:
-#     cache = AsyncPyCacheDict(maxsize=4096, ttl_s=300)
-#     val = await cache.get("key")        # returns None on miss/expired
-#     await cache.set("key", value)        # True on success
-#     await cache.touch("key")             # True if key existed
-#     await cache.clear()                  # True
-#     await cache.purge_expired()          # returns count purged
-#     # Optional: WVD-backed for numpy / embedding values
-#     cache = AsyncPyCacheDict(weak_values=True)
-#
-# M1 8GB: same memory bounds as PyCacheDict — values are Python objects held
-# in the OrderedDict; WeakValueDictionary only affects GC timing, not allocation.
-
 import asyncio
 import weakref
-from collections import OrderedDict
-from _core import aclose
 
 # K and V are already defined at module level (lines 26-27) for PyCacheDict.
 # AsyncPyCacheDict reuses the same TypeVars — no redefinition needed.
@@ -412,9 +375,7 @@ class AsyncPyCacheDict[K, V]:
         self._data: OrderedDict[K, tuple[V, float]] = OrderedDict()
         # _wvd_ref: secondary weak reference for GC assist (numpy / embeddings)
         # Always a WVD instance when weak_values=True, otherwise None
-        self._wvd_ref: weakref.WeakValueDictionary[K, V] | None = (
-            weakref.WeakValueDictionary() if weak_values else None
-    )
+        self._wvd_ref: weakref.WeakValueDictionary[K, V] | None = weakref.WeakValueDictionary() if weak_values else None
         # Lazy lock — NEVER asyncio.Lock() at import time (macOS crash vector)
         self._lock: asyncio.Lock | None = None
         # Stats
@@ -578,9 +539,7 @@ class AsyncPyCacheDict[K, V]:
             lock = await self._get_lock()
             async with lock:
                 now = time.monotonic()
-                expired: list[K] = [
-                    k for k, (_, ts) in self._data.items() if now - ts > self._ttl_s
-                ]
+                expired: list[K] = [k for k, (_, ts) in self._data.items() if now - ts > self._ttl_s]
                 for k in expired:
                     del self._data[k]
                     self._wvd_delete(k)
@@ -641,34 +600,9 @@ class AsyncPyCacheDict[K, V]:
                 f"size={len(self._data)}, hits={self._hits}, misses={self._misses}, "
                 f"evictions={self._evictions}, expirations={self._expirations}, "
                 f"weak_values={self._weak_values})"
-    )
+            )
         except Exception:
             return f"AsyncPyCacheDict(maxsize={self._maxsize}, ttl_s={self._ttl_s})"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BoundedLoRACache — ISSUE-111 fix: bounded OrderedDict for LoRA adapter cache
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Root cause: _lora_cache was an unbounded OrderedDict despite the comment
-# saying "max 2". LoRA adapters are 50-200 MB Metal SRAM each; without a hard
-# cap, repeated adapter switches leak memory indefinitely.
-#
-# Design choices:
-#   • maxsize=2  — hard cap matching the original comment intent (M1 8GB safe)
-#   • No TTL     — LoRA adapters are not time-sensitive; TTL adds only complexity
-#   • LRU order  — move_to_end() on access + insert keeps most-recently-used alive
-#   • Thread-safe via threading.Lock — serialize cache mutations across threads
-#   • fail-safe  — any error returns None / False, never raises
-#
-# Usage:
-#     cache = BoundedLoRACache(maxsize=2)
-#     cache.put("path/to/adapter", (lora_model, lora_tokenizer))
-#     result = cache.get("path/to/adapter")   # (lora_model, lora_tokenizer) | None
-#     cache.evict_oldest()                    # returns evicted (key, value) or None
-#     cache.clear()
-#
-# Memory bound: maxsize × ~200 MB ≈ 400 MB worst-case (bounded, M1 8GB safe)
 
 
 class BoundedLoRACache:
@@ -810,36 +744,9 @@ class BoundedLoRACache:
                 f"BoundedLoRACache(maxsize={self._maxsize}, "
                 f"size={len(self._cache)}, hits={self._hits}, "
                 f"misses={self._misses}, evictions={self._evictions})"
-    )
+            )
         except Exception:
             return f"BoundedLoRACache(maxsize={self._maxsize})"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GenerationalCache — 3-generation dict LRU with age-based eviction
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Memory management upgrade (ISSUE-ZOOMOUT 2026-07-16):
-#   • 3 generations: gen0 (youngest) → gen1 → gen2 (oldest)
-#   • Each generation is a regular dict — values are held strongly.
-#     Use refcount_check=True to detect orphaned entries (refcount≤baseline)
-#     and evict them before age-based eviction kicks in.
-#   • New entries land in gen0; when gen0 fills its maxsize, the oldest
-#     25% is promoted to gen1; gen1 → gen2 follows the same rule
-#   • Eviction policy: gen2 (oldest) evicted first, then gen1, then gen0
-#   • Optional refcount threshold: entries with refcount ≤ baseline can be
-#     force-evicted before age-based eviction kicks in
-#
-# M1 8GB: refcount_check=True detects numpy array / embedding values that
-# are only held by the cache (refcount=1) and evicts them before memory
-# pressure events, preventing the allocator from hitting OOM.
-#
-# Usage:
-#     cache = GenerationalCache(maxsize_per_gen=1024, refcount_check=True)
-#     cache.set("key", heavy_numpy_array)
-#     val = cache.get("key")           # returns None on miss
-#     cache.promote("key")             # move to next older generation
-#     cache.evict_low_refcount()       # force-evict orphaned entries
 
 
 class GenerationalCache[K, V]:
@@ -907,6 +814,7 @@ class GenerationalCache[K, V]:
         """Return sys.getrefcount for an entry in the given generation."""
         try:
             import sys
+
             val = gen.get(key)
             if val is None:
                 return 0
@@ -954,7 +862,7 @@ class GenerationalCache[K, V]:
                     del gen[key]
                     self._evictions += 1
                     evicted += 1
-                except (StopIteration, KeyError):
+                except StopIteration, KeyError:
                     break
         except Exception:  # noqa: BLE001
             pass
@@ -1037,7 +945,6 @@ class GenerationalCache[K, V]:
         try:
             with self._lock:
                 if key in self._gen0 or key in self._gen1 or key in self._gen2:
-                    # Update existing — remove from all gens first
                     for gen in (self._gen0, self._gen1, self._gen2):
                         if key in gen:
                             del gen[key]
@@ -1067,7 +974,6 @@ class GenerationalCache[K, V]:
         try:
             with self._lock:
                 for key, value in batch.items():
-                    # Remove existing from any gen
                     for gen in (self._gen0, self._gen1, self._gen2):
                         if key in gen:
                             del gen[key]
@@ -1127,7 +1033,7 @@ class GenerationalCache[K, V]:
                     if evicted >= max_evict:
                         break
                     orphaned = [k for k in gen.keys() if self._is_orphaned(k, gen)]
-                    for key in orphaned[:max_evict - evicted]:
+                    for key in orphaned[: max_evict - evicted]:
                         if key in gen:
                             try:
                                 del gen[key]
@@ -1182,8 +1088,16 @@ class GenerationalCache[K, V]:
                     "total": len(self),
                 }
         except Exception:
-            return {"hits": 0, "misses": 0, "evictions": 0, "promotions": 0,
-                    "gen0_size": 0, "gen1_size": 0, "gen2_size": 0, "total": 0}
+            return {
+                "hits": 0,
+                "misses": 0,
+                "evictions": 0,
+                "promotions": 0,
+                "gen0_size": 0,
+                "gen1_size": 0,
+                "gen2_size": 0,
+                "total": 0,
+            }
 
     def __repr__(self) -> str:
         try:
@@ -1193,45 +1107,9 @@ class GenerationalCache[K, V]:
                     f"gen0={len(self._gen0)}, gen1={len(self._gen1)}, gen2={len(self._gen2)}, "
                     f"hits={self._hits}, misses={self._misses}, "
                     f"evictions={self._evictions}, promotions={self._promotions})"
-    )
+                )
         except Exception:
             return f"GenerationalCache(maxsize={self._maxsize})"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RefcountEvictionCache — sys.getrefcount-based eviction for embedder sessions
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Memory management upgrade (ISSUE-ZOOMOUT 2026-07-16):
-#   Embedder sessions (MLXEmbeddingManager) hold Metal buffers and large numpy
-#   arrays. The standard LRU eviction doesn't account for entries that have
-#   been abandoned by callers but still occupy cache slots.
-#
-#   sys.getrefcount(obj) returns the number of references to an object.
-#   An entry only held by the cache has refcount ≈ 1 (the cache dict ref).
-#   An entry with external references (still in use by async tasks, etc.)
-#   has refcount ≥ 2.
-#
-#   This cache uses refcount as the PRIMARY eviction signal:
-#     1. Scan all entries
-#     2. Entries with refcount ≤ baseline are "orphaned" → evicted first
-#     3. Then apply LRU eviction to remaining entries
-#
-#   Secondary signal: generational age. Entries that survive N cycles in
-#   gen0 are promoted to gen1, then gen2. This provides age-based
-#   eviction as a fallback when refcount signals are noisy.
-#
-# Usage:
-#     sessions = RefcountEvictionCache(maxsize=16, name="embedder_sessions")
-#     sessions.set("session_id", embedder_session_object)
-#     # On memory pressure:
-#     sessions.evict_orphaned()   # kick out abandoned sessions
-#     sessions.evict_gen2()       # then age-based eviction
-#     val = sessions.get("session_id")
-#
-# M1 8GB: embedder sessions are 50-200MB each (Metal buffers).
-# A 16-slot cache = 800MB-3.2GB. Refcount eviction prevents these
-# from lingering after their callers have dropped references.
 
 
 class RefcountEvictionCache[K, V]:
@@ -1305,6 +1183,7 @@ class RefcountEvictionCache[K, V]:
         """Get refcount for an entry. Returns 0 if not found."""
         try:
             import sys
+
             val = gen.get(key)
             if val is None:
                 return 0
@@ -1351,14 +1230,14 @@ class RefcountEvictionCache[K, V]:
                 self._evict_lru_from(self._gen2, max(1, self._maxsize // 4))
             if len(self._gen1) >= self._maxsize:
                 # Promote oldest 25% of gen1 to gen2
-                keys = list(self._gen1.keys())[:max(1, len(self._gen1) // 4)]
+                keys = list(self._gen1.keys())[: max(1, len(self._gen1) // 4)]
                 for k in keys:
                     v = self._gen1.pop(k, None)
                     if v is not None and len(self._gen2) < self._maxsize:
                         self._gen2[k] = v
             if len(self._gen0) >= self._maxsize and len(self._gen1) > 0:
                 # Promote oldest 25% of gen0 to gen1
-                keys = list(self._gen0.keys())[:max(1, len(self._gen0) // 4)]
+                keys = list(self._gen0.keys())[: max(1, len(self._gen0) // 4)]
                 for k in keys:
                     v = self._gen0.pop(k, None)
                     if v is not None and len(self._gen1) < self._maxsize:
@@ -1423,7 +1302,6 @@ class RefcountEvictionCache[K, V]:
         try:
             with self._lock:
                 for key, value in batch.items():
-                    # Remove existing from any gen
                     for gen in (self._gen0, self._gen1, self._gen2):
                         if key in gen:
                             del gen[key]
@@ -1493,8 +1371,7 @@ class RefcountEvictionCache[K, V]:
             with self._lock:
                 all_entries = self._scan_refcounts()
                 # Sort by refcount ascending (most orphaned first), then by generation
-                orphaned = [(k, rc, gen) for k, (rc, gen) in all_entries.items()
-                            if self._is_orphaned(k, gen)]
+                orphaned = [(k, rc, gen) for k, (rc, gen) in all_entries.items() if self._is_orphaned(k, gen)]
                 orphaned.sort(key=lambda x: (x[1], 0 if x[2] is self._gen0 else 1 if x[2] is self._gen1 else 2))
                 for key, _, gen in orphaned[:max_evict]:
                     if key in gen:
@@ -1559,9 +1436,12 @@ class RefcountEvictionCache[K, V]:
         try:
             with self._lock:
                 orphaned_count = sum(
-                    1 for k, (_rc, _) in self._scan_refcounts().items()
-                    if self._is_orphaned(k, self._gen0 if k in self._gen0 else self._gen1 if k in self._gen1 else self._gen2)
-    )
+                    1
+                    for k, (_rc, _) in self._scan_refcounts().items()
+                    if self._is_orphaned(
+                        k, self._gen0 if k in self._gen0 else self._gen1 if k in self._gen1 else self._gen2
+                    )
+                )
                 return {
                     "name": self._name,
                     "hits": self._hits,
@@ -1576,10 +1456,19 @@ class RefcountEvictionCache[K, V]:
                     "refcount_baseline": self._refcount_baseline,
                 }
         except Exception:
-            return {"name": self._name, "hits": 0, "misses": 0, "evictions": 0,
-                    "evict_orphaned_total": 0, "gen0_size": 0, "gen1_size": 0,
-                    "gen2_size": 0, "total": 0, "orphaned_current": 0,
-                    "refcount_baseline": self._refcount_baseline}
+            return {
+                "name": self._name,
+                "hits": 0,
+                "misses": 0,
+                "evictions": 0,
+                "evict_orphaned_total": 0,
+                "gen0_size": 0,
+                "gen1_size": 0,
+                "gen2_size": 0,
+                "total": 0,
+                "orphaned_current": 0,
+                "refcount_baseline": self._refcount_baseline,
+            }
 
     def __repr__(self) -> str:
         try:
@@ -1590,6 +1479,6 @@ class RefcountEvictionCache[K, V]:
                     f"gen0={len(self._gen0)}, gen1={len(self._gen1)}, gen2={len(self._gen2)}, "
                     f"hits={self._hits}, miss={self._misses}, "
                     f"evict_orphaned={self._evict_orphaned_total})"
-    )
+                )
         except Exception:
             return f"RefcountEvictionCache(name={self._name!r}, maxsize={self._maxsize})"

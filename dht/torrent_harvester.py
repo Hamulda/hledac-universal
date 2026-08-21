@@ -23,23 +23,20 @@ Architecture (M1 8GB-safe):
 """
 
 import asyncio
-import hashlib
 import logging
 import os
 import time
 from typing import TYPE_CHECKING
-from collections import OrderedDict
+
 from cachetools import TTLCache
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
 from hledac.universal.utils.source_types import SourceType
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.dht.metadata_fetcher import (
         TorrentInfo,
-        TorrentMetadataFetcher,
     )
 
 logger = logging.getLogger(__name__)
@@ -53,9 +50,7 @@ METADATA_CACHE_MAXSIZE: int = 1000
 METADATA_CACHE_TTL: int = 86400  # 24h
 
 # Gate: renamed from HLEDAC_ENABLE_DHT_LEAK_HARVEST for clarity
-_DHT_HARVEST_ENABLED: bool = os.getenv(
-    "HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0"
-).lower() in ("1", "true", "yes", "on")
+_DHT_HARVEST_ENABLED: bool = os.getenv("HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0").lower() in ("1", "true", "yes", "on")
 
 # Shared metadata cache — survives across harvest calls
 _metadata_cache: TTLCache = TTLCache(maxsize=METADATA_CACHE_MAXSIZE, ttl=METADATA_CACHE_TTL)
@@ -86,12 +81,14 @@ async def harvest_torrent_metadata(
     # Memory governor check
     try:
         from hledac.universal._core.protocols import get_governor
+
         governor = get_governor()
         decision = await governor.evaluate()
         if decision.uma_state in ("critical", "emergency"):
             logger.debug(
-                "Torrent harvest skipped: memory %s", decision.uma_state,
-    )
+                "Torrent harvest skipped: memory %s",
+                decision.uma_state,
+            )
             return []
     except Exception:  # noqa: BLE001
         pass
@@ -103,7 +100,8 @@ async def harvest_torrent_metadata(
     unique_hashes = list(dict.fromkeys(info_hashes))[:MAX_INFO_HASHES_PER_HARVEST]
     logger.info(
         "Torrent harvest: %d unique info_hashes (capped from %d)",
-        len(unique_hashes), len(info_hashes),
+        len(unique_hashes),
+        len(info_hashes),
     )
 
     # Lazy import to avoid circular deps at module level
@@ -116,7 +114,6 @@ async def harvest_torrent_metadata(
         """Fetch metadata for one info_hash and extract findings."""
         ih_key = info_hash_hex.strip()
 
-        # Check cache first
         if ih_key in _metadata_cache:
             cached = _metadata_cache[ih_key]
             if cached is not None:
@@ -141,7 +138,7 @@ async def harvest_torrent_metadata(
         try:
             async with asyncio.timeout(METADATA_FETCH_TIMEOUT):
                 metadata = await fetcher.fetch_metadata(ih_bytes, peers)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("Metadata fetch timeout: %s", info_hash_hex[:12])
             _metadata_cache[info_hash_hex] = None
             return []
@@ -155,8 +152,10 @@ async def harvest_torrent_metadata(
             return []
 
         result_findings = _metadata_to_findings(
-            metadata, info_hash_hex, keyword,
-    )
+            metadata,
+            info_hash_hex,
+            keyword,
+        )
         _metadata_cache[info_hash_hex] = {
             "findings": result_findings,
             "ts": time.time(),
@@ -181,13 +180,15 @@ async def harvest_torrent_metadata(
     if len(all_findings) > MAX_COMPOUND_FINDINGS:
         logger.warning(
             "Torrent harvest capped: %d findings -> %d (max)",
-            len(all_findings), MAX_COMPOUND_FINDINGS,
-    )
+            len(all_findings),
+            MAX_COMPOUND_FINDINGS,
+        )
         all_findings = all_findings[:MAX_COMPOUND_FINDINGS]
 
     logger.info(
         "Torrent harvest complete: %d findings from %d info_hashes",
-        len(all_findings), len(unique_hashes),
+        len(all_findings),
+        len(unique_hashes),
     )
     return all_findings
 
@@ -204,12 +205,12 @@ async def _get_peers_for_hash(info_hash_hex: str) -> list[tuple[str, int]]:
         List of (ip, port) tuples, empty on failure.
     """
     try:
+        from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.dht.kademlia_node import (
             BOOTSTRAP_PEERS,
-            KademliaNode,
             DHT_REAL_UDP,
-    )
-        from hledac.universal._core.resource_governor import ResourceGovernor
+            KademliaNode,
+        )
 
         if not DHT_REAL_UDP:
             return []
@@ -219,7 +220,7 @@ async def _get_peers_for_hash(info_hash_hex: str) -> list[tuple[str, int]]:
             node_id=f"harvest-{info_hash_hex[:8]}",
             governor=governor,
             bootstrap_nodes=BOOTSTRAP_PEERS,
-    )
+        )
         try:
             await node.start_udp()
             if node._bep5_protocol is not None:
@@ -243,7 +244,7 @@ def _fallback_peers() -> list[tuple[str, int]]:
 
 
 def _metadata_to_findings(
-    metadata: "TorrentInfo",
+    metadata: TorrentInfo,
     info_hash_hex: str,
     keyword: str,
 ) -> list[CanonicalFinding]:
@@ -279,37 +280,45 @@ def _metadata_to_findings(
     findings.append(metadata_finding)
 
     # ── IOC extraction from file names ─────────────────────────────────────
-    file_names_text = " ".join(
-        f.get("path", "") for f in metadata.files if f.get("path")
-    )
+    file_names_text = " ".join(f.get("path", "") for f in metadata.files if f.get("path"))
     if file_names_text:
         ioc_findings = _extract_iocs_from_text(
-            file_names_text, info_hash_hex, keyword, ts, context="file_names",
-    )
+            file_names_text,
+            info_hash_hex,
+            keyword,
+            ts,
+            context="file_names",
+        )
         findings.extend(ioc_findings)
 
     # ── IOC extraction from tracker URLs ───────────────────────────────────
     tracker_text = " ".join(metadata.trackers)
     if tracker_text:
         ioc_findings = _extract_iocs_from_text(
-            tracker_text, info_hash_hex, keyword, ts, context="trackers",
-    )
+            tracker_text,
+            info_hash_hex,
+            keyword,
+            ts,
+            context="trackers",
+        )
         findings.extend(ioc_findings)
 
     # ── IOC extraction from comment/creator ────────────────────────────────
-    comment_text = " ".join(
-        part for part in (metadata.comment, metadata.created_by) if part
-    )
+    comment_text = " ".join(part for part in (metadata.comment, metadata.created_by) if part)
     if comment_text:
         ioc_findings = _extract_iocs_from_text(
-            comment_text, info_hash_hex, keyword, ts, context="comment",
-    )
+            comment_text,
+            info_hash_hex,
+            keyword,
+            ts,
+            context="comment",
+        )
         findings.extend(ioc_findings)
 
     return findings
 
 
-def _build_metadata_payload(metadata: "TorrentInfo", info_hash_hex: str) -> str:
+def _build_metadata_payload(metadata: TorrentInfo, info_hash_hex: str) -> str:
     """Build a compact payload text from torrent metadata.
 
     Args:
@@ -322,8 +331,7 @@ def _build_metadata_payload(metadata: "TorrentInfo", info_hash_hex: str) -> str:
     parts: list[str] = [
         f"Name: {metadata.name}",
         f"InfoHash: {info_hash_hex}",
-        f"TotalSize: {metadata.total_size} bytes "
-        f"({_format_size(metadata.total_size)})",
+        f"TotalSize: {metadata.total_size} bytes ({_format_size(metadata.total_size)})",
         f"Files: {len(metadata.files)}",
         f"PieceLength: {metadata.piece_length}",
     ]
@@ -394,7 +402,7 @@ def _extract_iocs_from_text(
             ts=ts,
             provenance=(f"btih:{info_hash_hex}", f"context:{context}"),
             payload_text=f"IOC: {ioc_value} (type: {ioc_type})\nInfoHash: {info_hash_hex}\nContext: {context}",
-    )
+        )
         findings.append(finding)
 
     return findings
@@ -410,7 +418,8 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
     try:
         from hledac.universal._core.rust_backend.ioc import (
             _python_extract_iocs_simd_single,
-    )
+        )
+
         return _python_extract_iocs_simd_single(text)
     except Exception:  # noqa: BLE001
         pass
@@ -418,6 +427,7 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
     # Fallback: forensics/ioc_extractor combined regex
     try:
         from forensics.ioc_extractor import _IOC_COMBINED
+
         results: list[tuple[str, str]] = []
         seen: set[str] = set()
         for m in _IOC_COMBINED.finditer(text):
@@ -505,7 +515,7 @@ def collect_info_hashes_from_crawl_results(
             continue
         # Strip urn:btih: prefix if present
         if ih.startswith("urn:btih:"):
-            ih = ih[len("urn:btih:"):]
+            ih = ih[len("urn:btih:") :]
         ih = ih.strip().lower()
         if ih and ih not in seen and len(ih) == 40:
             seen.add(ih)
@@ -516,11 +526,11 @@ def collect_info_hashes_from_crawl_results(
 def get_harvester_status() -> dict:
     """Get harvester status for monitoring (ISSUE-006)."""
     return {
-        'enabled': _DHT_HARVEST_ENABLED,
-        'gate': 'HLEDAC_ENABLE_DHT_METADATA_HARVEST',
-        'max_concurrent_fetches': 5,  # from TorrentMetadataFetcher
-        'max_info_hashes': MAX_INFO_HASHES_PER_HARVEST,
-        'cache_size': len(_metadata_cache),
-        'cache_maxsize': METADATA_CACHE_MAXSIZE,
-        'cache_ttl_s': METADATA_CACHE_TTL,
+        "enabled": _DHT_HARVEST_ENABLED,
+        "gate": "HLEDAC_ENABLE_DHT_METADATA_HARVEST",
+        "max_concurrent_fetches": 5,  # from TorrentMetadataFetcher
+        "max_info_hashes": MAX_INFO_HASHES_PER_HARVEST,
+        "cache_size": len(_metadata_cache),
+        "cache_maxsize": METADATA_CACHE_MAXSIZE,
+        "cache_ttl_s": METADATA_CACHE_TTL,
     }

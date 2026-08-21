@@ -20,13 +20,11 @@ import contextvars
 import logging
 import os
 import sys
-import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    import structlog
+    pass
 
 
 _LOG_FORMAT = os.environ.get("HLEDAC_LOG_FORMAT", "json").strip().lower()
@@ -49,9 +47,7 @@ def _get_structlog() -> Any:
     return _structlog
 
 
-_SPRINT_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
-    "_SPRINT_CONTEXT", default={}
-    )
+_SPRINT_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("_SPRINT_CONTEXT", default={})
 
 
 def _get_trace_context() -> dict[str, Any]:
@@ -125,7 +121,7 @@ def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> str:
             event = {**task_ctx, **event}
 
         rendered = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": method.upper(),
             "event": event.pop("event", ""),
             **event,
@@ -146,7 +142,7 @@ def _json_renderer(_logger: Any, method: str, event: dict[str, Any]) -> str:
 
 def _plain_renderer(_logger: Any, method: str, event: dict[str, Any]) -> str:
     """structlog processor: render event as human-readable line."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     ctx = _get_trace_context()
     task_ctx = _get_task_context()
 
@@ -239,7 +235,7 @@ def configure_logging() -> None:
             context_class=dict,
             logger_factory=sl.stdlib.LoggerFactory(),
             cache_logger_on_first_use=True,
-    )
+        )
 
         # Suppress noisy third-party loggers
         noisy = ["urllib3", "httpx", "httpcore", "curl_cffi", "charset_normalizer", "aiosqlite"]

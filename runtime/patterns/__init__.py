@@ -7,8 +7,8 @@ Pattern modules for Hledac OSINT orchestrator.
 Submodules:
     discovery.py  — URL/IP/regex patterns for discovery
 """
+
 from __future__ import annotations
-from _core import aclose
 
 __all__: list[str] = []
 
@@ -16,4 +16,4 @@ __all__: list[str] = []
 __getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
     "hledac.universal.runtime.patterns.discovery",
     {"discovery": "discovery"},
-    )
+)

@@ -80,10 +80,6 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 
-// ============================================================================
-// Error Types
-// ============================================================================
-
 /// DNS resolution error kinds.
 #[derive(Debug, Clone)]
 pub enum DnsError {
@@ -113,10 +109,6 @@ impl DnsError {
         }
     }
 }
-
-// ============================================================================
-// Cache Types
-// ============================================================================
 
 /// Cache entry with TTL.
 #[derive(Clone)]
@@ -158,14 +150,12 @@ impl DnsCache {
     fn get(&self, hostname: &str) -> Option<(Vec<String>, bool, Option<&str>)> {
         let now = Instant::now();
 
-        // Check positive cache
         if let Some(entry) = self.positive.get(hostname) {
             if now.duration_since(entry.timestamp) < self.positive_ttl {
                 return Some((entry.ips.clone(), false, None));
             }
         }
 
-        // Check negative cache
         if let Some((err, ts)) = self.negative.get(hostname) {
             if now.duration_since(*ts) < self.negative_ttl {
                 return Some((Vec::new(), true, Some(err)));
@@ -206,7 +196,6 @@ impl DnsCache {
 
     /// Insert negative result.
     fn insert_negative(&mut self, hostname: String, error: String) {
-        // Remove existing entries for this hostname
         self.positive.remove(&hostname);
         self.negative.remove(&hostname);
 
@@ -227,10 +216,6 @@ impl DnsCache {
         self.order.clear();
     }
 }
-
-// ============================================================================
-// DNS Resolver — DoH / DoT / DoQ
-// ============================================================================
 
 /// DNS-over-HTTPS (DoH) and DNS-over-TLS (DoT) resolver.
 ///
@@ -386,7 +371,6 @@ async fn resolve_host_async(
     cache: Arc<RwLock<DnsCache>>,
     _semaphore: Arc<tokio::sync::Semaphore>,
 ) -> Result<Vec<String>, DnsError> {
-    // Check cache
     {
         let c = cache.read();
         if let Some((ips, is_neg, err)) = c.get(&hostname) {
@@ -679,10 +663,6 @@ impl Default for DnsResolver {
     }
 }
 
-// ============================================================================
-// Python Bindings
-// ============================================================================
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// DNS statistics for monitoring.
@@ -881,26 +861,6 @@ pub fn clear_cache() {
     cache.clear();
 }
 
-// ============================================================================
-// Async FFI (MODERN-09) — Returns awaitables directly to Python asyncio
-// ============================================================================
-//
-// PROBLEM: Previous sync API forced Python to use `run_in_executor`:
-//
-//   # OLD: Blocking wrapper required
-//   ips = await loop.run_in_executor(None, lambda: rust.dns.resolve_async(host, "A"))
-//
-// SOLUTION: Use `future_into_py` to return native Python awaitables:
-//
-//   # NEW: Direct awaitable return
-//   ips = await rust.dns.resolve_async(host, "A")
-//
-// BENEFITS:
-//   - Eliminates thread pool overhead (+50-100µs per call)
-//   - Native async/await from Rust to Python
-//   - Uses existing shared tokio runtime (no additional memory)
-//   - Python call site becomes simpler and more idiomatic
-
 /// Async DNS resolution — returns awaitable to Python.
 ///
 /// # Arguments
@@ -937,7 +897,6 @@ pub fn resolve_async_await(
     let hostname_clone = hostname.clone();
     let cache = Arc::clone(&RESOLVER.cache);
     let semaphore = Arc::clone(&RESOLVER.semaphore);
-
 
     future_into_py(py, async move {
         let result = resolve_host_async(hostname_clone, qtype, cache, semaphore).await;
@@ -976,7 +935,6 @@ pub fn resolve_happy_eyeballs_async(
     let hostname_clone = hostname.clone();
     let shared_cache = Arc::clone(&RESOLVER.cache);
     let shared_sem = Arc::clone(&RESOLVER.semaphore);
-
 
     future_into_py(py, async move {
         let mut set = tokio::task::JoinSet::new();
@@ -1040,7 +998,6 @@ pub fn prefetch_async(
     use crate::async_bridge::future_into_py;
 
     if hostnames.is_empty() {
-        // Return empty dict synchronously for empty input
         let dict = pyo3::types::PyDict::new(py);
         return Ok(dict.as_any().to_string());
     }
@@ -1169,10 +1126,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DnsStats>()?;
     Ok(())
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

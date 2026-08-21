@@ -2,7 +2,6 @@
 Metal GPU-Accelerated HNSW Construction — SILICON-02
 ====================================================
 
-
 ROLE: Offload HNSW index construction distance computations to M1 GPU via MLX.
 Does NOT replace USearch graph topology — only accelerates distance computations
 during index build via optimal insertion order and batch GPU offload.
@@ -58,9 +57,8 @@ REFERENCES:
 from __future__ import annotations
 
 import logging
-import os
-import time
 import threading
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -70,16 +68,10 @@ from _core.lock_registry import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Feature gate — canonical constant, importable by integration points
-# ---------------------------------------------------------------------------
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 
 METAL_HNSW_ENABLED: bool = FeatureFlags.get(FeatureFlag.METAL_HNSW)
 
-# ---------------------------------------------------------------------------
-# Lazy imports (no module-level MLX cost — ISSUE #3 compliant)
-# ---------------------------------------------------------------------------
 _usearch_imported: bool = False
 
 
@@ -87,20 +79,21 @@ def _get_usearch_index_class() -> type[object]:
     """Lazy import usearch.index.Index. Cached after first call."""
     global _usearch_imported
     if not _usearch_imported:
-        import usearch.index  # noqa: F811 — cached via flag
         _usearch_imported = True
     from usearch.index import Index
+
     return Index
 
 
 def _mlx_available() -> bool:
     """Probe MLX without importing mlx.core at module level.
-    
+
     Uses importlib.metadata to avoid triggering MLX Metal init
     on module import (ISSUE #3 / PLANNER:ZERO-MLX compliant).
     """
     try:
         import importlib.metadata
+
         importlib.metadata.version("mlx")
         return True
     except Exception:
@@ -111,18 +104,14 @@ def _mlx_available() -> bool:
 # MetalHNSWBuilder: rss_mb=256, peak_mb=512 (GPU buffers + USearch graph)
 # Note: MetalHNSWEnabled is the feature flag, MetalHNSWBuilder is the class
 from hledac.universal._core.capability_cost import register_capability_cost
-from _core import aclose
+
 register_capability_cost("metalhnswbuilder", rss_mb=256, peak_mb=512, tier="heavy", tags=("gpu", "index", "mlx"))
 
-
-# ---------------------------------------------------------------------------
-# M1 8GB memory budget (aligned with SILICON-01 / MEM-2)
-# ---------------------------------------------------------------------------
 _GPU_BUFFER_LIMIT: int = 128 * 1024 * 1024  # 128 MiB per batch
-_GPU_TOTAL_GUARD: int = 256 * 1024 * 1024   # 256 MiB total Metal allocation
-_GPU_MIN_BATCH: int = 64                     # minimum vectors per GPU dispatch
-_GPU_MAX_BATCH: int = 4096                   # maximum per dispatch (M1 GPU cores)
-_RSS_GUARD_GIB: float = 5.5                  # skip GPU if process RSS above this
+_GPU_TOTAL_GUARD: int = 256 * 1024 * 1024  # 256 MiB total Metal allocation
+_GPU_MIN_BATCH: int = 64  # minimum vectors per GPU dispatch
+_GPU_MAX_BATCH: int = 4096  # maximum per dispatch (M1 GPU cores)
+_RSS_GUARD_GIB: float = 5.5  # skip GPU if process RSS above this
 
 # Global allocated bytes tracker (atomic, thread-safe)
 _gpu_allocated: int = 0
@@ -151,9 +140,6 @@ def _track_free(size: int) -> None:
         _gpu_allocated = max(0, _gpu_allocated - size)
 
 
-# ---------------------------------------------------------------------------
-# GPU kernels — compiled once, cached globally (thread-safe via GIL on 3.14+)
-# ---------------------------------------------------------------------------
 _mlx_kernels: dict[str, Any] = {}
 
 
@@ -180,7 +166,7 @@ def _get_batch_cosine_kernel():
 
         @mx.compile
         def _batch_cosine_distance(
-            queries: mx.array,    # (N, D) normalized
+            queries: mx.array,  # (N, D) normalized
             candidates: mx.array,  # (M, D) normalized
         ) -> mx.array:
             """GPU batch cosine distance on L2-normalized inputs."""
@@ -205,8 +191,8 @@ def _get_greedy_step_kernel():
 
         @mx.compile
         def _greedy_distance_step(
-            query: mx.array,       # (D,) normalized
-            candidates: mx.array,   # (K, D) normalized
+            query: mx.array,  # (D,) normalized
+            candidates: mx.array,  # (K, D) normalized
         ) -> mx.array:
             """Single-query to multi-candidate cosine distances."""
             sims = query @ candidates.T
@@ -215,10 +201,6 @@ def _get_greedy_step_kernel():
         _mlx_kernels["greedy_step"] = _greedy_distance_step
         return _greedy_distance_step
 
-
-# ---------------------------------------------------------------------------
-# MetalHNSWBuilder
-# ---------------------------------------------------------------------------
 
 class MetalHNSWBuilder:
     """Metal GPU-accelerated HNSW index construction.
@@ -241,11 +223,16 @@ class MetalHNSWBuilder:
     """
 
     __slots__ = (
-        '_dim', '_M', '_ef_construction', '_max_elements',
-        '_metric', '_dtype',
-        '_gpu_enabled', '_gpu_batch',
-        '_device_memory_mb',
-        '_stats',
+        "_dim",
+        "_M",
+        "_ef_construction",
+        "_max_elements",
+        "_metric",
+        "_dtype",
+        "_gpu_enabled",
+        "_gpu_batch",
+        "_device_memory_mb",
+        "_stats",
     )
 
     # ── Init ──────────────────────────────────────────────────────────
@@ -312,11 +299,9 @@ class MetalHNSWBuilder:
                 f"ef_construction={ef_construction}, "
                 f"gpu_batch={self._gpu_batch}, "
                 f"device_mem={self._device_memory_mb:.1f}MiB/batch"
-    )
+            )
         else:
-            logger.debug(
-                "[METAL-HNSW] GPU disabled — using CPU USearch fallback"
-    )
+            logger.debug("[METAL-HNSW] GPU disabled — using CPU USearch fallback")
 
     # ── GPU capability probe ─────────────────────────────────────────
 
@@ -349,7 +334,6 @@ class MetalHNSWBuilder:
                 logger.debug("[METAL-HNSW] RSS memory guard exceeded — GPU disabled")
                 return False
 
-            # Check UMA headroom
             try:
                 device_mem = mx.metal.get_active_memory()
                 recommended = mx.metal.get_recommended_max_memory()
@@ -360,7 +344,7 @@ class MetalHNSWBuilder:
                         f"[METAL-HNSW] Insufficient UMA headroom "
                         f"({headroom / 1024**2:.0f}MiB < "
                         f"{needed / 1024**2:.0f}MiB) — GPU disabled"
-    )
+                    )
                     return False
             except Exception:  # noqa: BLE001
                 # Can't probe — assume OK, let runtime handle OOM
@@ -373,7 +357,7 @@ class MetalHNSWBuilder:
                 warmup_q = mx.array(np.zeros((1, self._dim), dtype=np.float32))
                 warmup_c = mx.array(np.zeros((1, self._dim), dtype=np.float32))
                 _dist = _get_batch_cosine_kernel()(warmup_q, warmup_c)  # noqa: F841
-                mx.eval([])                    # INVARIANT #4: barrier before clear
+                mx.eval([])  # INVARIANT #4: barrier before clear
                 mx.metal.clear_cache()
                 logger.debug("[METAL-HNSW] GPU warmed up successfully")
             except Exception as e:
@@ -398,7 +382,8 @@ class MetalHNSWBuilder:
         """Check if RSS and Metal cache budget allow GPU use."""
         try:
             import psutil
-            rss_gib = psutil.Process().memory_info().rss / (1024 ** 3)
+
+            rss_gib = psutil.Process().memory_info().rss / (1024**3)
             if rss_gib > _RSS_GUARD_GIB:
                 return False
 
@@ -406,7 +391,8 @@ class MetalHNSWBuilder:
             try:
                 from hledac.universal.utils.mlx_cache import (
                     get_dynamic_metal_cache_limit,
-    )
+                )
+
                 cache_limit = get_dynamic_metal_cache_limit()
                 if cache_limit < self._device_memory_mb * 1024 * 1024 * 3:
                     return False
@@ -442,9 +428,7 @@ class MetalHNSWBuilder:
         Drop-in compatible with all existing USearch search/query code.
         """
         if len(vectors) != len(ids):
-            raise ValueError(
-                f"Vector count ({len(vectors)}) != ID count ({len(ids)})"
-    )
+            raise ValueError(f"Vector count ({len(vectors)}) != ID count ({len(ids)})")
 
         N = len(vectors)
         if N == 0:
@@ -475,7 +459,7 @@ class MetalHNSWBuilder:
             connectivity=self._M,
             expansion_add=exp_add,
             expansion_search=min(exp_add, 100),
-    )
+        )
 
         # GPU path only for cosine/cos metric (kernels assume L2-normalized inputs)
         if self._gpu_enabled and self._metric in ("cos", "cosine"):
@@ -483,9 +467,8 @@ class MetalHNSWBuilder:
         else:
             if self._gpu_enabled:
                 logger.debug(
-                    f"[METAL-HNSW] GPU skipped: metric={self._metric} "
-                    f"not supported (GPU kernels are cosine-only)"
-    )
+                    f"[METAL-HNSW] GPU skipped: metric={self._metric} not supported (GPU kernels are cosine-only)"
+                )
             self._build_cpu(index, vectors, ids, label_offset)
 
         self._stats["build_time_s"] = time.monotonic() - t0
@@ -496,7 +479,7 @@ class MetalHNSWBuilder:
             f"(gpu={self._gpu_enabled}, "
             f"gpu_batches={self._stats['gpu_batches']}, "
             f"cpu_fallbacks={self._stats['cpu_fallbacks']})"
-    )
+        )
 
         return index
 
@@ -563,16 +546,14 @@ class MetalHNSWBuilder:
 
                 # Release GPU buffers for this batch
                 del mx_vecs, distances
-                mx.eval([])                    # INVARIANT #4: barrier before clear
+                mx.eval([])  # INVARIANT #4: barrier before clear
                 mx.metal.clear_cache()
 
             except Exception as e:
                 logger.debug(
-                    f"[METAL-HNSW] GPU batch {batch_idx} failed: {e} — "
-                    f"falling back to sequential insertion order"
-    )
+                    f"[METAL-HNSW] GPU batch {batch_idx} failed: {e} — falling back to sequential insertion order"
+                )
                 self._stats["cpu_fallbacks"] += 1
-                # Clean up GPU on error too
                 try:
                     mx.eval([])
                     mx.metal.clear_cache()
@@ -635,12 +616,8 @@ class MetalHNSWBuilder:
             import mlx.core as mx
 
             # Normalize
-            q_norm = queries / (
-                np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8
-    )
-            c_norm = candidates / (
-                np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8
-    )
+            q_norm = queries / (np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8)
+            c_norm = candidates / (np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8)
 
             # Memory budget check
             est_bytes = queries.shape[0] * candidates.shape[0] * 4
@@ -656,14 +633,12 @@ class MetalHNSWBuilder:
                 result = kernel(q_mx, c_mx)
                 mx.eval([])  # INVARIANT #4: barrier before np.array
                 dist_np = np.array(result)
-                self._stats["gpu_distance_calls"] += (
-                    queries.shape[0] * candidates.shape[0]
-    )
+                self._stats["gpu_distance_calls"] += queries.shape[0] * candidates.shape[0]
                 self._stats["gpu_batches"] += 1
                 return dist_np
             finally:
                 _track_free(est_bytes)
-                mx.eval([])                    # INVARIANT #4: barrier before clear
+                mx.eval([])  # INVARIANT #4: barrier before clear
                 mx.metal.clear_cache()
 
         except Exception as e:
@@ -677,12 +652,8 @@ class MetalHNSWBuilder:
         candidates: np.ndarray,
     ) -> np.ndarray:
         """CPU fallback: numpy batch cosine distance (NEON SIMD)."""
-        q_norm = queries / (
-            np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8
-    )
-        c_norm = candidates / (
-            np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8
-    )
+        q_norm = queries / (np.linalg.norm(queries, axis=1, keepdims=True) + 1e-8)
+        c_norm = candidates / (np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8)
         sims = q_norm @ c_norm.T
         return 1.0 - sims.astype(np.float32)
 
@@ -697,10 +668,6 @@ class MetalHNSWBuilder:
         """Whether GPU acceleration is active for this builder."""
         return self._gpu_enabled
 
-
-# ---------------------------------------------------------------------------
-# Convenience: build USearch index from LanceDB data with GPU acceleration
-# ---------------------------------------------------------------------------
 
 def build_usearch_from_lancedb(
     table: Any,
@@ -729,17 +696,14 @@ def build_usearch_from_lancedb(
     try:
         row_count = table.count_rows()
         if row_count < 100:
-            logger.debug(
-                f"[METAL-HNSW] Too few rows ({row_count}), skipping"
-    )
+            logger.debug(f"[METAL-HNSW] Too few rows ({row_count}), skipping")
             return (
-                None, [],
+                None,
+                [],
                 {"skipped": True, "reason": "too_few_rows", "count": row_count},
-    )
+            )
 
-        data = table.to_lance().to_table(
-            columns=["finding_key", "vector"]
-        ).to_pydict()
+        data = table.to_lance().to_table(columns=["finding_key", "vector"]).to_pydict()
 
         vectors_raw = data.get("vector", [])
         keys_raw = data.get("finding_key", [])
@@ -748,9 +712,7 @@ def build_usearch_from_lancedb(
             return (None, [], {"skipped": True, "reason": "no_vectors"})
 
         # Stack into numpy (single allocation — avoids per-vector np.array)
-        vecs = np.array(
-            [np.array(v, dtype=np.float32) for v in vectors_raw]
-    )
+        vecs = np.array([np.array(v, dtype=np.float32) for v in vectors_raw])
         keys = list(keys_raw)
 
         # Build with GPU acceleration (labels are positional: 0, 1, 2, ...)
@@ -761,7 +723,7 @@ def build_usearch_from_lancedb(
             max_elements=max_elements,
             metric="cos",
             dtype="f32",
-    )
+        )
 
         index = builder.build(vecs, keys, label_offset=0)
         stats = builder.get_stats()
@@ -770,7 +732,7 @@ def build_usearch_from_lancedb(
             f"[METAL-HNSW] LanceDB build: {len(keys)} vectors "
             f"in {stats['build_time_s']:.2f}s "
             f"(gpu={stats['gpu_enabled']})"
-    )
+        )
 
         return (index, keys, stats)
 

@@ -16,24 +16,21 @@ DEGRADED transitions to WINDUP when time expires, or back to ACTIVE
 when the governor recovers to OK.
 """
 
-
-
 import collections.abc
 import time
 import warnings
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from dataclasses import dataclass
-from enum import Enum, auto
 from msgspec import field
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     pass
 
 # ── Phase enum ───────────────────────────────────────────────────────────────
+
 
 class SprintPhase(Enum):
     BOOT = auto()
@@ -46,6 +43,7 @@ class SprintPhase(Enum):
 
 
 # ── [FINAL]-019: Sprint QoS mode ─────────────────────────────────────────────
+
 
 class SprintQOSMode(Enum):
     """
@@ -67,12 +65,13 @@ class SprintQOSMode(Enum):
     expensive setup in MINIMAL mode).
     """
 
-    NORMAL = "normal"   # Full operation — all capabilities enabled
+    NORMAL = "normal"  # Full operation — all capabilities enabled
     REDUCED = "reduced"  # Windup / mild pressure — sidecars reduced
     MINIMAL = "minimal"  # Battery / near-OOM — inference suspended
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
+
 
 class SprintLifecycleError(Exception):
     """Base exception for sprint lifecycle errors."""
@@ -88,7 +87,7 @@ _PHASE_ORDER = [
     SprintPhase.BOOT,
     SprintPhase.WARMUP,
     SprintPhase.ACTIVE,
-    SprintPhase.DEGRADED,   # [FINAL]-019-08
+    SprintPhase.DEGRADED,  # [FINAL]-019-08
     SprintPhase.WINDUP,
     SprintPhase.EXPORT,
     SprintPhase.TEARDOWN,
@@ -96,6 +95,7 @@ _PHASE_ORDER = [
 
 
 # ── Manager ──────────────────────────────────────────────────────────────────
+
 
 class SprintLifecycleManager(Struct):
     """
@@ -117,10 +117,10 @@ class SprintLifecycleManager(Struct):
     transition. Callbacks are invoked in registration order.
     """
 
-    sprint_duration_s: float = 1800.0          # 30 minutes
-    windup_lead_s: float = 180.0               # T-3min before trigger
-    checkpoint_interval_s: float = 60.0          # lightweight checkpoint hint
-    checkpoint_path: str = ""                    # metadata only — no I/O here
+    sprint_duration_s: float = 1800.0  # 30 minutes
+    windup_lead_s: float = 180.0  # T-3min before trigger
+    checkpoint_interval_s: float = 60.0  # lightweight checkpoint hint
+    checkpoint_path: str = ""  # metadata only — no I/O here
 
     # Mutable state
     _started_at: float | None = None
@@ -182,11 +182,10 @@ class SprintLifecycleManager(Struct):
     def _deprecate(name: str, canonical: str) -> None:
         """Emit deprecation warning for COMPAT alias. F360M-R."""
         warnings.warn(
-            f"{name} is deprecated — use {canonical} directly. "
-            f"See future_owner in docstring for migration path.",
+            f"{name} is deprecated — use {canonical} directly. See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=3,
-    )
+        )
 
     def add_phase_exit_callback(
         self,
@@ -241,9 +240,8 @@ class SprintLifecycleManager(Struct):
             return
         if not self._is_valid_transition(self._current_phase, phase):
             raise InvalidPhaseTransitionError(
-                f"Cannot transition from {self._current_phase.name} to {phase.name}. "
-                f"Phases must advance monotonically."
-    )
+                f"Cannot transition from {self._current_phase.name} to {phase.name}. Phases must advance monotonically."
+            )
         self._transition_to_unlocked(phase, now)
 
     # ── tick ─────────────────────────────────────────────────────────────────
@@ -280,6 +278,7 @@ class SprintLifecycleManager(Struct):
         """Transition to DEGRADED if governor is critical/emergency."""
         try:
             from hledac.universal._core.resource_governor import _is_governor_critical_or_emergency
+
             if _is_governor_critical_or_emergency():
                 self._degraded = True
                 self._degraded_reason = "governor_critical_or_emergency"
@@ -293,6 +292,7 @@ class SprintLifecycleManager(Struct):
         recovered = False
         try:
             from hledac.universal._core.resource_governor import _is_governor_critical_or_emergency
+
             recovered = not _is_governor_critical_or_emergency()
         except Exception:
             pass
@@ -307,6 +307,7 @@ class SprintLifecycleManager(Struct):
         """Notify governor of degraded state change."""
         try:
             from hledac.universal._core.resource_governor import get_governor
+
             reason = self._degraded_reason if degraded else "governor_recovered"
             get_governor().set_degraded_mode(degraded, reason)
         except Exception:
@@ -338,6 +339,7 @@ class SprintLifecycleManager(Struct):
         try:
             if self._cognitive_saturation_detector.should_enter_windup(self._active_phase_elapsed_s, now):
                 import logging as _cs_logger
+
                 _cs_logger.warning(
                     "[ULTIMATE]-002] COGNITIVE_SATURATION: Sprint entering WINDUP "
                     "due to cognitive saturation. active_elapsed=%.1fs, "
@@ -346,7 +348,7 @@ class SprintLifecycleManager(Struct):
                     self._active_phase_elapsed_s,
                     self._cognitive_saturation_detector._unique_reports,
                     self._cognitive_saturation_detector._count_unique_in_window(now),
-    )
+                )
                 return True
         except Exception:
             pass
@@ -357,6 +359,7 @@ class SprintLifecycleManager(Struct):
         self._transition_to_unlocked(SprintPhase.WINDUP, now)
         try:
             from hledac.universal._core.resource_governor import get_governor
+
             gov = get_governor()
             gov.set_windup_mode(True)
             if not self._governor_degraded_lowered:
@@ -372,6 +375,7 @@ class SprintLifecycleManager(Struct):
         if self._current_phase == SprintPhase.EXPORT and not self._governor_windup_lowered:
             try:
                 from hledac.universal._core.resource_governor import get_governor
+
                 get_governor().set_windup_mode(False)
                 self._governor_windup_lowered = True
             except Exception:
@@ -425,22 +429,30 @@ class SprintLifecycleManager(Struct):
             # ran, allow windup for cleanup. Invariant: first_cycle_ran stays False.
             if not self._deadline_expired_pre_cycle:
                 import logging as _logger
+
                 _logger.debug(
                     "[F290-WINDBLOCK] first_cycle_ran=False blocking windup. "
                     "remaining=%.1fs, effective_trigger=%.1fs, "
                     "pre_loop_cost=%.1fs, windup_lead=%.1fs.",
-                    remaining, _effective_trigger, self.pre_loop_cost_s, self.windup_lead_s
-    )
+                    remaining,
+                    _effective_trigger,
+                    self.pre_loop_cost_s,
+                    self.windup_lead_s,
+                )
                 return False
         # DEBUG: Log if remaining is unexpectedly high (potential bug)
         if remaining > self.sprint_duration_s * 0.9:
             import logging as _logger
+
             _logger.debug(
                 "[F1-1-DEBUG] lifecycle_id=%d first_cycle_ran=%s remaining=%.1fs > 90%% of sprint_duration=%.1fs, "
                 "effective_trigger=%.1fs",
-                id(self), self.first_cycle_ran,
-                remaining, self.sprint_duration_s, _effective_trigger
-    )
+                id(self),
+                self.first_cycle_ran,
+                remaining,
+                self.sprint_duration_s,
+                _effective_trigger,
+            )
         return remaining <= _effective_trigger
 
     def set_first_cycle_ran(self) -> None:
@@ -501,9 +513,7 @@ class SprintLifecycleManager(Struct):
     def mark_export_started(self, now_monotonic: float | None = None) -> None:
         now = _now(now_monotonic)
         if self._current_phase != SprintPhase.WINDUP:
-            raise InvalidPhaseTransitionError(
-                f"EXPORT may only follow WINDUP, not {self._current_phase.name}."
-    )
+            raise InvalidPhaseTransitionError(f"EXPORT may only follow WINDUP, not {self._current_phase.name}.")
         self._export_started = True
         self._transition_to_unlocked(SprintPhase.EXPORT, now)
 
@@ -511,9 +521,8 @@ class SprintLifecycleManager(Struct):
         now = _now(now_monotonic)
         if self._current_phase not in (SprintPhase.EXPORT, SprintPhase.WINDUP):
             raise InvalidPhaseTransitionError(
-                f"TEARDOWN may only follow EXPORT or WINDUP (abort), "
-                f"not {self._current_phase.name}."
-    )
+                f"TEARDOWN may only follow EXPORT or WINDUP (abort), not {self._current_phase.name}."
+            )
         self._teardown_started = True
         self._transition_to_unlocked(SprintPhase.TEARDOWN, now)
 
@@ -543,7 +552,7 @@ class SprintLifecycleManager(Struct):
             "abort_requested": self._abort_requested,
             "abort_reason": self._abort_reason,
             "last_checkpoint_at": self._last_checkpoint_at,
-            "degraded": self._degraded,              # [FINAL]-019-08
+            "degraded": self._degraded,  # [FINAL]-019-08
             "degraded_reason": self._degraded_reason,  # [FINAL]-019-08
             # F288/F290: Pre-loop cost and first-cycle guarantee for windup gating
             "pre_loop_cost_s": self.pre_loop_cost_s,
@@ -571,9 +580,11 @@ class SprintLifecycleManager(Struct):
 
         if self._abort_requested or remaining <= 30.0 or thermal_state == "critical":
             return "panic"
-        if (remaining <= self.windup_lead_s
-                or thermal_state in ("throttled", "fair")
-                or self._current_phase == SprintPhase.DEGRADED):  # [FINAL]-019-08
+        if (
+            remaining <= self.windup_lead_s
+            or thermal_state in ("throttled", "fair")
+            or self._current_phase == SprintPhase.DEGRADED
+        ):  # [FINAL]-019-08
             return "prune"
         return "normal"
 
@@ -586,14 +597,6 @@ class SprintLifecycleManager(Struct):
         if self._abort_requested and self._teardown_started:
             return True
         return False
-
-    # =============================================================================
-    # Sprint F4: COMPAT ALIASES — sealed with metadata
-    # Each alias carries: future_owner, caller_class, removal_condition, why_still_needed.
-    # These forward to the canonical API. Labeled as COMPAT so they are clearly
-    # NOT co-equal public API — they exist to make __main__.py cutover safe.
-    # Sprint F4: All alias metadata sealed — no new co-equal authority created.
-    # =============================================================================
 
     # ── COMPAT: begin_sprint ─────────────────────────────────────────────────
     # Sprint F4: Metadata sealed.
@@ -646,6 +649,7 @@ class SprintLifecycleManager(Struct):
             # mark_warmup_done on each breaker resets its warmup counter
             # We import here to avoid circular deps; circuit_breaker imports lifecycle indirectly
             import hledac.universal.transport.circuit_breaker as cb_module
+
             for domain in list(cb_module._BREAKERS.keys()):
                 breaker = cb_module._BREAKERS.get(domain)
                 if breaker is not None:
@@ -755,13 +759,6 @@ class SprintLifecycleManager(Struct):
         self._deprecate("is_windup_phase()", "should_enter_windup() or in_phase(SprintPhase.WINDUP)")
         return self.should_enter_windup()
 
-    # ── COMPAT: is_active property ───────────────────────────────────────────
-    # Sprint F4: Metadata sealed.
-    # future_owner: callers (runtime shadow_* modules)
-    # caller_class: runtime shadow_pre_decision (line ~1276), shadow_pre_decision tests
-    # removal_condition: All callers use in_phase(SprintPhase.ACTIVE) — low urgency, used in shadow/readonly paths
-    # why_still_needed: Read-only property used by shadow modules; low risk to keep
-
     @property
     def is_active(self) -> bool:
         """
@@ -781,15 +778,8 @@ class SprintLifecycleManager(Struct):
             "current_phase == SprintPhase.ACTIVE. See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         return self._current_phase == SprintPhase.ACTIVE
-
-    # ── COMPAT: is_winding_down property ─────────────────────────────────────
-    # Sprint F4: Metadata sealed.
-    # future_owner: callers (runtime shadow_* modules)
-    # caller_class: runtime shadow_pre_decision (line ~1276)
-    # removal_condition: All callers use in_phase() checks — low urgency, used in shadow/readonly paths
-    # why_still_needed: Read-only property used by shadow modules; low risk to keep
 
     @property
     def is_winding_down(self) -> bool:
@@ -811,12 +801,16 @@ class SprintLifecycleManager(Struct):
             "See future_owner in docstring for migration path.",
             DeprecationWarning,
             stacklevel=2,
-    )
-        return self._current_phase in (
-            SprintPhase.WINDUP,
-            SprintPhase.EXPORT,
-            SprintPhase.TEARDOWN,
-        ) or self._current_phase == SprintPhase.DEGRADED  # [FINAL]-019-08: DEGRADED is also winding down
+        )
+        return (
+            self._current_phase
+            in (
+                SprintPhase.WINDUP,
+                SprintPhase.EXPORT,
+                SprintPhase.TEARDOWN,
+            )
+            or self._current_phase == SprintPhase.DEGRADED
+        )  # [FINAL]-019-08: DEGRADED is also winding down
 
     # ── Public read-only surface ─────────────────────────────────────────────
 
@@ -965,6 +959,7 @@ class SprintLifecycleManager(Struct):
 
 
 # ── Clock helper ─────────────────────────────────────────────────────────────
+
 
 def _now(m: float | None) -> float:
     if m is not None:

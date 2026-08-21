@@ -3,8 +3,6 @@ StealthCrawler a StealthWebScraper — web scraping s TLS fingerprinting.
 
 Rozděleno z původního stealth_crawler.py (ISSUE-028).
 
-
-
 From deep_research/distributed_dark_web_crawler.py:
 - curl_cffi for TLS fingerprinting (impersonate="chrome136")
 - DuckDuckGo HTML scraping (no CAPTCHA)
@@ -16,35 +14,28 @@ Enhanced with stealth_toolkit:
 - Protection detection (Cloudflare, Akamai, Imperva, DataDome)
 - Multi-layer bypass
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
+
+from hledac.universal.utils.asyncx import parallel
 
 from ._models import (
-    BypassMethod,
-    ChangeType,
     HeaderSpoofer,
     ProtectionType,
     ScrapingResult,
     SearchResult,
-    _mark_surface_patched,
     _crawler_domain_allowed,
     _get_crawl_bloom,
-    )
-
-from hledac.universal.utils.asyncx import safe_create_task, parallel
-from _core import aclose
+    _mark_surface_patched,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# StealthCrawler
-# ---------------------------------------------------------------------------
 
 
 class StealthCrawler:
@@ -63,11 +54,9 @@ class StealthCrawler:
     - Platform-specific headers
     """
 
-    __slots__ = tuple(
-        ("_curl_cffi_available", "_header_spoofer", "_httpx_available", "_session")
-    )
+    __slots__ = ("_curl_cffi_available", "_header_spoofer", "_httpx_available", "_session")
 
-    def __init__(self, use_header_spoofer: bool = True):
+    def __init__(self, use_header_spoofer: bool = True) -> None:
         self._curl_cffi_available = False
         self._httpx_available = False
         self._session = None
@@ -95,9 +84,7 @@ class StealthCrawler:
             except ImportError:
                 logger.warning("Neither curl_cffi nor httpx available")
 
-    async def search_async(
-        self, query: str, num_results: int = 10, source: str = "duckduckgo"
-    ) -> list[SearchResult]:
+    async def search_async(self, query: str, num_results: int = 10, source: str = "duckduckgo") -> list[SearchResult]:
         """
         P9 FIX: Async parallel search using stealth scraping with multi-provider fallback.
 
@@ -136,7 +123,7 @@ class StealthCrawler:
                     tasks,
                     policy="first",
                     ctx="stealth_search:all",
-    )
+                )
                 return result if result else []
 
             # Single provider with sequential fallback (legacy behavior preserved)
@@ -165,9 +152,7 @@ class StealthCrawler:
             logger.error(f"Stealth async search failed: {e}")
             return []
 
-    def search(
-        self, query: str, num_results: int = 10, source: str = "duckduckgo"
-    ) -> list[SearchResult]:
+    def search(self, query: str, num_results: int = 10, source: str = "duckduckgo") -> list[SearchResult]:
         """
         Search using stealth scraping with multi-provider fallback.
 
@@ -198,20 +183,19 @@ class StealthCrawler:
             raise TypeError(
                 "StealthCrawler.search() uses run_sync_async internally and cannot "
                 "be called from an async context. Use search_async() instead."
-    )
+            )
         try:
             # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
             # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
             # and handles both running and non-running event loop cases
             from hledac.universal.utils.sync_bridge import run_sync_async
+
             return run_sync_async(self.search_async(query, num_results, source))
         except Exception as e:
             logger.error(f"Stealth search failed: {e}")
             return []
 
-    def _search_duckduckgo(
-        self, query: str, num_results: int
-    ) -> list[SearchResult]:
+    def _search_duckduckgo(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape DuckDuckGo HTML results."""
         try:
             encoded_query = quote(query)
@@ -235,9 +219,7 @@ class StealthCrawler:
             logger.error(f"DuckDuckGo search failed: {e}")
             return []
 
-    def _search_google(
-        self, query: str, num_results: int
-    ) -> list[SearchResult]:
+    def _search_google(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape Google HTML results (fallback)."""
         try:
             encoded_query = quote(query)
@@ -257,9 +239,7 @@ class StealthCrawler:
             logger.error(f"Google search failed: {e}")
             return []
 
-    def _search_brave(
-        self, query: str, num_results: int
-    ) -> list[SearchResult]:
+    def _search_brave(self, query: str, num_results: int) -> list[SearchResult]:
         """Scrape Brave Search HTML results (Sprint 8R)."""
         try:
             encoded_query = quote(query)
@@ -308,7 +288,7 @@ class StealthCrawler:
                             snippet="",
                             source="brave",
                             rank=len(results),
-    )
+                        )
                     )
         return results
 
@@ -320,14 +300,11 @@ class StealthCrawler:
         """
         from ._models import TorProxyManager
 
-        # Check .onion URLs
         if ".onion" in url:
             from hledac.universal.transport.tor_transport import TorUnavailableError
 
             if not TorProxyManager.is_running():
-                raise TorUnavailableError(
-                    f"Cannot fetch .onion URL without Tor: {url}"
-    )
+                raise TorUnavailableError(f"Cannot fetch .onion URL without Tor: {url}")
         allowed, reason = _crawler_domain_allowed(url, "_fetch_html")
         if not allowed:
             logger.debug(f"[_fetch_html] domain blocked: {reason}")
@@ -342,9 +319,7 @@ class StealthCrawler:
             logger.error("No HTTP library available for _fetch_html")
             return None
 
-    def _fetch_with_curl_cffi(
-        self, url: str, headers: dict[str, str]
-    ) -> str | None:
+    def _fetch_with_curl_cffi(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using curl_cffi with TLS fingerprinting."""
         from curl_cffi import requests as curl_requests
 
@@ -354,7 +329,7 @@ class StealthCrawler:
                 headers=headers,
                 impersonate="chrome136",
                 timeout=30,
-    )
+            )
             response.raise_for_status()
             return response.text
         except Exception as e:
@@ -374,9 +349,7 @@ class StealthCrawler:
             logger.warning(f"httpx fetch failed: {e}")
             return None
 
-    def _parse_duckduckgo(
-        self, html: str, num_results: int
-    ) -> list[SearchResult]:
+    def _parse_duckduckgo(self, html: str, num_results: int) -> list[SearchResult]:
         """Parse DuckDuckGo HTML results."""
         results = []
         pattern = r'<a[^>]*href="([^"]+)"[^>]*class="[^"]*result[^"]*"[^>]*>\s*<h2[^>]*>([^<]+)</h2>'
@@ -404,7 +377,7 @@ class StealthCrawler:
                             snippet=snippet.strip(),
                             source="duckduckgo",
                             rank=i,
-    )
+                        )
                     )
         return results
 
@@ -433,14 +406,9 @@ class StealthCrawler:
                             snippet="",
                             source="google",
                             rank=i,
-    )
+                        )
                     )
         return results
-
-
-# ---------------------------------------------------------------------------
-# StealthWebScraper
-# ---------------------------------------------------------------------------
 
 
 class StealthWebScraper:
@@ -456,21 +424,19 @@ class StealthWebScraper:
     T3: cloudscraper removed — curl_cffi impersonate covers all bypass needs.
     """
 
-    __slots__ = tuple(
-        (
-            "_curl_cffi_available",
-            "_cloudscraper_available",
-            "_session",
-            "_fingerprint_profiles",
-            "_proxy_config",
-    )
+    __slots__ = (
+        "_curl_cffi_available",
+        "_cloudscraper_available",
+        "_session",
+        "_fingerprint_profiles",
+        "_proxy_config",
     )
 
     def __init__(
         self,
         use_cloudscraper: bool = True,
         proxy_config: dict[str, str] | None = None,
-    ):
+    ) -> None:
         # use_cloudscraper reserved for future cloudscraper activation
         _ = use_cloudscraper
         self._curl_cffi_available = False
@@ -537,17 +503,16 @@ class StealthWebScraper:
             ScrapingResult with content or error
         """
         import asyncio
+
         from ._models import TorProxyManager
 
         if ".onion" in url:
             from hledac.universal.transport.tor_transport import (
                 TorUnavailableError,
-    )
+            )
 
             if not TorProxyManager.is_running():
-                raise TorUnavailableError(
-                    f"Cannot fetch .onion URL without Tor: {url}"
-    )
+                raise TorUnavailableError(f"Cannot fetch .onion URL without Tor: {url}")
         allowed, reason = _crawler_domain_allowed(url, "StealthWebScraper.scrape")
         if not allowed:
             logger.debug(f"[StealthWebScraper.scrape] blocked: {reason}")
@@ -556,44 +521,36 @@ class StealthWebScraper:
                 url=url,
                 success=False,
                 error=f"Domain blocked: {reason}",
-    )
+            )
         _mark_surface_patched("StealthWebScraper.scrape")
         try:
             # F-FIX: wrap blocking HTTP calls with asyncio.to_thread
-            protection_type = await asyncio.to_thread(
-                self._detect_protection, url
-    )
+            protection_type = await asyncio.to_thread(self._detect_protection, url)
             if protection_type:
-                logger.info(
-                    f"Protection detected: {protection_type.value} on {url}"
-    )
-            content = await asyncio.to_thread(
-                self._fetch_content, url, protection_type, **kwargs
-    )
+                logger.info(f"Protection detected: {protection_type.value} on {url}")
+            content = await asyncio.to_thread(self._fetch_content, url, protection_type, **kwargs)
             if content:
                 return ScrapingResult(
                     url=url,
                     success=True,
                     content=content,
                     protection_type=protection_type,
-    )
+                )
             return ScrapingResult(
                 url=url,
                 success=False,
                 error="No content returned",
                 protection_type=protection_type,
-    )
+            )
         except Exception as e:
             logger.error(f"Scraping failed for {url}: {e}")
             return ScrapingResult(
                 url=url,
                 success=False,
                 error=str(e),
-    )
+            )
 
-    def _detect_protection_impl(
-        self, url: str
-    ) -> tuple[str, httpx.Headers] | None:
+    def _detect_protection_impl(self, url: str) -> tuple[str, httpx.Headers] | None:
         """Shared fetch implementation for protection detection.
 
         F-FIX: extracted to eliminate duplication between sync and async paths.
@@ -607,9 +564,7 @@ class StealthWebScraper:
         if self._curl_cffi_available:
             from curl_cffi import requests as curl_requests
 
-            response = curl_requests.get(
-                url, headers=headers, impersonate="chrome136", timeout=10
-    )
+            response = curl_requests.get(url, headers=headers, impersonate="chrome136", timeout=10)
             return response.text, response.headers
         with httpx.Client(timeout=10.0) as client:
             response = client.get(url, headers=headers)
@@ -666,9 +621,7 @@ class StealthWebScraper:
             return self._fetch_with_curl_cffi_async(url, headers)
         return self._fetch_with_httpx_fallback(url, headers)
 
-    def _fetch_with_curl_cffi_async(
-        self, url: str, headers: dict[str, str]
-    ) -> str | None:
+    def _fetch_with_curl_cffi_async(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using curl_cffi (async context - uses thread pool for M1 safety)."""
         from curl_cffi import requests as curl_requests
 
@@ -679,16 +632,14 @@ class StealthWebScraper:
                 headers=headers,
                 impersonate="chrome136",
                 timeout=30,
-    )
+            )
             response.raise_for_status()
             return response.text
         except Exception as e:
             logger.warning(f"curl_cffi fetch failed: {e}")
             return None
 
-    def _fetch_with_httpx_fallback(
-        self, url: str, headers: dict[str, str]
-    ) -> str | None:
+    def _fetch_with_httpx_fallback(self, url: str, headers: dict[str, str]) -> str | None:
         """Fetch using httpx.Client (last resort fallback)."""
         import httpx
 
@@ -700,11 +651,6 @@ class StealthWebScraper:
         except Exception as e:
             logger.warning(f"httpx fallback fetch failed: {e}")
             return None
-
-
-# ---------------------------------------------------------------------------
-# Factory functions (re-exports pro backwards compatibility)
-# ---------------------------------------------------------------------------
 
 
 def create_stealth_crawler() -> StealthCrawler:
@@ -740,6 +686,7 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
             Use StealthWebScraper.scrape() directly in async code instead.
     """
     import asyncio
+
     try:
         _ = asyncio.get_running_loop()
     except RuntimeError:  # noqa: BLE001
@@ -749,10 +696,11 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
             "quick_scrape() uses asyncio.run() internally and cannot be called "
             "from an async context. Use 'scraper = StealthWebScraper(); "
             "await scraper.scrape(url)' instead."
-    )
+        )
     scraper = StealthWebScraper()
     # SCAVENGER-FIX: Replace asyncio.run() with run_sync_async()
     # run_sync_async() uses asyncio.Runner() (PEP 654) for Python 3.11+
     # and handles both running and non-running event loop cases
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     return run_sync_async(scraper.scrape(url, **kwargs))

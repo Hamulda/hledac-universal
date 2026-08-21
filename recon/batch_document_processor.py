@@ -2,10 +2,6 @@
 recon/batch_document_processor.py — Batch PDF Processing Pipeline
 =================================================================
 
-
-
-
-
 ISSUE [UNINDEXED]-013: Batch PDF Processing for Large Document Dumps
 
 MOTIVATION:
@@ -49,7 +45,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
-import logging
 import os
 import time
 from collections.abc import Callable
@@ -57,19 +52,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 # Optional dependencies — checked via importlib.util.find_spec (no import side effects)
 _PYMUPDF_AVAILABLE = importlib.util.find_spec("fitz") is not None
 
-
 try:
     from hledac.universal._core.resource_governor import sample_uma_status
+
     _GOVERNOR_AVAILABLE = True
 except ImportError:
     _GOVERNOR_AVAILABLE = False
 
 from hledac.universal.utils.asyncx import _check_gathered
-from _core import aclose
 
 # orjson fallback — 5-10× faster than stdlib json, M1 optimized
 try:
@@ -98,6 +91,7 @@ except ImportError:
 
 class PDFProcessingResult:
     """Result of processing a single PDF."""
+
     doc_id: str  # SHA256 hash of file path
     file_path: str
     metadata_hash: str  # SHA256 hash of extracted metadata
@@ -124,6 +118,7 @@ class PDFProcessingResult:
 @dataclass(slots=True)
 class BatchProcessingStats:
     """Statistics for batch processing run."""
+
     total_files: int = 0
     processed_count: int = 0
     failed_count: int = 0
@@ -148,6 +143,7 @@ class BatchProcessingStats:
 @dataclass(slots=True)
 class BatchProcessingResult:
     """Result of batch processing run."""
+
     stats: BatchProcessingStats = field(default_factory=BatchProcessingStats)
     results: list[PDFProcessingResult] = field(default_factory=list)
     manifest_path: str = ""
@@ -214,7 +210,6 @@ class BatchPDFProcessor:
         "_stats",
     )
 
-
     def __init__(
         self,
         source_dir: str,
@@ -242,7 +237,6 @@ class BatchPDFProcessor:
         self._initialized = False
         self._stats = BatchProcessingStats()
 
-
     async def initialize(self) -> None:
         """
         Initialize processor (lazy imports, manifest loading, semaphore creation).
@@ -254,9 +248,9 @@ class BatchPDFProcessor:
 
         # Lazy import PDFAnalyzer (sync)
         from hledac.universal.recon.document_intelligence import PDFAnalyzer
+
         self._pdf_analyzer = PDFAnalyzer()
 
-        # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load existing manifest (for resumability)
@@ -275,7 +269,7 @@ class BatchPDFProcessor:
                         success=result_dict.get("success", True),
                         error=result_dict.get("error"),
                         processing_time_seconds=result_dict.get("processing_time_seconds", 0.0),
-    )
+                    )
                 logger.info(f"[BATCH:PDF] Loaded manifest with {len(self._manifest)} existing entries")
             except Exception as e:
                 logger.warning(f"[BATCH:PDF] Failed to load manifest: {e}")
@@ -316,12 +310,11 @@ class BatchPDFProcessor:
         self._stats.total_files = len(pdf_files)
         logger.info(f"[BATCH:PDF] Found {len(pdf_files)} PDF files to process")
 
-        # Process concurrently with semaphore
         tasks = [self._process_single_pdf(pdf_path) for pdf_path in pdf_files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         _, errors = _check_gathered(results)
         for err in errors:
-            logger.error(f'[BATCH:PDF] Task failed with exception: {err}')
+            logger.error(f"[BATCH:PDF] Task failed with exception: {err}")
 
         # Aggregate results
         for result in results:
@@ -343,12 +336,12 @@ class BatchPDFProcessor:
         # Get peak memory (if psutil available)
         try:
             import psutil
+
             process = psutil.Process(os.getpid())
             self._stats.peak_memory_mb = process.memory_info().rss / (1024 * 1024)
         except ImportError:  # noqa: BLE001
             pass
 
-        # Write final manifest
         manifest_path = self.output_dir / "processed_manifest.json"
         manifest_data = {doc_id: result.to_dict() for doc_id, result in self._manifest.items()}
         with open(manifest_path, "w") as f:
@@ -360,13 +353,13 @@ class BatchPDFProcessor:
             f"{self._stats.failed_count} failed, "
             f"{self._stats.skipped_count} skipped, "
             f"{self._stats.total_duration_seconds:.2f}s total"
-    )
+        )
 
         return BatchProcessingResult(
             stats=self._stats,
             results=self._results,
             manifest_path=str(manifest_path),
-    )
+        )
 
     async def _process_single_pdf(self, pdf_path: Path) -> PDFProcessingResult:
         """
@@ -434,9 +427,8 @@ class BatchPDFProcessor:
                     ioc_list_path=ioc_list_path,
                     success=True,
                     processing_time_seconds=time.time() - start_time,
-    )
+                )
 
-                # Update manifest
                 self._manifest[doc_id] = result
 
                 # Progress callback
@@ -445,7 +437,7 @@ class BatchPDFProcessor:
                         self._stats.processed_count + self._stats.failed_count + 1,
                         self._stats.total_files,
                         result,
-    )
+                    )
 
                 return result
 
@@ -458,9 +450,8 @@ class BatchPDFProcessor:
                     success=False,
                     error=str(e),
                     processing_time_seconds=time.time() - start_time,
-    )
+                )
 
-                # Update manifest
                 self._manifest[doc_id] = result
 
                 # Progress callback
@@ -469,7 +460,7 @@ class BatchPDFProcessor:
                         self._stats.processed_count + self._stats.failed_count + 1,
                         self._stats.total_files,
                         result,
-    )
+                    )
 
                 return result
 
@@ -532,7 +523,7 @@ if __name__ == "__main__":
             output_dir=output_dir,
             max_concurrent=10,
             progress_callback=on_progress,
-    )
+        )
 
         print("\nBatch processing complete:")
         print(f"  Total files: {result.stats.total_files}")

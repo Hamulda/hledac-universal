@@ -30,9 +30,6 @@ Sprint 8C3 schema extensions:
   - challenge_present, challenge_type, challenge_outcome
 """
 
-
-
-import msgspec.json as _json
 import os
 import threading
 import time
@@ -41,35 +38,64 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import msgspec.json as _json
+
 from hledac.universal._core.locks import LockCategory, register_lock
 
-# ============================================================================
-# Canonical Enums (Sprint 8C3)
-# ============================================================================
+SOURCE_FAMILY_ENUM = frozenset(
+    {
+        "indexed_search",
+        "archive",
+        "passive_dns",
+        "ct_log",
+        "code_repo",
+        "breach",
+        "social",
+        "infra_scan",
+        "hidden_service",
+        "decentralized",
+        "realtime_feed",
+        "direct_web",
+        "unknown",
+    }
+)
 
-SOURCE_FAMILY_ENUM = frozenset({
-    "indexed_search", "archive", "passive_dns", "ct_log",
-    "code_repo", "breach", "social", "infra_scan",
-    "hidden_service", "decentralized", "realtime_feed", "direct_web", "unknown",
-})
+ACQUISITION_MODE_ENUM = frozenset(
+    {
+        "search",
+        "direct_fetch",
+        "api",
+        "archive_lookup",
+        "websocket_stream",
+        "passive_lookup",
+        "crawler_discovery",
+        "replay",
+    }
+)
 
-ACQUISITION_MODE_ENUM = frozenset({
-    "search", "direct_fetch", "api", "archive_lookup",
-    "websocket_stream", "passive_lookup", "crawler_discovery", "replay",
-})
+CHALLENGE_OUTCOME_ENUM = frozenset(
+    {
+        "none",
+        "passive_clear",
+        "interactive_pass",
+        "fail",
+        "loop",
+        "abandon",
+    }
+)
 
-CHALLENGE_OUTCOME_ENUM = frozenset({
-    "none", "passive_clear", "interactive_pass", "fail", "loop", "abandon",
-})
-
-CHALLENGE_TYPE_ENUM = frozenset({
-    "none", "captcha", "js_challenge", "cookie_wall", "rate_limit",
-    "geo_block", "ua_block", "other",
-})
-
-# ============================================================================
-# Configuration
-# ============================================================================
+CHALLENGE_TYPE_ENUM = frozenset(
+    {
+        "none",
+        "captcha",
+        "js_challenge",
+        "cookie_wall",
+        "rate_limit",
+        "geo_block",
+        "ua_block",
+        "other",
+    }
+)
 
 TRACE_ENABLED = os.environ.get("GHOST_FLOW_TRACE", "0") == "1"
 TRACE_SAMPLE_RATE = float(os.environ.get("GHOST_FLOW_TRACE_SAMPLE_RATE", "1.0"))
@@ -77,10 +103,6 @@ TRACE_MAX_EVENTS = int(os.environ.get("GHOST_FLOW_TRACE_MAX_EVENTS", "50000"))
 
 # Bounded event buffer before forced flush
 _MAX_BUFFER_SIZE = 100
-
-# ============================================================================
-# Global State (process-wide, thread-safe)
-# ============================================================================
 
 _trace_lock = threading.Lock()
 register_lock(LockCategory.METRICS, _trace_lock, "flow_trace._trace_lock")
@@ -103,9 +125,6 @@ _span_stack: dict[str, float] = {}  # span_id -> start_time
 # Counters
 _counters: dict[str, int] = {}
 
-# ============================================================================
-# Path resolution (fail-safe)
-# ============================================================================
 
 def _get_trace_root() -> Path:
     """Get trace output directory with fallbacks."""
@@ -113,13 +132,15 @@ def _get_trace_root() -> Path:
         # Absolute import avoids the `..paths` 2-level hop that ty cannot resolve
         # from inside `utils/flow_trace.py` when running with the project root
         # configured as `hledac/universal/`.
-        from hledac.universal.paths import RUNS_ROOT  # type: ignore[import-not-found]
+        from hledac.universal.paths import RUNS_ROOT
+
         root = RUNS_ROOT
         root.mkdir(parents=True, exist_ok=True)
         return root
     except Exception:
         # Fallback to /tmp
         return Path("/tmp/hledac_trace")
+
 
 def _get_trace_paths() -> tuple[Path, Path]:
     """Get JSONL and summary paths."""
@@ -131,22 +152,23 @@ def _get_trace_paths() -> tuple[Path, Path]:
     summary_path = root / f"flow_{run_suffix}_summary.json"
     return jsonl_path, summary_path
 
-# ============================================================================
-# Core API
-# ============================================================================
 
 def is_enabled() -> bool:
     """Check if tracing is enabled."""
     return TRACE_ENABLED
+
 
 def set_run_id(run_id: str) -> None:
     """Set the current run ID for trace correlation."""
     global _run_id
     _run_id = run_id
 
+
 # Module-level RNG — non-security sampling, random is 30× faster than secrets
 import random as _random_module
+
 _RANDOM = _random_module.Random()
+
 
 def _should_sample() -> bool:
     """Determine if this event should be sampled."""
@@ -155,6 +177,7 @@ def _should_sample() -> bool:
     if TRACE_SAMPLE_RATE >= 1.0:
         return True
     return _RANDOM.random() < TRACE_SAMPLE_RATE
+
 
 def trace_event(
     component: str,
@@ -209,7 +232,7 @@ def trace_event(
             _ensure_file_open()
             if _trace_jsonl_file is not None:
                 line = _json.encode(event).decode("utf-8")
-                _trace_jsonl_file.write(line + '\n')
+                _trace_jsonl_file.write(line + "\n")
                 _event_count += 1
 
                 # Bounded buffer flush check
@@ -218,6 +241,7 @@ def trace_event(
         except Exception:
             _drop_count += 1
             # Fail-open: tracing error never crashes runtime
+
 
 def trace_span_start(span_id: str, metadata: dict[str, Any] | None = None) -> float:
     """
@@ -238,6 +262,7 @@ def trace_span_start(span_id: str, metadata: dict[str, Any] | None = None) -> fl
         _span_stack[span_id] = start_time
 
     return start_time
+
 
 def trace_span_end(
     span_id: str,
@@ -279,9 +304,10 @@ def trace_span_end(
             status=status,
             duration_ms=duration_ms,
             metadata=metadata,
-    )
+        )
 
     return duration_ms
+
 
 def trace_counter(name: str, value: int = 1, metadata: dict[str, Any] | None = None) -> None:
     """
@@ -298,6 +324,7 @@ def trace_counter(name: str, value: int = 1, metadata: dict[str, Any] | None = N
     with _trace_lock:
         _counters[name] = _counters.get(name, 0) + value
 
+
 def flush() -> None:
     """Flush trace buffers to disk."""
     if not TRACE_ENABLED:
@@ -309,6 +336,7 @@ def flush() -> None:
                 _trace_jsonl_file.flush()
             except Exception:  # noqa: BLE001
                 pass
+
 
 def get_summary() -> dict[str, Any]:
     """
@@ -330,9 +358,6 @@ def get_summary() -> dict[str, Any]:
             "session_elapsed_sec": time.time() - _session_start,
         }
 
-# ============================================================================
-# Internal helpers
-# ============================================================================
 
 def _ensure_file_open() -> None:
     """Lazily open trace files."""
@@ -341,9 +366,10 @@ def _ensure_file_open() -> None:
     if _trace_jsonl_file is None:
         _trace_jsonl_path, _trace_summary_path = _get_trace_paths()
         try:
-            _trace_jsonl_file = open(_trace_jsonl_path, 'a', buffering=8192, encoding='utf-8')  # noqa: SIM115
+            _trace_jsonl_file = open(_trace_jsonl_path, "a", buffering=8192, encoding="utf-8")  # noqa: SIM115
         except Exception:
             _trace_jsonl_file = None
+
 
 def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Sanitize metadata dict for trace safety."""
@@ -364,9 +390,6 @@ def _safe_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
             safe[k] = str(v)[:100]
     return safe
 
-# ============================================================================
-# Convenience wrappers for common patterns
-# ============================================================================
 
 def trace_fetch_start(url: str, transport: str, metadata: dict[str, Any] | None = None) -> None:
     """Trace fetch start event."""
@@ -380,8 +403,10 @@ def trace_fetch_start(url: str, transport: str, metadata: dict[str, Any] | None 
         metadata=metadata,
     )
 
-def trace_fetch_end(url: str, transport: str, status: str, duration_ms: float,
-                    metadata: dict[str, Any] | None = None) -> None:
+
+def trace_fetch_end(
+    url: str, transport: str, status: str, duration_ms: float, metadata: dict[str, Any] | None = None
+) -> None:
     """Trace fetch end event."""
     trace_event(
         component="fetch_coordinator",
@@ -394,6 +419,7 @@ def trace_fetch_end(url: str, transport: str, status: str, duration_ms: float,
         metadata=metadata,
     )
 
+
 def trace_dedup_decision(url: str, is_deduped: bool) -> None:
     """Trace URL dedup decision."""
     trace_event(
@@ -404,8 +430,10 @@ def trace_dedup_decision(url: str, is_deduped: bool) -> None:
         status="deduped" if is_deduped else "passed",
     )
 
-def trace_evidence_append(event_type: str, queue_size: int, status: str,
-                           metadata: dict[str, Any] | None = None) -> None:
+
+def trace_evidence_append(
+    event_type: str, queue_size: int, status: str, metadata: dict[str, Any] | None = None
+) -> None:
     """Trace evidence append request."""
     trace_event(
         component="evidence_log",
@@ -416,8 +444,10 @@ def trace_evidence_append(event_type: str, queue_size: int, status: str,
         metadata=metadata,
     )
 
-def trace_evidence_flush(batch_size: int, flush_latency_ms: float, status: str,
-                         rows_persisted: int | None = None) -> None:
+
+def trace_evidence_flush(
+    batch_size: int, flush_latency_ms: float, status: str, rows_persisted: int | None = None
+) -> None:
     """Trace evidence flush worker batch."""
     trace_event(
         component="evidence_log",
@@ -428,8 +458,11 @@ def trace_evidence_flush(batch_size: int, flush_latency_ms: float, status: str,
         metadata={
             "batch_size": batch_size,
             "rows_persisted": rows_persisted,
-        } if rows_persisted else {"batch_size": batch_size},
+        }
+        if rows_persisted
+        else {"batch_size": batch_size},
     )
+
 
 def trace_queue_drop(queue_name: str, queue_size: int) -> None:
     """Trace queue drop event."""
@@ -442,10 +475,6 @@ def trace_queue_drop(queue_name: str, queue_size: int) -> None:
         metadata={"queue_size": queue_size},
     )
 
-
-# ============================================================================
-# Sprint 8C3: Extended convenience wrappers
-# ============================================================================
 
 def trace_source_dedup_dropped(
     url: str,
@@ -883,10 +912,6 @@ def trace_source_family_counts(
     )
 
 
-# ============================================================================
-# Internal helper
-# ============================================================================
-
 def _merge_metadata(
     base: dict[str, Any] | None,
     additions: dict[str, Any],
@@ -899,67 +924,59 @@ def _merge_metadata(
     return result
 
 
-# ============================================================================
-# Module-level flush atexit
-# ============================================================================
-
 import atexit  # noqa: E402
-from _core import aclose
 
 
 def _flush_atexit() -> None:
     """Ensure trace flush on interpreter exit."""
     flush()
 
-atexit.register(_flush_atexit)
 
-# ============================================================================
-# Exports
-# ============================================================================
+atexit.register(_flush_atexit)
 
 __all__ = [
     # Core
-    'is_enabled',
-    'set_run_id',
-    'trace_event',
-    'trace_span_start',
-    'trace_span_end',
-    'trace_counter',
-    'flush',
-    'get_summary',
+    "is_enabled",
+    "set_run_id",
+    "trace_event",
+    "trace_span_start",
+    "trace_span_end",
+    "trace_counter",
+    "flush",
+    "get_summary",
     # Sprint 8C1 legacy
-    'trace_fetch_start',
-    'trace_fetch_end',
-    'trace_dedup_decision',
-    'trace_evidence_append',
-    'trace_evidence_flush',
-    'trace_queue_drop',
+    "trace_fetch_start",
+    "trace_fetch_end",
+    "trace_dedup_decision",
+    "trace_evidence_append",
+    "trace_evidence_flush",
+    "trace_queue_drop",
     # Sprint 8C3 enums
-    'SOURCE_FAMILY_ENUM',
-    'ACQUISITION_MODE_ENUM',
-    'CHALLENGE_OUTCOME_ENUM',
-    'CHALLENGE_TYPE_ENUM',
+    "SOURCE_FAMILY_ENUM",
+    "ACQUISITION_MODE_ENUM",
+    "CHALLENGE_OUTCOME_ENUM",
+    "CHALLENGE_TYPE_ENUM",
     # Sprint 8C3 fetch/source funnel
-    'trace_source_dedup_dropped',
-    'trace_provider_fallback',
-    'trace_fallback_after_403',
-    'trace_fallback_after_429',
-    'trace_source_accepted',
+    "trace_source_dedup_dropped",
+    "trace_provider_fallback",
+    "trace_fallback_after_403",
+    "trace_fallback_after_429",
+    "trace_source_accepted",
     # Sprint 8C3 challenge funnel
-    'trace_challenge_issued',
-    'trace_challenge_passed',
-    'trace_challenge_failed',
-    'trace_challenge_loop_detected',
-    'trace_clearance_reused',
+    "trace_challenge_issued",
+    "trace_challenge_passed",
+    "trace_challenge_failed",
+    "trace_challenge_loop_detected",
+    "trace_clearance_reused",
     # Sprint 8C3 evidence funnel
-    'trace_evidence_append_ext',
-    'trace_evidence_emitted',
-    'trace_evidence_corroborated',
-    'trace_evidence_rejected_low_quality',
-    'trace_evidence_flush_persisted',
+    "trace_evidence_append_ext",
+    "trace_evidence_emitted",
+    "trace_evidence_corroborated",
+    "trace_evidence_rejected_low_quality",
+    "trace_evidence_flush_persisted",
     # Sprint 8C3 snapshots
-    'trace_periodic_flow_snapshot',
-    'trace_queue_snapshot',
-    'trace_transport_mix_snapshot',
-    'trace_source_family_counts',
+    "trace_periodic_flow_snapshot",
+    "trace_queue_snapshot",
+    "trace_transport_mix_snapshot",
+    "trace_source_family_counts",
 ]

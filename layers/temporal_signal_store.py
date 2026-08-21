@@ -13,13 +13,15 @@ Design:
 
 No heavy imports at module level.
 """
-import msgspec.json as _json
+
 import logging
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
-from _core import aclose
+
+import msgspec.json as _json
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
@@ -31,13 +33,14 @@ CREATE TABLE IF NOT EXISTS temporal_snapshot (
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 """
-DEFAULT_STORE_PATH = Path(__file__).parent.parent / '.temporal_store' / 'temporal_signal.db'
+DEFAULT_STORE_PATH = Path(__file__).parent.parent / ".temporal_store" / "temporal_signal.db"
 
 __all__ = [
-    'TemporalSignalStore',
-    'SCHEMA_SQL',
-    'DEFAULT_STORE_PATH',
+    "TemporalSignalStore",
+    "SCHEMA_SQL",
+    "DEFAULT_STORE_PATH",
 ]
+
 
 class TemporalSignalStore:
     """
@@ -60,9 +63,10 @@ class TemporalSignalStore:
     close() -> None
         Close WAL checkpoint. Idempotent.
     """
-    __slots__ = tuple(('_conn', '_path'))
 
-    def __init__(self, path: str | Path | None=None) -> None:
+    __slots__ = ("_conn", "_path")
+
+    def __init__(self, path: str | Path | None = None) -> None:
         self._path: Path = Path(path) if path is not None else DEFAULT_STORE_PATH
         self._conn: sqlite3.Connection | None = None
 
@@ -71,12 +75,12 @@ class TemporalSignalStore:
         try:
             self._ensure_dir()
             self._conn = sqlite3.connect(str(self._path), timeout=10.0)
-            self._conn.execute('PRAGMA journal_mode=WAL')
-            self._conn.execute('PRAGMA synchronous=NORMAL')
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(SCHEMA_SQL)
             self._conn.commit()
         except Exception as exc:
-            logger.warning('[TemporalSignalStore] initialize() failed: %s', exc)
+            logger.warning("[TemporalSignalStore] initialize() failed: %s", exc)
             self._conn = None
 
     def save_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -88,13 +92,15 @@ class TemporalSignalStore:
         if self._conn is None:
             return
         try:
-            payload = _json.encode(snapshot).decode('utf-8')
+            payload = _json.encode(snapshot).decode("utf-8")
             updated_at = time.time()
-            self._conn.execute('REPLACE INTO temporal_snapshot (id, snapshot, updated_at) VALUES (1, ?, ?)', (payload, updated_at))
+            self._conn.execute(
+                "REPLACE INTO temporal_snapshot (id, snapshot, updated_at) VALUES (1, ?, ?)", (payload, updated_at)
+            )
             self._conn.commit()
-            self._conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except Exception as exc:
-            logger.warning('[TemporalSignalStore] save_snapshot() failed: %s', exc)
+            logger.warning("[TemporalSignalStore] save_snapshot() failed: %s", exc)
             try:
                 self._conn.rollback()
             except Exception:  # noqa: BLE001
@@ -110,13 +116,13 @@ class TemporalSignalStore:
         if self._conn is None:
             return None
         try:
-            cursor = self._conn.execute('SELECT snapshot FROM temporal_snapshot WHERE id = 1')
+            cursor = self._conn.execute("SELECT snapshot FROM temporal_snapshot WHERE id = 1")
             row = cursor.fetchone()
             if row is None:
                 return None
             return _json.decode(row[0])
         except Exception as exc:
-            logger.warning('[TemporalSignalStore] load_snapshot() failed: %s', exc)
+            logger.warning("[TemporalSignalStore] load_snapshot() failed: %s", exc)
             return None
 
     def close(self) -> None:
@@ -126,10 +132,10 @@ class TemporalSignalStore:
         if self._conn is None:
             return
         try:
-            self._conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self._conn.close()
         except Exception as exc:
-            logger.warning('[TemporalSignalStore] close() failed: %s', exc)
+            logger.warning("[TemporalSignalStore] close() failed: %s", exc)
         finally:
             self._conn = None
 
@@ -137,6 +143,7 @@ class TemporalSignalStore:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            logger.warning('[TemporalSignalStore] could not create store dir: %s', exc)
+            logger.warning("[TemporalSignalStore] could not create store dir: %s", exc)
             import tempfile
-            self._path = Path(tempfile.gettempdir()) / 'temporal_signal.db'
+
+            self._path = Path(tempfile.gettempdir()) / "temporal_signal.db"

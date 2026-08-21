@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +43,11 @@ _batch_hamming_scores_impl = None
 try:
     from hledac_rust_extensions import (
         batch_hamming_scores as _rust_batch_hamming_scores,
+    )
+    from hledac_rust_extensions import (
         batch_hamming_scores_batched as _rust_batch_hamming_scores_batched,
     )
+
     _RUST_AVAILABLE = True
     _batch_hamming_scores_impl = _rust_batch_hamming_scores
     logger.debug("[MRL-2] Rust SIMD Hamming loaded (NEON on M1)")
@@ -84,7 +86,7 @@ def batch_hamming_scores(
             candidates_packed,
             num_candidates,
             num_bytes,
-    )
+        )
         return list(result)
 
     # MLX fallback path — popcount via lookup table
@@ -118,14 +120,14 @@ def batch_hamming_scores_batched(
             num_queries,
             num_candidates,
             num_bytes,
-    )
+        )
         return [list(r) for r in result]
 
     # MLX fallback — call batch_hamming_scores for each query
     results = []
     for q in range(num_queries):
         q_start = q * num_bytes
-        q_bytes = queries_packed[q_start:q_start + num_bytes]
+        q_bytes = queries_packed[q_start : q_start + num_bytes]
         scores = batch_hamming_scores(q_bytes, candidates_packed, num_candidates, num_bytes)
         results.append(scores)
     return results
@@ -144,9 +146,7 @@ def _mlx_hamming_fallback(
     Popcount via 4-bit lookup table: popcount(byte) = table[byte & 0x0F] + table[byte >> 4].
     """
     # 4-bit popcount lookup table (0-15 → number of set bits)
-    _POPCOUNT_TABLE = bytes(
-        (bin(i).count("1") for i in range(16))
-    )
+    _POPCOUNT_TABLE = bytes(bin(i).count("1") for i in range(16))
 
     def _popcount_byte(b: int) -> int:
         """Popcount via 4-bit lookup table."""
@@ -166,7 +166,7 @@ def _mlx_hamming_fallback(
         cand = candidates_packed[start:end]
 
         # XOR then popcount: number of differing bits
-        xor_result = bytes(q ^ c for q, c in zip(query, cand))
+        xor_result = bytes(q ^ c for q, c in zip(query, cand, strict=False))
         diff_bits = _popcount_bytes(xor_result)
 
         # Convert to similarity: fewer bits differ = higher similarity
@@ -195,7 +195,8 @@ def simd_feature_level() -> int:
         # Try to get Rust feature level
         try:
             from hledac_rust_extensions import simd_feature_level
+
             return simd_feature_level()
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             return 1  # Rust available, but simd_feature_level not exposed
     return 0

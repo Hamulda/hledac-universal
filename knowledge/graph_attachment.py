@@ -33,9 +33,11 @@ F320 CHANGES:
     - graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
     - truth_write_graph_supports_buffered_writes: DuckPGQGraph now returns True (F272)
 """
+
 from typing import Any
-from _core import aclose
-__all__ = ['GraphAttachmentStore']
+
+__all__ = ["GraphAttachmentStore"]
+
 
 class GraphAttachmentStore:
     """
@@ -48,7 +50,8 @@ class GraphAttachmentStore:
 
     All read seams are fail-open: errors return empty collections, not exceptions.
     """
-    __slots__ = tuple(('_graph_attachment_kind', '_ioc_graph', '_stix_graph', '_truth_write_graph'))
+
+    __slots__ = ("_graph_attachment_kind", "_ioc_graph", "_stix_graph", "_truth_write_graph")
 
     def __init__(self) -> None:
         self._ioc_graph: Any = None
@@ -103,7 +106,9 @@ class GraphAttachmentStore:
         """
         if self._ioc_graph is None:
             return False
-        return callable(getattr(self._ioc_graph, 'buffer_ioc', None)) and callable(getattr(self._ioc_graph, 'flush_buffers', None))
+        return callable(getattr(self._ioc_graph, "buffer_ioc", None)) and callable(
+            getattr(self._ioc_graph, "flush_buffers", None)
+        )
 
     def inject_stix_graph(self, graph: Any) -> None:
         """
@@ -176,9 +181,11 @@ class GraphAttachmentStore:
         """
         if self._truth_write_graph is None:
             return False
-        return callable(getattr(self._truth_write_graph, 'buffer_ioc', None)) and callable(getattr(self._truth_write_graph, 'flush_buffers', None))
+        return callable(getattr(self._truth_write_graph, "buffer_ioc", None)) and callable(
+            getattr(self._truth_write_graph, "flush_buffers", None)
+        )
 
-    def get_top_seed_nodes(self, n: int=5) -> list[dict]:
+    def get_top_seed_nodes(self, n: int = 5) -> list[dict]:
         """
         Sprint 8TF §1: Export-facing read-only seam for top seed nodes.
 
@@ -219,14 +226,14 @@ class GraphAttachmentStore:
         if self._ioc_graph is None:
             return []
         try:
-            method = getattr(self._ioc_graph, 'get_top_nodes_by_degree', None)
+            method = getattr(self._ioc_graph, "get_top_nodes_by_degree", None)
             if not callable(method):
                 return []
             result = method(n=n)
             if not isinstance(result, list):
                 return []
             for item in result:
-                if not isinstance(item, dict) or 'value' not in item:
+                if not isinstance(item, dict) or "value" not in item:
                     return []
             return result
         except Exception:
@@ -263,19 +270,19 @@ class GraphAttachmentStore:
         if self._ioc_graph is None:
             return {}
         try:
-            method = getattr(self._ioc_graph, 'stats', None)
+            method = getattr(self._ioc_graph, "stats", None)
             if not callable(method):
                 return {}
             result = method()
             if not isinstance(result, dict):
                 return {}
-            if not all((k in result for k in ('nodes', 'edges'))):
+            if not all(k in result for k in ("nodes", "edges")):
                 return {}
             return result
         except Exception:
             return {}
 
-    def get_connected_iocs(self, ioc_value: str, max_hops: int=2) -> list:
+    def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list:
         """
         Sprint 8VY: Read-only seam for analytics graph find_connected() (DuckPGQGraph).
 
@@ -310,7 +317,7 @@ class GraphAttachmentStore:
         if self._ioc_graph is None:
             return []
         try:
-            method = getattr(self._ioc_graph, 'find_connected', None)
+            method = getattr(self._ioc_graph, "find_connected", None)
             if not callable(method):
                 return []
             result = method(ioc_value, max_hops=max_hops)
@@ -320,7 +327,7 @@ class GraphAttachmentStore:
         except Exception:
             return []
 
-    def get_connected_iocs_batch(self, values: list[str], max_hops: int=2) -> dict[str, list]:
+    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list]:
         """
         P1-1 fix: Batch version of get_connected_iocs for N+1 query optimization.
         Returns dict mapping each value to its connected IOC list.
@@ -334,7 +341,7 @@ class GraphAttachmentStore:
         if not values or self._ioc_graph is None:
             return {}
         try:
-            method = getattr(self._ioc_graph, 'find_connected_batch', None)
+            method = getattr(self._ioc_graph, "find_connected_batch", None)
             if not callable(method):
                 result = {}
                 for v in values:
@@ -347,7 +354,9 @@ class GraphAttachmentStore:
         except Exception:
             return {}
 
-    def annotate_findings_with_graph_context(self, findings: list[dict], max_hops: int=2, max_annotations: int=50) -> list[dict]:
+    def annotate_findings_with_graph_context(
+        self, findings: list[dict], max_hops: int = 2, max_annotations: int = 50
+    ) -> list[dict]:
         """
         Sprint F193A §1: Read-only enrichment pass — attaches graph context to findings.
 
@@ -388,8 +397,8 @@ class GraphAttachmentStore:
             ioc_seen: set[str] = set()
             ioc_to_finding_ids: dict[str, list[str]] = {}
             for f in findings[:max_annotations]:
-                finding_id = f.get('id', '')
-                ioc_value = f.get('value') or f.get('ioc_value') or f.get('indicator') or f.get('entity') or ''
+                finding_id = f.get("id", "")
+                ioc_value = f.get("value") or f.get("ioc_value") or f.get("indicator") or f.get("entity") or ""
                 if ioc_value and isinstance(ioc_value, str) and (len(ioc_value) >= 3):
                     if ioc_value not in ioc_seen:
                         ioc_seen.add(ioc_value)
@@ -401,13 +410,18 @@ class GraphAttachmentStore:
             annotation_map: dict[str, dict] = {}
             for ioc_value, connected in connected_cache.items():
                 if connected:
-                    annotation_map[ioc_value] = {'connected_count': len(connected), 'connected_types': list({c.get('ioc_type', 'unknown') for c in connected if c.get('ioc_type')}), 'max_hops': max_hops, 'connected_sample': connected[:5]}
+                    annotation_map[ioc_value] = {
+                        "connected_count": len(connected),
+                        "connected_types": list({c.get("ioc_type", "unknown") for c in connected if c.get("ioc_type")}),
+                        "max_hops": max_hops,
+                        "connected_sample": connected[:5],
+                    }
             enriched = []
             for f in findings[:max_annotations]:
                 enriched_f = dict(f)
-                ioc_value = f.get('value') or f.get('ioc_value') or f.get('indicator') or f.get('entity') or ''
+                ioc_value = f.get("value") or f.get("ioc_value") or f.get("indicator") or f.get("entity") or ""
                 if ioc_value in annotation_map:
-                    enriched_f['graph_annotation'] = annotation_map[ioc_value]
+                    enriched_f["graph_annotation"] = annotation_map[ioc_value]
                 enriched.append(enriched_f)
             enriched.extend(findings[max_annotations:])
             return enriched
@@ -481,7 +495,7 @@ class GraphAttachmentStore:
                 max_nodes=max_nodes,
                 max_community_size=max_community_size,
                 include_centrality=include_centrality,
-    )
+            )
         except Exception:
             return {
                 "nodes": [],
@@ -497,7 +511,7 @@ class GraphAttachmentStore:
                 },
             }
 
-    def get_top_entities_for_ghost_global(self, n: int=100) -> list[tuple[str, str, float]]:
+    def get_top_entities_for_ghost_global(self, n: int = 100) -> list[tuple[str, str, float]]:
         """
         Sprint 8TF §2: Bounded read-only seam for ghost_global cross-sprint entity accumulation.
 
@@ -544,7 +558,7 @@ class GraphAttachmentStore:
         if self._ioc_graph is None:
             return []
         try:
-            method = getattr(self._ioc_graph, 'get_top_nodes_by_degree', None)
+            method = getattr(self._ioc_graph, "get_top_nodes_by_degree", None)
             if not callable(method):
                 return []
             result = method(n=n)
@@ -553,9 +567,9 @@ class GraphAttachmentStore:
             entities: list[tuple[str, str, float]] = []
             for item in result:
                 if isinstance(item, dict):
-                    val = item.get('value', '')
-                    ioc_type = item.get('ioc_type', 'unknown')
-                    conf = float(item.get('confidence', 0.5))
+                    val = item.get("value", "")
+                    ioc_type = item.get("ioc_type", "unknown")
+                    conf = float(item.get("confidence", 0.5))
                     if val:
                         entities.append((val, ioc_type, conf))
             return entities

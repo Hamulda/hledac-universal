@@ -33,88 +33,81 @@ Backward compatibility:
     from hledac.universal.runtime.sprint_entrypoint import run_sprint
     # Still works via re-exports
 """
+
 from __future__ import annotations
 
-# Main entry point
-from .phases.orchestrator import run_sprint
-
-# Phase functions
-from .phases.boot import _run_sprint_boot
-from .phases.execute import _run_sprint_execute
-from .phases.windup import _run_sprint_windup
-from .phases.teardown import _run_sprint_teardown
+from .cleanup import (
+    _cleanup_stale_locks,
+    _fail_safe,
+    _fail_safe_async,
+)
 
 # Context and types
 from .context import (
     SprintContextManager,
     get_current_sprint_context,
-    set_current_sprint_context,
     get_sprint_seed_state,
+    set_current_sprint_context,
     set_sprint_seed_state,
-)
-from .types import (
-    SprintRunContext,
-    SprintFlags,
-    VerdictHintInput,
-    CheckpointInput,
-    RuntimeTruthInput,
-    ReportBuildInput,
-    ExportHandoffInput,
-)
-
-# Cleanup utilities
-from .cleanup import (
-    _fail_safe,
-    _fail_safe_async,
-    _cleanup_stale_locks,
-)
-
-# Truth logging
-from .truth_logger import (
-    _runtime_truth,
-    compute_timing_truth,
-    build_observed_run_tuple,
 )
 
 # Delta writer
 from .delta_writer import write_sprint_delta
 
+# Phase functions
+from .phases.boot import _run_sprint_boot
+from .phases.execute import _run_sprint_execute
+
+# Main entry point
+from .phases.orchestrator import run_sprint
+from .phases.teardown import _run_sprint_teardown
+from .phases.windup import _run_sprint_windup
+
+# Truth logging
+from .truth_logger import (
+    _runtime_truth,
+    build_observed_run_tuple,
+    compute_timing_truth,
+)
+from .types import (
+    CheckpointInput,
+    ExportHandoffInput,
+    ReportBuildInput,
+    RuntimeTruthInput,
+    SprintFlags,
+    SprintRunContext,
+    VerdictHintInput,
+)
+
 __all__ = [
     # Main entry point
-    'run_sprint',
-    
+    "run_sprint",
     # Phase functions
-    '_run_sprint_boot',
-    '_run_sprint_execute',
-    '_run_sprint_windup',
-    '_run_sprint_teardown',
-    
+    "_run_sprint_boot",
+    "_run_sprint_execute",
+    "_run_sprint_windup",
+    "_run_sprint_teardown",
     # Context
-    'SprintRunContext',
-    'SprintContextManager',
-    'get_current_sprint_context',
-    'set_current_sprint_context',
-    'get_sprint_seed_state',
-    'set_sprint_seed_state',
-    
+    "SprintRunContext",
+    "SprintContextManager",
+    "get_current_sprint_context",
+    "set_current_sprint_context",
+    "get_sprint_seed_state",
+    "set_sprint_seed_state",
     # Types
-    'SprintFlags',
-    'VerdictHintInput',
-    'CheckpointInput',
-    'RuntimeTruthInput',
-    'ReportBuildInput',
-    'ExportHandoffInput',
-    
-    # Cleanup
-    '_fail_safe',
-    '_fail_safe_async',
-    '_cleanup_stale_locks',
-    
+    "SprintFlags",
+    "VerdictHintInput",
+    "CheckpointInput",
+    "RuntimeTruthInput",
+    "ReportBuildInput",
+    "ExportHandoffInput",
+    "_fail_safe",
+    "_fail_safe_async",
+    "_cleanup_stale_locks",
     # Truth logging
-    '_runtime_truth',
-    'compute_timing_truth',
-    'build_observed_run_tuple',
-    
+    "_runtime_truth",
+    "compute_timing_truth",
+    "build_observed_run_tuple",
     # Delta writer
-    'write_sprint_delta',
+    "write_sprint_delta",
 ]

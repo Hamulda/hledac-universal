@@ -54,10 +54,8 @@ Limitations:
 import warnings
 
 from typing import TYPE_CHECKING, Literal
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 __all__ = ["render", "t", "Template"]
 
@@ -74,7 +72,7 @@ def _require_template() -> None:
     """Lazy import to defer import error until actual use."""
     global Template, Interpolation
     try:
-        from string.templatelib import Template, Interpolation  # type: ignore[import]
+        from string.templatelib import Template, Interpolation
     except ImportError:
         raise ImportError(
             "tstring.py requires Python 3.14+ (PEP 750 t-strings). "

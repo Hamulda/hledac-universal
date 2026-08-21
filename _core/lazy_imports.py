@@ -3,7 +3,6 @@
 Extends PEP 562 __getattr__ for module-level lazy imports.
 Reduces cold-start overhead for --help / diagnostics path.
 
-
 Usage:
     from hledac.universal._core.lazy_imports import lazy
 
@@ -27,7 +26,6 @@ import importlib
 import importlib.util
 import logging
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -190,7 +188,6 @@ lmdb = LazyImport("lmdb", install_hint="uv add lmdb")
 # This enables: from _core.lazy_imports import duckdb  # no import cost until duckdb.connect()
 def __getattr__(name: str) -> Any:
     """PEP 810: Lazily import submodules on first attribute access."""
-    # Check pre-configured instances
     if name in (
         "duckdb",
         "lancedb",

@@ -5,21 +5,21 @@ Tests for:
 - S1-10: NEREngine single-slot queue → 16-slot buffer
 - S1-13: ToolExecLog put_nowait with overflow counter
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
+
 import pytest
-from collections.abc import AsyncIterator
 
 from hledac.universal.tool_exec_log import ToolExecLog
-from pathlib import Path
-from _core import aclose
-
 
 # ============================================================================
 # S1-13: ToolExecLog Bounded Write Queue Tests
 # ============================================================================
+
 
 class TestToolExecLogBoundedQueue:
     """S1-13: ToolExecLog write queue must not drop silently on overflow."""
@@ -42,12 +42,7 @@ class TestToolExecLogBoundedQueue:
 
         # Submit 100 events rapidly (well under 2000 limit)
         for i in range(100):
-            log.log(
-                tool_name=f"test_tool_{i}",
-                input_data=b"input_data",
-                output_data=b"output_data",
-                status="success"
-    )
+            log.log(tool_name=f"test_tool_{i}", input_data=b"input_data", output_data=b"output_data", status="success")
 
         # Wait for write worker to process
         await asyncio.sleep(0.5)
@@ -68,12 +63,7 @@ class TestToolExecLogBoundedQueue:
         # Fill the queue beyond its limit by rapid logging
         # The queue is 2000, but we can test the counter mechanism
         for i in range(2500):
-            log.log(
-                tool_name=f"tool_{i}",
-                input_data=b"x",
-                output_data=b"y",
-                status="success"
-    )
+            log.log(tool_name=f"tool_{i}", input_data=b"x", output_data=b"y", status="success")
 
         final_overflow = log._overflow_count
 
@@ -88,12 +78,7 @@ class TestToolExecLogBoundedQueue:
         """log() should return ToolExecEvent when not silent_failure."""
         log = ToolExecLog(run_dir=temp_log_dir, enable_persist=False, run_id="test_no_persist")
 
-        event = log.log(
-            tool_name="test_tool",
-            input_data=b"input",
-            output_data=b"output",
-            status="success"
-    )
+        event = log.log(tool_name="test_tool", input_data=b"input", output_data=b"output", status="success")
 
         assert event is not None
         assert event.tool_name == "test_tool"
@@ -101,19 +86,9 @@ class TestToolExecLogBoundedQueue:
 
     def test_silent_failure_returns_none(self, temp_log_dir: Path) -> None:
         """silent_failure=True should make log() return None."""
-        log = ToolExecLog(
-            run_dir=temp_log_dir,
-            enable_persist=True,
-            run_id="test_silent",
-            silent_failure=True
-    )
+        log = ToolExecLog(run_dir=temp_log_dir, enable_persist=True, run_id="test_silent", silent_failure=True)
 
-        event = log.log(
-            tool_name="test_tool",
-            input_data=b"input",
-            output_data=b"output",
-            status="success"
-    )
+        event = log.log(tool_name="test_tool", input_data=b"input", output_data=b"output", status="success")
 
         assert event is None
 
@@ -126,6 +101,7 @@ class TestToolExecLogBoundedQueue:
 # S1-10: NER Engine Queue Size Tests (via inspection)
 # ============================================================================
 
+
 class TestNEREngineQueueSize:
     """S1-10: NER persistent worker should use 16-slot response queue."""
 
@@ -137,6 +113,7 @@ class TestNEREngineQueueSize:
         producer blocking when consumer is slow.
         """
         import inspect
+
         from hledac.universal.brain.ner_engine import _NERPersistentWorker
 
         source = inspect.getsource(_NERPersistentWorker.extract)

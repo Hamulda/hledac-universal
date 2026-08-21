@@ -33,22 +33,21 @@ M1 8GB constraints:
 - asyncio.to_thread() for non-blocking Rust call (no ProcessPoolExecutor)
 - Rust engine: ~10× faster than pure Python (HashMap vs dict + ahash vs FNV)
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from typing import Final
+from typing import TYPE_CHECKING, Any, Final
 
 import msgspec
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for, parallel
 logger = logging.getLogger(__name__)
 _MAX_PAIRS: Final[int] = 10000
 _MAX_FINDINGS_PER_CALL: Final[int] = 10000
@@ -66,8 +65,11 @@ def _try_import_simd_prefilter() -> bool:
     try:
         from rust_extensions.wiring.aho_corasick_simd_wiring import (
             ioc_prefilter_batch as _func,
+        )
+        from rust_extensions.wiring.aho_corasick_simd_wiring import (
             simd_aho_available,
         )
+
         _ioc_prefilter_batch = _func
         _SIMD_PREFILTER_AVAILABLE = simd_aho_available
         if _SIMD_PREFILTER_AVAILABLE:
@@ -84,9 +86,12 @@ class IOCooccurrenceEngineUnavailable(RuntimeError):
     Issue #18: Python O(n²) fallback eliminated. Sprint must have
     rust_extensions built and installed — no silent fallback.
     """
+
+
 _rust_engine_available: bool = False
 _compute_cooccurrence_edges_py: Any = None
 _batch_cooccurrence_edges_py: Any = None
+
 
 def _try_import_rust_engine() -> bool:
     """Lazy import of Rust co-occurrence engine. Raises if unavailable."""
@@ -96,6 +101,7 @@ def _try_import_rust_engine() -> bool:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         compute_cooccurrence_edges_py = rust.raw.compute_cooccurrence_edges_py
         batch_cooccurrence_edges_py = rust.raw.batch_cooccurrence_edges_py
         _compute_cooccurrence_edges_py = compute_cooccurrence_edges_py
@@ -104,7 +110,10 @@ def _try_import_rust_engine() -> bool:
         logger.debug("[IOC] Rust co-occurrence engine loaded")
         return True
     except ImportError as exc:
-        raise IOCooccurrenceEngineUnavailable(f"Rust co-occurrence engine unavailable. Build rust_extensions: cd rust_extensions && cargo build --release. Original error: {exc}") from exc
+        raise IOCooccurrenceEngineUnavailable(
+            f"Rust co-occurrence engine unavailable. Build rust_extensions: cd rust_extensions && cargo build --release. Original error: {exc}"
+        ) from exc
+
 
 class CoOccurrencePair(Struct):
     """A co-occurrence relationship between two IOCs."""
@@ -119,6 +128,7 @@ class CoOccurrencePair(Struct):
     last_seen: float = 0.0
     score: float = 0.0
 
+
 class SpeculativeEdge(Struct):
     """A speculative IOC connection for prefetch."""
 
@@ -131,6 +141,7 @@ class SpeculativeEdge(Struct):
     prefetch_priority: int
     speculative: bool = True
 
+
 class IOCounterStats(Struct):
     """IOC co-occurrence mining statistics."""
 
@@ -140,6 +151,7 @@ class IOCounterStats(Struct):
     prefetch_tasks_dispatched: int = 0
     compute_time_ms: float = 0.0
     rust_used: bool = True
+
 
 class IOCooccurrenceMiner:
     """Mines co-occurrence patterns from CanonicalFinding objects.
@@ -154,9 +166,9 @@ class IOCooccurrenceMiner:
     via module-level lazy import, not as an instance attribute.
     """
 
-    __slots__ = tuple(("_duckdb_store", "_ioc_counts", "_lock", "_pairs", "_stats", "_type_counts"))
+    __slots__ = ("_duckdb_store", "_ioc_counts", "_lock", "_pairs", "_stats", "_type_counts")
 
-    def __init__(self, duckdb_store: Any | None=None) -> None:
+    def __init__(self, duckdb_store: Any | None = None) -> None:
         """Initialize IOCooccurrenceMiner with DuckDB store."""
         self._pairs: dict[tuple[str, str], CoOccurrencePair] = {}
         self._ioc_counts: dict[str, int] = defaultdict(int)
@@ -182,6 +194,7 @@ class IOCooccurrenceMiner:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _extract_iocs_rust = rust.raw.extract_iocs
             return _extract_iocs_rust(finding.payload_text or "")
         except ImportError:  # noqa: BLE001
@@ -213,6 +226,7 @@ class IOCooccurrenceMiner:
         # Import here to avoid circular dependency — public_patterns is a sibling pipeline module
         try:
             from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts
+
             return extract_iocs_from_texts(texts)
         except Exception:  # noqa: BLE001
             # Fail-safe: return empty lists matching input length
@@ -296,18 +310,37 @@ class IOCooccurrenceMiner:
             try:
                 finding_dicts.append(msgspec.to_builtins(f))
             except TypeError:
-                finding_dicts.append({"finding_id": getattr(f, "finding_id", ""), "payload_text": getattr(f, "payload_text", None)})
+                finding_dicts.append(
+                    {"finding_id": getattr(f, "finding_id", ""), "payload_text": getattr(f, "payload_text", None)}
+                )
         try:
             raw_edges: list[tuple] = await asyncio.to_thread(_compute_cooccurrence_edges_py, finding_dicts)
         except Exception as exc:
             raise IOCooccurrenceEngineUnavailable(f"Rust co-occurrence engine failed at analyze() time: {exc}") from exc
         self._stats.rust_used = True
-        edges = [SpeculativeEdge(source_ioc=r[0], source_type=r[1], target_ioc=r[2], target_type=r[3], confidence=r[4], reason=r[5], prefetch_priority=r[6], speculative=True) for r in raw_edges]
+        edges = [
+            SpeculativeEdge(
+                source_ioc=r[0],
+                source_type=r[1],
+                target_ioc=r[2],
+                target_type=r[3],
+                confidence=r[4],
+                reason=r[5],
+                prefetch_priority=r[6],
+                speculative=True,
+            )
+            for r in raw_edges
+        ]
         await self._update_pairs_from_edges(raw_edges)
         self._stats.findings_analyzed += len(findings)
         self._stats.speculative_edges = len(edges)
         self._stats.compute_time_ms = (time.monotonic() - t0) * 1000
-        logger.debug("[IOC] analyzed %d findings → %d edges (%.1fms, rust=True)", len(findings), len(edges), self._stats.compute_time_ms)
+        logger.debug(
+            "[IOC] analyzed %d findings → %d edges (%.1fms, rust=True)",
+            len(findings),
+            len(edges),
+            self._stats.compute_time_ms,
+        )
         return edges
 
     async def _update_pairs_from_edges(self, raw_edges: list[tuple]) -> None:
@@ -327,7 +360,14 @@ class IOCooccurrenceMiner:
                     norm_a, norm_b = key
                     norm_type_a = type_a if val_a <= val_b else type_b
                     norm_type_b = type_b if val_a <= val_b else type_a
-                    self._pairs[key] = CoOccurrencePair(ioc_a=norm_a, ioc_b=norm_b, ioc_type_a=norm_type_a, ioc_type_b=norm_type_b, support=support, last_seen=time.time())
+                    self._pairs[key] = CoOccurrencePair(
+                        ioc_a=norm_a,
+                        ioc_b=norm_b,
+                        ioc_type_a=norm_type_a,
+                        ioc_type_b=norm_type_b,
+                        support=support,
+                        last_seen=time.time(),
+                    )
 
     def _evict_lru(self) -> None:
         """Evict lowest-support pairs to make room for new ones."""
@@ -346,7 +386,20 @@ class IOCooccurrenceMiner:
         """
         if self._duckdb_store is None:
             return
-        pairs = [{"ioc_a": p.ioc_a, "ioc_b": p.ioc_b, "ioc_type_a": p.ioc_type_a, "ioc_type_b": p.ioc_type_b, "support": p.support, "confidence": max(p.confidence_a_to_b, p.confidence_b_to_a), "score": p.score, "last_seen": p.last_seen} for p in self._pairs.values() if p.support >= 2]
+        pairs = [
+            {
+                "ioc_a": p.ioc_a,
+                "ioc_b": p.ioc_b,
+                "ioc_type_a": p.ioc_type_a,
+                "ioc_type_b": p.ioc_type_b,
+                "support": p.support,
+                "confidence": max(p.confidence_a_to_b, p.confidence_b_to_a),
+                "score": p.score,
+                "last_seen": p.last_seen,
+            }
+            for p in self._pairs.values()
+            if p.support >= 2
+        ]
         await self._duckdb_store.async_ingest_cooccurrence_batch(pairs)
 
     async def load(self) -> None:
@@ -360,18 +413,50 @@ class IOCooccurrenceMiner:
         rows = await self._duckdb_store.async_load_cooccurrence(limit=_MAX_PAIRS)
         self._pairs.clear()
         for row in rows:
-            pair = CoOccurrencePair(ioc_a=row["ioc_a"], ioc_b=row["ioc_b"], ioc_type_a=row["ioc_type_a"], ioc_type_b=row["ioc_type_b"], support=row["support"], confidence_a_to_b=row["confidence"], confidence_b_to_a=row["confidence"], score=row["score"], last_seen=row["last_seen"])
+            pair = CoOccurrencePair(
+                ioc_a=row["ioc_a"],
+                ioc_b=row["ioc_b"],
+                ioc_type_a=row["ioc_type_a"],
+                ioc_type_b=row["ioc_type_b"],
+                support=row["support"],
+                confidence_a_to_b=row["confidence"],
+                confidence_b_to_a=row["confidence"],
+                score=row["score"],
+                last_seen=row["last_seen"],
+            )
             self._pairs[row["ioc_a"], row["ioc_b"]] = pair
 
-    async def get_speculative_edges_for_ioc(self, ioc_value: str, limit: int=5) -> list[SpeculativeEdge]:
+    async def get_speculative_edges_for_ioc(self, ioc_value: str, limit: int = 5) -> list[SpeculativeEdge]:
         """Get top speculative edges originating from a specific IOC."""
         edges: list[SpeculativeEdge] = []
         async with self._lock:
             for pair in self._pairs.values():
                 if pair.ioc_a == ioc_value and pair.support >= 2:
-                    edges.append(SpeculativeEdge(source_ioc=pair.ioc_a, source_type=pair.ioc_type_a, target_ioc=pair.ioc_b, target_type=pair.ioc_type_b, confidence=pair.confidence_a_to_b, reason=f"co-occurred in {pair.support} findings", prefetch_priority=max(0, 100 - int(pair.score)), speculative=True))
+                    edges.append(
+                        SpeculativeEdge(
+                            source_ioc=pair.ioc_a,
+                            source_type=pair.ioc_type_a,
+                            target_ioc=pair.ioc_b,
+                            target_type=pair.ioc_type_b,
+                            confidence=pair.confidence_a_to_b,
+                            reason=f"co-occurred in {pair.support} findings",
+                            prefetch_priority=max(0, 100 - int(pair.score)),
+                            speculative=True,
+                        )
+                    )
                 elif pair.ioc_b == ioc_value and pair.support >= 2:
-                    edges.append(SpeculativeEdge(source_ioc=pair.ioc_b, source_type=pair.ioc_type_b, target_ioc=pair.ioc_a, target_type=pair.ioc_type_a, confidence=pair.confidence_b_to_a, reason=f"co-occurred in {pair.support} findings", prefetch_priority=max(0, 100 - int(pair.score)), speculative=True))
+                    edges.append(
+                        SpeculativeEdge(
+                            source_ioc=pair.ioc_b,
+                            source_type=pair.ioc_type_b,
+                            target_ioc=pair.ioc_a,
+                            target_type=pair.ioc_type_a,
+                            confidence=pair.confidence_b_to_a,
+                            reason=f"co-occurred in {pair.support} findings",
+                            prefetch_priority=max(0, 100 - int(pair.score)),
+                            speculative=True,
+                        )
+                    )
         edges.sort(key=lambda e: (e.prefetch_priority, -e.confidence))
         return edges[:limit]
 
@@ -381,11 +466,14 @@ class IOCooccurrenceMiner:
 
     async def aclose(self) -> None:
         """No-op: no ProcessPoolExecutor to shutdown."""
-        pass
+
+
 import re
-from _core import aclose
+
 _DOMAIN_PATTERN = re.compile("\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b")
-_IPV4_PATTERN = re.compile("\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b")
+_IPV4_PATTERN = re.compile(
+    "\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b"
+)
 _IPV6_PATTERN = re.compile("\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b")
 _URL_PATTERN = re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')
 _MD5_PATTERN = re.compile("\\b[a-fA-F0-9]{32}\\b")
@@ -394,9 +482,11 @@ _SHA256_PATTERN = re.compile("\\b[a-fA-F0-9]{64}\\b")
 _EMAIL_PATTERN = re.compile("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b")
 _CVE_PATTERN = re.compile("CVE-\\d{4}-\\d{4,}")
 
+
 def _is_valid_hex_hash(value: str, expected_len: int) -> bool:
     r"""Validate hex hash to prevent false positives without \b boundaries."""
-    return len(value) == expected_len and all((c in "0123456789abcdefABCDEF" for c in value))
+    return len(value) == expected_len and all(c in "0123456789abcdefABCDEF" for c in value)
+
 
 def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
     """Extract (ioc_value, ioc_type) pairs from text. Only for external API."""
@@ -430,4 +520,3 @@ def _extract_iocs_python(payload: str) -> list[tuple[str, str]]:
     for m in _CVE_PATTERN.finditer(payload):
         iocs.append((m.group(), "cve"))
     return iocs
-

@@ -36,7 +36,6 @@ import logging
 from typing import Any
 
 import msgspec.json as _json
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +82,7 @@ class ForensicsMetadataStore:
         """Get DuckDB connection."""
         if self._db_store is None:
             from hledac.universal.knowledge.db import get_db
+
             self._db_store = get_db().duckdb
         return self._db_store._get_connection()
 
@@ -116,7 +116,7 @@ class ForensicsMetadataStore:
                 """,
                 (file_hash, mod_time, file_size),
             ).fetchall()
-    )
+        )
 
         if not rows:
             return None
@@ -161,7 +161,7 @@ class ForensicsMetadataStore:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (file_hash, mod_time, file_size, file_type, metadata_json, extracted_at),
-    )
+            )
         )
 
     async def delete(self, file_hash: str) -> None:
@@ -179,7 +179,7 @@ class ForensicsMetadataStore:
             lambda: conn.execute(
                 "DELETE FROM forensics_metadata WHERE file_hash = ?",
                 (file_hash,),
-    )
+            )
         )
 
     async def get_by_type(self, file_type: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -209,19 +209,21 @@ class ForensicsMetadataStore:
                 """,
                 (file_type, limit),
             ).fetchall()
-    )
+        )
 
         results = []
         for row in rows:
             metadata_bytes = row[2]
             if isinstance(metadata_bytes, str):
                 metadata_bytes = metadata_bytes.encode()
-            results.append({
-                "file_hash": row[0],
-                "file_type": row[1],
-                "metadata": _json.decode(metadata_bytes),
-                "extracted_at": row[3],
-            })
+            results.append(
+                {
+                    "file_hash": row[0],
+                    "file_type": row[1],
+                    "metadata": _json.decode(metadata_bytes),
+                    "extracted_at": row[3],
+                }
+            )
         return results
 
     async def close(self) -> None:

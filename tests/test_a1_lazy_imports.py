@@ -8,9 +8,6 @@ RUN: python -m pytest tests/test_a1_lazy_imports.py -v
 
 from __future__ import annotations
 
-import pytest
-from _core import aclose
-
 
 class TestA1LazyImportsModule:
     """A1: _lazy_imports.py module existence and factory functions."""
@@ -19,11 +16,12 @@ class TestA1LazyImportsModule:
         """Verify _lazy_imports.py module can be imported."""
         from hledac.universal._lazy_imports import (
             get_DuckDBShadowStore,
-            get_M1ResourceGovernor,
-            get_Hermes3Engine,
             get_EvidenceLog,
+            get_Hermes3Engine,
+            get_M1ResourceGovernor,
             get_SidecarOrchestrator,
-    )
+        )
+
         # If this import succeeds, the module exists and has all 5 factories
         assert callable(get_DuckDBShadowStore)
         assert callable(get_M1ResourceGovernor)
@@ -33,7 +31,7 @@ class TestA1LazyImportsModule:
 
     def test_get_all_service_status(self) -> None:
         """Verify diagnostic helper returns status for all 5 services."""
-        from hledac.universal._lazy_imports import get_all_service_status, LazyServiceInfo
+        from hledac.universal._lazy_imports import LazyServiceInfo, get_all_service_status
 
         status = get_all_service_status()
         assert isinstance(status, dict)
@@ -60,9 +58,9 @@ class TestA1LazyImportsModule:
         """Verify factories return class types, not instances."""
         from hledac.universal._lazy_imports import (
             get_DuckDBShadowStore,
-            get_M1ResourceGovernor,
             get_EvidenceLog,
-    )
+            get_M1ResourceGovernor,
+        )
 
         # These should return class types
         cls = get_DuckDBShadowStore()
@@ -78,6 +76,7 @@ class TestA1LazyImportsModule:
         """Verify PEP 810 __getattr__ works for factory functions."""
         # This should work via __getattr__ lazy loading
         from hledac.universal._lazy_imports import get_DuckDBShadowStore
+
         assert callable(get_DuckDBShadowStore)
 
     def test_class_caching(self) -> None:
@@ -144,6 +143,7 @@ class TestA1EvidenceLogIntegration:
 
         # EvidenceLog should have specific __init__ signature
         import inspect
+
         sig = inspect.signature(EvidenceLog.__init__)
         params = list(sig.parameters.keys())
         assert "run_id" in params, "EvidenceLog.__init__ should have run_id param"

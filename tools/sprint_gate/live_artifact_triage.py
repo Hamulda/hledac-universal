@@ -10,18 +10,12 @@ Safety: no live network, no MLX, no live execution, no dependency install.
 import argparse
 import json
 import sys
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
-import msgspec
 from enum import StrEnum
 from pathlib import Path
-from _core import aclose
 from compat.msgspec_gc_compat import Struct
 
-
 if TYPE_CHECKING:
-    from typing import TypeAlias
 
 class RootCause(StrEnum):
     MEMORY_BLOCKED = 'MEMORY_BLOCKED'
@@ -369,12 +363,6 @@ def _profile(data: dict) -> str:
 _SWAP_GATE_THRESHOLD_GIB = 1.0
 _HIGH_SWAP_THRESHOLD_GIB = 2.0
 
-
-
-
-# ----------------------------------------------------------------------
-# Extracted handlers for complex triage logic
-# ----------------------------------------------------------------------
 def _check_memory_blocked(data: dict, allow_high_swap: bool) -> TriageResult | None:
     """Rule 1: Memory/swap blocked — check hardware constraints and swap thresholds."""
     swap_gib = _swap_gib(data)
@@ -418,7 +406,6 @@ def _check_memory_blocked(data: dict, allow_high_swap: bool) -> TriageResult | N
     )
     return None
 
-
 def _check_schema_drift(data: dict) -> TriageResult | None:
     """Rule 2: Surface contract drift — acquisition_report without schema_version."""
     schema_version = _acquisition_schema_version(data)
@@ -437,7 +424,6 @@ def _check_schema_drift(data: dict) -> TriageResult | None:
             exact_followup_command='python tools/live_artifact_triage.py --input <json> --output-json /tmp/triage.json --output-md /tmp/triage.md'
     )
     return None
-
 
 def _check_ct_failures(data: dict) -> TriageResult | None:
     """Rule 3: CT provider failures, quarantined, or rejected."""
@@ -494,7 +480,6 @@ def _check_ct_failures(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_quality_gate(data: dict) -> TriageResult | None:
     """Rule 4: Quality gate failure (feed only)."""
     quality_gate = _quality_gate(data)
@@ -514,7 +499,6 @@ def _check_quality_gate(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_terminality(data: dict) -> TriageResult | None:
     """
     Rule 5: Terminality failures — complex nested logic extracted for clarity.
@@ -525,7 +509,6 @@ def _check_terminality(data: dict) -> TriageResult | None:
     if verdict != 'FAIL_TERMINALITY_UNSATISFIED':
         return None
 
-    # Extract all terminality context
     ar_term_satisfied = _terminality_satisfied_from_report(data)
     top_level_term_satisfied = _top_level_terminality_satisfied(data)
     req_lanes = _terminality_required_lanes(data)
@@ -662,7 +645,6 @@ def _check_terminality(data: dict) -> TriageResult | None:
                 exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "{query}" --live'
     )
 
-
 def _check_benchmark_drift(data: dict) -> TriageResult | None:
     """Rule 6: Benchmark normalization drift verdicts."""
     verdict = _verdict(data)
@@ -687,7 +669,6 @@ def _check_benchmark_drift(data: dict) -> TriageResult | None:
             exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
     )
     return None
-
 
 def _check_discovery_providers(data: dict) -> TriageResult | None:
     """Rule 7: Discovery provider issues (not wired, no selection)."""
@@ -745,7 +726,6 @@ def _check_discovery_providers(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_nonfeed_evidence(data: dict) -> TriageResult | None:
     """Rule 8: Nonfeed evidence missing verdict."""
     verdict = _verdict(data)
@@ -768,7 +748,6 @@ def _check_nonfeed_evidence(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_feed_dominated(data: dict) -> TriageResult | None:
     """Rule 9: Feed-dominated results (high feed share, zero nonfeed)."""
     nonfeed_acc = _nonfeed_accepted(data)
@@ -781,7 +760,6 @@ def _check_feed_dominated(data: dict) -> TriageResult | None:
         pub_acc = _public_acceptance_accepted(data)
         pub_rej = _public_rejected(data)
 
-        # Check for public quality rejection first
         if (pub_fetched or pub_acc_att > 0) and pub_acc == 0 and pub_rej > 0:
             return _public_quality_rejected_result(data, f'feed_share={feed_share:.2f}, public_rejected > 0 but accepted = 0')
 
@@ -802,7 +780,6 @@ def _check_feed_dominated(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_public_quality(data: dict) -> TriageResult | None:
     """Rule 10: Public quality rejection (attempted but all rejected)."""
     pub_acc_att = _public_acceptance_attempted(data)
@@ -816,7 +793,6 @@ def _check_public_quality(data: dict) -> TriageResult | None:
             f'public_acceptance_attempted={pub_acc_att}, accepted=0, rejected={pub_rej}, top_reason={top_reject}'
     )
 
-    # Check public stage counters too
     psc = _public_stage_counters(data)
     if isinstance(psc, dict):
         psc_acc_att = psc.get('public_acceptance_attempted', 0)
@@ -828,7 +804,6 @@ def _check_public_quality(data: dict) -> TriageResult | None:
                 f'public_stage_counters: attempted={psc_acc_att}, accepted=0, rejected={psc_rej}'
     )
     return None
-
 
 def _check_nonfeed_scheduler(data: dict) -> TriageResult | None:
     """Rule 11: Nonfeed scheduler gap or starvation."""
@@ -851,7 +826,6 @@ def _check_nonfeed_scheduler(data: dict) -> TriageResult | None:
             exact_followup_command=f'python benchmarks/live_sprint_measurement.py --profile active300 --query "{query}" --live'
     )
     return None
-
 
 def _check_public_discovery(data: dict) -> TriageResult | None:
     """Rule 12: Public discovery/fetch zero outcomes."""
@@ -914,7 +888,6 @@ def _check_public_discovery(data: dict) -> TriageResult | None:
     )
     return None
 
-
 def _check_healthy_or_empty(data: dict) -> TriageResult | None:
     """Rule 13: Final fallback — healthy run or total findings zero."""
     total = _total_findings(data)
@@ -938,7 +911,6 @@ def _check_healthy_or_empty(data: dict) -> TriageResult | None:
             exact_followup_command='python benchmarks/live_sprint_measurement.py --print-preflight-only'
     )
 
-    # Run appears healthy
     return TriageResult(
         root_cause_class=RootCause.UNKNOWN,
         confidence=0.3,
@@ -955,10 +927,6 @@ def _check_healthy_or_empty(data: dict) -> TriageResult | None:
         exact_followup_command=''
     )
 
-
-# ----------------------------------------------------------------------
-# Main triage function — uses extracted handlers in priority order
-# ----------------------------------------------------------------------
 def triage_live_artifact(data: dict, allow_high_swap: bool=False) -> TriageResult:
     """
     Classify a live sprint measurement JSON and return triage result.
@@ -1031,10 +999,6 @@ def triage_live_artifact(data: dict, allow_high_swap: bool=False) -> TriageResul
     # Rule 13: Healthy run or empty findings (fallback)
     return _check_healthy_or_empty(data)
 
-
-# ----------------------------------------------------------------------
-# Shared helper for public quality rejection results
-# ----------------------------------------------------------------------
 def _public_quality_rejected_result(data: dict, reason: str) -> TriageResult:
     """Build PUBLIC_QUALITY_REJECTED result (used by multiple handlers)."""
     top_rej = _top_public_reject_reason(data)
@@ -1087,7 +1051,6 @@ def main() -> None:
     if cs:
         result.extracted_metrics['capability_synthesis'] = cs
 
-    # Build output dict
     output = {
         'root_cause_class': result.root_cause_class.value,
         'confidence': result.confidence,

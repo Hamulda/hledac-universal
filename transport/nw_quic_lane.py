@@ -59,13 +59,10 @@ import os
 import platform
 import sys
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Env gate
-# ---------------------------------------------------------------------------
+
 def _resolve_enabled() -> bool:
     """Resolve NW QUIC gate. Default ON on darwin/arm64, opt-out via env."""
     env_val = os.environ.get("HLEDAC_ENABLE_NW_QUIC", "").lower()
@@ -89,12 +86,10 @@ _NW_QUIC_RSS_BLOCK_GIB: float = 5.5
 def _rss_over_budget() -> bool:
     """Return True if process RSS exceeds the NW QUIC lane budget."""
     from hledac.universal.transport._rss_guard import rss_over_budget as _guard
+
     return _guard(_NW_QUIC_RSS_BLOCK_GIB)
 
 
-# ---------------------------------------------------------------------------
-# macOS version check — nw_parameters_create_quic requires macOS 12.0+
-# ---------------------------------------------------------------------------
 def _macos_version_at_least(major: int, minor: int = 0) -> bool:
     """Check if macOS version is at least major.minor."""
     if sys.platform != "darwin":
@@ -115,9 +110,6 @@ def _macos_version_at_least(major: int, minor: int = 0) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Rust extension import (lazy — no import on module load)
-# ---------------------------------------------------------------------------
 def _probe_nw_quic() -> bool:
     """Return True if the Rust nw_connection.fetch_quic extension is available."""
     if not NW_QUIC_ENABLED:
@@ -129,7 +121,8 @@ def _probe_nw_quic() -> bool:
         logger.debug("nw_quic: macOS < 12.0, QUIC not available via Network.framework")
         return False
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
+
         # Probe: check if fetch_quic is available
         if not hasattr(nw_connection, "fetch_quic"):
             logger.debug("nw_quic: fetch_quic not available in Rust extension")
@@ -148,9 +141,6 @@ def _probe_nw_quic() -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 async def fetch_nw_quic(
     url: str,
     *,
@@ -187,6 +177,7 @@ async def fetch_nw_quic(
     # Skip dark web — QUIC/UDP cannot tunnel through Tor/I2P
     try:
         from hledac.universal.transport.http3_lane import is_dark_web_url
+
         if is_dark_web_url(url):
             logger.debug("nw_quic: dark web URL skipped: %s", url[:80])
             return None
@@ -196,13 +187,13 @@ async def fetch_nw_quic(
     timeout = timeout_ms if timeout_ms is not None else NW_QUIC_TIMEOUT_MS
 
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
 
         # MODERN-14: fetch_quic_async() returns native awaitable — no GIL ping-pong!
         response = await nw_connection.fetch_quic_async(
             url,
             timeout,
-    )
+        )
 
         if response is None:
             return None
@@ -224,9 +215,7 @@ async def fetch_nw_quic(
             "content": bytes(response.body) if response.body else b"",
             "status_code": response.status,
             "headers": dict(response.headers) if response.headers else {},
-            "content_type": _extract_content_type(
-                dict(response.headers) if response.headers else {}
-            ),
+            "content_type": _extract_content_type(dict(response.headers) if response.headers else {}),
             "final_url": url,
             "success": response.status < 400,
             "error": response.error,
@@ -260,18 +249,16 @@ def _extract_content_type(headers: dict[str, str]) -> str:
     return "application/octet-stream"
 
 
-# ---------------------------------------------------------------------------
-# Telemetry
-# ---------------------------------------------------------------------------
 def get_quic_pool_stats() -> dict[str, Any] | None:
     """Return NWConnection pool statistics or None if unavailable.
-    
+
     Shares the same pool as TCP nw_connection — stats include both.
     """
     if not _probe_nw_quic():
         return None
     try:
-        from hledac.universal.rust_extensions import nw_connection  # type: ignore[import-untyped]
+        from hledac.universal.rust_extensions import nw_connection
+
         return nw_connection.pool_stats()
     except Exception:
         return None

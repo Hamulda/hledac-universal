@@ -9,7 +9,6 @@ Exit codes:
   1 = one or more checks failed
 """
 
-
 import sys
 from pathlib import Path
 
@@ -24,28 +23,27 @@ if _project_root not in sys.path:
 
 import types as _types  # noqa: E402
 
-_hledac_stub = _types.ModuleType('hledac')
+_hledac_stub = _types.ModuleType("hledac")
 _hledac_stub.__path__ = [_project_root, _universal]
-_hledac_stub.__file__ = f'{_project_root}/hledac/__init__.py'
-_hledac_stub.__package__ = 'hledac'
+_hledac_stub.__file__ = f"{_project_root}/hledac/__init__.py"
+_hledac_stub.__package__ = "hledac"
 _hledac_stub.__spec__ = None
-sys.modules['hledac'] = _hledac_stub
+sys.modules["hledac"] = _hledac_stub
 # Also create hledac.universal namespace explicitly (Python doesn't auto-create sub-packages)
-_hledac_universal_stub = _types.ModuleType('hledac.universal')
+_hledac_universal_stub = _types.ModuleType("hledac.universal")
 _hledac_universal_stub.__path__ = [_universal]
-_hledac_universal_stub.__package__ = 'hledac.universal'
-sys.modules['hledac.universal'] = _hledac_universal_stub
+_hledac_universal_stub.__package__ = "hledac.universal"
+sys.modules["hledac.universal"] = _hledac_universal_stub
 
 from hledac.universal.runtime.acquisition_strategy import (  # noqa: E402
     build_acquisition_plan,
     normalize_acquisition_profile,
-    )
-from _core import aclose
+)
 
 __all__ = ["run_preflight"]
 
-
 # ── Check 1 ──────────────────────────────────────────────────────────────────
+
 
 def check_profile_normalize() -> tuple[bool, str]:
     """_resolve_acquisition_profile('nonfeed_diagnostic180') == 'nonfeed_diagnostic'."""
@@ -59,6 +57,7 @@ def check_profile_normalize() -> tuple[bool, str]:
 
 
 # ── Check 2 ──────────────────────────────────────────────────────────────────
+
 
 def check_acquisition_plan_profile() -> tuple[bool, str]:
     """build_acquisition_plan passes canonical profile to internal plan."""
@@ -79,6 +78,7 @@ def check_acquisition_plan_profile() -> tuple[bool, str]:
 
 # ── Check 3 ──────────────────────────────────────────────────────────────────
 
+
 def check_query_variants() -> tuple[bool, str]:
     """Public query builder variants include mozilla.org for mozilla.org query."""
     # We test the public discovery query-builder variants path via acquisition plan
@@ -92,7 +92,6 @@ def check_query_variants() -> tuple[bool, str]:
         swap_detected=False,
         acquisition_profile="nonfeed_diagnostic",
     )
-    # Get PUBLIC lane plan
     public_plan = next(
         (p for p in plan.plans if getattr(p, "lane", None) == "PUBLIC"),
         None,
@@ -109,6 +108,7 @@ def check_query_variants() -> tuple[bool, str]:
 
 
 # ── Check 4 ──────────────────────────────────────────────────────────────────
+
 
 def check_acquisition_plan_ct_public_truth() -> tuple[bool, str]:
     """build_acquisition_plan for mozilla.org + nonfeed_diagnostic has PUBLIC/CT enabled."""
@@ -128,14 +128,12 @@ def check_acquisition_plan_ct_public_truth() -> tuple[bool, str]:
     public_reason = getattr(public_plan, "reason", "not found") or "not found"
     ct_reason = getattr(ct_plan, "reason", "not found") or "not found"
     ok = public_ok and ct_ok
-    detail = (
-        f"  PUBLIC enabled={public_ok} reason={public_reason!r}  "
-        f"CT enabled={ct_ok} reason={ct_reason!r}"
-    )
+    detail = f"  PUBLIC enabled={public_ok} reason={public_reason!r}  CT enabled={ct_ok} reason={ct_reason!r}"
     return ok, detail
 
 
 # ── Check 5 ──────────────────────────────────────────────────────────────────
+
 
 def check_duckdb_shadow_aclose_before_init() -> tuple[bool, str]:
     """DuckDBShadowStore aclose() before initialize() does not crash."""
@@ -146,7 +144,7 @@ def check_duckdb_shadow_aclose_before_init() -> tuple[bool, str]:
         # aclose should be safe even before async_initialize — Sprint F233A fix
         import asyncio
 
-        async def _test():
+        async def _test() -> None:
             await store.aclose()
 
         asyncio.run(_test())
@@ -159,6 +157,7 @@ def check_duckdb_shadow_aclose_before_init() -> tuple[bool, str]:
 
 
 # ── Check 6 ──────────────────────────────────────────────────────────────────
+
 
 def check_research_quality_replay_fixture() -> tuple[bool, str]:
     """Research-quality replay fixture preserves feed_findings=4464 + QUALITY_FAIL_FEED_ONLY.
@@ -203,7 +202,7 @@ def check_research_quality_replay_fixture() -> tuple[bool, str]:
             f"  quality_gate={gate!r} (expected QUALITY_FAIL_FEED_ONLY)  "
             f"feed_findings={feed_count} (expected 4464)  "
             f"replay_match={ok}"
-    )
+        )
     except Exception as e:
         ok = False
         detail = f"  FAILED: {type(e).__name__}: {e}"
@@ -211,6 +210,7 @@ def check_research_quality_replay_fixture() -> tuple[bool, str]:
 
 
 # ── Runner ───────────────────────────────────────────────────────────────────
+
 
 def run_preflight() -> int:
     """Run all preflight checks. Returns 0 on success, 1 on any failure."""

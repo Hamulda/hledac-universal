@@ -1,7 +1,5 @@
-# fetching/_js_renderer_cap.py
 """
 JS Renderer Capability Tracker for public_fetcher.
-
 
 Replaces module-level globals:
 - _js_renderer_capability dict
@@ -11,29 +9,15 @@ Thread-safe capability checking with caching.
 Cached after first check — use reset() to force re-check.
 """
 
-
-import os
 import threading
-from _core import aclose
-
-# =============================================================================
-# CHROME BINARY CHECK (separate to avoid import cycles)
-# =============================================================================
 
 
 def check_chrome_binary_exists() -> bool:
     """Check if Chrome binary exists for nodriver."""
     try:
-        import nodriver as _nd  # type: ignore[import]
-
         return True
     except Exception:
         return False
-
-
-# =============================================================================
-# JS RENDERER CAPABILITY
-# =============================================================================
 
 
 class JSRendererCapability:
@@ -84,8 +68,6 @@ class JSRendererCapability:
         if self._capability["camoufox"] is not None:
             return
         try:
-            from camoufox.async_api import AsyncCamoufox  # noqa: F401
-
             self._capability["camoufox"] = None  # available
         except ImportError:
             self._capability["camoufox"] = "camoufox_unavailable"
@@ -98,8 +80,6 @@ class JSRendererCapability:
             self._capability["nodriver"] = "chrome_binary_missing"
             return
         try:
-            import nodriver as _uc  # type: ignore[import]
-
             self._capability["nodriver"] = None  # available
         except ImportError:
             self._capability["nodriver"] = "nodriver_unavailable"
@@ -109,13 +89,12 @@ class JSRendererCapability:
         if self._capability["playwright"] is not None:
             return
         from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
         heavy_browser_enabled = FeatureFlags.get(FeatureFlag.HEAVY_BROWSER)
         if not heavy_browser_enabled:
             self._capability["playwright"] = "heavy_browser_disabled"
             return
         try:
-            from playwright.async_api import async_playwright as _ap  # noqa: F401
-
             self._capability["playwright"] = None  # available
         except ImportError:
             self._capability["playwright"] = "playwright_unavailable"
@@ -125,9 +104,5 @@ class JSRendererCapability:
         with self._lock:
             return any(v is None for v in self._capability.values())
 
-
-# =============================================================================
-# MODULE-LEVEL SINGLETON
-# =============================================================================
 
 js_renderer_cap = JSRendererCapability()

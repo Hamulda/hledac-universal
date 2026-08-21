@@ -15,7 +15,6 @@ Usage:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -50,14 +49,8 @@ from ..truth_logger import (
 # DuckDB is imported lazily in phase1_early via resource_governor
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Phase 1: Early Windup
-# =============================================================================
 
 async def _windup_phase1_early(
     ctx: SprintRunContext,
@@ -82,7 +75,6 @@ async def _windup_phase1_early(
             await ctx.scheduler._run_ct_log_discovery_in_cycle(query=query, store=ctx.store)
             result.accepted_findings += result.ct_log_stored
     
-    # Write sprint delta
     from hledac.universal._core.resource_governor import sample_uma_status
     uma_peak_gib = sample_uma_status().system_used_gib
     await write_sprint_delta(
@@ -122,11 +114,6 @@ async def _windup_phase1_early(
                 confidence=1.0
             )
 
-
-# =============================================================================
-# Phase 2: Timing
-# =============================================================================
-
 def _windup_phase2_timing(ctx: SprintRunContext, duration_s: float) -> dict[str, float]:
     """Phase 2: Compute phase timings and get scheduler intelligence."""
     from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER
@@ -147,11 +134,6 @@ def _windup_phase2_timing(ctx: SprintRunContext, duration_s: float) -> dict[str,
         ctx.intel = ctx.scheduler.compute_sprint_intelligence() or {}
     
     return _phase_durations
-
-
-# =============================================================================
-# Phase 3: Metrics & Classifications
-# =============================================================================
 
 def _windup_phase3_compute_metrics(
     ctx: SprintRunContext,
@@ -177,7 +159,6 @@ def _windup_phase3_compute_metrics(
         'public_pct': public_pct,
         'src_mix_str': src_mix_str,
     }
-
 
 def _windup_phase3_compute_classifications(
     ctx: SprintRunContext,
@@ -277,7 +258,6 @@ def _windup_phase3_compute_classifications(
     is_meaningful = runtime_truth['is_meaningful']
     evidence_note = runtime_truth['evidence_note']
     
-    # Update timing truth
     timing_truth['active_runtime_occurred'] = is_meaningful and time_to_windup_s > 0
     
     # Runtime truth level
@@ -355,7 +335,6 @@ def _windup_phase3_compute_classifications(
         'evidence_note': evidence_note,
     }
 
-
 def _compute_export_finish_status(
     final_phase: str,
     accepted_findings: int,
@@ -371,11 +350,6 @@ def _compute_export_finish_status(
     elif accepted_findings == 0:
         return 'no_findings'
     return 'unknown'
-
-
-# =============================================================================
-# Phase 4: Logging
-# =============================================================================
 
 def _windup_phase4_logging(
     ctx: SprintRunContext,
@@ -401,11 +375,6 @@ def _windup_phase4_logging(
     if sv:
         logger.info(f"[INTEL] posture={sv.get('posture', '?')} | dominant={sv.get('dominant_signal', '?')}")
 
-
-# =============================================================================
-# Phase 5: Export
-# =============================================================================
-
 def _extract_result_fields(result: Any, export_finish_status: str) -> dict:
     """Extract result fields for export."""
     return {
@@ -413,7 +382,6 @@ def _extract_result_fields(result: Any, export_finish_status: str) -> dict:
         'synthesis_success': result.accepted_findings > 0,
         'findings_deduplicated': getattr(result, 'findings_deduplicated', 0),
     }
-
 
 async def _windup_phase5_export(
     ctx: SprintRunContext,
@@ -443,7 +411,6 @@ async def _windup_phase5_export(
         with _fail_safe_async('debug', 'get_top_seed_nodes'):
             top_seed_nodes = ctx.store.get_top_seed_nodes(n=5) if ctx.store else []
         
-        # Build export handoff
         intel = ctx.intel
         scorecard = {
             'synthesis_engine_used': 'hermes3',
@@ -532,11 +499,6 @@ async def _windup_phase5_export(
             )
             if probe_result:
                 logger.info(f'[DEEP_PROBE] completed: {probe_result}')
-
-
-# =============================================================================
-# Report Building
-# =============================================================================
 
 def _build_report_dict(inp: ReportBuildInput) -> dict:
     """
@@ -684,11 +646,6 @@ def _build_report_dict(inp: ReportBuildInput) -> dict:
     
     return result_dict
 
-
-# =============================================================================
-# Main Windup Phase
-# =============================================================================
-
 async def _run_sprint_windup(
     ctx: SprintRunContext,
     query: str,
@@ -714,10 +671,8 @@ async def _run_sprint_windup(
     result = ctx.result
     actual_duration = ctx.phase_times.get('TEARDOWN', ctx.phase_times['WINDUP']) - ctx.phase_times['BOOT']
     
-    # Phase 1: Early windup
     await _windup_phase1_early(ctx, query, actual_duration)
     
-    # Phase 2: Timing
     _phase_durations = _windup_phase2_timing(ctx, duration_s)
     
     # Phase 3a: Metrics
@@ -726,10 +681,8 @@ async def _run_sprint_windup(
     # Phase 3b: Classifications
     classifications = _windup_phase3_compute_classifications(ctx, result, metrics, query, duration_s)
     
-    # Phase 4: Logging
     _windup_phase4_logging(ctx, result, classifications, metrics)
     
-    # Build report
     ctx.report_path = get_sprint_json_report_path(ctx.sprint_id)
     _acq_payload = _scheduler_result_acquisition_payload(result, ctx.scheduler, query, duration_s)
     _acq_payload_filtered = {k: v for k, v in _acq_payload.items() if k != 'source_family_outcomes'}
@@ -764,7 +717,6 @@ async def _run_sprint_windup(
     ctx.report_path.write_bytes(_serialize_report(report_dict))
     logger.info(f'[REPORT] {ctx.report_path}')
     
-    # Phase 5: Export
     await _windup_phase5_export(
         ctx=ctx,
         result=result,
@@ -776,11 +728,6 @@ async def _run_sprint_windup(
         query=query,
         actual_duration=actual_duration,
     )
-
-
-# =============================================================================
-# Acquisition Payload (imported from original)
-# =============================================================================
 
 def _scheduler_result_acquisition_payload(
     result: 'SprintSchedulerResult',  # type: ignore[name-defined] # Issue #9: type hint fix
@@ -1041,7 +988,6 @@ def _scheduler_result_acquisition_payload(
         'active_window_elapsed_s': r.active_window_elapsed_s,
     }
 
-
 def _build_sfo_list(r: AcqReportPayload) -> list:
     """Build source_family_outcomes list from AcqReportPayload (msgspec.Struct)."""
     from hledac.universal.runtime.acquisition_strategy import normalize_source_family_outcome
@@ -1134,7 +1080,6 @@ def _build_sfo_list(r: AcqReportPayload) -> list:
     
     return canonicalize_source_family_outcomes(sfo_list)
 
-
 def _extract_nonfeed_debug_fields(nd_raw: Any | None) -> dict | None:
     """Extract all nonfeed_plan_debug fields safely."""
     if nd_raw is None:
@@ -1154,7 +1099,6 @@ def _extract_nonfeed_debug_fields(nd_raw: Any | None) -> dict | None:
         'nonfeed_priority_enabled': getattr(nd_raw, 'nonfeed_priority_enabled', False),
         'nonfeed_profile_expected_lanes': getattr(nd_raw, 'nonfeed_profile_expected_lanes', ()) or (),
     }
-
 
 def _normalize_seed_context(report: dict, r: AcqReportPayload) -> dict:
     """
@@ -1177,10 +1121,3 @@ def _normalize_seed_context(report: dict, r: AcqReportPayload) -> dict:
         elif not report.get('seed_context_skip_reason'):
             report['seed_context_skip_reason'] = 'no_runtime_pivot_seeds'
     return report
-
-
-# =============================================================================
-# Export AcqReportPayload for external use (Issue #9)
-# =============================================================================
-# Note: AcqReportPayload is imported from ..types and re-exported here
-# for backward compatibility with any code importing from this module

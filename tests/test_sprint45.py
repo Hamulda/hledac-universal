@@ -14,11 +14,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from hledac.universal.intel.relationship_discovery import LSHLinkPredictor
+from hledac.universal.recon.document_intelligence import StegdetectServer
 from hledac.universal.tools.lightpanda_manager import LightpandaManager
 from hledac.universal.tools.lightpanda_pool import LightpandaPool
-from hledac.universal.recon.document_intelligence import StegdetectServer
-from hledac.universal.intel.relationship_discovery import LSHLinkPredictor
-from _core import aclose
 
 
 class TestSprint45(unittest.IsolatedAsyncioTestCase):
@@ -26,19 +25,19 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
     # === Part A – Lightpanda Pool ===
 
-    async def test_pool_size(self):
+    async def test_pool_size(self) -> None:
         """Pool should have configured number of instances."""
         pool = LightpandaPool(size=3)
         # Mock the LightpandaManager
-        with patch.object(LightpandaManager, 'ensure_running', new_callable=AsyncMock):
+        with patch.object(LightpandaManager, "ensure_running", new_callable=AsyncMock):
             await pool.start()
             self.assertEqual(len(pool._all_instances), 3)
 
-    async def test_pool_reuse(self):
+    async def test_pool_reuse(self) -> None:
         """Instance should be reused after release."""
         pool = LightpandaPool(size=1)
 
-        with patch.object(LightpandaManager, 'ensure_running', new_callable=AsyncMock):
+        with patch.object(LightpandaManager, "ensure_running", new_callable=AsyncMock):
             await pool.start()
 
             # Get instance
@@ -49,11 +48,11 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             lp2 = await pool.get_instance()
             self.assertIs(lp1, lp2)
 
-    async def test_pool_queue(self):
+    async def test_pool_queue(self) -> None:
         """When pool exhausted, request should wait (not fail)."""
         pool = LightpandaPool(size=1)
 
-        with patch.object(LightpandaManager, 'ensure_running', new_callable=AsyncMock):
+        with patch.object(LightpandaManager, "ensure_running", new_callable=AsyncMock):
             await pool.start()
 
             # Get the only instance
@@ -65,7 +64,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
     # === Part B – LSH Link Prediction ===
 
-    def test_lsh_candidates_count(self):
+    def test_lsh_candidates_count(self) -> None:
         """LSH should return ≤1% candidates compared to brute force."""
         try:
             import igraph as ig
@@ -73,7 +72,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             self.skipTest("igraph not available")
 
         # Create test graph
-        g = ig.Graph(edges=[(i, i+1) for i in range(50)])
+        g = ig.Graph(edges=[(i, i + 1) for i in range(50)])
 
         predictor = LSHLinkPredictor(threshold=0.7)
         predictor.build_index(g)
@@ -83,7 +82,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         # compared to 50 possible neighbors
         self.assertLessEqual(len(candidates), 10)
 
-    def test_lsh_recall(self):
+    def test_lsh_recall(self) -> None:
         """LSH should include all high-scoring edges in candidates."""
         try:
             import igraph as ig
@@ -100,7 +99,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         candidates = predictor.get_candidates(0)
         self.assertGreater(len(candidates), 0)
 
-    def test_lsh_speed(self):
+    def test_lsh_speed(self) -> None:
         """LSH computation should be fast for large graphs."""
         try:
             import igraph as ig
@@ -122,7 +121,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
     # === Part C – Persistent Stegdetect Server ===
 
-    async def test_stegdetect_server_running(self):
+    async def test_stegdetect_server_running(self) -> None:
         """Server should have correct __slots__ structure."""
         server = StegdetectServer()
         # Verify slots-based structure (no __dict__, can't use patch.object)
@@ -131,14 +130,14 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(server._semaphore, asyncio.Semaphore)
         self.assertIsInstance(server._lock, asyncio.Lock)  # lock initialized in __init__
 
-    async def test_stegdetect_server_speed(self):
+    async def test_stegdetect_server_speed(self) -> None:
         """Semaphore pool should limit concurrent analyses."""
         server = StegdetectServer(max_workers=2)
         # Verify semaphore is set correctly for concurrency limiting
         # Semaphore value tells us max concurrent analyses
         self.assertEqual(server._semaphore._value, 2)
 
-    async def test_stegdetect_auto_restart(self):
+    async def test_stegdetect_auto_restart(self) -> None:
         """Server restart logic should reset _initialized and _procs."""
         server = StegdetectServer(max_workers=1)
         # Set up initial state: initialized with dead processes
@@ -165,7 +164,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
     # === Part D – MessagePack ===
 
-    def test_msgpack_used(self):
+    def test_msgpack_used(self) -> None:
         """MessagePack should be available and used."""
         try:
             from hledac.universal.tools.serialization import pack, unpack
@@ -173,14 +172,14 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             self.skipTest("msgpack not available")
 
         # Basic test that pack/unpack works
-        data = {'key': 'value', 'number': 42}
+        data = {"key": "value", "number": 42}
         packed = pack(data)
         unpacked = unpack(packed)
 
-        self.assertEqual(unpacked['key'], 'value')
-        self.assertEqual(unpacked['number'], 42)
+        self.assertEqual(unpacked["key"], "value")
+        self.assertEqual(unpacked["number"], 42)
 
-    def test_msgpack_size(self):
+    def test_msgpack_size(self) -> None:
         """MessagePack should be smaller than JSON."""
         try:
             import numpy as np  # noqa: F401  # numpy
@@ -190,11 +189,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
             self.skipTest("msgpack/numpy not available")
 
         # Create test data with numpy arrays
-        data = {
-            'a': list(range(100)),
-            'b': {'nested': 'value'},
-            'c': 42
-        }
+        data = {"a": list(range(100)), "b": {"nested": "value"}, "c": 42}
 
         json_data = json.dumps(data).encode()
         msgpack_data = pack(data)
@@ -202,7 +197,7 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
         # MessagePack should be smaller
         self.assertLess(len(msgpack_data), len(json_data))
 
-    def test_msgpack_speed(self):
+    def test_msgpack_speed(self) -> None:
         """MessagePack should be comparable or faster than JSON for larger data."""
         try:
             import numpy as np  # noqa: F401  # numpy
@@ -213,10 +208,10 @@ class TestSprint45(unittest.IsolatedAsyncioTestCase):
 
         # Larger data with arrays
         data = {
-            'sources': ['web', 'academic', 'darkweb', 'archive', 'blockchain', 'osint'],
-            'scores': [float(i)/100 for i in range(100)],
-            'metadata': {f'key_{i}': f'value_{i}' for i in range(50)},
-            'embeddings': list(range(256))
+            "sources": ["web", "academic", "darkweb", "archive", "blockchain", "osint"],
+            "scores": [float(i) / 100 for i in range(100)],
+            "metadata": {f"key_{i}": f"value_{i}" for i in range(50)},
+            "embeddings": list(range(256)),
         }
 
         # JSON timing

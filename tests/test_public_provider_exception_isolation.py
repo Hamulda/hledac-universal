@@ -17,9 +17,9 @@ bootstrap tried to build the return dataclass.
 import asyncio
 import inspect
 import sys
+from typing import Never
 
 import pytest
-from _core import aclose
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -33,7 +33,7 @@ pytestmark = [
 
 
 @pytest.mark.asyncio
-async def test_keyword_seed_fallback_triggered_defined_before_kwargs():
+async def test_keyword_seed_fallback_triggered_defined_before_kwargs() -> None:
     """Regression: keyword_seed_fallback_triggered caused UnboundLocalError.
 
     Previously defined only inside _DiscoveryEngine.run(), referenced at
@@ -56,7 +56,7 @@ async def test_keyword_seed_fallback_triggered_defined_before_kwargs():
 # =============================================================================
 
 
-def test_safe_gather_strict_iterates_subexceptions():
+def test_safe_gather_strict_iterates_subexceptions() -> None:
     """Verify caller pattern: iterate over eg.exceptions, don't propagate raw.
 
     Correct pattern in sprint_scheduler.py lines 16978-16984:
@@ -86,12 +86,8 @@ def test_safe_gather_strict_iterates_subexceptions():
     assert func is not None, "_run_public_discovery_in_cycle must exist on SprintScheduler"
 
     src = inspect.getsource(func)
-    assert "for e in eg.exceptions" in src, (
-        "F265C fix missing: caller must iterate over eg.exceptions"
-    )
-    assert "isinstance(e, asyncio.CancelledError)" in src, (
-        "CancelledError must be re-raised — I6 invariant"
-    )
+    assert "for e in eg.exceptions" in src, "F265C fix missing: caller must iterate over eg.exceptions"
+    assert "isinstance(e, asyncio.CancelledError)" in src, "CancelledError must be re-raised — I6 invariant"
 
 
 # =============================================================================
@@ -100,7 +96,7 @@ def test_safe_gather_strict_iterates_subexceptions():
 
 
 @pytest.mark.asyncio
-async def test_safe_gather_strict_preserves_results_on_failure():
+async def test_safe_gather_strict_preserves_results_on_failure() -> None:
     """A single NameError must NOT discard results from successful siblings.
 
     safe_gather_strict re-raises BaseExceptionGroup — the caller (sprint_scheduler)
@@ -108,10 +104,10 @@ async def test_safe_gather_strict_preserves_results_on_failure():
     """
     from utils.asyncx import safe_gather_strict
 
-    async def _failing():
+    async def _failing() -> Never:
         raise NameError("provider_init")
 
-    async def _ok():
+    async def _ok() -> str:
         await asyncio.sleep(0.01)
         return "success"
 
@@ -127,7 +123,7 @@ async def test_safe_gather_strict_preserves_results_on_failure():
 # =============================================================================
 
 
-def test_keyword_seed_fallback_unpacking_location():
+def test_keyword_seed_fallback_unpacking_location() -> None:
     """Verify keyword_seed_fallback_triggered is unpacked AFTER engine.run().
 
     The fix (live_public_pipeline.py ~line 4216):
@@ -147,14 +143,11 @@ def test_keyword_seed_fallback_unpacking_location():
     run_pos = src.index(run_marker)
     kwarg_marker = "keyword_seed_fallback_triggered"
 
-    assert kwarg_marker in src, (
-        "keyword_seed_fallback_triggered must appear in source"
-    )
+    assert kwarg_marker in src, "keyword_seed_fallback_triggered must appear in source"
 
     unpacking_pos = src.index(kwarg_marker, run_pos)
 
     # The unpacking via .get() must come after the engine.run() call
     assert unpacking_pos > run_pos, (
-        f"keyword_seed_fallback_triggered (pos {unpacking_pos}) "
-        f"must be unpacked AFTER engine.run() (pos {run_pos})"
+        f"keyword_seed_fallback_triggered (pos {unpacking_pos}) must be unpacked AFTER engine.run() (pos {run_pos})"
     )

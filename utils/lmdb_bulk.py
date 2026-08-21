@@ -40,14 +40,11 @@ Invariants
 * Backward-compatible: works with Python ``lmdb>=2.0``.
 """
 
-
-
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from hledac.universal.utils.codec import encode as _msgspec_encode
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +78,8 @@ def _normalise_items(items: Sequence[LMDBPair]) -> list[tuple[bytes, bytes]]:
                 k, v = next(iter(item.items()))
                 out.append((k, v))
                 continue
-            raise TypeError(
-                f"putmulti mapping must have exactly 1 entry, got {len(item)}"
-    )
-        raise TypeError(
-            f"putmulti item must be (key, value) tuple or 1-entry mapping, "
-            f"got {type(item).__name__}"
-    )
+            raise TypeError(f"putmulti mapping must have exactly 1 entry, got {len(item)}")
+        raise TypeError(f"putmulti item must be (key, value) tuple or 1-entry mapping, got {type(item).__name__}")
     return out
 
 
@@ -163,15 +155,10 @@ def putmulti_bounded(
             try:
                 total_written += _write_chunk(env, chunk, overwrite, append, sub_db)
             except Exception as exc:
-                logger.warning(
-                    f"putmulti_bounded: chunk failed at item {total_written}"
-                    f"/{len(normalised)}: {exc}"
-    )
+                logger.warning(f"putmulti_bounded: chunk failed at item {total_written}/{len(normalised)}: {exc}")
                 return total_written
     except Exception as exc:
-        logger.warning(
-            f"putmulti_bounded: outer loop failed at item {total_written}: {exc}"
-    )
+        logger.warning(f"putmulti_bounded: outer loop failed at item {total_written}: {exc}")
         return total_written
 
     return total_written
@@ -207,7 +194,7 @@ def putmulti_bounded_str(
     encoded_indices: list[int] = []  # Track original item indices
     for idx, (key_str, value_dict) in enumerate(items):
         try:
-            prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
+            prefixed = f"{key_prefix}:{key_str}".encode() if key_prefix else key_str.encode("utf-8")
             val_bytes = _msgspec_encode(value_dict)  # encode() returns bytes for LMDB
             encoded.append((prefixed, val_bytes))
             encoded_indices.append(idx)

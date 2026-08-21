@@ -8,15 +8,17 @@ GHOST_INVARIANTS:
 - Fail-soft: any exception → return False (never crash on CAPTCHA detection)
 - Phase 1: PIL-only heuristics (no VisionEncoder, no coremltools model)
 """
+
 import re
 from io import BytesIO
 
 from hledac.universal.utils.domain_executors import get_captcha_executor
-from _core import aclose
+
 try:
     from PIL import Image
 except ImportError:
     Image = None
+
 
 def _analyze_pil_sync(image_bytes: bytes) -> float:
     """Analyze PIL image properties — runs in executor thread."""
@@ -25,7 +27,7 @@ def _analyze_pil_sync(image_bytes: bytes) -> float:
     try:
         img = Image.open(BytesIO(image_bytes))
         s = 0.0
-        if img.mode in ('L', 'P', '1'):
+        if img.mode in ("L", "P", "1"):
             s += 0.3
         w, h = img.size
         if w > 0 and h > 0 and (0.2 <= w / h <= 5.0):
@@ -35,6 +37,7 @@ def _analyze_pil_sync(image_bytes: bytes) -> float:
         return s
     except Exception:
         return 0.0
+
 
 class CaptchaDetector:
     """
@@ -47,14 +50,17 @@ class CaptchaDetector:
       - Aspect ratio in [0.2, 5.0] → +0.1
       - Score >= 0.5 → CAPTCHA detected
     """
-    CAPTCHA_URL_RE = re.compile('(captcha|challenge|verify|human|botcheck|spam|security.?check|abc.?def)', re.IGNORECASE)
+
+    CAPTCHA_URL_RE = re.compile(
+        "(captcha|challenge|verify|human|botcheck|spam|security.?check|abc.?def)", re.IGNORECASE
+    )
     DETECTION_THRESHOLD = 0.5
-    __slots__ = tuple(('_captcha_detections',))
+    __slots__ = ("_captcha_detections",)
 
     def __init__(self) -> None:
         self._captcha_detections: int = 0
 
-    def is_captcha(self, image_bytes: bytes, url: str | None=None) -> bool:
+    def is_captcha(self, image_bytes: bytes, url: str | None = None) -> bool:
         """
         Returns True if image bytes score as a CAPTCHA signal.
         NEVER raises — exceptions always return False.

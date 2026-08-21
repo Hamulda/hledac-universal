@@ -2,8 +2,6 @@
 HypothesisEngine - Automated Hypothesis Generation and Testing
 ===============================================================
 
-
-
 A comprehensive hypothesis management system implementing:
 - Automated hypothesis generation from observations (abductive reasoning)
 - Hypothesis testing framework with test design
@@ -29,33 +27,40 @@ M1 8GB Optimizations:
 - Async database queries for adversarial verification
 - Limited contradiction detection window
 """
-from itertools import combinations
+
 import asyncio
 import gc
 import logging
 import os
 import re
+import types
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-import types
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from datetime import UTC, datetime
+from itertools import combinations
 from typing import TYPE_CHECKING, Any
+
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     # Forward references for type checking
-    from hledac.universal.brain._inference.generate import GenerationFacade
-    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
-    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     import numpy as np
+
+    from hledac.universal.brain._inference.generate import GenerationFacade
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.inference_pipeline import BoundedInferencePipeline
+from operator import attrgetter
+
 from hledac.universal.brain.evidence_fusion import DempsterShafer
 from hledac.universal.utils.sync_bridge import run_sync_async
-from operator import attrgetter, itemgetter
+
 try:
     import dspy as _dspy
+
     DSPY_AVAILABLE = True
 except ImportError:
     DSPY_AVAILABLE = False
@@ -63,14 +68,37 @@ except ImportError:
 try:
     from hledac.universal.brain.dspy_programs import get_multi_hop_chain
     from hledac.universal.utils.uma_budget import get_uma_snapshot
+
     MULTIHOP_AVAILABLE = True
 except ImportError:
     get_multi_hop_chain = None
     get_uma_snapshot = None
     MULTIHOP_AVAILABLE = False
-HLEDAC_ENABLE_LLM = os.environ.get('HLEDAC_ENABLE_LLM', '1') == '1'
+HLEDAC_ENABLE_LLM = os.environ.get("HLEDAC_ENABLE_LLM", "1") == "1"
 logger = logging.getLogger(__name__)
-from hledac_hypothesis._types import CO_OCCURRENCE_FP16, MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS, MAX_CAUSAL_HYPOTHESES, MAX_CO_OCCURRENCE_MATRIX_SIZE, AdversarialReport, AnomalySignal, CausalEntity, CausalHypothesis, Contradiction, CrossReferenceResult, DarkQuery, DarkQueryType, Event, Evidence, FalsificationResult, HypothesisStatus, HypothesisType, InferenceEngineProtocol, SourceCredibility, TemporalSequence, TestDesign, TestResult, TestType, _DarkQueryListResponse
+from hledac_hypothesis._types import (
+    MAX_CAUSAL_HYPOTHESES,
+    AdversarialReport,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
+    Contradiction,
+    DarkQuery,
+    DarkQueryType,
+    Event,
+    Evidence,
+    FalsificationResult,
+    HypothesisStatus,
+    HypothesisType,
+    InferenceEngineProtocol,
+    SourceCredibility,
+    TemporalSequence,
+    TestDesign,
+    TestResult,
+    TestType,
+    _DarkQueryListResponse,
+)
+
 
 class Hypothesis(Struct):
     """
@@ -81,6 +109,7 @@ class Hypothesis(Struct):
     - posterior_probability: Updated belief after evidence
     - confidence: Overall confidence score (derived from tests)
     """
+
     id: str
     statement: str
     hypothesis_type: str
@@ -90,7 +119,7 @@ class Hypothesis(Struct):
     supporting_evidence: list[str] = field(default_factory=list)
     conflicting_evidence: list[str] = field(default_factory=list)
     test_results: list[TestResult] = field(default_factory=list)
-    status: str = 'pending'
+    status: str = "pending"
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     parent_hypotheses: list[str] = field(default_factory=list)
@@ -122,24 +151,24 @@ class Hypothesis(Struct):
         self._recalculate_confidence()
         self.updated_at = datetime.now(UTC)
 
-    def add_supporting_evidence(self, evidence_id: str, weight: float=1.0) -> None:
+    def add_supporting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add supporting evidence with optional weight."""
         if evidence_id not in self.supporting_evidence:
             self.supporting_evidence.append(evidence_id)
             self.update_probability(1.0 + weight * 0.5)
-            ds_engine = getattr(self, '_ds_engine', None)
+            ds_engine = getattr(self, "_ds_engine", None)
             if ds_engine is not None:
-                ds_engine.add_evidence('support', mass=min(1.0, weight * 0.5), source_weight=1.0)
+                ds_engine.add_evidence("support", mass=min(1.0, weight * 0.5), source_weight=1.0)
         self.updated_at = datetime.now(UTC)
 
-    def add_conflicting_evidence(self, evidence_id: str, weight: float=1.0) -> None:
+    def add_conflicting_evidence(self, evidence_id: str, weight: float = 1.0) -> None:
         """Add conflicting evidence with optional weight."""
         if evidence_id not in self.conflicting_evidence:
             self.conflicting_evidence.append(evidence_id)
             self.update_probability(1.0 / (1.0 + weight * 0.5))
-            ds_engine = getattr(self, '_ds_engine', None)
+            ds_engine = getattr(self, "_ds_engine", None)
             if ds_engine is not None:
-                ds_engine.add_evidence('conflict', mass=min(1.0, weight * 0.5), source_weight=1.0)
+                ds_engine.add_evidence("conflict", mass=min(1.0, weight * 0.5), source_weight=1.0)
         self.updated_at = datetime.now(UTC)
 
     def _recalculate_confidence(self) -> None:
@@ -152,15 +181,15 @@ class Hypothesis(Struct):
         for i, result in enumerate(self.test_results):
             weight = (i + 1) / len(self.test_results)
             total_weight += weight
-            if result.result == 'passed':
+            if result.result == "passed":
                 weighted_confidence += weight * result.confidence
-            elif result.result == 'failed':
+            elif result.result == "failed":
                 weighted_confidence += weight * (1 - result.confidence)
             else:
                 weighted_confidence += weight * 0.5
         self.confidence = weighted_confidence / total_weight if total_weight > 0 else 0.5
 
-    def to_dict(self, ds_engine: Any | None=None) -> dict[str, Any]:
+    def to_dict(self, ds_engine: Any | None = None) -> dict[str, Any]:
         """
         Convert hypothesis to dictionary.
 
@@ -169,24 +198,73 @@ class Hypothesis(Struct):
                       When provided, includes ds_belief_support, ds_belief_conflict,
                       ds_conflict_mass, and ds_contradiction.
         """
-        result = {'id': self.id, 'statement': self.statement, 'hypothesis_type': self.hypothesis_type, 'prior_probability': self.prior_probability, 'posterior_probability': self.posterior_probability, 'confidence': self.confidence, 'supporting_evidence': self.supporting_evidence, 'conflicting_evidence': self.conflicting_evidence, 'test_results': [{'test_type': tr.test_type, 'result': tr.result, 'confidence': tr.confidence, 'evidence_collected': tr.evidence_collected, 'timestamp': tr.timestamp.isoformat()} for tr in self.test_results], 'status': self.status, 'created_at': self.created_at.isoformat(), 'updated_at': self.updated_at.isoformat(), 'parent_hypotheses': self.parent_hypotheses, 'metadata': self.metadata}
+        result = {
+            "id": self.id,
+            "statement": self.statement,
+            "hypothesis_type": self.hypothesis_type,
+            "prior_probability": self.prior_probability,
+            "posterior_probability": self.posterior_probability,
+            "confidence": self.confidence,
+            "supporting_evidence": self.supporting_evidence,
+            "conflicting_evidence": self.conflicting_evidence,
+            "test_results": [
+                {
+                    "test_type": tr.test_type,
+                    "result": tr.result,
+                    "confidence": tr.confidence,
+                    "evidence_collected": tr.evidence_collected,
+                    "timestamp": tr.timestamp.isoformat(),
+                }
+                for tr in self.test_results
+            ],
+            "status": self.status,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+            "parent_hypotheses": self.parent_hypotheses,
+            "metadata": self.metadata,
+        }
         if ds_engine is not None:
-            result['ds_belief_support'] = ds_engine.belief('support')
-            result['ds_belief_conflict'] = ds_engine.belief('conflict')
-            result['ds_conflict_mass'] = ds_engine.conflict_mass()
-            result['ds_contradiction'] = ds_engine.detect_contradiction()
+            result["ds_belief_support"] = ds_engine.belief("support")
+            result["ds_belief_conflict"] = ds_engine.belief("conflict")
+            result["ds_conflict_mass"] = ds_engine.conflict_mass()
+            result["ds_contradiction"] = ds_engine.detect_contradiction()
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Hypothesis:
         """Create hypothesis from dictionary."""
-        test_results = [TestResult(test_type=tr['test_type'], result=tr['result'], confidence=tr['confidence'], evidence_collected=tr.get('evidence_collected', []), timestamp=datetime.fromisoformat(tr['timestamp'])) for tr in data.get('test_results', [])]
-        return cls(id=data['id'], statement=data['statement'], hypothesis_type=data['hypothesis_type'], prior_probability=data.get('prior_probability', 0.5), posterior_probability=data.get('posterior_probability', 0.5), confidence=data.get('confidence', 0.5), supporting_evidence=data.get('supporting_evidence', []), conflicting_evidence=data.get('conflicting_evidence', []), test_results=test_results, status=data.get('status', 'pending'), created_at=datetime.fromisoformat(data['created_at']), updated_at=datetime.fromisoformat(data['updated_at']), parent_hypotheses=data.get('parent_hypotheses', []), metadata=data.get('metadata', {}))
+        test_results = [
+            TestResult(
+                test_type=tr["test_type"],
+                result=tr["result"],
+                confidence=tr["confidence"],
+                evidence_collected=tr.get("evidence_collected", []),
+                timestamp=datetime.fromisoformat(tr["timestamp"]),
+            )
+            for tr in data.get("test_results", [])
+        ]
+        return cls(
+            id=data["id"],
+            statement=data["statement"],
+            hypothesis_type=data["hypothesis_type"],
+            prior_probability=data.get("prior_probability", 0.5),
+            posterior_probability=data.get("posterior_probability", 0.5),
+            confidence=data.get("confidence", 0.5),
+            supporting_evidence=data.get("supporting_evidence", []),
+            conflicting_evidence=data.get("conflicting_evidence", []),
+            test_results=test_results,
+            status=data.get("status", "pending"),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
+            parent_hypotheses=data.get("parent_hypotheses", []),
+            metadata=data.get("metadata", {}),
+        )
+
+
 from hledac_hypothesis.adversarial import AdversarialVerifier
 from hledac_hypothesis.causal import CausalReasoner
-from hledac_hypothesis.explainer import SimpleNodeAblationExplainer, explain_with_mlx
 from hledac_hypothesis.packs import HypothesisPack, SourceHint
-from _core import aclose
+
 
 class HypothesisEngine:
     """
@@ -225,11 +303,45 @@ class HypothesisEngine:
     - Periodic garbage collection
     - Bounded evidence and source credibility with deterministic eviction
     """
+
     MAX_EVIDENCE_ITEMS = 10000
     MAX_SOURCE_ITEMS = 5000
-    __slots__ = tuple(('_adversarial_verifier', '_anomaly_signals', '_causal_entities', '_causal_reasoner', '_co_occurrence_matrix', '_ds_engine', '_entity_id_to_idx', '_evidence', '_hypotheses', '_idx_to_entity_id', '_inference_pipeliner', '_source_credibility_cache', '_source_types', '_stats', '_temporal_sequences', '_test_templates', 'ds_contradiction_threshold', 'enable_adversarial_verification', 'inference_engine', 'max_hypotheses', 'memory_limit_mb', 'min_confidence_threshold', 'use_dempster_shafer'))
+    __slots__ = (
+        "_adversarial_verifier",
+        "_anomaly_signals",
+        "_causal_entities",
+        "_causal_reasoner",
+        "_co_occurrence_matrix",
+        "_ds_engine",
+        "_entity_id_to_idx",
+        "_evidence",
+        "_hypotheses",
+        "_idx_to_entity_id",
+        "_inference_pipeliner",
+        "_source_credibility_cache",
+        "_source_types",
+        "_stats",
+        "_temporal_sequences",
+        "_test_templates",
+        "ds_contradiction_threshold",
+        "enable_adversarial_verification",
+        "inference_engine",
+        "max_hypotheses",
+        "memory_limit_mb",
+        "min_confidence_threshold",
+        "use_dempster_shafer",
+    )
 
-    def __init__(self, inference_engine: InferenceEngineProtocol | None=None, max_hypotheses: int=100, min_confidence_threshold: float=0.1, memory_limit_mb: float=500.0, enable_adversarial_verification: bool=True, use_dempster_shafer: bool=True, ds_contradiction_threshold: float=0.5):
+    def __init__(
+        self,
+        inference_engine: InferenceEngineProtocol | None = None,
+        max_hypotheses: int = 100,
+        min_confidence_threshold: float = 0.1,
+        memory_limit_mb: float = 500.0,
+        enable_adversarial_verification: bool = True,
+        use_dempster_shafer: bool = True,
+        ds_contradiction_threshold: float = 0.5,
+    ) -> None:
         """
         Initialize the HypothesisEngine.
 
@@ -250,19 +362,31 @@ class HypothesisEngine:
         self.enable_adversarial_verification = enable_adversarial_verification
         self.use_dempster_shafer = use_dempster_shafer
         self.ds_contradiction_threshold = ds_contradiction_threshold
-        self._ds_engine: DempsterShafer | None = DempsterShafer(hypotheses={'support', 'conflict', 'unknown'}) if use_dempster_shafer else None
+        self._ds_engine: DempsterShafer | None = (
+            DempsterShafer(hypotheses={"support", "conflict", "unknown"}) if use_dempster_shafer else None
+        )
         if self._ds_engine is not None:
-            logger.info(f'[DS] DempsterShafer evidence fusion ACTIVE — conflict_threshold={ds_contradiction_threshold}')
+            logger.info(f"[DS] DempsterShafer evidence fusion ACTIVE — conflict_threshold={ds_contradiction_threshold}")
         else:
-            logger.debug('[DS] DempsterShafer disabled (use_dempster_shafer=False)')
+            logger.debug("[DS] DempsterShafer disabled (use_dempster_shafer=False)")
         self._hypotheses: dict[str, Hypothesis] = {}
         self._evidence: OrderedDict[str, Evidence] = OrderedDict()
         self._test_templates: dict[str, Callable[[Hypothesis], TestDesign]] = {}
         self._init_test_templates()
         self._adversarial_verifier: AdversarialVerifier | None = None
         self._source_credibility_cache: OrderedDict[str, SourceCredibility] = OrderedDict()
-        self._stats = {'generated': 0, 'tested': 0, 'confirmed': 0, 'rejected': 0, 'merged': 0, 'pruned': 0, 'adversarial_checks': 0}
-        logger.info(f'HypothesisEngine initialized (max_hypotheses={max_hypotheses}, memory_limit={memory_limit_mb}MB, adversarial_verification={enable_adversarial_verification}, use_dempster_shafer={use_dempster_shafer})')
+        self._stats = {
+            "generated": 0,
+            "tested": 0,
+            "confirmed": 0,
+            "rejected": 0,
+            "merged": 0,
+            "pruned": 0,
+            "adversarial_checks": 0,
+        }
+        logger.info(
+            f"HypothesisEngine initialized (max_hypotheses={max_hypotheses}, memory_limit={memory_limit_mb}MB, adversarial_verification={enable_adversarial_verification}, use_dempster_shafer={use_dempster_shafer})"
+        )
         self._causal_reasoner: CausalReasoner = CausalReasoner()
         self._causal_entities: dict[str, CausalEntity] = self._causal_reasoner._causal_entities
         self._co_occurrence_matrix: np.ndarray | None = self._causal_reasoner._co_occurrence_matrix
@@ -294,7 +418,7 @@ class HypothesisEngine:
         """Back-compat facade — delegates to CausalReasoner._is_valid_ip."""
         return self._causal_reasoner._is_valid_ip(ip)
 
-    def build_temporal_sequences(self, gap_threshold: float=3600.0) -> list[TemporalSequence]:
+    def build_temporal_sequences(self, gap_threshold: float = 3600.0) -> list[TemporalSequence]:
         """Back-compat facade — delegates to CausalReasoner.build_temporal_sequences."""
         result = self._causal_reasoner.build_temporal_sequences(gap_threshold)
         self._temporal_sequences = self._causal_reasoner._temporal_sequences
@@ -318,7 +442,9 @@ class HypothesisEngine:
         self._anomaly_signals = self._causal_reasoner._anomaly_signals
         return result
 
-    async def generate_causal_hypotheses(self, findings: list[str], max_hypotheses: int=MAX_CAUSAL_HYPOTHESES) -> list[CausalHypothesis]:
+    async def generate_causal_hypotheses(
+        self, findings: list[str], max_hypotheses: int = MAX_CAUSAL_HYPOTHESES
+    ) -> list[CausalHypothesis]:
         """
         Back-compat facade — delegates the entire causal pipeline to
         :meth:`CausalReasoner.generate_hypotheses` (sync, run via
@@ -327,6 +453,7 @@ class HypothesisEngine:
         external reader.
         """
         import asyncio as _asyncio
+
         result = await _asyncio.to_thread(self._causal_reasoner.generate_hypotheses, findings, max_hypotheses)
         self._causal_entities = self._causal_reasoner._causal_entities
         self._co_occurrence_matrix = self._causal_reasoner._co_occurrence_matrix
@@ -336,15 +463,22 @@ class HypothesisEngine:
         self._source_types = self._causal_reasoner._source_types
         return result
 
-    def _calculate_causal_confidence(self, source_count: int, source_diversity: int, co_occurrence_score: float, temporal_consistent: bool) -> float:
+    def _calculate_causal_confidence(
+        self, source_count: int, source_diversity: int, co_occurrence_score: float, temporal_consistent: bool
+    ) -> float:
         """Back-compat facade — delegates to CausalReasoner._calculate_confidence."""
-        return self._causal_reasoner._calculate_confidence(source_count=source_count, source_diversity=source_diversity, co_occurrence_score=co_occurrence_score, temporal_consistent=temporal_consistent)
+        return self._causal_reasoner._calculate_confidence(
+            source_count=source_count,
+            source_diversity=source_diversity,
+            co_occurrence_score=co_occurrence_score,
+            temporal_consistent=temporal_consistent,
+        )
 
     def _generate_causal_statement(self, entity1: CausalEntity, entity2: CausalEntity, confidence: float) -> str:
         """Back-compat facade — delegates to CausalReasoner._generate_statement."""
         return self._causal_reasoner._generate_statement(entity1, entity2, confidence)
 
-    def get_ds_belief(self, hypothesis: str='support') -> float | None:
+    def get_ds_belief(self, hypothesis: str = "support") -> float | None:
         """
         Return Dempster-Shafer belief for a hypothesis.
 
@@ -374,7 +508,7 @@ class HypothesisEngine:
             return None
         return self._ds_engine.conflict_mass()
 
-    def detect_contradiction_ds(self, threshold: float | None=None) -> bool | None:
+    def detect_contradiction_ds(self, threshold: float | None = None) -> bool | None:
         """
         Detect contradiction via Dempster-Shafer conflict mass.
 
@@ -403,7 +537,13 @@ class HypothesisEngine:
 
     def _init_test_templates(self) -> None:
         """Initialize test design templates for each hypothesis type."""
-        self._test_templates = {HypothesisType.EXISTENCE.value: self._design_existence_test, HypothesisType.RELATIONSHIP.value: self._design_relationship_test, HypothesisType.CAUSAL.value: self._design_causal_test, HypothesisType.IDENTITY.value: self._design_identity_test, HypothesisType.TEMPORAL.value: self._design_temporal_test}
+        self._test_templates = {
+            HypothesisType.EXISTENCE.value: self._design_existence_test,
+            HypothesisType.RELATIONSHIP.value: self._design_relationship_test,
+            HypothesisType.CAUSAL.value: self._design_causal_test,
+            HypothesisType.IDENTITY.value: self._design_identity_test,
+            HypothesisType.TEMPORAL.value: self._design_temporal_test,
+        }
 
     def _evict_evidence_if_needed(self) -> None:
         """Evict oldest evidence items if over MAX_EVIDENCE_ITEMS cap."""
@@ -448,23 +588,63 @@ class HypothesisEngine:
 
     def _design_existence_test(self, hypothesis: Hypothesis) -> TestDesign:
         """Design a test for an existence hypothesis."""
-        return TestDesign(test_type=TestType.EXISTENCE_CHECK.value, description=f'Verify existence of entity mentioned in: {hypothesis.statement}', required_data=['entity_reference', 'source_verification'], expected_outcome_if_true='Entity found in reliable sources', expected_outcome_if_false='Entity not found or disputed', priority=0.8, cost_estimate=1.0)
+        return TestDesign(
+            test_type=TestType.EXISTENCE_CHECK.value,
+            description=f"Verify existence of entity mentioned in: {hypothesis.statement}",
+            required_data=["entity_reference", "source_verification"],
+            expected_outcome_if_true="Entity found in reliable sources",
+            expected_outcome_if_false="Entity not found or disputed",
+            priority=0.8,
+            cost_estimate=1.0,
+        )
 
     def _design_relationship_test(self, hypothesis: Hypothesis) -> TestDesign:
         """Design a test for a relationship hypothesis."""
-        return TestDesign(test_type=TestType.CORRELATION_TEST.value, description=f'Test correlation between entities in: {hypothesis.statement}', required_data=['entity_a_data', 'entity_b_data', 'co_occurrence'], expected_outcome_if_true='Entities show significant correlation', expected_outcome_if_false='No significant correlation found', priority=0.7, cost_estimate=1.5)
+        return TestDesign(
+            test_type=TestType.CORRELATION_TEST.value,
+            description=f"Test correlation between entities in: {hypothesis.statement}",
+            required_data=["entity_a_data", "entity_b_data", "co_occurrence"],
+            expected_outcome_if_true="Entities show significant correlation",
+            expected_outcome_if_false="No significant correlation found",
+            priority=0.7,
+            cost_estimate=1.5,
+        )
 
     def _design_causal_test(self, hypothesis: Hypothesis) -> TestDesign:
         """Design a test for a causal hypothesis."""
-        return TestDesign(test_type=TestType.CAUSAL_TEST.value, description=f'Test causal link in: {hypothesis.statement}', required_data=['temporal_precedence', 'covariation', 'alternative_explanations'], expected_outcome_if_true='Cause precedes effect with consistent covariation', expected_outcome_if_false='No consistent causal pattern found', priority=0.9, cost_estimate=2.0)
+        return TestDesign(
+            test_type=TestType.CAUSAL_TEST.value,
+            description=f"Test causal link in: {hypothesis.statement}",
+            required_data=["temporal_precedence", "covariation", "alternative_explanations"],
+            expected_outcome_if_true="Cause precedes effect with consistent covariation",
+            expected_outcome_if_false="No consistent causal pattern found",
+            priority=0.9,
+            cost_estimate=2.0,
+        )
 
     def _design_identity_test(self, hypothesis: Hypothesis) -> TestDesign:
         """Design a test for an identity hypothesis."""
-        return TestDesign(test_type=TestType.IDENTITY_VERIFICATION.value, description=f'Verify identity equivalence in: {hypothesis.statement}', required_data=['unique_identifiers', 'attribute_comparison', 'source_cross_reference'], expected_outcome_if_true='All identifiers and attributes match', expected_outcome_if_false='Discrepancies found in identifiers or attributes', priority=0.75, cost_estimate=1.2)
+        return TestDesign(
+            test_type=TestType.IDENTITY_VERIFICATION.value,
+            description=f"Verify identity equivalence in: {hypothesis.statement}",
+            required_data=["unique_identifiers", "attribute_comparison", "source_cross_reference"],
+            expected_outcome_if_true="All identifiers and attributes match",
+            expected_outcome_if_false="Discrepancies found in identifiers or attributes",
+            priority=0.75,
+            cost_estimate=1.2,
+        )
 
     def _design_temporal_test(self, hypothesis: Hypothesis) -> TestDesign:
         """Design a test for a temporal hypothesis."""
-        return TestDesign(test_type=TestType.TEMPORAL_ORDERING.value, description=f'Verify temporal ordering in: {hypothesis.statement}', required_data=['timestamp_a', 'timestamp_b', 'event_sequence'], expected_outcome_if_true='Event A clearly precedes Event B', expected_outcome_if_false='Event B precedes or concurrent with Event A', priority=0.7, cost_estimate=1.0)
+        return TestDesign(
+            test_type=TestType.TEMPORAL_ORDERING.value,
+            description=f"Verify temporal ordering in: {hypothesis.statement}",
+            required_data=["timestamp_a", "timestamp_b", "event_sequence"],
+            expected_outcome_if_true="Event A clearly precedes Event B",
+            expected_outcome_if_false="Event B precedes or concurrent with Event A",
+            priority=0.7,
+            cost_estimate=1.0,
+        )
 
     @property
     def adversarial_verifier(self) -> AdversarialVerifier:
@@ -475,10 +655,14 @@ class HypothesisEngine:
             AdversarialVerifier instance
         """
         if self._adversarial_verifier is None:
-            self._adversarial_verifier = AdversarialVerifier(hypothesis_engine=self, max_contradiction_window=100, enable_streaming=True)
+            self._adversarial_verifier = AdversarialVerifier(
+                hypothesis_engine=self, max_contradiction_window=100, enable_streaming=True
+            )
         return self._adversarial_verifier
 
-    async def adversarial_verification(self, hypothesis: Hypothesis | str, context: dict[str, Any] | None=None) -> AdversarialReport:
+    async def adversarial_verification(
+        self, hypothesis: Hypothesis | str, context: dict[str, Any] | None = None
+    ) -> AdversarialReport:
         """
         Perform comprehensive adversarial verification of a hypothesis.
 
@@ -494,12 +678,24 @@ class HypothesisEngine:
             AdversarialReport with comprehensive analysis
         """
         if not self.enable_adversarial_verification:
-            logger.warning('Adversarial verification is disabled')
+            logger.warning("Adversarial verification is disabled")
             claim = hypothesis.statement if isinstance(hypothesis, Hypothesis) else hypothesis
-            return AdversarialReport(hypothesis=claim, supporting_evidence=[], contradicting_evidence=[], credibility_assessment={}, contradictions_found=[], temporal_consistency=True, overall_confidence=0.5, devil_advocate_score=0.0, alternative_explanations=['Adversarial verification disabled'])
-        self._stats['adversarial_checks'] += 1
+            return AdversarialReport(
+                hypothesis=claim,
+                supporting_evidence=[],
+                contradicting_evidence=[],
+                credibility_assessment={},
+                contradictions_found=[],
+                temporal_consistency=True,
+                overall_confidence=0.5,
+                devil_advocate_score=0.0,
+                alternative_explanations=["Adversarial verification disabled"],
+            )
+        self._stats["adversarial_checks"] += 1
         if isinstance(hypothesis, Hypothesis):
-            return await self.adversarial_verifier.verify_claim(hypothesis.statement, {**(context or {}), 'hypothesis': hypothesis})
+            return await self.adversarial_verifier.verify_claim(
+                hypothesis.statement, {**(context or {}), "hypothesis": hypothesis}
+            )
         else:
             return await self.adversarial_verifier.verify_claim(hypothesis, context)
 
@@ -556,10 +752,12 @@ class HypothesisEngine:
             Devil's advocate argument text
         """
         if not self.enable_adversarial_verification:
-            return 'Adversarial verification is disabled.'
+            return "Adversarial verification is disabled."
         return self.adversarial_verifier.generate_devils_advocate(hypothesis)
 
-    async def generate_hypotheses_async(self, context: dict[str, Any], hermes_engine: DeepHermes3Engine | None=None, prev_reward: float=0.0) -> list[str]:
+    async def generate_hypotheses_async(
+        self, context: dict[str, Any], hermes_engine: DeepHermes3Engine | None = None, prev_reward: float = 0.0
+    ) -> list[str]:
         """
         P12: Generate hypotheses from RAG context using Hermes 3.
         P17: Added prev_reward parameter for RL integration.
@@ -582,36 +780,32 @@ class HypothesisEngine:
         if hermes_engine is None:
             return []
 
-        # Extract and extend RAG context with multihop chain
         rag_context = self._extend_rag_with_multihop(context)
-        existing = set(context.get('existing_hypotheses', []))
+        existing = set(context.get("existing_hypotheses", []))
 
-        # Build truncated context string
         context_str = self._build_context_string(rag_context)
-        reward_context = f'\nReward from previous action: {prev_reward:.2f}' if prev_reward > 0 else ''
-        query = context.get('query', '')
-        graph_summary = context.get('graph_summary', '')
+        reward_context = f"\nReward from previous action: {prev_reward:.2f}" if prev_reward > 0 else ""
+        query = context.get("query", "")
+        graph_summary = context.get("graph_summary", "")
 
-        # Build prompt
         prompt = self._build_hypothesis_prompt(query, context_str, graph_summary, reward_context)
 
         # Generate response via LLM
         response = await self._generate_llm_response(prompt)
 
         # Apply DSPy optimization if available
-        response = self._apply_dspy_optimization(context, rag_context, query, graph_summary, reward_context, existing, response)
+        response = self._apply_dspy_optimization(
+            context, rag_context, query, graph_summary, reward_context, existing, response
+        )
 
-        # Parse and return hypotheses
         return self._parse_hypotheses(response, existing)
-
-    # --- Helper methods (extracted to reduce complexity) ---
 
     def _extend_rag_with_multihop(self, context: dict[str, Any]) -> list:
         """Extend RAG context with multihop chain evidence. Returns modified rag_context."""
         if not (HLEDAC_ENABLE_LLM and MULTIHOP_AVAILABLE and get_multi_hop_chain is not None):
-            return context.get('rag_context', [])
+            return context.get("rag_context", [])
 
-        rag_context = context.get('rag_context', [])
+        rag_context = context.get("rag_context", [])
         if not rag_context:
             return rag_context
 
@@ -620,10 +814,10 @@ class HypothesisEngine:
                 return rag_context
             snapshot = get_uma_snapshot()
             if snapshot.is_emergency or snapshot.is_critical:
-                logger.debug('[MULTIHOP] Skipping deep research chain — RAM critical')
+                logger.debug("[MULTIHOP] Skipping deep research chain — RAM critical")
                 return rag_context
 
-            graph_rag = context.get('graph_rag')
+            graph_rag = context.get("graph_rag")
             if graph_rag is None:
                 return rag_context
 
@@ -631,16 +825,16 @@ class HypothesisEngine:
             if chain is None:
                 return rag_context
 
-            extended_evidence = chain.forward(query=context.get('query', ''), initial_findings=rag_context[:20])
+            extended_evidence = chain.forward(query=context.get("query", ""), initial_findings=rag_context[:20])
             existing_evidence = {str(e)[:100] for e in rag_context}
             for ev in extended_evidence:
                 ev_key = str(ev)[:100]
                 if ev_key not in existing_evidence:
                     rag_context.append(ev)
                     existing_evidence.add(ev_key)
-            logger.debug(f'[MULTIHOP] Extended evidence from {len(rag_context) - len(existing_evidence)} new findings')
+            logger.debug(f"[MULTIHOP] Extended evidence from {len(rag_context) - len(existing_evidence)} new findings")
         except Exception as _e:
-            logger.debug(f'[MULTIHOP] Deep research chain failed: {_e}')
+            logger.debug(f"[MULTIHOP] Deep research chain failed: {_e}")
         return rag_context
 
     def _build_context_string(self, rag_context: list, max_context_chars: int = 4000) -> str:
@@ -656,37 +850,56 @@ class HypothesisEngine:
                 break
             ctx_parts.append(item_str)
             total_len += len(item_str)
-        return '\n---\n'.join(ctx_parts)
+        return "\n---\n".join(ctx_parts)
 
     def _build_hypothesis_prompt(self, query: str, context_str: str, graph_summary: str, reward_context: str) -> str:
         """Build the hypothesis generation prompt."""
-        return f'''Research query: {query}\n\nRAG context:\n{context_str}\n\n{(f'Graph summary: {graph_summary}' if graph_summary else '')}\n{reward_context}\n\nNavrhni možné cesty, jak získat více informací o "{query}".\n生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.\n\nFormát (pouze seznam, žádný další text):\n1. [hypotéza 1]\n2. [hypotéza 2]\n...\n'''
+        return f'''Research query: {query}\n\nRAG context:\n{context_str}\n\n{(f"Graph summary: {graph_summary}" if graph_summary else "")}\n{reward_context}\n\nNavrhni možné cesty, jak získat více informací o "{query}".\n生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.\n\nFormát (pouze seznam, žádný další text):\n1. [hypotéza 1]\n2. [hypotéza 2]\n...\n'''
 
     async def _generate_llm_response(self, prompt: str) -> str:
         """Generate LLM response from prompt."""
-        system_msg = 'Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy.'
+        system_msg = "Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy."
         if self._inference_pipeliner is not None:
-            return await self._inference_pipeliner.generate(prompt=prompt, temperature=0.4, max_tokens=1024, system_msg=system_msg)
-        raise RuntimeError('No inference pipeliner available')
+            return await self._inference_pipeliner.generate(
+                prompt=prompt, temperature=0.4, max_tokens=1024, system_msg=system_msg
+            )
+        raise RuntimeError("No inference pipeliner available")
 
-    def _apply_dspy_optimization(self, context: dict[str, Any], rag_context: list, query: str, graph_summary: str, reward_context: str, existing: set, response: str) -> str:
+    def _apply_dspy_optimization(
+        self,
+        context: dict[str, Any],
+        rag_context: list,
+        query: str,
+        graph_summary: str,
+        reward_context: str,
+        existing: set,
+        response: str,
+    ) -> str:
         """Apply DSPy optimization if available. Returns (potentially modified) response."""
-        if not (DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1'):
+        if not (DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1"):
             return response
 
         try:
             from hledac.universal.brain.dspy_optimizer import load_compiled_program
-            program = load_compiled_program('hypothesis_generator')
+
+            program = load_compiled_program("hypothesis_generator")
             if program is None:
                 try:
                     from hledac.universal.brain.dspy_programs import get_program
-                    program = get_program('hypothesis_generator')
+
+                    program = get_program("hypothesis_generator")
                 except Exception:
                     return response
             if program is not None:
-                rag_context_str = context.get('rag_context_str', rag_context[:2000])
-                pred = program.forward(research_query=query, rag_context=rag_context_str, graph_summary=graph_summary, reward_context=reward_context, existing_hypotheses=list(existing))
-                if hasattr(pred, 'answer') and pred.answer:
+                rag_context_str = context.get("rag_context_str", rag_context[:2000])
+                pred = program.forward(
+                    research_query=query,
+                    rag_context=rag_context_str,
+                    graph_summary=graph_summary,
+                    reward_context=reward_context,
+                    existing_hypotheses=list(existing),
+                )
+                if hasattr(pred, "answer") and pred.answer:
                     return pred.answer
         except Exception:  # noqa: BLE001
             pass
@@ -695,11 +908,11 @@ class HypothesisEngine:
     def _parse_hypotheses(self, response: str, existing: set, max_hypotheses: int = 10) -> list[str]:
         """Parse hypothesis strings from LLM response."""
         hypotheses = []
-        for line in response.strip().split('\n'):
+        for line in response.strip().split("\n"):
             line = line.strip()
             if not line:
                 continue
-            match = re.match(r'^\d+[.)]\s*(.+)', line)
+            match = re.match(r"^\d+[.)]\s*(.+)", line)
             if match:
                 hypo = match.group(1).strip()
                 if hypo and hypo not in existing:
@@ -707,8 +920,9 @@ class HypothesisEngine:
                     existing.add(hypo)
         return hypotheses[:max_hypotheses]
 
-
-    def generate_hypotheses(self, observations: list[Evidence], context: dict[str, Any] | None=None) -> list[Hypothesis]:
+    def generate_hypotheses(
+        self, observations: list[Evidence], context: dict[str, Any] | None = None
+    ) -> list[Hypothesis]:
         """
         Generate hypotheses from observations using abductive reasoning.
 
@@ -728,52 +942,82 @@ class HypothesisEngine:
                 explanations = run_sync_async(self.inference_engine.abductive_reasoning(observations, context))
             except RuntimeError:
                 explanations = []
-                logger.debug('generate_hypotheses called from async context, skipping inference engine')
+                logger.debug("generate_hypotheses called from async context, skipping inference engine")
                 for exp in explanations:
                     hypothesis = self._create_hypothesis_from_explanation(exp)
                     generated.append(hypothesis)
                     self._hypotheses[hypothesis.id] = hypothesis
             except Exception as e:
-                logger.warning(f'Inference engine abductive reasoning failed: {e}')
+                logger.warning(f"Inference engine abductive reasoning failed: {e}")
         if not generated:
             generated = self._generate_hypotheses_from_patterns(observations, context)
-        self._stats['generated'] += len(generated)
+        self._stats["generated"] += len(generated)
         if len(self._hypotheses) > self.max_hypotheses:
             self._prune_hypotheses()
-        logger.info(f'Generated {len(generated)} hypotheses from {len(observations)} observations')
+        logger.info(f"Generated {len(generated)} hypotheses from {len(observations)} observations")
         return generated
 
     def _create_hypothesis_from_explanation(self, explanation: dict[str, Any]) -> Hypothesis:
         """Create a hypothesis from an inference engine explanation."""
-        return Hypothesis(id=str(uuid.uuid7())[:8], statement=explanation.get('statement', 'Unknown hypothesis'), hypothesis_type=explanation.get('type', HypothesisType.EXISTENCE.value), prior_probability=explanation.get('probability', 0.5), posterior_probability=explanation.get('probability', 0.5), metadata=explanation.get('metadata', {}))
+        return Hypothesis(
+            id=str(uuid.uuid7())[:8],
+            statement=explanation.get("statement", "Unknown hypothesis"),
+            hypothesis_type=explanation.get("type", HypothesisType.EXISTENCE.value),
+            prior_probability=explanation.get("probability", 0.5),
+            posterior_probability=explanation.get("probability", 0.5),
+            metadata=explanation.get("metadata", {}),
+        )
 
-    def _generate_hypotheses_from_patterns(self, observations: list[Evidence], context: dict[str, Any]) -> list[Hypothesis]:
+    def _generate_hypotheses_from_patterns(
+        self, observations: list[Evidence], context: dict[str, Any]
+    ) -> list[Hypothesis]:
         """Generate hypotheses by analyzing observation patterns."""
         generated: list[Hypothesis] = []
         by_topic: dict[str, list[Evidence]] = {}
         for obs in observations:
-            topic = obs.metadata.get('topic', 'general')
+            topic = obs.metadata.get("topic", "general")
             if topic not in by_topic:
                 by_topic[topic] = []
             by_topic[topic].append(obs)
         for topic, evidence_list in by_topic.items():
             if len(evidence_list) >= 2:
-                h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"Entity '{topic}' exists based on multiple observations", hypothesis_type=HypothesisType.EXISTENCE.value, prior_probability=0.6, posterior_probability=0.6, supporting_evidence=[e.evidence_id for e in evidence_list[:3]])
+                h = Hypothesis(
+                    id=str(uuid.uuid7())[:8],
+                    statement=f"Entity '{topic}' exists based on multiple observations",
+                    hypothesis_type=HypothesisType.EXISTENCE.value,
+                    prior_probability=0.6,
+                    posterior_probability=0.6,
+                    supporting_evidence=[e.evidence_id for e in evidence_list[:3]],
+                )
                 generated.append(h)
                 self._hypotheses[h.id] = h
         topics = list(by_topic.keys())
         for i, topic_a in enumerate(topics):
-            for topic_b in topics[i + 1:]:
+            for topic_b in topics[i + 1 :]:
                 co_occur = self._check_co_occurrence(by_topic[topic_a], by_topic[topic_b])
                 if co_occur > 0.5:
-                    h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"'{topic_a}' is related to '{topic_b}'", hypothesis_type=HypothesisType.RELATIONSHIP.value, prior_probability=co_occur, posterior_probability=co_occur, supporting_evidence=[e.evidence_id for e in by_topic[topic_a][:2] + by_topic[topic_b][:2]])
+                    h = Hypothesis(
+                        id=str(uuid.uuid7())[:8],
+                        statement=f"'{topic_a}' is related to '{topic_b}'",
+                        hypothesis_type=HypothesisType.RELATIONSHIP.value,
+                        prior_probability=co_occur,
+                        posterior_probability=co_occur,
+                        supporting_evidence=[e.evidence_id for e in by_topic[topic_a][:2] + by_topic[topic_b][:2]],
+                    )
                     generated.append(h)
                     self._hypotheses[h.id] = h
-        temporal_obs = [o for o in observations if 'timestamp' in o.metadata]
+        temporal_obs = [o for o in observations if "timestamp" in o.metadata]
         if len(temporal_obs) >= 2:
-            temporal_obs.sort(key=attrgetter("metadata").get('timestamp', ''))
-            for obs_a, obs_b in zip(temporal_obs, temporal_obs[1:]):
-                h = Hypothesis(id=str(uuid.uuid7())[:8], statement=f"'{obs_a.content[:30]}...' may cause '{obs_b.content[:30]}...'", hypothesis_type=HypothesisType.CAUSAL.value, prior_probability=0.3, posterior_probability=0.3, supporting_evidence=[obs_a.evidence_id, obs_b.evidence_id])
+            temporal_obs.sort(key=attrgetter("metadata").get("timestamp", ""))
+            for obs_a, obs_b in zip(temporal_obs, temporal_obs[1:], strict=False):
+                h = Hypothesis(
+                    id=str(uuid.uuid7())[:8],
+                    statement=f"'{obs_a.content[:30]}...' may cause '{obs_b.content[:30]}...'",
+                    hypothesis_type=HypothesisType.CAUSAL.value,
+                    prior_probability=0.3,
+                    posterior_probability=0.3,
+                    supporting_evidence=[obs_a.evidence_id, obs_b.evidence_id],
+                )
                 generated.append(h)
                 self._hypotheses[h.id] = h
         return generated
@@ -801,7 +1045,15 @@ class HypothesisEngine:
         template = self._test_templates.get(hypothesis.hypothesis_type)
         if template:
             return template(hypothesis)
-        return TestDesign(test_type=TestType.CONSISTENCY_CHECK.value, description=f'General consistency check for: {hypothesis.statement}', required_data=['supporting_sources', 'cross_references'], expected_outcome_if_true='Hypothesis is consistent with available data', expected_outcome_if_false='Inconsistencies found', priority=0.5, cost_estimate=1.0)
+        return TestDesign(
+            test_type=TestType.CONSISTENCY_CHECK.value,
+            description=f"General consistency check for: {hypothesis.statement}",
+            required_data=["supporting_sources", "cross_references"],
+            expected_outcome_if_true="Hypothesis is consistent with available data",
+            expected_outcome_if_false="Inconsistencies found",
+            priority=0.5,
+            cost_estimate=1.0,
+        )
 
     async def execute_test(self, test: TestDesign, context: dict[str, Any]) -> TestResult:
         """
@@ -814,30 +1066,55 @@ class HypothesisEngine:
         Returns:
             Test result
         """
-        self._stats['tested'] += 1
+        self._stats["tested"] += 1
         missing_data = [req for req in test.required_data if req not in context]
         if missing_data:
-            return TestResult(test_type=test.test_type, result='inconclusive', confidence=0.5, evidence_collected=[], metadata={'missing_data': missing_data})
+            return TestResult(
+                test_type=test.test_type,
+                result="inconclusive",
+                confidence=0.5,
+                evidence_collected=[],
+                metadata={"missing_data": missing_data},
+            )
         try:
             if self.inference_engine:
-                chained_evidence = await self.inference_engine.evidence_chaining(context.get('hypothesis'), context)
-                evidence_ids = [e.get('id') for e in chained_evidence if e.get('id')]
+                chained_evidence = await self.inference_engine.evidence_chaining(context.get("hypothesis"), context)
+                evidence_ids = [e.get("id") for e in chained_evidence if e.get("id")]
             else:
-                evidence_ids = context.get('available_evidence', [])
-            evidence_quality = sum((self._evidence.get(eid, Evidence('', '', '', datetime.now(UTC))).reliability for eid in evidence_ids)) / len(evidence_ids) if evidence_ids else 0.5
+                evidence_ids = context.get("available_evidence", [])
+            evidence_quality = (
+                sum(
+                    self._evidence.get(eid, Evidence("", "", "", datetime.now(UTC))).reliability for eid in evidence_ids
+                )
+                / len(evidence_ids)
+                if evidence_ids
+                else 0.5
+            )
             if evidence_quality > 0.7:
-                result = 'passed'
+                result = "passed"
                 confidence = evidence_quality
             elif evidence_quality < 0.3:
-                result = 'failed'
+                result = "failed"
                 confidence = 1 - evidence_quality
             else:
-                result = 'inconclusive'
+                result = "inconclusive"
                 confidence = 0.5
-            return TestResult(test_type=test.test_type, result=result, confidence=confidence, evidence_collected=evidence_ids, metadata={'test_description': test.description})
+            return TestResult(
+                test_type=test.test_type,
+                result=result,
+                confidence=confidence,
+                evidence_collected=evidence_ids,
+                metadata={"test_description": test.description},
+            )
         except Exception as e:
-            logger.error(f'Test execution failed: {e}')
-            return TestResult(test_type=test.test_type, result='inconclusive', confidence=0.0, evidence_collected=[], metadata={'error': str(e)})
+            logger.error(f"Test execution failed: {e}")
+            return TestResult(
+                test_type=test.test_type,
+                result="inconclusive",
+                confidence=0.0,
+                evidence_collected=[],
+                metadata={"error": str(e)},
+            )
 
     def update_hypothesis(self, hypothesis: Hypothesis, result: TestResult) -> None:
         """
@@ -850,14 +1127,16 @@ class HypothesisEngine:
         hypothesis.add_test_result(result)
         if hypothesis.confidence > 0.8:
             hypothesis.status = HypothesisStatus.CONFIRMED.value
-            self._stats['confirmed'] += 1
+            self._stats["confirmed"] += 1
         elif hypothesis.confidence < 0.2:
             hypothesis.status = HypothesisStatus.REJECTED.value
-            self._stats['rejected'] += 1
+            self._stats["rejected"] += 1
         self._hypotheses[hypothesis.id] = hypothesis
-        logger.debug(f'Updated hypothesis {hypothesis.id}: confidence={hypothesis.confidence:.2f}, status={hypothesis.status}')
+        logger.debug(
+            f"Updated hypothesis {hypothesis.id}: confidence={hypothesis.confidence:.2f}, status={hypothesis.status}"
+        )
 
-    def attempt_falsification(self, hypothesis: Hypothesis, use_adversarial: bool=True) -> FalsificationResult:
+    def attempt_falsification(self, hypothesis: Hypothesis, use_adversarial: bool = True) -> FalsificationResult:
         """
         Attempt to falsify a hypothesis (Popperian approach).
 
@@ -879,23 +1158,27 @@ class HypothesisEngine:
         reasoning_parts: list[str] = []
         if hypothesis.conflicting_evidence:
             counter_evidence = hypothesis.conflicting_evidence[:5]
-            falsification_strength = len(hypothesis.conflicting_evidence) / (len(hypothesis.supporting_evidence) + len(hypothesis.conflicting_evidence) + 1)
+            falsification_strength = len(hypothesis.conflicting_evidence) / (
+                len(hypothesis.supporting_evidence) + len(hypothesis.conflicting_evidence) + 1
+            )
             if falsification_strength > 0.5:
                 falsified = True
                 confidence = falsification_strength
-                reasoning_parts.append(f'Strong counter-evidence ({len(hypothesis.conflicting_evidence)} items) contradicts hypothesis')
-        failed_tests = [t for t in hypothesis.test_results if t.result == 'failed']
+                reasoning_parts.append(
+                    f"Strong counter-evidence ({len(hypothesis.conflicting_evidence)} items) contradicts hypothesis"
+                )
+        failed_tests = [t for t in hypothesis.test_results if t.result == "failed"]
         if failed_tests:
             falsified = True
-            confidence = max(confidence, max((t.confidence for t in failed_tests)))
-            reasoning_parts.append(f'{len(failed_tests)} tests failed')
+            confidence = max(confidence, max(t.confidence for t in failed_tests))
+            reasoning_parts.append(f"{len(failed_tests)} tests failed")
             counter_evidence.extend([t.test_type for t in failed_tests])
         if not falsified:
             inconsistency = self._check_logical_inconsistency(hypothesis)
             if inconsistency:
                 falsified = True
                 confidence = 0.8
-                reasoning_parts.append(f'Logical inconsistency detected: {inconsistency}')
+                reasoning_parts.append(f"Logical inconsistency detected: {inconsistency}")
         if use_adversarial and self.enable_adversarial_verification:
             try:
                 adversarial_falsification = self._attempt_adversarial_falsification(hypothesis)
@@ -905,8 +1188,13 @@ class HypothesisEngine:
                     counter_evidence.extend(adversarial_falsification.counter_evidence)
                     reasoning_parts.append(adversarial_falsification.reasoning)
             except Exception as e:
-                logger.warning(f'Adversarial falsification failed: {e}')
-        return FalsificationResult(falsified=falsified, confidence=confidence, counter_evidence=counter_evidence, reasoning='; '.join(reasoning_parts) if reasoning_parts else 'No falsification criteria met')
+                logger.warning(f"Adversarial falsification failed: {e}")
+        return FalsificationResult(
+            falsified=falsified,
+            confidence=confidence,
+            counter_evidence=counter_evidence,
+            reasoning="; ".join(reasoning_parts) if reasoning_parts else "No falsification criteria met",
+        )
 
     def _attempt_adversarial_falsification(self, hypothesis: Hypothesis) -> FalsificationResult:
         """
@@ -927,21 +1215,21 @@ class HypothesisEngine:
             contradictions = self.adversarial_verifier.detect_contradictions(all_evidence)
             contradictions_found = len(contradictions)
             for contradiction in contradictions:
-                counter_evidence.append(f'contradiction:{contradiction.claim_a[:30]}...')
+                counter_evidence.append(f"contradiction:{contradiction.claim_a[:30]}...")
         for eid in hypothesis.supporting_evidence:
             evidence = self._evidence.get(eid)
             if evidence:
                 credibility = self.adversarial_verifier.assess_source_credibility(evidence.source)
                 if credibility.credibility_score < 0.4:
                     credibility_issues += 1
-                    counter_evidence.append(f'low_credibility:{evidence.source}')
+                    counter_evidence.append(f"low_credibility:{evidence.source}")
         events = self.adversarial_verifier._extract_events(all_evidence)
         if len(events) >= 2:
             is_consistent, temporal_contradictions = self.adversarial_verifier.check_temporal_consistency(events)
             if not is_consistent:
                 contradictions_found += len(temporal_contradictions)
                 for tc in temporal_contradictions:
-                    counter_evidence.append(f'temporal:{tc.claim_a[:30]}...')
+                    counter_evidence.append(f"temporal:{tc.claim_a[:30]}...")
         falsified = contradictions_found > 0 or credibility_issues >= 2
         if contradictions_found > 0:
             confidence = min(0.9, 0.5 + contradictions_found * 0.1)
@@ -951,10 +1239,15 @@ class HypothesisEngine:
             confidence = 0.0
         reasoning_parts = []
         if contradictions_found > 0:
-            reasoning_parts.append(f'{contradictions_found} contradictions detected')
+            reasoning_parts.append(f"{contradictions_found} contradictions detected")
         if credibility_issues > 0:
-            reasoning_parts.append(f'{credibility_issues} credibility issues found')
-        return FalsificationResult(falsified=falsified, confidence=confidence, counter_evidence=counter_evidence, reasoning='; '.join(reasoning_parts) if reasoning_parts else 'No adversarial issues found')
+            reasoning_parts.append(f"{credibility_issues} credibility issues found")
+        return FalsificationResult(
+            falsified=falsified,
+            confidence=confidence,
+            counter_evidence=counter_evidence,
+            reasoning="; ".join(reasoning_parts) if reasoning_parts else "No adversarial issues found",
+        )
 
     def _check_logical_inconsistency(self, hypothesis: Hypothesis) -> str | None:
         """Check for logical inconsistencies in a hypothesis."""
@@ -964,25 +1257,25 @@ class HypothesisEngine:
             if other.status != HypothesisStatus.CONFIRMED.value:
                 continue
             if self._statements_contradict(hypothesis.statement, other.statement):
-                return f'Contradicts confirmed hypothesis {other_id}'
+                return f"Contradicts confirmed hypothesis {other_id}"
         return None
 
     def _statements_contradict(self, stmt_a: str, stmt_b: str) -> bool:
         """Check if two statements contradict each other."""
-        negators = ['not ', 'no ', 'never ', 'does not ', 'is not ', 'cannot ']
-        a_negated = any((stmt_a.lower().startswith(n) for n in negators))
-        b_negated = any((stmt_b.lower().startswith(n) for n in negators))
+        negators = ["not ", "no ", "never ", "does not ", "is not ", "cannot "]
+        a_negated = any(stmt_a.lower().startswith(n) for n in negators)
+        b_negated = any(stmt_b.lower().startswith(n) for n in negators)
         if a_negated != b_negated:
             a_clean = stmt_a.lower()
             b_clean = stmt_b.lower()
             for n in negators:
-                a_clean = a_clean.replace(n, '')
-                b_clean = b_clean.replace(n, '')
+                a_clean = a_clean.replace(n, "")
+                b_clean = b_clean.replace(n, "")
             if len(set(a_clean.split()) & set(b_clean.split())) > 3:
                 return True
         return False
 
-    def rank_hypotheses(self, hypotheses: list[Hypothesis] | None=None) -> list[Hypothesis]:
+    def rank_hypotheses(self, hypotheses: list[Hypothesis] | None = None) -> list[Hypothesis]:
         """
         Rank hypotheses by composite score.
 
@@ -1010,18 +1303,23 @@ class HypothesisEngine:
         """Calculate composite score for a hypothesis."""
         confidence_score = hypothesis.posterior_probability
         if hypothesis.test_results:
-            passed = sum((1 for t in hypothesis.test_results if t.result == 'passed'))
+            passed = sum(1 for t in hypothesis.test_results if t.result == "passed")
             test_score = passed / len(hypothesis.test_results)
         else:
             test_score = 0.5
-        unique_sources = len({self._evidence.get(eid, Evidence('', 'unknown', '', datetime.now(UTC))).source for eid in hypothesis.supporting_evidence})
+        unique_sources = len(
+            {
+                self._evidence.get(eid, Evidence("", "unknown", "", datetime.now(UTC))).source
+                for eid in hypothesis.supporting_evidence
+            }
+        )
         diversity_score = min(1.0, unique_sources / 3)
         falsification = self.attempt_falsification(hypothesis)
         resistance_score = 1 - falsification.confidence if falsification.falsified else 1.0
         composite = confidence_score * 0.35 + test_score * 0.25 + diversity_score * 0.2 + resistance_score * 0.2
         return composite
 
-    def get_most_likely(self, hypotheses: list[Hypothesis] | None=None) -> Hypothesis | None:
+    def get_most_likely(self, hypotheses: list[Hypothesis] | None = None) -> Hypothesis | None:
         """
         Get the most likely hypothesis from a list.
 
@@ -1055,14 +1353,26 @@ class HypothesisEngine:
         statement_similarity = self._statement_similarity(h1.statement, h2.statement)
         if statement_similarity < 0.5:
             return None
-        merged = Hypothesis(id=str(uuid.uuid7())[:8], statement=f'Merged: {h1.statement[:50]} + {h2.statement[:50]}', hypothesis_type=h1.hypothesis_type, prior_probability=max(h1.prior_probability, h2.prior_probability), posterior_probability=(h1.posterior_probability + h2.posterior_probability) / 2, confidence=(h1.confidence + h2.confidence) / 2, supporting_evidence=list(total_evidence), conflicting_evidence=list(set(h1.conflicting_evidence) | set(h2.conflicting_evidence)), test_results=h1.test_results + h2.test_results, status=HypothesisStatus.ACTIVE.value, parent_hypotheses=[h1.id, h2.id])
+        merged = Hypothesis(
+            id=str(uuid.uuid7())[:8],
+            statement=f"Merged: {h1.statement[:50]} + {h2.statement[:50]}",
+            hypothesis_type=h1.hypothesis_type,
+            prior_probability=max(h1.prior_probability, h2.prior_probability),
+            posterior_probability=(h1.posterior_probability + h2.posterior_probability) / 2,
+            confidence=(h1.confidence + h2.confidence) / 2,
+            supporting_evidence=list(total_evidence),
+            conflicting_evidence=list(set(h1.conflicting_evidence) | set(h2.conflicting_evidence)),
+            test_results=h1.test_results + h2.test_results,
+            status=HypothesisStatus.ACTIVE.value,
+            parent_hypotheses=[h1.id, h2.id],
+        )
         h1.status = HypothesisStatus.MERGED.value
         h2.status = HypothesisStatus.MERGED.value
         self._hypotheses[h1.id] = h1
         self._hypotheses[h2.id] = h2
         self._hypotheses[merged.id] = merged
-        self._stats['merged'] += 1
-        logger.info(f'Merged hypotheses {h1.id} and {h2.id} into {merged.id}')
+        self._stats["merged"] += 1
+        logger.info(f"Merged hypotheses {h1.id} and {h2.id} into {merged.id}")
         return merged
 
     def _statement_similarity(self, stmt_a: str, stmt_b: str) -> float:
@@ -1075,7 +1385,9 @@ class HypothesisEngine:
         union = words_a | words_b
         return len(intersection) / len(union)
 
-    def run_hypothesis_cycle(self, observations: list[Evidence], max_iterations: int=10, context: dict[str, Any] | None=None) -> list[Hypothesis]:
+    def run_hypothesis_cycle(
+        self, observations: list[Evidence], max_iterations: int = 10, context: dict[str, Any] | None = None
+    ) -> list[Hypothesis]:
         """
         Run a complete hypothesis generation and testing cycle.
 
@@ -1090,24 +1402,24 @@ class HypothesisEngine:
             Final list of hypotheses after testing
         """
         context = context or {}
-        logger.info(f'Starting hypothesis cycle with {len(observations)} observations')
+        logger.info(f"Starting hypothesis cycle with {len(observations)} observations")
         hypotheses = self.generate_hypotheses(observations, context)
         if not hypotheses:
-            logger.warning('No hypotheses generated')
+            logger.warning("No hypotheses generated")
             return []
         for iteration in range(max_iterations):
             active_hypotheses = [h for h in self._hypotheses.values() if h.status == HypothesisStatus.ACTIVE.value]
             if not active_hypotheses:
-                logger.info('No active hypotheses remaining')
+                logger.info("No active hypotheses remaining")
                 break
             ranked = self.rank_hypotheses(active_hypotheses)
             target = ranked[0]
             test = self.design_test(target)
             try:
-                result = run_sync_async(self.execute_test(test, {**context, 'hypothesis': target}))
+                result = run_sync_async(self.execute_test(test, {**context, "hypothesis": target}))
                 self.update_hypothesis(target, result)
             except RuntimeError:
-                logger.warning('execute_test called from async context, skipping')
+                logger.warning("execute_test called from async context, skipping")
                 continue
             if iteration % 3 == 0:
                 for h in list(self._hypotheses.values())[:5]:
@@ -1121,7 +1433,9 @@ class HypothesisEngine:
                 self._prune_hypotheses()
                 gc.collect()
         final_hypotheses = self.rank_hypotheses()
-        logger.info(f"Hypothesis cycle complete: {len(final_hypotheses)} hypotheses, {self._stats['confirmed']} confirmed, {self._stats['rejected']} rejected")
+        logger.info(
+            f"Hypothesis cycle complete: {len(final_hypotheses)} hypotheses, {self._stats['confirmed']} confirmed, {self._stats['rejected']} rejected"
+        )
         return final_hypotheses
 
     def _prune_hypotheses(self) -> None:
@@ -1129,7 +1443,7 @@ class HypothesisEngine:
         if len(self._hypotheses) <= self.max_hypotheses:
             return
         ranked = self.rank_hypotheses()
-        to_keep = {h.id for h in ranked[:self.max_hypotheses]}
+        to_keep = {h.id for h in ranked[: self.max_hypotheses]}
         removed = 0
         for hid in list(self._hypotheses.keys()):
             if hid not in to_keep:
@@ -1137,15 +1451,15 @@ class HypothesisEngine:
                 if h.confidence < self.min_confidence_threshold:
                     del self._hypotheses[hid]
                     removed += 1
-        self._stats['pruned'] += removed
+        self._stats["pruned"] += removed
         if removed > 0:
-            logger.debug(f'Pruned {removed} low-confidence hypotheses')
+            logger.debug(f"Pruned {removed} low-confidence hypotheses")
 
     def get_hypothesis(self, hypothesis_id: str) -> Hypothesis | None:
         """Get a hypothesis by ID."""
         return self._hypotheses.get(hypothesis_id)
 
-    def get_all_hypotheses(self, status: str | None=None) -> list[Hypothesis]:
+    def get_all_hypotheses(self, status: str | None = None) -> list[Hypothesis]:
         """
         Get all hypotheses, optionally filtered by status.
 
@@ -1160,7 +1474,14 @@ class HypothesisEngine:
             hypotheses = [h for h in hypotheses if h.status == status]
         return hypotheses
 
-    async def generate_sprint_hypotheses(self, findings: list[str], ioc_graph: Any | None=None, max_hypotheses: int=3, duckdb_store: Any | None=None, sprint_id: str | None=None) -> list[str]:
+    async def generate_sprint_hypotheses(
+        self,
+        findings: list[str],
+        ioc_graph: Any | None = None,
+        max_hypotheses: int = 3,
+        duckdb_store: Any | None = None,
+        sprint_id: str | None = None,
+    ) -> list[str]:
         """
         Sprint 8TD: Generovat testovatelné hypotézy z IOC findings.
 
@@ -1186,34 +1507,40 @@ class HypothesisEngine:
             return []
         if duckdb_store is not None and sprint_id:
             try:
-                historical = await duckdb_store.async_query_recent_findings_by_sprint(sprint_id=sprint_id, limit=max_hypotheses * 4)
+                historical = await duckdb_store.async_query_recent_findings_by_sprint(
+                    sprint_id=sprint_id, limit=max_hypotheses * 4
+                )
                 if historical:
                     extra_texts: list[str] = []
                     for f in historical:
                         if isinstance(f, dict):
-                            text = f.get('payload_text') or f.get('text') or f.get('summary') or f.get('ioc_value') or ''
+                            text = (
+                                f.get("payload_text") or f.get("text") or f.get("summary") or f.get("ioc_value") or ""
+                            )
                         else:
                             text = str(f)
                         if text and text not in findings:
                             extra_texts.append(text)
                     findings = list(findings) + extra_texts
-            except (AttributeError, TypeError):  # noqa: BLE001
+            except AttributeError, TypeError:  # noqa: BLE001
                 pass
             except Exception:  # noqa: BLE001
                 pass
         hypotheses: list[str] = []
         for i, finding in enumerate(findings[:max_hypotheses]):
-            h = f'IF finding: {finding[:100]!r} THEN credible_with_confidence: 0.{7 + i}'
+            h = f"IF finding: {finding[:100]!r} THEN credible_with_confidence: 0.{7 + i}"
             hypotheses.append(h)
         if ioc_graph is not None and len(findings) >= 2:
             try:
-                h_ioc = f'IF {len(findings)} related findings THEN shared_attribution with confidence: 0.{min(9, 5 + len(findings))}'
+                h_ioc = f"IF {len(findings)} related findings THEN shared_attribution with confidence: 0.{min(9, 5 + len(findings))}"
                 hypotheses.append(h_ioc)
             except Exception:  # noqa: BLE001
                 pass
         return hypotheses[:max_hypotheses]
 
-    def suggest_next_queries(self, findings: list[str] | str, context: dict[str, Any] | None=None, max_queries: int=5) -> list[dict[str, str]]:
+    def suggest_next_queries(
+        self, findings: list[str] | str, context: dict[str, Any] | None = None, max_queries: int = 5
+    ) -> list[dict[str, str]]:
         """
         Generate bounded follow-up search queries from findings.
 
@@ -1247,41 +1574,145 @@ class HypothesisEngine:
         seen = set()
         unique = []
         for q in queries:
-            if q['query'] not in seen:
-                seen.add(q['query'])
+            if q["query"] not in seen:
+                seen.add(q["query"])
                 unique.append(q)
         return unique[:max_queries]
 
     def _heuristic_query_generation(self, findings: list[str], context: dict[str, Any]) -> list[dict[str, str]]:
         """Generate queries using cheap heuristics - no model required."""
         queries: list[dict[str, str]] = []
-        all_text = ' '.join(findings)
+        all_text = " ".join(findings)
         entities = self._extract_entities_heuristic(all_text)
-        known_iocs = context.get('known_iocs', set())
+        known_iocs = context.get("known_iocs", set())
         for entity in entities[:3]:
             if entity not in known_iocs:
-                queries.append({'query': f'"{entity}" OR "{entity.lower()}"', 'rationale': f'Entity expansion: {entity}', 'type': 'entity_expansion'})
-        rel_patterns = [('(\\w+)\\s+(?:linked|connected|related)\\s+to\\s+(\\w+)', 'linked_to'), ('(\\w+)\\s+(?:uses?|employs?|leverages?)\\s+(\\w+)', 'uses'), ('(\\w+)\\s+(?:targeted|attacked)\\s+(\\w+)', 'targeted')]
+                queries.append(
+                    {
+                        "query": f'"{entity}" OR "{entity.lower()}"',
+                        "rationale": f"Entity expansion: {entity}",
+                        "type": "entity_expansion",
+                    }
+                )
+        rel_patterns = [
+            ("(\\w+)\\s+(?:linked|connected|related)\\s+to\\s+(\\w+)", "linked_to"),
+            ("(\\w+)\\s+(?:uses?|employs?|leverages?)\\s+(\\w+)", "uses"),
+            ("(\\w+)\\s+(?:targeted|attacked)\\s+(\\w+)", "targeted"),
+        ]
         for pattern, rel_type in rel_patterns:
             matches = re.findall(pattern, all_text, re.IGNORECASE)
             for m in matches[:2]:
                 if len(m) == 2:
-                    queries.append({'query': f'"{m[0]}" AND "{m[1]}"', 'rationale': f'Relationship check: {m[0]} {rel_type} {m[1]}', 'type': 'relationship_check'})
-        time_indicators = re.findall('(?:in|during|since|after|before)\\s+(\\d{4})', all_text)
+                    queries.append(
+                        {
+                            "query": f'"{m[0]}" AND "{m[1]}"',
+                            "rationale": f"Relationship check: {m[0]} {rel_type} {m[1]}",
+                            "type": "relationship_check",
+                        }
+                    )
+        time_indicators = re.findall("(?:in|during|since|after|before)\\s+(\\d{4})", all_text)
         for year in time_indicators[:2]:
-            queries.append({'query': f'timeline:{year} OR "{year}" security incident', 'rationale': f'Temporal expansion: {year}', 'type': 'temporal_expansion'})
-        source_patterns = ['(?:according to|from|via)\\s+([A-Z][\\w\\s]+?(?:report|news|article|source))', '(?:published|released)\\s+(?:by\\s+)?([A-Z][\\w\\s]+)']
+            queries.append(
+                {
+                    "query": f'timeline:{year} OR "{year}" security incident',
+                    "rationale": f"Temporal expansion: {year}",
+                    "type": "temporal_expansion",
+                }
+            )
+        source_patterns = [
+            "(?:according to|from|via)\\s+([A-Z][\\w\\s]+?(?:report|news|article|source))",
+            "(?:published|released)\\s+(?:by\\s+)?([A-Z][\\w\\s]+)",
+        ]
         for pattern in source_patterns:
             sources = re.findall(pattern, all_text)
             for src in sources[:1]:
                 clean_src = src.strip()[:40]
-                queries.append({'query': f'"{clean_src}" latest news', 'rationale': f'Source discovery: {clean_src}', 'type': 'source_discovery'})
+                queries.append(
+                    {
+                        "query": f'"{clean_src}" latest news',
+                        "rationale": f"Source discovery: {clean_src}",
+                        "type": "source_discovery",
+                    }
+                )
         iocs = self._extract_iocs_heuristic(all_text)
         for ioc_type, ioc_value in iocs[:2]:
-            queries.append({'query': f'{ioc_type}:{ioc_value} OR {ioc_value}', 'rationale': f'IOC correlation: {ioc_type}={ioc_value}', 'type': 'entity_expansion'})
+            queries.append(
+                {
+                    "query": f"{ioc_type}:{ioc_value} OR {ioc_value}",
+                    "rationale": f"IOC correlation: {ioc_type}={ioc_value}",
+                    "type": "entity_expansion",
+                }
+            )
         return queries[:5]
-    _HIGH_VALUE_PATTERNS = ['\\bAPT\\d{1,2}\\b', '\\bCozy Bear\\b', '\\bFancy Bear\\b', '\\bLazarus\\b', '\\bWannaCry\\b', '\\bNotPetya\\b', '\\bSolarWinds\\b', '\\bKaseya\\b', '\\bLog4j\\b', '\\bLog4Shell\\b', '\\bCobalt Strike\\b', '\\bMimikatz\\b', '\\bEmotet\\b', '\\bTrickBot\\b', '\\bRyuk\\b', '\\bDarkSide\\b', '\\bREvil\\b', '\\bBlackCat\\b', '\\bALPHV\\b', '\\bClop\\b', '\\bConti\\b', '\\bHive\\b', '\\bLockBit\\b', '\\bBlackMatter\\b', '\\bTrickBot\\b', '\\bCobaltStrike\\b', '\\bPowerShell\\b', '\\bLiving off the Land\\b', '\\bLotL\\b']
-    _GENERIC_ENTITY_WORDS = {'actor', 'target', 'victim', 'group', 'campaign', 'operation', 'incident', 'breach', 'attack', 'threat', 'agent', 'person', 'individual', 'team', 'unit', 'party', 'entity', 'system', 'network', 'server', 'host', 'machine', 'device', 'software', 'tool', 'malware', 'ransomware', 'virus', 'trojan', 'data', 'information', 'file', 'document', 'report', 'source'}
+
+    _HIGH_VALUE_PATTERNS = [
+        "\\bAPT\\d{1,2}\\b",
+        "\\bCozy Bear\\b",
+        "\\bFancy Bear\\b",
+        "\\bLazarus\\b",
+        "\\bWannaCry\\b",
+        "\\bNotPetya\\b",
+        "\\bSolarWinds\\b",
+        "\\bKaseya\\b",
+        "\\bLog4j\\b",
+        "\\bLog4Shell\\b",
+        "\\bCobalt Strike\\b",
+        "\\bMimikatz\\b",
+        "\\bEmotet\\b",
+        "\\bTrickBot\\b",
+        "\\bRyuk\\b",
+        "\\bDarkSide\\b",
+        "\\bREvil\\b",
+        "\\bBlackCat\\b",
+        "\\bALPHV\\b",
+        "\\bClop\\b",
+        "\\bConti\\b",
+        "\\bHive\\b",
+        "\\bLockBit\\b",
+        "\\bBlackMatter\\b",
+        "\\bTrickBot\\b",
+        "\\bCobaltStrike\\b",
+        "\\bPowerShell\\b",
+        "\\bLiving off the Land\\b",
+        "\\bLotL\\b",
+    ]
+    _GENERIC_ENTITY_WORDS = {
+        "actor",
+        "target",
+        "victim",
+        "group",
+        "campaign",
+        "operation",
+        "incident",
+        "breach",
+        "attack",
+        "threat",
+        "agent",
+        "person",
+        "individual",
+        "team",
+        "unit",
+        "party",
+        "entity",
+        "system",
+        "network",
+        "server",
+        "host",
+        "machine",
+        "device",
+        "software",
+        "tool",
+        "malware",
+        "ransomware",
+        "virus",
+        "trojan",
+        "data",
+        "information",
+        "file",
+        "document",
+        "report",
+        "source",
+    }
 
     def _extract_entities_heuristic(self, text: str) -> list[str]:
         """Extract high-value threat entities using targeted patterns."""
@@ -1293,12 +1724,12 @@ class HypothesisEngine:
                 if name.lower() not in seen:
                     seen.add(name.lower())
                     entities.append(name)
-        for match in re.finditer('\\b(CVE-\\d{4}-\\d{4,7})\\b', text, re.IGNORECASE):
+        for match in re.finditer("\\b(CVE-\\d{4}-\\d{4,7})\\b", text, re.IGNORECASE):
             cve = match.group(1).upper()
             if cve.lower() not in seen:
                 seen.add(cve.lower())
                 entities.append(cve)
-        camel = re.findall('\\b[A-Z][a-z]+(?:[A-Z]\\w*)+\\b', text)
+        camel = re.findall("\\b[A-Z][a-z]+(?:[A-Z]\\w*)+\\b", text)
         for c in camel[:5]:
             c_lower = c.lower()
             if c_lower not in seen and len(c) > 3 and (c_lower not in self._GENERIC_ENTITY_WORDS):
@@ -1311,8 +1742,8 @@ class HypothesisEngine:
             if len(words) <= 4 and q_lower not in seen and (q_lower not in self._GENERIC_ENTITY_WORDS):
                 seen.add(q_lower)
                 entities.append(q)
-        skip = {'OR', 'AND', 'THE', 'FOR', 'WITH', 'FROM', 'THIS', 'THAT', 'WHEN', 'THEN'}
-        acronyms = re.findall('\\b[A-Z]{2,5}\\b', text)
+        skip = {"OR", "AND", "THE", "FOR", "WITH", "FROM", "THIS", "THAT", "WHEN", "THEN"}
+        acronyms = re.findall("\\b[A-Z]{2,5}\\b", text)
         for a in acronyms:
             a_lower = a.lower()
             if a not in skip and a_lower not in seen and (a_lower not in self._GENERIC_ENTITY_WORDS):
@@ -1323,42 +1754,42 @@ class HypothesisEngine:
     def _extract_iocs_heuristic(self, text: str) -> list[tuple[str, str]]:
         """Extract IOC-like patterns with better coverage."""
         iocs = []
-        cves = re.findall('\\bCVE-\\d{4}-\\d{4,7}\\b', text, re.IGNORECASE)
+        cves = re.findall("\\bCVE-\\d{4}-\\d{4,7}\\b", text, re.IGNORECASE)
         for cve in cves[:3]:
-            iocs.append(('cve', cve.upper()))
-        ips = re.findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b', text)
+            iocs.append(("cve", cve.upper()))
+        ips = re.findall("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", text)
         for ip in ips[:3]:
-            iocs.append(('ip', ip))
-        ipv6s = re.findall('\\b[0-9a-fA-F:]+:[0-9a-fA-F:]+\\b', text)
+            iocs.append(("ip", ip))
+        ipv6s = re.findall("\\b[0-9a-fA-F:]+:[0-9a-fA-F:]+\\b", text)
         for ip in ipv6s[:2]:
-            if ':' in ip and len(ip) > 10:
-                iocs.append(('ipv6', ip))
-        urls = re.findall('https?://[^\\s\\"\'>]+', text)
+            if ":" in ip and len(ip) > 10:
+                iocs.append(("ipv6", ip))
+        urls = re.findall("https?://[^\\s\\\"'>]+", text)
         for url in urls[:3]:
-            domain = re.sub('https?://', '', url).split('/')[0]
+            domain = re.sub("https?://", "", url).split("/")[0]
             if domain and len(domain) > 3:
-                iocs.append(('domain', domain))
-        hashes = re.findall('\\b[a-fA-F0-9]{32}\\b', text)
+                iocs.append(("domain", domain))
+        hashes = re.findall("\\b[a-fA-F0-9]{32}\\b", text)
         for h in hashes[:2]:
-            iocs.append(('md5', h))
-        sha256s = re.findall('\\b[a-fA-F0-9]{64}\\b', text)
+            iocs.append(("md5", h))
+        sha256s = re.findall("\\b[a-fA-F0-9]{64}\\b", text)
         for h in sha256s[:2]:
-            iocs.append(('sha256', h))
-        sha1s = re.findall('\\b[a-fA-F0-9]{40}\\b', text)
+            iocs.append(("sha256", h))
+        sha1s = re.findall("\\b[a-fA-F0-9]{40}\\b", text)
         for h in sha1s[:2]:
-            iocs.append(('sha1', h))
+            iocs.append(("sha1", h))
         paths = re.findall('[A-Z]:\\\\(?:[^\\\\/:*?\\"<>|\\r\\n]+\\\\)*[^\\\\\\/:*?\\"<>|\\r\\n]+', text)
         for p in paths[:2]:
-            iocs.append(('path', p[:50]))
-        regs = re.findall('HKLM\\\\[^,\\s]+|HKCU\\\\[^,\\s]+|HKCR\\\\[^,\\s]+', text, re.IGNORECASE)
+            iocs.append(("path", p[:50]))
+        regs = re.findall("HKLM\\\\[^,\\s]+|HKCU\\\\[^,\\s]+|HKCR\\\\[^,\\s]+", text, re.IGNORECASE)
         for r in regs[:2]:
-            iocs.append(('registry', r))
-        files = re.findall('\\b[\\w\\-]+\\.(exe|dll|ps1|vbs|bat|cmd|js|jar|scr|sys)\\b', text, re.IGNORECASE)
+            iocs.append(("registry", r))
+        files = re.findall("\\b[\\w\\-]+\\.(exe|dll|ps1|vbs|bat|cmd|js|jar|scr|sys)\\b", text, re.IGNORECASE)
         for f in files[:3]:
-            iocs.append(('file', f.lower()))
+            iocs.append(("file", f.lower()))
         return iocs
 
-    def build_hypothesis_pack(self, findings: list[str] | str, context: dict[str, Any] | None=None) -> HypothesisPack:
+    def build_hypothesis_pack(self, findings: list[str] | str, context: dict[str, Any] | None = None) -> HypothesisPack:
         """
         Build a practical hypothesis/query pack from findings.
 
@@ -1388,87 +1819,206 @@ class HypothesisEngine:
         if isinstance(findings, str):
             findings = [findings]
         if not findings:
-            return HypothesisPack(hypotheses=[], suggested_queries=[], ioc_follow_ups=[], source_hints=[], provenance='heuristic')
-        all_text = ' '.join(findings)
-        known_entities: set[str] = context.get('known_entities', set())
-        known_iocs: set[str] = context.get('known_iocs', set())
-        source_quality: dict[str, float] = context.get('source_quality', {})
-        existing_rels: list[tuple[str, str, str]] = context.get('existing_relationships', [])
-        temporal_anchors: list[tuple[str, str]] = context.get('temporal_anchors', [])
-        provenance = 'heuristic'
+            return HypothesisPack(
+                hypotheses=[], suggested_queries=[], ioc_follow_ups=[], source_hints=[], provenance="heuristic"
+            )
+        all_text = " ".join(findings)
+        known_entities: set[str] = context.get("known_entities", set())
+        known_iocs: set[str] = context.get("known_iocs", set())
+        source_quality: dict[str, float] = context.get("source_quality", {})
+        existing_rels: list[tuple[str, str, str]] = context.get("existing_relationships", [])
+        temporal_anchors: list[tuple[str, str]] = context.get("temporal_anchors", [])
+        provenance = "heuristic"
         entities = self._extract_entities_heuristic(all_text)
         new_entities = [e for e in entities if e not in known_entities]
         iocs = self._extract_iocs_heuristic(all_text)
         new_iocs = [(t, v) for t, v in iocs if v not in known_iocs]
         relationships = self._extract_relationships_heuristic(all_text)
-        new_rels = [(src, dst, rel) for src, dst, rel in relationships if (src, dst, rel) not in existing_rels and (dst, src, rel) not in existing_rels]
+        new_rels = [
+            (src, dst, rel)
+            for src, dst, rel in relationships
+            if (src, dst, rel) not in existing_rels and (dst, src, rel) not in existing_rels
+        ]
         sources = self._extract_source_hints_heuristic(all_text, source_quality)
         self._extract_temporal_anchors_heuristic(all_text, temporal_anchors)
         hypotheses = self._generate_hypotheses_heuristic(findings, new_entities, new_iocs, new_rels)
         suggested_queries = self._generate_ranked_queries(findings, new_entities, new_iocs, new_rels, sources)
         ioc_follow_ups = self._generate_ioc_follow_ups(new_iocs)
         entities, iocs = self._ner_capability_probe(all_text, entities, iocs)
-        model_pack = self._model_assisted_hypothesis_pack(findings, context, new_entities=new_entities, new_iocs=new_iocs, heuristic_queries=suggested_queries)
+        model_pack = self._model_assisted_hypothesis_pack(
+            findings, context, new_entities=new_entities, new_iocs=new_iocs, heuristic_queries=suggested_queries
+        )
         if model_pack:
             if model_pack.hypotheses:
                 hypotheses.extend(model_pack.hypotheses)
             if model_pack.suggested_queries:
-                existing_queries = {q['query'] for q in suggested_queries}
+                existing_queries = {q["query"] for q in suggested_queries}
                 for mq in model_pack.suggested_queries:
-                    if mq['query'] not in existing_queries:
+                    if mq["query"] not in existing_queries:
                         suggested_queries.append(mq)
             if model_pack.ioc_follow_ups:
                 ioc_follow_ups.extend(model_pack.ioc_follow_ups)
             if model_pack.source_hints:
                 sources.extend(model_pack.source_hints)
-            provenance = 'model-assisted'
+            provenance = "model-assisted"
         suggested_queries = self._deduplicate_and_rank_queries(suggested_queries)
-        return HypothesisPack(hypotheses=hypotheses[:10], suggested_queries=suggested_queries[:8], ioc_follow_ups=ioc_follow_ups[:5], source_hints=sources[:5], provenance=provenance)
+        return HypothesisPack(
+            hypotheses=hypotheses[:10],
+            suggested_queries=suggested_queries[:8],
+            ioc_follow_ups=ioc_follow_ups[:5],
+            source_hints=sources[:5],
+            provenance=provenance,
+        )
 
-    def _generate_hypotheses_heuristic(self, findings: list[str], entities: list[str], iocs: list[tuple[str, str]], relationships: list[tuple[str, str, str]]) -> list[dict[str, str]]:
+    def _generate_hypotheses_heuristic(
+        self,
+        findings: list[str],
+        entities: list[str],
+        iocs: list[tuple[str, str]],
+        relationships: list[tuple[str, str, str]],
+    ) -> list[dict[str, str]]:
         """Generate concrete, OSINT-practical hypotheses from extracted data."""
         hypotheses: list[dict[str, str]] = []
         for entity in entities[:3]:
-            hypotheses.append({'hypothesis': f"Entity '{entity}' is active in the threat space", 'confidence': '0.6', 'reason': 'Frequently mentioned in recent findings', 'type': 'entity_tracking'})
+            hypotheses.append(
+                {
+                    "hypothesis": f"Entity '{entity}' is active in the threat space",
+                    "confidence": "0.6",
+                    "reason": "Frequently mentioned in recent findings",
+                    "type": "entity_tracking",
+                }
+            )
         for ioc_type, ioc_value in iocs[:3]:
-            hypotheses.append({'hypothesis': f"{ioc_type.upper()} indicator '{ioc_value}' belongs to active campaign", 'confidence': '0.5', 'reason': 'IOC observed in current findings', 'type': 'ioc_attribution'})
+            hypotheses.append(
+                {
+                    "hypothesis": f"{ioc_type.upper()} indicator '{ioc_value}' belongs to active campaign",
+                    "confidence": "0.5",
+                    "reason": "IOC observed in current findings",
+                    "type": "ioc_attribution",
+                }
+            )
         for src, dst, rel in relationships[:2]:
-            hypotheses.append({'hypothesis': f"'{src}' {rel} '{dst}' — relationship is operational", 'confidence': '0.55', 'reason': 'Pattern-based relationship detection', 'type': 'relationship_tracking'})
+            hypotheses.append(
+                {
+                    "hypothesis": f"'{src}' {rel} '{dst}' — relationship is operational",
+                    "confidence": "0.55",
+                    "reason": "Pattern-based relationship detection",
+                    "type": "relationship_tracking",
+                }
+            )
         if len(entities) >= 2 and len(iocs) >= 1:
-            hypotheses.append({'hypothesis': 'Multiple entities share common IOC infrastructure', 'confidence': '0.45', 'reason': 'Entity cluster with shared IOC patterns', 'type': 'cluster_correlation'})
+            hypotheses.append(
+                {
+                    "hypothesis": "Multiple entities share common IOC infrastructure",
+                    "confidence": "0.45",
+                    "reason": "Entity cluster with shared IOC patterns",
+                    "type": "cluster_correlation",
+                }
+            )
         return hypotheses
 
-    def _generate_ranked_queries(self, findings: list[str], entities: list[str], iocs: list[tuple[str, str]], relationships: list[tuple[str, str, str]], sources: list[SourceHint]) -> list[dict[str, Any]]:
+    def _generate_ranked_queries(
+        self,
+        findings: list[str],
+        entities: list[str],
+        iocs: list[tuple[str, str]],
+        relationships: list[tuple[str, str, str]],
+        sources: list[SourceHint],
+    ) -> list[dict[str, Any]]:
         """Generate and rank follow-up queries with entity-pair and co-occurrence pivots."""
         queries: list[dict[str, Any]] = []
-        all_text = ' '.join(findings)
+        all_text = " ".join(findings)
         for ioc_type, ioc_value in iocs[:4]:
-            queries.append({'query': f'{ioc_type}:{ioc_value}', 'rationale': f'IOC lookup: {ioc_type}={ioc_value}', 'type': 'ioc_lookup', 'priority': 0.95, 'pivot_type': 'ioc'})
+            queries.append(
+                {
+                    "query": f"{ioc_type}:{ioc_value}",
+                    "rationale": f"IOC lookup: {ioc_type}={ioc_value}",
+                    "type": "ioc_lookup",
+                    "priority": 0.95,
+                    "pivot_type": "ioc",
+                }
+            )
         for entity in entities[:4]:
-            queries.append({'query': f'"{entity}" OR "{entity.lower()}"', 'rationale': f'Entity expansion: {entity}', 'type': 'entity_expansion', 'priority': 0.88, 'pivot_type': 'entity'})
+            queries.append(
+                {
+                    "query": f'"{entity}" OR "{entity.lower()}"',
+                    "rationale": f"Entity expansion: {entity}",
+                    "type": "entity_expansion",
+                    "priority": 0.88,
+                    "pivot_type": "entity",
+                }
+            )
         entity_pairs = self._find_entity_pairs(all_text, entities)
         for src, dst in entity_pairs[:3]:
-            queries.append({'query': f'"{src}" AND "{dst}"', 'rationale': f'Entity pair: {src} + {dst} co-occurrence', 'type': 'entity_pair', 'priority': 0.82, 'pivot_type': 'entity_pair'})
+            queries.append(
+                {
+                    "query": f'"{src}" AND "{dst}"',
+                    "rationale": f"Entity pair: {src} + {dst} co-occurrence",
+                    "type": "entity_pair",
+                    "priority": 0.82,
+                    "pivot_type": "entity_pair",
+                }
+            )
         for src, dst, rel in relationships[:2]:
-            queries.append({'query': f'"{src}" AND "{dst}"', 'rationale': f'Verify relationship: {src} {rel} {dst}', 'type': 'relationship_verification', 'priority': 0.78, 'pivot_type': 'relationship'})
+            queries.append(
+                {
+                    "query": f'"{src}" AND "{dst}"',
+                    "rationale": f"Verify relationship: {src} {rel} {dst}",
+                    "type": "relationship_verification",
+                    "priority": 0.78,
+                    "pivot_type": "relationship",
+                }
+            )
         ioc_entities = self._find_ioc_entity_pairs(iocs, entities, all_text)
         for ioc_val, entity in ioc_entities[:3]:
-            queries.append({'query': f'{ioc_val} AND "{entity}"', 'rationale': f'IOC+entity co-occurrence: {ioc_val} + {entity}', 'type': 'ioc_entity_pivot', 'priority': 0.85, 'pivot_type': 'ioc_entity'})
+            queries.append(
+                {
+                    "query": f'{ioc_val} AND "{entity}"',
+                    "rationale": f"IOC+entity co-occurrence: {ioc_val} + {entity}",
+                    "type": "ioc_entity_pivot",
+                    "priority": 0.85,
+                    "pivot_type": "ioc_entity",
+                }
+            )
         for src_hint in sources[:2]:
-            queries.append({'query': f'"{src_hint.source}" latest', 'rationale': f'Source check: {src_hint.source} (quality: {src_hint.quality:.2f})', 'type': 'source_discovery', 'priority': src_hint.quality * 0.75, 'pivot_type': 'source'})
+            queries.append(
+                {
+                    "query": f'"{src_hint.source}" latest',
+                    "rationale": f"Source check: {src_hint.source} (quality: {src_hint.quality:.2f})",
+                    "type": "source_discovery",
+                    "priority": src_hint.quality * 0.75,
+                    "pivot_type": "source",
+                }
+            )
         org_anchors = self._extract_org_anchors(all_text)
         for org in org_anchors[:2]:
-            queries.append({'query': f'"{org}" (targeted OR attacked OR compromised)', 'rationale': f'Org anchor pivot: {org}', 'type': 'org_pivot', 'priority': 0.65, 'pivot_type': 'organization'})
-        time_indicators = re.findall('\\b(20[12]\\d)\\b', all_text)
+            queries.append(
+                {
+                    "query": f'"{org}" (targeted OR attacked OR compromised)',
+                    "rationale": f"Org anchor pivot: {org}",
+                    "type": "org_pivot",
+                    "priority": 0.65,
+                    "pivot_type": "organization",
+                }
+            )
+        time_indicators = re.findall("\\b(20[12]\\d)\\b", all_text)
         for year in list(set(time_indicators))[:1]:
-            queries.append({'query': f'timeline:{year} security incident', 'rationale': f'Temporal expansion: {year}', 'type': 'temporal_expansion', 'priority': 0.45, 'pivot_type': 'temporal'})
-        queries.sort(key=attrgetter("get")('priority', 0.5), reverse=True)
+            queries.append(
+                {
+                    "query": f"timeline:{year} security incident",
+                    "rationale": f"Temporal expansion: {year}",
+                    "type": "temporal_expansion",
+                    "priority": 0.45,
+                    "pivot_type": "temporal",
+                }
+            )
+        queries.sort(key=attrgetter("get")("priority", 0.5), reverse=True)
         return queries[:10]
 
     def _find_entity_pairs(self, text: str, entities: list[str]) -> list[tuple[str, str]]:
         """Find entity pairs that co-occur in the same sentences."""
         pairs = []
-        sentences = re.split('[.!?]', text)
+        sentences = re.split("[.!?]", text)
         entities_lower = {e.lower(): e for e in entities}
         for sent in sentences:
             sent_lower = sent.lower()
@@ -1482,7 +2032,9 @@ class HypothesisEngine:
                     pairs.append(pair)
         return pairs[:5]
 
-    def _find_ioc_entity_pairs(self, iocs: list[tuple[str, str]], entities: list[str], text: str) -> list[tuple[str, str]]:
+    def _find_ioc_entity_pairs(
+        self, iocs: list[tuple[str, str]], entities: list[str], text: str
+    ) -> list[tuple[str, str]]:
         """Find IOCs that co-occur near entities in the text."""
         pairs = []
         text_lower = text.lower()
@@ -1505,22 +2057,121 @@ class HypothesisEngine:
         """Generate IOC pivot suggestions with actionable pivot queries."""
         follow_ups: list[dict[str, str]] = []
         for ioc_type, ioc_value in iocs:
-            if ioc_type == 'cve':
-                follow_ups.append({'pivot': 'cve', 'from': ioc_value, 'to': 'exploitation_status', 'query': f'"{ioc_value}" exploit OR vulnerable OR patch OR affected', 'rationale': f'CVE exploitation status: {ioc_value}', 'priority': 0.95})
-                follow_ups.append({'pivot': 'cve', 'from': ioc_value, 'to': 'threat_actors', 'query': f'"{ioc_value}" APT OR threat actor OR nation-state OR campaign', 'rationale': f'CVE in-the-wild exploitation: {ioc_value}', 'priority': 0.9})
-            elif ioc_type in ('ip', 'ipv4'):
-                follow_ups.append({'pivot': 'ip', 'from': ioc_value, 'to': 'threat_intel', 'query': f'ip:{ioc_value} malware OR suspicious OR malicious OR threat', 'rationale': f'IP threat intel: {ioc_value}', 'priority': 0.95})
-                follow_ups.append({'pivot': 'ip', 'from': ioc_value, 'to': 'passive_dns', 'query': f'passive-dns {ioc_value}', 'rationale': f'Passive DNS for IP: {ioc_value}', 'priority': 0.8})
-                follow_ups.append({'pivot': 'ip', 'from': ioc_value, 'to': 'historical_whois', 'query': f'historical whois {ioc_value}', 'rationale': f'Historical WHOIS: {ioc_value}', 'priority': 0.6})
-            elif ioc_type == 'domain':
-                follow_ups.append({'pivot': 'domain', 'from': ioc_value, 'to': 'subdomain_enum', 'query': f'subdomain:{ioc_value} OR dns:{ioc_value}', 'rationale': f'Subdomain enumeration: {ioc_value}', 'priority': 0.85})
-                follow_ups.append({'pivot': 'domain', 'from': ioc_value, 'to': 'whois', 'query': f'whois:{ioc_value} OR domain registration', 'rationale': f'WHOIS lookup: {ioc_value}', 'priority': 0.7})
-                follow_ups.append({'pivot': 'domain', 'from': ioc_value, 'to': 'malware_check', 'query': f'url:{ioc_value} malware OR suspicious OR scan', 'rationale': f'URL threat scan: {ioc_value}', 'priority': 0.8})
-            elif ioc_type in ('md5', 'sha1', 'sha256'):
-                follow_ups.append({'pivot': 'hash', 'from': ioc_value[:16] + '...' if len(ioc_value) > 16 else ioc_value, 'to': 'threat_intel', 'query': f'hash:{ioc_value} malware OR virus OR virus_total', 'rationale': f'Threat intel for {ioc_type}: {ioc_value[:16]}...', 'priority': 0.95})
-                follow_ups.append({'pivot': 'hash', 'from': ioc_value[:16] + '...' if len(ioc_value) > 16 else ioc_value, 'to': 'malware_family', 'query': f'hash:{ioc_value} family OR variant OR related', 'rationale': f'Malware family lookup: {ioc_value[:16]}...', 'priority': 0.8})
-            elif ioc_type == 'file':
-                follow_ups.append({'pivot': 'file', 'from': ioc_value, 'to': 'malware_samples', 'query': f'"{ioc_value}" malware sample OR uploaded OR vt', 'rationale': f'Malware sample search: {ioc_value}', 'priority': 0.85})
+            if ioc_type == "cve":
+                follow_ups.append(
+                    {
+                        "pivot": "cve",
+                        "from": ioc_value,
+                        "to": "exploitation_status",
+                        "query": f'"{ioc_value}" exploit OR vulnerable OR patch OR affected',
+                        "rationale": f"CVE exploitation status: {ioc_value}",
+                        "priority": 0.95,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "cve",
+                        "from": ioc_value,
+                        "to": "threat_actors",
+                        "query": f'"{ioc_value}" APT OR threat actor OR nation-state OR campaign',
+                        "rationale": f"CVE in-the-wild exploitation: {ioc_value}",
+                        "priority": 0.9,
+                    }
+                )
+            elif ioc_type in ("ip", "ipv4"):
+                follow_ups.append(
+                    {
+                        "pivot": "ip",
+                        "from": ioc_value,
+                        "to": "threat_intel",
+                        "query": f"ip:{ioc_value} malware OR suspicious OR malicious OR threat",
+                        "rationale": f"IP threat intel: {ioc_value}",
+                        "priority": 0.95,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "ip",
+                        "from": ioc_value,
+                        "to": "passive_dns",
+                        "query": f"passive-dns {ioc_value}",
+                        "rationale": f"Passive DNS for IP: {ioc_value}",
+                        "priority": 0.8,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "ip",
+                        "from": ioc_value,
+                        "to": "historical_whois",
+                        "query": f"historical whois {ioc_value}",
+                        "rationale": f"Historical WHOIS: {ioc_value}",
+                        "priority": 0.6,
+                    }
+                )
+            elif ioc_type == "domain":
+                follow_ups.append(
+                    {
+                        "pivot": "domain",
+                        "from": ioc_value,
+                        "to": "subdomain_enum",
+                        "query": f"subdomain:{ioc_value} OR dns:{ioc_value}",
+                        "rationale": f"Subdomain enumeration: {ioc_value}",
+                        "priority": 0.85,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "domain",
+                        "from": ioc_value,
+                        "to": "whois",
+                        "query": f"whois:{ioc_value} OR domain registration",
+                        "rationale": f"WHOIS lookup: {ioc_value}",
+                        "priority": 0.7,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "domain",
+                        "from": ioc_value,
+                        "to": "malware_check",
+                        "query": f"url:{ioc_value} malware OR suspicious OR scan",
+                        "rationale": f"URL threat scan: {ioc_value}",
+                        "priority": 0.8,
+                    }
+                )
+            elif ioc_type in ("md5", "sha1", "sha256"):
+                follow_ups.append(
+                    {
+                        "pivot": "hash",
+                        "from": ioc_value[:16] + "..." if len(ioc_value) > 16 else ioc_value,
+                        "to": "threat_intel",
+                        "query": f"hash:{ioc_value} malware OR virus OR virus_total",
+                        "rationale": f"Threat intel for {ioc_type}: {ioc_value[:16]}...",
+                        "priority": 0.95,
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "pivot": "hash",
+                        "from": ioc_value[:16] + "..." if len(ioc_value) > 16 else ioc_value,
+                        "to": "malware_family",
+                        "query": f"hash:{ioc_value} family OR variant OR related",
+                        "rationale": f"Malware family lookup: {ioc_value[:16]}...",
+                        "priority": 0.8,
+                    }
+                )
+            elif ioc_type == "file":
+                follow_ups.append(
+                    {
+                        "pivot": "file",
+                        "from": ioc_value,
+                        "to": "malware_samples",
+                        "query": f'"{ioc_value}" malware sample OR uploaded OR vt',
+                        "rationale": f"Malware sample search: {ioc_value}",
+                        "priority": 0.85,
+                    }
+                )
         return follow_ups[:8]
 
     def _deduplicate_and_rank_queries(self, queries: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1528,77 +2179,104 @@ class HypothesisEngine:
         seen: set[str] = set()
         unique: list[dict[str, Any]] = []
         for q in queries:
-            norm = q['query'].lower().strip()
+            norm = q["query"].lower().strip()
             if norm and norm not in seen:
                 seen.add(norm)
                 unique.append(q)
-        pivot_preference = {'ioc': 0, 'entity': 1, 'relationship': 2, 'organization': 3, 'source': 4, 'temporal': 5}
+        pivot_preference = {"ioc": 0, "entity": 1, "relationship": 2, "organization": 3, "source": 4, "temporal": 5}
 
         def sort_key(q):
-            pref = pivot_preference.get(q.get('pivot_type', ''), 9)
-            return (0 - q.get('priority', 0.5), pref)
+            pref = pivot_preference.get(q.get("pivot_type", ""), 9)
+            return (0 - q.get("priority", 0.5), pref)
+
         unique.sort(key=sort_key)
-        return [{'query': q['query'], 'rationale': q.get('rationale', ''), 'type': q.get('type', 'general'), 'priority': q.get('priority', 0.5), 'pivot_type': q.get('pivot_type', 'general')} for q in unique[:8]]
+        return [
+            {
+                "query": q["query"],
+                "rationale": q.get("rationale", ""),
+                "type": q.get("type", "general"),
+                "priority": q.get("priority", 0.5),
+                "pivot_type": q.get("pivot_type", "general"),
+            }
+            for q in unique[:8]
+        ]
 
     def _extract_relationships_heuristic(self, text: str) -> list[tuple[str, str, str]]:
         """Extract relationship triples from text."""
         relationships: list[tuple[str, str, str]] = []
-        for match in re.finditer('(\\b\\w+\\b)\\s+(?:linked|connected|related)\\s+to\\s+(\\b\\w+\\b)', text, re.IGNORECASE):
+        for match in re.finditer(
+            "(\\b\\w+\\b)\\s+(?:linked|connected|related)\\s+to\\s+(\\b\\w+\\b)", text, re.IGNORECASE
+        ):
             src, dst = (match.group(1), match.group(2))
             if len(src) > 2 and len(dst) > 2:
-                relationships.append((src, dst, 'linked_to'))
-        for match in re.finditer('(\\b\\w+\\b)\\s+(?:uses?|employs?|leverages?)\\s+(\\b\\w+\\b)', text, re.IGNORECASE):
+                relationships.append((src, dst, "linked_to"))
+        for match in re.finditer("(\\b\\w+\\b)\\s+(?:uses?|employs?|leverages?)\\s+(\\b\\w+\\b)", text, re.IGNORECASE):
             src, dst = (match.group(1), match.group(2))
             if len(src) > 2 and len(dst) > 2:
-                relationships.append((src, dst, 'uses'))
-        for match in re.finditer('(\\b\\w+\\b)\\s+(?:targeted|attacked)\\s+(\\b\\w+\\b)', text, re.IGNORECASE):
+                relationships.append((src, dst, "uses"))
+        for match in re.finditer("(\\b\\w+\\b)\\s+(?:targeted|attacked)\\s+(\\b\\w+\\b)", text, re.IGNORECASE):
             src, dst = (match.group(1), match.group(2))
             if len(src) > 2 and len(dst) > 2:
-                relationships.append((src, dst, 'targeted'))
-        for match in re.finditer('(\\b\\w+\\b)\\s*[-:]\\s*(\\b\\w+\\b)\\s+(?:campaign|operation|group)', text, re.IGNORECASE):
+                relationships.append((src, dst, "targeted"))
+        for match in re.finditer(
+            "(\\b\\w+\\b)\\s*[-:]\\s*(\\b\\w+\\b)\\s+(?:campaign|operation|group)", text, re.IGNORECASE
+        ):
             src, dst = (match.group(1), match.group(2))
             if len(src) > 2 and len(dst) > 2:
-                relationships.append((src, dst, 'associated_with'))
+                relationships.append((src, dst, "associated_with"))
         return relationships
 
     def _extract_source_hints_heuristic(self, text: str, source_quality: dict[str, float]) -> list[SourceHint]:
         """Extract source recommendations from findings."""
         hints: list[SourceHint] = []
-        good_source_patterns = [('(?:BleepingComputer|Wireless94|Ars Technica|The Record)', 0.8), ('(?:Krebs on Security|SecurityWeek|Dark Reading)', 0.85), ('(?:CISA|FBI|Interpol|Europol)', 0.9), ('(?:Mandiant|Recorded Future|Palo Alto|VirusTotal)', 0.85), ('(?:NIST|NVD|CVE)', 0.9)]
+        good_source_patterns = [
+            ("(?:BleepingComputer|Wireless94|Ars Technica|The Record)", 0.8),
+            ("(?:Krebs on Security|SecurityWeek|Dark Reading)", 0.85),
+            ("(?:CISA|FBI|Interpol|Europol)", 0.9),
+            ("(?:Mandiant|Recorded Future|Palo Alto|VirusTotal)", 0.85),
+            ("(?:NIST|NVD|CVE)", 0.9),
+        ]
         for pattern, base_quality in good_source_patterns:
             for match in re.finditer(pattern, text, re.IGNORECASE):
                 source_name = match.group(0)
                 quality = source_quality.get(source_name, base_quality)
-                hints.append(SourceHint(source=source_name, quality=quality, hint_type='trusted_source'))
+                hints.append(SourceHint(source=source_name, quality=quality, hint_type="trusted_source"))
         quoted_sources = re.findall('"(?:according to|from|via)\\s+([^"]+)"', text)
         for src in quoted_sources[:3]:
             clean = src.strip()[:50]
             if clean and clean not in source_quality:
-                hints.append(SourceHint(source=clean, quality=0.6, hint_type='quoted_source'))
+                hints.append(SourceHint(source=clean, quality=0.6, hint_type="quoted_source"))
         return hints
 
     def _extract_temporal_anchors_heuristic(self, text: str, existing: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """Extract temporal anchors for expansion."""
         anchors: list[tuple[str, str]] = list(existing)
-        for match in re.finditer('\\b(20[1-2]\\d)\\b', text):
+        for match in re.finditer("\\b(20[1-2]\\d)\\b", text):
             year = match.group(1)
             context_start = max(0, match.start() - 30)
-            context = text[context_start:match.end() + 30].strip()
+            context = text[context_start : match.end() + 30].strip()
             anchors.append((context, year))
         return anchors[:5]
 
     def _extract_org_anchors(self, text: str) -> list[str]:
         """Extract organization/domain anchors from text."""
         orgs: list[str] = []
-        org_patterns = ['(?:Microsoft|Google|Apple|Amazon|Meta|Tesla|Nvidia|Intel|AMD)\\b', '(?:IBM|Cisco|Oracle|SAP|Palo Alto|Fortinet|Check Point)\\b', '(?:Bank of|JPMorgan|Chase|Wells Fargo|Goldman)\\b', '(?:Government|Federal|State|CISA|FBI|NSA)\\b']
+        org_patterns = [
+            "(?:Microsoft|Google|Apple|Amazon|Meta|Tesla|Nvidia|Intel|AMD)\\b",
+            "(?:IBM|Cisco|Oracle|SAP|Palo Alto|Fortinet|Check Point)\\b",
+            "(?:Bank of|JPMorgan|Chase|Wells Fargo|Goldman)\\b",
+            "(?:Government|Federal|State|CISA|FBI|NSA)\\b",
+        ]
         for pattern in org_patterns:
             for match in re.finditer(pattern, text, re.IGNORECASE):
                 orgs.append(match.group(0))
-        domains = re.findall('\\b[a-z0-9]+\\.(?:com|org|net|gov|edu|io|co)\\b', text)
+        domains = re.findall("\\b[a-z0-9]+\\.(?:com|org|net|gov|edu|io|co)\\b", text)
         orgs.extend([d for d in domains if len(d) > 5][:5])
         return list(dict.fromkeys(orgs))[:5]
 
-    def _ner_capability_probe(self, text: str, heuristic_entities: list[str], heuristic_iocs: list[tuple[str, str]]) -> tuple[list[str], list[tuple[str, str]]]:
+    def _ner_capability_probe(
+        self, text: str, heuristic_entities: list[str], heuristic_iocs: list[tuple[str, str]]
+    ) -> tuple[list[str], list[tuple[str, str]]]:
         """
         Optional NER capability probe - augment heuristic extraction with NER if available.
 
@@ -1620,18 +2298,20 @@ class HypothesisEngine:
             return (heuristic_entities, heuristic_iocs)
         try:
             import threading
+
             result_holder = [None]
             error_holder = [None]
 
-            def _probe():
+            def _probe() -> None:
                 try:
                     ner = NEREngine()
                     short_text = text[:5000] if len(text) > 5000 else text
-                    labels = ['threat-actor', 'malware', 'vulnerability', 'organization', 'tool']
+                    labels = ["threat-actor", "malware", "vulnerability", "organization", "tool"]
                     entities_found = ner.predict_entities(short_text, labels)
                     result_holder[0] = entities_found
                 except Exception as e:
                     error_holder[0] = e
+
             thread = threading.Thread(target=_probe, daemon=True)
             thread.start()
             thread.join(timeout=2.0)
@@ -1646,7 +2326,7 @@ class HypothesisEngine:
             merged_entities = list(heuristic_entities)
             for ent in ner_entities:
                 if isinstance(ent, dict):
-                    name = ent.get('text', ent.get('entity', ''))
+                    name = ent.get("text", ent.get("entity", ""))
                 elif isinstance(ent, str):
                     name = ent
                 else:
@@ -1658,7 +2338,14 @@ class HypothesisEngine:
         except Exception:
             return (heuristic_entities, heuristic_iocs)
 
-    def _model_assisted_hypothesis_pack(self, findings: list[str], context: dict[str, Any], new_entities: list[str], new_iocs: list[tuple[str, str]], heuristic_queries: list[dict[str, str]]) -> HypothesisPack | None:
+    def _model_assisted_hypothesis_pack(
+        self,
+        findings: list[str],
+        context: dict[str, Any],
+        new_entities: list[str],
+        new_iocs: list[tuple[str, str]],
+        heuristic_queries: list[dict[str, str]],
+    ) -> HypothesisPack | None:
         """
         Optional model-assisted enhancement for hypothesis pack.
 
@@ -1677,7 +2364,8 @@ class HypothesisEngine:
             return None
         try:
             import asyncio
-            model_name = context.get('model_name', 'mlx-community/Qwen2.5-0.5B-Instruct-4bit')
+
+            model_name = context.get("model_name", "mlx-community/Qwen2.5-0.5B-Instruct-4bit")
 
             async def _try_load():
                 try:
@@ -1685,11 +2373,14 @@ class HypothesisEngine:
                         return await get_mlx_model(model_name)
                 except Exception:
                     return (None, None)
+
             return None
         except Exception:
             return None
 
-    def _model_assisted_query_suggestion(self, findings: list[str], context: dict[str, Any], max_to_add: int) -> list[dict[str, str]]:
+    def _model_assisted_query_suggestion(
+        self, findings: list[str], context: dict[str, Any], max_to_add: int
+    ) -> list[dict[str, str]]:
         """
         Optional model-assisted query enhancement.
 
@@ -1702,12 +2393,12 @@ class HypothesisEngine:
         if max_to_add <= 0:
             return []
         try:
-            import asyncio
             from hledac.universal.brain.dspy_service import suggest_pivots
 
             async def _dspy_suggest():
                 result = await suggest_pivots(findings, context)
                 return result if result else []
+
             try:
                 pivots = run_sync_async(_dspy_suggest())
             except RuntimeError:
@@ -1715,7 +2406,13 @@ class HypothesisEngine:
             if pivots:
                 queries = []
                 for p in pivots[:max_to_add]:
-                    queries.append({'query': p.get('ioc_value', ''), 'type': p.get('ioc_type', 'domain'), 'source': 'dspy_pivot_suggestion'})
+                    queries.append(
+                        {
+                            "query": p.get("ioc_value", ""),
+                            "type": p.get("ioc_type", "domain"),
+                            "source": "dspy_pivot_suggestion",
+                        }
+                    )
                 if queries:
                     return queries
         except Exception:  # noqa: BLE001
@@ -1724,20 +2421,43 @@ class HypothesisEngine:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get engine statistics."""
-        return {**self._stats, 'total_hypotheses': len(self._hypotheses), 'total_evidence': len(self._evidence), 'by_status': {status.value: len([h for h in self._hypotheses.values() if h.status == status.value]) for status in HypothesisStatus}}
+        return {
+            **self._stats,
+            "total_hypotheses": len(self._hypotheses),
+            "total_evidence": len(self._evidence),
+            "by_status": {
+                status.value: len([h for h in self._hypotheses.values() if h.status == status.value])
+                for status in HypothesisStatus
+            },
+        }
 
     def clear(self) -> None:
         """Clear all hypotheses and evidence (memory management)."""
         self._hypotheses.clear()
         self._evidence.clear()
         self._source_credibility_cache.clear()
-        self._stats = {'generated': 0, 'tested': 0, 'confirmed': 0, 'rejected': 0, 'merged': 0, 'pruned': 0, 'adversarial_checks': 0}
+        self._stats = {
+            "generated": 0,
+            "tested": 0,
+            "confirmed": 0,
+            "rejected": 0,
+            "merged": 0,
+            "pruned": 0,
+            "adversarial_checks": 0,
+        }
         self._adversarial_verifier = None
         gc.collect()
-        logger.info('HypothesisEngine cleared')
+        logger.info("HypothesisEngine cleared")
+
     MAX_DARK_QUERIES_PER_SPRINT = 3
 
-    async def generate_dark_surface_queries(self, findings: list[str], hermes_engine: DeepHermes3Engine | None=None, tor_available: bool=False, i2p_available: bool=False) -> list[DarkQuery]:
+    async def generate_dark_surface_queries(
+        self,
+        findings: list[str],
+        hermes_engine: DeepHermes3Engine | None = None,
+        tor_available: bool = False,
+        i2p_available: bool = False,
+    ) -> list[DarkQuery]:
         """
         F214K: Generate queries for dark/unindexed surfaces from IOC findings.
 
@@ -1761,7 +2481,7 @@ class HypothesisEngine:
             return []
         # Guard: no dark transport available
         if not (tor_available or i2p_available):
-            logger.debug('[DARK_SURFACE] No dark transport available, skipping')
+            logger.debug("[DARK_SURFACE] No dark transport available, skipping")
             return []
         # Guard: no IOCs extracted
         iocs = self._extract_iocs_from_findings(findings)
@@ -1773,21 +2493,17 @@ class HypothesisEngine:
 
         # LLM path: hermes_engine available
         if hermes_engine is not None:
-            return await self._generate_dark_surface_via_hermes(
-                hermes_engine, iocs, transport_str, context_hints
-    )
+            return await self._generate_dark_surface_via_hermes(hermes_engine, iocs, transport_str, context_hints)
         # Fallback path: no LLM
         return self._generate_dark_surface_queries_fallback(iocs, transport_str)
-
-    # ─── Helper methods (extracted to reduce complexity) ───────────────────────
 
     def _extract_iocs_from_findings(self, findings: list[str]) -> list[str]:
         """Extract IOC values from findings list (max 50 findings, max 15 brief)."""
         iocs: list[str] = []
         for f in findings[:50]:
-            if hasattr(f, 'ioc_value') and f.ioc_value:
+            if hasattr(f, "ioc_value") and f.ioc_value:
                 iocs.append(str(f.ioc_value))
-            elif hasattr(f, 'raw_ioc') and f.raw_ioc:
+            elif hasattr(f, "raw_ioc") and f.raw_ioc:
                 iocs.append(str(f.raw_ioc))
         return iocs
 
@@ -1795,24 +2511,25 @@ class HypothesisEngine:
         """Build transport string for logging/debugging."""
         available_transports = []
         if tor_available:
-            available_transports.append('Tor')
+            available_transports.append("Tor")
         if i2p_available:
-            available_transports.append('I2P')
-        return '+'.join(available_transports)
+            available_transports.append("I2P")
+        return "+".join(available_transports)
 
     async def _build_research_context_hints(self, findings: list[str], hermes_engine: DeepHermes3Engine) -> list[str]:
         """Query research layer for supplementary context hints (PII-safe)."""
-        if os.environ.get('HLEDAC_ENABLE_RESEARCH_LAYER') != '1' or hermes_engine is None:
+        if os.environ.get("HLEDAC_ENABLE_RESEARCH_LAYER") != "1" or hermes_engine is None:
             return []
         try:
             from hledac.universal.layers.layer_manager import LayerManager
+
             _lm = LayerManager(config=None)
             _research = _lm.research()
-            if not (_research and hasattr(_research, 'hunt') and findings):
+            if not (_research and hasattr(_research, "hunt") and findings):
                 return []
-            _seed_text = ''
+            _seed_text = ""
             for f in findings:
-                _c = getattr(f, 'content', None) or ''
+                _c = getattr(f, "content", None) or ""
                 if _c:
                     _seed_text = _c[:200]
                     break
@@ -1823,57 +2540,59 @@ class HypothesisEngine:
                 return []
             return self._filter_pii_safe_hints(_research, _raw_results)
         except Exception as _e:
-            logger.debug('[DARK_SURFACE] research_layer hunt failed: %s', _e)
+            logger.debug("[DARK_SURFACE] research_layer hunt failed: %s", _e)
             return []
 
     def _filter_pii_safe_hints(self, _research: Any, _raw_results: list[dict[str, Any]]) -> list[str]:
         """Filter PII from research layer results."""
         _safe_hints: list[str] = []
-        if hasattr(_research, 'has_pii'):
+        if hasattr(_research, "has_pii"):
             for r in _raw_results[:5]:
-                _txt = str(r.get('url', r.get('title', '')))[:100]
+                _txt = str(r.get("url", r.get("title", "")))[:100]
                 if not _research.has_pii(_txt):
                     _safe_hints.append(_txt)
         else:
-            _safe_hints = [str(r.get('url', r.get('title', '')))[:100] for r in _raw_results[:5]]
+            _safe_hints = [str(r.get("url", r.get("title", "")))[:100] for r in _raw_results[:5]]
         return _safe_hints
 
     async def _generate_dark_surface_via_hermes(
         self, hermes_engine: Any, iocs: list[str], transport_str: str, context_hints: list[str]
     ) -> list[DarkQuery]:
         """LLM-assisted dark surface query generation via Hermes3."""
-        ioc_brief = ', '.join(iocs[:15])
-        _research_hint_section = ''
+        ioc_brief = ", ".join(iocs[:15])
+        _research_hint_section = ""
         if context_hints:
-            _research_hint_section = '\n\nDOPLNUJICI KONTEXT (research layer):\n' + '\n'.join((f'- {h}' for h in context_hints))
+            _research_hint_section = "\n\nDOPLNUJICI KONTEXT (research layer):\n" + "\n".join(
+                f"- {h}" for h in context_hints
+            )
         prompt = (
-            f'Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}\n\n'
-            f'Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).\n'
-            f'Pro kazdy dotaz uved:\n'
-            f'1. typ: onion | ipfs | paste | i2p\n'
-            f'2. samotny dotaz (co hledat)\n'
-            f'3. priorita: 0-1 (vyssi = dulezitejsi)\n'
-            f'4. odovodneni (proc by to mohlo mit relevantni data)\n\n'
-            f'Vystup formatuj jako JSON list s objekty: type, query, priority, reasoning\n\n'
-            f'Zajimave patterny k hledani:\n'
-            f'- .onion domeny korelovane s IP/domain z IOC\n'
-            f'- IPFS CID z intelligence findings\n'
-            f'- Paste site leak korelace\n'
-            f'- Darknet forum IOC patterns'
-    )
+            f"Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}\n\n"
+            f"Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).\n"
+            f"Pro kazdy dotaz uved:\n"
+            f"1. typ: onion | ipfs | paste | i2p\n"
+            f"2. samotny dotaz (co hledat)\n"
+            f"3. priorita: 0-1 (vyssi = dulezitejsi)\n"
+            f"4. odovodneni (proc by to mohlo mit relevantni data)\n\n"
+            f"Vystup formatuj jako JSON list s objekty: type, query, priority, reasoning\n\n"
+            f"Zajimave patterny k hledani:\n"
+            f"- .onion domeny korelovane s IP/domain z IOC\n"
+            f"- IPFS CID z intelligence findings\n"
+            f"- Paste site leak korelace\n"
+            f"- Darknet forum IOC patterns"
+        )
         try:
             result = await hermes_engine.generate_structured(
                 prompt=prompt,
                 response_model=_DarkQueryListResponse,
                 max_tokens=1024,
-                system_msg='Jsi OSINT dark surface research assistant.'
-    )
+                system_msg="Jsi OSINT dark surface research assistant.",
+            )
             # Try DSPy overlay if available
-            if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
+            if DSPY_AVAILABLE and os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
                 result = self._apply_dspy_overlay(result, ioc_brief, transport_str)
             return self._parse_dark_queries(result, iocs)
         except Exception as e:
-            logger.warning(f'[DARK_SURFACE] Hermes LLM expansion failed: {e}, using heuristic fallback')
+            logger.warning(f"[DARK_SURFACE] Hermes LLM expansion failed: {e}, using heuristic fallback")
             return self._generate_dark_surface_queries_fallback(iocs, transport_str)
 
     def _apply_dspy_overlay(self, result: Any, ioc_brief: str, transport_str: str) -> Any:
@@ -1881,17 +2600,16 @@ class HypothesisEngine:
         try:
             from hledac.universal.brain.dspy_optimizer import load_compiled_program
             from hledac.universal.brain.dspy_programs import get_program
-            program = load_compiled_program('dark_query')
+
+            program = load_compiled_program("dark_query")
             if program is None:
-                program = get_program('dark_query')
+                program = get_program("dark_query")
             if program is None:
                 return result
             pred = program.forward(
-                ioc_brief=ioc_brief,
-                available_transports=transport_str,
-                max_queries=self.MAX_DARK_QUERIES_PER_SPRINT
-    )
-            if not (hasattr(pred, 'answer') and pred.answer):
+                ioc_brief=ioc_brief, available_transports=transport_str, max_queries=self.MAX_DARK_QUERIES_PER_SPRINT
+            )
+            if not (hasattr(pred, "answer") and pred.answer):
                 return result
             queries_data = msgspec.json.decode(pred.answer)
             if isinstance(queries_data, list):
@@ -1903,16 +2621,18 @@ class HypothesisEngine:
     def _parse_dark_queries(self, result: Any, iocs: list[str]) -> list[DarkQuery]:
         """Parse Hermes result into DarkQuery list."""
         dark_queries: list[DarkQuery] = []
-        for item in getattr(result, 'queries', []):
-            dt = DarkQueryType(item.get('type', 'onion'))
-            dark_queries.append(DarkQuery(
-                query_type=dt,
-                query=item.get('query', ''),
-                priority=float(item.get('priority', 0.5)),
-                source_iocs=tuple(iocs[:5]),
-                reasoning=item.get('reasoning', '')
-            ))
-        return dark_queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
+        for item in getattr(result, "queries", []):
+            dt = DarkQueryType(item.get("type", "onion"))
+            dark_queries.append(
+                DarkQuery(
+                    query_type=dt,
+                    query=item.get("query", ""),
+                    priority=float(item.get("priority", 0.5)),
+                    source_iocs=tuple(iocs[:5]),
+                    reasoning=item.get("reasoning", ""),
+                )
+            )
+        return dark_queries[: self.MAX_DARK_QUERIES_PER_SPRINT]
 
     def _generate_dark_surface_queries_fallback(self, iocs: list[str], transport_str: str) -> list[DarkQuery]:
         """Heuristic fallback for dark surface query generation (no LLM)."""
@@ -1920,21 +2640,45 @@ class HypothesisEngine:
         seen: set[str] = set()
         for ioc in iocs[:20]:
             if self._looks_like_domain_or_ip(ioc):
-                q = f'site:.onion {ioc}'
+                q = f"site:.onion {ioc}"
                 if q not in seen:
                     seen.add(q)
-                    queries.append(DarkQuery(query_type=DarkQueryType.ONION, query=q, priority=0.6, source_iocs=(ioc,), reasoning=f'IOC {ioc} -> onion mirror via {transport_str}'))
+                    queries.append(
+                        DarkQuery(
+                            query_type=DarkQueryType.ONION,
+                            query=q,
+                            priority=0.6,
+                            source_iocs=(ioc,),
+                            reasoning=f"IOC {ioc} -> onion mirror via {transport_str}",
+                        )
+                    )
             if self._looks_like_ipfs_cid(ioc):
-                q = f'ipfs://{ioc}'
+                q = f"ipfs://{ioc}"
                 if q not in seen:
                     seen.add(q)
-                    queries.append(DarkQuery(query_type=DarkQueryType.IPFS, query=q, priority=0.7, source_iocs=(ioc,), reasoning=f'CID-like IOC {ioc} -> IPFS content via {transport_str}'))
+                    queries.append(
+                        DarkQuery(
+                            query_type=DarkQueryType.IPFS,
+                            query=q,
+                            priority=0.7,
+                            source_iocs=(ioc,),
+                            reasoning=f"CID-like IOC {ioc} -> IPFS content via {transport_str}",
+                        )
+                    )
             if self._looks_like_hash(ioc):
-                q = f'pastebin OR ghostbin OR hastebin {ioc}'
+                q = f"pastebin OR ghostbin OR hastebin {ioc}"
                 if q not in seen:
                     seen.add(q)
-                    queries.append(DarkQuery(query_type=DarkQueryType.PASTE, query=q, priority=0.5, source_iocs=(ioc,), reasoning=f'Hash IOC {ioc} -> paste leak via {transport_str}'))
-        return queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
+                    queries.append(
+                        DarkQuery(
+                            query_type=DarkQueryType.PASTE,
+                            query=q,
+                            priority=0.5,
+                            source_iocs=(ioc,),
+                            reasoning=f"Hash IOC {ioc} -> paste leak via {transport_str}",
+                        )
+                    )
+        return queries[: self.MAX_DARK_QUERIES_PER_SPRINT]
 
     @staticmethod
     def _looks_like_domain_or_ip(s: str) -> bool:
@@ -1942,11 +2686,11 @@ class HypothesisEngine:
         if not s:
             return False
         s = str(s).lower()
-        if '.' in s and (not s.startswith('0x')) and (len(s) > 4):
-            if any((c.isalpha() for c in s)):
+        if "." in s and (not s.startswith("0x")) and (len(s) > 4):
+            if any(c.isalpha() for c in s):
                 return True
-        parts = s.split('.')
-        if len(parts) == 4 and all((p.isdigit() and 0 <= int(p) <= 255 for p in parts)):
+        parts = s.split(".")
+        if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
             return True
         return False
 
@@ -1956,9 +2700,9 @@ class HypothesisEngine:
         if not s:
             return False
         s = str(s)
-        if s.startswith('Qm') and len(s) > 30:
+        if s.startswith("Qm") and len(s) > 30:
             return True
-        if s.startswith('bafy'):
+        if s.startswith("bafy"):
             return True
         return False
 
@@ -1968,11 +2712,12 @@ class HypothesisEngine:
         if not s:
             return False
         s = str(s)
-        if len(s) in (32, 40, 56, 64) and all((c in '0123456789abcdef' for c in s.lower())):
+        if len(s) in (32, 40, 56, 64) and all(c in "0123456789abcdef" for c in s.lower()):
             return True
         return False
 
-def create_hypothesis_engine(inference_engine: InferenceEngineProtocol | None=None, **kwargs) -> HypothesisEngine:
+
+def create_hypothesis_engine(inference_engine: InferenceEngineProtocol | None = None, **kwargs) -> HypothesisEngine:
     """
     Factory function for creating a HypothesisEngine.
 

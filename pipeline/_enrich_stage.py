@@ -3,13 +3,13 @@
 Role: Enrich stage přijímá (PageResult, hits) z MatchStage, provádí text
 enrichment a construction CanonicalFinding, posílá je do StoreStage.
 
-
 MatchStage už provedla pattern matching a předává hits → EnrichStage NEVOLÁ
 match_text() znovu (duplikace opravena).
 
 AIMD řídí worker count — ceiling=16 na M1 8GB. Worker count je využit
 pro paralelní zpracování stranek přes asyncio.Semaphore.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,10 +17,10 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from ._stage_protocol import BoundedStageQueue, Stage, StageContext
 from hledac.universal.utils.asyncx import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
 from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore  # ISSUE-008: safe AIMD resize
-from _core import aclose
+
+from ._stage_protocol import BoundedStageQueue, StageContext
 
 if TYPE_CHECKING:
     pass
@@ -30,26 +30,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENRICH_QUEUE_IN = 64
 DEFAULT_ENRICH_QUEUE_OUT = 128
 
-# ============================================================================
-# F2: Elastic Pool Singleton — lazy module-level init for Rust rayon resize
-# ============================================================================
-# ponytail: global lock on Rust side; add per-stage granularity if throughput matters
 _RUST_CPU_POOL_RESIZE: Any = None  # Cached resize function
 _POOL_INIT_LOGGED: bool = False
 
 
 def _get_rust_cpu_pool_resize():
     """Get Rust CPU pool resize function with lazy initialization.
-    
+
     F2: This replaces the in-function import that was causing hot-path overhead.
     The function is cached after first call to avoid repeated imports.
     """
     global _RUST_CPU_POOL_RESIZE, _POOL_INIT_LOGGED
     if _RUST_CPU_POOL_RESIZE is not None:
         return _RUST_CPU_POOL_RESIZE
-    
+
     try:
         from rust_extensions.wiring.elastic_pool_wiring import resize_cpu_pool
+
         _RUST_CPU_POOL_RESIZE = resize_cpu_pool
         if not _POOL_INIT_LOGGED:
             logger.debug("[F2] Rust CPU pool resize wired successfully")
@@ -91,7 +88,7 @@ class EnrichStage:
         aimd_controller: Any | None = None,
         query: str = "",
         uma_state: str = "ok",
-    ):
+    ) -> None:
         from hledac.universal.coordinators.aimd_controllers import make_enrich_aimd
 
         self._aimd = aimd_controller or make_enrich_aimd()
@@ -133,7 +130,7 @@ class EnrichStage:
                 async with asyncio.timeout(0.1):
                     item = await input_queue.get()
                 batch.append(item)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
             except asyncio.CancelledError:
                 return batch
@@ -174,7 +171,7 @@ class EnrichStage:
         metrics: Any,
     ) -> None:
         """Update AIMD window based on batch success/failure.
-        
+
         F2: Also syncs Rust rayon CPU pool to match AIMD window.
         Eliminates AIMD oscillation spike on P-core (Thompson sampling jitter).
         """
@@ -235,10 +232,7 @@ class EnrichStage:
                     tasks = [self._enrich_one(pr, hits, ctx) for pr, hits in batch]
                     gather_result = await parallel(tasks, policy="collect")
 
-                # Process results and AIMD feedback
-                batch_success, batch_fail = await self._process_batch_results(
-                    gather_result, output_queue, metrics
-                )
+                batch_success, batch_fail = await self._process_batch_results(gather_result, output_queue, metrics)
                 success_count += batch_success
                 fail_count += batch_fail
                 await self._update_aimd(batch_success, metrics)
@@ -258,9 +252,7 @@ class EnrichStage:
                 fail_count,
             )
 
-    async def _enrich_one_hit(
-        self, hit: Any, page_text: str, url: str, ctx: StageContext
-    ) -> Any | None:
+    async def _enrich_one_hit(self, hit: Any, page_text: str, url: str, ctx: StageContext) -> Any | None:
         """Enrich a single hit — runs in parallel via parallel()."""
         from .live_public_pipeline import _extract_live_public_findings_from_page
 
@@ -284,9 +276,7 @@ class EnrichStage:
             ctx.get_metrics(self.name).record_error()
             return None
 
-    async def _enrich_one(
-        self, page_result: Any, hits: list[Any], ctx: StageContext
-    ) -> list[Any]:
+    async def _enrich_one(self, page_result: Any, hits: list[Any], ctx: StageContext) -> list[Any]:
         """Build CanonicalFinding from pre-matched hits.
 
         MatchStage uz matchovala patterny — tady uz jen stavime findings.

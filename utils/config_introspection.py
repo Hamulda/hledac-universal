@@ -8,13 +8,12 @@ without hasattr/try-except boilerplate.
 
 Public API — no leading underscore. Follows utils/ PEP 810 lazy loading.
 """
+
 from __future__ import annotations
-import msgspec
 
 __all__ = ["safe_attr_get"]
 
 from typing import Any
-from _core import aclose
 
 
 def safe_attr_get(obj: Any, key: str, default: Any = None) -> Any:
@@ -61,6 +60,6 @@ def safe_attr_get(obj: Any, key: str, default: Any = None) -> Any:
     if hasattr(obj, "__getitem__"):
         try:
             return obj[key]
-        except (KeyError, IndexError, TypeError):
+        except KeyError, IndexError, TypeError:
             return default
     return getattr(obj, key, default)

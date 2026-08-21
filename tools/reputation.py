@@ -4,7 +4,6 @@ Reputation scoring for domains based on corroboration/contradiction.
 
 import logging
 from collections import defaultdict
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +22,9 @@ def _enforce_reputation_cap() -> None:
     try:
         # Find domain with lowest total count (confirmed + refuted)
         min_domain = None
-        min_total = float('inf')
+        min_total = float("inf")
         for domain, counts in _reputation_counts.items():
-            total = counts.get('confirmed', 0) + counts.get('refuted', 0)
+            total = counts.get("confirmed", 0) + counts.get("refuted", 0)
             if total < min_total:
                 min_total = total
                 min_domain = domain

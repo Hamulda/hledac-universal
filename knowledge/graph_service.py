@@ -2,7 +2,6 @@
 Graph Service — Sprint Memory Layer Facade
 =========================================
 
-
 Cross-sprint entity memory backed by DuckPGQGraph (DuckDB).
 
 ROLE: Sprint memory / cross-sprint persistence layer.
@@ -25,8 +24,6 @@ ARCHITECTURE (F226):
   backward compatibility and remains wired to the default facade instance.
 """
 
-
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -41,14 +38,15 @@ from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 # NOTE: This import is deferred to avoid circular dependencies
 
 
-def _get_query_cache() -> "QueryCache":
+def _get_query_cache() -> QueryCache:
     """
     Lazy singleton for query cache.
-    
+
     Delegates to get_query_cache() from query_cache.py to ensure
     a single shared cache instance across the application.
     """
     from hledac.universal.knowledge.graph.query_cache import get_query_cache
+
     return get_query_cache()
 
 
@@ -93,10 +91,6 @@ logger = logging.getLogger(__name__)
 MAX_GRAPH_ANALYTICS_NODES: int = 500
 MAX_GRAPH_ANALYTICS_TOP_K: int = 10
 
-# ── Module-level DuckPGQGraph singleton (lazy) ─────────────────────────────────
-# Used by module-level facade AND by GraphService instances via class lookup.
-# Tests patching graph_service._get_graph affect all callers.
-
 _DUCKPGQ_GRAPH: DuckPGQGraph | None = None
 
 
@@ -110,6 +104,7 @@ def _get_graph() -> DuckPGQGraph | None:
     if _DUCKPGQ_GRAPH is None:
         try:
             from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
+
             _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
             _DUCKPGQ_GRAPH = DuckPGQGraph(temp_dir=_temp_dir)
         except Exception as e:
@@ -119,6 +114,7 @@ def _get_graph() -> DuckPGQGraph | None:
 
 
 # ── GraphService Class ─────────────────────────────────────────────────────────
+
 
 class GraphService:
     """
@@ -175,6 +171,7 @@ class GraphService:
             True if IOC was newly upserted, False if it already existed or on error.
         """
         import time as _time
+
         _ts = observed_at if observed_at is not None else _time.time()
         if _RUST_IOC_DEDUP_AVAILABLE:
             if self._seen_iocs.contains(value, ioc_type):
@@ -187,6 +184,7 @@ class GraphService:
         # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
         # NOT rejected — unknown types are valuable for pattern discovery
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
+
         if ioc_type not in _VALID_IOC_TYPES:
             logger.debug(f"[GraphService] unknown ioc_type={ioc_type!r}, routing to 'pending'")
             ioc_type = "pending"
@@ -215,9 +213,7 @@ class GraphService:
                     pass
                 else:
                     try:
-                        _ = running_loop.create_task(
-                            self._upsert_lancedb_entity_async(value, ioc_type)
-                        )
+                        _ = running_loop.create_task(self._upsert_lancedb_entity_async(value, ioc_type))
                     except Exception as _e:
                         logger.debug(f"[GraphService] LanceDB entity upsert skipped: {_e}")
 
@@ -236,9 +232,7 @@ class GraphService:
 
     # ── LanceDB Entity Store Seam (Sprint P2-3) ────────────────────────────────
 
-    async def _upsert_lancedb_entity_async(
-        self, value: str, ioc_type: str
-    ) -> None:
+    async def _upsert_lancedb_entity_async(self, value: str, ioc_type: str) -> None:
         """Sprint P2-3: Upsert entity embedding to LanceDBIdentityStore.
 
         Fire-and-forget async upsert after DuckPGQ IOC insert.
@@ -255,6 +249,7 @@ class GraphService:
                 return
             # Normalize
             import numpy as np
+
             norm = np.linalg.norm(emb) + 1e-8
             emb_norm = (np.array(emb) / norm).tolist()
             await store.add_entity(
@@ -288,6 +283,7 @@ class GraphService:
             Number of rows passed to DuckDB (not number actually inserted).
         """
         import time as _time
+
         _ts = observed_at if observed_at is not None else _time.time()
 
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
@@ -341,7 +337,7 @@ class GraphService:
                 result = graph.upsert_ioc_batch(unique_with_ts)
             else:
                 result = graph.upsert_ioc_batch(unique)
-            
+
             # B3: Invalidate graph cache on batch IOC add (graph structure changed)
             if result > 0:
                 try:
@@ -349,20 +345,13 @@ class GraphService:
                     cache.invalidate_on_ioc_add()
                 except Exception:
                     pass  # Non-fatal
-            
+
             return result
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
             return 0
 
-    def upsert_relation(
-        self,
-        src: str,
-        dst: str,
-        rel_type: str,
-        weight: float = 1.0,
-        evidence: str = ""
-    ) -> bool:
+    def upsert_relation(self, src: str, dst: str, rel_type: str, weight: float = 1.0, evidence: str = "") -> bool:
         """
         Idempotent relation upsert — skip if already upserted within this sprint session.
 
@@ -386,6 +375,7 @@ class GraphService:
             # and stores value+ioc_type in LMDB so read path avoids DuckDB.
             try:
                 from hledac.universal.knowledge import hot_edges_cache
+
                 src_id = hot_edges_cache.get_node_id_by_value(src)
                 dst_id = hot_edges_cache.get_node_id_by_value(dst)
                 if src_id is not None and dst_id is not None:
@@ -403,9 +393,7 @@ class GraphService:
                                 dst_ioc_type = str(row[0]) if row[0] else ""
                     except Exception:  # noqa: BLE001
                         pass
-                    hot_edges_cache.record_edge(
-                        src_id, dst_id, dst_value=dst_value, dst_ioc_type=dst_ioc_type
-                    )
+                    hot_edges_cache.record_edge(src_id, dst_id, dst_value=dst_value, dst_ioc_type=dst_ioc_type)
             except Exception:  # noqa: BLE001
                 pass
             # Fire relationship callbacks (NetworkX bridge for cross-sprint persistence)
@@ -465,7 +453,9 @@ class GraphService:
         )
 
     def find_entity_history(
-        self, value: str, max_hops: int = 2,
+        self,
+        value: str,
+        max_hops: int = 2,
     ) -> list[dict]:
         """
         Query entity history — find connected entities within N hops.
@@ -494,7 +484,7 @@ class GraphService:
             cache = _get_query_cache()
         except Exception:
             cache = None
-        
+
         if cache is not None and cache.available:
             try:
                 cached = cache.get_history(value, max_hops)
@@ -514,6 +504,7 @@ class GraphService:
         hot_result: list[dict] | None = None
         try:
             from hledac.universal.knowledge import hot_edges_cache
+
             src_id = hot_edges_cache.get_node_id_by_value(value)
             if src_id is not None and hot_edges_cache.has_hot_edges(src_id):
                 denorm_neighbors = hot_edges_cache.get_hot_neighbors_denorm(src_id, top_n=50)
@@ -524,12 +515,14 @@ class GraphService:
                         hot_result = []
                         for _, _, val, ioc in denorm_neighbors:
                             if val and ioc:
-                                hot_result.append({
-                                    "value": val,
-                                    "ioc_type": ioc,
-                                    "confidence": 0.0,
-                                    "source": "",
-                                })
+                                hot_result.append(
+                                    {
+                                        "value": val,
+                                        "ioc_type": ioc,
+                                        "confidence": 0.0,
+                                        "source": "",
+                                    }
+                                )
                         if hot_result:
                             return hot_result
                 # Fall back to v1 format or empty denorm: use old path
@@ -541,12 +534,14 @@ class GraphService:
                     for nid, _cnt in neighbors:
                         rec = records.get(nid)
                         if rec:
-                            hot_result.append({
-                                "value": rec.get("value", ""),
-                                "ioc_type": rec.get("ioc_type", "unknown"),
-                                "confidence": rec.get("confidence", 0.0),
-                                "source": rec.get("source", ""),
-                            })
+                            hot_result.append(
+                                {
+                                    "value": rec.get("value", ""),
+                                    "ioc_type": rec.get("ioc_type", "unknown"),
+                                    "confidence": rec.get("confidence", 0.0),
+                                    "source": rec.get("source", ""),
+                                }
+                            )
                     if hot_result:
                         return hot_result
         except Exception:  # noqa: BLE001
@@ -596,7 +591,6 @@ class GraphService:
             List of connected IOCs reranked by vector similarity, or
             plain graph results if LanceDB reranking unavailable / fails.
         """
-        # Step 1: Pure graph traversal
         graph = _get_graph()
         if graph is None:
             return []
@@ -608,11 +602,9 @@ class GraphService:
         if not connected:
             return []
 
-        # Step 2: LanceDB reranking (only if embedding provided)
         if query_embedding is None:
             return connected[:top_k]
 
-        # Check LanceDB availability + RAM
         try:
             from hledac.universal.knowledge.lancedb_store import get_identity_store
         except Exception:
@@ -653,8 +645,7 @@ class GraphService:
             overlap = sum(1 for v in connected_values if v in score_map)
             if overlap < max(1, len(connected_values) * 0.1):
                 logger.debug(
-                    f"[GraphService] LanceDB overlap {overlap}/{len(connected_values)} "
-                    "too sparse — using graph order"
+                    f"[GraphService] LanceDB overlap {overlap}/{len(connected_values)} too sparse — using graph order"
                 )
                 return connected[:top_k]
 
@@ -708,7 +699,7 @@ class GraphService:
             cache = _get_query_cache()
         except Exception:
             cache = None
-        
+
         if cache is not None and cache.available:
             try:
                 cached = cache.get_batch(values, max_hops)
@@ -753,7 +744,7 @@ class GraphService:
             return {}
         try:
             # F228FIX: DuckPGQGraph fallback path may not have stats() method
-            if hasattr(graph, 'stats'):
+            if hasattr(graph, "stats"):
                 return graph.stats()
             return {}
         except Exception as e:
@@ -781,7 +772,7 @@ class GraphService:
         self._seen_iocs.clear()
         self._seen_rels.clear()
         _DUCKPGQ_GRAPH = None
-        
+
         # B3: Invalidate graph cache on session reset (graph may have new data)
         try:
             cache = _get_query_cache()
@@ -791,9 +782,7 @@ class GraphService:
 
     # ── Analytics ─────────────────────────────────────────────────────────────
 
-    def graph_analytics_summary(
-        self, top_k: int = MAX_GRAPH_ANALYTICS_TOP_K
-    ) -> dict:
+    def graph_analytics_summary(self, top_k: int = MAX_GRAPH_ANALYTICS_TOP_K) -> dict:
         """
         F206G: Bounded read-only graph analytics summary.
 
@@ -825,9 +814,7 @@ class GraphService:
             }
 
         try:
-            raw_top = graph.get_top_nodes_by_degree(
-                n=min(top_k, MAX_GRAPH_ANALYTICS_NODES)
-            )
+            raw_top = graph.get_top_nodes_by_degree(n=min(top_k, MAX_GRAPH_ANALYTICS_NODES))
             # F239B: confidence already in raw_top from get_top_nodes_by_degree SQL
             confidence_by_node: dict[str, float] = {}
             for row in raw_top:
@@ -846,12 +833,14 @@ class GraphService:
                 ioc = row.get("ioc_type", "unknown")
                 deg = int(row.get("degree", 0))
                 if val:
-                    entities.append({
-                        "value": val,
-                        "ioc_type": ioc,
-                        "degree": deg,
-                        "max_confidence": confidence_by_node.get(val, 0.5),
-                    })
+                    entities.append(
+                        {
+                            "value": val,
+                            "ioc_type": ioc,
+                            "degree": deg,
+                            "max_confidence": confidence_by_node.get(val, 0.5),
+                        }
+                    )
 
             community_count = _estimate_community_count(graph)
 
@@ -1015,7 +1004,6 @@ class GraphService:
                 errors.append(f"communities: {e}")
                 return {}
 
-        # Execute all analytics concurrently with bounded concurrency
         results = await parallel(
             [_top_nodes(), _pagerank(), _communities()],
             policy="collect",
@@ -1027,7 +1015,6 @@ class GraphService:
         pagerank_scores = results[1] if len(results) > 1 else {}
         communities = results[2] if len(results) > 2 else {}
 
-        # Process top nodes into structured format
         confidence_by_node: dict[str, float] = {}
         for row in top_nodes_raw:
             if not isinstance(row, dict):
@@ -1045,12 +1032,14 @@ class GraphService:
             ioc = row.get("ioc_type", "unknown")
             deg = int(row.get("degree", 0))
             if val:
-                entities.append({
-                    "value": val,
-                    "ioc_type": ioc,
-                    "degree": deg,
-                    "max_confidence": confidence_by_node.get(val, 0.5),
-                })
+                entities.append(
+                    {
+                        "value": val,
+                        "ioc_type": ioc,
+                        "degree": deg,
+                        "max_confidence": confidence_by_node.get(val, 0.5),
+                    }
+                )
 
         return {
             "top_central_entities": entities,
@@ -1069,8 +1058,8 @@ class GraphService:
 
 _DEFAULT_GRAPH_SERVICE = GraphService()
 
-
 # ── Module-level functions (delegate to default facade) ────────────────────────
+
 
 def upsert_ioc(
     value: str,
@@ -1089,13 +1078,7 @@ def upsert_ioc_batch(
     return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows, observed_at=observed_at)
 
 
-def upsert_relation(
-    src: str,
-    dst: str,
-    rel_type: str,
-    weight: float = 1.0,
-    evidence: str = ""
-) -> bool:
+def upsert_relation(src: str, dst: str, rel_type: str, weight: float = 1.0, evidence: str = "") -> bool:
     return _DEFAULT_GRAPH_SERVICE.upsert_relation(src, dst, rel_type, weight, evidence)
 
 
@@ -1151,7 +1134,7 @@ def shutdown_graph() -> None:
         try:
             _DUCKPGQ_GRAPH.close()
         except Exception as e:
-            logger.debug(f'[GraphService] shutdown_graph: close failed: {e}')
+            logger.debug(f"[GraphService] shutdown_graph: close failed: {e}")
         _DUCKPGQ_GRAPH = None
 
 
@@ -1178,6 +1161,7 @@ async def parallel_graph_analytics(
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
+
 
 def _estimate_community_count(graph: DuckPGQGraph) -> int:
     """

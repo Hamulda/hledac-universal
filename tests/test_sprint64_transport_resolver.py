@@ -8,27 +8,26 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from _core import aclose
 
 
 # Test transport import doesn't crash
-def test_transport_import_no_crash():
+def test_transport_import_no_crash() -> None:
     """Test that import hledac.universal.transport doesn't crash without aiohttp_socks."""
     # This should not raise even if aiohttp_socks is not available
     import hledac.universal.transport as t
 
     # Verify expected exports
-    assert hasattr(t, 'Transport')
-    assert hasattr(t, 'InMemoryTransport')
-    assert hasattr(t, 'TransportResolver')
-    assert hasattr(t, 'TransportContext')
+    assert hasattr(t, "Transport")
+    assert hasattr(t, "InMemoryTransport")
+    assert hasattr(t, "TransportResolver")
+    assert hasattr(t, "TransportContext")
 
     # Verify no flag exports (invariant)
-    assert not hasattr(t, 'TOR_AVAILABLE')
-    assert not hasattr(t, 'NYM_AVAILABLE')
+    assert not hasattr(t, "TOR_AVAILABLE")
+    assert not hasattr(t, "NYM_AVAILABLE")
 
 
-def test_transport_resolver_instantiation():
+def test_transport_resolver_instantiation() -> None:
     """Test TransportResolver can be instantiated."""
     from hledac.universal.transport import TransportResolver
 
@@ -36,30 +35,26 @@ def test_transport_resolver_instantiation():
     assert resolver is not None
 
 
-def test_transport_context_creation():
+def test_transport_context_creation() -> None:
     """Test TransportContext creation."""
     from hledac.universal.transport import TransportContext
 
-    ctx = TransportContext(
-        requires_anonymity=True,
-        risk_level="high",
-        allow_inmemory=False
-    )
+    ctx = TransportContext(requires_anonymity=True, risk_level="high", allow_inmemory=False)
     assert ctx.requires_anonymity is True
     assert ctx.risk_level == "high"
     assert ctx.allow_inmemory is False
 
 
 @pytest.mark.asyncio
-async def test_resolver_fallback_to_inmemory():
+async def test_resolver_fallback_to_inmemory() -> None:
     """Test resolver falls back to InMemory when no Tor/Nym available."""
     from hledac.universal.transport import InMemoryTransport, TransportContext, TransportResolver
 
     # Patch the transport imports to fail at the module level where they're imported
-    with patch.dict('sys.modules', {
-        'hledac.universal.transport.tor_transport': None,
-        'hledac.universal.transport.nym_transport': None
-    }):
+    with patch.dict(
+        "sys.modules",
+        {"hledac.universal.transport.tor_transport": None, "hledac.universal.transport.nym_transport": None},
+    ):
         resolver = TransportResolver()
 
         # Request with allow_inmemory=True should get InMemoryTransport
@@ -70,15 +65,15 @@ async def test_resolver_fallback_to_inmemory():
 
 
 @pytest.mark.asyncio
-async def test_resolver_returns_none_without_inmemory():
+async def test_resolver_returns_none_without_inmemory() -> None:
     """Test resolver returns None when no transports available and inmemory not allowed."""
     from hledac.universal.transport import TransportContext, TransportResolver
 
     # Patch the transport imports to fail
-    with patch.dict('sys.modules', {
-        'hledac.universal.transport.tor_transport': None,
-        'hledac.universal.transport.nym_transport': None
-    }):
+    with patch.dict(
+        "sys.modules",
+        {"hledac.universal.transport.tor_transport": None, "hledac.universal.transport.nym_transport": None},
+    ):
         resolver = TransportResolver()
 
         # Request without allow_inmemory should return None
@@ -89,7 +84,7 @@ async def test_resolver_returns_none_without_inmemory():
 
 
 @pytest.mark.asyncio
-async def test_inmemory_transport_basic():
+async def test_inmemory_transport_basic() -> None:
     """Test InMemoryTransport basic operations."""
     from hledac.universal.transport import InMemoryTransport
 
@@ -102,7 +97,8 @@ async def test_inmemory_transport_basic():
 
     # Test register_handler
     handler_called = False
-    def test_handler(msg):
+
+    def test_handler(msg) -> None:
         nonlocal handler_called
         handler_called = True
 
@@ -119,18 +115,18 @@ async def test_inmemory_transport_basic():
     await t2.stop()
 
 
-def test_no_config_toggles_in_transport():
+def test_no_config_toggles_in_transport() -> None:
     """Verify no config toggles exist in transport module."""
     import subprocess
+
     result = subprocess.run(
-        ['rg', '-n', 'enable_tor|use_tor|TOR_AVAILABLE|enable_nym|use_nym|NYM_AVAILABLE',
-         'hledac/universal/transport'],
+        ["rg", "-n", "enable_tor|use_tor|TOR_AVAILABLE|enable_nym|use_nym|NYM_AVAILABLE", "hledac/universal/transport"],
         capture_output=True,
-        text=True
+        text=True,
     )
 
     # Filter out comments and test files
-    lines = [l for l in result.stdout.split('\n') if l and 'test' not in l.lower()]  # noqa: E741
+    lines = [l for l in result.stdout.split("\n") if l and "test" not in l.lower()]  # noqa: E741
 
     assert not lines, f"Found config toggles: {lines}"
 

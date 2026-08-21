@@ -22,11 +22,8 @@ Cleanup invariant (Python 3.14+):
             yield item  # leaks if exception between yield and exit
 """
 
-
-
 import asyncio
 import logging
-import sys
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -39,8 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Python 3.14+: contextlib.aclosing() for async generator cleanup
 # Fallback for older Python versions (graceful degradation)
-from contextlib import aclosing  # noqa: E402
-from _core import aclose
+from contextlib import aclosing
 
 # Lazy import — ijson loaded only when streaming functions called
 _IJSON_AVAILABLE: bool = True
@@ -88,6 +84,7 @@ async def stream_json_array(
             logger.debug(f"[streaming_json] fallback content capped to {_STREAMING_FALLBACK_MAX_BYTES} bytes")
         text = raw_content.decode("utf-8", errors="replace")
         import orjson
+
         try:
             data = orjson.loads(text)
             if isinstance(data, list):
@@ -124,6 +121,7 @@ async def stream_json_array(
                 raw_content = raw_content[:_STREAMING_FALLBACK_MAX_BYTES]
             text = raw_content.decode("utf-8", errors="replace")
             import orjson
+
             data = orjson.loads(text)
             if isinstance(data, list):
                 for item in data:
@@ -166,7 +164,7 @@ async def stream_ndjson(
                     except orjson.JSONDecodeError as e:
                         logger.debug(f"[streaming_json] NDJSON line parse failed: {e}")
                         continue
-    except (ConnectionError, asyncio.TimeoutError) as e:
+    except (TimeoutError, ConnectionError) as e:
         logger.debug(f"[streaming_json] NDJSON stream failed: {e}")
 
 
@@ -234,6 +232,7 @@ def parse_json_chunks(
     """
     if not _IJSON_AVAILABLE:
         import orjson
+
         try:
             data = orjson.loads(text)
             if isinstance(data, list):
@@ -268,10 +267,6 @@ def parse_json_chunks(
         # ijson.parse raises RuntimeError on malformed JSON, ValueError on parse errors
         logger.debug(f"[streaming_json] chunk parse failed: {e}")
 
-
-# -----------------------------------------------------------------------------
-# Bounded variants for M1 8GB safety
-# -----------------------------------------------------------------------------
 
 async def stream_json_array_bounded(
     response: httpx.Response,
@@ -323,16 +318,12 @@ async def stream_ndjson_bounded(
             break
 
 
-# -----------------------------------------------------------------------------
-# HEIST-05: Selective NDJSON streaming with simdjson zero-alloc extraction
-# -----------------------------------------------------------------------------
-
 async def stream_ndjson_selective(
-    response: "httpx.Response",
+    response: httpx.Response,
     fields: dict[str, str],
     *,
     max_items: int = 1000,
-) -> "AsyncIterator[dict[str, bytes]]":
+) -> AsyncIterator[dict[str, bytes]]:
     """
     Stream NDJSON extracting only specified fields via simdjson JSON Pointer.
 
@@ -381,16 +372,16 @@ async def stream_ndjson_selective(
                             break
                 except Exception:
                     continue
-    except (ConnectionError, asyncio.TimeoutError) as e:
+    except (TimeoutError, ConnectionError) as e:
         logger.debug(f"[streaming_json] NDJSON selective stream failed: {e}")
 
 
 async def stream_ndjson_selective_dicts(
-    response: "httpx.Response",
+    response: httpx.Response,
     fields: dict[str, str],
     *,
     max_items: int = 1000,
-) -> "AsyncIterator[dict[str, object]]":
+) -> AsyncIterator[dict[str, object]]:
     """
     Like stream_ndjson_selective() but decodes bytes to Python objects.
 
@@ -429,6 +420,7 @@ def _decode_simdjson_bytes(val: bytes) -> object:
     # Try to decode as JSON literal
     try:
         import orjson
+
         return orjson.loads(val)
     except Exception:  # noqa: BLE001
         pass

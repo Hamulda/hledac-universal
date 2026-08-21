@@ -14,6 +14,7 @@ In Python 3.14+ the internal _waiters deque means direct _value mutation can cau
 deadlocks or race conditions. AtomicAdaptiveSemaphore uses asyncio.Lock + Condition
 to provide a thread-safe, event-loop-safe adaptive semaphore with O(1) resize.
 """
+
 import asyncio
 import logging
 import time
@@ -21,12 +22,12 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.locks import LazyAsyncioLock
+
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
     from hledac.universal._core.resource_governor import GovernorDecision
 logger = logging.getLogger(__name__)
 from hledac.universal._core.psutil_shim import psutil
-from _core import aclose
+
 
 class AtomicAdaptiveSemaphore:
     """
@@ -50,14 +51,15 @@ class AtomicAdaptiveSemaphore:
         sem.release()
         await sem.resize(50)   # safe — notifies waiters
     """
-    __slots__ = ('_lock', '_cond', '_value', '_max', '_waiters')
+
+    __slots__ = ("_lock", "_cond", "_value", "_max", "_waiters")
 
     def __init__(self, initial: int) -> None:
         self._lock = asyncio.Lock()
         self._cond = asyncio.Condition(self._lock)
         self._value: int = initial
         self._max: int = initial
-        self._waiters: deque['asyncio.Future[None]'] = deque()
+        self._waiters: deque[asyncio.Future[None]] = deque()
 
     async def acquire(self) -> None:
         """Acquire one permit, yielding to event loop if none available."""
@@ -125,10 +127,13 @@ class AtomicAdaptiveSemaphore:
 
     def stats(self) -> dict[str, int]:
         """Return diagnostic stats dict."""
-        return {'value': self._value, 'max': self._max, 'waiters': len(self._waiters)}
+        return {"value": self._value, "max": self._max, "waiters": len(self._waiters)}
+
+
 _FETCH_SEMAPHORE: AtomicAdaptiveSemaphore | None = None
 
-def get_fetch_semaphore(initial_limit: int=25) -> AtomicAdaptiveSemaphore:
+
+def get_fetch_semaphore(initial_limit: int = 25) -> AtomicAdaptiveSemaphore:
     """
     Get or create the shared FETCH_SEMAPHORE.
 
@@ -143,8 +148,9 @@ def get_fetch_semaphore(initial_limit: int=25) -> AtomicAdaptiveSemaphore:
     global _FETCH_SEMAPHORE
     if _FETCH_SEMAPHORE is None:
         _FETCH_SEMAPHORE = AtomicAdaptiveSemaphore(initial_limit)
-        logger.debug(f'[FETCH_SEMAPHORE] Created with limit={initial_limit}')
+        logger.debug(f"[FETCH_SEMAPHORE] Created with limit={initial_limit}")
     return _FETCH_SEMAPHORE
+
 
 class _FetchSemaphoreProxy:
     """Proxy object that lazily initializes the semaphore on first attribute access."""
@@ -157,12 +163,15 @@ class _FetchSemaphoreProxy:
         """Return current available permits (delegates to underlying semaphore)."""
         return get_fetch_semaphore().available
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         sem = get_fetch_semaphore()
-        return f'FetchSemaphore(available={sem.available}, max={sem.max})'
+        return f"FetchSemaphore(available={sem.available}, max={sem.max})"
+
+
 FETCH_SEMAPHORE = _FetchSemaphoreProxy()
 _last_adjust_time: float = 0.0
 _last_adjust_value: int = -1
+
 
 async def adjust_fetch_workers(new_limit: int) -> None:
     """
@@ -209,11 +218,16 @@ async def adjust_fetch_workers(new_limit: int) -> None:
         await _clearnet_semaphore.resize(max(1, new_limit))
     if _tor_semaphore is not None:
         await _tor_semaphore.resize(tor_limit)
-    logger.info(f'[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{max(1, new_limit)}, tor {old_tor}→{tor_limit}')
+    logger.info(
+        f"[FETCH_WORKERS] Adjusted fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{max(1, new_limit)}, tor {old_tor}→{tor_limit}"
+    )
+
+
 _clearnet_semaphore: AtomicAdaptiveSemaphore | None = None
 _tor_semaphore: AtomicAdaptiveSemaphore | None = None
 CLEARNET_CONCURRENCY: int = 25
 TOR_CONCURRENCY: int = 5
+
 
 def get_clearnet_semaphore() -> AtomicAdaptiveSemaphore:
     """Get or create the shared clearnet semaphore (lazy singleton)."""
@@ -221,16 +235,18 @@ def get_clearnet_semaphore() -> AtomicAdaptiveSemaphore:
     if _clearnet_semaphore is None:
         adaptive = get_adaptive_limit()
         _clearnet_semaphore = AtomicAdaptiveSemaphore(adaptive)
-        logger.debug(f'[CLEARNET_SEMAPHORE] Created with limit={adaptive}')
+        logger.debug(f"[CLEARNET_SEMAPHORE] Created with limit={adaptive}")
     return _clearnet_semaphore
+
 
 def get_tor_semaphore() -> AtomicAdaptiveSemaphore:
     """Get or create the shared Tor semaphore (lazy singleton)."""
     global _tor_semaphore
     if _tor_semaphore is None:
         _tor_semaphore = AtomicAdaptiveSemaphore(TOR_CONCURRENCY)
-        logger.debug(f'[TOR_SEMAPHORE] Created with limit={TOR_CONCURRENCY}')
+        logger.debug(f"[TOR_SEMAPHORE] Created with limit={TOR_CONCURRENCY}")
     return _tor_semaphore
+
 
 def get_adaptive_limit() -> int:
     """
@@ -243,6 +259,7 @@ def get_adaptive_limit() -> int:
     """
     try:
         from hledac.universal._core.psutil_shim import process as _psutil_process
+
         p = _psutil_process()
         if p is None:
             return CLEARNET_CONCURRENCY
@@ -254,6 +271,7 @@ def get_adaptive_limit() -> int:
     elif rss_gb > 4.5:
         return 10
     return CLEARNET_CONCURRENCY
+
 
 async def adjust_clearnet_workers(new_limit: int) -> None:
     """
@@ -267,7 +285,8 @@ async def adjust_clearnet_workers(new_limit: int) -> None:
         return
     old_limit = _clearnet_semaphore.max
     await _clearnet_semaphore.resize(max(1, new_limit))
-    logger.info(f'[CLEARNET_WORKERS] Adjusted from {old_limit} to {new_limit}')
+    logger.info(f"[CLEARNET_WORKERS] Adjusted from {old_limit} to {new_limit}")
+
 
 class AdaptiveWorkerPool:
     """
@@ -290,14 +309,15 @@ class AdaptiveWorkerPool:
         fetch_limit = pool.get_fetch_limit()
         max_workers = pool.get_max_workers()
     """
+
     _instance: AdaptiveWorkerPool | None = None
     _instance_lock = LazyAsyncioLock()
-    __slots__ = tuple(('_fetch_limit', '_io_only', '_last_evaluate', '_lock', '_max_workers', '_uma_state'))
+    __slots__ = ("_fetch_limit", "_io_only", "_last_evaluate", "_lock", "_max_workers", "_uma_state")
 
     def __init__(self) -> None:
         self._fetch_limit: int = 25
         self._max_workers: int = 5
-        self._uma_state: str = 'ok'
+        self._uma_state: str = "ok"
         self._io_only: bool = False
         self._last_evaluate: float = 0.0
         self._lock = asyncio.Lock()
@@ -324,17 +344,21 @@ class AdaptiveWorkerPool:
         """
         async with self._lock:
             from hledac.universal._core.resource_governor import M1ResourceGovernor
+
             governor = M1ResourceGovernor(cache_ttl_s=2.0)
             decision = await governor.evaluate()
             self._uma_state = decision.uma_state
             self._io_only = decision.io_only
             self._fetch_limit = decision.fetch_limit
             from hledac.universal._core.resource_governor import ConcurrencyPreset
+
             preset = ConcurrencyPreset.from_state(decision.uma_state)
             self._max_workers = preset.max_workers
             await self._apply_fetch_limit(decision.fetch_limit)
             self._last_evaluate = time.monotonic()
-            logger.debug(f'[AdaptiveWorkerPool] state={decision.uma_state} fetch={decision.fetch_limit} workers={self._max_workers} io_only={decision.io_only}')
+            logger.debug(
+                f"[AdaptiveWorkerPool] state={decision.uma_state} fetch={decision.fetch_limit} workers={self._max_workers} io_only={decision.io_only}"
+            )
             return decision
 
     async def _apply_fetch_limit(self, new_limit: int) -> None:
@@ -349,7 +373,9 @@ class AdaptiveWorkerPool:
             await _clearnet_semaphore.resize(new_limit)
         if _tor_semaphore is not None:
             await _tor_semaphore.resize(tor_limit)
-        logger.info(f'[AdaptiveWorkerPool] Applied fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{new_limit}, tor→{tor_limit}')
+        logger.info(
+            f"[AdaptiveWorkerPool] Applied fetch {old_fetch}→{new_limit}, clearnet {old_clearnet}→{new_limit}, tor→{tor_limit}"
+        )
 
     def get_fetch_limit(self) -> int:
         """Current fetch_limit (from last evaluate, or default 25)."""
@@ -360,7 +386,7 @@ class AdaptiveWorkerPool:
         Current max_workers for ML job parallelism.
         Returns 0 when in io_only or emergency state (no ML jobs allowed).
         """
-        if self._io_only or self._uma_state == 'emergency':
+        if self._io_only or self._uma_state == "emergency":
             return 0
         return self._max_workers
 

@@ -8,9 +8,6 @@ ISSUE-04: Now uses core.duckdb_pool as the canonical RO pool.
 
 from __future__ import annotations
 
-import sqlite3
-from collections import deque
-from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -18,16 +15,10 @@ if TYPE_CHECKING:
 
 # ISSUE-04: Use canonical pool instead of inline pool
 from hledac.universal._core.duckdb_pool import (
-    duckdb_ro_acquire,
-    duckdb_ro_pool,
-    get_pool_stats,
     close_all_pools,
-    )
-
-
-# =============================================================================
-# DuckDB Read-Only Connection Pool (ISSUE-04: Now delegated to duckdb_pool)
-# =============================================================================
+    duckdb_ro_acquire,
+    get_pool_stats,
+)
 
 # DEPRECATED: Inline pool replaced by core.duckdb_pool
 # Keeping for backward compatibility until all callers migrate
@@ -64,11 +55,6 @@ def _pool_stats() -> dict:
 def _pool_close_all() -> None:
     """Close all pooled connections."""
     close_all_pools()
-
-
-# =============================================================================
-# Query Domain
-# =============================================================================
 
 
 class _RustQueryDomain:
@@ -129,7 +115,7 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
         cursor = conn.execute(sql)
         columns = [desc[0] for desc in cursor.description] if cursor.description else []
         rows = cursor.fetchall()
-        return [dict(zip(columns, row)) for row in rows]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
     except Exception:
         return []
     # Connection stays in pool for reuse (no explicit return needed)

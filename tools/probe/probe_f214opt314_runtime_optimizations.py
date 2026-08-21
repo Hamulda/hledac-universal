@@ -11,6 +11,7 @@ D) JIT/tail-call interpreter reality
 
 NO production patches applied. This is a diagnostic benchmark tool.
 """
+
 import concurrent.futures
 import gc
 import gzip
@@ -22,11 +23,13 @@ import time
 import tracemalloc
 from collections.abc import Callable
 from dataclasses import dataclass
+
 import psutil
-from _core import aclose
+
 MIN_VERSION = (3, 14)
 if sys.version_info < MIN_VERSION:
-    raise SystemExit(f'Requires Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+')
+    raise SystemExit(f"Requires Python {MIN_VERSION[0]}.{MIN_VERSION[1]}+")
+
 
 @dataclass(slots=True)
 class BenchmarkResult:
@@ -39,6 +42,7 @@ class BenchmarkResult:
     rss_delta_kb: int
     result_equivalence: bool
     verdict: str
+
 
 @dataclass(slots=True)
 class CompressionResult:
@@ -53,13 +57,16 @@ class CompressionResult:
     rss_peak_kb: int
     verdict: str
 
+
 def get_rss_kb() -> int:
     return psutil.Process(os.getpid()).memory_info().rss // 1024
 
+
 def normalize_text(text: str) -> str:
     text = text.lower().strip()
-    text = re.sub('[^\\w\\s]', '', text)
-    return re.sub('\\s+', ' ', text).strip()
+    text = re.sub("[^\\w\\s]", "", text)
+    return re.sub("\\s+", " ", text).strip()
+
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
     if len(s1) < len(s2):
@@ -76,30 +83,37 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
         prev_row, curr_row = (curr_row, prev_row)
     return prev_row[len(s2)]
 
+
 def _shannon_entropy(text: str) -> float:
     if not text:
         return 0.0
     byte_counts = [0] * 256
-    for byte in text.encode('utf-8'):
+    for byte in text.encode("utf-8"):
         byte_counts[byte] += 1
     entropy = 0.0
     data_len = len(text)
     for count in byte_counts:
         if count > 0:
             probability = count / data_len
-            entropy -= probability * probability ** 0.5
+            entropy -= probability * probability**0.5
     return entropy
+
 
 def cpu_workload_normalize(item: str) -> str:
     return normalize_text(item)
 
+
 def cpu_workload_levenshtein(pair: tuple) -> int:
     return _levenshtein_distance(pair[0], pair[1])
+
 
 def cpu_workload_entropy(text: str) -> float:
     return _shannon_entropy(text)
 
-def benchmark_executor(workload_fn: Callable, workload_args: tuple, n_workers: int=4, n_runs: int=3, timeout_per_call: float=5.0) -> BenchmarkResult:
+
+def benchmark_executor(
+    workload_fn: Callable, workload_args: tuple, n_workers: int = 4, n_runs: int = 3, timeout_per_call: float = 5.0
+) -> BenchmarkResult:
     """Benchmark serial vs ThreadPoolExecutor vs InterpreterPoolExecutor.
 
     InterpreterPoolExecutor has high per-call overhead for short tasks.
@@ -139,17 +153,20 @@ def benchmark_executor(workload_fn: Callable, workload_args: tuple, n_workers: i
         def run_interp_batch():
             with InterpreterPoolExecutor(max_workers=n_workers) as ex:
                 return list(ex.map(workload_fn, workload_args[0]))
+
         gc.collect()
         start = time.perf_counter()
         import queue
         from threading import Thread
+
         result_queue: queue.Queue = queue.Queue()
 
-        def target():
+        def target() -> None:
             try:
-                result_queue.put(('ok', run_interp_batch()))
+                result_queue.put(("ok", run_interp_batch()))
             except Exception as ex:
-                result_queue.put(('error', str(ex)))
+                result_queue.put(("error", str(ex)))
+
         t = Thread(target=target, daemon=True)
         t.start()
         t.join(timeout=timeout_per_call)
@@ -158,7 +175,7 @@ def benchmark_executor(workload_fn: Callable, workload_args: tuple, n_workers: i
             interp_ms = serial_ms * 999
         else:
             status, val = result_queue.get_nowait()
-            if status == 'ok':
+            if status == "ok":
                 result_interp = val
                 interp_ms = (time.perf_counter() - start) * 1000
                 interp_ok = True
@@ -176,20 +193,32 @@ def benchmark_executor(workload_fn: Callable, workload_args: tuple, n_workers: i
     speedup_vs_tpe = threadpool_ms / interp_ms if interp_ms > 0 and interp_ok else 0.0
     rss_ok = rss_interp < 100 * 1024
     if interp_timeout:
-        verdict = 'TIMEOUT'
+        verdict = "TIMEOUT"
     elif interp_ok and speedup_vs_serial >= 1.2 and (speedup_vs_tpe >= 1.1) and rss_ok:
-        verdict = 'PATCH_APPLIED'
+        verdict = "PATCH_APPLIED"
     elif interp_ok:
-        verdict = 'LAB_ONLY'
+        verdict = "LAB_ONLY"
     else:
-        verdict = 'NO_PATCH'
-    return BenchmarkResult(name=workload_name, serial_ms=serial_ms, threadpool_ms=threadpool_ms, interp_ms=interp_ms, speedup_vs_serial=speedup_vs_serial, speedup_vs_tpe=speedup_vs_tpe, rss_delta_kb=rss_interp, result_equivalence=equiv_tpe and equiv_interp, verdict=verdict)
+        verdict = "NO_PATCH"
+    return BenchmarkResult(
+        name=workload_name,
+        serial_ms=serial_ms,
+        threadpool_ms=threadpool_ms,
+        interp_ms=interp_ms,
+        speedup_vs_serial=speedup_vs_serial,
+        speedup_vs_tpe=speedup_vs_tpe,
+        rss_delta_kb=rss_interp,
+        result_equivalence=equiv_tpe and equiv_interp,
+        verdict=verdict,
+    )
 
-def benchmark_transient_artifact_compression(data: bytes, n_runs: int=50) -> dict:
+
+def benchmark_transient_artifact_compression(data: bytes, n_runs: int = 50) -> dict:
     results = {}
     has_zstd = False
     try:
         import compression.zstd
+
         has_zstd = True
     except ImportError:  # noqa: BLE001
         pass
@@ -205,7 +234,18 @@ def benchmark_transient_artifact_compression(data: bytes, n_runs: int=50) -> dic
         gzip.decompress(c_gzip)
     gzip_decomp_us = (time.perf_counter() - start) / n_runs * 1000000.0
     tracemalloc.stop()
-    results['gzip_l1'] = CompressionResult(name='transient_json', format='gzip', level=1, raw_bytes=len(data), compressed_bytes=gzip_size, compress_us=gzip_comp_us, decompress_us=gzip_decomp_us, ratio=gzip_size / len(data), rss_peak_kb=0, verdict='BASELINE')
+    results["gzip_l1"] = CompressionResult(
+        name="transient_json",
+        format="gzip",
+        level=1,
+        raw_bytes=len(data),
+        compressed_bytes=gzip_size,
+        compress_us=gzip_comp_us,
+        decompress_us=gzip_decomp_us,
+        ratio=gzip_size / len(data),
+        rss_peak_kb=0,
+        verdict="BASELINE",
+    )
     if has_zstd:
         tracemalloc.start()
         start = time.perf_counter()
@@ -221,137 +261,208 @@ def benchmark_transient_artifact_compression(data: bytes, n_runs: int=50) -> dic
         size_imp = (gzip_size - zstd_size) / gzip_size if gzip_size > 0 else 0
         speedup = gzip_comp_us / zstd_comp_us if zstd_comp_us > 0 else 0
         if size_imp > 0.1 or speedup > 1.5:
-            verdict = 'PATCH_APPLIED'
+            verdict = "PATCH_APPLIED"
         else:
-            verdict = 'NO_PATCH'
-        results['zstd_l1'] = CompressionResult(name='transient_json', format='zstd', level=1, raw_bytes=len(data), compressed_bytes=zstd_size, compress_us=zstd_comp_us, decompress_us=zstd_decomp_us, ratio=zstd_size / len(data), rss_peak_kb=0, verdict=verdict)
+            verdict = "NO_PATCH"
+        results["zstd_l1"] = CompressionResult(
+            name="transient_json",
+            format="zstd",
+            level=1,
+            raw_bytes=len(data),
+            compressed_bytes=zstd_size,
+            compress_us=zstd_comp_us,
+            decompress_us=zstd_decomp_us,
+            ratio=zstd_size / len(data),
+            rss_peak_kb=0,
+            verdict=verdict,
+        )
     return results
+
 
 def check_executor_map_buffersize() -> list[dict]:
     """Return known production sites. Already verified content_miner has buffersize=8."""
-    return [{'file': 'tools/content_miner.py', 'line': 1337, 'status': 'buffersize=8_F214M-B'}, {'file': 'intelligence/document_intelligence.py', 'line': 1139, 'status': 'single_submit_fallback'}]
+    return [
+        {"file": "tools/content_miner.py", "line": 1337, "status": "buffersize=8_F214M-B"},
+        {"file": "intelligence/document_intelligence.py", "line": 1139, "status": "single_submit_fallback"},
+    ]
+
 
 def jit_reality_check() -> dict:
-    result = {'version': sys.version, 'executable': sys.executable, 'has_jit_namespace': hasattr(sys, '_jit'), 'jit_available': False, 'jit_enabled': False, 'verdict': 'KEEP_DISABLED'}
-    if hasattr(sys, '_jit'):
+    result = {
+        "version": sys.version,
+        "executable": sys.executable,
+        "has_jit_namespace": hasattr(sys, "_jit"),
+        "jit_available": False,
+        "jit_enabled": False,
+        "verdict": "KEEP_DISABLED",
+    }
+    if hasattr(sys, "_jit"):
         try:
-            result['jit_available'] = bool(sys._jit.is_available())
-            result['jit_enabled'] = bool(sys._jit.is_enabled())
-            if result['jit_available'] and (not result['jit_enabled']):
-                result['verdict'] = 'LAB_ONLY'
+            result["jit_available"] = bool(sys._jit.is_available())
+            result["jit_enabled"] = bool(sys._jit.is_enabled())
+            if result["jit_available"] and (not result["jit_enabled"]):
+                result["verdict"] = "LAB_ONLY"
         except Exception:  # noqa: BLE001
             pass
     return result
 
+
 def generate_workloads():
     """Production-like CPU workloads (small to respect InterpreterPool overhead)."""
-    texts = ['Sample text for normalization testing purposes here', 'OSINT intelligence gathering for security research domain', 'Domain example.com IP address 192.168.1.1 URL path', 'SHA256 hash identifier string for content matching', 'Mozilla five zero browser user agent pattern match'] * 4
-    pair_list = [('hello world', 'hello world'), ('hello world', 'hello worlds'), ('abcdefgh', 'ijklmnop'), ('test one two', 'test three four'), ('password reset', 'password resets')] * 4
-    entropies = ['High entropy random aK9mZ2qL characters here', 'Low entropy text repeats many aaaaaaaa times', 'Normal English words distribution typical spacing', 'Digits only 0123456789' * 4, 'Alphanumeric mix aZ9mQ2kL7nP3'] * 4
-    return {'normalize': (cpu_workload_normalize, (texts,)), 'levenshtein': (cpu_workload_levenshtein, (pair_list,)), 'entropy': (cpu_workload_entropy, (entropies,))}
+    texts = [
+        "Sample text for normalization testing purposes here",
+        "OSINT intelligence gathering for security research domain",
+        "Domain example.com IP address 192.168.1.1 URL path",
+        "SHA256 hash identifier string for content matching",
+        "Mozilla five zero browser user agent pattern match",
+    ] * 4
+    pair_list = [
+        ("hello world", "hello world"),
+        ("hello world", "hello worlds"),
+        ("abcdefgh", "ijklmnop"),
+        ("test one two", "test three four"),
+        ("password reset", "password resets"),
+    ] * 4
+    entropies = [
+        "High entropy random aK9mZ2qL characters here",
+        "Low entropy text repeats many aaaaaaaa times",
+        "Normal English words distribution typical spacing",
+        "Digits only 0123456789" * 4,
+        "Alphanumeric mix aZ9mQ2kL7nP3",
+    ] * 4
+    return {
+        "normalize": (cpu_workload_normalize, (texts,)),
+        "levenshtein": (cpu_workload_levenshtein, (pair_list,)),
+        "entropy": (cpu_workload_entropy, (entropies,)),
+    }
+
 
 def generate_transient_artifacts():
     """Realistic sprint transient artifact data."""
-    partial = {'sprint_id': 'F214OPT314_test', 'is_partial': True, 'finding_count': 87, 'runtime_truth': {'total': 100, 'accepted': 87, 'rejected': 13, 'sources': {'ct': 45, 'duckdb': 30, 'mlx': 12}}, 'scorecard': {'speed': 0.85, 'memory': 0.72, 'quality': 0.91, 'throughput': 125.3, 'rss_mb': 3842}, 'partial_export': True, 'seeds': [{'ioc': f'domain{i}.io', 'type': 'domain', 'confidence': 0.9 + i * 0.001} for i in range(30)]}
-    seeds = {'sprint_id': 'F214OPT314_test', 'seeds': [{'ioc': f'test{i}.example.com', 'type': 'domain', 'priority': i % 10} for i in range(50)]}
-    return {'partial_export': json.dumps(partial, indent=2, default=str).encode('utf-8'), 'next_seeds': json.dumps(seeds, indent=2, default=str).encode('utf-8')}
+    partial = {
+        "sprint_id": "F214OPT314_test",
+        "is_partial": True,
+        "finding_count": 87,
+        "runtime_truth": {"total": 100, "accepted": 87, "rejected": 13, "sources": {"ct": 45, "duckdb": 30, "mlx": 12}},
+        "scorecard": {"speed": 0.85, "memory": 0.72, "quality": 0.91, "throughput": 125.3, "rss_mb": 3842},
+        "partial_export": True,
+        "seeds": [{"ioc": f"domain{i}.io", "type": "domain", "confidence": 0.9 + i * 0.001} for i in range(30)],
+    }
+    seeds = {
+        "sprint_id": "F214OPT314_test",
+        "seeds": [{"ioc": f"test{i}.example.com", "type": "domain", "priority": i % 10} for i in range(50)],
+    }
+    return {
+        "partial_export": json.dumps(partial, indent=2, default=str).encode("utf-8"),
+        "next_seeds": json.dumps(seeds, indent=2, default=str).encode("utf-8"),
+    }
+
 
 def run_all():
-    print('=' * 70)
-    print('F214OPT314 — Python 3.14.4 Runtime Optimization Probe')
-    print('=' * 70)
+    print("=" * 70)
+    print("F214OPT314 — Python 3.14.4 Runtime Optimization Probe")
+    print("=" * 70)
     print()
-    print('── Area D: JIT / Tail-Call Reality Check ──────────────────────────')
+    print("── Area D: JIT / Tail-Call Reality Check ──────────────────────────")
     jit = jit_reality_check()
     for k, v in jit.items():
-        print(f'  {k}: {v}')
+        print(f"  {k}: {v}")
     print(f"  Verdict: {jit['verdict']}")
     print()
-    print('── Area A: InterpreterPoolExecutor Pure Python CPU Candidates ───────')
+    print("── Area A: InterpreterPoolExecutor Pure Python CPU Candidates ───────")
     workloads = generate_workloads()
     area_a_results = []
     for name, (fn, args) in workloads.items():
-        print(f'  {name}...', end=' ', flush=True)
+        print(f"  {name}...", end=" ", flush=True)
         result = benchmark_executor(fn, args, timeout_per_call=3.0)
         area_a_results.append(result)
         status = result.verdict
-        if result.verdict == 'TIMEOUT':
-            status = 'TIMEOUT (>3s)'
+        if result.verdict == "TIMEOUT":
+            status = "TIMEOUT (>3s)"
         elif result.interp_ms < result.serial_ms * 10:
-            status = f'{result.verdict} ({result.serial_ms / result.interp_ms:.2f}x vs TPE)'
+            status = f"{result.verdict} ({result.serial_ms / result.interp_ms:.2f}x vs TPE)"
         else:
-            status = f'{status} (interp {result.interp_ms:.0f}ms >10x serial)'
+            status = f"{status} (interp {result.interp_ms:.0f}ms >10x serial)"
         print(status)
     print()
     for r in area_a_results:
-        print(f'  {r.name}:')
-        print(f'    serial={r.serial_ms:6.2f}ms  tpe={r.threadpool_ms:6.2f}ms  interp={r.interp_ms:6.2f}ms  equiv={r.result_equivalence}')
-        print(f'    speedup vs serial: {r.serial_ms / r.threadpool_ms:.2f}x  vs TPE: {r.speedup_vs_tpe:.2f}x')
-        print(f'    verdict: {r.verdict}')
+        print(f"  {r.name}:")
+        print(
+            f"    serial={r.serial_ms:6.2f}ms  tpe={r.threadpool_ms:6.2f}ms  interp={r.interp_ms:6.2f}ms  equiv={r.result_equivalence}"
+        )
+        print(f"    speedup vs serial: {r.serial_ms / r.threadpool_ms:.2f}x  vs TPE: {r.speedup_vs_tpe:.2f}x")
+        print(f"    verdict: {r.verdict}")
     print()
-    print('── Area B: Transient Artifact Compression ───────────────────────────')
+    print("── Area B: Transient Artifact Compression ───────────────────────────")
     artifacts = generate_transient_artifacts()
     for art_name, art_data in artifacts.items():
-        print(f'  {art_name} ({len(art_data)} bytes):')
+        print(f"  {art_name} ({len(art_data)} bytes):")
         results = benchmark_transient_artifact_compression(art_data)
         for res in results.values():
-            print(f'    {res.format} level {res.level}: {res.compressed_bytes}B (ratio={res.ratio:.3f}) comp={res.compress_us:.1f}us decomp={res.decompress_us:.1f}us [{res.verdict}]')
+            print(
+                f"    {res.format} level {res.level}: {res.compressed_bytes}B (ratio={res.ratio:.3f}) comp={res.compress_us:.1f}us decomp={res.decompress_us:.1f}us [{res.verdict}]"
+            )
     print()
-    print('── Area C: executor.map(buffersize) Production Patterns ─────────────')
+    print("── Area C: executor.map(buffersize) Production Patterns ─────────────")
     sites = check_executor_map_buffersize()
     for site in sites:
         print(f"  {site['file']}:{site['line']} — {site['status']}")
-    print('  Verdict: NO_PATCH (content_miner already has buffersize=8)')
+    print("  Verdict: NO_PATCH (content_miner already has buffersize=8)")
     print()
-    print('=' * 70)
-    print('SUMMARY')
-    print('=' * 70)
-    a_patch = [r for r in area_a_results if r.verdict == 'PATCH_APPLIED']
-    a_lab = [r for r in area_a_results if r.verdict == 'LAB_ONLY']
-    a_timeout = [r for r in area_a_results if r.verdict == 'TIMEOUT']
+    print("=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    a_patch = [r for r in area_a_results if r.verdict == "PATCH_APPLIED"]
+    a_lab = [r for r in area_a_results if r.verdict == "LAB_ONLY"]
+    a_timeout = [r for r in area_a_results if r.verdict == "TIMEOUT"]
     if a_patch:
-        print('  Area A (InterpreterPoolExecutor): PATCH_APPLIED')
+        print("  Area A (InterpreterPoolExecutor): PATCH_APPLIED")
         for r in a_patch:
-            print(f'    {r.name}: {r.serial_ms / r.interp_ms:.2f}x speedup')
+            print(f"    {r.name}: {r.serial_ms / r.interp_ms:.2f}x speedup")
     elif a_timeout:
-        print('  Area A (InterpreterPoolExecutor): NO_PATCH')
-        print('    Reason: InterpreterPoolExecutor per-call overhead >3s timeout for')
-        print('    short-duration pure Python transforms. High startup cost.')
+        print("  Area A (InterpreterPoolExecutor): NO_PATCH")
+        print("    Reason: InterpreterPoolExecutor per-call overhead >3s timeout for")
+        print("    short-duration pure Python transforms. High startup cost.")
         for r in a_timeout:
-            print(f'    {r.name}: TIMEOUT (>3s per run)')
+            print(f"    {r.name}: TIMEOUT (>3s per run)")
     elif a_lab:
-        print('  Area A (InterpreterPoolExecutor): LAB_ONLY')
+        print("  Area A (InterpreterPoolExecutor): LAB_ONLY")
         for r in a_lab:
-            print(f'    {r.name}: interp {r.interp_ms:.1f}ms vs TPE {r.threadpool_ms:.1f}ms')
+            print(f"    {r.name}: interp {r.interp_ms:.1f}ms vs TPE {r.threadpool_ms:.1f}ms")
     else:
-        print('  Area A (InterpreterPoolExecutor): NO_PATCH')
-        print('    Reason: InterpreterPoolExecutor slower than ThreadPoolExecutor')
+        print("  Area A (InterpreterPoolExecutor): NO_PATCH")
+        print("    Reason: InterpreterPoolExecutor slower than ThreadPoolExecutor")
         for r in area_a_results:
-            print(f'    {r.name}: interp={r.interp_ms:.1f}ms tpe={r.threadpool_ms:.1f}ms ({r.interp_ms / r.threadpool_ms:.1f}x)')
+            print(
+                f"    {r.name}: interp={r.interp_ms:.1f}ms tpe={r.threadpool_ms:.1f}ms ({r.interp_ms / r.threadpool_ms:.1f}x)"
+            )
     print()
     b_patch = []
     for art_name, art_data in artifacts.items():
         results = benchmark_transient_artifact_compression(art_data)
-        b_patch.extend((r for r in results.values() if r.verdict == 'PATCH_APPLIED'))
+        b_patch.extend(r for r in results.values() if r.verdict == "PATCH_APPLIED")
     if b_patch:
-        print('  Area B (compression.zstd): PATCH_APPLIED')
+        print("  Area B (compression.zstd): PATCH_APPLIED")
     else:
-        print('  Area B (compression.zstd): NO_PATCH')
-        print('    Reason: Sprint transient artifacts < 3KB raw, compression gains')
-        print('    negligible. gzip level 1 sufficient for recovery-grade files.')
-    print('  Area C (executor.map buffersize): NO_PATCH')
-    print('    Reason: content_miner.py already has buffersize=8 (F214M-B done)')
-    print('  Area D (JIT): KEEP_DISABLED')
+        print("  Area B (compression.zstd): NO_PATCH")
+        print("    Reason: Sprint transient artifacts < 3KB raw, compression gains")
+        print("    negligible. gzip level 1 sufficient for recovery-grade files.")
+    print("  Area C (executor.map buffersize): NO_PATCH")
+    print("    Reason: content_miner.py already has buffersize=8 (F214M-B done)")
+    print("  Area D (JIT): KEEP_DISABLED")
     print(f"    jit_available={jit['jit_available']} jit_enabled={jit['jit_enabled']}")
     print()
-    return {'area_a': area_a_results, 'jit': jit}
-if __name__ == '__main__':
+    return {"area_a": area_a_results, "jit": jit}
+
+
+if __name__ == "__main__":
     try:
         results = run_all()
-        print('Probe complete.')
+        print("Probe complete.")
         sys.exit(0)
     except Exception as e:
-        print(f'ERROR: {e}', file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

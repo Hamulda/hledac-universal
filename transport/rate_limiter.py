@@ -35,16 +35,10 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Rust Backend Access
-# ---------------------------------------------------------------------------
 
 _RUST_AVAILABLE: bool = False
 _rust_check_rate_limit: callable | None = None
@@ -64,10 +58,6 @@ except ImportError:
     _rate_limit_mod = None
     logger.debug("[rate_limiter] Rust backend unavailable, using Python fallback")
 
-
-# ---------------------------------------------------------------------------
-# Python TokenBucket (fallback)
-# ---------------------------------------------------------------------------
 
 class TokenBucket:
     """
@@ -117,10 +107,6 @@ class TokenBucket:
                 await asyncio.sleep(wait)
 
 
-# ---------------------------------------------------------------------------
-# Per-Host Rate Limiter
-# ---------------------------------------------------------------------------
-
 # Global host buckets (Python fallback only)
 _HOST_BUCKETS: dict[str, TokenBucket] = {}
 _HOST_BUCKETS_LOCK: asyncio.Lock = asyncio.Lock()
@@ -133,10 +119,6 @@ async def _get_host_bucket(host: str, rate: float, capacity: float) -> TokenBuck
             _HOST_BUCKETS[host] = TokenBucket(rate=rate, capacity=capacity)
         return _HOST_BUCKETS[host]
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def check_rate_limit(host: str, tokens: int = 1) -> bool:
     """
@@ -288,10 +270,6 @@ class RateLimiter:
     def __repr__(self) -> str:
         return f"RateLimiter(host={self._host!r}, rate={self._rate}, capacity={self._capacity})"
 
-
-# ---------------------------------------------------------------------------
-# Backward compatibility aliases
-# ---------------------------------------------------------------------------
 
 RateLimitExceeded = Exception  # Deprecated
 RateLimiterClass = RateLimiter  # For code expecting class name

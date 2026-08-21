@@ -22,20 +22,32 @@ GHOST_INVARIANTS:
   :data:`TYPE_CHECKING` only — runtime access is via the instance
   attribute ``self.hypothesis_engine`` which is injected via ``__init__``.
 """
+
 import asyncio
 import hashlib
 import logging
 import re
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any
+
 from hledac.universal.utils.asyncx import parallel_ok
-from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
-from operator import attrgetter, itemgetter
-from _core import aclose
+
+from ._types import (
+    AdversarialReport,
+    Contradiction,
+    CrossReferenceResult,
+    Event,
+    Evidence,
+    HypothesisType,
+    SourceCredibility,
+)
+
 if TYPE_CHECKING:
     from hledac.universal.brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
 logger = logging.getLogger(__name__)
+
 
 class AdversarialVerifier:
     """
@@ -59,11 +71,21 @@ class AdversarialVerifier:
         max_contradiction_window: Maximum evidence pairs to check for contradictions
         bias_keywords: Dictionary of bias indicators by category
     """
-    MAX_SOURCE_ITEMS = 5000
-    _NEGATORS: frozenset[str] = frozenset(['not ', 'no ', 'never ', 'false', 'incorrect'])
-    __slots__ = tuple(('_bias_keywords', '_fallacy_patterns', '_source_credibility', 'enable_streaming', 'hypothesis_engine', 'max_contradiction_window'))
 
-    def __init__(self, hypothesis_engine: HypothesisEngine, max_contradiction_window: int=100, enable_streaming: bool=True):
+    MAX_SOURCE_ITEMS = 5000
+    _NEGATORS: frozenset[str] = frozenset(["not ", "no ", "never ", "false", "incorrect"])
+    __slots__ = (
+        "_bias_keywords",
+        "_fallacy_patterns",
+        "_source_credibility",
+        "enable_streaming",
+        "hypothesis_engine",
+        "max_contradiction_window",
+    )
+
+    def __init__(
+        self, hypothesis_engine: HypothesisEngine, max_contradiction_window: int = 100, enable_streaming: bool = True
+    ) -> None:
         """
         Initialize the AdversarialVerifier.
 
@@ -77,11 +99,25 @@ class AdversarialVerifier:
         self.max_contradiction_window = max_contradiction_window
         self.enable_streaming = enable_streaming
         self._source_credibility: OrderedDict[str, SourceCredibility] = OrderedDict()
-        self._bias_keywords = {'political': ['partisan', 'biased', 'agenda', 'propaganda', 'lobby'], 'commercial': ['sponsored', 'advertisement', 'paid', 'promotion'], 'sensationalist': ['shocking', 'unbelievable', 'miracle', 'conspiracy'], 'unverified': ['anonymous', 'unconfirmed', 'alleged', 'rumored']}
-        self._fallacy_patterns = {'ad_hominem': '\\b(attacking|attack on)\\s+(the\\s+)?person\\b|\\b(person\\s+is\\s+(bad|evil|wrong))\\b', 'straw_man': '\\b(misrepresents?|mischaracterizes?|distorts?)\\b', 'false_dichotomy': '\\b(either\\s+or|only\\s+two\\s+(options?|choices?))\\b', 'appeal_to_authority': '\\b(expert\\s+says|according\\s+to\\s+(expert|authority))\\b', 'circular_reasoning': '\\b(because\\s+it\\s+is|it\\s+is\\s+because)\\b', 'hasty_generalization': '\\b(all\\s+are|everyone\\s+knows|always)\\b'}
-        logger.info(f'AdversarialVerifier initialized (window={max_contradiction_window}, streaming={enable_streaming})')
+        self._bias_keywords = {
+            "political": ["partisan", "biased", "agenda", "propaganda", "lobby"],
+            "commercial": ["sponsored", "advertisement", "paid", "promotion"],
+            "sensationalist": ["shocking", "unbelievable", "miracle", "conspiracy"],
+            "unverified": ["anonymous", "unconfirmed", "alleged", "rumored"],
+        }
+        self._fallacy_patterns = {
+            "ad_hominem": "\\b(attacking|attack on)\\s+(the\\s+)?person\\b|\\b(person\\s+is\\s+(bad|evil|wrong))\\b",
+            "straw_man": "\\b(misrepresents?|mischaracterizes?|distorts?)\\b",
+            "false_dichotomy": "\\b(either\\s+or|only\\s+two\\s+(options?|choices?))\\b",
+            "appeal_to_authority": "\\b(expert\\s+says|according\\s+to\\s+(expert|authority))\\b",
+            "circular_reasoning": "\\b(because\\s+it\\s+is|it\\s+is\\s+because)\\b",
+            "hasty_generalization": "\\b(all\\s+are|everyone\\s+knows|always)\\b",
+        }
+        logger.info(
+            f"AdversarialVerifier initialized (window={max_contradiction_window}, streaming={enable_streaming})"
+        )
 
-    async def verify_claim(self, claim: str, context: dict[str, Any] | None=None) -> AdversarialReport:
+    async def verify_claim(self, claim: str, context: dict[str, Any] | None = None) -> AdversarialReport:
         """
         Perform comprehensive adversarial verification of a claim.
 
@@ -97,9 +133,10 @@ class AdversarialVerifier:
             AdversarialReport with comprehensive analysis
         """
         import time
+
         start_time = time.time()
         context = context or {}
-        logger.info(f'Starting adversarial verification for claim: {claim[:50]}...')
+        logger.info(f"Starting adversarial verification for claim: {claim[:50]}...")
         supporting_evidence = await self._find_supporting_evidence(claim, context)
         contradicting_evidence = await self.find_counter_evidence_from_claim(claim, context)
         all_sources = set()
@@ -116,39 +153,61 @@ class AdversarialVerifier:
             temporal_consistency, temporal_contradictions = self.check_temporal_consistency(events)
             contradictions.extend(temporal_contradictions)
         cross_references = await self.cross_reference_databases(claim)
-        devil_advocate_score, alternative_explanations, logical_fallacies = await self._generate_devils_advocate_analysis(claim, supporting_evidence, contradicting_evidence, context)
-        overall_confidence = self._calculate_adversarial_confidence(supporting_evidence, contradicting_evidence, credibility_assessment, contradictions, cross_references)
+        (
+            devil_advocate_score,
+            alternative_explanations,
+            logical_fallacies,
+        ) = await self._generate_devils_advocate_analysis(claim, supporting_evidence, contradicting_evidence, context)
+        overall_confidence = self._calculate_adversarial_confidence(
+            supporting_evidence, contradicting_evidence, credibility_assessment, contradictions, cross_references
+        )
         metadata = {}
-        graph_rag = context.get('graph_rag') if context else None
+        graph_rag = context.get("graph_rag") if context else None
         if graph_rag and contradictions:
             try:
                 path = []
                 for c in contradictions[:3]:
-                    if hasattr(c, 'nodes') and c.nodes:
+                    if hasattr(c, "nodes") and c.nodes:
                         path = list(c.nodes)[:5]
                         break
                 if path:
                     from hledac_hypothesis.explainer import SimpleNodeAblationExplainer
+
                     explainer = SimpleNodeAblationExplainer(graph_rag)
                     importances = await explainer.explain_path(path, claim, max_nodes=5)
                     from hledac.universal.brain.research_hypothesis_engine import explain_with_mlx
+
                     explanation, prompt_hash = await explain_with_mlx(claim, path)
-                    metadata['edge_importances'] = importances
-                    metadata['mlx_explanation'] = explanation
-                    metadata['explainer_type'] = 'leave_one_node_out'
-                    metadata['max_nodes'] = 5
-                    metadata['scoring_fn'] = 'graph_rag.score_path'
-                    metadata['model_id'] = 'mlx-community/Qwen2.5-0.5B-Instruct-4bit'
-                    metadata['prompt_hash'] = prompt_hash
-                    metadata['token_budget'] = 80
-                    metadata['temperature'] = 0.0
+                    metadata["edge_importances"] = importances
+                    metadata["mlx_explanation"] = explanation
+                    metadata["explainer_type"] = "leave_one_node_out"
+                    metadata["max_nodes"] = 5
+                    metadata["scoring_fn"] = "graph_rag.score_path"
+                    metadata["model_id"] = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+                    metadata["prompt_hash"] = prompt_hash
+                    metadata["token_budget"] = 80
+                    metadata["temperature"] = 0.0
             except Exception as e:
-                logger.debug(f'Path explanation failed: {e}')
+                logger.debug(f"Path explanation failed: {e}")
         duration_ms = (time.time() - start_time) * 1000
         if metadata:
-            logger.debug('Adversarial metadata: %s', list(metadata.keys()))
-        logger.info(f'Adversarial verification complete: confidence={overall_confidence:.2f}, devil_score={devil_advocate_score:.2f}, contradictions={len(contradictions)}')
-        return AdversarialReport(hypothesis=claim, supporting_evidence=supporting_evidence, contradicting_evidence=contradicting_evidence, credibility_assessment=credibility_assessment, contradictions_found=contradictions, temporal_consistency=temporal_consistency, overall_confidence=overall_confidence, devil_advocate_score=devil_advocate_score, alternative_explanations=alternative_explanations, logical_fallacies=logical_fallacies, verification_duration_ms=duration_ms)
+            logger.debug("Adversarial metadata: %s", list(metadata.keys()))
+        logger.info(
+            f"Adversarial verification complete: confidence={overall_confidence:.2f}, devil_score={devil_advocate_score:.2f}, contradictions={len(contradictions)}"
+        )
+        return AdversarialReport(
+            hypothesis=claim,
+            supporting_evidence=supporting_evidence,
+            contradicting_evidence=contradicting_evidence,
+            credibility_assessment=credibility_assessment,
+            contradictions_found=contradictions,
+            temporal_consistency=temporal_consistency,
+            overall_confidence=overall_confidence,
+            devil_advocate_score=devil_advocate_score,
+            alternative_explanations=alternative_explanations,
+            logical_fallacies=logical_fallacies,
+            verification_duration_ms=duration_ms,
+        )
 
     async def find_counter_evidence(self, hypothesis: Hypothesis) -> list[Evidence]:
         """
@@ -163,9 +222,13 @@ class AdversarialVerifier:
         Returns:
             List of contradicting evidence items
         """
-        return await self.find_counter_evidence_from_claim(hypothesis.statement, {'hypothesis_type': hypothesis.hypothesis_type})
+        return await self.find_counter_evidence_from_claim(
+            hypothesis.statement, {"hypothesis_type": hypothesis.hypothesis_type}
+        )
 
-    async def find_counter_evidence_from_claim(self, claim: str, context: dict[str, Any] | None=None) -> list[Evidence]:
+    async def find_counter_evidence_from_claim(
+        self, claim: str, context: dict[str, Any] | None = None
+    ) -> list[Evidence]:
         """
         Find counter-evidence for a claim string.
 
@@ -178,7 +241,7 @@ class AdversarialVerifier:
         """
         context = context or {}
         counter_evidence: list[Evidence] = []
-        evidence_items = list(self.hypothesis_engine._evidence.items())[:self.max_contradiction_window]
+        evidence_items = list(self.hypothesis_engine._evidence.items())[: self.max_contradiction_window]
         for _evidence_id, evidence in evidence_items:
             if self._evidence_contradicts_claim(evidence, claim):
                 counter_evidence.append(evidence)
@@ -207,13 +270,21 @@ class AdversarialVerifier:
                 return cached
         bias_indicators = self._detect_bias_indicators(source)
         base_score = 0.5
-        if any((trusted in source.lower() for trusted in ['.edu', '.gov', 'peer-reviewed', 'arxiv'])):
+        if any(trusted in source.lower() for trusted in [".edu", ".gov", "peer-reviewed", "arxiv"]):
             base_score += 0.3
-        elif any((untrusted in source.lower() for untrusted in ['blog', 'forum', 'social', 'wiki'])):
+        elif any(untrusted in source.lower() for untrusted in ["blog", "forum", "social", "wiki"]):
             base_score -= 0.2
         bias_penalty = len(bias_indicators) * 0.1
         credibility_score = max(0.0, min(1.0, base_score - bias_penalty))
-        assessment = SourceCredibility(source_id=source, credibility_score=credibility_score, bias_indicators=bias_indicators, historical_accuracy=0.5, total_claims=0, verified_claims=0, contradiction_count=0)
+        assessment = SourceCredibility(
+            source_id=source,
+            credibility_score=credibility_score,
+            bias_indicators=bias_indicators,
+            historical_accuracy=0.5,
+            total_claims=0,
+            verified_claims=0,
+            contradiction_count=0,
+        )
         if source in self._source_credibility:
             self._source_credibility.move_to_end(source)
         else:
@@ -243,17 +314,33 @@ class AdversarialVerifier:
         sorted_events = sorted(events, key=attrgetter("timestamp"))
         event_id_to_event = {e.event_id: e for e in sorted_events}
         for event_a in sorted_events:
-            claims_after_id = event_a.metadata.get('claims_after')
+            claims_after_id = event_a.metadata.get("claims_after")
             if claims_after_id and claims_after_id in event_id_to_event:
                 event_b = event_id_to_event[claims_after_id]
-                contradiction = Contradiction(claim_a=f'{event_a.description} (at {event_a.timestamp})', claim_b=f'{event_b.description} (at {event_b.timestamp})', contradiction_type='temporal', severity=0.9, evidence_supporting_a=[event_a.source], evidence_supporting_b=[event_b.source], resolution_notes=f'Event {event_a.event_id} claims to occur after {event_b.event_id} but has earlier timestamp')
+                contradiction = Contradiction(
+                    claim_a=f"{event_a.description} (at {event_a.timestamp})",
+                    claim_b=f"{event_b.description} (at {event_b.timestamp})",
+                    contradiction_type="temporal",
+                    severity=0.9,
+                    evidence_supporting_a=[event_a.source],
+                    evidence_supporting_b=[event_b.source],
+                    resolution_notes=f"Event {event_a.event_id} claims to occur after {event_b.event_id} but has earlier timestamp",
+                )
                 contradictions.append(contradiction)
         for event in sorted_events:
-            causes = event.metadata.get('causes', [])
+            causes = event.metadata.get("causes", [])
             for cause_id in causes:
                 cause_event = event_id_to_event.get(cause_id)
                 if cause_event and cause_event.timestamp > event.timestamp:
-                    contradiction = Contradiction(claim_a=f'{event.description} is caused by {cause_event.description}', claim_b=f'Cause occurs at {cause_event.timestamp}, effect at {event.timestamp}', contradiction_type='temporal', severity=0.95, evidence_supporting_a=[event.source], evidence_supporting_b=[cause_event.source], resolution_notes='Effect timestamp precedes cause timestamp')
+                    contradiction = Contradiction(
+                        claim_a=f"{event.description} is caused by {cause_event.description}",
+                        claim_b=f"Cause occurs at {cause_event.timestamp}, effect at {event.timestamp}",
+                        contradiction_type="temporal",
+                        severity=0.95,
+                        evidence_supporting_a=[event.source],
+                        evidence_supporting_b=[cause_event.source],
+                        resolution_notes="Effect timestamp precedes cause timestamp",
+                    )
                     contradictions.append(contradiction)
         is_consistent = not contradictions
         return (is_consistent, contradictions)
@@ -279,7 +366,7 @@ class AdversarialVerifier:
         non_negated_bucket: list[tuple[int, Evidence]] = []
         for idx, ev in enumerate(evidence_window):
             content_lower = ev.content.lower()
-            has_neg = any((n in content_lower for n in negators))
+            has_neg = any(n in content_lower for n in negators)
             if has_neg:
                 negated_bucket.append((idx, ev))
             else:
@@ -292,9 +379,11 @@ class AdversarialVerifier:
                 if contradiction:
                     contradictions.append(contradiction)
                 if len(contradictions) >= 20:
-                    logger.warning(f'Contradiction detection hit limit (20) after {checked} checks, stopping early')
+                    logger.warning(f"Contradiction detection hit limit (20) after {checked} checks, stopping early")
                     return contradictions
-        logger.debug(f'Contradiction detection: checked {checked} cross-bucket pairs, found {len(contradictions)} contradictions')
+        logger.debug(
+            f"Contradiction detection: checked {checked} cross-bucket pairs, found {len(contradictions)} contradictions"
+        )
         return contradictions
 
     async def cross_reference_databases(self, claim: str) -> list[CrossReferenceResult]:
@@ -311,12 +400,12 @@ class AdversarialVerifier:
             List of cross-reference results from different databases
         """
         results: list[CrossReferenceResult] = []
-        databases = ['knowledge_graph', 'fact_check_db', 'academic_sources', 'news_archive']
+        databases = ["knowledge_graph", "fact_check_db", "academic_sources", "news_archive"]
         tasks = [self._query_database(db, claim) for db in databases]
-        db_results = await parallel_ok(*tasks, label='adversarial:509')
+        db_results = await parallel_ok(*tasks, label="adversarial:509")
         for db_id, result in zip(databases, db_results, strict=False):
             if isinstance(result, Exception):
-                logger.warning(f'Database query failed for {db_id}: {result}')
+                logger.warning(f"Database query failed for {db_id}: {result}")
                 continue
             results.append(result)
         return results
@@ -336,37 +425,45 @@ class AdversarialVerifier:
         """
         arguments: list[str] = []
         if len(hypothesis.supporting_evidence) < 3:
-            arguments.append(f'The hypothesis relies on only {len(hypothesis.supporting_evidence)} evidence items, which may be insufficient for a robust conclusion.')
+            arguments.append(
+                f"The hypothesis relies on only {len(hypothesis.supporting_evidence)} evidence items, which may be insufficient for a robust conclusion."
+            )
         sources = set()
         for eid in hypothesis.supporting_evidence:
             evidence = self.hypothesis_engine._evidence.get(eid)
             if evidence:
                 sources.add(evidence.source)
         if len(sources) < 2:
-            arguments.append('Evidence comes from a limited number of sources, increasing risk of systematic bias or coordinated misinformation.')
+            arguments.append(
+                "Evidence comes from a limited number of sources, increasing risk of systematic bias or coordinated misinformation."
+            )
         if hypothesis.conflicting_evidence:
-            arguments.append(f'There are {len(hypothesis.conflicting_evidence)} pieces of conflicting evidence that have not been adequately addressed.')
+            arguments.append(
+                f"There are {len(hypothesis.conflicting_evidence)} pieces of conflicting evidence that have not been adequately addressed."
+            )
         logical_issues = self._identify_logical_gaps(hypothesis)
         for issue in logical_issues:
-            arguments.append(f'Logical gap identified: {issue}')
+            arguments.append(f"Logical gap identified: {issue}")
         alternatives = self._generate_alternative_explanations(hypothesis)
         if alternatives:
-            arguments.append('Alternative explanations exist that could account for the observed evidence:')
+            arguments.append("Alternative explanations exist that could account for the observed evidence:")
             for alt in alternatives[:3]:
-                arguments.append(f'  - {alt}')
+                arguments.append(f"  - {alt}")
         assumptions = self._identify_assumptions(hypothesis)
         for assumption in assumptions:
             arguments.append(f"The hypothesis assumes: '{assumption}' - this may not hold under all conditions.")
         if not arguments:
-            arguments.append('While the hypothesis appears well-supported, extraordinary claims require extraordinary evidence. Continued scrutiny is warranted.')
-        return '\n\n'.join(arguments)
+            arguments.append(
+                "While the hypothesis appears well-supported, extraordinary claims require extraordinary evidence. Continued scrutiny is warranted."
+            )
+        return "\n\n".join(arguments)
 
     def _detect_bias_indicators(self, source: str) -> list[str]:
         """Detect bias indicators in a source identifier."""
         indicators = []
         source_lower = source.lower()
         for category, keywords in self._bias_keywords.items():
-            if any((kw in source_lower for kw in keywords)):
+            if any(kw in source_lower for kw in keywords):
                 indicators.append(category)
         return indicators
 
@@ -376,16 +473,16 @@ class AdversarialVerifier:
         if not evidence.content:
             return False
         evidence_lower = evidence.content.lower()
-        negators = ['not', 'no', 'never', 'false', 'incorrect', 'disputed']
-        claim_has_negation = any((n in claim_lower for n in negators))
-        evidence_has_negation = any((n in evidence_lower for n in negators))
+        negators = ["not", "no", "never", "false", "incorrect", "disputed"]
+        claim_has_negation = any(n in claim_lower for n in negators)
+        evidence_has_negation = any(n in evidence_lower for n in negators)
         if claim_has_negation != evidence_has_negation:
             claim_terms = set(claim_lower.split()) - set(negators)
             evidence_terms = set(evidence_lower.split()) - set(negators)
             overlap = claim_terms & evidence_terms
             if len(overlap) >= 3:
                 return True
-        if evidence.metadata.get('contradicts'):
+        if evidence.metadata.get("contradicts"):
             return True
         return False
 
@@ -399,22 +496,35 @@ class AdversarialVerifier:
         await asyncio.sleep(0.001)
         claim_hash = hashlib.md5(claim.encode()).hexdigest()
         confidence = int(claim_hash[:2], 16) / 255
-        return CrossReferenceResult(database_id=database_id, claim_found=confidence > 0.3, confidence=confidence, supporting_sources=[database_id] if confidence > 0.6 else [], conflicting_sources=[database_id] if confidence < 0.4 else [])
+        return CrossReferenceResult(
+            database_id=database_id,
+            claim_found=confidence > 0.3,
+            confidence=confidence,
+            supporting_sources=[database_id] if confidence > 0.6 else [],
+            conflicting_sources=[database_id] if confidence < 0.4 else [],
+        )
 
     def _check_pairwise_contradiction(self, evidence_a: Evidence, evidence_b: Evidence) -> Contradiction | None:
         """Check if two evidence items contradict each other."""
         content_a = evidence_a.content.lower()
         content_b = evidence_b.content.lower()
-        a_negated = any((n in content_a for n in self._NEGATORS))
-        b_negated = any((n in content_b for n in self._NEGATORS))
+        a_negated = any(n in content_a for n in self._NEGATORS)
+        b_negated = any(n in content_b for n in self._NEGATORS)
         if a_negated != b_negated:
             a_words = set(content_a.split())
             b_words = set(content_b.split())
             overlap = len(a_words & b_words) / max(len(a_words), len(b_words), 1)
             if overlap > 0.5:
-                return Contradiction(claim_a=evidence_a.content[:100], claim_b=evidence_b.content[:100], contradiction_type='factual', severity=0.7 + overlap * 0.2, evidence_supporting_a=[evidence_a.evidence_id], evidence_supporting_b=[evidence_b.evidence_id])
-        time_a = evidence_a.metadata.get('timestamp')
-        time_b = evidence_b.metadata.get('timestamp')
+                return Contradiction(
+                    claim_a=evidence_a.content[:100],
+                    claim_b=evidence_b.content[:100],
+                    contradiction_type="factual",
+                    severity=0.7 + overlap * 0.2,
+                    evidence_supporting_a=[evidence_a.evidence_id],
+                    evidence_supporting_b=[evidence_b.evidence_id],
+                )
+        time_a = evidence_a.metadata.get("timestamp")
+        time_b = evidence_b.metadata.get("timestamp")
         if time_a and time_b and (time_a != time_b):
             pass
         return None
@@ -423,8 +533,16 @@ class AdversarialVerifier:
         """Extract temporal events from evidence items."""
         events: list[Event] = []
         for evidence in evidence_list:
-            if 'event_timestamp' in evidence.metadata:
-                events.append(Event(event_id=evidence.evidence_id, description=evidence.content[:100], timestamp=evidence.metadata['event_timestamp'], source=evidence.source, metadata=evidence.metadata))
+            if "event_timestamp" in evidence.metadata:
+                events.append(
+                    Event(
+                        event_id=evidence.evidence_id,
+                        description=evidence.content[:100],
+                        timestamp=evidence.metadata["event_timestamp"],
+                        source=evidence.source,
+                        metadata=evidence.metadata,
+                    )
+                )
         return events
 
     async def _find_supporting_evidence(self, claim: str, context: dict[str, Any]) -> list[Evidence]:
@@ -443,21 +561,23 @@ class AdversarialVerifier:
         claim_words = set(claim_lower.split())
         evidence_words = set(evidence_lower.split())
         overlap = len(claim_words & evidence_words)
-        if evidence.metadata.get('supports'):
+        if evidence.metadata.get("supports"):
             return True
         if overlap >= 3:
-            negators = ['not ', 'no ', 'never ', 'false']
-            if not any((n in evidence_lower for n in negators)):
+            negators = ["not ", "no ", "never ", "false"]
+            if not any(n in evidence_lower for n in negators):
                 return True
         return False
 
-    async def _generate_devils_advocate_analysis(self, claim: str, supporting: list[Evidence], contradicting: list[Evidence], context: dict[str, Any]) -> tuple[float, list[str], list[str]]:
+    async def _generate_devils_advocate_analysis(
+        self, claim: str, supporting: list[Evidence], contradicting: list[Evidence], context: dict[str, Any]
+    ) -> tuple[float, list[str], list[str]]:
         """Generate devil's advocate analysis."""
         score = 0.0
         alternatives: list[str] = []
         fallacies: list[str] = []
         if contradicting:
-            total_weight = sum((e.reliability * e.relevance for e in contradicting))
+            total_weight = sum(e.reliability * e.relevance for e in contradicting)
             score += min(0.4, total_weight / 5)
         for evidence in supporting:
             credibility = self.assess_source_credibility(evidence.source)
@@ -483,16 +603,16 @@ class AdversarialVerifier:
     def _generate_alternative_explanations_for_claim(self, claim: str) -> list[str]:
         """Generate alternative explanations for a claim."""
         alternatives = []
-        if 'causes' in claim.lower() or 'leads to' in claim.lower():
-            alternatives.append('The observed correlation may be coincidental')
-            alternatives.append('A third variable may be the true cause')
-            alternatives.append('The causation may be reversed')
-        if 'is' in claim.lower() or 'equals' in claim.lower():
-            alternatives.append('The entities may be similar but distinct')
-            alternatives.append('The relationship may be contextual rather than absolute')
-        if 'all' in claim.lower() or 'every' in claim.lower():
-            alternatives.append('There may be exceptions not yet observed')
-            alternatives.append('The claim may hold only under specific conditions')
+        if "causes" in claim.lower() or "leads to" in claim.lower():
+            alternatives.append("The observed correlation may be coincidental")
+            alternatives.append("A third variable may be the true cause")
+            alternatives.append("The causation may be reversed")
+        if "is" in claim.lower() or "equals" in claim.lower():
+            alternatives.append("The entities may be similar but distinct")
+            alternatives.append("The relationship may be contextual rather than absolute")
+        if "all" in claim.lower() or "every" in claim.lower():
+            alternatives.append("There may be exceptions not yet observed")
+            alternatives.append("The claim may hold only under specific conditions")
         return alternatives
 
     def _identify_logical_gaps(self, hypothesis: Hypothesis) -> list[str]:
@@ -500,12 +620,12 @@ class AdversarialVerifier:
         gaps = []
         statement = hypothesis.statement.lower()
         if hypothesis.hypothesis_type == HypothesisType.CAUSAL.value:
-            if 'mechanism' not in statement and 'how' not in statement:
-                gaps.append('No proposed causal mechanism')
+            if "mechanism" not in statement and "how" not in statement:
+                gaps.append("No proposed causal mechanism")
         evidence_count = len(hypothesis.supporting_evidence)
-        if 'all' in statement or 'every' in statement:
+        if "all" in statement or "every" in statement:
             if evidence_count < 10:
-                gaps.append(f'Universal claim based on only {evidence_count} evidence items')
+                gaps.append(f"Universal claim based on only {evidence_count} evidence items")
         return gaps
 
     def _generate_alternative_explanations(self, hypothesis: Hypothesis) -> list[str]:
@@ -516,17 +636,30 @@ class AdversarialVerifier:
         """Identify underlying assumptions in a hypothesis."""
         assumptions = []
         if HypothesisType.CAUSAL.value in hypothesis.hypothesis_type:
-            assumptions.append('Causal relationships are stable over time')
-            assumptions.append('No confounding variables are present')
+            assumptions.append("Causal relationships are stable over time")
+            assumptions.append("No confounding variables are present")
         if HypothesisType.IDENTITY.value in hypothesis.hypothesis_type:
-            assumptions.append('Identity criteria are universally applicable')
-            assumptions.append('Attributes are sufficient for identification')
+            assumptions.append("Identity criteria are universally applicable")
+            assumptions.append("Attributes are sufficient for identification")
         return assumptions
 
-    def _calculate_adversarial_confidence(self, supporting: list[Evidence], contradicting: list[Evidence], credibility: dict[str, SourceCredibility], contradictions: list[Contradiction], cross_references: list[CrossReferenceResult]) -> float:
+    def _calculate_adversarial_confidence(
+        self,
+        supporting: list[Evidence],
+        contradicting: list[Evidence],
+        credibility: dict[str, SourceCredibility],
+        contradictions: list[Contradiction],
+        cross_references: list[CrossReferenceResult],
+    ) -> float:
         """Calculate overall confidence after adversarial analysis."""
-        support_weight = sum((e.reliability * e.relevance * credibility.get(e.source, SourceCredibility(e.source, 0.5)).credibility_score for e in supporting))
-        contradict_weight = sum((e.reliability * e.relevance * credibility.get(e.source, SourceCredibility(e.source, 0.5)).credibility_score for e in contradicting))
+        support_weight = sum(
+            e.reliability * e.relevance * credibility.get(e.source, SourceCredibility(e.source, 0.5)).credibility_score
+            for e in supporting
+        )
+        contradict_weight = sum(
+            e.reliability * e.relevance * credibility.get(e.source, SourceCredibility(e.source, 0.5)).credibility_score
+            for e in contradicting
+        )
         total_weight = support_weight + contradict_weight
         if total_weight == 0:
             base_confidence = 0.5

@@ -2,15 +2,6 @@
 Fetch Services — Service Layer for FetchCoordinator
 =================================================
 
-
-
-
-
-
-
-
-
-
 Provides isolated, testable components for the fetch pipeline:
 - TransportRouter: transport selection (Tor/I2P/clearnet/gopher)
 - RateLimiter: per-host and domain rate limiting
@@ -27,36 +18,29 @@ Usage:
     registry = FetchServiceRegistry(config=config)
     await registry.initialize()
 
-    # Get service
     dns = registry.dns
     result = await dns.resolve(host)
 """
+
 from __future__ import annotations
 
 import asyncio
 import ipaddress
 import logging
 import socket
-import threading
 import time
 from dataclasses import dataclass, field
-
 from typing import Any, Protocol, runtime_checkable
-
-from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
 
 from cachetools import TTLCache
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
-from hledac.universal._core import aclose
 from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import field as msgspec_field
+from hledac.universal.utils.asyncx import async_getaddrinfo, parallel
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Protocol Definitions
-# =============================================================================
 
 @runtime_checkable
 class FetchTransport(Protocol):
@@ -75,6 +59,7 @@ class FetchTransport(Protocol):
 
 class FetchOptions(Struct, frozen=True):
     """Options for fetch operation. M1 8GB: msgspec.Struct for ~40B/instance, no GC tracking."""
+
     timeout: float = 30.0
     max_retries: int = 3
     user_agent: str | None = None
@@ -84,19 +69,16 @@ class FetchOptions(Struct, frozen=True):
 
 class FetchResult(Struct, frozen=True):
     """Result of fetch operation. M1 8GB: msgspec.Struct for built-in JSON serde + no GC."""
+
     success: bool
     status_code: int = 0
-    content: bytes = b''
-    content_type: str = ''
+    content: bytes = b""
+    content_type: str = ""
     headers: dict[str, str] = msgspec_field(default_factory=dict)
     error: str | None = None
-    transport: str = 'unknown'
+    transport: str = "unknown"
     fetch_time_ms: float = 0.0
 
-
-# =============================================================================
-# DNS Cache Service
-# =============================================================================
 
 @dataclass(slots=True)
 class DNSCacheService:
@@ -106,21 +88,23 @@ class DNSCacheService:
     Prevents duplicate DNS resolutions for concurrent requests to the same host.
     M1 8GB: TTLCache with bounded size (2048 entries, 5min TTL).
     """
+
     _cache: TTLCache[str, list[str]] = field(default_factory=lambda: TTLCache(maxsize=2048, ttl=300))
     _inflight: dict[str, asyncio.Future[list[str] | None]] = field(default_factory=dict)
     _dedup_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _per_host_gate: Any = field(default=None)
-    _private_nets: tuple = field(default_factory=lambda: tuple(
-        ipaddress.ip_network(n) for n in [
-            '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-            '127.0.0.0/8', '169.254.0.0/16', '100.64.0.0/10'
-        ]
-    ))
+    _private_nets: tuple = field(
+        default_factory=lambda: tuple(
+            ipaddress.ip_network(n)
+            for n in ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10"]
+        )
+    )
 
     def __post_init__(self) -> None:
         # Import here to avoid circular deps
         try:
             from hledac.universal.utils.asyncx import BoundedPerHostGate
+
             self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=4)
         except ImportError:
             self._per_host_gate = None
@@ -131,17 +115,17 @@ class DNSCacheService:
         try:
             ip = ipaddress.ip_address(ip_str)
             for net in [
-                ipaddress.ip_network('10.0.0.0/8'),
-                ipaddress.ip_network('172.16.0.0/12'),
-                ipaddress.ip_network('192.168.0.0/16'),
-                ipaddress.ip_network('127.0.0.0/8'),
-                ipaddress.ip_network('169.254.0.0/16'),
-                ipaddress.ip_network('100.64.0.0/10'),
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("127.0.0.0/8"),
+                ipaddress.ip_network("169.254.0.0/16"),
+                ipaddress.ip_network("100.64.0.0/10"),
             ]:
                 if ip in net:
                     return False
             return not (ip.is_multicast or ip.is_unspecified or ip.is_loopback)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return False
 
     async def resolve(self, host: str) -> tuple[bool, list[str]]:
@@ -153,7 +137,6 @@ class DNSCacheService:
         if not host:
             return (False, [])
 
-        # Check for IP literal
         try:
             ip = ipaddress.ip_address(host)
             if not self._is_ip_public(str(ip)):
@@ -164,7 +147,6 @@ class DNSCacheService:
 
         cache_key = host.lower()
 
-        # Check cache
         cached = self._cache.get(cache_key)
         if cached is not None:
             if not cached:
@@ -178,7 +160,6 @@ class DNSCacheService:
                 return (False, [])
             return (True, list(ips))
 
-        # Start new resolution
         return await self._resolve_host(host, cache_key)
 
     async def _resolve_host(self, host: str, cache_key: str) -> tuple[bool, list[str]]:
@@ -197,9 +178,7 @@ class DNSCacheService:
                 # [PHYSICS]-03: Use async_getaddrinfo() which routes through
                 # rust.dns.resolve_async() (DoT, bypasses macOS mDNSResponder)
                 # when the dns feature is enabled. Falls back to loop.getaddrinfo().
-                raw_results = await async_getaddrinfo(
-                    host, 0, proto=socket.IPPROTO_TCP
-    )
+                raw_results = await async_getaddrinfo(host, 0, proto=socket.IPPROTO_TCP)
             finally:
                 if self._per_host_gate:
                     self._per_host_gate.release(sem)
@@ -217,7 +196,7 @@ class DNSCacheService:
 
             return (True, ips)
 
-        except (TimeoutError, OSError):
+        except TimeoutError, OSError:
             return (False, [])
 
     async def prefetch(self, hosts: list[str]) -> None:
@@ -230,12 +209,8 @@ class DNSCacheService:
             *[self.resolve(h) for h in hosts],
             policy="log",
             concurrency=10,
-    )
+        )
 
-
-# =============================================================================
-# Rate Limiter Service
-# =============================================================================
 
 @dataclass(slots=True)
 class RateLimiterService:
@@ -245,6 +220,7 @@ class RateLimiterService:
     CB-02: Per-domain rate limiter — 0.5 RPS default (1 req / 2s)
     CB-04: Retry budget per domain — max 20 retries per 60s window
     """
+
     _rate_limit_rps: float = field(default=0.5)
     _max_hosts: int = field(default=512)
     _domain_limiter: Any = field(default=None)
@@ -256,10 +232,8 @@ class RateLimiterService:
     def __post_init__(self) -> None:
         try:
             from hledac.universal.utils.asyncx import DomainRateLimiter
-            self._domain_limiter = DomainRateLimiter(
-                rate=self._rate_limit_rps,
-                max_hosts=self._max_hosts
-    )
+
+            self._domain_limiter = DomainRateLimiter(rate=self._rate_limit_rps, max_hosts=self._max_hosts)
         except ImportError:
             self._domain_limiter = None
 
@@ -272,20 +246,17 @@ class RateLimiterService:
         if not domain:
             return (True, "empty_domain")
 
-        # Check retry budget
         if self._retry_budget_lock is None:
             self._retry_budget_lock = asyncio.Lock()
         async with self._retry_budget_lock:
             now = time.monotonic()
             if domain in self._retry_budget:
                 self._retry_budget[domain] = [
-                    ts for ts in self._retry_budget[domain]
-                    if now - ts < self._retry_budget_window
+                    ts for ts in self._retry_budget[domain] if now - ts < self._retry_budget_window
                 ]
                 if len(self._retry_budget[domain]) >= self._retry_budget_max:
                     return (False, f"retry_budget_exceeded:{len(self._retry_budget[domain])}/{self._retry_budget_max}")
 
-        # Check domain rate limit
         if self._domain_limiter:
             allowed, reason = self._domain_limiter.check(domain)
             if not allowed:
@@ -311,10 +282,6 @@ class RateLimiterService:
             self._domain_limiter.record_failure(domain)
 
 
-# =============================================================================
-# Circuit Breaker Service
-# =============================================================================
-
 @dataclass(slots=True)
 class CircuitBreakerService:
     """
@@ -332,30 +299,28 @@ class CircuitBreakerService:
         """
         try:
             from hledac.universal.transport import circuit_breaker as cb
+
             decision = cb.domain_breaker_check(domain)
             return (decision.allowed, decision.reason, decision.retry_after_s)
-        except (ImportError, AttributeError, OSError):
+        except ImportError, AttributeError, OSError:
             return (True, "cb_unavailable", 0.0)
 
     def record_domain_success(self, domain: str) -> None:
         """Record domain success."""
         try:
             from hledac.universal.transport import circuit_breaker as cb
+
             cb.domain_breaker_record_success(domain)
-        except (ImportError, AttributeError):  # noqa: BLE001
+        except ImportError, AttributeError:  # noqa: BLE001
             pass
 
-    def record_domain_failure(
-        self, domain: str, is_timeout: bool = False, failure_kind: str = ''
-    ) -> None:
+    def record_domain_failure(self, domain: str, is_timeout: bool = False, failure_kind: str = "") -> None:
         """Record domain failure."""
         try:
             from hledac.universal.transport import circuit_breaker as cb
-            cb.domain_breaker_record_failure(
-                domain, is_timeout=is_timeout,
-                failure_kind=failure_kind or 'fetch_error'
-    )
-        except (ImportError, AttributeError, OSError):  # noqa: BLE001
+
+            cb.domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=failure_kind or "fetch_error")
+        except ImportError, AttributeError, OSError:  # noqa: BLE001
             pass
 
     def check_transport(self, transport: str) -> tuple[bool, str, float]:
@@ -369,12 +334,13 @@ class CircuitBreakerService:
 
         try:
             from hledac.universal.transport import circuit_breaker as cb
+
             breaker = cb.get_transport_breaker(transport)
             if breaker is None:
                 return (True, f"transport_breaker_not_found:{transport}", 0.0)
             decision = breaker.check_circuit()
             return (decision.allowed, decision.reason, decision.retry_after_s)
-        except (ImportError, AttributeError, OSError):
+        except ImportError, AttributeError, OSError:
             return (True, "transport_cb_unavailable", 0.0)
 
     def record_transport_success(self, transport: str) -> None:
@@ -383,10 +349,11 @@ class CircuitBreakerService:
             return
         try:
             from hledac.universal.transport import circuit_breaker as cb
+
             breaker = cb.get_transport_breaker(transport)
             if breaker is not None:
                 breaker.record_success()
-        except (ImportError, AttributeError):  # noqa: BLE001
+        except ImportError, AttributeError:  # noqa: BLE001
             pass
 
     def record_transport_failure(self, transport: str, is_timeout: bool = False) -> None:
@@ -395,19 +362,17 @@ class CircuitBreakerService:
             return
         try:
             from hledac.universal.transport import circuit_breaker as cb
+
             breaker = cb.get_transport_breaker(transport)
             if breaker is not None:
                 breaker.record_failure(is_timeout=is_timeout)
-        except (ImportError, AttributeError, OSError):  # noqa: BLE001
+        except ImportError, AttributeError, OSError:  # noqa: BLE001
             pass
 
 
-# =============================================================================
-# Retry Policy Service
-# =============================================================================
-
 class RetryConfig(Struct, frozen=True):
     """Configuration for retry policy. M1 8GB: msgspec.Struct for fast init."""
+
     max_retries: int = 3
     base_delay: float = 1.0
     max_delay: float = 30.0
@@ -422,6 +387,7 @@ class RetryPolicyService:
 
     Tracks retry attempts per domain to prevent amplification attacks.
     """
+
     config: RetryConfig = field(default_factory=RetryConfig)
     _budget: dict[str, list[float]] = field(default_factory=dict)
     _budget_lock: asyncio.Lock | None = None
@@ -440,10 +406,7 @@ class RetryPolicyService:
         async with self._budget_lock:
             now = time.monotonic()
             if domain in self._budget:
-                self._budget[domain] = [
-                    ts for ts in self._budget[domain]
-                    if now - ts < self.config.budget_window
-                ]
+                self._budget[domain] = [ts for ts in self._budget[domain] if now - ts < self.config.budget_window]
                 if len(self._budget[domain]) >= self.config.budget_max:
                     return (False, f"budget_exceeded:{len(self._budget[domain])}")
 
@@ -460,18 +423,16 @@ class RetryPolicyService:
     def calculate_delay(self, attempt: int) -> float:
         """Calculate delay for given attempt with exponential backoff + jitter."""
         import random
-        delay = min(self.config.base_delay * (2 ** attempt), self.config.max_delay)
+
+        delay = min(self.config.base_delay * (2**attempt), self.config.max_delay)
         # Add jitter (±10%)
         jitter = delay * 0.1 * (random.random() * 2 - 1)
         return delay + jitter
 
 
-# =============================================================================
-# Fetch Service Registry
-# =============================================================================
-
 class FetchServiceConfig(Struct, frozen=True):
     """Configuration for fetch services. M1 8GB: msgspec.Struct for fast init."""
+
     enable_tor: bool = False
     enable_i2p: bool = False
     enable_gopher: bool = False
@@ -491,7 +452,7 @@ class FetchServiceConfig(Struct, frozen=True):
             rate_limit_rps=FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5),
             max_retries=FeatureFlags.get_int(FeatureFlag.MAX_RETRIES, 3),
             timeout=FeatureFlags.get_float(FeatureFlag.FETCH_TIMEOUT, 30.0),
-    )
+        )
 
 
 class FetchServiceRegistry:
@@ -501,8 +462,17 @@ class FetchServiceRegistry:
     Provides lazy initialization of transports and services.
     M1 8GB: Only enabled transports are loaded.
     """
-    __slots__ = ('_config', '_dns', '_rate_limiter', '_circuit_breaker',
-                 '_retry_policy', '_robots_checker', '_transports', '_initialized')
+
+    __slots__ = (
+        "_config",
+        "_dns",
+        "_rate_limiter",
+        "_circuit_breaker",
+        "_retry_policy",
+        "_robots_checker",
+        "_transports",
+        "_initialized",
+    )
 
     def __init__(self, config: FetchServiceConfig | None = None) -> None:
         self._config = config or FetchServiceConfig.from_env()
@@ -519,40 +489,39 @@ class FetchServiceRegistry:
         if self._initialized:
             return True
 
-        # Initialize core services
         self._dns = DNSCacheService()
-        self._rate_limiter = RateLimiterService(
-            _rate_limit_rps=self._config.rate_limit_rps
-    )
+        self._rate_limiter = RateLimiterService(_rate_limit_rps=self._config.rate_limit_rps)
         self._circuit_breaker = CircuitBreakerService()
-        self._retry_policy = RetryPolicyService(
-            config=RetryConfig(max_retries=self._config.max_retries)
-    )
+        self._retry_policy = RetryPolicyService(config=RetryConfig(max_retries=self._config.max_retries))
 
         # Lazy-load transports based on config
         await self._initialize_transports()
 
         self._initialized = True
-        logger.info("FetchServiceRegistry initialized", extra={
-            'transports': list(self._transports.keys()),
-            'dns_cache_size': 2048,
-            'rate_limit_rps': self._config.rate_limit_rps,
-        })
+        logger.info(
+            "FetchServiceRegistry initialized",
+            extra={
+                "transports": list(self._transports.keys()),
+                "dns_cache_size": 2048,
+                "rate_limit_rps": self._config.rate_limit_rps,
+            },
+        )
         return True
 
     async def _initialize_transports(self) -> None:
         """Initialize transports based on enabled flags."""
         # Clearnet always available
-        self._transports['clearnet'] = None  # Placeholder for actual transport
+        self._transports["clearnet"] = None  # Placeholder for actual transport
 
         # Tor
         if self._config.enable_tor:
             try:
                 from hledac.universal.transport.tor_transport import TorTransport
+
                 tor = TorTransport()
                 if tor.available:
-                    self._transports['tor'] = tor
-                    logger.info('TorTransport enabled')
+                    self._transports["tor"] = tor
+                    logger.info("TorTransport enabled")
             except ImportError:  # noqa: BLE001
                 pass
 
@@ -560,10 +529,11 @@ class FetchServiceRegistry:
         if self._config.enable_i2p:
             try:
                 from hledac.universal.transport.i2p_transport import I2PTransport
+
                 i2p = I2PTransport()
                 if i2p.available:
-                    self._transports['i2p'] = i2p
-                    logger.info('I2PTransport enabled')
+                    self._transports["i2p"] = i2p
+                    logger.info("I2PTransport enabled")
             except ImportError:  # noqa: BLE001
                 pass
 
@@ -571,14 +541,11 @@ class FetchServiceRegistry:
         if self._config.enable_gopher:
             try:
                 from hledac.universal.transport.gopher_transport import GopherTransport
-                self._transports['gopher'] = GopherTransport()
-                logger.info('GopherTransport enabled')
+
+                self._transports["gopher"] = GopherTransport()
+                logger.info("GopherTransport enabled")
             except ImportError:  # noqa: BLE001
                 pass
-
-    # -------------------------------------------------------------------------
-    # Service Accessors
-    # -------------------------------------------------------------------------
 
     @property
     def dns(self) -> DNSCacheService:
@@ -622,23 +589,21 @@ class FetchServiceRegistry:
 
         Returns transport name: 'clearnet', 'tor', 'i2p', 'gopher'.
         """
-        # Parse URL scheme
-        if url.startswith('i2p://'):
-            if 'i2p' in self._transports:
-                return 'i2p'
-            return 'clearnet'
+        if url.startswith("i2p://"):
+            if "i2p" in self._transports:
+                return "i2p"
+            return "clearnet"
 
-        if url.startswith('gopher://'):
-            if 'gopher' in self._transports:
-                return 'gopher'
-            return 'clearnet'
+        if url.startswith("gopher://"):
+            if "gopher" in self._transports:
+                return "gopher"
+            return "clearnet"
 
-        # Check for darknet indicators
         lower_url = url.lower()
-        if ('.onion/' in lower_url or url.startswith('tor://')) and 'tor' in self._transports:
-            return 'tor'
+        if (".onion/" in lower_url or url.startswith("tor://")) and "tor" in self._transports:
+            return "tor"
 
-        return 'clearnet'
+        return "clearnet"
 
     def is_transport_available(self, transport: str) -> bool:
         """Check if transport is available."""
@@ -653,18 +618,18 @@ class FetchServiceRegistry:
         stats = {}
         for name, transport in self._transports.items():
             if transport is None:
-                stats[name] = {'available': True, 'type': 'clearnet'}
-            elif hasattr(transport, 'get_stats'):
+                stats[name] = {"available": True, "type": "clearnet"}
+            elif hasattr(transport, "get_stats"):
                 stats[name] = transport.get_stats()
             else:
-                stats[name] = {'available': True}
+                stats[name] = {"available": True}
         return stats
 
     async def aclose(self) -> None:
         """Close service registry and release all resources."""
         # Close transports that support aclose
         for name, transport in self._transports.items():
-            if transport is not None and hasattr(transport, 'aclose'):
+            if transport is not None and hasattr(transport, "aclose"):
                 try:
                     await transport.aclose()
                 except Exception as e:  # noqa: BLE001

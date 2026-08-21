@@ -46,20 +46,12 @@ use rayon::slice::ParallelSliceMut;
 
 use crate::gil::release_gil;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Hard cap on embedding dimension (memory guard).
 const MAX_DIM: usize = 2048;
 /// Hard cap on number of candidate embeddings per query.
 const MAX_CANDIDATES: usize = 10_000;
 /// Hard cap on number of query embeddings per batch.
 const MAX_QUERIES: usize = 100;
-
-// ---------------------------------------------------------------------------
-// Normalization — SIMD path
-// ---------------------------------------------------------------------------
 
 /// Normalize a vector in-place using ARM NEON (aarch64).
 /// Returns false on zero-vector.
@@ -210,10 +202,6 @@ fn normalize(vec: &mut [f32]) -> bool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dot product — SIMD path
-// ---------------------------------------------------------------------------
-
 /// Compute dot product using ARM NEON.
 /// Caller guarantees a and b have the same length.
 /// ISSUE-007: now validates length match — original had no check.
@@ -306,10 +294,6 @@ unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Core cosine scoring — pre-normalized candidates
-// ---------------------------------------------------------------------------
-
 /// Cosine similarity for one query against pre-normalized candidates.
 /// Candidates must already be L2-normalized; this normalizes the query only.
 /// Returns one score per candidate.
@@ -337,10 +321,6 @@ fn cosine_scores_for_one_query(query: &[f32], candidates: &[&[f32]]) -> Vec<f32>
     }
     scores
 }
-
-// ---------------------------------------------------------------------------
-// Python-facing API
-// ---------------------------------------------------------------------------
 
 /// Compute cosine similarity scores for batch of query embeddings vs candidates.
 ///
@@ -420,7 +400,6 @@ pub fn batch_cosine_scores(
         let _ = normalize(slice);
     }
 
-    // Build pointer slices into the normalized owned vec.
     let candidates: Vec<&[f32]> = (0..num_candidates)
         .map(|i| {
             let start = i * dim;
@@ -440,10 +419,6 @@ pub fn batch_cosine_scores(
     Ok(results)
 }
 
-// ---------------------------------------------------------------------------
-// Batch Top-K — rayon parallel partial sort per row
-// ---------------------------------------------------------------------------
-
 /// Return top-K indices and scores for one row of cosine similarity scores.
 /// Uses a two-phase approach: argpartition (O(N)) to get K candidates,
 /// then argsort (O(K log K)) to order them descending.
@@ -455,7 +430,6 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
     let k = k.min(n);
 
     if k < n {
-        // Phase 1: argpartition — O(N), places K smallest at end
         let mut indices: Vec<usize> = (0..n));
         indices.select_nth_unstable_by(n - k, |a, b| {
             // Compare by score descending (largest first)
@@ -466,7 +440,6 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
         // Top-K candidates are in the last K positions (not yet sorted)
         let top_candidates = &indices[n - k..];
 
-        // Phase 2: argsort the top-K — O(K log K), descending by score
         let mut order: Vec<(usize, f32)> = top_candidates
             .iter()
             .enumerate()
@@ -478,7 +451,6 @@ fn topk_for_one_row(scores: &[f32], k: usize) -> (Vec<usize>, Vec<f32>) {
         let top_scores: Vec<f32> = top_indices.iter().map(|&idx| scores[idx]));
         (top_indices, top_scores)
     } else {
-        // Return all sorted
         let mut order: Vec<(usize, f32)> =
             scores.iter().enumerate().map(|(i, &s)| (i, s)));
         order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -572,10 +544,6 @@ pub fn batch_topk_indices(
 
     Ok((all_indices, all_scores))
 }
-
-// ---------------------------------------------------------------------------
-// Hamming distance — SIMD bit-popcount on packed binary vectors
-// ---------------------------------------------------------------------------
 
 /// Count set bits in a 16-byte chunk using ARM NEON.
 /// MRL-2 FIX: Added vcntq_u8 before vpaddlq_u8. Previous code summed byte VALUES,
@@ -758,7 +726,6 @@ pub fn batch_hamming_scores(
         )));
     }
 
-    // Build pointer slices into the flat candidates vec.
     let candidates: Vec<&[u8]> = (0..num_candidates)
         .map(|i| {
             let start = i * num_bytes;
@@ -835,35 +802,6 @@ pub fn batch_hamming_scores_batched(
     Ok(results)
 }
 
-// ---------------------------------------------------------------------------
-// Zero-copy NumPy path — ISSUE-001 fix.
-// ---------------------------------------------------------------------------
-// IMPORTANT: These are NOT duplicates — they serve different performance needs:
-// - batch_cosine_scores: Serial normalization, simpler, for small batches (N < 1000)
-// - batch_cosine_scores_npy: Parallel rayon normalization with GIL release, for large batches
-//   (N >= 1000). The _npy suffix refers to the array('f') zero-copy pattern, not numpy itself.
-//
-// Performance: _npy is 2-4× faster for large batches due to rayon parallel normalization.
-// Both functions take Vec<f32> (not numpy arrays directly) — the name is historical.
-// ---------------------------------------------------------------------------
-// Python passes array('f', q.flatten()) → Vec<f32> — no Python float objects.
-// GIL is released during rayon par_chunks normalization.
-/// Zero-copy batch cosine via array('f') — ISSUE-001 fix.
-///
-/// Args:
-///   q: &PyAny — memoryview or bytes of flatten()'d query array, float32 C-contiguous
-///   c: &PyAny — memoryview or bytes of flatten()'d candidates array, float32 C-contiguous
-///   nq: Number of query embeddings (Q)
-///   nc: Number of candidate embeddings (N)
-///   dim: Embedding dimension (D)
-///
-/// Returns:
-///   Vec<Vec<f32>> — Q×N matrix as list of lists (compatible with existing API).
-///
-/// Performance: avoids flatten().tolist() → eliminates 1 Python list allocation
-/// per call. GIL is released during rayon normalization, so this is ~2-4× faster
-/// than the list-marshaling path even without zero-copy buffers.
-/// Expected: 5-15 ms → 2-5 ms per rerank for Q=10, N=1000, D=768.
 #[pyfunction]
 pub fn batch_cosine_scores_npy(
     q: Vec<f32>,
@@ -951,10 +889,6 @@ pub fn batch_cosine_scores_npy(
     Ok(results)
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_cosine_scores))?;
     m.add_function(wrap_pyfunction!(batch_cosine_scores_npy))?;
@@ -963,10 +897,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_topk_indices))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1078,8 +1008,6 @@ mod tests {
         let result = batch_cosine_scores(vec![1.0, 2.0, 3.0], vec![], 1, 0, 3));
         assert!(result.is_empty());
     }
-
-    // ---- Hamming tests -------------------------------------------------------
 
     #[test]
     fn test_hamming_identity() {

@@ -23,16 +23,14 @@ DuckDB analytical queries:
     - error rate: SUM(status != 'OK') / COUNT(*)
 """
 
-
 import hashlib
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.sdk.trace import Span
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Status, StatusCode
-from _core import aclose
 
 # orjson fallback — 5-10× faster than stdlib json, M1 optimized
 try:
@@ -113,6 +111,7 @@ def create_otel_spans_table(conn: Any) -> None:
 # SamplingSpanProcessor — TEL-01: Filter high-frequency spans before export
 # --------------------------------------------------------------------------- #
 
+
 class SamplingSpanProcessor:
     """
     SpanProcessor wrapper that applies sampling rules before passing spans downstream.
@@ -177,7 +176,7 @@ class SamplingSpanProcessor:
                 "lmdb.",
                 "cache.",
                 "duckdb.",
-    )
+            )
 
     def on_start(self, span: Span) -> None:
         self._next.on_start(span)
@@ -239,9 +238,7 @@ class SamplingSpanProcessor:
             trace_id_bytes = ctx.trace_id.to_bytes(16, "big")
             name_bytes = (span.name or "").encode("utf-8")
             hash_input = trace_id_bytes + name_bytes
-            hash_val = int.from_bytes(
-                hashlib.sha256(hash_input).digest()[:8], "big"
-    )
+            hash_val = int.from_bytes(hashlib.sha256(hash_input).digest()[:8], "big")
             return (hash_val % 1000) < (self._sample_rate * 1000)
         except Exception:
             return True  # Fail-safe: export on error
@@ -260,6 +257,7 @@ class SamplingSpanProcessor:
 # --------------------------------------------------------------------------- #
 # DuckDBSpanExporter
 # --------------------------------------------------------------------------- #
+
 
 class DuckDBSpanExporter(SpanExporter):
     """
@@ -288,7 +286,7 @@ class DuckDBSpanExporter(SpanExporter):
         self._worker: threading.Thread | None = None
         self._max_batch_size = max_batch_size
 
-    def start(self) -> "DuckDBSpanExporter":
+    def start(self) -> DuckDBSpanExporter:
         """Spustí background flush worker."""
         self._worker = threading.Thread(target=self._flush_loop, daemon=True)
         self._worker.start()
@@ -296,7 +294,6 @@ class DuckDBSpanExporter(SpanExporter):
 
     def _flush_loop(self) -> None:
         """Background loop — flush batch každých 1s."""
-        import time as _time
 
         while not self._shutdown.wait(1.0):
             with self._lock:
@@ -324,11 +321,18 @@ class DuckDBSpanExporter(SpanExporter):
         cursor = self._conn.cursor()
         records = [
             (
-                r["trace_id"], r["span_id"], r["parent_span_id"],
-                r["name"], r["status"], r["status_message"],
-                r["start_time_ms"], r["end_time_ms"], r["duration_ms"],
-                r["attributes_json"], r["resource_json"],
-    )
+                r["trace_id"],
+                r["span_id"],
+                r["parent_span_id"],
+                r["name"],
+                r["status"],
+                r["status_message"],
+                r["start_time_ms"],
+                r["end_time_ms"],
+                r["duration_ms"],
+                r["attributes_json"],
+                r["resource_json"],
+            )
             for r in batch
         ]
         cursor.executemany(sql, records)
@@ -408,6 +412,7 @@ class DuckDBSpanExporter(SpanExporter):
 # QueryBuilder — Analytical Queries
 # --------------------------------------------------------------------------- #
 
+
 class QueryBuilder:
     """
     Analytical queries proti otel_spans tabulce.
@@ -459,9 +464,7 @@ class QueryBuilder:
     def error_rate(self, *, since_hours: int = 24) -> float | None:
         """Chybovost za posledních N hodin."""
         try:
-            cutoff_ms = int(
-                (datetime.now(timezone.utc).timestamp() - since_hours * 3600) * 1000
-    )
+            cutoff_ms = int((datetime.now(UTC).timestamp() - since_hours * 3600) * 1000)
             total = self._conn.execute(
                 "SELECT COUNT(*) FROM otel_spans WHERE start_time_ms >= ?",
                 (cutoff_ms,),
@@ -479,9 +482,7 @@ class QueryBuilder:
     def throughput(self, name: str, *, since_hours: int = 1) -> float | None:
         """Počet spanů za hodinu."""
         try:
-            cutoff_ms = int(
-                (datetime.now(timezone.utc).timestamp() - since_hours * 3600) * 1000
-    )
+            cutoff_ms = int((datetime.now(UTC).timestamp() - since_hours * 3600) * 1000)
             count = self._conn.execute(
                 "SELECT COUNT(*) FROM otel_spans WHERE name = ? AND start_time_ms >= ?",
                 (name, cutoff_ms),
@@ -494,13 +495,9 @@ class QueryBuilder:
         """Celkový počet spanů, volitelně filtrováno podle name."""
         try:
             if name:
-                result = self._conn.execute(
-                    "SELECT COUNT(*) FROM otel_spans WHERE name = ?", (name,)
-                ).fetchone()
+                result = self._conn.execute("SELECT COUNT(*) FROM otel_spans WHERE name = ?", (name,)).fetchone()
             else:
-                result = self._conn.execute(
-                    "SELECT COUNT(*) FROM otel_spans"
-                ).fetchone()
+                result = self._conn.execute("SELECT COUNT(*) FROM otel_spans").fetchone()
             return int(result[0]) if result else 0
         except Exception:
             return 0

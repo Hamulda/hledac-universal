@@ -2,8 +2,6 @@
 WASM Sandbox - WebAssembly Secure Execution Environment
 ======================================================
 
-
-
 Secure WASM execution with fuel limits, epoch interruption,
 resource management, and WASI socket API for protocol parsing.
 
@@ -22,6 +20,7 @@ M1 8GB bounds:
   - TCP connect timeout: 10 s
   - Socket lifetime bound to sandbox instance
 """
+
 import asyncio
 import logging
 import socket
@@ -30,13 +29,13 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 _WASMTIME_AVAILABLE = False
 try:
     import wasmtime
     from wasmtime import Config, Engine, Func, Instance, Linker, Module, Store
+
     _WASMTIME_AVAILABLE = True
 except ImportError:
     wasmtime = None
@@ -75,7 +74,6 @@ _WASI_SOCK_STREAM: int = 1
 _WASI_MAX_SOCKETS: int = 3
 _WASI_SOCK_BUF_SIZE: int = 65536  # 64 KiB
 _WASI_CONNECT_TIMEOUT: float = 10.0
-
 
 # ── WASI Socket Linker ────────────────────────────────────────────────────────
 
@@ -204,7 +202,7 @@ class WasmWasiLinker:
 
             sock.connect((host, port))
             return _WASI_ERRNO_SUCCESS
-        except (socket.timeout, TimeoutError):
+        except TimeoutError:
             return _WASI_ERRNO_TIMEDOUT
         except ConnectionRefusedError:
             return _WASI_ERRNO_CONNREFUSED
@@ -238,7 +236,7 @@ class WasmWasiLinker:
             # Write sent count (4 bytes little-endian)
             mem.write(caller, so_data_len_ptr, struct.pack("<I", sent))
             return _WASI_ERRNO_SUCCESS
-        except (socket.timeout, TimeoutError):
+        except TimeoutError:
             return _WASI_ERRNO_TIMEDOUT
         except ConnectionResetError:
             return _WASI_ERRNO_CONNRESET
@@ -272,11 +270,10 @@ class WasmWasiLinker:
             data = sock.recv(recv_len)
             if data:
                 mem.write(caller, ri_data_ptr, data)
-            # Write received count + flags
             mem.write(caller, ro_data_len_ptr, struct.pack("<I", len(data)))
             mem.write(caller, ro_flags_ptr, struct.pack("<H", 0))
             return _WASI_ERRNO_SUCCESS
-        except (socket.timeout, TimeoutError):
+        except TimeoutError:
             return _WASI_ERRNO_TIMEDOUT
         except ConnectionResetError:
             return _WASI_ERRNO_CONNRESET
@@ -287,7 +284,7 @@ class WasmWasiLinker:
 
     # ── Linker registration ─────────────────────────────────────────────
 
-    def build_linker(self, engine: "Engine", store: "Store") -> "Linker":
+    def build_linker(self, engine: Engine, store: Store) -> Linker:
         """Create and configure a ``wasmtime.Linker`` with WASI socket host funcs.
 
         Registers ``wasi_snapshot_preview1`` imports for ``sock_open``,
@@ -311,36 +308,45 @@ class WasmWasiLinker:
         linker.define_func(
             "wasi_snapshot_preview1",
             "sock_open",
-            Func(store,
-                 [wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32()],
-                 [wasmtime.ValType.i32()],
-                 self._host_sock_open),
-    )
+            Func(
+                store,
+                [wasmtime.ValType.i32(), wasmtime.ValType.i32(), wasmtime.ValType.i32(), wasmtime.ValType.i32()],
+                [wasmtime.ValType.i32()],
+                self._host_sock_open,
+            ),
+        )
 
         # sock_connect(fd: i32, addr_ptr: i32, addr_len: i32) -> (errno: i32)
         linker.define_func(
             "wasi_snapshot_preview1",
             "sock_connect",
-            Func(store,
-                 [wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32()],
-                 [wasmtime.ValType.i32()],
-                 self._host_sock_connect),
-    )
+            Func(
+                store,
+                [wasmtime.ValType.i32(), wasmtime.ValType.i32(), wasmtime.ValType.i32(), wasmtime.ValType.i32()],
+                [wasmtime.ValType.i32()],
+                self._host_sock_connect,
+            ),
+        )
 
         # sock_send(fd: i32, ri_data_ptr: i32, ri_data_len: i32,
         #           si_flags: i32, so_data_len_ptr: i32) -> (errno: i32)
         linker.define_func(
             "wasi_snapshot_preview1",
             "sock_send",
-            Func(store,
-                 [wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32()],
-                 [wasmtime.ValType.i32()],
-                 self._host_sock_send),
-    )
+            Func(
+                store,
+                [
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                ],
+                [wasmtime.ValType.i32()],
+                self._host_sock_send,
+            ),
+        )
 
         # sock_recv(fd: i32, ri_data_ptr: i32, ri_data_len: i32,
         #           ri_flags: i32, ro_data_len_ptr: i32, ro_flags_ptr: i32)
@@ -348,14 +354,21 @@ class WasmWasiLinker:
         linker.define_func(
             "wasi_snapshot_preview1",
             "sock_recv",
-            Func(store,
-                 [wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32(), wasmtime.ValType.i32(),
-                  wasmtime.ValType.i32()],
-                 [wasmtime.ValType.i32()],
-                 self._host_sock_recv),
-    )
+            Func(
+                store,
+                [
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                    wasmtime.ValType.i32(),
+                ],
+                [wasmtime.ValType.i32()],
+                self._host_sock_recv,
+            ),
+        )
 
         return linker
 
@@ -393,14 +406,24 @@ class WasmSandbox:
     Use ``WasmSandbox.with_wasi()`` factory for WASI-capable sandboxes
     that can execute WASM protocol parsers with TCP access.
     """
+
     DEFAULT_FUEL_LIMIT = 1000000
     DEFAULT_EPOCH_DEADLINE = 30
     DEFAULT_TIMEOUT = 60
-    __slots__ = tuple((
-        '_config', '_engine', '_epoch_ticker', '_epoch_ticker_running',
-        '_lock', '_running_instances', 'cache_dir', 'epoch_deadline',
-        'fuel_limit', 'timeout', '_enable_wasi', '_wasi_linker',
-    ))
+    __slots__ = (
+        "_config",
+        "_engine",
+        "_epoch_ticker",
+        "_epoch_ticker_running",
+        "_lock",
+        "_running_instances",
+        "cache_dir",
+        "epoch_deadline",
+        "fuel_limit",
+        "timeout",
+        "_enable_wasi",
+        "_wasi_linker",
+    )
 
     def __init__(
         self,
@@ -410,7 +433,7 @@ class WasmSandbox:
         cache_dir: Path | None = None,
         *,
         enable_wasi: bool = False,
-    ):
+    ) -> None:
         """
         Initialize WASM sandbox.
 
@@ -428,9 +451,7 @@ class WasmSandbox:
         self.timeout = timeout
         self.cache_dir = cache_dir
         self._enable_wasi = enable_wasi
-        self._wasi_linker: WasmWasiLinker | None = (
-            WasmWasiLinker() if enable_wasi else None
-    )
+        self._wasi_linker: WasmWasiLinker | None = WasmWasiLinker() if enable_wasi else None
         self._engine: Engine | None = None
         self._config: Config | None = None
         self._epoch_ticker: threading.Thread | None = None
@@ -441,9 +462,12 @@ class WasmSandbox:
             self._init_engine()
             self._start_epoch_ticker()
         logger.info(
-            'WasmSandbox initialized: fuel=%s, epoch=%ss, timeout=%ss, wasi=%s',
-            fuel_limit, epoch_deadline, timeout, enable_wasi,
-    )
+            "WasmSandbox initialized: fuel=%s, epoch=%ss, timeout=%ss, wasi=%s",
+            fuel_limit,
+            epoch_deadline,
+            timeout,
+            enable_wasi,
+        )
 
     @classmethod
     def with_wasi(
@@ -452,7 +476,7 @@ class WasmSandbox:
         epoch_deadline: float = DEFAULT_EPOCH_DEADLINE,
         timeout: float = DEFAULT_TIMEOUT,
         cache_dir: Path | None = None,
-    ) -> "WasmSandbox":
+    ) -> WasmSandbox:
         """Factory for a WASI-capable sandbox.
 
         Convenience constructor that sets ``enable_wasi=True``.
@@ -467,14 +491,14 @@ class WasmSandbox:
             timeout=timeout,
             cache_dir=cache_dir,
             enable_wasi=True,
-    )
+        )
 
     @property
     def wasi_enabled(self) -> bool:
         """True if WASI socket API is enabled on this sandbox."""
         return self._enable_wasi and self._wasi_linker is not None
 
-    def _init_engine(self):
+    def _init_engine(self) -> None:
         """Initialize WASM engine with fuel and epoch settings."""
         if not _WASMTIME_AVAILABLE:
             return
@@ -483,29 +507,31 @@ class WasmSandbox:
             self._config.consume_fuel(True)
             self._config.epoch_interruption(True)
             self._engine = Engine(self._config)
-            logger.debug('WASM engine initialized')
+            logger.debug("WASM engine initialized")
         except Exception as e:
-            logger.error(f'Failed to initialize WASM engine: {e}')
+            logger.error(f"Failed to initialize WASM engine: {e}")
             self._engine = None
 
-    def _start_epoch_ticker(self):
+    def _start_epoch_ticker(self) -> None:
         """Start background epoch ticker thread."""
         if not _WASMTIME_AVAILABLE:
             return
         self._epoch_ticker_running = True
         self._epoch_ticker = threading.Thread(
-            target=self._epoch_ticker_loop, daemon=True, name='wasm-epoch-ticker',
-    )
+            target=self._epoch_ticker_loop,
+            daemon=True,
+            name="wasm-epoch-ticker",
+        )
         self._epoch_ticker.start()
-        logger.debug('Epoch ticker started')
+        logger.debug("Epoch ticker started")
 
-    def _epoch_ticker_loop(self):
+    def _epoch_ticker_loop(self) -> None:
         """Background loop that increments epoch."""
         while self._epoch_ticker_running:
             try:
                 time.sleep(self.epoch_deadline / 3)
             except Exception as e:
-                logger.debug(f'Epoch ticker error: {e}')
+                logger.debug(f"Epoch ticker error: {e}")
 
     def is_available(self) -> bool:
         """Check if WASM runtime is available."""
@@ -514,7 +540,7 @@ class WasmSandbox:
     async def run_async(
         self,
         wasm_bytes: bytes,
-        function_name: str = 'run',
+        function_name: str = "run",
         args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -530,27 +556,37 @@ class WasmSandbox:
         """
         if not self.is_available():
             return {
-                'success': False, 'result': None, 'fuel_used': 0,
-                'error': 'WASM runtime not available',
+                "success": False,
+                "result": None,
+                "fuel_used": 0,
+                "error": "WASM runtime not available",
             }
         result: dict[str, Any] = {
-            'success': False, 'result': None, 'fuel_used': 0, 'error': None,
+            "success": False,
+            "result": None,
+            "fuel_used": 0,
+            "error": None,
         }
         try:
             loop = asyncio.get_running_loop()
             async with asyncio.timeout(self.timeout):
                 result = await loop.run_in_executor(
-                    None, self._run_sync, wasm_bytes, function_name, args,
-    )
+                    None,
+                    self._run_sync,
+                    wasm_bytes,
+                    function_name,
+                    args,
+                )
         except TimeoutError:
-            result['error'] = f'Execution timeout ({self.timeout}s)'
+            result["error"] = f"Execution timeout ({self.timeout}s)"
             logger.warning(
-                'WASM execution timeout: %s (%.1fs)',
-                function_name, self.timeout,
-    )
+                "WASM execution timeout: %s (%.1fs)",
+                function_name,
+                self.timeout,
+            )
         except Exception as e:
-            result['error'] = str(e)
-            logger.error(f'WASM execution error: {e}')
+            result["error"] = str(e)
+            logger.error(f"WASM execution error: {e}")
         finally:
             # NEXUS-018-009: Close sockets after each execution.
             # WASM guest sockets don't persist across runs — each
@@ -576,16 +612,21 @@ class WasmSandbox:
         """
         if not _WASMTIME_AVAILABLE:
             return {
-                'success': False, 'result': None, 'fuel_used': 0,
-                'error': 'wasmtime not available',
+                "success": False,
+                "result": None,
+                "fuel_used": 0,
+                "error": "wasmtime not available",
             }
         result: dict[str, Any] = {
-            'success': False, 'result': None, 'fuel_used': 0, 'error': None,
+            "success": False,
+            "result": None,
+            "fuel_used": 0,
+            "error": None,
         }
         store = None
         instance = None
         try:
-            assert self._engine is not None, 'Engine not initialized'
+            assert self._engine is not None, "Engine not initialized"
             store = Store(self._engine)
             store.set_fuel(self.fuel_limit)
             store.set_epoch_deadline(int(self.epoch_deadline))
@@ -608,31 +649,31 @@ class WasmSandbox:
                 else:
                     func()
                 fuel_remaining = store.get_fuel()
-                result['fuel_used'] = self.fuel_limit - fuel_remaining
-                result['success'] = True
-                result['result'] = True
+                result["fuel_used"] = self.fuel_limit - fuel_remaining
+                result["success"] = True
+                result["result"] = True
             else:
-                result['error'] = f"Function '{function_name}' not found"
+                result["error"] = f"Function '{function_name}' not found"
         except wasmtime.RuntimeError as e:
             err_str = str(e).lower()
             # NEXUS-018-009: ExitTrap may be a RuntimeError subclass in some versions
-            if 'exit' in err_str or 'trap' in err_str:
-                result['success'] = True
-                result['result'] = True
-            elif 'fuel' in err_str:
-                result['error'] = 'Fuel exhausted'
-                result['fuel_used'] = self.fuel_limit
+            if "exit" in err_str or "trap" in err_str:
+                result["success"] = True
+                result["result"] = True
+            elif "fuel" in err_str:
+                result["error"] = "Fuel exhausted"
+                result["fuel_used"] = self.fuel_limit
             else:
-                result['error'] = f'Runtime error: {e}'
+                result["error"] = f"Runtime error: {e}"
         except Exception as e:
             # NEXUS-018-009: Catch ExitTrap if wasmtime version supports it
             exc_name = type(e).__name__
-            if exc_name == 'ExitTrap' or 'exit' in str(e).lower():
+            if exc_name == "ExitTrap" or "exit" in str(e).lower():
                 # WASM guest called proc_exit — treat as success
-                result['success'] = True
-                result['result'] = True
+                result["success"] = True
+                result["result"] = True
             else:
-                result['error'] = str(e)
+                result["error"] = str(e)
         finally:
             with self._lock:
                 self._running_instances.discard(instance_id)
@@ -651,7 +692,7 @@ class WasmSandbox:
         try:
             return wasm_path.read_bytes()
         except Exception as e:
-            logger.error(f'Failed to load WASM module: {e}')
+            logger.error(f"Failed to load WASM module: {e}")
             return None
 
     def __aenter__(self):
@@ -662,30 +703,30 @@ class WasmSandbox:
         """Async context manager exit."""
         await self.shutdown()
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         """Shutdown the sandbox and cleanup resources."""
-        logger.info('Shutting down WASM sandbox')
+        logger.info("Shutting down WASM sandbox")
         self._epoch_ticker_running = False
         if self._epoch_ticker:
             self._epoch_ticker.join(timeout=5)
         # NEXUS-018-009: Close all WASI sockets
         if self._wasi_linker is not None:
             self._wasi_linker.close_all()
-        logger.info('WASM sandbox shutdown complete')
+        logger.info("WASM sandbox shutdown complete")
 
     def get_stats(self) -> dict[str, Any]:
         """Get sandbox statistics."""
         stats: dict[str, Any] = {
-            'available': self.is_available(),
-            'fuel_limit': self.fuel_limit,
-            'epoch_deadline': self.epoch_deadline,
-            'timeout': self.timeout,
-            'running_instances': len(self._running_instances),
-            'epoch_ticker_running': self._epoch_ticker_running,
-            'wasi_enabled': self._enable_wasi,
+            "available": self.is_available(),
+            "fuel_limit": self.fuel_limit,
+            "epoch_deadline": self.epoch_deadline,
+            "timeout": self.timeout,
+            "running_instances": len(self._running_instances),
+            "epoch_ticker_running": self._epoch_ticker_running,
+            "wasi_enabled": self._enable_wasi,
         }
         if self._wasi_linker is not None:
-            stats['wasi_socket_count'] = self._wasi_linker.socket_count
+            stats["wasi_socket_count"] = self._wasi_linker.socket_count
         return stats
 
 
@@ -700,11 +741,11 @@ class WasmSandbox:
 # wasi_snapshot_preview1 imports to establish TCP connections to protocol
 # endpoints — enabling custom parsers for VPN, IoT, darknet protocols.
 
-
 # Backward-compat re-export (module was confused by two Instance assignments)
 if _WASMTIME_AVAILABLE:
     try:
-        from wasmtime import Instance as _WasmtimeInstance  # noqa: F811
+        from wasmtime import Instance as _WasmtimeInstance
+
         Instance = _WasmtimeInstance
     except ImportError:  # noqa: BLE001
         pass

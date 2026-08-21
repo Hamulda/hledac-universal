@@ -13,9 +13,9 @@ _warnings.warn(
 )
 
 from hledac.universal.utils.mlx_memory._core import (
-    mlx_managed,
-    mlx_cleanup_after,
     get_mlx_memory_stats,
+    mlx_cleanup_after,
+    mlx_managed,
     reset_metal_peak,
 )
 

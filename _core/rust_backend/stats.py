@@ -13,13 +13,13 @@ Usage:
     from hledac.universal._core.rust_backend.stats import StatCollector
     stats = StatCollector().collect(hledac_rust_extensions)
 """
+
 from __future__ import annotations
 
 __all__ = ["StatCollector"]
 
 import contextlib
 from typing import Any
-from _core._util import aclose
 
 # Registry entry: (attribute_name, optional_callable_invoker_or_None)
 #   invoker is None         → call attribute as no-arg callable (property or fn)
@@ -56,10 +56,6 @@ class StatCollector:
             # Metal availability — no-arg callable
             "metal_available": ("check_metal_availability", None),
         }
-
-    # -------------------------------------------------------------------------
-    # Public API
-    # -------------------------------------------------------------------------
 
     def collect(self, mod: Any) -> dict[str, Any]:
         """

@@ -16,6 +16,7 @@ ISSUE-FOUND-1: Replaced asyncio.Semaphore with AtomicAdaptiveSemaphore for:
 - Python 3.14+ safe resize() instead of unsafe _value mutation
 - O(1) resize with lock protection
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,12 +30,9 @@ from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
 class AIMDConfig(Struct, frozen=True):
     """AIMD configuration. M1 8GB: msgspec.Struct for fast init."""
+
     initial_window: int = 4
     min_window: int = 1
     max_window: int = 256
@@ -44,10 +42,6 @@ class AIMDConfig(Struct, frozen=True):
     blitz_window_boost: int = 4
     blitz_cooldown_s: float = 10.0
 
-
-# =============================================================================
-# AIMD Window Service
-# =============================================================================
 
 @dataclass(slots=True)
 class AIMDWindowService:
@@ -65,6 +59,7 @@ class AIMDWindowService:
 
     ISSUE-FOUND-1: Uses AtomicAdaptiveSemaphore for Python 3.14+ safe resize.
     """
+
     config: AIMDConfig = field(default_factory=AIMDConfig)
 
     _window: int = field(default=4, init=False)
@@ -126,19 +121,12 @@ class AIMDWindowService:
             # Additive increase
             new_window = min(self._window + self.config.ai_step, self.config.max_window)
 
-            # Check for blitz boost
             if rtt_ms is not None and rtt_ms < self.config.blitz_rtt_threshold_ms:
                 now = time.monotonic()
                 if now - self._last_blitz >= self.config.blitz_cooldown_s:
-                    new_window = min(
-                        new_window * self.config.blitz_window_boost,
-                        self.config.max_window
-                    )
+                    new_window = min(new_window * self.config.blitz_window_boost, self.config.max_window)
                     self._last_blitz = now
-                    logger.debug(
-                        f"AIMD blitz boost: {self._window} -> {new_window} "
-                        f"(RTT={rtt_ms:.1f}ms)"
-                    )
+                    logger.debug(f"AIMD blitz boost: {self._window} -> {new_window} (RTT={rtt_ms:.1f}ms)")
 
             if new_window != self._window:
                 self._window = new_window
@@ -155,10 +143,7 @@ class AIMDWindowService:
             self._failure_count += 1
 
             # Multiplicative decrease
-            new_window = max(
-                int(self._window * self.config.md_factor),
-                self.config.min_window
-            )
+            new_window = max(int(self._window * self.config.md_factor), self.config.min_window)
 
             if new_window != self._window:
                 self._window = new_window
@@ -180,14 +165,15 @@ class AIMDWindowService:
         """Get AIMD statistics."""
         avg_rtt = self._total_rtt_ms / self._request_count if self._request_count > 0 else 0.0
         return {
-            'window': self._window,
-            'success_count': self._success_count,
-            'failure_count': self._failure_count,
-            'success_rate': (
+            "window": self._window,
+            "success_count": self._success_count,
+            "failure_count": self._failure_count,
+            "success_rate": (
                 self._success_count / (self._success_count + self._failure_count)
-                if (self._success_count + self._failure_count) > 0 else 0.0
+                if (self._success_count + self._failure_count) > 0
+                else 0.0
             ),
-            'avg_rtt_ms': avg_rtt,
+            "avg_rtt_ms": avg_rtt,
         }
 
     def reset(self) -> None:
@@ -207,10 +193,6 @@ class AIMDWindowService:
         logger.debug("AIMDWindowService closed")
 
 
-# =============================================================================
-# PyAIMDController Bridge (if PyAIMD is available)
-# =============================================================================
-
 class PyAIMDController:
     """
     Bridge to PyAIMD library for advanced AIMD control.
@@ -229,6 +211,7 @@ class PyAIMDController:
         """Initialize PyAIMD controller with fallback."""
         try:
             from PyAIMD import AIMDController as PyAIMDClass
+
             self._controller = PyAIMDClass(
                 initial_cwnd=self._config.initial_window,
                 min_cwnd=self._config.min_window,
@@ -282,7 +265,7 @@ class PyAIMDController:
 
 
 __all__ = [
-    'AIMDConfig',
-    'AIMDWindowService',
-    'PyAIMDController',
+    "AIMDConfig",
+    "AIMDWindowService",
+    "PyAIMDController",
 ]

@@ -42,13 +42,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import threading
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, overload
-from collections.abc import Callable, Awaitable
 
-from hledac.universal._core.config.m1_air_config import M1AirConfig
-from _core import aclose
 from _core.locks import LockCategory, register_lock
+from hledac.universal._core.config.m1_air_config import M1AirConfig
 
 __all__ = [
     "offload_to",
@@ -57,17 +56,15 @@ __all__ = [
     "POOL_NAMES",
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Pool registry
-# ─────────────────────────────────────────────────────────────────────────────
-
-POOL_NAMES = frozenset([
-    "cpu_io_pool",
-    "cpu_blocking_pool",
-    "mlx_pool",
-    "ane_pool",
-    "duckdb_pool",
-])
+POOL_NAMES = frozenset(
+    [
+        "cpu_io_pool",
+        "cpu_blocking_pool",
+        "mlx_pool",
+        "ane_pool",
+        "duckdb_pool",
+    ]
+)
 
 # Module-level singletons — lazy initialization on first use.
 _pools: dict[str, NamedPool] = {}
@@ -126,7 +123,7 @@ class NamedPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=self._max_workers,
                 thread_name_prefix=f"hledac-{self._name}",
-    )
+            )
         return self._executor
 
     async def run(self, func: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
@@ -135,7 +132,7 @@ class NamedPool:
         return await loop.run_in_executor(
             self._get_executor(),
             functools.partial(func, *args, **kwargs),
-    )
+        )
 
     def shutdown(self) -> None:
         if self._executor is not None:
@@ -154,10 +151,6 @@ def get_named_pool(name: str) -> NamedPool:
     return _pools[name]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# @offload_to() decorator
-# ─────────────────────────────────────────────────────────────────────────────
-
 @overload
 def offload_to(
     pool: str,
@@ -165,16 +158,14 @@ def offload_to(
     /,
     *args: Any,
     timeout: float | None = None,
-) -> Awaitable[Any]:
-    ...
+) -> Awaitable[Any]: ...
 
 
 @overload
 def offload_to(
     pool: str,
     /,
-) -> Callable[[Callable[..., Any]], Callable[..., Awaitable[Any]]]:
-    ...
+) -> Callable[[Callable[..., Any]], Callable[..., Awaitable[Any]]]: ...
 
 
 async def _run_in_pool(
@@ -188,6 +179,7 @@ async def _run_in_pool(
     )
     if timeout is not None:
         from hledac.universal.utils.asyncx import safe_wait_for
+
         return await safe_wait_for(coro, timeout=timeout, label=f"offload:{pool.name}")
     return await coro
 
@@ -237,10 +229,6 @@ def offload_to(
 
     return decorator
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shutdown all pools (call on app exit)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def shutdown_all_pools() -> None:
     """Shutdown all NamedPool executors. Call on app exit."""

@@ -12,12 +12,11 @@ the background pressure-relief task. Validates:
   - stop_pressure_relief_loop is idempotent and bounded.
 """
 
-
 import asyncio
 import sys
+from typing import Never
 
 import pytest
-from _core import aclose
 
 
 class TestMallocZonePressureRelief:
@@ -45,17 +44,19 @@ class TestMallocZonePressureRelief:
 
         if sys.platform != "darwin":
             pytest.skip("Not on Darwin — skipping Darwin-specific failure path")
+
         # Simulate ctypes raising.
-        def _boom(*args, **kwargs):
+        def _boom(*args, **kwargs) -> Never:
             raise OSError("simulated ctypes failure")
 
         import ctypes
+
         monkeypatch.setattr(
             ctypes.CDLL(None, use_errno=True),
             "malloc_zone_pressure_relief",
             _boom,
             raising=False,
-    )
+        )
         result = memory_cycle.malloc_zone_pressure_relief()
         assert result == 0  # fail-soft
 
@@ -120,9 +121,7 @@ class TestPressureReliefLoop:
         runs_after = memory_cycle.get_stats()["pressure_relief_runs"]
         await memory_cycle.stop_pressure_relief_loop()
         # At least one tick ran (the loop hits the syscall on entry).
-        assert runs_after >= runs_before + 1, (
-            f"expected at least 1 tick, got {runs_after - runs_before}"
-    )
+        assert runs_after >= runs_before + 1, f"expected at least 1 tick, got {runs_after - runs_before}"
 
     @pytest.mark.asyncio
     async def test_min_interval_enforced(self) -> None:

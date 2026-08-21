@@ -28,7 +28,6 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 import threading
-import time
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from unittest.mock import MagicMock
@@ -55,7 +54,6 @@ def joinable_threads(
 
 # Import the module under test
 from _core.inference_coordinator import ModelPool, get_model_pool
-from _core import aclose
 
 
 class TestModelPoolLRU:
@@ -166,10 +164,10 @@ class TestModelPoolLRU:
 
         model_a = MagicMock(name="model_a")
         tokenizer_a = MagicMock(name="tokenizer_a")
-        model_b = MagicMock(name="model_b")
-        tokenizer_b = MagicMock(name="tokenizer_b")
-        model_c = MagicMock(name="model_c")
-        tokenizer_c = MagicMock(name="tokenizer_c")
+        MagicMock(name="model_b")
+        MagicMock(name="tokenizer_b")
+        MagicMock(name="model_c")
+        MagicMock(name="tokenizer_c")
 
         # Miss for A
         result = pool.get("A")

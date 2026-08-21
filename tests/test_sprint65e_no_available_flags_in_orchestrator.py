@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 # Paths to check
 CHECK_FILES = [
@@ -24,24 +23,56 @@ CHECK_FILES = [
 # Updated baseline from actual file scan - test catches NEW additions only
 BASELINE_FLAGS = {
     "autonomous_orchestrator.py": {
-        "AIOHTTP_AVAILABLE", "AUTONOMOUS_ANALYZER_AVAILABLE", "HINTS_AVAILABLE",
-        "METADATA_EXTRACTOR_AVAILABLE", "MLX_AVAILABLE", "PATTERN_MINING_AVAILABLE",
-        "PSUTIL_AVAILABLE", "TOT_INTEGRATION_AVAILABLE",
+        "AIOHTTP_AVAILABLE",
+        "AUTONOMOUS_ANALYZER_AVAILABLE",
+        "HINTS_AVAILABLE",
+        "METADATA_EXTRACTOR_AVAILABLE",
+        "MLX_AVAILABLE",
+        "PATTERN_MINING_AVAILABLE",
+        "PSUTIL_AVAILABLE",
+        "TOT_INTEGRATION_AVAILABLE",
         # All current flags in file (as of test creation)
-        "PRIVACY_RESEARCH_AVAILABLE", "EXPOSED_SERVICE_AVAILABLE", "SNN_ENGINE_AVAILABLE",
-        "LMDB_AVAILABLE", "ARCHIVE_AVAILABLE", "STEGO_AVAILABLE", "IDENTITY_STITCHING_AVAILABLE",
-        "PRIVACY_MGR_AVAILABLE", "DEEP_PROBE_AVAILABLE", "SUPREME_AVAILABLE",
-        "INFERENCE_ENGINE_AVAILABLE", "PII_GATE_AVAILABLE", "SELF_HEALING_AVAILABLE",
-        "DEEP_SEC_AVAILABLE", "DISTILLATION_AVAILABLE", "INPUT_DETECTOR_AVAILABLE",
-        "QUANTUM_PATHFINDER_AVAILABLE", "STEGO_DETECTOR_AVAILABLE", "CIRCUIT_BREAKER_AVAILABLE",
-        "DNS_TUNNEL_DETECTOR_AVAILABLE", "CRYPTO_INTELLIGENCE_AVAILABLE", "NETWORK_RECON_AVAILABLE",
-        "WORKFLOW_ORCHESTRATOR_AVAILABLE", "FEDERATED_ENGINE_AVAILABLE", "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
-        "BLOCKCHAIN_FORENSICS_AVAILABLE", "ENTITY_LINKER_AVAILABLE", "AGENT_META_OPTIMIZER_AVAILABLE",
-        "OBFS_AVAILABLE", "UNICODE_ANALYZER_AVAILABLE", "RELATIONSHIP_DISCOVERY_AVAILABLE",
-        "DIGITAL_GHOST_AVAILABLE", "DECISION_ENGINE_AVAILABLE", "DESTRUCTION_AVAILABLE",
-        "HASH_IDENTIFIER_AVAILABLE", "DOCUMENT_INTELLIGENCE_AVAILABLE", "TEMPORAL_AVAILABLE",
-        "HYPOTHESIS_ENGINE_AVAILABLE", "ENCODING_DETECTOR_AVAILABLE", "INSIGHT_AVAILABLE",
-        "DARK_WEB_AVAILABLE"
+        "PRIVACY_RESEARCH_AVAILABLE",
+        "EXPOSED_SERVICE_AVAILABLE",
+        "SNN_ENGINE_AVAILABLE",
+        "LMDB_AVAILABLE",
+        "ARCHIVE_AVAILABLE",
+        "STEGO_AVAILABLE",
+        "IDENTITY_STITCHING_AVAILABLE",
+        "PRIVACY_MGR_AVAILABLE",
+        "DEEP_PROBE_AVAILABLE",
+        "SUPREME_AVAILABLE",
+        "INFERENCE_ENGINE_AVAILABLE",
+        "PII_GATE_AVAILABLE",
+        "SELF_HEALING_AVAILABLE",
+        "DEEP_SEC_AVAILABLE",
+        "DISTILLATION_AVAILABLE",
+        "INPUT_DETECTOR_AVAILABLE",
+        "QUANTUM_PATHFINDER_AVAILABLE",
+        "STEGO_DETECTOR_AVAILABLE",
+        "CIRCUIT_BREAKER_AVAILABLE",
+        "DNS_TUNNEL_DETECTOR_AVAILABLE",
+        "CRYPTO_INTELLIGENCE_AVAILABLE",
+        "NETWORK_RECON_AVAILABLE",
+        "WORKFLOW_ORCHESTRATOR_AVAILABLE",
+        "FEDERATED_ENGINE_AVAILABLE",
+        "TEMPORAL_ARCHAEOLOGIST_AVAILABLE",
+        "BLOCKCHAIN_FORENSICS_AVAILABLE",
+        "ENTITY_LINKER_AVAILABLE",
+        "AGENT_META_OPTIMIZER_AVAILABLE",
+        "OBFS_AVAILABLE",
+        "UNICODE_ANALYZER_AVAILABLE",
+        "RELATIONSHIP_DISCOVERY_AVAILABLE",
+        "DIGITAL_GHOST_AVAILABLE",
+        "DECISION_ENGINE_AVAILABLE",
+        "DESTRUCTION_AVAILABLE",
+        "HASH_IDENTIFIER_AVAILABLE",
+        "DOCUMENT_INTELLIGENCE_AVAILABLE",
+        "TEMPORAL_AVAILABLE",
+        "HYPOTHESIS_ENGINE_AVAILABLE",
+        "ENCODING_DETECTOR_AVAILABLE",
+        "INSIGHT_AVAILABLE",
+        "DARK_WEB_AVAILABLE",
     },
     "model_store.py": set(),
     "tor_transport.py": set(),
@@ -51,9 +82,9 @@ BASELINE_FLAGS = {
 
 # Patterns that should NOT exist (global toggles)
 FORBIDDEN_PATTERNS = [
-    r'\bENABLE_[A-Z0-9_]+\b',
-    r'\bUSE_[A-Z0-9_]+\b',
-    r'\bFEATURE_[A-Z0-9_]+\b',
+    r"\bENABLE_[A-Z0-9_]+\b",
+    r"\bUSE_[A-Z0-9_]+\b",
+    r"\bFEATURE_[A-Z0-9_]+\b",
 ]
 
 
@@ -67,12 +98,12 @@ class TestNoAvailableFlags:
     """Tests verifying no *_AVAILABLE flags exist in critical files."""
 
     @pytest.mark.parametrize("file_path", CHECK_FILES)
-    def test_no_available_flags(self, file_path):
+    def test_no_available_flags(self, file_path) -> None:
         """Verify no new *_AVAILABLE flags added beyond baseline."""
         content = read_file(file_path)
 
         # Extract actual flags from file
-        actual_flags = set(re.findall(r'\b([A-Z0-9_]+_AVAILABLE)\b', content))
+        actual_flags = set(re.findall(r"\b([A-Z0-9_]+_AVAILABLE)\b", content))
 
         # Get baseline for this file
         filename = file_path.split("/")[-1]
@@ -87,7 +118,7 @@ class TestNoAvailableFlags:
             matches = re.findall(pattern, content)
             assert not matches, f"Found forbidden pattern '{pattern}' in {file_path}: {matches}"
 
-    def test_no_boolean_flags(self):
+    def test_no_boolean_flags(self) -> None:
         """
         Verify no boolean feature toggle patterns exist.
 
@@ -104,11 +135,11 @@ class TestNoAvailableFlags:
 
         # First, verify that safe patterns are NOT flagged
         safe_patterns = [
-            r'hasattr\s*\(',
-            r'isinstance\s*\(',
-            r'getattr\s*\(',
-            r'issubclass\s*\(',
-            r'callable\s*\(',
+            r"hasattr\s*\(",
+            r"isinstance\s*\(",
+            r"getattr\s*\(",
+            r"issubclass\s*\(",
+            r"callable\s*\(",
         ]
 
         for pattern in safe_patterns:
@@ -120,14 +151,22 @@ class TestNoAvailableFlags:
         issues = []
 
         # Toggle-like parameter names (feature toggles)
-        toggle_prefixes = ('enable_', 'use_', 'force_', 'allow_', 'strict_',
-                          'fast_', 'debug_', 'experimental_', 'auto_')
+        toggle_prefixes = (
+            "enable_",
+            "use_",
+            "force_",
+            "allow_",
+            "strict_",
+            "fast_",
+            "debug_",
+            "experimental_",
+            "auto_",
+        )
 
         for node in ast.walk(tree):
             # Check function definitions for toggle-like bool parameters
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for arg, default in zip(node.args.args[-len(node.args.defaults):],
-                                        node.args.defaults, strict=False):
+                for arg, default in zip(node.args.args[-len(node.args.defaults) :], node.args.defaults, strict=False):
                     if isinstance(default, ast.Constant) and isinstance(default.value, bool):
                         arg_name = arg.arg
                         # Only flag if it looks like a feature toggle
@@ -147,13 +186,15 @@ class TestNoAvailableFlags:
                         var_name = target.id
                         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, bool):
                             # Flag module-level bools with toggle-like names
-                            if var_name.startswith(toggle_prefixes) or var_name.endswith('_ENABLED'):
+                            if var_name.startswith(toggle_prefixes) or var_name.endswith("_ENABLED"):
                                 issues.append(f"Module-level toggle: '{var_name} = {node.value.value}'")
 
         # Filter: only report module-level constants (true feature flags)
         # Runtime parameters like use_graph_rag are OK - they're not global toggles
         module_level_issues = [i for i in issues if "Module-level" in i]
-        assert not module_level_issues, "Found module-level feature toggle constants:\n" + "\n".join(module_level_issues)  # noqa: E501
+        assert not module_level_issues, "Found module-level feature toggle constants:\n" + "\n".join(
+            module_level_issues
+        )  # noqa: E501
 
 
 if __name__ == "__main__":

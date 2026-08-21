@@ -3,6 +3,7 @@ Testy pro ISSUE 8.1 (KeyManager real implementation) a ISSUE 8.2 (Vault AES-256-
 
 F350M-R: security/key_manager.py + secrets_vault/vault.py
 """
+
 from __future__ import annotations
 
 import os
@@ -10,42 +11,41 @@ import shutil
 import tempfile
 
 import pytest
-from _core import aclose
 
 
 class TestKeyManagerHKDF:
     """Test HKDF-SHA256 key derivation used by KeyManager."""
 
-    def test_hkdf_deterministic(self):
+    def test_hkdf_deterministic(self) -> None:
         from hledac.universal.security.key_manager import _hkdf_sha256
 
         master = os.urandom(32)
-        key1 = _hkdf_sha256(master, b'bucket1', b'bucket1', 32)
-        key2 = _hkdf_sha256(master, b'bucket1', b'bucket1', 32)
+        key1 = _hkdf_sha256(master, b"bucket1", b"bucket1", 32)
+        key2 = _hkdf_sha256(master, b"bucket1", b"bucket1", 32)
         assert key1 == key2
 
-    def test_hkdf_different_buckets(self):
+    def test_hkdf_different_buckets(self) -> None:
         from hledac.universal.security.key_manager import _hkdf_sha256
 
         master = os.urandom(32)
-        key1 = _hkdf_sha256(master, b'bucket1', b'bucket1', 32)
-        key2 = _hkdf_sha256(master, b'bucket2', b'bucket2', 32)
+        key1 = _hkdf_sha256(master, b"bucket1", b"bucket1", 32)
+        key2 = _hkdf_sha256(master, b"bucket2", b"bucket2", 32)
         assert key1 != key2
 
-    def test_hkdf_32_bytes(self):
+    def test_hkdf_32_bytes(self) -> None:
         from hledac.universal.security.key_manager import _hkdf_sha256
 
         master = os.urandom(32)
-        key = _hkdf_sha256(master, b'bucket', b'bucket', 32)
+        key = _hkdf_sha256(master, b"bucket", b"bucket", 32)
         assert len(key) == 32
 
-    def test_hkdf_different_master(self):
+    def test_hkdf_different_master(self) -> None:
         from hledac.universal.security.key_manager import _hkdf_sha256
 
         master1 = os.urandom(32)
         master2 = os.urandom(32)
-        key1 = _hkdf_sha256(master1, b'bucket', b'bucket', 32)
-        key2 = _hkdf_sha256(master2, b'bucket', b'bucket', 32)
+        key1 = _hkdf_sha256(master1, b"bucket", b"bucket", 32)
+        key2 = _hkdf_sha256(master2, b"bucket", b"bucket", 32)
         assert key1 != key2
 
 
@@ -58,21 +58,21 @@ class TestKeyManagerAPI:
         yield tmp
         shutil.rmtree(tmp, ignore_errors=True)
 
-    def test_init(self, temp_dir):
+    def test_init(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
         assert km.db_path.name == "keys.lmdb"
         assert km._current_version == 1
 
-    def test_init_default_path(self):
+    def test_init_default_path(self) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager()
         assert ".hledac" in str(km.db_path)
 
     @pytest.mark.asyncio
-    async def test_get_bucket_key_returns_tuple(self, temp_dir):
+    async def test_get_bucket_key_returns_tuple(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -87,7 +87,7 @@ class TestKeyManagerAPI:
             pass
 
     @pytest.mark.asyncio
-    async def test_get_bucket_key_deterministic(self, temp_dir):
+    async def test_get_bucket_key_deterministic(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -100,7 +100,7 @@ class TestKeyManagerAPI:
             pass
 
     @pytest.mark.asyncio
-    async def test_get_bucket_key_different_buckets_different_keys(self, temp_dir):
+    async def test_get_bucket_key_different_buckets_different_keys(self, temp_dir) -> None:
         from hledac.universal.security.key_manager import KeyManager
 
         km = KeyManager(db_path=f"{temp_dir}/keys.lmdb")
@@ -112,9 +112,10 @@ class TestKeyManagerAPI:
             pass
 
     @pytest.mark.asyncio
-    async def test_salt_persistence_across_instances(self, temp_dir):
+    async def test_salt_persistence_across_instances(self, temp_dir) -> None:
         """Salt is stored in LMDB and reused when creating a new KeyManager instance."""
         import lmdb
+
         from hledac.universal.security.key_manager import KeyManager
 
         # On non-macOS, test _load_salt_from_lmdb / _store_salt_in_lmdb directly
@@ -152,7 +153,7 @@ class TestKeyManagerAPI:
 class TestVaultAESGCMAeadFormat:
     """Test AES-256-GCM AEAD format used by SecretVault."""
 
-    def test_aead_encrypt_format_v1(self):
+    def test_aead_encrypt_format_v1(self) -> None:
         from secrets_vault.vault import _aead_encrypt
 
         key = os.urandom(32)
@@ -165,7 +166,7 @@ class TestVaultAESGCMAeadFormat:
         # tag at end
         assert len(blob[-16:]) == 16
 
-    def test_aead_encrypt_unique_nonce(self):
+    def test_aead_encrypt_unique_nonce(self) -> None:
         from secrets_vault.vault import _aead_encrypt
 
         key = os.urandom(32)
@@ -174,8 +175,8 @@ class TestVaultAESGCMAeadFormat:
         # Nonces are random — ciphertext should differ
         assert b1 != b2
 
-    def test_aead_decrypt_roundtrip(self):
-        from secrets_vault.vault import _aead_encrypt, _aead_decrypt
+    def test_aead_decrypt_roundtrip(self) -> None:
+        from secrets_vault.vault import _aead_decrypt, _aead_encrypt
 
         key = os.urandom(32)
         plaintext = b'{"api_key": "hunter2", "nested": {"a": 1}}'
@@ -183,8 +184,8 @@ class TestVaultAESGCMAeadFormat:
         decrypted = _aead_decrypt(blob, key)
         assert decrypted == plaintext
 
-    def test_aead_decrypt_wrong_key_returns_none(self):
-        from secrets_vault.vault import _aead_encrypt, _aead_decrypt
+    def test_aead_decrypt_wrong_key_returns_none(self) -> None:
+        from secrets_vault.vault import _aead_decrypt, _aead_encrypt
 
         key = os.urandom(32)
         wrong_key = os.urandom(32)
@@ -192,8 +193,8 @@ class TestVaultAESGCMAeadFormat:
         result = _aead_decrypt(blob, wrong_key)
         assert result is None
 
-    def test_aead_decrypt_tampered_ciphertext_returns_none(self):
-        from secrets_vault.vault import _aead_encrypt, _aead_decrypt
+    def test_aead_decrypt_tampered_ciphertext_returns_none(self) -> None:
+        from secrets_vault.vault import _aead_decrypt, _aead_encrypt
 
         key = os.urandom(32)
         blob = _aead_encrypt(b"original", key)
@@ -205,25 +206,25 @@ class TestVaultAESGCMAeadFormat:
         result = _aead_decrypt(bytes(tampered), key)
         assert result is None
 
-    def test_aead_decrypt_empty_returns_none(self):
+    def test_aead_decrypt_empty_returns_none(self) -> None:
         from secrets_vault.vault import _aead_decrypt
 
         key = os.urandom(32)
         assert _aead_decrypt(b"", key) is None
         assert _aead_decrypt(None, key) is None
 
-    def test_aead_decrypt_too_short_returns_none(self):
+    def test_aead_decrypt_too_short_returns_none(self) -> None:
         from secrets_vault.vault import _aead_decrypt
 
         key = os.urandom(32)
         # Less than version + nonce + tag
-        assert _aead_decrypt(b'\x01' + b'\x00' * 10, key) is None
+        assert _aead_decrypt(b"\x01" + b"\x00" * 10, key) is None
 
 
 class TestVaultPbkdf2Iterations:
     """Verify PBKDF2 iteration count matches OWASP 2025 recommendation."""
 
-    def test_pbkdf2_600k_iterations(self):
+    def test_pbkdf2_600k_iterations(self) -> None:
         from secrets_vault.vault import _PBKDF2_ITERATIONS
 
         assert _PBKDF2_ITERATIONS == 600_000
@@ -239,7 +240,7 @@ class TestVaultSaltMetadata:
         shutil.rmtree(tmp, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_salt_stored_in_lmdb(self, vault_path):
+    async def test_salt_stored_in_lmdb(self, vault_path) -> None:
         from secrets_vault.vault import SecretVault
 
         vault = SecretVault(vault_path, "password123")
@@ -250,7 +251,7 @@ class TestVaultSaltMetadata:
         vault.close()
 
     @pytest.mark.asyncio
-    async def test_put_and_get_roundtrip(self, vault_path):
+    async def test_put_and_get_roundtrip(self, vault_path) -> None:
         from secrets_vault.vault import SecretVault
 
         vault = SecretVault(vault_path, "password123")
@@ -260,7 +261,7 @@ class TestVaultSaltMetadata:
         vault.close()
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_returns_none(self, vault_path):
+    async def test_get_nonexistent_returns_none(self, vault_path) -> None:
         from secrets_vault.vault import SecretVault
 
         vault = SecretVault(vault_path, "password123")
@@ -269,7 +270,7 @@ class TestVaultSaltMetadata:
         vault.close()
 
     @pytest.mark.asyncio
-    async def test_delete_works(self, vault_path):
+    async def test_delete_works(self, vault_path) -> None:
         from secrets_vault.vault import SecretVault
 
         vault = SecretVault(vault_path, "password123")
@@ -280,11 +281,11 @@ class TestVaultSaltMetadata:
         vault.close()
 
     @pytest.mark.asyncio
-    async def test_close_zeros_derived_key(self, vault_path):
+    async def test_close_zeros_derived_key(self, vault_path) -> None:
         from secrets_vault.vault import SecretVault
 
         vault = SecretVault(vault_path, "password123")
         derived_key = vault._derived_key
         vault.close()
         # After close, derived_key should be zeroed
-        assert vault._derived_key == b'\x00' * len(derived_key)
+        assert vault._derived_key == b"\x00" * len(derived_key)

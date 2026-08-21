@@ -27,12 +27,10 @@ CLI:
   python tools/rl_health_report.py --window 20   # reward window size
 """
 
-
 import argparse
 import json
 import sys
 from pathlib import Path
-from _core import aclose
 
 # ZSTD magic bytes (RFC 8478) — used to detect compressed state files
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
@@ -66,10 +64,12 @@ def _load_state(state_path: Path) -> dict:
             # Try stdlib zstd (Python 3.14+) first, then fall back
             try:
                 import compression.zstd as _zstd
+
                 plain = _zstd.decompress(raw)
             except Exception:
                 try:
                     import zstandard as _zstd_lib
+
                     plain = _zstd_lib.ZstdDecompressor().decompress(raw)
                 except Exception:
                     # Compressed but no decoder available — return empty
@@ -128,15 +128,12 @@ def _detect_anomalies(
         slope = _linear_regression_slope(epsilon_history)
         if abs(slope) < 1e-6 and abs(epsilon_history[-1] - epsilon_history[0]) < 1e-4:
             anomalies.append(
-                f"A1: epsilon stuck at {epsilon_history[-1]:.4f} after {train_steps} train steps "
-                f"(no decay)"
-    )
+                f"A1: epsilon stuck at {epsilon_history[-1]:.4f} after {train_steps} train steps (no decay)"
+            )
     # A2: Q-value explosion — any single entry above threshold
     for i, q in enumerate(mean_q_history):
         if q > Q_EXPLOSION_THRESHOLD:
-            anomalies.append(
-                f"A2: Q-value explosion at step {i}: mean_q={q:.2f} > {Q_EXPLOSION_THRESHOLD}"
-    )
+            anomalies.append(f"A2: Q-value explosion at step {i}: mean_q={q:.2f} > {Q_EXPLOSION_THRESHOLD}")
             break  # report first occurrence
     # A3: reward decay — slope over last 20 below threshold
     if len(reward_window) >= 20:
@@ -144,7 +141,7 @@ def _detect_anomalies(
         if slope < REWARD_TREND_SLOPE_THRESHOLD:
             anomalies.append(
                 f"A3: reward trend slope={slope:.3f}/sprint over last 20 (below {REWARD_TREND_SLOPE_THRESHOLD})"
-    )
+            )
     return anomalies
 
 
@@ -165,8 +162,7 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
 
     # ── Mean Q-value trend (capped to last 100) ──
     q_trend_slope = _linear_regression_slope(q_hist[-trend_window_size:]) if q_hist else 0.0
-    q_mean = (sum(q_hist[-reward_window_size:]) / len(q_hist[-reward_window_size:])
-              if q_hist else 0.0)
+    q_mean = sum(q_hist[-reward_window_size:]) / len(q_hist[-reward_window_size:]) if q_hist else 0.0
     q_trend = "—" if not q_hist else _classify_trend(q_trend_slope, 0.001)
 
     # ── Reward rolling average ──
@@ -176,11 +172,7 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
     reward_trend = _classify_trend(reward_slope, 0.01)
 
     # ── Training frequency ──
-    train_freq_str = (
-        f"1 step / {max(1, seq // max(1, train_steps))} sprints"
-        if train_steps > 0
-        else "no training yet"
-    )
+    train_freq_str = f"1 step / {max(1, seq // max(1, train_steps))} sprints" if train_steps > 0 else "no training yet"
 
     # ── Status verdict ──
     anomalies = _detect_anomalies(train_steps, eps_hist, q_hist, reward_trend_window)
@@ -197,15 +189,12 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
     lines: list[str] = []
     lines.append("=== RL Health Report ===")
     if train_steps == 0:
-        lines.append(
-            f"Sprints: {seq}   Train steps: {train_steps}   "
-            f"Epsilon: {eps:.3f} (↓ decaying toward floor 0.05)"
-    )
+        lines.append(f"Sprints: {seq}   Train steps: {train_steps}   Epsilon: {eps:.3f} (↓ decaying toward floor 0.05)")
         lines.append("Q-value mean: — (no training steps recorded yet)")
         lines.append(
             f"Reward avg (last {reward_window_size}): "
             f"{reward_rolling:.2f} (trend over last {trend_window_size}: {reward_slope:+.3f}/sprint {reward_trend})"
-    )
+        )
         lines.append(f"Training frequency: {train_freq_str}")
         lines.append(f"Status: {status} {verdict_glyph}")
         lines.append("")
@@ -213,13 +202,8 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
         return "\n".join(lines)
 
     # Normal (post-training) report
-    lines.append(
-        f"Sprints: {seq}   Train steps: {train_steps}   "
-        f"Epsilon: {eps:.3f} ({eps_trend} {eps_label})"
-    )
-    lines.append(
-        f"Q-value mean: {q_mean:.2f} (trend {q_trend}, slope={q_trend_slope:+.4f}/step)"
-    )
+    lines.append(f"Sprints: {seq}   Train steps: {train_steps}   Epsilon: {eps:.3f} ({eps_trend} {eps_label})")
+    lines.append(f"Q-value mean: {q_mean:.2f} (trend {q_trend}, slope={q_trend_slope:+.4f}/step)")
     lines.append(
         f"Reward avg (last {reward_window_size}): {reward_rolling:.2f} "
         f"({reward_trend} trend: {reward_slope:+.3f}/sprint)"
@@ -229,9 +213,7 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
         loss_last = loss_hist[-1]
         loss_min = min(loss_hist)
         loss_max = max(loss_hist)
-        lines.append(
-            f"Loss (last/min/max): {loss_last:.4f} / {loss_min:.4f} / {loss_max:.4f}"
-    )
+        lines.append(f"Loss (last/min/max): {loss_last:.4f} / {loss_min:.4f} / {loss_max:.4f}")
     lines.append(f"Status: {status} {verdict_glyph}")
     if anomalies:
         lines.append("")
@@ -243,12 +225,8 @@ def _format_report(data: dict, reward_window_size: int, trend_window_size: int) 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on healthy/pre-training, 1 on anomaly."""
-    parser = argparse.ArgumentParser(
-        description="Read-only RL training health report for SprintPolicyState."
-    )
-    default_path = (
-        Path(__file__).parent.parent / "rl" / ".sprint_policy_state.json"
-    )
+    parser = argparse.ArgumentParser(description="Read-only RL training health report for SprintPolicyState.")
+    default_path = Path(__file__).parent.parent / "rl" / ".sprint_policy_state.json"
     parser.add_argument(
         "--state-path",
         type=Path,
@@ -284,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     if train_steps == 0:
         return 0
     rewards = list(data.get("sprint_rewards", []))
-    reward_trend_window = rewards[-args.trend_window:] if rewards else []
+    reward_trend_window = rewards[-args.trend_window :] if rewards else []
     anomalies = _detect_anomalies(
         train_steps,
         list(data.get("epsilon_history", [])),

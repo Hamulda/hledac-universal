@@ -159,10 +159,6 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
     serde_json_reexport(json_str, false, true)
 }
 
-// ---------------------------------------------------------------------------
-// ISSUE-005: bytes-in/bytes-out variants — zero-copy for STIX export
-// ---------------------------------------------------------------------------
-
 /// ISSUE-039: Compact serialize Python dict → bytes (orjson API compatible).
 ///
 /// orjson.dumps(data) → bytes. Drop-in for orjson.dumps() in hot paths
@@ -184,7 +180,6 @@ pub fn serde_json_dumps_compact_bytes(
     data: &Bound<'_, PyAny>,
     _py: Python<'_>,
 ) -> PyResult<Vec<u8>> {
-    // Extract string from Python object WITH GIL held
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
@@ -227,7 +222,6 @@ pub fn serde_json_dumps_pretty_bytes(
     sort_keys: bool,
     _py: Python<'_>,
 ) -> PyResult<Vec<u8>> {
-    // Extract string from Python object WITH GIL held
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),

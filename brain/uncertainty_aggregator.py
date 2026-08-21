@@ -24,11 +24,11 @@ Usage:
     )
     # Returns: {"192.168.1.1": (0.95, "normal"), "CVE-2024-1234": (0.72, "elevated")}
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class UncertaintyAggregator:
                 results[entity] = (
                     self._entropy_to_confidence(uncertainty.avg_entropy_bits),
                     uncertainty.uncertainty_flag,
-    )
+                )
             else:
                 # Default: high confidence, no uncertainty flag
                 results[entity] = (1.0, "normal")

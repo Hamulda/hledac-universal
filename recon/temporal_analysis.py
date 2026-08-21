@@ -21,34 +21,42 @@ From deep_research/temporal_analyzer.py comments:
 
 Time-series analysis for research data with M1 optimization.
 """
+
 import logging
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from datetime import UTC, datetime
 from enum import Enum
+from operator import attrgetter
+
 import numpy as np
-from operator import attrgetter, itemgetter
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
+
 
 class TrendDirection(Enum):
     """Direction of temporal trend."""
-    INCREASING = 'increasing'
-    DECREASING = 'decreasing'
-    STABLE = 'stable'
-    VOLATILE = 'volatile'
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+    STABLE = "stable"
+    VOLATILE = "volatile"
+
 
 class PatternType(Enum):
     """Types of temporal patterns."""
-    SEASONAL = 'seasonal'
-    CYCLICAL = 'cyclical'
-    TREND = 'trend'
-    RANDOM = 'random'
-    STEP_CHANGE = 'step_change'
+
+    SEASONAL = "seasonal"
+    CYCLICAL = "cyclical"
+    TREND = "trend"
+    RANDOM = "random"
+    STEP_CHANGE = "step_change"
+
 
 class TrendAnalysis(Struct):
     """Result of trend analysis."""
+
     direction: TrendDirection
     strength: float
     slope: float
@@ -57,24 +65,30 @@ class TrendAnalysis(Struct):
     end_value: float
     time_period_days: int
 
+
 class TemporalPattern(Struct):
     """Detected temporal pattern."""
+
     pattern_type: PatternType
     period_days: int | None
     amplitude: float
     confidence: float
     description: str
 
+
 class CausalEvent(Struct, frozen=True):
     """Event in causal chain."""
+
     timestamp: datetime
     event: str
     strength: float
     lag_days: int
     evidence: list[str] = field(default_factory=list)
 
+
 class Scenario(Struct, frozen=True):
     """Future scenario projection."""
+
     name: str
     probability: float
     key_drivers: list[str]
@@ -82,16 +96,20 @@ class Scenario(Struct, frozen=True):
     implications: str
     time_horizon_days: int
 
+
 class TurningPoint(Struct, frozen=True):
     """Detected turning point in time series."""
+
     timestamp: datetime
     significance: float
     direction_change: str
     before_trend: TrendDirection
     after_trend: TrendDirection
 
+
 class TemporalAnalysisResult(Struct, frozen=True):
     """Complete temporal analysis result."""
+
     query: str
     timestamp: datetime
     trend: TrendAnalysis | None = None
@@ -105,6 +123,7 @@ class TemporalAnalysisResult(Struct, frozen=True):
     recommendations: list[str] = field(default_factory=list)
     overall_confidence: float = 0.0
     analysis_duration_ms: int = 0
+
 
 class TemporalAnalyzer:
     """
@@ -121,9 +140,10 @@ class TemporalAnalyzer:
     "Step 8: Generate temporal patterns"
     "Step 9: Generate insights and recommendations"
     """
-    __slots__ = tuple(('min_data_points',))
 
-    def __init__(self, min_data_points: int=5):
+    __slots__ = ("min_data_points",)
+
+    def __init__(self, min_data_points: int = 5) -> None:
         """
         Initialize analyzer.
 
@@ -132,7 +152,9 @@ class TemporalAnalyzer:
         """
         self.min_data_points = min_data_points
 
-    def analyze(self, query: str, timestamps: list[datetime], values: list[float], analysis_types: list[str] | None=None) -> TemporalAnalysisResult:
+    def analyze(
+        self, query: str, timestamps: list[datetime], values: list[float], analysis_types: list[str] | None = None
+    ) -> TemporalAnalysisResult:
         """
         Perform complete temporal analysis.
 
@@ -146,26 +168,27 @@ class TemporalAnalyzer:
             TemporalAnalysisResult with all analyses
         """
         import time
+
         start_time = time.time()
         result = TemporalAnalysisResult(query=query, timestamp=datetime.now(UTC))
         if len(timestamps) < self.min_data_points:
-            result.insights.append('Insufficient data for temporal analysis')
+            result.insights.append("Insufficient data for temporal analysis")
             return result
-        analysis_types = analysis_types or ['trend', 'patterns', 'causal', 'scenarios', 'turning_points', 'projections']
+        analysis_types = analysis_types or ["trend", "patterns", "causal", "scenarios", "turning_points", "projections"]
         sorted_data = sorted(zip(timestamps, values, strict=False), key=lambda x: x[0])
         timestamps = [d[0] for d in sorted_data]
         values = [d[1] for d in sorted_data]
-        if 'trend' in analysis_types:
+        if "trend" in analysis_types:
             result.trend = self._analyze_trend(timestamps, values)
-        if 'patterns' in analysis_types:
+        if "patterns" in analysis_types:
             result.patterns = self._detect_patterns(timestamps, values)
-        if 'causal' in analysis_types:
+        if "causal" in analysis_types:
             result.causal_chain = self._analyze_causal_chain(timestamps, values, query)
-        if 'scenarios' in analysis_types:
+        if "scenarios" in analysis_types:
             result.scenarios = self._generate_scenarios(timestamps, values, query)
-        if 'turning_points' in analysis_types:
+        if "turning_points" in analysis_types:
             result.turning_points = self._detect_turning_points(timestamps, values)
-        if 'projections' in analysis_types:
+        if "projections" in analysis_types:
             result.projections, result.projection_confidence = self._generate_projections(timestamps, values)
         result.insights = self._generate_insights(result)
         result.recommendations = self._generate_recommendations(result)
@@ -188,7 +211,7 @@ class TemporalAnalyzer:
         x = np.arange(len(values))
         y = np.array(values)
         n = len(x)
-        slope = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) / (n * np.sum(x ** 2) - np.sum(x) ** 2)
+        slope = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) / (n * np.sum(x**2) - np.sum(x) ** 2)
         if abs(slope) < 0.001:
             direction = TrendDirection.STABLE
         elif slope > 0:
@@ -203,7 +226,15 @@ class TemporalAnalyzer:
         if np.std(y) > abs(slope * len(y)):
             direction = TrendDirection.VOLATILE
         time_period = (timestamps[-1] - timestamps[0]).days if len(timestamps) > 1 else 1
-        return TrendAnalysis(direction=direction, strength=float(r_squared), slope=float(slope), confidence=float(r_squared), start_value=float(values[0]), end_value=float(values[-1]), time_period_days=time_period)
+        return TrendAnalysis(
+            direction=direction,
+            strength=float(r_squared),
+            slope=float(slope),
+            confidence=float(r_squared),
+            start_value=float(values[0]),
+            end_value=float(values[-1]),
+            time_period_days=time_period,
+        )
 
     def _detect_patterns(self, timestamps: list[datetime], values: list[float]) -> list[TemporalPattern]:
         """
@@ -214,24 +245,48 @@ class TemporalAnalyzer:
         patterns = []
         y = np.array(values)
         if len(y) >= 12:
-            autocorr = np.correlate(y - np.mean(y), y - np.mean(y), mode='full')
-            autocorr = autocorr[len(autocorr) // 2:]
+            autocorr = np.correlate(y - np.mean(y), y - np.mean(y), mode="full")
+            autocorr = autocorr[len(autocorr) // 2 :]
             if len(autocorr) > 2:
                 for i in range(2, min(len(autocorr) - 1, len(y) // 2)):
                     if autocorr[i] > autocorr[i - 1] and autocorr[i] > autocorr[i + 1]:
                         if autocorr[i] > autocorr[0] * 0.3:
-                            patterns.append(TemporalPattern(pattern_type=PatternType.SEASONAL, period_days=i * 30, amplitude=float(np.std(y)), confidence=0.6, description=f'Possible seasonal pattern with period ~{i} data points'))
+                            patterns.append(
+                                TemporalPattern(
+                                    pattern_type=PatternType.SEASONAL,
+                                    period_days=i * 30,
+                                    amplitude=float(np.std(y)),
+                                    confidence=0.6,
+                                    description=f"Possible seasonal pattern with period ~{i} data points",
+                                )
+                            )
                             break
         if len(y) >= 6:
             zero_crossings = np.sum(np.diff(np.sign(y - np.mean(y))) != 0)
             if zero_crossings > len(y) / 4:
-                patterns.append(TemporalPattern(pattern_type=PatternType.CYCLICAL, period_days=None, amplitude=float(np.std(y)), confidence=0.5, description='Cyclical behavior detected'))
+                patterns.append(
+                    TemporalPattern(
+                        pattern_type=PatternType.CYCLICAL,
+                        period_days=None,
+                        amplitude=float(np.std(y)),
+                        confidence=0.5,
+                        description="Cyclical behavior detected",
+                    )
+                )
         if len(y) >= 4:
             mid = len(y) // 2
             before_mean = np.mean(y[:mid])
             after_mean = np.mean(y[mid:])
             if abs(after_mean - before_mean) > np.std(y):
-                patterns.append(TemporalPattern(pattern_type=PatternType.STEP_CHANGE, period_days=None, amplitude=float(abs(after_mean - before_mean)), confidence=0.7, description=f'Step change detected around {timestamps[mid]}'))
+                patterns.append(
+                    TemporalPattern(
+                        pattern_type=PatternType.STEP_CHANGE,
+                        period_days=None,
+                        amplitude=float(abs(after_mean - before_mean)),
+                        confidence=0.7,
+                        description=f"Step change detected around {timestamps[mid]}",
+                    )
+                )
         return patterns
 
     def _analyze_causal_chain(self, timestamps: list[datetime], values: list[float], query: str) -> list[CausalEvent]:
@@ -247,7 +302,13 @@ class TemporalAnalyzer:
         for i in range(1, len(y)):
             change = abs(y[i] - y[i - 1])
             if change > std_val * 1.5:
-                event = CausalEvent(timestamp=timestamps[i], event='Significant value change', strength=min(1.0, change / (std_val * 3)), lag_days=(timestamps[i] - timestamps[i - 1]).days if i > 0 else 0, evidence=[f'Value changed by {change:.2f}'])
+                event = CausalEvent(
+                    timestamp=timestamps[i],
+                    event="Significant value change",
+                    strength=min(1.0, change / (std_val * 3)),
+                    lag_days=(timestamps[i] - timestamps[i - 1]).days if i > 0 else 0,
+                    evidence=[f"Value changed by {change:.2f}"],
+                )
                 events.append(event)
         return events[:5]
 
@@ -259,12 +320,48 @@ class TemporalAnalyzer:
         """
         scenarios = []
         trend = self._analyze_trend(timestamps, values)
-        scenarios.append(Scenario(name='Trend Continuation', probability=0.5, key_drivers=['Current momentum', 'Stable conditions'], outcomes=[f'Continued {trend.direction.value} trend'], implications='Expect similar pattern to continue', time_horizon_days=90))
-        scenarios.append(Scenario(name='Trend Reversal', probability=0.25, key_drivers=['Market saturation', 'External shocks'], outcomes=['Change in current direction'], implications='Prepare for opposite trend', time_horizon_days=90))
+        scenarios.append(
+            Scenario(
+                name="Trend Continuation",
+                probability=0.5,
+                key_drivers=["Current momentum", "Stable conditions"],
+                outcomes=[f"Continued {trend.direction.value} trend"],
+                implications="Expect similar pattern to continue",
+                time_horizon_days=90,
+            )
+        )
+        scenarios.append(
+            Scenario(
+                name="Trend Reversal",
+                probability=0.25,
+                key_drivers=["Market saturation", "External shocks"],
+                outcomes=["Change in current direction"],
+                implications="Prepare for opposite trend",
+                time_horizon_days=90,
+            )
+        )
         if trend.direction in [TrendDirection.INCREASING, TrendDirection.DECREASING]:
-            scenarios.append(Scenario(name='Trend Acceleration', probability=0.15, key_drivers=['Positive feedback loops', 'Momentum building'], outcomes=['Faster rate of change'], implications='Monitor closely for inflection', time_horizon_days=60))
+            scenarios.append(
+                Scenario(
+                    name="Trend Acceleration",
+                    probability=0.15,
+                    key_drivers=["Positive feedback loops", "Momentum building"],
+                    outcomes=["Faster rate of change"],
+                    implications="Monitor closely for inflection",
+                    time_horizon_days=60,
+                )
+            )
         if trend.direction != TrendDirection.STABLE:
-            scenarios.append(Scenario(name='Stabilization', probability=0.1, key_drivers=['Equilibrium reached', 'Balancing forces'], outcomes=['Values stabilize'], implications='Reduced volatility expected', time_horizon_days=120))
+            scenarios.append(
+                Scenario(
+                    name="Stabilization",
+                    probability=0.1,
+                    key_drivers=["Equilibrium reached", "Balancing forces"],
+                    outcomes=["Values stabilize"],
+                    implications="Reduced volatility expected",
+                    time_horizon_days=120,
+                )
+            )
         return scenarios
 
     def _detect_turning_points(self, timestamps: list[datetime], values: list[float]) -> list[TurningPoint]:
@@ -285,11 +382,23 @@ class TemporalAnalyzer:
                 if abs(before_slope) > 0.01 and abs(after_slope) > 0.01:
                     before_trend = TrendDirection.INCREASING if before_slope > 0 else TrendDirection.DECREASING
                     after_trend = TrendDirection.INCREASING if after_slope > 0 else TrendDirection.DECREASING
-                    points.append(TurningPoint(timestamp=timestamps[i], significance=min(1.0, abs(before_slope - after_slope) / max(abs(before_slope), abs(after_slope))), direction_change=f'{before_trend.value} to {after_trend.value}', before_trend=before_trend, after_trend=after_trend))
+                    points.append(
+                        TurningPoint(
+                            timestamp=timestamps[i],
+                            significance=min(
+                                1.0, abs(before_slope - after_slope) / max(abs(before_slope), abs(after_slope))
+                            ),
+                            direction_change=f"{before_trend.value} to {after_trend.value}",
+                            before_trend=before_trend,
+                            after_trend=after_trend,
+                        )
+                    )
         points.sort(key=attrgetter("significance"), reverse=True)
         return points[:3]
 
-    def _generate_projections(self, timestamps: list[datetime], values: list[float], horizon_days: int=30) -> tuple[dict[str, list[float]], float]:
+    def _generate_projections(
+        self, timestamps: list[datetime], values: list[float], horizon_days: int = 30
+    ) -> tuple[dict[str, list[float]], float]:
         """
         Generate future projections using multiple advanced methods.
 
@@ -304,28 +413,28 @@ class TemporalAnalyzer:
         confidences = []
         trend = self._analyze_trend(timestamps, values)
         linear_proj = self._project_linear(values, trend.slope, horizon_days)
-        projections['linear'] = linear_proj
+        projections["linear"] = linear_proj
         confidences.append(trend.confidence)
         if len(values) >= 5:
             arima_proj = self._project_arima(values, horizon_days)
-            projections['arima'] = arima_proj
+            projections["arima"] = arima_proj
             confidences.append(0.75)
         exp_smooth_proj = self._project_exponential_smoothing(values, horizon_days)
-        projections['exponential_smoothing'] = exp_smooth_proj
+        projections["exponential_smoothing"] = exp_smooth_proj
         confidences.append(0.7)
         if len(values) >= 5:
             mc_proj = self._project_monte_carlo(values, horizon_days)
-            projections['monte_carlo_mean'] = mc_proj['mean']
-            projections['monte_carlo_upper'] = mc_proj['upper']
-            projections['monte_carlo_lower'] = mc_proj['lower']
+            projections["monte_carlo_mean"] = mc_proj["mean"]
+            projections["monte_carlo_upper"] = mc_proj["upper"]
+            projections["monte_carlo_lower"] = mc_proj["lower"]
             confidences.append(0.8)
         bayesian_proj = self._project_bayesian(values, horizon_days)
-        projections['bayesian'] = bayesian_proj['mean']
-        projections['bayesian_ci_lower'] = bayesian_proj['ci_lower']
-        projections['bayesian_ci_upper'] = bayesian_proj['ci_upper']
+        projections["bayesian"] = bayesian_proj["mean"]
+        projections["bayesian_ci_lower"] = bayesian_proj["ci_lower"]
+        projections["bayesian_ci_upper"] = bayesian_proj["ci_upper"]
         confidences.append(0.85)
         ensemble_proj = self._create_ensemble_projection(projections, confidences)
-        projections['ensemble'] = ensemble_proj
+        projections["ensemble"] = ensemble_proj
         overall_confidence = float(np.average(confidences, weights=[1.0] * len(confidences)))
         return (projections, overall_confidence)
 
@@ -380,7 +489,9 @@ class TemporalAnalyzer:
             predictions.append(prediction)
         return predictions
 
-    def _project_monte_carlo(self, values: list[float], horizon_days: int, n_simulations: int=100) -> dict[str, list[float]]:
+    def _project_monte_carlo(
+        self, values: list[float], horizon_days: int, n_simulations: int = 100
+    ) -> dict[str, list[float]]:
         """
         Monte Carlo simulation for probabilistic forecasting.
 
@@ -407,7 +518,7 @@ class TemporalAnalyzer:
         mean_projection = simulations_array.mean(axis=0).tolist()
         upper_projection = np.percentile(simulations_array, 95, axis=0).tolist()
         lower_projection = np.percentile(simulations_array, 5, axis=0).tolist()
-        return {'mean': mean_projection, 'upper': upper_projection, 'lower': lower_projection}
+        return {"mean": mean_projection, "upper": upper_projection, "lower": lower_projection}
 
     def _project_bayesian(self, values: list[float], horizon_days: int) -> dict[str, list[float]]:
         """
@@ -437,7 +548,7 @@ class TemporalAnalyzer:
             predictions.append(pred_mean)
             ci_lower.append(pred_mean - 1.96 * np.sqrt(pred_var))
             ci_upper.append(pred_mean + 1.96 * np.sqrt(pred_var))
-        return {'mean': predictions, 'ci_lower': ci_lower, 'ci_upper': ci_upper}
+        return {"mean": predictions, "ci_lower": ci_lower, "ci_upper": ci_upper}
 
     def _create_ensemble_projection(self, projections: dict[str, list[float]], confidences: list[float]) -> list[float]:
         """
@@ -449,13 +560,13 @@ class TemporalAnalyzer:
         """
         available_projections = []
         available_weights = []
-        for i, method in enumerate(['linear', 'bayesian', 'exponential_smoothing', 'arima']):
+        for i, method in enumerate(["linear", "bayesian", "exponential_smoothing", "arima"]):
             if method in projections:
                 available_projections.append(projections[method])
                 available_weights.append(confidences[min(i, len(confidences) - 1)])
         if not available_projections:
             return []
-        min_len = min((len(p) for p in available_projections))
+        min_len = min(len(p) for p in available_projections)
         available_projections = [p[:min_len] for p in available_projections]
         weights = np.array(available_weights)
         weights = weights / weights.sum()
@@ -466,22 +577,25 @@ class TemporalAnalyzer:
         """Generate insights from analysis."""
         insights = []
         if result.trend:
-            insights.append(f'Overall trend is {result.trend.direction.value} with {result.trend.strength:.0%} confidence')
+            insights.append(
+                f"Overall trend is {result.trend.direction.value} with {result.trend.strength:.0%} confidence"
+            )
         for pattern in result.patterns:
-            insights.append(f'Detected {pattern.pattern_type.value} pattern: {pattern.description}')
+            insights.append(f"Detected {pattern.pattern_type.value} pattern: {pattern.description}")
         if result.turning_points:
-            insights.append(f'Found {len(result.turning_points)} significant turning points')
+            insights.append(f"Found {len(result.turning_points)} significant turning points")
         return insights
 
     def _generate_recommendations(self, result: TemporalAnalysisResult) -> list[str]:
         """Generate recommendations based on analysis."""
         recommendations = []
         if result.trend and result.trend.direction == TrendDirection.VOLATILE:
-            recommendations.append('High volatility detected - consider risk mitigation strategies')
+            recommendations.append("High volatility detected - consider risk mitigation strategies")
         if result.scenarios:
             top_scenario = max(result.scenarios, key=attrgetter("probability"))
-            recommendations.append(f'Most likely scenario: {top_scenario.name} ({top_scenario.probability:.0%})')
+            recommendations.append(f"Most likely scenario: {top_scenario.name} ({top_scenario.probability:.0%})")
         return recommendations
+
 
 def create_temporal_analyzer() -> TemporalAnalyzer:
     """Factory function for TemporalAnalyzer."""

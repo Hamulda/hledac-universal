@@ -2,7 +2,6 @@
 Extrækce stavu pro MARL agenty.
 Stav obsahuje globální informace (z grafu, scheduleru) a lokální informace z aktuálního běhu.
 
-
 Podporuje dva režimy:
   1. extract(result: SprintSchedulerResult) — RL F257: čte přímo z výsledků sprintu
   2. extract_from_dicts(thread_state, global_state) — původní rozhraní pro dict-based input
@@ -11,11 +10,14 @@ Podporuje dva režimy:
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
+
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
+
 
 # Initialize to None; will be set when first accessed
 mx = None
@@ -27,12 +29,14 @@ if MLX_AVAILABLE:
     except ImportError:
         mx = None
 
-import numpy as np
 from typing import TYPE_CHECKING, Optional
-from _core import aclose
+
+import numpy as np
+
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
-_KNOWN_LANES = ('PUBLIC', 'CT', 'WAYBACK', 'DOH', 'PASSIVE_DNS')
+_KNOWN_LANES = ("PUBLIC", "CT", "WAYBACK", "DOH", "PASSIVE_DNS")
+
 
 class StateExtractor:
     """
@@ -60,9 +64,10 @@ class StateExtractor:
         [22] sprints_since_PUBLIC, [23] sprints_since_CT, [24] sprints_since_WAYBACK,
         [25] sprints_since_DOH, [26] sprints_since_PASSIVE_DNS
     """
-    __slots__ = tuple(('_ema_alpha', '_reward_ema', '_sprint_count', '_sprints_since_lane', 'gnn_predictor', 'state_dim'))
 
-    def __init__(self, state_dim: int=27, gnn_predictor: Optional=None):
+    __slots__ = ("_ema_alpha", "_reward_ema", "_sprint_count", "_sprints_since_lane", "gnn_predictor", "state_dim")
+
+    def __init__(self, state_dim: int = 27, gnn_predictor: Optional = None) -> None:
         self.state_dim = state_dim
         self.gnn_predictor = gnn_predictor
         self._reward_ema = 0.0
@@ -84,28 +89,27 @@ class StateExtractor:
         """
         self._sprint_count += 1
 
-        # Update lane recency
         for lane in _KNOWN_LANES:
             self._sprints_since_lane[lane] += 1
-            if hasattr(result, 'lanes') and result.lanes:
+            if hasattr(result, "lanes") and result.lanes:
                 if lane in result.lanes:
                     self._sprints_since_lane[lane] = 0
 
         # Base features
         base = np.zeros(12, dtype=np.float32)
-        base[0] = min(getattr(result, 'findings_accepted', 0) / 50.0, 1.0)
-        base[1] = min(getattr(result, 'runtime_seconds', 0) / 3600.0, 1.0)
-        base[2] = min(getattr(result, 'cycles_completed', 0) / 50.0, 1.0)
+        base[0] = min(getattr(result, "findings_accepted", 0) / 50.0, 1.0)
+        base[1] = min(getattr(result, "runtime_seconds", 0) / 3600.0, 1.0)
+        base[2] = min(getattr(result, "cycles_completed", 0) / 50.0, 1.0)
 
-        total = getattr(result, 'findings_accepted', 0) + getattr(result, 'findings_rejected', 1)
-        base[3] = getattr(result, 'findings_accepted', 0) / max(total, 1)
-        base[4] = min(getattr(result, 'new_iocs', 0) / 100.0, 1.0)
-        base[5] = getattr(result, 'source_quality_avg', 0.5)
-        base[6] = min(getattr(result, 'queue_size', 0) / 200.0, 1.0)
-        base[7] = getattr(result, 'memory_pressure_norm', 0.5)
-        base[8] = getattr(result, 'graph_entropy_norm', 0.5)
-        base[9] = min(getattr(result, 'time_since_last_finding', 0) / 300.0, 1.0)
-        base[10] = min(getattr(result, 'resource_concurrency', 1) / 8.0, 1.0)
+        total = getattr(result, "findings_accepted", 0) + getattr(result, "findings_rejected", 1)
+        base[3] = getattr(result, "findings_accepted", 0) / max(total, 1)
+        base[4] = min(getattr(result, "new_iocs", 0) / 100.0, 1.0)
+        base[5] = getattr(result, "source_quality_avg", 0.5)
+        base[6] = min(getattr(result, "queue_size", 0) / 200.0, 1.0)
+        base[7] = getattr(result, "memory_pressure_norm", 0.5)
+        base[8] = getattr(result, "graph_entropy_norm", 0.5)
+        base[9] = min(getattr(result, "time_since_last_finding", 0) / 300.0, 1.0)
+        base[10] = min(getattr(result, "resource_concurrency", 1) / 8.0, 1.0)
 
         # Reward = acceptance ratio * throughput
         reward = base[3] * base[1]
@@ -114,21 +118,21 @@ class StateExtractor:
 
         # Lane yield vector
         lane_yield = np.zeros(5, dtype=np.float32)
-        if hasattr(result, 'lanes') and result.lanes:
+        if hasattr(result, "lanes") and result.lanes:
             for i, lane in enumerate(_KNOWN_LANES):
                 if lane in result.lanes:
                     lane_data = result.lanes[lane]
-                    duration = max(getattr(lane_data, 'duration_s', 0.001), 0.001)
-                    lane_yield[i] = min(getattr(lane_data, 'findings_accepted', 0) / duration, 10.0)
+                    duration = max(getattr(lane_data, "duration_s", 0.001), 0.001)
+                    lane_yield[i] = min(getattr(lane_data, "findings_accepted", 0) / duration, 10.0)
 
         # Lane quality vector
         lane_quality = np.zeros(5, dtype=np.float32)
-        if hasattr(result, 'lanes') and result.lanes:
+        if hasattr(result, "lanes") and result.lanes:
             for i, lane in enumerate(_KNOWN_LANES):
                 if lane in result.lanes:
                     lane_data = result.lanes[lane]
-                    accepted = getattr(lane_data, 'findings_accepted', 0)
-                    rejected = getattr(lane_data, 'findings_rejected', 0)
+                    accepted = getattr(lane_data, "findings_accepted", 0)
+                    rejected = getattr(lane_data, "findings_rejected", 0)
                     total = accepted + rejected
                     lane_quality[i] = accepted / max(total, 1)
 
@@ -158,21 +162,23 @@ class StateExtractor:
 
     def _result_from_dicts(self, thread_state: dict, global_state: dict) -> SprintSchedulerResult:
         """Convert dicts to SprintSchedulerResult-like object."""
+
         class _Result:
             pass
+
         r = _Result()
-        r.findings_accepted = thread_state.get('findings_accepted', 0)
-        r.findings_rejected = thread_state.get('findings_rejected', 0)
-        r.runtime_seconds = thread_state.get('runtime_seconds', 0)
-        r.cycles_completed = thread_state.get('cycles_completed', 0)
-        r.new_iocs = thread_state.get('new_iocs', 0)
-        r.source_quality_avg = thread_state.get('source_quality_avg', 0.5)
-        r.queue_size = thread_state.get('queue_size', 0)
-        r.memory_pressure_norm = thread_state.get('memory_pressure_norm', 0.5)
-        r.graph_entropy_norm = thread_state.get('graph_entropy_norm', 0.5)
-        r.time_since_last_finding = thread_state.get('time_since_last_finding', 0)
-        r.resource_concurrency = thread_state.get('resource_concurrency', 1)
-        r.lanes = thread_state.get('lanes', {})
+        r.findings_accepted = thread_state.get("findings_accepted", 0)
+        r.findings_rejected = thread_state.get("findings_rejected", 0)
+        r.runtime_seconds = thread_state.get("runtime_seconds", 0)
+        r.cycles_completed = thread_state.get("cycles_completed", 0)
+        r.new_iocs = thread_state.get("new_iocs", 0)
+        r.source_quality_avg = thread_state.get("source_quality_avg", 0.5)
+        r.queue_size = thread_state.get("queue_size", 0)
+        r.memory_pressure_norm = thread_state.get("memory_pressure_norm", 0.5)
+        r.graph_entropy_norm = thread_state.get("graph_entropy_norm", 0.5)
+        r.time_since_last_finding = thread_state.get("time_since_last_finding", 0)
+        r.resource_concurrency = thread_state.get("resource_concurrency", 1)
+        r.lanes = thread_state.get("lanes", {})
         return r
 
     def reset(self) -> None:

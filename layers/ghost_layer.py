@@ -8,6 +8,7 @@ This module is DEPRECATED. Import from `layers.ghost` instead:
 
 This file exists for backward compatibility only and will be removed in a future version.
 """
+
 import warnings
 
 # Deprecation warning for direct imports
@@ -24,4 +25,4 @@ from layers.ghost import (
     VMThreatLevel,
 )
 
-__all__ = ['GhostLayer', 'SystemContext', 'VMThreatLevel']
+__all__ = ["GhostLayer", "SystemContext", "VMThreatLevel"]

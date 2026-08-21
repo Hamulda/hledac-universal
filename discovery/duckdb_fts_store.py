@@ -2,9 +2,6 @@
 DuckDB FTS Store — Issue #11.
 Full-text index pro discovery/ dokument data.
 
-
-
-
 Pouziva rank_bm25 (pure Python, v deps) + DuckDB pro structured storage.
 M1 8GB safe. Zero-copy Arrow ingest.
 
@@ -13,42 +10,47 @@ BM25 je v `rank-bm25>=0.2.2` (deps). Schema:
     In-memory BM25 index (rank_bm25.BM25Okapi) per source provider
 
 ISSUE-011: Tantivy fulltext search (Rust mmap-backed BM25):
-    - search_tantivy() method uses Rust Tantivy when available
-    - 5-15x faster than Python BM25Okapi
-    - Falls back to search() (BM25Okapi) when Rust unavailable
+    - search() uses Tantivy as PRIORITY (5-15x faster than Python BM25Okapi)
+    - Falls back to rank_bm25.BM25Okapi when Rust unavailable
     - Tantivy index stored at .tantivy_<db_name>/ in same directory
+    - _search_bm25() — pure Python BM25Okapi fallback (internal)
 
 Canonical write path:
     1. upsert do DuckDB pres Arrow zero-copy
     2. BM25 index rebuilt on dirty flag before search
 
 Search:
-    search()     — BM25 scoring pres rank_bm25.BM25Okapi → ranked results
-    search_tantivy() — Rust Tantivy mmap-backed BM25 (when available)
+    search()     — Tantivy mmap-backed BM25 (when available), fallback to rank_bm25
+    _search_bm25() — Pure Python BM25Okapi (internal fallback)
+    search_tantivy() — Rust Tantivy mmap-backed BM25 (explicit)
     Hybrid: RRF fusion s LanceDB ANN pres rrf_fuse()
 """
+
 import asyncio
 import hashlib
 import logging
 import os
-import time
-import uuid
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
-from hledac.universal.knowledge.duckdb_parallel import numpy_rrf_fusion
-from polars import DataFrame
-from rank_bm25 import BM25Okapi
-from _core import aclose
 
 # ISSUE-011: Tantivy fulltext search — thread-safe lazy import
 import threading
+import time
+import uuid
+from dataclasses import field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from polars import DataFrame
+from rank_bm25 import BM25Okapi
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.knowledge.duckdb_parallel import numpy_rrf_fusion
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+
 _TANTIVY_AVAILABLE: bool = False
 _tantivy_domain = None
 _tantivy_lock = threading.Lock()
+
 
 def _init_tantivy() -> bool:
     """Thread-safe Tantivy domain initialization."""
@@ -60,6 +62,7 @@ def _init_tantivy() -> bool:
             return True
         try:
             from hledac.universal._core.rust_backend.fulltext import get_domain
+
             _tantivy_domain = get_domain()
             _TANTIVY_AVAILABLE = _tantivy_domain.is_available
             return _TANTIVY_AVAILABLE
@@ -67,30 +70,36 @@ def _init_tantivy() -> bool:
             _TANTIVY_AVAILABLE = False
             _tantivy_domain = None
             return False
+
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
-DEFAULT_FTS_DB = 'discovery_fts.duckdb'
+DEFAULT_FTS_DB = "discovery_fts.duckdb"
 MAX_BATCH_SIZE = 5000
 BM25_K = 60
-_WAL_SUFFIX = '.wal'
+_WAL_SUFFIX = ".wal"
 _WAL_MAX_SIZE_MB = 64
 
 # Schema version for migration handling (ISSUE #11)
 _SCHEMA_VERSION = 1
 
+
 class FTSDocument(Struct):
     """Jeden dokument k indexaci."""
+
     doc_id: str
-    title: str = ''
-    body: str = ''
+    title: str = ""
+    body: str = ""
     url: str | None = None
-    source: str = ''
+    source: str = ""
     fetched_at: float = field(default_factory=time.time)
-    metadata_json: str = '{}'
+    metadata_json: str = "{}"
+
 
 class FTSSearchResult(Struct):
     """Jeden vysledek FTS dotazu."""
+
     doc_id: str
     title: str
     body_snippet: str
@@ -98,6 +107,7 @@ class FTSSearchResult(Struct):
     source: str
     rank: float
     fetched_at: float
+
 
 class DuckDBFTSStore:
     """
@@ -125,28 +135,48 @@ class DuckDBFTSStore:
     Index worker appenduje do WAL, konsolidace probíhá periodicky nebo při startu.
     Přežívá crash: při restartu se WAL přečte a aplikuje před rebuild.
     """
-    __slots__ = tuple(('_bm25_combined', '_bm25_dirty', '_bm25_doc_ids', '_bm25_index', '_conn', '_db_path', '_initialized', '_lock', '_max_batch_size', '_readonly', '_wal_dirty', '_wal_flush_size', '_wal_path'))
 
-    def __init__(self, db_path: str | Path | None=None, *, max_batch_size: int=MAX_BATCH_SIZE, readonly: bool=False) -> None:
+    __slots__ = (
+        "_bm25_combined",
+        "_bm25_dirty",
+        "_bm25_doc_ids",
+        "_bm25_index",
+        "_conn",
+        "_db_path",
+        "_initialized",
+        "_lock",
+        "_max_batch_size",
+        "_readonly",
+        "_tantivy_dirty",
+        "_wal_dirty",
+        "_wal_flush_size",
+        "_wal_path",
+    )
+
+    def __init__(
+        self, db_path: str | Path | None = None, *, max_batch_size: int = MAX_BATCH_SIZE, readonly: bool = False
+    ) -> None:
         if db_path is None:
             db_path = DEFAULT_FTS_DB
         self._db_path = Path(db_path)
         self._max_batch_size = max_batch_size
         self._readonly = readonly
-        self._conn: 'Any' = None  # DuckDBPyConnection at runtime
+        self._conn: Any = None  # DuckDBPyConnection at runtime
         self._lock = asyncio.Lock()
         self._initialized = False
         self._bm25_index: dict[str, BM25Okapi | None] = {}
         self._bm25_doc_ids: dict[str, list[str]] = {}
         self._bm25_combined: dict[str, list[str]] = {}
         self._bm25_dirty = False
+        self._tantivy_dirty = False  # ISSUE-011: Tantivy index sync flag
         self._wal_path: Path | None = None
         self._wal_dirty = False
-        self._wal_flush_size = int(os.environ.get('HLEDAC_FTS_WAL_MAX_MB', str(_WAL_MAX_SIZE_MB))) * 1024 * 1024
+        self._wal_flush_size = int(os.environ.get("HLEDAC_FTS_WAL_MAX_MB", str(_WAL_MAX_SIZE_MB))) * 1024 * 1024
 
     async def initialize(self) -> None:
         """Inicializuje DuckDB schema + nacte existujici BM25 indexy."""
         import duckdb
+
         async with self._lock:
             if self._initialized:
                 return
@@ -165,14 +195,20 @@ class DuckDBFTSStore:
                 self._consolidate_wal()
             self._rebuild_bm25_index()
             self._initialized = True
-            logger.info('DuckDBFTSStore initialized: path=%s', self._db_path)
+            logger.info("DuckDBFTSStore initialized: path=%s", self._db_path)
 
     def _ensure_schema(self) -> None:
         """Vytvori DuckDB tabulku pro dokumenty s version tracking."""
         assert self._conn is not None
-        self._conn.execute("\n            CREATE TABLE IF NOT EXISTS doc_bm25 (\n                doc_id        TEXT PRIMARY KEY,\n                title         TEXT NOT NULL DEFAULT '',\n                body          TEXT NOT NULL DEFAULT '',\n                source        TEXT NOT NULL DEFAULT '',\n                url           TEXT,\n                fetched_at    DOUBLE NOT NULL DEFAULT 0.0,\n                metadata_json TEXT NOT NULL DEFAULT '{}'\n            );\n        ")
-        self._conn.execute('\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_source ON doc_bm25(source);\n        ')
-        self._conn.execute('\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_fetched ON doc_bm25(fetched_at DESC);\n        ')
+        self._conn.execute(
+            "\n            CREATE TABLE IF NOT EXISTS doc_bm25 (\n                doc_id        TEXT PRIMARY KEY,\n                title         TEXT NOT NULL DEFAULT '',\n                body          TEXT NOT NULL DEFAULT '',\n                source        TEXT NOT NULL DEFAULT '',\n                url           TEXT,\n                fetched_at    DOUBLE NOT NULL DEFAULT 0.0,\n                metadata_json TEXT NOT NULL DEFAULT '{}'\n            );\n        "
+        )
+        self._conn.execute(
+            "\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_source ON doc_bm25(source);\n        "
+        )
+        self._conn.execute(
+            "\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_fetched ON doc_bm25(fetched_at DESC);\n        "
+        )
         # Schema version tracking for migrations
         try:
             self._conn.execute("""
@@ -182,34 +218,46 @@ class DuckDBFTSStore:
                 );
             """)
             self._conn.execute(
-                "INSERT OR IGNORE INTO _fts_meta (key, value) VALUES ('schema_version', ?)",
-                [str(_SCHEMA_VERSION)]
-    )
+                "INSERT OR IGNORE INTO _fts_meta (key, value) VALUES ('schema_version', ?)", [str(_SCHEMA_VERSION)]
+            )
         except Exception:  # noqa: BLE001
             pass  # fail-soft
 
     def _wal_source_hash(self) -> str:
         """Stable hash for WAL file naming — derived from db_path."""
-        key = str(self._db_path.absolute()).encode('utf-8')
+        key = str(self._db_path.absolute()).encode("utf-8")
         return hashlib.sha256(key).hexdigest()[:16]
 
     def _init_wal(self) -> None:
         """Inicializuje WAL cestu v cache adresari."""
-        cache_dir = Path.home() / '.cache' / 'hledac'
+        cache_dir = Path.home() / ".cache" / "hledac"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        self._wal_path = cache_dir / f'{self._wal_source_hash()}{_WAL_SUFFIX}'
+        self._wal_path = cache_dir / f"{self._wal_source_hash()}{_WAL_SUFFIX}"
 
     def _wal_append(self, op: str, doc: FTSDocument) -> None:
         """Append one WAL entry (jsonl)."""
         if self._wal_path is None:
             return
         try:
-            entry = _msgspec_dumps_str({'op': op, 'doc': {'doc_id': doc.doc_id, 'title': doc.title, 'body': doc.body, 'source': doc.source, 'url': doc.url or '', 'fetched_at': doc.fetched_at, 'metadata_json': doc.metadata_json}})
-            with open(self._wal_path, 'a', encoding='utf-8') as fh:
-                fh.write(entry + '\n')
+            entry = _msgspec_dumps_str(
+                {
+                    "op": op,
+                    "doc": {
+                        "doc_id": doc.doc_id,
+                        "title": doc.title,
+                        "body": doc.body,
+                        "source": doc.source,
+                        "url": doc.url or "",
+                        "fetched_at": doc.fetched_at,
+                        "metadata_json": doc.metadata_json,
+                    },
+                }
+            )
+            with open(self._wal_path, "a", encoding="utf-8") as fh:
+                fh.write(entry + "\n")
             self._wal_dirty = True
         except Exception as e:
-            logger.debug('[FTS] WAL write failed: %s', e)
+            logger.debug("[FTS] WAL write failed: %s", e)
 
     def _wal_size(self) -> int:
         """Aktuální WAL velikost v bytech."""
@@ -227,29 +275,37 @@ class DuckDBFTSStore:
         wal_path = self._wal_path
         entries: list[tuple[str, dict]] = []
         try:
-            with open(wal_path, 'r', encoding='utf-8') as fh:
+            with open(wal_path, encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         parsed = _msgspec_loads(line)
-                        entries.append((parsed['op'], parsed['doc']))
-                    except (ValueError, KeyError):
+                        entries.append((parsed["op"], parsed["doc"]))
+                    except ValueError, KeyError:
                         continue
         except Exception:
             return
         if not entries:
             return
         for _, doc_dict in entries:
-            doc = FTSDocument(doc_id=doc_dict['doc_id'], title=doc_dict.get('title', ''), body=doc_dict.get('body', ''), source=doc_dict.get('source', ''), url=doc_dict.get('url') or None, fetched_at=doc_dict.get('fetched_at', 0.0), metadata_json=doc_dict.get('metadata_json', '{}'))
+            doc = FTSDocument(
+                doc_id=doc_dict["doc_id"],
+                title=doc_dict.get("title", ""),
+                body=doc_dict.get("body", ""),
+                source=doc_dict.get("source", ""),
+                url=doc_dict.get("url") or None,
+                fetched_at=doc_dict.get("fetched_at", 0.0),
+                metadata_json=doc_dict.get("metadata_json", "{}"),
+            )
             self._upsert_batch([doc])
         try:
             wal_path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
         self._wal_dirty = False
-        logger.info('DuckDBFTSStore: WAL consolidated %d entries', len(entries))
+        logger.info("DuckDBFTSStore: WAL consolidated %d entries", len(entries))
 
     async def _flush_wal_if_needed(self) -> None:
         """Flush WAL kdyz prekroci _wal_flush_size threshold."""
@@ -282,31 +338,36 @@ class DuckDBFTSStore:
     def _rebuild_bm25_index(self) -> None:
         """Rebuild BM25 index pro vsechny sources z DuckDB."""
         assert self._conn is not None
-        rows = self._conn.execute('SELECT doc_id, title, body, source FROM doc_bm25;').fetchall()
+        rows = self._conn.execute("SELECT doc_id, title, body, source FROM doc_bm25;").fetchall()
         by_source: dict[str, tuple[list[str], list[str], list[str]]] = {}
         for doc_id, title, body, source in rows:
             if source not in by_source:
                 by_source[source] = ([], [], [])
             by_source[source][0].append(doc_id)
-            by_source[source][1].append(title or '')
-            by_source[source][2].append(body or '')
+            by_source[source][1].append(title or "")
+            by_source[source][2].append(body or "")
         self._bm25_index.clear()
         self._bm25_doc_ids.clear()
         for source, (doc_ids, titles, bodies) in by_source.items():
             if not doc_ids:
                 continue
-            combined = [f'{t} {b}'.strip() for t, b in zip(titles, bodies)]
+            combined = [f"{t} {b}".strip() for t, b in zip(titles, bodies, strict=False)]
             tokenized = [self._tokenize(c) for c in combined]
-            if tokenized and any((tok for tok in tokenized if tok)):
+            if tokenized and any(tok for tok in tokenized if tok):
                 self._bm25_index[source] = BM25Okapi(tokenized)
                 self._bm25_doc_ids[source] = doc_ids
                 self._bm25_combined[source] = combined
         self._bm25_dirty = False
-        logger.info('DuckDBFTSStore: BM25 rebuilt for %d sources, total %d docs', len(self._bm25_index), sum((len(v) for v in self._bm25_doc_ids.values())))
+        logger.info(
+            "DuckDBFTSStore: BM25 rebuilt for %d sources, total %d docs",
+            len(self._bm25_index),
+            sum(len(v) for v in self._bm25_doc_ids.values()),
+        )
 
     def _invalidate_bm25(self, source: str, doc_id: str) -> None:
-        """Invaliduje BM25 cache po upsert/delete."""
+        """Invaliduje BM25 + Tantivy cache po upsert/delete."""
         self._bm25_dirty = True
+        self._tantivy_dirty = True  # ISSUE-011: keep Tantivy in sync
         if source not in self._bm25_doc_ids:
             self._bm25_doc_ids[source] = []
         if doc_id not in self._bm25_doc_ids[source]:
@@ -327,24 +388,37 @@ class DuckDBFTSStore:
             assert self._conn is not None
             total = 0
             for start in range(0, len(documents), self._max_batch_size):
-                batch = documents[start:start + self._max_batch_size]
+                batch = documents[start : start + self._max_batch_size]
                 count = self._upsert_batch(batch)
                 total += count
                 for doc in batch:
-                    self._wal_append('upsert', doc)
+                    self._wal_append("upsert", doc)
             await self._flush_wal_if_needed()
             return total
 
     def _upsert_batch(self, batch: list[FTSDocument]) -> int:
         """Upsert batch pres Arrow register + INSERT OR REPLACE."""
         assert self._conn is not None
-        rows = [{'doc_id': d.doc_id, 'title': d.title, 'body': d.body, 'source': d.source, 'url': d.url, 'fetched_at': d.fetched_at, 'metadata_json': d.metadata_json} for d in batch]
+        rows = [
+            {
+                "doc_id": d.doc_id,
+                "title": d.title,
+                "body": d.body,
+                "source": d.source,
+                "url": d.url,
+                "fetched_at": d.fetched_at,
+                "metadata_json": d.metadata_json,
+            }
+            for d in batch
+        ]
         df = DataFrame(rows)
         arrow_table = df.to_arrow()
-        reg_name = f'fts_batch_{uuid.uuid7().hex[:12]}'
+        reg_name = f"fts_batch_{uuid.uuid7().hex[:12]}"
         try:
             self._conn.register(reg_name, arrow_table)
-            self._conn.execute(f'\n                INSERT OR REPLACE INTO doc_bm25\n                (doc_id, title, body, source, url, fetched_at, metadata_json)\n                SELECT doc_id, title, body, source, url, fetched_at, metadata_json\n                FROM {reg_name};\n            ')
+            self._conn.execute(
+                f"\n                INSERT OR REPLACE INTO doc_bm25\n                (doc_id, title, body, source, url, fetched_at, metadata_json)\n                SELECT doc_id, title, body, source, url, fetched_at, metadata_json\n                FROM {reg_name};\n            "
+            )
             self._conn.commit()
         finally:
             try:
@@ -353,10 +427,20 @@ class DuckDBFTSStore:
                 pass
         for d in batch:
             self._invalidate_bm25(d.source, d.doc_id)
-        logger.debug('DuckDBFTSStore: indexed %d documents', len(batch))
+        logger.debug("DuckDBFTSStore: indexed %d documents", len(batch))
         return len(batch)
 
-    async def search(self, query: str, *, top_k: int=20, source_filter: str | None=None) -> list[FTSSearchResult]:
+    async def search(self, query: str, *, top_k: int = 20, source_filter: str | None = None) -> list[FTSSearchResult]:
+        """Full-text search with Tantivy as priority.
+
+        ISSUE-011: Uses Tantivy mmap-backed BM25 when available (5-15x faster).
+        Falls back to rank_bm25.BM25Okapi when Rust unavailable.
+        """
+        return await self.search_tantivy(query, top_k=top_k, source_filter=source_filter)
+
+    async def _search_bm25(
+        self, query: str, *, top_k: int = 20, source_filter: str | None = None
+    ) -> list[FTSSearchResult]:
         """
         Vyhleda dokumenty pres BM25 ranking.
 
@@ -393,10 +477,10 @@ class DuckDBFTSStore:
                 match_counts = []
                 for text in source_combined:
                     text_lower = text.lower()
-                    count = sum((1 for term in query_terms if term in text_lower))
+                    count = sum(1 for term in query_terms if term in text_lower)
                     match_counts.append(count)
                 scored = []
-                for i, (doc_id, score, mc) in enumerate(zip(doc_ids, scores, match_counts)):
+                for i, (doc_id, score, mc) in enumerate(zip(doc_ids, scores, match_counts, strict=False)):
                     if mc > 0:
                         scored.append((mc, score, doc_id, i))
                 if not scored:
@@ -405,113 +489,111 @@ class DuckDBFTSStore:
                 top_scored = scored[:top_k]
                 top_doc_ids = [s[2] for s in top_scored]
                 safe_ids = [did.replace("'", "''") for did in top_doc_ids]
-                placeholders = ','.join((f"'{sid}'" for sid in safe_ids))
-                rows = self._conn.execute(f'SELECT doc_id, title, body, url, source, fetched_at FROM doc_bm25 WHERE doc_id IN ({placeholders});').fetchall()
+                placeholders = ",".join(f"'{sid}'" for sid in safe_ids)
+                rows = self._conn.execute(
+                    f"SELECT doc_id, title, body, url, source, fetched_at FROM doc_bm25 WHERE doc_id IN ({placeholders});"
+                ).fetchall()
                 doc_score_map = {(s[2],): (s[0], s[1]) for s in top_scored}
                 for row in rows:
                     doc_id, title, body, url, src, fetched = row
-                    snippet = self._make_snippet(body or title or '', query)
+                    snippet = self._make_snippet(body or title or "", query)
                     mc, bm25_score = doc_score_map.get((doc_id,), (0, 0.0))
-                    all_results.append((float(mc) + bm25_score * 0.001, FTSSearchResult(doc_id=str(doc_id), title=str(title), body_snippet=snippet, url=str(url) if url else None, source=str(src), rank=float(mc), fetched_at=float(fetched))))
+                    all_results.append(
+                        (
+                            float(mc) + bm25_score * 0.001,
+                            FTSSearchResult(
+                                doc_id=str(doc_id),
+                                title=str(title),
+                                body_snippet=snippet,
+                                url=str(url) if url else None,
+                                source=str(src),
+                                rank=float(mc),
+                                fetched_at=float(fetched),
+                            ),
+                        )
+                    )
             all_results.sort(key=lambda x: x[0], reverse=True)
             return [r for _, r in all_results[:top_k]]
 
-    async def search_tantivy(self, query: str, *, top_k: int=20, source_filter: str | None=None) -> list[FTSSearchResult]:
+    async def search_tantivy(
+        self, query: str, *, top_k: int = 20, source_filter: str | None = None
+    ) -> list[FTSSearchResult]:
         """
         ISSUE-011: Tantivy fulltext search — mmap-backed BM25 with Arrow IPC.
-        
+
         Uses Rust Tantivy when available (5-15x faster than Python BM25Okapi).
         Falls back to Python BM25Okapi when Rust unavailable.
 
-        Args:
-            query: Search query
-            top_k: Maximum results
-            source_filter: Optional source filter
-
-        Returns:
-            List of FTSSearchResult sorted by BM25 score
+        Rebuild strategy:
+          - On first call: build index from DuckDB, then mark clean.
+          - On write (upsert/delete): _tantivy_dirty = True -> next search rebuilds once.
+          - Subsequent searches: Tantivy is clean, search directly (~5-15x faster).
         """
         if not query.strip():
             return []
-        
-        # Lazy init Tantivy domain
+
         if not _TANTIVY_AVAILABLE:
             _init_tantivy()
-        
+
         if not _TANTIVY_AVAILABLE or _tantivy_domain is None:
-            # Fallback to Python BM25Okapi
-            return await self.search(query, top_k=top_k, source_filter=source_filter)
-        
+            return await self._search_bm25(query, top_k=top_k, source_filter=source_filter)
+
         async with self._lock:
             assert self._conn is not None
-            
-            # Get index path for this FTS store
-            tantivy_index_path = str(self._db_path.parent / f'.tantivy_{self._db_path.stem}')
-            
-            # Check if we need to rebuild the Tantivy index
-            current_count = _tantivy_domain.doc_count(tantivy_index_path)
-            duckdb_count = self._conn.execute('SELECT COUNT(*) FROM doc_bm25').fetchone()[0]
-            
-            if current_count != duckdb_count or current_count == 0:
-                # Rebuild Tantivy index from DuckDB
+
+            tantivy_index_path = str(self._db_path.parent / f".tantivy_{self._db_path.stem}")
+
+            # ISSUE-011 FIX: Rebuild ONLY when _tantivy_dirty is set.
+            # After rebuild, mark clean — subsequent searches skip rebuild.
+            if self._tantivy_dirty or _tantivy_domain.doc_count(tantivy_index_path) == 0:
                 rows = self._conn.execute(
-                    'SELECT doc_id, title, body, source, url, fetched_at FROM doc_bm25;'
+                    "SELECT doc_id, title, body FROM doc_bm25;"
                 ).fetchall()
-                
-                docs = [
-                    (str(row[0]), f"{row[1] or ''} {row[2] or ''}")  # doc_id, content
-                    for row in rows
-                ]
-                
+                docs = [(str(r[0]), f"{r[1] or ''} {r[2] or ''}") for r in rows]
                 if docs:
                     _tantivy_domain.create_index(tantivy_index_path, docs)
-            
+                self._tantivy_dirty = False  # ponytail: mark clean after rebuild
+
             # Search Tantivy index
             tantivy_results = _tantivy_domain.search(tantivy_index_path, query, top_k)
-            
+
             if not tantivy_results:
                 return []
-            
-            # Fetch full documents from DuckDB
+
             doc_ids = [doc_id for doc_id, _ in tantivy_results]
             safe_ids = [did.replace("'", "''") for did in doc_ids]
-            placeholders = ','.join((f"'{sid}'" for sid in safe_ids))
+            placeholders = ",".join(f"'{sid}'" for sid in safe_ids)
             rows = self._conn.execute(
-                f'SELECT doc_id, title, body, url, source, fetched_at FROM doc_bm25 WHERE doc_id IN ({placeholders});'
+                f"SELECT doc_id, title, body, url, source, fetched_at FROM doc_bm25 WHERE doc_id IN ({placeholders});"
             ).fetchall()
-            
-            # Build result map
-            row_map: dict[str, tuple] = {str(row[0]): row for row in rows}
-            
-            # Apply source filter if provided
+
+            row_map: dict[str, tuple] = {str(r[0]): r for r in rows}
+
             if source_filter:
                 row_map = {k: v for k, v in row_map.items() if v[4] == source_filter}
-            
-            # Build results preserving Tantivy score order
-            results = []
+
             score_map = {doc_id: score for doc_id, score in tantivy_results}
-            
+            results = []
             for doc_id in doc_ids:
                 if doc_id not in row_map:
                     continue
-                row = row_map[doc_id]
-                doc_id_str, title, body, url, src, fetched = row
-                snippet = self._make_snippet(body or title or '', query)
-                score = score_map.get(doc_id, 0.0)
-                results.append(FTSSearchResult(
-                    doc_id=str(doc_id_str),
-                    title=str(title),
-                    body_snippet=snippet,
-                    url=str(url) if url else None,
-                    source=str(src),
-                    rank=float(score),
-                    fetched_at=float(fetched)
-                ))
-            
+                doc_id_str, title, body, url, src, fetched = row_map[doc_id]
+                results.append(
+                    FTSSearchResult(
+                        doc_id=str(doc_id_str),
+                        title=str(title),
+                        body_snippet=self._make_snippet(body or title or "", query),
+                        url=str(url) if url else None,
+                        source=str(src),
+                        rank=float(score_map.get(doc_id, 0.0)),
+                        fetched_at=float(fetched),
+                    )
+                )
+
             return results
 
     @staticmethod
-    def _make_snippet(body: str, query: str, context_chars: int=120) -> str:
+    def _make_snippet(body: str, query: str, context_chars: int = 120) -> str:
         """Vytvori snippet kolem prvniho matchu query terms."""
         body_lower = body.lower()
         query_lower = query.lower()
@@ -522,18 +604,20 @@ class DuckDBFTSStore:
             if pos != -1 and pos < first_pos:
                 first_pos = pos
         if first_pos == len(body):
-            return body[:context_chars] + ('...' if len(body) > context_chars else '')
+            return body[:context_chars] + ("..." if len(body) > context_chars else "")
         start = max(0, first_pos - context_chars // 2)
         end = min(len(body), start + context_chars)
         snippet = body[start:end]
         if start > 0:
-            snippet = '...' + snippet
+            snippet = "..." + snippet
         if end < len(body):
-            snippet = snippet + '...'
+            snippet = snippet + "..."
         return snippet
 
     @staticmethod
-    def rrf_fuse(fts_results: list[FTSSearchResult], ann_results: list[dict[str, Any]], *, top_k: int=20, k: int=BM25_K) -> list[dict[str, Any]]:
+    def rrf_fuse(
+        fts_results: list[FTSSearchResult], ann_results: list[dict[str, Any]], *, top_k: int = 20, k: int = BM25_K
+    ) -> list[dict[str, Any]]:
         """
         Reciprocal Rank Fusion — kombinuje FTS BM25 + ANN similarity.
 
@@ -546,16 +630,29 @@ class DuckDBFTSStore:
 
         # ISSUE-006: Convert to dict format for numpy_rrf_fusion
         fts_dicts = [
-            {"id": res.doc_id, "rank": i, "title": res.title, "body_snippet": res.body_snippet,
-             "url": res.url, "source": res.source, "fetched_at": res.fetched_at}
+            {
+                "id": res.doc_id,
+                "rank": i,
+                "title": res.title,
+                "body_snippet": res.body_snippet,
+                "url": res.url,
+                "source": res.source,
+                "fetched_at": res.fetched_at,
+            }
             for i, res in enumerate(fts_results)
         ]
         vec_dicts = [
-            {"id": res.get("entity_id", res.get("doc_id", "")), "rank": i,
-             "title": res.get("title", ""), "snippet": res.get("snippet", ""),
-             "url": res.get("url"), "source": res.get("source", "ann"),
-             "fetched_at": res.get("fetched_at", 0.0)}
-            for i, res in enumerate(ann_results) if res.get("entity_id") or res.get("doc_id")
+            {
+                "id": res.get("entity_id", res.get("doc_id", "")),
+                "rank": i,
+                "title": res.get("title", ""),
+                "snippet": res.get("snippet", ""),
+                "url": res.get("url"),
+                "source": res.get("source", "ann"),
+                "fetched_at": res.get("fetched_at", 0.0),
+            }
+            for i, res in enumerate(ann_results)
+            if res.get("entity_id") or res.get("doc_id")
         ]
 
         # ISSUE-006: Use NumPy vectorized RRF
@@ -573,23 +670,25 @@ class DuckDBFTSStore:
         for doc in rrf_result.fused_results:
             # Check if it's from FTS or vector results
             is_fts = "body_snippet" in doc or doc.get("title") in [r.title for r in fts_results]
-            results.append({
-                "doc_id": doc.get("id", ""),
-                "title": doc.get("title", ""),
-                "body_snippet": doc.get("body_snippet", doc.get("snippet", "")),
-                "url": doc.get("url"),
-                "source": doc.get("source", "ann"),
-                "rank": doc.get("score", 0.0),
-                "fetched_at": doc.get("fetched_at", 0.0),
-                "match_type": "fts" if is_fts else "ann",
-            })
+            results.append(
+                {
+                    "doc_id": doc.get("id", ""),
+                    "title": doc.get("title", ""),
+                    "body_snippet": doc.get("body_snippet", doc.get("snippet", "")),
+                    "url": doc.get("url"),
+                    "source": doc.get("source", "ann"),
+                    "rank": doc.get("score", 0.0),
+                    "fetched_at": doc.get("fetched_at", 0.0),
+                    "match_type": "fts" if is_fts else "ann",
+                }
+            )
         return results
 
     async def count(self) -> int:
         """Pocet indexovanych dokumentu."""
         async with self._lock:
             assert self._conn is not None
-            row = self._conn.execute('SELECT COUNT(*) FROM doc_bm25;').fetchone()
+            row = self._conn.execute("SELECT COUNT(*) FROM doc_bm25;").fetchone()
             return int(row[0]) if row else 0
 
     async def health_check(self) -> dict[str, Any]:
@@ -597,7 +696,7 @@ class DuckDBFTSStore:
         try:
             cnt = await self.count()
             size_bytes = self._db_path.stat().st_size if self._db_path.exists() else 0
-            tantivy_index_path = str(self._db_path.parent / f'.tantivy_{self._db_path.stem}')
+            tantivy_index_path = str(self._db_path.parent / f".tantivy_{self._db_path.stem}")
             tantivy_count = 0
             if _TANTIVY_AVAILABLE and _tantivy_domain is not None:
                 try:
@@ -605,16 +704,16 @@ class DuckDBFTSStore:
                 except Exception:
                     pass
             return {
-                'status': 'healthy',
-                'doc_count': cnt,
-                'indexed_sources': len(self._bm25_index),
-                'db_path': str(self._db_path),
-                'size_mb': round(size_bytes / 1024 / 1024, 2),
-                'tantivy_available': _TANTIVY_AVAILABLE,
-                'tantivy_doc_count': tantivy_count,
+                "status": "healthy",
+                "doc_count": cnt,
+                "indexed_sources": len(self._bm25_index),
+                "db_path": str(self._db_path),
+                "size_mb": round(size_bytes / 1024 / 1024, 2),
+                "tantivy_available": _TANTIVY_AVAILABLE,
+                "tantivy_doc_count": tantivy_count,
             }
         except Exception as exc:
-            return {'status': 'unhealthy', 'error': str(exc)}
+            return {"status": "unhealthy", "error": str(exc)}
 
     async def delete(self, doc_ids: list[str]) -> int:
         """Odstrani dokumenty z indexu."""
@@ -623,26 +722,40 @@ class DuckDBFTSStore:
         async with self._lock:
             assert self._conn is not None
             safe_ids = [did.replace("'", "''") for did in doc_ids]
-            placeholders = ','.join((f"'{sid}'" for sid in safe_ids))
-            self._conn.execute(f'DELETE FROM doc_bm25 WHERE doc_id IN ({placeholders});')
+            placeholders = ",".join(f"'{sid}'" for sid in safe_ids)
+            self._conn.execute(f"DELETE FROM doc_bm25 WHERE doc_id IN ({placeholders});")
             self._conn.commit()
             self._bm25_dirty = True
+            self._tantivy_dirty = True  # ISSUE-011: keep Tantivy in sync
             return len(doc_ids)
 
-    async def aiter_all(self, batch_size: int=1000) -> AsyncIterator[FTSDocument]:
+    async def aiter_all(self, batch_size: int = 1000) -> AsyncIterator[FTSDocument]:
         """Async iterator pres vsechny dokumenty (pro migraci / reindex)."""
         async with self._lock:
             assert self._conn is not None
             offset = 0
             while True:
-                rows = self._conn.execute(f'\n                    SELECT doc_id, title, body, source, url, fetched_at, metadata_json\n                    FROM doc_bm25\n                    ORDER BY fetched_at DESC\n                    LIMIT {batch_size} OFFSET {offset};\n                ').fetchall()
+                rows = self._conn.execute(
+                    f"\n                    SELECT doc_id, title, body, source, url, fetched_at, metadata_json\n                    FROM doc_bm25\n                    ORDER BY fetched_at DESC\n                    LIMIT {batch_size} OFFSET {offset};\n                "
+                ).fetchall()
                 if not rows:
                     break
                 for row in rows:
-                    yield FTSDocument(doc_id=str(row[0]), title=str(row[1]), body=str(row[2]), source=str(row[3]), url=str(row[4]) if row[4] else None, fetched_at=float(row[5]), metadata_json=str(row[6]))
+                    yield FTSDocument(
+                        doc_id=str(row[0]),
+                        title=str(row[1]),
+                        body=str(row[2]),
+                        source=str(row[3]),
+                        url=str(row[4]) if row[4] else None,
+                        fetched_at=float(row[5]),
+                        metadata_json=str(row[6]),
+                    )
                 offset += batch_size
+
+
 _fts_store: DuckDBFTSStore | None = None
 _fts_lock: asyncio.Lock | None = None  # ISSUE-014 fix: None sentinel, lazy creation
+
 
 def _get_fts_lock() -> asyncio.Lock:
     """Lazily create FTS store lock — ISSUE-014 fix avoids asyncio.Lock() at module import."""
@@ -651,7 +764,8 @@ def _get_fts_lock() -> asyncio.Lock:
         _fts_lock = asyncio.Lock()
     return _fts_lock
 
-async def get_fts_store(db_path: str | Path | None=None) -> DuckDBFTSStore:
+
+async def get_fts_store(db_path: str | Path | None = None) -> DuckDBFTSStore:
     """Lazy singleton — bezpecne pro async context."""
     global _fts_store
     async with _get_fts_lock():

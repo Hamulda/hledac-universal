@@ -47,7 +47,6 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -84,7 +83,7 @@ class DuckDBBaseStore(ABC):
             ttl_days: Optional TTL for cache stores (None = no expiration).
             schema_name: Optional schema name for table initialization.
         """
-        self._db_store: "DuckDBShadowStore | None" = None
+        self._db_store: DuckDBShadowStore | None = None
         self._initialized: bool = False
         self._ttl_days: int | None = ttl_days
         self._schema_name: str | None = schema_name
@@ -175,6 +174,7 @@ class DuckDBBaseStore(ABC):
         Returns:
             List of rows or None on error.
         """
+
         def _sync_execute() -> list[Any] | None:
             try:
                 conn = self._get_connection()
@@ -204,6 +204,7 @@ class DuckDBBaseStore(ABC):
         Returns:
             True on success, False on error.
         """
+
         def _sync_execute_void() -> bool:
             try:
                 conn = self._get_connection()
@@ -250,10 +251,8 @@ class DuckDBBaseStore(ABC):
         def _sync_delete() -> int:
             try:
                 conn = self._get_connection()
-                # Get count before delete
                 count = conn.execute(count_sql, (cutoff,)).fetchall()
                 deleted = count[0][0] if count else 0
-                # Execute delete
                 conn.execute(delete_sql, (cutoff,))
                 return deleted
             except Exception:  # noqa: BLE001

@@ -17,23 +17,27 @@ Generates context-aware search variations using:
 
 M1-Optimized: Minimal dependencies, efficient generation
 """
+
 import itertools
 import logging
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from operator import attrgetter
 from typing import Any
-from operator import attrgetter, itemgetter
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
+
 
 class ExpansionConfig(Struct):
     """Configuration for query expansion"""
+
     max_variations: int = 50
     synonym_depth: int = 2
     include_acronyms: bool = True
     include_plurals: bool = True
     include_permutations: bool = True
     domain_context: str | None = None
+
 
 class QueryExpander:
     """
@@ -45,18 +49,72 @@ class QueryExpander:
         >>> print(variations)
         ['machine learning healthcare', 'ml healthcare', 'machine learning medicine', ...]
     """
-    DOMAIN_SYNONYMS: dict[str, dict[str, list[str]]] = {'academic': {'paper': ['article', 'publication', 'research', 'study'], 'author': ['researcher', 'scientist', 'scholar'], 'journal': ['periodical', 'publication', 'magazine'], 'citation': ['reference', 'bibliography'], 'abstract': ['summary', 'overview']}, 'medical': {'patient': ['subject', 'individual', 'case'], 'treatment': ['therapy', 'intervention', 'care'], 'disease': ['condition', 'disorder', 'illness', 'syndrome'], 'symptom': ['sign', 'manifestation', 'indication'], 'diagnosis': ['identification', 'detection'], 'medication': ['drug', 'pharmaceutical', 'medicine']}, 'tech': {'software': ['program', 'application', 'system'], 'hardware': ['equipment', 'device', 'machinery'], 'network': ['connection', 'infrastructure'], 'algorithm': ['procedure', 'method', 'technique'], 'database': ['repository', 'data store']}, 'general': {'method': ['approach', 'technique', 'strategy', 'way'], 'analysis': ['examination', 'evaluation', 'study'], 'development': ['evolution', 'growth', 'progress'], 'improvement': ['enhancement', 'optimization', 'refinement'], 'application': ['use', 'implementation', 'deployment']}}
-    ACRONYMS: dict[str, list[str]] = {'ml': ['machine learning'], 'ai': ['artificial intelligence'], 'dl': ['deep learning'], 'nlp': ['natural language processing'], 'cv': ['computer vision'], 'rl': ['reinforcement learning'], 'nn': ['neural network', 'neural networks'], 'cnn': ['convolutional neural network', 'convolutional neural networks'], 'rnn': ['recurrent neural network', 'recurrent neural networks'], 'llm': ['large language model', 'large language models'], 'bert': ['bidirectional encoder representations'], 'gpu': ['graphics processing unit'], 'cpu': ['central processing unit'], 'api': ['application programming interface'], 'ui': ['user interface'], 'ux': ['user experience'], 'db': ['database'], 'sql': ['structured query language'], 'json': ['javascript object notation'], 'xml': ['extensible markup language'], 'html': ['hypertext markup language'], 'css': ['cascading style sheets']}
-    __slots__ = tuple(('_synonyms', 'config'))
 
-    def __init__(self, config: ExpansionConfig | None=None):
+    DOMAIN_SYNONYMS: dict[str, dict[str, list[str]]] = {
+        "academic": {
+            "paper": ["article", "publication", "research", "study"],
+            "author": ["researcher", "scientist", "scholar"],
+            "journal": ["periodical", "publication", "magazine"],
+            "citation": ["reference", "bibliography"],
+            "abstract": ["summary", "overview"],
+        },
+        "medical": {
+            "patient": ["subject", "individual", "case"],
+            "treatment": ["therapy", "intervention", "care"],
+            "disease": ["condition", "disorder", "illness", "syndrome"],
+            "symptom": ["sign", "manifestation", "indication"],
+            "diagnosis": ["identification", "detection"],
+            "medication": ["drug", "pharmaceutical", "medicine"],
+        },
+        "tech": {
+            "software": ["program", "application", "system"],
+            "hardware": ["equipment", "device", "machinery"],
+            "network": ["connection", "infrastructure"],
+            "algorithm": ["procedure", "method", "technique"],
+            "database": ["repository", "data store"],
+        },
+        "general": {
+            "method": ["approach", "technique", "strategy", "way"],
+            "analysis": ["examination", "evaluation", "study"],
+            "development": ["evolution", "growth", "progress"],
+            "improvement": ["enhancement", "optimization", "refinement"],
+            "application": ["use", "implementation", "deployment"],
+        },
+    }
+    ACRONYMS: dict[str, list[str]] = {
+        "ml": ["machine learning"],
+        "ai": ["artificial intelligence"],
+        "dl": ["deep learning"],
+        "nlp": ["natural language processing"],
+        "cv": ["computer vision"],
+        "rl": ["reinforcement learning"],
+        "nn": ["neural network", "neural networks"],
+        "cnn": ["convolutional neural network", "convolutional neural networks"],
+        "rnn": ["recurrent neural network", "recurrent neural networks"],
+        "llm": ["large language model", "large language models"],
+        "bert": ["bidirectional encoder representations"],
+        "gpu": ["graphics processing unit"],
+        "cpu": ["central processing unit"],
+        "api": ["application programming interface"],
+        "ui": ["user interface"],
+        "ux": ["user experience"],
+        "db": ["database"],
+        "sql": ["structured query language"],
+        "json": ["javascript object notation"],
+        "xml": ["extensible markup language"],
+        "html": ["hypertext markup language"],
+        "css": ["cascading style sheets"],
+    }
+    __slots__ = ("_synonyms", "config")
+
+    def __init__(self, config: ExpansionConfig | None = None) -> None:
         self.config = config or ExpansionConfig()
         self._synonyms: dict[str, list[str]] = {}
         self._build_synonym_map()
 
-    def _build_synonym_map(self):
+    def _build_synonym_map(self) -> None:
         """Build combined synonym map based on domain context"""
-        self._synonyms = dict(self.DOMAIN_SYNONYMS.get('general', {}))
+        self._synonyms = dict(self.DOMAIN_SYNONYMS.get("general", {}))
         if self.config.domain_context:
             domain_syns = self.DOMAIN_SYNONYMS.get(self.config.domain_context, {})
             for word, syns in domain_syns.items():
@@ -86,12 +144,12 @@ class QueryExpander:
         """Generate plural form of word"""
         if not self.config.include_plurals:
             return None
-        if word.endswith('s') or word.endswith('x') or word.endswith('ch') or word.endswith('sh'):
-            return word + 'es'
-        elif word.endswith('y') and len(word) > 1 and (word[-2] not in 'aeiou'):
-            return word[:-1] + 'ies'
+        if word.endswith("s") or word.endswith("x") or word.endswith("ch") or word.endswith("sh"):
+            return word + "es"
+        elif word.endswith("y") and len(word) > 1 and (word[-2] not in "aeiou"):
+            return word[:-1] + "ies"
         else:
-            return word + 's'
+            return word + "s"
 
     def _expand_acronyms(self, query: str) -> list[str]:
         """Expand acronyms in query"""
@@ -114,7 +172,7 @@ class QueryExpander:
                     new_result[idx] = expansion
                     new_results.append(new_result)
             results = new_results
-        return [' '.join(r) for r in results]
+        return [" ".join(r) for r in results]
 
     def _generate_synonym_variations(self, query: str) -> list[str]:
         """Generate variations by replacing words with synonyms"""
@@ -123,7 +181,7 @@ class QueryExpander:
         for token in tokens:
             syns = self._get_synonyms(token)
             if syns:
-                token_synonyms.append((token, [token] + syns[:self.config.synonym_depth]))
+                token_synonyms.append((token, [token] + syns[: self.config.synonym_depth]))
             else:
                 token_synonyms.append((token, [token]))
         if not token_synonyms:
@@ -131,8 +189,8 @@ class QueryExpander:
         synonym_lists = [ts[1] for ts in token_synonyms]
         combinations = list(itertools.product(*synonym_lists))
         if len(combinations) > self.config.max_variations:
-            combinations = combinations[:self.config.max_variations]
-        return [' '.join(combo) for combo in combinations]
+            combinations = combinations[: self.config.max_variations]
+        return [" ".join(combo) for combo in combinations]
 
     def _generate_permutations(self, query: str) -> list[str]:
         """Generate permutations of query terms"""
@@ -145,7 +203,7 @@ class QueryExpander:
         elif len(tokens) == 3:
             permutations.append([tokens[1], tokens[0], tokens[2]])
             permutations.append([tokens[0], tokens[2], tokens[1]])
-        return [' '.join(p) for p in permutations]
+        return [" ".join(p) for p in permutations]
 
     def expand(self, query: str) -> list[str]:
         """
@@ -180,9 +238,9 @@ class QueryExpander:
                 new_query = query.replace(original, plural, 1)
                 variations.add(new_query)
         results = sorted(variations, key=lambda x: (len(x), x))
-        return results[:self.config.max_variations]
+        return results[: self.config.max_variations]
 
-    def expand_for_discovery(self, base_terms: list[str], modifiers: list[str] | None=None) -> list[str]:
+    def expand_for_discovery(self, base_terms: list[str], modifiers: list[str] | None = None) -> list[str]:
         """
         Generate discovery-focused query variations.
 
@@ -194,25 +252,30 @@ class QueryExpander:
             Combined expanded queries
         """
         if modifiers is None:
-            modifiers = ['', 'review', 'paper', 'tutorial', 'guide', 'overview']
+            modifiers = ["", "review", "paper", "tutorial", "guide", "overview"]
         all_variations = []
         for term in base_terms:
             term_variations = self.expand(term)
             for variation in term_variations:
                 for modifier in modifiers:
                     if modifier:
-                        combined = f'{variation} {modifier}'.strip()
+                        combined = f"{variation} {modifier}".strip()
                     else:
                         combined = variation
                     all_variations.append(combined)
         unique = list(dict.fromkeys(all_variations))
-        return unique[:self.config.max_variations * 2]
+        return unique[: self.config.max_variations * 2]
 
     def get_statistics(self) -> dict[str, Any]:
         """Get expander statistics"""
-        return {'domain': self.config.domain_context, 'synonyms_loaded': len(self._synonyms), 'acronyms_loaded': len(self.ACRONYMS)}
+        return {
+            "domain": self.config.domain_context,
+            "synonyms_loaded": len(self._synonyms),
+            "acronyms_loaded": len(self.ACRONYMS),
+        }
 
-def expand_query(query: str, domain: str | None=None, max_variations: int=20) -> list[str]:
+
+def expand_query(query: str, domain: str | None = None, max_variations: int = 20) -> list[str]:
     """
     Quick query expansion.
 
@@ -227,47 +290,87 @@ def expand_query(query: str, domain: str | None=None, max_variations: int=20) ->
     config = ExpansionConfig(domain_context=domain, max_variations=max_variations)
     expander = QueryExpander(config)
     return expander.expand(query)
+
+
 from abc import ABC, abstractmethod
-from _core import aclose
+
 
 class ExpansionStrategy(ABC):
     """Abstract base class for query expansion strategies (from MSQES)."""
 
     @abstractmethod
-    async def expand(self, query: str, context: dict[str, Any] | None=None) -> list[QueryVariation]:
+    async def expand(self, query: str, context: dict[str, Any] | None = None) -> list[QueryVariation]:
         """Expand query into multiple variations."""
-        pass
 
     @property
     @abstractmethod
     def strategy_type(self) -> str:
         """Get strategy type identifier."""
-        pass
+
 
 class QueryVariation(Struct, frozen=True):
     """A single query variation with metadata."""
+
     query: str
     strategy: str
     weight: float = 1.0
     confidence: float = 0.8
+
 
 class SemanticExpansionStrategy(ExpansionStrategy):
     """
     Semantic query expansion using synonyms and related terms.
     From MSQES - optimized for academic research.
     """
-    DOMAIN_SYNONYMS: dict[str, dict[str, list[str]]] = {'cs': {'machine learning': ['ML', 'deep learning', 'neural networks', 'artificial intelligence', 'AI'], 'neural network': ['NN', 'deep neural network', 'DNN', 'artificial neural network'], 'training': ['learning', 'optimization', 'fine-tuning', 'fitting'], 'dataset': ['data', 'corpus', 'benchmark', 'training data'], 'model': ['architecture', 'network', 'system', 'algorithm'], 'classification': ['categorization', 'labeling', 'recognition'], 'prediction': ['forecasting', 'regression', 'estimation']}, 'physics': {'quantum': ['quantum mechanics', 'quantum physics', 'quantum theory'], 'relativity': ['general relativity', 'special relativity', 'GR', 'SR'], 'particle': ['subatomic', 'elementary particle', 'fundamental particle']}, 'biology': {'gene': ['genetic', 'DNA', 'genomic'], 'protein': ['peptide', 'amino acid sequence'], 'cell': ['cellular', 'tissue', 'organism']}, 'medicine': {'patient': ['subject', 'individual', 'case'], 'treatment': ['therapy', 'intervention', 'care'], 'disease': ['condition', 'disorder', 'illness', 'syndrome'], 'diagnosis': ['identification', 'detection'], 'medication': ['drug', 'pharmaceutical', 'medicine']}}
-    GENERAL_SYNONYMS: dict[str, list[str]] = {'research': ['study', 'investigation', 'analysis', 'exploration'], 'method': ['approach', 'technique', 'methodology', 'procedure'], 'result': ['finding', 'outcome', 'conclusion', 'discovery'], 'analysis': ['examination', 'evaluation', 'assessment', 'investigation'], 'significant': ['important', 'substantial', 'considerable', 'meaningful'], 'improve': ['enhance', 'optimize', 'boost', 'increase'], 'new': ['novel', 'innovative', 'recent', 'state-of-the-art'], 'performance': ['efficiency', 'accuracy', 'effectiveness', 'capability']}
-    __slots__ = tuple(('_synonyms', 'domain', 'max_expansions'))
 
-    def __init__(self, max_expansions: int=5, domain: str | None=None):
+    DOMAIN_SYNONYMS: dict[str, dict[str, list[str]]] = {
+        "cs": {
+            "machine learning": ["ML", "deep learning", "neural networks", "artificial intelligence", "AI"],
+            "neural network": ["NN", "deep neural network", "DNN", "artificial neural network"],
+            "training": ["learning", "optimization", "fine-tuning", "fitting"],
+            "dataset": ["data", "corpus", "benchmark", "training data"],
+            "model": ["architecture", "network", "system", "algorithm"],
+            "classification": ["categorization", "labeling", "recognition"],
+            "prediction": ["forecasting", "regression", "estimation"],
+        },
+        "physics": {
+            "quantum": ["quantum mechanics", "quantum physics", "quantum theory"],
+            "relativity": ["general relativity", "special relativity", "GR", "SR"],
+            "particle": ["subatomic", "elementary particle", "fundamental particle"],
+        },
+        "biology": {
+            "gene": ["genetic", "DNA", "genomic"],
+            "protein": ["peptide", "amino acid sequence"],
+            "cell": ["cellular", "tissue", "organism"],
+        },
+        "medicine": {
+            "patient": ["subject", "individual", "case"],
+            "treatment": ["therapy", "intervention", "care"],
+            "disease": ["condition", "disorder", "illness", "syndrome"],
+            "diagnosis": ["identification", "detection"],
+            "medication": ["drug", "pharmaceutical", "medicine"],
+        },
+    }
+    GENERAL_SYNONYMS: dict[str, list[str]] = {
+        "research": ["study", "investigation", "analysis", "exploration"],
+        "method": ["approach", "technique", "methodology", "procedure"],
+        "result": ["finding", "outcome", "conclusion", "discovery"],
+        "analysis": ["examination", "evaluation", "assessment", "investigation"],
+        "significant": ["important", "substantial", "considerable", "meaningful"],
+        "improve": ["enhance", "optimize", "boost", "increase"],
+        "new": ["novel", "innovative", "recent", "state-of-the-art"],
+        "performance": ["efficiency", "accuracy", "effectiveness", "capability"],
+    }
+    __slots__ = ("_synonyms", "domain", "max_expansions")
+
+    def __init__(self, max_expansions: int = 5, domain: str | None = None) -> None:
         self.max_expansions = max_expansions
         self.domain = domain
         self._synonyms = self._build_synonym_map()
 
     @property
     def strategy_type(self) -> str:
-        return 'semantic'
+        return "semantic"
 
     def _build_synonym_map(self) -> dict[str, list[str]]:
         """Build combined synonym map."""
@@ -276,11 +379,11 @@ class SemanticExpansionStrategy(ExpansionStrategy):
             synonyms.update(self.DOMAIN_SYNONYMS[self.domain])
         return synonyms
 
-    async def expand(self, query: str, context: dict[str, Any] | None=None) -> list[QueryVariation]:
+    async def expand(self, query: str, context: dict[str, Any] | None = None) -> list[QueryVariation]:
         """Expand query using semantic variations."""
         variations = []
         query_lower = query.lower()
-        detected_domain = context.get('domain') if context else None
+        detected_domain = context.get("domain") if context else None
         if detected_domain and detected_domain in self.DOMAIN_SYNONYMS:
             synonyms = dict(self.GENERAL_SYNONYMS)
             synonyms.update(self.DOMAIN_SYNONYMS[detected_domain])
@@ -291,35 +394,39 @@ class SemanticExpansionStrategy(ExpansionStrategy):
                 for replacement in replacements[:2]:
                     expanded = query_lower.replace(term, replacement, 1)
                     if expanded != query_lower:
-                        variations.append(QueryVariation(query=expanded, strategy='semantic', weight=0.8, confidence=0.85))
+                        variations.append(
+                            QueryVariation(query=expanded, strategy="semantic", weight=0.8, confidence=0.85)
+                        )
         key_terms = query_lower.split()
         if key_terms:
-            variations.append(QueryVariation(query=f'recent {query}', strategy='semantic', weight=0.7, confidence=0.75))
-            variations.append(QueryVariation(query=f'survey {query}', strategy='semantic', weight=0.6, confidence=0.7))
-            variations.append(QueryVariation(query=f'review {query}', strategy='semantic', weight=0.6, confidence=0.7))
+            variations.append(QueryVariation(query=f"recent {query}", strategy="semantic", weight=0.7, confidence=0.75))
+            variations.append(QueryVariation(query=f"survey {query}", strategy="semantic", weight=0.6, confidence=0.7))
+            variations.append(QueryVariation(query=f"review {query}", strategy="semantic", weight=0.6, confidence=0.7))
         seen = set()
         unique_variations = []
         for var in variations:
             if var.query not in seen:
                 seen.add(var.query)
                 unique_variations.append(var)
-        return unique_variations[:self.max_expansions]
+        return unique_variations[: self.max_expansions]
+
 
 class SyntacticExpansionStrategy(ExpansionStrategy):
     """
     Syntactic query expansion - generates different phrasings
     without changing semantic meaning.
     """
-    __slots__ = tuple(('max_expansions',))
 
-    def __init__(self, max_expansions: int=5):
+    __slots__ = ("max_expansions",)
+
+    def __init__(self, max_expansions: int = 5) -> None:
         self.max_expansions = max_expansions
 
     @property
     def strategy_type(self) -> str:
-        return 'syntactic'
+        return "syntactic"
 
-    async def expand(self, query: str, context: dict[str, Any] | None=None) -> list[QueryVariation]:
+    async def expand(self, query: str, context: dict[str, Any] | None = None) -> list[QueryVariation]:
         """Expand query using syntactic variations."""
         variations = []
         words = query.split()
@@ -327,16 +434,20 @@ class SyntacticExpansionStrategy(ExpansionStrategy):
             return variations
         if len(words) >= 3:
             reordered = words[-2:] + words[:-2]
-            variations.append(QueryVariation(query=' '.join(reordered), strategy='syntactic', weight=0.7, confidence=0.75))
+            variations.append(
+                QueryVariation(query=" ".join(reordered), strategy="syntactic", weight=0.7, confidence=0.75)
+            )
         if len(words) >= 2:
-            quoted = f'''"{' '.join(words[:2])}"''' + ' ' + ' '.join(words[2:])
-            variations.append(QueryVariation(query=quoted, strategy='syntactic', weight=0.8, confidence=0.8))
-            quoted_end = ' '.join(words[:-2]) + f''' "{' '.join(words[-2:])}"'''
-            variations.append(QueryVariation(query=quoted_end, strategy='syntactic', weight=0.8, confidence=0.8))
-        variations.append(QueryVariation(query=query.replace(' ', ' AND '), strategy='syntactic', weight=0.6, confidence=0.7))
-        variations.append(QueryVariation(query=f'title:{query}', strategy='syntactic', weight=0.7, confidence=0.75))
-        variations.append(QueryVariation(query=f'abstract:{query}', strategy='syntactic', weight=0.7, confidence=0.75))
-        variations.append(QueryVariation(query=f'"{query}"', strategy='syntactic', weight=0.9, confidence=0.9))
+            quoted = f'''"{" ".join(words[:2])}"''' + " " + " ".join(words[2:])
+            variations.append(QueryVariation(query=quoted, strategy="syntactic", weight=0.8, confidence=0.8))
+            quoted_end = " ".join(words[:-2]) + f''' "{" ".join(words[-2:])}"'''
+            variations.append(QueryVariation(query=quoted_end, strategy="syntactic", weight=0.8, confidence=0.8))
+        variations.append(
+            QueryVariation(query=query.replace(" ", " AND "), strategy="syntactic", weight=0.6, confidence=0.7)
+        )
+        variations.append(QueryVariation(query=f"title:{query}", strategy="syntactic", weight=0.7, confidence=0.75))
+        variations.append(QueryVariation(query=f"abstract:{query}", strategy="syntactic", weight=0.7, confidence=0.75))
+        variations.append(QueryVariation(query=f'"{query}"', strategy="syntactic", weight=0.9, confidence=0.9))
         seen = {query.lower()}
         unique_variations = []
         for var in variations:
@@ -344,34 +455,106 @@ class SyntacticExpansionStrategy(ExpansionStrategy):
             if normalized not in seen:
                 seen.add(normalized)
                 unique_variations.append(var)
-        return unique_variations[:self.max_expansions]
+        return unique_variations[: self.max_expansions]
+
 
 class DomainSpecificExpansionStrategy(ExpansionStrategy):
     """
     Domain-specific query expansion using field knowledge.
     """
-    DOMAIN_MODIFIERS: dict[str, list[str]] = {'cs': ['algorithm', 'implementation', 'evaluation', 'benchmark', 'dataset', 'framework', 'open source', 'GitHub'], 'medicine': ['clinical trial', 'patient outcomes', 'treatment', 'efficacy', 'safety', 'randomized controlled trial', 'meta-analysis'], 'physics': ['theoretical', 'experimental', 'simulation', 'model', 'measurement'], 'biology': ['in vivo', 'in vitro', 'molecular', 'cellular', 'genetic'], 'economics': ['empirical', 'theoretical', 'policy', 'market analysis', 'econometric'], 'psychology': ['behavioral', 'cognitive', 'experimental', 'longitudinal study']}
-    PAPER_TYPES = ['paper', 'article', 'study', 'research', 'thesis', 'dissertation', 'preprint']
-    __slots__ = tuple(('domain', 'max_expansions'))
 
-    def __init__(self, max_expansions: int=5, domain: str | None=None):
+    DOMAIN_MODIFIERS: dict[str, list[str]] = {
+        "cs": [
+            "algorithm",
+            "implementation",
+            "evaluation",
+            "benchmark",
+            "dataset",
+            "framework",
+            "open source",
+            "GitHub",
+        ],
+        "medicine": [
+            "clinical trial",
+            "patient outcomes",
+            "treatment",
+            "efficacy",
+            "safety",
+            "randomized controlled trial",
+            "meta-analysis",
+        ],
+        "physics": ["theoretical", "experimental", "simulation", "model", "measurement"],
+        "biology": ["in vivo", "in vitro", "molecular", "cellular", "genetic"],
+        "economics": ["empirical", "theoretical", "policy", "market analysis", "econometric"],
+        "psychology": ["behavioral", "cognitive", "experimental", "longitudinal study"],
+    }
+    PAPER_TYPES = ["paper", "article", "study", "research", "thesis", "dissertation", "preprint"]
+    __slots__ = ("domain", "max_expansions")
+
+    def __init__(self, max_expansions: int = 5, domain: str | None = None) -> None:
         self.max_expansions = max_expansions
         self.domain = domain
 
     @property
     def strategy_type(self) -> str:
-        return 'domain'
+        return "domain"
 
     def _detect_domain(self, query: str) -> str | None:
         """Detect domain from query terms."""
         query_lower = query.lower()
-        domain_indicators = {'cs': ['algorithm', 'neural', 'machine learning', 'deep learning', 'computer vision', 'nlp', 'artificial intelligence', 'code', 'programming', 'software', 'network', 'database'], 'medicine': ['patient', 'clinical', 'treatment', 'disease', 'diagnosis', 'therapy', 'drug', 'medical', 'health'], 'physics': ['quantum', 'particle', 'relativity', 'thermodynamics', 'electromagnetic', 'optics', 'mechanics'], 'biology': ['gene', 'protein', 'cell', 'organism', 'species', 'dna', 'molecular', 'biological', 'evolution']}
+        domain_indicators = {
+            "cs": [
+                "algorithm",
+                "neural",
+                "machine learning",
+                "deep learning",
+                "computer vision",
+                "nlp",
+                "artificial intelligence",
+                "code",
+                "programming",
+                "software",
+                "network",
+                "database",
+            ],
+            "medicine": [
+                "patient",
+                "clinical",
+                "treatment",
+                "disease",
+                "diagnosis",
+                "therapy",
+                "drug",
+                "medical",
+                "health",
+            ],
+            "physics": [
+                "quantum",
+                "particle",
+                "relativity",
+                "thermodynamics",
+                "electromagnetic",
+                "optics",
+                "mechanics",
+            ],
+            "biology": [
+                "gene",
+                "protein",
+                "cell",
+                "organism",
+                "species",
+                "dna",
+                "molecular",
+                "biological",
+                "evolution",
+            ],
+        }
         for domain, terms in domain_indicators.items():
-            if any((term in query_lower for term in terms)):
+            if any(term in query_lower for term in terms):
                 return domain
         return None
 
-    async def expand(self, query: str, context: dict[str, Any] | None=None) -> list[QueryVariation]:
+    async def expand(self, query: str, context: dict[str, Any] | None = None) -> list[QueryVariation]:
         """Expand query using domain-specific knowledge."""
         variations = []
         domain = self.domain
@@ -380,12 +563,24 @@ class DomainSpecificExpansionStrategy(ExpansionStrategy):
         if domain and domain in self.DOMAIN_MODIFIERS:
             modifiers = self.DOMAIN_MODIFIERS[domain]
             for modifier in modifiers[:3]:
-                variations.append(QueryVariation(query=f'{query} {modifier}', strategy='domain', weight=0.75, confidence=0.8))
+                variations.append(
+                    QueryVariation(query=f"{query} {modifier}", strategy="domain", weight=0.75, confidence=0.8)
+                )
             for paper_type in self.PAPER_TYPES[:3]:
-                variations.append(QueryVariation(query=f'{query} {paper_type}', strategy='domain', weight=0.7, confidence=0.75))
-        general_modifiers = ['research paper', 'journal article', 'conference proceedings', 'literature review', 'systematic review']
+                variations.append(
+                    QueryVariation(query=f"{query} {paper_type}", strategy="domain", weight=0.7, confidence=0.75)
+                )
+        general_modifiers = [
+            "research paper",
+            "journal article",
+            "conference proceedings",
+            "literature review",
+            "systematic review",
+        ]
         for modifier in general_modifiers[:2]:
-            variations.append(QueryVariation(query=f'{query} {modifier}', strategy='domain', weight=0.6, confidence=0.7))
+            variations.append(
+                QueryVariation(query=f"{query} {modifier}", strategy="domain", weight=0.6, confidence=0.7)
+            )
         seen = {query.lower()}
         unique_variations = []
         for var in variations:
@@ -393,20 +588,26 @@ class DomainSpecificExpansionStrategy(ExpansionStrategy):
             if normalized not in seen:
                 seen.add(normalized)
                 unique_variations.append(var)
-        return unique_variations[:self.max_expansions]
+        return unique_variations[: self.max_expansions]
+
 
 class MultiStrategyExpander:
     """
     Combines multiple expansion strategies for comprehensive query expansion.
     From MSQES - Multi-Source Query Expansion System.
     """
-    __slots__ = tuple(('max_total_variations', 'strategies'))
 
-    def __init__(self, strategies: list[ExpansionStrategy] | None=None, max_total_variations: int=20):
-        self.strategies = strategies or [SemanticExpansionStrategy(), SyntacticExpansionStrategy(), DomainSpecificExpansionStrategy()]
+    __slots__ = ("max_total_variations", "strategies")
+
+    def __init__(self, strategies: list[ExpansionStrategy] | None = None, max_total_variations: int = 20) -> None:
+        self.strategies = strategies or [
+            SemanticExpansionStrategy(),
+            SyntacticExpansionStrategy(),
+            DomainSpecificExpansionStrategy(),
+        ]
         self.max_total_variations = max_total_variations
 
-    async def expand(self, query: str, context: dict[str, Any] | None=None) -> list[QueryVariation]:
+    async def expand(self, query: str, context: dict[str, Any] | None = None) -> list[QueryVariation]:
         """
         Expand query using all configured strategies.
 
@@ -423,7 +624,7 @@ class MultiStrategyExpander:
                 variations = await strategy.expand(query, context)
                 all_variations.extend(variations)
             except Exception as e:
-                logger.warning(f'Expansion strategy {strategy.strategy_type} failed: {e}')
+                logger.warning(f"Expansion strategy {strategy.strategy_type} failed: {e}")
         all_variations.sort(key=attrgetter("weight") * v.confidence, reverse=True)
         seen = {query.lower()}
         unique_variations = []
@@ -431,7 +632,8 @@ class MultiStrategyExpander:
             if var.query.lower() not in seen:
                 seen.add(var.query.lower())
                 unique_variations.append(var)
-        return unique_variations[:self.max_total_variations]
+        return unique_variations[: self.max_total_variations]
+
 
 class DorkingEngine:
     """
@@ -452,12 +654,72 @@ class DorkingEngine:
         >>> print(queries[:3])
         ['site:ai.edu filetype:pdf "research"', 'site:ai.gov filetype:pdf "study"', ...]
     """
-    __slots__ = tuple(('patterns',))
 
-    def __init__(self):
-        self.patterns = {'academic': ['site:{domain} filetype:pdf "research"', 'site:{domain} filetype:pdf "study"', 'site:{domain} filetype:pdf "analysis"', 'site:{domain} inurl:research filetype:pdf', 'site:{domain} inurl:publications filetype:pdf', 'site:{domain} filetype:doc "research"', 'site:{domain} "research paper" "pdf"', 'site:{domain} "journal" "article" "pdf"'], 'technical': ['site:{domain} filetype:pdf "specification"', 'site:{domain} filetype:pdf "documentation"', 'site:{domain} filetype:pdf "manual"', 'site:{domain} inurl:docs filetype:pdf', 'site:{domain} inurl:api filetype:pdf', 'site:{domain} filetype:txt "readme"', 'site:{domain} "api documentation" "pdf"', 'site:{domain} "technical report" "pdf"'], 'financial': ['site:{domain} filetype:pdf "report"', 'site:{domain} filetype:pdf "annual"', 'site:{domain} filetype:pdf "quarterly"', 'site:{domain} inurl:investor filetype:pdf', 'site:{domain} inurl:financial filetype:pdf', 'site:{domain} "financial statement" "pdf"', 'site:{domain} "earnings report" "pdf"'], 'government': ['site:{domain} filetype:pdf "classified"', 'site:{domain} filetype:pdf "declassified"', 'site:{domain} filetype:pdf "memo"', 'site:{domain} inurl:foia filetype:pdf', 'site:{domain} inurl:archives filetype:pdf', 'site:{domain} "government report" "pdf"', 'site:{domain} "official document" "pdf"'], 'security': ['site:{domain} filetype:log', 'site:{domain} filetype:env', 'site:{domain} filetype:config', 'site:{domain} inurl:admin', 'site:{domain} inurl:backup', 'site:{domain} "error log"', 'site:{domain} "access log"'], 'hidden': ['site:{domain} intitle:"index of"', 'site:{domain} intitle:"directory listing"', 'site:{domain} "parent directory"', 'site:{domain} filetype:sql', 'site:{domain} filetype:backup', 'site:{domain} filetype:old', 'site:{domain} filetype:bak']}
+    __slots__ = ("patterns",)
 
-    def generate_complex_queries(self, topic: str, query_type: str='academic', include_variations: bool=True) -> list[str]:
+    def __init__(self) -> None:
+        self.patterns = {
+            "academic": [
+                'site:{domain} filetype:pdf "research"',
+                'site:{domain} filetype:pdf "study"',
+                'site:{domain} filetype:pdf "analysis"',
+                "site:{domain} inurl:research filetype:pdf",
+                "site:{domain} inurl:publications filetype:pdf",
+                'site:{domain} filetype:doc "research"',
+                'site:{domain} "research paper" "pdf"',
+                'site:{domain} "journal" "article" "pdf"',
+            ],
+            "technical": [
+                'site:{domain} filetype:pdf "specification"',
+                'site:{domain} filetype:pdf "documentation"',
+                'site:{domain} filetype:pdf "manual"',
+                "site:{domain} inurl:docs filetype:pdf",
+                "site:{domain} inurl:api filetype:pdf",
+                'site:{domain} filetype:txt "readme"',
+                'site:{domain} "api documentation" "pdf"',
+                'site:{domain} "technical report" "pdf"',
+            ],
+            "financial": [
+                'site:{domain} filetype:pdf "report"',
+                'site:{domain} filetype:pdf "annual"',
+                'site:{domain} filetype:pdf "quarterly"',
+                "site:{domain} inurl:investor filetype:pdf",
+                "site:{domain} inurl:financial filetype:pdf",
+                'site:{domain} "financial statement" "pdf"',
+                'site:{domain} "earnings report" "pdf"',
+            ],
+            "government": [
+                'site:{domain} filetype:pdf "classified"',
+                'site:{domain} filetype:pdf "declassified"',
+                'site:{domain} filetype:pdf "memo"',
+                "site:{domain} inurl:foia filetype:pdf",
+                "site:{domain} inurl:archives filetype:pdf",
+                'site:{domain} "government report" "pdf"',
+                'site:{domain} "official document" "pdf"',
+            ],
+            "security": [
+                "site:{domain} filetype:log",
+                "site:{domain} filetype:env",
+                "site:{domain} filetype:config",
+                "site:{domain} inurl:admin",
+                "site:{domain} inurl:backup",
+                'site:{domain} "error log"',
+                'site:{domain} "access log"',
+            ],
+            "hidden": [
+                'site:{domain} intitle:"index of"',
+                'site:{domain} intitle:"directory listing"',
+                'site:{domain} "parent directory"',
+                "site:{domain} filetype:sql",
+                "site:{domain} filetype:backup",
+                "site:{domain} filetype:old",
+                "site:{domain} filetype:bak",
+            ],
+        }
+
+    def generate_complex_queries(
+        self, topic: str, query_type: str = "academic", include_variations: bool = True
+    ) -> list[str]:
         """
         Generate complex dorking queries for a topic.
 
@@ -471,21 +733,21 @@ class DorkingEngine:
             List of dorking queries
         """
         if query_type not in self.patterns:
-            query_type = 'academic'
+            query_type = "academic"
         base_patterns = self.patterns[query_type]
         queries = []
-        domain_variations = [f'{topic}.edu', f'{topic}.gov', f'{topic}.org', f'{topic}.com', topic, f'www.{topic}.com']
+        domain_variations = [f"{topic}.edu", f"{topic}.gov", f"{topic}.org", f"{topic}.com", topic, f"www.{topic}.com"]
         for pattern in base_patterns:
             for domain in domain_variations:
-                query = pattern.replace('{domain}', domain)
+                query = pattern.replace("{domain}", domain)
                 queries.append(query)
         if include_variations:
-            filetypes = ['pdf', 'doc', 'docx', 'txt', 'csv', 'xml', 'json', 'xls', 'xlsx']
+            filetypes = ["pdf", "doc", "docx", "txt", "csv", "xml", "json", "xls", "xlsx"]
             base_queries = queries.copy()
             for query in base_queries:
-                if 'filetype:pdf' in query:
+                if "filetype:pdf" in query:
                     for ft in filetypes[1:]:
-                        queries.append(query.replace('filetype:pdf', f'filetype:{ft}'))
+                        queries.append(query.replace("filetype:pdf", f"filetype:{ft}"))
         seen = set()
         unique_queries = []
         for q in queries:
@@ -517,4 +779,17 @@ class DorkingEngine:
         if category not in self.patterns:
             self.patterns[category] = []
         self.patterns[category].append(pattern)
-__all__ = ['ExpansionConfig', 'QueryExpander', 'expand_query', 'DorkingEngine', 'ExpansionStrategy', 'QueryVariation', 'SemanticExpansionStrategy', 'SyntacticExpansionStrategy', 'DomainSpecificExpansionStrategy', 'MultiStrategyExpander']
+
+
+__all__ = [
+    "ExpansionConfig",
+    "QueryExpander",
+    "expand_query",
+    "DorkingEngine",
+    "ExpansionStrategy",
+    "QueryVariation",
+    "SemanticExpansionStrategy",
+    "SyntacticExpansionStrategy",
+    "DomainSpecificExpansionStrategy",
+    "MultiStrategyExpander",
+]

@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: speculative queue size limited
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -30,14 +27,10 @@ class PrefetchProtocol(Protocol):
         - predict_temporal: predict query timing
     """
 
-    def get_prefetch_candidates(
-        self, query: str, count: int = 5
-    ) -> list[str]:
+    def get_prefetch_candidates(self, query: str, count: int = 5) -> list[str]:
         """Get speculative prefetch candidates for query."""
         ...
 
-    async def predict_temporal(
-        self, query: str
-    ) -> dict[str, Any] | None:
+    async def predict_temporal(self, query: str) -> dict[str, Any] | None:
         """Predict temporal distribution of query results."""
         ...

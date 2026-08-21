@@ -16,21 +16,23 @@ Data contracts:
 - add_vectors: (list[str], np.ndarray shape (N, dim), str) → None
 - query: (np.ndarray shape (1, dim), int, str) → list[tuple[str, float]]
 """
+
 import asyncio
 import logging
 from pathlib import Path
+
 import numpy as np
 
-from hledac.universal.utils._patterns import CloseMethodDescriptor  # F320-REFACTOR-2
-from _core import aclose
+from hledac.universal.utils._patterns import CloseMethodDescriptor
 
 logger = logging.getLogger(__name__)
-_LANCEDB_ROOT = Path.home() / '.hledac' / 'lancedb'
-_TEXT_INDEX_PATH = _LANCEDB_ROOT / 'text_index.lance'
-_IMAGE_INDEX_PATH = _LANCEDB_ROOT / 'image_index.lance'
+_LANCEDB_ROOT = Path.home() / ".hledac" / "lancedb"
+_TEXT_INDEX_PATH = _LANCEDB_ROOT / "text_index.lance"
+_IMAGE_INDEX_PATH = _LANCEDB_ROOT / "image_index.lance"
 _TEXT_DIM = 256
 _IMAGE_DIM = 1024
-_VALID_INDEX_TYPES = {'text', 'image'}
+_VALID_INDEX_TYPES = {"text", "image"}
+
 
 class VectorStore:
     """
@@ -39,9 +41,10 @@ class VectorStore:
     Singleton: use get_vector_store() to get the instance.
     Lazy initialization: indices created on first add_vectors call.
     """
-    __slots__ = tuple(('_db', '_image_table', '_initialized', '_text_table'))
 
-    def __init__(self):
+    __slots__ = ("_db", "_image_table", "_initialized", "_text_table")
+
+    def __init__(self) -> None:
         self._db = None
         self._text_table = None
         self._image_table = None
@@ -59,31 +62,38 @@ class VectorStore:
         try:
             import lancedb
             import pyarrow as pa
+
             self._db = lancedb.connect(str(_LANCEDB_ROOT))
-            text_schema = pa.schema([pa.field('id', pa.string()), pa.field('vector', pa.list_(pa.float32(), _TEXT_DIM))])
-            image_schema = pa.schema([pa.field('id', pa.string()), pa.field('vector', pa.list_(pa.float32(), _IMAGE_DIM))])
+            text_schema = pa.schema(
+                [pa.field("id", pa.string()), pa.field("vector", pa.list_(pa.float32(), _TEXT_DIM))]
+            )
+            image_schema = pa.schema(
+                [pa.field("id", pa.string()), pa.field("vector", pa.list_(pa.float32(), _IMAGE_DIM))]
+            )
             try:
-                self._text_table = self._db.open_table('text_index')
-                logger.debug('[VECTOR] Opened existing text_index table')
+                self._text_table = self._db.open_table("text_index")
+                logger.debug("[VECTOR] Opened existing text_index table")
             except Exception:
-                self._text_table = self._db.create_table('text_index', schema=text_schema, exist_ok=True)
-                logger.info(f'[VECTOR] Created text_index at {_TEXT_INDEX_PATH}')
+                self._text_table = self._db.create_table("text_index", schema=text_schema, exist_ok=True)
+                logger.info(f"[VECTOR] Created text_index at {_TEXT_INDEX_PATH}")
             try:
-                self._image_table = self._db.open_table('image_index')
-                logger.debug('[VECTOR] Opened existing image_index table')
+                self._image_table = self._db.open_table("image_index")
+                logger.debug("[VECTOR] Opened existing image_index table")
             except Exception:
-                self._image_table = self._db.create_table('image_index', schema=image_schema, exist_ok=True)
-                logger.info(f'[VECTOR] Created image_index at {_IMAGE_INDEX_PATH}')
+                self._image_table = self._db.create_table("image_index", schema=image_schema, exist_ok=True)
+                logger.info(f"[VECTOR] Created image_index at {_IMAGE_INDEX_PATH}")
             self._initialized = True
-            logger.info('[VECTOR] LanceDB initialized successfully')
+            logger.info("[VECTOR] LanceDB initialized successfully")
         except ImportError as e:
-            logger.error(f'[VECTOR] LanceDB not available: {e}')
-            raise RuntimeError("LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'") from e
+            logger.error(f"[VECTOR] LanceDB not available: {e}")
+            raise RuntimeError(
+                "LanceDB is required for vector store. Install with: pip install 'lancedb>=0.2.5'"
+            ) from e
         except Exception as e:
-            logger.error(f'[VECTOR] Failed to initialize LanceDB: {e}')
+            logger.error(f"[VECTOR] Failed to initialize LanceDB: {e}")
             raise
 
-    def add_vectors(self, ids: list[str], vectors: np.ndarray, index_type: str='text') -> None:
+    def add_vectors(self, ids: list[str], vectors: np.ndarray, index_type: str = "text") -> None:
         """
         Add vectors to the specified index.
 
@@ -98,24 +108,26 @@ class VectorStore:
         if index_type not in _VALID_INDEX_TYPES:
             raise ValueError(f"Invalid index_type: {index_type}. Must be 'text' or 'image'.")
         if len(ids) != len(vectors):
-            raise ValueError(f'Length mismatch: {len(ids)} IDs vs {len(vectors)} vectors')
+            raise ValueError(f"Length mismatch: {len(ids)} IDs vs {len(vectors)} vectors")
         self._init_db()
-        expected_dim = _TEXT_DIM if index_type == 'text' else _IMAGE_DIM
+        expected_dim = _TEXT_DIM if index_type == "text" else _IMAGE_DIM
         if vectors.shape[1] != expected_dim:
-            raise ValueError(f'Dimension mismatch for {index_type}: expected {expected_dim}, got {vectors.shape[1]}')
-        table = self._text_table if index_type == 'text' else self._image_table
+            raise ValueError(f"Dimension mismatch for {index_type}: expected {expected_dim}, got {vectors.shape[1]}")
+        table = self._text_table if index_type == "text" else self._image_table
         try:
             data = []
             for _i, (row_id, vector) in enumerate(zip(ids, vectors, strict=False)):
                 vec_float32 = vector.astype(np.float32)
-                data.append({'id': str(row_id), 'vector': vec_float32.tolist()})
+                data.append({"id": str(row_id), "vector": vec_float32.tolist()})
             table.add(data)
-            logger.debug(f'[VECTOR] Added {len(ids)} vectors to {index_type}_index')
+            logger.debug(f"[VECTOR] Added {len(ids)} vectors to {index_type}_index")
         except Exception as e:
-            logger.error(f'[VECTOR] Failed to add vectors: {e}')
+            logger.error(f"[VECTOR] Failed to add vectors: {e}")
             raise
 
-    async def add_vectors_streaming(self, ids: list[str], vectors: np.ndarray, index_type: str='text', batch_size: int=16) -> None:
+    async def add_vectors_streaming(
+        self, ids: list[str], vectors: np.ndarray, index_type: str = "text", batch_size: int = 16
+    ) -> None:
         """
         F203I: Streaming batch add — yields control between chunks.
 
@@ -132,15 +144,15 @@ class VectorStore:
         """
         total = len(ids)
         for i in range(0, total, batch_size):
-            chunk_ids = ids[i:i + batch_size]
-            chunk_vecs = vectors[i:i + batch_size]
+            chunk_ids = ids[i : i + batch_size]
+            chunk_vecs = vectors[i : i + batch_size]
             try:
                 self.add_vectors(chunk_ids, chunk_vecs, index_type)
             except Exception as e:
-                logger.warning(f'[VECTOR] add_vectors_streaming chunk error at {i}: {e}')
+                logger.warning(f"[VECTOR] add_vectors_streaming chunk error at {i}: {e}")
             await asyncio.sleep(0)
 
-    def query(self, vector: np.ndarray, k: int, index_type: str='text') -> list[tuple[str, float]]:
+    def query(self, vector: np.ndarray, k: int, index_type: str = "text") -> list[tuple[str, float]]:
         """
         Query the vector index for similar vectors.
 
@@ -161,23 +173,25 @@ class VectorStore:
         if vector.ndim == 2:
             vector = vector.squeeze(0)
         vector = vector.astype(np.float32)
-        expected_dim = _TEXT_DIM if index_type == 'text' else _IMAGE_DIM
+        expected_dim = _TEXT_DIM if index_type == "text" else _IMAGE_DIM
         if len(vector) != expected_dim:
-            logger.warning(f'[VECTOR] Query dimension mismatch: expected {expected_dim}, got {len(vector)}. Skipping query.')
+            logger.warning(
+                f"[VECTOR] Query dimension mismatch: expected {expected_dim}, got {len(vector)}. Skipping query."
+            )
             return []
-        table = self._text_table if index_type == 'text' else self._image_table
+        table = self._text_table if index_type == "text" else self._image_table
         try:
-            results = table.search(vector.tolist(), vector_column_name='vector').limit(k).to_polars()
+            results = table.search(vector.tolist(), vector_column_name="vector").limit(k).to_polars()
             output = []
             for row in results.iter_rows(named=True):
-                doc_id = str(row['id'])
-                distance = row.get('_distance', 1.0)
+                doc_id = str(row["id"])
+                distance = row.get("_distance", 1.0)
                 similarity = 1.0 - distance
                 output.append((doc_id, float(similarity)))
-            logger.debug(f'[VECTOR] Query returned {len(output)} results from {index_type}_index')
+            logger.debug(f"[VECTOR] Query returned {len(output)} results from {index_type}_index")
             return output
         except Exception as e:
-            logger.error(f'[VECTOR] Query failed: {e}')
+            logger.error(f"[VECTOR] Query failed: {e}")
             return []
 
     # F320-REFACTOR-2: close method descriptor (resets db, tables, and initialized)
@@ -188,7 +202,10 @@ class VectorStore:
         initialized_attr="_initialized",
         initialized_value=False,
     )
+
+
 _vector_store: VectorStore | None = None
+
 
 def get_vector_store() -> VectorStore:
     """

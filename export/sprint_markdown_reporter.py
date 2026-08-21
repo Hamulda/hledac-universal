@@ -25,19 +25,15 @@ Path semantics (Sprint 8VY §C):
   - Output path: ~/.hledac/reports/{sprint_id}.md
 """
 
-
 import time as _time
 from datetime import UTC
-from pathlib import Path as _Path
 from typing import Any
 
 from ..utils.safe_render import escape_markdown_text
-from _core import aclose
 
 __all__ = [
     "render_sprint_markdown",
 ]
-
 
 # ── Issue #19: Jinja2 pre-compiled template (cached at module load) ──────────
 try:
@@ -48,7 +44,7 @@ except ImportError:
     _JINJA2_AVAILABLE = False
 
 
-def _build_jinja2_env() -> "jinja2.Environment | None":
+def _build_jinja2_env() -> jinja2.Environment | None:
     """
     Build Jinja2 Environment with pre-compiled sprint report template.
 
@@ -69,15 +65,15 @@ def _build_jinja2_env() -> "jinja2.Environment | None":
                 autoescape=jinja2.select_autoescape(["html", "xml"]),
                 keep_trailing_newline=True,
                 auto_reload=False,  # No reload needed — compiled once
-    )
+            )
             return env
     except Exception:  # noqa: BLE001
         pass
     return None
 
 
-_JINJA2_ENV: "jinja2.Environment | None" = _build_jinja2_env()
-_JINJA2_TEMPLATE: "jinja2.Template | None" = None
+_JINJA2_ENV: jinja2.Environment | None = _build_jinja2_env()
+_JINJA2_TEMPLATE: jinja2.Template | None = None
 if _JINJA2_ENV is not None:
     try:
         _JINJA2_TEMPLATE = _JINJA2_ENV.get_template("sprint_report.md.j2")
@@ -85,9 +81,6 @@ if _JINJA2_ENV is not None:
         _JINJA2_TEMPLATE = None
 
 
-# ---------------------------------------------------------------------------
-# Sprint F192F: Centralized JSON parsing with graceful fallback
-# ---------------------------------------------------------------------------
 def _try_parse_json(raw: str) -> dict | list | None:
     """
     Sprint F192F §3: Centralized JSON parsing with single fallback path.
@@ -102,23 +95,18 @@ def _try_parse_json(raw: str) -> dict | list | None:
         return None
     try:
         import orjson
+
         return orjson.loads(raw)
     except Exception:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Constants (stable, no new values invented)
-# ---------------------------------------------------------------------------
 _SYNTHESIS_ENGINE_LABELS: dict[bool, str] = {
     True: "✅ Outlines constrained",
     False: "⚠️ Regex fallback",
 }
 
 
-# ---------------------------------------------------------------------------
-# Markdown helpers
-# ---------------------------------------------------------------------------
 def _render_research_metrics(
     fpm: float,
     ioc_d: float,
@@ -192,6 +180,7 @@ def _render_phase_timings(phase: dict[str, float]) -> str:
 
 # Sprint F265C: Arrow ingest telemetry rendering
 
+
 def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
     """
     Render Arrow ingest telemetry as a markdown section.
@@ -209,10 +198,7 @@ def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
     ok = arrow_m.get("arrow_success_count", 0)
     lmdb_ok = arrow_m.get("arrow_success_lmdb_count", 0)
     duckdb_ok = arrow_m.get("arrow_success_duckdb_count", 0)
-    fallbacks = {
-        k: v for k, v in arrow_m.items()
-        if ("fallback" in k or "error" in k) and v > 0
-    }
+    fallbacks = {k: v for k, v in arrow_m.items() if ("fallback" in k or "error" in k) and v > 0}
 
     lines = [
         "## Arrow Ingest",
@@ -233,10 +219,6 @@ def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
     lines.append("")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Main renderer
-# ---------------------------------------------------------------------------
 
 # Sprint F240A: Optional sections configuration (data-driven pattern)
 # Maps scorecard keys to their renderer functions
@@ -304,7 +286,6 @@ def render_sprint_markdown(
     str
         Markdown-formatted sprint report.
     """
-    # Extract scorecard metrics
     fpm = scorecard.get("findings_per_minute", 0.0)
     ioc_d = scorecard.get("ioc_density", 0.0)
     novel = scorecard.get("semantic_novelty", 1.0)
@@ -312,7 +293,7 @@ def render_sprint_markdown(
 
     src_y, phase = _extract_scorecard_metrics(scorecard)
     summary, tas, findings = _extract_report_fields(report)
-    generated = _time.strftime('%Y-%m-%d %H:%M:%S UTC', _time.gmtime())
+    generated = _time.strftime("%Y-%m-%d %H:%M:%S UTC", _time.gmtime())
 
     # Core sections (always rendered)
     parts = [
@@ -347,7 +328,7 @@ def render_sprint_markdown(
 
     # Issue #19: Jinja2 fast path — template compiled at module load, re-used
     if _JINJA2_TEMPLATE is not None:
-        phase_timings_min = min(phase.values()) if phase and (phase_values := list(phase.values())) else 0.0
+        phase_timings_min = min(phase.values()) if phase and (_phase_values := list(phase.values())) else 0.0
         try:
             return _JINJA2_TEMPLATE.render(
                 sprint_id=sprint_id,
@@ -362,16 +343,12 @@ def render_sprint_markdown(
                 source_yield_sorted=sorted(src_y.items(), key=lambda x: x[1], reverse=True),
                 phase_timings=phase,
                 phase_timings_min=phase_timings_min,
-    )
+            )
         except Exception:  # noqa: BLE001
             pass  # Fall through to Python-based rendering
 
     return "\n".join(parts)
 
-
-# ---------------------------------------------------------------------------
-# Sprint F204E: Analyst Brief rendering
-# ---------------------------------------------------------------------------
 
 def _render_list_section(lines: list, title: str, items: list, prefix: str = "- ", limit: int = 10) -> None:
     """Render a list section with optional numbering prefix."""
@@ -399,7 +376,7 @@ _ANALYST_BRIEF_SECTIONS: tuple[tuple[str, str, str, int], ...] = (
     ("risk_hypotheses", "Risk Hypotheses", "- ", 5),
     ("feed_cluster_summary", "Feed Cluster", "- ", 5),
     ("pivot_recommendations", "Pivot Recommendations", "- ", 5),
-    )
+)
 
 
 def _render_evidence_chains(lines: list, analyst_brief: dict) -> None:
@@ -438,7 +415,10 @@ def _build_analyst_header(analyst_brief: dict) -> list[str]:
     """Build analyst brief header with timestamp and metadata."""
     try:
         from datetime import datetime
-        ts_str = datetime.fromtimestamp(analyst_brief.get("generated_ts", 0.0) or 0.0, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        ts_str = datetime.fromtimestamp(analyst_brief.get("generated_ts", 0.0) or 0.0, tz=UTC).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
     except Exception:
         ts_str = "unknown"
 
@@ -462,10 +442,6 @@ def _render_analyst_sections(lines: list, analyst_brief: dict) -> None:
         items = analyst_brief.get(key, []) or []
         _render_list_section(lines, title, items, prefix=prefix, limit=limit)
 
-
-# ---------------------------------------------------------------------------
-# Sprint F202A §5: Evidence Envelope rendering
-# ---------------------------------------------------------------------------
 
 def _render_envelope_findings(envelope_findings: list) -> str:
     """
@@ -504,7 +480,9 @@ def _render_envelope_findings(envelope_findings: list) -> str:
                     direction = pivot.get("direction", "")
                     query_hint = pivot.get("query_hint", "")
                     priority = pivot.get("priority", "")
-                    lines.append(f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}")
+                    lines.append(
+                        f"- [{escape_markdown_text(priority)}] {escape_markdown_text(direction)}: {escape_markdown_text(query_hint)}"
+                    )
                 elif isinstance(pivot, str):
                     lines.append(f"- {escape_markdown_text(pivot)}")
             lines.append("")
@@ -529,10 +507,6 @@ def _render_envelope_findings(envelope_findings: list) -> str:
     lines.append(f"_{count} finding(s) with evidence envelope_")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Sprint F202B: Identity Candidate rendering
-# ---------------------------------------------------------------------------
 
 def _format_confidence_label(confidence: float) -> str:
     """Return confidence label string."""
@@ -560,7 +534,7 @@ def _render_single_identity_candidate(cand: dict) -> list[str]:
         f"### `{cand_id[:32]}`",
         f"**Name:** {primary}",
         f"**Confidence:** {confidence:.2f} ({_format_confidence_label(confidence)})",
-        ""
+        "",
     ]
 
     # Attribution confidence
@@ -586,8 +560,7 @@ def _render_single_identity_candidate(cand: dict) -> list[str]:
 
     # Signals
     if signals:
-        signal_parts = [f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}"
-                       for k, v in list(signals.items())[:5]]
+        signal_parts = [f"{k}={v:.2f}" if isinstance(v, float) else f"{k}={v}" for k, v in list(signals.items())[:5]]
         lines.append(f"**Signals:** {', '.join(signal_parts)}")
         lines.append("")
 
@@ -629,16 +602,13 @@ def _render_identity_candidates(identity_candidates: list) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Sprint F202E: Temporal Archaeology Timeline rendering
-# ---------------------------------------------------------------------------
-
 def _format_time_span(oldest_ts: float | None, newest_ts: float | None) -> str:
     """Format time span from timestamps."""
     if not oldest_ts or not newest_ts:
         return "unknown"
     try:
         from datetime import datetime as dt
+
         oldest = dt.fromtimestamp(oldest_ts)  # noqa: DTZ006
         newest = dt.fromtimestamp(newest_ts)  # noqa: DTZ006
         delta = newest - oldest
@@ -663,6 +633,7 @@ def _render_timeline_event(event: dict) -> str | None:
     if evt_ts:
         try:
             from datetime import datetime as dt
+
             ts_dt = dt.fromtimestamp(evt_ts)  # noqa: DTZ006
             ts_str = ts_dt.strftime("%Y-%m-%d")
         except Exception:
@@ -738,10 +709,6 @@ def _render_timeline_section(timeline_findings: list) -> str:
     lines.append(f"_{count} timeline(s)_")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Sprint F203A: Sprint Diff rendering
-# ---------------------------------------------------------------------------
 
 def _render_sprint_diff_section(sprint_diff_findings: list) -> str:
     """
@@ -918,10 +885,6 @@ def _render_evidence_chains_section(evidence_chains: list) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Sprint F232C: Deterministic Analyst Brief from investigation_packet
-# ---------------------------------------------------------------------------
-
 # F232C: Helper functions for analyst brief sections
 def _derive_analyst_confidence(total_accepted: int, capability_verdict: str, signal_class: str) -> str:
     """Derive confidence level from sprint metrics."""
@@ -934,7 +897,9 @@ def _derive_analyst_confidence(total_accepted: int, capability_verdict: str, sig
     return "low"
 
 
-def _render_f232_executive_summary(lines: list, total_accepted: int, capability_verdict: str, signal_class: str, pvs: dict) -> None:
+def _render_f232_executive_summary(
+    lines: list, total_accepted: int, capability_verdict: str, signal_class: str, pvs: dict
+) -> None:
     """Render Executive Summary section."""
     lines.append("### Executive Summary")
     lines.append("")
@@ -1037,8 +1002,11 @@ def _render_f232_confirmed(lines: list, total_accepted: int, source_family_summa
         lines.append("_No findings were accepted — nothing was confirmed._")
         lines.append("")
         return
-    confirmed = [f"`{e.get('family', '?')}` ({e.get('accepted', 0)} accepted)"
-                 for e in source_family_summary if isinstance(e, dict) and e.get("accepted", 0) > 0]
+    confirmed = [
+        f"`{e.get('family', '?')}` ({e.get('accepted', 0)} accepted)"
+        for e in source_family_summary
+        if isinstance(e, dict) and e.get("accepted", 0) > 0
+    ]
     if confirmed:
         for c in confirmed[:8]:
             lines.append(f"- {c}")
@@ -1051,16 +1019,22 @@ def _render_f232_attempted_not_confirmed(lines: list, total_accepted: int, sourc
     """Render What Was Attempted But Not Confirmed section."""
     lines.append("### What Was Attempted But Not Confirmed")
     lines.append("")
-    attempted = [f"`{e.get('family', '?')}`: {e.get('terminal_state') or 'attempted, no results'}"
-                 for e in source_family_summary if isinstance(e, dict)
-                 and e.get("accepted", 0) == 0
-                 and (e.get("attempted") or e.get("terminal_only") or e.get("terminal_state"))]
+    attempted = [
+        f"`{e.get('family', '?')}`: {e.get('terminal_state') or 'attempted, no results'}"
+        for e in source_family_summary
+        if isinstance(e, dict)
+        and e.get("accepted", 0) == 0
+        and (e.get("attempted") or e.get("terminal_only") or e.get("terminal_state"))
+    ]
     if attempted:
         for a in attempted[:10]:
             lines.append(f"- {a}")
     else:
-        lines.append("_All lanes failed to produce accepted findings._" if total_accepted == 0
-                     else "_No terminal-only lanes without accepted findings._")
+        lines.append(
+            "_All lanes failed to produce accepted findings._"
+            if total_accepted == 0
+            else "_No terminal-only lanes without accepted findings._"
+        )
     lines.append("")
 
 
@@ -1096,7 +1070,10 @@ def _render_f232_provider_diagnosis(lines: list, scorecard: dict, investigation_
         if status not in ("skipped", "unknown") or reason not in ("not_attempted", "unknown"):
             action_str = f" → {action}" if action and action != "none" else ""
             lines.append(f"- **{fam_name}** [{status}]: {reason}{action_str}")
-    for key, label in [("recommended_next_engineering_action", "engineering"), ("recommended_next_investigation_action", "investigation")]:
+    for key, label in [
+        ("recommended_next_engineering_action", "engineering"),
+        ("recommended_next_investigation_action", "investigation"),
+    ]:
         if val := pyd.get(key, ""):
             if val != "none":
                 lines.append(f"**Next {label}:** {val}")
@@ -1147,7 +1124,11 @@ def _render_f232_constraints(lines: list, investigation_packet: dict, cap_synth:
     lines.append(f"**Confidence:** {confidence}")
     lines.append("")
     if isinstance(cap_synth, dict):
-        for key, label in [("feed_noise_summary", "Feed noise"), ("source_diversity_summary", "Source diversity"), ("corroboration_summary", "Corroboration")]:
+        for key, label in [
+            ("feed_noise_summary", "Feed noise"),
+            ("source_diversity_summary", "Source diversity"),
+            ("corroboration_summary", "Corroboration"),
+        ]:
             if val := cap_synth.get(key, ""):
                 lines.append(f"- {label}: **{val}**")
     if (tc := investigation_packet.get("terminal_coverage", {})) and isinstance(tc, dict):
@@ -1169,7 +1150,7 @@ _OPTIONAL_SECTIONS: tuple[tuple[str, callable, str], ...] = (
     ("evidence_chains", _render_evidence_chains_section, "evidence_chains"),
     ("analyst_brief", _render_analyst_brief_section, "analyst_brief"),
     ("investigation_packet", lambda pkt: _render_f232_analyst_brief(pkt, None), "investigation_packet"),
-    )
+)
 
 
 def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> str:
@@ -1197,7 +1178,6 @@ def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> s
 
     lines: list[str] = ["", "## Analyst Brief", ""]
 
-    # Extract shared data
     source_family_summary = investigation_packet.get("source_family_summary") or []
     sfo_dict = {e.get("family", ""): e for e in source_family_summary if isinstance(e, dict) and e.get("family")}
     total_accepted = sum(v.get("accepted", 0) for v in sfo_dict.values())
@@ -1209,7 +1189,6 @@ def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> s
 
     confidence = _derive_analyst_confidence(total_accepted, capability_verdict, signal_class)
 
-    # Render sections via helpers
     _render_f232_executive_summary(lines, total_accepted, capability_verdict, signal_class, pvs)
     _render_f232_seed_context(lines, investigation_packet)
     _render_f232_source_coverage(lines, source_family_summary)

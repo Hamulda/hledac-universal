@@ -37,24 +37,29 @@ Usage:
     # After failure:
     cb.record_failure()
 """
+
 from __future__ import annotations
+
 import logging
 import time
 from dataclasses import dataclass, field
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class CircuitOpenError(RuntimeError):
     """Raised when circuit is open and cannot execute."""
-    pass
+
 
 @dataclass(slots=True)
 class CircuitState:
     """Immutable state snapshot for debugging/telemetry."""
+
     failure_count: int
     last_failure: float | None
     opened_at: float | None
     is_open: bool
+
 
 @dataclass(slots=True)
 class TransportCircuitBreaker:
@@ -74,6 +79,7 @@ class TransportCircuitBreaker:
 
     Invariant: All mutations happen in async context (NymTransport event loop).
     """
+
     failure_threshold: int = 3
     recovery_timeout: float = 60.0
     _failure_count: int = field(default=0, init=False)
@@ -118,7 +124,9 @@ class TransportCircuitBreaker:
         Force reset to closed state. Used at phase boundaries.
         """
         if self._opened_at is not None or self._failure_count > 0:
-            logger.debug('[TransportCircuit] Reset: failures=%d, was_open=%s', self._failure_count, self._opened_at is not None)
+            logger.debug(
+                "[TransportCircuit] Reset: failures=%d, was_open=%s", self._failure_count, self._opened_at is not None
+            )
         self._failure_count = 0
         self._opened_at = None
         self._last_failure = 0.0
@@ -126,11 +134,16 @@ class TransportCircuitBreaker:
     @property
     def state(self) -> CircuitState:
         """Return current state for debugging/telemetry."""
-        return CircuitState(failure_count=self._failure_count, last_failure=self._last_failure if self._last_failure > 0 else None, opened_at=self._opened_at, is_open=self._opened_at is not None)
+        return CircuitState(
+            failure_count=self._failure_count,
+            last_failure=self._last_failure if self._last_failure > 0 else None,
+            opened_at=self._opened_at,
+            is_open=self._opened_at is not None,
+        )
 
     def __repr__(self) -> str:
         if self._opened_at is None:
-            return f'TransportCircuitBreaker(CLOSED, failures={self._failure_count})'
+            return f"TransportCircuitBreaker(CLOSED, failures={self._failure_count})"
         elapsed = time.monotonic() - self._opened_at
         remaining = max(0, self.recovery_timeout - elapsed)
-        return f'TransportCircuitBreaker(OPEN, failures={self._failure_count}, recovery_in={remaining:.1f}s)'
+        return f"TransportCircuitBreaker(OPEN, failures={self._failure_count}, recovery_in={remaining:.1f}s)"

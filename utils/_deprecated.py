@@ -32,14 +32,11 @@ Usage:
 M1 8GB UMA: 0 KB runtime overhead, 0 new imports in hot paths.
 """
 
-
-
 import functools
 import sys
 import warnings
 from collections.abc import Callable
 from typing import Any, TypeVar
-from _core import aclose
 
 __all__ = ["deprecated", "HAS_NATIVE_DEPRECATED"]
 

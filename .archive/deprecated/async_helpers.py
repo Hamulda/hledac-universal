@@ -42,9 +42,7 @@ import warnings
 
 # Emit deprecation warning on import
 warnings.warn(
-    "utils.async_helpers is DEPRECATED. "
-    "Import from utils.asyncx instead. "
-    "See migration guide in module docstring.",
+    "utils.async_helpers is DEPRECATED. Import from utils.asyncx instead. See migration guide in module docstring.",
     DeprecationWarning,
     stacklevel=2,
 )
@@ -53,45 +51,45 @@ warnings.warn(
 from utils.asyncx import (
     # _monitor.py
     AsyncMonitor,
-    get_async_monitor,
-    init_async_monitoring,
-    # _fault.py
-    silent_except,
-    get_cascading_failure_id,
-    # _parallel.py
-    parallel,
-    parallel_ok,
-    try_group,
-    parallel_taskgroup_star,
-    safe_create_task,
-    safe_gather,
-    safe_gather_ok,
-    safe_gather_strict,
-    safe_gather_fire_and_forget,
-    bounded_parallel_map,
-    race_first_success,
-    chunked_taskgroup,
-    _check_gathered,
-    ParallelResult,
-    SafeGatherResult,
-    RaceFirstSuccessResult,
-    _BoundedExceptionLog,
-    ExceptionPolicy,
-    ConcurrencyBudgetResolver,
-    current_otel_context,
     # _rate_limit.py
     BoundedPerHostGate,
+    ConcurrencyBudgetResolver,
     DomainRateLimiter,
+    ExceptionPolicy,
+    ParallelResult,
+    RaceFirstSuccessResult,
+    SafeGatherResult,
+    _BoundedExceptionLog,
+    _check_gathered,
     _TokenBucketState,
     # _core.py
     async_getaddrinfo,
-    safe_wait_for,
+    bounded_parallel_map,
+    chunked_taskgroup,
+    current_otel_context,
     first_completed,
+    get_async_monitor,
+    get_cascading_failure_id,
+    init_async_monitoring,
     monotonic_ms,
-    stop_task,
+    # _parallel.py
+    parallel,
     parallel_close,
     parallel_close_async,
+    parallel_ok,
+    parallel_taskgroup_star,
+    race_first_success,
     retry_backoff_async,
+    safe_create_task,
+    safe_gather,
+    safe_gather_fire_and_forget,
+    safe_gather_ok,
+    safe_gather_strict,
+    safe_wait_for,
+    # _fault.py
+    silent_except,
+    stop_task,
+    try_group,
 )
 
 __all__ = [

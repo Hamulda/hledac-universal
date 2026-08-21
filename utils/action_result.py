@@ -8,12 +8,12 @@ Migrated from dataclass to msgspec.Struct for:
 - Zero-copy encoding via msgspec
 - Python 3.14 compatible (no __slots__ issues)
 """
+
 from __future__ import annotations
 
-
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 
 class ActionResult(Struct):
@@ -24,6 +24,7 @@ class ActionResult(Struct):
     - Zero-GC overhead with gc=False (no tracing for cycle detection)
     - Python 3.14 ready
     """
+
     success: bool = False
     findings: list = msgspec.field(default_factory=list)
     sources: list = msgspec.field(default_factory=list)

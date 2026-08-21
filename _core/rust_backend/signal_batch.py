@@ -18,10 +18,9 @@ M1 8GB: GIL released via _py.allow_threads(), no Metal contention.
 from __future__ import annotations
 
 from typing import Any
-from _core._util import aclose
 
 
-def get_domain() -> "SignalBatchDomain":
+def get_domain() -> SignalBatchDomain:
     from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
 
     _probe = getattr(_ext, "batch_compute_scores", None)
@@ -76,11 +75,6 @@ class SignalBatchDomain:
             Aggregated signal vector, or empty list on error.
         """
         return self._ext.batch_aggregate_signals(signals, weights, normalize)
-
-
-# ---------------------------------------------------------------------------
-# Python fallback — pure scalar implementation
-# ---------------------------------------------------------------------------
 
 
 class PythonFallbackSignalDomain:

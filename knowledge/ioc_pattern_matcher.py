@@ -33,16 +33,14 @@ Usage:
     # → [IOCMatch(pattern_name="btc_address", matched_value="1A1zP1eP5QGefi...", start=12, end=46)]
 """
 
-
 import logging
 import re
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
+from operator import attrgetter
 from typing import Final
 
-from operator import attrgetter, itemgetter
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
+
 __all__ = [
     "IOCPatternMatcher",
     "get_ioc_pattern_matcher",
@@ -76,6 +74,7 @@ HOT_PATTERNS: Final[list[tuple[str, re.Pattern[str]]]] = [
 
 class IOCMatch(Struct, frozen=True):
     """A single IOC pattern match."""
+
     pattern_name: str
     matched_value: str
     start: int
@@ -122,12 +121,14 @@ class IOCPatternMatcher:
                     value = m.group(0)
                     if len(value) > MAX_MATCH_VALUE:
                         value = value[:MAX_MATCH_VALUE]
-                    matches.append(IOCMatch(
-                        pattern_name=name,
-                        matched_value=value,
-                        start=m.start(),
-                        end=m.end(),
-                    ))
+                    matches.append(
+                        IOCMatch(
+                            pattern_name=name,
+                            matched_value=value,
+                            start=m.start(),
+                            end=m.end(),
+                        )
+                    )
 
             matches.sort(key=attrgetter("start"))
             return matches

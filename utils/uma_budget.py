@@ -58,8 +58,6 @@ Invariant: All code importing these values MUST import from here, not define the
     - transport/policy.py: imports from here ✅ (MODERN-36 fix)
     - rust_extensions/src/memory.rs: syncs from here at startup ✅ (MODERN-36 fix)
 
-
-
 This module provides:
 - Raw memory sampling (system RAM via psutil, MLX active/peak/cache)
 - Pressure level classification (normal/warn/critical/emergency)
@@ -121,27 +119,6 @@ __all__ = [
     'get_power_monitor', 'PowerStatusMonitor',
 ]
 
-# =============================================================================
-# SSOT: M1 8GB Unified Memory Budget (P7-3)
-# =============================================================================
-# Single source of truth for all memory budget constants.
-# Import from here — do NOT define these elsewhere.
-#
-# Budget breakdown:
-#   - macOS system:      2.5 GiB (baseline, non-adjustable)
-#   - Orchestrator:      1.0 GiB (fetch/parse/DB/overhead)
-#   - LLM model weights: 2.0 GiB (DeepHermes-3-3B Q4)
-#   - KV cache:         0.75 GiB (max allocation)
-#   ─────────────────────────────────────────────
-#   - TOTAL:            6.25 GiB
-
-
-# =============================================================================
-# MODERN-45: Memory Axis Enums (compile-time axis declarations)
-# =============================================================================
-# Each memory constant MUST declare which axis it measures.
-# This prevents subsystems from comparing apples to oranges.
-
 class MemoryAxis:
     """
     MODERN-45: Compile-time axis declarations for memory constants.
@@ -181,16 +158,6 @@ class MemoryAxis:
     MLX_SLAB = TRACKED_ALLOCATION          # MLX allocator tracks allocations
     METAL_MEMORY = TRACKED_ALLOCATION       # MLX Metal is part of tracked-allocation
 
-
-# =============================================================================
-# MODERN-45: Compile-time assertion for memory ceiling invariant
-# =============================================================================
-# This assertion fires at import time, catching misconfigurations early.
-# The invariant: PROCESS_RSS_CEILING <= SYSTEM_USED_CEILING <= 6.25
-#
-# Current values: 5.5 <= 6.25 <= 6.25 ✓
-# If this fails, the M1 8GB budget model is broken.
-
 # Deferred import to avoid circular dependency
 def _assert_memory_invariants() -> None:
     """MODERN-45: Verify memory ceiling invariant at module import time."""
@@ -208,10 +175,8 @@ def _assert_memory_invariants() -> None:
         f"must be <= MAX_VALID_CEILING ({MAX_VALID_CEILING})"
     )
 
-
 # Execute assertion immediately at import (before any code uses the constants)
 _assert_memory_invariants()
-
 
 class UmaBudget:
     """
@@ -359,7 +324,6 @@ class UmaBudget:
             dict: Per-component breakdown with keys: orchestrator, llm_weights, 
                   kv_cache, mlx_metal, system_used, total_tracked, process_rss
         """
-        # Get current MLX Metal memory
         from hledac.universal._core.memory import get_metal_active_memory_bytes
         try:
             mlx_active_bytes = get_metal_active_memory_bytes()
@@ -367,7 +331,6 @@ class UmaBudget:
         except Exception:
             mlx_active_mib = 0.0
         
-        # Get current system memory
         sys_total, sys_used, sys_avail = get_system_memory_mb()
         
         # MODERN-CROSS-1 FIX: Corrected process RSS calculation
@@ -478,7 +441,6 @@ class UmaBudget:
         
         return '\n'.join(lines)
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODERN-36 FIX: Module-level SSOT exports
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -505,7 +467,6 @@ LLM_WEIGHTS_GIB: float = UmaBudget.LLM_WEIGHTS_GIB  # 2.0 GiB
 KV_CACHE_GIB: float = UmaBudget.KV_CACHE_GIB  # 0.75 GiB
 MACOS_SYSTEM_GIB: float = UmaBudget.MACOS_SYSTEM_GIB  # 2.5 GiB
 
-# Fetch concurrency
 M1_FETCH_SOFT_CEILING_GB: float = UmaBudget.M1_FETCH_SOFT_CEILING_GB  # 5.5 GiB
 GENERAL_HIGH_WATER_RATIO: float = UmaBudget.HIGH_WATER_RATIO  # 0.88
 
@@ -513,7 +474,6 @@ GENERAL_HIGH_WATER_RATIO: float = UmaBudget.HIGH_WATER_RATIO  # 0.88
 # MODERN-41 Fix: SWAP_TIERS SSOT — single source of truth for swap policy
 # ═══════════════════════════════════════════════════════════════════════════════
 from typing import NamedTuple
-
 
 class SwapTiers(NamedTuple):
     """
@@ -563,15 +523,12 @@ class SwapTiers(NamedTuple):
             HARD_BLOCK=round(mission_peak * 0.95, 2),  # 5.225 GiB
     )
 
-
 # SSOT SWAP_TIERS instance — import this, don't define locally
 SWAP_TIERS: SwapTiers = SwapTiers.default()
-
 
 # R5: UMA callback executor — managed centrally by domain_executors.
 # No local atexit registration needed — domain_executors handles shutdown.
 _uma_callback_executor: ThreadPoolExecutor | None = None
-
 
 def _get_uma_executor() -> ThreadPoolExecutor:
     """R5: Get the bounded UMA callback executor from domain_executors.
@@ -585,7 +542,6 @@ def _get_uma_executor() -> ThreadPoolExecutor:
         _uma_callback_executor = get_uma_callback_executor()
     return _uma_callback_executor
 
-
 async def _run_callback_in_executor(cb, snapshot: dict) -> None:
     """Run a synchronous callback in the bounded thread pool, propagating exceptions."""
     loop = asyncio.get_running_loop()
@@ -593,7 +549,6 @@ async def _run_callback_in_executor(cb, snapshot: dict) -> None:
         await loop.run_in_executor(_get_uma_executor(), cb, snapshot)
     except Exception as e:
         logger.error(f'[UMA-WATCHDOG] UMA callback failed: {e}')
-
 
 def shutdown_uma_callback_executor() -> None:
     """R5: No-op — executor managed centrally by domain_executors.
@@ -603,7 +558,6 @@ def shutdown_uma_callback_executor() -> None:
     """
 logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
-    from types import ModuleType
 
 def _detect_total_memory_mb() -> int:
     """Detect real system RAM. Floor 4 GB, ceil 64 GB, fallback 8 GB."""
@@ -692,7 +646,6 @@ except Exception as _e:
 MAX_L2_CACHE_SIZE_MB: int = 50
 from hledac.universal._core.memory import get_memory_snapshot as _rust_snapshot
 from hledac.universal._core.psutil_shim import psutil_module as _psutil_mod
-from _core import aclose
 
 def _get_mlx_core():
     """Lazy MLX import for memory metrics."""
@@ -1083,14 +1036,11 @@ class UmaWatchdog:
         """Return the last level that triggered a callback."""
         return self._last_fired_level
 
-
 # Canonical alias: Watchdog = UmaWatchdog (A-01 compat migration)
 Watchdog = UmaWatchdog
 
-
 # HW-02: Power status monitoring for battery vs AC power detection
 _POWER_CHECK_INTERVAL_S: float = 5.0
-
 
 class PowerStatusMonitor:
     """
@@ -1143,7 +1093,6 @@ class PowerStatusMonitor:
             status["ac_attached"] = "ac attached" in output or "charging" in output
             status["charging"] = "charging" in output
 
-            # Parse battery percentage
             import re
 
             level_match = re.search(r"(\d+)%", output)
@@ -1186,10 +1135,8 @@ class PowerStatusMonitor:
 
         return self._last_status
 
-
 # Module-level singleton for cross-module reuse
 _power_monitor_instance: PowerStatusMonitor | None = None
-
 
 def get_power_monitor() -> PowerStatusMonitor:
     """Lazy singleton for PowerStatusMonitor."""

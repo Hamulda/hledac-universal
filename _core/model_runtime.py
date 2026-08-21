@@ -36,28 +36,21 @@ logger = logging.getLogger(__name__)
 
 # MODERN-35 Fix: Import CPU affinity utilities
 from hledac.universal.utils.cpu_affinity import (
-    set_mlx_affinity,
-    is_apple_silicon,
     get_core_topology,
-    )
+    is_apple_silicon,
+    set_mlx_affinity,
+)
 
-
-# ---------------------------------------------------------------------------
-# Module-level helpers used by ModelLifecycle
-# ---------------------------------------------------------------------------
 
 def _get_mlx_safe() -> Any:
     """Return mlx.core if available, else None."""
     try:
         import mlx.core as _mx
+
         return _mx
     except Exception:
         return None
 
-
-# ---------------------------------------------------------------------------
-# ModelLifecycle — windup-local structured-generation sidecar
-# ---------------------------------------------------------------------------
 
 class ModelLifecycle:
     """
@@ -78,17 +71,13 @@ class ModelLifecycle:
     """
 
     # F314-4: __slots__ for M1 8GB RAM optimization
-    __slots__ = ('_model', '_tokenizer', '_model_path', '_loaded')
+    __slots__ = ("_model", "_tokenizer", "_model_path", "_loaded")
 
     def __init__(self) -> None:
         self._model: Any = None
         self._tokenizer: Any = None
         self._model_path: Path | None = None
         self._loaded: bool = False
-
-    # ------------------------------------------------------------------
-    # Model discovery — 3-tier
-    # ------------------------------------------------------------------
 
     def _discover_model_path(self) -> Path | None:
         """
@@ -118,10 +107,6 @@ class ModelLifecycle:
         logger.warning("[LIFECYCLE] No local model found — structured generation disabled")
         return None
 
-    # ------------------------------------------------------------------
-    # Memory pre-flight check (E4: M1 8GB UMA safety)
-    # ------------------------------------------------------------------
-
     def _check_mlx_memory_before_load(self) -> None:
         """
         Pre-flight memory check before mlx_lm.load().
@@ -147,6 +132,7 @@ class ModelLifecycle:
                 available_bytes = os.proc_available_memory()
             else:
                 import psutil
+
                 available_bytes = psutil.virtual_memory().available
         except Exception:  # noqa: BLE001
             pass
@@ -155,12 +141,11 @@ class ModelLifecycle:
         # check_available_memory_py is registered directly on the Rust module (rust.raw)
         try:
             from hledac.universal._core.rust_backend import rust
+
             if rust.is_available:
                 raw = rust.raw
                 if hasattr(raw, "check_available_memory"):
-                    allowed, _avail, reason = raw.check_available_memory(
-                        max_memory_bytes, available_bytes
-    )
+                    allowed, _avail, reason = raw.check_available_memory(max_memory_bytes, available_bytes)
                     if not allowed:
                         raise RuntimeError(f"[E4-MEMORY] MLX model load rejected: {reason}")
                     return
@@ -174,11 +159,7 @@ class ModelLifecycle:
             raise RuntimeError(
                 f"[E4-MEMORY] Insufficient memory for MLX load: "
                 f"available={available_bytes} < required={max_memory_bytes}"
-    )
-
-    # ------------------------------------------------------------------
-    # Lazy load
-    # ------------------------------------------------------------------
+            )
 
     async def _ensure_loaded(self) -> tuple[Any, Any, Path | None]:
         """Lazy load s 3-tier fallback. Volá se před každým generate."""
@@ -254,9 +235,10 @@ class ModelLifecycle:
                     topology = get_core_topology()
                     logger.debug(
                         "[LIFECYCLE] MLX P-core affinity set (P-cores=%d, E-cores=%d)",
-                        topology["p_cores"], topology["e_cores"]
-    )
-                
+                        topology["p_cores"],
+                        topology["e_cores"],
+                    )
+
                 # Allocate pre-warm buffer
                 _warm_buffer = mx.zeros([12_000_000], dtype=mx.float32)  # 48 MB
                 mx.eval(_warm_buffer)  # Force allocation — MLX lazy evaluation requires barrier
@@ -270,10 +252,6 @@ class ModelLifecycle:
         except Exception as e:
             logger.error("[LIFECYCLE] Model load failed: %s", e)
             raise
-
-    # ------------------------------------------------------------------
-    # Structured generation — Outlines PRIMÁRNÍ path
-    # ------------------------------------------------------------------
 
     async def structured_generate(
         self,
@@ -305,23 +283,42 @@ class ModelLifecycle:
 
         # LLM-01: ALWAYS sanitize input prompt before LLM inference (fail-safe, always-on)
         try:
-            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            _sanitize_fn = __import__(
+                "hledac.universal.brain.prompt_injection_validator", fromlist=["sanitize_prompt_injection_patterns"]
+            ).sanitize_prompt_injection_patterns
             validation_result = _sanitize_fn(prompt)
             if validation_result.suspicious:
-                _high_risk = any(p in validation_result.patterns for p in (
-                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                    'structural_repeated_delimiters', 'structural_html_comment',
-                ))
+                _high_risk = any(
+                    p in validation_result.patterns
+                    for p in (
+                        "ignore_previous_instructions",
+                        "disregard_instructions",
+                        "forget_instructions",
+                        "system_prompt_injection",
+                        "developer_message_injection",
+                        "you_are_chatgpt",
+                        "you_are_an_ai",
+                        "as_an_ai",
+                        "jailbreak",
+                        "dan",
+                        "structural_repeated_delimiters",
+                        "structural_html_comment",
+                    )
+                )
                 if _high_risk:
-                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in structured_generate: {validation_result.patterns}')
+                    logger.warning(
+                        f"[LLM-01-BLOCK] High-risk prompt injection in structured_generate: {validation_result.patterns}"
+                    )
                     return (None, False)
-                logger.warning('[LIFECYCLE] prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+                logger.warning(
+                    "[LIFECYCLE] prompt_injection: suspicious=%s, patterns=%s",
+                    validation_result.suspicious,
+                    validation_result.patterns,
+                )
             prompt = validation_result.safe_text
         except Exception:
             # LLM-01 fail-safe: reject on any internal error
-            logger.error('[LLM-01] structured_generate prompt injection validation failed internally')
+            logger.error("[LLM-01] structured_generate prompt injection validation failed internally")
             return (None, False)
 
         full_prompt = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
@@ -340,11 +337,14 @@ class ModelLifecycle:
                     # Try parse if result is not dict
                     try:
                         import msgspec
+
                         parsed = msgspec.json.decode(result.encode()) if isinstance(result, str) else result
                         return (parsed if isinstance(parsed, dict) else None, True)
                     except Exception:
                         return (None, True)
+
                 from hledac.universal.runtime.worker_pool import get_rust_pool
+
                 pool = get_rust_pool("cpu")
                 return await pool.submit(_run_constrained_generation)
             except Exception as outlines_err:
@@ -381,20 +381,22 @@ class ModelLifecycle:
                     gen_result: str = ""
                     try:
                         gen_result = mlx_lm.generate(
-                            model, tokenizer,
+                            model,
+                            tokenizer,
                             prompt=formatted,
                             max_tokens=max_tokens,
-                            kv_bits=4,          # F179C: KV cache 4-bit quantization (M1 8GB RAM budget)
-                            max_kv_size=8192,   # F179C: KV cache size cap
+                            kv_bits=4,  # F179C: KV cache 4-bit quantization (M1 8GB RAM budget)
+                            max_kv_size=8192,  # F179C: KV cache size cap
                             verbose=False,
-    )
+                        )
                     finally:
                         # F179C: mx.eval([]) + gc.collect() + clear_cache (správné pořadí dle moe_router.py)
                         try:
                             import mlx.core as _mx
+
                             if hasattr(_mx, "eval"):
                                 _mx.eval([])  # 1. settle lazy eval
-                            gc.collect()       # 2. reclaim Python memory BEFORE clear_cache
+                            gc.collect()  # 2. reclaim Python memory BEFORE clear_cache
                             if hasattr(_mx, "clear_cache"):
                                 _mx.clear_cache()  # 3. clear Metal cache
                         except Exception:  # noqa: BLE001
@@ -409,6 +411,7 @@ class ModelLifecycle:
                 clean = raw[start:end].strip().lstrip("`").strip()
                 try:
                     import msgspec
+
                     parsed = msgspec.json.decode(clean.encode())
                     return (parsed if isinstance(parsed, dict) else None, False)
                 except Exception:  # noqa: BLE001
@@ -421,11 +424,8 @@ class ModelLifecycle:
     def _load_outlines_model(self, model: Any, tokenizer: Any) -> Any:
         """Load Outlines MLX model with (model, tokenizer)."""
         from outlines import from_mlxlm
-        return from_mlxlm(model, tokenizer)
 
-    # ------------------------------------------------------------------
-    # Unload
-    # ------------------------------------------------------------------
+        return from_mlxlm(model, tokenizer)
 
     async def unload(self) -> None:
         """
@@ -467,10 +467,6 @@ class ModelLifecycle:
         self._set_qos_background()
 
         logger.info("[LIFECYCLE] Model unloaded after structured generation")
-
-    # ------------------------------------------------------------------
-    # QoS helpers (Darwin only — platform-specific, fail-open)
-    # ------------------------------------------------------------------
 
     def _set_qos_user_initiated(self) -> None:
         """B.9: Set thread QoS to USER_INITIATED before load. Fail-open."""

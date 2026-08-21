@@ -106,7 +106,6 @@ _ENGINE_LAZY: tuple[str, ...] = (
 def __getattr__(name: str) -> Any:
     # AdversarialVerifier, CausalReasoner, explainer, packs — lazy submodules
     if name in _SUPMOD_LAZY:
-        import sys
         mod_map: dict[str, str] = {
             "AdversarialVerifier": "adversarial",
             "CausalReasoner": "causal",
@@ -144,12 +143,15 @@ def __getattr__(name: str) -> Any:
             }
             if name == "DarkQuery":
                 from hledac.universal.brain.research_hypothesis_engine import DarkQuery
+
                 exports["DarkQuery"] = DarkQuery
             elif name == "DarkQueryType":
                 from hledac.universal.brain.research_hypothesis_engine import DarkQueryType
+
                 exports["DarkQueryType"] = DarkQueryType
             elif name == "Hypothesis":
                 from hledac.universal.brain.research_hypothesis_engine import Hypothesis
+
                 exports["Hypothesis"] = Hypothesis
 
             val = exports.get(name)

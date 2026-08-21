@@ -40,6 +40,7 @@ def _ctx(
 
     def _has_domain(q: str) -> bool:
         import re
+
         # Bounded regex — matches FQDN or IP literal, not arbitrary strings
         # Must have a TLD with at least 2 chars, no bare numbers-only strings
         domain_ip_re = re.compile(
@@ -64,13 +65,15 @@ def _ctx(
         )
 
     has_domain = _has_domain(query)
-    has_ip = bool(__import__("re").search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', query))
+    has_ip = bool(__import__("re").search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", query))
     has_url = _has_url(query)
     has_crypto = _has_crypto(query)
     has_long_duration = False  # default scenario duration < 300s
 
     from hledac.universal.runtime.acquisition_strategy import (
         _has_explicit_ipfs_cid as _has_explicit_cid,
+    )
+    from hledac.universal.runtime.acquisition_strategy import (
         is_academic_profile,
         is_deep_osint_m1_profile,
     )
@@ -235,9 +238,7 @@ def _build_expected(
     )
 
     # WAYBACK
-    wayback_enabled = (has_url or ctx.has_long_duration or (is_nfd and has_domain)) and (
-        not hw or is_nfd
-    )
+    wayback_enabled = (has_url or ctx.has_long_duration or (is_nfd and has_domain)) and (not hw or is_nfd)
     if wayback_enabled:
         wb_reason = "has_url_or_long_duration_or_nonfeed_domain"
     else:
@@ -343,22 +344,78 @@ SCENARIOS = [
     ("default_domain_uma_ok", "evil.com", "ok", False, False, False, False, False, "default"),
     ("default_domain_uma_critical", "evil.com", "critical", False, False, False, False, False, "default"),
     ("default_domain_swap", "evil.com", "ok", True, False, False, False, False, "default"),
-    ("default_crypto_uma_ok", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "ok", False, False, False, False, False, "default"),  # noqa: E501
-    ("default_crypto_uma_critical", "0x742d35Cc6634C0532925a3b844Bc9e7595f1", "critical", False, False, False, False, False, "default"),  # noqa: E501
+    (
+        "default_crypto_uma_ok",
+        "0x742d35Cc6634C0532925a3b844Bc9e7595f1",
+        "ok",
+        False,
+        False,
+        False,
+        False,
+        False,
+        "default",
+    ),  # noqa: E501
+    (
+        "default_crypto_uma_critical",
+        "0x742d35Cc6634C0532925a3b844Bc9e7595f1",
+        "critical",
+        False,
+        False,
+        False,
+        False,
+        False,
+        "default",
+    ),  # noqa: E501
     ("nfd_domain_uma_critical", "evil.com", "critical", False, False, True, False, False, "nonfeed_diagnostic"),
-    ("nfd_non_domain_uma_critical", "some query without domains", "critical", False, False, True, False, False, "nonfeed_diagnostic"),  # noqa: E501
+    (
+        "nfd_non_domain_uma_critical",
+        "some query without domains",
+        "critical",
+        False,
+        False,
+        True,
+        False,
+        False,
+        "nonfeed_diagnostic",
+    ),  # noqa: E501
     ("research_uma_ok", "academic query", "ok", False, False, False, False, False, "research"),
     ("research_uma_critical", "academic query", "critical", False, False, False, False, False, "academic"),
-    ("explicit_cid_uma_ok", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "ok", False, False, False, False, False, "default"),  # noqa: E501
-    ("explicit_cid_uma_critical", "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8", "critical", False, False, False, False, False, "default"),  # noqa: E501
+    (
+        "explicit_cid_uma_ok",
+        "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8",
+        "ok",
+        False,
+        False,
+        False,
+        False,
+        False,
+        "default",
+    ),  # noqa: E501
+    (
+        "explicit_cid_uma_critical",
+        "QmY6mPjH1e5eEK2zJ8dGf5eCk1uL6vN3qP9rT4sXwQ2eK8",
+        "critical",
+        False,
+        False,
+        False,
+        False,
+        False,
+        "default",
+    ),  # noqa: E501
     ("transport_degraded", "example.com", "ok", False, False, False, True, False, "default"),
     ("stealth_ready", "darkweb target", "ok", False, False, False, False, True, "default"),
 ]
 
 
 @pytest.mark.parity
-@pytest.mark.parametrize("label,query,uma_state,swap_detected,aggressive,is_nfd,transport_deg,stealth_ready,profile", SCENARIOS, ids=[s[0] for s in SCENARIOS])  # noqa: E501
-def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, is_nfd, transport_deg, stealth_ready, profile):  # noqa: E501
+@pytest.mark.parametrize(
+    "label,query,uma_state,swap_detected,aggressive,is_nfd,transport_deg,stealth_ready,profile",
+    SCENARIOS,
+    ids=[s[0] for s in SCENARIOS],
+)  # noqa: E501
+def test_lane_parity_matrix(
+    label, query, uma_state, swap_detected, aggressive, is_nfd, transport_deg, stealth_ready, profile
+) -> None:  # noqa: E501
     """
     Parity matrix: verify all 12 lanes across 13 scenarios.
 
@@ -406,20 +463,21 @@ def test_lane_parity_matrix(label, query, uma_state, swap_detected, aggressive, 
         )
 
 
-def test_lane_rules_count():
+def test_lane_rules_count() -> None:
     """Verify LANE_RULES has exactly 15 entries (one per AcquisitionLane)."""
     assert len(LANE_RULES) == 15, f"Expected 15 lane rules, got {len(LANE_RULES)}"
 
 
-def test_lane_spec_feednfd_unused():
+def test_lane_spec_feednfd_unused() -> None:
     """LaneSpecFeedNFD is defined but unused in the loop — confirm it exists for API compat."""
     from hledac.universal.runtime.acquisition_strategy import LaneSpecFeedNFD
+
     assert LaneSpecFeedNFD.max_items == 25
     assert LaneSpecFeedNFD.timeout_s == 30
     assert LaneSpecFeedNFD.risk_level == "low"
 
 
-def test_disabled_reason_hardware_critical_ipfs():
+def test_disabled_reason_hardware_critical_ipfs() -> None:
     """IPFS disabled reason: cid_present + hardware_critical → hardware_critical (not no_cid_in_query)."""
     # Valid CIDv0: Qm prefix + 44 base58 chars = 46 total.
     # base58 alphabet: 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz
@@ -433,28 +491,28 @@ def test_disabled_reason_hardware_critical_ipfs():
     assert reason == "hardware_critical", f"Expected hardware_critical, got {reason!r}"
 
 
-def test_disabled_reason_ipfs_no_cid():
+def test_disabled_reason_ipfs_no_cid() -> None:
     """IPFS disabled reason: no cid_present → no_cid_in_query."""
     ctx = _ctx("example.com", "ok")
     reason = _disabled_reason(AcquisitionLane.IPFS, ctx)
     assert reason == "no_cid_in_query", f"Expected no_cid_in_query, got {reason!r}"
 
 
-def test_context_feed_max_items_nfd():
+def test_context_feed_max_items_nfd() -> None:
     """nonfeed_diagnostic profile: _feed_max_items should be 25."""
     ctx = _ctx("example.com", "ok", is_nonfeed_diagnostic=True)
     assert ctx._feed_max_items == 25
     assert ctx._feed_cap_reason == "nonfeed_diagnostic_profile_capped_25"
 
 
-def test_context_feed_max_items_default():
+def test_context_feed_max_items_default() -> None:
     """default profile: _feed_max_items should be 50."""
     ctx = _ctx("example.com", "ok", is_nonfeed_diagnostic=False)
     assert ctx._feed_max_items == 50
     assert ctx._feed_cap_reason is None
 
 
-def test_hardware_critical_derived():
+def test_hardware_critical_derived() -> None:
     """hardware_critical = uma_state in (critical, emergency) OR swap_detected."""
     # critical → True
     ctx1 = _ctx("example.com", "critical")
@@ -470,7 +528,7 @@ def test_hardware_critical_derived():
     assert ctx4.hardware_critical is False
 
 
-def test_stale_docstring_max_lanes():
+def test_stale_docstring_max_lanes() -> None:
     """Docstring says 'max 8 lanes' but LANE_RULES has 15 — verify actual count."""
     # The docstring comment "Bounded: max 8 lane plans" is stale.
     # F235 added SHODAN, CENSYS, GREYNOISE lanes after the original 12.
@@ -479,7 +537,7 @@ def test_stale_docstring_max_lanes():
     assert len(snapshot.plans) == 15, f"Expected 15 lanes, got {len(snapshot.plans)}"
 
 
-def test_noop_lane_rule_called_once():
+def test_noop_lane_rule_called_once() -> None:
     """Each LaneRule.enabled/reason/concurrency is called exactly once per plan build."""
     call_counts: dict[str, int] = {}
 
@@ -494,6 +552,7 @@ def test_noop_lane_rule_called_once():
             def counter(ctx):
                 call_counts[name] = call_counts.get(name, 0) + 1
                 return orig(ctx)
+
             return counter
 
         # We can't easily patch lambdas, but we verify the structure is sound:
@@ -510,9 +569,10 @@ def test_noop_lane_rule_called_once():
 class TestLaneTableDrift:
     """Table-driven implementation correctness checks."""
 
-    def test_all_lanes_have_rules(self):
+    def test_all_lanes_have_rules(self) -> None:
         """Every AcquisitionLane value has a corresponding LaneRule."""
         from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
+
         expected_lanes = {
             AcquisitionLane.FEED,
             AcquisitionLane.PUBLIC,
@@ -533,7 +593,7 @@ class TestLaneTableDrift:
         rule_lanes = {rule.lane for rule in LANE_RULES}
         assert rule_lanes == expected_lanes, f"Missing lanes: {expected_lanes - rule_lanes}"
 
-    def test_disabled_reason_covers_all_lanes(self):
+    def test_disabled_reason_covers_all_lanes(self) -> None:
         """_disabled_reason returns a string for every known lane."""
         ctx = _ctx("example.com", "ok")  # hardware_critical=False, no special flags
         for rule in LANE_RULES:
@@ -541,21 +601,21 @@ class TestLaneTableDrift:
             assert isinstance(reason, str), f"{rule.lane}: disabled_reason returned {type(reason)}"
             assert reason, f"{rule.lane}: disabled_reason is empty string"
 
-    def test_enabled_fn_returns_bool(self):
+    def test_enabled_fn_returns_bool(self) -> None:
         """Each rule's enabled_fn returns a bool for any ctx."""
         ctx = _ctx("example.com", "critical")
         for rule in LANE_RULES:
             result = rule.enabled(ctx)
             assert isinstance(result, bool), f"{rule.lane}: enabled returned {type(result)}, not bool"
 
-    def test_reason_fn_returns_str(self):
+    def test_reason_fn_returns_str(self) -> None:
         """Each rule's reason_fn returns a str for enabled ctx."""
         ctx = _ctx("example.com", "ok")
         for rule in LANE_RULES:
             result = rule.reason(ctx)
             assert isinstance(result, str), f"{rule.lane}: reason returned {type(result)}, not str"
 
-    def test_concurrency_fn_returns_int(self):
+    def test_concurrency_fn_returns_int(self) -> None:
         """Each rule's concurrency_fn returns an int."""
         ctx = _ctx("example.com", "ok")
         for rule in LANE_RULES:

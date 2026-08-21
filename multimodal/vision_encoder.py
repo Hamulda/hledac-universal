@@ -2,11 +2,13 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-
-from hledac.universal.utils.domain_executors import get_vision_executor
 from pathlib import Path
+
 import numpy as np
+
 from hledac.universal._core.resource_governor import Priority, ResourceGovernor
+from hledac.universal.utils.domain_executors import get_vision_executor
+
 logger = logging.getLogger(__name__)
 _mlx_core_mod = None
 _MLX_CORE_AVAILABLE = False
@@ -16,16 +18,19 @@ _MLModel = None
 _TORCH_AVAILABLE = None
 _TORCHVISION_AVAILABLE = None
 
+
 def _get_mlx_core():
     global _mlx_core_mod, _MLX_CORE_AVAILABLE
     if _mlx_core_mod is None:
         try:
             import mlx.core as _mlx_core_mod
+
             _MLX_CORE_AVAILABLE = True
         except ImportError:
             _mlx_core_mod = None
             _MLX_CORE_AVAILABLE = False
     return _mlx_core_mod
+
 
 def _get_coremltools():
     global _coremltools_mod, _COREML_AVAILABLE, _MLModel
@@ -33,6 +38,7 @@ def _get_coremltools():
         try:
             import coremltools as _coremltools_mod
             from coremltools.models import MLModel as _MLModel
+
             _COREML_AVAILABLE = True
         except ImportError:
             _coremltools_mod = None
@@ -40,26 +46,30 @@ def _get_coremltools():
             _MLModel = None
     return (_coremltools_mod, _MLModel)
 
+
 def _check_torch():
     global _TORCH_AVAILABLE, _TORCHVISION_AVAILABLE
     if _TORCH_AVAILABLE is None:
         try:
             import torch
-            import torchvision
+
             _TORCH_AVAILABLE = True
             _TORCHVISION_AVAILABLE = True
         except ImportError:
             _TORCH_AVAILABLE = False
             _TORCHVISION_AVAILABLE = False
     return (_TORCH_AVAILABLE, _TORCHVISION_AVAILABLE)
+
+
 _IMAGENET_MEAN = [0.485, 0.456, 0.406]
 _IMAGENET_STD = [0.229, 0.224, 0.225]
-_MODEL_CACHE_DIR = Path('~/.hledac/models').expanduser()
-_MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / 'vision_encoder.mlpackage'
+_MODEL_CACHE_DIR = Path("~/.hledac/models").expanduser()
+_MOBILE_NET_MODEL_PATH = _MODEL_CACHE_DIR / "vision_encoder.mlpackage"
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
-from _core import aclose
+
 _IMAGE_SEMAPHORE = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 _COREML_EXECUTOR: ThreadPoolExecutor | None = None
+
 
 def _get_coreml_executor() -> ThreadPoolExecutor:
     """Lazily-initialized CoreML vision executor (ISSUE-049: migrated to domain_executors)."""
@@ -67,8 +77,11 @@ def _get_coreml_executor() -> ThreadPoolExecutor:
     if _COREML_EXECUTOR is None:
         _COREML_EXECUTOR = get_vision_executor()
     return _COREML_EXECUTOR
+
+
 IMAGE_VECTOR_DIM = 1024
 _MOBILE_NET_RAW_DIM = 960
+
 
 class VisionEncoder:
     """
@@ -83,9 +96,27 @@ class VisionEncoder:
     - mx.eval([]) + clear_cache() after each batch (GHOST_INVARIANTS I11)
     - Fail-soft: if any step fails, returns stable dummy embeddings (no crash)
     """
-    __slots__ = tuple(('_embedding_dim', '_input_name', '_mlx_mod', '_model', '_output_name', '_proj_loaded', '_proj_weights', 'batch_size', 'governor', 'model_path'))
 
-    def __init__(self, governor: ResourceGovernor, model_path: str | None=None, embedding_dim: int=IMAGE_VECTOR_DIM, batch_size: int=4):
+    __slots__ = (
+        "_embedding_dim",
+        "_input_name",
+        "_mlx_mod",
+        "_model",
+        "_output_name",
+        "_proj_loaded",
+        "_proj_weights",
+        "batch_size",
+        "governor",
+        "model_path",
+    )
+
+    def __init__(
+        self,
+        governor: ResourceGovernor,
+        model_path: str | None = None,
+        embedding_dim: int = IMAGE_VECTOR_DIM,
+        batch_size: int = 4,
+    ) -> None:
         self.governor = governor
         self.model_path = model_path or str(_MOBILE_NET_MODEL_PATH)
         self._embedding_dim = embedding_dim
@@ -97,25 +128,30 @@ class VisionEncoder:
         self._proj_loaded = False
         self._mlx_mod = None
 
-    def _ensure_model_cache_dir(self):
+    def _ensure_model_cache_dir(self) -> None:
         _MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    def _save_projection_weights(self):
+    def _save_projection_weights(self) -> None:
         """Save the 960→1024 projection matrix alongside the model package."""
         import json
-        proj_path = Path(self.model_path).parent / 'vision_encoder_projection.json'
-        data = {'raw_dim': _MOBILE_NET_RAW_DIM, 'out_dim': IMAGE_VECTOR_DIM, 'weights': self._proj_weights.tolist() if self._proj_weights is not None else None}
-        with open(proj_path, 'w') as f:
+
+        proj_path = Path(self.model_path).parent / "vision_encoder_projection.json"
+        data = {
+            "raw_dim": _MOBILE_NET_RAW_DIM,
+            "out_dim": IMAGE_VECTOR_DIM,
+            "weights": self._proj_weights.tolist() if self._proj_weights is not None else None,
+        }
+        with open(proj_path, "w") as f:
             json.dump(data, f)
 
     def _create_projection(self) -> np.ndarray:
         """
         Create a 960→1024 projection matrix using SVD-based random orthogonal initialization.
-        
+
         Uses the classic neural network init trick: W = U @ V.T where U, V come from
         the SVD of a random matrix. This produces a matrix with orthonormal columns,
         which preserves variance through the projection and avoids singular value issues.
-        
+
         Returns:
             np.ndarray of shape (960, 1024) with float32 dtype.
         """
@@ -129,15 +165,16 @@ class VisionEncoder:
         try:
             # Use scipy if available for better numerical stability
             from scipy.linalg import svd
+
             U, _S, Vt = svd(random_matrix, full_matrices=False)
             # Use the U @ Vt product to get orthonormal columns
             proj_matrix = (U @ Vt).astype(np.float32)
         except ImportError as e:
             if "scipy" in str(e):
                 logger.debug(
-                    f'VisionEncoder: scipy.linalg.svd unavailable, using QR fallback. '
-                    f'Install with: pip install hledac-universal[ml]'
-    )
+                    "VisionEncoder: scipy.linalg.svd unavailable, using QR fallback. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
             # Fallback: simple QR-based orthonormalization
             Q, R = np.linalg.qr(random_matrix)
             # Ensure proper sign (positive diagonal for stability)
@@ -145,18 +182,19 @@ class VisionEncoder:
             proj_matrix = (Q * signs).astype(np.float32)
         return proj_matrix
 
-    def _load_projection_weights(self):
+    def _load_projection_weights(self) -> None:
         """Load or create the 960→1024 projection matrix."""
-        proj_path = Path(self.model_path).parent / 'vision_encoder_projection.json'
+        proj_path = Path(self.model_path).parent / "vision_encoder_projection.json"
         if proj_path.exists():
             import json
+
             with open(proj_path) as f:
                 data = json.load(f)
-            self._proj_weights = np.array(data['weights'], dtype=np.float32)
+            self._proj_weights = np.array(data["weights"], dtype=np.float32)
         else:
             self._proj_weights = self._create_projection()
             self._save_projection_weights()
-            logger.info('VisionEncoder: created 960→1024 projection matrix (SVD-based)')
+            logger.info("VisionEncoder: created 960→1024 projection matrix (SVD-based)")
         self._proj_loaded = True
 
     async def load(self) -> None:
@@ -174,25 +212,26 @@ class VisionEncoder:
             try:
                 ct_mod, MLModel = _get_coremltools()
                 if MLModel is None:
-                    logger.warning('CoreML not available; VisionEncoder runs in dummy mode.')
+                    logger.warning("CoreML not available; VisionEncoder runs in dummy mode.")
                     return
                 loop = asyncio.get_running_loop()
 
                 def _load():
                     return MLModel(str(model_file), compute_units=ct_mod.ComputeUnit.ALL)
+
                 self._model = await loop.run_in_executor(_get_coreml_executor(), _load)
                 spec = self._model.get_spec()
                 self._input_name = spec.description.input[0].name
                 self._output_name = spec.description.output[0].name
                 self._load_projection_weights()
-                logger.info('VisionEncoder: model loaded (CoreML/ANE), 960→1024 projection active.')
+                logger.info("VisionEncoder: model loaded (CoreML/ANE), 960→1024 projection active.")
                 return
             except Exception as exc:
-                logger.warning('VisionEncoder: failed to load existing model %s: %s — dummy mode.', model_file, exc)
+                logger.warning("VisionEncoder: failed to load existing model %s: %s — dummy mode.", model_file, exc)
                 self._model = None
                 return
         else:
-            logger.info('VisionEncoder: no model file at %s — using dummy mode (pHash fallback).', model_file)
+            logger.info("VisionEncoder: no model file at %s — using dummy mode (pHash fallback).", model_file)
             self._model = None
             return
 
@@ -204,8 +243,10 @@ class VisionEncoder:
         """
         try:
             import io
+
             from PIL import Image
-            img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+
+            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
             img = img.resize((224, 224), Image.BILINEAR)
             arr = np.array(img, dtype=np.float32) / 255.0
             for c in range(3):
@@ -214,20 +255,20 @@ class VisionEncoder:
             arr = np.expand_dims(arr, axis=0)
             return arr.astype(np.float32)
         except Exception as exc:
-            logger.debug('VisionEncoder: image preprocess failed: %s', exc)
-            raise ValueError(f'Image preprocess failed: {exc}') from exc
+            logger.debug("VisionEncoder: image preprocess failed: %s", exc)
+            raise ValueError(f"Image preprocess failed: {exc}") from exc
 
     async def _raw_encode(self, preprocessed: np.ndarray) -> np.ndarray:
         """
         Run CoreML inference asynchronously on the raw 224×224 image tensor.
         Uses the single-thread _COREML_EXECUTOR (GHOST_INVARIANTS I10).
         Returns raw 960d MobileNetV3 penultimate features.
-        
+
         FIX: Uses cached self._model instead of reloading from disk per image.
         Loading MLModel from disk causes 200-400ms ANE recompile per call.
         """
         if self._model is None or self._input_name is None:
-            raise RuntimeError('Model not loaded')
+            raise RuntimeError("Model not loaded")
 
         # Capture model, input_name, output_name from self (already loaded in load())
         model = self._model
@@ -239,10 +280,11 @@ class VisionEncoder:
             input_dict = {input_name: preprocessed}
             out_dict = model.predict(input_dict)
             return np.array(out_dict[output_name])
+
         return await asyncio.get_running_loop().run_in_executor(_get_coreml_executor(), _inference)
 
     @staticmethod
-    def _phash_deterministic(image_bytes: bytes, out_dim: int=IMAGE_VECTOR_DIM) -> np.ndarray:
+    def _phash_deterministic(image_bytes: bytes, out_dim: int = IMAGE_VECTOR_DIM) -> np.ndarray:
         """
         Deterministic 1024d pHash fallback (zero ML, zero new deps).
 
@@ -258,8 +300,10 @@ class VisionEncoder:
         Hamming distance < 10 — sufficient for visually-similar image grouping.
         """
         import io
+
         from PIL import Image
-        img = Image.open(io.BytesIO(image_bytes)).convert('L').resize((32, 32), Image.BILINEAR)
+
+        img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((32, 32), Image.BILINEAR)
         arr = np.array(img, dtype=np.float32)
 
         def _dct2(x: np.ndarray) -> np.ndarray:
@@ -268,11 +312,12 @@ class VisionEncoder:
             k = n.reshape(-1, 1)
             cos_mat = np.cos(np.pi / N * (n + 0.5) * k)
             return cos_mat @ x
+
         dct_rows = _dct2(arr)
         dct_2d = _dct2(dct_rows.T).T
         low_freq = dct_2d[:8, :8].flatten()
         ac = low_freq[1:]
-        coeffs = np.pad(ac, (0, 64 - ac.size), mode='constant')
+        coeffs = np.pad(ac, (0, 64 - ac.size), mode="constant")
         median = np.median(coeffs)
         bits = (coeffs > median).astype(np.float32)
         repeats = out_dim // bits.size + 1
@@ -282,13 +327,13 @@ class VisionEncoder:
     def _get_deterministic_dummy(self) -> np.ndarray:
         """
         Return a deterministic dummy embedding for error fallback.
-        
+
         IMPORTANT: Must be deterministic (same output every time) to avoid
         poisoning LanceDB ANN index with random vectors. Uses a stable
         hash-based seed from the class's embedding_dim.
         """
         # Use a stable seed based on embedding dimension
-        rng = np.random.default_rng(hash(('VisionEncoder', self._embedding_dim)) & 0xFFFFFFFF)
+        rng = np.random.default_rng(hash(("VisionEncoder", self._embedding_dim)) & 0xFFFFFFFF)
         dummy = rng.standard_normal(self._embedding_dim, dtype=np.float32)
         # L2 normalize to match expected embedding distribution
         norm = np.linalg.norm(dummy)
@@ -310,11 +355,12 @@ class VisionEncoder:
         Fail-soft: returns dummy embeddings on any error — sprint never crashes.
         """
         from contextlib import nullcontext
+
         mx_mod = _get_mlx_core()
         async with _IMAGE_SEMAPHORE:
             # Governor may be None in standalone use — skip RAM reservation if so
             if self.governor is not None:
-                ram_ctx = self.governor.reserve({'ram_mb': max(50, 20 * len(images)), 'gpu': True}, Priority.NORMAL)
+                ram_ctx = self.governor.reserve({"ram_mb": max(50, 20 * len(images)), "gpu": True}, Priority.NORMAL)
             else:
                 ram_ctx = nullcontext()
             async with ram_ctx:
@@ -324,7 +370,7 @@ class VisionEncoder:
                         try:
                             out.append(self._phash_deterministic(image_bytes, self._embedding_dim))
                         except Exception as exc:
-                            logger.debug('VisionEncoder: pHash failed for one image: %s', exc)
+                            logger.debug("VisionEncoder: pHash failed for one image: %s", exc)
                             out.append(np.zeros(self._embedding_dim, dtype=np.float32))
                     return out
                 start_time = time.monotonic()
@@ -340,7 +386,7 @@ class VisionEncoder:
                                 projected = raw_features.astype(np.float32)
                             results.append(projected.flatten())
                         except Exception as exc:
-                            logger.debug('VisionEncoder: encode failed for one image: %s', exc)
+                            logger.debug("VisionEncoder: encode failed for one image: %s", exc)
                             # Use deterministic dummy vector instead of np.random.randn
                             # Non-deterministic vectors poison LanceDB ANN index
                             results.append(self._get_deterministic_dummy())
@@ -357,7 +403,12 @@ class VisionEncoder:
                         except Exception:  # noqa: BLE001
                             pass
                 elapsed = time.monotonic() - start_time
-                logger.debug('VisionEncoder: encoded %d images in %.3fs (%.3fs/img)', len(images), elapsed, elapsed / len(images) if images else 0)
+                logger.debug(
+                    "VisionEncoder: encoded %d images in %.3fs (%.3fs/img)",
+                    len(images),
+                    elapsed,
+                    elapsed / len(images) if images else 0,
+                )
                 return results
 
     # ── [IO-4] Zero-copy CVPixelBuffer encoding ────────────────────────────────
@@ -383,44 +434,43 @@ class VisionEncoder:
         """
         try:
             import CoreImage as _CI
-            import CoreGraphics as _CG
 
-            # Get CVPixelBuffer dimensions
             try:
                 import CoreVideo as _CV
+
                 width = int(_CV.CVPixelBufferGetWidth(pixel_buffer))
                 height = int(_CV.CVPixelBufferGetHeight(pixel_buffer))
             except Exception:
-                logger.debug('VisionEncoder: Failed to get CVPixelBuffer dimensions')
-                raise ValueError('Invalid CVPixelBuffer')
+                logger.debug("VisionEncoder: Failed to get CVPixelBuffer dimensions")
+                raise ValueError("Invalid CVPixelBuffer")
 
             # Create CIImage from IOSurface (zero-copy from CVPixelBuffer)
             try:
                 ci_image = _CI.CIImage.imageWithCVPixelBuffer_(pixel_buffer)
             except Exception:
-                logger.debug('VisionEncoder: Failed to create CIImage from CVPixelBuffer')
-                raise ValueError('CVPixelBuffer not compatible with CIImage')
+                logger.debug("VisionEncoder: Failed to create CIImage from CVPixelBuffer")
+                raise ValueError("CVPixelBuffer not compatible with CIImage")
 
             if ci_image is None:
-                raise ValueError('CIImage creation returned nil')
+                raise ValueError("CIImage creation returned nil")
 
             # Scale to target size using CILanczosScale (GPU-accelerated on M1)
             target_w, target_h = target_size
             scale_x = target_w / width
             scale_y = target_h / height
-            scale_filter = _CI.CIFilter.filterWithName_('CILanczosScaleTransform')
+            scale_filter = _CI.CIFilter.filterWithName_("CILanczosScaleTransform")
             if scale_filter is not None:
-                scale_filter.setValue_forKey_(ci_image, 'inputImageKey')
-                scale_filter.setValue_forKey_(scale_x, 'inputScale')
-                scale_filter.setValue_forKey_(1.0, 'inputAspectRatio')
-                scaled_image = scale_filter.valueForKey_('outputImageKey')
+                scale_filter.setValue_forKey_(ci_image, "inputImageKey")
+                scale_filter.setValue_forKey_(scale_x, "inputScale")
+                scale_filter.setValue_forKey_(1.0, "inputAspectRatio")
+                scaled_image = scale_filter.valueForKey_("outputImageKey")
             else:
                 # Fallback: use CIAffineTransform + CIScaling (always available)
                 transform = _CI.CGAffineTransform.makeScale_(scale_x, scale_y)
                 scaled_image = ci_image.transformedByUsingAbort_(transform, None)
 
             if scaled_image is None:
-                raise ValueError('Image scaling failed')
+                raise ValueError("Image scaling failed")
 
             # Convert to CGImage for numpy extraction
             # Note: This IS a copy (CGImage is always a copy), but it's unavoidable
@@ -429,27 +479,27 @@ class VisionEncoder:
             cg_image = context.createCGImage_fromRect_(scaled_image, scaled_image.extent())
 
             if cg_image is None:
-                raise ValueError('CGImage creation failed')
+                raise ValueError("CGImage creation failed")
 
             # Extract pixel data to numpy array via CGImage
             # CGImage doesn't have .bytes() method in PyObjC
             # Use NSBitmapImageRep for safe pixel extraction → TIFF → PIL
             import AppKit as _AK
+
             ns_rep = _AK.NSBitmapImageRep.alloc().initWithCGImage_(cg_image)
             if ns_rep is None:
-                raise ValueError('NSBitmapImageRep creation failed')
-            # Get TIFF representation and convert to numpy via PIL
-            tiff_data = ns_rep.representationUsingType_properties_(
-                _AK.NSTIFFFileType, None
-    )
+                raise ValueError("NSBitmapImageRep creation failed")
+            tiff_data = ns_rep.representationUsingType_properties_(_AK.NSTIFFFileType, None)
             if tiff_data is None:
-                raise ValueError('TIFF representation failed')
+                raise ValueError("TIFF representation failed")
             import io
+
             from PIL import Image
+
             img = Image.open(io.BytesIO(bytes(tiff_data)))
             # NSBitmapImageRep with NSTIFFFileType returns RGB/RGBA depending on source
-            if img.mode == 'RGBA':
-                img = img.convert('RGB')
+            if img.mode == "RGBA":
+                img = img.convert("RGB")
             arr = np.array(img, dtype=np.float32) / 255.0
 
             # ImageNet normalization
@@ -462,8 +512,8 @@ class VisionEncoder:
             return arr.astype(np.float32)
 
         except Exception as exc:
-            logger.debug('VisionEncoder: CVPixelBuffer preprocess failed: %s', exc)
-            raise ValueError(f'CVPixelBuffer preprocess failed: {exc}') from exc
+            logger.debug("VisionEncoder: CVPixelBuffer preprocess failed: %s", exc)
+            raise ValueError(f"CVPixelBuffer preprocess failed: {exc}") from exc
 
     async def encode_batch_from_pixelbuffer(
         self,
@@ -491,10 +541,13 @@ class VisionEncoder:
             List of 1024d numpy embedding arrays.
         """
         from contextlib import nullcontext
+
         mx_mod = _get_mlx_core()
         async with _IMAGE_SEMAPHORE:
             if self.governor is not None:
-                ram_ctx = self.governor.reserve({'ram_mb': max(50, 20 * len(pixel_buffers)), 'gpu': True}, Priority.NORMAL)
+                ram_ctx = self.governor.reserve(
+                    {"ram_mb": max(50, 20 * len(pixel_buffers)), "gpu": True}, Priority.NORMAL
+                )
             else:
                 ram_ctx = nullcontext()
 
@@ -508,7 +561,7 @@ class VisionEncoder:
                             image_bytes = self._pixelbuffer_to_bytes(pb)
                             out.append(self._phash_deterministic(image_bytes, self._embedding_dim))
                         except Exception as exc:
-                            logger.debug('VisionEncoder: pHash from CVPixelBuffer failed: %s', exc)
+                            logger.debug("VisionEncoder: pHash from CVPixelBuffer failed: %s", exc)
                             out.append(np.zeros(self._embedding_dim, dtype=np.float32))
                     return out
 
@@ -525,7 +578,7 @@ class VisionEncoder:
                                 projected = raw_features.astype(np.float32)
                             results.append(projected.flatten())
                         except Exception as exc:
-                            logger.debug('VisionEncoder: CVPixelBuffer encode failed: %s', exc)
+                            logger.debug("VisionEncoder: CVPixelBuffer encode failed: %s", exc)
                             # Use deterministic dummy vector instead of np.random.randn
                             results.append(self._get_deterministic_dummy())
                 finally:
@@ -543,9 +596,11 @@ class VisionEncoder:
 
                 elapsed = time.monotonic() - start_time
                 logger.debug(
-                    'VisionEncoder: encoded %d CVPixelBuffers in %.3fs (%.3fs/img)',
-                    len(pixel_buffers), elapsed, elapsed / len(pixel_buffers) if pixel_buffers else 0
-    )
+                    "VisionEncoder: encoded %d CVPixelBuffers in %.3fs (%.3fs/img)",
+                    len(pixel_buffers),
+                    elapsed,
+                    elapsed / len(pixel_buffers) if pixel_buffers else 0,
+                )
                 return results
 
     def _pixelbuffer_to_bytes(self, pixel_buffer: Any) -> bytes:
@@ -562,31 +617,29 @@ class VisionEncoder:
             JPEG bytes of the CVPixelBuffer.
         """
         try:
-            import CoreImage as _CI
             import AppKit as _AK
+            import CoreImage as _CI
 
             # Create CIImage from IOSurface (zero-copy)
             ci_image = _CI.CIImage.imageWithCVPixelBuffer_(pixel_buffer)
             if ci_image is None:
-                raise ValueError('CIImage creation failed')
+                raise ValueError("CIImage creation failed")
 
-            # Create CGImage
             context = _CI.Context()
             cg_image = context.createCGImage_fromRect_(ci_image, ci_image.extent())
             if cg_image is None:
-                raise ValueError('CGImage creation failed')
+                raise ValueError("CGImage creation failed")
 
             # Convert to JPEG bytes
             rep = _AK.NSBitmapImageRep.alloc().initWithCGImage_(cg_image)
             jpeg_data = rep.representationUsingType_properties_(
-                _AK.NSBitmapImageFileTypeJPEG,
-                {_AK.NSImageCompressionFactor: 0.8}
-    )
-            return bytes(jpeg_data) if jpeg_data else b''
+                _AK.NSBitmapImageFileTypeJPEG, {_AK.NSImageCompressionFactor: 0.8}
+            )
+            return bytes(jpeg_data) if jpeg_data else b""
 
         except Exception as exc:
-            logger.debug('VisionEncoder: CVPixelBuffer to bytes failed: %s', exc)
-            return b''
+            logger.debug("VisionEncoder: CVPixelBuffer to bytes failed: %s", exc)
+            return b""
 
     async def encode_batch_from_cvpixelbuffer_direct(
         self,
@@ -612,25 +665,28 @@ class VisionEncoder:
             List of 1024d numpy embedding arrays.
         """
         if not _COREML_AVAILABLE:
-            logger.debug('VisionEncoder: CoreML not available, falling back to preprocess path')
+            logger.debug("VisionEncoder: CoreML not available, falling back to preprocess path")
             return await self.encode_batch_from_pixelbuffer(pixel_buffers)
 
         try:
             import coremltools as ct
             from coremltools.models import MLModel
         except ImportError:
-            logger.debug('VisionEncoder: coremltools not available')
+            logger.debug("VisionEncoder: coremltools not available")
             return await self.encode_batch_from_pixelbuffer(pixel_buffers)
 
         if self._model is None:
-            logger.debug('VisionEncoder: No CoreML model loaded')
+            logger.debug("VisionEncoder: No CoreML model loaded")
             return await self.encode_batch_from_pixelbuffer(pixel_buffers)
 
         from contextlib import nullcontext
+
         mx_mod = _get_mlx_core()
         async with _IMAGE_SEMAPHORE:
             if self.governor is not None:
-                ram_ctx = self.governor.reserve({'ram_mb': max(50, 20 * len(pixel_buffers)), 'gpu': True}, Priority.NORMAL)
+                ram_ctx = self.governor.reserve(
+                    {"ram_mb": max(50, 20 * len(pixel_buffers)), "gpu": True}, Priority.NORMAL
+                )
             else:
                 ram_ctx = nullcontext()
 
@@ -650,7 +706,7 @@ class VisionEncoder:
                                 has_image_input = False
                                 input_name = None
                                 for input_feat in spec.description.input:
-                                    if input_feat.type.HasField('imageType'):
+                                    if input_feat.type.HasField("imageType"):
                                         has_image_input = True
                                         input_name = input_feat.name
                                         break
@@ -676,10 +732,10 @@ class VisionEncoder:
 
                             raw_result = await asyncio.get_running_loop().run_in_executor(
                                 _get_coreml_executor(), _inference_direct
-    )
+                            )
                             results.append(raw_result)
                         except Exception as exc:
-                            logger.debug('VisionEncoder: Direct CVPixelBuffer encode failed: %s', exc)
+                            logger.debug("VisionEncoder: Direct CVPixelBuffer encode failed: %s", exc)
                             # Use deterministic dummy vector instead of np.random.randn
                             results.append(self._get_deterministic_dummy())
                 finally:
@@ -692,7 +748,9 @@ class VisionEncoder:
 
                 elapsed = time.monotonic() - start_time
                 logger.debug(
-                    'VisionEncoder: direct encode %d CVPixelBuffers in %.3fs (%.3fs/img)',
-                    len(pixel_buffers), elapsed, elapsed / len(pixel_buffers) if pixel_buffers else 0
-    )
+                    "VisionEncoder: direct encode %d CVPixelBuffers in %.3fs (%.3fs/img)",
+                    len(pixel_buffers),
+                    elapsed,
+                    elapsed / len(pixel_buffers) if pixel_buffers else 0,
+                )
                 return results

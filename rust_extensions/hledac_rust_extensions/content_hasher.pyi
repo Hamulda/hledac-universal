@@ -35,7 +35,6 @@ class ContentHasher:
         Returns:
             64-character lowercase hex digest.
         """
-        ...
 
     @staticmethod
     def blake3_64(body: bytes) -> str:
@@ -52,7 +51,6 @@ class ContentHasher:
         Returns:
             16-character lowercase hex fingerprint.
         """
-        ...
 
     @staticmethod
     def blake3_hex(body: bytes) -> str:
@@ -67,7 +65,6 @@ class ContentHasher:
         Returns:
             64-character lowercase hex digest.
         """
-        ...
 
     @staticmethod
     def batch_blake3_64(bodies: list[bytes]) -> list[str]:
@@ -82,4 +79,3 @@ class ContentHasher:
         Returns:
             List of 16-character hex strings, same length as `bodies`.
         """
-        ...

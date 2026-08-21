@@ -12,22 +12,26 @@ Usage:
     if eig > EIG_THRESHOLD:
         await enrichment_queue.add(task)
 """
+
 import math
 from typing import Any
-from _core import aclose
+
 try:
     from hledac.universal.brain.evidence_fusion import DempsterShafer
+
     _DS_AVAILABLE = True
 except ImportError:
     _DS_AVAILABLE = False
     DempsterShafer = None
 
+
 class EIGCalculator:
     """Expected Information Gain calculator for action selection."""
-    EIG_THRESHOLD = 0.1
-    __slots__ = tuple(('bandit_arms',))
 
-    def __init__(self, bandit_arms: dict | None=None):
+    EIG_THRESHOLD = 0.1
+    __slots__ = ("bandit_arms",)
+
+    def __init__(self, bandit_arms: dict | None = None) -> None:
         self.bandit_arms = bandit_arms or {}
 
     def compute_eig(self, hypothesis_set: list, action: dict[str, Any]) -> float:
@@ -47,14 +51,14 @@ class EIGCalculator:
         """Compute Shannon entropy for hypothesis set using stdlib math."""
         beliefs = []
         for h in hypothesis_set:
-            if hasattr(h, 'belief'):
+            if hasattr(h, "belief"):
                 b = h.belief()
             else:
                 b = float(h)
             beliefs.append(max(0.0, min(1.0, b)))
         total = sum(beliefs) + 1e-08
         probs = [b / total for b in beliefs]
-        entropy = -sum((p * math.log(p + 1e-08) for p in probs if p > 0))
+        entropy = -sum(p * math.log(p + 1e-08) for p in probs if p > 0)
         return float(entropy)
 
     def _expected_entropy_after_action(self, hypothesis_set: list, action: dict) -> float:
@@ -65,7 +69,7 @@ class EIGCalculator:
         Real implementation would simulate possible outcomes.
         """
         current = self._entropy(hypothesis_set)
-        reduction_factor = action.get('expected_reduction', 0.2)
+        reduction_factor = action.get("expected_reduction", 0.2)
         return current * (1.0 - reduction_factor)
 
     def rank_actions(self, hypothesis_set: list, candidates: list[dict]) -> list[tuple]:

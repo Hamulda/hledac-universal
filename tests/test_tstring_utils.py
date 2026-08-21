@@ -3,13 +3,9 @@ Tests for utils/tstring.py (PEP 750 t-string utilities)
 """
 
 import logging
-import sys
 from string.templatelib import Template
 
-import pytest
-
 from utils.tstring import convert, render, t
-from _core import aclose
 
 
 class TestRender:
@@ -134,6 +130,7 @@ class TestLoggingIntegration:
 
     def test_nested_object_access(self) -> None:
         """Nested attribute access in interpolation."""
+
         class Config:
             name = "test-config"
 

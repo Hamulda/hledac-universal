@@ -31,8 +31,8 @@ warnings.warn(
 # Re-export from new unified location
 from hledac.universal.utils.pools.subinterpreter import (
     is_subinterpreter_available,
-    run_in_subinterpreter,
     run_batch_in_subinterpreter,
+    run_in_subinterpreter,
 )
 
 __all__ = [

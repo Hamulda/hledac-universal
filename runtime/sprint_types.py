@@ -3,8 +3,6 @@ Sprint Types Module - Extracted from sprint_scheduler.py (Tier 3 Sprint 2)
 
 Auto-extracted standalone types, dataclasses, enums, and functions
 
-
-
 that do not depend on SprintScheduler instance state.
 
 MIGRATION STATUS:
@@ -20,7 +18,6 @@ CONTENTS:
 - SprintSeedState: Deterministic cognitive replay state for court-admissible reproducibility
 """
 
-
 import hashlib
 import logging
 import secrets
@@ -29,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 
 # ── Re-export from scheduler/core/types.py for convenience ─────────────────────
@@ -37,7 +35,6 @@ from hledac.universal.runtime.scheduler.core.types import (
     LaneBudgetPool,
     SourceTier,
 )
-
 
 # ── SprintSeedState: Deterministic Cognitive Replay ──────────────────────────
 # ULTIMATE-001: Court-admissible reproducibility via seed capture
@@ -74,7 +71,7 @@ class SprintSeedState(Struct, frozen=True):
         query: str,
         explicit_seed: int | None = None,
         config_snapshot: dict | None = None,
-    ) -> "SprintSeedState":
+    ) -> SprintSeedState:
         """
         Generate a new SprintSeedState for deterministic cognitive replay.
 
@@ -87,19 +84,18 @@ class SprintSeedState(Struct, frozen=True):
         Returns:
             SprintSeedState with all fields populated
         """
-        import hashlib
-        import secrets
 
         # Generate or use explicit seed
         seed = explicit_seed if explicit_seed is not None else secrets.randbits(64)
 
         # BLAKE2b-16 of seed + query (deterministic ToT root hash)
-        tot_iv_input = f"{seed}:{query}".encode("utf-8")
+        tot_iv_input = f"{seed}:{query}".encode()
         tot_iv = hashlib.blake2b(tot_iv_input, digest_size=8).hexdigest()
 
         # SHA-256 of config snapshot
         if config_snapshot is None:
             import os
+
             config_snapshot = dict(os.environ)
 
         # Sort keys for deterministic serialization
@@ -125,7 +121,7 @@ class SprintSeedState(Struct, frozen=True):
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SprintSeedState":
+    def from_dict(cls, data: dict) -> SprintSeedState:
         """Reconstruct from dict (DuckDB row, JSON, etc.)."""
         return cls(
             prng_seed=int(data["prng_seed"]),
@@ -133,6 +129,7 @@ class SprintSeedState(Struct, frozen=True):
             config_hash=str(data["config_hash"]),
             created_at=float(data["created_at"]),
         )
+
 
 # ── LMDB Names (must be defined before path functions) ────────────────────────
 
@@ -149,12 +146,12 @@ def _gc_sprint_callback(phase: str, info: dict) -> None:
     """GC callback for sprint memory tracking."""
     # These are registered with gc.callback to track phase transitions
     # Actual implementation does nothing - gc module calls this on each collection
-    pass  # pragma: no cover
+    # pragma: no cover
 
 
 def _gc_sprint_sentinel(_phase: object, _info: object) -> None:
     """Sentinel GC callback that does nothing."""
-    pass  # pragma: no cover
+    # pragma: no cover
 
 
 # ── Path Utilities ────────────────────────────────────────────────────────────
@@ -291,7 +288,7 @@ class FeedDominanceGuardResult:
         reason: str,
         feed_ratio: float,
         nonfeed_lanes_terminal: bool,
-    ):
+    ) -> None:
         self._suppressed = suppressed
         self._reason = reason
         self._feed_ratio = feed_ratio
@@ -337,7 +334,7 @@ class SourceEconomics:
         latency_ema: float = 0.0,
         hit_count: int = 0,
         miss_count: int = 0,
-    ):
+    ) -> None:
         self._quality = quality
         self._latency_ema = latency_ema
         self._hit_count = hit_count
@@ -364,7 +361,6 @@ class SourceEconomics:
         """Record a source hit with latency."""
         self._hit_count += 1
         self._last_seen = latency
-        # Update latency EMA
         alpha = 0.3
         if self._latency_ema == 0:
             self._latency_ema = latency

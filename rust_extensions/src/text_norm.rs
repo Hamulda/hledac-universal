@@ -28,10 +28,6 @@ const BATCH_HARD_CAP: usize = 50_000;
 /// 16 bytes per NEON register (128-bit).
 const BATCH_NEON_CHUNK: usize = 16;
 
-// ---------------------------------------------------------------------------
-// ARM NEON helpers (M1/AArch64 only)
-// ---------------------------------------------------------------------------
-
 #[cfg(target_arch = "aarch64")]
 unsafe fn is_ascii_only_neon(data: &[u8]) -> bool {
     unsafe {
@@ -227,10 +223,6 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
     }
     Ok(out)
 }
-
-// ---------------------------------------------------------------------------
-// Fast-path batch functions (NEON for ASCII, scalar fallback otherwise)
-// ---------------------------------------------------------------------------
 
 /// Batch NFC normalization with NEON fast-path for ASCII-only strings.
 ///
@@ -487,8 +479,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- Fast-path tests ----------------------------------------------------
-
     #[test]
     fn test_batch_nfc_normalize_fast_empty() {
         let out = batch_nfc_normalize_fast(vec![]));
@@ -574,8 +564,6 @@ mod tests {
             ]
         );
     }
-
-    // ---- Combined NFC + strip tests -------------------------------------------
 
     #[test]
     fn test_batch_nfc_and_strip_diacritics_fast_empty() {

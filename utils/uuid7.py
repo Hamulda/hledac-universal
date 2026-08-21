@@ -12,7 +12,6 @@ LMDB keys, STIX deterministic IDs, or stable provenance references.
 from __future__ import annotations
 
 import uuid
-from _core import aclose
 
 
 def new_runtime_id() -> str:

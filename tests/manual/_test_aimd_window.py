@@ -1,7 +1,6 @@
 """Test Issue #15: AIMDWindow lock-free counter (partial fix for _aimd_release_success)."""
-import asyncio
-from _core import aclose
 
+import asyncio
 
 # Simulate the constants
 AIMD_ADDITIVE_INCREMENT = 2
@@ -76,7 +75,7 @@ class AIMDWindow:
             self._window = min(
                 self._window + AIMD_ADDITIVE_INCREMENT * multiplier,
                 AIMD_MAX_CONCURRENCY,
-    )
+            )
             if self._window != old:
                 self._stats["increases"] += 1
                 self._stats["window_changes"] += 1
@@ -94,7 +93,7 @@ class AIMDWindow:
             self._window = max(
                 self._window * decrease_factor,
                 AIMD_MIN_CONCURRENCY,
-    )
+            )
             if self._window != old:
                 self._stats["decreases"] += 1
                 self._stats["window_changes"] += 1
@@ -119,12 +118,12 @@ class AIMDWindow:
         return self._stats.copy()
 
 
-async def test_race_condition_fix():
+async def test_race_condition_fix() -> None:
     """Test that 10 concurrent successes result in exactly 5 window increases (not more)."""
     w = AIMDWindow(initial=12.0)
     assert w.window == 12.0, f"Initial window should be 12.0, got {w.window}"
 
-    async def fire_success():
+    async def fire_success() -> None:
         await w.on_success()
 
     # Fire 10 concurrent successes (threshold=2, so 5 increases possible)
@@ -139,7 +138,7 @@ async def test_race_condition_fix():
     print("✓ Race condition test PASSED: 10 concurrent successes → exactly 5 window increases")
 
 
-async def test_100_sequential_successes():
+async def test_100_sequential_successes() -> None:
     """Sequential 100 successes: verifies counter reset + threshold crossing math.
 
     Note: CAS retry limit (5) means high-contention concurrent tests (>20 coroutines)
@@ -163,7 +162,7 @@ async def test_100_sequential_successes():
     print("✓ 100 sequential successes test PASSED")
 
 
-async def test_failure_decrease():
+async def test_failure_decrease() -> None:
     """Test multiplicative decrease on failure."""
     w = AIMDWindow(initial=12.0)
 
@@ -175,7 +174,7 @@ async def test_failure_decrease():
     print("✓ Failure decrease test PASSED")
 
 
-async def test_multiplier():
+async def test_multiplier() -> None:
     """Test 2x multiplier for fast recovery."""
     w = AIMDWindow(initial=12.0)
 
@@ -187,7 +186,7 @@ async def test_multiplier():
     print("✓ Multiplier test PASSED")
 
 
-async def test_2x_multiplier_sequential():
+async def test_2x_multiplier_sequential() -> None:
     """Sequential test with 2x multiplier: verifies multiplier math correctly."""
     w = AIMDWindow(initial=3.0)
 
@@ -205,7 +204,7 @@ async def test_2x_multiplier_sequential():
     print("✓ 2x multiplier 100 sequential successes test PASSED")
 
 
-async def main():
+async def main() -> None:
     await test_race_condition_fix()
     await test_100_sequential_successes()
     await test_failure_decrease()

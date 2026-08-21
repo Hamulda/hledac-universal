@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 import urllib.parse as urlparse
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -34,11 +33,6 @@ try:
     _SELECTOLAX_AVAILABLE = True
 except ImportError:
     _SelectolaxParser = None  # type: ignore[assignment]
-
-
-# =============================================================================
-# HTML Domain
-# =============================================================================
 
 
 class _RustHtmlDomain:

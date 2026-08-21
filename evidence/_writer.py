@@ -11,30 +11,20 @@ Architecture (Sprint Split-Brain):
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import hashlib
 import logging
-import os
-import secrets
-import threading
 import time
-import uuid
-import zlib
-from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 import orjson
 
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
-
-# ─── EvidenceEvent ──────────────────────────────────────────────────────────────
 
 
 class EvidenceEvent(Struct, frozen=False):
@@ -44,9 +34,20 @@ class EvidenceEvent(Struct, frozen=False):
     Chain: event_id → source_ids → chain_hash
     Tamper-evident: hash chain links events to prior state.
     """
-    __slots__ = ('event_id', 'event_type', 'timestamp', 'payload', 'run_id',
-                 'source_ids', 'confidence', 'content_hash', 'seq_no',
-                 'prev_chain_hash', 'chain_hash')
+
+    __slots__ = (
+        "event_id",
+        "event_type",
+        "timestamp",
+        "payload",
+        "run_id",
+        "source_ids",
+        "confidence",
+        "content_hash",
+        "seq_no",
+        "prev_chain_hash",
+        "chain_hash",
+    )
 
     event_id: str
     event_type: str
@@ -62,9 +63,15 @@ class EvidenceEvent(Struct, frozen=False):
 
     @classmethod
     def create(
-        cls, event_id: str, event_type: str, payload: dict[str, Any],
-        run_id: str, source_ids: list[str] | None = None,
-        confidence: float = 1.0, seq_no: int = 0, prev_chain_hash: str | None = None,
+        cls,
+        event_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        run_id: str,
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
+        seq_no: int = 0,
+        prev_chain_hash: str | None = None,
     ) -> EvidenceEvent:
         """Create a new evidence event with hash chain."""
         timestamp = datetime.now(UTC).timestamp()
@@ -72,16 +79,28 @@ class EvidenceEvent(Struct, frozen=False):
         content_hash = cls._calculate_hash(event_id, event_type, timestamp, payload, source_ids, confidence, run_id)
         chain_hash = cls._compute_chain_hash(prev_chain_hash, content_hash, event_id)
         return cls(
-            event_id=event_id, event_type=event_type, timestamp=timestamp,
-            payload=payload, run_id=run_id, source_ids=source_ids,
-            confidence=confidence, content_hash=content_hash, seq_no=seq_no,
-            prev_chain_hash=prev_chain_hash or '', chain_hash=chain_hash,
-    )
+            event_id=event_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            payload=payload,
+            run_id=run_id,
+            source_ids=source_ids,
+            confidence=confidence,
+            content_hash=content_hash,
+            seq_no=seq_no,
+            prev_chain_hash=prev_chain_hash or "",
+            chain_hash=chain_hash,
+        )
 
     @staticmethod
     def _calculate_hash(
-        event_id: str, event_type: str, timestamp: float,
-        payload: dict[str, Any], source_ids: list[str], confidence: float, run_id: str,
+        event_id: str,
+        event_type: str,
+        timestamp: float,
+        payload: dict[str, Any],
+        source_ids: list[str],
+        confidence: float,
+        run_id: str,
     ) -> str:
         """Calculate content hash."""
         data = f"{event_id}|{event_type}|{timestamp}|{orjson.dumps(payload)}|{source_ids}|{confidence}|{run_id}"
@@ -96,9 +115,14 @@ class EvidenceEvent(Struct, frozen=False):
     def calculate_hash(self) -> str:
         """Recalculate content hash for verification."""
         return self._calculate_hash(
-            self.event_id, self.event_type, self.timestamp,
-            self.payload, self.source_ids, self.confidence, self.run_id,
-    )
+            self.event_id,
+            self.event_type,
+            self.timestamp,
+            self.payload,
+            self.source_ids,
+            self.confidence,
+            self.run_id,
+        )
 
     def payload_dict(self) -> dict[str, Any]:
         """Return payload as dict."""
@@ -119,7 +143,7 @@ class EvidenceEvent(Struct, frozen=False):
 
     def to_jsonl_line(self) -> str:
         """Serialize to JSONL line."""
-        return orjson.dumps(self.to_dict()).decode('utf-8', errors='replace')
+        return orjson.dumps(self.to_dict()).decode("utf-8", errors="replace")
 
     def to_bytes(self) -> bytes:
         """Serialize to msgpack bytes."""
@@ -131,9 +155,6 @@ class EvidenceEvent(Struct, frozen=False):
         return msgspec.msgpack.decode(data, type=cls)
 
 
-# ─── _RustMPSCBytes ──────────────────────────────────────────────────────────────
-
-
 class _RustMPSCBytes:
     """
     Rust MPSC pool for high-throughput async event ingestion.
@@ -141,12 +162,23 @@ class _RustMPSCBytes:
     ISSUE-006: bytes-only — serialization is caller's responsibility.
     Falls back to asyncio.Queue when Rust is unavailable.
     """
-    __slots__ = ('_impl', '_pool', '_sender_ptr', '_queue', '_capacity',
-                 '_retry_handle', '_pending_retry', '_retry_delay',
-                 '_rust_unavailable', '_fallback', '_wake_fd')
+
+    __slots__ = (
+        "_impl",
+        "_pool",
+        "_sender_ptr",
+        "_queue",
+        "_capacity",
+        "_retry_handle",
+        "_pending_retry",
+        "_retry_delay",
+        "_rust_unavailable",
+        "_fallback",
+        "_wake_fd",
+    )
 
     def __init__(self, capacity: int = 2048, asyncio_fallback: bool = False) -> None:
-        self._impl = 'rust'
+        self._impl = "rust"
         self._pool: Any = None
         self._sender_ptr: int = 0
         self._queue: asyncio.Queue[bytes] | None = None
@@ -163,6 +195,7 @@ class _RustMPSCBytes:
         """Try to initialize Rust MPSC."""
         try:
             from hledac.universal._core.rust_backend import rust
+
             _MPSC = rust.raw.MPSCPool  # type: ignore[import]
             pool = _MPSC(capacity=capacity)
             sender_ptr = pool.add_sender()
@@ -171,15 +204,15 @@ class _RustMPSCBytes:
             self._sender_ptr = sender_ptr
             self._wake_fd = wake_fd
             self._rust_unavailable = False
-            self._impl = 'rust'
+            self._impl = "rust"
         except Exception:
             self._fallback = True
-            self._impl = 'asyncio'
+            self._impl = "asyncio"
             self._queue = asyncio.Queue(maxsize=capacity)
 
     def send(self, item: bytes) -> bool:
         """Send raw bytes to the pool."""
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             try:
                 return self._pool.send(self._sender_ptr, item)
             except Exception:
@@ -214,13 +247,13 @@ class _RustMPSCBytes:
 
     async def send_async(self, item: bytes, *, timeout: float = 1.0) -> bool:
         """Async send with backpressure."""
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             return self.send(item)
         elif self._queue is not None:
             try:
                 await safe_wait_for(self._queue.put(item), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return False
             except Exception:
                 return False
@@ -228,7 +261,7 @@ class _RustMPSCBytes:
 
     def recv_batch(self, max_items: int | None = None) -> list[bytes]:
         """Drain up to max_items as raw bytes (non-blocking)."""
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             try:
                 return self._pool.recv_batch(max_items)
             except Exception:
@@ -248,7 +281,7 @@ class _RustMPSCBytes:
         return self._wake_fd
 
     def __len__(self) -> int:
-        if self._impl == 'rust' and self._pool is not None:
+        if self._impl == "rust" and self._pool is not None:
             return self._pool.len()
         elif self._queue is not None:
             return self._queue.qsize()
@@ -256,9 +289,6 @@ class _RustMPSCBytes:
 
     def is_empty(self) -> bool:
         return len(self) == 0
-
-
-# ─── EvidenceWriter ──────────────────────────────────────────────────────────────
 
 
 class EvidenceWriter:
@@ -271,10 +301,20 @@ class EvidenceWriter:
     """
 
     __slots__ = (
-        '_mpsc', '_run_id', '_seq', '_chain_head', '_genesis_hash',
-        '_total_count', '_persist_path', '_persist_file',
-        '_flush_interval_s', '_last_flush', '_flush_task',
-        '_shutdown_event', '_shutdown', '_running',
+        "_mpsc",
+        "_run_id",
+        "_seq",
+        "_chain_head",
+        "_genesis_hash",
+        "_total_count",
+        "_persist_path",
+        "_persist_file",
+        "_flush_interval_s",
+        "_last_flush",
+        "_flush_task",
+        "_shutdown_event",
+        "_shutdown",
+        "_running",
     )
 
     def __init__(self, run_id: str, persist_path: Path | None = None) -> None:
@@ -295,7 +335,7 @@ class EvidenceWriter:
 
         if persist_path:
             persist_path.parent.mkdir(parents=True, exist_ok=True)
-            self._persist_file = open(persist_path, 'ab')
+            self._persist_file = open(persist_path, "ab")
 
     @property
     def run_id(self) -> str:
@@ -316,8 +356,8 @@ class EvidenceWriter:
     def _persist_event(self, event: EvidenceEvent) -> None:
         """Persist event to file."""
         if self._persist_file:
-            line = event.to_jsonl_line() + '\n'
-            self._persist_file.write(line.encode('utf-8'))
+            line = event.to_jsonl_line() + "\n"
+            self._persist_file.write(line.encode("utf-8"))
 
     def _compute_chain_hash(self, prev_hash: str | None, content_hash: str, event_id: str) -> str:
         """Compute chain hash."""
@@ -333,8 +373,11 @@ class EvidenceWriter:
         self._persist_event(event)
 
     def create_event(
-        self, event_type: str, payload: dict[str, Any],
-        source_ids: list[str] | None = None, confidence: float = 1.0,
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        source_ids: list[str] | None = None,
+        confidence: float = 1.0,
     ) -> EvidenceEvent:
         """Create and write a new evidence event."""
         event_id = f"ev_{self._run_id[:8]}_{self._seq + 1:06d}"
@@ -347,7 +390,7 @@ class EvidenceWriter:
             confidence=confidence,
             seq_no=self._seq + 1,
             prev_chain_hash=self._chain_head,
-    )
+        )
         self.write_event(event)
         return event
 

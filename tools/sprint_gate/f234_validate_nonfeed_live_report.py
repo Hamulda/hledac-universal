@@ -17,16 +17,14 @@ Exit codes:
   9 = public DISCOVERY_ERROR without concrete discovery_empty_reason/provider surface
 """
 
-
 import json
 import sys
 from typing import Any, cast
-from _core import aclose
 
 __all__ = ["validate_report", "main"]
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _get(data: dict, *keys: str, default: Any = None) -> Any:
     """Safe nested key access."""
@@ -112,6 +110,7 @@ def _all_source_family_outcomes(data: dict) -> list[dict]:
 
 # ── Validation checks ─────────────────────────────────────────────────────────
 
+
 def _check_acquisition_profile(data: dict) -> tuple[bool, str]:
     """Check acquisition_profile == 'nonfeed_diagnostic'."""
     # Check acquisition_report.acquisition_profile (canonical path per F234 live report)
@@ -123,7 +122,6 @@ def _check_acquisition_profile(data: dict) -> tuple[bool, str]:
     profile_alias = _get(data, "profile", default=None)
     if profile_alias and profile_alias not in ("default", "nonfeed_diagnostic"):
         profile_alias = profile_alias.rsplit("180", 1)[0] if profile_alias.endswith("180") else profile_alias
-    # Check from acquisition_report input/effective
     acq_input = _get(data, "acquisition_report", "acquisition_profile_input", default=None)
     acq_effective = _get(data, "acquisition_report", "acquisition_profile_effective", default=None)
 
@@ -147,7 +145,6 @@ def _check_nonfeed_priority(data: dict) -> tuple[bool, str]:
     np_enabled = _get(data, "runtime_truth", "nonfeed_priority_enabled", default=None)
     if np_enabled is True:
         return True, "nonfeed_priority_enabled=True"
-    # Check acquisition plan for nonfeed_diagnostic profile
     acq_eff = _get(data, "acquisition_report", "acquisition_profile_effective", default="")
     if acq_eff == "nonfeed_diagnostic":
         return True, f"acquisition_profile_effective={acq_eff!r} (nonfeed_diagnostic)"
@@ -157,7 +154,7 @@ def _check_nonfeed_priority(data: dict) -> tuple[bool, str]:
         return True, (
             f"nonfeed_priority N/A — profile={acq_profile!r} propagated correctly "
             f"(priority_enabled={np_enabled} expected for FEED-LED runs)"
-    )
+        )
     # FEED_ONLY skip reason acceptable — profile propagation worked
     gate = _gate(data)
     if gate == "QUALITY_FAIL_FEED_ONLY":
@@ -203,11 +200,14 @@ def _check_duplicate_normalized_source_families(data: dict) -> tuple[bool, str]:
 
     # Normalize to lowercase for duplicate detection
     normalized = {f.lower() for f in raw_families}
-    # Check for CT/ct or PUBLIC/public coexistence
     conflicts = []
     if "ct" in normalized and any(f for f in raw_families if f == "CT") and any(f for f in raw_families if f == "ct"):
         conflicts.append("CT and ct both present")
-    if "public" in normalized and any(f for f in raw_families if f == "PUBLIC") and any(f for f in raw_families if f == "public"):  # noqa: E501
+    if (
+        "public" in normalized
+        and any(f for f in raw_families if f == "PUBLIC")
+        and any(f for f in raw_families if f == "public")
+    ):  # noqa: E501
         conflicts.append("PUBLIC and public both present")
 
     if conflicts:
@@ -228,9 +228,8 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
     prelude_missing = _get(data, "acquisition_prelude_missing_lanes", default=None)
     if prelude_missing is None:
         return True, "acquisition_prelude_missing_lanes is None — upstream issue (see FIX-02)"
-    ct_terminal = (
-        _get(data, "runtime_truth", "ct_terminal_stage", default="")
-        or _get(data, "acquisition_report", "ct_terminal_stage", default="")
+    ct_terminal = _get(data, "runtime_truth", "ct_terminal_stage", default="") or _get(
+        data, "acquisition_report", "ct_terminal_stage", default=""
     )
     ct_status = _get(data, "acquisition_report", "ct_status", default="")
     ct_provider = _get(data, "acquisition_report", "ct_provider_status", default="")
@@ -303,7 +302,7 @@ def _check_profile_priority_mismatch(data: dict) -> tuple[bool, str]:
         return False, (
             f"nonfeed_priority_enabled=False (stale surfaces: {stale_values}), "
             f"acquisition_profile=default (should be nonfeed_diagnostic)"
-    )
+        )
 
     # No higher-priority truth available — pass (profile propagation may have worked without explicit flag)
     return True, "profile/priority OK for CT-expected nonfeed_diagnostic run"
@@ -339,13 +338,13 @@ def _check_ct_prelude_contradiction(data: dict) -> tuple[bool, str]:
             f"CT prelude contradiction: CT in acquisition_prelude_missing_lanes={prelude_missing}, "
             f"ct_attempted_error={ct_ae!r}, "
             f"ct_prelude_missing_but_final_attempted=False (inconsistent)"
-    )
+        )
     if ct_in_prelude_missing and ct_ae and ct_prelude_val is None:
         return False, (
             f"CT prelude contradiction: CT in acquisition_prelude_missing_lanes={prelude_missing}, "
             f"ct_attempted_error={ct_ae!r}, "
             f"ct_prelude_missing_but_final_attempted not set (should be True to explain CT error)"
-    )
+        )
 
     return True, "CT prelude consistent"
 
@@ -383,7 +382,7 @@ def _check_public_discovery_error_missing_reason(data: dict) -> tuple[bool, str]
         return False, (
             "public_terminal_stage=DISCOVERY_ERROR but no public_discovery_empty_reason "
             "and no provider_errors surface — report is silent on why discovery failed"
-    )
+        )
 
     surface = []
     if reason:
@@ -398,10 +397,8 @@ def _check_public_query_variants(data: dict) -> tuple[bool, str]:
     # Check live_kpi for public_query_variants (set during live run)
     variants = _get(data, "live_kpi", "public_query_variants", default=None)
     if variants is not None and variants:
-        # Check mozilla.org presence
         has_domain = any("mozilla.org" in v for v in variants)
         return True, f"public_query_variants present ({len(variants)}), mozilla.org={has_domain}"
-    # Check public_pipeline for query variants
     pp = _get(data, "public_pipeline", default=None)
     if pp:
         pp_variants = _get(pp, "public_query_variants", default=None)
@@ -463,7 +460,6 @@ def _check_ct_planned(data: dict) -> tuple[bool, str]:
     planned = _get(data, "runtime_truth", "ct_planned", default=None)
     if planned is not None:
         return True, f"ct_planned={planned}"
-    # Check from runtime_truth ct_planned
     return True, "ct_planned not in runtime_truth (may be dry-run)"
 
 
@@ -485,10 +481,8 @@ def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
     """
     source_families = _get(data, "runtime_truth", "source_family_outcomes", default=None)
     if source_families is None:
-        # Check top-level
         source_families = _get(data, "source_family_outcomes", default=None)
     if source_families is None:
-        # Check acquisition_report
         source_families = _get(data, "acquisition_report", "source_family_outcomes", default=None)
     if source_families is None:
         # Missing is OK — dry-run without terminal stages
@@ -518,23 +512,21 @@ def _check_source_family_outcomes(data: dict) -> tuple[bool, str]:
         return False, (
             f"public_terminal_stage={public_terminal!r} present but "
             f"PUBLIC not in source_family_outcomes={source_families}"
-    )
+        )
 
     # Check ct_terminal_stage -> CT outcome
     ct_terminal = _get(data, "runtime_truth", "ct_terminal_stage", default="")
     if ct_terminal and "CT" not in outcomes_set:
         return False, (
-            f"ct_terminal_stage={ct_terminal!r} present but "
-            f"CT not in source_family_outcomes={source_families}"
-    )
+            f"ct_terminal_stage={ct_terminal!r} present but CT not in source_family_outcomes={source_families}"
+        )
 
     # Check ct_provider_status -> CT outcome
     ct_provider = _get(data, "acquisition_report", "ct_provider_status", default="")
     if ct_provider and "CT" not in outcomes_set:
         return False, (
-            f"ct_provider_status={ct_provider!r} present but "
-            f"CT not in source_family_outcomes={source_families}"
-    )
+            f"ct_provider_status={ct_provider!r} present but CT not in source_family_outcomes={source_families}"
+        )
 
     return True, f"source_family_outcomes={list(outcomes_set)} consistent"
 
@@ -567,7 +559,6 @@ def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
     # For FEED_ONLY: count divergence is acceptable (nonfeed=0 by design)
     if is_feed_only:
         if runtime_accepted > 0 and branch_sum == 0 and mix_sum == 0:
-            # Check research_quality for evidence of real findings
             rq = _get(data, "live_kpi", "research_quality", default={})
             rq_feed = rq.get("feed_findings", -1)
             if rq_feed > 0:
@@ -575,11 +566,8 @@ def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
                     f"FEED_ONLY: runtime_accepted={runtime_accepted} but "
                     f"branch_counts/branch_mix zeroed (nonfeed=0 by design) "
                     f"research_quality.feed_findings={rq_feed} > 0 OK"
-    )
-            return False, (
-                f"FEED_ONLY: runtime_accepted={runtime_accepted} but "
-                f"all branch counts zero — mismatch"
-    )
+                )
+            return False, (f"FEED_ONLY: runtime_accepted={runtime_accepted} but all branch counts zero — mismatch")
         return True, f"FEED_ONLY: runtime_accepted={runtime_accepted} count mismatch acceptable"
 
     # Non-FEED_ONLY: counts must match
@@ -588,9 +576,8 @@ def _check_kpi_runtime_counts_match(data: dict) -> tuple[bool, str]:
         if mix_sum > 0 and runtime_accepted == mix_sum:
             return True, f"runtime_accepted={runtime_accepted} matches branch_mix sum={mix_sum}"
         return False, (
-            f"runtime_accepted={runtime_accepted} != "
-            f"branch_counts sum={branch_sum} (or branch_mix sum={mix_sum})"
-    )
+            f"runtime_accepted={runtime_accepted} != branch_counts sum={branch_sum} (or branch_mix sum={mix_sum})"
+        )
     return True, f"runtime_accepted={runtime_accepted} matches branch counts"
 
 
@@ -629,7 +616,6 @@ _INFORMATIONAL_FIELDS = [
     "arrow_last_flush_error",
     "nonfeed_provider_failures",
 ]
-
 
 # NOTE R3: Critical 33 runtime error/signal field labels
 _R3_FIELD_LABELS = [
@@ -713,10 +699,14 @@ def _check_scheduler_exit(data: dict) -> tuple[bool, str]:
     WARN if elapsed_s > 300 (5min timeout threshold).
     """
     EXPECTED_EXIT_PATHS = {  # noqa: N806
-        "normal_completion", "guard_triggered", "timeout",
-        "prewindup_barrier", "return_guard", "windup_guard",
+        "normal_completion",
+        "guard_triggered",
+        "timeout",
+        "prewindup_barrier",
+        "return_guard",
+        "windup_guard",
         "post_sleep_windup_break",
-        "prelude_complete",   # prelude_complete: feed-dominant result, prelude exits early
+        "prelude_complete",  # prelude_complete: feed-dominant result, prelude exits early
     }
 
     acq = _get(data, "acquisition_report", default=None)
@@ -783,9 +773,7 @@ def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
         # rejected může být None nebo absent — použij 0 jako fallback
         rejected = _get(kpi, "rejected_findings", default=None)
         if rejected is not None and (accepted + rejected) > total:
-            issues.append(
-                f"total_findings={total} < accepted({accepted})+rejected({rejected})"
-    )
+            issues.append(f"total_findings={total} < accepted({accepted})+rejected({rejected})")
         # soft warn — může být legitimní (filtered pre-acceptance)
         # intentionally not flagged unless > total
 
@@ -813,9 +801,7 @@ def _check_runtime_truth_termination(data: dict) -> tuple[bool, str]:
 
     issues = []
     if is_meaningful is False and accepted > 0:
-        issues.append(
-            f"is_meaningful=False but accepted_findings={accepted} (contradiction)"
-    )
+        issues.append(f"is_meaningful=False but accepted_findings={accepted} (contradiction)")
     if ct_timeout:
         issues.append("ct_branch_timed_out=True — partial CT results")
     if pub_timeout:
@@ -896,9 +882,7 @@ def _check_live_kpi_integrity(data: dict) -> tuple[bool, str]:
         # rejected může být None nebo absent — použij 0 jako fallback
         rejected = _get(kpi, "rejected_findings", default=None)
         if rejected is not None and (accepted + rejected) > total:
-            issues.append(
-                f"total_findings={total} < accepted({accepted})+rejected({rejected})"
-    )
+            issues.append(f"total_findings={total} < accepted({accepted})+rejected({rejected})")
         # soft warn — může být legitimní (filtered pre-acceptance)
         # intentionally not flagged unless > total
 
@@ -922,28 +906,22 @@ def _check_quality_gate_not_zeroed(data: dict) -> tuple[bool, str]:
 
     # FEED_ONLY with zero runtime_accepted is a real failure
     if runtime_accepted == 0:
-        return False, (
-            "FEED_ONLY with runtime_accepted=0 — "
-            "counts were zeroed instead of preserving feed findings"
-    )
+        return False, ("FEED_ONLY with runtime_accepted=0 — counts were zeroed instead of preserving feed findings")
 
     # At least feed findings should be present
     branch_counts = _branch_counts(data)
     feed_count = branch_counts.get("FEED", 0)
     if feed_count == 0:
-        # Check branch_mix as fallback
         feed_count = _get(_branch_mix(data), "feed_findings", default=0)
 
     if feed_count == 0:
         return False, "FEED_ONLY gate with no feed findings — counts zeroed incorrectly"
 
-    return True, (
-        f"FEED_ONLY gate OK: runtime_accepted={runtime_accepted} "
-        f"feed_findings={feed_count}"
-    )
+    return True, (f"FEED_ONLY gate OK: runtime_accepted={runtime_accepted} feed_findings={feed_count}")
 
 
 # ── Main validator ─────────────────────────────────────────────────────────────
+
 
 def validate_report(report_path: str) -> tuple[int, dict]:
     """
@@ -1063,7 +1041,7 @@ def validate_report(report_path: str) -> tuple[int, dict]:
         "checks": results,
         "gate": _gate(data),
         "runtime_accepted": _get(data, "runtime_accepted_findings", default=None)
-                         or _get(data, "runtime_truth", "accepted_findings", default=None),
+        or _get(data, "runtime_truth", "accepted_findings", default=None),
     }
 
 

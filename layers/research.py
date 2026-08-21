@@ -15,18 +15,17 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency, no numpy/pandas/mlx.
 """
+
 from __future__ import annotations
 
 import heapq
 import itertools
 import logging
 import math
-import time
 from collections import deque
 from collections.abc import Iterable
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.project_types import (
     DeepResearchConfig,
@@ -38,17 +37,14 @@ from hledac.universal.project_types import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    'ResearchLayer',
-    'TemporalSignalLayer',
-    'TemporalEvent',
-    'TemporalScore',
-    'TemporalEdgeCandidate',
-    '_KeyState',
-    'event_from_finding_like',
+    "ResearchLayer",
+    "TemporalSignalLayer",
+    "TemporalEvent",
+    "TemporalScore",
+    "TemporalEdgeCandidate",
+    "_KeyState",
+    "event_from_finding_like",
 ]
-
-# ─── Temporal Signal Layer ──────────────────────────────────────────────────
-
 
 DEFAULT_MAX_KEYS = 4096
 DEFAULT_RING_SIZE = 32
@@ -71,16 +67,18 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 class TemporalEvent(Struct, frozen=True, gc=False):
     """Temporal event for OSINT signal tracking."""
+
     ts: float
     key: str
-    family: str = 'generic'
-    source: str = ''
+    family: str = "generic"
+    source: str = ""
     weight: float = 1.0
     labels: tuple[str, ...] = ()
 
 
 class TemporalScore(Struct, frozen=True, gc=False):
     """Temporal score for a key."""
+
     key: str
     family: str
     event_count: int
@@ -98,6 +96,7 @@ class TemporalScore(Struct, frozen=True, gc=False):
 
 class TemporalEdgeCandidate(Struct, frozen=True, gc=False):
     """Temporal edge candidate for graph construction."""
+
     src_key: str
     dst_key: str
     edge_type: str
@@ -109,6 +108,7 @@ class TemporalEdgeCandidate(Struct, frozen=True, gc=False):
 
 class _KeyState(Struct, gc=False):
     """Internal state for temporal tracking."""
+
     last_ts: float = 0.0
     event_count: int = 0
     ewma_rate: float = 0.0
@@ -139,17 +139,18 @@ class TemporalSignalLayer:
 
     M1 8GB: Pure Python, no numpy/pandas/mlx.
     """
-    __slots__ = tuple((
-        '_bocpd_max_run',
-        '_edge_candidates',
-        '_half_life_s',
-        '_lru_order',
-        '_max_keys',
-        '_ring_size',
-        '_states',
-        '_sync_window',
-        '_synchrony_window_s',
-    ))
+
+    __slots__ = (
+        "_bocpd_max_run",
+        "_edge_candidates",
+        "_half_life_s",
+        "_lru_order",
+        "_max_keys",
+        "_ring_size",
+        "_states",
+        "_sync_window",
+        "_synchrony_window_s",
+    )
 
     def __init__(
         self,
@@ -200,7 +201,6 @@ class TemporalSignalLayer:
                 state.ring_gaps.append(gap_s)
                 state.ring_sources.append(event.source)
 
-        # Update EWMA
         if state.event_count == 0:
             state.ewma_gap = gap_s if gap_s > 0 else 0.1
             state.ewma_rate = 1.0 / state.ewma_gap if state.ewma_gap > 0 else 1.0
@@ -219,22 +219,27 @@ class TemporalSignalLayer:
         change_point_score = self._compute_change_point_score(state, gap_s, event_count)
         source_synchrony_score = self._compute_source_synchrony_score(ts)
         rate_score = self._compute_rate_score(state.last_ts, state.ewma_rate, gap_s)
-        anomaly_score = self._aggregate_anomaly_score(
-            burst_score, change_point_score, periodicity_score, rate_score
-        )
+        anomaly_score = self._aggregate_anomaly_score(burst_score, change_point_score, periodicity_score, rate_score)
         reason = self._build_reason_string(
-            event_count, burst_score, periodicity_score,
-            change_point_score, source_synchrony_score, anomaly_score
+            event_count, burst_score, periodicity_score, change_point_score, source_synchrony_score, anomaly_score
         )
 
         state.last_ts = ts
         state.event_count = event_count
         state.last_score = TemporalScore(
-            key=key, family=family, event_count=event_count,
-            anomaly_score=anomaly_score, burst_score=burst_score,
-            periodicity_score=periodicity_score, change_point_score=change_point_score,
-            source_synchrony_score=source_synchrony_score, rate_score=rate_score,
-            cv_isi=cv_isi, mean_gap_s=mean_gap_s, autocorr_lag1=autocorr_lag1, reason=reason,
+            key=key,
+            family=family,
+            event_count=event_count,
+            anomaly_score=anomaly_score,
+            burst_score=burst_score,
+            periodicity_score=periodicity_score,
+            change_point_score=change_point_score,
+            source_synchrony_score=source_synchrony_score,
+            rate_score=rate_score,
+            cv_isi=cv_isi,
+            mean_gap_s=mean_gap_s,
+            autocorr_lag1=autocorr_lag1,
+            reason=reason,
         )
 
         self._update_edge_candidates(state, ts, burst_score, source_synchrony_score)
@@ -244,19 +249,15 @@ class TemporalSignalLayer:
         """Observe multiple events."""
         return [self.observe(event) for event in events]
 
-    def observe_confirmation(self, key: str, confirmed: bool, source: str = '') -> None:
+    def observe_confirmation(self, key: str, confirmed: bool, source: str = "") -> None:
         """Feedback loop — confirmed boosts weight, unconfirmed decays."""
         if key not in self._states:
             return
         state = self._states[key]
         if confirmed:
-            state.confirmation_weight = min(
-                state.confirmation_weight + CONFIRMATION_GROWTH, CONFIRMATION_BOOST_MAX
-            )
+            state.confirmation_weight = min(state.confirmation_weight + CONFIRMATION_GROWTH, CONFIRMATION_BOOST_MAX)
         else:
-            state.confirmation_weight = max(
-                state.confirmation_weight - CONFIRMATION_DECAY, CONFIRMATION_BOOST_MIN
-            )
+            state.confirmation_weight = max(state.confirmation_weight - CONFIRMATION_DECAY, CONFIRMATION_BOOST_MIN)
 
     def get_top_scores(self, k: int = 20) -> list[TemporalScore]:
         """Get top k anomaly scores."""
@@ -270,7 +271,8 @@ class TemporalSignalLayer:
     def get_edge_candidates(self, k: int = 50) -> list[TemporalEdgeCandidate]:
         """Get top k edge candidates."""
         from operator import attrgetter
-        return heapq.nlargest(k, self._edge_candidates, key=attrgetter('score'))
+
+        return heapq.nlargest(k, self._edge_candidates, key=attrgetter("score"))
 
     def _compute_burst_score(self, gap_s: float, ewma_gap: float) -> float:
         """Compute burst score from gap timing."""
@@ -281,7 +283,8 @@ class TemporalSignalLayer:
         return burst_score
 
     def _compute_periodicity_metrics(
-        self, ring_gaps: deque[float],
+        self,
+        ring_gaps: deque[float],
     ) -> tuple[float, float, float, float]:
         """Compute periodicity metrics from ring buffer."""
         periodicity_score = 0.0
@@ -317,7 +320,10 @@ class TemporalSignalLayer:
         return periodicity_score, cv_isi, autocorr_lag1, mean_gap_s
 
     def _compute_change_point_score(
-        self, state: _KeyState, gap_s: float, event_count: int,
+        self,
+        state: _KeyState,
+        gap_s: float,
+        event_count: int,
     ) -> float:
         """Compute change point score using Page-Hinkley and BOCPD-lite."""
         change_point_score = 0.0
@@ -383,8 +389,11 @@ class TemporalSignalLayer:
         return rate_score
 
     def _aggregate_anomaly_score(
-        self, burst_score: float, change_point_score: float,
-        periodicity_score: float, rate_score: float,
+        self,
+        burst_score: float,
+        change_point_score: float,
+        periodicity_score: float,
+        rate_score: float,
     ) -> float:
         """Aggregate individual scores into anomaly score."""
         return _clamp(
@@ -392,28 +401,34 @@ class TemporalSignalLayer:
             + _safe_div(change_point_score, 3.0) * 0.3
             + (1.0 - periodicity_score) * 0.2
             + rate_score * 0.2,
-            0.0, 1.0,
+            0.0,
+            1.0,
         )
 
     def _build_reason_string(
-        self, event_count: int, burst_score: float, periodicity_score: float,
-        change_point_score: float, source_synchrony_score: float, anomaly_score: float,
+        self,
+        event_count: int,
+        burst_score: float,
+        periodicity_score: float,
+        change_point_score: float,
+        source_synchrony_score: float,
+        anomaly_score: float,
     ) -> str:
         """Build human-readable reason string."""
         if event_count < 2:
-            return 'insufficient_history'
+            return "insufficient_history"
         reasons = []
         if burst_score > 0.6:
-            reasons.append('burst')
+            reasons.append("burst")
         if periodicity_score > 0.6:
-            reasons.append('periodic')
+            reasons.append("periodic")
         if change_point_score > 0.6:
-            reasons.append('change_point')
+            reasons.append("change_point")
         if source_synchrony_score > 0.5:
-            reasons.append('source_synchrony')
+            reasons.append("source_synchrony")
         if anomaly_score > 0.7:
-            reasons.append('anomaly')
-        return '|'.join(reasons) if reasons else 'normal'
+            reasons.append("anomaly")
+        return "|".join(reasons) if reasons else "normal"
 
     def _ensure_capacity(self) -> None:
         """Ensure capacity for new keys (LRU eviction)."""
@@ -422,8 +437,11 @@ class TemporalSignalLayer:
             self._states.pop(oldest, None)
 
     def _update_edge_candidates(
-        self, state: _KeyState, ts: float,
-        burst_score: float, source_synchrony_score: float,
+        self,
+        state: _KeyState,
+        ts: float,
+        burst_score: float,
+        source_synchrony_score: float,
     ) -> None:
         """Update edge candidates from burst and synchrony."""
         if burst_score > 0.6:
@@ -435,16 +453,13 @@ class TemporalSignalLayer:
                     candidate = TemporalEdgeCandidate(
                         src_key=state.last_score.key,
                         dst_key=other_key,
-                        edge_type='co_burst',
+                        edge_type="co_burst",
                         score=(burst_score + other_state.last_score.burst_score) / 2.0,
                         window_start=window_start,
                         window_end=ts,
-                        reason='co_burst',
+                        reason="co_burst",
                     )
                     self._edge_candidates.append(candidate)
-
-
-# ─── Research Layer ──────────────────────────────────────────────────────────
 
 
 class ResearchLayer:
@@ -459,22 +474,23 @@ class ResearchLayer:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
-    layer_name: str = 'research'
+
+    layer_name: str = "research"
     _priority: int = 80  # High priority
 
-    __slots__ = tuple((
-        '_actions_executed',
-        '_depth_levels_reached',
-        '_depth_maximizer',
-        '_explorations',
-        '_ghost_director',
-        '_ghost_director_shared',
-        '_hunter',
-        '_missions',
-        '_missions_completed',
-        '_temporal_layer',
-        'config',
-    ))
+    __slots__ = (
+        "_actions_executed",
+        "_depth_levels_reached",
+        "_depth_maximizer",
+        "_explorations",
+        "_ghost_director",
+        "_ghost_director_shared",
+        "_hunter",
+        "_missions",
+        "_missions_completed",
+        "_temporal_layer",
+        "config",
+    )
 
     def __init__(
         self,
@@ -492,16 +508,13 @@ class ResearchLayer:
         self._actions_executed = 0
         self._depth_levels_reached = 0
         self._temporal_layer = TemporalSignalLayer()
-        logger.info(
-            f"ResearchLayer initialized "
-            f"(GhostDirector: {'shared' if self._ghost_director_shared else 'lazy'})"
-        )
+        logger.info(f"ResearchLayer initialized (GhostDirector: {'shared' if self._ghost_director_shared else 'lazy'})")
 
     async def mount(self, ctx: Any) -> None:
         """Mount the research layer."""
         await self.initialize()
-        ctx.set('research', self)
-        ctx.set('temporal', self._temporal_layer)
+        ctx.set("research", self)
+        ctx.set("temporal", self._temporal_layer)
 
     async def unmount(self, ctx: Any) -> None:
         """Unmount the research layer."""
@@ -513,22 +526,23 @@ class ResearchLayer:
 
     async def rollback(self, ctx: Any, error: Exception) -> None:
         """Rollback on error."""
-        logger.warning(f'ResearchLayer rollback: {error}')
+        logger.warning(f"ResearchLayer rollback: {error}")
 
     async def initialize(self) -> bool:
         """Initialize ResearchLayer components."""
         try:
-            logger.info('🚀 Initializing ResearchLayer...')
+            logger.info("🚀 Initializing ResearchLayer...")
             self._temporal_layer = TemporalSignalLayer()
-            logger.info('✅ ResearchLayer initialized successfully')
+            logger.info("✅ ResearchLayer initialized successfully")
             return True
         except Exception as e:
-            logger.error(f'❌ ResearchLayer initialization failed: {e}')
+            logger.error(f"❌ ResearchLayer initialization failed: {e}")
             return False
 
     def create_mission(self, goal: str) -> GhostMission:
         """Create a new GhostDirector mission."""
         import uuid
+
         mission_id = str(uuid.uuid7())[:8]
         mission = GhostMission(
             mission_id=mission_id,
@@ -539,7 +553,7 @@ class ResearchLayer:
             anti_loop_counter=0,
         )
         self._missions[mission_id] = mission
-        logger.info(f'🎯 Mission created: {mission_id} - {goal[:50]}...')
+        logger.info(f"🎯 Mission created: {mission_id} - {goal[:50]}...")
         return mission
 
     async def execute_mission(
@@ -551,42 +565,43 @@ class ResearchLayer:
         if self._ghost_director is None:
             await self._init_ghost_director()
         if self._ghost_director is None:
-            logger.error('❌ GhostDirector not available')
-            return {'success': False, 'error': 'GhostDirector not available'}
+            logger.error("❌ GhostDirector not available")
+            return {"success": False, "error": "GhostDirector not available"}
 
         max_steps = max_steps or 20
-        logger.info(f'🚀 Executing mission: {mission.mission_id}')
+        logger.info(f"🚀 Executing mission: {mission.mission_id}")
         try:
             result = await self._ghost_director.start_investigation(mission.goal)
             self._missions_completed += 1
-            self._actions_executed += result.get('actions_count', 0)
-            mission.acquired_loot = result.get('loot', [])
+            self._actions_executed += result.get("actions_count", 0)
+            mission.acquired_loot = result.get("loot", [])
             return {
-                'success': True,
-                'mission_id': mission.mission_id,
-                'goal': mission.goal,
-                'actions_executed': result.get('actions_count', 0),
-                'loot_count': len(mission.acquired_loot),
-                'findings': result.get('findings', []),
-                'duration': result.get('duration', 0),
+                "success": True,
+                "mission_id": mission.mission_id,
+                "goal": mission.goal,
+                "actions_executed": result.get("actions_count", 0),
+                "loot_count": len(mission.acquired_loot),
+                "findings": result.get("findings", []),
+                "duration": result.get("duration", 0),
             }
         except Exception as e:
-            logger.error(f'❌ Mission execution failed: {e}')
-            return {'success': False, 'mission_id': mission.mission_id, 'error': str(e)}
+            logger.error(f"❌ Mission execution failed: {e}")
+            return {"success": False, "mission_id": mission.mission_id, "error": str(e)}
 
     async def _init_ghost_director(self) -> None:
         """Lazy initialization of GhostDirector."""
         if self._ghost_director_shared and self._ghost_director is not None:
-            logger.debug('Using shared GhostDirector')
+            logger.debug("Using shared GhostDirector")
             return
         if self._ghost_director is None:
             try:
                 from hledac.universal.cortex.director import GhostDirector
+
                 self._ghost_director = GhostDirector(max_steps=20)
                 await self._ghost_director.initialize_drivers()
-                logger.info('✅ GhostDirector initialized (local)')
+                logger.info("✅ GhostDirector initialized (local)")
             except Exception as e:
-                logger.warning(f'⚠️ GhostDirector not available: {e}')
+                logger.warning(f"⚠️ GhostDirector not available: {e}")
                 self._ghost_director = None
 
     async def deep_explore(
@@ -598,17 +613,19 @@ class ResearchLayer:
         """Perform deep research exploration."""
         strategy = strategy or ExplorationStrategy(self.config.strategy)
         max_depth = max_depth or self.config.max_depth
-        logger.info(f'🔍 Deep exploration: {start_url} (strategy: {strategy.value}, max_depth: {max_depth})')
-        return [ExplorationNode(
-            node_id='root',
-            url=start_url,
-            title='Root',
-            depth=0,
-            parent_id=None,
-            children=[],
-            citations=[],
-            quality_score=1.0,
-        )]
+        logger.info(f"🔍 Deep exploration: {start_url} (strategy: {strategy.value}, max_depth: {max_depth})")
+        return [
+            ExplorationNode(
+                node_id="root",
+                url=start_url,
+                title="Root",
+                depth=0,
+                parent_id=None,
+                children=[],
+                citations=[],
+                quality_score=1.0,
+            )
+        ]
 
     # Temporal signal methods
     def observe_temporal_event(self, event: TemporalEvent) -> TemporalScore:
@@ -619,7 +636,7 @@ class ResearchLayer:
         """Observe multiple temporal events."""
         return self._temporal_layer.observe_many(events)
 
-    def observe_confirmation(self, key: str, confirmed: bool, source: str = '') -> None:
+    def observe_confirmation(self, key: str, confirmed: bool, source: str = "") -> None:
         """Feedback loop for temporal events."""
         self._temporal_layer.observe_confirmation(key, confirmed, source)
 
@@ -634,47 +651,47 @@ class ResearchLayer:
     def get_statistics(self) -> dict[str, Any]:
         """Get research layer statistics."""
         return {
-            'missions_completed': self._missions_completed,
-            'actions_executed': self._actions_executed,
-            'depth_levels_reached': self._depth_levels_reached,
-            'active_missions': len(self._missions),
-            'ghost_director_available': self._ghost_director is not None,
-            'temporal_keys': len(self._temporal_layer._states),
-            'config': {
-                'max_depth': self.config.max_depth,
-                'strategy': self.config.strategy,
-                'follow_citations': self.config.follow_citations,
-                'explore_tangents': self.config.explore_tangents,
+            "missions_completed": self._missions_completed,
+            "actions_executed": self._actions_executed,
+            "depth_levels_reached": self._depth_levels_reached,
+            "active_missions": len(self._missions),
+            "ghost_director_available": self._ghost_director is not None,
+            "temporal_keys": len(self._temporal_layer._states),
+            "config": {
+                "max_depth": self.config.max_depth,
+                "strategy": self.config.strategy,
+                "follow_citations": self.config.follow_citations,
+                "explore_tangents": self.config.explore_tangents,
             },
         }
 
     async def cleanup(self) -> None:
         """Cleanup resources."""
-        logger.info('🧹 Cleaning up ResearchLayer...')
-        if self._ghost_director and hasattr(self._ghost_director, 'cleanup'):
+        logger.info("🧹 Cleaning up ResearchLayer...")
+        if self._ghost_director and hasattr(self._ghost_director, "cleanup"):
             try:
                 await self._ghost_director.cleanup()
             except Exception as e:
-                logger.warning(f'⚠️ GhostDirector cleanup error: {e}')
-        if self._depth_maximizer and hasattr(self._depth_maximizer, 'stop'):
+                logger.warning(f"⚠️ GhostDirector cleanup error: {e}")
+        if self._depth_maximizer and hasattr(self._depth_maximizer, "stop"):
             try:
                 await self._depth_maximizer.stop()
             except Exception as e:
-                logger.warning(f'⚠️ DepthMaximizer cleanup error: {e}')
-        if self._hunter and hasattr(self._hunter, 'cleanup'):
+                logger.warning(f"⚠️ DepthMaximizer cleanup error: {e}")
+        if self._hunter and hasattr(self._hunter, "cleanup"):
             try:
                 await self._hunter.cleanup()
             except Exception as e:
-                logger.warning(f'⚠️ Hunter cleanup error: {e}')
+                logger.warning(f"⚠️ Hunter cleanup error: {e}")
         self._missions.clear()
         self._explorations.clear()
-        logger.info('✅ ResearchLayer cleanup complete')
+        logger.info("✅ ResearchLayer cleanup complete")
 
 
 __all__ = [
-    'ResearchLayer',
-    'TemporalSignalLayer',
-    'TemporalEvent',
-    'TemporalScore',
-    'TemporalEdgeCandidate',
+    "ResearchLayer",
+    "TemporalSignalLayer",
+    "TemporalEvent",
+    "TemporalScore",
+    "TemporalEdgeCandidate",
 ]

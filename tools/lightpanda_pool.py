@@ -5,10 +5,11 @@ Extracted from coordinators/fetch_coordinator.py (Sprint 45 refactor).
 
 Provides a bounded pool of LightpandaManager instances.
 """
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.tools.lightpanda_manager import LightpandaManager
 logger = logging.getLogger(__name__)
@@ -16,11 +17,13 @@ logger = logging.getLogger(__name__)
 # Fixed pool size cap — prevents unbounded memory growth on large pool configs.
 _POOL_QUEUE_MAX = 64
 
+
 class LightpandaPool:
     """Pool of Lightpanda instances for concurrent JS rendering."""
-    __slots__ = tuple(('_all_instances', '_available', '_size', '_started'))
 
-    def __init__(self, size: int=2):
+    __slots__ = ("_all_instances", "_available", "_size", "_started")
+
+    def __init__(self, size: int = 2) -> None:
         self._size = size
         # S1-07 FIX: queue size scales with pool size but is capped at _POOL_QUEUE_MAX.
         # This prevents unbounded growth when size>>64 while ensuring all instances
@@ -35,6 +38,7 @@ class LightpandaPool:
         if self._started:
             return
         from hledac.universal.tools.lightpanda_manager import LightpandaManager
+
         for i in range(self._size):
             lp = LightpandaManager()
             try:
@@ -43,11 +47,11 @@ class LightpandaPool:
                 try:
                     self._available.put_nowait(lp)
                 except asyncio.QueueFull:
-                    logger.warning('[POOL] Instance %d queued but pool at capacity (%d)', i, _POOL_QUEUE_MAX)
+                    logger.warning("[POOL] Instance %d queued but pool at capacity (%d)", i, _POOL_QUEUE_MAX)
             except Exception as e:
-                logger.warning(f'[POOL] Failed to start instance {i}: {e}')
+                logger.warning(f"[POOL] Failed to start instance {i}: {e}")
         self._started = True
-        logger.info(f'[POOL] Started {len(self._all_instances)} Lightpanda instances')
+        logger.info(f"[POOL] Started {len(self._all_instances)} Lightpanda instances")
 
     async def get_instance(self) -> LightpandaManager:
         """Get available instance or wait."""

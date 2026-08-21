@@ -182,10 +182,6 @@ fn decode_base32_rfc4648(input: &str) -> Result<Vec<u8>, OnionValidationError> {
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// PyO3 bindings — wire into hledac_rust_extensions Python module
-// ---------------------------------------------------------------------------
-
 /// Validate a single .onion v3 address. Returns true if valid, false otherwise.
 ///
 /// GRAPH-03: Fast path — no allocation on valid addresses.
@@ -248,7 +244,6 @@ mod tests {
 
     #[test]
     fn test_bad_base32_chars() {
-        // Contains '1', '8', '9', '0' which are not valid base32
         let result = validate_onion_v3_address(
             "0000000000000000000000000000000000000000000000000000111111.onion",
         );

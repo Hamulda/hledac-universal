@@ -14,7 +14,6 @@ import logging
 from typing import Any
 
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +34,14 @@ class _OpenStorageScanner:
 
     MAX_GUESSES_PER_DOMAIN = 15
     # F185D: use session_runtime canonical constants
-    _CONNECT_TIMEOUT_S: float = 10.0   # canonical HTML connect
-    _READ_TIMEOUT_S: float = 5.0       # HEAD request — short read
+    _CONNECT_TIMEOUT_S: float = 10.0  # canonical HTML connect
+    _READ_TIMEOUT_S: float = 5.0  # HEAD request — short read
     _PORT_SCAN_TIMEOUT_S: float = 3.0  # TCP port probe — quick
 
     # ── URL Guess Generation ───────────────────────────────────────────────
 
     def _generate_guesses(self, domain: str) -> list[str]:
         """Generate a list of potential bucket URLs (only external services)."""
-        # Remove any port or path
         domain = domain.split(":")[0]
         parts = domain.split(".")
         base_domain = parts[-2] + "." + parts[-1] if len(parts) >= 2 else domain
@@ -66,13 +64,15 @@ class _OpenStorageScanner:
             f"https://{name}.mongodb.net",
             f"https://{base_domain}.mongodb.net",
         ]
-        # Remove duplicates and limit
         return list(dict.fromkeys(guesses))[: self.MAX_GUESSES_PER_DOMAIN]
 
     # ── Cloud Storage HTTP Scan (existing) ─────────────────────────────────
 
     async def scan_domain(
-        self, domain: str, *, extraction_mode: bool = False,
+        self,
+        domain: str,
+        *,
+        extraction_mode: bool = False,
     ) -> list[dict[str, Any]]:
         """Scan a single domain for open storage.
 
@@ -108,7 +108,7 @@ class _OpenStorageScanner:
                                 "type": self._classify_bucket(url),
                                 "headers": dict(resp.headers),
                             }
-            except asyncio.TimeoutError:  # noqa: BLE001
+            except TimeoutError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
                 raise
@@ -122,7 +122,7 @@ class _OpenStorageScanner:
             policy="collect",
             concurrency=5,
             ctx="open_storage:scan_domain",
-    )
+        )
 
         findings: list[dict[str, Any]] = [r for r in results.ok if r is not None]
 
@@ -145,14 +145,13 @@ class _OpenStorageScanner:
             from hledac.universal.network.native_extraction import (
                 extract_from_exposed,
                 is_native_extraction_enabled,
-    )
+            )
         except Exception:
             return []
 
         if not is_native_extraction_enabled():
             return []
 
-        # Phase 1: Quick TCP port probe (bounded, fast)
         open_ports: list[tuple[int, str]] = []
         host = domain.split(":")[0]  # strip port if present
 
@@ -163,7 +162,7 @@ class _OpenStorageScanner:
                 writer.close()
                 await writer.wait_closed()
                 open_ports.append((port, service))
-            except asyncio.TimeoutError:  # noqa: BLE001
+            except TimeoutError:  # noqa: BLE001
                 pass
             except ConnectionRefusedError:  # noqa: BLE001
                 pass
@@ -177,41 +176,43 @@ class _OpenStorageScanner:
             policy="collect",
             concurrency=10,  # TCP probes are cheap, 10 concurrent is fine
             ctx="open_storage:port_probe",
-    )
+        )
 
         if not open_ports:
             return []
 
         logger.debug(
             "HEIST-08: %d open DB ports on %s: %s",
-            len(open_ports), domain,
+            len(open_ports),
+            domain,
             [(p, s) for p, s in open_ports],
-    )
+        )
 
-        # Phase 2: Native protocol extraction (bounded concurrency)
         findings: list[dict[str, Any]] = []
         for port, service in open_ports:
             try:
                 result = await extract_from_exposed(host, port, service)
                 if result is not None:
-                    findings.append({
-                        "host": host,
-                        "port": port,
-                        "service": service,
-                        "success": result.success,
-                        "error": result.error,
-                        # MongoDB
-                        "databases": result.databases,
-                        "collections": dict(result.collections) if result.collections else None,
-                        # Redis
-                        "keys": result.keys,
-                        "key_count": result.key_count,
-                        # Elasticsearch
-                        "indices": result.indices,
-                        # Common
-                        "auth_required": result.auth_required,
-                        "extraction_source": "native_extraction",
-                    })
+                    findings.append(
+                        {
+                            "host": host,
+                            "port": port,
+                            "service": service,
+                            "success": result.success,
+                            "error": result.error,
+                            # MongoDB
+                            "databases": result.databases,
+                            "collections": dict(result.collections) if result.collections else None,
+                            # Redis
+                            "keys": result.keys,
+                            "key_count": result.key_count,
+                            # Elasticsearch
+                            "indices": result.indices,
+                            # Common
+                            "auth_required": result.auth_required,
+                            "extraction_source": "native_extraction",
+                        }
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001

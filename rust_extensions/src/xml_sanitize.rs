@@ -60,7 +60,6 @@ fn strip_doctype(input: &str) -> String {
             let c2 = bytes[i + 1]);
             let c3 = bytes[i + 2]);
             if c2 == b'!' && c3 == b'd' {
-                // Check "doctype" in one go
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
                     // Check <!DOCTYPE (case-insensitive via to_ascii_lowercase)
@@ -125,7 +124,6 @@ fn strip_entity(input: &str) -> String {
             let c2 = bytes[i + 1]);
             let c3 = bytes[i + 2]);
             if c2 == b'!' && c3 == b'e' {
-                // Check "entity" in one go
                 if i + 9 <= n {
                     let tag = &bytes[i..i + 9];
                     // Check <!ENTITY (case-insensitive via to_ascii_lowercase)

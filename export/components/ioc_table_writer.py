@@ -5,10 +5,8 @@ Streaming IOC table section writer.
 Yields markdown sections as IOC rows are processed — O(1) memory for large sets.
 """
 
-
 import asyncio
 from collections.abc import AsyncGenerator
-from _core import aclose
 
 __all__ = ["stream_ioc_table_section"]
 
@@ -67,6 +65,7 @@ async def stream_ioc_table_section(
             if ts_raw:
                 if isinstance(ts_raw, (int, float)):
                     import datetime
+
                     ts_str = datetime.datetime.fromtimestamp(ts_raw, tz=datetime.UTC).strftime("%Y-%m-%d")
                 else:
                     ts_str = str(ts_raw)[:10]

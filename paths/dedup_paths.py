@@ -32,7 +32,7 @@ compatibility, but internal resolution uses os.path.join.
 import os
 import threading
 from typing import Final, cast
-from _core import aclose
+
 from _core.lock_registry import LockCategory, register_lock
 
 # Default base under ~/.hledac/ — co-located with LMDB_STORE_ROOT

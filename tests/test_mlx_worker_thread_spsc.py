@@ -4,13 +4,12 @@ P0: Validates SPSC queue initialization and stats.
 """
 
 import pytest
-from _core import aclose
 
 
 class TestSPSCIntegration:
     """Test SPSC queue integration with MLXWorkerThread."""
 
-    def test_spsc_stats_available(self):
+    def test_spsc_stats_available(self) -> None:
         """Verify SPSC stats appear in get_stats() after worker start."""
         from brain.mlx_worker_thread import MLXWorkerThread
 
@@ -29,10 +28,11 @@ class TestSPSCIntegration:
         finally:
             worker.shutdown()
 
-    def test_spsc_submit_returns_false_when_full(self):
+    def test_spsc_submit_returns_false_when_full(self) -> None:
         """When SPSC queue is full, sender should return False on send."""
         try:
             from _core.rust_backend import rust
+
             if not rust.is_available:
                 pytest.skip("Rust backend not available")
 
@@ -50,10 +50,11 @@ class TestSPSCIntegration:
         except ImportError:
             pytest.skip("Rust spsc module not available")
 
-    def test_spsc_receiver_taken_once(self):
+    def test_spsc_receiver_taken_once(self) -> None:
         """take_receiver() must be called exactly once per pair."""
         try:
             from _core.rust_backend import rust
+
             if not rust.is_available:
                 pytest.skip("Rust backend not available")
 
@@ -67,7 +68,7 @@ class TestSPSCIntegration:
         except ImportError:
             pytest.skip("Rust spsc module not available")
 
-    def test_worker_spsc_cleanup_on_shutdown(self):
+    def test_worker_spsc_cleanup_on_shutdown(self) -> None:
         """SPSC resources cleaned up properly on worker shutdown."""
         from brain.mlx_worker_thread import MLXWorkerThread
 

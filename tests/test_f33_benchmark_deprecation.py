@@ -7,20 +7,19 @@ Superseded by: benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
 import warnings
 
 import pytest
-from _core import aclose
 
 
 class TestF33BenchmarkDeprecation:
     """benchmark_coordinator archived to archive/ on 2026-07-05."""
 
-    def test_import_via_top_level_raises_import_error(self):
+    def test_import_via_top_level_raises_import_error(self) -> None:
         """`from hledac.universal.coordinators.benchmark_coordinator import X` raises ImportError."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with pytest.raises(ImportError, match="archived"):
                 import hledac.universal.coordinators.benchmark_coordinator as _  # noqa: F401
 
-    def test_shim_in_coordinators(self):
+    def test_shim_in_coordinators(self) -> None:
         """The benchmark_coordinator.py shim exists in coordinators/ with ImportError."""
         from pathlib import Path
 
@@ -29,7 +28,7 @@ class TestF33BenchmarkDeprecation:
         content = shim.read_text()
         assert "raise ImportError" in content, "shim should raise ImportError"
 
-    def test_no_real_module_in_archive(self):
+    def test_no_real_module_in_archive(self) -> None:
         """The original benchmark_coordinator.py was NEVER in archive (no-op deprecation)."""
         from pathlib import Path
 
@@ -39,7 +38,7 @@ class TestF33BenchmarkDeprecation:
         if real_module.exists():
             assert real_module.stat().st_size < 1000, "benchmark_coordinator was always a shim"
 
-    def test_deprecated_dir_clean(self):
+    def test_deprecated_dir_clean(self) -> None:
         """coordinators/_deprecated/ does not exist or is empty (benchmark files never existed)."""
         from pathlib import Path
 
@@ -47,13 +46,10 @@ class TestF33BenchmarkDeprecation:
         # _deprecated/ directory was never created for benchmark_coordinator
         if not dep_dir.exists():
             return
-        files = [
-            f.name for f in dep_dir.iterdir()
-            if f.is_file() and f.name not in ("__init__.py", "__pycache__")
-        ]
+        files = [f.name for f in dep_dir.iterdir() if f.is_file() and f.name not in ("__init__.py", "__pycache__")]
         assert files == [], f"_deprecated/ should be empty, found: {files}"
 
-    def test_top_level_alias_raises(self):
+    def test_top_level_alias_raises(self) -> None:
         """`coordinators.benchmark_coordinator` raises ImportError pointing to archive."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from _core import aclose
 
 # Add universal to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -31,10 +30,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # LIVE BENCHMARK RESULTS
 # =============================================================================
 
+
 @dataclass
 class LiveHandlerLatency:
     """Per-handler latency statistics."""
-    min_ms: float = float('inf')
+
+    min_ms: float = float("inf")
     mean_ms: float = 0.0
     p95_ms: float = 0.0
     max_ms: float = 0.0
@@ -44,8 +45,9 @@ class LiveHandlerLatency:
     rate_limited: int = 0
     _samples: list[float] = field(default_factory=list)
 
-    def add(self, latency_ms: float, is_error: bool = False,
-            is_timeout: bool = False, is_rate_limited: bool = False):
+    def add(
+        self, latency_ms: float, is_error: bool = False, is_timeout: bool = False, is_rate_limited: bool = False
+    ) -> None:
         self._samples.append(latency_ms)
         self.calls += 1
         if is_error:
@@ -58,30 +60,31 @@ class LiveHandlerLatency:
         self.max_ms = max(self.max_ms, latency_ms)
         self.mean_ms = ((self.mean_ms * (self.calls - 1)) + latency_ms) / self.calls
 
-    def finalize(self):
+    def finalize(self) -> None:
         if self._samples:
             sorted_samples = sorted(self._samples)
             p95_idx = int(len(sorted_samples) * 0.95)
             self.p95_ms = sorted_samples[min(p95_idx, len(sorted_samples) - 1)]
-        if self.min_ms == float('inf'):
+        if self.min_ms == float("inf"):
             self.min_ms = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'min_ms': round(self.min_ms, 2),
-            'mean_ms': round(self.mean_ms, 2),
-            'p95_ms': round(self.p95_ms, 2),
-            'max_ms': round(self.max_ms, 2),
-            'calls': self.calls,
-            'errors': self.errors,
-            'timeouts': self.timeouts,
-            'rate_limited': self.rate_limited,
+            "min_ms": round(self.min_ms, 2),
+            "mean_ms": round(self.mean_ms, 2),
+            "p95_ms": round(self.p95_ms, 2),
+            "max_ms": round(self.max_ms, 2),
+            "calls": self.calls,
+            "errors": self.errors,
+            "timeouts": self.timeouts,
+            "rate_limited": self.rate_limited,
         }
 
 
 @dataclass
 class LiveBenchmarkResults:
     """Complete LIVE benchmark results."""
+
     iterations: int = 0
     findings_total: int = 0
     sources_total: int = 0
@@ -122,22 +125,22 @@ SEED_DOMAINS = ["python.org", "github.com", "arxiv.org", "archive.org"]
 LIVE_QUERY = "python programming tutorial github source code arxiv research documentation"
 
 TIMEOUT_BUDGETS = {
-    'network_recon': 5.0,
-    'ct_discovery': 10.0,
-    'surface_search': 15.0,
-    'academic_search': 20.0,
-    'archive_fetch': 30.0,
-    'wayback_rescue': 30.0,
-    'commoncrawl_rescue': 30.0,
-    'render_page': 30.0,
-    'necromancer_rescue': 30.0,
+    "network_recon": 5.0,
+    "ct_discovery": 10.0,
+    "surface_search": 15.0,
+    "academic_search": 20.0,
+    "archive_fetch": 30.0,
+    "wayback_rescue": 30.0,
+    "commoncrawl_rescue": 30.0,
+    "render_page": 30.0,
+    "necromancer_rescue": 30.0,
 }
 
 RATE_LIMIT_STRATEGY = {
-    'surface_search': {'rate': 10, 'unit': 'requests/minute', 'backoff': 2.0},
-    'academic_search': {'rate': 5, 'unit': 'requests/minute', 'backoff': 2.0},
-    'ct_discovery': {'rate': 20, 'unit': 'requests/minute', 'backoff': 2.0},
-    'network_recon': {'rate': 30, 'unit': 'requests/minute', 'backoff': 1.5},
+    "surface_search": {"rate": 10, "unit": "requests/minute", "backoff": 2.0},
+    "academic_search": {"rate": 5, "unit": "requests/minute", "backoff": 2.0},
+    "ct_discovery": {"rate": 20, "unit": "requests/minute", "backoff": 2.0},
+    "network_recon": {"rate": 30, "unit": "requests/minute", "backoff": 1.5},
 }
 
 RSS_KILL_SWITCH_MB = 6.5 * 1024
@@ -146,11 +149,9 @@ RSS_KILL_SWITCH_MB = 6.5 * 1024
 class LiveLatencyCollector:
     """Wraps orchestrator to capture per-handler latency."""
 
-    def __init__(self, orch):
+    def __init__(self, orch) -> None:
         self.orch = orch
-        self.latency: dict[str, LiveHandlerLatency] = {
-            name: LiveHandlerLatency() for name in TIMEOUT_BUDGETS.keys()
-        }
+        self.latency: dict[str, LiveHandlerLatency] = {name: LiveHandlerLatency() for name in TIMEOUT_BUDGETS.keys()}
         self._original_execute = orch._execute_action
         self._orch = orch
         orch._execute_action = self._wrapped_execute
@@ -162,9 +163,9 @@ class LiveLatencyCollector:
             result = await self._original_execute(name, **params)
             if result:
                 is_error = not result.success
-                error_msg = (result.error or '').lower()
-                is_timeout = 'timeout' in error_msg or 'timed out' in error_msg
-                is_rate_limited = '429' in error_msg or 'rate limit' in error_msg
+                error_msg = (result.error or "").lower()
+                is_timeout = "timeout" in error_msg or "timed out" in error_msg
+                is_rate_limited = "429" in error_msg or "rate limit" in error_msg
             return result
         except TimeoutError:
             is_timeout = True
@@ -178,13 +179,13 @@ class LiveLatencyCollector:
             if name in self.latency:
                 self.latency[name].add(latency_ms, is_error, is_timeout, is_rate_limited)
 
-    def finalize(self):
+    def finalize(self) -> None:
         for lat in self.latency.values():
             lat.finalize()
 
 
 class RSSMonitor:
-    def __init__(self, interval_s: float = 10.0):
+    def __init__(self, interval_s: float = 10.0) -> None:
         self.interval_s = interval_s
         self.samples: list[float] = []
         self.peak_mb: float = 0.0
@@ -193,14 +194,14 @@ class RSSMonitor:
         self._stop = asyncio.Event()
         self.process = psutil.Process(os.getpid())
 
-    async def start(self):
+    async def start(self) -> None:
         self.start_rss_mb = self.get_rss_mb()
         self.peak_mb = self.start_rss_mb
         self.samples.append(self.start_rss_mb)
         self._stop.clear()
         self._task = asyncio.create_task(self._monitor())
 
-    async def stop(self):
+    async def stop(self) -> None:
         self._stop.set()
         if self._task:
             try:
@@ -208,7 +209,7 @@ class RSSMonitor:
             except TimeoutError:
                 self._task.cancel()
 
-    async def _monitor(self):
+    async def _monitor(self) -> None:
         while not self._stop.is_set():
             await asyncio.sleep(self.interval_s)
             if self._stop.is_set():
@@ -237,7 +238,7 @@ class RSSMonitor:
 
 
 class PhaseTracker:
-    def __init__(self, orch):
+    def __init__(self, orch) -> None:
         self.orch = orch
         self.timeline: list[dict[str, Any]] = []
         self._task: asyncio.Task | None = None
@@ -246,11 +247,11 @@ class PhaseTracker:
         self.max_winner_margin = 0.0
         self._last_phase = None
 
-    async def start(self):
+    async def start(self) -> None:
         self._stop.clear()
         self._task = asyncio.create_task(self._track())
 
-    async def stop(self):
+    async def stop(self) -> None:
         self._stop.set()
         if self._task:
             try:
@@ -261,20 +262,20 @@ class PhaseTracker:
     def _read_current_state(self) -> tuple:
         """Read current phase and promotion score from orchestrator."""
         try:
-            pc = getattr(self.orch, '_phase_controller', None)
-            if pc and hasattr(pc, 'current_phase'):
+            pc = getattr(self.orch, "_phase_controller", None)
+            if pc and hasattr(pc, "current_phase"):
                 phase = pc.current_phase.name
             else:
-                phase = 'unknown'
+                phase = "unknown"
 
             # Read winner_margin from lane manager
             winner_margin = 0.0
-            lm = getattr(self.orch, '_lane_manager', None)
-            if lm and hasattr(lm, 'active_lanes') and lm.active_lanes:
+            lm = getattr(self.orch, "_lane_manager", None)
+            if lm and hasattr(lm, "active_lanes") and lm.active_lanes:
                 try:
                     lanes = list(lm.active_lanes)
                     if len(lanes) >= 2:
-                        priorities = [getattr(l, 'priority', 0.0) for l in lanes]  # noqa: E741
+                        priorities = [getattr(l, "priority", 0.0) for l in lanes]  # noqa: E741
                         winner_margin = max(priorities) - sorted(priorities)[-2] if len(priorities) > 1 else 0.0
                 except Exception:  # noqa: BLE001
                     pass
@@ -282,9 +283,9 @@ class PhaseTracker:
             # Promotion score: use the same formula as phase_controller
             promotion_score = 0.0
             try:
-                if pc and hasattr(pc, '_compute_promotion_score'):
+                if pc and hasattr(pc, "_compute_promotion_score"):
                     # Build a minimal PhaseSignals-like object
-                    signals = pc._get_signals() if hasattr(pc, '_get_signals') else None
+                    signals = pc._get_signals() if hasattr(pc, "_get_signals") else None
                     if signals is not None:
                         promotion_score = pc._compute_promotion_score(signals)
             except Exception:  # noqa: BLE001
@@ -292,9 +293,9 @@ class PhaseTracker:
 
             return phase, promotion_score, winner_margin
         except Exception:
-            return 'unknown', 0.0, 0.0
+            return "unknown", 0.0, 0.0
 
-    async def _track(self):
+    async def _track(self) -> None:
         while not self._stop.is_set():
             await asyncio.sleep(5.0)
             if self._stop.is_set():
@@ -304,13 +305,15 @@ class PhaseTracker:
 
                 # Detect phase transition
                 if phase != self._last_phase:
-                    self.timeline.append({
-                        'elapsed_s': time.time() - getattr(self.orch, '_research_loop_start_time', time.time()),
-                        'phase': phase,
-                        'promotion_score': round(promotion_score, 3),
-                        'winner_margin': round(winner_margin, 3),
-                        'event': 'PHASE_CHANGE',
-                    })
+                    self.timeline.append(
+                        {
+                            "elapsed_s": time.time() - getattr(self.orch, "_research_loop_start_time", time.time()),
+                            "phase": phase,
+                            "promotion_score": round(promotion_score, 3),
+                            "winner_margin": round(winner_margin, 3),
+                            "event": "PHASE_CHANGE",
+                        }
+                    )
                     self._last_phase = phase
 
                 self.max_promotion_score = max(self.max_promotion_score, promotion_score)
@@ -322,11 +325,13 @@ class PhaseTracker:
 def detect_ner_fallback() -> str:
     try:
         from NaturalLanguage import NLTagger  # noqa: F401  # NaturalLanguage.NLTagger
+
         return "NaturalLanguage.framework (ANE)"
     except ImportError:
         pass
     try:
         import coremltools  # noqa: F401  # coremltools
+
         return "CoreML (ANE)"
     except ImportError:
         pass
@@ -334,7 +339,8 @@ def detect_ner_fallback() -> str:
         import torch  # noqa: F401  # torch
         from transformers import (
             AutoModelForTokenClassification,  # noqa: F401  # transformers.AutoModelForTokenClassification
-    )
+        )
+
         return "GLiNER (torch)"
     except ImportError:
         pass
@@ -352,9 +358,7 @@ def compute_hhi(counts: dict[str, int]) -> float:
 
 
 async def run_live_benchmark(
-    duration_seconds: int = 60,
-    query: str = LIVE_QUERY,
-    output_dir: str = "./benchmark_results/live"
+    duration_seconds: int = 60, query: str = LIVE_QUERY, output_dir: str = "./benchmark_results/live"
 ) -> LiveBenchmarkResults:
     """Execute a controlled LIVE Tier-1 research run."""
 
@@ -416,17 +420,19 @@ async def run_live_benchmark(
                     timeout=float(duration_seconds),
                     offline_replay=False,  # LIVE MODE
                 ),
-                timeout=float(duration_seconds) + 120.0
-    )
+                timeout=float(duration_seconds) + 120.0,
+            )
             if result:
                 # Sprint 8L: ComprehensiveResearchResult has .findings and .sources directly
-                results.findings_total = len(getattr(result, 'findings', []))
-                results.sources_total = len(getattr(result, 'sources', []))
+                results.findings_total = len(getattr(result, "findings", []))
+                results.sources_total = len(getattr(result, "sources", []))
                 # Also read from statistics as fallback
-                if hasattr(result, 'statistics') and isinstance(result.statistics, dict):
-                    results.iterations = result.statistics.get('iterations', 0)
+                if hasattr(result, "statistics") and isinstance(result.statistics, dict):
+                    results.iterations = result.statistics.get("iterations", 0)
                 else:
-                    results.iterations = getattr(result.statistics, 'iterations', 0) if hasattr(result, 'statistics') else 0  # noqa: E501
+                    results.iterations = (
+                        getattr(result.statistics, "iterations", 0) if hasattr(result, "statistics") else 0
+                    )  # noqa: E501
         except TimeoutError:
             print("  Research timed out — collecting partial results...")
             results.error = "timeout"
@@ -459,7 +465,7 @@ async def run_live_benchmark(
             if lat.rate_limited > 0:
                 results.handler_rate_limited[name] = lat.rate_limited
 
-        action_counts = getattr(orch, '_action_executed_counts', {}) or {}
+        action_counts = getattr(orch, "_action_executed_counts", {}) or {}
         results.action_selection_counts = dict(action_counts)
         results.action_selection_hhi = compute_hhi(action_counts)
 
@@ -469,7 +475,7 @@ async def run_live_benchmark(
 
         print("\n[3/6] Cleaning up...")
         cleanup_start = time.time()
-        if hasattr(orch, 'cleanup'):
+        if hasattr(orch, "cleanup"):
             try:
                 await asyncio.wait_for(orch.cleanup(), timeout=10.0)
             except Exception as e:
@@ -483,7 +489,7 @@ async def run_live_benchmark(
 
         thermal = "unknown"
         try:
-            if hasattr(orch, '_memory_mgr') and orch._memory_mgr:
+            if hasattr(orch, "_memory_mgr") and orch._memory_mgr:
                 ts = orch._memory_mgr.get_thermal_state()
                 thermal = str(ts) if ts is not None else "unknown"
         except Exception:  # noqa: BLE001
@@ -493,6 +499,7 @@ async def run_live_benchmark(
 
     except Exception as e:
         import traceback
+
         results.error = f"{e}\n{traceback.format_exc()}"
         print(f"\nFATAL ERROR: {e}")
 
@@ -520,7 +527,7 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     print(f"  rss_samples:            {len(results.rss_samples)} samples")
     print(f"  memory_guard_triggered: {results.memory_guard_triggered}")
     if results.rss_samples:
-        traj = ' -> '.join(f'{s:.0f}' for s in results.rss_samples[:8])
+        traj = " -> ".join(f"{s:.0f}" for s in results.rss_samples[:8])
         if len(results.rss_samples) > 8:
             traj += f" ... ({len(results.rss_samples)} total)"
         print(f"  RSS trajectory:        {traj}")
@@ -532,21 +539,29 @@ def print_live_results(results: LiveBenchmarkResults) -> bool:
     print(f"  HHI:                    {results.action_selection_hhi:.3f}")
 
     print("\n[HANDLER LATENCY TABLE]")
-    print(f"  {'Handler':<25s} {'min_ms':>8s} {'mean_ms':>8s} {'p95_ms':>8s} {'max_ms':>8s} {'calls':>6s} {'errors':>6s} {'timeouts':>8s} {'429':>6s}")  # noqa: E501
-    print(f"  {'-'*25} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*6} {'-'*6} {'-'*8} {'-'*6}")
+    print(
+        f"  {'Handler':<25s} {'min_ms':>8s} {'mean_ms':>8s} {'p95_ms':>8s} {'max_ms':>8s} {'calls':>6s} {'errors':>6s} {'timeouts':>8s} {'429':>6s}"
+    )  # noqa: E501
+    print(f"  {'-' * 25} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 6} {'-' * 6} {'-' * 8} {'-' * 6}")
     for name in TIMEOUT_BUDGETS:
         if name in results.handler_latency:
             lat = results.handler_latency[name]
-            print(f"  {name:<25s} {lat.min_ms:8.1f} {lat.mean_ms:8.1f} {lat.p95_ms:8.1f} {lat.max_ms:8.1f} {lat.calls:6d} {lat.errors:6d} {lat.timeouts:8d} {lat.rate_limited:6d}")  # noqa: E501
+            print(
+                f"  {name:<25s} {lat.min_ms:8.1f} {lat.mean_ms:8.1f} {lat.p95_ms:8.1f} {lat.max_ms:8.1f} {lat.calls:6d} {lat.errors:6d} {lat.timeouts:8d} {lat.rate_limited:6d}"
+            )  # noqa: E501
         else:
-            print(f"  {name:<25s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'0':>6s} {'0':>6s} {'0':>8s} {'0':>6s}")  # noqa: E501
+            print(
+                f"  {name:<25s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'N/A':>8s} {'0':>6s} {'0':>6s} {'0':>8s} {'0':>6s}"
+            )  # noqa: E501
 
     print("\n[PHASE TIMELINE]")
     print(f"  promotion_score_max:   {results.promotion_score_max:.3f}")
     print(f"  winner_margin_max:      {results.winner_margin_max:.3f}")
     if results.phase_timeline:
         for entry in results.phase_timeline[:8]:
-            print(f"    t={entry['elapsed_s']:6.1f}s phase={entry['phase']:15s} promo={entry['promotion_score']:.3f} margin={entry['winner_margin']:.3f}")  # noqa: E501
+            print(
+                f"    t={entry['elapsed_s']:6.1f}s phase={entry['phase']:15s} promo={entry['promotion_score']:.3f} margin={entry['winner_margin']:.3f}"
+            )  # noqa: E501
         if len(results.phase_timeline) > 8:
             print(f"    ... ({len(results.phase_timeline)} total entries)")
     else:
@@ -605,36 +620,36 @@ def save_results(results: LiveBenchmarkResults, output_dir: str = "./benchmark_r
     path = output_path / f"live_results_{ts}.json"
 
     data = {
-        'iterations': results.iterations,
-        'findings_total': results.findings_total,
-        'sources_total': results.sources_total,
-        'data_mode': results.data_mode,
-        'total_wall_clock_s': round(results.total_wall_clock_s, 2),
-        'research_runtime_s': round(results.research_runtime_s, 2),
-        'rss_start_mb': round(results.rss_start_mb, 1),
-        'rss_peak_mb': round(results.rss_peak_mb, 1),
-        'rss_end_mb': round(results.rss_end_mb, 1),
-        'rss_slope_mb_per_s': round(results.rss_slope_mb_per_s, 3),
-        'rss_samples': [round(s, 1) for s in results.rss_samples],
-        'memory_guard_triggered': results.memory_guard_triggered,
-        'action_selection_counts': results.action_selection_counts,
-        'action_selection_hhi': round(results.action_selection_hhi, 3),
-        'handler_latency': {k: v.to_dict() for k, v in results.handler_latency.items()},
-        'handler_errors': results.handler_errors,
-        'handler_timeouts': results.handler_timeouts,
-        'handler_rate_limited': results.handler_rate_limited,
-        'phase_timeline': results.phase_timeline,
-        'promotion_score_max': round(results.promotion_score_max, 3),
-        'winner_margin_max': round(results.winner_margin_max, 3),
-        'action_families_with_findings': results.action_families_with_findings,
-        'thermal_state_start': results.thermal_state_start,
-        'thermal_state_peak': results.thermal_state_peak,
-        'seed_domains': results.seed_domains,
-        'ner_fallback_note': results.ner_fallback_note,
-        'error': results.error,
+        "iterations": results.iterations,
+        "findings_total": results.findings_total,
+        "sources_total": results.sources_total,
+        "data_mode": results.data_mode,
+        "total_wall_clock_s": round(results.total_wall_clock_s, 2),
+        "research_runtime_s": round(results.research_runtime_s, 2),
+        "rss_start_mb": round(results.rss_start_mb, 1),
+        "rss_peak_mb": round(results.rss_peak_mb, 1),
+        "rss_end_mb": round(results.rss_end_mb, 1),
+        "rss_slope_mb_per_s": round(results.rss_slope_mb_per_s, 3),
+        "rss_samples": [round(s, 1) for s in results.rss_samples],
+        "memory_guard_triggered": results.memory_guard_triggered,
+        "action_selection_counts": results.action_selection_counts,
+        "action_selection_hhi": round(results.action_selection_hhi, 3),
+        "handler_latency": {k: v.to_dict() for k, v in results.handler_latency.items()},
+        "handler_errors": results.handler_errors,
+        "handler_timeouts": results.handler_timeouts,
+        "handler_rate_limited": results.handler_rate_limited,
+        "phase_timeline": results.phase_timeline,
+        "promotion_score_max": round(results.promotion_score_max, 3),
+        "winner_margin_max": round(results.winner_margin_max, 3),
+        "action_families_with_findings": results.action_families_with_findings,
+        "thermal_state_start": results.thermal_state_start,
+        "thermal_state_peak": results.thermal_state_peak,
+        "seed_domains": results.seed_domains,
+        "ner_fallback_note": results.ner_fallback_note,
+        "error": results.error,
     }
 
-    with open(path, 'w') as f:
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
     print(f"\nResults saved to: {path}")
@@ -643,17 +658,20 @@ def save_results(results: LiveBenchmarkResults, output_dir: str = "./benchmark_r
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Sprint 8L: Controlled LIVE Tier-1 Run")
     parser.add_argument("--duration", type=int, default=60)
     parser.add_argument("--query", type=str, default=LIVE_QUERY)
     parser.add_argument("--output", type=str, default="./benchmark_results/live")
     args = parser.parse_args()
 
-    results = asyncio.run(run_live_benchmark(
-        duration_seconds=args.duration,
-        query=args.query,
-        output_dir=args.output,
-    ))
+    results = asyncio.run(
+        run_live_benchmark(
+            duration_seconds=args.duration,
+            query=args.query,
+            output_dir=args.output,
+        )
+    )
 
     print_live_results(results)
     save_results(results, args.output)

@@ -8,21 +8,20 @@ Evidence Corroboration Graph Scorer — Sprint F223D
 Ranks findings/seeds by cross-source corroboration, not feed volume.
 No model imports, no network calls, no LLM for scoring.
 """
+
 from __future__ import annotations
 
-
-
 import re
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
+from operator import attrgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
+
 # --------------------------------------------------------------------------- #
 # Datatypes
 # --------------------------------------------------------------------------- #
+
 
 class CorroborationScore(Struct, frozen=True):
     """Sprint F300 migration: @dataclass(frozen=True) → msgspec.Struct.
@@ -89,6 +88,7 @@ _DUPLICATE_PENALTY = 0.3  # subtracted from score if only duplicates support
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+
 
 def score_indicators_by_corroboration(findings: list[dict]) -> list[CorroborationScore]:
     """
@@ -160,13 +160,15 @@ def score_seeds_by_corroboration(seeds: list[dict]) -> list[CorroborationScore]:
         # Map seed source to source_type family
         source_type = _seed_source_to_family(source)
 
-        findings.append({
-            "value": seed.get("value", ""),
-            "kind": seed.get("kind", "domain"),
-            "source_type": source_type,
-            "confidence": seed.get("confidence", 0.5),
-            "quality_score": qs,
-        })
+        findings.append(
+            {
+                "value": seed.get("value", ""),
+                "kind": seed.get("kind", "domain"),
+                "source_type": source_type,
+                "confidence": seed.get("confidence", 0.5),
+                "quality_score": qs,
+            }
+        )
 
     return score_indicators_by_corroboration(findings)
 
@@ -174,6 +176,7 @@ def score_seeds_by_corroboration(seeds: list[dict]) -> list[CorroborationScore]:
 # --------------------------------------------------------------------------- #
 # Core scoring
 # --------------------------------------------------------------------------- #
+
 
 def _score_group(value: str, kind: str, group: list[dict]) -> CorroborationScore:
     """Score one (value, kind) group of findings."""
@@ -204,7 +207,7 @@ def _score_group(value: str, kind: str, group: list[dict]) -> CorroborationScore
             independent_source_count=len(unique_findings),
             supporting_finding_ids=_extract_ids(unique_findings),
             reasons=(noise_reason,),
-    )
+        )
 
     # Compute score
     score, reasons = _compute_score(value, kind, source_families, unique_findings)
@@ -233,9 +236,7 @@ def _score_group(value: str, kind: str, group: list[dict]) -> CorroborationScore
     )
 
 
-def _compute_score(
-    _value: str, _kind: str, source_families: set[str], findings: list[dict]
-) -> tuple[float, list[str]]:
+def _compute_score(_value: str, _kind: str, source_families: set[str], findings: list[dict]) -> tuple[float, list[str]]:
     """Compute corroboration score and reasons."""
     reasons = []
 
@@ -295,6 +296,7 @@ _SEED_SOURCE_MAP = {
     "unknown": "unknown",
 }
 
+
 def _seed_source_to_family(source: str) -> str:
     return _SEED_SOURCE_MAP.get(source.lower(), "unknown")
 
@@ -310,15 +312,37 @@ def _normalize_source_type(source_type: str) -> str:
 
 
 # Platform domains (major CDNs/Cloud providers — high false positive)
-_PLATFORM_DOMAINS = frozenset({
-    "cloudflare.com", "akamai.com", "fastly.com", "cdn.cloudflare.net",
-    "amazonaws.com", "azure.com", "digitalocean.com", "google.com",
-    "microsoft.com", "apple.com", "facebook.com", "twitter.com",
-    "github.com", "gitlab.com", "bitbucket.org", "jsdelivr.net",
-    "unpkg.com", "cdnjs.cloudflare.com", "bootstrapcdn.com",
-    "rackcdn.com", "cloudfront.net", "akamaiedge.net", "edgekey.net",
-    "mozilla.org", "wordpress.com", "wix.com", "squarespace.com",
-})
+_PLATFORM_DOMAINS = frozenset(
+    {
+        "cloudflare.com",
+        "akamai.com",
+        "fastly.com",
+        "cdn.cloudflare.net",
+        "amazonaws.com",
+        "azure.com",
+        "digitalocean.com",
+        "google.com",
+        "microsoft.com",
+        "apple.com",
+        "facebook.com",
+        "twitter.com",
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "jsdelivr.net",
+        "unpkg.com",
+        "cdnjs.cloudflare.com",
+        "bootstrapcdn.com",
+        "rackcdn.com",
+        "cloudfront.net",
+        "akamaiedge.net",
+        "edgekey.net",
+        "mozilla.org",
+        "wordpress.com",
+        "wix.com",
+        "squarespace.com",
+    }
+)
 
 
 def _check_noise(value: str, source_families: set[str]) -> str | None:
@@ -355,6 +379,7 @@ def _extract_ids(findings: list[dict]) -> tuple[str, ...]:
 # CLI output helpers
 # --------------------------------------------------------------------------- #
 
+
 def build_top_indicators(scores: list[CorroborationScore], limit: int = _MAX_RANKED) -> list[dict]:
     """Build ranked indicators output."""
     strong = [s for s in scores if s.is_strong()][:limit]
@@ -374,14 +399,16 @@ def build_recommended_pivots(scores: list[CorroborationScore], limit: int = _MAX
 
     for s in scores:
         if s.is_strong() and s.kind not in seen_kinds and len(pivots) < limit:
-            pivots.append({
-                "value": s.value,
-                "kind": s.kind,
-                "score": round(s.score, 2),
-                "source_family_count": s.source_family_count,
-                "reason": f"{s.source_family_count} independent sources",
-                "suggested_action": "pivot",
-            })
+            pivots.append(
+                {
+                    "value": s.value,
+                    "kind": s.kind,
+                    "score": round(s.score, 2),
+                    "source_family_count": s.source_family_count,
+                    "reason": f"{s.source_family_count} independent sources",
+                    "suggested_action": "pivot",
+                }
+            )
             seen_kinds.add(s.kind)
 
     return pivots

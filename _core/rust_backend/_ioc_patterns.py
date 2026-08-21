@@ -11,6 +11,7 @@ the list itself is flat for performance (avoiding dict lookups).
 Note: These are Aho-Corasick LITERALS, not regex. For regex-based
 extraction, see runtime/nonfeed_seed_extractor.py.
 """
+
 from __future__ import annotations
 
 # Canonical IOC literal patterns (Aho-Corasick literals)

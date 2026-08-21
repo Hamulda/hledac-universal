@@ -53,7 +53,6 @@ Usage:
         get_mlx_model,
         evict_all,
         get_cache_stats,
-        # Cleanup
         mlx_cleanup_sync,
         mlx_cleanup_aggressive,
         # Memory metrics
@@ -109,7 +108,6 @@ get_mlx_memory_pressure = _core_module.get_mlx_memory_pressure
 get_mlx_memory_metrics = _core_module.get_mlx_memory_metrics
 format_mlx_memory_snapshot = _core_module.format_mlx_memory_snapshot
 
-# Cleanup
 clear_mlx_cache = _core_module.clear_mlx_cache
 clear_mlx_cache_debounced = _core_module.clear_mlx_cache_debounced
 set_cache_limit_with_debounce = _core_module.set_cache_limit_with_debounce
@@ -164,7 +162,6 @@ SharedTensor = _tensor_module.SharedTensor
 # ── Re-export mlx_utils decorators from _core ─────────────────────────────────
 
 from . import _core as _core_mlx_utils
-from _core import aclose
 
 mlx_managed = _core_mlx_utils.mlx_managed
 mlx_cleanup_after = _core_mlx_utils.mlx_cleanup_after
@@ -195,7 +192,6 @@ __all__ = [
     "get_mlx_memory_pressure",
     "get_mlx_memory_metrics",
     "format_mlx_memory_snapshot",
-    # Cleanup
     "clear_mlx_cache",
     "clear_mlx_cache_debounced",
     "set_cache_limit_with_debounce",

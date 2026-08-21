@@ -18,17 +18,17 @@ from __future__ import annotations
 
 import sys
 import threading
-from typing import Any
+from typing import Never
 
 import pytest
-from _core import aclose
+
 from compat.msgspec_gc_compat import Struct
 
 
 class TestGILReleaseFunctionExists:
     """Test that release_gil function exists and has correct signature."""
 
-    def test_release_gil_import(self):
+    def test_release_gil_import(self) -> None:
         """release_gil must be importable from rust_extensions."""
         try:
             from rust_extensions import release_gil
@@ -38,7 +38,7 @@ class TestGILReleaseFunctionExists:
         except ImportError:
             pytest.skip("rust_extensions not available - build required")
 
-    def test_release_gil_signature(self):
+    def test_release_gil_signature(self) -> None:
         """release_gil must accept (py, function) parameters."""
         import inspect
 
@@ -49,13 +49,14 @@ class TestGILReleaseFunctionExists:
             params = list(sig.parameters.keys())
 
             # Must have 'py' (Python interpreter) and 'f' (function) parameters
-            assert "py" in params or "f" in params or len(params) >= 1, \
+            assert "py" in params or "f" in params or len(params) >= 1, (
                 "release_gil must accept at least one function parameter"
+            )
 
         except ImportError:
             pytest.skip("rust_extensions not available")
 
-    def test_release_gil_py_import(self):
+    def test_release_gil_py_import(self) -> None:
         """release_gil_py must be importable for PyResult return type."""
         try:
             from rust_extensions import release_gil_py
@@ -69,7 +70,7 @@ class TestGILReleaseFunctionExists:
 class TestGILReleaseSemantics:
     """Test GIL release semantics with PyO3 0.29 py.detach()."""
 
-    def test_release_gil_accepts_callable(self):
+    def test_release_gil_accepts_callable(self) -> None:
         """release_gil must accept a callable and execute it."""
         try:
             from rust_extensions import release_gil
@@ -84,7 +85,7 @@ class TestGILReleaseSemantics:
         except Exception as exc:
             pytest.fail(f"release_gil raised unexpectedly: {exc}")
 
-    def test_release_gil_returns_send_value(self):
+    def test_release_gil_returns_send_value(self) -> None:
         """release_gil must return Send-compatible values."""
         try:
             from rust_extensions import release_gil
@@ -104,13 +105,13 @@ class TestGILReleaseSemantics:
         except ImportError:
             pytest.skip("rust_extensions not available")
 
-    def test_release_gil_py_catches_panic(self):
+    def test_release_gil_py_catches_panic(self) -> None:
         """release_gil_py must catch panics and return PyResult."""
         try:
             from rust_extensions import release_gil_py
 
             # Panic should be caught and converted to PyErr
-            def panicking_fn():
+            def panicking_fn() -> Never:
                 raise RuntimeError("test panic")
 
             result = release_gil_py(panicking_fn)
@@ -130,7 +131,7 @@ class TestGILReleaseSemantics:
 class TestGILReleaseMeasurement:
     """Test that GIL release can be measured (thread id verification)."""
 
-    def test_thread_id_changes_during_release(self):
+    def test_thread_id_changes_during_release(self) -> None:
         """Thread id should remain the same (GIL release happens within same thread)."""
         import threading
 
@@ -145,13 +146,12 @@ class TestGILReleaseMeasurement:
             released_thread_id = release_gil(check_thread_id)
 
             # Thread id should be the same (GIL released, not thread)
-            assert released_thread_id == main_thread_id, \
-                f"Thread id changed: {main_thread_id} -> {released_thread_id}"
+            assert released_thread_id == main_thread_id, f"Thread id changed: {main_thread_id} -> {released_thread_id}"
 
         except ImportError:
             pytest.skip("rust_extensions not available")
 
-    def test_getswitchinterval_available(self):
+    def test_getswitchinterval_available(self) -> None:
         """sys.getswitchinterval must be available for GIL measurement."""
         if hasattr(sys, "getswitchinterval"):
             interval = sys.getswitchinterval()
@@ -160,12 +160,10 @@ class TestGILReleaseMeasurement:
         else:
             pytest.skip("sys.getswitchinterval not available on this Python")
 
-    def test_concurrent_execution_with_gil_release(self):
+    def test_concurrent_execution_with_gil_release(self) -> None:
         """GIL release should allow concurrent execution of rayon threads."""
         try:
             from rust_extensions import release_gil
-
-            results: list[int] = []
 
             def compute(n: int) -> int:
                 # Simulate CPU-bound work
@@ -192,7 +190,7 @@ class TestGILReleaseMeasurement:
 class TestGILReleaseInBloomFilter:
     """Test GIL release in actual usage (bloom filter batch operations)."""
 
-    def test_bloom_add_batch_uses_release_gil(self):
+    def test_bloom_add_batch_uses_release_gil(self) -> None:
         """BloomFilter.add_batch should use release_gil for parallel hashing."""
         try:
             from rust_extensions import BloomFilter
@@ -211,7 +209,7 @@ class TestGILReleaseInBloomFilter:
         except Exception as exc:
             pytest.fail(f"add_batch failed: {exc}")
 
-    def test_bloom_contains_batch_uses_release_gil(self):
+    def test_bloom_contains_batch_uses_release_gil(self) -> None:
         """BloomFilter.contains_batch should use release_gil for parallel lookups."""
         try:
             from rust_extensions import BloomFilter
@@ -238,7 +236,7 @@ class TestGILReleaseInBloomFilter:
 class TestGILReleaseInAhoCorasick:
     """Test GIL release in Aho-Corasick pattern matcher."""
 
-    def test_scan_batch_uses_release_gil(self):
+    def test_scan_batch_uses_release_gil(self) -> None:
         """AhoCorasick.scan_batch should use release_gil for parallel scanning."""
         try:
             from rust_extensions import AhoCorasick
@@ -263,7 +261,7 @@ class TestGILReleaseInAhoCorasick:
 class TestGILReleaseBoundaries:
     """Test boundaries and error conditions for release_gil."""
 
-    def test_release_gil_requires_send_function(self):
+    def test_release_gil_requires_send_function(self) -> None:
         """release_gil requires Send-compatible closures."""
         try:
             from rust_extensions import release_gil
@@ -277,7 +275,7 @@ class TestGILReleaseBoundaries:
 
             # This may fail because lock is not Send
             try:
-                result = release_gil(capture_lock)
+                release_gil(capture_lock)
                 # If it succeeds, that's fine
                 assert True
             except TypeError as e:
@@ -287,7 +285,7 @@ class TestGILReleaseBoundaries:
         except ImportError:
             pytest.skip("rust_extensions not available")
 
-    def test_release_gil_with_complex_return(self):
+    def test_release_gil_with_complex_return(self) -> None:
         """release_gil must handle complex return values."""
         try:
             from rust_extensions import release_gil
@@ -306,7 +304,7 @@ class TestGILReleaseBoundaries:
 class TestM1Optimization:
     """Test M1-specific GIL release optimizations."""
 
-    def test_release_gil_module_docstring(self):
+    def test_release_gil_module_docstring(self) -> None:
         """release_gil must have documentation about PyO3 0.29 semantics."""
         try:
             from rust_extensions import release_gil
@@ -318,15 +316,14 @@ class TestM1Optimization:
             # Doc should mention PyO3 or GIL
             doc_lower = doc.lower()
             has_gil_mention = any(
-                keyword in doc_lower
-                for keyword in ["gil", "py.detach", "pythread", "global interpreter"]
-    )
+                keyword in doc_lower for keyword in ["gil", "py.detach", "pythread", "global interpreter"]
+            )
             assert has_gil_mention, "Documentation should mention GIL release mechanism"
 
         except ImportError:
             pytest.skip("rust_extensions not available")
 
-    def test_msgspec_struct_no_gil_contention(self):
+    def test_msgspec_struct_no_gil_contention(self) -> None:
         """msgspec.Struct should not require GIL for basic operations."""
         try:
             import msgspec

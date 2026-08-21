@@ -1,4 +1,3 @@
-
 class GenerationResult:
     text: str
     prompt_tokens: int

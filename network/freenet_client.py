@@ -25,7 +25,6 @@ F230: Alternative Protocol Stack integration.
 ISSUE-005: Missing ZeroNet & Freenet/Hyphanet Content Mining.
 """
 
-import asyncio
 import logging
 import os
 import re
@@ -33,9 +32,9 @@ import time
 from typing import Final
 
 import httpx
+
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +55,9 @@ CHK_PATTERN = re.compile(r"\b(CHK@[A-Za-z0-9~\-_]{40,60})")
 SSK_PATTERN = re.compile(r"\b(SSK@[A-Za-z0-9~\-_]{40,60})")
 # Generic Freenet URI
 FREENET_URI_PATTERN = re.compile(
-    r"freenet:(USK|CHK|SSK|KSK)@[A-Za-z0-9~\-_./]+", re.IGNORECASE,
-    )
+    r"freenet:(USK|CHK|SSK|KSK)@[A-Za-z0-9~\-_./]+",
+    re.IGNORECASE,
+)
 
 # ── Known Freenet sites / freesites — OSINT entry points ──────────────────────
 KNOWN_FREESITES: list[dict] = [
@@ -139,7 +139,7 @@ def _normalize_freenet_key(key: str) -> str:
     """
     key = key.strip()
     if key.startswith(FREENET_FPROXY_URL):
-        key = key[len(FREENET_FPROXY_URL):]
+        key = key[len(FREENET_FPROXY_URL) :]
     if key.startswith("freenet:"):
         return f"/{key}"
     if not key.startswith("/"):
@@ -203,22 +203,25 @@ async def fetch_freesite(
                     if int(content_length) > max_size:
                         logger.warning(
                             "Freenet response too large: %s bytes for %s",
-                            content_length, key[:60],
-    )
+                            content_length,
+                            key[:60],
+                        )
                         return None
                 content = resp.text
                 if len(content.encode("utf-8")) > max_size:
                     logger.warning(
-                        "Freenet response too large after decode: %s", key[:60],
-    )
+                        "Freenet response too large after decode: %s",
+                        key[:60],
+                    )
                     return None
                 return content
             logger.debug(
                 "Freenet fetch failed: status %s for %s",
-                resp.status_code, key[:60],
-    )
+                resp.status_code,
+                key[:60],
+            )
             return None
-    except (httpx.TimeoutException, asyncio.TimeoutError):
+    except TimeoutError, httpx.TimeoutException:
         logger.debug("Freenet fetch timeout: %s", key[:60])
         return None
     except Exception as e:
@@ -277,10 +280,7 @@ def filter_sites_by_keyword(
     if not keyword:
         return seed_sites
     kw = keyword.lower()
-    return [
-        s for s in seed_sites
-        if kw in s["name"].lower() or kw in s.get("description", "").lower()
-    ]
+    return [s for s in seed_sites if kw in s["name"].lower() or kw in s.get("description", "").lower()]
 
 
 def get_enumeration_semaphore() -> object:
@@ -340,16 +340,15 @@ class FreenetSiteEnumerator:
                         title = site["name"]
                         if "<title" in content.lower():
                             title_match = re.search(
-                                r"<title[^>]*>([^<]+)", content, re.IGNORECASE,
-    )
+                                r"<title[^>]*>([^<]+)",
+                                content,
+                                re.IGNORECASE,
+                            )
                             if title_match:
                                 title = title_match.group(1).strip()[:200]
                         discovered = extract_freenet_keys(content)
                         for dk in discovered:
-                            if (
-                                dk not in self._seen_keys
-                                and len(self._seen_keys) < self._max_sites
-                            ):
+                            if dk not in self._seen_keys and len(self._seen_keys) < self._max_sites:
                                 self._seen_keys.add(dk)
                         return {
                             "name": title,
@@ -368,7 +367,7 @@ class FreenetSiteEnumerator:
             if isinstance(item, dict) and item:
                 results.append(item)
 
-        return results[:self._max_sites]
+        return results[: self._max_sites]
 
 
 # ── Finding conversion ────────────────────────────────────────────────────────
@@ -404,7 +403,7 @@ async def freenet_to_findings(query: str) -> list[CanonicalFinding]:
                 ts=time.time(),
                 provenance=(f"freenet:{site['key']}",),
                 payload_text=site.get("content_preview", "")[:4096],
-    )
+            )
             findings.append(finding)
     except Exception as e:
         logger.debug("Freenet to findings failed: %s", e)
@@ -440,12 +439,14 @@ async def search_freenet(keyword: str, max_results: int = 20) -> list[dict]:
             start = max(0, idx - 100)
             end = min(len(content), idx + len(keyword) + 100)
             snippet = content[start:end].replace("\n", " ").strip()
-            results.append({
-                "key": site["key"],
-                "name": site.get("name", ""),
-                "snippet": snippet,
-                "confidence": 0.6,
-            })
+            results.append(
+                {
+                    "key": site["key"],
+                    "name": site.get("name", ""),
+                    "snippet": snippet,
+                    "confidence": 0.6,
+                }
+            )
             if len(results) >= max_results:
                 break
 

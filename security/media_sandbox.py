@@ -2,11 +2,6 @@
 Media Sandbox - Tiered Process Isolation for Untrusted Binary Parsing
 =====================================================================
 
-
-
-
-
-
 ADVERSARY-001 fix: Isolates PyMuPDF, whisper.cpp, stegdetect, and other
 high-risk media decoders from the orchestrator process.
 
@@ -25,32 +20,24 @@ Feature gate: HLEDAC_ENABLE_DOC_SANDBOX=1 (default ON, opt-out for trusted archi
 
 from __future__ import annotations
 
-import abc
 import asyncio
-import hashlib
 import json
 import logging
 import os
-import resource
 import shutil
-import subprocess
 import sys
 import tempfile
 import typing
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
-
-# ─── Lazy imports ──────────────────────────────────────────────────────────────
 
 _wasmtime = None
 _wasmtime_available: bool | None = None
@@ -74,6 +61,7 @@ def _get_mach_remap_bridge():
         return _mach_remap
     try:
         from hledac.universal.security.mach_remap import get_mach_remap_bridge as _get
+
         _mach_remap = _get()
         return _mach_remap
     except ImportError:
@@ -87,6 +75,7 @@ def _check_wasmtime() -> bool:
         return _wasmtime_available
     try:
         import wasmtime
+
         _wasmtime = wasmtime
         _wasmtime_available = True
     except ImportError:
@@ -96,20 +85,14 @@ def _check_wasmtime() -> bool:
     return _wasmtime_available
 
 
-# ─── Configuration ─────────────────────────────────────────────────────────────
-
 SANDBOX_ENABLED: bool = FeatureFlags.get(FeatureFlag.DOC_SANDBOX, default=True)
 
-SANDBOX_ALLOW_FALLBACK: bool = (
-    os.environ.get("HLEDAC_SANDBOX_ALLOW_FALLBACK", "1") == "1"
-    )
+SANDBOX_ALLOW_FALLBACK: bool = os.environ.get("HLEDAC_SANDBOX_ALLOW_FALLBACK", "1") == "1"
 
 # [NEXUS]-018-03: MachRemap threshold — files >= this size (bytes) are
 # candidates for zero-copy Mach vm_remap. Below this, tempfile is faster.
 # Default: 100 MB. Override: HLEDAC_MACH_REMAP_MIN_SIZE env var.
-SANDBOX_MACH_REMAP_MIN_SIZE: int = int(
-    os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
-    )
+SANDBOX_MACH_REMAP_MIN_SIZE: int = int(os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024)))
 
 # macOS Seatbelt available on macOS 10.10+
 _sandbox_exec_path: str | None = None
@@ -119,25 +102,24 @@ def _detect_sandbox_exec() -> bool:
     global _sandbox_exec_path
     if _sandbox_exec_path is not None:
         return _sandbox_exec_path != ""
-    import shutil
     path = shutil.which("sandbox-exec")
     _sandbox_exec_path = path or ""
     return bool(path)
 
 
-# ─── Risk Classification ───────────────────────────────────────────────────────
-
 class FileRiskLevel(Enum):
     """Pre-classification risk tier for file analysis."""
-    TRUSTED = auto()      # Known-safe source, low risk
-    STANDARD = auto()      # Clearnet fetch, moderate risk
-    UNTRUSTED = auto()     # User-supplied, Tor/I2P, high risk
-    UNKNOWN = auto()       # Unknown format, maximum risk
+
+    TRUSTED = auto()  # Known-safe source, low risk
+    STANDARD = auto()  # Clearnet fetch, moderate risk
+    UNTRUSTED = auto()  # User-supplied, Tor/I2P, high risk
+    UNKNOWN = auto()  # Unknown format, maximum risk
 
 
 @dataclass(frozen=True, slots=True)
 class MediaRiskProfile:
     """Risk assessment for a media file based on magic bytes + entropy."""
+
     risk_level: FileRiskLevel
     magic_bytes: bytes
     file_type: str
@@ -146,8 +128,6 @@ class MediaRiskProfile:
     is_executable: bool
     reasons: tuple[str, ...] = field(default_factory=tuple)
 
-
-# ─── Magic Byte Signatures ────────────────────────────────────────────────────
 
 MAGIC_SIGNATURES: dict[bytes, str] = {
     b"%PDF": "pdf",
@@ -173,17 +153,40 @@ MAGIC_SIGNATURES: dict[bytes, str] = {
     b"\x89PNG\r\n\x1a\n": "png_steg",
 }
 
-ALLOWED_FORMATS: frozenset[str] = frozenset({
-    "pdf", "png", "jpeg", "gif", "wav", "avi", "mkv", "webm",
-    "flac", "mp3", "ogg", "tiff", "bmp", "zip/office", "json", "xml/html",
-    "ico",
-})
+ALLOWED_FORMATS: frozenset[str] = frozenset(
+    {
+        "pdf",
+        "png",
+        "jpeg",
+        "gif",
+        "wav",
+        "avi",
+        "mkv",
+        "webm",
+        "flac",
+        "mp3",
+        "ogg",
+        "tiff",
+        "bmp",
+        "zip/office",
+        "json",
+        "xml/html",
+        "ico",
+    }
+)
 
-HIGH_RISK_EXTENSIONS: frozenset[str] = frozenset({
-    ".exe", ".dll", ".so", ".dylib", ".app", ".bin", ".dat", ".pkg",
-})
-
-# ─── Risk Profiler ────────────────────────────────────────────────────────────
+HIGH_RISK_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".app",
+        ".bin",
+        ".dat",
+        ".pkg",
+    }
+)
 
 
 def _shannon_entropy(data: bytes) -> float:
@@ -192,6 +195,7 @@ def _shannon_entropy(data: bytes) -> float:
         return 0.0
     import collections
     import math
+
     counts = collections.Counter(data)
     total = len(data)
     entropy = 0.0
@@ -232,7 +236,7 @@ def profile_file_risk(
             is_archive=False,
             is_executable=False,
             reasons=("read_error",),
-    )
+        )
 
     # Magic bytes
     magic = header[:16]
@@ -290,8 +294,6 @@ def profile_file_risk(
         reasons=tuple(reasons),
     )
 
-
-# ─── Tier-A: Seatbelt Sandbox Profiles ────────────────────────────────────────
 
 _SANDBOX_PROFILES: dict[str, str] = {}
 
@@ -390,12 +392,10 @@ def _write_sandbox_profile(profile_name: str, content: str) -> Path:
     return profile_path
 
 
-# ─── Tier-B: Subprocess Isolation ─────────────────────────────────────────────
-
-
 @dataclass(frozen=True, slots=True)
 class IsolationConfig:
     """Configuration for subprocess isolation."""
+
     max_memory_mb: int = 512
     max_cpu_seconds: float = 30.0
     max_file_size_mb: int = 100
@@ -430,7 +430,6 @@ async def _run_in_subprocess_isolation(
     if config is None:
         config = IsolationConfig()
 
-    # Build environment
     run_env = {**os.environ}
     if env:
         run_env.update(env)
@@ -438,23 +437,21 @@ async def _run_in_subprocess_isolation(
     for key in ["HLEDAC_API_KEY", "SHODAN_API_KEY", "CENSYS_API_KEY", "GREYNOISE_API_KEY"]:
         run_env.pop(key, None)
 
-    # Check for sandbox-exec availability
     sandbox_profile: str | None = None
     if _detect_sandbox_exec():
         # Use generic profile for unknown binaries
         sandbox_profile = _build_generic_sandbox_profile(
             os.fspath(Path.home()),
             args[0] if args else "",
-    )
+        )
 
-    # Build command
     cmd = args
     profile_path: Path | None = None
     if sandbox_profile:
         profile_path = _write_sandbox_profile(
             f"isolated_{os.getpid()}_{id(args)}",
             sandbox_profile,
-    )
+        )
         cmd = ["sandbox-exec", "-p", str(profile_path)] + cmd
 
     proc = await asyncio.create_subprocess_exec(
@@ -471,9 +468,9 @@ async def _run_in_subprocess_isolation(
         stdout, stderr = await safe_wait_for(
             proc.communicate(input=stdin_data),
             timeout=timeout_s,
-    )
+        )
         return proc.returncode or 0, stdout, stderr
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
             await proc.wait()
@@ -490,7 +487,6 @@ async def _run_in_subprocess_isolation(
             pass
         return -1, b"", str(e).encode()
     finally:
-        # Clean up sandbox profile temp file
         if profile_path:
             try:
                 profile_path.unlink(missing_ok=True)
@@ -498,18 +494,15 @@ async def _run_in_subprocess_isolation(
                 pass
 
 
-# ─── Tier-C: Wasmtime Sandbox ─────────────────────────────────────────────────
-
 @dataclass(frozen=True, slots=True)
 class WasmSandboxConfig:
     """Configuration for WASM sandbox."""
+
     fuel_limit: int = 1_000_000
     epoch_deadline_s: float = 30.0
     timeout_s: float = 60.0
     max_memory_mb: int = 256
 
-
-# ─── Whisper Subprocess Isolation (Tier-B for whisper.cpp) ─────────────────────
 
 _WHISPER_SUBPROCESS_SCRIPT = '''
 """Whisper subprocess isolation script — ADVERSARY-001 Tier-B.
@@ -532,17 +525,16 @@ def try_rust_whisper(audio_path: str, model_size: str, language: str | None) -> 
     """Try Rust whisper (CoreML/ANE acceleration) first."""
     try:
         from hledac.universal._core.rust_backend import rust
-        
+
         if not rust.whisper.is_available():
             return None
-        
-        # Run Rust whisper synchronously
+
         raw = rust.whisper.transcribe(
             audio_path,
             model_size=model_size,
             language=language,
     )
-        
+
         if raw and raw.get('text'):
             return {
                 'text': raw.get('text', ''),
@@ -562,15 +554,15 @@ async def try_python_whisper(audio_path: str, model_size: str, language: str | N
     """Try Python whispercpp as fallback."""
     try:
         from hledac.universal.brain.whisper_engine import WhisperEngine
-        
+
         engine = WhisperEngine()
         initialized = await engine.initialize(model_size=model_size)
         if not initialized:
             return None
-        
+
         raw = await engine.transcribe(audio_path, model_size=model_size, language=language)
         await engine.close()
-        
+
         if raw and raw.text:
             return {
                 'text': raw.text,
@@ -603,18 +595,18 @@ async def main():
     # Preserve essential ML env vars (strip only secrets)
     _SAFE_PREFIXES = ('API', 'KEY', 'TOKEN', 'SECRET', 'SHODAN', 'CENSYS', 'GREYNOISE')
     _SAFE_WHISPER_VARS = ('WHISPER_COREML', 'WHISPER_MODEL_PATH', 'WHISPER_THREADS')
-    
+
     safe_env = {}
     for key, value in os.environ.items():
         if not any(prefix in key for prefix in _SAFE_PREFIXES):
             safe_env[key] = value
         elif any(safe in key for safe in _SAFE_WHISPER_VARS):
             safe_env[key] = value
-    
+
     # Set WHISPER_COREML for CoreML/ANE acceleration if not already set
     if 'WHISPER_COREML' not in safe_env:
         safe_env['WHISPER_COREML'] = '1'
-    
+
     os.environ.clear()
     os.environ.update(safe_env)
 
@@ -633,7 +625,6 @@ async def main():
             result['error'] = 'No whisper engine available (tried Rust + Python whispercpp)'
 
     json.dump(result, sys.stdout)
-
 
 if __name__ == '__main__':
     asyncio.run(main())
@@ -659,20 +650,22 @@ async def run_whisper_in_subprocess(
 
     M1 8GB overhead: ~15-30ms fork+exec, no additional RAM in orchestrator.
     """
-    import time
     import tempfile as _tempfile
+    import time
+
     start = time.monotonic()
 
-    # Write isolation script to temp file
     script_path = _tempfile.NamedTemporaryFile(
-        suffix='_whisper_sandbox.py', mode='w', delete=False, dir=_tempfile.gettempdir()
+        suffix="_whisper_sandbox.py", mode="w", delete=False, dir=_tempfile.gettempdir()
     )
-    script_path.write(_WHISPER_SUBPROCESS_SCRIPT + '\n')
+    script_path.write(_WHISPER_SUBPROCESS_SCRIPT + "\n")
     script_path.close()
 
-    # Build stripped environment
-    safe_env = {k: v for k, v in os.environ.items()
-                if not any(x in k for x in ('API', 'KEY', 'TOKEN', 'SECRET', 'HLEDAC_', 'SHODAN', 'CENSYS', 'GREYNOISE'))}
+    safe_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not any(x in k for x in ("API", "KEY", "TOKEN", "SECRET", "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE"))
+    }
 
     use_sandbox = False
     profile_path = None
@@ -680,12 +673,16 @@ async def run_whisper_in_subprocess(
         # Pass current working directory to subprocess for correct relative paths
         cwd = os.getcwd()
         cmd = [
-            sys.executable, script_path.name, audio_path,
-            '--model-size', model_size,
-            '--working-dir', cwd,
+            sys.executable,
+            script_path.name,
+            audio_path,
+            "--model-size",
+            model_size,
+            "--working-dir",
+            cwd,
         ]
         if language:
-            cmd += ['--language', language]
+            cmd += ["--language", language]
 
         # Try seatbelt first (cached check)
         if _detect_sandbox_exec():
@@ -693,40 +690,44 @@ async def run_whisper_in_subprocess(
             audio_profile = _build_audio_sandbox_profile(
                 os.fspath(Path.home()),
                 audio_path,
-    )
+            )
             profile_path = _write_sandbox_profile(
-                f'whisper_{os.getpid()}',
+                f"whisper_{os.getpid()}",
                 audio_profile,
-    )
-            cmd = ['sandbox-exec', '-p', str(profile_path)] + cmd
+            )
+            cmd = ["sandbox-exec", "-p", str(profile_path)] + cmd
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=safe_env,
-    )
+        )
 
         try:
             # D5 FIX: safe_wait_for for correct TaskGroup composition
             stdout, stderr = await safe_wait_for(
                 proc.communicate(),
                 timeout=timeout_s,
-    )
+            )
             elapsed_ms = (time.monotonic() - start) * 1000
             logger.info(
                 "[ADVERSARY-001] Whisper subprocess: path=%s rc=%s elapsed=%.1fms",
-                Path(audio_path).name, proc.returncode, elapsed_ms,
-    )
+                Path(audio_path).name,
+                proc.returncode,
+                elapsed_ms,
+            )
             if proc.returncode == 0 and stdout:
-                return json.loads(stdout.decode('utf-8', errors='replace'))
+                return json.loads(stdout.decode("utf-8", errors="replace"))
             else:
                 return {
-                    'text': '', 'language': None, 'duration_s': 0.0,
-                    'confidence': 0.0,
-                    'error': stderr.decode('utf-8', errors='replace')[:200] if stderr else 'unknown',
+                    "text": "",
+                    "language": None,
+                    "duration_s": 0.0,
+                    "confidence": 0.0,
+                    "error": stderr.decode("utf-8", errors="replace")[:200] if stderr else "unknown",
                 }
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
                 await proc.wait()
@@ -734,16 +735,20 @@ async def run_whisper_in_subprocess(
                 pass
             logger.warning("[ADVERSARY-001] Whisper subprocess timeout after %.1fs", timeout_s)
             return {
-                'text': '', 'language': None, 'duration_s': 0.0,
-                'confidence': 0.0,
-                'error': f'timeout after {timeout_s}s',
+                "text": "",
+                "language": None,
+                "duration_s": 0.0,
+                "confidence": 0.0,
+                "error": f"timeout after {timeout_s}s",
             }
     except Exception as e:
         logger.warning("[ADVERSARY-001] Whisper subprocess error: %s", e)
         return {
-            'text': '', 'language': None, 'duration_s': 0.0,
-            'confidence': 0.0,
-            'error': str(e),
+            "text": "",
+            "language": None,
+            "duration_s": 0.0,
+            "confidence": 0.0,
+            "error": str(e),
         }
     finally:
         try:
@@ -757,25 +762,27 @@ async def run_whisper_in_subprocess(
                 pass
 
     return {
-        'text': '', 'language': None, 'duration_s': 0.0,
-        'confidence': 0.0,
-        'error': 'unknown',
+        "text": "",
+        "language": None,
+        "duration_s": 0.0,
+        "confidence": 0.0,
+        "error": "unknown",
     }
 
 
-# ─── MediaSandboxCoordinator ──────────────────────────────────────────────────
-
 class SandboxTier(Enum):
     """Which isolation tier to use."""
-    NONE = auto()       # No isolation (trusted source only)
-    SEATBELT = auto()   # Tier-A: kernel sandbox for known formats
-    SUBPROCESS = auto() # Tier-B: subprocess + rlimit + optional chroot
-    WASM = auto()       # Tier-C: WASM sandbox for format parsers
+
+    NONE = auto()  # No isolation (trusted source only)
+    SEATBELT = auto()  # Tier-A: kernel sandbox for known formats
+    SUBPROCESS = auto()  # Tier-B: subprocess + rlimit + optional chroot
+    WASM = auto()  # Tier-C: WASM sandbox for format parsers
 
 
 @dataclass(frozen=True, slots=True)
 class SandboxResult:
     """Result from sandboxed execution."""
+
     success: bool
     tier: SandboxTier
     stdout: bytes = b""
@@ -789,10 +796,11 @@ class SandboxResult:
 class SandboxStats(Struct, frozen=True, kw_only=True):
     """
     Unified statistics for sandbox operations.
-    
+
     ADVERSARY-001: Extended with whisper-specific fields.
     For adapter-specific stats, see whisper_sandbox_adapter.SandboxStats.
     """
+
     total: int = 0
     seatbelt: int = 0
     subprocess: int = 0
@@ -808,10 +816,11 @@ class SandboxStats(Struct, frozen=True, kw_only=True):
 class WhisperTranscriptionResult:
     """
     ADVERSARY-001: Unified result from sandboxed whisper transcription.
-    
+
     Uses dataclass with kw_only=True for consistent keyword-argument construction
     matching the msgspec.Struct style used elsewhere in the module.
     """
+
     text: str = ""
     language: str | None = None
     duration_s: float = 0.0
@@ -841,19 +850,19 @@ class MediaSandboxCoordinator:
     """
 
     __slots__ = (
-        '_enabled',
-        '_allow_fallback',
-        '_seatbelt_available',
-        '_wasm_available',
-        '_stats',
-        '_whisper_stats',
+        "_enabled",
+        "_allow_fallback",
+        "_seatbelt_available",
+        "_wasm_available",
+        "_stats",
+        "_whisper_stats",
     )
 
     def __init__(
         self,
         enabled: bool = SANDBOX_ENABLED,
         allow_fallback: bool = SANDBOX_ALLOW_FALLBACK,
-    ):
+    ) -> None:
         self._enabled = enabled
         self._allow_fallback = allow_fallback
         self._seatbelt_available = _detect_sandbox_exec()
@@ -875,10 +884,12 @@ class MediaSandboxCoordinator:
         }
 
         logger.info(
-            "[SANDBOX] MediaSandboxCoordinator init: enabled=%s, "
-            "seatbelt=%s, wasm=%s, fallback=%s",
-            enabled, self._seatbelt_available, self._wasm_available, allow_fallback,
-    )
+            "[SANDBOX] MediaSandboxCoordinator init: enabled=%s, seatbelt=%s, wasm=%s, fallback=%s",
+            enabled,
+            self._seatbelt_available,
+            self._wasm_available,
+            allow_fallback,
+        )
 
     @property
     def stats(self) -> SandboxStats:
@@ -893,7 +904,7 @@ class MediaSandboxCoordinator:
             errors=self._stats["errors"],
             whisper_sandboxed=self._whisper_stats["sandboxed"],
             whisper_fallback=self._whisper_stats["fallback"],
-    )
+        )
 
     @property
     def is_sandboxed(self) -> bool:
@@ -904,7 +915,7 @@ class MediaSandboxCoordinator:
     async def run_whisper_transcription(
         self,
         audio_path: str | Path,
-        model_size: Literal["tiny", "base"] = "tiny",
+        model_size: Literal[tiny, base] = "tiny",
         language: str | None = None,
         timeout_s: float = 120.0,
     ) -> WhisperTranscriptionResult:
@@ -929,6 +940,7 @@ class MediaSandboxCoordinator:
             WhisperTranscriptionResult with transcription or error details
         """
         import time
+
         start = time.monotonic()
         audio_path_str = str(audio_path)
 
@@ -936,65 +948,64 @@ class MediaSandboxCoordinator:
         risk = profile_file_risk(audio_path_str, source="user")
         logger.debug(
             "[SANDBOX] Whisper risk: path=%s risk=%s entropy=%.2f",
-            Path(audio_path).name, risk.risk_level.name, risk.entropy_bits_per_byte,
-    )
+            Path(audio_path).name,
+            risk.risk_level.name,
+            risk.entropy_bits_per_byte,
+        )
 
-        # Step 1: Try sandboxed subprocess execution (Tier-B)
         sandboxed_result = await run_whisper_in_subprocess(
             audio_path=audio_path_str,
             model_size=model_size,
             language=language,
             timeout_s=timeout_s,
-    )
+        )
 
-        if sandboxed_result and not sandboxed_result.get('error'):
+        if sandboxed_result and not sandboxed_result.get("error"):
             elapsed_ms = (time.monotonic() - start) * 1000
             self._whisper_stats["sandboxed"] += 1
             self._stats["total"] += 1
             self._stats["seatbelt"] += 1
             logger.info(
-                "[ADVERSARY-001] Whisper sandboxed transcription: path=%s "
-                "elapsed=%.1fms text_len=%d",
-                Path(audio_path).name, elapsed_ms,
-                len(sandboxed_result.get('text', '')),
-    )
+                "[ADVERSARY-001] Whisper sandboxed transcription: path=%s elapsed=%.1fms text_len=%d",
+                Path(audio_path).name,
+                elapsed_ms,
+                len(sandboxed_result.get("text", "")),
+            )
             return WhisperTranscriptionResult(
-                text=sandboxed_result.get('text', ''),
-                language=sandboxed_result.get('language'),
-                duration_s=sandboxed_result.get('duration_s', 0.0),
-                confidence=sandboxed_result.get('confidence', 0.0),
+                text=sandboxed_result.get("text", ""),
+                language=sandboxed_result.get("language"),
+                duration_s=sandboxed_result.get("duration_s", 0.0),
+                confidence=sandboxed_result.get("confidence", 0.0),
                 sandboxed=True,
                 seatbelt_used=self._seatbelt_available,
                 error=None,
-                segments=sandboxed_result.get('segments', []),
-    )
+                segments=sandboxed_result.get("segments", []),
+            )
 
-        # Step 2: Fallback to direct engine execution
-        if sandboxed_result and sandboxed_result.get('error'):
+        if sandboxed_result and sandboxed_result.get("error"):
             logger.warning(
                 "[ADVERSARY-001] Whisper subprocess failed: %s — trying direct engine",
-                sandboxed_result.get('error'),
-    )
+                sandboxed_result.get("error"),
+            )
 
         direct_result = await self._run_whisper_direct_engine(
             audio_path=audio_path_str,
             model_size=model_size,
             language=language,
             timeout_s=timeout_s,
-    )
+        )
 
         if direct_result.text:
             self._whisper_stats["fallback"] += 1
             return direct_result
 
-        # Step 3: Complete failure
         self._whisper_stats["errors"] += 1
         self._stats["errors"] += 1
-        error_msg = sandboxed_result.get('error') if sandboxed_result else 'unknown'
+        error_msg = sandboxed_result.get("error") if sandboxed_result else "unknown"
         logger.error(
             "[ADVERSARY-001] Whisper transcription failed: %s",
             error_msg,
-    )
+        )
         return WhisperTranscriptionResult(
             text="",
             language=None,
@@ -1003,12 +1014,12 @@ class MediaSandboxCoordinator:
             sandboxed=False,
             seatbelt_used=False,
             error=error_msg,
-    )
+        )
 
     async def _run_whisper_direct_engine(
         self,
         audio_path: str,
-        model_size: Literal["tiny", "base"],
+        model_size: Literal[tiny, base],
         language: str | None,
         timeout_s: float,
     ) -> WhisperTranscriptionResult:
@@ -1020,13 +1031,13 @@ class MediaSandboxCoordinator:
         Only used when subprocess sandboxing fails. Logs security warning.
         """
         import time
+
         start = time.monotonic()
 
         logger.warning(
-            "[ADVERSARY-001 SECURITY] Whisper running WITHOUT sandbox isolation. "
-            "Audio: %s",
+            "[ADVERSARY-001 SECURITY] Whisper running WITHOUT sandbox isolation. Audio: %s",
             Path(audio_path).name,
-    )
+        )
 
         # ── Priority 1: Rust whisper (CoreML/ANE acceleration) ──────────────────
         # SILICON-02: Rust whisper.cpp with dedicated ANE memory, M1 8GB safe
@@ -1043,15 +1054,16 @@ class MediaSandboxCoordinator:
                         language=language,
                     ),
                     timeout=timeout_s,
-    )
+                )
 
                 if raw and raw.get("text"):
                     elapsed_ms = (time.monotonic() - start) * 1000
                     logger.info(
-                        "[ADVERSARY-001] Rust whisper direct: path=%s "
-                        "elapsed=%.1fms coreml=%s",
-                        Path(audio_path).name, elapsed_ms, raw.get("coreml_used", False),
-    )
+                        "[ADVERSARY-001] Rust whisper direct: path=%s elapsed=%.1fms coreml=%s",
+                        Path(audio_path).name,
+                        elapsed_ms,
+                        raw.get("coreml_used", False),
+                    )
                     return WhisperTranscriptionResult(
                         text=raw.get("text", ""),
                         language=raw.get("language", language or "en"),
@@ -1068,14 +1080,14 @@ class MediaSandboxCoordinator:
                             }
                             for s in raw.get("segments", [])
                         ],
-    )
+                    )
         except ImportError:
             logger.debug("[ADVERSARY-001] Rust whisper not available")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return WhisperTranscriptionResult(
                 text="",
                 error=f"timeout after {timeout_s}s",
-    )
+            )
         except Exception as exc:
             logger.debug("[ADVERSARY-001] Rust whisper error: %s", exc)
 
@@ -1092,21 +1104,21 @@ class MediaSandboxCoordinator:
                     language=language,
                 ),
                 timeout=timeout_s,
-    )
+            )
 
             if raw is None or not raw.text:
                 return WhisperTranscriptionResult(
                     text="",
                     error="engine returned empty result",
-    )
+                )
 
             elapsed_ms = (time.monotonic() - start) * 1000
-            coreml_note = " +CoreML/ANE" if raw.coreml_used else ""
             logger.info(
-                "[ADVERSARY-001] Whisper direct engine: path=%s "
-                "elapsed=%.1fms coreml=%s",
-                Path(audio_path).name, elapsed_ms, raw.coreml_used,
-    )
+                "[ADVERSARY-001] Whisper direct engine: path=%s elapsed=%.1fms coreml=%s",
+                Path(audio_path).name,
+                elapsed_ms,
+                raw.coreml_used,
+            )
 
             return WhisperTranscriptionResult(
                 text=raw.text,
@@ -1124,18 +1136,18 @@ class MediaSandboxCoordinator:
                     }
                     for s in raw.segments
                 ],
-    )
+            )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return WhisperTranscriptionResult(
                 text="",
                 error=f"timeout after {timeout_s}s",
-    )
+            )
         except Exception as exc:
             return WhisperTranscriptionResult(
                 text="",
                 error=str(exc),
-    )
+            )
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -1158,6 +1170,7 @@ class MediaSandboxCoordinator:
         """
         self._stats["total"] += 1
         import time
+
         start = time.monotonic()
 
         if not self._enabled:
@@ -1166,14 +1179,16 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-    )
+            )
 
         risk = profile_file_risk(file_path, source)
         logger.debug(
             "[SANDBOX] PDF risk: level=%s, entropy=%.2f, type=%s, reasons=%s",
-            risk.risk_level.name, risk.entropy_bits_per_byte, risk.file_type,
+            risk.risk_level.name,
+            risk.entropy_bits_per_byte,
+            risk.file_type,
             risk.reasons,
-    )
+        )
 
         if risk.risk_level == FileRiskLevel.TRUSTED and source == "clearnet":
             # Low-risk PDF: still apply seatbelt
@@ -1185,7 +1200,7 @@ class MediaSandboxCoordinator:
             tier=SandboxTier.SEATBELT,
             timeout_s=timeout_s,
             elapsed_start=start,
-    )
+        )
 
     async def run_audio_analysis(
         self,
@@ -1206,6 +1221,7 @@ class MediaSandboxCoordinator:
         """
         self._stats["total"] += 1
         import time
+
         start = time.monotonic()
 
         if not self._enabled:
@@ -1214,9 +1230,9 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-    )
+            )
 
-        risk = profile_file_risk(file_path, source)
+        profile_file_risk(file_path, source)
 
         return await self._run_with_sandbox(
             file_path=file_path,
@@ -1224,7 +1240,7 @@ class MediaSandboxCoordinator:
             tier=SandboxTier.SEATBELT,
             timeout_s=timeout_s,
             elapsed_start=start,
-    )
+        )
 
     async def run_image_forensics(
         self,
@@ -1245,6 +1261,7 @@ class MediaSandboxCoordinator:
         """
         self._stats["total"] += 1
         import time
+
         start = time.monotonic()
 
         if not self._enabled:
@@ -1253,7 +1270,7 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-    )
+            )
 
         risk = profile_file_risk(file_path, source)
 
@@ -1268,7 +1285,7 @@ class MediaSandboxCoordinator:
             tier=tier,
             timeout_s=timeout_s,
             elapsed_start=start,
-    )
+        )
 
     async def run_unknown_binary(
         self,
@@ -1289,6 +1306,7 @@ class MediaSandboxCoordinator:
         """
         self._stats["total"] += 1
         import time
+
         start = time.monotonic()
 
         if not self._enabled:
@@ -1297,16 +1315,16 @@ class MediaSandboxCoordinator:
                 tier=SandboxTier.NONE,
                 sandboxed=False,
                 elapsed_ms=0.0,
-    )
+            )
 
-        risk = profile_file_risk(file_path, source)
+        profile_file_risk(file_path, source)
 
         # Always use subprocess isolation for unknown/untrusted binaries
         return await self._run_subprocess_isolation(
             file_path=file_path,
             timeout_s=timeout_s,
             elapsed_start=start,
-    )
+        )
 
     # ── Internal ────────────────────────────────────────────────────────────
 
@@ -1326,6 +1344,7 @@ class MediaSandboxCoordinator:
         profile_builder and tier. Actual binary execution is done by callers.
         """
         import time
+
         file_path_str = str(file_path)
         home = os.fspath(Path.home())
 
@@ -1334,7 +1353,7 @@ class MediaSandboxCoordinator:
                 file_path=file_path,
                 timeout_s=timeout_s,
                 elapsed_start=elapsed_start,
-    )
+            )
 
         profile = profile_builder(home, file_path_str)
         profile_name = f"media_{Path(file_path).suffix.lstrip('.')}_{os.getpid()}"
@@ -1351,7 +1370,7 @@ class MediaSandboxCoordinator:
                 tier=tier,
                 elapsed_ms=elapsed_ms,
                 sandboxed=True,
-    )
+            )
         except Exception as e:
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
             logger.warning("[SANDBOX] Seatbelt error: %s", e)
@@ -1361,14 +1380,14 @@ class MediaSandboxCoordinator:
                     file_path=file_path,
                     timeout_s=timeout_s,
                     elapsed_start=elapsed_start,
-    )
+                )
             return SandboxResult(
                 success=False,
                 tier=tier,
                 elapsed_ms=elapsed_ms,
                 error=str(e),
                 sandboxed=True,
-    )
+            )
         finally:
             try:
                 profile_path.unlink(missing_ok=True)
@@ -1409,6 +1428,7 @@ class MediaSandboxCoordinator:
         Fail-soft: ALWAYS returns a SandboxResult, never raises.
         """
         import time
+
         if elapsed_start == 0.0:
             elapsed_start = time.monotonic()
 
@@ -1423,24 +1443,28 @@ class MediaSandboxCoordinator:
             logger.debug(
                 "[MACH-REMAP] cannot stat %s — tempfile path",
                 file_path,
-    )
+            )
 
-        # Build safe environment
         safe_env = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if not any(
                 prefix in k
                 for prefix in (
-                    "API_", "KEY_", "TOKEN", "SECRET",
-                    "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE",
-    )
+                    "API_",
+                    "KEY_",
+                    "TOKEN",
+                    "SECRET",
+                    "HLEDAC_",
+                    "SHODAN",
+                    "CENSYS",
+                    "GREYNOISE",
+                )
             )
         }
 
-        # Build analysis script
         analysis_script = f"""
 import sys, os
-from _core import aclose
 for k in list(os.environ):
     if any(p in k for p in ('API','KEY','TOKEN','SECRET','HLEDAC')):
         del os.environ[k]
@@ -1454,11 +1478,7 @@ except Exception as e:
 
         # ── Strategy 1: vm_remap_and_exec (zero-copy) ─────────────────────
         remap_result = None
-        if (
-            file_size is not None
-            and file_size >= SANDBOX_MACH_REMAP_MIN_SIZE
-            and sys.platform == "darwin"
-        ):
+        if file_size is not None and file_size >= SANDBOX_MACH_REMAP_MIN_SIZE and sys.platform == "darwin":
             bridge = _get_mach_remap_bridge()
             if bridge is not None:
                 try:
@@ -1466,21 +1486,20 @@ except Exception as e:
                         bridge.remap_for_sandbox,
                         str(file_path),
                         file_size,
-    )
+                    )
                     if remap_result is not None:
                         logger.info(
-                            "[MACH-REMAP] zero-copy remap: pid=%d addr=0x%x "
-                            "size=%d path=%s",
+                            "[MACH-REMAP] zero-copy remap: pid=%d addr=0x%x size=%d path=%s",
                             remap_result.child_pid,
                             remap_result.mapped_addr,
                             remap_result.mapped_size,
                             file_path.name,
-    )
+                        )
                 except Exception as exc:
                     logger.debug(
                         "[MACH-REMAP] remap_for_sandbox raised: %s — tempfile fallback",
                         exc,
-    )
+                    )
                     remap_result = None
 
         # ── Execute (Path A: remap | Path B: tempfile) ────────────────────
@@ -1495,7 +1514,7 @@ except Exception as e:
                     timeout_s,
                     elapsed_start,
                     analysis_script,
-    )
+                )
                 elapsed_ms = (time.monotonic() - elapsed_start) * 1000
                 self._stats["zero_copy"] += 1
                 return SandboxResult(
@@ -1506,31 +1525,33 @@ except Exception as e:
                     returncode=returncode,
                     elapsed_ms=elapsed_ms,
                     sandboxed=True,
-    )
+                )
             else:
                 # ── Path B: Tempfile subprocess (existing fallback) ─────────────
                 tmp = tempfile.NamedTemporaryFile(
                     suffix=file_path.suffix,
-                    mode='wb',
+                    mode="wb",
                     delete=False,
                     dir=tempfile.gettempdir(),
-    )
+                )
                 tmp.write(file_path.read_bytes())
                 tmp.close()
                 temp_path = Path(tmp.name)
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        sys.executable, "-c", analysis_script,
+                        sys.executable,
+                        "-c",
+                        analysis_script,
                         stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         env=safe_env,
-    )
+                    )
                     # D5 FIX: safe_wait_for for correct TaskGroup composition
                     stdout, stderr = await safe_wait_for(
                         proc.communicate(),
                         timeout=timeout_s,
-    )
+                    )
                     elapsed_ms = (time.monotonic() - elapsed_start) * 1000
                     self._stats["subprocess"] += 1
                     return SandboxResult(
@@ -1541,18 +1562,18 @@ except Exception as e:
                         returncode=proc.returncode or 0,
                         elapsed_ms=elapsed_ms,
                         sandboxed=True,
-    )
+                    )
                 finally:
                     try:
                         temp_path.unlink(missing_ok=True)
                     except OSError:  # noqa: BLE001
                         pass
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "[SANDBOX] subprocess isolation timeout after %.1fs",
                 timeout_s,
-    )
+            )
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
             self._stats["errors"] += 1
             return SandboxResult(
@@ -1561,7 +1582,7 @@ except Exception as e:
                 elapsed_ms=elapsed_ms,
                 error="timeout",
                 sandboxed=True,
-    )
+            )
         except Exception as exc:
             logger.warning("[SANDBOX] subprocess isolation error: %s", exc)
             elapsed_ms = (time.monotonic() - elapsed_start) * 1000
@@ -1572,7 +1593,7 @@ except Exception as e:
                 elapsed_ms=elapsed_ms,
                 error=str(exc),
                 sandboxed=True,
-    )
+            )
 
     async def _collect_mach_child_output(
         self,
@@ -1597,11 +1618,10 @@ except Exception as e:
 
         Returns: (stdout_bytes, returncode)
         """
-        import time
-        import os as _os
         import asyncio as _asyncio
+        import os as _os
+        import time
 
-        # Write analysis script BEFORE child tries to read it
         if analysis_script is not None:
             script_path = f"/tmp/hledac_mach_script_{child_pid}"
             sfd = _os.open(script_path, _os.O_CREAT | _os.O_WRONLY | _os.O_TRUNC, 0o600)
@@ -1618,15 +1638,14 @@ except Exception as e:
         # Poll for handshake file (written before exec)
         while time.monotonic() - start < 5.0:
             try:
-                data = _os.read(
-                    _os.open(handshake_path, _os.O_RDONLY), 4
-    )
+                data = _os.read(_os.open(handshake_path, _os.O_RDONLY), 4)
                 if data:
                     import struct as _struct
+
                     real_pid = _struct.unpack("<I", data)[0]
                     _os.unlink(handshake_path)
                     break
-            except (FileNotFoundError, OSError):  # noqa: BLE001
+            except FileNotFoundError, OSError:  # noqa: BLE001
                 pass
             await _asyncio.sleep(0.01)
 
@@ -1639,9 +1658,7 @@ except Exception as e:
         while time.monotonic() - start2 < timeout_s:
             # Check if child exited
             try:
-                wpid, status = await _asyncio.to_thread(
-                    _os.wait4, real_pid, _os.WNOHANG
-    )
+                wpid, status = await _asyncio.to_thread(_os.wait4, real_pid, _os.WNOHANG)
                 if wpid != 0:
                     rc = _os.WEXITSTATUS(status) if _os.WIFEXITED(status) else -1
                     # Read result file
@@ -1650,7 +1667,7 @@ except Exception as e:
                         result = _os.read(fd, 65536)
                         _os.close(fd)
                         _os.unlink(result_path)
-                    except (FileNotFoundError, OSError):
+                    except FileNotFoundError, OSError:
                         result = b""
                     return result, rc
             except ChildProcessError:
@@ -1660,7 +1677,7 @@ except Exception as e:
         # Timeout — kill child
         try:
             await _asyncio.to_thread(_os.kill, real_pid, 9)
-        except (ProcessLookupError, OSError):  # noqa: BLE001
+        except ProcessLookupError, OSError:  # noqa: BLE001
             pass
         try:
             _os.unlink(result_path)
@@ -1697,9 +1714,6 @@ except Exception as e:
         else:  # UNKNOWN
             return SandboxTier.SUBPROCESS
 
-
-# ─── PyMuPDF Subprocess Analysis ───────────────────────────────────────────────
-# ADVERSARY-001: All PyMuPDF calls run in subprocess with Seatbelt containment.
 
 # Resource limits (M1 8GB safe)
 _PYMUPDF_MAX_DOCUMENT_SIZE = 100 * 1024 * 1024
@@ -1917,12 +1931,10 @@ def _build_pymupdf_analysis_script(temp_file_path: str) -> str:
         "doc.close()",
         "json.dump(result, sys.stdout)",
     ]
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
-SANDBOX_MACH_REMAP_MIN_SIZE = int(
-    os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
-    )
+SANDBOX_MACH_REMAP_MIN_SIZE = int(os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024)))
 
 
 async def run_pymupdf_sandboxed(
@@ -1932,10 +1944,12 @@ async def run_pymupdf_sandboxed(
 ) -> dict[str, Any]:
     """ADVERSARY-001: PyMuPDF in sandboxed subprocess."""
     file_path = Path(file_path)
-    
+
     logger.info(
         "[PYMUPDF-SANDBOX] Starting: path=%s source=%s timeout=%.1fs",
-        file_path.name, source, timeout_s,
+        file_path.name,
+        source,
+        timeout_s,
     )
 
     file_size = None
@@ -1945,11 +1959,11 @@ async def run_pymupdf_sandboxed(
         pass
 
     safe_env = {
-        k: v for k, v in os.environ.items()
+        k: v
+        for k, v in os.environ.items()
         if not any(
-            prefix in k
-            for prefix in ("API_", "KEY_", "TOKEN", "SECRET", "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE")
-    )
+            prefix in k for prefix in ("API_", "KEY_", "TOKEN", "SECRET", "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE")
+        )
     }
 
     home = os.fspath(Path.home())
@@ -1963,15 +1977,18 @@ async def run_pymupdf_sandboxed(
             if bridge:
                 try:
                     remap_result = await asyncio.to_thread(
-                        bridge.remap_for_sandbox, str(file_path), file_size,
-    )
+                        bridge.remap_for_sandbox,
+                        str(file_path),
+                        file_size,
+                    )
                     if remap_result:
-                        logger.info("[PYMUPDF-SANDBOX] MachRemap: pid=%d size=%d",
-                            remap_result.child_pid, file_size)
+                        logger.info("[PYMUPDF-SANDBOX] MachRemap: pid=%d size=%d", remap_result.child_pid, file_size)
                         script = _build_pymupdf_analysis_script(str(file_path))
                         stdout_data, returncode = await _collect_pymupdf_mach_child(
-                            remap_result.child_pid, timeout_s, script,
-    )
+                            remap_result.child_pid,
+                            timeout_s,
+                            script,
+                        )
                         if returncode == 0 and stdout_data:
                             try:
                                 return json.loads(stdout_data.decode("utf-8", errors="replace"))
@@ -1989,9 +2006,12 @@ async def run_pymupdf_sandboxed(
             script = _build_pymupdf_analysis_script(str(temp_path))
             cmd = ["sandbox-exec", "-p", str(profile_path), sys.executable, "-c", script]
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=safe_env,
-    )
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=safe_env,
+            )
             # D5 FIX: safe_wait_for for correct TaskGroup composition
             stdout, stderr = await safe_wait_for(proc.communicate(), timeout=timeout_s)
 
@@ -2008,7 +2028,7 @@ async def run_pymupdf_sandboxed(
             except OSError:  # noqa: BLE001
                 pass
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("[PYMUPDF-SANDBOX] Timeout after %.1fs", timeout_s)
         return _error_result("timeout")
     except Exception as exc:
@@ -2039,6 +2059,7 @@ def _error_result(error_msg: str) -> dict[str, Any]:
 
 async def _collect_pymupdf_mach_child(child_pid: int, timeout_s: float, script: str) -> tuple[bytes, int]:
     import time
+
     script_path = f"/tmp/hledac_mach_script_{child_pid}"
     sfd = os.open(script_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     os.write(sfd, script.encode("utf-8"))
@@ -2050,12 +2071,10 @@ async def _collect_pymupdf_mach_child(child_pid: int, timeout_s: float, script: 
             result_data = os.read(os.open(result_path, os.O_RDONLY), 1024 * 1024)
             os.unlink(result_path)
             return result_data, 0
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError, OSError:
             await asyncio.sleep(0.01)
     return b'{"error": "timeout"}', -1
 
-
-# ─── Module-level singleton ───────────────────────────────────────────────────
 
 _coordinator: MediaSandboxCoordinator | None = None
 

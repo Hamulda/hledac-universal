@@ -12,13 +12,14 @@ NOTE: This backend is NOT loaded by default. It is only instantiated
 when HLEDAC_INFERENCE_BACKEND=mlxcel is set, or when explicitly
 passed in InferenceRequest(backend=InferenceBackend.MLXCEL).
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal._core.inference_coordinator import InferenceRequest, InferenceResponse, Token
@@ -32,7 +33,6 @@ else:
         InferenceRequest = Any  # type: ignore[assignment,misc]
         InferenceResponse = Any  # type: ignore[assignment,misc]
         Token = Any  # type: ignore[assignment,misc]
-from _core._util import aclose
 
 from hledac.universal._core.inference_coordinator import InferenceBackend, InferenceError
 
@@ -83,14 +83,14 @@ class MlxcelBackend:
                 system_msg=request.system_msg,
                 thinking=request.thinking,
                 adapter_path=request.adapter_path,
-    )
+            )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLXCEL,
-    )
+            )
         except Exception as exc:
             raise InferenceError(
                 f"mlxcel generate failed: {exc}",

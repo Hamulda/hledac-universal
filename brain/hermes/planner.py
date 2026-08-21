@@ -11,12 +11,13 @@ Handles:
 
 M1 8GB: Chunked execution to respect memory constraints.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import msgspec
 
@@ -25,14 +26,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Chunk size for batch execution
 BRIDGE_CHUNK_SIZE = 4
 
 
 class PlannerRuntimeResult(msgspec.Struct, frozen=True, kw_only=True):
     """Result of a planner runtime execution."""
-    
+
     task_id: str
     executed: bool
     skipped_panic: bool
@@ -43,51 +43,51 @@ class PlannerRuntimeResult(msgspec.Struct, frozen=True, kw_only=True):
 
 class GenericResult(msgspec.Struct, kw_only=True):
     """Generic structured result for planner requests."""
-    
+
     result: str = ""
     confidence: float = 0.5
 
 
 class FetchResult(GenericResult):
     """Result for fetch operations."""
-    
+
     url: str = ""
 
 
 class DeepReadResult(GenericResult):
     """Result for deep read operations."""
-    
+
     url: str = ""
     depth: int = 1
 
 
 class AnalyseResult(GenericResult):
     """Result for analysis operations."""
-    
+
     source: str = ""
 
 
 class SynthesizeResult(GenericResult):
     """Result for synthesis operations."""
-    
+
     sources: list[str] = msgspec.field(default_factory=list)
 
 
 class BranchResult(GenericResult):
     """Result for branching operations."""
-    
+
     branches: int = 1
 
 
 class ExplainResult(GenericResult):
     """Result for explanation operations."""
-    
+
     topic: str = ""
 
 
 class HypothesisResult(GenericResult):
     """Result for hypothesis generation."""
-    
+
     hypothesis: str = ""
 
 
@@ -111,18 +111,17 @@ async def execute_single_planner_request(
 ) -> PlannerRuntimeResult:
     """
     Execute a single planner request via generate_structured.
-    
+
     Args:
         engine: DeepHermes3Engine instance
         req: PlannerRuntimeRequest
         response_models: Optional model registry
-        
+
     Returns:
         PlannerRuntimeResult
     """
     response_models = response_models or MODEL_REGISTRY
-    
-    # Check panic deprioritization
+
     if getattr(req, "is_panic_deprioritized", False):
         return PlannerRuntimeResult(
             task_id=req.task_id,
@@ -131,15 +130,14 @@ async def execute_single_planner_request(
             hermes_output=None,
             error=None,
         )
-    
-    # Get model class
+
     model_cls = response_models.get(
         getattr(req, "response_model_name", "GenericResult"),
         GenericResult,
     )
-    
+
     t0 = time.monotonic_ns()
-    
+
     try:
         result = await engine.generate_structured(
             prompt=req.prompt,
@@ -148,13 +146,11 @@ async def execute_single_planner_request(
             system_msg="You are a helpful research assistant.",
             max_tokens=1024,
         )
-        
+
         elapsed_s = (time.monotonic_ns() - t0) / 1_000_000_000.0
-        
-        output_text = (
-            result.result if hasattr(result, "result") else str(result)
-        )
-        
+
+        output_text = result.result if hasattr(result, "result") else str(result)
+
         return PlannerRuntimeResult(
             task_id=req.task_id,
             executed=True,
@@ -163,10 +159,10 @@ async def execute_single_planner_request(
             error=None,
             elapsed_s=elapsed_s,
         )
-        
+
     except Exception as exc:
         elapsed_s = (time.monotonic_ns() - t0) / 1_000_000_000.0
-        
+
         return PlannerRuntimeResult(
             task_id=req.task_id,
             executed=False,
@@ -184,37 +180,31 @@ async def execute_planner_requests(
 ) -> list[PlannerRuntimeResult]:
     """
     Execute multiple planner requests in chunks.
-    
+
     Args:
         engine: DeepHermes3Engine instance
         requests: List of PlannerRuntimeRequest
         response_models: Optional model registry
-        
+
     Returns:
         List of PlannerRuntimeResult
     """
     from hledac.universal.utils.asyncx import parallel
-    
+
     response_models = response_models or MODEL_REGISTRY
     results: list[PlannerRuntimeResult] = []
-    
-    # Process in chunks
+
     for i in range(0, len(requests), BRIDGE_CHUNK_SIZE):
         chunk = requests[i : i + BRIDGE_CHUNK_SIZE]
-        
-        # Execute chunk in parallel
-        chunk_tasks = [
-            execute_single_planner_request(engine, req, response_models)
-            for req in chunk
-        ]
-        
+
+        chunk_tasks = [execute_single_planner_request(engine, req, response_models) for req in chunk]
+
         chunk_results = await parallel(
             chunk_tasks,
             policy="log",
             ctx="hermes:planner",
         )
-        
-        # Handle results
+
         for req, result in zip(chunk, chunk_results, strict=False):
             if isinstance(result, Exception):
                 results.append(
@@ -228,11 +218,11 @@ async def execute_planner_requests(
                 )
             else:
                 results.append(result)
-        
+
         # Yield to event loop between chunks
         if i + BRIDGE_CHUNK_SIZE < len(requests):
             await asyncio.sleep(0)
-    
+
     return results
 
 
@@ -242,16 +232,16 @@ def create_result_from_output(
 ) -> GenericResult:
     """
     Create structured result from text output.
-    
+
     Args:
         output: Text output
         result_type: Result type name
-        
+
     Returns:
         Structured result instance
     """
     model_cls = MODEL_REGISTRY.get(result_type, GenericResult)
-    
+
     try:
         return model_cls(result=output)
     except Exception:

@@ -3,7 +3,6 @@ Domain Protocol & Generic Delegation Framework (F285)
 
 Eliminates boilerplate duplication between _RustXxxDomain / _PythonXxxDomain pairs
 
-
 using a metaclass that generates delegation methods at class definition time.
 
 Performance (M1): Methods are generated ONCE at class definition (not per-call
@@ -39,11 +38,8 @@ Usage:
                            "classify_url", "batch_classify", "extract_host")
 """
 
-
 import importlib
-import types
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
-from _core._util import aclose
+from typing import Any, TypeVar
 
 __all__ = [
     "DelegatingDomain",
@@ -56,17 +52,15 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Markers / Targets
-# ---------------------------------------------------------------------------
-
 class _RustMarker:
     """Sentinel: method calls self._ext.<ext_name>(...)"""
+
     __slots__ = ()
 
 
 class _PythonMarker:
     """Sentinel: method calls _python_<ext_name>(...)"""
+
     __slots__ = ()
 
 
@@ -74,10 +68,6 @@ class _PythonMarker:
 RustTarget: Any = _RustMarker()
 PythonTarget: Any = _PythonMarker()
 
-
-# ---------------------------------------------------------------------------
-# Method Specification
-# ---------------------------------------------------------------------------
 
 class MethodSpec:
     """
@@ -91,6 +81,7 @@ class MethodSpec:
         no_except: if True, skips try/except overhead on hot-path Rust calls.
                    Use for batch operations where exceptions are never expected.
     """
+
     __slots__ = ("name", "ext_name", "rust_conv", "no_except")
 
     def __init__(
@@ -118,10 +109,6 @@ def make_spec_with_conv(
     """Build MethodSpec list from (name, ext_name, rust_conv) tuples."""
     return [MethodSpec(n, e, c, no_except=no_except) for n, e, c in specs]
 
-
-# ---------------------------------------------------------------------------
-# Metaclass: generates delegation methods at class definition time
-# ---------------------------------------------------------------------------
 
 _RUST_BACKEND_MODULE: str = "core.rust_backend"
 
@@ -187,12 +174,15 @@ def _make_rust_delegation(ms: MethodSpec) -> Any:
     if no_except:
         # Hot-path: no exception wrapper — 0μs overhead per call
         if conv:
+
             def method(self, *args: Any, **kwargs: Any) -> Any:
                 result = getattr(self._ext, ext_name)(*args, **kwargs)
                 return _convert(result, conv)
         else:
+
             def method(self, *args: Any, **kwargs: Any) -> Any:
                 return getattr(self._ext, ext_name)(*args, **kwargs)
+
         method.__name__ = ms.name
         return method
     elif conv:
@@ -227,13 +217,10 @@ def _make_python_delegation(ms: MethodSpec) -> Any:
     func_name = f"_python_{ms.ext_name}"
 
     def method(self, *args: Any, **kwargs: Any) -> Any:
-        # Import lazily — avoids circular import at module load time
         mod = importlib.import_module(_RUST_BACKEND_MODULE)
         func = getattr(mod, func_name, None)
         if func is None:
-            raise AttributeError(
-                f"Python fallback function {func_name!r} not found in {_RUST_BACKEND_MODULE}"
-    )
+            raise AttributeError(f"Python fallback function {func_name!r} not found in {_RUST_BACKEND_MODULE}")
         return func(*args, **kwargs)
 
     method.__name__ = ms.name
@@ -254,10 +241,6 @@ def _convert(value: Any, conv: str) -> Any:
         return bytes(value) if value is not None else b""
     return value
 
-
-# ---------------------------------------------------------------------------
-# Base class — shared init and type conversion
-# ---------------------------------------------------------------------------
 
 T = TypeVar("T", default=object)
 

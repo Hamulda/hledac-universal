@@ -40,28 +40,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from typing import TYPE_CHECKING
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
 
 if TYPE_CHECKING:
-    from typing import Any
 
 logger = logging.getLogger(__name__)
-
-# --- Feature gate ---
-
 
 def is_enabled() -> bool:
     """Check if CAPTCHA solving is enabled via env var."""
     return FeatureFlags.get(FeatureFlag.ENABLE_CAPTCHA, default=False)
-
-
-# --- Constants ---
-
 
 # Turnstile challenge page signatures
 _TURNSTILE_CHALLENGE_PATTERNS = [
@@ -81,10 +71,6 @@ _DATADOME_PATTERNS = [
 _CHALLENGE_CONTENT_TYPES = [
     "text/html",
 ]
-
-
-# --- Challenge detection helpers ---
-
 
 def detect_turnstile_challenge(
     url: str,
@@ -119,7 +105,6 @@ def detect_turnstile_challenge(
 
     return False
 
-
 def detect_datadome_challenge(
     headers: dict[str, str],
 ) -> bool:
@@ -134,7 +119,6 @@ def detect_datadome_challenge(
                 logger.debug("[DATADOME] DataDome cookie detected")
                 return True
     return False
-
 
 def extract_clearance_token_from_headers(
     headers: dict[str, str],
@@ -170,7 +154,6 @@ def extract_clearance_token_from_headers(
 
     return cookies
 
-
 def extract_sitekey_from_html(html_content: str) -> str | None:
     """
     Extract Turnstile sitekey from challenge HTML.
@@ -198,10 +181,6 @@ def extract_sitekey_from_html(html_content: str) -> str | None:
         return match.group(1)
 
     return None
-
-
-# --- Stub solver ---
-
 
 async def solve_turnstile(
     _url: str,
@@ -242,10 +221,6 @@ async def solve_turnstile(
     )
     return None
 
-
-# --- Clearance injector ---
-
-
 async def get_clearance_for_domain(
     domain: str,
     _url: str,
@@ -267,7 +242,6 @@ async def get_clearance_for_domain(
     Returns:
         Dict of {cookie_name: cookie_value} to inject.
     """
-    # Check for clearance cookies in response headers
     clearance_cookies = extract_clearance_token_from_headers(headers)
 
     if not clearance_cookies:
@@ -297,7 +271,6 @@ async def get_clearance_for_domain(
         pass
 
     return clearance_cookies
-
 
 def inject_clearance_cookies(
     cookies: dict[str, str],

@@ -43,19 +43,22 @@ GHOST_INVARIANTS:
 - New code should prefer the forward import:
   ``from brain.hypothesis_engine.packs import SourceHint, HypothesisPack``
 """
+
 import functools
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
+from operator import attrgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
-from _core import aclose
+from compat.msgspec_gc_compat import Struct
+
+
 class SourceHint(Struct):
     """Source recommendation with quality score."""
+
     source: str
     quality: float
-    hint_type: str = 'general'
+    hint_type: str = "general"
+
 
 class HypothesisPack(Struct, frozen=True):
     """
@@ -79,11 +82,12 @@ class HypothesisPack(Struct, frozen=True):
 
     Priority order for ranking: IOC pivots > entity-pair > relationship > broad entity
     """
+
     hypotheses: list[dict[str, Any]] = field(default_factory=list)
     suggested_queries: list[dict[str, Any]] = field(default_factory=list)
     ioc_follow_ups: list[dict[str, Any]] = field(default_factory=list)
     source_hints: list[Any] = field(default_factory=list)
-    provenance: str = 'heuristic'
+    provenance: str = "heuristic"
 
     @functools.cached_property
     def signal_quality(self) -> str:
@@ -91,27 +95,29 @@ class HypothesisPack(Struct, frozen=True):
 
         Derived from pack content — no model required.
         """
-        strong_indicators = len(self.hypotheses) >= 3 and len(self.suggested_queries) >= 2 and (len(self.ioc_follow_ups) >= 1)
+        strong_indicators = (
+            len(self.hypotheses) >= 3 and len(self.suggested_queries) >= 2 and (len(self.ioc_follow_ups) >= 1)
+        )
         weak_indicators = not self.hypotheses and (not self.suggested_queries) and (not self.ioc_follow_ups)
         if strong_indicators:
-            return 'strong'
+            return "strong"
         elif weak_indicators:
-            return 'weak'
-        return 'mixed'
+            return "weak"
+        return "mixed"
 
     @functools.cached_property
     def confidence_note(self) -> str:
         """Human-readable confidence explanation for operator."""
         total = len(self.hypotheses) + len(self.suggested_queries) + len(self.ioc_follow_ups)
         if total >= 8:
-            abundance = 'rich pack'
+            abundance = "rich pack"
         elif total >= 4:
-            abundance = 'moderate pack'
+            abundance = "moderate pack"
         elif total >= 1:
-            abundance = 'thin pack'
+            abundance = "thin pack"
         else:
-            abundance = 'empty pack'
-        return f'{abundance} | provenance={self.provenance} | {len(self.source_hints)} source hints'
+            abundance = "empty pack"
+        return f"{abundance} | provenance={self.provenance} | {len(self.source_hints)} source hints"
 
     @functools.cached_property
     def what_matters_first(self) -> str:
@@ -125,7 +131,7 @@ class HypothesisPack(Struct, frozen=True):
         if self.hypotheses:
             top_h = self.hypotheses[0]
             return f"Verify: {top_h.get('hypothesis', '')[:80]}"
-        return 'No immediate action — empty hypothesis pack'
+        return "No immediate action — empty hypothesis pack"
 
     @property
     def operator_shortlist(self) -> list[dict[str, Any]]:
@@ -134,6 +140,7 @@ class HypothesisPack(Struct, frozen=True):
         Returns items: {action: query, target: rationale[:80], rationale: pivot_type}
         """
         from hledac_hypothesis._types import _to_operator_shortlist
+
         return _to_operator_shortlist(self.actionable_shortlist(max_items=3))
 
     def is_empty(self) -> bool:
@@ -144,29 +151,29 @@ class HypothesisPack(Struct, frozen=True):
         """One-line summary of pack contents."""
         parts = []
         if self.hypotheses:
-            parts.append(f'{len(self.hypotheses)} hypotheses')
+            parts.append(f"{len(self.hypotheses)} hypotheses")
         if self.suggested_queries:
             types = {}
             for q in self.suggested_queries:
-                t = q.get('type', 'unknown')
+                t = q.get("type", "unknown")
                 types[t] = types.get(t, 0) + 1
-            type_str = ', '.join((f'{v} {k}' for k, v in list(types.items())[:3]))
-            parts.append(f'{len(self.suggested_queries)} queries ({type_str})')
+            type_str = ", ".join((f"{v} {k}" for k, v in list(types.items())[:3]))
+            parts.append(f"{len(self.suggested_queries)} queries ({type_str})")
         if self.ioc_follow_ups:
-            parts.append(f'{len(self.ioc_follow_ups)} IOC pivots')
+            parts.append(f"{len(self.ioc_follow_ups)} IOC pivots")
         if self.source_hints:
-            parts.append(f'{len(self.source_hints)} sources')
-        return ', '.join(parts) or 'empty'
+            parts.append(f"{len(self.source_hints)} sources")
+        return ", ".join(parts) or "empty"
 
-    def top_queries(self, n: int=3) -> list[dict[str, Any]]:
+    def top_queries(self, n: int = 3) -> list[dict[str, Any]]:
         """Get top N queries by priority for scheduler."""
-        return sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True)[:n]
+        return sorted(self.suggested_queries, key=attrgetter("get")("priority", 0.5), reverse=True)[:n]
 
     def pivot_trail(self, ioc: str) -> list[dict[str, Any]]:
         """Get all pivots starting from a specific IOC."""
-        return [p for p in self.ioc_follow_ups if p.get('from') == ioc]
+        return [p for p in self.ioc_follow_ups if p.get("from") == ioc]
 
-    def next_best_actions(self, max_actions: int=4) -> list[dict[str, Any]]:
+    def next_best_actions(self, max_actions: int = 4) -> list[dict[str, Any]]:
         """
         Return a small, ranked shortlist of next actions.
 
@@ -178,26 +185,52 @@ class HypothesisPack(Struct, frozen=True):
         actions: list[dict[str, Any]] = []
         seen_queries: set[str] = set()
         for pivot in self.ioc_follow_ups:
-            q = pivot.get('query', '')
+            q = pivot.get("query", "")
             if q:
                 seen_queries.add(q)
         for q in self.suggested_queries:
-            q_str = q.get('query', '')
+            q_str = q.get("query", "")
             if q_str:
                 seen_queries.add(q_str)
-        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5), reverse=True)[:2]:
-            q = pivot.get('query', '')
+        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")("priority", 0.5), reverse=True)[:2]:
+            q = pivot.get("query", "")
             if q and q not in seen_queries:
-                actions.append({'action_type': 'ioc_pivot', 'query': q, 'from_ioc': pivot.get('from', ''), 'to_field': pivot.get('to', ''), 'rationale': pivot.get('rationale', ''), 'priority': pivot.get('priority', 0.8), 'pivot_type': 'ioc'})
+                actions.append(
+                    {
+                        "action_type": "ioc_pivot",
+                        "query": q,
+                        "from_ioc": pivot.get("from", ""),
+                        "to_field": pivot.get("to", ""),
+                        "rationale": pivot.get("rationale", ""),
+                        "priority": pivot.get("priority", 0.8),
+                        "pivot_type": "ioc",
+                    }
+                )
                 seen_queries.add(q)
-        for q in sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True):
-            if q['query'] not in seen_queries and len(actions) < max_actions:
-                actions.append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': q.get('pivot_type', 'general')})
-                seen_queries.add(q['query'])
+        for q in sorted(self.suggested_queries, key=attrgetter("get")("priority", 0.5), reverse=True):
+            if q["query"] not in seen_queries and len(actions) < max_actions:
+                actions.append(
+                    {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                        "pivot_type": q.get("pivot_type", "general"),
+                    }
+                )
+                seen_queries.add(q["query"])
         for hint in self.source_hints[:2]:
             if len(actions) >= max_actions:
                 break
-            actions.append({'action_type': 'source_check', 'query': f'"{hint.source}" latest', 'rationale': f'Source: {hint.source} (quality: {hint.quality:.2f})', 'priority': hint.quality * 0.6, 'pivot_type': 'source'})
+            actions.append(
+                {
+                    "action_type": "source_check",
+                    "query": f'"{hint.source}" latest',
+                    "rationale": f"Source: {hint.source} (quality: {hint.quality:.2f})",
+                    "priority": hint.quality * 0.6,
+                    "pivot_type": "source",
+                }
+            )
         return actions[:max_actions]
 
     def why_best_first(self) -> dict[str, Any] | None:
@@ -214,35 +247,72 @@ class HypothesisPack(Struct, frozen=True):
         """
         if self.is_empty():
             return None
-        pivot_type_rank = {'ioc': 0, 'ioc_lookup': 0, 'entity_pair': 1, 'relationship': 2, 'ioc_entity': 3, 'entity': 4, 'entity_expansion': 5, 'source': 6, 'organization': 7, 'temporal': 8, 'general': 9}
+        pivot_type_rank = {
+            "ioc": 0,
+            "ioc_lookup": 0,
+            "entity_pair": 1,
+            "relationship": 2,
+            "ioc_entity": 3,
+            "entity": 4,
+            "entity_expansion": 5,
+            "source": 6,
+            "organization": 7,
+            "temporal": 8,
+            "general": 9,
+        }
         chosen = self.best_first_path()
         if not chosen:
             return None
-        pt = chosen.get('pivot_type', 'general')
+        pt = chosen.get("pivot_type", "general")
         rank = pivot_type_rank.get(pt, 9)
         alternatives: list[dict[str, Any]] = []
         for pivot in self.ioc_follow_ups:
-            if pivot.get('query') != chosen.get('query'):
-                alternatives.append({'action_type': 'ioc_pivot', 'query': pivot.get('query', ''), 'pivot_type': 'ioc', 'priority': pivot.get('priority', 0.5), 'rank': 0})
+            if pivot.get("query") != chosen.get("query"):
+                alternatives.append(
+                    {
+                        "action_type": "ioc_pivot",
+                        "query": pivot.get("query", ""),
+                        "pivot_type": "ioc",
+                        "priority": pivot.get("priority", 0.5),
+                        "rank": 0,
+                    }
+                )
         for q in self.suggested_queries:
-            if q.get('query') != chosen.get('query'):
-                q_pt = q.get('pivot_type', 'general')
-                alternatives.append({'action_type': 'query', 'query': q.get('query', ''), 'pivot_type': q_pt, 'priority': q.get('priority', 0.5), 'rank': pivot_type_rank.get(q_pt, 9)})
-        alternatives.sort(key=lambda x: (-x.get('priority', 0.5), x.get('rank', 9)))
+            if q.get("query") != chosen.get("query"):
+                q_pt = q.get("pivot_type", "general")
+                alternatives.append(
+                    {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "pivot_type": q_pt,
+                        "priority": q.get("priority", 0.5),
+                        "rank": pivot_type_rank.get(q_pt, 9),
+                    }
+                )
+        alternatives.sort(key=lambda x: (-x.get("priority", 0.5), x.get("rank", 9)))
         alternatives = alternatives[:3]
-        if pt == 'ioc':
-            reason = 'IOC pivot selected as highest-priority actionable domain path'
-        elif pt == 'entity_pair':
-            reason = 'Entity-pair query selected as most specific relationship probe'
-        elif pt == 'relationship':
-            reason = 'Relationship query selected for direct connection verification'
-        elif pt == 'source':
-            reason = 'Source check selected as lowest-risk verification path'
+        if pt == "ioc":
+            reason = "IOC pivot selected as highest-priority actionable domain path"
+        elif pt == "entity_pair":
+            reason = "Entity-pair query selected as most specific relationship probe"
+        elif pt == "relationship":
+            reason = "Relationship query selected for direct connection verification"
+        elif pt == "source":
+            reason = "Source check selected as lowest-risk verification path"
         else:
             reason = f"{pt} query selected by priority {chosen.get('priority', 0.5):.2f}"
-        return {'chosen_action': chosen, 'reason': reason, 'pivot_type': pt, 'pivot_type_rank': rank, 'alternatives': alternatives, 'total_ioc_pivots': len(self.ioc_follow_ups), 'total_queries': len(self.suggested_queries), 'total_sources': len(self.source_hints)}
+        return {
+            "chosen_action": chosen,
+            "reason": reason,
+            "pivot_type": pt,
+            "pivot_type_rank": rank,
+            "alternatives": alternatives,
+            "total_ioc_pivots": len(self.ioc_follow_ups),
+            "total_queries": len(self.suggested_queries),
+            "total_sources": len(self.source_hints),
+        }
 
-    def discarded_as_redundant(self, max_items: int=5) -> list[dict[str, Any]]:
+    def discarded_as_redundant(self, max_items: int = 5) -> list[dict[str, Any]]:
         """
         Return items from the pack that were dropped by actionable_shortlist dedup.
 
@@ -254,18 +324,44 @@ class HypothesisPack(Struct, frozen=True):
         - 'below_priority_threshold': priority below 0.5 and shortlist already full
         - 'low_pivot_type_priority': general/organization pivot types deprioritized
         """
-        shortlist_queries: set[str] = {a.get('query', '') for a in self.actionable_shortlist(max_items=999)}
+        shortlist_queries: set[str] = {a.get("query", "") for a in self.actionable_shortlist(max_items=999)}
         discarded: list[dict[str, Any]] = []
         for pivot in self.ioc_follow_ups:
-            q = pivot.get('query', '')
+            q = pivot.get("query", "")
             if q in shortlist_queries:
-                discarded.append({'action_type': 'ioc_pivot', 'query': q, 'reason_discarded': 'query_deduped', 'pivot_type': 'ioc', 'priority': pivot.get('priority', 0.5), 'from_ioc': pivot.get('from', '')})
-            elif pivot.get('priority', 0.5) < 0.5:
-                discarded.append({'action_type': 'ioc_pivot', 'query': q, 'reason_discarded': 'below_priority_threshold', 'pivot_type': 'ioc', 'priority': pivot.get('priority', 0.5), 'from_ioc': pivot.get('from', '')})
+                discarded.append(
+                    {
+                        "action_type": "ioc_pivot",
+                        "query": q,
+                        "reason_discarded": "query_deduped",
+                        "pivot_type": "ioc",
+                        "priority": pivot.get("priority", 0.5),
+                        "from_ioc": pivot.get("from", ""),
+                    }
+                )
+            elif pivot.get("priority", 0.5) < 0.5:
+                discarded.append(
+                    {
+                        "action_type": "ioc_pivot",
+                        "query": q,
+                        "reason_discarded": "below_priority_threshold",
+                        "pivot_type": "ioc",
+                        "priority": pivot.get("priority", 0.5),
+                        "from_ioc": pivot.get("from", ""),
+                    }
+                )
         for q in self.suggested_queries:
-            q_str = q.get('query', '')
+            q_str = q.get("query", "")
             if q_str in shortlist_queries:
-                discarded.append({'action_type': 'query', 'query': q_str, 'reason_discarded': 'query_deduped', 'pivot_type': q.get('pivot_type', 'general'), 'priority': q.get('priority', 0.5)})
+                discarded.append(
+                    {
+                        "action_type": "query",
+                        "query": q_str,
+                        "reason_discarded": "query_deduped",
+                        "pivot_type": q.get("pivot_type", "general"),
+                        "priority": q.get("priority", 0.5),
+                    }
+                )
         return discarded[:max_items]
 
     def action_confidence(self, action: dict[str, Any]) -> float:
@@ -282,23 +378,23 @@ class HypothesisPack(Struct, frozen=True):
         """
         if not action or not isinstance(action, dict):
             return 0.5
-        base_priority = action.get('priority', 0.5)
-        pivot_type = action.get('pivot_type', 'general')
+        base_priority = action.get("priority", 0.5)
+        pivot_type = action.get("pivot_type", "general")
         pt_bonus = 0.0
-        if pivot_type in ('ioc', 'ioc_lookup'):
+        if pivot_type in ("ioc", "ioc_lookup"):
             pt_bonus = 0.15
-        elif pivot_type in ('entity_pair', 'relationship'):
+        elif pivot_type in ("entity_pair", "relationship"):
             pt_bonus = 0.1
-        elif pivot_type == 'source':
+        elif pivot_type == "source":
             pt_bonus = 0.0
         source_bonus = 0.0
-        if action.get('action_type') == 'source_check':
-            source_name = action.get('query', '').strip('"')
+        if action.get("action_type") == "source_check":
+            source_name = action.get("query", "").strip('"')
             for hint in self.source_hints:
-                if hasattr(hint, 'source') and hint.source == source_name:
+                if hasattr(hint, "source") and hint.source == source_name:
                     source_bonus = (hint.quality - 0.5) * 0.2
                     break
-        provenance_bonus = 0.1 if self.provenance == 'model-assisted' else 0.0
+        provenance_bonus = 0.1 if self.provenance == "model-assisted" else 0.0
         confidence = base_priority * 0.4 + min(base_priority + pt_bonus, 1.0) * 0.4 + source_bonus + provenance_bonus
         return max(0.0, min(1.0, confidence))
 
@@ -314,31 +410,47 @@ class HypothesisPack(Struct, frozen=True):
         """
         tracks = self.investigation_tracks()
         if not tracks:
-            return {'recommended_track': None, 'track_scores': {}, 'reasoning': 'empty pack', 'next_action': None}
+            return {"recommended_track": None, "track_scores": {}, "reasoning": "empty pack", "next_action": None}
         track_scores: dict[str, float] = {}
         for track_name, items in tracks.items():
             if not items:
                 track_scores[track_name] = 0.0
                 continue
-            avg_priority = sum((i.get('priority', 0.5) for i in items)) / len(items)
-            ioc_count = sum((1 for i in items if i.get('action_type') == 'ioc_pivot'))
-            high_conf_count = sum((1 for i in items if i.get('priority', 0.5) >= 0.7))
+            avg_priority = sum(i.get("priority", 0.5) for i in items) / len(items)
+            ioc_count = sum(1 for i in items if i.get("action_type") == "ioc_pivot")
+            high_conf_count = sum(1 for i in items if i.get("priority", 0.5) >= 0.7)
             score = avg_priority * 0.4 + min(ioc_count / 3, 1.0) * 0.3 + high_conf_count / len(items) * 0.3
             track_scores[track_name] = max(0.0, min(1.0, score))
         recommended = max(track_scores, key=lambda k: track_scores.get(k, 0.0))
-        reasoning_map = {'ioc_pivots': 'IOC pivot track has highest actionable domain value', 'entity_tracking': 'Entity tracking track has strong specific targets', 'relationship_verification': 'Relationship verification has direct connection probes', 'source_investigation': 'Source investigation is lowest-risk verification path', 'cluster_analysis': 'Cluster analysis offers broad correlation overview'}
+        reasoning_map = {
+            "ioc_pivots": "IOC pivot track has highest actionable domain value",
+            "entity_tracking": "Entity tracking track has strong specific targets",
+            "relationship_verification": "Relationship verification has direct connection probes",
+            "source_investigation": "Source investigation is lowest-risk verification path",
+            "cluster_analysis": "Cluster analysis offers broad correlation overview",
+        }
         next_action = None
         if recommended in tracks and tracks[recommended]:
             first_item = tracks[recommended][0]
-            next_action = {'action_type': first_item.get('action_type', 'query'), 'query': first_item.get('query', ''), 'rationale': f'Track: {recommended}', 'priority': first_item.get('priority', 0.5)}
-        return {'recommended_track': recommended, 'track_scores': track_scores, 'reasoning': reasoning_map.get(recommended, f'{recommended} selected by score'), 'next_action': next_action}
+            next_action = {
+                "action_type": first_item.get("action_type", "query"),
+                "query": first_item.get("query", ""),
+                "rationale": f"Track: {recommended}",
+                "priority": first_item.get("priority", 0.5),
+            }
+        return {
+            "recommended_track": recommended,
+            "track_scores": track_scores,
+            "reasoning": reasoning_map.get(recommended, f"{recommended} selected by score"),
+            "next_action": next_action,
+        }
 
     def best_track(self) -> str | None:
         """Return the name of the highest-scoring track. Shortcut for track_recommendation."""
         tracks = self.investigation_tracks()
         if not tracks:
             return None
-        return max(tracks, key=lambda t: sum((i.get('priority', 0.5) for i in tracks[t])) / max(1, len(tracks[t])))
+        return max(tracks, key=lambda t: sum(i.get("priority", 0.5) for i in tracks[t]) / max(1, len(tracks[t])))
 
     def investigation_tracks(self) -> dict[str, list[dict[str, Any]]]:
         """
@@ -353,29 +465,92 @@ class HypothesisPack(Struct, frozen=True):
 
         Each track is a list of structured items with action_type + details.
         """
-        tracks: dict[str, list[dict[str, Any]]] = {'ioc_pivots': [], 'entity_tracking': [], 'relationship_verification': [], 'source_investigation': [], 'cluster_analysis': []}
+        tracks: dict[str, list[dict[str, Any]]] = {
+            "ioc_pivots": [],
+            "entity_tracking": [],
+            "relationship_verification": [],
+            "source_investigation": [],
+            "cluster_analysis": [],
+        }
         for pivot in self.ioc_follow_ups:
-            tracks['ioc_pivots'].append({'action_type': 'ioc_pivot', 'from_ioc': pivot.get('from', ''), 'pivot': pivot.get('pivot', ''), 'to_field': pivot.get('to', ''), 'query': pivot.get('query', ''), 'priority': pivot.get('priority', 0.5)})
+            tracks["ioc_pivots"].append(
+                {
+                    "action_type": "ioc_pivot",
+                    "from_ioc": pivot.get("from", ""),
+                    "pivot": pivot.get("pivot", ""),
+                    "to_field": pivot.get("to", ""),
+                    "query": pivot.get("query", ""),
+                    "priority": pivot.get("priority", 0.5),
+                }
+            )
         for h in self.hypotheses:
-            if h.get('type') in ('entity_tracking', 'ioc_attribution'):
-                tracks['entity_tracking'].append({'action_type': 'hypothesis', 'statement': h.get('hypothesis', ''), 'confidence': h.get('confidence', '0.5'), 'type': h.get('type', '')})
+            if h.get("type") in ("entity_tracking", "ioc_attribution"):
+                tracks["entity_tracking"].append(
+                    {
+                        "action_type": "hypothesis",
+                        "statement": h.get("hypothesis", ""),
+                        "confidence": h.get("confidence", "0.5"),
+                        "type": h.get("type", ""),
+                    }
+                )
         for q in self.suggested_queries:
-            if q.get('pivot_type') in ('entity', 'entity_expansion'):
-                tracks['entity_tracking'].append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5)})
+            if q.get("pivot_type") in ("entity", "entity_expansion"):
+                tracks["entity_tracking"].append(
+                    {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                    }
+                )
         for h in self.hypotheses:
-            if h.get('type') in ('relationship_tracking', 'cluster_correlation'):
-                tracks['relationship_verification'].append({'action_type': 'hypothesis', 'statement': h.get('hypothesis', ''), 'confidence': h.get('confidence', '0.5'), 'type': h.get('type', '')})
+            if h.get("type") in ("relationship_tracking", "cluster_correlation"):
+                tracks["relationship_verification"].append(
+                    {
+                        "action_type": "hypothesis",
+                        "statement": h.get("hypothesis", ""),
+                        "confidence": h.get("confidence", "0.5"),
+                        "type": h.get("type", ""),
+                    }
+                )
         for q in self.suggested_queries:
-            if q.get('pivot_type') in ('relationship', 'entity_pair'):
-                tracks['relationship_verification'].append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5)})
+            if q.get("pivot_type") in ("relationship", "entity_pair"):
+                tracks["relationship_verification"].append(
+                    {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                    }
+                )
         for hint in self.source_hints:
-            tracks['source_investigation'].append({'action_type': 'source_hint', 'source': hint.source if hasattr(hint, 'source') else str(hint), 'quality': hint.quality if hasattr(hint, 'quality') else 0.5, 'hint_type': hint.hint_type if hasattr(hint, 'hint_type') else 'general'})
+            tracks["source_investigation"].append(
+                {
+                    "action_type": "source_hint",
+                    "source": hint.source if hasattr(hint, "source") else str(hint),
+                    "quality": hint.quality if hasattr(hint, "quality") else 0.5,
+                    "hint_type": hint.hint_type if hasattr(hint, "hint_type") else "general",
+                }
+            )
         for q in self.suggested_queries:
-            if q.get('pivot_type') == 'source':
-                tracks['source_investigation'].append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5)})
+            if q.get("pivot_type") == "source":
+                tracks["source_investigation"].append(
+                    {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                    }
+                )
         for h in self.hypotheses:
-            if h.get('type') == 'cluster_correlation':
-                tracks['cluster_analysis'].append({'action_type': 'hypothesis', 'statement': h.get('hypothesis', ''), 'confidence': h.get('confidence', '0.5')})
+            if h.get("type") == "cluster_correlation":
+                tracks["cluster_analysis"].append(
+                    {
+                        "action_type": "hypothesis",
+                        "statement": h.get("hypothesis", ""),
+                        "confidence": h.get("confidence", "0.5"),
+                    }
+                )
         return {k: v for k, v in tracks.items() if v}
 
     def best_first_path(self) -> dict[str, Any] | None:
@@ -392,41 +567,90 @@ class HypothesisPack(Struct, frozen=True):
         if self.is_empty():
             return None
         if self.ioc_follow_ups:
-            best_ioc = max(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5))
-            return {'action_type': 'ioc_pivot', 'query': best_ioc.get('query', ''), 'from_ioc': best_ioc.get('from', ''), 'to_field': best_ioc.get('to', ''), 'rationale': best_ioc.get('rationale', 'IOC pivot'), 'priority': best_ioc.get('priority', 0.9), 'pivot_type': 'ioc'}
+            best_ioc = max(self.ioc_follow_ups, key=attrgetter("get")("priority", 0.5))
+            return {
+                "action_type": "ioc_pivot",
+                "query": best_ioc.get("query", ""),
+                "from_ioc": best_ioc.get("from", ""),
+                "to_field": best_ioc.get("to", ""),
+                "rationale": best_ioc.get("rationale", "IOC pivot"),
+                "priority": best_ioc.get("priority", 0.9),
+                "pivot_type": "ioc",
+            }
         if self.suggested_queries:
-            sorted_qs = sorted(self.suggested_queries, key=lambda x: (x.get('priority', 0.5), x.get('pivot_type', '') == 'entity_expansion'), reverse=True)
+            sorted_qs = sorted(
+                self.suggested_queries,
+                key=lambda x: (x.get("priority", 0.5), x.get("pivot_type", "") == "entity_expansion"),
+                reverse=True,
+            )
             for q in sorted_qs:
-                pt = q.get('pivot_type', '')
-                if pt in ('entity_pair', 'relationship', 'ioc_entity', 'ioc_lookup'):
-                    return {'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': pt}
+                pt = q.get("pivot_type", "")
+                if pt in ("entity_pair", "relationship", "ioc_entity", "ioc_lookup"):
+                    return {
+                        "action_type": "query",
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                        "pivot_type": pt,
+                    }
             top = sorted_qs[0]
-            return {'action_type': 'query', 'query': top.get('query', ''), 'rationale': top.get('rationale', ''), 'priority': top.get('priority', 0.5), 'pivot_type': top.get('pivot_type', 'general')}
+            return {
+                "action_type": "query",
+                "query": top.get("query", ""),
+                "rationale": top.get("rationale", ""),
+                "priority": top.get("priority", 0.5),
+                "pivot_type": top.get("pivot_type", "general"),
+            }
         return None
 
-    def actionable_shortlist(self, max_items: int=5) -> list[dict[str, Any]]:
+    def actionable_shortlist(self, max_items: int = 5) -> list[dict[str, Any]]:
         """
         Return a compact, sprint-ready shortlist.
         """
         shortlist: list[dict[str, Any]] = []
         seen_queries: set[str] = set()
-        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5), reverse=True):
-            q = pivot.get('query', '')
+        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")("priority", 0.5), reverse=True):
+            q = pivot.get("query", "")
             if q and q not in seen_queries:
-                shortlist.append({'action_type': 'ioc_pivot', 'query': q, 'from_ioc': pivot.get('from', ''), 'to_field': pivot.get('to', ''), 'rationale': pivot.get('rationale', ''), 'priority': pivot.get('priority', 0.5), 'pivot_type': 'ioc'})
+                shortlist.append(
+                    {
+                        "action_type": "ioc_pivot",
+                        "query": q,
+                        "from_ioc": pivot.get("from", ""),
+                        "to_field": pivot.get("to", ""),
+                        "rationale": pivot.get("rationale", ""),
+                        "priority": pivot.get("priority", 0.5),
+                        "pivot_type": "ioc",
+                    }
+                )
                 seen_queries.add(q)
                 if len(shortlist) >= max_items:
                     return shortlist
-        for q in sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True):
-            if q['query'] in seen_queries:
+        for q in sorted(self.suggested_queries, key=attrgetter("get")("priority", 0.5), reverse=True):
+            if q["query"] in seen_queries:
                 continue
-            shortlist.append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': q.get('pivot_type', 'general')})
-            seen_queries.add(q['query'])
+            shortlist.append(
+                {
+                    "action_type": "query",
+                    "query": q.get("query", ""),
+                    "rationale": q.get("rationale", ""),
+                    "priority": q.get("priority", 0.5),
+                    "pivot_type": q.get("pivot_type", "general"),
+                }
+            )
+            seen_queries.add(q["query"])
             if len(shortlist) >= max_items:
                 return shortlist
         for hint in self.source_hints:
             if len(shortlist) >= max_items:
                 return shortlist
-            if hasattr(hint, 'source'):
-                shortlist.append({'action_type': 'source_hint', 'source': hint.source, 'quality': hint.quality, 'hint_type': getattr(hint, 'hint_type', 'general')})
+            if hasattr(hint, "source"):
+                shortlist.append(
+                    {
+                        "action_type": "source_hint",
+                        "source": hint.source,
+                        "quality": hint.quality,
+                        "hint_type": getattr(hint, "hint_type", "general"),
+                    }
+                )
         return shortlist

@@ -41,7 +41,6 @@ import importlib
 import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -51,8 +50,9 @@ _sidecarlogger = logging.getLogger(__name__)
 
 # ── Canonical ingest helper ───────────────────────────────────────────────────
 
+
 async def _store_ingest_and_count(
-    store: "DuckDBShadowStore",
+    store: DuckDBShadowStore,
     derived_findings: list,
 ) -> int:
     """
@@ -68,6 +68,7 @@ async def _store_ingest_and_count(
 
 # ── Composable runner factories (F27) ─────────────────────────────────────────
 # Plain callable objects — no dataclass inheritance, no abstractmethod issues.
+
 
 def sidecar_runner(
     *,
@@ -121,13 +122,13 @@ def sidecar_runner(
                     _name,
                     _factory_name,
                     _module_path,
-    )
+                )
                 return None
 
         async def __call__(
             self,
             findings: list,
-            store: "DuckDBShadowStore | None",
+            store: DuckDBShadowStore | None,
             query: str,
         ) -> Any:
             if not findings or store is None:
@@ -146,7 +147,7 @@ def sidecar_runner(
                     _correlate_method,
                     type(e).__name__,
                     e,
-    )
+                )
                 return None
 
     return _SidecarRunner
@@ -190,13 +191,13 @@ def sidecar_runner_await(
                     _name,
                     _factory_name,
                     _module_path,
-    )
+                )
                 return None
 
         async def __call__(
             self,
             findings: list,
-            store: "DuckDBShadowStore | None",
+            store: DuckDBShadowStore | None,
             query: str,
         ) -> Any:
             if not findings or store is None:
@@ -215,13 +216,14 @@ def sidecar_runner_await(
                     _correlate_method,
                     type(e).__name__,
                     e,
-    )
+                )
                 return None
 
     return _SidecarRunnerAwait
 
 
 # ── BaseSidecarRunner ABC (for complex runners with inline _run_impl) ─────────
+
 
 class BaseSidecarRunner:
     """
@@ -272,7 +274,7 @@ class BaseSidecarRunner:
                 "[%s] import module '%s' failed",
                 self._name,
                 mp,
-    )
+            )
             return None
 
     def _create_adapter(self) -> Any | None:
@@ -288,13 +290,13 @@ class BaseSidecarRunner:
                 "[%s] factory '%s' call failed",
                 self._name,
                 self._factory_name,
-    )
+            )
             return None
 
     async def run_async(
         self,
         findings: list,
-        store: "DuckDBShadowStore | None",
+        store: DuckDBShadowStore | None,
         query: str,
     ) -> Any:
         """
@@ -315,13 +317,13 @@ class BaseSidecarRunner:
                 self._name,
                 type(e).__name__,
                 e,
-    )
+            )
             return None
 
     async def __call__(
         self,
         findings: list,
-        store: "DuckDBShadowStore | None",
+        store: DuckDBShadowStore | None,
         query: str,
     ) -> Any:
         """Callable entry point — SidecarRunner protocol compatibility."""
@@ -332,7 +334,7 @@ class BaseSidecarRunner:
         self,
         adapter: Any,
         findings: list,
-        store: "DuckDBShadowStore",
+        store: DuckDBShadowStore,
         query: str,
     ) -> Any:
         """

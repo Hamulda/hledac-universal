@@ -3,7 +3,6 @@ VectorIndex — Unified Vector Storage Protocol (Issue F5)
 
 ROLE: Single canonical interface for ANN vector storage.
 
-
 Dispatches to SqliteVecIndex (primary, M1 8GB) or LanceDbIndex (>1M vectors).
 
 Dispatch: HLEDAC_VECTOR_BACKEND env var
@@ -30,11 +29,11 @@ Performance invariants:
 - sqlite_vec/pyarrow imports happen at module level, not inside hot paths
 - All add() and query() paths are allocation-free on success
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 # orjson — strict import with stdlib fallback (fail-safe, always-on)
 try:
@@ -44,25 +43,18 @@ try:
 except ImportError:
     _orjson_mod = None  # type: ignore[assignment]
     _HAS_ORJSON = False
-import shutil
 import subprocess
 from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
-from _core import aclose
 
 if TYPE_CHECKING:
-    import lancedb
-    import pyarrow as pa
-    import sqlite_vec
+    pass
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Module-level lazy singletons (imported once, used everywhere)
-# ---------------------------------------------------------------------------
 _sqlite_vec: Any = None
 _lancedb: Any = None
 _pyarrow: Any = None
@@ -95,9 +87,6 @@ def _lazy_import_pyarrow() -> Any:
     return _pyarrow
 
 
-# ---------------------------------------------------------------------------
-# orjson cache (zero-allocation on success path)
-# ---------------------------------------------------------------------------
 _orjson_dumps: Any = None
 
 
@@ -121,29 +110,25 @@ def json_dumps_maybe(obj: dict[str, Any]) -> str:
         return _orjson_dumps(obj).decode("utf-8")
     return _json_lib.dumps(obj)
 
-# ---------------------------------------------------------------------------
-# AnnHit — canonical return type for vector queries
-# ---------------------------------------------------------------------------
+
 AnnHit = dict[str, Any]
 
-# ---------------------------------------------------------------------------
-# Backend dispatch
-# ---------------------------------------------------------------------------
 VectorBackend = Literal["sqlite-vec", "lancedb", "auto"]
 
 
 def _resolve_backend() -> VectorBackend:
     """Resolve HLEDAC_VECTOR_BACKEND to concrete backend.
-    
+
     SWARM-010: Use FeatureFlags.get_str() for registry compliance.
     """
-    from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
+    from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
     backend = FeatureFlags.get_str(FeatureFlag.VECTOR_BACKEND, "auto").lower()
     if backend not in ("sqlite-vec", "lancedb", "auto"):
         logger.warning(
             "[VectorIndex] Unknown HLEDAC_VECTOR_BACKEND=%r, defaulting to auto",
             backend,
-    )
+        )
         return "auto"
     return cast(VectorBackend, backend)
 
@@ -161,18 +146,13 @@ def _is_m1() -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
-    )
-            _is_m1_cached = (
-                "Apple" in result.stdout and ("M1" in result.stdout or "M2" in result.stdout)
-    )
+            )
+            _is_m1_cached = "Apple" in result.stdout and ("M1" in result.stdout or "M2" in result.stdout)
         except Exception:
             _is_m1_cached = False
     return _is_m1_cached
 
 
-# ---------------------------------------------------------------------------
-# VectorIndex Protocol (PEP 544)
-# ---------------------------------------------------------------------------
 class VectorIndex:
     """
     Unified vector storage protocol.
@@ -191,9 +171,7 @@ class VectorIndex:
     __slots__ = ()
 
     @abstractmethod
-    async def add(
-        self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]
-    ) -> None:
+    async def add(self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]) -> None:
         """Add vectors to the index.
 
         Args:
@@ -204,9 +182,7 @@ class VectorIndex:
         ...
 
     @abstractmethod
-    async def query(
-        self, query: np.ndarray, k: int = 10
-    ) -> list[AnnHit]:
+    async def query(self, query: np.ndarray, k: int = 10) -> list[AnnHit]:
         """ANN search for k nearest neighbors.
 
         Args:
@@ -223,7 +199,7 @@ class VectorIndex:
         """Close index and release resources."""
         ...
 
-    async def __aenter__(self) -> "VectorIndex":
+    async def __aenter__(self) -> VectorIndex:
         """Async context manager entry."""
         return self
 
@@ -231,9 +207,6 @@ class VectorIndex:
         """Async context manager exit — ensures close()."""
         await self.close()
 
-    # -------------------------------------------------------------------------
-    # Shared utilities (default implementations, overrideable)
-    # -------------------------------------------------------------------------
     @staticmethod
     def _normalize(v: np.ndarray) -> np.ndarray:
         """L2-normalize vectors for cosine similarity."""
@@ -242,9 +215,6 @@ class VectorIndex:
         return v / norm
 
 
-# ---------------------------------------------------------------------------
-# SqliteVecIndex — M1-native primary backend
-# ---------------------------------------------------------------------------
 class SqliteVecIndex(VectorIndex):
     """
     M1-native ANN store via sqlite-vec.
@@ -257,7 +227,17 @@ class SqliteVecIndex(VectorIndex):
         - Vector dimension capped at 384 (sqlite-vec vec0 limit)
     """
 
-    __slots__ = ("_db_path", "_conn", "_dim", "_table_name", "_pending_ids", "_pending_vectors", "_pending_meta", "_lock", "_closed")
+    __slots__ = (
+        "_db_path",
+        "_conn",
+        "_dim",
+        "_table_name",
+        "_pending_ids",
+        "_pending_vectors",
+        "_pending_meta",
+        "_lock",
+        "_closed",
+    )
     MAX_DIM: int = 384
     MAX_PENDING_UPSERTS: int = 10_000
 
@@ -285,25 +265,20 @@ class SqliteVecIndex(VectorIndex):
             from hledac.universal.paths import SPRINT_STORE_ROOT
         except ImportError:
             from pathlib import Path
+
             return Path.home() / ".hledac" / "sprint_store" / "default.db"
         sprint_dir = SPRINT_STORE_ROOT / "default"
         sprint_dir.mkdir(parents=True, exist_ok=True)
         return sprint_dir / "default.db"
 
-    async def add(
-        self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]
-    ) -> None:
+    async def add(self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]) -> None:
         """Batch upsert via sqlite-vec vec0 virtual table."""
         if self._closed:
             raise RuntimeError("[SqliteVecIndex] Already closed")
         if vectors.shape[0] != len(ids) or vectors.shape[0] != len(metadata):
-            raise ValueError(
-                f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta"
-    )
+            raise ValueError(f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta")
         if vectors.shape[1] > self.MAX_DIM:
-            raise ValueError(
-                f"[SqliteVecIndex] dim={vectors.shape[1]} exceeds MAX_DIM={self.MAX_DIM}"
-    )
+            raise ValueError(f"[SqliteVecIndex] dim={vectors.shape[1]} exceeds MAX_DIM={self.MAX_DIM}")
 
         # Ensure initialized
         await self._ensure_db()
@@ -341,11 +316,9 @@ class SqliteVecIndex(VectorIndex):
                 metadata JSON
     )
             """
-    )
+        )
         self._conn.commit()
-        logger.debug(
-            "[SqliteVecIndex] Initialized: %s (dim=%d)", self._db_path, self._dim
-    )
+        logger.debug("[SqliteVecIndex] Initialized: %s (dim=%d)", self._db_path, self._dim)
 
     async def _flush_locked(self) -> None:
         """Flush pending upserts (must hold self._lock)."""
@@ -356,20 +329,17 @@ class SqliteVecIndex(VectorIndex):
             self._pending_ids[:],
             self._pending_vectors[:],
             self._pending_meta[:],
-    )
+        )
         self._pending_ids.clear()
         self._pending_vectors.clear()
         self._pending_meta.clear()
 
-        rows = [
-            (i, v, json_dumps_maybe(m))
-            for i, v, m in zip(ids, vectors, meta)
-        ]
+        rows = [(i, v, json_dumps_maybe(m)) for i, v, m in zip(ids, vectors, meta, strict=False)]
         try:
             self._conn.executemany(
                 f"INSERT OR REPLACE INTO {self._table_name} (id, embedding, metadata) VALUES (?, ?, ?)",
                 rows,
-    )
+            )
             self._conn.commit()
             logger.debug("[SqliteVecIndex] Flushed %d vectors", len(rows))
         except Exception as e:
@@ -414,9 +384,7 @@ class SqliteVecIndex(VectorIndex):
                 # sqlite-vec distance is 0=identical, 2=opposite
                 # Convert to similarity score: score = 1 - distance/2
                 score = max(0.0, 1.0 - (row[1] or 0.0) / 2.0)
-                results.append(
-                    AnnHit(id=row[0], score=float(score), metadata=meta)
-    )
+                results.append(AnnHit(id=row[0], score=float(score), metadata=meta))
             return results
 
         except Exception as e:
@@ -439,9 +407,6 @@ class SqliteVecIndex(VectorIndex):
             logger.warning("[SqliteVecIndex] Close error: %s", e)
 
 
-# ---------------------------------------------------------------------------
-# LanceDbIndex — high-capacity backend (>1M vectors)
-# ---------------------------------------------------------------------------
 class LanceDbIndex(VectorIndex):
     """
     LanceDB ANN store for high-capacity vector workloads.
@@ -475,16 +440,12 @@ class LanceDbIndex(VectorIndex):
         """Use LanceDB root under .hledac/lancedb/."""
         return Path.home() / ".hledac" / "lancedb"
 
-    async def add(
-        self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]
-    ) -> None:
+    async def add(self, vectors: np.ndarray, ids: list[str], metadata: list[dict[str, Any]]) -> None:
         """Batch upsert via LanceDB."""
         if self._closed:
             raise RuntimeError("[LanceDbIndex] Already closed")
         if vectors.shape[0] != len(ids) or vectors.shape[0] != len(metadata):
-            raise ValueError(
-                f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta"
-    )
+            raise ValueError(f"Shape mismatch: {vectors.shape[0]} vectors, {len(ids)} ids, {len(metadata)} meta")
 
         await self._ensure_db()
 
@@ -493,14 +454,13 @@ class LanceDbIndex(VectorIndex):
         # Normalize for cosine similarity
         vectors = self._normalize(vectors.astype(np.float32))
 
-        # Build PyArrow record batch
         table = pa.table(
             {
                 "id": pa.array(ids),
                 "vector": pa.array(vectors.tolist(), type=pa.list_(pa.float32(), self._dim)),
                 "metadata": pa.array([json_dumps_maybe(m) for m in metadata]),
             }
-    )
+        )
 
         try:
             self._table.merge_insert("id").on("id").execute(table.to_batches())
@@ -521,20 +481,16 @@ class LanceDbIndex(VectorIndex):
         schema = pa.schema(
             [
                 pa.field("id", pa.string()),
-                pa.field(
-                    "vector", pa.list_(pa.float32(), self._dim)
-                ),
+                pa.field("vector", pa.list_(pa.float32(), self._dim)),
                 pa.field("metadata", pa.string()),
             ]
-    )
+        )
 
         try:
             self._table = self._db.open_table(self._table_name)
             logger.debug("[LanceDbIndex] Opened existing table: %s", self._table_name)
         except Exception:
-            self._table = self._db.create_table(
-                self._table_name, schema=schema, exist_ok=True
-    )
+            self._table = self._db.create_table(self._table_name, schema=schema, exist_ok=True)
             logger.info("[LanceDbIndex] Created table: %s", self._table_name)
 
         # Try to create FTS indexes (best-effort)
@@ -578,7 +534,7 @@ class LanceDbIndex(VectorIndex):
                 meta_list = [{} for _ in ids]
 
             results: list[AnnHit] = []
-            for row_id, score, meta_str in zip(ids, scores, meta_list):
+            for row_id, score, meta_str in zip(ids, scores, meta_list, strict=False):
                 try:
                     meta = meta_str if isinstance(meta_str, dict) else {}  # type: ignore[unreachable]
                 except Exception:
@@ -605,9 +561,6 @@ class LanceDbIndex(VectorIndex):
             logger.warning("[LanceDbIndex] Close error: %s", e)
 
 
-# ---------------------------------------------------------------------------
-# JSON helpers (zero-allocation on success path)
-# ---------------------------------------------------------------------------
 def json_dumps_maybe(obj: dict[str, Any]) -> str:
     """Serialize metadata dict. Uses orjson if available for speed."""
     if _HAS_ORJSON:
@@ -617,9 +570,6 @@ def json_dumps_maybe(obj: dict[str, Any]) -> str:
     return json.dumps(obj)
 
 
-# ---------------------------------------------------------------------------
-# Factory dispatch
-# ---------------------------------------------------------------------------
 _VectorIndex: VectorIndex | None = None
 
 
@@ -669,13 +619,7 @@ def get_vector_index(
     return impl
 
 
-# ---------------------------------------------------------------------------
-# Backward-compatibility aliases
-# ---------------------------------------------------------------------------
-# For callers that do `from knowledge.vector_index import VectorStore`
-# (old name), provide an alias.
 VectorStore = VectorIndex  # type: ignore[misc,assignment]
-
 
 __all__ = [
     "VectorIndex",

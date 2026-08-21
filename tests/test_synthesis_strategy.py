@@ -16,15 +16,13 @@ Invariant tests:
     - L-05-6: SYNTHESIS_STRATEGY env var is correctly read
     - L-05-7: __slots__ includes _synthesis_strategy
 """
+
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _core import aclose
 
 # Patch SYS_PATH before any hledac imports
 sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
@@ -33,32 +31,38 @@ sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 class TestSynthesisStrategyEnvVar:
     """L-05-6: SYNTHESIS_STRATEGY env var is correctly read."""
 
-    def test_default_is_sequential_preferred(self, monkeypatch):
+    def test_default_is_sequential_preferred(self, monkeypatch) -> None:
         monkeypatch.delenv("SYNTHESIS_STRATEGY", raising=False)
         import importlib
+
         import hledac.universal.brain.synthesis_runner as sr
+
         importlib.reload(sr)
         assert sr.SYNTHESIS_STRATEGY == "sequential_preferred"
 
-    def test_race_first_wins_env(self, monkeypatch):
+    def test_race_first_wins_env(self, monkeypatch) -> None:
         monkeypatch.setenv("SYNTHESIS_STRATEGY", "race_first_wins")
         import importlib
+
         import hledac.universal.brain.synthesis_runner as sr
+
         importlib.reload(sr)
         assert sr.SYNTHESIS_STRATEGY == "race_first_wins"
 
-    def test_invalid_strategy_raises(self, monkeypatch):
+    def test_invalid_strategy_raises(self, monkeypatch) -> None:
         monkeypatch.setenv("SYNTHESIS_STRATEGY", "invalid")
         with pytest.raises(AssertionError):
             import importlib
+
             import hledac.universal.brain.synthesis_runner as sr
+
             importlib.reload(sr)
 
 
 class TestSynthesisStrategySlots:
     """L-05-7: __slots__ includes _synthesis_strategy."""
 
-    def test_synthesis_strategy_in_slots(self):
+    def test_synthesis_strategy_in_slots(self) -> None:
         from brain.synthesis_runner import SynthesisRunner
 
         slots = SynthesisRunner.__slots__
@@ -67,12 +71,13 @@ class TestSynthesisStrategySlots:
 
 # ── Helper async callables for MockSynthesisRunner ─────────────────────────────────
 
+
 async def _result_ok(result_dict):
     """Return (dict, True) — successful engine result."""
     return result_dict, True
 
 
-async def _result_none():
+async def _result_none() -> None:
     """Return None — failed engine result."""
     return None
 
@@ -92,7 +97,7 @@ class MockSynthesisRunner:
         xgrammar_fn=None,
         streaming_fn=None,
         structured_fn=None,
-    ):
+    ) -> None:
         self._synthesis_strategy = strategy
         self._call_log: list[str] = []
 
@@ -204,9 +209,9 @@ class MockSynthesisRunner:
             done, pending = await asyncio.wait(
                 pending,
                 return_when=asyncio.FIRST_COMPLETED,
-    )
+            )
             for task in done:
-                task_name = tasks.pop(task)
+                tasks.pop(task)
                 try:
                     result_dict, result_name = task.result()
                     if result_dict is not None and result_name != "none":
@@ -239,7 +244,7 @@ class TestSequentialPreferred:
     """L-05-1, L-05-2, L-05-3, L-05-5: sequential_preferred cascade behavior."""
 
     @pytest.mark.asyncio
-    async def test_sequential_xgrammar_wins(self):
+    async def test_sequential_xgrammar_wins(self) -> None:
         """L-05-1: xgrammar succeeds → returns xgrammar immediately."""
         runner = MockSynthesisRunner("sequential_preferred")
 
@@ -249,13 +254,13 @@ class TestSequentialPreferred:
         assert runner._call_log == ["xgrammar"]
 
     @pytest.mark.asyncio
-    async def test_sequential_streaming_fallback(self):
+    async def test_sequential_streaming_fallback(self) -> None:
         """L-05-2: xgrammar fails → falls through to streaming."""
         runner = MockSynthesisRunner(
             "sequential_preferred",
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_ok({"title": "streaming"}),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "streaming"}
@@ -263,14 +268,14 @@ class TestSequentialPreferred:
         assert runner._call_log == ["xgrammar", "streaming"]
 
     @pytest.mark.asyncio
-    async def test_sequential_structured_fallback(self):
+    async def test_sequential_structured_fallback(self) -> None:
         """L-05-3: xgrammar + streaming fail → falls through to structured."""
         runner = MockSynthesisRunner(
             "sequential_preferred",
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_ok({"title": "structured"}),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "structured"}
@@ -278,14 +283,14 @@ class TestSequentialPreferred:
         assert runner._call_log == ["xgrammar", "streaming", "structured"]
 
     @pytest.mark.asyncio
-    async def test_sequential_all_fail(self):
+    async def test_sequential_all_fail(self) -> None:
         """L-05-5: all engines fail → returns (None, 'none')."""
         runner = MockSynthesisRunner(
             "sequential_preferred",
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_none(),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
         assert result is None
@@ -299,7 +304,7 @@ class TestRaceFirstWins:
     """L-05-4, L-05-5: race_first_wins cancellation behavior."""
 
     @pytest.mark.asyncio
-    async def test_race_cancels_slower_tasks(self):
+    async def test_race_cancels_slower_tasks(self) -> None:
         """L-05-4: first completed winner cancels remaining pending tasks."""
         call_log: list[str] = []
 
@@ -326,7 +331,7 @@ class TestRaceFirstWins:
             xgrammar_fn=lambda: fast_xgrammar(),
             streaming_fn=lambda: slow_streaming(),
             structured_fn=lambda: slow_structured(),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
 
@@ -337,28 +342,27 @@ class TestRaceFirstWins:
         # At most one slow task may complete; both should NOT both complete
         streaming_done = "streaming_end" in call_log
         structured_done = "structured_end" in call_log
-        assert not (streaming_done and structured_done), \
-            "Both slow tasks completed — cancellation may not be working"
+        assert not (streaming_done and structured_done), "Both slow tasks completed — cancellation may not be working"
 
     @pytest.mark.asyncio
-    async def test_race_all_fail_returns_none(self):
+    async def test_race_all_fail_returns_none(self) -> None:
         """L-05-5: all engines fail → returns (None, 'none')."""
         runner = MockSynthesisRunner(
             "race_first_wins",
             xgrammar_fn=lambda: _result_none(),
             streaming_fn=lambda: _result_none(),
             structured_fn=lambda: _result_none(),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
         assert result is None
         assert name == "none"
 
     @pytest.mark.asyncio
-    async def test_race_streaming_wins_when_xgrammar_fails(self):
+    async def test_race_streaming_wins_when_xgrammar_fails(self) -> None:
         """Streaming wins when xgrammar fails but streaming is fast."""
 
-        async def xgrammar_fail():
+        async def xgrammar_fail() -> None:
             await asyncio.sleep(0.5)
             return None
 
@@ -375,7 +379,7 @@ class TestRaceFirstWins:
             xgrammar_fn=lambda: xgrammar_fail(),
             streaming_fn=lambda: streaming_fast(),
             structured_fn=lambda: structured_slow(),
-    )
+        )
 
         result, name = await runner._race_inference("test prompt")
         assert result == {"title": "streaming"}
@@ -386,13 +390,13 @@ class TestSynthesisStrategyDispatch:
     """L-05: Dispatcher routes to correct implementation."""
 
     @pytest.mark.asyncio
-    async def test_dispatcher_routes_sequential(self):
+    async def test_dispatcher_routes_sequential(self) -> None:
         runner = MockSynthesisRunner("sequential_preferred")
         result, name = await runner._race_inference("test prompt")
         assert name == "xgrammar"
 
     @pytest.mark.asyncio
-    async def test_dispatcher_routes_race(self):
+    async def test_dispatcher_routes_race(self) -> None:
         # In race_first_wins with all-fast engines, any engine may win.
         # Verify the dispatcher runs and returns a valid non-none result.
         runner = MockSynthesisRunner("race_first_wins")

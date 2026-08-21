@@ -20,7 +20,6 @@ all features (e.g., JS rendering when only simple HTML fetching is needed).
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import functools
 import importlib
 import importlib.util
@@ -42,13 +41,6 @@ from hledac.universal.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# MODERN-35: Lazy Import Infrastructure
-# ---------------------------------------------------------------------------
-# Uses Python 3.7+ module-level __getattr__ for lazy loading.
-# Import cache is stored in _LAZY_CACHE to avoid repeated lookups.
-# ---------------------------------------------------------------------------
-
 _LAZY_CACHE: dict[str, Any] = {}
 _LAZY_SUBMODULES = {
     "_url_ops",
@@ -58,7 +50,6 @@ _LAZY_SUBMODULES = {
     "_js_renderers",
     "_html_processor",
 }
-
 
 def _lazy_import(submodule: str, name: str) -> Any:
     """
@@ -83,7 +74,6 @@ def _lazy_import(submodule: str, name: str) -> Any:
     _LAZY_CACHE[cache_key] = obj
     return obj
 
-
 def __getattr__(name: str) -> Any:
     """
     MODERN-35: Module-level __getattr__ for lazy imports.
@@ -91,7 +81,6 @@ def __getattr__(name: str) -> Any:
     Handles lazy loading of all submodules and their exports.
     Falls back to module-level attributes for backward compatibility.
     """
-    # Check lazy cache first
     if name in _LAZY_CACHE:
         return _LAZY_CACHE[name]
 
@@ -194,12 +183,6 @@ def __getattr__(name: str) -> Any:
     # Fallback to module-level attributes
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-# ---------------------------------------------------------------------------
-# MODERN-35: Critical Eager Imports
-# These are required at module load time for type hints and core functionality.
-# ---------------------------------------------------------------------------
-
 if TYPE_CHECKING:
     import httpx
 
@@ -218,7 +201,6 @@ from hledac.universal.transport.session_pool import httpx_socks_client
 
 # Utility imports (lightweight, safe to eager import)
 from hledac.universal.utils.encoding import decode_response_bytes
-from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
 from hledac.universal.utils.asyncx._parallel import parallel
 from hledac.universal.utils.html_text_fast import strip_html_tags
 from tenacity import (
@@ -240,7 +222,6 @@ from hledac.universal.fetching._body_hash import body_hash_store as _body_hash_s
 # Tarpit detection — import function lazily to avoid circular import at module level
 _tarpit_detect = None  # type: ignore[assignment]
 
-
 def _get_tarpit_detect():
     """Lazy import detect_tarpit to avoid circular imports at module load time."""
     global _tarpit_detect
@@ -249,7 +230,6 @@ def _get_tarpit_detect():
 
         _tarpit_detect = _dt
     return _tarpit_detect
-
 
 logger = get_logger(__name__)
 _ContentHasher: object | None = None
@@ -325,7 +305,6 @@ def _store_body_hash(url: str, hash_hex: str) -> None:
     _body_hash_store.store(url, hash_hex)
 from hledac.universal.transport.http3_lane import http_version_for_curl_cffi as _h3_http_version_for_url
 from hledac.universal.transport.http3_lane import record_from_curl_cffi_result as _h3_record_from_result_headers
-
 
 # _altsvc_extract_host is now imported from _url_ops module
 def _altsvc_http_version_for(host: str) -> Any:
@@ -506,12 +485,10 @@ async def get_httpx_session() -> httpx.AsyncClient:
     from hledac.universal.network.session_runtime import async_get_httpx_session as _canonical_get
     return await _canonical_get()
 
-
 async def close_httpx_session() -> None:
     """ISSUE-014: Delegate to canonical session_runtime (backward compat stub)."""
     from hledac.universal.network.session_runtime import close_httpx_session_async as _canonical_close
     await _canonical_close()
-
 
 async def close_aiohttp_session() -> None:
     """ISSUE-014: Delegate to canonical session_runtime (backward compat stub)."""
@@ -553,7 +530,6 @@ def get_session_source_telemetry() -> dict[str, str]:
     result['fallback_reason'] = 'injected_provider_available' if _SESSION_MGR._injected_session_provider is not None else 'local_pool_until_transport_unified'
     return result
 
-
 # [NEXUS]-018-01: WebKit HTTP/2 transport telemetry.
 def get_webkit_transport_stats() -> dict[str, int]:
     """Return WebKit HTTP/2 transport telemetry snapshot.
@@ -587,7 +563,6 @@ def get_webkit_transport_stats() -> dict[str, int]:
             "h2_webkit_preset_enabled": 0,
         }
 
-
 def _reset_webkit_transport_telemetry() -> None:
     """Reset WebKit transport telemetry counters (call at sprint winddown)."""
     try:
@@ -597,7 +572,6 @@ def _reset_webkit_transport_telemetry() -> None:
         _reset_wt()
     except ImportError:  # noqa: BLE001
         pass
-
 
 # _CAMOUFOX_LOCK and _get_camoufox_lock imported from _js_renderers
 DEFAULT_UA: Final[str] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -1297,7 +1271,6 @@ async def _fetch_with_camoufox(url: str, timeout: float=15.0) -> str:
     except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.warning('Error checking renderer policy, proceeding with caution: %s', e)
     try:
-        from camoufox.async_api import AsyncCamoufox
     except ImportError:
         logger.debug('camoufox not installed, JS fetch unavailable')
         return ''
@@ -1358,7 +1331,6 @@ async def _playwright_locked(url: str, timeout: float) -> str:
         if browser is not None:
             await browser.close()
 
-
 # BLITZ-15: Dead-host tracking — hosts marked dead after exhausting retries
 # in blitz mode are excluded from further fetch attempts for the sprint duration.
 # Reset at sprint start via reset_blitz_dead_hosts().
@@ -1379,7 +1351,6 @@ def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
     max_attempts = 2 if _is_blitz() else MAX_RETRIES + 1
     return retry_state.attempt_number >= max_attempts
 
-
 # ISSUE-7: tenacity decorator — replaces manual for/retry loop.
 # BLITZ-15: stop uses _blitz_aware_stop — 2 attempts in blitz mode, MAX_RETRIES+1 otherwise.
 # wait: _tenacity_wait_jitter — decorrelated jitter with Retry-After header priority
@@ -1395,8 +1366,6 @@ _retry_decorator = retry(
     after=_tenacity_after,
     reraise=True,
     )
-
-
 
 # Transient error patterns that warrant a retry (substring match on lowercased error string).
 _RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
@@ -1422,14 +1391,12 @@ _RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
     'handshake failure',
     )
 
-
 # PHYSICS-11: TTFB (Time-To-First-Byte) kill switch default — 1.5 s is
 # aggressive enough to kill unresponsive hosts while leaving headroom for
 # normal latency (TCP + TLS + server processing + first chunk on non-local
 # servers). After 2 TTFB timeouts on the same host in blitz mode the
 # dead-host blacklist blocks it for the remainder of the sprint.
 _TTFB_TIMEOUT_S: float = 1.5
-
 
 def _is_tarpit_url(url: str) -> bool:
     """Pre-scan URL for known tarpit/honeypot path patterns.
@@ -1626,9 +1593,6 @@ async def _fetch_core(
         redirected=bool(final_url != url and 300 <= status_code < 400),
     )
 
-
-
-
 @_retry_decorator
 async def _fetch_core_retryable(url: str, **kwargs) -> FetchResult:
     """Apply tenacity retry decorator to _fetch_core.
@@ -1731,11 +1695,6 @@ async def async_fetch_public_text(
             failure_stage='retry_loop',
     )
 
-
-# ---------------------------------------------------------------------------
-# UNIFIED-007/008: Domain reputation helpers
-# ---------------------------------------------------------------------------
-
 def _extract_domain_from_url(url: str) -> str:
     """Extract netloc (host:port → host) from URL string. Fail-safe."""
     try:
@@ -1748,9 +1707,7 @@ def _extract_domain_from_url(url: str) -> str:
     except Exception:
         return ""
 
-
 _rep_service_cache: Any = None  # DomainReputationService singleton, lazy
-
 
 def _lazy_get_reputation_service() -> Any | None:
     """Lazy-load DomainReputationService singleton.
@@ -1770,7 +1727,6 @@ def _lazy_get_reputation_service() -> Any | None:
         return _rep_service_cache
     except Exception:  # noqa: BLE001 — fail-safe; optional feature
         return None
-
 
 # UNIFIED-009: Route graph service singleton (lazy)
 _route_graph_cache: Any = None
@@ -1794,7 +1750,6 @@ def _lazy_get_route_graph_service() -> Any | None:
     except Exception:  # noqa: BLE001 — fail-safe; optional feature
         return None
 
-
 # UNIFIED-010: Anti-bot profile service singleton (lazy)
 _anti_bot_profile_cache: Any = None
 
@@ -1817,7 +1772,6 @@ def _lazy_get_anti_bot_profile_service() -> Any | None:
     except Exception:  # noqa: BLE001 — fail-safe; optional feature
         return None
 
-
 _ANTI_BOT_HEADERS: tuple[tuple[str, str], ...] = (
     ("cf-ray", "cloudflare"),
     ("cf-cache-status", "cloudflare"),
@@ -1835,7 +1789,6 @@ _ANTI_BOT_BODY_SUBSTRINGS: tuple[tuple[str, str], ...] = (
     ("imperva", "imperva"),
     ("incapsula", "imperva"),
     )
-
 
 def _detect_anti_bot_type(result: Any) -> str:
     """Detect anti-bot/WAF type from FetchResult headers and text.
@@ -1863,7 +1816,6 @@ def _detect_anti_bot_type(result: Any) -> str:
         return "none"
     except Exception:  # noqa: BLE001 — fail-safe
         return "none"
-
 
 async def _fetch_one(url: str, idx: int, *, _timeout_s: float, _max_bytes: int, _ttfb_timeout_s: float | None) -> tuple[int, FetchResult]:
     """Fail-safe fetch with index capture for order preservation."""
@@ -1983,10 +1935,6 @@ async def async_fetch_public_text_batch(
     for idx, fetched_result in result.ok:
         ordered[idx] = fetched_result
 
-    # ISSUE-7 Phase 2: two-phase retry for retryable failures.
-    # Phase 1 (above): all URLs fetched with built-in retry loop (serial per-host).
-    # Phase 2: identify retryable failures and retry them in a separate parallel pass.
-    # This ensures retry sleeps for broken hosts don't block the batch concurrency slot.
     retryable_urls: list[tuple[int, str]] = []  # (original_idx, url)
     for idx, fr in enumerate(ordered):
         if fr.error is not None and (
@@ -2122,7 +2070,6 @@ async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int,
     )
     return None
 
-
 async def _detect_and_handle_tarpits(
     result: FetchResult,
     url: str,
@@ -2169,7 +2116,6 @@ async def _detect_and_handle_tarpits(
         except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
             pass
     return False, result
-
 
 async def _detect_cognitive_tarpit(
     result: FetchResult,
@@ -2233,7 +2179,6 @@ async def _detect_cognitive_tarpit(
             pass
     return False, result
 
-
 async def _record_reputation_success(
     result: FetchResult,
     domain: str,
@@ -2249,7 +2194,6 @@ async def _record_reputation_success(
     )
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
-
 
 async def _record_route_outcome(
     result: FetchResult,
@@ -2279,7 +2223,6 @@ async def _record_route_outcome(
     )
             except Exception:  # noqa: BLE001 — fail-safe; non-critical
                 pass
-
 
 async def _record_anti_bot_observations(
     result: FetchResult,
@@ -2314,9 +2257,8 @@ async def _record_fetch_outcome(
     await _record_reputation_success(result, domain, rep_service)
     await _record_route_outcome(result, domain)
     await _record_anti_bot_observations(result, domain)
-from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
+from hledac.universal.utils.html_text_fast import extract_html_metadata
 from _core import aclose
-
 
 # _sync_process_html imported from _html_processor
 # _batch_sync_extract_html_metadata imported from _html_processor

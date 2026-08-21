@@ -3,7 +3,6 @@ Unified Lazy Import Resolver — P0-01
 
 Centralizuje try/except ImportError pattern napříč všemi moduly.
 
-
 Používá importlib.import_module() (PEP 451 C-optimalizovaná cesta v Python 3.14+)
 místo try/except ImportError, což eliminuje:
 - 4 import resolution kroky při cold startu
@@ -30,10 +29,7 @@ M1 8GB: žádná extra RAM (pouze 1× reference na modul).
 """
 
 import importlib
-import sys
 from typing import Any, TypeVar
-from collections.abc import Callable
-from _core import aclose
 
 __all__ = ["lazy", "lazy_callable"]
 
@@ -76,14 +72,13 @@ class _LazyResolver:
         if module_path.startswith("."):
             # Count leading dots to determine depth
             depth = len(module_path) - len(module_path.lstrip("."))
-            # Import the parent module at the correct depth
             if depth == 1:
                 # Single dot: sibling module (e.g. .foo from bar/baz.py -> bar.foo)
                 # We need to find the caller's package
                 # Use __import__ with fromlist trick to resolve relative
                 try:
                     # Try using importlib's relative import support
-                    mod = importlib.import_module(module_path, package="hledac.universal.brain")
+                    importlib.import_module(module_path, package="hledac.universal.brain")
                     return module_path, self._attr
                 except TypeError:
                     # Fallback: convert to absolute
@@ -112,7 +107,7 @@ class _LazyResolver:
                     mod = importlib.import_module(module_path)
                 self._resolved = getattr(mod, attr)
             return self._resolved
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             self._resolved = self._fallback
             return self._fallback
 

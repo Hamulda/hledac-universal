@@ -30,22 +30,26 @@ Usage:
     else:
         # Skip, save tokens
 """
+
 import logging
 import re
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
+
 import numpy as np
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
+
 
 class FilterResult(Struct):
     """Result of semantic filtering."""
+
     passed: bool
     similarity: float
     filtered_content: str | None
     metadata: dict[str, Any] | None = None
+
 
 class LightweightTokenizer:
     """
@@ -54,11 +58,12 @@ class LightweightTokenizer:
     Uses simple whitespace and punctuation tokenization
     for M1 Silicon memory efficiency.
     """
-    __slots__ = tuple(('_pattern', '_use_bigrams'))
 
-    def __init__(self, use_bigrams: bool=False):
+    __slots__ = ("_pattern", "_use_bigrams")
+
+    def __init__(self, use_bigrams: bool = False) -> None:
         """Initialize LightweightTokenizer."""
-        self._pattern = re.compile('\\b\\w{3,}\\b')
+        self._pattern = re.compile("\\b\\w{3,}\\b")
         self._use_bigrams = use_bigrams
 
     def tokenize(self, text: str) -> list[str]:
@@ -73,11 +78,11 @@ class LightweightTokenizer:
         """
         words = self._pattern.findall(text.lower())
         if self._use_bigrams and len(words) > 1:
-            bigrams = [f'{w_a}_{w_b}' for w_a, w_b in zip(words, words[1:])]
+            bigrams = [f"{w_a}_{w_b}" for w_a, w_b in zip(words, words[1:], strict=False)]
             words.extend(bigrams)
         return words
 
-    def extract_keywords(self, text: str, top_k: int=10) -> list[str]:
+    def extract_keywords(self, text: str, top_k: int = 10) -> list[str]:
         """
         Extract top keywords from text.
 
@@ -90,8 +95,10 @@ class LightweightTokenizer:
         """
         tokens = self.tokenize(text)
         from collections import Counter
+
         counter = Counter(tokens)
         return [token for token, _ in counter.most_common(top_k)]
+
 
 class ModernBERTEmbedding:
     """
@@ -102,11 +109,12 @@ class ModernBERTEmbedding:
 
     REPLACES: Model2VecEmbedding, SentenceTransformerEmbedding
     """
-    EMBEDDING_DIM = 768
-    DEFAULT_MODEL = 'mlx-community/answerdotai-ModernBERT-base-6bit'
-    __slots__ = tuple(('_embedder', '_initialized', '_model_path'))
 
-    def __init__(self, model_path: str | None=None):
+    EMBEDDING_DIM = 768
+    DEFAULT_MODEL = "mlx-community/answerdotai-ModernBERT-base-6bit"
+    __slots__ = ("_embedder", "_initialized", "_model_path")
+
+    def __init__(self, model_path: str | None = None) -> None:
         """
         Initialize ModernBERTEmbedding.
 
@@ -118,17 +126,18 @@ class ModernBERTEmbedding:
         self._initialized = False
         try:
             self._load_model()
-            logger.info('[EMBED] Using ModernBERT MLX (768d)')
+            logger.info("[EMBED] Using ModernBERT MLX (768d)")
             self._initialized = True
         except Exception as e:
-            logger.error(f'Failed to initialize ModernBERT: {e}')
+            logger.error(f"Failed to initialize ModernBERT: {e}")
             self._initialized = False
             raise
 
-    def _load_model(self):
+    def _load_model(self) -> None:
         """Load ModernBERT embedder."""
         from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
-        logger.info(f'[MODEL LOAD] ModernBERT: {self._model_path} (MLX) dim=768')
+
+        logger.info(f"[MODEL LOAD] ModernBERT: {self._model_path} (MLX) dim=768")
         self._embedder = ModernBERTEmbedder(model_path=self._model_path, lazy_load=True, normalize=True)
 
     def encode(self, text: str) -> list[float]:
@@ -142,12 +151,12 @@ class ModernBERTEmbedding:
             Embedding vector (768 dimensions)
         """
         if not self._initialized or self._embedder is None:
-            raise RuntimeError('ModernBERT not initialized')
+            raise RuntimeError("ModernBERT not initialized")
         try:
             result = self._embedder.embed(text)
             return result.embedding.tolist()
         except Exception as e:
-            logger.error(f'Failed to encode with ModernBERT: {e}')
+            logger.error(f"Failed to encode with ModernBERT: {e}")
             return [0.0] * self.EMBEDDING_DIM
 
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
@@ -181,7 +190,8 @@ class ModernBERTEmbedding:
             self._embedder.unload()
             self._embedder = None
             self._initialized = False
-            logger.info('ModernBERT embedding unloaded')
+            logger.info("ModernBERT embedding unloaded")
+
 
 class SimpleEmbedding:
     """
@@ -192,9 +202,10 @@ class SimpleEmbedding:
 
     DEPRECATED: Use ModernBERTEmbedding instead.
     """
-    __slots__ = tuple(('_doc_count', '_docs_for_idf', '_idf_cache', '_initialized', '_tokenizer', '_vocabulary'))
 
-    def __init__(self):
+    __slots__ = ("_doc_count", "_docs_for_idf", "_idf_cache", "_initialized", "_tokenizer", "_vocabulary")
+
+    def __init__(self) -> None:
         """Initialize SimpleEmbedding."""
         self._vocabulary: dict[str, int] = {}
         self._idf_cache: dict[str, float] = {}
@@ -203,7 +214,7 @@ class SimpleEmbedding:
         self._docs_for_idf: list[set] = []
         self._tokenizer = LightweightTokenizer(use_bigrams=False)
 
-    def fit(self, documents: list[str]):
+    def fit(self, documents: list[str]) -> None:
         """
         Build vocabulary from documents.
 
@@ -233,7 +244,16 @@ class SimpleEmbedding:
             Embedding vector
         """
         if not self._initialized:
-            init_text = ' '.join(['machine learning neural networks artificial intelligence deep learning algorithms techniques', 'programming coding software development computer science technology digital', 'data analysis statistics optimization techniques models training', 'web development internet research academic papers scientific studies', 'advanced techniques neural networks machine learning artificial intelligence', 'relevant article discussing advanced machine learning neural networks'])
+            init_text = " ".join(
+                [
+                    "machine learning neural networks artificial intelligence deep learning algorithms techniques",
+                    "programming coding software development computer science technology digital",
+                    "data analysis statistics optimization techniques models training",
+                    "web development internet research academic papers scientific studies",
+                    "advanced techniques neural networks machine learning artificial intelligence",
+                    "relevant article discussing advanced machine learning neural networks",
+                ]
+            )
             self.fit([init_text])
         tokens = self._tokenizer.tokenize(text)
         tf = {}
@@ -251,7 +271,7 @@ class SimpleEmbedding:
                 self._idf_cache[token] = 1.0
                 tfidf = count * 1.0
                 vector.append(tfidf)
-        norm = sum((x ** 2 for x in vector)) ** 0.5
+        norm = sum(x**2 for x in vector) ** 0.5
         if norm > 0:
             vector = [x / norm for x in vector]
         return vector
@@ -270,11 +290,12 @@ class SimpleEmbedding:
         if len(vec1) != len(vec2):
             return 0.0
         dot_product = sum((a * b for a, b in zip(vec1, vec2, strict=False)))
-        norm1 = sum((a ** 2 for a in vec1)) ** 0.5
-        norm2 = sum((b ** 2 for b in vec2)) ** 0.5
+        norm1 = sum(a**2 for a in vec1) ** 0.5
+        norm2 = sum(b**2 for b in vec2) ** 0.5
         if norm1 == 0 or norm2 == 0:
             return 0.0
         return dot_product / (norm1 * norm2)
+
 
 class SemanticFilter:
     """
@@ -298,9 +319,10 @@ class SemanticFilter:
         if result.passed:
             # Send to DeepSeek
     """
-    __slots__ = tuple(('_embedding', '_embedding_type', '_tokenizer', '_use_fallback', 'threshnew'))
 
-    def __init__(self, threshnew: float=0.7, use_fallback: bool=False):
+    __slots__ = ("_embedding", "_embedding_type", "_tokenizer", "_use_fallback", "threshnew")
+
+    def __init__(self, threshnew: float = 0.7, use_fallback: bool = False) -> None:
         """
         Initialize SemanticFilter.
 
@@ -312,31 +334,31 @@ class SemanticFilter:
         self._embedding: Any = None
         self._tokenizer = LightweightTokenizer()
         self._use_fallback = use_fallback
-        self._embedding_type = 'none'
+        self._embedding_type = "none"
         self._init_embedding()
 
-    def _init_embedding(self):
+    def _init_embedding(self) -> None:
         """Initialize embedding model."""
-        logger.info('[EMBED] Initializing ModernBERT MLX (768d) as primary solution')
+        logger.info("[EMBED] Initializing ModernBERT MLX (768d) as primary solution")
         try:
             self._embedding = ModernBERTEmbedding()
-            test_vec = self._embedding.encode('test')
+            test_vec = self._embedding.encode("test")
             if not test_vec or not test_vec:
-                raise RuntimeError('ModernBERT returned empty vector')
+                raise RuntimeError("ModernBERT returned empty vector")
             if len(test_vec) != ModernBERTEmbedding.EMBEDDING_DIM:
-                raise RuntimeError(f'Expected dim={ModernBERTEmbedding.EMBEDDING_DIM}, got {len(test_vec)}')
-            logger.info(f'[EMBED] ModernBERT initialized successfully, vector size: {len(test_vec)}')
-            self._embedding_type = 'modernbert'
+                raise RuntimeError(f"Expected dim={ModernBERTEmbedding.EMBEDDING_DIM}, got {len(test_vec)}")
+            logger.info(f"[EMBED] ModernBERT initialized successfully, vector size: {len(test_vec)}")
+            self._embedding_type = "modernbert"
         except Exception as e:
-            logger.error(f'[EMBED] Failed to initialize ModernBERT: {e}')
+            logger.error(f"[EMBED] Failed to initialize ModernBERT: {e}")
             if self._use_fallback:
-                logger.warning('[EMBED] Falling back to SimpleEmbedding (DEPRECATED)')
+                logger.warning("[EMBED] Falling back to SimpleEmbedding (DEPRECATED)")
                 self._embedding = SimpleEmbedding()
-                self._embedding.fit(['test query', 'test document'])
-                self._embedding_type = 'simple'
+                self._embedding.fit(["test query", "test document"])
+                self._embedding_type = "simple"
             else:
-                logger.error('[EMBED] ModernBERT initialization failed and fallback disabled')
-                raise RuntimeError(f'ModernBERT initialization failed: {e}') from e
+                logger.error("[EMBED] ModernBERT initialization failed and fallback disabled")
+                raise RuntimeError(f"ModernBERT initialization failed: {e}") from e
 
     def compute_similarity(self, text1: str, text2: str) -> float:
         """
@@ -352,7 +374,7 @@ class SemanticFilter:
         try:
             vec1 = self._embedding.encode(text1)
             vec2 = self._embedding.encode(text2)
-            logger.debug(f'Vec1 length: {len(vec1)}, Vec2 length: {len(vec2)}')
+            logger.debug(f"Vec1 length: {len(vec1)}, Vec2 length: {len(vec2)}")
             if not vec1 or not vec2:
                 return 0.0
             similarity = self._embedding.cosine_similarity(vec1, vec2)
@@ -362,13 +384,13 @@ class SemanticFilter:
             if tokens2:
                 overlap_ratio = len(common_tokens) / len(tokens2)
                 similarity = similarity / (1 - 0.3 * overlap_ratio)
-            logger.debug(f'Similarity: {similarity}, Overlap ratio: {(overlap_ratio if len(tokens2) > 0 else 0)}')
+            logger.debug(f"Similarity: {similarity}, Overlap ratio: {(overlap_ratio if len(tokens2) > 0 else 0)}")
             return max(0.0, min(1.0, similarity))
         except Exception as e:
-            logger.error(f'Failed to compute similarity: {e}')
+            logger.error(f"Failed to compute similarity: {e}")
             return 0.0
 
-    def filter(self, content: str, query: str, threshnew: float | None=None) -> FilterResult:
+    def filter(self, content: str, query: str, threshnew: float | None = None) -> FilterResult:
         """
         Filter content based on semantic similarity to query.
 
@@ -384,9 +406,19 @@ class SemanticFilter:
             threshnew = self.threshnew
         similarity = self.compute_similarity(content, query)
         passed = similarity >= threshnew
-        return FilterResult(passed=passed, similarity=similarity, filtered_content=content if passed else None, metadata={'threshnew': threshnew, 'content_length': len(content), 'query_length': len(query), 'embedding_type': self._embedding_type})
+        return FilterResult(
+            passed=passed,
+            similarity=similarity,
+            filtered_content=content if passed else None,
+            metadata={
+                "threshnew": threshnew,
+                "content_length": len(content),
+                "query_length": len(query),
+                "embedding_type": self._embedding_type,
+            },
+        )
 
-    def filter_batch(self, contents: list[str], query: str, threshnew: float | None=None) -> list[FilterResult]:
+    def filter_batch(self, contents: list[str], query: str, threshnew: float | None = None) -> list[FilterResult]:
         """
         Filter multiple contents against a query.
 
@@ -409,10 +441,23 @@ class SemanticFilter:
             else:
                 similarity = self._embedding.cosine_similarity(query_vec, content_vec)
             passed = similarity >= threshnew
-            results.append(FilterResult(passed=passed, similarity=similarity, filtered_content=content if passed else None, metadata={'threshnew': threshnew, 'content_length': len(content), 'embedding_type': self._embedding_type}))
+            results.append(
+                FilterResult(
+                    passed=passed,
+                    similarity=similarity,
+                    filtered_content=content if passed else None,
+                    metadata={
+                        "threshnew": threshnew,
+                        "content_length": len(content),
+                        "embedding_type": self._embedding_type,
+                    },
+                )
+            )
         return results
 
-    def extract_relevant_snippets(self, content: str, query: str, max_snippets: int=3, snippet_length: int=200) -> list[str]:
+    def extract_relevant_snippets(
+        self, content: str, query: str, max_snippets: int = 3, snippet_length: int = 200
+    ) -> list[str]:
         """
         Extract most relevant snippets from content.
 
@@ -425,7 +470,7 @@ class SemanticFilter:
         Returns:
             List of relevant snippets
         """
-        sentences = re.split('[.!?]+', content)
+        sentences = re.split("[.!?]+", content)
         sentence_scores = []
         for sentence in sentences:
             sentence = sentence.strip()
@@ -444,9 +489,10 @@ class SemanticFilter:
 
     def unload(self) -> None:
         """Unload embedding model from memory."""
-        if hasattr(self._embedding, 'unload'):
+        if hasattr(self._embedding, "unload"):
             self._embedding.unload()
-            logger.info('SemanticFilter embedding unloaded')
+            logger.info("SemanticFilter embedding unloaded")
+
 
 class KeywordFilter:
     """
@@ -455,13 +501,14 @@ class KeywordFilter:
     Used as a first-pass filter before semantic filtering
     to save computational resources.
     """
-    __slots__ = tuple(('_tokenizer',))
 
-    def __init__(self):
+    __slots__ = ("_tokenizer",)
+
+    def __init__(self) -> None:
         """Initialize KeywordFilter."""
         self._tokenizer = LightweightTokenizer()
 
-    def contains_keywords(self, content: str, keywords: list[str], min_matches: int=1) -> bool:
+    def contains_keywords(self, content: str, keywords: list[str], min_matches: int = 1) -> bool:
         """
         Check if content contains minimum number of keywords.
 
@@ -500,6 +547,7 @@ class KeywordFilter:
                 matches.append(keyword)
         return matches
 
+
 class Model2VecEmbedding:
     """
     DEPRECATED: Use ModernBERTEmbedding instead.
@@ -507,8 +555,11 @@ class Model2VecEmbedding:
     Model2Vec-based embedding for efficient semantic filtering.
     """
 
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError('Model2VecEmbedding is DEPRECATED. Use ModernBERTEmbedding from hledac.embeddings.modernbert_embedder directly.')
+    def __init__(self, *args, **kwargs) -> None:
+        raise RuntimeError(
+            "Model2VecEmbedding is DEPRECATED. Use ModernBERTEmbedding from hledac.embeddings.modernbert_embedder directly."
+        )
+
 
 class SentenceTransformerEmbedding:
     """
@@ -517,5 +568,7 @@ class SentenceTransformerEmbedding:
     SentenceTransformer-based embedding for semantic filtering.
     """
 
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError('SentenceTransformerEmbedding is DEPRECATED. Use ModernBERTEmbedding which uses MLX-optimized ModernBERT (768d). NO sentence-transformers dependency required.')
+    def __init__(self, *args, **kwargs) -> None:
+        raise RuntimeError(
+            "SentenceTransformerEmbedding is DEPRECATED. Use ModernBERTEmbedding which uses MLX-optimized ModernBERT (768d). NO sentence-transformers dependency required."
+        )

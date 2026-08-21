@@ -32,13 +32,10 @@ except ImportError:
     import json as _stdlib_json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ─── Lazy Rust import ──────────────────────────────────────────────────────────
 
 _RUST_STIX: Any | None = None
 
@@ -49,6 +46,7 @@ def _get_rust_stix():
     if _RUST_STIX is None:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _rust = rust.stix
         if _rust is not None and hasattr(_rust, "encode_finding"):
             _RUST_STIX = _rust
@@ -65,8 +63,6 @@ def _json_loads(data: bytes | str) -> Any:
         return _orjson_mod.loads(data)
     return _stdlib_json.loads(data)
 
-
-# ─── Public API ────────────────────────────────────────────────────────────────
 
 STIX_BUNDLE_TYPE = "bundle"
 STIX_SPEC_VERSION = "2.1"
@@ -155,22 +151,19 @@ def validate(stix_json: str) -> ValidationResult:
                     is_valid=parsed.get("is_valid", False),
                     errors=parsed.get("errors", []),
                     object_count=parsed.get("object_count"),
-    )
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[stix] Rust validate_json failed: {exc}, falling back to Python")
 
     return _py_validate(stix_json)
 
 
-# ─── Python fallback implementations ────────────────────────────────────────────
-
-
 def _iso8601_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _iso8601_future(days: int = 90) -> str:
-    future = datetime.now(timezone.utc) + timedelta(days=days)
+    future = datetime.now(UTC) + timedelta(days=days)
     return future.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -289,14 +282,14 @@ def _py_validate(stix_json: str) -> ValidationResult:
             is_valid=False,
             errors=[{"path": "", "message": f"JSON parse error: {exc}", "value_preview": None}],
             object_count=None,
-    )
+        )
 
     if not isinstance(obj, dict):
         return ValidationResult(
             is_valid=False,
             errors=[{"path": "", "message": "STIX object must be a JSON object", "value_preview": None}],
             object_count=None,
-    )
+        )
 
     obj_type = obj.get("type")
     if obj_type == "bundle":
@@ -306,7 +299,7 @@ def _py_validate(stix_json: str) -> ValidationResult:
                 is_valid=False,
                 errors=[{"path": "objects", "message": "'objects' must be an array", "value_preview": None}],
                 object_count=None,
-    )
+            )
 
         errors = []
         ids_seen: set[str] = set()
@@ -323,12 +316,12 @@ def _py_validate(stix_json: str) -> ValidationResult:
                 if item_id in ids_seen:
                     errors.append(
                         {"path": f"objects[{i}].id", "message": f"Duplicate STIX ID '{item_id}'", "value_preview": None}
-    )
+                    )
                 ids_seen.add(item_id)
             else:
                 errors.append(
-                    {"path": f"objects[{i}].id", "message": f"Missing required field 'id'", "value_preview": None}
-    )
+                    {"path": f"objects[{i}].id", "message": "Missing required field 'id'", "value_preview": None}
+                )
 
             is_sco = item_type in ("ipv4-addr", "ipv6-addr", "domain-name", "url", "file-hash", "email-addr")
             if not is_sco and "spec_version" not in item:
@@ -338,7 +331,7 @@ def _py_validate(stix_json: str) -> ValidationResult:
                         "message": f"SDO '{item_type}' missing 'spec_version'",
                         "value_preview": None,
                     }
-    )
+                )
 
         return ValidationResult(is_valid=len(errors) == 0, errors=errors, object_count=len(objects))
 
@@ -347,12 +340,9 @@ def _py_validate(stix_json: str) -> ValidationResult:
             is_valid=False,
             errors=[{"path": "", "message": "STIX object missing required 'id' or 'type'", "value_preview": None}],
             object_count=None,
-    )
+        )
 
     return ValidationResult(is_valid=True, errors=[], object_count=1)
-
-
-# ─── ValidationResult dataclass ─────────────────────────────────────────────────
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,4 +364,6 @@ class ValidationResult:
         return {"is_valid": self.is_valid, "errors": self.errors, "object_count": self.object_count}
 
     def __repr__(self) -> str:
-        return f"ValidationResult(is_valid={self.is_valid}, errors={len(self.errors)}, object_count={self.object_count})"
+        return (
+            f"ValidationResult(is_valid={self.is_valid}, errors={len(self.errors)}, object_count={self.object_count})"
+        )

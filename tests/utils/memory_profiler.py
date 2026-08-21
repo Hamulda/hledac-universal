@@ -32,11 +32,10 @@ import time
 import tracemalloc
 import weakref
 from dataclasses import dataclass, field
+from operator import attrgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
 import psutil
-from _core import aclose
 
 __all__ = [
     "get_rss_mb",
@@ -279,7 +278,7 @@ class Snapshot:
                 f"Memory leak detected: RSS grew by {delta:.1f} MB "
                 f"(threshold={threshold_mb:.1f} MB). "
                 f"Snapshot RSS={self.rss_mb:.1f} MB, current RSS={get_rss_mb():.1f} MB"
-    )
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +322,7 @@ class TracemallocStats:
                 peak_bytes=peak,
                 _baseline=(current, peak),
                 _started=True,
-    )
+            )
         except Exception as ex:
             log.warning("get_traced_memory failed: %s", ex)
             return TracemallocStats(current_bytes=0, peak_bytes=0, _started=False)
@@ -399,7 +398,7 @@ class TracemallocSnapshot:
             log.warning("tracemalloc init failed (CI/container?): %s", ex)
             self._started = False
             self._session_mode = False
-        
+
         # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
         self._finalizer = weakref.finalize(self, _tracemalloc_snapshot_cleanup)
 
@@ -516,12 +515,12 @@ class TracemallocSnapshot:
     def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self.stop()
 
     def _cleanup_tracemalloc_snapshot(self) -> None:
@@ -532,13 +531,12 @@ class TracemallocSnapshot:
 def _tracemalloc_snapshot_cleanup() -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Stop tracemalloc when TracemallocSnapshot is garbage collected.
     Called automatically by weakref.finalize when the object is GC'd.
     """
     # Note: This is a no-op for session mode; for legacy mode, the instance
     # cleanup is handled by the stop() method which checks _session_mode.
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -687,4 +685,4 @@ def assert_no_leak(
             f"Memory leak{' in ' + context if context else ''}:"
             f" RSS grew by {delta:.1f} MB (threshold={threshold_mb:.1f} MB)."
             f" before={before_mb:.1f} MB, after={after_mb:.1f} MB"
-    )
+        )

@@ -23,12 +23,9 @@ Author: F270 Interface Segregation
 Date: 2026-06-25
 """
 
-
-
 from .duckdb_adapter import DuckDBStoreAdapter
 from .fetch_adapter import FetchCoordinatorAdapter
-from .graph_adapter import DuckPGQGraphAdapter, IOCGraphAdapter, GraphFacade
-from _core import aclose
+from .graph_adapter import DuckPGQGraphAdapter, GraphFacade, IOCGraphAdapter
 
 __all__ = [
     "DuckDBStoreAdapter",

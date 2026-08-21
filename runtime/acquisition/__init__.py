@@ -24,33 +24,11 @@ BACKWARD COMPATIBILITY:
   without changes during the transition period.
 """
 
-
 # ── Threat dictionary ──────────────────────────────────────────────────────
-from hledac.universal.runtime.acquisition.threat_dictionary import (
-    lookup_threat_entity,
-)
-
-# ── Domain expansion ────────────────────────────────────────────────────────
-from hledac.universal.runtime.acquisition.domain_expansion import (
-    DOMAIN_EXPANSIONS,
-    _expand_keyword_query,
-)
-
-# ── Profile ─────────────────────────────────────────────────────────────────
-from hledac.universal.runtime.acquisition.profile import (
-    AcquisitionProfile,
-    normalize_acquisition_profile,
-    is_academic_profile,
-    is_deep_osint_m1_profile,
-    is_mission_profile,
-)
-
-# ── CID detection ──────────────────────────────────────────────────────────
-from hledac.universal.runtime.acquisition.cid_detection import (
-    _has_explicit_ipfs_cid,
-    _extract_cids_from_text,
-    _CIDV0_RE,
-    _CIDV1_BASE32_RE,
+# ── Acquisition lanes (shim during transition) ───────────────────────────────
+from hledac.universal.runtime.acquisition.acquisition_lanes import (
+    run_enabled_acquisition_lanes,
+    run_enabled_acquisition_lanes_streaming,
 )
 
 # ── Budget ─────────────────────────────────────────────────────────────────
@@ -60,76 +38,93 @@ from hledac.universal.runtime.acquisition.budget import (
     feed_budget_to_dict,
 )
 
-# ── Mission ────────────────────────────────────────────────────────────────
-from hledac.universal.runtime.acquisition.mission import (
-    NonfeedMissionController,
-    NonfeedMissionSnapshot,
-    MissionIntent,
-    MissionTargetKind,
-    infer_mission_intent,
+# ── CID detection ──────────────────────────────────────────────────────────
+from hledac.universal.runtime.acquisition.cid_detection import (
+    _CIDV0_RE,
+    _CIDV1_BASE32_RE,
+    _extract_cids_from_text,
+    _has_explicit_ipfs_cid,
+)
+
+# ── Domain expansion ────────────────────────────────────────────────────────
+from hledac.universal.runtime.acquisition.domain_expansion import (
+    DOMAIN_EXPANSIONS,
+    _expand_keyword_query,
 )
 
 # ── Lane constants ─────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.lane_constants import (
+    NON_TERMINAL_STATES,
+    TERMINAL_STATES,
     AcquisitionLane,
     RiskLevel,
-    TERMINAL_STATES,
-    NON_TERMINAL_STATES,
 )
 
 # ── Lane plan ──────────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.lane_plan import (
     AcquisitionContext,
-    LaneSpec,
     LaneRule,
+    LaneSpec,
 )
 
-# AcquisitionLanePlan is in nonfeed_outcomes.py
-from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
-    AcquisitionLanePlan,
+# ── Mission ────────────────────────────────────────────────────────────────
+from hledac.universal.runtime.acquisition.mission import (
+    MissionIntent,
+    MissionTargetKind,
+    NonfeedMissionController,
+    NonfeedMissionSnapshot,
+    infer_mission_intent,
 )
 
 # ── Nonfeed eligibility ─────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.nonfeed_eligibility import (
-    required_terminal_lanes,
     lane_is_terminal,
+    required_terminal_lanes,
     terminality_report,
 )
 
+# AcquisitionLanePlan is in nonfeed_outcomes.py
 # ── Nonfeed outcomes ────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     AcquisitionLaneOutcome,
-    SourceFamilyOutcome,
+    AcquisitionLanePlan,
+    MandatoryLaneTerminality,
     NonfeedPlanDebug,
     NonfeedSeedContext,
-    MandatoryLaneTerminality,
+    SourceFamilyOutcome,
 )
 
 # ── Plan builder ────────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.plan_builder import (
+    ACQUISITION_REPORT_SCHEMA_VERSION,
     build_acquisition_plan,
     build_lane_query,
-    is_lane_enabled,
-    get_lane_plan,
-    lane_skip_reason,
-    normalize_source_family_outcome,
-    normalize_source_family_name,
     canonicalize_source_family_outcomes,
+    get_lane_plan,
+    is_lane_enabled,
+    lane_skip_reason,
+    normalize_source_family_name,
+    normalize_source_family_outcome,
     normalize_terminal_state,
-    ACQUISITION_REPORT_SCHEMA_VERSION,
+)
+
+# ── Profile ─────────────────────────────────────────────────────────────────
+from hledac.universal.runtime.acquisition.profile import (
+    AcquisitionProfile,
+    is_academic_profile,
+    is_deep_osint_m1_profile,
+    is_mission_profile,
+    normalize_acquisition_profile,
 )
 
 # ── Report builder ──────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.report_builder import (
     build_acquisition_report,
-    reconcile_lane_detail_fields,
     complete_source_family_outcomes_from_lane_details,
+    reconcile_lane_detail_fields,
 )
-
-# ── Acquisition lanes (shim during transition) ───────────────────────────────
-from hledac.universal.runtime.acquisition.acquisition_lanes import (
-    run_enabled_acquisition_lanes,
-    run_enabled_acquisition_lanes_streaming,
+from hledac.universal.runtime.acquisition.threat_dictionary import (
+    lookup_threat_entity,
 )
 
 __all__ = [

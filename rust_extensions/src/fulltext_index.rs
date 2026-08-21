@@ -38,19 +38,11 @@ use tantivy::schema::*;
 use tantivy::tokenizer::*;
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy};
 
-// ---------------------------------------------------------------------------
-// Schema constants — single source of truth for field names
-// ---------------------------------------------------------------------------
-
 /// Field name for document ID (stored, retrievable in results).
 const FIELD_DOC_ID: &str = "doc_id";
 
 /// Field name for document content (indexed, tokenized for BM25).
 const FIELD_CONTENT: &str = "content";
-
-// ---------------------------------------------------------------------------
-// Tokenizer — uses Tantivy's built-in "default" tokenizer
-// ---------------------------------------------------------------------------
 
 /// TANTIVY 0.22 FIX: Removed custom tokenizer registration.
 ///
@@ -63,10 +55,6 @@ const FIELD_CONTENT: &str = "content";
 ///   manager.register("custom", my_tokenizer);
 ///   // Then set via IndexSettings::set_indexing(tokenizer_name)
 
-// ---------------------------------------------------------------------------
-// Schema builder
-// ---------------------------------------------------------------------------
-
 /// Build the Tantivy schema for fulltext index.
 ///
 /// Fields:
@@ -78,10 +66,6 @@ fn build_schema() -> Schema {
     schema_builder.add_text_field(FIELD_CONTENT, TEXT | STORED);
     schema_builder.build()
 }
-
-// ---------------------------------------------------------------------------
-// Index helpers
-// ---------------------------------------------------------------------------
 
 /// Open or create a Tantivy index at the given path.
 ///
@@ -117,10 +101,6 @@ fn get_content_field(schema: &Schema) -> Field {
         .get_field(FIELD_CONTENT)
         .expect("Schema must have content field")
 }
-
-// ---------------------------------------------------------------------------
-// PyO3-exported functions
-// ---------------------------------------------------------------------------
 
 /// Create a new fulltext index from a batch of (doc_id, content) documents.
 ///
@@ -405,18 +385,6 @@ fn fulltext_is_available() -> bool {
     true
 }
 
-// ---------------------------------------------------------------------------
-// Arrow IPC RecordBatch encoding — 2-column (doc_id: Utf8, score: Float64)
-//
-// ISSUE [BLITZ]-01: Replaces the per-tuple FFI serialization of
-// fulltext_search() with a single PyBytes containing a hand-rolled Arrow
-// IPC RecordBatchStream. Python calls pa.ipc.open_stream() for zero-copy
-// deserialization — no per-row Python object allocation.
-//
-// The encoding follows the same hand-rolled IPC pattern proven in
-// arrow_batch_builder.rs:118-176, adapted for a 2-column schema.
-// ---------------------------------------------------------------------------
-
 /// Encode a string array as IPC format: null_bitmap + offsets + data bytes.
 /// Identical to arrow_batch_builder::encode_string_array — duplicated here
 /// to avoid cross-feature dependency (fulltext ≠ data feature gates).
@@ -469,7 +437,6 @@ fn build_fulltext_ipc_bytes(
         arrow::datatypes::Field::new("score", arrow::datatypes::DataType::Float64, true),
     ]);
 
-    // Build column arrays using arrow types
     use arrow::array::{Float64Array, StringArray};
     let doc_ids_array: ArrayRef = Arc::new(StringArray::from(doc_ids));
     let scores_array: ArrayRef = Arc::new(Float64Array::from(scores));
@@ -597,10 +564,6 @@ fn fulltext_search_arrow<'py>(
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,7 +622,6 @@ mod tests {
         let result = build_fulltext_ipc_bytes(doc_ids.clone(), scores.clone(), 2)
             .expect("build_fulltext_ipc_bytes should succeed");
 
-        // Parse and verify roundtrip
         let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
             .expect("Should parse as valid Arrow IPC");
         let batches: Vec<_> = reader.collect().expect("Should collect batches");
@@ -674,10 +636,6 @@ mod tests {
         assert_eq!(score_col.len(), 2);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 /// Register fulltext module functions with PyO3 module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

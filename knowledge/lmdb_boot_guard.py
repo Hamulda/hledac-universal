@@ -19,14 +19,11 @@ from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 env = open_lmdb_with_guard(path, map_size=...)
 """
 
-
-
 import logging
 import os
 import pathlib
 import stat as _stat
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     import lmdb
@@ -37,10 +34,6 @@ logger = logging.getLogger(__name__)
 # Used ONLY when holder PID cannot be resolved; age threshold is a fallback safety net
 _LOCK_AGE_THRESHOLD_SECONDS: float = 60.0
 
-
-# ---------------------------------------------------------------------------
-# SEC-02: LMDB file permission hardening
-# ---------------------------------------------------------------------------
 
 def _chmod_lmdb_path(path: pathlib.Path) -> None:
     """
@@ -75,10 +68,8 @@ def _is_process_alive(pid: int) -> bool:
         os.kill(pid, 0)
         return True
     except ProcessLookupError:
-        # Process does not exist
         return False
     except PermissionError:
-        # Process exists but we don't have permission — treat as alive
         return True
     except OSError:
         return False
@@ -112,7 +103,9 @@ def _try_get_lock_holder_pid(lock_path: str | os.PathLike[str]) -> int | None:
         return None
 
 
-def _is_lock_stale(lock_path: str | os.PathLike[str], data_path: str | os.PathLike[str] | None = None) -> tuple[bool, str]:
+def _is_lock_stale(
+    lock_path: str | os.PathLike[str], data_path: str | os.PathLike[str] | None = None
+) -> tuple[bool, str]:
     """
     Determine if a lock file is safely considered stale.
 
@@ -145,13 +138,13 @@ def _is_lock_stale(lock_path: str | os.PathLike[str], data_path: str | os.PathLi
     if pid is not None:
         if _is_process_alive(pid):
             return False, f"holder_process_alive(pid={pid})"
-        # Process is dead — lock is stale
         return True, f"holder_process_dead(pid={pid})"
 
     # Cannot determine holder — use age threshold as last resort
     try:
         age_seconds = os.path.getmtime(_lock_str)
         import time
+
         age = time.time() - age_seconds
         if age > _LOCK_AGE_THRESHOLD_SECONDS:
             return True, f"age_threshold_exceeded(age={age:.1f}s>{_LOCK_AGE_THRESHOLD_SECONDS}s)"
@@ -170,10 +163,11 @@ class BootGuardError(Exception):
     Only raise this when the caller should abort boot — i.e., when a live
     process holds the lock and this process should NOT proceed.
     """
-    pass
 
 
-def cleanup_stale_lmdb_lock(lmdb_dir: str | os.PathLike[str], *, data_path: str | os.PathLike[str] | None = None) -> tuple[int, str]:
+def cleanup_stale_lmdb_lock(
+    lmdb_dir: str | os.PathLike[str], *, data_path: str | os.PathLike[str] | None = None
+) -> tuple[int, str]:
     """
     Safely clean a single stale LMDB lock.mdb from lmdb_dir.
 
@@ -272,6 +266,7 @@ def open_lmdb_with_guard(
     # Resolve map_size
     if map_size is None:
         from hledac.universal.paths import lmdb_map_size
+
         map_size = lmdb_map_size()
 
     # Adaptive sync strategy: critical stores get durable writes.
@@ -343,46 +338,43 @@ def compact_lmdb(env: lmdb.Environment) -> dict[str, int] | None:
         leaf_entries, branch_pages) or None on failure.
     """
     try:
-        import lmdb
-        import tempfile
-        import shutil
         import pathlib
+        import tempfile
+
+        import lmdb
 
         # MDB_CP_COMPACT: compact but do not shrink the data file (safe for concurrent readers)
         # Available in lmdb >= 2.2.0 (required by this project)
         # FIX: LMDB env has no 'compact' method. Use env.copy(path, compact=True)
         # to create a compact copy, then atomically swap files.
         flags = getattr(lmdb, "MDB_CP_COMPACT", 0)
-        
-        # Get current stats before compaction
+
         with env.begin() as txn:
             pre_stats = txn.stat()
-        
-        # Create temporary path for compact copy
+
         with tempfile.TemporaryDirectory(prefix="lmdb_compact_") as tmp_dir:
             tmp_path = pathlib.Path(tmp_dir)
-            
+
             # env.copy creates compact copy at target path
             env.copy(str(tmp_path), compact=True, flags=flags)
-            
-            # Get stats after compaction
+
             tmp_env = lmdb.open(str(tmp_path), readonly=True)
             try:
                 with tmp_env.begin() as txn:
                     post_stats = txn.stat()
             finally:
                 tmp_env.close()
-            
+
             # Calculate stats
-            pre_pages = pre_stats.get('branch_pages', 0) + pre_stats.get('leaf_pages', 0)
-            post_pages = post_stats.get('branch_pages', 0) + post_stats.get('leaf_pages', 0)
+            pre_pages = pre_stats.get("branch_pages", 0) + pre_stats.get("leaf_pages", 0)
+            post_pages = post_stats.get("branch_pages", 0) + post_stats.get("leaf_pages", 0)
             pages_reclaimed = max(0, pre_pages - post_pages)
-            
+
             return {
                 "pages_reclaimed": int(pages_reclaimed),
-                "pages_free": int(post_stats.get('overflow_pages', 0)),
-                "leaf_entries": int(post_stats.get('entries', 0)),
-                "branch_pages": int(post_stats.get('branch_pages', 0)),
+                "pages_free": int(post_stats.get("overflow_pages", 0)),
+                "leaf_entries": int(post_stats.get("entries", 0)),
+                "branch_pages": int(post_stats.get("branch_pages", 0)),
             }
     except Exception:  # noqa: BLE001
         return None

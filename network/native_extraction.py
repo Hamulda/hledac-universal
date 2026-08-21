@@ -51,12 +51,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -65,16 +62,17 @@ logger = logging.getLogger(__name__)
 _CONNECT_TIMEOUT_S: float = 5.0
 _READ_TIMEOUT_S: float = 30.0
 # FIX-1.5: Explicit MAX_* caps for MongoDB enumeration (was unbounded).
-_MAX_MONGO_DATABASES: int = 10       # Max databases to enumerate
-_MAX_MONGO_COLLECTIONS: int = 20     # Max collections per database
-_DEFAULT_DOC_LIMIT: int = 500        # MongoDB documents per collection
-_DEFAULT_KEY_LIMIT: int = 500       # Redis keys via SCAN
-_DEFAULT_ES_SIZE: int = 100         # Elasticsearch documents per index
-_MAX_ES_INDICES: int = 10           # Max indices to sample from
-_MAX_ES_DOCS_PER_INDEX: int = 10    # Max docs per index
-_BATCH_CONCURRENCY: int = 5         # Parallel extraction cap (M1 8GB budget)
+_MAX_MONGO_DATABASES: int = 10  # Max databases to enumerate
+_MAX_MONGO_COLLECTIONS: int = 20  # Max collections per database
+_DEFAULT_DOC_LIMIT: int = 500  # MongoDB documents per collection
+_DEFAULT_KEY_LIMIT: int = 500  # Redis keys via SCAN
+_DEFAULT_ES_SIZE: int = 100  # Elasticsearch documents per index
+_MAX_ES_INDICES: int = 10  # Max indices to sample from
+_MAX_ES_DOCS_PER_INDEX: int = 10  # Max docs per index
+_BATCH_CONCURRENCY: int = 5  # Parallel extraction cap (M1 8GB budget)
 
 # ── DTOs ────────────────────────────────────────────────────────────────────
+
 
 class NativeExtractionResult(Struct, frozen=True):
     """Canonical result of native database extraction for a single service.
@@ -82,6 +80,7 @@ class NativeExtractionResult(Struct, frozen=True):
     All fields except host/port/service are optional — the struct captures
     whatever the extractor was able to retrieve before hitting a bound or error.
     """
+
     host: str
     port: int
     service: str  # "mongodb" | "redis" | "elasticsearch"
@@ -90,7 +89,7 @@ class NativeExtractionResult(Struct, frozen=True):
 
     # MongoDB-specific
     databases: list[str] | None = None
-    collections: dict[str, list[str]] | None = None   # db_name → [coll_names]
+    collections: dict[str, list[str]] | None = None  # db_name → [coll_names]
     sample_documents: list[dict[str, Any]] | None = None
 
     # Redis-specific
@@ -131,6 +130,7 @@ def _get_rust_native_db() -> Any | None:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _rust = rust.raw.module  # type: ignore[assignment]
 
         MongoDumper = getattr(_rust, "MongoDumper", None)
@@ -138,23 +138,26 @@ def _get_rust_native_db() -> Any | None:
         ElasticsearchDumper = getattr(_rust, "ElasticsearchDumper", None)
 
         if all([MongoDumper, RedisDumper, ElasticsearchDumper]):
-            # Return a lightweight namespace for ergonomic access
             from types import SimpleNamespace
+
             _native_db_module = SimpleNamespace(
                 MongoDumper=MongoDumper,
                 RedisDumper=RedisDumper,
                 ElasticsearchDumper=ElasticsearchDumper,
-    )
+            )
             logger.debug("Rust native_db classes loaded — MongoDB/Redis extraction available")
         else:
             missing = []
-            if not MongoDumper: missing.append("MongoDumper")
-            if not RedisDumper: missing.append("RedisDumper")
-            if not ElasticsearchDumper: missing.append("ElasticsearchDumper")
+            if not MongoDumper:
+                missing.append("MongoDumper")
+            if not RedisDumper:
+                missing.append("RedisDumper")
+            if not ElasticsearchDumper:
+                missing.append("ElasticsearchDumper")
             logger.debug(
                 "Rust native_db classes missing: %s (compile with --features native_db)",
                 ", ".join(missing),
-    )
+            )
             _native_db_module = None
     except ImportError:
         logger.debug("hledac_rust_extensions not available (compile with --features native_db)")
@@ -163,6 +166,7 @@ def _get_rust_native_db() -> Any | None:
 
 
 # ── Elasticsearch HTTP Extraction (pure Python, always available) ───────────
+
 
 async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | None:
     """Extract data from exposed Elasticsearch via HTTP REST API.
@@ -179,16 +183,17 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
         session = await async_get_httpx_session()
         base = f"http://{host}:{port}"
 
-        # Phase 1: List indices via _cat/indices
         async with asyncio.timeout(_READ_TIMEOUT_S):
             resp = await session.get(f"{base}/_cat/indices?format=json")
         if resp.status_code != 200:
             return NativeExtractionResult(
-                host=host, port=port, service="elasticsearch",
+                host=host,
+                port=port,
+                service="elasticsearch",
                 success=False,
                 error=f"HTTP {resp.status_code}",
                 auth_required=(resp.status_code in (401, 403)),
-    )
+            )
 
         indices_data: list[dict[str, Any]] = resp.json()
         indices = [
@@ -199,12 +204,15 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
 
         if not indices:
             return NativeExtractionResult(
-                host=host, port=port, service="elasticsearch",
-                success=True, indices=[], es_documents=[],
+                host=host,
+                port=port,
+                service="elasticsearch",
+                success=True,
+                indices=[],
+                es_documents=[],
                 auth_required=False,
-    )
+            )
 
-        # Phase 2: Sample documents from each index (bounded)
         documents: list[dict[str, Any]] = []
         sampled_indices = indices[:_MAX_ES_INDICES]
         size_per_index = max(_DEFAULT_ES_SIZE // max(len(sampled_indices), 1), 1)
@@ -220,30 +228,35 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
                             "size": size_per_index,
                             "_source": True,
                         },
-    )
+                    )
                 if r.status_code == 200:
                     hits = r.json().get("hits", {}).get("hits", [])
                     for hit in hits:
                         if isinstance(hit, dict):
                             documents.append(hit.get("_source", {}))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception:
                 continue
 
         return NativeExtractionResult(
-            host=host, port=port, service="elasticsearch",
+            host=host,
+            port=port,
+            service="elasticsearch",
             success=True,
             indices=indices,
             es_documents=documents,
             auth_required=False,
-    )
+        )
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return NativeExtractionResult(
-            host=host, port=port, service="elasticsearch",
-            success=False, error="timeout",
-    )
+            host=host,
+            port=port,
+            service="elasticsearch",
+            success=False,
+            error="timeout",
+        )
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -252,6 +265,7 @@ async def _es_extract(host: str, port: int = 9200) -> NativeExtractionResult | N
 
 
 # ── MongoDB Extraction (Rust native_db) ─────────────────────────────────────
+
 
 async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult | None:
     """Extract from MongoDB via Rust native_db OP_MSG wire protocol.
@@ -273,7 +287,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
             port,
             _DEFAULT_DOC_LIMIT,
             _READ_TIMEOUT_S,
-    )
+        )
 
         databases: list[str] = []
         collections: dict[str, list[str]] = {}
@@ -295,38 +309,42 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
                             break
                         try:
                             import orjson
+
                             documents.append(orjson.loads(doc_json))
                         except Exception:  # noqa: BLE001
                             pass
             if entry.error:
                 errors.append(entry.error)
 
-        auth_required = any(
-            "auth" in e.lower() or "unauthorized" in e.lower()
-            for e in errors
-    )
+        auth_required = any("auth" in e.lower() or "unauthorized" in e.lower() for e in errors)
 
         return NativeExtractionResult(
-            host=host, port=port, service="mongodb",
+            host=host,
+            port=port,
+            service="mongodb",
             success=len(databases) > 0,
             error="; ".join(errors[:5]) if errors else None,
             databases=databases,
             collections=collections if collections else None,
             sample_documents=documents if documents else None,
             auth_required=auth_required if errors else False,
-    )
+        )
 
     except asyncio.CancelledError:
         raise
     except Exception as e:
         logger.debug(f"MongoDB extraction failed {host}:{port}: {e}")
         return NativeExtractionResult(
-            host=host, port=port, service="mongodb",
-            success=False, error=str(e),
-    )
+            host=host,
+            port=port,
+            service="mongodb",
+            success=False,
+            error=str(e),
+        )
 
 
 # ── Redis Extraction (Rust native_db) ───────────────────────────────────────
+
 
 async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult | None:
     """Extract from Redis via Rust native_db RESP2/RESP3 protocol.
@@ -341,10 +359,12 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
     try:
         dumper = native_db.RedisDumper()
 
-        # Phase 1: Get server INFO
         info_raw: str = await asyncio.to_thread(
-            dumper.get_info, host, port, _READ_TIMEOUT_S,
-    )
+            dumper.get_info,
+            host,
+            port,
+            _READ_TIMEOUT_S,
+        )
         info: dict[str, str] = {}
         for line in info_raw.split("\n"):
             line = line.strip()
@@ -352,21 +372,30 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
                 k, _, v = line.partition(":")
                 info[k.strip()] = v.strip()
 
-        # Phase 2: Check auth requirement
         auth_required: bool = await asyncio.to_thread(
-            dumper.check_auth, host, port, _READ_TIMEOUT_S,
-    )
+            dumper.check_auth,
+            host,
+            port,
+            _READ_TIMEOUT_S,
+        )
         if auth_required:
             return NativeExtractionResult(
-                host=host, port=port, service="redis",
-                success=False, auth_required=True,
-                redis_info=info, error="Authentication required",
-    )
+                host=host,
+                port=port,
+                service="redis",
+                success=False,
+                auth_required=True,
+                redis_info=info,
+                error="Authentication required",
+            )
 
-        # Phase 3: Dump keys with types and values
         entries = await asyncio.to_thread(
-            dumper.dump_all, host, port, _DEFAULT_KEY_LIMIT, _READ_TIMEOUT_S,
-    )
+            dumper.dump_all,
+            host,
+            port,
+            _DEFAULT_KEY_LIMIT,
+            _READ_TIMEOUT_S,
+        )
 
         keys: list[str] = []
         for entry in entries:
@@ -374,22 +403,27 @@ async def _redis_extract(host: str, port: int = 6379) -> NativeExtractionResult 
                 keys.append(entry.key)
 
         return NativeExtractionResult(
-            host=host, port=port, service="redis",
+            host=host,
+            port=port,
+            service="redis",
             success=True,
             keys=keys[:_DEFAULT_KEY_LIMIT],
             key_count=len(keys),
             redis_info=info,
             auth_required=False,
-    )
+        )
 
     except asyncio.CancelledError:
         raise
     except Exception as e:
         logger.debug(f"Redis extraction failed {host}:{port}: {e}")
         return NativeExtractionResult(
-            host=host, port=port, service="redis",
-            success=False, error=str(e),
-    )
+            host=host,
+            port=port,
+            service="redis",
+            success=False,
+            error=str(e),
+        )
 
 
 # ── Unified Extraction Entry Points ─────────────────────────────────────────
@@ -452,11 +486,14 @@ async def extract_from_exposed(
     try:
         async with asyncio.timeout(timeout_s):
             return await extractor(host, actual_port)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return NativeExtractionResult(
-            host=host, port=actual_port, service=service,
-            success=False, error="extraction timeout",
-    )
+            host=host,
+            port=actual_port,
+            service=service,
+            success=False,
+            error="extraction timeout",
+        )
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -480,10 +517,7 @@ async def extract_batch(
     """
     from hledac.universal.utils.asyncx import parallel
 
-    coros = [
-        extract_from_exposed(host, port, service)
-        for host, port, service in targets
-    ]
+    coros = [extract_from_exposed(host, port, service) for host, port, service in targets]
     results = await parallel(
         coros,
         policy="collect",
@@ -494,6 +528,7 @@ async def extract_batch(
 
 
 # ── Feature Gate Helpers ────────────────────────────────────────────────────
+
 
 def is_native_extraction_enabled() -> bool:
     """Check if native extraction is enabled via FeatureFlag registry.
@@ -506,6 +541,7 @@ def is_native_extraction_enabled() -> bool:
     Set HLEDAC_ENABLE_NATIVE_EXTRACTION=1 for internal/CI deployments only.
     """
     from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
     return FeatureFlags.get(FeatureFlag.NATIVE_EXTRACTION)
 
 

@@ -11,7 +11,6 @@ MIGRATION NOTE (Issue #2):
 """
 
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass

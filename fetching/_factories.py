@@ -1,4 +1,3 @@
-# fetching/_factories.py
 """
 Factory functions for lazy-loaded resources in public_fetcher.
 
@@ -10,16 +9,10 @@ Thread-safe via GIL (single assignment after first import).
 Lazy import preserves M1 invariant (no eager imports).
 """
 
-
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    import psutil
-
-# =============================================================================
-# PSUTIL FACTORY
-# =============================================================================
+    pass
 
 
 def make_psutil_getter():
@@ -53,11 +46,6 @@ def make_psutil_getter():
 
 # Module-level singleton getter
 get_psutil = make_psutil_getter()
-
-
-# =============================================================================
-# CONTENT HASHER FACTORY
-# =============================================================================
 
 
 def make_content_hasher_factory():
@@ -101,11 +89,6 @@ def make_content_hasher_factory():
 
 # Module-level singletons
 get_content_hasher, is_rust_content_hasher = make_content_hasher_factory()
-
-
-# =============================================================================
-# CONTENT HASHER COMPUTATION
-# =============================================================================
 
 
 def compute_body_hash(body: bytes) -> str:

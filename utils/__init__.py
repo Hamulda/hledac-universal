@@ -25,7 +25,6 @@ Obsahuje:
 """
 
 from typing import TYPE_CHECKING
-from _core import aclose
 
 # Lazy submodule registry — maps name → (module, names to expose)
 # Loaded on demand to eliminate ~3300ms import overhead for callers that only
@@ -33,27 +32,135 @@ from _core import aclose
 _SUBMODULE_REGISTRY: dict[str, tuple[str, tuple[str, ...]]] = {
     "action_result": (".action_result", ("ActionResult",)),
     "async_utils": (".async_utils", ("TaskResult", "bounded_map", "map_as_completed")),
-    "bloom_filter": (".bloom_filter", ("BloomFilter", "BloomFilterStats", "create_content_fingerprint", "create_url_deduplicator")),
-    "deduplication": (".deduplication", ("ContentDeduplicator", "DeduplicationConfig", "DeduplicationEngine", "DeduplicationMatch", "DeduplicationResult", "DeduplicationStats", "DeduplicationStrategy", "MetadataDeduplicator", "QueryItem", "SemanticDeduplicator", "SimilarityScore")),
+    "bloom_filter": (
+        ".bloom_filter",
+        ("BloomFilter", "BloomFilterStats", "create_content_fingerprint", "create_url_deduplicator"),
+    ),
+    "deduplication": (
+        ".deduplication",
+        (
+            "ContentDeduplicator",
+            "DeduplicationConfig",
+            "DeduplicationEngine",
+            "DeduplicationMatch",
+            "DeduplicationResult",
+            "DeduplicationStats",
+            "DeduplicationStrategy",
+            "MetadataDeduplicator",
+            "QueryItem",
+            "SemanticDeduplicator",
+            "SimilarityScore",
+        ),
+    ),
     "encryption": (".encryption", ("DataEncryption", "DecryptionResult", "EncryptionResult")),
     "entity_extractor": (".entity_extractor", ("EntityExtractor", "ExtractedEntity", "PatternType")),
-    "execution_optimizer": (".execution_optimizer", ("AnomalyDetector", "ExecutionStrategy", "IntelligentResourceAllocator", "OptimizationLevel", "ParallelExecutionOptimizer", "PredictiveScaler", "ResourceLimits", "ResourceMetrics", "ResourceType", "TaskMetrics", "TaskType", "WorkerMetrics", "create_m1_resource_allocator")),
-    "filtering": (".filtering", ("EfficientFrontier", "FastFilter", "FilterStats", "FrontierStats", "get_fast_filter", "get_frontier")),
-    "intelligent_cache": (".intelligent_cache", ("CacheConfig", "CacheEntry", "CacheStats", "EvictionStrategy", "IntelligentCache", "MemoryOptimizedURLSet", "get_global_cache")),
+    "execution_optimizer": (
+        ".execution_optimizer",
+        (
+            "AnomalyDetector",
+            "ExecutionStrategy",
+            "IntelligentResourceAllocator",
+            "OptimizationLevel",
+            "ParallelExecutionOptimizer",
+            "PredictiveScaler",
+            "ResourceLimits",
+            "ResourceMetrics",
+            "ResourceType",
+            "TaskMetrics",
+            "TaskType",
+            "WorkerMetrics",
+            "create_m1_resource_allocator",
+        ),
+    ),
+    "filtering": (
+        ".filtering",
+        ("EfficientFrontier", "FastFilter", "FilterStats", "FrontierStats", "get_fast_filter", "get_frontier"),
+    ),
+    "intelligent_cache": (
+        ".intelligent_cache",
+        (
+            "CacheConfig",
+            "CacheEntry",
+            "CacheStats",
+            "EvictionStrategy",
+            "IntelligentCache",
+            "MemoryOptimizedURLSet",
+            "get_global_cache",
+        ),
+    ),
     "language": (".language", ("LanguageDetector", "create_language_detector")),
     "lazy_imports": (".lazy_imports", ("LazyImportManager", "LazyLoader", "lazy_import")),
-    "patterns_pattern_matcher": (".patterns.pattern_matcher", ("PatternHit", "extract_high_precision_entities", "get_backend_info", "get_default_bootstrap_patterns", "get_pattern_matcher", "match_text", "prewarm", "reset_pattern_matcher")),
+    "patterns_pattern_matcher": (
+        ".patterns.pattern_matcher",
+        (
+            "PatternHit",
+            "extract_high_precision_entities",
+            "get_backend_info",
+            "get_default_bootstrap_patterns",
+            "get_pattern_matcher",
+            "match_text",
+            "prewarm",
+            "reset_pattern_matcher",
+        ),
+    ),
     "performance_monitor": (".performance_monitor", ("PerformanceMetrics", "PerformanceMonitor", "QualityValidator")),
     "predictive_planner": (".predictive_planner", ("Prediction", "PredictivePlanner", "RollbackManager")),
-    "query_expansion": (".query_expansion", ("DomainSpecificExpansionStrategy", "ExpansionConfig", "ExpansionStrategy", "MultiStrategyExpander", "QueryExpander", "QueryVariation", "SemanticExpansionStrategy", "SyntacticExpansionStrategy", "expand_query")),
+    "query_expansion": (
+        ".query_expansion",
+        (
+            "DomainSpecificExpansionStrategy",
+            "ExpansionConfig",
+            "ExpansionStrategy",
+            "MultiStrategyExpander",
+            "QueryExpander",
+            "QueryVariation",
+            "SemanticExpansionStrategy",
+            "SyntacticExpansionStrategy",
+            "expand_query",
+        ),
+    ),
     "ranking": (".ranking", ("RankedResult", "ReciprocalRankFusion", "RRFConfig", "ScoreAggregator", "fuse_results")),
     "rate_limiter": (".rate_limiter", ("RateLimitConfig", "RateLimiter", "RateLimitExceeded", "with_rate_limit")),
-    "rayon_channel": (".rayon_channel", ("dispatch_cpu", "dispatch_io", "dispatch_mixed", "dispatch_rayon", "dispatch_cpu_batch", "dispatch_mixed_batch")),
-    "rayon_hash": (".rayon_hash", ("simhash_single", "simhash_batch", "quality_gate_assess", "blake3_hash_batch", "xxhash_batch", "normalize_text_batch", "compute_fingerprints")),
+    "rayon_channel": (
+        ".rayon_channel",
+        (
+            "dispatch_cpu",
+            "dispatch_io",
+            "dispatch_mixed",
+            "dispatch_rayon",
+            "dispatch_cpu_batch",
+            "dispatch_mixed_batch",
+        ),
+    ),
+    "rayon_hash": (
+        ".rayon_hash",
+        (
+            "simhash_single",
+            "simhash_batch",
+            "quality_gate_assess",
+            "blake3_hash_batch",
+            "xxhash_batch",
+            "normalize_text_batch",
+            "compute_fingerprints",
+        ),
+    ),
     "ioc_extract": (".ioc_extract", ("extract_iocs_batch", "extract_iocs_single", "extract_iocs_from_findings")),
-    "subinterpreter_pool": (".subinterpreter_pool", ("run_in_subinterpreter", "run_batch_in_subinterpreters", "shutdown_pool")),
+    "subinterpreter_pool": (
+        ".subinterpreter_pool",
+        ("run_in_subinterpreter", "run_batch_in_subinterpreters", "shutdown_pool"),
+    ),
     "robots_parser": (".robots_parser", ("RobotsDocument", "RobotsParser", "Rule")),
-    "semantic": (".semantic", ("FilterResult", "KeywordFilter", "LightweightTokenizer", "Model2VecEmbedding", "SemanticFilter", "SimpleEmbedding")),
+    "semantic": (
+        ".semantic",
+        (
+            "FilterResult",
+            "KeywordFilter",
+            "LightweightTokenizer",
+            "Model2VecEmbedding",
+            "SemanticFilter",
+            "SimpleEmbedding",
+        ),
+    ),
     "tech_detection": (".tech_detection", ("TechStackResult", "TechStackSignature")),
     "validation": (".validation", ("DataValidator", "ValidationError", "ValidationSeverity", "create_sample_schema")),
     "config_introspection": (".config_introspection", ("safe_attr_get",)),
@@ -69,25 +176,85 @@ if TYPE_CHECKING:
     from .action_result import ActionResult
     from .async_utils import TaskResult, bounded_map, map_as_completed
     from .bloom_filter import BloomFilter, BloomFilterStats, create_content_fingerprint, create_url_deduplicator
-    from .deduplication import ContentDeduplicator, DeduplicationConfig, DeduplicationEngine, DeduplicationMatch, DeduplicationResult, DeduplicationStats, DeduplicationStrategy, MetadataDeduplicator, QueryItem, SemanticDeduplicator, SimilarityScore
+    from .config_introspection import safe_attr_get
+    from .deduplication import (
+        ContentDeduplicator,
+        DeduplicationConfig,
+        DeduplicationEngine,
+        DeduplicationMatch,
+        DeduplicationResult,
+        DeduplicationStats,
+        DeduplicationStrategy,
+        MetadataDeduplicator,
+        QueryItem,
+        SemanticDeduplicator,
+        SimilarityScore,
+    )
     from .encryption import DataEncryption, DecryptionResult, EncryptionResult
     from .entity_extractor import EntityExtractor, ExtractedEntity, PatternType
-    from .execution_optimizer import AnomalyDetector, ExecutionStrategy, IntelligentResourceAllocator, OptimizationLevel, ParallelExecutionOptimizer, PredictiveScaler, ResourceLimits, ResourceMetrics, ResourceType, TaskMetrics, TaskType, WorkerMetrics, create_m1_resource_allocator
+    from .execution_optimizer import (
+        AnomalyDetector,
+        ExecutionStrategy,
+        IntelligentResourceAllocator,
+        OptimizationLevel,
+        ParallelExecutionOptimizer,
+        PredictiveScaler,
+        ResourceLimits,
+        ResourceMetrics,
+        ResourceType,
+        TaskMetrics,
+        TaskType,
+        WorkerMetrics,
+        create_m1_resource_allocator,
+    )
     from .filtering import EfficientFrontier, FastFilter, FilterStats, FrontierStats, get_fast_filter, get_frontier
-    from .intelligent_cache import CacheConfig, CacheEntry, CacheStats, EvictionStrategy, IntelligentCache, MemoryOptimizedURLSet, get_global_cache
+    from .intelligent_cache import (
+        CacheConfig,
+        CacheEntry,
+        CacheStats,
+        EvictionStrategy,
+        IntelligentCache,
+        MemoryOptimizedURLSet,
+        get_global_cache,
+    )
     from .language import LanguageDetector, create_language_detector
     from .lazy_imports import LazyImportManager, LazyLoader, lazy_import
-    from .patterns.pattern_matcher import PatternHit, extract_high_precision_entities, get_backend_info, get_default_bootstrap_patterns, get_pattern_matcher, match_text, prewarm, reset_pattern_matcher
+    from .patterns.pattern_matcher import (
+        PatternHit,
+        extract_high_precision_entities,
+        get_backend_info,
+        get_default_bootstrap_patterns,
+        get_pattern_matcher,
+        match_text,
+        prewarm,
+        reset_pattern_matcher,
+    )
     from .performance_monitor import PerformanceMetrics, PerformanceMonitor, QualityValidator
     from .predictive_planner import Prediction, PredictivePlanner, RollbackManager
-    from .query_expansion import DomainSpecificExpansionStrategy, ExpansionConfig, ExpansionStrategy, MultiStrategyExpander, QueryExpander, QueryVariation, SemanticExpansionStrategy, SyntacticExpansionStrategy, expand_query
+    from .query_expansion import (
+        DomainSpecificExpansionStrategy,
+        ExpansionConfig,
+        ExpansionStrategy,
+        MultiStrategyExpander,
+        QueryExpander,
+        QueryVariation,
+        SemanticExpansionStrategy,
+        SyntacticExpansionStrategy,
+        expand_query,
+    )
     from .ranking import RankedResult, ReciprocalRankFusion, RRFConfig, ScoreAggregator, fuse_results
     from .rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded, with_rate_limit
     from .robots_parser import RobotsDocument, RobotsParser, Rule
-    from .semantic import FilterResult, KeywordFilter, LightweightTokenizer, Model2VecEmbedding, SemanticFilter, SimpleEmbedding
+    from .semantic import (
+        FilterResult,
+        KeywordFilter,
+        LightweightTokenizer,
+        Model2VecEmbedding,
+        SemanticFilter,
+        SimpleEmbedding,
+    )
     from .tech_detection import TechStackResult, TechStackSignature
     from .validation import DataValidator, ValidationError, ValidationSeverity, create_sample_schema
-    from .config_introspection import safe_attr_get
     from .workflow_engine import Task, TaskStatus, TaskType, Workflow, WorkflowEngine
 
 
@@ -120,6 +287,7 @@ def __getattr__(name: str):
     if name in _SUBMODULE_REGISTRY:
         rel_path, _ = _SUBMODULE_REGISTRY[name]
         from importlib import import_module
+
         mod = import_module(rel_path, package=__name__)
         _LOADED_SUBMODULES[name] = mod
         return mod
@@ -129,6 +297,7 @@ def __getattr__(name: str):
     for rel_path, names in _SUBMODULE_REGISTRY.values():
         if name in names:
             from importlib import import_module
+
             mod = import_module(rel_path, package=__name__)
             _LOADED_SUBMODULES[rel_path.lstrip(".")] = mod
             return getattr(mod, name)
@@ -167,12 +336,13 @@ async def run_cmd(cmd: list[str], timeout: float = 15.0) -> str:
     """
     import asyncio
     import subprocess
+
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-    )
+        )
         try:
             async with asyncio.timeout(timeout):
                 stdout, _ = await process.communicate()

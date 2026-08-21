@@ -19,8 +19,8 @@ NOTE:
   - CISA KEV (Known Exploited Vulnerabilities) catalog
   Uses httpx for REST API calls - no P2P transport needed.
 """
+
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from _core import aclose
 
 
 # FIX-5: Inherit from DarknetSidecarAdapter for proper capability handling

@@ -53,19 +53,11 @@ pub const MPSC_DEFAULT_CAPACITY: usize = 2048;
 /// Per-slot budget: msgspec-serialized dict (~200-500B) + overhead.
 pub const MPSC_SLOT_BYTES: usize = 512;
 
-// ---------------------------------------------------------------------------
-// QueueItem
-// ---------------------------------------------------------------------------
-
 /// A single queue slot payload — heap-allocated Vec<u8>.
 #[derive(Clone)]
 pub struct QueueItem {
     pub data: Vec<u8>,
 }
-
-// ---------------------------------------------------------------------------
-// WakeFd
-// ---------------------------------------------------------------------------
 
 /// Pipe-based async wake notification.
 /// Creates a pipe(2) pair; Rust writes to wake_fd to signal Python.
@@ -135,10 +127,6 @@ impl Drop for WakeFd {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SenderHandle
-// ---------------------------------------------------------------------------
-
 /// An owned Sender clone — stored in Python as usize opaque handle.
 struct SenderHandle {
     inner: Sender<QueueItem>,
@@ -163,10 +151,6 @@ impl SenderHandle {
         self.inner.capacity().unwrap_or(0)
     }
 }
-
-// ---------------------------------------------------------------------------
-// MPSCPool
-// ---------------------------------------------------------------------------
 
 /// MPSC Queue pair — Python holds the Pool with SenderHandle owners.
 ///
@@ -224,7 +208,7 @@ impl MPSCPool {
         // self.senders is Vec<Sender>; iteration gives &Sender.
         // Sender::clone() takes &self and returns owned Sender.
         if let Some(s) = self.senders.first() {
-            let sender_for_handle: Sender<QueueItem> = s);
+            let sender_for_handle: Sender<QueueItem> = s.clone();
             // ISSUE-C FIX: push the NEW cloned sender, not the original.
             // Previously: push(s.clone()) was duplicating the original sender.
             self.senders.push(sender_for_handle.clone());
@@ -285,14 +269,13 @@ impl MPSCPool {
         for i in 0..payloads.len() {
             if let Ok(item) = payloads.get_item(i) {
                 if let Ok(bytes) = item.cast::<PyBytes>() {
-                    let payload = bytes);
+                    let payload = bytes.as_bytes();
                     // Each send() still does to_vec() internally (crossbeam requirement),
                     // but we save: 1× the GIL acquisition + Python call overhead per item,
                     // vs 1× Python call for the entire batch + N× native Rust fn calls.
                     if handle.send(payload) {
                         sent += 1;
                     } else {
-                        // Queue full — stop sending, return partial count.
                         break;
                     }
                 }
@@ -305,7 +288,7 @@ impl MPSCPool {
     fn close(&mut self) {
         self.closed.store(true, Ordering::SeqCst);
         // Drop all senders to close the channel
-        self.senders);
+        self.senders.clear();
     }
 
     /// Pipe read-fd for Python's asyncio to watch.
@@ -340,7 +323,7 @@ impl MPSCPool {
         // If more items remain in the queue, re-wake the async waiter
         // so Python doesn't block indefinitely waiting for more items.
         if !receiver.is_empty() {
-            self.wake);
+            self.wake.wake();
         }
 
         batch
@@ -368,18 +351,10 @@ impl MPSCPool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<MPSCPool>()?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -396,24 +371,24 @@ mod tests {
 
     #[test]
     fn test_pool_create() {
-        let pool = make_pool(None));
+        let pool = make_pool(None)?;
         assert!(!pool.is_empty());
         assert_eq!(pool.len(), 0);
     }
 
     #[test]
     fn test_add_sender() {
-        let mut pool = make_pool(None));
-        let ptr1 = pool);
-        let ptr2 = pool);
+        let mut pool = make_pool(None)?;
+        let ptr1 = pool.add_sender();
+        let ptr2 = pool.add_sender();
         assert!(ptr1 != 0);
         assert_ne!(ptr1, ptr2);
     }
 
     #[test]
     fn test_send_and_recv() {
-        let mut pool = make_pool(None));
-        let sender_ptr = pool);
+        let mut pool = make_pool(None)?;
+        let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"hello"));
         assert!(pool.send(sender_ptr, b"world"));
@@ -428,8 +403,8 @@ mod tests {
 
     #[test]
     fn test_full_backpressure() {
-        let mut pool = make_pool(Some(2)));
-        let sender_ptr = pool);
+        let mut pool = make_pool(Some(2))?;
+        let sender_ptr = pool.add_sender();
 
         assert!(pool.send(sender_ptr, b"a"));
         assert!(pool.send(sender_ptr, b"b"));
@@ -439,9 +414,9 @@ mod tests {
 
     #[test]
     fn test_multi_sender() {
-        let mut pool = make_pool(None));
-        let s1 = pool);
-        let s2 = pool);
+        let mut pool = make_pool(None)?;
+        let s1 = pool.add_sender();
+        let s2 = pool.add_sender();
 
         assert!(pool.send(s1, b"from-1"));
         assert!(pool.send(s2, b"from-2"));
@@ -453,8 +428,8 @@ mod tests {
 
     #[test]
     fn test_recv_batch_limits() {
-        let mut pool = make_pool(None));
-        let sender_ptr = pool);
+        let mut pool = make_pool(None)?;
+        let sender_ptr = pool.add_sender();
 
         for i in 0..10 {
             pool.send(sender_ptr, &[i as u8]);
@@ -470,9 +445,9 @@ mod tests {
     fn test_mpsc_pool_zero_capacity_returns_pyresult() {
         let result = make_pool(Some(0));
         assert!(result.is_err(), "capacity=0 must return Err, not panic");
-        let err = result);
+        let err = result?;
         // Error message should mention the invalid capacity
-        let msg = err);
+        let msg = err;
         assert!(
             msg.contains("capacity") || msg.contains("0") || msg.contains("bounded"),
             "Error message should indicate capacity issue, got: {}",

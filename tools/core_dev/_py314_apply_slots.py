@@ -14,7 +14,6 @@ Usage: python tools/_py314_apply_slots.py <file> [file ...]
 import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def has_cached_property(tree: ast.Module) -> bool:
@@ -46,7 +45,7 @@ def find_dataclass_classes(tree: ast.Module) -> list[tuple[ast.ClassDef, ast.exp
                     has_slots = any(
                         kw.arg == "slots" and isinstance(kw.value, ast.Constant) and kw.value.value is True
                         for kw in dec.keywords
-    )
+                    )
                     result.append((node, dec, has_slots))
                     break
                 elif isinstance(dec, ast.Name) and dec.id == "dataclass":
@@ -87,7 +86,7 @@ def rewrite_decorator(dec_node: ast.expr | None, add_slots: bool) -> ast.expr:
                 func=ast.Name(id="dataclass", ctx=ast.Load()),
                 args=[],
                 keywords=[ast.keyword(arg="slots", value=ast.Constant(value=True))],
-    )
+            )
         return ast.Name(id="dataclass", ctx=ast.Load())
     if isinstance(dec_node, ast.Call):
         new_keywords = list(dec_node.keywords)
@@ -98,7 +97,7 @@ def rewrite_decorator(dec_node: ast.expr | None, add_slots: bool) -> ast.expr:
             func=dec_node.func,
             args=list(dec_node.args),
             keywords=new_keywords,
-    )
+        )
     return dec_node
 
 
@@ -121,7 +120,6 @@ def process_file(path: Path, verbose: bool = True) -> tuple[int, int]:
     if not classes:
         return 0, 0
 
-    # Build class hierarchy map for this file
     class_parents: dict[str, list[str]] = {}
     for cls, _, _ in classes:
         class_parents[cls.name] = get_parent_names(cls)
@@ -154,7 +152,6 @@ def process_file(path: Path, verbose: bool = True) -> tuple[int, int]:
                 # External parent - skip
                 eligible[id(cls)] = False
 
-    # Build rewrite map: line number → new decorator string
     line_rewrites: dict[int, str] = {}
     added = 0
     skipped = 0
@@ -198,7 +195,7 @@ def process_file(path: Path, verbose: bool = True) -> tuple[int, int]:
     return added, skipped
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python tools/_py314_apply_slots.py <file> [file ...]")
         sys.exit(1)

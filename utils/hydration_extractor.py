@@ -11,32 +11,24 @@ All operations are:
 - Fail-soft: no exceptions escape, malformed input → graceful degradation
 - Async-agnostic: pure synchronous functions, no network calls
 """
+
 from __future__ import annotations
 
 import re
-from typing import Final, TypeAlias
+from typing import Final
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import orjson
-from _core import aclose
 
-# ---------------------------------------------------------------------------
-# Bounds (M1 8GB safe)
-# ---------------------------------------------------------------------------
+from compat.msgspec_gc_compat import Struct
 
 MAX_HTML_BYTES: Final[int] = 2 * 1024 * 1024  # 2 MB input cap
-MAX_EXTRACTED_TEXT: Final[int] = 100_000       # 100 KB output cap
-MAX_JSON_LD_BLOCKS: Final[int] = 10             # max JSON-LD script blocks
-MAX_JSON_DEPTH: Final[int] = 20                # max traversal depth
-MAX_SCRIPT_LEN: Final[int] = 500_000           # 500 KB per script block
-MAX_TITLE_LEN: Final[int] = 500                 # max title chars
-MAX_METADATA_LEN: Final[int] = 2000             # max metadata dict serialized
-MAX_CANDIDATE_LEN: Final[int] = 50_000          # max single JSON candidate text
-
-# ---------------------------------------------------------------------------
-# Reason constants (telemetry)
-# ---------------------------------------------------------------------------
+MAX_EXTRACTED_TEXT: Final[int] = 100_000  # 100 KB output cap
+MAX_JSON_LD_BLOCKS: Final[int] = 10  # max JSON-LD script blocks
+MAX_JSON_DEPTH: Final[int] = 20  # max traversal depth
+MAX_SCRIPT_LEN: Final[int] = 500_000  # 500 KB per script block
+MAX_TITLE_LEN: Final[int] = 500  # max title chars
+MAX_METADATA_LEN: Final[int] = 2000  # max metadata dict serialized
+MAX_CANDIDATE_LEN: Final[int] = 50_000  # max single JSON candidate text
 
 _REASON_SUFFICIENT_NEXT = "next_data_sufficient"
 _REASON_SUFFICIENT_NUXT = "nuxt_data_sufficient"
@@ -48,18 +40,14 @@ _REASON_NONE = "no_hydration_found"
 _RE_BODY_TAGS: re.Pattern = re.compile(
     r"<(?:p|article|main|section|div[^>]*|ul|ol|dl|table|blockquote|h[2-6])[^>]*>",
     re.IGNORECASE,
-    )
+)
 _RE_SKIP_TAGS: re.Pattern = re.compile(
     r"<script[^>]*>|<style[^>]*>|<noscript[^>]*>|<svg[^>]*>|<canvas[^>]*>",
     re.IGNORECASE,
-    )
+)
 # Reserved for future telemetry (not currently emitted by extract_static_hydration):
 # _REASON_PARSE_ERROR = "parse_error"
 # _REASON_MAX_BYTES = "max_bytes_exceeded"
-
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
 
 
 class HydrationExtractionResult(Struct):
@@ -94,114 +82,103 @@ class HydrationExtractionResult(Struct):
     quality_signals: tuple[str, ...] = ()  # e.g. "title", "body", "json_ld_article"
 
 
-# ---------------------------------------------------------------------------
-# Regex patterns
-# ---------------------------------------------------------------------------
-
 # Next.js __NEXT_DATA__
 _RE_NEXT_DATA: re.Pattern[str] = re.compile(
     r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*type=["\']application/json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
-    )
+)
 
 # Nuxt __NUXT_DATA__ (SSR rendered)
 _RE_NUXT_DATA: re.Pattern[str] = re.compile(
-    r'<script[^>]*>(?:window\.)?__NUXT_DATA__\s*=\s*(\[.*?\]);?\s*</script>',
+    r"<script[^>]*>(?:window\.)?__NUXT_DATA__\s*=\s*(\[.*?\]);?\s*</script>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 
 # Nuxt window.__NUXT__
 _RE_NUXT_GLOBAL: re.Pattern[str] = re.compile(
-    r'<script[^>]*>window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>',
+    r"<script[^>]*>window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 
 # Generic hydration
 _RE_INITIAL_STATE: re.Pattern[str] = re.compile(
-    r'<script[^>]*>(?:window\.)?__INITIAL_STATE__\s*=\s*(\{.*?\});?\s*</script>',
+    r"<script[^>]*>(?:window\.)?__INITIAL_STATE__\s*=\s*(\{.*?\});?\s*</script>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 _RE_PRELOADED_STATE: re.Pattern[str] = re.compile(
-    r'<script[^>]*>(?:window\.)?__PRELOADED_STATE__\s*=\s*(\{.*?\});?\s*</script>',
+    r"<script[^>]*>(?:window\.)?__PRELOADED_STATE__\s*=\s*(\{.*?\});?\s*</script>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 _RE_APOLLO_STATE: re.Pattern[str] = re.compile(
-    r'<script[^>]*>(?:window\.)?__APOLLO_STATE__\s*=\s*(\{.*?\});?\s*</script>',
+    r"<script[^>]*>(?:window\.)?__APOLLO_STATE__\s*=\s*(\{.*?\});?\s*</script>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 
 # JSON-LD
 _RE_JSON_LD: re.Pattern[str] = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
-    )
+)
 
 # Metadata
 _RE_CANONICAL: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*canonical[^"\']*["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_RSS: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/rss\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_ATOM: re.Pattern[str] = re.compile(
     r'<link[^>]+rel=["\'][^"\']*alternate[^"\']*["\'][^>]+type=["\']application/atom\+xml["\'][^>]+href=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_OG_TITLE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_OG_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_META_DESC: re.Pattern[str] = re.compile(
     r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_TITLE_TAG: re.Pattern[str] = re.compile(
-    r'<title[^>]*>(.*?)</title>',
+    r"<title[^>]*>(.*?)</title>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 _RE_OG_IMAGE: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_OG_URL: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 _RE_ARTICLE_PUBLISHED: re.Pattern[str] = re.compile(
     r'<meta[^>]+(?:property|name)=["\']article:published_time["\'][^>]+content=["\']([^"\']+)["\']',
     re.IGNORECASE,
-    )
+)
 
-# ---------------------------------------------------------------------------
-# Content types that signal rich data
-# ---------------------------------------------------------------------------
-
-_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
-    "Article",
-    "NewsArticle",
-    "BlogPosting",
-    "Person",
-    "Organization",
-    "WebSite",
-    "BreadcrumbList",
-    "Product",
-    "Event",
-})
+_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "Article",
+        "NewsArticle",
+        "BlogPosting",
+        "Person",
+        "Organization",
+        "WebSite",
+        "BreadcrumbList",
+        "Product",
+        "Event",
+    }
+)
 
 # Minimum lengths for sufficiency heuristic
 _MIN_TITLE_LEN: Final[int] = 15
 _MIN_BODY_LEN: Final[int] = 50
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _truncate(text: str, max_len: int) -> str:
@@ -223,9 +200,19 @@ def _safe_json_parse(raw: str) -> dict | None:
 
 # Content fields for JSON extraction (prioritized)
 _CONTENT_FIELDS: tuple[str, ...] = (
-    "props", "pageProps", "serverData", "data", "body", "content",
-    "text", "html", "result", "articleBody", "description", "headline",
-    )
+    "props",
+    "pageProps",
+    "serverData",
+    "data",
+    "body",
+    "content",
+    "text",
+    "html",
+    "result",
+    "articleBody",
+    "description",
+    "headline",
+)
 
 
 def _is_valid_text(text: str) -> bool:
@@ -342,27 +329,20 @@ def _has_meaningful_title(info: dict) -> bool:
 def _has_meaningful_body(info: dict) -> bool:
     """Check if info dict has meaningful body/description >= MIN_BODY_LEN."""
     body = (
-        info.get("body", "") or info.get("description", "") or
-        info.get("json_ld_text", "") or info.get("meta_desc", "")
+        info.get("body", "") or info.get("description", "") or info.get("json_ld_text", "") or info.get("meta_desc", "")
     )
     return bool(body and len(body) >= _MIN_BODY_LEN)
 
 
 def _has_content_json_ld(info: dict) -> bool:
     """Check if info has JSON-LD type from CONTENT_TYPES."""
-    return bool(info.get("json_ld_types") and any(
-        t in _CONTENT_TYPES for t in info.get("json_ld_types", [])
-    ))
+    return bool(info.get("json_ld_types") and any(t in _CONTENT_TYPES for t in info.get("json_ld_types", [])))
 
 
 def _has_metadata_signal(info: dict) -> bool:
     """Check if info has canonical/feed/alternate links."""
     metadata = info.get("metadata", {})
-    return bool(
-        metadata.get("canonical") or
-        metadata.get("rss") or
-        metadata.get("atom")
-    )
+    return bool(metadata.get("canonical") or metadata.get("rss") or metadata.get("atom"))
 
 
 def _has_body_content_html(html: str) -> bool:
@@ -436,7 +416,9 @@ def _compute_hydration_score(info: dict, input_truncated: bool = False) -> tuple
 
     # Hydration payload (+0.4)
     body_source = info.get("_body_source", "")
-    if body_source in (_REASON_SUFFICIENT_NEXT, _REASON_SUFFICIENT_NUXT, _REASON_SUFFICIENT_METADATA) and info.get("body"):
+    if body_source in (_REASON_SUFFICIENT_NEXT, _REASON_SUFFICIENT_NUXT, _REASON_SUFFICIENT_METADATA) and info.get(
+        "body"
+    ):
         score += 0.4
         signals.append("hydration_payload")
 
@@ -487,15 +469,11 @@ def _is_sufficient(info: dict, html: str = "") -> tuple[bool, str]:
     return False, ""
 
 
-# ---------------------------------------------------------------------------
-# Extracted helpers for refactored extract_static_hydration
-# ---------------------------------------------------------------------------
-
 # Title extraction dispatch table: (name, path/key extractor, validator)
 # Single-pass consolidates Next.js, Nuxt, and generic patterns
-_TitleHandlers: TypeAlias = tuple[
+type _TitleHandlers = tuple[
     tuple[str, tuple[str, ...], callable],  # name, path tuple, validator
-    ...
+    ...,
 ]
 
 _TITLE_HANDLERS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -511,12 +489,11 @@ _TITLE_HANDLERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (("serverData", "title"), ("serverData", "title")),
     (("data", "title"), ("data", "title")),
     (("ROOT_QUERY", "title"), ("ROOT_QUERY", "title")),
-    )
+)
 
 
 def _extract_title_from_parsed(parsed) -> str:
     """Extract title using single-pass dispatch table (Next.js, Nuxt, generic)."""
-    # Handle Nuxt list format first
     if isinstance(parsed, list) and parsed:
         first = parsed[0]
         if isinstance(first, dict):
@@ -524,7 +501,6 @@ def _extract_title_from_parsed(parsed) -> str:
             if title and len(str(title)) >= _MIN_TITLE_LEN:
                 return str(title)
 
-    # Dispatch table iteration
     for path, _ in _TITLE_HANDLERS:
         val = parsed
         for key in path:
@@ -539,7 +515,7 @@ def _extract_title_from_parsed(parsed) -> str:
 
 
 # Type alias for hydration handler entries (source_name, regex, title_extractor, reason)
-_HydrationHandler: TypeAlias = tuple[str, re.Pattern[str], callable[[object], str], str]
+type _HydrationHandler = tuple[str, re.Pattern[str], callable[[object], str], str]
 
 
 def _try_hydration_pattern(
@@ -692,7 +668,7 @@ def _build_hydration_result(
             reason=_REASON_NONE,
             hydration_score=0.0,
             quality_signals=(),
-    )
+        )
 
     # Sufficiency check
     sufficient, reason = _is_sufficient(info, html)
@@ -717,11 +693,6 @@ def _build_hydration_result(
         hydration_score=hydration_score,
         quality_signals=quality_signals,
     )
-
-
-# ---------------------------------------------------------------------------
-# Main API
-# ---------------------------------------------------------------------------
 
 
 def extract_static_hydration(
@@ -762,14 +733,13 @@ def extract_static_hydration(
             text="",
             metadata={},
             reason=_REASON_NONE,
-    )
+        )
 
     # Bounds: truncate oversized input (M1 8GB safe: single pass)
     input_truncated = len(html) > max_bytes
     if input_truncated:
         html = html[:max_bytes]
 
-    # Initialize extraction state
     sources: list[str] = []
     info: dict = {
         "title": "",
@@ -782,16 +752,12 @@ def extract_static_hydration(
         "metadata": {},
     }
 
-    # Phase 1: JSON-based hydration (Next.js, Nuxt, generic)
     _extract_json_hydration(html, info, sources)
 
-    # Phase 2: JSON-LD extraction (single-pass, optimized)
     _extract_json_ld(html, info, sources)
 
-    # Phase 3: Metadata extraction
     metadata = _extract_metadata(html, info)
 
-    # Phase 4: Build result with scoring
     hydration_score, quality_signals = _compute_hydration_score(info, input_truncated)
     return _build_hydration_result(
         info=info,

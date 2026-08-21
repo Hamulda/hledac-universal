@@ -22,20 +22,18 @@ Verifies:
 import asyncio
 import random
 import sys
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Any
 
 import pytest
-from _core import aclose
 
 # Add project root to path for imports
-sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
+sys.path.insert(0, "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
 
 class MockDeduplicationStrategy:
     """Mock dedup strategy that tracks add/discard operations."""
-    def __init__(self):
+
+    def __init__(self) -> None:
         self._urls: set = set()
 
     def add(self, url: str) -> None:
@@ -50,13 +48,14 @@ class MockDeduplicationStrategy:
 
 class MockPrivacyBudgetAllocator:
     """Mock privacy budget allocator."""
-    def __init__(self):
+
+    def __init__(self) -> None:
         self._semaphores: dict[str, asyncio.Semaphore] = {}
 
     def get_lane_for_url(self, url: str) -> str:
-        if 'tor' in url.lower():
-            return 'tor'
-        return 'clearnet'
+        if "tor" in url.lower():
+            return "tor"
+        return "clearnet"
 
     def get_semaphore(self, lane: str) -> asyncio.Semaphore | None:
         if lane not in self._semaphores:
@@ -68,8 +67,9 @@ class MockPrivacyBudgetAllocator:
 # Test 1: Lock leak on early return (line 1342 path)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_dedup_lock_no_leak_on_early_return():
+async def test_dedup_lock_no_leak_on_early_return() -> None:
     """
     AP-02 FIX VERIFICATION: _dedup_lock was leaked when returning early
     on line 1342 inside _fetch_url when gov.can_afford_sync returned False.
@@ -92,7 +92,7 @@ async def test_dedup_lock_no_leak_on_early_return():
 
     test_url = "https://example.com/test"
 
-    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
+    with patch("hledac.universal._core.protocols.get_governor", return_value=mock_gov):
         # Call _fetch_url directly - it should NOT deadlock
         # With the bug: lock acquired on line 1314, early return on line 1342
         # without releasing the lock → deadlock after 2nd call
@@ -107,12 +107,12 @@ async def test_dedup_lock_no_leak_on_early_return():
             async with asyncio.timeout(2.0):
                 await fc._dedup_lock.acquire()
                 fc._dedup_lock.release()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail("DEADLOCK DETECTED: _dedup_lock was leaked!")
 
 
 @pytest.mark.asyncio
-async def test_dedup_lock_multiple_concurrent_calls():
+async def test_dedup_lock_multiple_concurrent_calls() -> None:
     """
     Test that multiple concurrent _fetch_url calls don't deadlock.
     Simulates the real-world scenario where 100+ coroutines complete simultaneously.
@@ -137,14 +137,12 @@ async def test_dedup_lock_multiple_concurrent_calls():
 
     urls = [f"https://example.com/page{i}" for i in range(20)]
 
-    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
+    with patch("hledac.universal._core.protocols.get_governor", return_value=mock_gov):
         # Run 20 concurrent fetches - should NOT deadlock
         try:
             async with asyncio.timeout(10.0):
-                results = await asyncio.gather(*[
-                    fc._fetch_url(url) for url in urls
-                ], return_exceptions=True)
-        except asyncio.TimeoutError:
+                results = await asyncio.gather(*[fc._fetch_url(url) for url in urls], return_exceptions=True)
+        except TimeoutError:
             pytest.fail("DEADLOCK: 20 concurrent _fetch_url calls timed out!")
 
         # All should return None (early exit)
@@ -155,8 +153,9 @@ async def test_dedup_lock_multiple_concurrent_calls():
 # Test 2: Nested lock acquisition order (no deadlock if always same order)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_nested_lock_acquisition_no_deadlock():
+async def test_nested_lock_acquisition_no_deadlock() -> None:
     """
     Verify that nested lock acquisitions don't cause deadlock when
     locks are always acquired in the same order.
@@ -185,7 +184,7 @@ async def test_nested_lock_acquisition_no_deadlock():
 
 
 @pytest.mark.asyncio
-async def test_random_lock_ordering_no_deadlock():
+async def test_random_lock_ordering_no_deadlock() -> None:
     """
     AP-02: 100 random lock orderings test (reduced from 10k for speed).
     Verifies no deadlock occurs with random acquisition patterns.
@@ -199,13 +198,13 @@ async def test_random_lock_ordering_no_deadlock():
     fc._privacy_allocator = MockPrivacyBudgetAllocator()
 
     lock_orderings = [
-        ['_dedup_lock', '_privacy_lock'],
-        ['_privacy_lock', '_dedup_lock'],
-        ['_dedup_lock'],
-        ['_privacy_lock'],
+        ["_dedup_lock", "_privacy_lock"],
+        ["_privacy_lock", "_dedup_lock"],
+        ["_dedup_lock"],
+        ["_privacy_lock"],
     ]
 
-    async def random_lock_order():
+    async def random_lock_order() -> None:
         """Simulate random lock acquisition order."""
         locks = random.choice(lock_orderings)
         for lock_name in locks:
@@ -213,7 +212,7 @@ async def test_random_lock_ordering_no_deadlock():
             async with lock:
                 await asyncio.sleep(0.001)
 
-    async def worker(_worker_id: int):
+    async def worker(_worker_id: int) -> None:
         """Worker that acquires locks in random order."""
         for _ in range(5):  # Reduced from 10
             await random_lock_order()
@@ -225,7 +224,7 @@ async def test_random_lock_ordering_no_deadlock():
         try:
             async with asyncio.timeout(5.0):
                 await asyncio.gather(*workers, return_exceptions=True)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail(f"DEADLOCK at iteration {iteration}: random lock ordering caused timeout!")
 
 
@@ -233,8 +232,9 @@ async def test_random_lock_ordering_no_deadlock():
 # Test 3: AIMDWindow lock patterns (_lock, _window_lock)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_aimd_window_concurrent_on_success():
+async def test_aimd_window_concurrent_on_success() -> None:
     """
     Test AIMDWindow.on_success() under concurrent load.
     Verifies _lock and _window_lock don't cause deadlock.
@@ -243,7 +243,7 @@ async def test_aimd_window_concurrent_on_success():
 
     window = AIMDWindow(initial=3.0)
 
-    async def success_worker():
+    async def success_worker() -> None:
         for _ in range(100):
             await window.on_success(multiplier=1.0)
             await asyncio.sleep(0.0001)
@@ -254,7 +254,7 @@ async def test_aimd_window_concurrent_on_success():
     try:
         async with asyncio.timeout(5.0):
             await asyncio.gather(*workers, return_exceptions=True)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("DEADLOCK: AIMDWindow.on_success() timed out!")
 
     # Verify final state is consistent
@@ -263,7 +263,7 @@ async def test_aimd_window_concurrent_on_success():
 
 
 @pytest.mark.asyncio
-async def test_aimd_window_concurrent_on_failure():
+async def test_aimd_window_concurrent_on_failure() -> None:
     """
     Test AIMDWindow.on_failure() under concurrent load.
     Verifies _lock and _window_lock don't cause deadlock.
@@ -272,9 +272,9 @@ async def test_aimd_window_concurrent_on_failure():
 
     window = AIMDWindow(initial=3.0)
 
-    async def failure_worker():
+    async def failure_worker() -> None:
         for _ in range(50):
-            await window.on_failure(uma_state='ok')
+            await window.on_failure(uma_state="ok")
             await asyncio.sleep(0.0001)
 
     workers = [failure_worker() for _ in range(10)]
@@ -282,7 +282,7 @@ async def test_aimd_window_concurrent_on_failure():
     try:
         async with asyncio.timeout(5.0):
             await asyncio.gather(*workers, return_exceptions=True)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("DEADLOCK: AIMDWindow.on_failure() timed out!")
 
     assert window.window >= 1.0
@@ -292,8 +292,9 @@ async def test_aimd_window_concurrent_on_failure():
 # Test 4: Lightpanda lock DCLP pattern
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_lightpanda_lock_dclp_pattern():
+async def test_lightpanda_lock_dclp_pattern() -> None:
     """
     Test _lightpanda_lock DCLP (Double-Checked Locking Pattern).
     The lock should only be held during pool start, not during get_instance.
@@ -327,8 +328,9 @@ async def test_lightpanda_lock_dclp_pattern():
 # Test 5: Privacy lock acquisition/release cycle
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_privacy_lock_acquire_release_cycle():
+async def test_privacy_lock_acquire_release_cycle() -> None:
     """
     Test _privacy_lock acquire/release cycle.
     Verify locks are properly released after use.
@@ -352,7 +354,7 @@ async def test_privacy_lock_acquire_release_cycle():
         async with asyncio.timeout(1.0):
             async with fc._privacy_lock:
                 pass  # Lock should be available
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("DEADLOCK: _privacy_lock was not released!")
 
     # Release should be safe to call
@@ -363,8 +365,9 @@ async def test_privacy_lock_acquire_release_cycle():
 # Integration test: Full _fetch_url with all lock paths exercised
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_fetch_url_full_integration_no_deadlock():
+async def test_fetch_url_full_integration_no_deadlock() -> None:
     """
     Integration test: Exercise all lock paths in _fetch_url.
 
@@ -395,13 +398,11 @@ async def test_fetch_url_full_integration_no_deadlock():
         "https://example.com/page5",
     ]
 
-    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
+    with patch("hledac.universal._core.protocols.get_governor", return_value=mock_gov):
         try:
             async with asyncio.timeout(15.0):
-                results = await asyncio.gather(*[
-                    fc._fetch_url(url) for url in urls
-                ], return_exceptions=True)
-        except asyncio.TimeoutError:
+                results = await asyncio.gather(*[fc._fetch_url(url) for url in urls], return_exceptions=True)
+        except TimeoutError:
             pytest.fail("DEADLOCK: Full _fetch_url integration test timed out!")
 
         # Should complete without deadlock
@@ -413,9 +414,10 @@ async def test_fetch_url_full_integration_no_deadlock():
 # Stress test: 1000 iterations as per acceptance criteria
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 @pytest.mark.slow
-async def test_deadlock_stress_1000_iterations():
+async def test_deadlock_stress_1000_iterations() -> None:
     """
     AP-02 ACCEPTANCE CRITERIA: deadlock test passes 1000 iterations.
 
@@ -438,6 +440,7 @@ async def test_deadlock_stress_1000_iterations():
 
     # Mock governor to sometimes allow, sometimes deny
     call_count = 0
+
     def mock_can_afford(_data, _priority):
         nonlocal call_count
         call_count += 1
@@ -448,7 +451,7 @@ async def test_deadlock_stress_1000_iterations():
 
     iteration_failures = []
 
-    with patch('hledac.universal._core.protocols.get_governor', return_value=mock_gov):
+    with patch("hledac.universal._core.protocols.get_governor", return_value=mock_gov):
         for i in range(1000):
             url = f"https://example.com/stress{i}"
 
@@ -461,10 +464,10 @@ async def test_deadlock_stress_1000_iterations():
                         async with asyncio.timeout(0.5):
                             await fc._dedup_lock.acquire()
                             fc._dedup_lock.release()
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         iteration_failures.append(f"Iteration {i}: _dedup_lock leaked")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 iteration_failures.append(f"Iteration {i}: Deadlock (timeout)")
 
             # Small delay every 100 iterations
@@ -483,7 +486,8 @@ async def test_deadlock_stress_1000_iterations():
 # MODERN-06: enqueue_pivot public protocol verification
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_fetch_coordinator_has_enqueue_pivot_method():
+
+def test_fetch_coordinator_has_enqueue_pivot_method() -> None:
     """Verify FetchCoordinator exposes enqueue_pivot as a public class method.
 
     MODERN-06: enqueue_pivot misindent broke public protocol.
@@ -496,32 +500,30 @@ def test_fetch_coordinator_has_enqueue_pivot_method():
     from hledac.universal.runtime.protocols.pivot_protocol import PivotProtocol
 
     # P0: enqueue_pivot must be a callable class method, not a closure
-    assert hasattr(FetchCoordinator, 'enqueue_pivot'), (
-        "MODERN-06 FAIL: FetchCoordinator must have 'enqueue_pivot' method "
-        "at class level (not nested inside _put_task)"
+    assert hasattr(FetchCoordinator, "enqueue_pivot"), (
+        "MODERN-06 FAIL: FetchCoordinator must have 'enqueue_pivot' method at class level (not nested inside _put_task)"
     )
 
     # Verify it's a proper method (bound method when accessed on instance)
-    method = getattr(FetchCoordinator, 'enqueue_pivot')
+    method = FetchCoordinator.enqueue_pivot
     assert callable(method), "enqueue_pivot must be callable"
 
     # Verify signature includes required parameters
     import inspect
+
     sig = inspect.signature(method)
     params = list(sig.parameters.keys())
-    assert 'ioc_value' in params, "enqueue_pivot must accept ioc_value"
-    assert 'ioc_type' in params, "enqueue_pivot must accept ioc_type"
-    assert 'confidence' in params, "enqueue_pivot must accept confidence"
+    assert "ioc_value" in params, "enqueue_pivot must accept ioc_value"
+    assert "ioc_type" in params, "enqueue_pivot must accept ioc_type"
+    assert "confidence" in params, "enqueue_pivot must accept confidence"
 
     # P1: FetchCoordinator should satisfy PivotProtocol at runtime
     # (runtime_checkable allows isinstance checks)
     mock_fc = MagicMock(spec=FetchCoordinator)
-    assert isinstance(mock_fc, PivotProtocol), (
-        "FetchCoordinator must satisfy PivotProtocol for type-safe calls"
-    )
+    assert isinstance(mock_fc, PivotProtocol), "FetchCoordinator must satisfy PivotProtocol for type-safe calls"
 
 
-def test_fetch_coordinator_satisfies_full_pivot_protocol():
+def test_fetch_coordinator_satisfies_full_pivot_protocol() -> None:
     """Verify FetchCoordinator implements all PivotProtocol methods.
 
     PivotProtocol requires:
@@ -531,30 +533,24 @@ def test_fetch_coordinator_satisfies_full_pivot_protocol():
 
     This test ensures FetchCoordinator satisfies the FULL protocol contract.
     """
+
     from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
     from hledac.universal.runtime.protocols.pivot_protocol import PivotProtocol
-    import inspect
 
     # Verify drain_pivot_queue exists and is async
-    assert hasattr(FetchCoordinator, 'drain_pivot_queue'), (
+    assert hasattr(FetchCoordinator, "drain_pivot_queue"), (
         "FetchCoordinator must have 'drain_pivot_queue' method for PivotProtocol"
     )
-    method = getattr(FetchCoordinator, 'drain_pivot_queue')
-    assert asyncio.iscoroutinefunction(method), (
-        "drain_pivot_queue must be an async function"
-    )
+    method = FetchCoordinator.drain_pivot_queue
+    assert asyncio.iscoroutinefunction(method), "drain_pivot_queue must be an async function"
 
     # Verify record_feedback exists and is async
-    assert hasattr(FetchCoordinator, 'record_feedback'), (
+    assert hasattr(FetchCoordinator, "record_feedback"), (
         "FetchCoordinator must have 'record_feedback' method for PivotProtocol"
     )
-    method = getattr(FetchCoordinator, 'record_feedback')
-    assert asyncio.iscoroutinefunction(method), (
-        "record_feedback must be an async function"
-    )
+    method = FetchCoordinator.record_feedback
+    assert asyncio.iscoroutinefunction(method), "record_feedback must be an async function"
 
     # Verify protocol compliance with mock
     mock_fc = MagicMock(spec=FetchCoordinator)
-    assert isinstance(mock_fc, PivotProtocol), (
-        "FetchCoordinator must fully satisfy PivotProtocol"
-    )
+    assert isinstance(mock_fc, PivotProtocol), "FetchCoordinator must fully satisfy PivotProtocol"

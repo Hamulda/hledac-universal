@@ -14,7 +14,6 @@ ensures the pipeline continues without crashing.
 """
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -24,9 +23,10 @@ try:
     from hledac.universal._core.ffi_circuit_breaker import (
         FFI_MODULE_XXHASH,
         FFICallResult,
-        get_ffi_circuit_breaker,
         call_or_fallback,
+        get_ffi_circuit_breaker,
     )
+
     _FFI_CB_AVAILABLE = True
 except ImportError:
     _FFI_CB_AVAILABLE = False
@@ -53,11 +53,11 @@ class _RustHashDomain:
     def content_hash_64(self, data: bytes) -> int:
         # ISSUE [SWARM]-005: Use circuit breaker for critical hash functions
         if self._ffi_cb is not None:
+
             def rust_call() -> int:
                 return self._ext.content_hash_64(data)
-            result = self._ffi_cb.call_or_fallback(
-                FFI_MODULE_XXHASH, rust_call
-    )
+
+            result = self._ffi_cb.call_or_fallback(FFI_MODULE_XXHASH, rust_call)
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_xxhash64(data)
@@ -65,11 +65,11 @@ class _RustHashDomain:
 
     def content_hash_hex(self, data: bytes) -> str:
         if self._ffi_cb is not None:
+
             def rust_call() -> str:
                 return self._ext.content_hash_hex(data)
-            result = self._ffi_cb.call_or_fallback(
-                FFI_MODULE_XXHASH, rust_call
-    )
+
+            result = self._ffi_cb.call_or_fallback(FFI_MODULE_XXHASH, rust_call)
             if result.success:
                 return result.value  # type: ignore[return-value]
             return _python_xxhash64_hex(data)
@@ -133,6 +133,7 @@ class _PythonHashDomain:
     @staticmethod
     def sha256_hex(data: bytes) -> str:
         import hashlib
+
         return hashlib.sha256(data).hexdigest()
 
     @staticmethod
@@ -144,11 +145,6 @@ class _PythonHashDomain:
         return [f"{_python_xxhash64(item):016x}" for item in items]
 
 
-# ------------------------------------------------------------------
-# Pure-Python hash helpers (moved from top of rust_backend.py)
-# ------------------------------------------------------------------
-
-
 class _PythonContentHasher:
     """Pure-Python content hasher fallback."""
 
@@ -156,6 +152,7 @@ class _PythonContentHasher:
 
     def __init__(self) -> None:
         import hashlib
+
         self._hasher = hashlib.blake2b()
 
     def update(self, data: bytes) -> None:
@@ -194,6 +191,7 @@ def _python_xxhash64(data: bytes | str) -> int:
     Accepts both bytes and str for Rust API compatibility.
     """
     import hashlib
+
     if isinstance(data, str):
         data = data.encode("utf-8")
     h = hashlib.sha256(data).digest()
@@ -211,12 +209,14 @@ def _python_batch_xxhash64_hex(items: list[bytes]) -> list[str]:
 def _python_blake3_hex(data: bytes) -> str:
     """Blake3 via hashlib (fallback)."""
     import hashlib
+
     return hashlib.blake2b(data).hexdigest()
 
 
 def _python_blake3_64(data: bytes) -> str:
     """Blake3-64: first 8 bytes of blake2b hex (compatibility)."""
     import hashlib
+
     return hashlib.blake2b(data).hexdigest()[:16]
 
 
@@ -226,16 +226,12 @@ def get_domain(ext: object | None) -> _RustHashDomain | _PythonHashDomain:
     return _PythonHashDomain()
 
 
-# ============================================================================
-# ISSUE [SWARM]-005: No-op fallback for xxhash
-# ============================================================================
-
-
 def _noop_xxh3_64_hex(*args: Any, **kwargs: Any) -> str:
     """No-op for xxh3_64_hex — returns random hex string.
-    
+
     Used when both Rust SIMD and Python fallback fail.
     Not cryptographic but ensures pipeline continues.
     """
     import secrets
+
     return secrets.token_hex(8)

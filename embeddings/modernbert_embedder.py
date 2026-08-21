@@ -14,13 +14,14 @@ Provides:
 Canonical import path: from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 Replaces: utils/semantic.py ModernBERTEmbedding (DEPRECATED)
 """
+
 import logging
 import threading
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
+
 import numpy as np
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 MLX_EMBEDDINGS_AVAILABLE = False
 _mlx_available = False
@@ -35,7 +36,8 @@ MAX_EMBED_BATCH_TOTAL_CHARS = 5_000_000
 
 try:
     import mlx.core as mx
-    _mlx_available = mx.metal.is_available() if hasattr(mx, 'metal') else False
+
+    _mlx_available = mx.metal.is_available() if hasattr(mx, "metal") else False
 except ImportError:
     _mlx_available = False
 try:
@@ -50,6 +52,7 @@ try:
         MLX Metal backend is registered per-thread; ensure load happens once
         on the correct thread (main thread where inference runs).
         """
+
         _instance = None
         _model = None
         _processor = None
@@ -73,16 +76,19 @@ try:
                     cls._model, cls._processor = mlx_embeddings_load(model_path, lazy=False)
                     cls._tokenizer = cls._processor._tokenizer
                     cls._instance = True
-                    logger.info(f'[MODERNBERT] MLX load OK: {model_path}')
+                    logger.info(f"[MODERNBERT] MLX load OK: {model_path}")
             return (cls._model, cls._tokenizer)
+
     MLX_EMBEDDINGS_AVAILABLE = True
 except ImportError:
     MLX_EMBEDDINGS_AVAILABLE = False
     _ModernBERTMLXLoader = None
 
+
 class ModernBERTConfig(Struct):
     """Configuration for ModernBERT embedder."""
-    model_path: str = 'nomic-ai/modernbert-embed-base'
+
+    model_path: str = "nomic-ai/modernbert-embed-base"
     max_seq_len: int = 512
     embed_dim: int = 768
     batch_size: int = 8
@@ -90,6 +96,7 @@ class ModernBERTConfig(Struct):
     batch_size_high: int = 16
     batch_size_low: int = 4
     batch_size_max: int = 32
+
 
 class ModernBERTEmbedder:
     """
@@ -102,11 +109,21 @@ class ModernBERTEmbedder:
 
     M1 8GB safe: Metal cache cleared on unload.
     """
-    _SEARCH_QUERY_PREFIX = 'search_query: '
-    _SEARCH_DOC_PREFIX = 'search_document: '
-    __slots__ = tuple(('_is_loaded', '_model', '_tokenizer', 'config'))
 
-    def __init__(self, model_path: str | None=None, lazy_load: bool=True, normalize: bool=True, batch_size: int=8, batch_size_high: int=16, batch_size_low: int=4, batch_size_max: int=32):
+    _SEARCH_QUERY_PREFIX = "search_query: "
+    _SEARCH_DOC_PREFIX = "search_document: "
+    __slots__ = ("_is_loaded", "_model", "_tokenizer", "config")
+
+    def __init__(
+        self,
+        model_path: str | None = None,
+        lazy_load: bool = True,
+        normalize: bool = True,
+        batch_size: int = 8,
+        batch_size_high: int = 16,
+        batch_size_low: int = 4,
+        batch_size_max: int = 32,
+    ) -> None:
         """
         Initialize ModernBERT embedder.
 
@@ -119,7 +136,14 @@ class ModernBERTEmbedder:
             batch_size_low: Min batch size when Metal memory >90% (default 4).
             batch_size_max: Max batch size when Metal memory <50% (P3-1, default 32).
         """
-        self.config = ModernBERTConfig(model_path=model_path or 'nomic-ai/modernbert-embed-base', batch_size=batch_size, normalize=normalize, batch_size_high=batch_size_high, batch_size_low=batch_size_low, batch_size_max=batch_size_max)
+        self.config = ModernBERTConfig(
+            model_path=model_path or "nomic-ai/modernbert-embed-base",
+            batch_size=batch_size,
+            normalize=normalize,
+            batch_size_high=batch_size_high,
+            batch_size_low=batch_size_low,
+            batch_size_max=batch_size_max,
+        )
         self._model = None
         self._tokenizer = None
         self._is_loaded = False
@@ -131,16 +155,16 @@ class ModernBERTEmbedder:
         if self._is_loaded:
             return
         if not MLX_EMBEDDINGS_AVAILABLE:
-            raise RuntimeError('mlx-embeddings not available. Install: pip install mlx-embeddings')
+            raise RuntimeError("mlx-embeddings not available. Install: pip install mlx-embeddings")
         model_name = str(self.config.model_path)
-        logger.info(f'[MODERNBERT] Loading: {model_name}')
+        logger.info(f"[MODERNBERT] Loading: {model_name}")
         try:
             self._model, self._tokenizer = _ModernBERTMLXLoader.load(model_name)
             self._is_loaded = True
-            logger.info('[MODERNBERT] Loaded successfully via mlx-embeddings')
+            logger.info("[MODERNBERT] Loaded successfully via mlx-embeddings")
         except Exception as e:
-            logger.error(f'[MODERNBERT] Failed to load: {e}')
-            raise RuntimeError(f'ModernBERT load failed: {e}') from e
+            logger.error(f"[MODERNBERT] Failed to load: {e}")
+            raise RuntimeError(f"ModernBERT load failed: {e}") from e
 
     @property
     def is_loaded(self) -> bool:
@@ -166,7 +190,7 @@ class ModernBERTEmbedder:
             return self.embed(texts, **kwargs)
         return self.embed_batch(texts, **kwargs)
 
-    def embed(self, text: str, task: str='search_document') -> np.ndarray:
+    def embed(self, text: str, task: str = "search_document") -> np.ndarray:
         """
         Encode a single text to embedding vector.
 
@@ -183,9 +207,11 @@ class ModernBERTEmbedder:
         # MEM-UMA-003: bound single-doc input BEFORE tokenizer processes it (prevents memory spike on huge strings)
         if len(text) > MAX_EMBED_DOCUMENT_CHARS:
             text = text[:MAX_EMBED_DOCUMENT_CHARS]
-            logger.warning(f'[MODERNBERT] Single text truncated to {MAX_EMBED_DOCUMENT_CHARS} chars')
+            logger.warning(f"[MODERNBERT] Single text truncated to {MAX_EMBED_DOCUMENT_CHARS} chars")
         prefixed = self._apply_prefix(text, task)
-        inputs = self._tokenizer([prefixed], padding=True, truncation=True, max_length=self.config.max_seq_len, return_tensors='mlx')
+        inputs = self._tokenizer(
+            [prefixed], padding=True, truncation=True, max_length=self.config.max_seq_len, return_tensors="mlx"
+        )
         with self._metal_context():
             outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
         emb = outputs.text_embeds
@@ -196,7 +222,7 @@ class ModernBERTEmbedder:
         del outputs, emb, inputs
         return result
 
-    def embed_batch(self, texts: list[str], task: str='search_document') -> np.ndarray:
+    def embed_batch(self, texts: list[str], task: str = "search_document") -> np.ndarray:
         """
         Encode a batch of texts to embedding matrix.
 
@@ -219,7 +245,7 @@ class ModernBERTEmbedder:
 
         # MEM-UMA-003: OOM guard — validate batch size, per-doc length, total chars
         if len(texts) > MAX_EMBED_BATCH_SIZE:
-            logger.warning(f'[MODERNBERT] Batch size {len(texts)} > {MAX_EMBED_BATCH_SIZE}, truncating')
+            logger.warning(f"[MODERNBERT] Batch size {len(texts)} > {MAX_EMBED_BATCH_SIZE}, truncating")
             texts = texts[:MAX_EMBED_BATCH_SIZE]
 
         # Truncate individual docs BEFORE tokenization (prevents memory spike during tokenizer() call)
@@ -229,7 +255,7 @@ class ModernBERTEmbedder:
                 texts[idx] = t[:MAX_EMBED_DOCUMENT_CHARS]
                 truncated = True
         if truncated:
-            logger.warning(f'[MODERNBERT] Some texts truncated to {MAX_EMBED_DOCUMENT_CHARS} chars')
+            logger.warning(f"[MODERNBERT] Some texts truncated to {MAX_EMBED_DOCUMENT_CHARS} chars")
 
         total_chars = sum(len(t) for t in texts)
         if total_chars > MAX_EMBED_BATCH_TOTAL_CHARS:
@@ -257,8 +283,10 @@ class ModernBERTEmbedder:
         prefixed = [self._apply_prefix(t, task) for t in texts]
         all_embeddings = []
         for i in range(0, len(prefixed), effective_batch_size):
-            batch = prefixed[i:i + effective_batch_size]
-            inputs = self._tokenizer(batch, padding=True, truncation=True, max_length=self.config.max_seq_len, return_tensors='mlx')
+            batch = prefixed[i : i + effective_batch_size]
+            inputs = self._tokenizer(
+                batch, padding=True, truncation=True, max_length=self.config.max_seq_len, return_tensors="mlx"
+            )
             with self._metal_context():
                 outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
             emb = outputs.text_embeds
@@ -271,12 +299,12 @@ class ModernBERTEmbedder:
 
     def _apply_prefix(self, text: str, task: str) -> str:
         """Apply task prefix to text. Guards against double-prefixing."""
-        if task == 'search_query':
+        if task == "search_query":
             prefix = self._SEARCH_QUERY_PREFIX
-        elif task == 'search_document':
+        elif task == "search_document":
             prefix = self._SEARCH_DOC_PREFIX
         else:
-            prefix = ''
+            prefix = ""
         if prefix and (not text.startswith(prefix)):
             return prefix + text
         return text
@@ -285,6 +313,7 @@ class ModernBERTEmbedder:
         """Return Metal stream context manager for M1 UMA buffer management."""
         try:
             from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
             return get_metal_stream_context()
         except ImportError:
             return _NoOpContext()
@@ -292,6 +321,7 @@ class ModernBERTEmbedder:
     def _get_mlx_memory(self):
         """Lazy-load mlx_memory module for adaptive batching (Sprint F265D)."""
         from hledac.universal.utils.mlx_memory import get_mlx_memory_module
+
         return get_mlx_memory_module()
 
     def _get_adaptive_batch_size(self) -> int:
@@ -314,11 +344,11 @@ class ModernBERTEmbedder:
             usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
         except Exception:
             return self.config.batch_size
-        if pressure_level == 'NORMAL' and usage_pct < 50:
+        if pressure_level == "NORMAL" and usage_pct < 50:
             return self.config.batch_size_max
-        if pressure_level == 'NORMAL':
+        if pressure_level == "NORMAL":
             return self.config.batch_size_high
-        elif pressure_level == 'WARNING':
+        elif pressure_level == "WARNING":
             return self.config.batch_size
         else:
             return self.config.batch_size_low
@@ -332,14 +362,16 @@ class ModernBERTEmbedder:
             try:
                 mx.eval([])
                 import gc
+
                 gc.collect()
-                if hasattr(mx, 'clear_cache'):
+                if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-                elif hasattr(mx.metal, 'clear_cache'):
+                elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
             except Exception:  # noqa: BLE001
                 pass
-        logger.info('[MODERNBERT] Unloaded, Metal cache cleared')
+        logger.info("[MODERNBERT] Unloaded, Metal cache cleared")
+
 
 class _NoOpContext:
     """No-op context manager when mlx_memory is unavailable."""

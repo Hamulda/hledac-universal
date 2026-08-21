@@ -3,7 +3,6 @@ StreamingMonitor — Continuous monitoring system for web sources.
 
 Rozděleno z původního stealth_crawler.py (ISSUE-028).
 
-
 Features:
 - RSS feed monitoring with selectolax (async-native)
 - API polling (Twitter/X, Reddit, custom APIs)
@@ -13,13 +12,16 @@ Features:
 - Keyword matching with alert generation
 - M1 8GB optimized: async loops, connection reuse, selective fetching
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any, cast
+
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 from ._models import (
     Alert,
@@ -27,24 +29,13 @@ from ._models import (
     Change,
     ChangeType,
     MonitoredSource,
-    SearchResult,
     Severity,
-    SourceType,
     StreamEvent,
-    TorProxyManager,
-    _mark_surface_patched,
     _crawler_domain_allowed,
-    )
-
-from hledac.universal.utils.asyncx import parallel, safe_create_task
-from _core import aclose
+    _mark_surface_patched,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# StreamingMonitor
-# ---------------------------------------------------------------------------
 
 
 class StreamingMonitor:
@@ -81,24 +72,22 @@ class StreamingMonitor:
     MAX_ALERT_HISTORY = 1000
     MAX_EVENT_HISTORY = 500
 
-    __slots__ = tuple(
-        (
-            "_alert_rules",
-            "_alerts",
-            "_check_count",
-            "_diff_match_patch_available",
-            "_events",
-            "_monitor_task",
-            "_running",
-            "_semaphore",
-            "_session",
-            "_sources",
-            "_stats",
-            "crawler",
-    )
+    __slots__ = (
+        "_alert_rules",
+        "_alerts",
+        "_check_count",
+        "_diff_match_patch_available",
+        "_events",
+        "_monitor_task",
+        "_running",
+        "_semaphore",
+        "_session",
+        "_sources",
+        "_stats",
+        "crawler",
     )
 
-    def __init__(self, crawler: Any):
+    def __init__(self, crawler: Any) -> None:
         self.crawler = crawler
         self._sources: dict[str, MonitoredSource] = {}
         self._alert_rules: dict[str, AlertRule] = {}
@@ -164,16 +153,12 @@ class StreamingMonitor:
         """
         try:
             if source.source_id in self._sources:
-                logger.warning(
-                    f"Source {source.source_id} already exists, updating"
-    )
+                logger.warning(f"Source {source.source_id} already exists, updating")
             source.session = self._session
             if source.source_id not in self._events:
                 self._events[source.source_id] = []
             self._sources[source.source_id] = source
-            logger.info(
-                f"✅ Added source: {source.source_id} ({source.source_type})"
-    )
+            logger.info(f"✅ Added source: {source.source_id} ({source.source_type})")
             return True
         except Exception as e:
             logger.error(f"Failed to add source {source.source_id}: {e}")
@@ -206,9 +191,7 @@ class StreamingMonitor:
             await self.initialize()
         self._running = True
         self._stats["start_time"] = datetime.now(UTC)
-        self._monitor_task = safe_create_task(
-            self._monitor_loop(), name="stealth_crawler:streaming_monitor"
-    )
+        self._monitor_task = safe_create_task(self._monitor_loop(), name="stealth_crawler:streaming_monitor")
         logger.info("🚀 Streaming monitoring started")
 
     async def stop_monitoring(self) -> None:
@@ -233,11 +216,7 @@ class StreamingMonitor:
                     s
                     for s in self._sources.values()
                     if s.is_active
-                    and (
-                        s.last_check is None
-                        or (now - s.last_check).total_seconds() / 60
-                        >= s.check_interval_minutes
-    )
+                    and (s.last_check is None or (now - s.last_check).total_seconds() / 60 >= s.check_interval_minutes)
                 ]
                 if sources_to_check:
                     await parallel(
@@ -245,7 +224,7 @@ class StreamingMonitor:
                         policy="log",
                         ctx="streaming_monitor:check_sources",
                         logger_instance=logger,
-    )
+                    )
                 self._check_count += 1
                 if self._check_count >= self.MEMORY_CLEANUP_INTERVAL:
                     await self._cleanup_memory()
@@ -258,9 +237,7 @@ class StreamingMonitor:
                 self._stats["errors"] += 1
                 await asyncio.sleep(5)
 
-    async def _check_source_with_semaphore(
-        self, source: MonitoredSource
-    ) -> None:
+    async def _check_source_with_semaphore(self, source: MonitoredSource) -> None:
         """Check source with concurrency control."""
         async with self._semaphore:
             try:
@@ -268,9 +245,7 @@ class StreamingMonitor:
                 if event:
                     await self._process_event(event)
             except Exception as e:
-                logger.error(
-                    f"Error checking source {source.source_id}: {e}"
-    )
+                logger.error(f"Error checking source {source.source_id}: {e}")
                 self._stats["errors"] += 1
 
     async def _check_source(self, source: MonitoredSource) -> StreamEvent | None:
@@ -290,9 +265,7 @@ class StreamingMonitor:
             if source.last_content_hash:
                 head_changed = await self._head_check_changed(source)
                 if not head_changed:
-                    logger.debug(
-                        f"Source {source.source_id} unchanged (HEAD check)"
-    )
+                    logger.debug(f"Source {source.source_id} unchanged (HEAD check)")
                     return None
             if source.source_type == "rss":
                 content = await self._fetch_rss(source)
@@ -311,17 +284,12 @@ class StreamingMonitor:
             else:
                 change_type = ChangeType.UPDATED
                 old_content = ""
-                if (
-                    source.source_id in self._events
-                    and self._events[source.source_id]
-                ):
+                if source.source_id in self._events and self._events[source.source_id]:
                     old_content = self._events[source.source_id][-1].content
                 changes = self._detect_changes(old_content, content)
             entities = self._extract_entities(content)
             matched_keywords = self._match_keywords(content, source.keywords)
-            severity = self._determine_severity(
-                change_type, matched_keywords, entities
-    )
+            severity = self._determine_severity(change_type, matched_keywords, entities)
             source.last_content_hash = content_hash
             event = StreamEvent(
                 event_id=self._generate_id(),
@@ -333,11 +301,9 @@ class StreamingMonitor:
                 change_type=change_type.value,
                 severity=severity.value,
                 changes=changes[:10],
-    )
+            )
             self._stats["changes_detected"] += 1
-            logger.info(
-                f"🔔 Change detected in {source.source_id}: {change_type.value}"
-    )
+            logger.info(f"🔔 Change detected in {source.source_id}: {change_type.value}")
             return event
         except Exception as e:
             logger.error(f"Error checking source {source.source_id}: {e}")
@@ -350,9 +316,7 @@ class StreamingMonitor:
 
         M1 8GB Optimization: Avoids downloading full content if not needed.
         """
-        allowed, reason = _crawler_domain_allowed(
-            source.url, "StreamingMonitor._head_check_changed"
-    )
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._head_check_changed")
         if not allowed:
             _mark_surface_patched("StreamingMonitor._head_check_changed")
             return False
@@ -368,23 +332,17 @@ class StreamingMonitor:
                     return etag != source.metadata.get("last_etag")
                 last_modified = response.headers.get("Last-Modified")
                 if last_modified:
-                    return last_modified != source.metadata.get(
-                        "last_modified"
-    )
+                    return last_modified != source.metadata.get("last_modified")
                 content_length = response.headers.get("Content-Length")
                 if content_length:
-                    return content_length != source.metadata.get(
-                        "content_length"
-    )
+                    return content_length != source.metadata.get("content_length")
                 return True
         except Exception:
             return True
 
     async def _fetch_rss(self, source: MonitoredSource) -> str | None:
         """Fetch and parse RSS/Atom feed using selectolax (async-native)."""
-        allowed, reason = _crawler_domain_allowed(
-            source.url, "StreamingMonitor._fetch_rss"
-    )
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_rss")
         if not allowed:
             _mark_surface_patched("StreamingMonitor._fetch_rss")
             return None
@@ -409,17 +367,13 @@ class StreamingMonitor:
 
     async def _fetch_api(self, source: MonitoredSource) -> str | None:
         """Fetch from API endpoint."""
-        allowed, reason = _crawler_domain_allowed(
-            source.url, "StreamingMonitor._fetch_api"
-    )
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_api")
         if not allowed:
             _mark_surface_patched("StreamingMonitor._fetch_api")
             return None
         _mark_surface_patched("StreamingMonitor._fetch_api")
         try:
-            async with self._session.get(
-                source.url, timeout=httpx.Timeout(self.CONTENT_TIMEOUT)
-            ) as response:
+            async with self._session.get(source.url, timeout=httpx.Timeout(self.CONTENT_TIMEOUT)) as response:
                 content = await response.text()
                 return content
         except Exception as e:
@@ -428,9 +382,7 @@ class StreamingMonitor:
 
     async def _fetch_url(self, source: MonitoredSource) -> str | None:
         """Fetch a general URL."""
-        allowed, reason = _crawler_domain_allowed(
-            source.url, "StreamingMonitor._fetch_url"
-    )
+        allowed, reason = _crawler_domain_allowed(source.url, "StreamingMonitor._fetch_url")
         if not allowed:
             _mark_surface_patched("StreamingMonitor._fetch_url")
             return None
@@ -453,13 +405,10 @@ class StreamingMonitor:
             self._events[event.source_id].append(event)
             # Trim history
             if len(self._events[event.source_id]) > self.MAX_EVENT_HISTORY:
-                self._events[event.source_id] = self._events[event.source_id][
-                    -self.MAX_EVENT_HISTORY :
-                ]
+                self._events[event.source_id] = self._events[event.source_id][-self.MAX_EVENT_HISTORY :]
         else:
             self._events[event.source_id] = [event]
 
-        # Check alert rules
         for rule in self._alert_rules.values():
             if rule.enabled and event.source_id in rule.source_ids:
                 if any(kw in event.content for kw in rule.keywords):
@@ -470,7 +419,7 @@ class StreamingMonitor:
                         severity=rule.severity,
                         message=f"Alert triggered by rule '{rule.name}'",
                         event=event,
-    )
+                    )
                     self._alerts.append(alert)
                     self._stats["alerts_generated"] += 1
                     if len(self._alerts) > self.MAX_ALERT_HISTORY:
@@ -482,9 +431,7 @@ class StreamingMonitor:
 
         return hashlib.sha256(content.encode()).hexdigest()
 
-    def _detect_changes(
-        self, old_content: str, new_content: str
-    ) -> list[Change]:
+    def _detect_changes(self, old_content: str, new_content: str) -> list[Change]:
         """Detect changes between old and new content."""
         if self._diff_match_patch_available:
             try:
@@ -497,18 +444,14 @@ class StreamingMonitor:
                 position = 0
                 for op, text in diffs:
                     if op != 0:  # Not equal
-                        change_type = (
-                            ChangeType.UPDATED
-                            if op == -1
-                            else ChangeType.NEW
-    )
+                        change_type = ChangeType.UPDATED if op == -1 else ChangeType.NEW
                         changes.append(
                             Change(
                                 change_type=change_type,
                                 position=position,
                                 old_text=text if op == -1 else None,
                                 new_text=text if op == 1 else None,
-    )
+                            )
                         )
                     position += len(text)
                 return changes
@@ -518,7 +461,7 @@ class StreamingMonitor:
         old_lines = old_content.split("\n")
         new_lines = new_content.split("\n")
         changes = []
-        for i, (old, new) in enumerate(zip(old_lines, new_lines)):
+        for i, (old, new) in enumerate(zip(old_lines, new_lines, strict=False)):
             if old != new:
                 changes.append(
                     Change(
@@ -526,7 +469,7 @@ class StreamingMonitor:
                         position=i,
                         old_text=old,
                         new_text=new,
-    )
+                    )
                 )
         return changes
 
@@ -541,9 +484,7 @@ class StreamingMonitor:
             "domains": [],
         }
         # URLs
-        url_pattern = re.compile(
-            r"https?://[^\s<>\"]+", re.IGNORECASE
-    )
+        url_pattern = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
         entities["urls"] = list(set(url_pattern.findall(content)))[:50]
 
         # Emails
@@ -551,24 +492,16 @@ class StreamingMonitor:
         entities["emails"] = list(set(email_pattern.findall(content)))[:20]
 
         # IPs
-        ip_pattern = re.compile(
-            r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"
-    )
+        ip_pattern = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
         entities["ips"] = list(set(ip_pattern.findall(content)))[:20]
 
         # Domains
-        domain_pattern = re.compile(
-            r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b"
-    )
-        entities["domains"] = list(
-            set(domain_pattern.findall(content))
-        )[:20]
+        domain_pattern = re.compile(r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b")
+        entities["domains"] = list(set(domain_pattern.findall(content)))[:20]
 
         return entities
 
-    def _match_keywords(
-        self, content: str, keywords: list[str]
-    ) -> list[str]:
+    def _match_keywords(self, content: str, keywords: list[str]) -> list[str]:
         """Match keywords in content."""
         content_lower = content.lower()
         matched = [kw for kw in keywords if kw.lower() in content_lower]
@@ -606,10 +539,7 @@ class StreamingMonitor:
         """Periodic memory cleanup for M1 8GB optimization."""
         # Trim events
         for source_id in list(self._events.keys()):
-            if (
-                source_id in self._sources
-                and source_id not in self._sources[source_id].source_id
-            ):
+            if source_id in self._sources and source_id not in self._sources[source_id].source_id:
                 del self._events[source_id]
         # Trim alerts
         if len(self._alerts) > self.MAX_ALERT_HISTORY:

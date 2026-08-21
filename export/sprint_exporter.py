@@ -7,8 +7,6 @@ Sprint 8VI Section  A: EXPORT fáze  --  export_sprint() + _generate_next_sprint
 Sprint 8VJ Section  C: ExportHandoff | dict -> typed handoff spotřeba
 Sprint 8VX Section  A: Finish-up  --  removal conditions tightened, comments aligned with reality
 
-
-
 Sprint F150I: product_value_summary  --  přenáší do exportu to, co runtime už ví:
   - accepted/stored reality z dedup status
   - reject breakdown (low-info / duplicate / fail-open)
@@ -49,14 +47,11 @@ Sprint F150P: Finish-layer truth fields  --  canonical surfaces from scheduler/c
   - No new store reads, no write-back, additive only
 """
 
-import asyncio
 import logging
 from pathlib import Path
 
-from operator import attrgetter, itemgetter
-from hledac.universal.utils.asyncx import parallel
+from operator import attrgetter
 
-from hledac.universal.utils.executor_decorator import offload_to
 import os
 import pathlib
 from typing import TYPE_CHECKING, Any
@@ -88,8 +83,7 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _get_branch_value,
     )
 
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag  # noqa: E402
-
+from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 
 def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
     """Sprint F285: Delegates to canonical codec. R13  --  migrated from inline orjson."""
@@ -111,16 +105,11 @@ def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> 
         return encode_pretty(obj)
     return encode_str(obj)
 
-
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Sprint F232A: Component imports  --  narrative, scorecard, pivot, signal, hypothesis
-# ---------------------------------------------------------------------------
 from hledac.universal.export.components.hypothesis_builder import (  # noqa: E402
     _derive_hypothesis_queries,
     )
@@ -132,11 +121,6 @@ from hledac.universal.export.components.pivot_builder import (  # noqa: E402
     _get_runtime_truth,
     )
 
-# ---------------------------------------------------------------------------
-# Sprint F232A: Investigation Packet builder
-# Connects existing reconciliation + planner into report enrichment.
-# No new storage, no new model deps, no live network calls.
-# ---------------------------------------------------------------------------
 from hledac.universal.runtime.acquisition_telemetry_reconcile import (  # noqa: E402
     complete_source_family_outcomes_from_lane_details,
     complete_source_family_outcomes_from_prelude,
@@ -148,18 +132,7 @@ from hledac.universal.runtime.investigation_planner import (  # noqa: E402
     summarize_planner_actions,
     )
 
-import itertools  # for JSONFormatter.render_investigation_packet_markdown
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Sprint F214Z: JSONFormatter  --  moved from formatters.py to break circular import
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Sprint F232C: JSONFormatter  --  extracted to export/_formatters.py
-# Reduces sprint_exporter.py from 4455 to ~3700 lines
-# ---------------------------------------------------------------------------
-from hledac.universal.export._formatters import JSONFormatter  # noqa: F401, E402
+from hledac.universal.export._formatters import JSONFormatter
 def _build_seed_context(planner_state: dict) -> dict:
     """Build seed context from planner state."""
     sc = planner_state.get("seed_context") or {}
@@ -227,7 +200,6 @@ def _build_gaps(planner_state: dict, sfo_dict: dict, corroboration: dict) -> lis
             gaps.append("no_accepted_findings")
     if gaps:
         return gaps
-    # Check feed dominance
     try:
         from hledac.universal.runtime.investigation_planner import _is_feed_dominant
         if _is_feed_dominant(sfo_dict) and not corroboration:
@@ -288,7 +260,6 @@ def _build_investigation_packet(report: dict) -> dict:
             "next_pivots": [],
         }
 
-
 def _compute_overall_status(sfo_by_family: dict) -> str:
     """Compute overall nonfeed yield status."""
     nonfeed_accepted = 0
@@ -299,7 +270,6 @@ def _compute_overall_status(sfo_by_family: dict) -> str:
     if nonfeed_accepted > 0:
         return "nonfeed_successful"
     return "no_positive_nonfeed_yield"
-
 
 def _extract_family_outcome(sfo_by_family: dict, report: dict, family: str, terminal_key: str, error_key: str = "") -> tuple:
     """Extract common outcome fields from source_family_outcomes or report."""
@@ -313,7 +283,6 @@ def _extract_family_outcome(sfo_by_family: dict, report: dict, family: str, term
         error = report.get(error_key, "") or ""
 
     return terminal, error, attempted, outcome
-
 
 def _diagnose_public_family(sfo_by_family: dict, report: dict) -> dict:
     """Build public family diagnosis."""
@@ -335,8 +304,6 @@ def _diagnose_public_family(sfo_by_family: dict, report: dict) -> dict:
     else:
         return {"status": "unknown", "reason": terminal or "unknown",
                 "action": "check_provider_selection_or_bootstrap"}
-
-
 
 def _diagnose_ct_family(sfo_by_family: dict, report: dict) -> dict:
     """Build CT (Certificate Transparency) family diagnosis."""
@@ -361,7 +328,6 @@ def _diagnose_ct_family(sfo_by_family: dict, report: dict) -> dict:
     else:
         return {"status": "error_or_zero", "reason": error or "unknown",
                 "action": "retry_later_or_use_cache"}
-
 
 def _diagnose_doh_family(sfo_by_family: dict, report: dict) -> dict:
     """Build DoH (DNS-over-HTTPS) family diagnosis."""
@@ -389,8 +355,6 @@ def _diagnose_doh_family(sfo_by_family: dict, report: dict) -> dict:
         return {"status": "attempted_empty", "reason": terminal or "unknown",
                 "action": "try_passive_dns_or_wayback"}
 
-
-
 def _diagnose_generic_family(
     sfo_by_family: dict,
     report: dict,
@@ -417,7 +381,6 @@ def _diagnose_generic_family(
     else:
         return {"status": "attempted_empty", "reason": terminal or "unknown", "action": default_action}
 
-
 def _diagnose_wayback_family(sfo_by_family: dict, report: dict) -> dict:
     """Build Wayback family diagnosis (uses generic handler)."""
     return _diagnose_generic_family(
@@ -426,14 +389,12 @@ def _diagnose_wayback_family(sfo_by_family: dict, report: dict) -> dict:
         empty_terminals=("no_terminal", "terminal_no_results", "wayback_unchanged_rejected"),
     )
 
-
 def _diagnose_pdns_family(sfo_by_family: dict, report: dict) -> dict:
     """Build PassiveDNS family diagnosis (uses generic handler)."""
     return _diagnose_generic_family(
         sfo_by_family, report,
         "passive_dns", "passive_dns_terminal_state", "passive_dns_error",
     )
-
 
 def _derive_recommendations(report: dict, overall: str) -> tuple:
     """Derive engineering and investigation recommendations."""
@@ -449,7 +410,6 @@ def _derive_recommendations(report: dict, overall: str) -> tuple:
         inv_action = next_inv or "none"
 
     return eng_action, inv_action
-
 
 def _build_provider_yield_diagnosis(report: dict) -> dict:
     """
@@ -504,27 +464,7 @@ def _build_provider_yield_diagnosis(report: dict) -> dict:
             "families": {},
             "recommended_next_engineering_action": "check_provider_selection_or_bootstrap",
             "recommended_next_investigation_action": "use_planner_next_seeds",
-# ---------------------------------------------------------------------------
         }
-# Sprint F229A: Terminal truth reconciliation helper
-# Resolves contradictions between product_value_summary, runtime_truth,
-# partial_export finding_count, and capability_synthesis surfaces.
-#
-# Truth precedence (first non-zero wins):
-#   1. explicit runtime_truth.accepted_findings if > 0
-#   2. scorecard.runtime_truth.accepted_findings if > 0
-#   3. scorecard.accepted_findings if > 0
-#   4. pvs.accepted / pvs.runtime_accepted_findings if > 0
-#   5. 0 fallback (all-zero = low-signal / smoke run)
-#
-# Rules:
-#   - If accepted_findings > 0 and meaningful=true, do NOT emit invalid_capability
-#     solely because product_value_summary is zero.
-#   - If pvs is zero but runtime_truth has accepted, backfill pvs.
-#   - Preserve explicit low-signal verdicts when ALL sources are zero.
-#   - Expose reconciliation via truth_reconciliation_applied + reason.
-# ---------------------------------------------------------------------------
-
 
 def reconcile_terminal_truth(
     pvs: dict[str, Any] | None,
@@ -592,23 +532,13 @@ def reconcile_terminal_truth(
 
     return pvs, accepted_count, truth_applied, reason
 
-
-# ---------------------------------------------------------------------------
-# Sprint F192F Section  1: PVS helper  --  type-safe numeric coercion for scorecard reads
-# Consolidates isinstance guard pattern used throughout _build_product_value_summary.
-# Guards against MagicMock / non-numeric values in test or degraded scenarios.
-# ---------------------------------------------------------------------------
-
-
 def _pvs_num(val: Any, default: float | int) -> float | int:
     """Type-safe numeric coercion - returns default for non-numeric values."""
     return val if isinstance(val, (int, float)) else default
 
-
 def _pvs_n(scorecard: dict, key: str, default: float | int) -> float | int:
     """Type-safe scorecard numeric read with key-level default."""
     return _pvs_num(scorecard.get(key, default), default)
-
 
 async def export_partial_sprint(
     store: Any,
@@ -696,7 +626,6 @@ async def export_partial_sprint(
 
     return {"partial_json": str(partial_path), "finding_count": finding_count}
 
-
 async def export_sprint(
     store: Any,
     handoff: ExportHandoff,  # type: ignore[name-defined]
@@ -766,7 +695,6 @@ async def export_sprint(
         enable_security_enrichment=enable_security_enrichment,
         export_mode=export_mode,
     )
-
 
 def _action_to_seed(action: dict) -> dict | None:
     """
@@ -887,7 +815,6 @@ def _action_to_seed(action: dict) -> dict | None:
         case _:
             return None
 
-
 def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], str]:
     """
     Sprint F238A: Convert planner_actions to seeds using _action_to_seed.
@@ -931,7 +858,6 @@ def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], 
 
     return deduped, "investigation_packet.planner_actions"
 
-
 def _derive_ioc_followup_seeds(top_nodes: list) -> list[dict[str, Any]]:
     """
     Sprint F150J Section  1: IOC follow-up seeds from top graph nodes.
@@ -968,7 +894,6 @@ def _derive_ioc_followup_seeds(top_nodes: list) -> list[dict[str, Any]]:
 
     return seeds
 
-
 def _derive_hypothesis_seeds(
     pvs: dict[str, Any] | None,
     max_queries: int = 2,
@@ -985,7 +910,6 @@ def _derive_hypothesis_seeds(
     except Exception:  # noqa: BLE001
         return []
 
-
 def _derive_focus_expand_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any]]:
     """
     Sprint F150K: Focus/expand recommendations from product_value_summary.
@@ -998,7 +922,6 @@ def _derive_focus_expand_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any
         return _derive_focus_expand(pvs)
     except Exception:  # noqa: BLE001
         return []
-
 
 def _derive_planner_seeds(investigation_packet: dict[str, Any] | None) -> tuple[list[dict[str, Any]], str]:
     """Derive seeds from investigation_packet.planner_actions."""
@@ -1013,11 +936,9 @@ def _derive_planner_seeds(investigation_packet: dict[str, Any] | None) -> tuple[
         return planner_seeds, source
     return [], "legacy_fallback"
 
-
 def _derive_ioc_seeds(top_nodes: list) -> list[dict[str, Any]]:
     """Derive IOC follow-up seeds from top graph nodes."""
     return _derive_ioc_followup_seeds(top_nodes)
-
 
 def _derive_pvs_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Derive seeds from product_value_summary signals."""
@@ -1029,14 +950,12 @@ def _derive_pvs_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any]]:
         seeds.extend(_derive_focus_expand_seeds(pvs))
     return seeds
 
-
 def _derive_enrichment_seeds(pvs: dict[str, Any] | None, export_mode: str) -> list[dict[str, Any]]:
     """Derive hypothesis engine seeds (full mode only)."""
     seeds: list[dict[str, Any]] = []
     if pvs and export_mode == "full":
         seeds.extend(_derive_hypothesis_seeds(pvs, max_queries=2))
     return seeds
-
 
 def _derive_context_seeds(
     branch_value: dict[str, Any] | None,
@@ -1056,7 +975,6 @@ def _derive_context_seeds(
         seeds.extend(_derive_analyst_brief_seeds(analyst_brief))
     return seeds
 
-
 def _merge_quantum_seeds(seeds: list[dict[str, Any]], sprint_id: str) -> tuple[list[dict[str, Any]], str]:
     """Merge quantum pathfinder seeds with existing seeds."""
     from hledac.universal.knowledge.sprint_seeds_store import sync_load_sprint_seeds
@@ -1070,7 +988,6 @@ def _merge_quantum_seeds(seeds: list[dict[str, Any]], sprint_id: str) -> tuple[l
         # Merge: quantum first (higher fidelity path-informed), then dedup
         return _dedup_seeds(q_seed_dicts + seeds), "quantum_pathfinder"
     return seeds, "legacy_fallback"
-
 
 def _finalize_seeds(
     seeds: list[dict[str, Any]],
@@ -1088,7 +1005,6 @@ def _finalize_seeds(
         "next_seeds_source": next_seeds_source,
             "capability_synthesis": capability_synthesis,
     }
-
 
 async def _generate_next_sprint_seeds(
     top_nodes: list,
@@ -1174,7 +1090,6 @@ async def _generate_next_sprint_seeds(
 
     return seeds_path
 
-
 def _seed_type_counts(seeds: list[dict[str, Any]]) -> dict[str, int]:
     """Count seeds by their seed_type."""
     counts: dict[str, int] = {}
@@ -1182,7 +1097,6 @@ def _seed_type_counts(seeds: list[dict[str, Any]]) -> dict[str, int]:
         t = s.get("task_type", "unknown")
         counts[t] = counts.get(t, 0) + 1
     return counts
-
 
 def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
@@ -1259,7 +1173,6 @@ def _derive_query_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
 
     return seeds[:3]  # Hard cap: max 3 query suggestions
 
-
 def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Sprint F150J: source_revisit  --  domains/hosts that need re-visiting.
@@ -1297,7 +1210,6 @@ def _derive_source_revisit_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
     return seeds[:3]
-
 
 def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     """
@@ -1338,12 +1250,6 @@ def _derive_low_signal_seeds(pvs: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
     return seeds[:2]  # Hard cap: max 2 low-signal recommendations
-
-
-# ---------------------------------------------------------------------------
-# Sprint F226D Section  1: capability_synthesis-driven seeds
-# ---------------------------------------------------------------------------
-
 
 def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> list[dict[str, Any]]:
     """
@@ -1452,18 +1358,11 @@ def _derive_capability_seeds(capability_synthesis: dict[str, Any] | None) -> lis
 
     return seeds[:4]  # Hard cap: max 4 capability-derived seeds
 
-
-# ---------------------------------------------------------------------------
-# Sprint F226D Section  2: analyst_brief-driven seeds
-# ---------------------------------------------------------------------------
-
-
 def _get_brief_field(obj: Any, field: str, default: Any = None) -> Any:
     """Get field from dict or dataclass/attr object (fallback: getattr)."""
     if isinstance(obj, dict):
         return obj.get(field, default)
     return getattr(obj, field, default)
-
 
 def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[dict[str, Any]]:
     """
@@ -1529,12 +1428,6 @@ def _derive_analyst_brief_seeds(analyst_brief: dict[str, Any] | None) -> list[di
 
     return seeds[:4]  # Hard cap: max 4 analyst-brief seeds
 
-
-# ---------------------------------------------------------------------------
-# Sprint F226D Section  3: seed deduplication
-# ---------------------------------------------------------------------------
-
-
 def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Sprint F226D: Deduplicate seeds by (seed_source, task_type, suggested_action).
@@ -1556,7 +1449,6 @@ def _dedup_seeds(seeds: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen.add(key)
             deduped.append(s)
     return deduped
-
 
 def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node") -> list[dict[str, Any]]:
     """
@@ -1659,7 +1551,6 @@ def _type_aware_seeds(value: str, ioc_type: str, reason: str = "top_graph_node")
             # generate NO seeds  --  better to skip than to generate falsy task
             return []
 
-
 def _extract_accepted_findings_count(
     scorecard: dict[str, Any],
     runtime_truth: dict[str, Any],
@@ -1677,7 +1568,6 @@ def _extract_accepted_findings_count(
         if accepted > 0:
             runtime_accepted_findings = accepted
     return accepted
-
 
 def _compute_findings_per_minute(
     scorecard: dict[str, Any],
@@ -1704,7 +1594,6 @@ def _compute_findings_per_minute(
         runtime_findings_per_minute = findings_per_minute
 
     return findings_per_minute, runtime_findings_per_minute
-
 
 def _extract_dedup_status(
     store: Any,
@@ -1762,7 +1651,6 @@ def _extract_dedup_status(
 
     return dedup_status, reject_breakdown, total_rejected, dedup_effective, dedup_lmdb_path, hot_cache
 
-
 def _compute_feed_dominance(
     scorecard: dict[str, Any],
 ) -> tuple[float | None, bool]:
@@ -1785,7 +1673,6 @@ def _compute_feed_dominance(
         feed_dominance_ratio is not None and feed_dominance_ratio > 0.95 and _nonfeed_accepted < 5
     )
     return feed_dominance_ratio, should_recommend
-
 
 def _classify_signal_quality(
     accepted: int,
@@ -1812,7 +1699,6 @@ def _classify_signal_quality(
         return "depleted"
     return "unknown"
 
-
 def _build_product_value_summary(
     store: Any,
     eh: ExportHandoff,  # type: ignore[name-defined]
@@ -1825,11 +1711,9 @@ def _build_product_value_summary(
     scorecard = eh.scorecard if eh.scorecard else {}
     runtime_truth = eh.runtime_truth if eh.runtime_truth else {}
 
-    # Extract findings count with priority logic
     accepted = _extract_accepted_findings_count(scorecard, runtime_truth)
     runtime_accepted_findings = accepted
 
-    # Extract phase timings
     phase_timings = scorecard.get("phase_duration_seconds", {}) or {}
     peak_rss_mb = scorecard.get("peak_rss_mb", None)
     if peak_rss_mb is not None and not isinstance(peak_rss_mb, (int, float)):
@@ -1839,11 +1723,9 @@ def _build_product_value_summary(
     findings_per_minute, runtime_findings_per_minute = _compute_findings_per_minute(
         scorecard, runtime_accepted_findings, phase_timings)
 
-    # Extract dedup status and derived counters
     dedup_status, reject_breakdown, total_rejected, dedup_effective, dedup_lmdb_path, hot_cache = \
         _extract_dedup_status(store, scorecard)
 
-    # Extract IOC density from scorecard
     ioc_density = _pvs_n(scorecard, "ioc_density", 0.0)
 
     # Circuit breaker state
@@ -1933,15 +1815,6 @@ def _build_product_value_summary(
 
     # Remove None fields for cleaner output (keep 0 as valid)
     return {k: v for k, v in summary.items() if v is not None}
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# F251E: Enrichment Value Delta
-# Measures how much new IOC value sidecars added vs. raw input findings.
-# Canonical read-only seam  --  no network, no model, no new store API.
-# ---------------------------------------------------------------------------
-
 
 def _collect_sidecar_iocs(sfo_list: list) -> tuple[int, list[str], list[str], list[str]]:
     """Collect sidecar IOCs from source family outcomes."""
@@ -2050,15 +1923,6 @@ def _build_enrichment_value_delta(scorecard: dict, input_accepted: int) -> dict:
 
     return evd
 
-
-# ---------------------------------------------------------------------------
-# F254C: Engineering Action Map
-# Maps provider_yield_diagnosis + enrichment_value_delta to a deterministic
-# engineering action recommendation for the sprint report.
-# Canonical read-only seam  --  no network, no model, no new store API.
-# ---------------------------------------------------------------------------
-
-
 def _apply_engineering_rule(
     pyd: dict[str, Any],
     evd: dict[str, Any],
@@ -2159,14 +2023,6 @@ def _build_engineering_action_map(
         "confidence": 0.50,
     }
 
-
-# ---------------------------------------------------------------------------
-# F260A: Expected Evidence Contract
-# Compares provider_yield_diagnosis against what was expected for the
-# mission intent + seed classes. Read-only seam  --  no network, no model.
-# ---------------------------------------------------------------------------
-
-
 def _handle_no_strict_expectation(intent: str) -> dict[str, Any]:
     """Handle unknown intents with no strict expectation."""
     return {
@@ -2177,7 +2033,6 @@ def _handle_no_strict_expectation(intent: str) -> dict[str, Any]:
         "unexpected_skipped": [],
         "contract_status": "no_strict_expectation",
     }
-
 
 def _handle_domain_recon_contract(families: dict[str, Any]) -> dict[str, Any]:
     """Handle 'domain_recon' intent contract."""
@@ -2207,7 +2062,6 @@ def _handle_domain_recon_contract(families: dict[str, Any]) -> dict[str, Any]:
         "unexpected_skipped": unexpected_skipped,
         "contract_status": contract_status,
     }
-
 
 def _handle_malware_wallet_contract(families: dict[str, Any], intent: str) -> dict[str, Any]:
     """Handle 'malware_family' and 'wallet_recon' intent contracts."""
@@ -2245,7 +2099,6 @@ def _handle_malware_wallet_contract(families: dict[str, Any], intent: str) -> di
         "contract_status": contract_status,
     }
 
-
 def _handle_vulnerability_contract(families: dict[str, Any], intent: str) -> dict[str, Any]:
     """Handle 'cve_recon' and 'vulnerability' intent contracts."""
     expected = ["public", "ct", "wayback"]
@@ -2275,7 +2128,6 @@ def _handle_vulnerability_contract(families: dict[str, Any], intent: str) -> dic
         "unexpected_skipped": unexpected_skipped,
         "contract_status": contract_status,
     }
-
 
 def _build_expected_evidence(
     intent: str,
@@ -2346,12 +2198,6 @@ def _build_expected_evidence(
     # Unknown intent  --  no strict expectation
     return _handle_no_strict_expectation(intent)
 
-
-# ---------------------------------------------------------------------------
-# F229B/F230E: Lane corroboration score helpers
-# ---------------------------------------------------------------------------
-
-
 def _get_corrob_outcomes(scorecard: dict) -> dict:
     """Normalize lane outcomes from either src_family_outcomes or source_family_outcomes.
 
@@ -2389,13 +2235,7 @@ def _get_corrob_outcomes(scorecard: dict) -> dict:
     except Exception:
         return {}
 
-
-# ---------------------------------------------------------------------------
-# Corroboration helpers  --  shared logic extracted to eliminate clone
-# ---------------------------------------------------------------------------
-
 from hledac.universal.runtime.corroboration_score import score_from_result
-
 
 class _CorrobResult:
     """Lightweight result wrapper for corroboration scoring."""
@@ -2405,7 +2245,6 @@ class _CorrobResult:
         self.src_family_outcomes = outcomes
         self.seed_context_available = False
 
-
 def _get_corrob_score_result(scorecard: dict) -> object | None:
     """Get the corroboration Score object from a scorecard, or None on failure."""
     outcomes = _get_corrob_outcomes(scorecard)
@@ -2414,24 +2253,20 @@ def _get_corrob_score_result(scorecard: dict) -> object | None:
     except Exception:
         return None
 
-
 def _corroboration_score_value(scorecard: dict) -> float:
     """Compute corroboration score (0.0-1.0) from src_family_outcomes or source_family_outcomes."""
     sc = _get_corrob_score_result(scorecard)
     return sc.corroboration_score if sc else 0.0
-
 
 def _corroborating_families(scorecard: dict) -> tuple:
     """Return tuple of families that contributed to corroboration."""
     sc = _get_corrob_score_result(scorecard)
     return sc.corroborating_families if sc else ()
 
-
 def _corroboration_reason_str(scorecard: dict) -> str:
     """Return human-readable corroboration reason."""
     sc = _get_corrob_score_result(scorecard)
     return sc.corroboration_reason if sc else "corroboration unavailable"
-
 
 def _corroboration_penalties_list(scorecard: dict) -> list:
     """Return list of active penalties."""
@@ -2468,7 +2303,6 @@ def _corroboration_penalties_list(scorecard: dict) -> list:
 
     return penalties
 
-
 # F231A: Terminal coverage helpers (distinct from positive corroboration)
 def _terminal_coverage_score(scorecard: dict) -> float:
     """Compute terminal coverage score (0.0 - 1.0) from lane outcomes.
@@ -2486,7 +2320,6 @@ def _terminal_coverage_score(scorecard: dict) -> float:
     except Exception:
         return 0.0
 
-
 def _terminal_families(scorecard: dict) -> tuple:
     """Return families that reached terminal/attempted state."""
     from hledac.universal.runtime.corroboration_score import compute_terminal_coverage
@@ -2497,7 +2330,6 @@ def _terminal_families(scorecard: dict) -> tuple:
         return tc.terminal_families
     except Exception:
         return ()
-
 
 def _terminal_coverage_reason_str(scorecard: dict) -> str:
     """Return human-readable terminal coverage reason."""
@@ -2510,15 +2342,7 @@ def _terminal_coverage_reason_str(scorecard: dict) -> str:
     except Exception:
         return "terminal coverage unavailable"
 
-
-
-# ---------------------------------------------------------------------------
-# Sprint F232C: _compute_provider_yield_signals  --  extracted to export/_signals.py
-# Reduces sprint_exporter.py from 4455 to ~3700 lines
-# ---------------------------------------------------------------------------
-from hledac.universal.export._signals import _compute_provider_yield_signals  # noqa: F401, E402
-
-
+from hledac.universal.export._signals import _compute_provider_yield_signals
 
 def _extract_source_family_outcomes(report_dict: dict) -> tuple[list[dict], dict | None, dict | None]:
     """Extract source_family_outcomes from all known locations and return (sfo_list, ar, crs)."""
@@ -2543,7 +2367,6 @@ def _extract_source_family_outcomes(report_dict: dict) -> tuple[list[dict], dict
 
     return sfo_list, ar, crs
 
-
 def _is_lane_terminal(outcome: dict) -> bool:
     """Check if a lane outcome is terminal per F211A rules."""
     attempted = outcome.get("attempted") if isinstance(outcome, dict) else False
@@ -2551,7 +2374,6 @@ def _is_lane_terminal(outcome: dict) -> bool:
     timeout = outcome.get("timeout") if isinstance(outcome, dict) else False
     error = outcome.get("error") if isinstance(outcome, dict) else None
     return bool(attempted or skipped or timeout or (error is not None))
-
 
 def _find_terminal_mismatches(
     original_missing: list[str],
@@ -2562,7 +2384,6 @@ def _find_terminal_mismatches(
         lane for lane in original_missing
         if outcomes_by_family.get(lane) and _is_lane_terminal(outcomes_by_family[lane])
     ]
-
 
 def _apply_reconciliation(
     report_dict: dict,
@@ -2593,7 +2414,6 @@ def _apply_reconciliation(
     if "acquisition_terminality_satisfied" in report_dict:
         report_dict["acquisition_terminality_satisfied"] = not new_missing
 
-
 def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -> dict:
     """
     Sprint F211A: Final terminality reconciliation from source_family_outcomes.
@@ -2621,7 +2441,6 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
         if isinstance(outcome, dict) and outcome.get("family")
     }
 
-    # Get existing terminality from acquisition_report
     term = ar.get("terminality") if isinstance(ar, dict) else None
     if not term or not isinstance(term, dict):
         return report_dict
@@ -2637,7 +2456,6 @@ def _reconcile_acquisition_terminality_from_source_outcomes(report_dict: dict) -
 
     _apply_reconciliation(report_dict, ar, term, original_missing, mismatch_before)
     return report_dict
-
 
 def _get_feed_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
@@ -2655,7 +2473,6 @@ def _get_feed_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: igno
         return fv
     return None
 
-
 def _get_public_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: public_verdict z ExportHandoff.scorecard.
@@ -2671,7 +2488,6 @@ def _get_public_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ig
     if pv and isinstance(pv, dict):
         return pv
     return None
-
 
 def _get_signal_path(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
@@ -2689,7 +2505,6 @@ def _get_signal_path(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignor
         return sp
     return None
 
-
 def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P: hypothesis_pack z ExportHandoff.scorecard.
@@ -2705,7 +2520,6 @@ def _get_hypothesis_pack(eh: ExportHandoff) -> dict[str, Any] | None:  # type: i
     if hp and isinstance(hp, dict):
         return hp
     return None
-
 
 def _get_handoff_field(eh: ExportHandoff, field_name: str) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
@@ -2728,7 +2542,6 @@ def _get_handoff_field(eh: ExportHandoff, field_name: str) -> dict[str, Any] | N
         return value
     return None
 
-
 def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P Section  2 + F157: canonical_run_summary  --  handoff-first truth order.
@@ -2745,7 +2558,6 @@ def _get_canonical_run_summary(eh: ExportHandoff) -> dict[str, Any] | None:  # t
     """
     return _get_handoff_field(eh, "canonical_run_summary")
 
-
 def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F150P Section  2 + F157: sprint_verdict  --  handoff-first truth order.
@@ -2761,7 +2573,6 @@ def _get_sprint_verdict(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ig
     """
     return _get_handoff_field(eh, "sprint_verdict")
 
-
 def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None:  # type: ignore[name-defined]
     """
     Sprint F157: synthesis_outcome_payload  --  handoff-first truth order.
@@ -2774,7 +2585,6 @@ def _get_synthesis_outcome_payload(eh: ExportHandoff) -> dict[str, Any] | None: 
     Fail-soft: returns None when not present (synthesis not run, or older builds).
     """
     return _get_handoff_field(eh, "synthesis_outcome_payload")
-
 
 # Sprint F192H: Research Depth Metric
 # Source type depth tiers  --  higher tier = harder to reach = deeper research
@@ -2809,7 +2619,6 @@ _SOURCE_TIER: dict[str, int] = {
     "tot_synthesis": 2,
     "report": 2,
 }
-
 
 def _compute_source_diversity_score(source_counts: dict[str, int]) -> tuple[float, int, int]:
     """Compute source diversity score (0-25) and return unique types and total hits."""
@@ -2902,7 +2711,6 @@ def _compute_research_depth(
     scorecard = eh.scorecard if eh.scorecard else {}
     runtime_truth = _get_runtime_truth(eh)
 
-    # Extract source counts from scorecard
     entries_per_source = scorecard.get("entries_per_source", {}) if isinstance(scorecard.get("entries_per_source"), dict) else {}
     hits_per_source = scorecard.get("hits_per_source", {}) if isinstance(scorecard.get("hits_per_source"), dict) else {}
     source_counts = {}
@@ -2942,14 +2750,6 @@ def _compute_research_depth(
         },
     }
 
-
-# ---------------------------------------------------------------------------
-# Sprint FXXX: _build_capability_synthesis helper functions
-# Extracted from _build_capability_synthesis to reduce cyclomatic complexity
-# from ~45 to under 15.
-# ---------------------------------------------------------------------------
-
-
 def _check_terminality(acquisition_report: dict[str, Any] | None) -> bool:
     """Check if terminality is satisfied from acquisition report."""
     if acquisition_report and isinstance(acquisition_report, dict):
@@ -2957,7 +2757,6 @@ def _check_terminality(acquisition_report: dict[str, Any] | None) -> bool:
         if isinstance(term, dict):
             return bool(term.get("satisfied", False))
     return False
-
 
 def _determine_capability_verdict(
     is_meaningful: bool | None,
@@ -2990,7 +2789,6 @@ def _determine_capability_verdict(
     # Default: terminality satisfied + meaningful
     return "useful_capability", 0.75
 
-
 def _analyze_evidence_quality(
     pvs: dict[str, Any] | None,
     runtime_truth: dict[str, Any] | None,
@@ -3012,7 +2810,6 @@ def _analyze_evidence_quality(
     hardware_constrained = bool(pvs.get("peak_rss_mb", 0) > 7000) if pvs else False
 
     return useful_evidence, feed_heavy, hardware_constrained
-
 
 def _compute_source_diversity(research_depth: dict[str, Any] | None) -> tuple[list[str], str]:
     """
@@ -3038,7 +2835,6 @@ def _compute_source_diversity(research_depth: dict[str, Any] | None) -> tuple[li
 
     return source_types, source_diversity_summary
 
-
 def _compute_corroboration(
     _corrob_score: float,
     _corrob_families: tuple,
@@ -3062,7 +2858,6 @@ def _compute_corroboration(
     else:
         return "none"
 
-
 def _compute_feed_noise(
     pvs: dict[str, Any] | None,
     feed_heavy: bool,
@@ -3085,7 +2880,6 @@ def _compute_feed_noise(
         else:
             return "balanced_or_nonfeed"
     return "unknown"
-
 
 def _determine_engineering_action(
     verdict: str,
@@ -3144,7 +2938,6 @@ def _determine_engineering_action(
 
     return "maintain_current_capability_and_increment"
 
-
 def _determine_investigation_action(
     analyst_brief: dict[str, Any] | None,
     _corrob_score: float,
@@ -3165,7 +2958,6 @@ def _determine_investigation_action(
     if accepted > 0:
         return "assess_accepted_findings_for_false_positive_rate"
     return "diagnose_acquisition_or_query_effectiveness"
-
 
 def _build_capability_synthesis(
     pvs: dict[str, Any] | None,
@@ -3272,7 +3064,6 @@ def _build_capability_synthesis(
         "confidence": confidence,
     }
 
-
 def _derive_run_truth_note(
     runtime_truth: dict[str, Any] | None,
     canonical_run_summary: dict[str, Any] | None,
@@ -3339,7 +3130,6 @@ def _derive_run_truth_note(
         case _:
             return "unknown_run"
 
-
 def _derive_branch_truth(  # noqa: F811
     feed_verdict: dict[str, Any] | None,
     public_verdict: dict[str, Any] | None,
@@ -3383,14 +3173,12 @@ def _derive_branch_truth(  # noqa: F811
         return "branch_truth: insufficient data"
     return " | ".join(parts)
 
-
 def _first_non_none(*values: str | None) -> str | None:
     """Return the first non-None value from a sequence of call results."""
     for value in values:
         if value is not None:
             return value
     return None
-
 
 def _derive_best_first_move(  # noqa: F811
     runtime_truth: dict[str, Any] | None,

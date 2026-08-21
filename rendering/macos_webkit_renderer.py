@@ -17,26 +17,29 @@ Integration order:
     3. macOS WKWebView renderer  ← this module
     4. camoufox/nodriver only if explicitly enabled and available
 """
+
 import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
-import msgspec.json as _json
 import sys
 import time
-from dataclasses import dataclass
 from typing import Final
-from hledac.universal.utils.sync_bridge import run_sync_async
+
+import msgspec.json as _json
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
-from _core import aclose
+from hledac.universal.utils.sync_bridge import run_sync_async
+
 _WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 _DEFAULT_TIMEOUT_S: Final[float] = 10.0
 _DEFAULT_MAX_BYTES: Final[int] = 2000000
 _WEBKIT_CAPABILITY_CACHE: tuple[bool, str] | None = None
 
+
 def reset_macos_webkit_capability_cache() -> None:
     """Reset the capability cache — forces next render to re-probe worker."""
     global _WEBKIT_CAPABILITY_CACHE
     _WEBKIT_CAPABILITY_CACHE = None
+
 
 def refresh_macos_webkit_capability() -> tuple[bool, str]:
     """Force a fresh capability probe, update cache, return result."""
@@ -44,26 +47,30 @@ def refresh_macos_webkit_capability() -> tuple[bool, str]:
     _WEBKIT_CAPABILITY_CACHE = _probe_worker_capability()
     return _WEBKIT_CAPABILITY_CACHE
 
+
 class MACOS_WEBKIT_REASONS:
-    UNAVAILABLE = 'macos_webkit_unavailable'
-    NON_DARWIN = 'macos_webkit_non_darwin'
-    PYOBJC_MISSING = 'macos_webkit_pyobjc_missing'
-    TIMEOUT = 'macos_webkit_timeout'
-    WORKER_ERROR = 'macos_webkit_worker_error'
-    EMPTY = 'macos_webkit_empty'
-    SUCCESS = 'macos_webkit_success'
-    MAX_BYTES_EXCEEDED = 'macos_webkit_max_bytes_exceeded'
+    UNAVAILABLE = "macos_webkit_unavailable"
+    NON_DARWIN = "macos_webkit_non_darwin"
+    PYOBJC_MISSING = "macos_webkit_pyobjc_missing"
+    TIMEOUT = "macos_webkit_timeout"
+    WORKER_ERROR = "macos_webkit_worker_error"
+    EMPTY = "macos_webkit_empty"
+    SUCCESS = "macos_webkit_success"
+    MAX_BYTES_EXCEEDED = "macos_webkit_max_bytes_exceeded"
+
 
 class WebKitRenderResult(Struct, frozen=True):
     """Result of a WKWebView render attempt.
 
     Always returned (never raises) — callers check .ok before using .html.
     """
+
     html: str | None
     ok: bool
     reason: str
     elapsed_ms: float
     rendered_bytes: int = 0
+
 
 def is_macos_webkit_available() -> tuple[bool, str]:
     """Check if macOS WKWebView renderer is available on this platform.
@@ -79,12 +86,13 @@ def is_macos_webkit_available() -> tuple[bool, str]:
     delegated to the worker subprocess to avoid loading WebKit in the main process.
     """
     global _WEBKIT_CAPABILITY_CACHE
-    if sys.platform != 'darwin':
+    if sys.platform != "darwin":
         return (False, MACOS_WEBKIT_REASONS.NON_DARWIN)
     if _WEBKIT_CAPABILITY_CACHE is not None:
         return _WEBKIT_CAPABILITY_CACHE
     _WEBKIT_CAPABILITY_CACHE = _probe_worker_capability()
     return _WEBKIT_CAPABILITY_CACHE
+
 
 def _probe_worker_capability() -> tuple[bool, str]:
     """Probe the worker subprocess for its capability.
@@ -101,11 +109,20 @@ def _probe_worker_capability() -> tuple[bool, str]:
         async def _probe() -> tuple[bool, str]:
             nonlocal proc
             from pathlib import Path
-            worker_path = Path(__file__).parent / 'macos_webkit_worker.py'
+
+            worker_path = Path(__file__).parent / "macos_webkit_worker.py"
             if not worker_path.is_file():
                 return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)
-            proc = await asyncio.create_subprocess_exec(sys.executable, '-m', 'hledac.universal.rendering.macos_webkit_worker', '--capability-check', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            payload = _json.encode({'action': 'capability_check'})
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "hledac.universal.rendering.macos_webkit_worker",
+                "--capability-check",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            payload = _json.encode({"action": "capability_check"})
             try:
                 async with asyncio.timeout(5.0):
                     stdout_bytes, stderr_bytes = await proc.communicate(input=payload)
@@ -120,17 +137,18 @@ def _probe_worker_capability() -> tuple[bool, str]:
                         await proc.wait()
                 return (False, MACOS_WEBKIT_REASONS.PYOBJC_MISSING)
             if proc.returncode != 0:
-                stderr_text = stderr_bytes.decode('utf-8', errors='replace').strip()
-                if 'ModuleNotFoundError' in stderr_text or 'ImportError' in stderr_text:
+                stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                if "ModuleNotFoundError" in stderr_text or "ImportError" in stderr_text:
                     return (False, MACOS_WEBKIT_REASONS.PYOBJC_MISSING)
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
             try:
-                result = _json.decode(stdout_bytes.decode('utf-8', errors='replace'))
-            except (ValueError, UnicodeDecodeError):
+                result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
+            except ValueError, UnicodeDecodeError:
                 return (False, MACOS_WEBKIT_REASONS.WORKER_ERROR)
-            if result.get('ok'):
+            if result.get("ok"):
                 return (True, MACOS_WEBKIT_REASONS.SUCCESS)
-            return (False, result.get('reason', MACOS_WEBKIT_REASONS.WORKER_ERROR))
+            return (False, result.get("reason", MACOS_WEBKIT_REASONS.WORKER_ERROR))
+
         try:
             return run_sync_async(_probe())
         except RuntimeError:
@@ -138,7 +156,14 @@ def _probe_worker_capability() -> tuple[bool, str]:
     except Exception:
         return (False, MACOS_WEBKIT_REASONS.UNAVAILABLE)
 
-async def fetch_with_macos_webkit(url: str, *, timeout_s: float=_DEFAULT_TIMEOUT_S, max_bytes: int=_DEFAULT_MAX_BYTES, user_agent: str | None=None) -> WebKitRenderResult:
+
+async def fetch_with_macos_webkit(
+    url: str,
+    *,
+    timeout_s: float = _DEFAULT_TIMEOUT_S,
+    max_bytes: int = _DEFAULT_MAX_BYTES,
+    user_agent: str | None = None,
+) -> WebKitRenderResult:
     """Render a URL using macOS WKWebView via isolated subprocess.
 
     This is the main entry point — called from public_fetcher after static
@@ -169,11 +194,34 @@ async def fetch_with_macos_webkit(url: str, *, timeout_s: float=_DEFAULT_TIMEOUT
             async def _render() -> WebKitRenderResult:
                 nonlocal proc
                 from pathlib import Path
-                worker_path = Path(__file__).parent / 'macos_webkit_worker.py'
+
+                worker_path = Path(__file__).parent / "macos_webkit_worker.py"
                 if not worker_path.is_file():
-                    return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.UNAVAILABLE, elapsed_ms=(time.monotonic() - t0) * 1000, rendered_bytes=0)
-                proc = await asyncio.create_subprocess_exec(sys.executable, '-m', 'hledac.universal.rendering.macos_webkit_worker', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                payload = _json.encode({'action': 'render', 'url': url, 'timeout_s': timeout_s, 'max_bytes': max_bytes, 'user_agent': user_agent}, ensure_ascii=False).encode('utf-8')
+                    return WebKitRenderResult(
+                        html=None,
+                        ok=False,
+                        reason=MACOS_WEBKIT_REASONS.UNAVAILABLE,
+                        elapsed_ms=(time.monotonic() - t0) * 1000,
+                        rendered_bytes=0,
+                    )
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    "hledac.universal.rendering.macos_webkit_worker",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                payload = _json.encode(
+                    {
+                        "action": "render",
+                        "url": url,
+                        "timeout_s": timeout_s,
+                        "max_bytes": max_bytes,
+                        "user_agent": user_agent,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
                 try:
                     async with asyncio.timeout(timeout_s + 5.0):
                         stdout_bytes, stderr_bytes = await proc.communicate(input=payload)
@@ -187,35 +235,78 @@ async def fetch_with_macos_webkit(url: str, *, timeout_s: float=_DEFAULT_TIMEOUT
                             proc.kill()
                             await proc.wait()
                     elapsed_ms = (time.monotonic() - t0) * 1000
-                    return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.TIMEOUT, elapsed_ms=elapsed_ms, rendered_bytes=0)
+                    return WebKitRenderResult(
+                        html=None,
+                        ok=False,
+                        reason=MACOS_WEBKIT_REASONS.TIMEOUT,
+                        elapsed_ms=elapsed_ms,
+                        rendered_bytes=0,
+                    )
                 if proc.returncode != 0:
-                    stderr_text = stderr_bytes.decode('utf-8', errors='replace').strip()
+                    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
                     elapsed_ms = (time.monotonic() - t0) * 1000
-                    if 'ModuleNotFoundError' in stderr_text or 'ImportError' in stderr_text:
-                        return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.PYOBJC_MISSING, elapsed_ms=elapsed_ms, rendered_bytes=0)
+                    if "ModuleNotFoundError" in stderr_text or "ImportError" in stderr_text:
+                        return WebKitRenderResult(
+                            html=None,
+                            ok=False,
+                            reason=MACOS_WEBKIT_REASONS.PYOBJC_MISSING,
+                            elapsed_ms=elapsed_ms,
+                            rendered_bytes=0,
+                        )
                     try:
                         err_result = _json.decode(stderr_text)
-                        err_reason = err_result.get('reason', '')
+                        err_reason = err_result.get("reason", "")
                         if err_reason == MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED:
-                            return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED, elapsed_ms=elapsed_ms, rendered_bytes=err_result.get('rendered_bytes', 0))
-                    except (ValueError, UnicodeDecodeError):  # noqa: BLE001
+                            return WebKitRenderResult(
+                                html=None,
+                                ok=False,
+                                reason=MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED,
+                                elapsed_ms=elapsed_ms,
+                                rendered_bytes=err_result.get("rendered_bytes", 0),
+                            )
+                    except ValueError, UnicodeDecodeError:  # noqa: BLE001
                         pass
-                    return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.WORKER_ERROR, elapsed_ms=elapsed_ms, rendered_bytes=0)
+                    return WebKitRenderResult(
+                        html=None,
+                        ok=False,
+                        reason=MACOS_WEBKIT_REASONS.WORKER_ERROR,
+                        elapsed_ms=elapsed_ms,
+                        rendered_bytes=0,
+                    )
                 try:
-                    result = _json.decode(stdout_bytes.decode('utf-8', errors='replace'))
-                except (ValueError, UnicodeDecodeError):
+                    result = _json.decode(stdout_bytes.decode("utf-8", errors="replace"))
+                except ValueError, UnicodeDecodeError:
                     elapsed_ms = (time.monotonic() - t0) * 1000
-                    return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.WORKER_ERROR, elapsed_ms=elapsed_ms, rendered_bytes=0)
-                elapsed_ms = result.get('elapsed_ms', (time.monotonic() - t0) * 1000)
-                ok_flag = result.get('ok', False)
-                html = result.get('html') or None
-                rendered_bytes = result.get('rendered_bytes', 0)
-                reason = result.get('reason', MACOS_WEBKIT_REASONS.SUCCESS if ok_flag else MACOS_WEBKIT_REASONS.WORKER_ERROR)
+                    return WebKitRenderResult(
+                        html=None,
+                        ok=False,
+                        reason=MACOS_WEBKIT_REASONS.WORKER_ERROR,
+                        elapsed_ms=elapsed_ms,
+                        rendered_bytes=0,
+                    )
+                elapsed_ms = result.get("elapsed_ms", (time.monotonic() - t0) * 1000)
+                ok_flag = result.get("ok", False)
+                html = result.get("html") or None
+                rendered_bytes = result.get("rendered_bytes", 0)
+                reason = result.get(
+                    "reason", MACOS_WEBKIT_REASONS.SUCCESS if ok_flag else MACOS_WEBKIT_REASONS.WORKER_ERROR
+                )
                 if not ok_flag:
-                    return WebKitRenderResult(html=None, ok=False, reason=reason, elapsed_ms=elapsed_ms, rendered_bytes=rendered_bytes)
+                    return WebKitRenderResult(
+                        html=None, ok=False, reason=reason, elapsed_ms=elapsed_ms, rendered_bytes=rendered_bytes
+                    )
                 if not html or not html.strip():
-                    return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.EMPTY, elapsed_ms=elapsed_ms, rendered_bytes=rendered_bytes)
-                return WebKitRenderResult(html=html, ok=True, reason=reason, elapsed_ms=elapsed_ms, rendered_bytes=rendered_bytes)
+                    return WebKitRenderResult(
+                        html=None,
+                        ok=False,
+                        reason=MACOS_WEBKIT_REASONS.EMPTY,
+                        elapsed_ms=elapsed_ms,
+                        rendered_bytes=rendered_bytes,
+                    )
+                return WebKitRenderResult(
+                    html=html, ok=True, reason=reason, elapsed_ms=elapsed_ms, rendered_bytes=rendered_bytes
+                )
+
             return await _render()
         except asyncio.CancelledError:
             if proc:
@@ -229,4 +320,6 @@ async def fetch_with_macos_webkit(url: str, *, timeout_s: float=_DEFAULT_TIMEOUT
             raise
         except Exception:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.WORKER_ERROR, elapsed_ms=elapsed_ms, rendered_bytes=0)
+            return WebKitRenderResult(
+                html=None, ok=False, reason=MACOS_WEBKIT_REASONS.WORKER_ERROR, elapsed_ms=elapsed_ms, rendered_bytes=0
+            )

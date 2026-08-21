@@ -2,6 +2,7 @@
 Canonical HTTP utilities — circuit-breaker protected JSON fetch.
 Moved from compat/core_http.py (F350M-R A-01).
 """
+
 from __future__ import annotations
 
 import logging
@@ -13,9 +14,8 @@ from hledac.universal.transport.circuit_breaker import (
     domain_breaker_check,
     domain_breaker_record_failure,
     domain_breaker_record_success,
-    )
+)
 from hledac.universal.transport.session_pool import session_pool
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 

@@ -1,22 +1,8 @@
 from __future__ import annotations
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
 
 """
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 Sprint F3.6: Shadow Pre-Decision Consumer Layer
 ================================================
@@ -66,15 +52,9 @@ Inputs: ParityArtifact (from shadow_parity.py)
 Outputs: PreDecisionSummary (diagnostic artifact)
 """
 
+from enum import Enum, auto
+from typing import TYPE_CHECKING, Any
 
-import msgspec  # noqa: E402
-from enum import Enum, auto  # noqa: E402
-from typing import TYPE_CHECKING, Any  # noqa: E402
-from _core import aclose
-
-# =============================================================================
-# Diff Taxonomy — categorizace pre-decision mismatch reasons
-# =============================================================================
 
 class DiffTaxonomy(Enum):
     """
@@ -92,8 +72,9 @@ class DiffTaxonomy(Enum):
     - COMPAT mismatch: problém v compat/legacy path, může být expected
     - UNKNOWN mismatch: nedostatek informací, obvykle není blocker
     """
+
     # Základní stav
-    NONE = auto()               # Všechny pre-decision vstupy jsou dostatečné
+    NONE = auto()  # Všechny pre-decision vstupy jsou dostatečné
 
     # Input quality
     INSUFFICIENT_INPUT = auto()  # Fact bundles nemají dost informací pro pre-decision
@@ -108,49 +89,45 @@ class DiffTaxonomy(Enum):
     GRAPH_CAPABILITY_AMBIGUITY = auto()  # Graph backend/neural capability je nejasný
 
     # Export handoff ambiguity — UNKNOWN stability (depends on handoff source)
-    EXPORT_HANDOFF_AMBIGUITY = auto()    # Export handoff facts jsou nejasné/neúplné
+    EXPORT_HANDOFF_AMBIGUITY = auto()  # Export handoff facts jsou nejasné/neúplné
 
     # Model/Control ambiguity — STABILITY závisí na path (STABLE pokud AnalyzerResult, COMPAT pokud raw_profile)
-    MODEL_CONTROL_AMBIGUITY = auto()     # Model/control konfigurace je nejasná
+    MODEL_CONTROL_AMBIGUITY = auto()  # Model/control konfigurace je nejasná
 
     # Provider precursor ambiguity — UNKNOWN (provider_recommend is future)
     PROVIDER_PRECURSOR_AMBIGUITY = auto()  # Provider doporučení je nejasné
 
     # Branch precursor ambiguity — UNKNOWN (depends on branch_decision source)
-    BRANCH_PRECURSOR_AMBIGUITY = auto()   # Branch rozhodnutí je nejasné
+    BRANCH_PRECURSOR_AMBIGUITY = auto()  # Branch rozhodnutí je nejasné
 
     # Compat seam warning — COMPAT only, not a real mismatch
     # Toto je FYZIOLOGICKÝ stav, ne problém. Označuje že jsme v compat path.
-    COMPAT_SEAM_ACTIVE = auto()   # Compat seam je aktivní (windup_local_phase, scorecard, raw_profile)
+    COMPAT_SEAM_ACTIVE = auto()  # Compat seam je aktivní (windup_local_phase, scorecard, raw_profile)
 
     # Decision gate readiness — richer preview (Sprint 8VQ)
-    DECISION_GATE_READY = auto()    # Všechny facts dostatečné, žádné blockers
+    DECISION_GATE_READY = auto()  # Všechny facts dostatečné, žádné blockers
     DECISION_GATE_BLOCKED = auto()  # Hard blockers present — cannot proceed
     DECISION_GATE_INSUFFICIENT = auto()  # Facts insufficient for decision
-    DECISION_GATE_UNKNOWN = auto()   # Cannot determine readiness
+    DECISION_GATE_UNKNOWN = auto()  # Cannot determine readiness
 
     # Tool readiness — DIAGNOSTIC ONLY, no dispatch
-    TOOL_READINESS_READY = auto()    # Tools available, can execute
+    TOOL_READINESS_READY = auto()  # Tools available, can execute
     TOOL_READINESS_DEGRADED = auto()  # Some tools unavailable due to resource pressure
     TOOL_READINESS_PRUNED = auto()  # Tools heavily pruned (panic mode)
-    TOOL_READINESS_UNKNOWN = auto() # Cannot determine tool readiness
+    TOOL_READINESS_UNKNOWN = auto()  # Cannot determine tool readiness
 
     # Windup readiness — from existing fact bundles only
-    WINDUP_READY = auto()           # Windup facts sufficient
-    WINDUP_PARTIAL = auto()         # Some windup facts missing
-    WINDUP_INSUFFICIENT = auto()    # Windup facts insufficient
-    WINDUP_NOT_ACTIVE = auto()      # Not in WINDUP phase
+    WINDUP_READY = auto()  # Windup facts sufficient
+    WINDUP_PARTIAL = auto()  # Some windup facts missing
+    WINDUP_INSUFFICIENT = auto()  # Windup facts insufficient
+    WINDUP_NOT_ACTIVE = auto()  # Not in WINDUP phase
 
     # Provider activation — deferred/unknown note only, NO simulation
-    PROVIDER_DEFERRED = auto()       # Provider activation deferred to future phase
-    PROVIDER_UNKNOWN = auto()        # Cannot determine provider readiness
-    PROVIDER_NOT_READY = auto()      # Provider not ready
-    PROVIDER_BLOCKED = auto()       # Provider blocked by hard constraint
+    PROVIDER_DEFERRED = auto()  # Provider activation deferred to future phase
+    PROVIDER_UNKNOWN = auto()  # Cannot determine provider readiness
+    PROVIDER_NOT_READY = auto()  # Provider not ready
+    PROVIDER_BLOCKED = auto()  # Provider blocked by hard constraint
 
-
-# =============================================================================
-# Pre-Decision Summary — diagnostic artifact, NOT a truth store
-# =============================================================================
 
 class LifecycleInterpretation(Struct):
     """
@@ -159,6 +136,7 @@ class LifecycleInterpretation(Struct):
     Interpretuje workflow_phase, control_phase a windup_local_phase
     z hlediska scheduler pre-decision, aniž by zasahovalo do lifecycle.
     """
+
     workflow_phase: str
     workflow_phase_entered_at: float | None
     control_phase_mode: str
@@ -166,16 +144,16 @@ class LifecycleInterpretation(Struct):
     windup_local_mode: str | None
 
     # Pre-decision interpretation
-    is_active: bool          # workflow_phase == ACTIVE
-    is_windup: bool          # workflow_phase == WINDUP
-    is_export_ready: bool     # workflow_phase == EXPORT
-    is_terminal: bool        # workflow_phase in (EXPORT, TEARDOWN)
-    can_accept_work: bool    # workflow_phase in (BOOT, WARMUP, ACTIVE)
-    should_prune: bool       # control_phase_mode in (prune, panic)
+    is_active: bool  # workflow_phase == ACTIVE
+    is_windup: bool  # workflow_phase == WINDUP
+    is_export_ready: bool  # workflow_phase == EXPORT
+    is_terminal: bool  # workflow_phase in (EXPORT, TEARDOWN)
+    can_accept_work: bool  # workflow_phase in (BOOT, WARMUP, ACTIVE)
+    should_prune: bool  # control_phase_mode in (prune, panic)
     synthesis_mode_known: bool  # windup_local_mode is known
 
     # Phase conflict detection
-    phase_conflict: bool     # True pokud phase vrstvy jsou v konfliktu
+    phase_conflict: bool  # True pokud phase vrstvy jsou v konfliktu
     phase_conflict_reason: str | None  # Popis konfliktu pokud existuje
 
 
@@ -185,6 +163,7 @@ class GraphCapabilitySummary(Struct):
 
     Interpretuje graph facts z hlediska pre-decision.
     """
+
     backend: str
     nodes: int
     edges: int
@@ -192,10 +171,10 @@ class GraphCapabilitySummary(Struct):
     top_nodes_count: int
 
     # Pre-decision interpretation
-    is_initialized: bool    # backend != "unknown"
+    is_initialized: bool  # backend != "unknown"
     has_structured_data: bool  # nodes > 0 and edges > 0
-    is_rich: bool           # top_nodes_count >= 5
-    readiness: str           # "unknown" | "sparse" | "ready" | "rich"
+    is_rich: bool  # top_nodes_count >= 5
+    readiness: str  # "unknown" | "sparse" | "ready" | "rich"
 
 
 class ExportReadinessSummary(Struct):
@@ -204,16 +183,17 @@ class ExportReadinessSummary(Struct):
 
     Interpretuje export handoff facts z hlediska pre-decision.
     """
+
     sprint_id: str
     synthesis_engine: str
     ranked_parquet_present: bool
     gnn_predictions: int
 
     # Pre-decision interpretation
-    is_ready: bool           # sprint_id known and engine known
+    is_ready: bool  # sprint_id known and engine known
     has_gnn_predictions: bool  # gnn_predictions > 0
-    has_ranked_data: bool    # ranked_parquet_present
-    readiness: str           # "unknown" | "partial" | "ready"
+    has_ranked_data: bool  # ranked_parquet_present
+    readiness: str  # "unknown" | "partial" | "ready"
 
 
 class ModelControlSummary(Struct):
@@ -222,6 +202,7 @@ class ModelControlSummary(Struct):
 
     Interpretuje model/control facts z hlediska pre-decision.
     """
+
     tools_count: int
     sources_count: int
     privacy: str
@@ -229,10 +210,10 @@ class ModelControlSummary(Struct):
     models_needed: list[str]
 
     # Pre-decision interpretation
-    has_tools: bool         # tools_count > 0
-    has_sources: bool       # sources_count > 0
-    is_high_quality: bool   # depth in (DEEP, STANDARD) and privacy != UNKNOWN
-    readiness: str          # "unknown" | "partial" | "ready"
+    has_tools: bool  # tools_count > 0
+    has_sources: bool  # sources_count > 0
+    is_high_quality: bool  # depth in (DEEP, STANDARD) and privacy != UNKNOWN
+    readiness: str  # "unknown" | "partial" | "ready"
 
 
 class PrecursorSummary(Struct):
@@ -241,6 +222,7 @@ class PrecursorSummary(Struct):
 
     Interpretuje provider a branch decision precursors z hlediska pre-decision.
     """
+
     branch_decision_id: str | None
     provider_recommend: str | None
     correlation_run_id: str | None
@@ -249,7 +231,7 @@ class PrecursorSummary(Struct):
     # Pre-decision interpretation
     has_branch_decision: bool  # branch_decision_id is not None
     has_provider_recommend: bool  # provider_recommend is not None
-    has_correlation: bool     # correlation_run_id is not None
+    has_correlation: bool  # correlation_run_id is not None
     is_correlation_linked: bool  # correlation_run_id == branch_decision_id (if both set)
 
     # Readiness
@@ -269,6 +251,7 @@ class DecisionGateReadiness(Struct):
     - DECISION_GATE_INSUFFICIENT: facts insufficient for decision
     - DECISION_GATE_UNKNOWN: cannot determine readiness
     """
+
     gate_status: str  # "ready" | "blocked" | "insufficient" | "unknown"
     blocker_count: int
     unknown_count: int
@@ -293,6 +276,7 @@ class ToolReadinessPreview(Struct):
     - TOOL_READINESS_PRUNED: tools heavily pruned (panic mode)
     - TOOL_READINESS_UNKNOWN: cannot determine tool readiness
     """
+
     readiness: str  # "ready" | "degraded" | "pruned" | "unknown"
     tool_count: int
     tool_names: list[str]
@@ -320,6 +304,7 @@ class WindupReadinessPreview(Struct):
     - WINDUP_INSUFFICIENT: windup facts insufficient
     - WINDUP_NOT_ACTIVE: not in WINDUP phase
     """
+
     readiness: str  # "ready" | "partial" | "insufficient" | "not_active"
     is_windup_phase: bool
     synthesis_mode: str | None  # "synthesis" | "structured" | "minimal" | None
@@ -346,6 +331,7 @@ class AdvisoryGateSnapshot(Struct):
     - unknown_reasons: co je neznámé
     - defer_to_provider: zda je provider activation deferred
     """
+
     gate_outcome: str  # "proceed" | "blocked" | "insufficient" | "unknown"
     gate_status: str  # "ready" | "blocked" | "insufficient" | "unknown"
     blocker_count: int
@@ -392,6 +378,7 @@ class ProviderActivationNote(Struct):
     - PROVIDER_NOT_READY: provider not ready
     - PROVIDER_BLOCKED: blocked by hard constraint
     """
+
     status: str  # "deferred" | "unknown" | "not_ready" | "blocked"
     deferral_reason: str  # Why deferred
     has_recommendation: bool  # provider_recommend available
@@ -420,6 +407,7 @@ class ProviderReadinessPreview(Struct):
     - unknown: facts insufficient to determine readiness
     - compat: lifecycle in COMPAT path (WARMUP), readiness indeterminate
     """
+
     # Source facts
     has_recommendation: bool
     recommendation: str | None
@@ -428,23 +416,23 @@ class ProviderReadinessPreview(Struct):
     readiness: str  # "ready" | "deferred" | "blocked" | "unknown" | "compat"
 
     # Per-dimension facts
-    lifecycle_ready: bool          # is_active or is_windup
-    control_ready: bool          # control_mode in (normal, prune)
-    thermal_safe: bool          # thermal_state in (nominal, fair, throttled) — NOT critical
-    has_facts: bool              # has_recommendation AND has lifecycle facts
+    lifecycle_ready: bool  # is_active or is_windup
+    control_ready: bool  # control_mode in (normal, prune)
+    thermal_safe: bool  # thermal_state in (nominal, fair, throttled) — NOT critical
+    has_facts: bool  # has_recommendation AND has lifecycle facts
 
     # Blockers/detections
-    blockers: list[str]          # Hard constraints blocking readiness
-    unknowns: list[str]          # Facts insufficient to determine readiness
+    blockers: list[str]  # Hard constraints blocking readiness
+    unknowns: list[str]  # Facts insufficient to determine readiness
 
     # Hints
     next_phase_hint: str | None  # What would change readiness
-    deferred_reasons: list[str]     # Why deferred (if readiness = deferred)
+    deferred_reasons: list[str]  # Why deferred (if readiness = deferred)
 
     # Sprint F3.13: Runtime facts — read-only runtime model state
-    runtime_loaded: bool = False          # is a model currently loaded
+    runtime_loaded: bool = False  # is a model currently loaded
     runtime_current_model: str | None = None  # which model is loaded (hermes/modernbert/gliner/None)
-    runtime_initialized: bool = False       # is MLX/runtime initialized
+    runtime_initialized: bool = False  # is MLX/runtime initialized
 
     # No simulation fields (enforced by tests)
     # NO: load_order, provider_state, activation_sequence, actual_model_loaded
@@ -471,6 +459,7 @@ class PreDecisionSummary(Struct):
     Phase separation: VŠECHNY phase fields jsou ODDĚLENÉ v LifecycleInterpretation.
     Žádné slité phase pole neexistuje.
     """
+
     # Source parity artifact reference
     parity_timestamp_monotonic: float
     parity_timestamp_wall: str
@@ -589,7 +578,9 @@ class PreDecisionSummary(Struct):
                 "unknown_categories": self.decision_gate.unknown_categories,
                 "is_proceed_allowed": self.decision_gate.is_proceed_allowed,
                 "defer_to_provider": self.decision_gate.defer_to_provider,
-            } if self.decision_gate else None,
+            }
+            if self.decision_gate
+            else None,
             "tool_readiness": {
                 "readiness": self.tool_readiness.readiness,
                 "tool_count": self.tool_readiness.tool_count,
@@ -601,7 +592,9 @@ class PreDecisionSummary(Struct):
                 "resource_constraint": self.tool_readiness.resource_constraint,
                 "can_execute": self.tool_readiness.can_execute,
                 "defer_reason": self.tool_readiness.defer_reason,
-            } if self.tool_readiness else None,
+            }
+            if self.tool_readiness
+            else None,
             "windup_readiness": {
                 "readiness": self.windup_readiness.readiness,
                 "is_windup_phase": self.windup_readiness.is_windup_phase,
@@ -610,14 +603,18 @@ class PreDecisionSummary(Struct):
                 "has_export_data": self.windup_readiness.has_export_data,
                 "export_data_quality": self.windup_readiness.export_data_quality,
                 "defer_reason": self.windup_readiness.defer_reason,
-            } if self.windup_readiness else None,
+            }
+            if self.windup_readiness
+            else None,
             "provider_note": {
                 "status": self.provider_note.status,
                 "deferral_reason": self.provider_note.deferral_reason,
                 "has_recommendation": self.provider_note.has_recommendation,
                 "recommendation": self.provider_note.recommendation,
                 "next_phase_hint": self.provider_note.next_phase_hint,
-            } if self.provider_note else None,
+            }
+            if self.provider_note
+            else None,
             # Sprint F3.5-F3.6: Provider readiness preview
             "provider_readiness": {
                 "readiness": self.provider_readiness.readiness,
@@ -631,7 +628,9 @@ class PreDecisionSummary(Struct):
                 "unknowns": self.provider_readiness.unknowns,
                 "next_phase_hint": self.provider_readiness.next_phase_hint,
                 "deferred_reasons": self.provider_readiness.deferred_reasons,
-            } if self.provider_readiness else None,
+            }
+            if self.provider_readiness
+            else None,
             # Sprint F3.11: Dispatch parity preview
             "dispatch_parity": self.dispatch_parity.to_dict() if self.dispatch_parity else None,
             # Sprint F3.13: Provider runtime facts — read-only runtime model state
@@ -650,10 +649,6 @@ class PreDecisionSummary(Struct):
         return True
 
 
-# =============================================================================
-# Pre-Decision Composer — pure function, no side effects
-# =============================================================================
-
 def compose_pre_decision(
     parity_artifact: ParityArtifact,
     runtime_facts: ProviderRuntimeFactsBundle | None = None,
@@ -671,58 +666,32 @@ def compose_pre_decision(
     Returns:
         PreDecisionSummary — composed pre-decision artifact
     """
-    # --- Lifecycle Interpretation ---
     lc = _compose_lifecycle_interpretation(parity_artifact)
 
-    # --- Graph Capability Summary ---
     gr = _compose_graph_capability_summary(parity_artifact)
 
-    # --- Export Readiness Summary ---
     er = _compose_export_readiness_summary(parity_artifact)
 
-    # --- Model/Control Summary ---
     mc = _compose_model_control_summary(parity_artifact)
 
-    # --- Precursor Summary ---
     pr = _compose_precursor_summary(parity_artifact)
 
-    # --- Diff Taxonomy ---
     diffs = _compose_diff_taxonomy(parity_artifact, lc, gr, er, pr)
 
-    # --- Blockers, Unknowns, Mismatch Reasons ---
-    blockers, unknowns, mismatch_reasons = _compose_diagnostic_metadata(
-        parity_artifact, lc, gr, er, mc, pr
-    )
+    blockers, unknowns, mismatch_reasons = _compose_diagnostic_metadata(parity_artifact, lc, gr, er, mc, pr)
 
-    # --- Sprint 8VQ: Decision Gate Readiness ---
-    gate_readiness = _compose_decision_gate_readiness(
-        blockers, unknowns, parity_artifact.compat_seams
-    )
+    gate_readiness = _compose_decision_gate_readiness(blockers, unknowns, parity_artifact.compat_seams)
 
-    # --- Sprint 8VQ: Tool Readiness Preview (read-only, no dispatch) ---
     tool_readiness = _compose_tool_readiness_preview(
         lc.control_phase_mode,
         gr,
     )
 
-    # --- Sprint 8VQ: Windup Readiness Preview ---
-    windup_readiness = _compose_windup_readiness_preview(
-        lc, er
-    )
+    windup_readiness = _compose_windup_readiness_preview(lc, er)
 
-    # --- Sprint 8VQ: Provider Activation Note (deferred/unknown only) ---
-    provider_note = _compose_provider_activation_note(
-        pr, lc
-    )
+    provider_note = _compose_provider_activation_note(pr, lc)
 
-    # --- Sprint F3.5-F3.6: Provider Readiness Preview (diagnostic only) ---
-    # F360A FIX: pass pr (PrecursorSummary) to access has_provider_recommend
-    # has_recommendation comes from pr.has_provider_recommend (provider_recommend fact)
-    # has_facts comes from model_control.models_needed (model availability fact)
-    # These are DISTINCT facts and must NOT be conflated
-    provider_readiness = _compose_provider_readiness_preview(
-        lc, mc, pr, runtime_facts
-    )
+    provider_readiness = _compose_provider_readiness_preview(lc, mc, pr, runtime_facts)
 
     return PreDecisionSummary(
         parity_timestamp_monotonic=parity_artifact.timestamp_monotonic,
@@ -1243,7 +1212,7 @@ def _compose_windup_readiness_preview(
             has_export_data=export.has_ranked_data or export.has_gnn_predictions,
             export_data_quality=_assess_export_quality(export),
             defer_reason="not in WINDUP phase",
-    )
+        )
 
     # In WINDUP — assess windup readiness
     synthesis_mode = lifecycle.windup_local_mode
@@ -1404,7 +1373,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-    )
+        )
 
     if lifecycle.phase_conflict:
         blockers.append(f"phase_conflict: {lifecycle.phase_conflict_reason}")
@@ -1423,7 +1392,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-    )
+        )
 
     if lifecycle.control_phase_mode == "panic":
         blockers.append("control_mode=panic — provider activation blocked")
@@ -1442,7 +1411,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-    )
+        )
 
     if not lifecycle_ready:
         # Lifecycle not active yet — deferred
@@ -1466,7 +1435,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-    )
+            )
 
         return ProviderReadinessPreview(
             has_recommendation=has_recommendation_fact,
@@ -1483,7 +1452,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-    )
+        )
 
     # Lifecycle is ACTIVE or WINDUP — assess readiness dimensions
     if not control_ready:
@@ -1517,7 +1486,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-    )
+            )
         else:
             # readiness="unknown" from model_control — insufficient facts
             unknowns.append("model_control.readiness=unknown — insufficient facts")
@@ -1536,7 +1505,7 @@ def _compose_provider_readiness_preview(
                 runtime_loaded=runtime_loaded,
                 runtime_current_model=runtime_current_model,
                 runtime_initialized=runtime_initialized,
-    )
+            )
 
     # Deferred or unknown
     if unknowns or deferred_reasons:
@@ -1555,7 +1524,7 @@ def _compose_provider_readiness_preview(
             runtime_loaded=runtime_loaded,
             runtime_current_model=runtime_current_model,
             runtime_initialized=runtime_initialized,
-    )
+        )
 
     # Fallback — should not reach here
     return ProviderReadinessPreview(
@@ -1616,7 +1585,7 @@ def compose_advisory_gate(
             gate_evaluated_at_monotonic=now_mono,
             gate_evaluated_at_wall=now_wall,
             source_pd_timestamp=pd.parity_timestamp_monotonic,
-    )
+        )
 
     # Determine gate outcome (actionable vs non-actionable)
     if gate.gate_status == "blocked":
@@ -1646,10 +1615,6 @@ def compose_advisory_gate(
     )
 
 
-# =============================================================================
-# F3.11: Dispatch Parity Preview
-# =============================================================================
-
 class DispatchTaxonomy(Enum):
     """
     Dispatch taxonomy pro scheduler-shadow dispatch parity preview.
@@ -1663,28 +1628,29 @@ class DispatchTaxonomy(Enum):
     - DISPATCH_PRUNED: control mode prune/panic
     - DISPATCH_UNKNOWN: nelze určit readiness
     """
-    # Dispatch path classification
-    CANONICAL_TOOL_DISPATCH = auto()   # Má ToolRegistry mapping, jde přes execute_with_limits
+
+    CANONICAL_TOOL_DISPATCH = auto()  # Má ToolRegistry mapping, jde přes execute_with_limits
     RUNTIME_ONLY_COMPAT_DISPATCH = auto()  # Inline task handler, ne ToolRegistry
 
     # Readiness states (additive on path classification)
-    DISPATCH_READY = auto()           # Všechny podmínky splněny
-    DISPATCH_BLOCKED = auto()         # Capability missing nebo hard constraint
-    DISPATCH_PRUNED = auto()          # Control mode prune/panic
-    DISPATCH_UNKNOWN = auto()         # Nelze určit
+    DISPATCH_READY = auto()  # Všechny podmínky splněny
+    DISPATCH_BLOCKED = auto()  # Capability missing nebo hard constraint
+    DISPATCH_PRUNED = auto()  # Control mode prune/panic
+    DISPATCH_UNKNOWN = auto()  # Nelze určit
 
     # Blocker reasons
-    CAPABILITY_MISSING = auto()       # Tool requires capabilities not in available set
-    CONTROL_MODE_PRUNE = auto()       # Control phase je prune nebo panic
-    GRAPH_NOT_READY = auto()          # Graph není ready pro tuto operaci
-    NO_TOOL_MAPPING = auto()           # Task type nemá ToolRegistry tool mapping
-    RUNTIME_HANDLER_ONLY = auto()     # Používá get_task_handler(), ne execute_with_limits
+    CAPABILITY_MISSING = auto()  # Tool requires capabilities not in available set
+    CONTROL_MODE_PRUNE = auto()  # Control phase je prune nebo panic
+    GRAPH_NOT_READY = auto()  # Graph není ready pro tuto operaci
+    NO_TOOL_MAPPING = auto()  # Task type nemá ToolRegistry tool mapping
+    RUNTIME_HANDLER_ONLY = auto()  # Používá get_task_handler(), ne execute_with_limits
 
 
 class ToolCapabilityGap(Struct):
     """
     Capability gap pro jeden tool.
     """
+
     tool_name: str
     required_capabilities: set[str]
     available_capabilities: set[str]
@@ -1705,6 +1671,7 @@ class ExecutionContextReadiness(Struct):
 
     Všechny tři dimenze musí být "ready" pro canonical execute_with_limits call.
     """
+
     # Capability readiness
     capability_ready: bool
     capability_missing: list[str]  # seznam chybějících capabilities
@@ -1767,6 +1734,7 @@ class DispatchReadinessPreview(Struct):
     - load_model()
     - Žádný dispatch
     """
+
     readiness: str  # "ready" | "blocked" | "pruned" | "unknown"
     dispatch_path: str  # "canonical_tool" | "runtime_only_compat"
 
@@ -1961,6 +1929,7 @@ def preview_dispatch_parity(
     # Sprint F3.11: Read mapping from canonical read-side owner (tool_registry.py)
     # Previously this was a local constant — now centralized to prevent drift
     from ..tool_registry import get_task_tool_preview_mapping
+
     TASK_TYPE_TO_TOOL = get_task_tool_preview_mapping()  # noqa: N806
 
     # Load tools from registry (read-only, no execute)
@@ -1996,11 +1965,10 @@ def preview_dispatch_parity(
             satisfied_count=0,
             blocked_count=0,
             execution_context=None,
-    )
+        )
     else:
         tools = registry_tools
 
-    # Build tool lookup: tool_name → Tool
     tool_lookup: dict[str, Tool] = {t.name: t for t in tools}
 
     # Analyze each candidate
@@ -2036,7 +2004,6 @@ def preview_dispatch_parity(
         missing = required - available_capabilities if required else set()
         is_satisfied = not missing
 
-        # Check network/high-memory
         is_network = tool.cost_model.network
         is_high_mem = tool.cost_model.ram_mb_est >= 500
 
@@ -2048,7 +2015,7 @@ def preview_dispatch_parity(
             is_satisfied=is_satisfied,
             is_network_tool=is_network,
             is_high_memory=is_high_mem,
-    )
+        )
         capability_gaps[tool_name] = gap
 
         if will_prune and (is_network or is_high_mem):
@@ -2070,11 +2037,7 @@ def preview_dispatch_parity(
         readiness = "ready"
 
     # Determine dispatch path
-    dispatch_path = (
-        "runtime_only_compat"
-        if runtime_only_handlers
-        else "canonical_tool"
-    )
+    dispatch_path = "runtime_only_compat" if runtime_only_handlers else "canonical_tool"
 
     return DispatchReadinessPreview(
         readiness=readiness,
@@ -2094,10 +2057,6 @@ def preview_dispatch_parity(
         execution_context=None,  # F9: Attach via build_execution_context_readiness() separately
     )
 
-
-# =============================================================================
-# TYPE CHECKING imports — only used behind TYPE_CHECKING guard
-# =============================================================================
 
 if TYPE_CHECKING:
     from typing import Any

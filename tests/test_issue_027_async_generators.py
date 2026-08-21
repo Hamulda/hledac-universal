@@ -10,23 +10,22 @@ Tests:
 Running:
     pytest tests/test_issue_027_async_generators.py -v
 """
+
 import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
+from typing import Never
 
 import pytest
 
-from hledac.universal.utils.sync_bridge import (
-    to_thread,
-    to_thread_with_timeout,
-    run_sync_async,
-)
 from hledac.universal.utils.domain_executors import (
     get_exposure_db_executor,
     get_or_create,
-    shutdown_all,
 )
-
+from hledac.universal.utils.sync_bridge import (
+    run_sync_async,
+    to_thread,
+    to_thread_with_timeout,
+)
 
 # ============================================================================
 # Fixtures
@@ -50,19 +49,19 @@ class TestToThreadWithTimeout:
     """Tests for to_thread_with_timeout()."""
 
     @pytest.mark.asyncio
-    async def test_basic_no_timeout(self):
+    async def test_basic_no_timeout(self) -> None:
         """Basic operation without timeout."""
         result = await to_thread_with_timeout(lambda: 42)
         assert result == 42
 
     @pytest.mark.asyncio
-    async def test_with_args(self):
+    async def test_with_args(self) -> None:
         """Function with arguments."""
         result = await to_thread_with_timeout(lambda x, y: x + y, 10, 20)
         assert result == 30
 
     @pytest.mark.asyncio
-    async def test_with_kwargs(self):
+    async def test_with_kwargs(self) -> None:
         """Function with keyword arguments."""
         result = await to_thread_with_timeout(
             lambda a, b=0: a + b,
@@ -72,7 +71,7 @@ class TestToThreadWithTimeout:
         assert result == 30
 
     @pytest.mark.asyncio
-    async def test_timeout_success(self):
+    async def test_timeout_success(self) -> None:
         """Operation completes within timeout."""
         start = time.monotonic()
         result = await to_thread_with_timeout(
@@ -84,7 +83,7 @@ class TestToThreadWithTimeout:
         assert elapsed < 0.5  # Should be well under timeout
 
     @pytest.mark.asyncio
-    async def test_timeout_exceeded(self):
+    async def test_timeout_exceeded(self) -> None:
         """Timeout exceeded raises TimeoutError."""
         with pytest.raises(asyncio.TimeoutError):
             await to_thread_with_timeout(
@@ -93,7 +92,7 @@ class TestToThreadWithTimeout:
             )
 
     @pytest.mark.asyncio
-    async def test_timeout_none_no_timeout(self):
+    async def test_timeout_none_no_timeout(self) -> None:
         """Explicit None timeout means no timeout."""
         start = time.monotonic()
         result = await to_thread_with_timeout(
@@ -105,7 +104,7 @@ class TestToThreadWithTimeout:
         assert elapsed < 0.5
 
     @pytest.mark.asyncio
-    async def test_exception_propagates(self):
+    async def test_exception_propagates(self) -> None:
         """Exceptions propagate through timeout wrapper."""
         with pytest.raises(ValueError, match="test error"):
             await to_thread_with_timeout(
@@ -122,13 +121,13 @@ class TestToThreadBackwardCompat:
     """Verify to_thread() still works (no timeout regression)."""
 
     @pytest.mark.asyncio
-    async def test_basic_to_thread(self):
+    async def test_basic_to_thread(self) -> None:
         """Basic to_thread without timeout."""
         result = await to_thread(lambda: "hello")
         assert result == "hello"
 
     @pytest.mark.asyncio
-    async def test_with_executor_argument(self):
+    async def test_with_executor_argument(self) -> None:
         """to_thread passes through to executor."""
         result = await to_thread(lambda x: x * 2, 21)
         assert result == 42
@@ -149,10 +148,11 @@ class TestToThreadRayon:
     """
 
     @pytest.mark.asyncio
-    async def test_rayon_available(self):
+    async def test_rayon_available(self) -> None:
         """Rayon extension is compiled and available."""
         try:
-            from hledac_rust_extensions import rayon_submit, rayon_join, rayon_abort
+            from hledac_rust_extensions import rayon_abort, rayon_join, rayon_submit
+
             assert callable(rayon_submit)
             assert callable(rayon_join)
             assert callable(rayon_abort)
@@ -160,7 +160,7 @@ class TestToThreadRayon:
             pytest.skip("Rust extension not compiled (run: cd rust_extensions && maturin develop)")
 
     @pytest.mark.asyncio
-    async def test_rayon_submit_returns_handle(self):
+    async def test_rayon_submit_returns_handle(self) -> None:
         """rayon_submit returns a non-null handle."""
         try:
             from hledac_rust_extensions import rayon_submit
@@ -175,10 +175,10 @@ class TestToThreadRayon:
         assert isinstance(handle, int)
 
     @pytest.mark.asyncio
-    async def test_rayon_abort_no_exception(self):
+    async def test_rayon_abort_no_exception(self) -> None:
         """Rayon abort can be called without exception."""
         try:
-            from hledac_rust_extensions import rayon_submit, rayon_abort
+            from hledac_rust_extensions import rayon_abort, rayon_submit
         except ImportError:
             pytest.skip("Rust extension not compiled")
 
@@ -199,32 +199,33 @@ class TestToThreadRayon:
 class TestDomainExecutorsRegistry:
     """Tests for domain_executors registry (ISSUE-027)."""
 
-    def test_exposure_db_executor_singleton(self):
+    def test_exposure_db_executor_singleton(self) -> None:
         """Exposure DB executor is a singleton."""
         executor1 = get_exposure_db_executor()
         executor2 = get_exposure_db_executor()
         assert executor1 is executor2
 
-    def test_exposure_db_single_thread(self):
+    def test_exposure_db_single_thread(self) -> None:
         """Exposure DB executor is bounded (preset=1, min 2 due to _bounded_workers)."""
         executor = get_exposure_db_executor()
         # _bounded_workers enforces max(2, preset) so 1→2 on M1
         assert executor._max_workers >= 1  # Single-writer intent, bounded by design
 
-    def test_exposure_db_via_get_or_create(self):
+    def test_exposure_db_via_get_or_create(self) -> None:
         """Can access via get_or_create directly."""
         executor = get_or_create("exposure_db")
         assert executor._max_workers >= 1
 
-    def test_other_executors_still_work(self):
+    def test_other_executors_still_work(self) -> None:
         """Other domain executors unaffected."""
         html_executor = get_or_create("html")
         assert html_executor._max_workers >= 1
         assert html_executor is get_or_create("html")
 
-    def test_registry_includes_exposure_db(self):
+    def test_registry_includes_exposure_db(self) -> None:
         """Registry includes the new exposure_db domain."""
         from hledac.universal.utils.domain_executors import _DOMAIN_PRESETS
+
         assert "exposure_db" in _DOMAIN_PRESETS
         assert _DOMAIN_PRESETS["exposure_db"] == 1
 
@@ -238,19 +239,20 @@ class TestAcloseStream:
     """Tests for _aclose_stream async cleanup pattern."""
 
     @pytest.mark.asyncio
-    async def test_aclose_stream_exists(self):
+    async def test_aclose_stream_exists(self) -> None:
         """_aclose_stream function exists and is callable."""
         from hledac.universal.recon.exposure_clients import _aclose_stream
+
         assert callable(_aclose_stream)
 
     @pytest.mark.asyncio
-    async def test_aclose_stream_handles_already_closed(self):
+    async def test_aclose_stream_handles_already_closed(self) -> None:
         """_aclose_stream handles already-closed streams gracefully."""
         from hledac.universal.recon.exposure_clients import _aclose_stream
 
         # Mock stream that's already closed
         class MockStream:
-            async def aclose(self):
+            async def aclose(self) -> Never:
                 raise RuntimeError("already closed")
 
         stream = MockStream()
@@ -266,17 +268,19 @@ class TestAcloseStream:
 class TestRunSyncAsync:
     """Regression tests for run_sync_async()."""
 
-    def test_sync_from_sync(self):
+    def test_sync_from_sync(self) -> None:
         """run_sync_async from synchronous context."""
+
         async def async_adder(a: int, b: int) -> int:
             return a + b
 
         result = run_sync_async(async_adder(10, 20))
         assert result == 30
 
-    def test_sync_from_sync_with_exception(self):
+    def test_sync_from_sync_with_exception(self) -> None:
         """Exception propagates from run_sync_async."""
-        async def async_fail():
+
+        async def async_fail() -> Never:
             raise ValueError("test error")
 
         with pytest.raises(ValueError, match="test error"):
@@ -292,17 +296,18 @@ class TestAsyncGeneratorWithDomainExecutors:
     """Integration tests for async generators + domain executors."""
 
     @pytest.mark.asyncio
-    async def test_exposure_cache_uses_executor(self):
+    async def test_exposure_cache_uses_executor(self) -> None:
         """ExposureCache operations use the registered executor."""
-        from hledac.universal.recon.exposure_clients import ExposureCache, _DB_EXECUTOR
+        from hledac.universal.recon.exposure_clients import _DB_EXECUTOR, ExposureCache
 
-        cache = ExposureCache()
+        ExposureCache()
         # Verify executor is the registered exposure_db executor
         assert _DB_EXECUTOR._max_workers >= 1  # Bounded by _bounded_workers
 
     @pytest.mark.asyncio
-    async def test_to_thread_with_timeout_in_pipeline(self):
+    async def test_to_thread_with_timeout_in_pipeline(self) -> None:
         """to_thread_with_timeout works in async generator pipeline."""
+
         async def source_gen():
             for i in range(10):
                 yield i

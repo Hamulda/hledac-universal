@@ -47,27 +47,18 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _ioc_dedup_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "ioc_dedup")
     and getattr(_rust_backend, "ioc_dedup", None) is not None
 )
 
-# Get module reference
 _ioc_dedup = getattr(_rust_backend, "ioc_dedup", None) if _ioc_dedup_available else None
-
-
-# =============================================================================
-# IOC Deduplication Store
-# =============================================================================
-
 
 class IocDedupStore:
     """
@@ -242,15 +233,9 @@ class IocDedupStore:
             "backend": "python",
         }
 
-
 def ioc_dedup_available() -> bool:
     """Check if Rust IOC dedup store is available."""
     return _ioc_dedup_available
-
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     "IocDedupStore",

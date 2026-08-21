@@ -1,7 +1,6 @@
 """Certificate Transparency log scanner (crt.sh) with local cache."""
-from __future__ import annotations
 
-import asyncio
+from __future__ import annotations
 
 import logging
 import time
@@ -23,10 +22,10 @@ if TYPE_CHECKING:
 
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # CTLogCacheStore replaces local SQLite3 cache with DuckDB for better M1 performance.
-_DUCKDB_STORE: "CTLogCacheStore | None" = None
+_DUCKDB_STORE: CTLogCacheStore | None = None
 
 
-async def _get_duckdb_store() -> "CTLogCacheStore | None":
+async def _get_duckdb_store() -> CTLogCacheStore | None:
     """Get or create singleton DuckDB CT cache store."""
     global _DUCKDB_STORE
     if _DUCKDB_STORE is None:
@@ -44,6 +43,7 @@ async def _get_duckdb_store() -> "CTLogCacheStore | None":
 
 try:
     import httpx
+
     HTTPX_AVAILABLE = True
 except ImportError:
     httpx = None
@@ -103,9 +103,7 @@ class _CTLogScanner:
                 )
                 conn.commit()
 
-    async def get_subdomains(
-        self, domain: str, *, async_session: "httpx.AsyncClient | None" = None
-    ) -> list[str]:
+    async def get_subdomains(self, domain: str, *, async_session: httpx.AsyncClient | None = None) -> list[str]:
         """Get subdomains for a domain, using cache first.
 
         Args:
@@ -132,11 +130,9 @@ class _CTLogScanner:
             logger.warning("[CT] httpx not available, cannot fetch from crt.sh")
             return []
 
-        async def _fetch_with_session(session: "httpx.AsyncClient") -> list[str]:
+        async def _fetch_with_session(session: httpx.AsyncClient) -> list[str]:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
-            resp = await session.get(
-                url, timeout=httpx.Timeout(connect=CT_CONNECT_TIMEOUT_S, read=CT_READ_TIMEOUT_S)
-            )
+            resp = await session.get(url, timeout=httpx.Timeout(connect=CT_CONNECT_TIMEOUT_S, read=CT_READ_TIMEOUT_S))
             try:
                 if resp.status_code != 200:
                     return []
@@ -171,7 +167,7 @@ class _CTLogScanner:
             logger.warning(f"[CT] Error for {domain}: {e}")
             return []
 
-    async def _get_cached_duckdb(self, domain: str) -> "list[str] | None":
+    async def _get_cached_duckdb(self, domain: str) -> list[str] | None:
         """Get cached subdomains from DuckDB."""
         store = await _get_duckdb_store()
         if store is None:
@@ -184,7 +180,7 @@ class _CTLogScanner:
         if store is not None:
             await store.set(domain, subdomains)
 
-    def _get_cached_sqlite(self, domain: str) -> "list[str] | None":
+    def _get_cached_sqlite(self, domain: str) -> list[str] | None:
         """Return cached subdomains from SQLite if fresh enough (fallback only)."""
         import sqlite3
 
@@ -193,9 +189,7 @@ class _CTLogScanner:
 
         ttl_seconds = self.cache_ttl_days * 86400
         with sqlite3.connect(_CACHE_DB) as conn:
-            row = conn.execute(
-                "SELECT subdomains, fetched_at FROM ct_cache WHERE domain = ?", (domain,)
-            ).fetchone()
+            row = conn.execute("SELECT subdomains, fetched_at FROM ct_cache WHERE domain = ?", (domain,)).fetchone()
             if row and time.time() - row[1] < ttl_seconds:
                 return _json.decode(row[0])
         return None

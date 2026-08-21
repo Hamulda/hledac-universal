@@ -33,7 +33,6 @@ from __future__ import annotations
 import warnings
 from importlib import import_module
 from typing import Final
-from _core import aclose
 
 __all__ = [
     "INTEL_RECON_MAP",
@@ -122,7 +121,7 @@ def warn_deprecation(deprecated: str, canonical: str, stacklevel: int = 2) -> No
         stacklevel: passed through to warnings.warn (default=2 means caller's frame)
     """
     warnings.warn(
-        f"{deprecated} is deprecated — import from \"{canonical}\" directly instead.",
+        f'{deprecated} is deprecated — import from "{canonical}" directly instead.',
         DeprecationWarning,
         stacklevel=stacklevel,
     )

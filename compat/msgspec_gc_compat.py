@@ -22,17 +22,15 @@ For msgspec >= 0.22: maps `gc=False` → `weakref=False` and strips `gc`.
 Import this instead of `msgspec.Struct` for all new code. Existing
 msgspec.Struct(gc=False) usages are migrated incrementally.
 """
+
 from __future__ import annotations
 
 import msgspec
-from _core import aclose
 
 __all__ = ["struct", "Struct"]
 
 # msgspec version detection
-_MSGSPEC_VERSION: tuple[int, ...] = tuple(
-    int(x) for x in msgspec.__version__.split(".")[:2]
-    )
+_MSGSPEC_VERSION: tuple[int, ...] = tuple(int(x) for x in msgspec.__version__.split(".")[:2])
 _MSGSPEC_V022_PLUS: bool = _MSGSPEC_VERSION >= (0, 22)
 
 
@@ -81,13 +79,9 @@ def struct(
         if gc is not None:
             # gc=False → weakref=False, gc=True → weakref=True (identity mapping)
             if weakref and not gc:
-                raise ValueError(
-                    "conflicting values: gc=False but weakref=True"
-                )
+                raise ValueError("conflicting values: gc=False but weakref=True")
             if not weakref and gc:
-                raise ValueError(
-                    "conflicting values: gc=True but weakref=False"
-                )
+                raise ValueError("conflicting values: gc=True but weakref=False")
             weakref = gc  # identity: gc=False sets weakref=False, gc=True sets weakref=True
         kwargs["weakref"] = weakref
         return type("AnonymousStruct", (msgspec.Struct,), kwargs)

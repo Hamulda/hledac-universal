@@ -31,17 +31,18 @@ Author: F270 Interface Segregation
 Date: 2026-06-25
 """
 
-import asyncio
-from collections.abc import Callable, Iterator
 from typing import (
     Any,
     Protocol,
     TypeAlias,
     runtime_checkable,
-    )
+)
 
-import lmdb
+# Scheduler v2 protocols (F350M-R)
+from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol, SchedulerProtocol
 
+# Graph tier protocols (F350M-R)
+from .analytics_protocol import AnalyticsProtocol
 from .brain_protocol import BrainProtocol
 from .cleanup_protocol import AsyncCleanable, manage_cleanup
 from .enrichment_protocol import EnrichmentProtocol
@@ -54,13 +55,7 @@ from .metrics_protocol import MetricsProtocol
 from .pivot_protocol import PivotProtocol
 from .prefetch_protocol import PrefetchProtocol
 from .score_protocol import ScoreProtocol
-
-# Graph tier protocols (F350M-R)
-from .analytics_protocol import AnalyticsProtocol
 from .stix_protocol import StixProtocol
-
-# Scheduler v2 protocols (F350M-R)
-from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol, SchedulerProtocol
 
 # Re-export all protocols for convenience
 from .storage_protocol import StorageProtocol
@@ -72,7 +67,6 @@ __all__ = [
     "manage_cleanup",
     # Storage
     "StorageProtocol",
-    # Fetch
     "FetchProtocol",
     # Graph
     "GraphProtocol",
@@ -105,11 +99,6 @@ __all__ = [
     "is_protocol_compatible_cached",
 ]
 
-
-# =============================================================================
-# MODERN-06: Lazy Protocol Checking Cache (M1 8GB Optimization)
-# =============================================================================
-
 import weakref
 from typing import TYPE_CHECKING
 
@@ -117,18 +106,14 @@ if TYPE_CHECKING:
     from typing import Protocol as TypingProtocol
 else:
     TypingProtocol = object  # Avoid Protocol import at runtime
-from _core import aclose
-
 
 # Weak-key dictionary: object -> {Protocol -> bool}
-_PROTOCOL_CACHE: weakref.WeakKeyDictionary[object, dict[type, bool]] = (
-    weakref.WeakKeyDictionary()
-    )
+_PROTOCOL_CACHE: weakref.WeakKeyDictionary[object, dict[type, bool]] = weakref.WeakKeyDictionary()
 
 
 def is_protocol_compatible_cached(
     obj: object,
-    protocol: type["TypingProtocol"],
+    protocol: type[TypingProtocol],
     *,
     cache_ttl_seconds: float = 300.0,
 ) -> bool:
@@ -176,7 +161,6 @@ def is_protocol_compatible_cached(
     # Slow path: perform actual check
     is_compatible = isinstance(obj, protocol)
 
-    # Update cache
     if cached is None:
         cached = {}
         try:

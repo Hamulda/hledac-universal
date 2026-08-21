@@ -30,9 +30,7 @@ STORAGE-DUP-003: duckdb_ipc_store lazy import removed (legacy IPC stack deleted)
 
 import importlib
 import importlib.util
-import sys
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass

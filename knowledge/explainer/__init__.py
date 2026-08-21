@@ -12,11 +12,8 @@ Lazy module loading (PEP 562) pro M1 8GB UMA cold start:
 - Vzor: core/__init__.py (stejný pattern), Python 3.7+ PEP 562.
 """
 
-
-
 import importlib
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     # Stub pro pyright — runtime využívá __getattr__ níže.
@@ -50,4 +47,4 @@ def __dir__() -> list[str]:
     return sorted(set(globals().keys()) | set(_LAZY_ATTRS.keys()))
 
 
-__all__ = ['FastExplainer', 'DeepExplainer']
+__all__ = ["FastExplainer", "DeepExplainer"]

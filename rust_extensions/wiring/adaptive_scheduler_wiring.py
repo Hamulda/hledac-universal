@@ -28,21 +28,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_adaptive_scheduler
 
-# Create singleton instance
 _adaptive_scheduler = get_adaptive_scheduler()
-
 
 def adaptive_scheduler_wired():
     """Get the wired adaptive scheduler integration."""
     return _adaptive_scheduler
-
 
 def get_thread_budget() -> dict[str, int]:
     """
@@ -52,7 +47,6 @@ def get_thread_budget() -> dict[str, int]:
         Dict with max_total, available, dispatchers counts.
     """
     return _adaptive_scheduler.get_thread_budget()
-
 
 def get_mixed_threshold() -> int:
     """
@@ -65,7 +59,6 @@ def get_mixed_threshold() -> int:
     """
     return _adaptive_scheduler.get_mixed_threshold()
 
-
 def get_phase_config(phase: str) -> dict[str, int]:
     """
     Get thread configuration for a specific phase.
@@ -77,7 +70,6 @@ def get_phase_config(phase: str) -> dict[str, int]:
         Dict with cpu, io, mixed_max thread counts.
     """
     return _adaptive_scheduler.get_phase_config(phase)
-
 
 def recommend_pool_size(
     phase: str,
@@ -104,13 +96,10 @@ def recommend_pool_size(
     else:
         return 2  # Default
 
-
 # R12-NOTE: get_adaptive_mixed_threshold is now in _core.resource_governor
 # Import from there directly: from _core.resource_governor import get_adaptive_mixed_threshold
 # The redundant wrapper has been removed to avoid circular dependencies.
 
-
-# Check availability at import time for logging
 if _adaptive_scheduler.available:
     logger.info("[AdaptiveScheduler] Rust adaptive_scheduler.rs integration: ENABLED")
 else:

@@ -2,7 +2,6 @@
 
 import fnmatch
 from pathlib import Path
-from _core import aclose
 
 
 def find_files(
@@ -10,7 +9,7 @@ def find_files(
     pattern: str = "*",
     recursive: bool = True,
     case_sensitive: bool = True,
-    max_depth: int | None = None
+    max_depth: int | None = None,
 ) -> list[Path]:
     """
     Find files matching a pattern in a directory tree.
@@ -31,7 +30,6 @@ def find_files(
     """
     dir_path = Path(directory)
 
-    # Validate input directory
     if not dir_path.exists():
         raise ValueError(f"Directory does not exist: {directory}")
 
@@ -72,11 +70,7 @@ def find_files(
     return matches
 
 
-def find_files_by_extension(
-    directory: str | Path,
-    extensions: str | list[str],
-    recursive: bool = True
-) -> list[Path]:
+def find_files_by_extension(directory: str | Path, extensions: str | list[str], recursive: bool = True) -> list[Path]:
     """
     Find files by extension(s).
 
@@ -94,12 +88,11 @@ def find_files_by_extension(
     all_matches = []
     for ext in extensions:
         # Remove leading dot if present
-        ext = ext.lstrip('.')
+        ext = ext.lstrip(".")
         pattern = f"*.{ext}"
         matches = find_files(directory, pattern, recursive)
         all_matches.extend(matches)
 
-    # Remove duplicates while preserving order
     seen = set()
     unique_matches = []
     for match in all_matches:

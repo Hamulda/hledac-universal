@@ -26,20 +26,17 @@ Design:
 - synthesize() likewise wraps summarize() into a simple "context: X" format.
 """
 
-
-
 import logging
 from typing import Any, TypeVar
-
-from .modernbert_engine import ModernBertEngine
-from _core import aclose
 
 # ROADMAP-006: Pydantic v2 compatibility layer
 from hledac.universal.compat.pydantic_compat import model_construct as _pydantic_construct
 
+from .modernbert_engine import ModernBertEngine
+
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')  # PEP 696: TypeVar with default
+T = TypeVar("T")  # PEP 696: TypeVar with default
 
 
 class ModernBertModelAdapter:
@@ -57,7 +54,7 @@ class ModernBertModelAdapter:
       Prefer structured generation to Hermes3Engine for actual structured output.
     """
 
-    __slots__ = ('_engine', '_loaded', '_model_name')
+    __slots__ = ("_engine", "_loaded", "_model_name")
 
     def __init__(self, config: Any | None = None) -> None:  # type: ignore[explicit-any]
         self._engine: ModernBertEngine = ModernBertEngine(config=config)  # type: ignore[no-untyped-call]
@@ -100,7 +97,7 @@ class ModernBertModelAdapter:
             "[ModernBertModelAdapter] generate() called but ModernBERT is "
             "extractive-only; returning empty string. "
             "Use generate_report() or synthesize() for summarization."
-    )
+        )
         return ""
 
     async def generate_structured(
@@ -125,7 +122,7 @@ class ModernBertModelAdapter:
             "cannot do grammar-constrained generation. "
             "Returning default-constructed response_model. "
             "Use Hermes3Engine for actual structured output."
-    )
+        )
         try:
             return response_model()
         except Exception:
@@ -184,4 +181,4 @@ class ModernBertModelAdapter:
 
     async def is_ready(self) -> bool:
         """True if the underlying engine is loaded."""
-        return self._engine._loaded if hasattr(self._engine, '_loaded') else self._loaded
+        return self._engine._loaded if hasattr(self._engine, "_loaded") else self._loaded

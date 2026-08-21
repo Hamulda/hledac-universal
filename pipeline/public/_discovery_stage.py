@@ -11,7 +11,6 @@ Output: DiscoveryPhaseResult with enriched hits and telemetry
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -19,18 +18,11 @@ from typing import TYPE_CHECKING, Any
 from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
 from hledac.universal.pipeline._soa_types import PageBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ----------------------------------------------------------------------
-# Types
-# ----------------------------------------------------------------------
-
 
 class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
     """Structured discovery output for downstream phases.
@@ -61,7 +53,6 @@ class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
 _MAX_BOOTSTRAP_URLS: int = 5
 _MAX_KEYWORD_BOOTSTRAP: int = 8
 _MAX_RESCUE_URLS: int = 8
-
 
 class DiscoveryStage:
     """Discovery stage: query → list of candidate URLs.
@@ -135,7 +126,6 @@ class DiscoveryStage:
         fetch_blocked_reasons: list[str | None] = []
         errors: list[str | None] = []
 
-        # Run all discovery strategies concurrently
         bootstrap_hits: list[Any] = []
         rescue_hits: list[Any] = []
         keyword_hits: list[Any] = []
@@ -188,7 +178,6 @@ class DiscoveryStage:
                 live_hits = await async_search_public_web(query, max_results=max_results)
                 telemetry["discovery_attempted"] = True
                 telemetry["discovery_elapsed_s"] = time.monotonic() - _discovery_start
-                # Handle DiscoveryBatchResult or list
                 live_list = list(live_hits) if hasattr(live_hits, "__iter__") else []
                 telemetry["live_candidates"] = len(live_list)
                 for hit in live_list:
@@ -223,7 +212,6 @@ class DiscoveryStage:
 
         return batch, telemetry
 
-
 def _generate_rescue_hits(query: str, max_urls: int = 8) -> list[Any]:
     """Generate rescue DiscoveryHits for threat queries."""
     # Lazy import to avoid circular dependency
@@ -238,7 +226,6 @@ def _generate_rescue_hits(query: str, max_urls: int = 8) -> list[Any]:
         return generate_rescue_urls(query, max_urls=max_urls)
     except Exception:
         return []
-
 
 def _generate_keyword_urls(query: str, max_urls: int = 8) -> list[str]:
     """Generate keyword-based search engine URLs."""

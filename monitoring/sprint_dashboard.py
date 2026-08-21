@@ -13,9 +13,10 @@ Usage:
 The dashboard survives branch timeout and early windup — it renders the
 final SprintSchedulerResult regardless of how the sprint exited.
 """
+
 import time
 from typing import TYPE_CHECKING
-from _core import aclose
+
 try:
     from rich.console import Console
     from rich.live import Live
@@ -25,13 +26,34 @@ except Exception as _rich_missing:
     Live = None
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
-_PHASE_COLORS = {'BOOT': 'dim', 'WARMUP': 'yellow', 'ACTIVE': 'green', 'DEGRADED': 'bright_yellow', 'WINDUP': 'cyan', 'EXPORT': 'blue', 'TEARDOWN': 'magenta', 'ABORTED': 'red'}
+_PHASE_COLORS = {
+    "BOOT": "dim",
+    "WARMUP": "yellow",
+    "ACTIVE": "green",
+    "DEGRADED": "bright_yellow",
+    "WINDUP": "cyan",
+    "EXPORT": "blue",
+    "TEARDOWN": "magenta",
+    "ABORTED": "red",
+}
+
 
 def _phase_style(phase: str) -> str:
-    return _PHASE_COLORS.get(phase.upper(), 'white')
+    return _PHASE_COLORS.get(phase.upper(), "white")
+
 
 def _phase_emoji(phase: str) -> str:
-    return {'BOOT': '⚙️', 'WARMUP': '⚡', 'ACTIVE': '🔨', 'DEGRADED': '⚠️', 'WINDUP': '⏹', 'EXPORT': '📤', 'TEARDOWN': '✅', 'ABORTED': '❌'}.get(phase.upper(), '❓')
+    return {
+        "BOOT": "⚙️",
+        "WARMUP": "⚡",
+        "ACTIVE": "🔨",
+        "DEGRADED": "⚠️",
+        "WINDUP": "⏹",
+        "EXPORT": "📤",
+        "TEARDOWN": "✅",
+        "ABORTED": "❌",
+    }.get(phase.upper(), "❓")
+
 
 class SprintDashboard:
     """
@@ -45,7 +67,8 @@ class SprintDashboard:
         - Branch status (timeouts, blockers)
         - Abort / windup reason if applicable
     """
-    __slots__ = tuple(('_aborted', '_console', '_last_phase', '_live', '_start_time', 'duration_s', 'query', 'sprint_id'))
+
+    __slots__ = ("_aborted", "_console", "_last_phase", "_live", "_start_time", "duration_s", "query", "sprint_id")
 
     def __init__(self, sprint_id: str, query: str, duration_s: float) -> None:
         self.sprint_id = sprint_id
@@ -54,7 +77,7 @@ class SprintDashboard:
         self._start_time = time.monotonic()
         self._console: Console = Console()
         self._live: Live | None = None
-        self._last_phase = 'BOOT'
+        self._last_phase = "BOOT"
         self._aborted = False
 
     def start(self) -> None:
@@ -92,39 +115,39 @@ class SprintDashboard:
         pct = min(1.0, elapsed_s / self.duration_s) if self.duration_s > 0 else 0.0
         bar_len = 50
         filled = int(bar_len * pct)
-        bar = '█' * filled + '░' * (bar_len - filled)
-        return f'[█]{bar}[█]  {pct * 100:.1f}%'
+        bar = "█" * filled + "░" * (bar_len - filled)
+        return f"[█]{bar}[█]  {pct * 100:.1f}%"
 
     def _build_findings_row(self, result: SprintSchedulerResult | None) -> str:
         """Build the findings summary row."""
         if result is None:
-            return 'no findings yet'
+            return "no findings yet"
         findings_parts: list[str] = []
         af = result.accepted_findings
-        findings_parts.append(f'findings={af}')
+        findings_parts.append(f"findings={af}")
         if result.public_accepted_findings is not None and result.public_accepted_findings > 0:
-            findings_parts.append(f'public={result.public_accepted_findings}')
+            findings_parts.append(f"public={result.public_accepted_findings}")
         if result.ct_log_accepted_findings is not None and result.ct_log_accepted_findings > 0:
-            findings_parts.append(f'ct={result.ct_log_accepted_findings}')
+            findings_parts.append(f"ct={result.ct_log_accepted_findings}")
         if result.multimodal_enriched_findings:
-            findings_parts.append(f'vision={result.multimodal_enriched_findings}')
+            findings_parts.append(f"vision={result.multimodal_enriched_findings}")
         if result.forensics_enriched_ct_findings:
-            findings_parts.append(f'forensics={result.forensics_enriched_ct_findings}')
-        return '  '.join(findings_parts) if findings_parts else 'no findings yet'
+            findings_parts.append(f"forensics={result.forensics_enriched_ct_findings}")
+        return "  ".join(findings_parts) if findings_parts else "no findings yet"
 
     def _build_cycles_row(self, result: SprintSchedulerResult | None) -> tuple[str, str, str] | tuple[str, None, None]:
         """Build the cycles info components."""
         if result is None:
-            return '', '', ''
-        cycles = f'cycles={result.cycles_started}/{result.cycles_completed}'
+            return "", "", ""
+        cycles = f"cycles={result.cycles_started}/{result.cycles_completed}"
         dedup = result.duplicate_entry_hashes_skipped
-        dedup_str = f'dedup={dedup}'
+        dedup_str = f"dedup={dedup}"
         sources_parts: list[str] = []
         if result.entries_per_source:
             for src, cnt in list(result.entries_per_source.items())[:3]:
                 short_src = src[:30] if len(src) > 30 else src
-                sources_parts.append(f'{short_src}={cnt}')
-        sources_str = '  '.join(sources_parts) if sources_parts else ''
+                sources_parts.append(f"{short_src}={cnt}")
+        sources_str = "  ".join(sources_parts) if sources_parts else ""
         return cycles, dedup_str, sources_str
 
     def _build_branch_row(self, result: SprintSchedulerResult | None) -> str | None:
@@ -133,46 +156,51 @@ class SprintDashboard:
             return None
         branch_parts: list[str] = []
         if result.branch_timeout_count > 0:
-            branch_parts.append(f'⏱️timeouts={result.branch_timeout_count}')
+            branch_parts.append(f"⏱️timeouts={result.branch_timeout_count}")
         if result.public_branch_timed_out:
-            branch_parts.append('public_timeout=❌')
+            branch_parts.append("public_timeout=❌")
         if result.ct_branch_timed_out:
-            branch_parts.append('ct_timeout=❌')
-        if result.dominant_branch_blocker and result.dominant_branch_blocker != 'none':
-            branch_parts.append(f'blocker={result.dominant_branch_blocker}')
+            branch_parts.append("ct_timeout=❌")
+        if result.dominant_branch_blocker and result.dominant_branch_blocker != "none":
+            branch_parts.append(f"blocker={result.dominant_branch_blocker}")
         if result.public_error:
             short_err = result.public_error[:60]
-            branch_parts.append(f'public_err={short_err}')
+            branch_parts.append(f"public_err={short_err}")
         if branch_parts:
-            return '  '.join(branch_parts)
-        return 'healthy'
+            return "  ".join(branch_parts)
+        return "healthy"
 
     def _build_status_row(self, result: SprintSchedulerResult | None) -> str | None:
         """Build the status warnings row."""
         if result is None:
             return None
         if result.aborted:
-            return f'ABORTED: {result.abort_reason or "unknown"}'
+            return f"ABORTED: {result.abort_reason or 'unknown'}"
         elif result.stop_requested:
-            return 'STOP REQUESTED  (stop_on_first_accepted)'
+            return "STOP REQUESTED  (stop_on_first_accepted)"
         elif result.feed_zero_yield_detected:
-            return 'feed_zero_yield  (no signal in any feed)'
+            return "feed_zero_yield  (no signal in any feed)"
         return None
 
     def _build_governor_row(self) -> str | None:
         """Build the governor status row."""
         try:
             from hledac.universal._core.protocols import get_governor
+
             gov = get_governor()
             snap = gov.snapshot()
-            gov_parts: list[str] = [f'uma={snap.uma_state}', f'fetch={snap.fetch_limit}', f'branches={snap.branch_concurrency}']
+            gov_parts: list[str] = [
+                f"uma={snap.uma_state}",
+                f"fetch={snap.fetch_limit}",
+                f"branches={snap.branch_concurrency}",
+            ]
             if snap.model_loaded:
-                gov_parts.append('model=LOADED')
+                gov_parts.append("model=LOADED")
             if snap.renderer_denied_count > 0:
-                gov_parts.append(f'renderer_denied={snap.renderer_denied_count}')
+                gov_parts.append(f"renderer_denied={snap.renderer_denied_count}")
             if snap.model_denied_count > 0:
-                gov_parts.append(f'model_denied={snap.model_denied_count}')
-            return '  '.join(gov_parts)
+                gov_parts.append(f"model_denied={snap.model_denied_count}")
+            return "  ".join(gov_parts)
         except Exception:  # noqa: BLE001
             return None
 
@@ -182,10 +210,10 @@ class SprintDashboard:
             return result.kill_chain_tags_produced
         return 0
 
-    def _build_table(self, result: SprintSchedulerResult | None=None, elapsed_s: float=0.0) -> Table:
+    def _build_table(self, result: SprintSchedulerResult | None = None, elapsed_s: float = 0.0) -> Table:
         """Build the main dashboard table."""
         table = Table(title=None, show_header=False, box=None, padding=(0, 1), pad_edge=False)
-        table.add_column(style='bold', width=60)
+        table.add_column(style="bold", width=60)
 
         # Header row
         phase = self._last_phase
@@ -193,15 +221,15 @@ class SprintDashboard:
         style = _phase_style(phase)
         remaining = max(0.0, self.duration_s - elapsed_s)
         title_text = Text.assemble(
-            (f' {emoji} [{phase}]', style),
-            f'  │  {self.sprint_id}  │  {elapsed_s:.0f}s elapsed  │  {remaining:.0f}s left',
-            'white'
-    )
+            (f" {emoji} [{phase}]", style),
+            f"  │  {self.sprint_id}  │  {elapsed_s:.0f}s elapsed  │  {remaining:.0f}s left",
+            "white",
+        )
         table.add_row(title_text)
 
         # Progress row
         if result is None:
-            table.add_row(f'[dim]Initializing sprint for query: {self.query}[/dim]')
+            table.add_row(f"[dim]Initializing sprint for query: {self.query}[/dim]")
         else:
             progress_row = self._build_progress_row(result, elapsed_s)
             if progress_row is not None:
@@ -209,7 +237,7 @@ class SprintDashboard:
 
         # Findings summary
         findings_str = self._build_findings_row(result)
-        table.add_row(Text.assemble(('findings: ', 'cyan'), findings_str))
+        table.add_row(Text.assemble(("findings: ", "cyan"), findings_str))
 
         # Cycles and sources (only when result available)
         self._add_cycles_row(table, result)
@@ -219,42 +247,42 @@ class SprintDashboard:
 
         # Hits row
         if result is not None and result.total_pattern_hits > 0:
-            table.add_row(Text.assemble(('hits: ', 'magenta'), str(result.total_pattern_hits)))
+            table.add_row(Text.assemble(("hits: ", "magenta"), str(result.total_pattern_hits)))
 
         # Governor state
         gov_str = self._build_governor_row()
         if gov_str:
-            table.add_row(Text.assemble(('governor: ', 'cyan'), gov_str))
+            table.add_row(Text.assemble(("governor: ", "cyan"), gov_str))
 
         # Kill-chain tags
         killchain_count = self._build_killchain_row(result)
         if killchain_count > 0:
-            table.add_row(Text.assemble(('kill-chain: ', 'magenta'), str(killchain_count)))
+            table.add_row(Text.assemble(("kill-chain: ", "magenta"), str(killchain_count)))
 
         return table
 
     def _add_cycles_row(self, table: Table, result: SprintSchedulerResult | None) -> None:
         """Add cycles and sources row to table."""
         if result is None:
-            table.add_row('[dim]Starting up...[/dim]')
+            table.add_row("[dim]Starting up...[/dim]")
             return
         cycles, dedup_str, sources_str = self._build_cycles_row(result)
-        table.add_row(Text.assemble(('cycles: ', 'green'), cycles, ('  ', 'white'), (dedup_str, 'dim')))
+        table.add_row(Text.assemble(("cycles: ", "green"), cycles, ("  ", "white"), (dedup_str, "dim")))
         if sources_str:
-            table.add_row(Text.assemble(('sources: ', 'yellow'), sources_str, style='dim'))
+            table.add_row(Text.assemble(("sources: ", "yellow"), sources_str, style="dim"))
 
     def _add_status_rows(self, table: Table, result: SprintSchedulerResult | None) -> None:
         """Add branch health and status warning rows to table."""
         if result is None:
             return
         branch_str = self._build_branch_row(result)
-        if branch_str == 'healthy':
-            table.add_row(Text.assemble(('branch: ', 'green'), branch_str))
+        if branch_str == "healthy":
+            table.add_row(Text.assemble(("branch: ", "green"), branch_str))
         elif branch_str:
-            table.add_row(Text.assemble(('branch: ', 'red'), branch_str))
+            table.add_row(Text.assemble(("branch: ", "red"), branch_str))
 
         status_str = self._build_status_row(result)
         if status_str:
-            prefix = '[⚠] ' if 'ABORTED' in status_str else '[⛔] '
-            color = 'red' if 'ABORTED' in status_str else 'yellow'
+            prefix = "[⚠] " if "ABORTED" in status_str else "[⛔] "
+            color = "red" if "ABORTED" in status_str else "yellow"
             table.add_row(Text.assemble((prefix, color), status_str))

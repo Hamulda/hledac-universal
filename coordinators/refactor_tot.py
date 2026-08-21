@@ -1,21 +1,21 @@
 """Helper script to refactor _tree_of_thoughts_reasoning function."""
-import re
-from _core import aclose
 
-file_path = '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/meta_reasoning_coordinator.py'
-with open(file_path, 'r') as f:
+import re
+
+file_path = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/coordinators/meta_reasoning_coordinator.py"
+with open(file_path) as f:
     content = f.read()
 
 # Find the function
-start = content.find('async def _tree_of_thoughts_reasoning(self, query: str)')
+start = content.find("async def _tree_of_thoughts_reasoning(self, query: str)")
 if start == -1:
     print("Function not found!")
     exit(1)
 
 # Find the end - next method at same indentation level
 rest = content[start:]
-next_method = re.search(r'\n    async def [a-zA-Z_]', rest[10:])
-next_method2 = re.search(r'\n    def [a-zA-Z_]', rest[10:])
+next_method = re.search(r"\n    async def [a-zA-Z_]", rest[10:])
+next_method2 = re.search(r"\n    def [a-zA-Z_]", rest[10:])
 end_match = None
 if next_method and next_method2:
     end_match = min(next_method.start(), next_method2.start())
@@ -49,37 +49,37 @@ new_code = '''async def _tree_of_thoughts_reasoning(self, query: str) -> dict[st
         """
         config = self._clamp_tot_config(self.strategy_configs[ReasoningStrategy.TREE_OF_THOUGHTS])
         max_depth, branching_factor, beam_width = config['max_depth'], config['branching_factor'], config['beam_width']
-        
+
         if max_depth == 0:
             return _tot_urgency_skip(self._compute_urgency())
-        
+
         checkpointer = await _init_tot_checkpointer(self, query)
         value_predictor = _TotValuePredictor(cost_model=self._cost_model)
         dead_end_detector = _DeadEndDetector(timeout_s=_DEAD_END_TIMEOUT_S)
         query_complexity = min(len(set(query.split())) / 20.0, 1.0)
-        
+
         nodes, leaves, _resumed = await _resume_or_create_root(self, checkpointer)
-        
+
         branching_factor = await _apply_gravity_void_boost(self, branching_factor, query)
-        
+
         if checkpointer:
             checkpointer._step = self._resume_step if _resumed else 0
             checkpointer.bind(nodes)
             await checkpointer.start()
             await checkpointer.checkpoint(nodes=nodes, step=checkpointer._step)
-        
+
         result = await _run_tot_search(
             self, query, nodes, leaves, max_depth, branching_factor, beam_width,
             value_predictor, dead_end_detector, query_complexity, checkpointer
     )
-        
+
         if checkpointer:
             try:
                 await checkpointer.checkpoint(nodes=nodes)
                 await checkpointer.stop(final_checkpoint=False)
             except Exception:
                 pass
-        
+
         return result
 
 
@@ -120,7 +120,7 @@ async def _resume_or_create_root(self, checkpointer):
         leaves = [n for n in nodes.values() if not n.expanded and n.depth == max_depth] or [root]
         logger.info('[UNIFIED-006] ToT resumed: step=%d nodes=%d leaves=%d', self._resume_step, len(nodes), len(leaves))
         return nodes, leaves, True
-    
+
     root = ThoughtNode(node_id='root', thought=f'Exploring: {self._query[:50]}...', value_estimate=0.5, depth=0, cost=0.0, uncertainty=0.0)
     nodes = {'root': root}
     if checkpointer:
@@ -157,10 +157,10 @@ async def _run_tot_search(
     best_value, pruned_count, dead_end_count, igd_count = float('-inf'), 0, 0, 0
     best_path = []
     nodes_since_yield = 0
-    
+
     dead_end_detector.register_branch('root')
     self._igd_policy.register_branch('root')
-    
+
     for depth in range(max_depth):
         new_leaves = []
         for leaf in leaves:
@@ -174,22 +174,22 @@ async def _run_tot_search(
                 dead_end_count += 1
                 leaf.expanded = True
                 continue
-            
+
             new_leaves = await _expand_branches(
                 self, leaf, depth, branching_factor, value_predictor, query_complexity,
                 nodes, dead_end_detector, checkpointer, pruned_count
     )
             leaf.expanded = True
             nodes_since_yield = await _yield_if_needed(nodes_since_yield)
-        
+
         leaves = _select_beam(new_leaves, beam_width)
         _cleanup_detectors(dead_end_detector, self._igd_policy, leaves)
-        
+
         if checkpointer:
             await checkpointer.checkpoint(nodes=nodes, step=depth + 1)
-        
+
         best_path, best_value = _find_best_path(nodes, leaves, best_path, best_value)
-    
+
     return _build_tot_result(
         nodes, best_path, best_value, pruned_count, dead_end_count, igd_count,
         value_predictor, self._resume_step if self._resume_from else 0, self._resume_from is not None
@@ -200,14 +200,14 @@ async def _expand_branches(self, leaf, depth, branching_factor, value_predictor,
     """Expand leaf node into branches."""
     new_leaves = []
     parent_value = leaf.value_estimate
-    
+
     for i in range(branching_factor):
         child_id = f'node_{depth}_{i}_{leaf.node_id}'
         value_est, uncertainty = value_predictor.predict_value(child_id, depth + 1, parent_value, query_complexity)
-        
+
         child = ThoughtNode(node_id=child_id, thought=f'Branch {i + 1} at depth {depth + 1}', value_estimate=value_est, parent=leaf.node_id, depth=depth + 1, cost=leaf.cost + 1.0, uncertainty=uncertainty)
         gain = value_est - parent_value
-        
+
         if depth >= _PRUNE_MIN_DEPTH and gain < _PRUNE_GAIN_THRESHOLD:
             pruned_count += 1
             child.thought = f'Pruned branch {i + 1} at depth {depth + 1} (gain={gain:.3f})'
@@ -217,22 +217,22 @@ async def _expand_branches(self, leaf, depth, branching_factor, value_predictor,
                 from msgspec import to_builtins as _to_builtins
                 await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
             continue
-        
+
         leaf.children.append(child_id)
         nodes[child_id] = child
         new_leaves.append(child)
-        
+
         if checkpointer:
             from msgspec import to_builtins as _to_builtins
             await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
-        
+
         self._igd_policy.register_branch(child_id)
         dead_end_detector.register_branch(child_id)
-        
+
         if value_est > 0.5:
             dead_end_detector.report_progress(child_id, ioc_count=1)
             self._igd_policy.report_iocs(child_id, [value_est])
-    
+
     return new_leaves
 
 
@@ -290,7 +290,7 @@ def _build_tot_result(nodes, best_path, best_value, pruned_count, dead_end_count
 '''
 new_content = content[:start] + new_code + content[end:]
 
-with open(file_path, 'w') as f:
+with open(file_path, "w") as f:
     f.write(new_content)
 
 print("File updated successfully")

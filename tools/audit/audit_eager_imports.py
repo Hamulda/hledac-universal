@@ -16,10 +16,9 @@ Usage:
 
 import ast
 import sys
+from operator import itemgetter
 from pathlib import Path
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 HEAVY_MODULES = {
     "duckdb",
     "lancedb",
@@ -192,7 +191,7 @@ def find_module_level_imports(py_file: Path) -> list[dict]:
     """Find heavy module imports that are at module level (not inside a function/class)."""
     try:
         content = py_file.read_text()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return []
 
     try:
@@ -211,27 +210,31 @@ def find_module_level_imports(py_file: Path) -> list[dict]:
             for alias in node.names:
                 name = alias.name.split(".")[0]
                 if name in HEAVY_MODULES:
-                    violations.append({
-                        "file": str(py_file),
-                        "line": node.lineno,
-                        "module": alias.name,
-                        "kind": "Import",
-                        "module_level": is_module_level,
-                        "type_checking": in_type_checking,
-                    })
+                    violations.append(
+                        {
+                            "file": str(py_file),
+                            "line": node.lineno,
+                            "module": alias.name,
+                            "kind": "Import",
+                            "module_level": is_module_level,
+                            "type_checking": in_type_checking,
+                        }
+                    )
 
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 name = node.module.split(".")[0]
                 if name in HEAVY_MODULES:
-                    violations.append({
-                        "file": str(py_file),
-                        "line": node.lineno,
-                        "module": node.module,
-                        "kind": "ImportFrom",
-                        "module_level": is_module_level,
-                        "type_checking": in_type_checking,
-                    })
+                    violations.append(
+                        {
+                            "file": str(py_file),
+                            "line": node.lineno,
+                            "module": node.module,
+                            "kind": "ImportFrom",
+                            "module_level": is_module_level,
+                            "type_checking": in_type_checking,
+                        }
+                    )
 
     return violations
 
@@ -261,16 +264,10 @@ def main() -> None:
         violations.extend(viols)
 
     # Only module-level violations outside TYPE_CHECKING
-    module_level_violations = [
-        v for v in violations
-        if v["module_level"] and not v["type_checking"]
-    ]
+    module_level_violations = [v for v in violations if v["module_level"] and not v["type_checking"]]
 
     # Filter allowed files
-    real_violations = [
-        v for v in module_level_violations
-        if v["file"].replace(str(root) + "/", "") not in ALLOWED
-    ]
+    real_violations = [v for v in module_level_violations if v["file"].replace(str(root) + "/", "") not in ALLOWED]
 
     if verbose:
         print(f"Audit root: {root}")
@@ -279,7 +276,7 @@ def main() -> None:
     if real_violations:
         print(f"\n[FAIL] Eager top-level imports found: {len(real_violations)}")
         for v in sorted(real_violations, key=itemgetter("line")):
-            print(f"  {v['file'].replace(str(root)+'/','')}:{v['line']}: {v['kind']} {v['module']}")
+            print(f"  {v['file'].replace(str(root) + '/', '')}:{v['line']}: {v['kind']} {v['module']}")
         print("\nFix by moving the import inside the function/class that uses it,")
         print("or add the file to ALLOWED if it's a core MLX/brain component.")
         sys.exit(1)

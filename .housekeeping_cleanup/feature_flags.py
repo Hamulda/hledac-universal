@@ -12,15 +12,8 @@ Design rules (GHOST_INVARIANTS):
 - Resolution order: explicit config flag → env var → default off
 """
 
-
-
 import os
 from typing import Final
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 _TRUTHY_TOKENS: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 
@@ -34,17 +27,13 @@ def _env_truthy(name: str) -> bool:
     """
     try:
         raw = os.environ.get(name, "0")
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return False
     try:
         return raw.strip().lower() in _TRUTHY_TOKENS
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return False
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 # Canonical env var name for F11 deep research (Sprint F11 spec).
 HLEDAC_ENABLE_DEEP_RESEARCH: Final[str] = "HLEDAC_ENABLE_DEEP_RESEARCH"
@@ -76,10 +65,6 @@ def is_deep_research_enabled(config_flag: bool = False) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Generic resolver — Phase 2 (Declarative FlagSpec registry)
-# ---------------------------------------------------------------------------
-
 #: Tokens that disable a flag when present as the env-var value.
 #: ``is_enabled`` returns ``False`` for these; any other non-empty
 #: value (including ``"true"``, ``"yes"``, ``"on"``) returns ``True``.
@@ -107,11 +92,11 @@ def is_enabled(flag_name: str, default: str = "0") -> bool:
     """
     try:
         raw = os.environ.get(flag_name, default)
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return False
     try:
         return raw.strip().lower() not in _FALSEY_TOKENS
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return False
 
 

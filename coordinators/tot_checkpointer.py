@@ -2,7 +2,6 @@
 UNIFIED-005/007/008: Transactional ToT State Checkpointer — Multi-Layer Crash Resilience
 ==========================================================================================
 
-
 Four-layer durability architecture for Tree-of-Thoughts state on M1 8GB:
 
   L0 — LMDB incremental (hot path): sub-ms per-node writes during exploration.
@@ -92,9 +91,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from operator import attrgetter, itemgetter
 import orjson
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -171,6 +168,7 @@ class TransactionalToTCheckpointer:
             step, nodes, checksum = restored
             # resume from step, using nodes
     """
+
     __slots__ = (
         "_sprint_id",
         "_query_hash",
@@ -306,7 +304,7 @@ class TransactionalToTCheckpointer:
             self._sprint_id[:12],
             self._interval_s,
             self._fs_fallback,
-    )
+        )
 
     async def stop(self, *, final_checkpoint: bool = True) -> None:
         """Stop periodic checkpointing.
@@ -329,7 +327,7 @@ class TransactionalToTCheckpointer:
             "[UNIFIED-005] ToT checkpointing stopped: sprint=%s checkpoints=%d",
             self._sprint_id[:12],
             self._stats["checkpoints_written"],
-    )
+        )
 
     async def checkpoint(
         self,
@@ -385,7 +383,7 @@ class TransactionalToTCheckpointer:
                         "[UNIFIED-007] Tree JSON too large: %d bytes > %d limit — skipping checkpoint",
                         len(raw),
                         _MAX_TREE_JSON_BYTES,
-    )
+                    )
                     self._stats["checkpoints_skipped"] += 1
                     return False
 
@@ -401,14 +399,14 @@ class TransactionalToTCheckpointer:
                     ts=ts,
                     checksum=checksum,
                     query_hash=self._query_hash,
-    )
+                )
 
                 if not ok:
                     logger.warning(
                         "[UNIFIED-007] DuckDB checkpoint write failed: sprint=%s step=%d",
                         self._sprint_id[:12],
                         current_step,
-    )
+                    )
                     self._stats["checkpoints_failed"] += 1
                     return False
 
@@ -428,7 +426,7 @@ class TransactionalToTCheckpointer:
                     current_step,
                     len(raw),
                     checksum[:16],
-    )
+                )
                 return True
 
             except asyncio.CancelledError:
@@ -439,7 +437,7 @@ class TransactionalToTCheckpointer:
                     self._sprint_id[:12],
                     current_step,
                     exc,
-    )
+                )
                 self._stats["checkpoints_failed"] += 1
                 return False
 
@@ -471,11 +469,9 @@ class TransactionalToTCheckpointer:
                     if lmdb_nodes:
                         self._stats["lmdb_nodes_recovered"] += len(lmdb_nodes)
                         logger.info(
-                            "[UNIFIED-007] LMDB recovery: %d nodes found — "
-                            "using incremental layer as primary source",
+                            "[UNIFIED-007] LMDB recovery: %d nodes found — using incremental layer as primary source",
                             len(lmdb_nodes),
-    )
-                        # Get step from LMDB metadata or DuckDB
+                        )
                         step = await self._read_lmdb_step() or 0
                         # LMDB nodes are already raw dicts, no deserialization needed
                         self._step = step
@@ -485,19 +481,19 @@ class TransactionalToTCheckpointer:
                     logger.debug(
                         "[UNIFIED-007] LMDB recovery failed: %s — falling back to DuckDB",
                         exc,
-    )
+                    )
 
             # ── Tier 2: DuckDB full-tree recovery (L1) ─────────────────
             try:
                 row = await self._store.async_get_latest_tot_checkpoint(
                     sprint_id=self._sprint_id,
-    )
+                )
 
                 if row is None:
                     logger.debug(
                         "[UNIFIED-007] No DuckDB checkpoint for sprint=%s",
                         self._sprint_id[:12],
-    )
+                    )
                     # ── Tier 3: Filesystem fallback (L2) ────────────────
                     if self._fs_fallback:
                         fs_result = self._fs_read()
@@ -505,7 +501,7 @@ class TransactionalToTCheckpointer:
                             logger.info(
                                 "[UNIFIED-007] Recovered from filesystem fallback: sprint=%s",
                                 self._sprint_id[:12],
-    )
+                            )
                             self._stats["restores_succeeded"] += 1
                             return fs_result
                     return None
@@ -524,16 +520,15 @@ class TransactionalToTCheckpointer:
                         step,
                         stored_checksum[:16],
                         computed[:16],
-    )
+                    )
                     # Try filesystem fallback
                     if self._fs_fallback:
                         fs_result = self._fs_read()
                         if fs_result is not None:
                             logger.info(
-                                "[UNIFIED-007] Recovered from filesystem fallback "
-                                "after checksum mismatch: sprint=%s",
+                                "[UNIFIED-007] Recovered from filesystem fallback after checksum mismatch: sprint=%s",
                                 self._sprint_id[:12],
-    )
+                            )
                             self._stats["restores_succeeded"] += 1
                             return fs_result
                     return None
@@ -547,7 +542,7 @@ class TransactionalToTCheckpointer:
                         self._sprint_id[:12],
                         step,
                         exc,
-    )
+                    )
                     return None
 
                 # Validate envelope (accept v1 or v2)
@@ -556,7 +551,7 @@ class TransactionalToTCheckpointer:
                         "[UNIFIED-007] Invalid checkpoint envelope v=%s: sprint=%s",
                         envelope.get("v") if isinstance(envelope, dict) else type(envelope),
                         self._sprint_id[:12],
-    )
+                    )
                     return None
 
                 nodes = envelope.get("nodes", {})
@@ -564,7 +559,7 @@ class TransactionalToTCheckpointer:
                     logger.error(
                         "[UNIFIED-007] Invalid nodes structure: sprint=%s",
                         self._sprint_id[:12],
-    )
+                    )
                     return None
 
                 # Restore step counter
@@ -572,13 +567,12 @@ class TransactionalToTCheckpointer:
 
                 self._stats["restores_succeeded"] += 1
                 logger.info(
-                    "[UNIFIED-007] DuckDB checkpoint restored: sprint=%s step=%d "
-                    "nodes=%d ts=%.0f",
+                    "[UNIFIED-007] DuckDB checkpoint restored: sprint=%s step=%d nodes=%d ts=%.0f",
                     self._sprint_id[:12],
                     step,
                     len(nodes),
                     ts,
-    )
+                )
                 return (step, nodes, stored_checksum)
 
             except asyncio.CancelledError:
@@ -588,7 +582,7 @@ class TransactionalToTCheckpointer:
                     "[UNIFIED-007] Restore failed: sprint=%s error=%s",
                     self._sprint_id[:12],
                     exc,
-    )
+                )
                 return None
 
     async def cleanup(self) -> bool:
@@ -596,7 +590,7 @@ class TransactionalToTCheckpointer:
         try:
             ok = await self._store.async_delete_tot_checkpoints(
                 sprint_id=self._sprint_id,
-    )
+            )
             # Also cleanup filesystem fallback
             if self._fs_fallback:
                 self._fs_cleanup()
@@ -607,7 +601,7 @@ class TransactionalToTCheckpointer:
                 logger.debug(
                     "[UNIFIED-005] Checkpoints cleaned up: sprint=%s",
                     self._sprint_id[:12],
-    )
+                )
             return ok
         except Exception:  # noqa: BLE001
             return False
@@ -638,27 +632,24 @@ class TransactionalToTCheckpointer:
                 max_dbs=_LMDB_MAX_DBS,
                 sync=True,  # M1 NAND — fsync on every write for crash safety
                 metasync=True,
-    )
+            )
 
             self._lmdb_nodes_db = self._lmdb_env.open_db(b"nodes")
             self._lmdb_meta_db = self._lmdb_env.open_db(b"meta")
 
             logger.debug(
-                "[UNIFIED-005] LMDB incremental layer initialized: "
-                "path=%s map_size=%d",
+                "[UNIFIED-005] LMDB incremental layer initialized: path=%s map_size=%d",
                 self._lmdb_path,
                 _LMDB_MAP_SIZE,
-    )
+            )
         except ImportError:
-            logger.debug(
-                "[UNIFIED-005] lmdb not available — incremental layer disabled"
-    )
+            logger.debug("[UNIFIED-005] lmdb not available — incremental layer disabled")
             self._lmdb_enabled = False
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "[UNIFIED-005] LMDB init failed: %s — incremental layer disabled",
                 exc,
-    )
+            )
             self._lmdb_enabled = False
 
     def _close_lmdb(self) -> None:
@@ -710,8 +701,9 @@ class TransactionalToTCheckpointer:
             if len(raw) > 65536:
                 logger.debug(
                     "[UNIFIED-007] Node %s too large (%d bytes) — skipping",
-                    node_id, len(raw),
-    )
+                    node_id,
+                    len(raw),
+                )
                 self._stats["incremental_failures"] += 1
                 return False
 
@@ -720,20 +712,19 @@ class TransactionalToTCheckpointer:
                     node_id.encode("utf-8"),
                     raw,
                     db=self._lmdb_nodes_db,
-    )
-                # Update metadata: last_modified timestamp
+                )
                 txn.put(
                     b"last_modified",
                     str(time.time()).encode("utf-8"),
                     db=self._lmdb_meta_db,
-    )
+                )
                 # UNIFIED-007: also save step counter for recovery
                 if step is not None:
                     txn.put(
                         b"step",
                         str(step).encode("utf-8"),
                         db=self._lmdb_meta_db,
-    )
+                    )
 
             self._stats["incremental_writes"] += 1
             return True
@@ -741,8 +732,9 @@ class TransactionalToTCheckpointer:
         except Exception as exc:  # noqa: BLE001 — fail-soft in hot path
             logger.debug(
                 "[UNIFIED-007] Incremental checkpoint failed for %s: %s",
-                node_id, exc,
-    )
+                node_id,
+                exc,
+            )
             self._stats["incremental_failures"] += 1
             return False
 
@@ -769,12 +761,12 @@ class TransactionalToTCheckpointer:
                         node_id = key.decode("utf-8")
                         node_data = orjson.loads(value)
                         nodes[node_id] = node_data
-                    except (orjson.JSONDecodeError, UnicodeDecodeError):
+                    except orjson.JSONDecodeError, UnicodeDecodeError:
                         continue
             logger.debug(
                 "[UNIFIED-005] Read %d nodes from LMDB incremental store",
                 len(nodes),
-    )
+            )
             return nodes if nodes else None
         except Exception as exc:  # noqa: BLE001
             logger.debug("[UNIFIED-005] LMDB read failed: %s", exc)
@@ -797,15 +789,15 @@ class TransactionalToTCheckpointer:
 
         try:
             import psutil
-            rss_gib = psutil.Process().memory_info().rss / (1024 ** 3)
+
+            rss_gib = psutil.Process().memory_info().rss / (1024**3)
             if rss_gib >= _MEMORY_THROTTLE_RSS_GIB:
                 self._stats["memory_throttles"] += 1
                 logger.warning(
-                    "[UNIFIED-005] Memory pressure: RSS=%.2f GiB ≥ %.1f GiB "
-                    "— skipping checkpoint",
+                    "[UNIFIED-005] Memory pressure: RSS=%.2f GiB ≥ %.1f GiB — skipping checkpoint",
                     rss_gib,
                     _MEMORY_THROTTLE_RSS_GIB,
-    )
+                )
                 return False
             return True
         except ImportError:
@@ -838,7 +830,7 @@ class TransactionalToTCheckpointer:
             logger.warning(
                 "[UNIFIED-007] Signal %d received — triggering emergency checkpoint",
                 signum,
-    )
+            )
             # Set async event for cooperative shutdown
             checkpointer_ref._shutdown_event.set()
             # Also wake the periodic loop so it can perform emergency shutdown
@@ -859,7 +851,7 @@ class TransactionalToTCheckpointer:
                             time.time(),
                             checksum,
                             checkpointer_ref._query_hash,
-    )
+                        )
                         if ok:
                             # UNIFIED-007: force WAL checkpoint for SIGKILL durability
                             try:
@@ -868,12 +860,11 @@ class TransactionalToTCheckpointer:
                                 pass
                             checkpointer_ref._stats["emergency_checkpoints"] += 1
                             logger.info(
-                                "[UNIFIED-007] Emergency checkpoint written: "
-                                "sprint=%s step=%d nodes=%d (WAL forced)",
+                                "[UNIFIED-007] Emergency checkpoint written: sprint=%s step=%d nodes=%d (WAL forced)",
                                 checkpointer_ref._sprint_id[:12],
                                 checkpointer_ref._step,
                                 len(checkpointer_ref._nodes_ref),
-    )
+                            )
             except Exception:  # noqa: BLE001 — best-effort in signal context
                 pass
 
@@ -886,13 +877,9 @@ class TransactionalToTCheckpointer:
             # SIGINT is handled by asyncio event loop — we use shutdown_event
             # for cooperative handling; KeyboardInterrupt is still raised
             self._signal_handlers_registered = True
-            logger.debug(
-                "[UNIFIED-005] Signal handlers registered: SIGTERM → emergency checkpoint"
-    )
+            logger.debug("[UNIFIED-005] Signal handlers registered: SIGTERM → emergency checkpoint")
         except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "[UNIFIED-005] Signal handler registration failed: %s", exc
-    )
+            logger.debug("[UNIFIED-005] Signal handler registration failed: %s", exc)
 
     async def _emergency_shutdown(self) -> bool:
         """
@@ -908,7 +895,7 @@ class TransactionalToTCheckpointer:
                 ok = await self.checkpoint(
                     nodes=self._nodes_ref,
                     step=self._step,
-    )
+                )
                 if ok:
                     self._stats["emergency_checkpoints"] += 1
                 return ok
@@ -958,7 +945,7 @@ class TransactionalToTCheckpointer:
             await loop.run_in_executor(
                 self._store.executor,
                 self._store._sync_force_wal_checkpoint,
-    )
+            )
             self._stats["wal_checkpoints_forced"] += 1
         except asyncio.CancelledError:
             raise
@@ -1001,21 +988,18 @@ class TransactionalToTCheckpointer:
                 await asyncio.wait_for(
                     self._wake_event.wait(),
                     timeout=self._interval_s,
-    )
+                )
                 # Non-timeout: _wake_event was set externally (signal handler).
                 # Clear it so the next iteration sleeps for the full interval.
                 self._wake_event.clear()
-            except asyncio.TimeoutError:  # noqa: BLE001
+            except TimeoutError:  # noqa: BLE001
                 pass  # Normal: interval elapsed, time to checkpoint
             except asyncio.CancelledError:
                 break
 
             # UNIFIED-005: Check emergency shutdown event
             if self._shutdown_event.is_set():
-                logger.info(
-                    "[UNIFIED-007] Shutdown event detected — performing "
-                    "emergency checkpoint"
-    )
+                logger.info("[UNIFIED-007] Shutdown event detected — performing emergency checkpoint")
                 await self._emergency_shutdown()
                 break
 
@@ -1043,7 +1027,7 @@ class TransactionalToTCheckpointer:
                 suffix=".tmp",
                 prefix=f"tot_{self._sprint_id[:8]}_",
                 dir=str(self._fs_dir),
-    )
+            )
             try:
                 os.write(fd, raw)
                 os.fsync(fd)
@@ -1055,7 +1039,7 @@ class TransactionalToTCheckpointer:
                 "[UNIFIED-005] FS fallback written: %s checksum=%s",
                 target.name,
                 checksum[:16],
-    )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[UNIFIED-005] FS fallback write failed: %s", exc)
 
@@ -1071,7 +1055,7 @@ class TransactionalToTCheckpointer:
                 # PRM-1 FIX: Use lambda instead of attrgetter()() which was calling attrgetter itself
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
-    )
+            )
             if not candidates:
                 return None
             latest = candidates[0]
@@ -1082,11 +1066,10 @@ class TransactionalToTCheckpointer:
             if envelope.get("v") not in (1, 2):
                 return None
             nodes = envelope.get("nodes", {})
-            # Extract step from filename
             try:
                 step_str = latest.stem.split("_step")[-1]
                 step = int(step_str)
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 step = 0
             return (step, nodes, computed)
         except Exception:  # noqa: BLE001

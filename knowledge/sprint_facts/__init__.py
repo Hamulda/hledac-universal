@@ -26,14 +26,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .canonical_finding import (  # noqa: E402
+    ActivationResult,
     CanonicalFinding,
     FindingQualityDecision,
-    ActivationResult,
 )
 from .source_attribution import (  # noqa: E402
     SourceHitLog,
-    SprintScorecard,
     SprintDelta,
+    SprintScorecard,
 )
 
 __all__ = [

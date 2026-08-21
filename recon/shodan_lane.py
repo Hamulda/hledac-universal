@@ -17,27 +17,23 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-import asyncio
 import logging
 import os
 import time
-from typing import Any
 
 import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.rate_limiters import get_limiter
-
-from hledac.universal.security.secrets_scrubber import redact_shodan_key, safe_error_log
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
 from hledac.universal.recon.search_lane_utils import (
     apply_jitter,
     circuit_breaker_check,
-    http_status_to_failure_kind,
     record_failure,
     record_success,
 )
+from hledac.universal.security.secrets_scrubber import safe_error_log
+from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +42,7 @@ RATE_LIMIT_KEY = "shodan_api"
 
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Gaussian sigma = 0.8s gives decorrelated inter-request intervals.
-_SHODAN_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_SHODAN_JITTER_SIGMA_S', '0.8'))
+_SHODAN_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_SHODAN_JITTER_SIGMA_S", "0.8"))
 
 # F266: Circuit breaker — domain for Shodan API
 _CB_DOMAIN = "api.shodan.io"
@@ -56,7 +52,9 @@ def _get_api_key() -> str | None:
     return os.environ.get("SHODAN_API_KEY") or None
 
 
-def _build_findings(query: str, raw_results: list[dict], ts_now: float, api_key: str | None = None) -> list[CanonicalFinding]:
+def _build_findings(
+    query: str, raw_results: list[dict], ts_now: float, api_key: str | None = None
+) -> list[CanonicalFinding]:
     """Build CanonicalFinding list from normalized Shodan results.
 
     Args:

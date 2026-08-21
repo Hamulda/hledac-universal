@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: max_queue_size enforced
 """
 
-
-
 from typing import Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable

@@ -16,7 +16,6 @@ import multiprocessing as mp
 import os
 import queue
 import sys
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Standalone module that simulates global_scheduler._TASK_REGISTRY
@@ -26,7 +25,7 @@ _TASK_REGISTRY = {}
 _MAX_TASK_REGISTRY = 1000
 
 
-def register_task(name, func):
+def register_task(name, func) -> None:
     global _TASK_REGISTRY
     if name in _TASK_REGISTRY:
         del _TASK_REGISTRY[name]
@@ -44,7 +43,8 @@ def get_task(name):
 # Child worker functions (must be picklable / importable at top level)
 # ---------------------------------------------------------------------------
 
-def _child_check_registry(child_conn, task_name_check):
+
+def _child_check_registry(child_conn, task_name_check) -> None:
     """
     Child process entry point via spawn.
     Reloads this module's state to see if _TASK_REGISTRY was inherited.
@@ -54,27 +54,31 @@ def _child_check_registry(child_conn, task_name_check):
     # It only inherits what is passed via arguments/pipes, NOT parent's memory.
     # So _TASK_REGISTRY will be empty ({}).
     import __main__
+
     main_dict = dir(__main__)
-    '_TASK_REGISTRY' in main_dict and main_dict
+    "_TASK_REGISTRY" in main_dict and main_dict
 
     # Re-import THIS module in child to check state
     import importlib
 
     import test_global_scheduler_spawn_registry as self_module
+
     importlib.reload(self_module)
 
     registry_keys = list(self_module._TASK_REGISTRY.keys())
     get_result = self_module.get_task(task_name_check)
 
-    child_conn.send({
-        "registry_keys": registry_keys,
-        "get_task_result": get_result,
-        "child_pid": pid,
-        "success": True,
-    })
+    child_conn.send(
+        {
+            "registry_keys": registry_keys,
+            "get_task_result": get_result,
+            "child_pid": pid,
+            "success": True,
+        }
+    )
 
 
-def _child_simulate_worker(signal_queue, result_queue, task_name_check):
+def _child_simulate_worker(signal_queue, result_queue, task_name_check) -> None:
     """
     Simulate GlobalPriorityScheduler._worker_loop behavior:
     receive job from queue, look up task from _TASK_REGISTRY.
@@ -92,41 +96,47 @@ def _child_simulate_worker(signal_queue, result_queue, task_name_check):
         import importlib
 
         import test_global_scheduler_spawn_registry as self_module
+
         importlib.reload(self_module)
 
         func = self_module.get_task(task_name)
-        result_queue.put({
-            "job_id": job_id,
-            "task_found": func is not None,
-            "registry_keys": list(self_module._TASK_REGISTRY.keys()),
-            "child_pid": pid,
-            "success": True,
-        })
+        result_queue.put(
+            {
+                "job_id": job_id,
+                "task_found": func is not None,
+                "registry_keys": list(self_module._TASK_REGISTRY.keys()),
+                "child_pid": pid,
+                "success": True,
+            }
+        )
     except Exception as e:
-        result_queue.put({
-            "error": str(e),
-            "child_pid": pid,
-            "success": False,
-        })
+        result_queue.put(
+            {
+                "error": str(e),
+                "child_pid": pid,
+                "success": False,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_spawn_registry_empty():
     """Core test: spawn child, check if _TASK_REGISTRY is empty."""
     print("\n=== Test: SPAWN child _TASK_REGISTRY state ===")
 
     # Register something in parent
-    def parent_func():
+    def parent_func() -> int:
         return 42
 
     register_task("parent_task", parent_func)
     print(f"  Parent PID {os.getpid()}: registered 'parent_task'")
     print(f"  Parent _TASK_REGISTRY: {list(_TASK_REGISTRY.keys())}")
 
-    ctx = mp.get_context('spawn')
+    ctx = mp.get_context("spawn")
     parent_conn, child_conn = mp.Pipe()
 
     child = ctx.Process(target=_child_check_registry, args=(child_conn, "parent_task"))
@@ -164,7 +174,7 @@ def test_spawn_worker_behavioral():
     print(f"  Parent PID {os.getpid()}: registered 'behavioral_task'")
     print(f"  Parent _TASK_REGISTRY: {list(_TASK_REGISTRY.keys())}")
 
-    ctx = mp.get_context('spawn')
+    ctx = mp.get_context("spawn")
     signal_q = ctx.Queue()
     result_q = ctx.Queue()
 
@@ -196,14 +206,14 @@ def test_fork_registry_inherited():
     """Fork context: child should inherit parent's _TASK_REGISTRY."""
     print("\n=== Test: FORK child _TASK_REGISTRY state ===")
 
-    def parent_func():
+    def parent_func() -> int:
         return 42
 
     register_task("fork_task", parent_func)
     print(f"  Parent PID {os.getpid()}: registered 'fork_task'")
     print(f"  Parent _TASK_REGISTRY: {list(_TASK_REGISTRY.keys())}")
 
-    ctx = mp.get_context('fork')
+    ctx = mp.get_context("fork")
     parent_conn, child_conn = mp.Pipe()
 
     child = ctx.Process(target=_child_check_registry, args=(child_conn, "fork_task"))

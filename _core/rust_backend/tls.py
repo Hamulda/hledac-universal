@@ -20,10 +20,8 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import parallel_ok
-from _core._util import aclose
 
 if TYPE_CHECKING:
-    from hledac_rust_extensions import hledac_rust_extensions
 
 # Availability flag — set once at module load
 _TLS13_RUST_AVAILABLE = False
@@ -31,19 +29,12 @@ _TLS13_RUST_AVAILABLE = False
 try:
     from hledac.universal.rust_extensions import tls13 as _tls13_rust
 
-    # Check TLS13_AVAILABLE constant from Rust module
     try:
         _TLS13_RUST_AVAILABLE = getattr(_tls13_rust, "TLS13_AVAILABLE", False)
     except Exception:
         _TLS13_RUST_AVAILABLE = False
 except ImportError:
     _tls13_rust = None  # type: ignore[assignment]
-
-
-# =============================================================================
-# TLS Domain
-# =============================================================================
-
 
 class _RustTlsDomain:
     """Rust-backed TLS 1.3 fingerprinting via rustls.
@@ -91,7 +82,6 @@ class _RustTlsDomain:
         """Batch JA4 for multiple hosts in parallel (max 8 concurrent)."""
         return self._ext.batch_ja4(hosts, snis=snis, alpn=alpn, timeout_ms=timeout_ms)
 
-
 class _PythonTlsDomain:
     """Python TLS fingerprinting via stdlib ssl.
 
@@ -125,18 +115,15 @@ class _PythonTlsDomain:
                 await writer.wait_closed()
                 return _make_error_result(host, port, "No SSL socket")
 
-            # Get TLS version
             tls_version = getattr(ssl_socket, "version", lambda: "unknown")()
             if callable(tls_version):
                 tls_version = "unknown"
 
-            # Get cipher suite
             cipher = getattr(ssl_socket, "cipher", lambda: None)()
             if callable(cipher):
                 cipher = None
             server_ciphers = [cipher[0]] if cipher else []
 
-            # Get ALPN
             alpn_result = None
             if hasattr(ssl_socket, "selected_alpn_protocol"):
                 try:
@@ -197,7 +184,6 @@ class _PythonTlsDomain:
         results = await parallel_ok(*tasks, label="batch_ja4")
         return [r for r in results if isinstance(r, dict)]
 
-
 def _make_error_result(host: str, port: int, error: str) -> dict[str, Any]:
     """Create error result dict."""
     return {
@@ -212,7 +198,6 @@ def _make_error_result(host: str, port: int, error: str) -> dict[str, Any]:
         "cert_verified": False,
         "error": error,
     }
-
 
 def get_tls_domain(ext: object | None) -> _RustTlsDomain | _PythonTlsDomain:
     """Factory: return Rust or Python TlsDomain based on ext availability."""

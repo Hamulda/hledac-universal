@@ -36,9 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from collections.abc import Callable
 import aiosqlite
-from _core._util import aclose
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
 
 def _json_encode(obj: Any) -> str:
@@ -365,7 +363,6 @@ def dlq_catch(source: str, serialize_payload: bool=True, metadata_extractor: Opt
 
     def decorator(func: Callable) -> Callable:
         import functools
-        import inspect
         is_async = asyncio.iscoroutinefunction(func)
         if is_async:
 

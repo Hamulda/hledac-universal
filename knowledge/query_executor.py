@@ -67,7 +67,9 @@ class DuckDBQueryExecutor:
         "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
     )
     _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
-    _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json"
+    _SQL_SELECT_SHADOW_FINDINGS = (
+        "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json"
+    )
     _SQL_INSERT_RESEARCH_SESSION = "INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     _SQL_INSERT_ENTITY_OBSERVATION = "INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     _SQL_SELECT_RESEARCH_SESSIONS_BY_SPRINT = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
@@ -235,17 +237,21 @@ class DuckDBQueryExecutor:
             findings = self._enrich_findings_with_claims(findings)
 
         rows = [
-            [r["id"], r["query"], r["source_type"], r["confidence"], r.get("ts"), r.get("provenance_json"), r.get("claims_json")]
+            [
+                r["id"],
+                r["query"],
+                r["source_type"],
+                r["confidence"],
+                r.get("ts"),
+                r.get("provenance_json"),
+                r.get("claims_json"),
+            ]
             for r in findings
         ]
         conn = self._conn()
         if conn is None:
             return 0
 
-        # R2: DuckDBAppender path for batches ≤ 500 rows — bypasses SQL parser,
-        # direct columnar write. ~2-5× faster than executemany for small batches.
-        # For larger batches, the Arrow register() path in insert_findings_bulk_arrow
-        # is used by the caller; this method is the legacy shadow path.
         _APPENDER_THRESHOLD = 500
         if len(rows) <= _APPENDER_THRESHOLD:
             result = self._insert_via_appender(conn, rows)
@@ -280,6 +286,7 @@ class DuckDBQueryExecutor:
         M1 8GB safe: temp table is session-scoped, dropped immediately after.
         """
         import uuid as _uuid
+
         _TEMP_TABLE = f"_appender_bulk_{_uuid.uuid7().hex[:8]}"
         try:
             # Create temp table with same schema as canonical_findings (subset of columns)
@@ -344,7 +351,14 @@ class DuckDBQueryExecutor:
         """
         # Filter findings that have text to process
         texts_data = [
-            (i, r.get("payload_text") or r.get("text", ""), r.get("title", ""), r.get("query", ""), r.get("source_type", "PUBLIC"), "finding")
+            (
+                i,
+                r.get("payload_text") or r.get("text", ""),
+                r.get("title", ""),
+                r.get("query", ""),
+                r.get("source_type", "PUBLIC"),
+                "finding",
+            )
             for i, r in enumerate(findings)
             if r.get("payload_text") or r.get("text")
         ]
@@ -363,6 +377,7 @@ class DuckDBQueryExecutor:
             # Lazy import — claims_extraction loaded only when needed
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             batch_extract_claims_python = rust.raw.batch_extract_claims_python  # type: ignore[assignment]
 
             # PyO3 zero-copy: single GIL acquisition for entire batch
@@ -376,7 +391,17 @@ class DuckDBQueryExecutor:
             for i, finding_idx in enumerate(indices):
                 if i < len(claims_result):
                     claim = claims_result[i]
-                    claims_json = orjson.dumps([{"text": claim[0], "polarity": claim[1], "confidence": claim[2], "source": claim[3], "evidence_type": claim[4]}])
+                    claims_json = orjson.dumps(
+                        [
+                            {
+                                "text": claim[0],
+                                "polarity": claim[1],
+                                "confidence": claim[2],
+                                "source": claim[3],
+                                "evidence_type": claim[4],
+                            }
+                        ]
+                    )
                     findings[finding_idx]["claims_json"] = claims_json
         except Exception as e:  # noqa: BLE001 — fail-soft: claims extraction is best-effort
             _logger.debug(f"[F350M-R] Claims extraction failed: {type(e).__name__}: {e}")
@@ -547,7 +572,6 @@ class DuckDBQueryExecutor:
         _TEMP_TABLE = f"_copy_arrow_batch_{_uuid.uuid7().hex[:8]}"
         try:
             with self._wal_delete_mode():
-                # Step 1: Create temp table with same schema as canonical_findings
                 conn.execute(f"""
                     CREATE TEMP TABLE {_TEMP_TABLE} (
                         id VARCHAR, query VARCHAR, source_type VARCHAR,
@@ -556,12 +580,10 @@ class DuckDBQueryExecutor:
                         claims_json VARCHAR
                     )
                 """)
-                # Step 2: COPY FROM Arrow — zero-copy columnar ingestion
                 conn.execute(
                     f"COPY {_TEMP_TABLE} FROM ? (FORMAT 'arrow')",
                     [table],
                 )
-                # Step 3: Atomic move with conflict handling
                 conn.execute(f"""
                     INSERT INTO canonical_findings
                         (id, query, source_type, confidence, ts,
@@ -573,9 +595,7 @@ class DuckDBQueryExecutor:
                 """)
                 return (n_rows, None)
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            _logger.error(
-                f"[ISSUE-16 Arrow] COPY FROM bulk insert failed: {type(e).__name__}: {e}"
-            )
+            _logger.error(f"[ISSUE-16 Arrow] COPY FROM bulk insert failed: {type(e).__name__}: {e}")
             return (0, "duckdb_error")
         finally:
             try:
@@ -616,9 +636,10 @@ class DuckDBQueryExecutor:
         M1 8GB safety: temp file uses zstd level 1 (fast, low RAM), deleted immediately
         after COPY FROM succeeds or fails.
         """
-        from pathlib import Path as _Path
-        import tempfile as _tempfile
         import os as _os
+        import tempfile as _tempfile
+        from pathlib import Path as _Path
+
         import pyarrow.parquet as _pq
 
         if table is None:
@@ -638,6 +659,7 @@ class DuckDBQueryExecutor:
         if _resolve_dir is None:
             try:
                 from hledac.universal.utils.paths import get_data_dir
+
                 _resolve_dir = get_data_dir() / "tmp"
                 _resolve_dir.mkdir(parents=True, exist_ok=True)
             except Exception:  # noqa: BLE001 — best-effort; non-critical fallback
@@ -646,6 +668,7 @@ class DuckDBQueryExecutor:
         parquet_path = None
         try:
             import uuid as _uuid
+
             parquet_path = _Path(_resolve_dir) / f"finding_batch_{_uuid.uuid7().hex[:12]}.parquet"
 
             # Write Parquet: zstd level 1 — fast compression, low RAM, M1-friendly
@@ -660,9 +683,7 @@ class DuckDBQueryExecutor:
             with self._wal_delete_mode():
                 # DuckDB COPY FROM uses internal parallelism for Parquet I/O.
                 # ON CONFLICT (id) DO NOTHING handles PK collisions.
-                conn.execute(
-                    f"COPY canonical_findings FROM '{parquet_path}' (FORMAT PARQUET)"
-                )
+                conn.execute(f"COPY canonical_findings FROM '{parquet_path}' (FORMAT PARQUET)")
                 # COPY FROM doesn't return row count like MERGE; use num_rows from table
                 # minus any PK conflicts (we trust ON CONFLICT DO NOTHING semantics
                 # which DuckDB COPY FROM respects via unique index enforcement)

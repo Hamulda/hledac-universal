@@ -18,14 +18,13 @@ import hashlib
 import logging
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from _core.lock_registry import LockCategory, auto_register
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +70,7 @@ def _clear_warc_globals() -> None:
 
 class WarcWriteResult(Struct, frozen=True, kw_only=True):
     """ISO 28500 WARC record metadata."""
+
     record_id: str = ""
     byte_offset: int = 0
     byte_length: int = 0
@@ -97,16 +97,17 @@ class WARCWriter:
     - Any write error → logs and continues (never blocks sprint)
     - Rotation is transparent — callers just write, rotation is automatic
     """
-    __slots__ = ('_path', '_file', '_current_size', '_max_size', '_record_counter', '_lock', '_logger', '_path_history')
+
+    __slots__ = ("_path", "_file", "_current_size", "_max_size", "_record_counter", "_lock", "_logger", "_path_history")
     WARC_VERSION = "WARC/1.1"
     MAX_WARC_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
     _MIN_PAYLOAD_SIZE = 50
 
     def __init__(self, path: Path, max_size_gb: float = 10.0) -> None:
-        self._path = Path(str(path).replace('.jsonl', '').replace('.enc', ''))
-        if not str(self._path).endswith('.warc.gz'):
+        self._path = Path(str(path).replace(".jsonl", "").replace(".enc", ""))
+        if not str(self._path).endswith(".warc.gz"):
             self._path = self._path.parent / f"{self._path.stem}.warc.gz"
-        self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+        self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
         self._current_size = self._path.stat().st_size if self._path.exists() else 0
         self._max_size = int(max_size_gb * 1024 * 1024 * 1024)
         self._record_counter = 0
@@ -147,7 +148,7 @@ class WARCWriter:
                     f"WARC-Identified-Payload-Type: application/http;msgtype=response\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-    )
+                )
 
                 request_header = (
                     f"{self.WARC_VERSION}\r\n"
@@ -158,13 +159,13 @@ class WARCWriter:
                     f"Content-Length: {len(http_request)}\r\n"
                     f"Content-Type: application/http;msgtype=request\r\n"
                     f"\r\n"
-    )
+                )
 
-                request_block = request_header.encode('utf-8', errors='replace') + http_request + b"\r\n"
+                request_block = request_header.encode("utf-8", errors="replace") + http_request + b"\r\n"
                 self._file.write(request_block)
                 self._current_size += len(request_block)
 
-                response_block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
+                response_block = header.encode("utf-8", errors="replace") + http_response + b"\r\n"
                 self._file.write(response_block)
                 self._current_size += len(response_block)
 
@@ -178,15 +179,22 @@ class WARCWriter:
                 _http_status = self._parse_http_status(http_response)
 
                 return WarcWriteResult(
-                    url=url, timestamp=timestamp.isoformat() + 'Z', record_id=record_id,
-                    byte_offset=byte_offset, byte_length=byte_length, warc_path=_current_warc_path,
-                    warc_type='response', payload_digest=payload_digest, status=_http_status,
-                    success=True, compressed_offset=compressed_offset, compressed_size=compressed_size,
-    )
+                    url=url,
+                    timestamp=timestamp.isoformat() + "Z",
+                    record_id=record_id,
+                    byte_offset=byte_offset,
+                    byte_length=byte_length,
+                    warc_path=_current_warc_path,
+                    warc_type="response",
+                    payload_digest=payload_digest,
+                    status=_http_status,
+                    success=True,
+                    compressed_offset=compressed_offset,
+                    compressed_size=compressed_size,
+                )
         except Exception as e:
             self._logger.debug("warc_write_failed", url=url, error=str(e))
             return None
-
 
     def write_raw(
         self,
@@ -224,9 +232,9 @@ class WARCWriter:
                     f"WARC-Payload-Digest: {payload_digest}\r\n"
                     f"WARC-Filename: {self._path.name}\r\n"
                     f"\r\n"
-    )
+                )
 
-                block = header.encode('utf-8', errors='replace') + http_response + b"\r\n"
+                block = header.encode("utf-8", errors="replace") + http_response + b"\r\n"
                 self._file.write(block)
                 self._current_size += len(block)
                 self._file.flush()
@@ -236,11 +244,19 @@ class WARCWriter:
                     self._rotate_unlocked()
 
                 return WarcWriteResult(
-                    url=url, timestamp=timestamp.isoformat() + 'Z', record_id=record_id,
-                    byte_offset=byte_offset, byte_length=len(block), warc_path=_current_warc_path,
-                    warc_type='response', payload_digest=payload_digest, status=0,
-                    success=True, compressed_offset=compressed_offset, compressed_size=compressed_size,
-    )
+                    url=url,
+                    timestamp=timestamp.isoformat() + "Z",
+                    record_id=record_id,
+                    byte_offset=byte_offset,
+                    byte_length=len(block),
+                    warc_path=_current_warc_path,
+                    warc_type="response",
+                    payload_digest=payload_digest,
+                    status=0,
+                    success=True,
+                    compressed_offset=compressed_offset,
+                    compressed_size=compressed_size,
+                )
         except Exception as e:
             self._logger.debug("warc_write_raw_failed", url=url, error=str(e))
             return None
@@ -248,9 +264,9 @@ class WARCWriter:
     def _parse_http_status(self, http_response: bytes) -> int:
         """Extract HTTP status code from response."""
         try:
-            first_line = http_response[:http_response.find(b'\r\n')].decode('utf-8', errors='replace')
-            if first_line.startswith('HTTP/'):
-                parts = first_line.split(' ', 2)
+            first_line = http_response[: http_response.find(b"\r\n")].decode("utf-8", errors="replace")
+            if first_line.startswith("HTTP/"):
+                parts = first_line.split(" ", 2)
                 if len(parts) >= 2:
                     return int(parts[1])
         except Exception:
@@ -266,9 +282,9 @@ class WARCWriter:
             new_path = self._path.parent / f"{self._path.stem}_{idx}.warc.gz"
             self._path = new_path
             self._path_history.append(new_path)
-            self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+            self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
         except Exception:
-            self._file = gzip.GzipFile(self._path, 'ab', compresslevel=6)
+            self._file = gzip.GzipFile(self._path, "ab", compresslevel=6)
 
     def close(self) -> None:
         """Close the WARC writer."""
@@ -305,8 +321,12 @@ class WARCArchiver:
     """
 
     __slots__ = (
-        '_enabled', '_warc_writer', '_warc_path', '_warc_paths',
-        '_warc_data_lock', '_warc_snippets',
+        "_enabled",
+        "_warc_writer",
+        "_warc_path",
+        "_warc_paths",
+        "_warc_data_lock",
+        "_warc_snippets",
     )
 
     def __init__(self, enabled: bool = True) -> None:
@@ -341,7 +361,6 @@ class WARCArchiver:
             self._build_warc_snippet(result, http_response)
         return result
 
-
     def archive_http_response(
         self,
         url: str,
@@ -364,24 +383,25 @@ class WARCArchiver:
     def _build_warc_snippet(self, prov: WarcWriteResult, http_response: bytes) -> None:
         """Build dashboard-ready snippet from WARC record."""
         try:
-            _body_start = http_response.find(b'\r\n\r\n')
-            _raw_headers = http_response[:_body_start] if _body_start >= 0 else b''
-            _body_bytes = http_response[_body_start + 4:] if _body_start >= 0 else http_response
+            _body_start = http_response.find(b"\r\n\r\n")
+            _raw_headers = http_response[:_body_start] if _body_start >= 0 else b""
+            _body_bytes = http_response[_body_start + 4 :] if _body_start >= 0 else http_response
 
             _status = prov.status or 0
             if _status == 0:
-                _header_text = _raw_headers.decode('utf-8', errors='replace')
-                _first_line = _header_text.split('\r\n')[0] if _header_text else ''
-                if _first_line.startswith('HTTP/'):
-                    _parts = _first_line.split(' ', 2)
+                _header_text = _raw_headers.decode("utf-8", errors="replace")
+                _first_line = _header_text.split("\r\n")[0] if _header_text else ""
+                if _first_line.startswith("HTTP/"):
+                    _parts = _first_line.split(" ", 2)
                     if len(_parts) >= 2:
                         _status = int(_parts[1])
 
-            _text_content = _body_bytes.decode('utf-8', errors='replace')
+            _text_content = _body_bytes.decode("utf-8", errors="replace")
 
             _html_content: str | None = None
-            if _text_content.strip().startswith(('<', '<?', '<!')):
+            if _text_content.strip().startswith(("<", "<?", "<!")):
                 try:
+
                     class _TextExtractor(HTMLParser):
                         def __init__(self) -> None:
                             super().__init__()
@@ -392,23 +412,23 @@ class WARCArchiver:
 
                     _parser = _TextExtractor()
                     _parser.feed(_text_content)
-                    _html_content = '\n'.join(_parser._lines)[:5000]
+                    _html_content = "\n".join(_parser._lines)[:5000]
                 except Exception:
                     _html_content = _text_content[:5000]
 
             _snippet = {
-                'url': prov.url,
-                'timestamp': prov.timestamp,
-                'status': _status,
-                'html': _html_content or '',
-                'text': _text_content[:5000],
-                'record_id': prov.record_id,
-                'byte_offset': prov.byte_offset,
-                'byte_length': prov.byte_length,
-                'warc_path': prov.warc_path,
-                'payload_digest': prov.payload_digest,
-                'compressed_offset': prov.compressed_offset,
-                'compressed_size': prov.compressed_size,
+                "url": prov.url,
+                "timestamp": prov.timestamp,
+                "status": _status,
+                "html": _html_content or "",
+                "text": _text_content[:5000],
+                "record_id": prov.record_id,
+                "byte_offset": prov.byte_offset,
+                "byte_length": prov.byte_length,
+                "warc_path": prov.warc_path,
+                "payload_digest": prov.payload_digest,
+                "compressed_offset": prov.compressed_offset,
+                "compressed_size": prov.compressed_size,
             }
 
             with self._warc_data_lock:

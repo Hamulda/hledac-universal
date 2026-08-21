@@ -1,37 +1,40 @@
 """
 Fast explainer – delta‑evidence na základě odebírání hran.
 """
+
 import logging
 
 from hledac.universal._core.resource_governor import ResourceGovernor
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class FastExplainer:
     """Fast explainer pro vysvětlení cest v grafu pomocí delta evidence."""
-    __slots__ = tuple(('_cache', 'governor', 'graph_rag'))
 
-    def __init__(self, graph_rag, governor: ResourceGovernor):
+    __slots__ = ("_cache", "governor", "graph_rag")
+
+    def __init__(self, graph_rag, governor: ResourceGovernor) -> None:
         self.graph_rag = graph_rag
         self.governor = governor
         self._cache = {}
 
-    async def explain_path(self, start_node: str, end_node: str, max_hops: int=3) -> list[tuple[str, str, float]]:
+    async def explain_path(self, start_node: str, end_node: str, max_hops: int = 3) -> list[tuple[str, str, float]]:
         """
         Vysvětlí cestu mezi uzly – vrátí seznam hran (source, target) s vahami důležitosti.
         """
         path = await self.graph_rag.multi_hop_search(start_node, end_node, max_hops)
-        if not path or 'nodes' not in path or len(path['nodes']) < 2:
+        if not path or "nodes" not in path or len(path["nodes"]) < 2:
             return []
-        nodes = path['nodes']
-        edges = list(zip(nodes, nodes[1:]))
+        nodes = path["nodes"]
+        edges = list(zip(nodes, nodes[1:], strict=False))
         tasks = [self._delta_for_edge(edge, start_node, end_node, max_hops) for edge in edges]
-        results = await parallel_ok(*tasks, label='fast:37')
+        results = await parallel_ok(*tasks, label="fast:37")
         important_edges = []
         for edge, res in zip(edges, results, strict=False):
             if isinstance(res, Exception):
-                logger.warning(f'Chyba při výpočtu delta pro {edge}: {res}')
+                logger.warning(f"Chyba při výpočtu delta pro {edge}: {res}")
                 continue
             if res > 0.1:
                 important_edges.append((edge[0], edge[1], res))
@@ -52,17 +55,19 @@ class FastExplainer:
     async def _score_path(self, start: str, end: str, max_hops: int) -> float:
         """Ohodnotí cestu – čím kratší, tím lepší. Vrací skóre 0..1."""
         path = await self.graph_rag.multi_hop_search(start, end, max_hops)
-        if not path or 'nodes' not in path:
+        if not path or "nodes" not in path:
             return 0.0
-        length = len(path['nodes']) - 1
+        length = len(path["nodes"]) - 1
         if length <= 0:
             return 0.0
         return 1.0 / length
 
-    async def _score_path_without_edge(self, start: str, end: str, max_hops: int, forbidden_edge: tuple[str, str]) -> float:
+    async def _score_path_without_edge(
+        self, start: str, end: str, max_hops: int, forbidden_edge: tuple[str, str]
+    ) -> float:
         """Jako _score_path, ale zakáže danou hranu."""
         path = await self.graph_rag.multi_hop_search(start, end, max_hops, forbidden_edges=[forbidden_edge])
-        if not path or 'nodes' not in path:
+        if not path or "nodes" not in path:
             return 0.0
-        length = len(path['nodes']) - 1
+        length = len(path["nodes"]) - 1
         return 1.0 / length

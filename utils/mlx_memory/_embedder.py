@@ -20,14 +20,11 @@ M1 8GB: buffers bounded to 256MB total to stay within Metal budget.
 import gc
 import logging
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import field
+from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils._patterns import module_singleton_creator
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE: int = 32
@@ -47,6 +44,7 @@ def _get_shared_buf_cls():
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         SharedMetalBuffer = rust.raw.SharedMetalBuffer
         return SharedMetalBuffer
     except ImportError:
@@ -73,6 +71,7 @@ class _MetalBuffer(Struct):
         Falls back to mx.array → numpy conversion when not Metal-backed.
         """
         import numpy as np
+
         if self._shared_buf is not None and self.allocated:
             return self._shared_buf.to_numpy(list(self.shape), self.dtype)
         if self.mx_buffer is not None:
@@ -97,7 +96,7 @@ class MetalBufferPool:
             ids_np = pool.get_buffer_numpy("input_ids")
     """
 
-    _instance: "MetalBufferPool | None" = None
+    _instance: MetalBufferPool | None = None
     _init_lock = threading.Lock()
     _buffers: dict[str, _MetalBuffer]
     _allocated: bool = False
@@ -113,7 +112,7 @@ class MetalBufferPool:
         self._use_metal_shared = _get_shared_buf_cls() is not None
 
     @classmethod
-    def get_instance(cls) -> "MetalBufferPool":
+    def get_instance(cls) -> MetalBufferPool:
         if cls._instance is None:
             with cls._init_lock:
                 if cls._instance is None:
@@ -156,9 +155,7 @@ class MetalBufferPool:
                     size *= dim
                 byte_size = size * 4  # int32=4, float32=4
                 if self._allocated_bytes + byte_size > _MAX_BUFFER_BYTES:
-                    logger.warning(
-                        f"[MetalBufferPool] Buffer {name} would exceed cap, skipping"
-    )
+                    logger.warning(f"[MetalBufferPool] Buffer {name} would exceed cap, skipping")
                     continue
 
                 mlx_dtype = mx.float32 if dtype == "float32" else mx.int32
@@ -169,14 +166,13 @@ class MetalBufferPool:
                     try:
                         shared_buf = SharedMetalBuffer.allocate(byte_size)
                         logger.debug(
-                            f"[MetalBufferPool] SILICON-04: {name} backed by "
-                            f"SharedMetalBuffer ({byte_size} bytes)"
-    )
+                            f"[MetalBufferPool] SILICON-04: {name} backed by SharedMetalBuffer ({byte_size} bytes)"
+                        )
                     except Exception as e:
                         logger.debug(
                             f"[MetalBufferPool] SharedMetalBuffer.allocate failed "
                             f"for {name}: {e}, falling back to mx.zeros()"
-    )
+                        )
                         shared_buf = None
 
                 if shared_buf is not None:
@@ -193,12 +189,11 @@ class MetalBufferPool:
                     mx_buffer=mlx_arr,
                     _shared_buf=shared_buf,
                     allocated=True,
-    )
+                )
                 self._allocated_bytes += byte_size
                 logger.debug(
-                    f"[MetalBufferPool] ALLOC {name} shape={shape} dtype={dtype} "
-                    f"metal_shared={shared_buf is not None}"
-    )
+                    f"[MetalBufferPool] ALLOC {name} shape={shape} dtype={dtype} metal_shared={shared_buf is not None}"
+                )
 
             self._allocated = True
             return True

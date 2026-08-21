@@ -13,7 +13,6 @@ M1 8GB: No model load, pure I/O with bounded results.
 import asyncio
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
@@ -49,8 +48,6 @@ class BGPAdvisorAdapter:
             result: SprintSchedulerResult with accepted_findings from the sprint.
         """
         try:
-            import httpx
-
             from hledac.universal.recon.bgp_lane import BGPAdapter
         except ImportError:
             logger.debug("[BGPAdvisor] bgp_lane unavailable, skipping")
@@ -72,7 +69,7 @@ class BGPAdvisorAdapter:
                 _sync_enrich_ips,
                 adapter,
                 ips_to_query,
-    )
+            )
             self._adapter = adapter
         except Exception:  # noqa: BLE001
             # fail-soft: overall failure doesn't crash the sprint
@@ -81,7 +78,7 @@ class BGPAdvisorAdapter:
 
 def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
     """Sync wrapper: run batch enrich_ips in a dedicated session.
-    
+
     BUG-E FIX: Switches from sequential enrich_ip() to batch enrich_ips()
     for better performance. Ensures adapter.close() in finally block.
     """
@@ -100,7 +97,7 @@ def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
                         result.asn,
                         result.prefix or "unknown",
                         result.org_name or "unknown",
-    )
+                    )
         except Exception:  # noqa: BLE001
             pass  # fail-soft on batch operation
     except Exception:  # noqa: BLE001

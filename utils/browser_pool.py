@@ -43,6 +43,7 @@ Usage
     finally:
         await pool.release(browser)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,10 +51,9 @@ import logging
 import os
 from collections import deque
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    import nodriver as uc
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +84,11 @@ def _check_memory_pressure() -> None:
     threshold = _BROWSER_MEM_THRESHOLD_GIB
     try:
         threshold = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", str(threshold)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         threshold = _BROWSER_MEM_THRESHOLD_GIB
     rss = _rss_gib()
     if rss > threshold > 0:
-        raise MemoryPressureError(
-            f"BrowserPool acquire blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB"
-    )
+        raise MemoryPressureError(f"BrowserPool acquire blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB")
 
 
 class MemoryPressureError(Exception):
@@ -145,8 +143,6 @@ class BrowserPool:
         self._lock: asyncio.Lock = asyncio.Lock()
         self._prewarm_task: asyncio.Task[None] | None = None
         self._closed: bool = False
-
-    # ─── public API ────────────────────────────────────────────────────────────
 
     async def acquire(self) -> Any:
         """
@@ -237,13 +233,10 @@ class BrowserPool:
                 pass
             self._prewarm_task = None
 
-        # Stop all idle browsers
         async with self._lock:
             while self._idle:
                 browser = self._idle.popleft()
                 await self._stop_browser(browser)
-
-    # ─── internal ───────────────────────────────────────────────────────────────
 
     async def _get_or_create_browser(self) -> Any:
         """Pop from idle deque or launch a new browser (with lock for creation)."""
@@ -295,8 +288,6 @@ class BrowserPool:
             logger.debug("[BrowserPool] browser.stop() error (non-fatal): %s", e)
 
 
-# ─── module-level pool registry ──────────────────────────────────────────────────
-
 # Separate pools for different proxy configurations.
 # Key: tor_proxy string or None for direct connection.
 # Each pool maintains its own idle deque and semaphore.
@@ -327,7 +318,6 @@ async def _get_pool(tor_proxy: str | None = None) -> BrowserPool:
     async with _POOLS_LOCK:
         if key in _POOLS:
             return _POOLS[key]
-        # Build browser_args with optional Tor proxy
         browser_args = [
             "--no-sandbox",
             "--disable-dev-shm-usage",
@@ -339,7 +329,7 @@ async def _get_pool(tor_proxy: str | None = None) -> BrowserPool:
             max_idle=_DEFAULT_MAX_IDLE,
             max_active=_DEFAULT_MAX_ACTIVE,
             browser_args=browser_args,
-    )
+        )
         _POOLS[key] = pool
         return pool
 

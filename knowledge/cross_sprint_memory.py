@@ -19,12 +19,14 @@ WIRE: runtime/sprint_scheduler.py → CrossSprintMemory.get_related_entities()
 
 M1 8GB: bounded queries (max_hops=2, limit=50), fail-soft on graph errors.
 """
+
 import logging
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 MAX_ENTITIES = 50
 MAX_HOPS = 2
+
 
 class CrossSprintMemory:
     """
@@ -33,7 +35,8 @@ class CrossSprintMemory:
     Provides ranked entity neighbors from DuckPGQ for lane planning injection.
     Fail-soft: graph errors → empty list, sprint continues.
     """
-    __slots__ = tuple(('_available', '_graph'))
+
+    __slots__ = ("_available", "_graph")
 
     def __init__(self) -> None:
         self._graph: Any = None
@@ -45,14 +48,15 @@ class CrossSprintMemory:
             try:
                 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
                 from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
-                _temp_dir = str(RAMDISK_ROOT / 'duckdb_tmp') if RAMDISK_ACTIVE else None
+
+                _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
                 self._graph = DuckPGQGraph(temp_dir=_temp_dir)
             except Exception as e:
-                logger.warning(f'[CrossSprintMemory] DuckPGQGraph init failed: {e}')
+                logger.warning(f"[CrossSprintMemory] DuckPGQGraph init failed: {e}")
                 self._available = False
         return self._graph
 
-    def get_related_entities(self, seed_value: str, max_hops: int=MAX_HOPS) -> list[dict[str, Any]]:
+    def get_related_entities(self, seed_value: str, max_hops: int = MAX_HOPS) -> list[dict[str, Any]]:
         """
         Query DuckPGQ for entities connected to seed_value within max_hops.
 
@@ -73,13 +77,16 @@ class CrossSprintMemory:
             return []
         try:
             from hledac.universal.knowledge.graph_service import _DEFAULT_GRAPH_SERVICE
+
             results = _DEFAULT_GRAPH_SERVICE.find_entity_history(seed_value, max_hops=max_hops)
             return results[:MAX_ENTITIES] if results else []
         except Exception as e:
-            logger.debug(f'[CrossSprintMemory] find_entity_history({seed_value!r}) failed: {e}')
+            logger.debug(f"[CrossSprintMemory] find_entity_history({seed_value!r}) failed: {e}")
             return []
 
-    def get_related_entities_batch(self, seed_values: list[str], max_hops: int=MAX_HOPS) -> dict[str, list[dict[str, Any]]]:
+    def get_related_entities_batch(
+        self, seed_values: list[str], max_hops: int = MAX_HOPS
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         Batch query DuckPGQ for multiple seed entities.
 
@@ -98,7 +105,10 @@ class CrossSprintMemory:
     def is_available(self) -> bool:
         """True if DuckPGQGraph initialized successfully."""
         return self._available
+
+
 _cross_sprint_memory: CrossSprintMemory | None = None
+
 
 def get_cross_sprint_memory() -> CrossSprintMemory:
     """Return the shared CrossSprintMemory singleton."""

@@ -45,14 +45,10 @@ Feature Gate:
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.asyncx import parallel_ok
-from _core._util import aclose
 
 if TYPE_CHECKING:
-    from hledac_rust_extensions import hledac_rust_extensions
 
 # Availability flag — set once at module load
 _ANALYSIS_RUST_AVAILABLE = False
@@ -64,10 +60,6 @@ except ImportError:
     _aa_rust = None  # type: ignore[assignment]
     _ANALYSIS_RUST_AVAILABLE = False
 
-
-# =============================================================================
-# Anti-Analysis Domain
-# =============================================================================
 
 
 class _RustAntiAnalysisDomain:
@@ -331,10 +323,6 @@ class _PythonAntiAnalysisDomain:
         }
 
 
-# =============================================================================
-# Result Types (mirrored from Rust for Python fallback)
-# =============================================================================
-
 
 class QuickProbeResult:
     """Result of quick probe (combined fast check)."""
@@ -480,10 +468,6 @@ class AbandonCheckResult:
         self.abandoned_at = abandoned_at
         self.trust_score = trust_score
 
-
-# =============================================================================
-# Domain Factory
-# =============================================================================
 
 
 def _get_domain() -> "_RustAntiAnalysisDomain | _PythonAntiAnalysisDomain":

@@ -30,7 +30,6 @@ import ast
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
 
 
 class Violation(NamedTuple):
@@ -42,60 +41,105 @@ class Violation(NamedTuple):
 
 
 # Banned import root modules (bare package imports)
-BANNED_ROOTS: frozenset[str] = frozenset({
-    # Dual-namespace sources — must use hledac.universal.<pkg>
-    "runtime",
-    "brain",
-    "knowledge",
-    "coordinators",
-    "intel",
-    "intelligence",
-    "transport",
-    "network",
-    "export",
-    "report",
-    "rendering",
-    "layers",
-    "prefetch",
-    "cli",
-    "tools",
-    "discovery",
-    "federated",
-    "security",
-    "infrastructure",
-    "memory",
-    "multimodal",
-    "monitoring",
-    "evidence_log",
-    # Legacy bare packages
-    "graph",
-    "prefilt",
-    "hledac",
-    # Also banned: core/utils/recon/fetching/rl — dual-load with hledac.universal.*
-    "core",
-    "utils",
-    "recon",
-    "fetching",
-    "rl",
-})
+BANNED_ROOTS: frozenset[str] = frozenset(
+    {
+        # Dual-namespace sources — must use hledac.universal.<pkg>
+        "runtime",
+        "brain",
+        "knowledge",
+        "coordinators",
+        "intel",
+        "intelligence",
+        "transport",
+        "network",
+        "export",
+        "report",
+        "rendering",
+        "layers",
+        "prefetch",
+        "cli",
+        "tools",
+        "discovery",
+        "federated",
+        "security",
+        "infrastructure",
+        "memory",
+        "multimodal",
+        "monitoring",
+        "evidence_log",
+        # Legacy bare packages
+        "graph",
+        "prefilt",
+        "hledac",
+        # Also banned: core/utils/recon/fetching/rl — dual-load with hledac.universal.*
+        "core",
+        "utils",
+        "recon",
+        "fetching",
+        "rl",
+    }
+)
 
 # Allowed import roots (stdlib, test frameworks, internal)
-ALLOWED_ROOTS: frozenset[str] = frozenset({
-    # Stdlib
-    "asyncio", "typing", "pathlib", "os", "sys", "re", "json", "abc",
-    "argparse", "ast", "contextlib", "copy", "dataclasses", "enum",
-    "functools", "inspect", "io", "itertools", "logging", "math",
-    "pickle", "queue", "random", "struct", "tempfile", "threading",
-    "time", "traceback", "types", "unittest", "warnings", "weakref",
-    "collections", "operator", "signal", "socket", "statistics", "string",
-    "textwrap", "tokenize", "tracemalloc", "uuid", "zipfile",
-    # Test
-    "pytest", "unittest", "coverage", "hypothesis",
-    # DNS resolution library (external, not part of project)
-    "dns",
-    # Internal aliases (explicit internal intent via underscore prefix)
-    "_asyncio", "_threading", "_io", "_collections",
-})
+ALLOWED_ROOTS: frozenset[str] = frozenset(
+    {
+        # Stdlib
+        "asyncio",
+        "typing",
+        "pathlib",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "abc",
+        "argparse",
+        "ast",
+        "contextlib",
+        "copy",
+        "dataclasses",
+        "enum",
+        "functools",
+        "inspect",
+        "io",
+        "itertools",
+        "logging",
+        "math",
+        "pickle",
+        "queue",
+        "random",
+        "struct",
+        "tempfile",
+        "threading",
+        "time",
+        "traceback",
+        "types",
+        "unittest",
+        "warnings",
+        "weakref",
+        "collections",
+        "operator",
+        "signal",
+        "socket",
+        "statistics",
+        "string",
+        "textwrap",
+        "tokenize",
+        "tracemalloc",
+        "uuid",
+        "zipfile",
+        # Test
+        "pytest",
+        "coverage",
+        "hypothesis",
+        # DNS resolution library (external, not part of project)
+        "dns",
+        # Internal aliases (explicit internal intent via underscore prefix)
+        "_asyncio",
+        "_threading",
+        "_io",
+        "_collections",
+    }
+)
 
 # Modules that live under hledac.universal but are accessed bare
 LEGACY_BARE_REMAP: dict[str, str] = {
@@ -138,7 +182,7 @@ def check_file(path: Path) -> list[Violation]:
     violations = []
     try:
         content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return violations
 
     try:
@@ -152,19 +196,20 @@ def check_file(path: Path) -> list[Violation]:
 
         if isinstance(node, ast.Import):
             for alias in node.names:
-                # import hledac.universal.xyz — canonical form, always allowed
                 if alias.name == "hledac.universal" or alias.name.startswith("hledac.universal."):
                     continue
                 name = alias.name.split(".")[0]
                 if name in BANNED_ROOTS and name not in ALLOWED_ROOTS:
-                    violations.append(Violation(
-                        file=path,
-                        line=node.lineno or 0,
-                        col=node.col_offset or 0,
-                        name=alias.name,
-                        message=f"RUFF022 banned bare import: `{alias.name}` "
-                                f"(use `{LEGACY_BARE_REMAP.get(alias.name, f'hledac.universal.{alias.name}')}` instead)",
-                    ))
+                    violations.append(
+                        Violation(
+                            file=path,
+                            line=node.lineno or 0,
+                            col=node.col_offset or 0,
+                            name=alias.name,
+                            message=f"RUFF022 banned bare import: `{alias.name}` "
+                            f"(use `{LEGACY_BARE_REMAP.get(alias.name, f'hledac.universal.{alias.name}')}` instead)",
+                        )
+                    )
 
         elif isinstance(node, ast.ImportFrom):
             if node.level > 0:
@@ -183,14 +228,16 @@ def check_file(path: Path) -> list[Violation]:
 
             if root in BANNED_ROOTS and root not in ALLOWED_ROOTS:
                 for alias in node.names:
-                    violations.append(Violation(
-                        file=path,
-                        line=node.lineno or 0,
-                        col=node.col_offset or 0,
-                        name=f"{module}.{alias.name}" if alias.name != "*" else module,
-                        message=f"RUFF022 banned bare import: `from {module} import {alias.name}` "
-                                f"(use `from hledac.universal.{module} import {alias.name}` instead)",
-                    ))
+                    violations.append(
+                        Violation(
+                            file=path,
+                            line=node.lineno or 0,
+                            col=node.col_offset or 0,
+                            name=f"{module}.{alias.name}" if alias.name != "*" else module,
+                            message=f"RUFF022 banned bare import: `from {module} import {alias.name}` "
+                            f"(use `from hledac.universal.{module} import {alias.name}` instead)",
+                        )
+                    )
 
     return violations
 
@@ -198,17 +245,32 @@ def check_file(path: Path) -> list[Violation]:
 def check_directory(root: Path, exclude_dirs: frozenset[str] | None = None) -> list[Violation]:
     """Recursively check a directory for banned imports."""
     if exclude_dirs is None:
-        exclude_dirs = frozenset({
-            "__pycache__", ".venv", ".venv-test", ".git", ".claude",
-            "archive", "tests", "benchmarks", ".mypy_cache",
-            ".pytest_cache", "stubs", "tools/audit",
-        })
+        exclude_dirs = frozenset(
+            {
+                "__pycache__",
+                ".venv",
+                ".venv-test",
+                ".git",
+                ".claude",
+                "archive",
+                "tests",
+                "benchmarks",
+                ".mypy_cache",
+                ".pytest_cache",
+                "stubs",
+                "tools/audit",
+            }
+        )
 
     # Substring-based exclusions (prefix / partial path matches)
-    EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset({
-        "tools/probe/", "tools/_archive/", "tools/probe_",
-        "probe/",  # probe/ subdirectories (e.g. probe/probe_f229g_...)
-    })
+    EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset(
+        {
+            "tools/probe/",
+            "tools/_archive/",
+            "tools/probe_",
+            "probe/",  # probe/ subdirectories (e.g. probe/probe_f229g_...)
+        }
+    )
 
     all_violations = []
     for py_file in root.rglob("*.py"):
@@ -228,7 +290,9 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="RUFF022: Banned import paths checker")
-    parser.add_argument("--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+    )
     parser.add_argument("--fix", action="store_true", help="Not yet implemented")
     parser.add_argument("--ci", action="store_true", help="CI mode: exit 1 on violations")
     args = parser.parse_args()

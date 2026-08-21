@@ -16,10 +16,9 @@ hledac_rust_extensions.batch_graph_traverse function.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
-    from hledac_rust_extensions import hledac_rust_extensions
+    pass
 
 
 class _GraphDomain:
@@ -29,6 +28,7 @@ class _GraphDomain:
     functions (batch_graph_traverse, graph_traverse_single) wired directly
     in prefetch_oracle_integration.py and quantum_pathfinder.py.
     """
+
     __slots__ = ()
 
     def batch_graph_traverse(

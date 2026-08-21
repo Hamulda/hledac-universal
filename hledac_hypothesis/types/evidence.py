@@ -26,17 +26,17 @@ def _utc_now() -> datetime:
 
 class Evidence(Struct):
     """Evidence item supporting or conflicting with a hypothesis."""
+
     evidence_id: str
     source: str
     content: str
     timestamp: datetime
     reliability: float = 1.0  # 0-1, source reliability
-    relevance: float = 1.0    # 0-1, relevance to hypothesis
+    relevance: float = 1.0  # 0-1, relevance to hypothesis
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 # SourceCredibility is kept as msgspec.Struct with mutable fields for update_accuracy()
-from _core import aclose
 
 
 class SourceCredibility(Struct):
@@ -46,6 +46,7 @@ class SourceCredibility(Struct):
     Tracks historical accuracy, bias indicators, and overall trustworthiness.
     Used to weight evidence by source quality.
     """
+
     source_id: str
     credibility_score: float  # 0-1, overall credibility
     bias_indicators: list[str] = msgspec.field(default_factory=list)
@@ -62,15 +63,13 @@ class SourceCredibility(Struct):
             self.verified_claims += 1
         self.historical_accuracy = self.verified_claims / self.total_claims
         # Recalculate credibility score
-        self.credibility_score = (
-            self.historical_accuracy * 0.7 +
-            (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
-    )
+        self.credibility_score = self.historical_accuracy * 0.7 + (1.0 - min(1.0, self.contradiction_count / 10)) * 0.3
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
 class Event(Struct):
     """Temporal event for consistency checking."""
+
     event_id: str
     description: str
     timestamp: datetime

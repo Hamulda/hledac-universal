@@ -3,9 +3,9 @@
 F360-REFACTOR: These helper functions have been extracted to reduce
 god function complexity in the main pipeline module.
 """
+
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import time
@@ -18,10 +18,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ----------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------
 
 _MAX_BOOTSTRAP_URLS: int = 5
 _BOOTSTRAP_DEFAULT_URLS: list[str] = [
@@ -50,10 +46,6 @@ _RESGUE_SOURCE_CANDIDATES: list[tuple[str, str]] = [
     ("AlienVault OTX", "https://otx.alienvault.com/api/v1/search?q="),
     ("Maltiverse", "https://maltiverse.com/search?keyword="),
 ]
-
-# ----------------------------------------------------------------------
-# Query Classification
-# ----------------------------------------------------------------------
 
 
 def _strip_query_prefix(q: str) -> str:
@@ -85,7 +77,7 @@ def _normalize_domain(q: str) -> str | None:
     """Normalize domain string: strip ports, www, wildcards."""
     q = q.rstrip("/")
     if "/" in q and "://" in q:
-        if (host := _extract_host_from_url(q)):
+        if host := _extract_host_from_url(q):
             q = host
     if ":" in q:
         q = q.rsplit(":", 1)[0]
@@ -133,11 +125,6 @@ def _build_domain_candidates(query: str) -> list[str]:
         if "." in token and token != q:
             candidates.append(token)
     return candidates
-
-
-# ----------------------------------------------------------------------
-# Threat Query Detection
-# ----------------------------------------------------------------------
 
 
 def _check_ip_cve(q: str) -> bool:
@@ -218,7 +205,12 @@ def _is_threat_query(query: str) -> bool:
     if not query or not query.strip():
         return False
     q, first_token = _strip_query_prefix(query.strip()), query.split()[0] if query else ""
-    return _check_ip_cve(q) or _check_threat_patterns(q, first_token) or _check_generic_keywords(q, first_token) or _check_multi_word_patterns(q)
+    return (
+        _check_ip_cve(q)
+        or _check_threat_patterns(q, first_token)
+        or _check_generic_keywords(q, first_token)
+        or _check_multi_word_patterns(q)
+    )
 
 
 def _query_looks_like_domain(query: str) -> bool:
@@ -241,11 +233,6 @@ def _extract_base_domain(domain: str) -> str:
     if len(parts) >= 3:
         return ".".join(parts[-2:])
     return domain
-
-
-# ----------------------------------------------------------------------
-# Noise Filtering
-# ----------------------------------------------------------------------
 
 
 _SHOPPING_NOISE_DOMAINS: tuple[str, ...] = (
@@ -317,11 +304,6 @@ def _filter_public_noise(hits: list | tuple, is_threat_query: bool) -> tuple[lis
     return (filtered, rejected)
 
 
-# ----------------------------------------------------------------------
-# URL Generators
-# ----------------------------------------------------------------------
-
-
 def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> list[str]:
     """Generate deterministic bootstrap URLs for domain/URL queries."""
     if not query or max_urls < 1:
@@ -367,7 +349,9 @@ def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
     return hits
 
 
-def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:
+def generate_seed_context_bootstrap_urls(
+    seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP
+) -> list[str]:
     """Generate deterministic bootstrap URLs from NonfeedSeedContext."""
     if not seed_context or max_candidates < 1:
         return []
@@ -409,7 +393,9 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
     return urls[:max_candidates]
 
 
-async def generate_keyword_bootstrap_urls(query: str, max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS) -> list[DiscoveryHit]:
+async def generate_keyword_bootstrap_urls(
+    query: str, max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS
+) -> list[DiscoveryHit]:
     """Keyword-based search engine bootstrap — falls back through multiple engines."""
     from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine
 

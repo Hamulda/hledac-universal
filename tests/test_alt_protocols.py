@@ -11,7 +11,6 @@ import os
 import sys
 
 import pytest
-from _core import aclose
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,40 +29,40 @@ class TestIPFSClient:
 
         return ipfs_client
 
-    def test_cid_extraction(self, ipfs_client):
+    def test_cid_extraction(self, ipfs_client) -> None:
         """Test CID pattern extraction from text."""
         text = "Check out this content: QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx"
         cids = ipfs_client.extract_cids_from_text(text)
         assert len(cids) == 1
         assert cids[0].startswith("Qm")
 
-    def test_cid_extraction_v1(self, ipfs_client):
+    def test_cid_extraction_v1(self, ipfs_client) -> None:
         """Test CIDv1 (bafy) extraction."""
         text = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         cids = ipfs_client.extract_cids_from_text(text)
         assert len(cids) == 1
         assert cids[0].startswith("bafy")
 
-    def test_cid_extraction_none(self, ipfs_client):
+    def test_cid_extraction_none(self, ipfs_client) -> None:
         """Test CID extraction with no CIDs."""
         text = "This is just regular text without any CIDs"
         cids = ipfs_client.extract_cids_from_text(text)
         assert not cids
 
-    def test_cid_extraction_empty(self, ipfs_client):
+    def test_cid_extraction_empty(self, ipfs_client) -> None:
         """Test CID extraction with empty input (fail-safe)."""
         assert ipfs_client.extract_cids_from_text("") == []
         assert ipfs_client.extract_cids_from_text(None) == []
 
     @pytest.mark.asyncio
-    async def test_resolve_ipns_invalid_input(self, ipfs_client):
+    async def test_resolve_ipns_invalid_input(self, ipfs_client) -> None:
         """Test IPNS resolution with invalid input (raw CID)."""
         # Raw CID should return None (not an IPNS name)
         result = await ipfs_client.resolve_ipns("QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_find_via_ipfs_search_returns_list(self, ipfs_client):
+    async def test_find_via_ipfs_search_returns_list(self, ipfs_client) -> None:
         """Test IPFS search returns list of CIDs (may be empty if API unavailable)."""
         cids = await ipfs_client.find_via_ipfs_search("test query")
         assert isinstance(cids, list)
@@ -82,7 +81,7 @@ class TestGopherTransport:
 
         return gopher_transport
 
-    def test_gopher_item_dataclass(self, gopher):
+    def test_gopher_item_dataclass(self, gopher) -> None:
         """Test GopherItem structure."""
         item = gopher.GopherItem(
             item_type="0",
@@ -90,12 +89,12 @@ class TestGopherTransport:
             selector="/test.txt",
             host="gopher.example.com",
             port=70,
-    )
+        )
         assert item.item_type == "0"
         assert item.display_string == "Test File"
         assert item.selector == "/test.txt"
 
-    def test_gopher_finding_dataclass(self, gopher):
+    def test_gopher_finding_dataclass(self, gopher) -> None:
         """Test GopherFinding structure."""
         finding = gopher.GopherFinding(
             title="Test",
@@ -103,11 +102,11 @@ class TestGopherTransport:
             url="gopher://example.com/test",
             item_type="file",
             source_server="example.com",
-    )
+        )
         assert finding.title == "Test"
         assert finding.url.startswith("gopher://")
 
-    def test_gopher_item_is_file(self, gopher):
+    def test_gopher_item_is_file(self, gopher) -> None:
         """Test GopherItem is_file property."""
         file_item = gopher.GopherItem("0", "Test", "/test", "host", 70)
         dir_item = gopher.GopherItem("1", "Dir", "/dir", "host", 70)
@@ -116,18 +115,18 @@ class TestGopherTransport:
         assert dir_item.is_directory is True
         assert dir_item.is_file is False
 
-    def test_constants(self, gopher):
+    def test_constants(self, gopher) -> None:
         """Test protocol constants."""
         assert gopher.DEFAULT_PORT == 70
         assert gopher.MAX_CRAWL_HOPS == 5
         assert gopher.MAX_CRAWL_ITEMS == 100
 
-    def test_bootstrap_servers_defined(self, gopher):
+    def test_bootstrap_servers_defined(self, gopher) -> None:
         """Test gopher bootstrap servers are configured."""
         assert len(gopher.GOPHER_BOOTSTRAP_SERVERS) >= 1
         assert any("floodgap.com" in s[0] for s in gopher.GOPHER_BOOTSTRAP_SERVERS)
 
-    def test_veronica_search_config(self, gopher):
+    def test_veronica_search_config(self, gopher) -> None:
         """Test Veronica-2 search is configured."""
         # VERONICA_* are class attributes
         transport = gopher.get_gopher_transport()
@@ -148,7 +147,7 @@ class TestGeminiTransport:
 
         return gemini_transport
 
-    def test_gemini_response_namedtuple(self, gemini):
+    def test_gemini_response_namedtuple(self, gemini) -> None:
         """Test GeminiResponse structure."""
         resp = gemini.GeminiResponse(
             status=20,
@@ -156,11 +155,11 @@ class TestGeminiTransport:
             body="# Test\nTest content",
             content_type="text/gemini",
             url="gemini://example.com/",
-    )
+        )
         assert resp.status == 20
         assert "text/gemini" in resp.meta
 
-    def test_gemini_finding_namedtuple(self, gemini):
+    def test_gemini_finding_namedtuple(self, gemini) -> None:
         """Test GeminiFinding structure."""
         finding = gemini.GeminiFinding(
             title="Test Capsule",
@@ -168,32 +167,32 @@ class TestGeminiTransport:
             url="gemini://example.com/",
             content_type="text/gemini",
             source_capsule="example.com",
-    )
+        )
         assert finding.title == "Test Capsule"
         assert finding.url.startswith("gemini://")
 
-    def test_parse_gemini_url(self, gemini):
+    def test_parse_gemini_url(self, gemini) -> None:
         """Test Gemini URL parsing."""
         host, port, selector = gemini.parse_gemini_url("gemini://example.com/path/to/page")
         assert host == "example.com"
         assert port == 1965
         assert selector == "/path/to/page"
 
-    def test_parse_gemini_url_with_port(self, gemini):
+    def test_parse_gemini_url_with_port(self, gemini) -> None:
         """Test Gemini URL parsing with custom port."""
         host, port, selector = gemini.parse_gemini_url("gemini://example.com:1966/path")
         assert host == "example.com"
         assert port == 1966
         assert selector == "/path"
 
-    def test_parse_gemini_url_simple(self, gemini):
+    def test_parse_gemini_url_simple(self, gemini) -> None:
         """Test Gemini URL parsing with just host."""
         host, port, selector = gemini.parse_gemini_url("gemini://example.com")
         assert host == "example.com"
         assert port == 1965
         assert selector == "/"
 
-    def test_extract_gemini_links(self, gemini):
+    def test_extract_gemini_links(self, gemini) -> None:
         """Test gemtext link extraction."""
         gemtext = """# Test Page
 
@@ -208,13 +207,13 @@ Regular text here.
         assert links[0] == ("gemini://example.com", "First Link")
         assert links[1] == ("gemini://other.com", "Some Other Link")
 
-    def test_extract_gemini_links_empty(self, gemini):
+    def test_extract_gemini_links_empty(self, gemini) -> None:
         """Test gemtext link extraction with no links."""
         gemtext = "Just regular text\nNo links here"
         links = gemini.extract_gemini_links(gemtext)
         assert not links
 
-    def test_constants(self, gemini):
+    def test_constants(self, gemini) -> None:
         """Test protocol constants."""
         assert gemini.GEMINI_PORT == 1965
         assert gemini.GEMINI_MAX_RESPONSE_SIZE == 1024 * 1024
@@ -234,13 +233,13 @@ class TestI2PClient:
 
         return i2p_client
 
-    def test_constants(self, i2p):
+    def test_constants(self, i2p) -> None:
         """Test I2P constants."""
         assert i2p.I2P_PROXY_PORT == 4444
         assert i2p.I2P_TIMEOUT == 30
         assert i2p.I2P_MAX_SIZE == 2 * 1024 * 1024
 
-    def test_known_eepsites_structure(self, i2p):
+    def test_known_eepsites_structure(self, i2p) -> None:
         """Test known eepsites list structure."""
         for site in i2p.KNOWN_EEPSITES:
             assert "url" in site
@@ -248,13 +247,13 @@ class TestI2PClient:
             assert site["url"].startswith("http")
 
     @pytest.mark.asyncio
-    async def test_is_i2p_available_returns_bool(self, i2p):
+    async def test_is_i2p_available_returns_bool(self, i2p) -> None:
         """Test I2P availability check returns bool."""
         result = await i2p.is_i2p_available()
         assert isinstance(result, bool)
 
     @pytest.mark.asyncio
-    async def test_is_i2p_available_cached(self, i2p):
+    async def test_is_i2p_available_cached(self, i2p) -> None:
         """Test I2P availability check uses caching."""
         # First call
         result1 = await i2p.is_i2p_available()
@@ -276,7 +275,7 @@ class TestAlternativeProtocolFetcher:
 
         return alternative_protocol_fetcher
 
-    def test_gate_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch):
+    def test_gate_disabled_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test alt protocols disabled by default."""
         monkeypatch.delenv("HLEDAC_ENABLE_ALT_PROTOCOLS", raising=False)
 
@@ -287,7 +286,7 @@ class TestAlternativeProtocolFetcher:
         importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
         assert not hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
 
-    def test_gate_enabled_with_env(self, monkeypatch: pytest.MonkeyPatch):
+    def test_gate_enabled_with_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test alt protocols enabled with env var."""
         monkeypatch.setenv("HLEDAC_ENABLE_ALT_PROTOCOLS", "1")
 
@@ -298,20 +297,20 @@ class TestAlternativeProtocolFetcher:
         importlib.reload(hledac.universal.fetching.alternative_protocol_fetcher)
         assert hledac.universal.fetching.alternative_protocol_fetcher.ALT_PROTOCOLS_ENABLED
 
-    def test_alt_protocol_result_namedtuple(self, fetcher):
+    def test_alt_protocol_result_namedtuple(self, fetcher) -> None:
         """Test AltProtocolResult structure."""
         result = fetcher.AltProtocolResult(
             source_type="ipfs",
             findings_count=5,
             success=True,
             error=None,
-    )
+        )
         assert result.source_type == "ipfs"
         assert result.findings_count == 5
         assert result.success is True
         assert result.error is None
 
-    def test_get_alt_protocols_status(self, fetcher):
+    def test_get_alt_protocols_status(self, fetcher) -> None:
         """Test status reporting."""
         status = fetcher.get_alt_protocols_status()
         assert "enabled" in status
@@ -331,7 +330,7 @@ class TestAltProtocolsIntegration:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_ipfs_gateway_reachable(self):
+    async def test_ipfs_gateway_reachable(self) -> None:
         """Test IPFS gateways are reachable."""
         from hledac.universal.network import ipfs_client
 
@@ -340,7 +339,7 @@ class TestAltProtocolsIntegration:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_gopher_floodgap_reachable(self):
+    async def test_gopher_floodgap_reachable(self) -> None:
         """Test Gopher floodgap server is reachable."""
         from hledac.universal.network import gopher_transport
 
@@ -349,7 +348,7 @@ class TestAltProtocolsIntegration:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_gemini_circumlunar_reachable(self):
+    async def test_gemini_circumlunar_reachable(self) -> None:
         """Test Gemini circumlunar.space is configured."""
         from hledac.universal.network import gemini_transport
 
@@ -362,7 +361,7 @@ class TestAltProtocolsIntegration:
 class TestFediverseAdapter:
     """Tests for discovery/fediverse_adapter.py"""
 
-    def test_fediverse_adapter_init(self):
+    def test_fediverse_adapter_init(self) -> None:
         """Test FediverseAdapter initialization."""
         from discovery.fediverse_adapter import DEFAULT_INSTANCES, FediverseAdapter
 
@@ -370,7 +369,7 @@ class TestFediverseAdapter:
         assert adapter is not None
         assert len(DEFAULT_INSTANCES) == 2  # M1 constraint
 
-    def test_fediverse_is_enabled(self):
+    def test_fediverse_is_enabled(self) -> None:
         """Test Fediverse is_enabled gate."""
         from discovery.fediverse_adapter import FediverseAdapter
 
@@ -379,21 +378,21 @@ class TestFediverseAdapter:
         # Test the method exists and is callable
         assert callable(adapter.is_enabled)
 
-    def test_fediverse_constants(self):
+    def test_fediverse_constants(self) -> None:
         """Test Fediverse constants are bounded."""
         from discovery.fediverse_adapter import (
             FEDIVERSE_TIMEOUT,
             MAX_CONCURRENT_INSTANCES,
             MAX_RESULTS_PER_INSTANCE,
             RATE_LIMIT_DELAY,
-    )
+        )
 
         assert FEDIVERSE_TIMEOUT == 10.0
         assert MAX_RESULTS_PER_INSTANCE == 50
         assert MAX_CONCURRENT_INSTANCES == 2
         assert RATE_LIMIT_DELAY == 5.0
 
-    def test_fediverse_instances_defined(self):
+    def test_fediverse_instances_defined(self) -> None:
         """Test OSINT instances are defined."""
         from discovery.fediverse_adapter import DEFAULT_INSTANCES, OSINT_INSTANCES
 
@@ -408,7 +407,7 @@ class TestFediverseAdapter:
 class TestMatrixAdapter:
     """Tests for discovery/matrix_adapter.py"""
 
-    def test_matrix_adapter_init(self):
+    def test_matrix_adapter_init(self) -> None:
         """Test MatrixPublicAdapter initialization."""
         from discovery.matrix_adapter import MATRIX_HOMESERVER, MatrixPublicAdapter
 
@@ -416,7 +415,7 @@ class TestMatrixAdapter:
         assert adapter is not None
         assert adapter._homeserver == MATRIX_HOMESERVER
 
-    def test_matrix_is_enabled(self):
+    def test_matrix_is_enabled(self) -> None:
         """Test Matrix is_enabled gate."""
         from discovery.matrix_adapter import MatrixPublicAdapter
 
@@ -425,21 +424,21 @@ class TestMatrixAdapter:
         # Test the method exists and is callable
         assert callable(adapter.is_enabled)
 
-    def test_matrix_constants(self):
+    def test_matrix_constants(self) -> None:
         """Test Matrix constants are bounded."""
         from discovery.matrix_adapter import (
             MATRIX_TIMEOUT,
             MAX_GUEST_TOKEN_AGE,
             MAX_ROOM_MESSAGES,
             MAX_ROOMS_TO_SEARCH,
-    )
+        )
 
         assert MATRIX_TIMEOUT == 10.0
         assert MAX_ROOM_MESSAGES == 50
         assert MAX_ROOMS_TO_SEARCH == 20
         assert MAX_GUEST_TOKEN_AGE == 3600
 
-    def test_matrix_homeserver(self):
+    def test_matrix_homeserver(self) -> None:
         """Test Matrix homeserver is configured."""
         from discovery.matrix_adapter import MATRIX_HOMESERVER
 
@@ -452,7 +451,7 @@ class TestMatrixAdapter:
 class TestTorrentMetadataFetcher:
     """Tests for dht/metadata_fetcher.py"""
 
-    def test_metadata_fetcher_init(self):
+    def test_metadata_fetcher_init(self) -> None:
         """Test TorrentMetadataFetcher initialization."""
         from dht.metadata_fetcher import MAX_CONCURRENT_FETCHES, TorrentMetadataFetcher
 
@@ -460,7 +459,7 @@ class TestTorrentMetadataFetcher:
         assert fetcher is not None
         assert fetcher._semaphore._value == MAX_CONCURRENT_FETCHES
 
-    def test_bencode_encoder(self):
+    def test_bencode_encoder(self) -> None:
         """Test bencode encoding."""
         from dht.metadata_fetcher import TorrentMetadataFetcher
 
@@ -471,7 +470,7 @@ class TestTorrentMetadataFetcher:
         assert fetcher._bencode([1, 2, 3]) == b"li1ei2ei3ee"
         assert fetcher._bencode({"key": "value"}) == b"d3:key5:valuee"
 
-    def test_bencode_decoder(self):
+    def test_bencode_decoder(self) -> None:
         """Test bencode decoding."""
         from dht.metadata_fetcher import TorrentMetadataFetcher
 
@@ -481,7 +480,7 @@ class TestTorrentMetadataFetcher:
         assert fetcher._decode_bencode(b"li1ei2ei3ee") == [1, 2, 3]
         assert fetcher._decode_bencode(b"d3:key5:valuee") == {b"key": b"value"}
 
-    def test_size_formatter(self):
+    def test_size_formatter(self) -> None:
         """Test human-readable size formatting."""
         from dht.metadata_fetcher import TorrentMetadataFetcher
 
@@ -491,7 +490,7 @@ class TestTorrentMetadataFetcher:
         assert "MB" in fetcher._format_size(1024 * 1024)
         assert "GB" in fetcher._format_size(1024 * 1024 * 1024)
 
-    def test_constants(self):
+    def test_constants(self) -> None:
         """Test BEP-9 constants are bounded."""
         from dht.metadata_fetcher import (
             BEP_9_TIMEOUT,
@@ -499,7 +498,7 @@ class TestTorrentMetadataFetcher:
             MAX_PEERS_TO_TRY,
             METADATA_PIECE_SIZE,
             UT_METADATA_ID,
-    )
+        )
 
         assert UT_METADATA_ID == 1
         assert METADATA_PIECE_SIZE == 16384
@@ -507,7 +506,7 @@ class TestTorrentMetadataFetcher:
         assert MAX_CONCURRENT_FETCHES == 5
         assert MAX_PEERS_TO_TRY == 3
 
-    def test_torrent_info_dataclass(self):
+    def test_torrent_info_dataclass(self) -> None:
         """Test TorrentInfo dataclass."""
         from dht.metadata_fetcher import TorrentInfo
 
@@ -518,12 +517,12 @@ class TestTorrentMetadataFetcher:
             piece_length=16384,
             pieces=b"",
             trackers=["http://tracker.example.com"],
-    )
+        )
         assert info.name == "test.torrent"
         assert len(info.files) == 1
         assert info.total_size == 1024
 
-    def test_extract_intel_from_torrent(self):
+    def test_extract_intel_from_torrent(self) -> None:
         """Test OSINT extraction from torrent metadata."""
         from dht.metadata_fetcher import TorrentInfo, TorrentMetadataFetcher
 
@@ -538,7 +537,7 @@ class TestTorrentMetadataFetcher:
             piece_length=16384,
             pieces=b"",
             trackers=["http://tracker.example.com"],
-    )
+        )
 
         findings = fetcher.extract_intel_from_torrent(info, "abc123" * 6 + "abcd")
         assert len(findings) >= 4  # files + size + tracker
@@ -549,7 +548,7 @@ class TestTorrentMetadataFetcher:
         assert "total_size" in types
         assert "tracker" in types
 
-    def test_clear_cache(self):
+    def test_clear_cache(self) -> None:
         """Test cache clearing."""
         from dht.metadata_fetcher import TorrentMetadataFetcher
 
@@ -566,14 +565,14 @@ class TestTorrentMetadataFetcher:
 class TestDHTAdapterBEP9:
     """Tests for dht_adapter.py BEP-9 integration."""
 
-    def test_async_fetch_dht_metadata_import(self):
+    def test_async_fetch_dht_metadata_import(self) -> None:
         """Test async_fetch_dht_metadata is importable."""
         from discovery.dht_adapter import async_fetch_dht_metadata
 
         assert callable(async_fetch_dht_metadata)
 
     @pytest.mark.asyncio
-    async def test_async_fetch_dht_metadata_invalid_hash(self):
+    async def test_async_fetch_dht_metadata_invalid_hash(self) -> None:
         """Test async_fetch_dht_metadata with invalid hash."""
         from discovery.dht_adapter import async_fetch_dht_metadata
 
@@ -582,7 +581,7 @@ class TestDHTAdapterBEP9:
         assert result["error"] == "invalid_infohash"
 
     @pytest.mark.asyncio
-    async def test_async_fetch_dht_metadata_disabled(self):
+    async def test_async_fetch_dht_metadata_disabled(self) -> None:
         """Test async_fetch_dht_metadata when DHT is disabled."""
         from discovery.dht_adapter import async_fetch_dht_metadata
 
@@ -598,19 +597,19 @@ class TestDHTAdapterBEP9:
 class TestAltProtocolFetcherSocial:
     """Tests for alternative_protocol_fetcher.py social protocol wiring."""
 
-    def test_fediverse_fetch_function_exists(self):
+    def test_fediverse_fetch_function_exists(self) -> None:
         """Test fetch_fediverse_only function exists."""
         from fetching.alternative_protocol_fetcher import fetch_fediverse_only
 
         assert callable(fetch_fediverse_only)
 
-    def test_matrix_fetch_function_exists(self):
+    def test_matrix_fetch_function_exists(self) -> None:
         """Test fetch_matrix_only function exists."""
         from fetching.alternative_protocol_fetcher import fetch_matrix_only
 
         assert callable(fetch_matrix_only)
 
-    def test_alt_protocols_status_includes_social(self):
+    def test_alt_protocols_status_includes_social(self) -> None:
         """Test get_alt_protocols_status includes social protocols."""
         from fetching.alternative_protocol_fetcher import get_alt_protocols_status
 
@@ -620,13 +619,13 @@ class TestAltProtocolFetcherSocial:
         assert status["protocols"]["fediverse"]["gate"] == "HLEDAC_ENABLE_SOCIAL"
         assert status["protocols"]["matrix"]["gate"] == "HLEDAC_ENABLE_SOCIAL"
 
-    def test_fediverse_timeout_constant(self):
+    def test_fediverse_timeout_constant(self) -> None:
         """Test FEDIVERSE_TIMEOUT constant."""
         from fetching.alternative_protocol_fetcher import FEDIVERSE_TIMEOUT
 
         assert FEDIVERSE_TIMEOUT == 10
 
-    def test_matrix_timeout_constant(self):
+    def test_matrix_timeout_constant(self) -> None:
         """Test MATRIX_TIMEOUT constant."""
         from fetching.alternative_protocol_fetcher import MATRIX_TIMEOUT
 

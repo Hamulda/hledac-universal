@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _core import aclose
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 
@@ -54,13 +53,11 @@ def _parse_module() -> ast.Module:
 
 
 class TestArrowFetchBatchSignature:
-    def test_method_defined(self):
+    def test_method_defined(self) -> None:
         src = DUCKDB_STORE.read_text(encoding="utf-8")
-        assert "def arrow_fetch_batch(" in src, (
-            "arrow_fetch_batch() must be defined on DuckDBShadowStore"
-    )
+        assert "def arrow_fetch_batch(" in src, "arrow_fetch_batch() must be defined on DuckDBShadowStore"
 
-    def test_signature_has_required_params(self):
+    def test_signature_has_required_params(self) -> None:
         tree = _parse_module()
         found = None
         for node in ast.walk(tree):
@@ -76,7 +73,7 @@ class TestArrowFetchBatchSignature:
         assert "params" in arg_names
         assert "batch_size" in arg_names
 
-    def test_default_batch_size_is_2048(self):
+    def test_default_batch_size_is_2048(self) -> None:
         """M1 8GB UMA: 2048 rows ≈ 16 MB peak per batch for payload_text-heavy queries."""
         tree = _parse_module()
         for node in ast.walk(tree):
@@ -95,7 +92,7 @@ class TestArrowFetchBatchSignature:
                     if isinstance(last_default, ast.Constant):
                         assert last_default.value == 2048, (
                             f"batch_size default must be 2048 for M1 8GB UMA, got {last_default.value}"
-    )
+                        )
                 return
         pytest.fail("arrow_fetch_batch not found in module")
 
@@ -104,7 +101,7 @@ class TestArrowFetchBatchSignature:
 
 
 class TestArrowFetchBatchIteration:
-    def test_yields_list_per_batch(self):
+    def test_yields_list_per_batch(self) -> None:
         """Each yielded value must be a list of tuples (matches fetchall() shape)."""
         _load_module()
         # We can't import the real DuckDBShadowStore without side effects.
@@ -112,11 +109,9 @@ class TestArrowFetchBatchIteration:
         # or `yield [tuple(row) for row in batch.to_pylist()]` (Arrow path).
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Both paths should yield list-like values
-        assert "yield list(rows)" in src or "yield [tuple" in src, (
-            "arrow_fetch_batch must yield list[tuple] chunks"
-    )
+        assert "yield list(rows)" in src or "yield [tuple" in src, "arrow_fetch_batch must yield list[tuple] chunks"
 
-    def test_returns_generator_when_called(self):
+    def test_returns_generator_when_called(self) -> None:
         """The function must be a generator (contains `yield`)."""
         tree = _parse_module()
         for node in ast.walk(tree):
@@ -133,33 +128,27 @@ class TestArrowFetchBatchIteration:
 
 
 class TestArrowFetchBatchFailSoft:
-    def test_conn_none_returns_empty_generator(self):
+    def test_conn_none_returns_empty_generator(self) -> None:
         """conn=None must yield nothing (no raise)."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Find the early return
         assert "if conn is None:" in src, "Must guard against conn=None"
         # The if-block must `return` (not raise) — search for `if conn is None:`
-        m = re.search(
-            r"if conn is None:\s*\n\s*return", src
-    )
+        m = re.search(r"if conn is None:\s*\n\s*return", src)
         assert m is not None, "conn=None must early-return, not raise"
 
-    def test_execute_exception_swallowed(self):
+    def test_execute_exception_swallowed(self) -> None:
         """conn.execute() failure must not propagate."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Find: try: result = conn.execute(...)
-        m = re.search(
-            r"try:\s*\n\s*result = conn\.execute\(", src
-    )
+        m = re.search(r"try:\s*\n\s*result = conn\.execute\(", src)
         assert m is not None, "conn.execute() must be wrapped in try/except"
         # Match: the except block should `return` (empty generator)
         # Look for `except Exception:\s*\n\s*return`
-        m2 = re.search(
-            r"except Exception:\s*\n\s*return", src
-    )
+        m2 = re.search(r"except Exception:\s*\n\s*return", src)
         assert m2 is not None, "execute failure must early-return (empty gen)"
 
-    def test_arrow_path_falls_back_to_fetchmany(self):
+    def test_arrow_path_falls_back_to_fetchmany(self) -> None:
         """When fetch_record_batch raises, fall through to fetchmany — not propagate."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # The Arrow-path try/except must end with `pass  # fall through to fetchmany`
@@ -176,7 +165,7 @@ class TestArrowFetchBatchFailSoft:
 
 
 class TestCallsitesMigrated:
-    def test_remaining_fetchall_in_module(self):
+    def test_remaining_fetchall_in_module(self) -> None:
         """After refactor, only the healthcheck + arrow_fetch_batch internals may call .fetchall()."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Find every ".fetchall()" occurrence and classify.
@@ -216,7 +205,7 @@ class TestCallsitesMigrated:
             # Heuristic: a *code* call to .fetchall() must follow a `conn.execute(` or
             # similar within ~20 lines. If we don't find one, it's a textual mention.
             is_code_call = False
-            for j in range(max(0, i-25), i):
+            for j in range(max(0, i - 25), i):
                 if re.search(r"\b(?:conn|self\._file_conn|self\._persistent_conn)\.execute\(", lines[j]):
                     is_code_call = True
                     break
@@ -228,9 +217,9 @@ class TestCallsitesMigrated:
             f"Found {len(violations)} unbounded .fetchall() callsites "
             f"outside arrow_fetch_batch + healthcheck + textual mentions:\n"
             + "\n".join(f"  L{l}: {t}" for l, t in violations[:10])  # noqa: E741
-    )
+        )
 
-    def test_at_least_25_arrow_fetch_batch_callsites(self):
+    def test_at_least_25_arrow_fetch_batch_callsites(self) -> None:
         """Audit found 27 multi-line + 2 one-liner = 29 production callsites."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         n = len(re.findall(r"self\.arrow_fetch_batch\(", src))
@@ -238,17 +227,14 @@ class TestCallsitesMigrated:
         # The def line is `def arrow_fetch_batch(`
         def_count = src.count("def arrow_fetch_batch(")
         call_count = n - def_count
-        assert call_count >= 25, (
-            f"Expected ≥25 production callsites, got {call_count}. "
-            f"Refactor incomplete."
-    )
+        assert call_count >= 25, f"Expected ≥25 production callsites, got {call_count}. Refactor incomplete."
 
 
 # ── Test 5: existing async path is preserved ──────────────────────────────────
 
 
 class TestAsyncArrowPathPreserved:
-    def test_async_query_arrow_batches_still_exists(self):
+    def test_async_query_arrow_batches_still_exists(self) -> None:
         """The async generator (used in async contexts) must remain untouched."""
         tree = _parse_module()
         for node in ast.walk(tree):
@@ -261,7 +247,7 @@ class TestAsyncArrowPathPreserved:
 
 
 class TestNoNewHeavyImports:
-    def test_no_pyarrow_at_module_top(self):
+    def test_no_pyarrow_at_module_top(self) -> None:
         """pyarrow must remain lazy (only imported inside arrow_fetch_batch)."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Top-level imports section ends with the first non-import code line
@@ -273,14 +259,14 @@ class TestNoNewHeavyImports:
         # No `import pyarrow` at top level
         assert "import pyarrow" not in top_section, (
             "pyarrow must remain lazy (not at module top level — M1 8GB UMA constraint)"
-    )
+        )
 
 
 # ── Test 7: bounded memory contract ──────────────────────────────────────────
 
 
 class TestBoundedMemoryContract:
-    def test_documented_batch_size_in_docstring(self):
+    def test_documented_batch_size_in_docstring(self) -> None:
         """Docstring must document the 2048 default and the M1 8GB rationale."""
         src = DUCKDB_STORE.read_text(encoding="utf-8")
         # Find the arrow_fetch_batch method + docstring
@@ -288,11 +274,9 @@ class TestBoundedMemoryContract:
             r'def arrow_fetch_batch\([^)]*\)[^:]*:\s*\n\s*"""(.*?)"""',
             src,
             re.DOTALL,
-    )
+        )
         assert m is not None, "arrow_fetch_batch must have a docstring"
         doc = m.group(1)
         assert "2048" in doc, "Docstring must document batch_size=2048"
         assert "M1" in doc or "UMA" in doc, "Docstring must explain M1 8GB rationale"
-        assert "fail-soft" in doc.lower() or "fail soft" in doc.lower(), (
-            "Docstring must mention fail-soft behavior"
-    )
+        assert "fail-soft" in doc.lower() or "fail soft" in doc.lower(), "Docstring must mention fail-soft behavior"

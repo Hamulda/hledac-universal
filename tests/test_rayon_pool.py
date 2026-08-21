@@ -4,12 +4,10 @@ Tests for R4.1: Unified Rayon-based Pipeline — utils/rayon_pool.py
 Run with: pytest tests/test_rayon_pool.py -v
 """
 
-
 import asyncio
 import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
 
 import pytest
 
@@ -17,17 +15,17 @@ import pytest
 from utils.rayon_pool import (
     RayonPoolsAvailable,
     run_in_cpu_pool,
-    run_in_io_pool,
-    run_in_mixed_pool,
     run_in_cpu_pool_async,
+    run_in_io_pool,
     run_in_io_pool_async,
+    run_in_mixed_pool,
     run_in_mixed_pool_async,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
+
 
 def cpu_bound_hash(data: bytes) -> str:
     """CPU-bound work: compute SHA-256 hash multiple times."""
@@ -55,6 +53,7 @@ def mixed_work(data: str, n: int) -> list[str]:
 # Rayon availability check
 # ---------------------------------------------------------------------------
 
+
 class TestRayonAvailability:
     def test_rayon_pools_available_returns_bool(self) -> None:
         """RayonPoolsAvailable() returns a boolean."""
@@ -66,6 +65,7 @@ class TestRayonAvailability:
 # run_in_cpu_pool tests
 # ---------------------------------------------------------------------------
 
+
 class TestCpuPool:
     def test_cpu_pool_runs_function(self) -> None:
         """run_in_cpu_pool executes the function and returns result."""
@@ -75,6 +75,7 @@ class TestCpuPool:
 
     def test_cpu_pool_with_args(self) -> None:
         """run_in_cpu_pool passes arguments correctly."""
+
         def add(a: int, b: int) -> int:
             return a + b
 
@@ -105,6 +106,7 @@ class TestCpuPool:
 # run_in_io_pool tests
 # ---------------------------------------------------------------------------
 
+
 class TestIoPool:
     def test_io_pool_runs_function(self) -> None:
         """run_in_io_pool executes the function and returns result."""
@@ -126,6 +128,7 @@ class TestIoPool:
 # ---------------------------------------------------------------------------
 # run_in_mixed_pool tests
 # ---------------------------------------------------------------------------
+
 
 class TestMixedPool:
     def test_mixed_pool_runs_small_batch(self) -> None:
@@ -155,6 +158,7 @@ class TestMixedPool:
 # ---------------------------------------------------------------------------
 # Async wrapper tests
 # ---------------------------------------------------------------------------
+
 
 class TestAsyncWrappers:
     @pytest.mark.asyncio
@@ -205,15 +209,13 @@ class TestAsyncWrappers:
 # Concurrency tests
 # ---------------------------------------------------------------------------
 
+
 class TestConcurrency:
     def test_multiple_pools_run_concurrently(self) -> None:
         """Multiple pool calls can run concurrently with Python ThreadPoolExecutor."""
         # This tests that rayon pools don't block Python threading
         with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [
-                executor.submit(run_in_cpu_pool, cpu_bound_hash, f"data{i}".encode())
-                for i in range(4)
-            ]
+            futures = [executor.submit(run_in_cpu_pool, cpu_bound_hash, f"data{i}".encode()) for i in range(4)]
             results = [f.result(timeout=10) for f in futures]
 
         assert len(results) == 4
@@ -235,6 +237,7 @@ class TestConcurrency:
 # ---------------------------------------------------------------------------
 # Performance tests (optional, skip in CI)
 # ---------------------------------------------------------------------------
+
 
 class TestPerformance:
     @pytest.mark.skip(reason="performance test, run manually")
@@ -270,9 +273,11 @@ class TestPerformance:
 # Integration tests with real workload
 # ---------------------------------------------------------------------------
 
+
 class TestIntegration:
     def test_ioc_extract_like_workload(self) -> None:
         """Simulate IOC extraction workload pattern."""
+
         def extract_patterns(text: str) -> list[str]:
             """Simulate pattern matching work."""
             patterns = ["ipv4", "ipv6", "domain", "url", "email", "hash"]
@@ -289,6 +294,7 @@ class TestIntegration:
 
     def test_hash_dedup_like_workload(self) -> None:
         """Simulate content dedup hashing workload."""
+
         def compute_content_hash(content: str) -> str:
             return hashlib.blake2b(content.encode(), digest_size=16).hexdigest()
 
@@ -301,6 +307,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_pipeline_like_workload(self) -> None:
         """Simulate a pipeline: extract -> hash -> store."""
+
         def extract(data: str) -> list[str]:
             return data.split()
 

@@ -53,16 +53,13 @@ M1 8GB safe:
 """
 from __future__ import annotations
 import logging
-import textwrap
 from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING, Any
-from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
 logger = logging.getLogger(__name__)
 from hledac.universal._core.capability_cost import register_capability_cost
-from _core import aclose
 register_capability_cost('wasmdashboardbuilder', rss_mb=200, peak_mb=400, tier='light', tags=('export', 'ui'))
 MAX_GRAPH_NODES: int = 500
 MAX_TIMELINE_EVENTS: int = 2000

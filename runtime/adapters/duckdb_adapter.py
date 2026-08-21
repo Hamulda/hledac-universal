@@ -11,8 +11,6 @@ GHOST_INVARIANTS:
 - Bounded: write queue bounded
 """
 
-
-
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -20,7 +18,6 @@ if TYPE_CHECKING:
     pass
 
 from hledac.universal.runtime.protocols.storage_protocol import StorageProtocol
-from _core import aclose
 
 
 class DuckDBStoreAdapter(StorageProtocol):
@@ -37,7 +34,7 @@ class DuckDBStoreAdapter(StorageProtocol):
         await adapter.async_ingest_findings(findings, sprint_id)
     """
 
-    __slots__ = ('_store',)
+    __slots__ = ("_store",)
 
     def __init__(self, store: Any) -> None:
         """
@@ -48,9 +45,7 @@ class DuckDBStoreAdapter(StorageProtocol):
         """
         self._store = store
 
-    async def async_ingest_findings(
-        self, findings: list[Any], sprint_id: str
-    ) -> None:
+    async def async_ingest_findings(self, findings: list[Any], sprint_id: str) -> None:
         """Delegate to store's canonical write path."""
         try:
             await self._store.async_ingest_findings_batch(findings, sprint_id)
@@ -82,7 +77,7 @@ class DuckDBStoreAdapter(StorageProtocol):
     async def async_initialize(self) -> None:
         """Initialize underlying store."""
         try:
-            if hasattr(self._store, 'async_initialize'):
+            if hasattr(self._store, "async_initialize"):
                 await self._store.async_initialize()
         except Exception:  # noqa: BLE001
             pass

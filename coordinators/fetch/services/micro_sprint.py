@@ -12,27 +12,26 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, TypeVar
+from typing import Any, TypeVar
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 class MicroSprintConfig(Struct, frozen=True):
     """Micro sprint configuration. M1 8GB: msgspec.Struct for fast init."""
+
     sprint_duration_s: float = 5.0
     max_tasks_per_sprint: int = 50
     cooldown_s: float = 1.0
@@ -41,13 +40,10 @@ class MicroSprintConfig(Struct, frozen=True):
     adaptive_duration: bool = True
 
 
-# =============================================================================
-# Sprint Task
-# =============================================================================
-
 @dataclass(slots=True, order=True)
 class SprintTask:
     """Task scheduled for micro-sprint execution."""
+
     priority: int = field(compare=True)
     task_id: str = field(compare=False)
     url: str = field(compare=False)
@@ -66,6 +62,7 @@ class SprintTask:
 @dataclass(slots=True)
 class SprintResult:
     """Result of sprint task execution."""
+
     task_id: str
     success: bool
     result: Any = None
@@ -73,10 +70,6 @@ class SprintResult:
     duration_s: float = 0.0
     entropy_score: float = 0.0
 
-
-# =============================================================================
-# Micro Sprint Service
-# =============================================================================
 
 @dataclass(slots=True)
 class MicroSprintService:
@@ -95,28 +88,29 @@ class MicroSprintService:
     STRESS-25 pattern: asyncio.Event provides immediate cancellation response
     (no polling delay when stop() is called).
     """
+
     config: MicroSprintConfig = field(default_factory=MicroSprintConfig)
 
-    _task_queue: asyncio.PriorityQueue[SprintTask] = field(
-        default_factory=lambda: asyncio.PriorityQueue()
-    )
+    _task_queue: asyncio.PriorityQueue[SprintTask] = field(default_factory=lambda: asyncio.PriorityQueue())
     _results: dict[str, SprintResult] = field(default_factory=dict)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _running: asyncio.Event = field(default=None, init=False)  # ISSUE-OPT-1: Event-driven
     _sprint_task: asyncio.Task[None] | None = field(default=None, init=False)
     _entropy_feedback: Any = field(default=None, init=False)
-    _stats: dict[str, Any] = field(default_factory=lambda: {
-        'tasks_scheduled': 0,
-        'tasks_completed': 0,
-        'tasks_failed': 0,
-        'sprints_executed': 0,
-        'total_duration_s': 0.0,
-    })
+    _stats: dict[str, Any] = field(
+        default_factory=lambda: {
+            "tasks_scheduled": 0,
+            "tasks_completed": 0,
+            "tasks_failed": 0,
+            "sprints_executed": 0,
+            "total_duration_s": 0.0,
+        }
+    )
 
     def __post_init__(self) -> None:
         # ISSUE-OPT-1: Initialize asyncio.Event lazily
         if self._running is None:
-            object.__setattr__(self, '_running', asyncio.Event())
+            object.__setattr__(self, "_running", asyncio.Event())
             self._running.set()  # Start in running state
 
     def set_entropy_feedback(self, entropy_service: Any) -> None:
@@ -131,7 +125,7 @@ class MicroSprintService:
         *args: Any,
         priority: int = 0,
         entropy_score: float = 0.0,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Schedule a task for sprint execution.
@@ -164,7 +158,7 @@ class MicroSprintService:
         await self._task_queue.put(task)
 
         async with self._lock:
-            self._stats['tasks_scheduled'] += 1
+            self._stats["tasks_scheduled"] += 1
 
     async def execute_sprint(self) -> list[SprintResult]:
         """
@@ -177,12 +171,10 @@ class MicroSprintService:
         sprint_duration = self.config.sprint_duration_s
         results: list[SprintResult] = []
 
-        # Check for adaptive duration
         if self.config.adaptive_duration and self._entropy_feedback:
             try:
-                # Get recent entropy average
                 stats = self._entropy_feedback.get_stats()
-                avg_entropy = stats.get('avg_entropy', 0.0)
+                avg_entropy = stats.get("avg_entropy", 0.0)
                 if avg_entropy > self.config.entropy_threshold:
                     # High entropy = shorter sprint
                     sprint_duration = self.config.sprint_duration_s * 0.5
@@ -204,14 +196,14 @@ class MicroSprintService:
             results.append(result)
 
             async with self._lock:
-                self._stats['tasks_completed'] += 1 if result.success else 0
-                self._stats['tasks_failed'] += 1 if not result.success else 0
+                self._stats["tasks_completed"] += 1 if result.success else 0
+                self._stats["tasks_failed"] += 1 if not result.success else 0
 
             tasks_executed += 1
 
         async with self._lock:
-            self._stats['sprints_executed'] += 1
-            self._stats['total_duration_s'] += time.monotonic() - sprint_start
+            self._stats["sprints_executed"] += 1
+            self._stats["total_duration_s"] += time.monotonic() - sprint_start
 
         return results
 
@@ -225,13 +217,10 @@ class MicroSprintService:
         )
 
         try:
-            task_result = await asyncio.wait_for(
-                task.callback(*task.args, **task.kwargs),
-                timeout=30.0
-            )
+            task_result = await asyncio.wait_for(task.callback(*task.args, **task.kwargs), timeout=30.0)
             result.result = task_result
             result.success = True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result.error = "timeout"
         except Exception as e:  # noqa: BLE001
             result.error = str(e)
@@ -269,12 +258,9 @@ class MicroSprintService:
 
                 # Cooldown between sprints - use Event.wait() for immediate cancellation
                 try:
-                    await asyncio.wait_for(
-                        self._running.wait(),
-                        timeout=self.config.cooldown_s
-                    )
+                    await asyncio.wait_for(self._running.wait(), timeout=self.config.cooldown_s)
                     break  # Event was set, exit loop
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass  # Timeout reached, continue
 
             except asyncio.CancelledError:
@@ -282,12 +268,9 @@ class MicroSprintService:
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Sprint loop error: {e}")
                 try:
-                    await asyncio.wait_for(
-                        self._running.wait(),
-                        timeout=self.config.cooldown_s
-                    )
+                    await asyncio.wait_for(self._running.wait(), timeout=self.config.cooldown_s)
                     break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
     def get_queue_size(self) -> int:
@@ -301,25 +284,23 @@ class MicroSprintService:
     def get_stats(self) -> dict[str, Any]:
         """Get sprint statistics."""
         avg_duration = (
-            self._stats['total_duration_s'] / self._stats['sprints_executed']
-            if self._stats['sprints_executed'] > 0 else 0.0
+            self._stats["total_duration_s"] / self._stats["sprints_executed"]
+            if self._stats["sprints_executed"] > 0
+            else 0.0
         )
 
         return {
             **self._stats,
-            'queue_size': self._task_queue.qsize(),
-            'results_cached': len(self._results),
-            'avg_sprint_duration_s': avg_duration,
-            'running': self._running,
+            "queue_size": self._task_queue.qsize(),
+            "results_cached": len(self._results),
+            "avg_sprint_duration_s": avg_duration,
+            "running": self._running,
         }
 
     def cleanup_results(self, max_age_s: float = 300.0) -> int:
         """Clean up old results."""
         now = time.monotonic()
-        to_remove = [
-            task_id for task_id, result in self._results.items()
-            if now - (result.duration_s or 0) > max_age_s
-        ]
+        to_remove = [task_id for task_id, result in self._results.items() if now - (result.duration_s or 0) > max_age_s]
         for task_id in to_remove:
             del self._results[task_id]
         return len(to_remove)
@@ -340,8 +321,8 @@ class MicroSprintService:
 
 
 __all__ = [
-    'MicroSprintConfig',
-    'SprintTask',
-    'SprintResult',
-    'MicroSprintService',
+    "MicroSprintConfig",
+    "SprintTask",
+    "SprintResult",
+    "MicroSprintService",
 ]

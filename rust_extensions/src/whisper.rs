@@ -101,10 +101,6 @@ const MEDIUM_MODEL_SIZE_MB: usize = 148;
 /// Default batch size for M1 8GB (bounded concurrent transcription).
 const DEFAULT_BATCH_SIZE: usize = 2;
 
-// ============================================================================
-// Internal types
-// ============================================================================
-
 /// Single transcribed segment with timing and confidence.
 #[derive(Debug, Clone)]
 pub struct WhisperSegment {
@@ -193,10 +189,6 @@ impl ModelSize {
     }
 }
 
-// ============================================================================
-// Global state
-// ============================================================================
-
 /// Model cache directory.
 static MODEL_CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     std::env::var("WHISPER_MODEL_PATH")
@@ -209,10 +201,6 @@ static MODEL_CACHE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         })
 });
 
-// ============================================================================
-// Model file management
-// ============================================================================
-
 /// Validate model file exists and has reasonable size.
 fn validate_model_file(path: &PathBuf) -> Result<ModelSize, String> {
     use std::fs;
@@ -221,7 +209,6 @@ fn validate_model_file(path: &PathBuf) -> Result<ModelSize, String> {
     let metadata = fs::metadata(path).map_err(|e| format!("Failed to read model file: {}", e))?;
     let size_mb = metadata.len() as usize / (1024 * 1024);
 
-    // Check for ggml magic number
     let mut file = fs::File::open(path).map_err(|e| format!("Failed to open model: {}", e))?;
     let mut header = [0u8; 4];
     file.read_exact(&mut header)
@@ -291,7 +278,6 @@ fn find_coreml_model(ggml_path: &PathBuf) -> Option<PathBuf> {
     let coreml_path = parent.join(&coreml_name);
 
     if coreml_path.exists() && coreml_path.is_dir() {
-        // Check for model.mil or .mlmodel file inside
         if coreml_path.join("model.mil").exists()
             || coreml_path
                 .read_dir()
@@ -338,10 +324,6 @@ fn find_cached_model(model_size: ModelSize) -> Option<PathBuf> {
     }
 }
 
-// ============================================================================
-// Whisper transcription implementation
-// ============================================================================
-
 /// Run whisper transcription on audio data.
 fn run_whisper_transcription(
     audio_path: &str,
@@ -363,7 +345,6 @@ fn run_whisper_transcription(
 
     validate_model_file(&model_path)?;
 
-    // Check for CoreML acceleration
     let coreml_path = find_coreml_model(&model_path);
     let coreml_used = coreml_path);
 
@@ -372,7 +353,6 @@ fn run_whisper_transcription(
         std::env::set_var("WHISPER_COREML", "1");
     }
 
-    // Load context
     let ctx = WhisperContext::new_with_params(
         model_path.to_str().unwrap(),
         WhisperContextParameters::default(),
@@ -397,12 +377,10 @@ fn run_whisper_transcription(
     // Read audio file
     let audio_data = read_audio_samples(audio_path)?;
 
-    // Run transcription
     state
         .full(params, &audio_data)
         .map_err(|e| format!("Whisper transcription failed: {}", e))?;
 
-    // Extract results
     let num_segments = state
         .full_n_segments()
         .map_err(|e| format!("Failed to get segment count: {}", e))?;
@@ -531,10 +509,6 @@ fn read_audio_samples(audio_path: &str) -> Result<Vec<f32>, String> {
     Ok(samples)
 }
 
-// ============================================================================
-// PyO3 module
-// ============================================================================
-
 /// Convert WhisperResult to Python dict.
 fn result_to_dict(result: WhisperResult, py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let dict = PyDict::new(py);
@@ -623,7 +597,6 @@ fn transcribe(
     language: Option<&str>,
     n_threads: usize,
 ) -> PyResult<Py<PyDict>> {
-    // Validate model size
     let model_size = ModelSize::from_str(model_size)
         .ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -631,7 +604,6 @@ fn transcribe(
             )
         })?;
 
-    // Validate audio path
     let audio_path_buf = PathBuf::from(audio_path);
     if !audio_path_buf.exists() {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
@@ -654,7 +626,6 @@ fn transcribe(
 
     let start = Instant::now();
 
-    // Execute whisper transcription with GIL released
     let result = crate::gil::release_gil(py, move || {
         run_whisper_transcription(&audio_path_str, model_size, language_ref, n_threads)
     });
@@ -680,7 +651,6 @@ fn transcribe_with_timestamps(
     model_size: &str,
     language: Option<&str>,
 ) -> PyResult<Py<PyList>> {
-    // Validate model size
     let model_size = ModelSize::from_str(model_size).ok_or_else(|| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid model_size. Must be 'tiny' or 'base'")
     })?;
@@ -724,10 +694,6 @@ fn transcribe_with_timestamps(
     }
 }
 
-// ============================================================================
-// NEXTGEN-03: Voiceprint Extraction (Speaker Embedding)
-// ============================================================================
-
 /// NEXTGEN-03: Extract speaker embedding from audio using whisper encoder layer.
 ///
 /// This function extracts a 256-dimensional speaker embedding by running
@@ -757,7 +723,6 @@ fn extract_voiceprint(
     // NEXTGEN-03: Cache the last extraction for efficiency
     static LAST_RESULT: OnceLock<(String, Vec<f32>)> = OnceLock::new();
 
-    // Validate model size
     let model_size = ModelSize::from_str(model_size).ok_or_else(|| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid model_size")
     })?;
@@ -771,7 +736,6 @@ fn extract_voiceprint(
 
     let n_segments = n_segments.min(10).max(1);
 
-    // Check cache
     let cache_key = format!("{}:{}:{}", audio_path, model_size.as_str(), n_segments);
     if let Some((key, emb)) = LAST_RESULT.get() {
         if key == &cache_key {
@@ -790,7 +754,6 @@ fn extract_voiceprint(
 
     let audio_path_str = audio_path);
 
-    // Execute voiceprint extraction with GIL released
     let result = crate::gil::release_gil(py, move || {
         run_voiceprint_extraction(&audio_path_str, model_size, n_segments)
     });
@@ -1204,10 +1167,6 @@ fn speaker_similarity(embedding_a: Vec<f32>, embedding_b: Vec<f32>) -> f64 {
     dot as f64
 }
 
-// ============================================================================
-// Batch Transcription (for multi-page PDF audio)
-// ============================================================================
-
 /// Batch transcription result for a single file.
 #[derive(Debug, Clone)]
 pub struct BatchItemResult {
@@ -1385,7 +1344,6 @@ fn batch_transcribe(
     n_threads: usize,
     max_concurrent: usize,
 ) -> PyResult<Py<PyDict>> {
-    // Validate model size
     let model_size = ModelSize::from_str(model_size).ok_or_else(|| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>(
             format!(
@@ -1395,14 +1353,12 @@ fn batch_transcribe(
         )
     })?;
 
-    // Validate audio paths
     if audio_paths.is_empty() {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "audio_paths cannot be empty"
         ));
     }
 
-    // Validate paths exist
     for path in &audio_paths {
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
@@ -1424,7 +1380,6 @@ fn batch_transcribe(
     let language_ref = language_owned.as_deref();
     let n_threads = if n_threads == 0 { DEFAULT_THREADS } else { n_threads };
 
-    // Run batch with GIL released
     let batch_result = crate::gil::release_gil(py, move || {
         run_batch_transcription(
             &audio_paths,
@@ -1492,10 +1447,6 @@ fn result_to_dict_sync(result: &WhisperResult) -> PyObject {
     })
 }
 
-// ============================================================================
-// ANE Verification
-// ============================================================================
-
 /// ANE verification result.
 #[derive(Debug, Clone)]
 pub struct AneVerification {
@@ -1531,7 +1482,6 @@ fn verify_ane() -> PyResult<Py<PyDict>> {
     let mut coreml_models: Vec<CoremlModelInfo> = Vec::new();
     let mut ane_available = false;
 
-    // Check each model size
     let sizes = [
         (ModelSize::Tiny, "tiny", 39),
         (ModelSize::Base, "base", 74),
@@ -1711,10 +1661,6 @@ Example:
 
     Ok(())
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

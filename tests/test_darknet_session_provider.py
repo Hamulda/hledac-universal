@@ -8,15 +8,15 @@ provider (F274) for Tor/I2P/Arti transports.
 
 Architecture: M1 8GB optimized, Python 3.14+ compatible
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from _core import aclose
 
 
 class TestGetSession:
@@ -45,10 +45,10 @@ class TestGetSession:
         from hledac.universal.transport.darknet_session_provider import get_session
 
         mock_session = MagicMock()
-        
+
         async def mock_get_tor(host: str) -> Any | None:
             return mock_session
-        
+
         with patch("hledac.universal.transport.darknet_session_provider._get_tor_session", mock_get_tor):
             result = await get_session("tor", "example.onion")
             assert result is mock_session
@@ -87,13 +87,13 @@ class TestMarkUsed:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-    )
+        )
 
         # Clear state
         _last_used["tor"].clear()
-        
+
         await mark_used("tor", "example.onion")
-        
+
         # Access should be recorded
         assert "example.onion" in _last_used["tor"]
         assert _last_used["tor"]["example.onion"] > 0
@@ -112,20 +112,20 @@ class TestMarkUsed:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-    )
+        )
 
         # Clear state
         _last_used["i2p"].clear()
-        
+
         await mark_used("i2p", "test.i2p")
         first_ts = _last_used["i2p"]["test.i2p"]
-        
+
         # Wait a bit
         await asyncio.sleep(0.1)
-        
+
         await mark_used("i2p", "test.i2p")
         second_ts = _last_used["i2p"]["test.i2p"]
-        
+
         assert second_ts > first_ts
 
 
@@ -138,10 +138,10 @@ class TestCloseIdle:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_idle,
-    )
+        )
 
         _last_used["tor"].clear()
-        
+
         evicted = await close_idle()
         assert evicted == 0
 
@@ -149,18 +149,18 @@ class TestCloseIdle:
     async def test_close_idle_evicts_expired(self) -> None:
         """close_idle() must evict TTL-expired entries."""
         from hledac.universal.transport.darknet_session_provider import (
-            _last_used,
             _TTL_SECONDS,
+            _last_used,
             close_idle,
-    )
+        )
 
         # Add old entry (expired)
         _last_used["tor"]["old.onion"] = time.monotonic() - _TTL_SECONDS - 10
         # Add new entry (not expired)
         _last_used["tor"]["new.onion"] = time.monotonic()
-        
+
         evicted = await close_idle()
-        
+
         assert evicted == 1
         assert "old.onion" not in _last_used["tor"]
         assert "new.onion" in _last_used["tor"]
@@ -170,14 +170,13 @@ class TestCloseIdle:
         """close_idle() must preserve non-expired entries."""
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
-            _TTL_SECONDS,
             close_idle,
-    )
+        )
 
         _last_used["i2p"]["valid.i2p"] = time.monotonic()
-        
+
         evicted = await close_idle()
-        
+
         assert evicted == 0
         assert "valid.i2p" in _last_used["i2p"]
 
@@ -191,14 +190,14 @@ class TestCloseAll:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_all,
-    )
+        )
 
         # Add some entries
         _last_used["tor"]["example.onion"] = time.monotonic()
         _last_used["i2p"]["example.i2p"] = time.monotonic()
-        
+
         await close_all()
-        
+
         # All tracking should be cleared
         assert len(_last_used["tor"]) == 0
         assert len(_last_used["i2p"]) == 0
@@ -242,16 +241,13 @@ class TestThreadSafety:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-    )
+        )
 
         _last_used["tor"].clear()
-        
+
         # Concurrent marks
-        await asyncio.gather(*[
-            mark_used("tor", f"host{i}.onion")
-            for i in range(10)
-        ])
-        
+        await asyncio.gather(*[mark_used("tor", f"host{i}.onion") for i in range(10)])
+
         assert len(_last_used["tor"]) == 10
 
     @pytest.mark.asyncio
@@ -261,22 +257,22 @@ class TestThreadSafety:
             _last_used,
             close_idle,
             mark_used,
-    )
+        )
 
         _last_used["i2p"].clear()
-        
+
         # Add some entries
         for i in range(5):
             _last_used["i2p"][f"host{i}.i2p"] = time.monotonic() - 100
-        
+
         # Concurrent operations
         await asyncio.gather(
             close_idle(),
             close_idle(),
             mark_used("i2p", "newhost.i2p"),
             close_idle(),
-    )
-        
+        )
+
         # Should have exactly one entry (newhost)
         assert "newhost.i2p" in _last_used["i2p"]
 
@@ -294,9 +290,11 @@ class TestInvariants:
         # Invalid transport - returns None
         result = await get_session("invalid", "host")
         assert result is None
-        
+
         # Exception handling - returns None
-        with patch("hledac.universal.transport.darknet_session_provider._get_tor_session", side_effect=Exception("Test")):
+        with patch(
+            "hledac.universal.transport.darknet_session_provider._get_tor_session", side_effect=Exception("Test")
+        ):
             result = await get_session("tor", "host")
             assert result is None
 
@@ -308,13 +306,13 @@ class TestInvariants:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             mark_used,
-    )
+        )
 
         _last_used["tor"].clear()
-        
+
         # mark_used should only update timestamp, not create sessions
         await mark_used("tor", "test.onion")
-        
+
         assert "test.onion" in _last_used["tor"]
         assert _last_used["tor"]["test.onion"] > 0
 
@@ -326,12 +324,12 @@ class TestInvariants:
         from hledac.universal.transport.darknet_session_provider import (
             _last_used,
             close_idle,
-    )
+        )
 
         _last_used["i2p"]["old.i2p"] = time.monotonic() - 400
-        
+
         evicted = await close_idle()
-        
+
         assert evicted == 1
         assert "old.i2p" not in _last_used["i2p"]
 

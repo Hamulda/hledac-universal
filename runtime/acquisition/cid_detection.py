@@ -9,9 +9,7 @@ MODERNIZATION (Issue #18):
   - No heavy imports — fully self-contained
 """
 
-
 import re
-from _core import aclose
 
 # R10: CID detection regex — bounded, no catastrophic backtracking
 # CIDv0: Qm + 44 base58 chars = 46 chars total

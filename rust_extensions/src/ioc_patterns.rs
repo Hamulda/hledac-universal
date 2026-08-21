@@ -53,8 +53,6 @@ pub static URL_PAT: &str = r#"https?://[^\s<>"']+"#;
 /// Used when specific hash type cannot be determined
 pub static HASH_PAT: &str = r"\b[a-fA-F0-9]{32,64}\b";
 
-// ─── Encoding Detection Patterns (DNS tunneling analysis) ───────────────────
-
 /// Base32 encoding pattern
 /// Format: A-Z and 2-7 characters, optional padding with =
 pub static ENCODING_BASE32_PAT: &str = r"^[A-Z2-7]+=*$";

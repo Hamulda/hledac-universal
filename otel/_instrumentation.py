@@ -5,7 +5,6 @@ gets a NoOp span and continues unchanged.
 
 """
 
-
 import functools
 import inspect
 from collections.abc import Callable
@@ -13,7 +12,6 @@ from typing import Any, TypeVar
 
 from otel._noop import _NOOP_SPAN, _NOOP_TRACER
 from otel._setup import is_initialized
-from _core import aclose
 
 F = TypeVar("F", bound=Callable[..., Any], default=Callable[..., Any])
 
@@ -50,7 +48,7 @@ def get_tracer() -> Any:
         _TRACER = _NOOP_TRACER
         return _TRACER
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         _TRACER = trace.get_tracer(_TRACER_NAME)
         return _TRACER
@@ -167,6 +165,7 @@ class _SpanContextManager:
         if is_initialized():
             try:
                 from opentelemetry import trace as otel_trace
+
                 self._tracer = otel_trace.get_tracer(_TRACER_NAME)
             except Exception:
                 self._tracer = _NOOP_TRACER
@@ -180,9 +179,7 @@ class _SpanContextManager:
             # start_as_current_span returns _AgnosticContextManager (generator CM).
             # We must call __enter__() on it to get the actual _Span and properly
             # hook the span lifecycle to our __exit__.
-            self._acm = self._tracer.start_as_current_span(
-                self._name, attributes=filtered
-    )
+            self._acm = self._tracer.start_as_current_span(self._name, attributes=filtered)
             self._span = self._acm.__enter__()
             return self._span
         except Exception:
@@ -204,6 +201,7 @@ class _SpanContextManager:
             if self._token is not None:
                 try:
                     from opentelemetry import context as otel_context
+
                     otel_context.detach(self._token)
                 except Exception:  # noqa: BLE001
                     pass
@@ -228,6 +226,7 @@ class _SpanContextManager:
         if self._token is not None:
             try:
                 from opentelemetry import context as otel_context
+
                 otel_context.detach(self._token)
             except Exception:  # noqa: BLE001
                 pass
@@ -252,6 +251,7 @@ class _SpanContextManager:
             if self._token is not None:
                 try:
                     from opentelemetry import context as otel_context
+
                     otel_context.detach(self._token)
                 except Exception:  # noqa: BLE001
                     pass
@@ -272,6 +272,7 @@ class _SpanContextManager:
         if self._token is not None:
             try:
                 from opentelemetry import context as otel_context
+
                 otel_context.detach(self._token)
             except Exception:  # noqa: BLE001
                 pass
@@ -302,9 +303,7 @@ def span(name: str, **attrs: Any) -> _SpanContextManager:
 # ── Decorator: instrumented() ──────────────────────────────────────────────
 
 
-def instrumented(
-    name: str | None = None, **default_attrs: Any
-) -> Callable[[F], F]:
+def instrumented(name: str | None = None, **default_attrs: Any) -> Callable[[F], F]:
     """Wrap a sync or async function in a span. Fail-safe.
 
     Usage::
@@ -331,7 +330,7 @@ def instrumented(
                 try:
                     with span(n, **attrs):
                         return await fn(*args, **kwargs)
-                except (GeneratorExit, RuntimeError):
+                except GeneratorExit, RuntimeError:
                     # BUG 5 fix: OTel span __exit__ on a generator that received
                     # throw() raises RuntimeError "generator didn't stop after throw()".
                     # Re-raise cleanly so the async context manager protocol completes.
@@ -347,7 +346,7 @@ def instrumented(
                 try:
                     with span(n, **attrs):
                         return fn(*args, **kwargs)
-                except (GeneratorExit, RuntimeError):
+                except GeneratorExit, RuntimeError:
                     # Same fix for sync generators wrapped in span.
                     raise
 
@@ -362,7 +361,7 @@ def instrumented(
 def add_event(name: str, attrs: dict[str, Any] | None = None) -> None:
     """Add an event to the current span. No-op if not in a span."""
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         sp = trace.get_current_span()
         if sp is not None:
@@ -376,7 +375,7 @@ def add_event(name: str, attrs: dict[str, Any] | None = None) -> None:
 def set_attribute(key: str, value: Any) -> None:
     """Set an attribute on the current span."""
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         sp = trace.get_current_span()
         if sp is not None:
@@ -390,18 +389,18 @@ def set_attribute(key: str, value: Any) -> None:
 def set_status(code: str, description: str = "") -> None:
     """Set status on the current span. code: OK|ERROR|UNSET."""
     try:
-        from opentelemetry import trace  # type: ignore
-        from opentelemetry.trace import Status, StatusCode  # type: ignore
+        from opentelemetry import trace
+        from opentelemetry.trace import Status, StatusCode
 
         sp = trace.get_current_span()
         if sp is not None:
             is_recording = getattr(sp, "is_recording", None)
             if callable(is_recording) and is_recording():
                 sc = {
-                "OK": StatusCode.OK,
-                "ERROR": StatusCode.ERROR,
-                "UNSET": StatusCode.UNSET,
-            }.get(code.upper(), StatusCode.UNSET)
+                    "OK": StatusCode.OK,
+                    "ERROR": StatusCode.ERROR,
+                    "UNSET": StatusCode.UNSET,
+                }.get(code.upper(), StatusCode.UNSET)
                 sp.set_status(Status(sc, description[:256]))
     except Exception:  # noqa: BLE001
         pass
@@ -410,7 +409,7 @@ def set_status(code: str, description: str = "") -> None:
 def record_exception(exc: BaseException) -> None:
     """Record an exception on the current span."""
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         sp = trace.get_current_span()
         if sp is not None:
@@ -424,7 +423,7 @@ def record_exception(exc: BaseException) -> None:
 def current_trace_id() -> str:
     """Return current trace ID as 32-char hex, or zeros."""
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         sp = trace.get_current_span()
         if sp is not None:
@@ -439,7 +438,7 @@ def current_trace_id() -> str:
 def current_span_id() -> str:
     """Return current span ID as 16-char hex, or zeros."""
     try:
-        from opentelemetry import trace  # type: ignore
+        from opentelemetry import trace
 
         sp = trace.get_current_span()
         if sp is not None:

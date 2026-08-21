@@ -14,6 +14,7 @@ Cache TTL: 200ms — debounces rapid successive calls in tight loops without
 stale data issues. ResourceGovernor uses 2s TTL for its policy decisions;
 this module targets the sub-second monitoring loop use case.
 """
+
 from __future__ import annotations
 
 import os
@@ -21,9 +22,9 @@ import resource
 import sys
 import threading
 import time as _time_module
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from _core._util import aclose
+
 from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
@@ -63,9 +64,7 @@ def _get_sysctlCached(name: str) -> int | float | None:
                 return val
         import subprocess
 
-        result = subprocess.run(
-            ["sysctl", "-n", name], capture_output=True, text=True, timeout=1
-    )
+        result = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=1)
         if result.returncode == 0:
             raw = result.stdout.strip()
             val = int(raw) if raw.isdigit() else float(raw)
@@ -97,9 +96,11 @@ def _get_loadavg() -> tuple[float, float, float] | None:
     except Exception:
         return None
 
+
 # ------------------------------------------------------------------ #
 # Dataclass
 # ------------------------------------------------------------------ #
+
 
 @dataclass(slots=True, frozen=True)
 class SystemSnapshot:
@@ -109,17 +110,19 @@ class SystemSnapshot:
     All values are derived once per cache TTL. Callers MUST NOT make
     additional raw psutil calls — use this snapshot instead.
     """
+
     timestamp: float
-    rss_bytes: int           # Process RSS from getrusage (kilobytes on Darwin → bytes)
-    rss_mb: float            # RSS in MB
-    memory_percent: float     # System memory used percent (0-100)
-    memory_used_gb: float    # System used (total - available)
+    rss_bytes: int  # Process RSS from getrusage (kilobytes on Darwin → bytes)
+    rss_mb: float  # RSS in MB
+    memory_percent: float  # System memory used percent (0-100)
+    memory_used_gb: float  # System used (total - available)
     memory_available_gb: float
-    memory_pressure: str      # "GREEN" | "YELLOW" | "RED" | "UNKNOWN"
-    free_pct: int            # System free percent 0-100
+    memory_pressure: str  # "GREEN" | "YELLOW" | "RED" | "UNKNOWN"
+    free_pct: int  # System free percent 0-100
     # Diagnostic (not used in hot-path decisions)
     cpu_percent: float = 0.0
     load_average: tuple[float, float, float] | None = None
+
 
 # ------------------------------------------------------------------ #
 # RSS via getrusage — ZERO syscall after first call
@@ -128,7 +131,7 @@ class SystemSnapshot:
 # On Darwin getrusage(RUSAGE_SELF) returns struct rusage with ru_maxrss in KB.
 # The struct is read from libc without any syscall after initial setup.
 _rusage_cache: dict[str, tuple[int, float]] = {}  # key → (rusage_maxrss_bytes, timestamp)
-_rusage_lock: "threading.Lock | None" = None  # lazily initialized
+_rusage_lock: threading.Lock | None = None  # lazily initialized
 
 
 @auto_register(LockCategory.METRICS)
@@ -137,6 +140,7 @@ def _get_rusage_lock():
     global _rusage_lock
     if _rusage_lock is None:
         import threading
+
         _rusage_lock = threading.Lock()
     return _rusage_lock
 
@@ -180,7 +184,7 @@ def get_rss_rusage() -> int:
 # Returns vm_statistics64_data_t fields needed for memory pressure derivation.
 
 _memory_pressure_cache: dict[str, tuple[dict[str, int], float]] = {}  # key → (pressure_dict, ts)
-_mach_lock: "threading.Lock | None" = None
+_mach_lock: threading.Lock | None = None
 
 
 @auto_register(LockCategory.METRICS)
@@ -189,6 +193,7 @@ def _get_mach_lock():
     global _mach_lock
     if _mach_lock is None:
         import threading
+
         _mach_lock = threading.Lock()
     return _mach_lock
 
@@ -240,7 +245,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
                 int mach_host_self(void);
                 int host_statistics64(int host_port, int flavor, void *stat, int *count);
                 """
-    )
+            )
             libc = ffi.dlopen("libc.dylib")
             mach_host_self = libc.mach_host_self
         except Exception:
@@ -271,19 +276,17 @@ def get_memory_pressure_mach() -> dict[str, int]:
         if _using_ctypes:
             stat = struct_vm_statistics64()
             count = c_int(HOST_VM_INFO_COUNT)
-            result = libc.host_statistics64(
-                mach_port, HOST_VM_INFO_COUNT, pointer(stat), count
-    )
+            result = libc.host_statistics64(mach_port, HOST_VM_INFO_COUNT, pointer(stat), count)
         else:
             # cffi: allocate struct via ffi.new()
-            vm_stat_type = ffi.new("struct {"
+            vm_stat_type = ffi.new(
+                "struct {"
                 "int free_count; int active_count; int inactive_count; "
                 "int wire_count; int compressed_count; int compressor_pages; "
-                "int thumb_pages; int speculative_count; int extra[50]; }*")
+                "int thumb_pages; int speculative_count; int extra[50]; }*"
+            )
             count = ffi.new("int*", HOST_VM_INFO_COUNT)
-            result = libc.host_statistics64(
-                mach_port, HOST_VM_INFO_COUNT, vm_stat_type, count
-    )
+            result = libc.host_statistics64(mach_port, HOST_VM_INFO_COUNT, vm_stat_type, count)
             if result == 0:
                 data = {
                     "free_count": vm_stat_type.free_count,
@@ -313,11 +316,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
                 "wire_count": stat.wire_count,
                 "compressed_count": stat.compressed_count,
                 "total": (
-                    stat.free_count
-                    + stat.active_count
-                    + stat.inactive_count
-                    + stat.wire_count
-                    + stat.compressed_count
+                    stat.free_count + stat.active_count + stat.inactive_count + stat.wire_count + stat.compressed_count
                 ),
             }
         else:
@@ -335,7 +334,7 @@ def get_memory_pressure_mach() -> dict[str, int]:
 # Unified snapshot — single point of entry for hot paths
 # ------------------------------------------------------------------ #
 _system_snapshot_cache: dict[str, tuple[SystemSnapshot, float]] = {}
-_snapshot_lock: "threading.Lock | None" = None
+_snapshot_lock: threading.Lock | None = None
 
 
 @auto_register(LockCategory.METRICS)
@@ -344,6 +343,7 @@ def _get_snapshot_lock():
     global _snapshot_lock
     if _snapshot_lock is None:
         import threading
+
         _snapshot_lock = threading.Lock()
     return _snapshot_lock
 
@@ -437,7 +437,7 @@ def get_system_snapshot() -> SystemSnapshot:
             free_pct=free_pct,
             cpu_percent=0.0,  # Not used in hot paths — use psutil if needed
             load_average=load_avg,
-    )
+        )
 
         _system_snapshot_cache["snapshot"] = (snap, now)
         return snap
@@ -453,7 +453,7 @@ def get_system_snapshot() -> SystemSnapshot:
             memory_available_gb=0.0,
             memory_pressure="UNKNOWN",
             free_pct=0,
-    )
+        )
 
 
 def invalidate_cache() -> None:

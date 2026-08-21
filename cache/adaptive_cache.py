@@ -2,9 +2,6 @@
 Adaptive Cache — Memory-Aware LRU/TinyLFU Cache for M1 8GB UMA
 ================================================================
 
-
-
-
 Adaptive cache with dynamic sizing based on available RAM.
 Uses existing Rust infrastructure (PyGraphLRUCache + get_memory_snapshot).
 
@@ -16,19 +13,18 @@ Features:
 
 Invariant: Always-on, bounded, fail-safe
 """
+
 from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from enum import IntEnum
-from typing import Any, Generic, TypeVar
 from collections.abc import Callable
+from enum import IntEnum
+from typing import Any, TypeVar
 
-from hledac.universal._core.locks import make_lock, LockCategory
-from _core import aclose
+from hledac.universal._core.locks import LockCategory, make_lock
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +42,7 @@ def _get_rust() -> Any:
             if _rust is None:
                 try:
                     from hledac.universal.hledac.universal import rust_extensions
+
                     _rust = rust_extensions
                 except ImportError:
                     logger.warning("[AdaptiveCache] Rust extensions unavailable, using fallback")
@@ -59,15 +56,16 @@ V = TypeVar("V")
 
 class MemoryPressure(IntEnum):
     """M1 8GB UMA memory pressure levels."""
-    NORMAL = 0      # > 2 GiB available — full cache
-    ELEVATED = 1    # 1-2 GiB available — reduce to 50%
-    CRITICAL = 2    # < 1 GiB available — minimal cache
+
+    NORMAL = 0  # > 2 GiB available — full cache
+    ELEVATED = 1  # 1-2 GiB available — reduce to 50%
+    CRITICAL = 2  # < 1 GiB available — minimal cache
 
 
 # M1 8GB bounds
-_MAX_CACHE_BYTES_NORMAL = 512 * 1024 * 1024    # 512 MB
+_MAX_CACHE_BYTES_NORMAL = 512 * 1024 * 1024  # 512 MB
 _MAX_CACHE_BYTES_ELEVATED = 256 * 1024 * 1024  # 256 MB
-_MAX_CACHE_BYTES_CRITICAL = 64 * 1024 * 1024   # 64 MB
+_MAX_CACHE_BYTES_CRITICAL = 64 * 1024 * 1024  # 64 MB
 _MAX_ENTRIES_NORMAL = 100_000
 _MAX_ENTRIES_ELEVATED = 50_000
 _MAX_ENTRIES_CRITICAL = 10_000
@@ -82,6 +80,7 @@ class AdaptiveCacheConfig(Struct):
     - Elevated: 256 MB / 50k entries
     - Critical: 64 MB / 10k entries
     """
+
     max_bytes_normal: int = _MAX_CACHE_BYTES_NORMAL
     max_bytes_elevated: int = _MAX_CACHE_BYTES_ELEVATED
     max_bytes_critical: int = _MAX_CACHE_BYTES_CRITICAL
@@ -95,6 +94,7 @@ class AdaptiveCacheConfig(Struct):
 
 class CacheStats(Struct):
     """Cache statistics."""
+
     hits: int = 0
     misses: int = 0
     evictions: int = 0
@@ -110,7 +110,7 @@ class CacheStats(Struct):
         return self.hits / total if total > 0 else 0.0
 
 
-class AdaptiveCache(Generic[K, V]):
+class AdaptiveCache[K, V]:
     """
     Memory-aware cache s TinyLFU admission a adaptívnym sizingom.
 
@@ -121,10 +121,20 @@ class AdaptiveCache(Generic[K, V]):
     """
 
     __slots__ = (
-        '_name', '_config', '_pressure', '_max_bytes', '_max_entries',
-        '_lock', '_stats', '_memory_check_interval_sec',
-        '_last_memory_check', '_use_rust', '_rust_cache',
-        '_python_cache', '_python_access_order', '_python_current_bytes',
+        "_name",
+        "_config",
+        "_pressure",
+        "_max_bytes",
+        "_max_entries",
+        "_lock",
+        "_stats",
+        "_memory_check_interval_sec",
+        "_last_memory_check",
+        "_use_rust",
+        "_rust_cache",
+        "_python_cache",
+        "_python_access_order",
+        "_python_current_bytes",
     )
 
     def __init__(
@@ -142,7 +152,7 @@ class AdaptiveCache(Generic[K, V]):
             max_bytes=self._max_bytes,
             max_entries=self._max_entries,
             pressure_level=self._pressure,
-    )
+        )
         self._memory_check_interval_sec = self._config.memory_check_interval_sec
         self._last_memory_check = 0.0  # timestamp
 
@@ -171,12 +181,12 @@ class AdaptiveCache(Generic[K, V]):
             self._rust_cache = rust.PyGraphLRUCache(
                 self._max_entries,
                 self._max_bytes,
-    )
+            )
             self._use_rust = True
             logger.debug(
                 f"[AdaptiveCache] Rust PyGraphLRUCache initialized: "
                 f"entries={self._max_entries}, bytes={self._max_bytes}"
-    )
+            )
             return True
         except Exception as e:
             logger.warning(f"[AdaptiveCache] Rust PyGraphLRUCache init failed: {e}")
@@ -187,6 +197,7 @@ class AdaptiveCache(Generic[K, V]):
     def _get_memory_pressure(self) -> MemoryPressure:
         """Zisti aktuálny memory pressure pomocou Rust get_memory_snapshot."""
         import time
+
         current_time = time.monotonic()
 
         # Throttle memory check
@@ -215,7 +226,7 @@ class AdaptiveCache(Generic[K, V]):
                     f"[AdaptiveCache] Memory pressure changed: "
                     f"{self._pressure.name} -> {new_pressure.name} "
                     f"(available={available_gib:.2f} GiB)"
-    )
+                )
                 self._pressure = new_pressure
                 self._update_limits()
 
@@ -247,9 +258,9 @@ class AdaptiveCache(Generic[K, V]):
         if old_max_bytes != self._max_bytes:
             logger.info(
                 f"[AdaptiveCache] Limits updated: "
-                f"bytes={old_max_bytes//1024//1024}MB -> {self._max_bytes//1024//1024}MB, "
+                f"bytes={old_max_bytes // 1024 // 1024}MB -> {self._max_bytes // 1024 // 1024}MB, "
                 f"entries={old_max_entries} -> {self._max_entries}"
-    )
+            )
 
     def get(self, key: K) -> V | None:
         """
@@ -343,17 +354,17 @@ class AdaptiveCache(Generic[K, V]):
         def _estimate_size(v: V) -> int:
             """Estimate byte size of a value using sys.getsizeof."""
             import sys
+
             try:
                 return sys.getsizeof(v)
             except Exception:
                 return 64
 
         if existing_key is not None:
-            # Update existing - account for value size change
             old_value = self._python_cache[existing_key]
             old_size = _estimate_size(old_value)
             new_size = _estimate_size(value)
-            self._python_current_bytes += (new_size - old_size)
+            self._python_current_bytes += new_size - old_size
             self._python_cache[existing_key] = value
             if existing_key in self._python_access_order:
                 self._python_access_order.remove(existing_key)
@@ -408,7 +419,7 @@ class AdaptiveCache(Generic[K, V]):
                 max_bytes=self._max_bytes,
                 max_entries=self._max_entries,
                 pressure_level=self._pressure,
-    )
+            )
 
     def stats(self) -> CacheStats:
         """Vráti štatistiky cache."""
@@ -445,10 +456,6 @@ class AdaptiveCache(Generic[K, V]):
         return self.get(key) is not None
 
 
-# ---------------------------------------------------------------------------
-# Global cache registry pre adaptívne management
-# ---------------------------------------------------------------------------
-
 _cache_registry: dict[str, AdaptiveCache] = {}
 _registry_lock = threading.Lock()
 
@@ -480,10 +487,6 @@ def get_all_stats() -> dict[str, CacheStats]:
         return {name: cache.stats() for name, cache in _cache_registry.items()}
 
 
-# ---------------------------------------------------------------------------
-# Adaptive Cache Factory
-# ---------------------------------------------------------------------------
-
 _DEFAULT_CONFIG = AdaptiveCacheConfig()
 
 
@@ -506,10 +509,6 @@ def create_adaptive_cache(
     return cache
 
 
-# ---------------------------------------------------------------------------
-# Convenience decorators
-# ---------------------------------------------------------------------------
-
 _CACHES: dict[str, AdaptiveCache] = {}
 
 
@@ -525,12 +524,13 @@ def cached(
         def expensive_function(arg1, arg2):
             ...
     """
+
     def decorator(func: Callable[..., V]) -> Any:
         if cache_name not in _CACHES:
             _CACHES[cache_name] = create_adaptive_cache(cache_name, config)
         cache = _CACHES[cache_name]
 
-        func_name = getattr(func, '__name__', repr(func))
+        func_name = getattr(func, "__name__", repr(func))
 
         def wrapper(*args: Any, **kwargs: Any) -> V:
             # Key je (func_name, args, kwargs)

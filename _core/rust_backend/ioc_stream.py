@@ -45,13 +45,15 @@ M1 8GB safety:
     - Async: uses asyncio.to_thread(), no event loop blocking
 
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING
-import weakref
-from _core._util import aclose
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 logger = logging.getLogger(__name__)
@@ -60,17 +62,23 @@ _RUST_IMPORT_ERROR: str | None = None
 try:
     from hledac_rust_extensions import StreamingIocScanner as _RustStreamingIocScanner
     from hledac_rust_extensions import StreamPatternHit as _RustStreamPatternHit
+
     _RUST_SCANNER_AVAILABLE = True
 except ImportError as _exc:
     _RUST_IMPORT_ERROR = str(_exc)
     _RustStreamingIocScanner = None
     _RustStreamPatternHit = None
 if not _RUST_SCANNER_AVAILABLE:
-    logger.warning(f'[HEIST-01] Rust StreamingIocScanner not available. mmap/bytes streaming scan disabled. Install: rebuild Rust extensions with `uv run maturin develop --release`. Import error: {_RUST_IMPORT_ERROR}')
+    logger.warning(
+        f"[HEIST-01] Rust StreamingIocScanner not available. mmap/bytes streaming scan disabled. Install: rebuild Rust extensions with `uv run maturin develop --release`. Import error: {_RUST_IMPORT_ERROR}"
+    )
 
 # Shared IOC patterns (imported to avoid duplication)
 from _core.rust_backend._ioc_patterns import IOC_LITERALS
+
 _uAe
+
+
 class IocStreamScanner:
     """Streaming IOC scanner for mmap'd files and raw byte buffers.
 
@@ -95,9 +103,10 @@ class IocStreamScanner:
         - Bounded memory: automaton ~2-5 MB, mmap ~0 bytes resident
 
     """
-    __slots__ = ('_finalizer', '_rust_scanner')
 
-    def __init__(self, patterns: Sequence[str], labels: Sequence[str] | None=None) -> None:
+    __slots__ = ("_finalizer", "_rust_scanner")
+
+    def __init__(self, patterns: Sequence[str], labels: Sequence[str] | None = None) -> None:
         """Create a streaming IOC scanner.
 
 
@@ -277,12 +286,12 @@ class IocStreamScanner:
     def close(self) -> None:
         """Release the automaton and free memory."""
         if self._rust_scanner is not None:
-            if hasattr(self, '_finalizer'):
+            if hasattr(self, "_finalizer"):
                 self._finalizer.detach()
             self._rust_scanner.close()
             self._rust_scanner = None
 
-    def _hit_to_dict(hit: _RustStreamPatternHit) -> dict[str, int | str | bytes | None]:
+    def _hit_to_dict(self: _RustStreamPatternHit) -> dict[str, int | str | bytes | None]:
         """Convert a Rust StreamPatternHit to a plain dict.
 
 
@@ -306,7 +315,7 @@ class IocStreamScanner:
             label (str), value (str or bytes)
 
         """
-        return {'start': hit.start, 'end': hit.end, 'pattern': hit.pattern, 'label': hit.label, 'value': hit.value}
+        return {"start": self.start, "end": self.end, "pattern": self.pattern, "label": self.label, "value": self.value}
 
     @staticmethod
     def is_available() -> bool:
@@ -338,16 +347,16 @@ class IocStreamScanner:
         """
         scanner = _ioc_scanner_instance
         if scanner is None or scanner._rust_scanner is None:
-            return {'available': False, 'pattern_count': 0, 'automaton_bytes': 0}
+            return {"available": False, "pattern_count": 0, "automaton_bytes": 0}
         try:
             pattern_count = len(scanner)
         except Exception:
             pattern_count = 0
         automaton_bytes = pattern_count * 55000 if pattern_count > 0 else 0
-        return {'available': True, 'pattern_count': pattern_count, 'automaton_bytes': automaton_bytes}
+        return {"available": True, "pattern_count": pattern_count, "automaton_bytes": automaton_bytes}
 
     @staticmethod
-    def create_scanner(patterns: Sequence[str], labels: Sequence[str] | None=None) -> IocStreamScanner:
+    def create_scanner(patterns: Sequence[str], labels: Sequence[str] | None = None) -> IocStreamScanner:
         """Create a new IocStreamScanner.
 
 
@@ -358,8 +367,11 @@ class IocStreamScanner:
 
         """
         return IocStreamScanner(patterns, labels)
+
+
 # Use shared IOC_LITERALS from _ioc_patterns
 _ioc_scanner_lock = asyncio.Lock()
+
 
 async def get_ioc_scanner() -> IocStreamScanner:
     """Get or create the singleton IOC scanner.
@@ -379,10 +391,13 @@ async def get_ioc_scanner() -> IocStreamScanner:
             scanner = IocStreamScanner(IOC_LITERALS)
             _ioc_scanner_instance = scanner
             if scanner.is_available:
-                logger.info(f'[HEIST-01] Singleton IOC scanner initialized with {len(IOC_LITERALS)} literal patterns, NEON Teddy SIMD enabled')
+                logger.info(
+                    f"[HEIST-01] Singleton IOC scanner initialized with {len(IOC_LITERALS)} literal patterns, NEON Teddy SIMD enabled"
+                )
             else:
-                logger.warning('[HEIST-01] Singleton IOC scanner initialized without Rust - SIMD scanning disabled')
+                logger.warning("[HEIST-01] Singleton IOC scanner initialized without Rust - SIMD scanning disabled")
         return _ioc_scanner_instance
+
 
 def get_ioc_scanner_sync() -> IocStreamScanner | None:
     """Synchronous access to singleton scanner (call from thread pool).
@@ -395,6 +410,7 @@ def get_ioc_scanner_sync() -> IocStreamScanner | None:
 
     """
     return _ioc_scanner_instance
+
 
 async def scan_bytes_with_ioc_scanner(buffer: bytes | bytearray | memoryview) -> list[dict]:
     """Fail-soft wrapper for SIMD IOC scanning.
@@ -422,8 +438,9 @@ async def scan_bytes_with_ioc_scanner(buffer: bytes | bytearray | memoryview) ->
         scanner = await get_ioc_scanner()
         return await scanner.scan_bytes_async(buffer)
     except Exception as exc:
-        logger.debug(f'IOC SIMD scan failed (fail-soft): {exc}')
+        logger.debug(f"IOC SIMD scan failed (fail-soft): {exc}")
         return []
+
 
 def reset_ioc_scanner() -> None:
     """Reset singleton scanner (for testing).
@@ -443,10 +460,12 @@ def reset_ioc_scanner() -> None:
         return
     asyncio.run_coroutine_threadsafe(_areset(), loop)
 
+
 async def _areset() -> None:
     """Async version of reset with lock acquisition."""
     async with _ioc_scanner_lock:
         _do_reset()
+
 
 def _do_reset() -> None:
     """Core reset logic without lock (callers must hold lock)."""

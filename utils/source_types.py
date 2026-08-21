@@ -16,10 +16,8 @@ yields 80 unique values across the sprint pipeline. All are captured below
 (plus the canonical aliases — see :data:`LEGACY_ALIASES`).
 """
 
-
 import enum
 from typing import Final, Literal
-from _core import aclose
 
 
 class SourceType(enum.StrEnum):
@@ -188,7 +186,7 @@ def canonical_source_type(value: str | SourceType | None) -> str:
         return ""
     try:
         raw = value.value if isinstance(value, SourceType) else str(value)
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return ""
     if not raw:
         return ""
@@ -197,30 +195,94 @@ def canonical_source_type(value: str | SourceType | None) -> str:
 
 # Type alias for static type-checkers (mypy/pyright).
 SourceTypeLiteral = Literal[
-    "ct_log", "ct", "ct_indicators", "cert_log",
-    "web", "web_fetch", "rss", "rss_atom_pipeline", "searxng", "core_fulltext",
+    "ct_log",
+    "ct",
+    "ct_indicators",
+    "cert_log",
+    "web",
+    "web_fetch",
+    "rss",
+    "rss_atom_pipeline",
+    "searxng",
+    "core_fulltext",
     "duckduckgo_search",
-    "shodan_search", "shodan_intel", "censys_intel", "greynoise_intel",
-    "bgp_intelligence", "bgp_enrichment", "bgp_monitor", "bgp_ripe_stat", "rir_correlation",
-    "passive_dns", "circl_pdns", "passive_fingerprint", "passive_tech_stack", "doh",
-    "onion_discovery", "i2p", "i2p_discovery", "i2p_content",
-    "ipfs", "ipfs_content", "ipfs_directory", "ipfs_fetch", "ipfs_search",
-    "gopher", "gopher_content", "gemini", "gemini_content",
-    "zeronet", "zeronet_content", "freenet", "freenet_content",
-    "dht_discovery", "dht_metadata", "fediverse", "matrix", "matrix_public",
+    "shodan_search",
+    "shodan_intel",
+    "censys_intel",
+    "greynoise_intel",
+    "bgp_intelligence",
+    "bgp_enrichment",
+    "bgp_monitor",
+    "bgp_ripe_stat",
+    "rir_correlation",
+    "passive_dns",
+    "circl_pdns",
+    "passive_fingerprint",
+    "passive_tech_stack",
+    "doh",
+    "onion_discovery",
+    "i2p",
+    "i2p_discovery",
+    "i2p_content",
+    "ipfs",
+    "ipfs_content",
+    "ipfs_directory",
+    "ipfs_fetch",
+    "ipfs_search",
+    "gopher",
+    "gopher_content",
+    "gemini",
+    "gemini_content",
+    "zeronet",
+    "zeronet_content",
+    "freenet",
+    "freenet_content",
+    "dht_discovery",
+    "dht_metadata",
+    "fediverse",
+    "matrix",
+    "matrix_public",
     "social_identity_surface",
-    "academic", "academic_search", "arxiv_bulk", "openalex", "s2orc", "unpaywall",
-    "pastebin_monitor", "github_secret_scanner", "github", "leak_sentinel",
-    "steganography_detection", "digital_ghost_detection", "blockchain_forensics",
+    "academic",
+    "academic_search",
+    "arxiv_bulk",
+    "openalex",
+    "s2orc",
+    "unpaywall",
+    "pastebin_monitor",
+    "github_secret_scanner",
+    "github",
+    "leak_sentinel",
+    "steganography_detection",
+    "digital_ghost_detection",
+    "blockchain_forensics",
     "forensic_analysis",  # Sprint F265 — closes cosmetic gap with SourceType.FORENSIC_ANALYSIS
-    "identity_stitching", "identity_attribution", "exposure_correlation", "temporal_archaeology",
-    "network_recon", "banner_grab", "nvd_cve", "cve_lookup",
-    "hermes_inference", "llm_synthesis", "tot_synthesis",
-    "deep_research", "deep_probe", "deep_probe_ipfs",
-    "pattern_behavioral", "pattern_temporal", "killchain_tag",
-    "context_seed", "rl_research", "sprint_diff", "evidence_packet", "document",
-    "wayback_cdx", "wayback_diff",
-    "test", "bench_source",
+    "identity_stitching",
+    "identity_attribution",
+    "exposure_correlation",
+    "temporal_archaeology",
+    "network_recon",
+    "banner_grab",
+    "nvd_cve",
+    "cve_lookup",
+    "hermes_inference",
+    "llm_synthesis",
+    "tot_synthesis",
+    "deep_research",
+    "deep_probe",
+    "deep_probe_ipfs",
+    "pattern_behavioral",
+    "pattern_temporal",
+    "killchain_tag",
+    "context_seed",
+    "rl_research",
+    "sprint_diff",
+    "evidence_packet",
+    "document",
+    "wayback_cdx",
+    "wayback_diff",
+    "test",
+    "bench_source",
 ]
 
 

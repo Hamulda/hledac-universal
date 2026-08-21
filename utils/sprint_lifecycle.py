@@ -31,6 +31,7 @@ Sprint F4: Module-level metadata:
   - removal_condition: All active_importers migrated to runtime version
   - why_still_needed: 2 production modules still import this; cutover deferred to avoid behavior risk
 """
+
 import asyncio
 import logging
 import os
@@ -39,26 +40,31 @@ import time
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
-from .uma_budget import UmaWatchdog
+
 from .async_helpers import safe_create_task
-from _core import aclose
+from .uma_budget import UmaWatchdog
+
 logger = logging.getLogger(__name__)
 
+
 class SprintLifecycleState(Enum):
-    BOOT = 'boot'
-    WARMUP = 'warmup'
-    ACTIVE = 'active'
-    WINDUP = 'windup'
-    EXPORT = 'export'
-    TEARDOWN = 'teardown'
+    BOOT = "boot"
+    WARMUP = "warmup"
+    ACTIVE = "active"
+    WINDUP = "windup"
+    EXPORT = "export"
+    TEARDOWN = "teardown"
+
 
 def _get_sprint_duration_seconds() -> float:
     """Read sprint duration from env, default 30 min."""
-    return float(os.environ.get('HLEDAC_SPRINT_DURATION_SECONDS', '1800'))
+    return float(os.environ.get("HLEDAC_SPRINT_DURATION_SECONDS", "1800"))
+
 
 def _get_windup_lead_seconds() -> float:
     """Read T-3min wind-down lead time from env, default 180 s."""
-    return float(os.environ.get('HLEDAC_WINDUP_LEAD_SECONDS', '180'))
+    return float(os.environ.get("HLEDAC_WINDUP_LEAD_SECONDS", "180"))
+
 
 class SprintLifecycleManager:
     """
@@ -74,9 +80,27 @@ class SprintLifecycleManager:
     - Registers SIGINT/SIGTERM handlers pointing to unified shutdown
     - All methods are async-safe and fail-open
     """
+
     _instance: SprintLifecycleManager | None = None
     _instance_lock: asyncio.Lock | None = None  # FIX: Thread-safe singleton lock
-    __slots__ = tuple(('_bg_tasks', '_checkpoint_seam_ready', '_on_export', '_on_teardown', '_on_windup', '_shutdown_event', '_shutdown_requested', '_signals_registered', '_sprint_duration', '_sprint_start', '_state', '_uma_watchdog', '_uma_watchdog_task', '_windown_task', '_windup_fired', '_windup_lead'))
+    __slots__ = (
+        "_bg_tasks",
+        "_checkpoint_seam_ready",
+        "_on_export",
+        "_on_teardown",
+        "_on_windup",
+        "_shutdown_event",
+        "_shutdown_requested",
+        "_signals_registered",
+        "_sprint_duration",
+        "_sprint_start",
+        "_state",
+        "_uma_watchdog",
+        "_uma_watchdog_task",
+        "_windown_task",
+        "_windup_fired",
+        "_windup_lead",
+    )
 
     def __init__(self) -> None:
         self._state = SprintLifecycleState.BOOT
@@ -102,7 +126,7 @@ class SprintLifecycleManager:
         if cls._instance is None:
             if cls._instance_lock is None:
                 import threading
-                # Create lock outside of async context for thread safety
+
                 cls._instance_lock = threading.Lock()
             with cls._instance_lock:
                 # Double-check after acquiring lock
@@ -165,7 +189,7 @@ class SprintLifecycleManager:
             return
         old = self._state
         self._state = new_state
-        logger.info(f'[LIFECYCLE] {old.value} → {new_state.value}')
+        logger.info(f"[LIFECYCLE] {old.value} → {new_state.value}")
 
     def begin_sprint(self) -> None:
         """
@@ -187,7 +211,7 @@ class SprintLifecycleManager:
             self._windup_lead = _get_windup_lead_seconds()
         self._windup_fired = False
         self.transition_to(SprintLifecycleState.WARMUP)
-        logger.info(f'[LIFECYCLE] Sprint started — duration={self._sprint_duration}s, windup_lead={self._windup_lead}s')
+        logger.info(f"[LIFECYCLE] Sprint started — duration={self._sprint_duration}s, windup_lead={self._windup_lead}s")
 
     def mark_warmup_done(self) -> None:
         """
@@ -222,7 +246,7 @@ class SprintLifecycleManager:
         self._windup_fired = True
         self._stop_uma_watchdog()
         self.transition_to(SprintLifecycleState.WINDUP)
-        logger.info('[LIFECYCLE] Wind-down requested')
+        logger.info("[LIFECYCLE] Wind-down requested")
 
     def request_export(self) -> None:
         """
@@ -237,12 +261,12 @@ class SprintLifecycleManager:
         """
         if self._state == SprintLifecycleState.WINDUP:
             self.transition_to(SprintLifecycleState.EXPORT)
-            logger.info('[LIFECYCLE] Export phase')
+            logger.info("[LIFECYCLE] Export phase")
             if self._on_export is not None:
                 try:
                     self._on_export()
                 except Exception as e:
-                    logger.warning(f'[LIFECYCLE] export hook error: {e}')
+                    logger.warning(f"[LIFECYCLE] export hook error: {e}")
 
     def request_teardown(self) -> None:
         """
@@ -259,12 +283,12 @@ class SprintLifecycleManager:
             return
         old_state = self._state
         self.transition_to(SprintLifecycleState.TEARDOWN)
-        logger.info('[LIFECYCLE] Teardown phase')
+        logger.info("[LIFECYCLE] Teardown phase")
         if old_state != SprintLifecycleState.TEARDOWN and self._on_teardown is not None:
             try:
                 self._on_teardown()
             except Exception as e:
-                logger.warning(f'[LIFECYCLE] teardown hook error: {e}')
+                logger.warning(f"[LIFECYCLE] teardown hook error: {e}")
 
     def _start_uma_watchdog(self) -> None:
         """
@@ -274,34 +298,41 @@ class SprintLifecycleManager:
         """
         try:
             from hledac.universal.brain.model_lifecycle import request_emergency_unload
+
             from .uma_budget import UmaWatchdog, UmaWatchdogCallbacks
         except Exception as e:
-            logger.debug(f'[LIFECYCLE] UmaWatchdog import failed: {e}')
+            logger.debug(f"[LIFECYCLE] UmaWatchdog import failed: {e}")
             return
         manager_ref = self
 
         class _LifecycleWatchdogCallbacks(UmaWatchdogCallbacks):
-
             def on_warn(self, snapshot: dict) -> None:
-                logger.warning(f"[LIFECYCLE-WATCHDOG] WARN: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
+                logger.warning(
+                    f"[LIFECYCLE-WATCHDOG] WARN: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)"
+                )
 
             def on_critical(self, snapshot: dict) -> None:
-                logger.error(f"[LIFECYCLE-WATCHDOG] CRITICAL: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
+                logger.error(
+                    f"[LIFECYCLE-WATCHDOG] CRITICAL: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)"
+                )
                 manager_ref.request_windup()
 
             def on_emergency(self, snapshot: dict) -> None:
-                logger.error(f"[LIFECYCLE-WATCHDOG] EMERGENCY: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
+                logger.error(
+                    f"[LIFECYCLE-WATCHDOG] EMERGENCY: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)"
+                )
                 manager_ref.request_teardown()
                 request_emergency_unload()
+
         callbacks = _LifecycleWatchdogCallbacks()
         self._uma_watchdog = UmaWatchdog(callbacks=callbacks, interval=0.5)
         try:
             task = self._uma_watchdog.start()
             self.track_task(task)
             self._uma_watchdog_task = task
-            logger.info('[LIFECYCLE] UmaWatchdog started (ACTIVE phase)')
+            logger.info("[LIFECYCLE] UmaWatchdog started (ACTIVE phase)")
         except RuntimeError as e:
-            logger.debug(f'[LIFECYCLE] UmaWatchdog start failed: {e}')
+            logger.debug(f"[LIFECYCLE] UmaWatchdog start failed: {e}")
 
     def _stop_uma_watchdog(self) -> None:
         """Stop UMA watchdog. Called when exiting ACTIVE state."""
@@ -311,14 +342,14 @@ class SprintLifecycleManager:
         if self._uma_watchdog_task is not None and (not self._uma_watchdog_task.done()):
             self._uma_watchdog_task.cancel()
             self._uma_watchdog_task = None
-        logger.info('[LIFECYCLE] UmaWatchdog stopped')
+        logger.info("[LIFECYCLE] UmaWatchdog stopped")
 
     def _start_windown_monitor(self) -> None:
         """Start background task that fires wind-up at T-3min. Fail-open if no event loop."""
         if self._windown_task is not None and (not self._windown_task.done()):
             return
 
-        async def _monitor():
+        async def _monitor() -> None:
             while True:
                 await asyncio.sleep(10)
                 if self._state != SprintLifecycleState.ACTIVE:
@@ -330,14 +361,15 @@ class SprintLifecycleManager:
                         try:
                             self._on_windup()
                         except Exception as e:
-                            logger.warning(f'[LIFECYCLE] windup hook error: {e}')
+                            logger.warning(f"[LIFECYCLE] windup hook error: {e}")
                     break
+
         try:
-            self._windown_task = safe_create_task(_monitor(), name='sprint_lifecycle:winddown_monitor')
+            self._windown_task = safe_create_task(_monitor(), name="sprint_lifecycle:winddown_monitor")
             self._bg_tasks.add(self._windown_task)
             self._windown_task.add_done_callback(self._bg_tasks.discard)
         except RuntimeError:
-            logger.debug('[LIFECYCLE] No event loop, wind-down monitor disabled')
+            logger.debug("[LIFECYCLE] No event loop, wind-down monitor disabled")
 
     def set_windup_hook(self, fn: Callable[[], None]) -> None:
         """Set callback to run when wind-down is triggered."""
@@ -365,9 +397,9 @@ class SprintLifecycleManager:
             return
         self._signals_registered = True
 
-        def _handler(signum, *_):
+        def _handler(signum, *_) -> None:
             sig_name = signal.Signals(signum).name
-            logger.info(f'[LIFECYCLE] Received {sig_name}')
+            logger.info(f"[LIFECYCLE] Received {sig_name}")
             self._shutdown_requested = True
             try:
                 loop = asyncio.get_running_loop()
@@ -376,12 +408,13 @@ class SprintLifecycleManager:
                     loop.call_soon_threadsafe(lambda c=coro: asyncio.create_task(c))
             except RuntimeError:  # noqa: BLE001
                 pass
+
         try:
             signal.signal(signal.SIGINT, _handler)
             signal.signal(signal.SIGTERM, _handler)
-            logger.info('[LIFECYCLE] SIGINT/SIGTERM handlers registered')
+            logger.info("[LIFECYCLE] SIGINT/SIGTERM handlers registered")
         except (ValueError, OSError) as e:
-            logger.warning(f'[LIFECYCLE] Could not register signal handlers: {e}')
+            logger.warning(f"[LIFECYCLE] Could not register signal handlers: {e}")
 
     def track_task(self, task: asyncio.Task) -> None:
         """Add task to internal registry with done-callback that logs exceptions."""
@@ -395,7 +428,7 @@ class SprintLifecycleManager:
             if not task.cancelled():
                 exc = task.exception()
                 if exc is not None:
-                    logger.warning(f'[LIFECYCLE] Background task {task.get_name()} failed: {exc}')
+                    logger.warning(f"[LIFECYCLE] Background task {task.get_name()} failed: {exc}")
         except asyncio.InvalidStateError:  # noqa: BLE001
             pass
 
@@ -413,17 +446,22 @@ class SprintLifecycleManager:
         Return a minimal checkpoint payload for this layer.
         Sprint 1B will wire this into CheckpointManager.save().
         """
-        return {'lifecycle_state': self._state.value, 'sprint_start': self._sprint_start, 'sprint_duration': self._sprint_duration, 'windup_fired': self._windup_fired}
+        return {
+            "lifecycle_state": self._state.value,
+            "sprint_start": self._sprint_start,
+            "sprint_duration": self._sprint_duration,
+            "windup_fired": self._windup_fired,
+        }
 
     def load_from_checkpoint(self, data: dict) -> None:
         """
         Restore lifecycle state from checkpoint payload.
         Sprint 1B will call this in CheckpointManager.load().
         """
-        self._sprint_start = data.get('sprint_start')
-        self._sprint_duration = data.get('sprint_duration', 1800.0)
-        self._windup_fired = data.get('windup_fired', False)
-        state_val = data.get('lifecycle_state')
+        self._sprint_start = data.get("sprint_start")
+        self._sprint_duration = data.get("sprint_duration", 1800.0)
+        self._windup_fired = data.get("windup_fired", False)
+        state_val = data.get("lifecycle_state")
         if state_val:
             try:
                 self._state = SprintLifecycleState(state_val)
@@ -441,6 +479,7 @@ class SprintLifecycleManager:
         for t in list(self._bg_tasks):
             t.cancel()
         self._bg_tasks.clear()
+
 
 def maybe_resume(lmdb_env=None) -> bool:
     """
@@ -464,11 +503,13 @@ def maybe_resume(lmdb_env=None) -> bool:
         return False
     try:
         with lmdb_env.begin() as txn:
-            phase_bytes = txn.get(b'sprint:last_phase')
+            phase_bytes = txn.get(b"sprint:last_phase")
             if phase_bytes is None:
                 return False
-            phase = phase_bytes.decode('utf-8', errors='replace')
-            return phase not in ('export', 'teardown')
+            phase = phase_bytes.decode("utf-8", errors="replace")
+            return phase not in ("export", "teardown")
     except Exception:
         return False
-__all__ = ['SprintLifecycleManager', 'SprintLifecycleState', 'maybe_resume']
+
+
+__all__ = ["SprintLifecycleManager", "SprintLifecycleState", "maybe_resume"]

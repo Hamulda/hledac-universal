@@ -15,17 +15,17 @@ Usage:
         def __init__(self):
             self._items = BoundedList[str](maxlen=256)
 """
+
 from __future__ import annotations
 
 from collections import deque
-from typing import Generic, TypeVar
-from collections.abc import Iterator, Iterable
-from _core._util import aclose
+from collections.abc import Iterable, Iterator
+from typing import TypeVar
 
 T = TypeVar("T")
 
 
-class BoundedList(Generic[T]):  # noqa: N801
+class BoundedList[T]:  # noqa: N801
     """
     Generic bounded list backed by collections.deque(maxlen=N).
 

@@ -13,7 +13,6 @@ Tests:
   P1-6-6  | VaultManager alias works
 """
 
-
 import sys
 import tempfile
 from pathlib import Path
@@ -33,7 +32,7 @@ from security.vault_manager import (
 class TestVaultManagerInstantiation:
     """P1-6-1: LootManager instantiation fails without crypto deps."""
 
-    def test_instantiation_succeeds_with_crypto(self):
+    def test_instantiation_succeeds_with_crypto(self) -> None:
         """VaultManager should instantiate when crypto is available."""
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
             pytest.skip("No crypto packages available")
@@ -43,7 +42,7 @@ class TestVaultManagerInstantiation:
             assert vm is not None
             assert vm.vault_path == Path(tmpdir)
 
-    def test_alias_vaultmanager_works(self):
+    def test_alias_vaultmanager_works(self) -> None:
         """VaultManager alias should be LootManager."""
         assert VaultManager is LootManager
 
@@ -51,7 +50,7 @@ class TestVaultManagerInstantiation:
 class TestFallbackEncRejection:
     """P1-6-2: FALLBACK_ENC detection and rejection."""
 
-    def test_fallback_enc_prefix_rejected(self):
+    def test_fallback_enc_prefix_rejected(self) -> None:
         """decrypt_export should reject FALLBACK_ENC exports."""
         if not CRYPTO_AVAILABLE:
             pytest.skip("cryptography not available")
@@ -91,7 +90,7 @@ class TestSecureExportRoundTrip:
         """Return test password."""
         return "test_password_123"
 
-    def test_fernet_round_trip(self, temp_vault):
+    def test_fernet_round_trip(self, temp_vault) -> None:
         """P1-6-3: Fernet encrypt/decrypt round-trip."""
         if not CRYPTO_AVAILABLE:
             pytest.skip("cryptography not available")
@@ -123,7 +122,7 @@ class TestSecureExportRoundTrip:
             assert (decrypted_vault / "test.txt").read_text() == "sensitive data"
             assert (decrypted_vault / "subdir" / "nested.txt").read_text() == "more sensitive data"
 
-    def test_pyzipper_round_trip(self, temp_vault):
+    def test_pyzipper_round_trip(self, temp_vault) -> None:
         """P1-6-4: pyzipper encrypt/decrypt round-trip."""
         if not PYZIPPER_AVAILABLE:
             pytest.skip("pyzipper not available")
@@ -153,7 +152,7 @@ class TestSecureExportRoundTrip:
             decrypted_vault = Path(result)
             assert (decrypted_vault / "test.txt").read_text() == "sensitive data"
 
-    def test_pyzipper_content_encrypted(self, temp_vault):
+    def test_pyzipper_content_encrypted(self, temp_vault) -> None:
         """P1-6-4b: Verify pyzipper encrypts file contents, not just headers.
 
         Note: When CryptoKit is available, LootManager uses it instead of pyzipper.
@@ -177,7 +176,7 @@ class TestSecureExportRoundTrip:
             encrypted_path = Path(tmpdir) / "test.enc"
             with pyzipper.AESZipFile(
                 encrypted_path,
-                'w',
+                "w",
                 encryption=pyzipper.WZ_AES,
             ) as zipf:
                 zipf.setpassword(pwd.encode())
@@ -197,7 +196,7 @@ class TestSecureExportRoundTrip:
                 content = zf.read(zf.namelist()[0])
                 assert b"sensitive data" in content
 
-    def test_invalid_password_returns_none(self, temp_vault):
+    def test_invalid_password_returns_none(self, temp_vault) -> None:
         """P1-6-5: Invalid password returns None on decrypt."""
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
             pytest.skip("No crypto packages available")
@@ -216,7 +215,7 @@ class TestSecureExportRoundTrip:
             result = vm.decrypt_export(exported, "wrong_password", str(decrypt_dir))
             assert result is None, "Wrong password should return None"
 
-    def test_nonexistent_vault_path_returns_none(self):
+    def test_nonexistent_vault_path_returns_none(self) -> None:
         """Secure export should return None for nonexistent vault."""
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
             pytest.skip("No crypto packages available")
@@ -226,7 +225,7 @@ class TestSecureExportRoundTrip:
             result = vm.secure_export(tmpdir, "password")
             assert result is None
 
-    def test_nonexistent_encrypted_file_returns_none(self):
+    def test_nonexistent_encrypted_file_returns_none(self) -> None:
         """Decrypt should return None for nonexistent file."""
         if not (CRYPTO_AVAILABLE or PYZIPPER_AVAILABLE):
             pytest.skip("No crypto packages available")

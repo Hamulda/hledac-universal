@@ -5,6 +5,7 @@ Sprint F214Q — StealthEngine aliasing.
 
 """
 
+
 class StealthEngine:
     """
     Adapter wrapping hledac.universal.stealth.stealth_session.StealthSession
@@ -17,19 +18,22 @@ class StealthEngine:
     Does NOT provide full StealthEngine semantics — only what
     SecurityCoordinator._execute_stealth_operation actually calls.
     """
-    __slots__ = tuple(('_activations', '_active', '_manager'))
+
+    __slots__ = ("_activations", "_active", "_manager")
 
     def __init__(self, *args, **kwargs) -> None:
         from hledac.universal.stealth.stealth_manager import StealthManager
+
         self._manager = StealthManager()
         self._active = False
         self._activations = 0
 
     async def initialize(self) -> None:
         """No-op: StealthSession has no init requirement."""
-        pass
 
-    async def activate_stealth_mode(self, operation_type: str='research', confidence_threshold: float=0.0, security_level: int=1) -> dict:
+    async def activate_stealth_mode(
+        self, operation_type: str = "research", confidence_threshold: float = 0.0, security_level: int = 1
+    ) -> dict:
         """
         Activate stealth mode via StealthManager.
 
@@ -38,10 +42,21 @@ class StealthEngine:
         self._activations += 1
         self._active = True
         await self._manager.rotate_all()
-        ua = self._manager.header_spoofer.get_random_ua() if self._manager.header_spoofer else 'unknown'
+        ua = self._manager.header_spoofer.get_random_ua() if self._manager.header_spoofer else "unknown"
         js_prot = self._manager.get_js_protection()
         profile = self._manager.get_browser_profile()
-        return {'active': True, 'success': True, 'measures_activated': 4, 'ua_used': ua[:60], 'operation_type': operation_type, 'canvas_normalized': profile is not None, 'webgl_spoofed': profile is not None, 'webdriver_hidden': profile is not None, 'js_protection_script': js_prot, 'browser_profile': profile}
+        return {
+            "active": True,
+            "success": True,
+            "measures_activated": 4,
+            "ua_used": ua[:60],
+            "operation_type": operation_type,
+            "canvas_normalized": profile is not None,
+            "webgl_spoofed": profile is not None,
+            "webdriver_hidden": profile is not None,
+            "js_protection_script": js_prot,
+            "browser_profile": profile,
+        }
 
     async def cleanup(self) -> None:
         """No-op: StealthManager has no close requirement."""
@@ -50,4 +65,6 @@ class StealthEngine:
     def is_active(self) -> bool:
         """Return whether stealth mode is currently active."""
         return self._active
-__all__ = ['StealthEngine']
+
+
+__all__ = ["StealthEngine"]

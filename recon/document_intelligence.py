@@ -2,23 +2,6 @@
 Document Intelligence Engine
 ============================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ADVERSARY-001 fix: All untrusted binary parsing is sandboxed via
 security/media_sandbox.py MediaSandboxCoordinator (Tier-A Seatbelt,
 Tier-B subprocess isolation, Tier-C Wasmtime). PyMuPDF, whisper.cpp,
@@ -31,32 +14,9 @@ git clone + build with verification when no release URL is available.
 Original unverified git+make path is DISABLED by default
 (HLEDAC_ENABLE_STEGDETECT_SIGNED=1).
 """
+
 import asyncio
 import concurrent.futures
-import sys
-import weakref
-
-import numpy as np
-
-from operator import attrgetter, itemgetter
-from hledac.universal.utils.locks import LazyAsyncioLock
-from hledac.universal.utils.domain_executors import get_parallel_executor
-from hledac.universal.security.artifact_verifier import (
-    get_artifact_verifier,
-    )
-from hledac.universal.security.media_sandbox import (
-    MediaSandboxCoordinator,
-    MediaRiskProfile,
-    profile_file_risk,
-    SandboxTier,
-    SandboxResult,
-    FileRiskLevel,
-    get_sandbox_coordinator,
-    SANDBOX_ENABLED,
-    _write_sandbox_profile,
-    _build_image_sandbox_profile,
-    run_pymupdf_sandboxed,
-    )
 import hashlib
 import io
 import logging
@@ -64,14 +24,32 @@ import multiprocessing as mp
 import os
 import re
 import tempfile
+import weakref
 import zipfile
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from datetime import datetime
 from enum import Enum
+from operator import attrgetter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import Any, BinaryIO
+
+import numpy as np
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.security.artifact_verifier import (
+    get_artifact_verifier,
+)
+from hledac.universal.security.media_sandbox import (
+    SANDBOX_ENABLED,
+    _build_image_sandbox_profile,
+    _write_sandbox_profile,
+    get_sandbox_coordinator,
+    profile_file_risk,
+    run_pymupdf_sandboxed,
+)
+from hledac.universal.utils.domain_executors import get_parallel_executor
+from hledac.universal.utils.locks import LazyAsyncioLock
+
 logger = logging.getLogger(__name__)
 
 # M1 8GB: ProcessPoolExecutor for CPU-bound forensics (max 2 workers to avoid RAM pressure)
@@ -95,9 +73,8 @@ def _guard_file_size(file_path: str) -> None:
     stat = os.stat(file_path)
     if stat.st_size > _MAX_DOCUMENT_SIZE:
         raise ValueError(
-            f"Document too large: {stat.st_size / 1024 / 1024:.1f}MB "
-            f"(limit {_MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB)"
-    )
+            f"Document too large: {stat.st_size / 1024 / 1024:.1f}MB (limit {_MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB)"
+        )
 
 
 def _get_forensics_pool() -> concurrent.futures.Executor:
@@ -110,19 +87,21 @@ def _get_forensics_pool() -> concurrent.futures.Executor:
     global _forensics_pool, _forensics_pool_atexit_registered
     if _forensics_pool is None:
         try:
-            ctx = mp.get_context('spawn')
+            ctx = mp.get_context("spawn")
             _forensics_pool = concurrent.futures.ProcessPoolExecutor(
                 max_workers=2,
                 mp_context=ctx,
-    )
+            )
         except Exception as e:
-            logger.warning(f'[FORENSICS] ProcessPoolExecutor init failed, using ThreadPool fallback: {e}')
+            logger.warning(f"[FORENSICS] ProcessPoolExecutor init failed, using ThreadPool fallback: {e}")
             # R5 FIX (Issue 3): Route fallback through domain_executors shared pool
             from hledac.universal.utils.domain_executors import get_forensics_cpu_executor
+
             _forensics_pool = get_forensics_cpu_executor()
         # Register atexit shutdown on first pool creation (ISSUE-5 fix)
         if not _forensics_pool_atexit_registered:
             import atexit
+
             atexit.register(shutdown_forensics_pool)
             _forensics_pool_atexit_registered = True
     return _forensics_pool
@@ -143,11 +122,14 @@ def shutdown_forensics_pool() -> None:
         try:
             _forensics_pool.shutdown(wait=True, cancel_futures=True)
         except Exception as e:
-            logger.warning(f'[FORENSICS] Pool shutdown error (non-fatal): {e}')
+            logger.warning(f"[FORENSICS] Pool shutdown error (non-fatal): {e}")
         finally:
             _forensics_pool = None
+
+
 try:
     import numpy as np
+
     NUMPY_AVAILABLE = True
 except ImportError:
     np = None
@@ -157,33 +139,39 @@ try:
     import piexif
     from PIL import ExifTags, Image, ImageChops
     from PIL.TiffImagePlugin import IFDRational
+
     PIL_AVAILABLE = True
 except ImportError:
     piexif = None
     PIL_AVAILABLE = False
-    logger.warning('PIL not available - image analysis disabled')
+    logger.warning("PIL not available - image analysis disabled")
 try:
     import fitz
+
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
-    logger.warning('PyMuPDF not available - advanced PDF analysis disabled')
+    logger.warning("PyMuPDF not available - advanced PDF analysis disabled")
 DOCUMENT_INTELLIGENCE_AVAILABLE = True
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
+
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
+
+
 MPS_AVAILABLE = False
 VISION_OCR_AVAILABLE: bool | None = None
 _VisionOCREngine: Any | None = None
 _AhoExtractorModule: Any | None = None
 _AHO_AVAILABLE: bool | None = None
+
 
 def _get_aho_extractor():
     """Lazy import of aho_extractor — NOT loaded at document_intelligence boot."""
@@ -191,6 +179,7 @@ def _get_aho_extractor():
     if _AHO_AVAILABLE is None:
         try:
             from hledac.universal.utils import aho_extractor
+
             _AhoExtractorModule = aho_extractor
             _AHO_AVAILABLE = True
         except Exception:
@@ -198,26 +187,31 @@ def _get_aho_extractor():
             _AHO_AVAILABLE = False
     return _AhoExtractorModule
 
-def _check_mps_available():
+
+def _check_mps_available() -> bool:
     """Check MPS availability lazily - only when actually needed."""
     global MPS_AVAILABLE
     if MPS_AVAILABLE:
         return True
     try:
         import torch
+
         if torch.backends.mps.is_available():
             MPS_AVAILABLE = True
             return True
     except ImportError:  # noqa: BLE001
         pass
     return False
+
+
 MAX_IMAGE_SIZE = 2048
 
 # M1 8GB: Per-image and per-stream size caps to prevent OOM from decoded content.
 # PyMuPDF's extract_image() returns FULLY DECODED image bytes — a 1KB JPEG
 # compressed in a page stream can expand to 500MB decoded.
-_MAX_EMBEDDED_IMAGE_BYTES = 50 * 1024 * 1024   # 50 MB per decoded image
+_MAX_EMBEDDED_IMAGE_BYTES = 50 * 1024 * 1024  # 50 MB per decoded image
 _MAX_EMBEDDED_STREAM_BYTES = 10 * 1024 * 1024  # 10 MB per OOXML media entry
+
 
 def _safe_extract_image(doc: Any, xref: int) -> dict | None:
     """Extract image from PDF with size cap on decoded content.
@@ -234,14 +228,15 @@ def _safe_extract_image(doc: Any, xref: int) -> dict | None:
         return None
     if not base_image:
         return None
-    image_bytes = base_image.get('image', b'')
+    image_bytes = base_image.get("image", b"")
     if len(image_bytes) > _MAX_EMBEDDED_IMAGE_BYTES:
         logger.warning(
             f"[DOC] Refused image xref={xref} at {len(image_bytes) / 1024 / 1024:.1f}MB "
             f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
-    )
+        )
         return None
     return base_image
+
 
 def _safe_read_zip_entry(z: zipfile.ZipFile, name: str) -> bytes | None:
     """Read a zip entry with size cap to prevent zip bomb attacks."""
@@ -251,11 +246,12 @@ def _safe_read_zip_entry(z: zipfile.ZipFile, name: str) -> bytes | None:
             logger.warning(
                 f"[DOC] Refused zip entry '{name}' at {info.file_size / 1024 / 1024:.1f}MB "
                 f"(limit {_MAX_EMBEDDED_STREAM_BYTES // 1024 // 1024:.0f}MB)"
-    )
+            )
             return None
         return z.read(name)
     except Exception:
         return None
+
 
 def _safe_xref_stream(doc: Any, xref: int) -> bytes | None:
     """Read PDF xref stream with size cap to prevent decompression bombs.
@@ -274,11 +270,12 @@ def _safe_xref_stream(doc: Any, xref: int) -> bytes | None:
             logger.warning(
                 f"[DOC] Refused xref_stream xref={xref} at {len(stream) / 1024 / 1024:.1f}MB "
                 f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
-    )
+            )
             return None
         return stream
     except Exception:
         return None
+
 
 def _get_vision_ocr_engine():
     """Lazily load VisionOCREngine — NOT loaded at document_intelligence boot.
@@ -315,10 +312,10 @@ class VisionOCREngine:
     are safe and allow the ANE to pipeline work.
     """
 
-    __slots__ = tuple(('_batch_executor', '_batch_pool_lock'))
+    __slots__ = ("_batch_executor", "_batch_pool_lock")
 
     # Languages supported by Vision Framework on M1 without additional models
-    DEFAULT_LANGUAGES = ['en-US', 'cs-CZ', 'de-DE', 'fr-FR', 'es-ES']
+    DEFAULT_LANGUAGES = ["en-US", "cs-CZ", "de-DE", "fr-FR", "es-ES"]
 
     # ISSUE-012: Batch concurrency — M1 8GB safe limit.
     # ANE can pipeline 4 concurrent image recognition requests before
@@ -326,7 +323,7 @@ class VisionOCREngine:
     # without throughput improvement.
     _BATCH_MAX_WORKERS: int = 4
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Lazy-initialized ThreadPoolExecutor for batch processing.
         # Separate from the event-loop thread pool to avoid starving
         # async tasks when batch OCR is in flight.
@@ -338,11 +335,13 @@ class VisionOCREngine:
         if self._batch_executor is None:
             if self._batch_pool_lock is None:
                 import threading
+
                 self._batch_pool_lock = threading.Lock()
             with self._batch_pool_lock:
                 if self._batch_executor is None:
                     # R5 FIX: Route through domain_executors shared pool
                     from hledac.universal.utils.domain_executors import get_vision_ocr_batch_executor
+
                     self._batch_executor = get_vision_ocr_batch_executor()
         return self._batch_executor
 
@@ -357,27 +356,29 @@ class VisionOCREngine:
         Fails safely: returns ('', 0.0) on any error.
         """
         try:
-            import Vision  # type: ignore[import-not-found, no-redef]
             import AppKit  # type: ignore[import-not-found, no-redef]
+            import Vision  # type: ignore[import-not-found, no-redef]
         except Exception:
-            return '', 0.0
+            return "", 0.0
 
         try:
             ns_data = AppKit.NSData.alloc().initWithBytes_length_(image_bytes, len(image_bytes))  # type: ignore[attr-defined]
             cg_image = AppKit.NSBitmapImageRep.imageRepWithData_(ns_data).CGImage()  # type: ignore[attr-defined]
         except Exception:
-            return '', 0.0
+            return "", 0.0
 
         if cg_image is None:
-            return '', 0.0
+            return "", 0.0
 
         # Vision request must run on the same thread — completion handler is sync on M1
         results: list = []
 
         class _ResultHandler:
-            __slots__ = tuple(('_results'))
-            def __init__(self):
+            __slots__ = tuple("_results")
+
+            def __init__(self) -> None:
                 self._results = results
+
             def __call__(self, request, error):
                 if error is not None:
                     return
@@ -392,13 +393,13 @@ class VisionOCREngine:
         try:
             Vision.VNImageRequestHandler.alloc().initWithCGImageOptions_(  # type: ignore[attr-defined]
                 cg_image,
-                {'VNImageOptionApplyOrientationCorrection': True},
+                {"VNImageOptionApplyOrientationCorrection": True},
             ).performRequests_error_([vn_request], None)
         except Exception:
-            return '', 0.0
+            return "", 0.0
 
         if not results or not results[0]:
-            return '', 0.0
+            return "", 0.0
 
         observations = results[0]
         texts = []
@@ -409,7 +410,7 @@ class VisionOCREngine:
             texts.append(txt)
             confidences.append(conf)
 
-        full_text = '\n'.join(texts)
+        full_text = "\n".join(texts)
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
         return full_text, avg_conf
 
@@ -437,16 +438,14 @@ class VisionOCREngine:
             return [self.recognize_bytes(images[0])]
 
         executor = self._get_batch_executor()
-        futures: list[concurrent.futures.Future] = [
-            executor.submit(self.recognize_bytes, img) for img in images
-        ]
+        futures: list[concurrent.futures.Future] = [executor.submit(self.recognize_bytes, img) for img in images]
 
         results: list[tuple[str, float]] = []
         for future in futures:
             try:
                 results.append(future.result())
             except Exception:
-                results.append(('', 0.0))
+                results.append(("", 0.0))
         return results
 
     async def recognize_bytes_async(self, image_bytes: bytes) -> tuple[str, float]:
@@ -478,10 +477,9 @@ class VisionOCREngine:
         try:
             import Vision  # type: ignore[import-not-found, no-redef]
         except Exception:
-            return '', 0.0
+            return "", 0.0
 
         try:
-            # Configure recognition level
             if recognition_level == "fast":
                 req_level = Vision.VNRequestTextRecognitionLevelFast  # type: ignore[attr-defined]
             else:
@@ -491,9 +489,11 @@ class VisionOCREngine:
             results: list = []
 
             class _ResultHandler:
-                __slots__ = tuple(('_results'))
-                def __init__(self):
+                __slots__ = tuple("_results")
+
+                def __init__(self) -> None:
                     self._results = results
+
                 def __call__(self, request, error):
                     if error is not None:
                         return
@@ -508,14 +508,13 @@ class VisionOCREngine:
             try:
                 # Use VNImageRequestHandler with CVPixelBuffer directly
                 Vision.VNImageRequestHandler.alloc().initWithCVPixelBuffer_options_(  # type: ignore[attr-defined]
-                    pixel_buffer,
-                    {'VNImageOptionApplyOrientationCorrection': True}
+                    pixel_buffer, {"VNImageOptionApplyOrientationCorrection": True}
                 ).performRequests_error_([vn_request], None)
             except Exception:
-                return '', 0.0
+                return "", 0.0
 
             if not results or not results[0]:
-                return '', 0.0
+                return "", 0.0
 
             observations = results[0]
             texts = []
@@ -526,14 +525,16 @@ class VisionOCREngine:
                 texts.append(txt)
                 confidences.append(conf)
 
-            full_text = '\n'.join(texts)
+            full_text = "\n".join(texts)
             avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
             return full_text, avg_conf
 
         except Exception:
-            return '', 0.0
+            return "", 0.0
 
-    def recognize_batch_from_pixelbuffer(self, pixel_buffers: list[Any], recognition_level: str = "accurate") -> list[tuple[str, float]]:
+    def recognize_batch_from_pixelbuffer(
+        self, pixel_buffers: list[Any], recognition_level: str = "accurate"
+    ) -> list[tuple[str, float]]:
         """[IO-4] Batch OCR from CVPixelBuffer list with ANE parallelization.
 
         Uses a dedicated ThreadPoolExecutor (max_workers=_BATCH_MAX_WORKERS)
@@ -554,8 +555,7 @@ class VisionOCREngine:
 
         executor = self._get_batch_executor()
         futures: list[concurrent.futures.Future] = [
-            executor.submit(self.recognize_pixelbuffer, pb, recognition_level)
-            for pb in pixel_buffers
+            executor.submit(self.recognize_pixelbuffer, pb, recognition_level) for pb in pixel_buffers
         ]
 
         results: list[tuple[str, float]] = []
@@ -563,23 +563,21 @@ class VisionOCREngine:
             try:
                 results.append(future.result())
             except Exception:
-                results.append(('', 0.0))
+                results.append(("", 0.0))
         return results
 
-    async def recognize_pixelbuffer_async(self, pixel_buffer: Any, recognition_level: str = "accurate") -> tuple[str, float]:
+    async def recognize_pixelbuffer_async(
+        self, pixel_buffer: Any, recognition_level: str = "accurate"
+    ) -> tuple[str, float]:
         """[IO-4] Async wrapper for zero-copy CVPixelBuffer OCR.
 
         Runs sync Vision OCR in thread pool to avoid blocking event loop.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self.recognize_pixelbuffer, pixel_buffer, recognition_level
-    )
+        return await loop.run_in_executor(None, self.recognize_pixelbuffer, pixel_buffer, recognition_level)
 
     async def recognize_batch_from_pixelbuffer_async(
-        self,
-        pixel_buffers: list[Any],
-        recognition_level: str = "accurate"
+        self, pixel_buffers: list[Any], recognition_level: str = "accurate"
     ) -> list[tuple[str, float]]:
         """[IO-4] Async batch wrapper for CVPixelBuffer OCR.
 
@@ -593,9 +591,7 @@ class VisionOCREngine:
         if not pixel_buffers:
             return []
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self.recognize_batch_from_pixelbuffer, pixel_buffers, recognition_level
-    )
+        return await loop.run_in_executor(None, self.recognize_batch_from_pixelbuffer, pixel_buffers, recognition_level)
 
     async def recognize_batch_async(self, images: list[bytes]) -> list[tuple[str, float]]:
         """Async wrapper for batch OCR — runs recognize_batch in thread pool.
@@ -623,12 +619,12 @@ def _ocr_embedded_image(image_bytes: bytes) -> tuple[str, float]:
     """
     engine_cls = _get_vision_ocr_engine()
     if engine_cls is None:
-        return '', 0.0
+        return "", 0.0
     try:
         engine = engine_cls()
         return engine.recognize_bytes(image_bytes)
     except Exception:
-        return '', 0.0
+        return "", 0.0
 
 
 def _ocr_embedded_batch(image_list: list[bytes]) -> list[tuple[str, float]]:
@@ -643,24 +639,24 @@ def _ocr_embedded_batch(image_list: list[bytes]) -> list[tuple[str, float]]:
     """
     engine_cls = _get_vision_ocr_engine()
     if engine_cls is None:
-        return [('', 0.0)] * len(image_list)
+        return [("", 0.0)] * len(image_list)
     try:
         engine = engine_cls()
         return engine.recognize_batch(image_list)
     except Exception:
-        return [('', 0.0)] * len(image_list)
+        return [("", 0.0)] * len(image_list)
 
 
 async def _ocr_embedded_image_async(image_bytes: bytes) -> tuple[str, float]:
     """Async version — runs in thread pool via VisionOCREngine's async entry point."""
     engine_cls = _get_vision_ocr_engine()
     if engine_cls is None:
-        return '', 0.0
+        return "", 0.0
     try:
         engine = engine_cls()
         return await engine.recognize_bytes_async(image_bytes)
     except Exception:
-        return '', 0.0
+        return "", 0.0
 
 
 async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, float]]:
@@ -674,7 +670,7 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
     """
     engine_cls = _get_vision_ocr_engine()
     if engine_cls is None:
-        return [('', 0.0)] * len(image_list)
+        return [("", 0.0)] * len(image_list)
 
     # UNIFIED-001: Acquire admission from peak load coordinator
     peak_guard = None
@@ -683,7 +679,8 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
-    )
+        )
+
         coordinator = get_peak_coordinator()
         if coordinator is not None:
             # ANE OCR batch: ~1500 MB peak allocation (4 concurrent workers)
@@ -693,7 +690,7 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
                 priority=TaskPriority.NORMAL,
                 owner=f"ane_ocr_batch:{len(image_list)}_images",
                 timeout_s=5.0,
-    )
+            )
     except (ImportError, TimeoutError) as e:
         logger.debug(f"[UNIFIED-001] ANE OCR admission failed: {e}")
         # Fail-open: proceed without admission if coordinator unavailable
@@ -709,39 +706,44 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
         else:
             return await engine.recognize_batch_async(image_list)
     except Exception:
-        return [('', 0.0)] * len(image_list)
+        return [("", 0.0)] * len(image_list)
 
 
 class DocumentType(Enum):
     """Supported document types."""
-    PDF = 'pdf'
-    MICROSOFT_WORD = 'docx'
-    MICROSOFT_EXCEL = 'xlsx'
-    MICROSOFT_POWERPOINT = 'pptx'
-    OPEN_DOCUMENT_TEXT = 'odt'
-    OPEN_DOCUMENT_SPREADSHEET = 'ods'
-    RTF = 'rtf'
-    IMAGE = 'image'
-    UNKNOWN = 'unknown'
+
+    PDF = "pdf"
+    MICROSOFT_WORD = "docx"
+    MICROSOFT_EXCEL = "xlsx"
+    MICROSOFT_POWERPOINT = "pptx"
+    OPEN_DOCUMENT_TEXT = "odt"
+    OPEN_DOCUMENT_SPREADSHEET = "ods"
+    RTF = "rtf"
+    IMAGE = "image"
+    UNKNOWN = "unknown"
+
 
 class MetadataCategory(Enum):
     """Categories of document metadata."""
-    CREATION = 'creation'
-    MODIFICATION = 'modification'
-    AUTHORSHIP = 'authorship'
-    SOFTWARE = 'software'
-    LOCATION = 'location'
-    DEVICE = 'device'
-    CUSTOM = 'custom'
+
+    CREATION = "creation"
+    MODIFICATION = "modification"
+    AUTHORSHIP = "authorship"
+    SOFTWARE = "software"
+    LOCATION = "location"
+    DEVICE = "device"
+    CUSTOM = "custom"
+
 
 class GeoLocation(Struct):
     """GPS coordinates extracted from EXIF."""
+
     latitude: float
     longitude: float
     altitude: float | None = None
     timestamp: datetime | None = None
     gps_version: str | None = None
-    coordinate_system: str = 'WGS84'
+    coordinate_system: str = "WGS84"
 
     def to_dms(self) -> tuple[tuple[int, int, float], str]:
         """Convert decimal degrees to DMS (Degrees, Minutes, Seconds)."""
@@ -752,16 +754,19 @@ class GeoLocation(Struct):
             minutes = int(minutes_float)
             seconds = (minutes_float - minutes) * 60
             return (degrees, minutes, seconds)
+
         lat_dms = decimal_to_dms(self.latitude)
-        lat_ref = 'N' if self.latitude >= 0 else 'S'
+        lat_ref = "N" if self.latitude >= 0 else "S"
         return (lat_dms, lat_ref)
 
     def to_google_maps_url(self) -> str:
         """Generate Google Maps URL."""
-        return f'https://www.google.com/maps?q={self.latitude},{self.longitude}'
+        return f"https://www.google.com/maps?q={self.latitude},{self.longitude}"
+
 
 class EXIFData(Struct, frozen=True):
     """Comprehensive EXIF data from images."""
+
     camera_make: str | None = None
     camera_model: str | None = None
     software: str | None = None
@@ -778,8 +783,10 @@ class EXIFData(Struct, frozen=True):
     shutter_speed: str | None = None
     raw_exif: dict[str, Any] = field(default_factory=dict)
 
+
 class DocumentMetadata(Struct, frozen=True):
     """Comprehensive document metadata."""
+
     file_hash_md5: str
     file_hash_sha1: str
     file_hash_sha256: str
@@ -809,8 +816,10 @@ class DocumentMetadata(Struct, frozen=True):
     hyperlinks_base: str | None = None
     raw_metadata: dict[str, Any] = field(default_factory=dict)
 
+
 class EmbeddedObject(Struct, frozen=True):
     """Represents an embedded object in a document."""
+
     object_type: str
     object_name: str
     content_type: str | None
@@ -818,8 +827,10 @@ class EmbeddedObject(Struct, frozen=True):
     extracted_content: bytes | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+
 class DocumentAnalysis(Struct, frozen=True):
     """Complete document analysis result."""
+
     metadata: DocumentMetadata
     embedded_objects: list[EmbeddedObject] = field(default_factory=list)
     hyperlinks: list[str] = field(default_factory=list)
@@ -830,12 +841,13 @@ class DocumentAnalysis(Struct, frozen=True):
     hidden_text: list[str] = field(default_factory=list)
     suspicious_indicators: list[str] = field(default_factory=list)
     exif_data: EXIFData | None = None
-    ocr_text: str = ''  # Vision Framework ANE OCR for scanned images/PDFs
+    ocr_text: str = ""  # Vision Framework ANE OCR for scanned images/PDFs
     canary_tokens: list[str] = field(default_factory=list)  # ISSUE-015: detected canary tokens / tracking beacons
     # ISSUE-016: PDF forensics - OCG layers, redaction failures, suppressed annotations
     ocg_layers: list[dict[str, Any]] = field(default_factory=list)  # Optional Content Groups (hidden layers)
     redaction_failures: list[str] = field(default_factory=list)  # Text visible under black rectangles
     suppressed_annotations: list[dict[str, Any]] = field(default_factory=list)  # Hidden annotations (/F 6 flag)
+
 
 class PDFAnalyzer:
     """
@@ -845,13 +857,24 @@ class PDFAnalyzer:
     in a subprocess isolation sandbox (Tier-B) to contain PyMuPDF CVEs.
     Standard PDFs run in-process with risk profiling.
     """
-    EMAIL_PATTERN = re.compile('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}')
-    IP_PATTERN = re.compile('\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b')
-    URL_PATTERN = re.compile('https?://[^\\s<>\\"{}|\\\\^`\\[\\]]+')
-    __slots__ = tuple(('suspicious_keywords', '_sandbox'))
 
-    def __init__(self):
-        self.suspicious_keywords = ['confidential', 'classified', 'secret', 'proprietary', 'internal use only', 'do not distribute', 'draft', 'redacted', 'sensitive']
+    EMAIL_PATTERN = re.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}")
+    IP_PATTERN = re.compile("\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b")
+    URL_PATTERN = re.compile('https?://[^\\s<>\\"{}|\\\\^`\\[\\]]+')
+    __slots__ = ("suspicious_keywords", "_sandbox")
+
+    def __init__(self) -> None:
+        self.suspicious_keywords = [
+            "confidential",
+            "classified",
+            "secret",
+            "proprietary",
+            "internal use only",
+            "do not distribute",
+            "draft",
+            "redacted",
+            "sensitive",
+        ]
         self._sandbox = get_sandbox_coordinator()
 
     async def analyze_async(self, file_path: str | bytes | BinaryIO, source: str = "unknown") -> DocumentAnalysis:
@@ -878,16 +901,14 @@ class PDFAnalyzer:
             risk = profile_file_risk(file_path, source)
             tier = self._sandbox.get_tier_for_file(file_path, source)
             logger.debug(
-                "[ADVERSARY-001] PDF: path=%s source=%s risk=%s "
-                "entropy=%.2f tier=%s",
+                "[ADVERSARY-001] PDF: path=%s source=%s risk=%s entropy=%.2f tier=%s",
                 Path(file_path).name if isinstance(file_path, str) else str(file_path),
                 source,
                 risk.risk_level.name,
                 risk.entropy_bits_per_byte,
                 tier.name,
-        )
+            )
 
-        # Check for sandbox-enabled async path first
         if SANDBOX_ENABLED and isinstance(file_path, (str, Path)):
             try:
                 result_data = await run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
@@ -907,14 +928,13 @@ class PDFAnalyzer:
             # All forensics operations run concurrently for maximum throughput
             probe_task = self._probe_pdf_async(doc)
 
-            # Execute probe first to get candidate pages
             probe_result = await probe_task
 
             # ISSUE-S3-FIX: Parallel deep parsing + forensics using asyncio.gather()
             SIGNAL_THRESHOLD = 0.5
-            candidate_pages = probe_result['candidate_pages']
+            candidate_pages = probe_result["candidate_pages"]
 
-            if probe_result['signal_score'] >= SIGNAL_THRESHOLD:
+            if probe_result["signal_score"] >= SIGNAL_THRESHOLD:
                 # Parallel: deep page parsing + forensics (OCG, redaction, suppressed annotations)
                 deep_parse_task = self._deep_parse_pages_async(doc, candidate_pages)
                 ocg_task = self._extract_ocg_layers_async(doc)
@@ -923,13 +943,11 @@ class PDFAnalyzer:
 
                 # Wait for all parallel tasks
                 deep_texts, ocg_layers, redaction_failures, suppressed_annotations = await asyncio.gather(
-                    deep_parse_task, ocg_task, redaction_task, suppressed_task,
-                    return_exceptions=True
+                    deep_parse_task, ocg_task, redaction_task, suppressed_task, return_exceptions=True
                 )
 
-                # Handle exceptions gracefully
                 if isinstance(deep_texts, Exception):
-                    deep_texts = ['']
+                    deep_texts = [""]
                     logger.warning(f"Deep parse failed: {deep_texts}")
                 if isinstance(ocg_layers, Exception):
                     ocg_layers = []
@@ -938,10 +956,10 @@ class PDFAnalyzer:
                 if isinstance(suppressed_annotations, Exception):
                     suppressed_annotations = []
 
-                full_text = ' '.join(deep_texts)
+                full_text = " ".join(deep_texts)
             else:
                 # Sequential fallback for low-signal PDFs
-                full_text = ''
+                full_text = ""
                 for page_num in candidate_pages:
                     if page_num < len(doc):
                         page = doc[page_num]
@@ -953,7 +971,6 @@ class PDFAnalyzer:
             # Extract embedded objects (OCR is already batched)
             embedded_objects = self._extract_pdf_objects(doc)
 
-            # Extract patterns from text
             hyperlinks = self.URL_PATTERN.findall(full_text)
             emails = self.EMAIL_PATTERN.findall(full_text)
             ip_addresses = self.IP_PATTERN.findall(full_text)
@@ -961,6 +978,7 @@ class PDFAnalyzer:
 
             # ISSUE-015: Canary token detection (pre-flight OPSEC check)
             from forensics.canary_detector import scan_for_canary_tokens
+
             canary_detection = scan_for_canary_tokens(full_text)
             canary_tokens = canary_detection.tokens if canary_detection.detected else []
 
@@ -978,8 +996,15 @@ class PDFAnalyzer:
                 suppressed_annotations=suppressed_annotations,
             )
         except Exception as e:
-            logger.warning(f'PDF analysis failed: {e}')
-            return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
+            logger.warning(f"PDF analysis failed: {e}")
+            return DocumentAnalysis(
+                metadata=DocumentMetadata(),
+                embedded_objects=[],
+                hyperlinks=[],
+                email_addresses=[],
+                ip_addresses=[],
+                suspicious_indicators=[],
+            )
 
     def analyze(self, file_path: str | bytes | BinaryIO, source: str = "unknown") -> DocumentAnalysis:
         """
@@ -1005,16 +1030,14 @@ class PDFAnalyzer:
             risk = profile_file_risk(file_path, source)
             tier = self._sandbox.get_tier_for_file(file_path, source)
             logger.debug(
-                "[ADVERSARY-001] PDF: path=%s source=%s risk=%s "
-                "entropy=%.2f tier=%s",
+                "[ADVERSARY-001] PDF: path=%s source=%s risk=%s entropy=%.2f tier=%s",
                 Path(file_path).name if isinstance(file_path, str) else str(file_path),
                 source,
                 risk.risk_level.name,
                 risk.entropy_bits_per_byte,
                 tier.name,
-    )
+            )
 
-        # Check for sandbox-enabled async path first
         if SANDBOX_ENABLED and isinstance(file_path, (str, Path)):
             try:
                 # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
@@ -1022,18 +1045,16 @@ class PDFAnalyzer:
                 if loop.is_running():
                     # If we're already in an async context, schedule the coroutine
                     import concurrent.futures
+
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(
-                            asyncio.run,
-                            run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
-    )
+                            asyncio.run, run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
+                        )
                         result_data = future.result(timeout=65.0)  # Slightly higher than subprocess timeout
                         return self._convert_sandbox_result(result_data)
                 else:
                     # No running loop - use asyncio.run
-                    result_data = asyncio.run(
-                        run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
-    )
+                    result_data = asyncio.run(run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0))
                     return self._convert_sandbox_result(result_data)
             except Exception as e:
                 logger.warning(f"[ADVERSARY-001] PyMuPDF sandbox failed: {e}, fallback to in-process")
@@ -1046,12 +1067,12 @@ class PDFAnalyzer:
             metadata = self._extract_pdf_metadata(doc, file_path)
             probe_result = self._probe_pdf(doc)
             SIGNAL_THRESHOLD = 0.5
-            full_text = ''
-            if probe_result['signal_score'] >= SIGNAL_THRESHOLD:
-                deep_texts = self._deep_parse_pages(doc, probe_result['candidate_pages'])
-                full_text = ' '.join(deep_texts)
+            full_text = ""
+            if probe_result["signal_score"] >= SIGNAL_THRESHOLD:
+                deep_texts = self._deep_parse_pages(doc, probe_result["candidate_pages"])
+                full_text = " ".join(deep_texts)
             else:
-                for page_num in probe_result['candidate_pages']:
+                for page_num in probe_result["candidate_pages"]:
                     if page_num < len(doc):
                         page = doc[page_num]
                         full_text += page.get_text()
@@ -1063,6 +1084,7 @@ class PDFAnalyzer:
 
             # ISSUE-015: Canary token detection (pre-flight OPSEC check)
             from forensics.canary_detector import scan_for_canary_tokens
+
             canary_detection = scan_for_canary_tokens(full_text)
             canary_tokens = canary_detection.tokens if canary_detection.detected else []
 
@@ -1083,14 +1105,21 @@ class PDFAnalyzer:
                 ocg_layers=ocg_layers,
                 redaction_failures=redaction_failures,
                 suppressed_annotations=suppressed_annotations,
-    )
+            )
         except Exception as e:
-            logger.warning(f'PDF analysis failed: {e}')
-            return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
+            logger.warning(f"PDF analysis failed: {e}")
+            return DocumentAnalysis(
+                metadata=DocumentMetadata(),
+                embedded_objects=[],
+                hyperlinks=[],
+                email_addresses=[],
+                ip_addresses=[],
+                suspicious_indicators=[],
+            )
 
     def _convert_sandbox_result(self, result_data: dict) -> DocumentAnalysis:
         """Convert sandboxed PyMuPDF result to DocumentAnalysis.
-        
+
         ADVERSARY-001: Maps the sandbox subprocess JSON output to the
         in-process DocumentAnalysis structure.
         """
@@ -1103,93 +1132,93 @@ class PDFAnalyzer:
                 email_addresses=[],
                 ip_addresses=[],
                 suspicious_indicators=[],
-    )
-        
+            )
+
         # Check for error in sandbox result (set by _error_result in media_sandbox.py)
-        meta_dict = result_data.get('metadata', {})
-        if meta_dict.get('error'):
+        meta_dict = result_data.get("metadata", {})
+        if meta_dict.get("error"):
             logger.warning(f"[ADVERSARY-001] Sandbox returned error: {meta_dict.get('error')}")
             # Still return partial result - the error message will be in analysis_stats
             # This allows the caller to decide whether to retry with fallback
-        
+
         # Also check analysis_stats for errors
-        analysis_stats = result_data.get('analysis_stats', {})
-        if analysis_stats.get('error'):
+        analysis_stats = result_data.get("analysis_stats", {})
+        if analysis_stats.get("error"):
             logger.warning(f"[ADVERSARY-001] Sandbox analysis error: {analysis_stats.get('error')}")
-        
+
         # Parse creation/modification dates if present
         creation_date = None
         mod_date = None
-        if meta_dict.get('creation_date'):
-            creation_date = self._parse_pdf_date(meta_dict.get('creation_date'))
-        if meta_dict.get('modification_date'):
-            mod_date = self._parse_pdf_date(meta_dict.get('modification_date'))
-        
-        # Build DocumentMetadata
+        if meta_dict.get("creation_date"):
+            creation_date = self._parse_pdf_date(meta_dict.get("creation_date"))
+        if meta_dict.get("modification_date"):
+            mod_date = self._parse_pdf_date(meta_dict.get("modification_date"))
+
         try:
-            # Parse keywords
-            keywords_str = meta_dict.get('keywords', '')
-            keywords_list = [k.strip() for k in keywords_str.split(',') if k.strip()] if keywords_str else []
-            
+            keywords_str = meta_dict.get("keywords", "")
+            keywords_list = [k.strip() for k in keywords_str.split(",") if k.strip()] if keywords_str else []
+
             metadata = DocumentMetadata(
-                file_hash_md5=meta_dict.get('file_hash_md5', ''),
-                file_hash_sha1='',  # sha1 not available from sandbox subprocess
-                file_hash_sha256=meta_dict.get('file_hash_sha256', ''),
-                file_size_bytes=meta_dict.get('file_size_bytes', 0),
+                file_hash_md5=meta_dict.get("file_hash_md5", ""),
+                file_hash_sha1="",  # sha1 not available from sandbox subprocess
+                file_hash_sha256=meta_dict.get("file_hash_sha256", ""),
+                file_size_bytes=meta_dict.get("file_size_bytes", 0),
                 file_type=DocumentType.PDF,
-                file_extension='.pdf',
-                title=meta_dict.get('title', ''),
-                author=meta_dict.get('author', ''),
-                creator=meta_dict.get('creator', ''),
-                creating_application=meta_dict.get('producer', ''),
+                file_extension=".pdf",
+                title=meta_dict.get("title", ""),
+                author=meta_dict.get("author", ""),
+                creator=meta_dict.get("creator", ""),
+                creating_application=meta_dict.get("producer", ""),
                 creation_date=creation_date,
                 modification_date=mod_date,
-                subject=meta_dict.get('subject', ''),
+                subject=meta_dict.get("subject", ""),
                 keywords=keywords_list,
                 # Store sandbox analysis stats in raw_metadata for forensics
                 raw_metadata={
                     **meta_dict,
                     **analysis_stats,  # Includes page_count, pymupdf_available, embedded_objects_count
-                    'sandboxed': True,  # Mark as sandboxed result
+                    "sandboxed": True,  # Mark as sandboxed result
                 },
-    )
+            )
         except Exception:
             metadata = DocumentMetadata()
-        
+
         # Convert embedded objects
         embedded_objects = []
-        for obj in result_data.get('embedded_objects', []):
+        for obj in result_data.get("embedded_objects", []):
             if isinstance(obj, dict):
-                embedded_objects.append(EmbeddedObject(
-                    object_type=obj.get('object_type', 'unknown'),
-                    object_name=obj.get('xref', str(obj.get('xref', ''))),
-                    content_type=obj.get('ext'),
-                    size_bytes=obj.get('size_bytes', 0),
-                    extracted_content=b'',  # Not extracted in sandbox mode for security
-                    metadata=obj,
-                ))
-        
+                embedded_objects.append(
+                    EmbeddedObject(
+                        object_type=obj.get("object_type", "unknown"),
+                        object_name=obj.get("xref", str(obj.get("xref", ""))),
+                        content_type=obj.get("ext"),
+                        size_bytes=obj.get("size_bytes", 0),
+                        extracted_content=b"",  # Not extracted in sandbox mode for security
+                        metadata=obj,
+                    )
+                )
+
         # ADVERSARY-001: Canary tokens from sandbox are list of strings (matching DocumentAnalysis type)
         # Sandbox returns list of strings in format "type:value"
-        canary_tokens_raw = result_data.get('canary_tokens', [])
+        canary_tokens_raw = result_data.get("canary_tokens", [])
         if canary_tokens_raw and isinstance(canary_tokens_raw[0], dict):
             # Convert from dict format to string format
-            canary_tokens = [t.get('type', 'unknown') + ':' + t.get('value', '')[:50] for t in canary_tokens_raw]
+            canary_tokens = [t.get("type", "unknown") + ":" + t.get("value", "")[:50] for t in canary_tokens_raw]
         else:
             canary_tokens = canary_tokens_raw
 
         return DocumentAnalysis(
             metadata=metadata,
             embedded_objects=embedded_objects,
-            hyperlinks=result_data.get('hyperlinks', []),
-            email_addresses=result_data.get('email_addresses', []),
-            ip_addresses=result_data.get('ip_addresses', []),
-            suspicious_indicators=result_data.get('suspicious_indicators', []),
+            hyperlinks=result_data.get("hyperlinks", []),
+            email_addresses=result_data.get("email_addresses", []),
+            ip_addresses=result_data.get("ip_addresses", []),
+            suspicious_indicators=result_data.get("suspicious_indicators", []),
             canary_tokens=canary_tokens,
-            ocg_layers=result_data.get('ocg_layers', []),
-            redaction_failures=result_data.get('redaction_failures', []),
-            suppressed_annotations=result_data.get('suppressed_annotations', []),
-    )
+            ocg_layers=result_data.get("ocg_layers", []),
+            redaction_failures=result_data.get("redaction_failures", []),
+            suppressed_annotations=result_data.get("suppressed_annotations", []),
+        )
 
     async def _probe_pdf_async(self, doc) -> dict:
         """Async PDF probing with parallel page sampling.
@@ -1205,13 +1234,15 @@ class PDFAnalyzer:
         """
         MAX_DEEP_PDF_PAGES = 12
         if not PYMUPDF_AVAILABLE:
-            return {'signal_score': 0.5, 'candidate_pages': list(range(min(10, len(doc) if hasattr(doc, '__len__') else 10)))}
+            return {
+                "signal_score": 0.5,
+                "candidate_pages": list(range(min(10, len(doc) if hasattr(doc, "__len__") else 10))),
+            }
         try:
             total_pages = len(doc)
             if total_pages == 0:
-                return {'signal_score': 0.0, 'candidate_pages': []}
+                return {"signal_score": 0.0, "candidate_pages": []}
 
-            # Phase 1: Sample pages for signal estimation (parallel)
             sample_size = min(5, total_pages)
             sample_indices = [int(i * total_pages / sample_size) for i in range(sample_size)]
 
@@ -1243,8 +1274,6 @@ class PDFAnalyzer:
             image_ratio = has_images / len(sample_indices) if sample_indices else 0
             signal_score = min(1.0, avg_text_length / 500.0 + image_ratio * 0.3)
 
-            # Phase 2: Score all pages for candidate selection (parallel, limited)
-            # ISSUE-S3-FIX: Score pages in parallel batches to avoid overwhelming I/O
             _PAGE_SCORING_CONCURRENCY = 4
 
             async def _score_page(page_num: int) -> tuple[int, int]:
@@ -1270,10 +1299,10 @@ class PDFAnalyzer:
 
             page_scores.sort(key=lambda x: x[1], reverse=True)
             candidate_pages = [p[0] for p in page_scores[:MAX_DEEP_PDF_PAGES]]
-            return {'signal_score': signal_score, 'candidate_pages': candidate_pages}
+            return {"signal_score": signal_score, "candidate_pages": candidate_pages}
         except Exception as e:
-            logger.warning(f'PDF probing failed: {e}')
-            return {'signal_score': 0.5, 'candidate_pages': list(range(5))}
+            logger.warning(f"PDF probing failed: {e}")
+            return {"signal_score": 0.5, "candidate_pages": list(range(5))}
 
     def _probe_pdf(self, doc) -> dict:
         """
@@ -1287,11 +1316,14 @@ class PDFAnalyzer:
         """
         MAX_DEEP_PDF_PAGES = 12
         if not PYMUPDF_AVAILABLE:
-            return {'signal_score': 0.5, 'candidate_pages': list(range(min(10, len(doc) if hasattr(doc, '__len__') else 10)))}
+            return {
+                "signal_score": 0.5,
+                "candidate_pages": list(range(min(10, len(doc) if hasattr(doc, "__len__") else 10))),
+            }
         try:
             total_pages = len(doc)
             if total_pages == 0:
-                return {'signal_score': 0.0, 'candidate_pages': []}
+                return {"signal_score": 0.0, "candidate_pages": []}
             sample_size = min(5, total_pages)
             sample_indices = [int(i * total_pages / sample_size) for i in range(sample_size)]
             text_lengths = []
@@ -1318,10 +1350,10 @@ class PDFAnalyzer:
                     page_scores.append((page_num, 0))
             page_scores.sort(key=lambda x: x[1], reverse=True)
             candidate_pages = [p[0] for p in page_scores[:MAX_DEEP_PDF_PAGES]]
-            return {'signal_score': signal_score, 'candidate_pages': candidate_pages}
+            return {"signal_score": signal_score, "candidate_pages": candidate_pages}
         except Exception as e:
-            logger.warning(f'PDF probing failed: {e}')
-            return {'signal_score': 0.5, 'candidate_pages': list(range(5))}
+            logger.warning(f"PDF probing failed: {e}")
+            return {"signal_score": 0.5, "candidate_pages": list(range(5))}
 
     async def _deep_parse_pages_async(self, doc, page_indices: list[int]) -> list[str]:
         """Async deep parse specific pages of the PDF with bounded parallelization.
@@ -1353,23 +1385,22 @@ class PDFAnalyzer:
                     text = page.get_text()
                     return (idx, text)
             except Exception as e:
-                logger.warning(f'Page {idx} parse failed: {e}')
-            return (idx, '')
+                logger.warning(f"Page {idx} parse failed: {e}")
+            return (idx, "")
 
         # ISSUE-S3-FIX: Batched parallel execution with bounded concurrency.
         # For a 100-page PDF: creates 4 batches × 25 pages = bounded memory usage.
         parsed: list[tuple[int, str]] = []
 
         for i in range(0, len(page_indices), _PARSER_CONCURRENCY):
-            batch = page_indices[i:i + _PARSER_CONCURRENCY]
+            batch = page_indices[i : i + _PARSER_CONCURRENCY]
             tasks = [asyncio.create_task(_parse_page(idx)) for idx in batch]
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in batch_results:
                 if isinstance(result, Exception):
-                    # Extract original index from batch
                     orig_idx = batch[batch_results.index(result)]
-                    parsed.append((orig_idx, ''))
+                    parsed.append((orig_idx, ""))
                 else:
                     parsed.append(result)
 
@@ -1398,7 +1429,7 @@ class PDFAnalyzer:
                     text = page.get_text()
                     results.append(text)
         except Exception as e:
-            logger.warning(f'Deep PDF parsing failed: {e}')
+            logger.warning(f"Deep PDF parsing failed: {e}")
         return results
 
     def _extract_pdf_metadata(self, doc: fitz.Document, file_path) -> DocumentMetadata:
@@ -1406,7 +1437,7 @@ class PDFAnalyzer:
         pdf_metadata = doc.metadata
         if isinstance(file_path, str):
             _guard_file_size(file_path)
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content = f.read()
         elif isinstance(file_path, bytes):
             content = file_path
@@ -1415,16 +1446,33 @@ class PDFAnalyzer:
         md5_hash = hashlib.md5(content).hexdigest()
         sha1_hash = hashlib.sha256(content).hexdigest()
         sha256_hash = hashlib.sha256(content).hexdigest()
-        creation_date = self._parse_pdf_date(pdf_metadata.get('creationDate'))
-        mod_date = self._parse_pdf_date(pdf_metadata.get('modDate'))
-        return DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.PDF, file_extension='.pdf', author=pdf_metadata.get('author'), creator=pdf_metadata.get('creator'), title=pdf_metadata.get('title'), subject=pdf_metadata.get('subject'), keywords=pdf_metadata.get('keywords', '').split(',') if pdf_metadata.get('keywords') else [], creation_date=creation_date, modification_date=mod_date, creating_application=pdf_metadata.get('producer'), application_version=pdf_metadata.get('format'), raw_metadata=pdf_metadata)
+        creation_date = self._parse_pdf_date(pdf_metadata.get("creationDate"))
+        mod_date = self._parse_pdf_date(pdf_metadata.get("modDate"))
+        return DocumentMetadata(
+            file_hash_md5=md5_hash,
+            file_hash_sha1=sha1_hash,
+            file_hash_sha256=sha256_hash,
+            file_size_bytes=len(content),
+            file_type=DocumentType.PDF,
+            file_extension=".pdf",
+            author=pdf_metadata.get("author"),
+            creator=pdf_metadata.get("creator"),
+            title=pdf_metadata.get("title"),
+            subject=pdf_metadata.get("subject"),
+            keywords=pdf_metadata.get("keywords", "").split(",") if pdf_metadata.get("keywords") else [],
+            creation_date=creation_date,
+            modification_date=mod_date,
+            creating_application=pdf_metadata.get("producer"),
+            application_version=pdf_metadata.get("format"),
+            raw_metadata=pdf_metadata,
+        )
 
     def _parse_pdf_date(self, date_str: str | None) -> datetime | None:
         """Parse PDF date string format."""
         if not date_str:
             return None
         try:
-            if date_str.startswith('D:'):
+            if date_str.startswith("D:"):
                 date_str = date_str[2:]
             year = int(date_str[:4])
             month = int(date_str[4:6]) if len(date_str) >= 6 else 1
@@ -1444,48 +1492,50 @@ class PDFAnalyzer:
         OCR path which underutilized the Neural Engine.
         """
         objects = []
-        # Phase 1: Collect image xrefs and extract bytes (sequential — xref extraction is fast)
         pending_ocr: list[tuple[bytes, int]] = []  # (image_bytes, xref_index) for batch OCR
 
         for xref in range(1, doc.xref_length()):
             try:
-                doc.xref_get_key(xref, 'Type')
-                subtype = doc.xref_get_key(xref, 'Subtype')
-                if subtype[1] == 'Image':
+                doc.xref_get_key(xref, "Type")
+                subtype = doc.xref_get_key(xref, "Subtype")
+                if subtype[1] == "Image":
                     base_image = _safe_extract_image(doc, xref)
                     if base_image:
-                        image_bytes = base_image.get('image', b'')
+                        image_bytes = base_image.get("image", b"")
                         obj_metadata = {
-                            'width': base_image.get('width'),
-                            'height': base_image.get('height'),
-                            'colorspace': base_image.get('colorspace'),
+                            "width": base_image.get("width"),
+                            "height": base_image.get("height"),
+                            "colorspace": base_image.get("colorspace"),
                         }
-                        objects.append(EmbeddedObject(
-                            object_type='image',
-                            object_name=f'image_{xref}',
-                            content_type=base_image.get('ext'),
-                            size_bytes=len(image_bytes),
-                            extracted_content=image_bytes,
-                            metadata=obj_metadata,
-                        ))
+                        objects.append(
+                            EmbeddedObject(
+                                object_type="image",
+                                object_name=f"image_{xref}",
+                                content_type=base_image.get("ext"),
+                                size_bytes=len(image_bytes),
+                                extracted_content=image_bytes,
+                                metadata=obj_metadata,
+                            )
+                        )
                         # Collect for batch OCR (only non-empty images)
                         if image_bytes:
                             pending_ocr.append((image_bytes, len(objects) - 1))
-                elif subtype[1] in ['FileAttachment', 'EmbeddedFile']:
+                elif subtype[1] in ["FileAttachment", "EmbeddedFile"]:
                     stream = _safe_xref_stream(doc, xref)
                     if stream:
-                        name = doc.xref_get_key(xref, 'F')
-                        objects.append(EmbeddedObject(
-                            object_type='file_attachment',
-                            object_name=name[1] if name else f'attachment_{xref}',
-                            content_type=None,
-                            size_bytes=len(stream),
-                            extracted_content=stream,
-                        ))
+                        name = doc.xref_get_key(xref, "F")
+                        objects.append(
+                            EmbeddedObject(
+                                object_type="file_attachment",
+                                object_name=name[1] if name else f"attachment_{xref}",
+                                content_type=None,
+                                size_bytes=len(stream),
+                                extracted_content=stream,
+                            )
+                        )
             except Exception:
                 continue
 
-        # Phase 2: Batch OCR all collected images (parallel ANE processing)
         if pending_ocr:
             image_list = [item[0] for item in pending_ocr]
             ocr_results = _ocr_embedded_batch(image_list)
@@ -1494,8 +1544,8 @@ class PDFAnalyzer:
                     # Rebuild EmbeddedObject with OCR metadata (frozen struct)
                     obj = objects[obj_idx]
                     updated_metadata = dict(obj.metadata)
-                    updated_metadata['ocr_text'] = ocr_text
-                    updated_metadata['ocr_confidence'] = ocr_conf
+                    updated_metadata["ocr_text"] = ocr_text
+                    updated_metadata["ocr_confidence"] = ocr_conf
                     objects[obj_idx] = EmbeddedObject(
                         object_type=obj.object_type,
                         object_name=obj.object_name,
@@ -1503,7 +1553,7 @@ class PDFAnalyzer:
                         size_bytes=obj.size_bytes,
                         extracted_content=obj.extracted_content,
                         metadata=updated_metadata,
-    )
+                    )
 
         return objects
 
@@ -1533,11 +1583,11 @@ class PDFAnalyzer:
                 """Extract text samples from pages containing this OCG (parallel)."""
                 try:
                     layer_data = {
-                        'xref': xref,
-                        'name': ocg_info.get('name', 'Unnamed'),
-                        'intent': ocg_info.get('intent', 'View'),
-                        'on': ocg_info.get('on', True),
-                        'text_samples': [],
+                        "xref": xref,
+                        "name": ocg_info.get("name", "Unnamed"),
+                        "intent": ocg_info.get("intent", "View"),
+                        "on": ocg_info.get("on", True),
+                        "text_samples": [],
                     }
 
                     # ISSUE-S3-FIX: Parallel page inspection per OCG
@@ -1553,8 +1603,8 @@ class PDFAnalyzer:
                                 text = page.get_text()[:200]
                                 if text.strip():
                                     return {
-                                        'page': page_num,
-                                        'text': text,
+                                        "page": page_num,
+                                        "text": text,
                                     }
                         except Exception:
                             pass
@@ -1565,16 +1615,15 @@ class PDFAnalyzer:
                     results = await asyncio.gather(*tasks, return_exceptions=True)
                     for result in results:
                         if isinstance(result, dict):
-                            layer_data['text_samples'].append(result)
+                            layer_data["text_samples"].append(result)
 
                     return layer_data
                 except Exception as e:
-                    logger.debug(f'Failed to extract OCG xref={xref}: {e}')
+                    logger.debug(f"Failed to extract OCG xref={xref}: {e}")
                     return None
 
             # ISSUE-S3-FIX: Parallel OCG extraction with bounded concurrency
-            ocg_tasks = [asyncio.create_task(_extract_single_ocg(xref, ocg_info))
-                         for xref, ocg_info in ocg_items]
+            ocg_tasks = [asyncio.create_task(_extract_single_ocg(xref, ocg_info)) for xref, ocg_info in ocg_items]
             results = await asyncio.gather(*ocg_tasks, return_exceptions=True)
 
             ocg_layers = []
@@ -1584,7 +1633,7 @@ class PDFAnalyzer:
 
             return ocg_layers
         except Exception as e:
-            logger.debug(f'OCG extraction failed: {e}')
+            logger.debug(f"OCG extraction failed: {e}")
             return []
 
     def _extract_ocg_layers(self, doc: fitz.Document) -> list[dict]:
@@ -1613,11 +1662,11 @@ class PDFAnalyzer:
             for xref, ocg_info in list(ocg_dict.items())[:MAX_OCG_LAYERS]:
                 try:
                     layer_data = {
-                        'xref': xref,
-                        'name': ocg_info.get('name', 'Unnamed'),
-                        'intent': ocg_info.get('intent', 'View'),
-                        'on': ocg_info.get('on', True),
-                        'text_samples': [],
+                        "xref": xref,
+                        "name": ocg_info.get("name", "Unnamed"),
+                        "intent": ocg_info.get("intent", "View"),
+                        "on": ocg_info.get("on", True),
+                        "text_samples": [],
                     }
 
                     for page_num in range(min(len(doc), 20)):
@@ -1627,20 +1676,22 @@ class PDFAnalyzer:
                             if xref in page_ocgs:
                                 text = page.get_text()[:200]
                                 if text.strip():
-                                    layer_data['text_samples'].append({
-                                        'page': page_num,
-                                        'text': text,
-                                    })
+                                    layer_data["text_samples"].append(
+                                        {
+                                            "page": page_num,
+                                            "text": text,
+                                        }
+                                    )
                         except Exception:
                             continue
 
                     ocg_layers.append(layer_data)
                 except Exception as e:
-                    logger.debug(f'Failed to extract OCG xref={xref}: {e}')
+                    logger.debug(f"Failed to extract OCG xref={xref}: {e}")
                     continue
 
         except Exception as e:
-            logger.debug(f'OCG extraction failed: {e}')
+            logger.debug(f"OCG extraction failed: {e}")
 
         return ocg_layers
 
@@ -1685,21 +1736,21 @@ class PDFAnalyzer:
                             if not rect:
                                 continue
 
-                            text_dict = page.get_text('dict', clip=rect)
+                            text_dict = page.get_text("dict", clip=rect)
                             hidden_texts = []
-                            for block in text_dict.get('blocks', []):
-                                if block.get('type') == 0:
-                                    for line in block.get('lines', []):
-                                        for span in line.get('spans', []):
-                                            span_text = span.get('text', '').strip()
+                            for block in text_dict.get("blocks", []):
+                                if block.get("type") == 0:
+                                    for line in block.get("lines", []):
+                                        for span in line.get("spans", []):
+                                            span_text = span.get("text", "").strip()
                                             if span_text:
                                                 hidden_texts.append(span_text)
 
                             if hidden_texts:
-                                combined = ' '.join(hidden_texts)
+                                combined = " ".join(hidden_texts)
                                 page_failures.append(
-                                    f'Page {page_num + 1}: Redaction failure at '
-                                    f'({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) '
+                                    f"Page {page_num + 1}: Redaction failure at "
+                                    f"({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) "
                                     f'- hidden text: "{combined[:100]}"'
                                 )
                                 page_count += 1
@@ -1730,7 +1781,7 @@ class PDFAnalyzer:
 
             return all_failures
         except Exception as e:
-            logger.debug(f'Redaction failure detection failed: {e}')
+            logger.debug(f"Redaction failure detection failed: {e}")
             return []
 
     def _detect_redaction_failures(self, doc: fitz.Document) -> list[str]:
@@ -1774,30 +1825,30 @@ class PDFAnalyzer:
                         if not rect:
                             continue
 
-                        text_dict = page.get_text('dict', clip=rect)
+                        text_dict = page.get_text("dict", clip=rect)
                         hidden_texts = []
-                        for block in text_dict.get('blocks', []):
-                            if block.get('type') == 0:
-                                for line in block.get('lines', []):
-                                    for span in line.get('spans', []):
-                                        span_text = span.get('text', '').strip()
+                        for block in text_dict.get("blocks", []):
+                            if block.get("type") == 0:
+                                for line in block.get("lines", []):
+                                    for span in line.get("spans", []):
+                                        span_text = span.get("text", "").strip()
                                         if span_text:
                                             hidden_texts.append(span_text)
 
                         if hidden_texts:
-                            combined = ' '.join(hidden_texts)
+                            combined = " ".join(hidden_texts)
                             redaction_failures.append(
-                                f'Page {page_num + 1}: Redaction failure at '
-                                f'({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) '
+                                f"Page {page_num + 1}: Redaction failure at "
+                                f"({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) "
                                 f'- hidden text: "{combined[:100]}"'
-    )
+                            )
                             if len(redaction_failures) >= MAX_FAILURES:
                                 break
                     except Exception:
                         continue
 
         except Exception as e:
-            logger.debug(f'Redaction failure detection failed: {e}')
+            logger.debug(f"Redaction failure detection failed: {e}")
 
         return redaction_failures
 
@@ -1835,22 +1886,26 @@ class PDFAnalyzer:
                             if flags not in SUPPRESSED_FLAG_VALUES:
                                 continue
 
-                            annot_type = annot.type[1] if annot.type else 'Unknown'
-                            content = annot.info.get('content', '') if annot.info else ''
+                            annot_type = annot.type[1] if annot.type else "Unknown"
+                            content = annot.info.get("content", "") if annot.info else ""
                             rect = annot.rect
 
-                            page_annots.append({
-                                'page': page_num + 1,
-                                'type': annot_type,
-                                'content': content[:500] if content else '',
-                                'flags': flags,
-                                'rect': {
-                                    'x0': rect.x0,
-                                    'y0': rect.y0,
-                                    'x1': rect.x1,
-                                    'y1': rect.y1,
-                                } if rect else None,
-                            })
+                            page_annots.append(
+                                {
+                                    "page": page_num + 1,
+                                    "type": annot_type,
+                                    "content": content[:500] if content else "",
+                                    "flags": flags,
+                                    "rect": {
+                                        "x0": rect.x0,
+                                        "y0": rect.y0,
+                                        "x1": rect.x1,
+                                        "y1": rect.y1,
+                                    }
+                                    if rect
+                                    else None,
+                                }
+                            )
                         except Exception:
                             continue
                 except Exception:
@@ -1878,7 +1933,7 @@ class PDFAnalyzer:
 
             return all_annots
         except Exception as e:
-            logger.debug(f'Suppressed annotation extraction failed: {e}')
+            logger.debug(f"Suppressed annotation extraction failed: {e}")
             return []
 
     def _extract_suppressed_annotations(self, doc: fitz.Document) -> list[dict]:
@@ -1924,22 +1979,26 @@ class PDFAnalyzer:
                         if flags not in SUPPRESSED_FLAG_VALUES:
                             continue
 
-                        annot_type = annot.type[1] if annot.type else 'Unknown'
-                        content = annot.info.get('content', '') if annot.info else ''
+                        annot_type = annot.type[1] if annot.type else "Unknown"
+                        content = annot.info.get("content", "") if annot.info else ""
                         rect = annot.rect
 
-                        suppressed.append({
-                            'page': page_num + 1,
-                            'type': annot_type,
-                            'content': content[:500] if content else '',
-                            'flags': flags,
-                            'rect': {
-                                'x0': rect.x0,
-                                'y0': rect.y0,
-                                'x1': rect.x1,
-                                'y1': rect.y1,
-                            } if rect else None,
-                        })
+                        suppressed.append(
+                            {
+                                "page": page_num + 1,
+                                "type": annot_type,
+                                "content": content[:500] if content else "",
+                                "flags": flags,
+                                "rect": {
+                                    "x0": rect.x0,
+                                    "y0": rect.y0,
+                                    "x1": rect.x1,
+                                    "y1": rect.y1,
+                                }
+                                if rect
+                                else None,
+                            }
+                        )
 
                         if len(suppressed) >= MAX_ANNOTATIONS:
                             break
@@ -1947,7 +2006,7 @@ class PDFAnalyzer:
                         continue
 
         except Exception as e:
-            logger.debug(f'Suppressed annotation extraction failed: {e}')
+            logger.debug(f"Suppressed annotation extraction failed: {e}")
 
         return suppressed
 
@@ -1968,7 +2027,7 @@ class PDFAnalyzer:
         """Fallback basic analysis without PyMuPDF."""
         if isinstance(file_path, str):
             _guard_file_size(file_path)
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content = f.read()
         elif isinstance(file_path, bytes):
             content = file_path
@@ -1977,18 +2036,30 @@ class PDFAnalyzer:
         md5_hash = hashlib.md5(content).hexdigest()
         sha1_hash = hashlib.sha256(content).hexdigest()
         sha256_hash = hashlib.sha256(content).hexdigest()
-        text = content.decode('utf-8', errors='ignore')
-        metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.PDF, file_extension='.pdf')
-        return DocumentAnalysis(metadata=metadata, hyperlinks=self.URL_PATTERN.findall(text), email_addresses=self.EMAIL_PATTERN.findall(text))
+        text = content.decode("utf-8", errors="ignore")
+        metadata = DocumentMetadata(
+            file_hash_md5=md5_hash,
+            file_hash_sha1=sha1_hash,
+            file_hash_sha256=sha256_hash,
+            file_size_bytes=len(content),
+            file_type=DocumentType.PDF,
+            file_extension=".pdf",
+        )
+        return DocumentAnalysis(
+            metadata=metadata,
+            hyperlinks=self.URL_PATTERN.findall(text),
+            email_addresses=self.EMAIL_PATTERN.findall(text),
+        )
 
 
 class OfficeDocumentAnalyzer:
     """
     Analyzer for Microsoft Office and OpenDocument files.
     """
-    __slots__ = tuple(('_foca_extractor', '_foca_initialized'))
 
-    def __init__(self):
+    __slots__ = ("_foca_extractor", "_foca_initialized")
+
+    def __init__(self) -> None:
         self._foca_extractor: Any = None
         self._foca_initialized = False
 
@@ -1998,7 +2069,7 @@ class OfficeDocumentAnalyzer:
             try:
                 await self._foca_extractor.close()
             except Exception as e:
-                logger.debug(f'FOCA extractor close error: {e}')
+                logger.debug(f"FOCA extractor close error: {e}")
             self._foca_extractor = None
             self._foca_initialized = False
 
@@ -2009,10 +2080,11 @@ class OfficeDocumentAnalyzer:
         self._foca_initialized = True
         try:
             from forensics.metadata_extractor import UniversalMetadataExtractor
+
             self._foca_extractor = UniversalMetadataExtractor()
             await self._foca_extractor.initialize()
         except Exception as e:
-            logger.warning(f'FOCA extractor unavailable: {e}')
+            logger.warning(f"FOCA extractor unavailable: {e}")
             self._foca_extractor = None
         return self._foca_extractor
 
@@ -2020,11 +2092,11 @@ class OfficeDocumentAnalyzer:
         """Analyze Office document (sync)."""
         if isinstance(file_path, str):
             _guard_file_size(file_path)
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content = f.read()
         else:
             content = file_path
-        if content[:4] == b'PK\x03\x04':
+        if content[:4] == b"PK\x03\x04":
             return self._analyze_ooxml(content, file_path if isinstance(file_path, str) else None)
         else:
             return self._analyze_ole(content)
@@ -2036,7 +2108,7 @@ class OfficeDocumentAnalyzer:
             content = await asyncio.to_thread(Path(file_path).read_bytes)
         else:
             content = file_path
-        if content[:4] == b'PK\x03\x04':
+        if content[:4] == b"PK\x03\x04":
             return await self._analyze_ooxml_async(content, file_path if isinstance(file_path, str) else None)
         else:
             return self._analyze_ole(content)
@@ -2052,7 +2124,7 @@ class OfficeDocumentAnalyzer:
                     if foca_result and foca_result.success:
                         self._merge_foca_metadata(analysis, foca_result)
             except Exception as e:
-                logger.debug(f'FOCA enrichment skipped for {file_path}: {e}')
+                logger.debug(f"FOCA enrichment skipped for {file_path}: {e}")
         return analysis
 
     def _merge_foca_metadata(self, analysis: DocumentAnalysis, foca_result: Any) -> None:
@@ -2062,13 +2134,13 @@ class OfficeDocumentAnalyzer:
         """
         foca_data = {}
         if foca_result.pptx:
-            foca_data['pptx'] = foca_result.pptx.to_dict()
+            foca_data["pptx"] = foca_result.pptx.to_dict()
         if foca_result.email:
-            foca_data['email'] = foca_result.email.to_dict()
+            foca_data["email"] = foca_result.email.to_dict()
         if foca_result.cad:
-            foca_data['cad'] = foca_result.cad.to_dict()
+            foca_data["cad"] = foca_result.cad.to_dict()
         if foca_data:
-            analysis.metadata.raw_metadata['foca'] = foca_data
+            analysis.metadata.raw_metadata["foca"] = foca_data
 
     def _analyze_ooxml(self, content: bytes, file_path: str | None) -> DocumentAnalysis:
         """Analyze Office Open XML format (docx, xlsx, pptx)."""
@@ -2079,27 +2151,42 @@ class OfficeDocumentAnalyzer:
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as z:
                 metadata = self._extract_ooxml_core_props(z, content)
-                if 'word/comments.xml' in z.namelist():
-                    comments_xml = z.read('word/comments.xml').decode('utf-8', errors='ignore')
+                if "word/comments.xml" in z.namelist():
+                    comments_xml = z.read("word/comments.xml").decode("utf-8", errors="ignore")
                     comments = self._extract_comments_from_xml(comments_xml)
-                if 'word/document.xml' in z.namelist():
-                    doc_xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+                if "word/document.xml" in z.namelist():
+                    doc_xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
                     hyperlinks = PDFAnalyzer.URL_PATTERN.findall(doc_xml)
 
                     # ISSUE-015: Canary token detection (pre-flight OPSEC check)
                     from forensics.canary_detector import scan_for_canary_tokens
+
                     canary_detection = scan_for_canary_tokens(doc_xml)
                     if canary_detection.detected:
                         canary_tokens = canary_detection.tokens
 
                 for name in z.namelist():
-                    if name.startswith('word/media/'):
+                    if name.startswith("word/media/"):
                         data = _safe_read_zip_entry(z, name)
                         if data is not None:
-                            embedded_objects.append(EmbeddedObject(object_type='media', object_name=name.split('/')[-1], content_type=None, size_bytes=len(data), extracted_content=data))
+                            embedded_objects.append(
+                                EmbeddedObject(
+                                    object_type="media",
+                                    object_name=name.split("/")[-1],
+                                    content_type=None,
+                                    size_bytes=len(data),
+                                    extracted_content=data,
+                                )
+                            )
         except Exception as e:
-            logger.error(f'OOXML analysis error: {e}')
-        return DocumentAnalysis(metadata=metadata, embedded_objects=embedded_objects, hyperlinks=hyperlinks, comments=comments, canary_tokens=canary_tokens)
+            logger.error(f"OOXML analysis error: {e}")
+        return DocumentAnalysis(
+            metadata=metadata,
+            embedded_objects=embedded_objects,
+            hyperlinks=hyperlinks,
+            comments=comments,
+            canary_tokens=canary_tokens,
+        )
 
     def _extract_ooxml_core_props(self, z: zipfile.ZipFile, content: bytes) -> DocumentMetadata:
         """Extract core properties from OOXML."""
@@ -2108,36 +2195,61 @@ class OfficeDocumentAnalyzer:
         sha256_hash = hashlib.sha256(content).hexdigest()
         props = {}
         try:
-            if 'docProps/core.xml' in z.namelist():
-                core_xml = z.read('docProps/core.xml').decode('utf-8', errors='ignore')
+            if "docProps/core.xml" in z.namelist():
+                core_xml = z.read("docProps/core.xml").decode("utf-8", errors="ignore")
                 props = self._parse_core_xml(core_xml)
         except Exception:  # noqa: BLE001
             pass
-        if 'word/document.xml' in z.namelist():
+        if "word/document.xml" in z.namelist():
             doc_type = DocumentType.MICROSOFT_WORD
-            ext = '.docx'
-        elif 'xl/workbook.xml' in z.namelist():
+            ext = ".docx"
+        elif "xl/workbook.xml" in z.namelist():
             doc_type = DocumentType.MICROSOFT_EXCEL
-            ext = '.xlsx'
-        elif 'ppt/presentation.xml' in z.namelist():
+            ext = ".xlsx"
+        elif "ppt/presentation.xml" in z.namelist():
             doc_type = DocumentType.MICROSOFT_POWERPOINT
-            ext = '.pptx'
+            ext = ".pptx"
         else:
             doc_type = DocumentType.UNKNOWN
-            ext = '.unknown'
-        return DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=doc_type, file_extension=ext, author=props.get('creator'), last_modified_by=props.get('lastModifiedBy'), title=props.get('title'), subject=props.get('subject'), keywords=props.get('keywords', '').split() if props.get('keywords') else [], creation_date=props.get('created'), modification_date=props.get('modified'), application_version=props.get('version'), raw_metadata=props)
+            ext = ".unknown"
+        return DocumentMetadata(
+            file_hash_md5=md5_hash,
+            file_hash_sha1=sha1_hash,
+            file_hash_sha256=sha256_hash,
+            file_size_bytes=len(content),
+            file_type=doc_type,
+            file_extension=ext,
+            author=props.get("creator"),
+            last_modified_by=props.get("lastModifiedBy"),
+            title=props.get("title"),
+            subject=props.get("subject"),
+            keywords=props.get("keywords", "").split() if props.get("keywords") else [],
+            creation_date=props.get("created"),
+            modification_date=props.get("modified"),
+            application_version=props.get("version"),
+            raw_metadata=props,
+        )
 
     def _parse_core_xml(self, xml_content: str) -> dict[str, Any]:
         """Parse core.xml properties."""
         props = {}
-        patterns = {'creator': '<dc:creator>(.*?)</dc:creator>', 'lastModifiedBy': '<cp:lastModifiedBy>(.*?)</cp:lastModifiedBy>', 'title': '<dc:title>(.*?)</dc:title>', 'subject': '<dc:subject>(.*?)</dc:subject>', 'keywords': '<cp:keywords>(.*?)</cp:keywords>', 'created': '<dcterms:created.*?>(.*?)</dcterms:created>', 'modified': '<dcterms:modified.*?>(.*?)</dcterms:modified>', 'version': '<cp:version>(.*?)</cp:version>'}
+        patterns = {
+            "creator": "<dc:creator>(.*?)</dc:creator>",
+            "lastModifiedBy": "<cp:lastModifiedBy>(.*?)</cp:lastModifiedBy>",
+            "title": "<dc:title>(.*?)</dc:title>",
+            "subject": "<dc:subject>(.*?)</dc:subject>",
+            "keywords": "<cp:keywords>(.*?)</cp:keywords>",
+            "created": "<dcterms:created.*?>(.*?)</dcterms:created>",
+            "modified": "<dcterms:modified.*?>(.*?)</dcterms:modified>",
+            "version": "<cp:version>(.*?)</cp:version>",
+        }
         for key, pattern in patterns.items():
             match = re.search(pattern, xml_content)
             if match:
                 value = match.group(1)
-                if key in ['created', 'modified']:
+                if key in ["created", "modified"]:
                     try:
-                        value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
                     except Exception:  # noqa: BLE001
                         pass
                 props[key] = value
@@ -2146,7 +2258,7 @@ class OfficeDocumentAnalyzer:
     def _extract_comments_from_xml(self, xml_content: str) -> list[str]:
         """Extract comments from Word XML."""
         comments = []
-        pattern = '<w:t>(.*?)</w:t>'
+        pattern = "<w:t>(.*?)</w:t>"
         for match in re.finditer(pattern, xml_content):
             text = match.group(1)
             if len(text) > 5:
@@ -2158,8 +2270,16 @@ class OfficeDocumentAnalyzer:
         md5_hash = hashlib.md5(content).hexdigest()
         sha1_hash = hashlib.sha256(content).hexdigest()
         sha256_hash = hashlib.sha256(content).hexdigest()
-        metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.UNKNOWN, file_extension='.doc')
+        metadata = DocumentMetadata(
+            file_hash_md5=md5_hash,
+            file_hash_sha1=sha1_hash,
+            file_hash_sha256=sha256_hash,
+            file_size_bytes=len(content),
+            file_type=DocumentType.UNKNOWN,
+            file_extension=".doc",
+        )
         return DocumentAnalysis(metadata=metadata)
+
 
 class ImageAnalyzer:
     """
@@ -2171,12 +2291,12 @@ class ImageAnalyzer:
     def analyze(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze image file."""
         if not PIL_AVAILABLE:
-            logger.warning('PIL not available - cannot analyze image')
+            logger.warning("PIL not available - cannot analyze image")
             return self._basic_image_analysis(file_path)
         try:
             if isinstance(file_path, str):
                 _guard_file_size(file_path)
-                with open(file_path, 'rb') as f:
+                with open(file_path, "rb") as f:
                     content = f.read()
                 with Image.open(file_path) as img:
                     exif_data = self._extract_exif(img)
@@ -2195,29 +2315,43 @@ class ImageAnalyzer:
             md5_hash = hashlib.md5(content).hexdigest()
             sha1_hash = hashlib.sha256(content).hexdigest()
             sha256_hash = hashlib.sha256(content).hexdigest()
-            metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.IMAGE, file_extension=f'.{img_format.lower()}' if img_format else '.unknown', image_width=img_width, image_height=img_height, gps_coordinates=exif_data.gps_location if exif_data else None, raw_metadata={'format': img_format, 'mode': img_mode})
+            metadata = DocumentMetadata(
+                file_hash_md5=md5_hash,
+                file_hash_sha1=sha1_hash,
+                file_hash_sha256=sha256_hash,
+                file_size_bytes=len(content),
+                file_type=DocumentType.IMAGE,
+                file_extension=f".{img_format.lower()}" if img_format else ".unknown",
+                image_width=img_width,
+                image_height=img_height,
+                gps_coordinates=exif_data.gps_location if exif_data else None,
+                raw_metadata={"format": img_format, "mode": img_mode},
+            )
             # Vision Framework ANE OCR — hardware-accelerated text extraction from image bytes
-            ocr_text, _ = _ocr_embedded_image(content) if PYMUPDF_AVAILABLE else ('', 0.0)
+            ocr_text, _ = _ocr_embedded_image(content) if PYMUPDF_AVAILABLE else ("", 0.0)
 
             # ISSUE-015: Canary token detection in OCR text and EXIF metadata
             canary_tokens: list[str] = []
             scan_targets = [ocr_text]
             if exif_data and exif_data.raw_exif:
                 # Scan EXIF text fields that can embed canary tokens
-                for tag_name in ('UserComment', 'ImageDescription', 'Software', 'Make', 'Model'):
+                for tag_name in ("UserComment", "ImageDescription", "Software", "Make", "Model"):
                     exif_val = exif_data.raw_exif.get(tag_name)
                     if isinstance(exif_val, str) and exif_val.strip():
                         scan_targets.append(exif_val)
-            combined_scan = ' '.join(scan_targets)
+            combined_scan = " ".join(scan_targets)
             if combined_scan.strip():
                 from forensics.canary_detector import scan_for_canary_tokens
+
                 canary_result = scan_for_canary_tokens(combined_scan)
                 if canary_result.detected:
                     canary_tokens = canary_result.tokens
 
-            return DocumentAnalysis(metadata=metadata, exif_data=exif_data, ocr_text=ocr_text, canary_tokens=canary_tokens)
+            return DocumentAnalysis(
+                metadata=metadata, exif_data=exif_data, ocr_text=ocr_text, canary_tokens=canary_tokens
+            )
         except Exception as e:
-            logger.error(f'Image analysis error: {e}')
+            logger.error(f"Image analysis error: {e}")
             return self._basic_image_analysis(file_path)
 
     # EXIF tag → handler dispatch table (reduces 15+ elif branches to O(1) lookup)
@@ -2241,36 +2375,38 @@ class ImageAnalyzer:
             return lambda data, val: setattr(data, attr, bool(val & bit) if val else None)
 
         def _make_float_handler(attr: str, num_type: type = float) -> callable:
-            return lambda data, val: setattr(data, attr, float(val) if isinstance(val, (int, float, IFDRational)) else None)
+            return lambda data, val: setattr(
+                data, attr, float(val) if isinstance(val, (int, float, IFDRational)) else None
+            )
 
-        def _handle_aperture(data, val):
-            data.aperture = f'f/{val}'
+        def _handle_aperture(data, val) -> None:
+            data.aperture = f"f/{val}"
 
-        def _handle_shutter_speed(data, val):
+        def _handle_shutter_speed(data, val) -> None:
             if isinstance(val, (int, float)):
-                data.shutter_speed = f'1/{1 / val:.0f}s' if val < 1 else f'{val}s'
+                data.shutter_speed = f"1/{1 / val:.0f}s" if val < 1 else f"{val}s"
 
-        def _handle_iso(data, val):
+        def _handle_iso(data, val) -> None:
             data.iso_speed = val[0] if isinstance(val, tuple) else val
 
-        def _handle_gps(data, val):
+        def _handle_gps(data, val) -> None:
             data.gps_location = self._extract_gps(self._current_exif_for_gps)
 
         ImageAnalyzer._EXIF_TAG_HANDLERS = {
-            'Make': _make_str_handler('camera_make'),
-            'Model': _make_str_handler('camera_model'),
-            'Software': _make_str_handler('software'),
-            'DateTimeOriginal': _make_datetime_handler('date_time_original'),
-            'DateTimeDigitized': _make_datetime_handler('date_time_digitized'),
-            'ExifImageWidth': _make_int_handler('image_width'),
-            'ExifImageHeight': _make_int_handler('image_height'),
-            'Orientation': _make_str_handler('orientation'),  # stored as-is
-            'Flash': _make_bool_bit_handler('flash', 1),
-            'FocalLength': _make_float_handler('focal_length'),
-            'ISOSpeedRatings': _handle_iso,
-            'FNumber': _handle_aperture,
-            'ExposureTime': _handle_shutter_speed,
-            'GPSInfo': _handle_gps,
+            "Make": _make_str_handler("camera_make"),
+            "Model": _make_str_handler("camera_model"),
+            "Software": _make_str_handler("software"),
+            "DateTimeOriginal": _make_datetime_handler("date_time_original"),
+            "DateTimeDigitized": _make_datetime_handler("date_time_digitized"),
+            "ExifImageWidth": _make_int_handler("image_width"),
+            "ExifImageHeight": _make_int_handler("image_height"),
+            "Orientation": _make_str_handler("orientation"),  # stored as-is
+            "Flash": _make_bool_bit_handler("flash", 1),
+            "FocalLength": _make_float_handler("focal_length"),
+            "ISOSpeedRatings": _handle_iso,
+            "FNumber": _handle_aperture,
+            "ExposureTime": _handle_shutter_speed,
+            "GPSInfo": _handle_gps,
         }
 
     def _extract_exif(self, img: Image.Image) -> EXIFData | None:
@@ -2280,7 +2416,6 @@ class ImageAnalyzer:
             if not exif:
                 return None
 
-            # Initialize handlers on first use
             self._init_exif_handlers()
 
             data = EXIFData()
@@ -2299,7 +2434,7 @@ class ImageAnalyzer:
             data.raw_exif = raw_exif
             return data
         except Exception as e:
-            logger.error(f'EXIF extraction error: {e}')
+            logger.error(f"EXIF extraction error: {e}")
             self._current_exif_for_gps = None
             return None
 
@@ -2307,7 +2442,7 @@ class ImageAnalyzer:
         """Parse EXIF datetime string."""
         if isinstance(value, str):
             try:
-                return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+                return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
             except ValueError:  # noqa: BLE001
                 pass
         return None
@@ -2315,7 +2450,7 @@ class ImageAnalyzer:
     def _extract_gps(self, exif: dict) -> GeoLocation | None:
         """Extract GPS coordinates from EXIF."""
         try:
-            gps_info = exif.get('GPSInfo')
+            gps_info = exif.get("GPSInfo")
             if not gps_info:
                 return None
 
@@ -2327,6 +2462,7 @@ class ImageAnalyzer:
                     seconds = dms[2]
                     return float(degrees) + float(minutes) / 60 + float(seconds) / 3600
                 return float(dms)
+
             lat_ref = gps_info.get(1)
             lat_dms = gps_info.get(2)
             lon_ref = gps_info.get(3)
@@ -2335,69 +2471,71 @@ class ImageAnalyzer:
             if lat_dms and lon_dms:
                 lat = convert_dms(lat_dms)
                 lon = convert_dms(lon_dms)
-                if lat_ref == 'S':
+                if lat_ref == "S":
                     lat = -lat
-                if lon_ref == 'W':
+                if lon_ref == "W":
                     lon = -lon
-                return GeoLocation(latitude=lat, longitude=lon, altitude=float(altitude) if altitude else None, timestamp=None)
+                return GeoLocation(
+                    latitude=lat, longitude=lon, altitude=float(altitude) if altitude else None, timestamp=None
+                )
         except Exception as e:
-            logger.error(f'GPS extraction error: {e}')
+            logger.error(f"GPS extraction error: {e}")
         return None
 
     def _basic_image_analysis(self, file_path) -> DocumentAnalysis:
         """Basic analysis without PIL."""
         if isinstance(file_path, str):
             _guard_file_size(file_path)
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 content = f.read()
         else:
             content = file_path if isinstance(file_path, bytes) else file_path.read()
         md5_hash = hashlib.md5(content).hexdigest()
         sha1_hash = hashlib.sha256(content).hexdigest()
         sha256_hash = hashlib.sha256(content).hexdigest()
-        metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.IMAGE, file_extension='.unknown')
+        metadata = DocumentMetadata(
+            file_hash_md5=md5_hash,
+            file_hash_sha1=sha1_hash,
+            file_hash_sha256=sha256_hash,
+            file_size_bytes=len(content),
+            file_type=DocumentType.IMAGE,
+            file_extension=".unknown",
+        )
         return DocumentAnalysis(metadata=metadata)
 
-
-# ─── Standalone ELA Functions for ProcessPool (Picklable) ───────────────────────
-#
-# These module-level functions are picklable and can be safely passed to
-# ProcessPoolExecutor with spawn context. They replace the bound methods
-# self._ela_analysis_mps_sync and self._ela_analysis_cpu_sync which cannot
-# be pickled on macOS with spawn context.
-#
-# ISSUE IO-4 fix: Bound methods capture self which is not serializable.
 
 def _ela_mps_sync(content: bytes) -> float:
     """
     Synchronous MPS implementation of ELA for ProcessPool.
-    
+
     This is a module-level function (not a bound method) so it can be
     pickled and sent to ProcessPoolExecutor workers.
     """
+    import io
+
     import torch
     from PIL import Image
-    import io
+
     try:
         with Image.open(io.BytesIO(content)) as img:
-            img = img.convert('RGB')
+            img = img.convert("RGB")
             if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
                 ratio = min(MAX_IMAGE_SIZE / img.width, MAX_IMAGE_SIZE / img.height)
                 new_size = (int(img.width * ratio), int(img.height * ratio))
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
             tensor = torch.from_numpy(np.array(img)).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-            tensor = tensor.to('mps')
+            tensor = tensor.to("mps")
             with torch.no_grad():
                 compressed = torch.nn.functional.avg_pool2d(tensor, 2)
-                upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode='nearest')
+                upscaled = torch.nn.functional.interpolate(compressed, scale_factor=2, mode="nearest")
                 diff = torch.abs(tensor - upscaled)
                 ela_score = diff.mean().item()
             return ela_score
-    except Exception as e:
+    except Exception:
         # Fallback to CPU
         return _ela_cpu_sync(content)
     finally:
-        if hasattr(torch.mps, 'empty_cache'):
+        if hasattr(torch.mps, "empty_cache"):
             try:
                 torch.mps.empty_cache()
             except Exception:
@@ -2407,20 +2545,22 @@ def _ela_mps_sync(content: bytes) -> float:
 def _ela_cpu_sync(content: bytes) -> float:
     """
     Synchronous CPU implementation of ELA for ProcessPool.
-    
+
     This is a module-level function (not a bound method) so it can be
     pickled and sent to ProcessPoolExecutor workers.
     """
-    from PIL import Image, ImageChops
     import io
+
     import numpy as np
+    from PIL import Image, ImageChops
+
     with Image.open(io.BytesIO(content)) as img:
         tmp = io.BytesIO()
-        img.save(tmp, format='JPEG', quality=95)
+        img.save(tmp, format="JPEG", quality=95)
         tmp.seek(0)
         with Image.open(tmp) as compressed:
             diff = ImageChops.difference(img, compressed)
-            diff_np = np.array(diff.convert('L'))
+            diff_np = np.array(diff.convert("L"))
         ela_score = np.mean(diff_np) / 255.0
         return ela_score
 
@@ -2431,23 +2571,24 @@ class DeepForensicsAnalyzer:
     Uses shared ProcessPoolExecutor for CPU-bound operations (M1 8GB safe: max 2 workers).
     Steganography detection uses async subprocess pool via StegdetectServer.
     """
-    __slots__ = tuple(('_orch', '_stegdetect_path', '_stegdetect_server', '_thread_pool', '_finalizer'))
 
-    def __init__(self, orch: Any=None):
+    __slots__ = ("_orch", "_stegdetect_path", "_stegdetect_server", "_thread_pool", "_finalizer")
+
+    def __init__(self, orch: Any = None) -> None:
         """Initialize DeepForensicsAnalyzer.
 
         Args:
             orch: Optional orchestrator reference for graph integration (S49-C)
         """
         self._orch = orch
-        self._stegdetect_path = Path.home() / '.hledac' / 'bin' / 'stegdetect'
+        self._stegdetect_path = Path.home() / ".hledac" / "bin" / "stegdetect"
         self._stegdetect_server = StegdetectServer()
         # ThreadPool for short-lived sync CPU work (not CPU-bound image analysis)
         self._thread_pool = get_parallel_executor()  # noqa: F811 — reused pool, intentional
         # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
         self._finalizer = weakref.finalize(self, _deep_forensics_cleanup)
 
-    async def _ensure_stegdetect(self):
+    async def _ensure_stegdetect(self) -> None:
         """
         ADVERSARY-001-INTERNAL-007 fix: Install stegdetect via ArtifactVerifier.
 
@@ -2471,12 +2612,12 @@ class DeepForensicsAnalyzer:
             repo_url="https://github.com/abeluck/stegdetect.git",
             branch="master",
             build_cmd=["make"],
-    )
+        )
         if not result.success:
             logger.warning(
                 "[ADVERSARY-001] [INTERNAL-007] Stegdetect installation failed: %s",
                 result.error,
-    )
+            )
 
     def _parse_gps(self, gps_dict):
         """Parse GPS data from EXIF."""
@@ -2488,16 +2629,16 @@ class DeepForensicsAnalyzer:
             if lat and lon:
                 lat_dec = lat[0] + lat[1] / 60 + lat[2] / 3600
                 lon_dec = lon[0] + lon[1] / 60 + lon[2] / 3600
-                if lat_ref == 'S':
+                if lat_ref == "S":
                     lat_dec = -lat_dec
-                if lon_ref == 'W':
+                if lon_ref == "W":
                     lon_dec = -lon_dec
-                return {'lat': lat_dec, 'lon': lon_dec}
+                return {"lat": lat_dec, "lon": lon_dec}
         except Exception:  # noqa: BLE001
             pass
         return None
 
-    async def analyze_image(self, content: bytes, url: str | None=None):
+    async def analyze_image(self, content: bytes, url: str | None = None):
         """Analyze image for forensic artifacts.
 
         Uses ProcessPoolExecutor for CPU-bound image analysis (ELA) to avoid
@@ -2511,38 +2652,38 @@ class DeepForensicsAnalyzer:
             Dict with analysis results including ela_score, suspicious flag, etc.
         """
         result = {}
-        if content.startswith(b'\xff\xd8') and piexif:
+        if content.startswith(b"\xff\xd8") and piexif:
             try:
                 exif = piexif.load_from_bytes(content)
-                gps = exif.get('GPS')
+                gps = exif.get("GPS")
                 if gps:
                     gps_coords = self._parse_gps(gps)
                     if gps_coords:
-                        result['gps_coords'] = gps_coords
+                        result["gps_coords"] = gps_coords
             except Exception:  # noqa: BLE001
                 pass
         try:
             # CPU-bound: run ELA in ProcessPool to avoid blocking MLX workers
             ela_score = await self._ela_analysis(content)
-            result['ela_score'] = ela_score
+            result["ela_score"] = ela_score
             if ela_score > 0.3:
-                result['suspicious'] = True
+                result["suspicious"] = True
             if self._orch and ela_score > 0.7 and url:
                 try:
-                    if hasattr(self._orch, '_research_mgr') and self._orch._research_mgr:
+                    if hasattr(self._orch, "_research_mgr") and self._orch._research_mgr:
                         rd = self._orch._research_mgr.relationship_discovery
-                        if rd and hasattr(rd, 'flag_manipulated_image'):
+                        if rd and hasattr(rd, "flag_manipulated_image"):
                             await rd.flag_manipulated_image(url=url, ela_score=ela_score)
                 except Exception as e:
-                    logger.warning(f'ELA→Graph forward failed: {e}')
+                    logger.warning(f"ELA→Graph forward failed: {e}")
         except Exception:  # noqa: BLE001
             pass
         if len(content) > 10000:
             try:
                 stego_prob = await self._stegdetect(content)
-                result['stego_probability'] = stego_prob
+                result["stego_probability"] = stego_prob
                 if stego_prob > 0.1:
-                    result['suspicious'] = True
+                    result["suspicious"] = True
             except Exception:  # noqa: BLE001
                 pass
         return result
@@ -2576,6 +2717,7 @@ class DeepForensicsAnalyzer:
         """Run stegdetect on image using persistent server."""
         return await self._stegdetect_server.analyze(content)
 
+
 class StegdetectServer:
     """
     ADVERSARY-001 fix: stegdetect subprocess pool runs with sandbox-exec
@@ -2583,11 +2725,21 @@ class StegdetectServer:
 
     Persistent stegdetect process pool with semaphore concurrency.
     """
-    __slots__ = tuple(('_bin_path', '_initialized', '_lock', '_max_workers', '_procs', '_semaphore', '_sandbox', '_profile_path'))
 
-    def __init__(self, max_workers: int=4):
+    __slots__ = (
+        "_bin_path",
+        "_initialized",
+        "_lock",
+        "_max_workers",
+        "_procs",
+        "_semaphore",
+        "_sandbox",
+        "_profile_path",
+    )
+
+    def __init__(self, max_workers: int = 4) -> None:
         self._procs: list[asyncio.subprocess.Process] = []
-        self._bin_path = Path.home() / '.hledac' / 'bin' / 'stegdetect'
+        self._bin_path = Path.home() / ".hledac" / "bin" / "stegdetect"
         self._semaphore = asyncio.Semaphore(max_workers)
         self._lock = asyncio.Lock()
         self._max_workers = max_workers
@@ -2595,14 +2747,14 @@ class StegdetectServer:
         self._sandbox = get_sandbox_coordinator()
         self._profile_path: Path | None = None
 
-    async def _ensure_processes(self):
+    async def _ensure_processes(self) -> None:
         """
         ADVERSARY-001: Ensure worker processes run with Seatbelt sandbox.
 
         When sandbox-exec is available, wraps each stegdetect worker with
         a read-only, network-denied Seatbelt profile.
         """
-        if self._initialized and all((p.returncode is None for p in self._procs if p)):
+        if self._initialized and all(p.returncode is None for p in self._procs if p):
             return
         fa = DeepForensicsAnalyzer()
         await fa._ensure_stegdetect()
@@ -2618,7 +2770,7 @@ class StegdetectServer:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-    )
+                )
                 self._procs.append(proc)
             self._initialized = True
 
@@ -2629,23 +2781,23 @@ class StegdetectServer:
         Returns [sandbox-exec, -p, profile.sb, stegdetect, -r, -s] when
         seatbelt is available, otherwise [stegdetect, -r, -s].
         """
-        base_cmd = [str(self._bin_path), '-r', '-s']
+        base_cmd = [str(self._bin_path), "-r", "-s"]
 
         if self._sandbox._seatbelt_available:
             profile = _build_image_sandbox_profile(
                 os.fspath(Path.home()),
                 str(self._bin_path),
-    )
+            )
             profile_path = _write_sandbox_profile(
-                f'stegd_{os.getpid()}_{id(self)}',
+                f"stegd_{os.getpid()}_{id(self)}",
                 profile,
-    )
+            )
             self._profile_path = profile_path
             logger.debug(
                 "[ADVERSARY-001] Wrapping stegdetect with Seatbelt: %s",
                 profile_path.name,
-    )
-            return ['sandbox-exec', '-p', str(profile_path)] + base_cmd
+            )
+            return ["sandbox-exec", "-p", str(profile_path)] + base_cmd
 
         return base_cmd
 
@@ -2669,21 +2821,21 @@ class StegdetectServer:
             if proc is None:
                 await self._ensure_processes()
                 proc = self._procs[0]
-            tmp = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
             tmp.write(content)
             tmp.close()
             try:
-                proc.stdin.write(f'{tmp.name}\n'.encode())
+                proc.stdin.write(f"{tmp.name}\n".encode())
                 await proc.stdin.drain()
                 line = await proc.stdout.readline()
-                result = 0.8 if b'positive' in line else 0.0
+                result = 0.8 if b"positive" in line else 0.0
                 logger.debug(
                     "[ADVERSARY-001] stegdetect: score=%.2f",
                     result,
-    )
+                )
                 return result
             except Exception as e:
-                logger.warning('[ADVERSARY-001] [STEGDETECT] Failed: %s', e)
+                logger.warning("[ADVERSARY-001] [STEGDETECT] Failed: %s", e)
                 return 0.0
             finally:
                 try:
@@ -2691,7 +2843,7 @@ class StegdetectServer:
                 except FileNotFoundError:  # noqa: BLE001
                     pass
 
-    async def restart(self):
+    async def restart(self) -> None:
         """Restart all stegdetect processes."""
         async with self._lock:
             for proc in self._procs:
@@ -2710,41 +2862,42 @@ class StegdetectServer:
         Called synchronously from __del__ (GC context) — no async allowed.
         Stegdetect processes are killed outright (no restart needed on shutdown).
         """
-        if hasattr(self, '_thread_pool') and self._thread_pool:
+        if hasattr(self, "_thread_pool") and self._thread_pool:
             # R5: Shared pool — do NOT shut down (managed by domain_executors)
             self._thread_pool = None
-        if hasattr(self, '_stegdetect_server') and self._stegdetect_server:
+        if hasattr(self, "_stegdetect_server") and self._stegdetect_server:
             server = self._stegdetect_server
             loop = asyncio.new_event_loop()
             try:
                 loop.run_until_complete(server.restart())
             finally:
                 loop.close()
-        if hasattr(self, '_orch'):
+        if hasattr(self, "_orch"):
             self._orch = None
 
     def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self.close()
 
 
 def _deep_forensics_cleanup() -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Cleanup forensics resources when DeepForensicsAnalyzer is garbage collected.
     Called automatically by weakref.finalize when the object is GC'd.
     """
     try:
         from hledac.universal.paths import DB_ROOT
-        stegdetect_lock = DB_ROOT / '.stegdetect.lock'
+
+        stegdetect_lock = DB_ROOT / ".stegdetect.lock"
         if stegdetect_lock.exists():
             try:
                 stegdetect_lock.unlink()
@@ -2760,15 +2913,17 @@ class DocumentIntelligenceEngine:
 
     Provides unified interface for analyzing all document types.
     """
-    __slots__ = tuple(('_forensics', 'image_analyzer', 'office_analyzer', 'pdf_analyzer', '_forensics_thread_pool'))
 
-    def __init__(self):
+    __slots__ = ("_forensics", "image_analyzer", "office_analyzer", "pdf_analyzer", "_forensics_thread_pool")
+
+    def __init__(self) -> None:
         self.pdf_analyzer = PDFAnalyzer()
         self.office_analyzer = OfficeDocumentAnalyzer()
         self.image_analyzer = ImageAnalyzer()
         self._forensics = DeepForensicsAnalyzer()
         # R5 FIX: Dedicated thread pool via domain_executors shared pool
         from hledac.universal.utils.domain_executors import get_forensics_sync_executor
+
         self._forensics_thread_pool = get_forensics_sync_executor()
 
     def _run_async(self, coro) -> Any:
@@ -2784,7 +2939,7 @@ class DocumentIntelligenceEngine:
             finally:
                 loop.close()
         except Exception as e:
-            logger.debug('[F206AC] async run failed: %s', e)
+            logger.debug("[F206AC] async run failed: %s", e)
             return None
 
     def _run_forensics_async(self, content: bytes) -> dict[str, Any] | None:
@@ -2805,38 +2960,38 @@ class DocumentIntelligenceEngine:
         Returns:
             DocumentAnalysis with all extracted intelligence
         """
-        extension = file_path.lower().split('.')[-1] if '.' in file_path else ''
-        if extension == 'pdf':
+        extension = file_path.lower().split(".")[-1] if "." in file_path else ""
+        if extension == "pdf":
             return self.pdf_analyzer.analyze(file_path, source=source)
-        elif extension in ['docx', 'xlsx', 'pptx', 'odt', 'ods']:
+        elif extension in ["docx", "xlsx", "pptx", "odt", "ods"]:
             return self.office_analyzer.analyze(file_path)
-        elif extension in ['jpg', 'jpeg', 'png', 'tiff', 'tif', 'gif', 'bmp', 'webp']:
+        elif extension in ["jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp"]:
             analysis = self.image_analyzer.analyze(file_path)
             try:
                 _guard_file_size(file_path)
-                with open(file_path, 'rb') as f:
+                with open(file_path, "rb") as f:
                     content = f.read()
-                if hasattr(self, '_forensics'):
+                if hasattr(self, "_forensics"):
                     try:
                         # M1-SAFE: run async forensics in dedicated thread with its own event loop
                         # This avoids asyncio.run() crash and CPU-bound work runs in ProcessPool
                         forensics = self._run_forensics_async(content)
                         if forensics:
-                            analysis.metadata.raw_metadata['forensics'] = forensics
+                            analysis.metadata.raw_metadata["forensics"] = forensics
                     except Exception as e:
-                        logger.warning(f'[F206AC] forensics analyze failed: {e}')
+                        logger.warning(f"[F206AC] forensics analyze failed: {e}")
             except Exception as e:
-                logger.warning(f'[F206AC] forensics analyze failed: {e}')
+                logger.warning(f"[F206AC] forensics analyze failed: {e}")
             return analysis
         else:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 header = f.read(8)
-            if header[:4] == b'%PDF':
+            if header[:4] == b"%PDF":
                 return self.pdf_analyzer.analyze(file_path, source=source)
-            elif header[:4] == b'PK\x03\x04':
+            elif header[:4] == b"PK\x03\x04":
                 return self.office_analyzer.analyze(file_path)
             else:
-                logger.warning(f'Unknown file type: {file_path}')
+                logger.warning(f"Unknown file type: {file_path}")
                 return self._create_unknown_analysis(file_path)
 
     def _create_unknown_analysis(self, file_path: str) -> DocumentAnalysis:
@@ -2847,7 +3002,7 @@ class DocumentIntelligenceEngine:
         for the AutoRE sidecar to pick up during advisory runner phase.
         """
         _guard_file_size(file_path)
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             content = f.read()
         md5_hash = hashlib.md5(content).hexdigest()
         sha1_hash = hashlib.sha256(content).hexdigest()
@@ -2859,6 +3014,7 @@ class DocumentIntelligenceEngine:
         if 1024 <= len(content) <= 1_048_576:  # 1KB–1MB
             try:
                 import hledac_rust_extensions as rust
+
                 text_candidate = content.decode("utf-8", errors="ignore")
                 if len(text_candidate) >= 64:
                     auto_re_iocs = rust.extract_iocs_simd(text_candidate)
@@ -2875,9 +3031,9 @@ class DocumentIntelligenceEngine:
             file_hash_sha256=sha256_hash,
             file_size_bytes=len(content),
             file_type=DocumentType.UNKNOWN,
-            file_extension=f".{file_path.split('.')[-1]}" if '.' in file_path else '.unknown',
+            file_extension=f".{file_path.split('.')[-1]}" if "." in file_path else ".unknown",
             raw_metadata=raw_metadata,
-    )
+        )
         return DocumentAnalysis(metadata=metadata)
 
     async def batch_analyze_async(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
@@ -2893,7 +3049,7 @@ class DocumentIntelligenceEngine:
                 # Wrap sync analyze() in to_thread to avoid blocking event loop
                 return (path, await asyncio.to_thread(self.analyze, path))
             except Exception as e:
-                logger.error(f'Error analyzing {path}: {e}')
+                logger.error(f"Error analyzing {path}: {e}")
                 return (path, None)
 
         coros = [analyze_one(path) for path in file_paths]
@@ -2902,7 +3058,7 @@ class DocumentIntelligenceEngine:
             concurrency=8,
             policy="collect",
             ctx="DocumentIntelligenceEngine.batch_analyze_async",
-    )
+        )
         return dict(result.ok)
 
     def batch_analyze(self, file_paths: list[str]) -> dict[str, DocumentAnalysis]:
@@ -2912,7 +3068,7 @@ class DocumentIntelligenceEngine:
             try:
                 results[path] = self.analyze(path)
             except Exception as e:
-                logger.error(f'Error analyzing {path}: {e}')
+                logger.error(f"Error analyzing {path}: {e}")
                 results[path] = None
         return results
 
@@ -2920,17 +3076,17 @@ class DocumentIntelligenceEngine:
         """Clean up resources: forensics thread pool and stegdetect server."""
         # R5: _forensics_thread_pool is a shared pool from domain_executors —
         # do NOT shut it down (managed centrally). Just clear local reference.
-        if hasattr(self, '_forensics_thread_pool') and self._forensics_thread_pool:
+        if hasattr(self, "_forensics_thread_pool") and self._forensics_thread_pool:
             self._forensics_thread_pool = None
-        if hasattr(self, '_forensics') and self._forensics:
-            steg_server = getattr(self._forensics, '_stegdetect_server', None)
-            if steg_server and hasattr(steg_server, 'restart'):
+        if hasattr(self, "_forensics") and self._forensics:
+            steg_server = getattr(self._forensics, "_stegdetect_server", None)
+            if steg_server and hasattr(steg_server, "restart"):
                 try:
                     self._run_async(steg_server.restart())
                 except Exception:  # noqa: BLE001
                     pass
 
-    def probe(self, url: str, preview_bytes: bytes, query: str='') -> dict[str, Any]:
+    def probe(self, url: str, preview_bytes: bytes, query: str = "") -> dict[str, Any]:
         """
         Probe document to estimate value score for progressive parsing.
 
@@ -2942,27 +3098,33 @@ class DocumentIntelligenceEngine:
         Returns:
             dict with heuristic_score, semantic_score (if computed), final_score, keywords, entities
         """
-        result: dict[str, Any] = {'url': url, 'heuristic_score': 0.5, 'final_score': 0.5, 'keywords': [], 'entities': []}
+        result: dict[str, Any] = {
+            "url": url,
+            "heuristic_score": 0.5,
+            "final_score": 0.5,
+            "keywords": [],
+            "entities": [],
+        }
         try:
-            text = preview_bytes.decode('utf-8', errors='ignore')
+            text = preview_bytes.decode("utf-8", errors="ignore")
         except Exception:
-            text = ''
+            text = ""
         if not text:
             return result
         heuristic_score = self._compute_heuristic_score(text)
-        result['heuristic_score'] = heuristic_score
+        result["heuristic_score"] = heuristic_score
         if query and MLX_AVAILABLE:
             try:
                 semantic_score = self._compute_semantic_score(text, query)
                 if semantic_score is not None:
-                    result['semantic_score'] = semantic_score
-                    result['final_score'] = 0.5 * heuristic_score + 0.5 * semantic_score
+                    result["semantic_score"] = semantic_score
+                    result["final_score"] = 0.5 * heuristic_score + 0.5 * semantic_score
             except Exception as e:
-                logger.debug(f'Semantic scoring failed: {e}')
-                result['final_score'] = heuristic_score
+                logger.debug(f"Semantic scoring failed: {e}")
+                result["final_score"] = heuristic_score
         else:
-            result['final_score'] = heuristic_score
-        result['keywords'] = self._extract_keywords(text)
+            result["final_score"] = heuristic_score
+        result["keywords"] = self._extract_keywords(text)
         return result
 
     def _compute_heuristic_score(self, text: str) -> float:
@@ -2972,20 +3134,38 @@ class DocumentIntelligenceEngine:
         if not text:
             return 0.5
         score = 0.0
-        high_value_keywords = ['analysis', 'research', 'report', 'study', 'data', 'results', 'findings', 'conclusion', 'method', 'evidence', 'case', 'review', 'assessment', 'evaluation', 'detection', 'identification', 'model']
+        high_value_keywords = [
+            "analysis",
+            "research",
+            "report",
+            "study",
+            "data",
+            "results",
+            "findings",
+            "conclusion",
+            "method",
+            "evidence",
+            "case",
+            "review",
+            "assessment",
+            "evaluation",
+            "detection",
+            "identification",
+            "model",
+        ]
         text_lower = text.lower()
-        keyword_count = sum((1 for kw in high_value_keywords if kw in text_lower))
+        keyword_count = sum(1 for kw in high_value_keywords if kw in text_lower)
         score += min(0.4, keyword_count * 0.05)
         text_length = len(text)
         if text_length > 1000:
             score += 0.2
         elif text_length > 500:
             score += 0.1
-        if re.search('\\d+[\\.,]\\d+', text):
+        if re.search("\\d+[\\.,]\\d+", text):
             score += 0.1
-        if re.search('^\\s*[-*•]\\s+', text, re.MULTILINE):
+        if re.search("^\\s*[-*•]\\s+", text, re.MULTILINE):
             score += 0.1
-        if 'cookie' in text_lower or 'privacy policy' in text_lower:
+        if "cookie" in text_lower or "privacy policy" in text_lower:
             score -= 0.2
         return max(0.0, min(1.0, score))
 
@@ -2995,12 +3175,13 @@ class DocumentIntelligenceEngine:
         """
         try:
             from ...brain.model_manager import get_model_manager
+
             mm = get_model_manager()
-            if not mm.has_model('modernbert'):
+            if not mm.has_model("modernbert"):
                 return None
-            embedder = mm.get_embedding_model('modernbert')
+            embedder = mm.get_embedding_model("modernbert")
             try:
-                chunks = self._split_preview_into_chunks(text.encode('utf-8'), max_chunks=5, max_tokens=512)
+                chunks = self._split_preview_into_chunks(text.encode("utf-8"), max_chunks=5, max_tokens=512)
                 if not chunks:
                     return None
                 query_emb = embedder.embed(query)
@@ -3010,16 +3191,16 @@ class DocumentIntelligenceEngine:
                 # C7: Batch cosine similarity via zero-copy Rust SIMD
                 # Query is single embedding, candidates are chunks
                 query_list = [query_emb]  # Shape: (1, D)
-                chunk_lists = [list(c) if hasattr(c, '__iter__') else c for c in chunk_embs]  # Ensure list format
+                chunk_lists = [list(c) if hasattr(c, "__iter__") else c for c in chunk_embs]  # Ensure list format
                 scores = self._batch_cosine_scores_npy(query_list, chunk_lists)
                 if scores.size > 0:
                     # Average similarity across all chunks
                     return float(scores[0].mean())
                 return None
             finally:
-                mm.release_model('modernbert')
+                mm.release_model("modernbert")
         except Exception as e:
-            logger.debug(f'Semantic scoring error: {e}')
+            logger.debug(f"Semantic scoring error: {e}")
             return None
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
@@ -3027,8 +3208,8 @@ class DocumentIntelligenceEngine:
         if not a or not b or len(a) != len(b):
             return 0.0
         dot_product = sum((x * y for x, y in zip(a, b, strict=False)))
-        norm_a = sum((x * x for x in a)) ** 0.5
-        norm_b = sum((x * x for x in b)) ** 0.5
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
         if norm_a == 0 or norm_b == 0:
             return 0.0
         return dot_product / (norm_a * norm_b)
@@ -3065,17 +3246,17 @@ class DocumentIntelligenceEngine:
         num_queries, dim = q_matrix.shape
         num_candidates = c_matrix.shape[0]
 
-        # Check Rust availability via embeddings.reranker pattern
         try:
             from hledac.universal._core.rust_backend import rust
+
             _rust_mod = rust.raw.module
 
             _raw_npy = getattr(_rust_mod, "batch_cosine_scores_npy", None)
             if _raw_npy is not None:
                 # Zero-copy path: pass flattened arrays, receive zero-copy view back
                 result = _raw_npy(
-                    q_matrix.reshape(-1),   # PyReadonlyArray1<f32>, shape (Q*D,)
-                    c_matrix.reshape(-1),   # PyReadonlyArray1<f32>, shape (N*D,)
+                    q_matrix.reshape(-1),  # PyReadonlyArray1<f32>, shape (Q*D,)
+                    c_matrix.reshape(-1),  # PyReadonlyArray1<f32>, shape (N*D,)
                     num_queries,
                     num_candidates,
                     dim,
@@ -3094,7 +3275,7 @@ class DocumentIntelligenceEngine:
         c_normed = c_matrix / np.where(c_norms == 0, 1, c_norms)
         return q_normed @ c_normed.T
 
-    def _split_preview_into_chunks(self, bytes_data: bytes, max_chunks: int=5, max_tokens: int=512) -> list[str]:
+    def _split_preview_into_chunks(self, bytes_data: bytes, max_chunks: int = 5, max_tokens: int = 512) -> list[str]:
         """
         Split preview bytes into chunks for embedding.
 
@@ -3107,15 +3288,15 @@ class DocumentIntelligenceEngine:
             List of text chunks
         """
         try:
-            text = bytes_data.decode('utf-8', errors='ignore')
+            text = bytes_data.decode("utf-8", errors="ignore")
         except Exception:
             return []
-        paragraphs = text.split('\n\n')
+        paragraphs = text.split("\n\n")
         chunks = []
         for para in paragraphs:
             words = para.split()
             if len(words) > max_tokens:
-                para = ' '.join(words[:max_tokens])
+                para = " ".join(words[:max_tokens])
             if para.strip():
                 chunks.append(para.strip())
             if len(chunks) >= max_chunks:
@@ -3127,14 +3308,16 @@ class DocumentIntelligenceEngine:
         Extract high-value keywords from text.
         """
         keywords = set()
-        capitalized = re.findall('\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b', text)
+        capitalized = re.findall("\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b", text)
         keywords.update([w.lower() for w in capitalized[:10]])
-        tech_terms = re.findall('\\b\\w+(?:tion|ing|ed|ness|ment|ance|ity)\\b', text.lower())
+        tech_terms = re.findall("\\b\\w+(?:tion|ing|ed|ness|ment|ance|ity)\\b", text.lower())
         keywords.update(tech_terms[:10])
         return list(keywords)[:20]
 
+
 class EntityMention(Struct, frozen=True):
     """Mention of an entity in text."""
+
     text: str
     entity_type: str
     start_pos: int
@@ -3142,8 +3325,10 @@ class EntityMention(Struct, frozen=True):
     confidence: float
     context: str
 
+
 class CrossDocumentLink(Struct, frozen=True):
     """Link between entities across documents."""
+
     entity_type: str
     value: str
     documents: list[str]
@@ -3151,16 +3336,20 @@ class CrossDocumentLink(Struct, frozen=True):
     first_seen: str
     last_seen: str
 
+
 class TimelineEvent(Struct):
     """Event extracted from document with temporal information."""
+
     date: datetime | None
     description: str
     source_document: str
     entities_involved: list[str]
     confidence: float
 
+
 class LongContextAnalysis(Struct, frozen=True):
     """Results from MLX long-context analysis."""
+
     total_chunks: int
     total_tokens: int
     entities: list[EntityMention]
@@ -3170,6 +3359,7 @@ class LongContextAnalysis(Struct, frozen=True):
     key_findings: list[str]
     memory_usage_mb: float
     processing_time_seconds: float
+
 
 class MLXLongContextAnalyzer:
     """
@@ -3187,9 +3377,10 @@ class MLXLongContextAnalyzer:
     - MLX lazy evaluation for efficiency
     - Smart chunk sizing based on available RAM
     """
-    __slots__ = tuple(('chunk_embeddings', 'chunk_size', 'chunk_texts', 'mlx_available', 'overlap', 'patterns'))
 
-    def __init__(self, chunk_size: int=4096, overlap: int=512):
+    __slots__ = ("chunk_embeddings", "chunk_size", "chunk_texts", "mlx_available", "overlap", "patterns")
+
+    def __init__(self, chunk_size: int = 4096, overlap: int = 512) -> None:
         """
         Initialize MLX Long-Context Analyzer.
 
@@ -3201,20 +3392,31 @@ class MLXLongContextAnalyzer:
         self.overlap = overlap
         self.chunk_embeddings: mx.array | None = None
         self.chunk_texts: list[str] = []
-        self.patterns = {'email': re.compile('\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b'), 'phone': re.compile('\\b(?:\\+?1[-.\\s]?)?\\(?[0-9]{3}\\)?[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}\\b'), 'ip_address': re.compile('\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b'), 'url': re.compile('https?://(?:[-\\w.])+(?:[:\\d]+)?(?:/(?:[\\w/_.])*(?:\\?(?:[\\w&=%.])*)?(?:#(?:[\\w.])*)?)?'), 'btc_address': re.compile('\\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\\b|\\bbc1[a-z0-9]{39,59}\\b'), 'credit_card': re.compile('\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b'), 'date': re.compile('\\b(?:\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})\\b')}
+        self.patterns = {
+            "email": re.compile("\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"),
+            "phone": re.compile("\\b(?:\\+?1[-.\\s]?)?\\(?[0-9]{3}\\)?[-.\\s]?[0-9]{3}[-.\\s]?[0-9]{4}\\b"),
+            "ip_address": re.compile("\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b"),
+            "url": re.compile(
+                "https?://(?:[-\\w.])+(?:[:\\d]+)?(?:/(?:[\\w/_.])*(?:\\?(?:[\\w&=%.])*)?(?:#(?:[\\w.])*)?)?"
+            ),
+            "btc_address": re.compile("\\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\\b|\\bbc1[a-z0-9]{39,59}\\b"),
+            "credit_card": re.compile("\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b"),
+            "date": re.compile("\\b(?:\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})\\b"),
+        }
         self.mlx_available = self._check_mlx()
 
     def _check_mlx(self) -> bool:
         """Check if MLX is available."""
         try:
             import mlx.core as mx
-            logger.info(f'MLX available on device: {mx.default_device()}')
+
+            logger.info(f"MLX available on device: {mx.default_device()}")
             return True
         except ImportError:
-            logger.warning('MLX not available - falling back to CPU processing')
+            logger.warning("MLX not available - falling back to CPU processing")
             return False
 
-    def _estimate_optimal_chunk_size(self, available_ram_gb: float=5.5) -> int:
+    def _estimate_optimal_chunk_size(self, available_ram_gb: float = 5.5) -> int:
         """
         Estimate optimal chunk size based on available RAM.
 
@@ -3223,7 +3425,7 @@ class MLXLongContextAnalyzer:
         safe_tokens = int(available_ram_gb * 0.25 * 1024 * 1024 * 1024 / 4 / 2)
         return min(self.chunk_size, safe_tokens)
 
-    def chunk_text(self, text: str, source: str='unknown') -> list[dict]:
+    def chunk_text(self, text: str, source: str = "unknown") -> list[dict]:
         """
         Split text into overlapping chunks with metadata.
 
@@ -3242,16 +3444,26 @@ class MLXLongContextAnalyzer:
         while start < len(text):
             end = min(start + effective_chunk_size, len(text))
             if end < len(text):
-                while end > start and text[end] not in ' \n\t':
+                while end > start and text[end] not in " \n\t":
                     end -= 1
             chunk_text = text[start:end].strip()
             if len(chunk_text) > 100:
-                chunks.append({'id': chunk_id, 'text': chunk_text, 'source': source, 'start_pos': start, 'end_pos': end, 'token_estimate': len(chunk_text) // 4, 'overlap_with_previous': self.overlap if chunk_id > 0 else 0})
+                chunks.append(
+                    {
+                        "id": chunk_id,
+                        "text": chunk_text,
+                        "source": source,
+                        "start_pos": start,
+                        "end_pos": end,
+                        "token_estimate": len(chunk_text) // 4,
+                        "overlap_with_previous": self.overlap if chunk_id > 0 else 0,
+                    }
+                )
                 chunk_id += 1
             start += step
         return chunks
 
-    def extract_entities(self, text: str, source: str='unknown', chunk_id: int=0) -> list[EntityMention]:
+    def extract_entities(self, text: str, source: str = "unknown", chunk_id: int = 0) -> list[EntityMention]:
         """
         Extract entities from text using pattern matching.
 
@@ -3266,7 +3478,14 @@ class MLXLongContextAnalyzer:
         entities = []
         for entity_type, pattern in self.patterns.items():
             for match in pattern.finditer(text):
-                entity = EntityMention(text=match.group(), entity_type=entity_type, start_pos=match.start() + chunk_id * (self.chunk_size - self.overlap), end_pos=match.end() + chunk_id * (self.chunk_size - self.overlap), confidence=1.0, context=text[max(0, match.start() - 50):min(len(text), match.end() + 50)])
+                entity = EntityMention(
+                    text=match.group(),
+                    entity_type=entity_type,
+                    start_pos=match.start() + chunk_id * (self.chunk_size - self.overlap),
+                    end_pos=match.end() + chunk_id * (self.chunk_size - self.overlap),
+                    confidence=1.0,
+                    context=text[max(0, match.start() - 50) : min(len(text), match.end() + 50)],
+                )
                 entities.append(entity)
         return entities
 
@@ -3294,10 +3513,10 @@ class MLXLongContextAnalyzer:
                     embeddings.append(mx.array(0.0))
             return mx.stack(embeddings)
         except Exception as e:
-            logger.error(f'MLX embedding computation failed: {e}')
+            logger.error(f"MLX embedding computation failed: {e}")
             return None
 
-    def find_similar_chunks_mlx(self, query: str, top_k: int=5) -> list[tuple[int, float]]:
+    def find_similar_chunks_mlx(self, query: str, top_k: int = 5) -> list[tuple[int, float]]:
         """
         Find most similar chunks to query using MLX.
 
@@ -3324,7 +3543,7 @@ class MLXLongContextAnalyzer:
                 results.append((idx_int, sim_score))
             return results
         except Exception as e:
-            logger.error(f'MLX similarity search failed: {e}')
+            logger.error(f"MLX similarity search failed: {e}")
             return []
 
     def cross_reference_entities(self, all_entities: list[EntityMention]) -> list[CrossDocumentLink]:
@@ -3347,7 +3566,14 @@ class MLXLongContextAnalyzer:
         for (entity_type, value), mentions in by_value.items():
             sources = list({m.context[:50] for m in mentions})
             if len(sources) > 1:
-                link = CrossDocumentLink(entity_type=entity_type, value=value, documents=sources[:10], confidence=min(1.0, len(mentions) / 10), first_seen='unknown', last_seen='unknown')
+                link = CrossDocumentLink(
+                    entity_type=entity_type,
+                    value=value,
+                    documents=sources[:10],
+                    confidence=min(1.0, len(mentions) / 10),
+                    first_seen="unknown",
+                    last_seen="unknown",
+                )
                 links.append(link)
         links.sort(key=attrgetter("confidence"), reverse=True)
         return links
@@ -3364,20 +3590,33 @@ class MLXLongContextAnalyzer:
             List of timeline events
         """
         timeline = []
-        date_entities = [e for e in entities if e.entity_type == 'date']
+        date_entities = [e for e in entities if e.entity_type == "date"]
         for date_entity in date_entities:
             try:
                 date_str = date_entity.text
                 context = date_entity.context
-                event_desc = context.replace(date_str, '[DATE]').strip()
-                event = TimelineEvent(date=None, description=event_desc[:200], source_document=date_entity.context[:50], entities_involved=[date_entity.text], confidence=date_entity.confidence)
+                event_desc = context.replace(date_str, "[DATE]").strip()
+                event = TimelineEvent(
+                    date=None,
+                    description=event_desc[:200],
+                    source_document=date_entity.context[:50],
+                    entities_involved=[date_entity.text],
+                    confidence=date_entity.confidence,
+                )
                 timeline.append(event)
             except Exception as e:
-                logger.debug(f'Failed to parse date {date_entity.text}: {e}')
+                logger.debug(f"Failed to parse date {date_entity.text}: {e}")
         timeline.sort(key=attrgetter("confidence"), reverse=True)
         return timeline[:100]
 
-    def analyze_massive_dump(self, text: str, source: str='unknown', extract_entities: bool=True, build_timeline: bool=True, cross_reference: bool=True) -> LongContextAnalysis:
+    def analyze_massive_dump(
+        self,
+        text: str,
+        source: str = "unknown",
+        extract_entities: bool = True,
+        build_timeline: bool = True,
+        cross_reference: bool = True,
+    ) -> LongContextAnalysis:
         """
         Analyze massive text dump using MLX acceleration.
 
@@ -3392,26 +3631,27 @@ class MLXLongContextAnalyzer:
             LongContextAnalysis with all findings
         """
         import time
+
         start_time = time.time()
         chunks = self.chunk_text(text, source)
-        self.chunk_texts = [c['text'] for c in chunks]
-        logger.info(f'Split text into {len(chunks)} chunks (size: {self.chunk_size}, overlap: {self.overlap})')
+        self.chunk_texts = [c["text"] for c in chunks]
+        logger.info(f"Split text into {len(chunks)} chunks (size: {self.chunk_size}, overlap: {self.overlap})")
         if self.mlx_available:
-            logger.info('Computing MLX embeddings...')
+            logger.info("Computing MLX embeddings...")
             self.chunk_embeddings = self.compute_embeddings_mlx(self.chunk_texts)
         all_entities = []
         if extract_entities:
-            logger.info('Extracting entities...')
+            logger.info("Extracting entities...")
             for chunk in chunks:
-                entities = self.extract_entities(chunk['text'], chunk['source'], chunk['id'])
+                entities = self.extract_entities(chunk["text"], chunk["source"], chunk["id"])
                 all_entities.extend(entities)
         cross_links = []
         if cross_reference and all_entities:
-            logger.info('Cross-referencing entities...')
+            logger.info("Cross-referencing entities...")
             cross_links = self.cross_reference_entities(all_entities)
         timeline = []
         if build_timeline:
-            logger.info('Building timeline...')
+            logger.info("Building timeline...")
             timeline = self.reconstruct_timeline(all_entities, chunks)
         key_findings = []
         if all_entities:
@@ -3419,16 +3659,28 @@ class MLXLongContextAnalyzer:
             for e in all_entities:
                 entity_types[e.entity_type] = entity_types.get(e.entity_type, 0) + 1
             for etype, count in sorted(entity_types.items(), key=lambda x: -x[1])[:10]:
-                key_findings.append(f'Found {count} {etype} entities')
+                key_findings.append(f"Found {count} {etype} entities")
         if cross_links:
-            key_findings.append(f'{len(cross_links)} cross-document entity links identified')
+            key_findings.append(f"{len(cross_links)} cross-document entity links identified")
         processing_time = time.time() - start_time
         memory_usage = len(text) / (1024 * 1024)
         if self.chunk_embeddings is not None:
             memory_usage += self.chunk_embeddings.size * 4 / (1024 * 1024)
-        return LongContextAnalysis(total_chunks=len(chunks), total_tokens=len(text) // 4, entities=all_entities, cross_document_links=cross_links, timeline=timeline, summary=f'Analyzed {len(chunks)} chunks, found {len(all_entities)} entities', key_findings=key_findings, memory_usage_mb=memory_usage, processing_time_seconds=processing_time)
+        return LongContextAnalysis(
+            total_chunks=len(chunks),
+            total_tokens=len(text) // 4,
+            entities=all_entities,
+            cross_document_links=cross_links,
+            timeline=timeline,
+            summary=f"Analyzed {len(chunks)} chunks, found {len(all_entities)} entities",
+            key_findings=key_findings,
+            memory_usage_mb=memory_usage,
+            processing_time_seconds=processing_time,
+        )
 
-    async def analyze_multiple_dumps_async(self, dumps: dict[str, str], cross_correlate: bool=True) -> dict[str, LongContextAnalysis]:
+    async def analyze_multiple_dumps_async(
+        self, dumps: dict[str, str], cross_correlate: bool = True
+    ) -> dict[str, LongContextAnalysis]:
         """
         Analyze multiple document dumps in parallel with optional cross-correlation.
 
@@ -3438,7 +3690,7 @@ class MLXLongContextAnalyzer:
 
         async def analyze_one(source_text: tuple[str, str]) -> tuple[str, LongContextAnalysis]:
             source, text = source_text
-            logger.info(f'Analyzing dump from {source}...')
+            logger.info(f"Analyzing dump from {source}...")
             return (source, self.analyze_massive_dump(text, source))
 
         coros = [analyze_one(s) for s in dumps.items()]
@@ -3447,17 +3699,17 @@ class MLXLongContextAnalyzer:
             concurrency=4,
             policy="collect",
             ctx="MLXLongContextAnalyzer.analyze_multiple_dumps_async",
-    )
+        )
         results = dict(result.ok)
 
         if cross_correlate:
-            logger.info('Cross-correlating all dumps...')
+            logger.info("Cross-correlating all dumps...")
             all_entities = []
             for analysis in results.values():
                 all_entities.extend(analysis.entities)
             global_links = self.cross_reference_entities(all_entities)
             for source in results:
-                source_links = [link for link in global_links if any((source in doc for doc in link.documents))]
+                source_links = [link for link in global_links if any(source in doc for doc in link.documents)]
                 analysis = results[source]
                 results[source] = LongContextAnalysis(
                     total_chunks=analysis.total_chunks,
@@ -3466,13 +3718,15 @@ class MLXLongContextAnalyzer:
                     cross_document_links=source_links,
                     timeline=analysis.timeline,
                     summary=analysis.summary,
-                    key_findings=analysis.key_findings + [f'Linked to {len(source_links)} other sources'],
+                    key_findings=analysis.key_findings + [f"Linked to {len(source_links)} other sources"],
                     memory_usage_mb=analysis.memory_usage_mb,
                     processing_time_seconds=analysis.processing_time_seconds,
-    )
+                )
         return results
 
-    def analyze_multiple_dumps(self, dumps: dict[str, str], cross_correlate: bool=True) -> dict[str, LongContextAnalysis]:
+    def analyze_multiple_dumps(
+        self, dumps: dict[str, str], cross_correlate: bool = True
+    ) -> dict[str, LongContextAnalysis]:
         """
         Analyze multiple document dumps and optionally cross-correlate (sync wrapper).
 
@@ -3486,20 +3740,32 @@ class MLXLongContextAnalyzer:
         results = {}
         all_entities = []
         for source, text in dumps.items():
-            logger.info(f'Analyzing dump from {source}...')
+            logger.info(f"Analyzing dump from {source}...")
             analysis = self.analyze_massive_dump(text, source)
             results[source] = analysis
             all_entities.extend(analysis.entities)
         if cross_correlate:
-            logger.info('Cross-correlating all dumps...')
+            logger.info("Cross-correlating all dumps...")
             global_links = self.cross_reference_entities(all_entities)
             for source in results:
-                source_links = [link for link in global_links if any((source in doc for doc in link.documents))]
+                source_links = [link for link in global_links if any(source in doc for doc in link.documents)]
                 analysis = results[source]
-                results[source] = LongContextAnalysis(total_chunks=analysis.total_chunks, total_tokens=analysis.total_tokens, entities=analysis.entities, cross_document_links=source_links, timeline=analysis.timeline, summary=analysis.summary, key_findings=analysis.key_findings + [f'Linked to {len(source_links)} other sources'], memory_usage_mb=analysis.memory_usage_mb, processing_time_seconds=analysis.processing_time_seconds)
+                results[source] = LongContextAnalysis(
+                    total_chunks=analysis.total_chunks,
+                    total_tokens=analysis.total_tokens,
+                    entities=analysis.entities,
+                    cross_document_links=source_links,
+                    timeline=analysis.timeline,
+                    summary=analysis.summary,
+                    key_findings=analysis.key_findings + [f"Linked to {len(source_links)} other sources"],
+                    memory_usage_mb=analysis.memory_usage_mb,
+                    processing_time_seconds=analysis.processing_time_seconds,
+                )
         return results
 
-    async def search_across_dumps_async(self, query: str, dumps: dict[str, str], top_k_per_dump: int=3) -> dict[str, list[dict]]:
+    async def search_across_dumps_async(
+        self, query: str, dumps: dict[str, str], top_k_per_dump: int = 3
+    ) -> dict[str, list[dict]]:
         """
         Search for query across multiple dumps using MLX similarity (parallel).
 
@@ -3514,7 +3780,7 @@ class MLXLongContextAnalyzer:
             source_results = []
             for idx, score in similar:
                 if idx < len(self.chunk_texts):
-                    source_results.append({'chunk_id': idx, 'text': self.chunk_texts[idx][:500], 'similarity': score})
+                    source_results.append({"chunk_id": idx, "text": self.chunk_texts[idx][:500], "similarity": score})
             return (source, source_results)
 
         coros = [search_one(s) for s in dumps.items()]
@@ -3523,10 +3789,10 @@ class MLXLongContextAnalyzer:
             concurrency=4,
             policy="collect",
             ctx="MLXLongContextAnalyzer.search_across_dumps_async",
-    )
+        )
         return dict(result.ok)
 
-    def search_across_dumps(self, query: str, dumps: dict[str, str], top_k_per_dump: int=3) -> dict[str, list[dict]]:
+    def search_across_dumps(self, query: str, dumps: dict[str, str], top_k_per_dump: int = 3) -> dict[str, list[dict]]:
         """
         Search for query across multiple dumps using MLX similarity (sync wrapper).
 
@@ -3545,7 +3811,25 @@ class MLXLongContextAnalyzer:
             source_results = []
             for idx, score in similar:
                 if idx < len(self.chunk_texts):
-                    source_results.append({'chunk_id': idx, 'text': self.chunk_texts[idx][:500], 'similarity': score})
+                    source_results.append({"chunk_id": idx, "text": self.chunk_texts[idx][:500], "similarity": score})
             results[source] = source_results
         return results
-__all__ = ['DocumentIntelligenceEngine', 'PDFAnalyzer', 'OfficeDocumentAnalyzer', 'ImageAnalyzer', 'DocumentAnalysis', 'DocumentMetadata', 'EXIFData', 'GeoLocation', 'EmbeddedObject', 'DocumentType', 'MLXLongContextAnalyzer', 'LongContextAnalysis', 'EntityMention', 'CrossDocumentLink', 'TimelineEvent']
+
+
+__all__ = [
+    "DocumentIntelligenceEngine",
+    "PDFAnalyzer",
+    "OfficeDocumentAnalyzer",
+    "ImageAnalyzer",
+    "DocumentAnalysis",
+    "DocumentMetadata",
+    "EXIFData",
+    "GeoLocation",
+    "EmbeddedObject",
+    "DocumentType",
+    "MLXLongContextAnalyzer",
+    "LongContextAnalysis",
+    "EntityMention",
+    "CrossDocumentLink",
+    "TimelineEvent",
+]

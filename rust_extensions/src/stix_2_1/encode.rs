@@ -132,7 +132,6 @@ pub fn encode_indicator(finding: &Map<String, Value>) -> Option<Value> {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // Build pattern based on IOC type
     let pattern = build_cybox_pattern(ioc_type, ioc_value)?;
     let stix_type = ioc_type_to_stix_type(ioc_type);
     let stix_id = format!("{}-{}", stix_type, new_uuid());
@@ -425,8 +424,6 @@ pub fn validate_json(stix_json: &str) -> String {
         r#"{"is_valid":false,"errors":[{"path":"","message":"serialization error","value_preview":null}],"object_count":null}"#.to_string()
     })
 }
-
-// ─── Timestamp helpers ────────────────────────────────────────────────────────
 
 /// Julian Day Number for 1970-01-01 (Unix epoch).
 const JULIAN_DAY_1970: u64 = 2_440_588;

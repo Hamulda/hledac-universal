@@ -23,7 +23,7 @@ import threading
 import time
 import warnings
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mlx_lm import Model as MLXModel
@@ -32,36 +32,28 @@ from collections.abc import Callable
 
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.memory_tier import get_lora_cache_max, get_model_cache_max
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-# ─── Module-level constants ───────────────────────────────────────────────────
-
 _HERMES_MODEL_CACHE_MAX = 2  # M1 8GB: max 2 base models ~2GB each
 _LORA_CACHE_MAX = 2  # M1 8GB: max 2 LoRA adapters
 _MODEL_TTL_S = 600.0  # 10 minutes — idle model eviction threshold
-
-
-# ─── MLX cache-clear helper (canonical F300-MLX order) ──────────────────────
 
 
 def _mlx_cache_clear(reason: str) -> None:
     """Canonical MLX cache clear — delegates to mlx_cleanup_sync()."""
     try:
         from hledac.universal.utils.mlx_memory import mlx_cleanup_sync
+
         mlx_cleanup_sync()
     except ImportError:  # noqa: BLE001
         pass
     except Exception:  # noqa: BLE001
         pass
     logger.debug("[HERMES cache] MLX clear (%s)", reason)
-
-
-# ─── HermesModelLoader ───────────────────────────────────────────────────────
 
 
 class HermesModelLoader:
@@ -76,10 +68,16 @@ class HermesModelLoader:
     """
 
     __slots__ = (
-        '_model_cache', '_lora_cache', '_access_times',
-        '_max_size', '_lora_max_size',
-        '_model_eviction_count', '_lora_eviction_count',
-        '_lock', '_on_evict_model', '_on_evict_lora',
+        "_model_cache",
+        "_lora_cache",
+        "_access_times",
+        "_max_size",
+        "_lora_max_size",
+        "_model_eviction_count",
+        "_lora_eviction_count",
+        "_lock",
+        "_on_evict_model",
+        "_on_evict_lora",
     )
 
     def __init__(
@@ -104,6 +102,7 @@ class HermesModelLoader:
         """Fail-open OTel telemetry emit."""
         try:
             from otel._instrumentation import set_attribute
+
             set_attribute(metric, count)
         except Exception:  # noqa: BLE001
             pass
@@ -129,8 +128,6 @@ class HermesModelLoader:
             self._lock.release()
         except RuntimeError:  # noqa: BLE001
             pass
-
-    # ─── Model cache operations ───────────────────────────────────────────────
 
     def get_model(self, key: str) -> tuple[MLXModel, MLXTokenizer] | None:
         """Sync get — returns (model, tokenizer) or None."""
@@ -192,8 +189,6 @@ class HermesModelLoader:
             _mlx_cache_clear("clear_models")
         return count
 
-    # ─── LoRA cache operations ────────────────────────────────────────────────
-
     def get_lora(self, key: str) -> tuple[MLXModel, MLXTokenizer] | None:
         """Sync get — returns (lora_model, lora_tokenizer) or None."""
         with self._lock:
@@ -236,8 +231,6 @@ class HermesModelLoader:
             _mlx_cache_clear("clear_loras")
         return count
 
-    # ─── Stats ───────────────────────────────────────────────────────────────
-
     @property
     def model_count(self) -> int:
         with self._lock:
@@ -261,9 +254,6 @@ class HermesModelLoader:
             return len(self._model_cache), len(self._lora_cache)
 
 
-# ─── HermesModelMonitor ──────────────────────────────────────────────────────
-
-
 class HermesModelMonitor:
     """
     MemoryPressureListener + TTL sweep loop for model cache.
@@ -273,14 +263,12 @@ class HermesModelMonitor:
     response vs cache operations.
     """
 
-    __slots__ = ('_loader', '_monitor_task', '_running')
+    __slots__ = ("_loader", "_monitor_task", "_running")
 
     def __init__(self, loader: HermesModelLoader) -> None:
         self._loader = loader
         self._monitor_task: asyncio.Task | None = None
         self._running = False
-
-    # ─── MemoryPressureListener protocol (R8) ────────────────────────────────
 
     @property
     def listener_priority(self) -> int:
@@ -299,7 +287,8 @@ class HermesModelMonitor:
 
         with self._loader._lock:
             stale_keys = [
-                k for k, ts in list(self._loader._access_times.items())
+                k
+                for k, ts in list(self._loader._access_times.items())
                 if ts < cutoff and k in self._loader._model_cache
             ]
             for key in stale_keys:
@@ -317,7 +306,9 @@ class HermesModelMonitor:
 
         if evicted_models or evicted_loras:
             _mlx_cache_clear("soft_warn")
-            logger.info("[HermesModelMonitor] on_soft_warn: evicted %d model(s), %d LoRA(s)", evicted_models, evicted_loras)
+            logger.info(
+                "[HermesModelMonitor] on_soft_warn: evicted %d model(s), %d LoRA(s)", evicted_models, evicted_loras
+            )
 
     def on_warn(self) -> None:
         """R8: HIGH pressure — evict ALL LoRA adapters + oldest model."""
@@ -336,7 +327,9 @@ class HermesModelMonitor:
 
         if evicted_models or evicted_loras:
             _mlx_cache_clear("warn")
-            logger.warning("[HermesModelMonitor] on_warn: evicted %d model(s), %d LoRA(s)", evicted_models, evicted_loras)
+            logger.warning(
+                "[HermesModelMonitor] on_warn: evicted %d model(s), %d LoRA(s)", evicted_models, evicted_loras
+            )
         self._loader._emit_eviction_telemetry(self._loader._model_eviction_count, "hermes.cache.model_evictions")
         self._loader._emit_eviction_telemetry(self._loader._lora_eviction_count, "hermes.cache.lora_evictions")
 
@@ -349,9 +342,6 @@ class HermesModelMonitor:
 
     def on_normal(self) -> None:
         """R8: NORMAL pressure — no action needed."""
-        pass
-
-    # ─── TTL sweep loop ─────────────────────────────────────────────────────
 
     async def pressure_check_loop(self) -> None:
         """Background loop: TTL sweep every 60s."""
@@ -362,7 +352,8 @@ class HermesModelMonitor:
                 cutoff = now - _MODEL_TTL_S
                 with self._loader._lock:
                     stale_keys = [
-                        k for k, ts in list(self._loader._access_times.items())
+                        k
+                        for k, ts in list(self._loader._access_times.items())
                         if ts < cutoff and k in self._loader._model_cache
                     ]
                     for key in stale_keys:
@@ -370,7 +361,9 @@ class HermesModelMonitor:
                         self._loader._access_times.pop(key, None)
                         self._loader._model_eviction_count += 1
                         _mlx_cache_clear(f"ttl_evict:{key}")
-                        self._loader._emit_eviction_telemetry(self._loader._model_eviction_count, "hermes.cache.model_evictions")
+                        self._loader._emit_eviction_telemetry(
+                            self._loader._model_eviction_count, "hermes.cache.model_evictions"
+                        )
                         logger.debug("[HermesModelMonitor] TTL expired, evicted model: %s", key)
                         if self._loader._on_evict_model:
                             self._loader._safe_call_hook(self._loader._on_evict_model, key)
@@ -387,12 +380,13 @@ class HermesModelMonitor:
                 "loop= argument is deprecated; the event loop is resolved automatically",
                 DeprecationWarning,
                 stacklevel=2,
-    )
+            )
         if self._monitor_task is not None and not self._monitor_task.done():
             return
         self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")
         try:
             from hledac.universal._core.memory_pressure import get_broadcaster
+
             bc = get_broadcaster()
             safe_create_task(bc.start(), name="memory_pressure:start")
         except Exception:  # noqa: BLE001:
@@ -412,9 +406,6 @@ class HermesModelMonitor:
         logger.info("[HermesModelMonitor] Monitor task stopped")
 
 
-# ─── HermesModelCache — Facade ───────────────────────────────────────────────
-
-
 class HermesModelCache:
     """
     Unified model cache facade — delegates to Loader + Monitor.
@@ -423,7 +414,7 @@ class HermesModelCache:
     (storage) and HermesModelMonitor (pressure response).
     """
 
-    __slots__ = ('_loader', '_monitor')
+    __slots__ = ("_loader", "_monitor")
 
     def __init__(
         self,
@@ -437,7 +428,7 @@ class HermesModelCache:
             lora_max_size=lora_max_size,
             on_evict_model=on_evict_model,
             on_evict_lora=on_evict_lora,
-    )
+        )
         self._monitor = HermesModelMonitor(self._loader)
 
     # Delegate storage operations to loader
@@ -519,13 +510,11 @@ class HermesModelCache:
         await self._monitor.stop_monitor()
 
 
-# ─── OTel eviction callbacks (LP-2 fix) ──────────────────────────────────────
-
-
 def _set_eviction_attr(name: str, value: str | int) -> None:
     """Fail-open OTel attribute emit."""
     try:
         from otel._instrumentation import set_attribute
+
         set_attribute(name, value)
     except Exception:  # noqa: BLE001:
         pass
@@ -541,8 +530,6 @@ def _hermes_cache_evict_lora_otel(key: str) -> None:
     _set_eviction_attr("hermes.cache.lora_eviction", key)
 
 
-# ─── Singleton ────────────────────────────────────────────────────────────────
-
 _HERMES_CACHE: HermesModelCache | None = None
 
 
@@ -553,5 +540,5 @@ def hermes_cache() -> HermesModelCache:
         _HERMES_CACHE = HermesModelCache(
             on_evict_model=_hermes_cache_evict_model_otel,
             on_evict_lora=_hermes_cache_evict_lora_otel,
-    )
+        )
     return _HERMES_CACHE

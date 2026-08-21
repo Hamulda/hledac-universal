@@ -4,6 +4,7 @@ Provides HTML parsing, pattern matching, and metadata extraction.
 Optimized for M1 8GB with Rust rayon parallel processing.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,8 +13,7 @@ import logging
 import re
 import urllib.parse
 from collections import deque as _f273c_deque
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -24,39 +24,38 @@ from hledac.universal._core.rust_backend import rust as _rust_backend
 from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
-from _core import aclose
 
 # XML detection constants
-_XML_MARKER = b'<?xml'
-_XML_TAG_RE = re.compile(b'^\\s*<[a-zA-Z]', re.IGNORECASE)
+_XML_MARKER = b"<?xml"
+_XML_TAG_RE = re.compile(b"^\\s*<[a-zA-Z]", re.IGNORECASE)
 
 # Feed URL pattern
-_FEED_URL_RE = re.compile(r'/?(?:rss|feed|atom|xml|sitemap|opensearch)', re.IGNORECASE)
+_FEED_URL_RE = re.compile(r"/?(?:rss|feed|atom|xml|sitemap|opensearch)", re.IGNORECASE)
 
 # JS skip hosts pattern
 _JS_SKIP_HOST_RE = re.compile(
-    r'(?:^|\.)(?:threatfox\.abuse\.ch|bleepingcomputer\.com|thehackernews\.com|'
-    r'krebsonsecurity\.com|cisa\.gov|id-ransomware\.malwarehunterteam\.com|'
-    r'ransomwaretracker\.xyz|abuse\.ch|urlhaus\.abuse\.ch|feodo\.tracker|'
-    r'openphish\.com|cyberscoop\.com|darkreading\.com|threatpost\.com|'
-    r'therecord\.media|securityweek\.com|inforisktoday\.com|'
-    r'helpnetsecurity\.com|malwarebazaar\.abuse\.ch|sslbl\.abuse\.ch)$',
-    re.IGNORECASE
-    )
+    r"(?:^|\.)(?:threatfox\.abuse\.ch|bleepingcomputer\.com|thehackernews\.com|"
+    r"krebsonsecurity\.com|cisa\.gov|id-ransomware\.malwarehunterteam\.com|"
+    r"ransomwaretracker\.xyz|abuse\.ch|urlhaus\.abuse\.ch|feodo\.tracker|"
+    r"openphish\.com|cyberscoop\.com|darkreading\.com|threatpost\.com|"
+    r"therecord\.media|securityweek\.com|inforisktoday\.com|"
+    r"helpnetsecurity\.com|malwarebazaar\.abuse\.ch|sslbl\.abuse\.ch)$",
+    re.IGNORECASE,
+)
 
 # SERP hosts pattern
 _SERP_HOST_RE = re.compile(
-    r'(google\.|bing\.|duckduckgo\.|yahoo\.|baidu\.|yandex\.|so\.|'
-    r'startpage\.|search\.|serp)|searchresults|webcache|googlesyndication|'
-    r'googletagmanager|doubleclick|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=',
-    re.IGNORECASE
-    )
+    r"(google\.|bing\.|duckduckgo\.|yahoo\.|baidu\.|yandex\.|so\.|"
+    r"startpage\.|search\.|serp)|searchresults|webcache|googlesyndication|"
+    r"googletagmanager|doubleclick|search\?q=|/search\?|\?q=|\&oq=|\&gs_l=",
+    re.IGNORECASE,
+)
 
 # Content length pattern
-_CONTENT_LENGTH_RE = re.compile(r'content-length\s*[=:]\s*(\d+)', re.IGNORECASE)
+_CONTENT_LENGTH_RE = re.compile(r"content-length\s*[=:]\s*(\d+)", re.IGNORECASE)
 
 # Noscript pattern
-_NOSCRIPT_RE = re.compile(r'<noscript[^>]*>|enable javascript', re.IGNORECASE)
+_NOSCRIPT_RE = re.compile(r"<noscript[^>]*>|enable javascript", re.IGNORECASE)
 
 
 def looks_xmlish(body: bytes) -> bool:
@@ -82,32 +81,26 @@ def try_decode(body: bytes) -> tuple[str, bool, int, str]:
     (i.e. U+FFFD replacement chars were inserted).
     """
     try:
-        text = body.decode('utf-8', errors='strict')
-        return (text, False, 0, 'utf-8')
+        text = body.decode("utf-8", errors="strict")
+        return (text, False, 0, "utf-8")
     except UnicodeDecodeError:  # noqa: BLE001
         pass
     try:
-        text = body.decode('windows-1252', errors='strict')
-        return (text, False, 0, 'windows-1252')
-    except (UnicodeDecodeError, LookupError):  # noqa: BLE001
+        text = body.decode("windows-1252", errors="strict")
+        return (text, False, 0, "windows-1252")
+    except UnicodeDecodeError, LookupError:  # noqa: BLE001
         pass
     try:
-        text = body.decode('latin-1', errors='strict')
-        return (text, False, 0, 'latin-1')
-    except (UnicodeDecodeError, LookupError):  # noqa: BLE001
+        text = body.decode("latin-1", errors="strict")
+        return (text, False, 0, "latin-1")
+    except UnicodeDecodeError, LookupError:  # noqa: BLE001
         pass
-    text = body.decode('utf-8', errors='replace')
-    count = text.count('�')
-    return (text, True, count, 'utf-8-replace')
+    text = body.decode("utf-8", errors="replace")
+    count = text.count("�")
+    return (text, True, count, "utf-8-replace")
 
 
-def needs_js_fetch(
-    text: str,
-    *,
-    url: str = '',
-    content_length: int = 0,
-    declared_length: int = -1
-) -> bool:
+def needs_js_fetch(text: str, *, url: str = "", content_length: int = 0, declared_length: int = -1) -> bool:
     """Detect if response suggests JS-rendered content is needed.
 
     Enhanced P0-FIX: covers three failure modes of the original _NOSCRIPT_RE-only
@@ -119,7 +112,8 @@ def needs_js_fetch(
     if url:
         try:
             from urllib.parse import urlparse
-            host = urlparse(url).hostname or ''
+
+            host = urlparse(url).hostname or ""
             if host and _JS_SKIP_HOST_RE.search(host):
                 return False
         except Exception:  # noqa: BLE001 — best-effort
@@ -129,8 +123,9 @@ def needs_js_fetch(
     if url:
         try:
             from urllib.parse import urlparse
-            host = urlparse(url).hostname or ''
-            if host and _SERP_HOST_RE.search(host + '/' + url):
+
+            host = urlparse(url).hostname or ""
+            if host and _SERP_HOST_RE.search(host + "/" + url):
                 return True
             if _JS_SKIP_HOST_RE.search(host):
                 return False
@@ -142,7 +137,7 @@ def needs_js_fetch(
     return False
 
 
-def sync_process_html(html: str, url: str = '') -> tuple[str, list, dict]:
+def sync_process_html(html: str, url: str = "") -> tuple[str, list, dict]:
     """Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction.
 
     Runs in CPU_EXECUTOR thread pool — never blocks the async event loop.
@@ -156,6 +151,7 @@ def sync_process_html(html: str, url: str = '') -> tuple[str, list, dict]:
     text = html_to_text_fast(html)
     if not text:
         import html as _html
+
         text = strip_html_tags(_html.unescape(html))
         text = collapse_whitespace(text).strip()
     matches = match_text(text)
@@ -164,8 +160,8 @@ def sync_process_html(html: str, url: str = '') -> tuple[str, list, dict]:
         for start, end in raw_ranges:
             href_str = html[start:end]
             resolved = urllib.parse.urljoin(url, href_str)
-            if resolved.startswith(('http://', 'https://')):
-                matches.append(PatternHit(pattern='rust_link', start=0, end=0, value=resolved, label=''))
+            if resolved.startswith(("http://", "https://")):
+                matches.append(PatternHit(pattern="rust_link", start=0, end=0, value=resolved, label=""))
     except Exception:  # noqa: BLE001 — best-effort
         pass
     return (text, matches, metadata)
@@ -205,7 +201,7 @@ def batch_sync_extract_html_metadata(items: list[tuple[str, str]]) -> list[dict]
                     titles_results = raw_titles
             except Exception:  # noqa: BLE001 — best-effort
                 pass
-        return [{'emails': e, 'title': t} for e, t in zip(emails_results, titles_results, strict=True)]
+        return [{"emails": e, "title": t} for e, t in zip(emails_results, titles_results, strict=True)]
     except Exception:  # noqa: BLE001 — best-effort
         return [{} for _ in items]
 
@@ -279,20 +275,18 @@ def batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, lis
         base_urls = [base_url for _, base_url in items]
         # Rayon parallel: batch_extract_html_text + batch_extract_links + batch_extract_titles
         texts: list[str] = _rust_backend.html.batch_extract_html_text(htmls)
-        links_batch: list[list[str]] = _rust_backend.html.batch_extract_links(
-            list(zip(htmls, base_urls, strict=True))
-    )
+        links_batch: list[list[str]] = _rust_backend.html.batch_extract_links(list(zip(htmls, base_urls, strict=True)))
         titles_batch: list[str | None] = _rust_backend.html.batch_extract_titles(htmls)
         emails_batch: list[list[str]] = _rust_backend.html.batch_extract_emails(htmls)
         return [
             (
-                texts[i] if i < len(texts) else '',
+                texts[i] if i < len(texts) else "",
                 links_batch[i] if i < len(links_batch) else [],
                 {
-                    'title': titles_batch[i] if i < len(titles_batch) and titles_batch[i] is not None else '',
-                    'emails': emails_batch[i] if i < len(emails_batch) else [],
+                    "title": titles_batch[i] if i < len(titles_batch) and titles_batch[i] is not None else "",
+                    "emails": emails_batch[i] if i < len(emails_batch) else [],
                 },
-    )
+            )
             for i in range(len(items))
         ]
     except Exception:  # noqa: BLE001 — best-effort
@@ -328,10 +322,10 @@ def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
     Now uses the centralized domain_executors registry (P1-4).
     """
     from hledac.universal.utils.domain_executors import get_html_executor
+
     return get_html_executor()
 
 
-# ==== Drain Registry ====
 class DrainRegistry:
     """Manages HTML extraction futures with bounded deque and stats tracking.
 
@@ -340,7 +334,8 @@ class DrainRegistry:
 
     Thread-safe for async use: mutations only from asyncio event loop.
     """
-    __slots__ = ('_registry', '_scheduled', '_completed', '_max_size')
+
+    __slots__ = ("_registry", "_scheduled", "_completed", "_max_size")
 
     def __init__(self, max_size: int = 512) -> None:
         self._registry: _f273c_deque = _f273c_deque(maxlen=max_size)
@@ -385,11 +380,11 @@ class DrainRegistry:
     def stats(self) -> dict:
         """Return diagnostic snapshot."""
         return {
-            'registry_size': len(self._registry),
-            'registry_capacity': self._registry.maxlen,
-            'total_scheduled': self._scheduled,
-            'total_completed': self._completed,
-            'in_flight': self._scheduled - self._completed,
+            "registry_size": len(self._registry),
+            "registry_capacity": self._registry.maxlen,
+            "total_scheduled": self._scheduled,
+            "total_completed": self._completed,
+            "in_flight": self._scheduled - self._completed,
         }
 
 
@@ -397,7 +392,7 @@ class DrainRegistry:
 drain_registry = DrainRegistry(max_size=512)
 
 
-def schedule_html_extraction(html: str, url: str = '') -> asyncio.Future:
+def schedule_html_extraction(html: str, url: str = "") -> asyncio.Future:
     """Submit HTML processing to CPU_EXECUTOR and register for drain.
 
     Returns the asyncio.Future wrapping the work. Caller may await it
@@ -410,7 +405,7 @@ def schedule_html_extraction(html: str, url: str = '') -> asyncio.Future:
         loop = asyncio.new_event_loop()
     fut: asyncio.Future = loop.run_in_executor(_get_html_executor(), sync_process_html, html)
     try:
-        tag = f'pattern_extract:{url[:64]}' if url else 'pattern_extract'
+        tag = f"pattern_extract:{url[:64]}" if url else "pattern_extract"
         fut.set_name(tag)
     except Exception:  # noqa: BLE001 — best-effort
         pass
@@ -419,6 +414,7 @@ def schedule_html_extraction(html: str, url: str = '') -> asyncio.Future:
     def _drop_from_registry(f: asyncio.Future = fut) -> None:
         drain_registry.mark_completed(f.cancelled())
         drain_registry.remove(f)
+
     fut.add_done_callback(_drop_from_registry)
     return fut
 
@@ -433,6 +429,7 @@ async def drain_pending_extractions(deadline_s: float = 30.0) -> tuple[int, int,
         Tuple of (completed_count, timed_out_count, elapsed_seconds).
     """
     import time as _t_module
+
     _t0 = _t_module.monotonic()
     deadline_abs = _t0 + max(0.0, deadline_s)
     pending = drain_registry.pending_list()
@@ -445,11 +442,11 @@ async def drain_pending_extractions(deadline_s: float = 30.0) -> tuple[int, int,
         async with asyncio.timeout(remaining_timeout):
             gathered = await asyncio.gather(*pending, return_exceptions=True)
             _, errors = _check_gathered(gathered)
-            for err in errors:
+            for _err in errors:
                 pass  # log if needed
         completed = len(pending)
         timed_out = 0
-    except asyncio.TimeoutError:
+    except TimeoutError:
         completed = sum(1 for t in pending if t.done())
         timed_out = len(pending) - completed
     except Exception:  # noqa: BLE001 — best-effort

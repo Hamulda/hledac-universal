@@ -3,9 +3,6 @@ core/feature_flags.py — Canonical Feature Flag Registry (ISSUE [SWARM]-010)
 
 Single source of truth for all HLEDAC_ENABLE_* feature flags.
 
-
-
-
 Solves the Feature Flag Sprawl problem:
 - 70+ flags documented in CLAUDE.md but no runtime validation
 - Code reading os.environ.get() directly, bypassing registry
@@ -21,11 +18,9 @@ Architecture:
 Usage:
     from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 
-    # Check a flag
     if FeatureFlags.get(FeatureFlag.DSPY):
         ...
 
-    # Validate at startup
     errors, warnings = FeatureFlags.validate()
     if errors:
         sys.exit(2)  # Config error per F350
@@ -75,23 +70,16 @@ __all__ = [
 import logging
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from functools import lru_cache
 from typing import ClassVar
 
-# Import existing registry for Q1 compliance
 from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
-    FlagSpec,
-    validate_flag_combo as _validate_registry_combo,
-    )
+)
 
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Enums
-# ============================================================================
 
 
 class FlagCategory(Enum):
@@ -107,11 +95,6 @@ class FlagCategory(Enum):
     SYSTEM = auto()
     SECURITY = auto()  # Security/sandboxing flags
     PIPELINE = auto()  # Pipeline/processing flags
-
-
-# ============================================================================
-# Deprecated Flags
-# ============================================================================
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,17 +136,12 @@ DEPRECATED_FLAGS: dict[str, DeprecatedFlag] = {
 }
 
 
-# ============================================================================
-# FlagInfo dataclass (for list_all output)
-# ============================================================================
-
-
 @dataclass(slots=True)
 class FlagInfo:
     """Runtime information about a single flag."""
 
     name: str
-    flag: "FeatureFlag"
+    flag: FeatureFlag
     category: FlagCategory
     default: bool
     value: bool
@@ -176,11 +154,6 @@ class FlagInfo:
     is_active: bool  # True if currently enabled
 
 
-# ============================================================================
-# FeatureFlag Enum
-# ============================================================================
-
-
 class FeatureFlag(Enum):
     """
     Canonical enum of all HLEDAC_ENABLE_* feature flags.
@@ -190,8 +163,6 @@ class FeatureFlag(Enum):
 
     Add new flags here — this is the single source of truth.
     """
-
-    # ─── Network Flags ────────────────────────────────────────────────────
 
     TOR = "HLEDAC_ENABLE_TOR"
     I2P = "HLEDAC_ENABLE_I2P"
@@ -213,8 +184,6 @@ class FeatureFlag(Enum):
     ARTi = "HLEDAC_ENABLE_ARTI"
     DARK_PIVOTS = "HLEDAC_ENABLE_DARK_PIVOTS"
 
-    # ─── Brain / LLM Flags ───────────────────────────────────────────────
-
     LLM = "HLEDAC_ENABLE_LLM"
     DSPY = "HLEDAC_ENABLE_DSPY"
     HYPOTHESIS = "HLEDAC_ENABLE_HYPOTHESIS"
@@ -230,8 +199,6 @@ class FeatureFlag(Enum):
     MLX_OUTLINES = "HLEDAC_ENABLE_MLX_OUTLINES"
     ABSENCE_MINING = "HLEDAC_ENABLE_ABSENCE_MINING"
     AUTO_RE = "HLEDAC_ENABLE_AUTO_RE"
-
-    # ─── Storage / Persistence Flags ─────────────────────────────────────
 
     TEMPORAL_STORE = "HLEDAC_ENABLE_TEMPORAL_STORE"
     LANCEDB_QUANTIZE = "HLEDAC_LANCEDB_QUANTIZE"
@@ -255,8 +222,6 @@ class FeatureFlag(Enum):
     DASHBOARD = "HLEDAC_ENABLE_DASHBOARD"
     CROSS_LANE_TEMPORAL_CORRELATION = "HLEDAC_ENABLE_CROSS_LANE_TEMPORAL_CORRELATION"
 
-    # ─── Intelligence API Flags ─────────────────────────────────────────
-
     BGP = "HLEDAC_ENABLE_BGP"
     BGP_PDNS = "HLEDAC_ENABLE_BGP_PDNS"
     ACADEMIC = "HLEDAC_ENABLE_ACADEMIC"
@@ -273,8 +238,6 @@ class FeatureFlag(Enum):
     DHT = "HLEDAC_ENABLE_DHT"
     BLOCKCHAIN_ANALYZER = "HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER"
 
-    # ─── Forensics Flags ─────────────────────────────────────────────────
-
     STEGANOGRAPHY = "HLEDAC_ENABLE_STEGANOGRAPHY"
     STEGDETECT_SIGNED = "HLEDAC_ENABLE_STEGDETECT_SIGNED"
     DIGITAL_GHOST = "HLEDAC_ENABLE_DIGITAL_GHOST"
@@ -284,8 +247,6 @@ class FeatureFlag(Enum):
     CAPTCHA_DETECTION = "HLEDAC_ENABLE_CAPTCHA_DETECTION"
     CAPTCHA_LOCAL = "HLEDAC_ENABLE_CAPTCHA_LOCAL"
     NATIVE_EXTRACTION = "HLEDAC_ENABLE_NATIVE_EXTRACTION"
-
-    # ─── Stealth / Privacy Flags ─────────────────────────────────────────
 
     STEALTH_LAYER = "HLEDAC_ENABLE_STEALTH_LAYER"
     PRIVACY_LAYER = "HLEDAC_ENABLE_PRIVACY_LAYER"
@@ -298,8 +259,6 @@ class FeatureFlag(Enum):
     CENSYS_JITTER = "HLEDAC_CENSYS_JITTER_SIGMA_S"
     RACE_STAGGER_MS = "HLEDAC_RACE_STAGGER_MS"
     PIVOT_EXEC_JITTER = "HLEDAC_PIVOT_EXEC_JITTER_S"
-
-    # ─── System / Runtime Flags ──────────────────────────────────────────
 
     CONTENT_HASHER = "HLEDAC_CONTENT_HASHER"
     BENCHMARK = "HLEDAC_BENCHMARK"
@@ -328,15 +287,11 @@ class FeatureFlag(Enum):
     WHISPER = "HLEDAC_ENABLE_WHISPER"
     METAL_GEMM = "HLEDAC_ENABLE_METAL_GEMM"
 
-    # ─── MLX / Apple Silicon Flags ───────────────────────────────────────
-
     MLX = "HLEDAC_MLX"
     MLX_PREWARM = "HLEDAC_MLX_PREWARM"
     ANE_INFERENCE = "HLEDAC_ENABLE_ANE_INFERENCE"
     DISABLE_ANE = "HLEDAC_DISABLE_ANE"
     KV_CACHE = "HLEDAC_ENABLE_KV_CACHE"
-
-    # ─── Brain / Processing Flags ────────────────────────────────────────
 
     COGNITIVE_TARPIT = "HLEDAC_ENABLE_COGNITIVE_TARPIT"
     POS_TAGGING = "HLEDAC_ENABLE_POS_TAGGING"
@@ -344,8 +299,6 @@ class FeatureFlag(Enum):
     TRIAGE_TIER2 = "HLEDAC_TRIAGE_TIER2"
     DISABLE_SPEC_DECODE = "HLEDAC_DISABLE_SPEC_DECODE"
     ENABLE_SPEC_DECODE = "HLEDAC_ENABLE_SPEC_DECODE"
-
-    # ─── Knowledge / RAG Flags ──────────────────────────────────────────
 
     HOT_EDGES = "HLEDAC_HOT_EDGES"
     HOT_EDGES_COMPRESS = "HLEDAC_HOT_EDGES_COMPRESS"
@@ -374,22 +327,14 @@ class FeatureFlag(Enum):
     DISABLE_RUST_FULLTEXT = "HLEDAC_DISABLE_RUST_FULLTEXT"
     VECTOR_BACKEND = "HLEDAC_VECTOR_BACKEND"
 
-    # ─── Network / Transport Flags ───────────────────────────────────────
-
     ENABLE_QUIC = "HLEDAC_ENABLE_QUIC"
-
-    # ─── Export / Security Flags ─────────────────────────────────────────
 
     ENABLE_PQ_EXPORT = "HLEDAC_ENABLE_PQ_EXPORT"
     VAULT_EXPORT = "HLEDAC_VAULT_EXPORT"
 
-    # ─── Evidence / Logging Flags ───────────────────────────────────────
-
     ARROW_EVIDENCE = "HLEDAC_ARROW_EVIDENCE"
     EVIDENCE_DUCKDB = "HLEDAC_EVIDENCE_DUCKDB"
     CLAIMS_EXTRACTION = "HLEDAC_ENABLE_CLAIMS_EXTRACTION"
-
-    # ─── DuckDB / Storage Config Flags ──────────────────────────────────
 
     DUCKDB_INPROCESS = "HLEDAC_DUCKDB_INPROCESS"
     DUCKDB_THREADS = "HLEDAC_DUCKDB_THREADS"
@@ -399,15 +344,11 @@ class FeatureFlag(Enum):
     DEDUP_DISK = "HLEDAC_DEDUP_DISK"
     DEDUP_SIZE_MB = "HLEDAC_DEDUP_SIZE_MB"
 
-    # ─── Intel / Analytics Flags ─────────────────────────────────────────
-
     GRAPH_STORE_RAG = "HLEDAC_ENABLE_GRAPH_STORE_RAG"
     INSIGHT_ENGINE = "HLEDAC_ENABLE_INSIGHT_ENGINE"
     ADVERSARIAL_VERIFIER = "HLEDAC_ENABLE_ADVERSARIAL_VERIFIER"
     DEMPSTER_SHAFER = "HLEDAC_ENABLE_DEMPSTER_SHAFER"
     EVIDENCE_NETWORK = "HLEDAC_ENABLE_EVIDENCE_NETWORK"
-
-    # ─── Misc / Debug Flags ──────────────────────────────────────────────
 
     DEBUG_JA3 = "HLEDAC_DEBUG_JA3"
     FORCE_PYTHON = "HLEDAC_FORCE_PYTHON"
@@ -416,11 +357,7 @@ class FeatureFlag(Enum):
     BLITZ_TRIAGE = "HLEDAC_ENABLE_BLITZ_TRIAGE"
     NETWORK_ANALYTICS = "HLEDAC_ENABLE_NETWORK_ANALYTICS"
 
-    # ─── Browser / Stealth Config ─────────────────────────────────────────
-
     BROWSER_MEM_THRESHOLD_GIB = "HLEDAC_BROWSER_MEM_THRESHOLD_GIB"
-
-    # ─── Security / Sandboxing Flags ──────────────────────────────────────
 
     MACH_REMAP = "HLEDAC_ENABLE_MACH_REMAP"
     DOC_SANDBOX = "HLEDAC_ENABLE_DOC_SANDBOX"
@@ -428,84 +365,49 @@ class FeatureFlag(Enum):
     NATIVE_EXTRACTION = "HLEDAC_ENABLE_NATIVE_EXTRACTION"
     REMOTE_DEBUG_DISABLE = "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED"
 
-    # ─── Cognitive / Runtime Flags ─────────────────────────────────────────
-
     COGNITIVE_SATURATION = "HLEDAC_ENABLE_COGNITIVE_SATURATION"
     AUTO_RE = "HLEDAC_ENABLE_AUTO_RE"
     SUBINTERPRETERS = "HLEDAC_ENABLE_SUBINTERPRETERS"
 
-    # ─── Async / Logging Flags ─────────────────────────────────────────────
-
     ASYNC_LOG = "HLEDAC_ASYNC_LOG"
-
-    # ─── Deobfuscation / Pipeline ─────────────────────────────────────────
 
     ENABLE_DEOBFUSCATE = "HLEDAC_ENABLE_DEOBFUSCATE"
 
-    # ─── Deep Research Config ─────────────────────────────────────────────
-
     DEEP_RESEARCH = "HLEDAC_DEEP_RESEARCH"
-
-    # ─── Async / Logging Config ───────────────────────────────────────────
 
     ASYNC_LOG_DROP_OLDEST = "HLEDAC_ASYNC_LOG_DROP_OLDEST"
     MAX_PENDING_OPS = "HLEDAC_MAX_PENDING_OPS"
 
-    # ─── IPFS Config ──────────────────────────────────────────────────────
-
     IPFS_GATEWAY_URL = "HLEDAC_IPFS_GATEWAY_URL"
 
-    # ─── Memory / Budget Config ────────────────────────────────────────────
-
     PEAK_BUDGET_GIB = "HLEDAC_PEAK_BUDGET_GIB"
-
-    # ─── Deduplication Config ─────────────────────────────────────────────
 
     DEDUP_DISK = "HLEDAC_DEDUP_DISK"
     DEDUP_SIZE_MB = "HLEDAC_DEDUP_SIZE_MB"
     DEDUP_DIR = "HLEDAC_DEDUP_DIR"
     DEDUP_MAX_NGRAMS = "HLEDAC_DEDUP_MAX_NGRAMS"
 
-    # ─── Captcha Config ───────────────────────────────────────────────────
-
     ENABLE_CAPTCHA = "HLEDAC_ENABLE_CAPTCHA"
-
-    # ─── LanceDB Quantization Config ─────────────────────────────────────
 
     LANCEDB_IVFPQ_NUM_SUB_VECTORS = "HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS"
     LANCEDB_IVFPQ_NUM_PARTITIONS = "HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS"
-
-    # ─── Storage Paths ────────────────────────────────────────────────────
 
     DUCKDB_STORE = "HLEDAC_DUCKDB_STORE"
     LANCEDB_STORE = "HLEDAC_LANCEDB_STORE"
     LMDB_STORE = "HLEDAC_LMDB_STORE"
     SPRINT_STORE = "HLEDAC_SPRINT_STORE"
 
-    # ─── Whois Config ─────────────────────────────────────────────────────
-
     WHOIS_API = "HLEDAC_WHOIS_API"
     WHOIS_API_KEY = "HLEDAC_WHOIS_API_KEY"
-
-    # ─── Network / Retry Config ───────────────────────────────────────────
 
     MAX_RETRIES = "HLEDAC_MAX_RETRIES"
     FETCH_TIMEOUT = "HLEDAC_FETCH_TIMEOUT"
 
-    # ─── Telemetry / Observability ───────────────────────────────────────
-
     OTEL_SAMPLE_RATIO = "HLEDAC_OTEL_SAMPLE_RATIO"
     OTEL_SLOW_SPAN_MS = "HLEDAC_OTEL_SLOW_SPAN_MS"
 
-    # ─── Acquisition / RL Config ─────────────────────────────────────────
-
     ACQUISITION_PROFILE = "HLEDAC_ACQUISITION_PROFILE"
     RL_TRAIN = "HLEDAC_RL_TRAIN"
-
-
-# ============================================================================
-# Flag Metadata Class Dict
-# ============================================================================
 
 
 @lru_cache(maxsize=1)
@@ -727,9 +629,6 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_IPFS_GATEWAY_URL": FlagCategory.NETWORK,
         # Memory / Budget
         "HLEDAC_PEAK_BUDGET_GIB": FlagCategory.SYSTEM,
-        # Deduplication
-        "HLEDAC_DEDUP_DISK": FlagCategory.STORAGE,
-        "HLEDAC_DEDUP_SIZE_MB": FlagCategory.STORAGE,
         "HLEDAC_DEDUP_DIR": FlagCategory.STORAGE,
         "HLEDAC_DEDUP_MAX_NGRAMS": FlagCategory.STORAGE,
         # Captcha
@@ -741,7 +640,6 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_DUCKDB_STORE": FlagCategory.STORAGE,
         "HLEDAC_LANCEDB_STORE": FlagCategory.STORAGE,
         "HLEDAC_LMDB_STORE": FlagCategory.STORAGE,
-        "HLEDAC_RAMDISK": FlagCategory.STORAGE,
         # Whois
         "HLEDAC_WHOIS_API": FlagCategory.INTELLIGENCE_APIS,
         "HLEDAC_WHOIS_API_KEY": FlagCategory.INTELLIGENCE_APIS,
@@ -754,22 +652,12 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         # Acquisition / RL
         "HLEDAC_ACQUISITION_PROFILE": FlagCategory.SYSTEM,
         "HLEDAC_RL_TRAIN": FlagCategory.SYSTEM,
-        "HLEDAC_RAMDISK_AUTO_CREATE": FlagCategory.STORAGE,
-        # Graph Store
-        "HLEDAC_ENABLE_GRAPH_ANALYSIS": FlagCategory.STORAGE,
-        "HLEDAC_ENABLE_GRAPH_PATHS": FlagCategory.STORAGE,
-        # Sprint
-        "HLEDAC_ENABLE_TIMELINE_SPLICER": FlagCategory.STORAGE,
         # Security / Sandboxing
         "HLEDAC_ENABLE_MACH_REMAP": FlagCategory.SECURITY,
         "HLEDAC_ENABLE_DOC_SANDBOX": FlagCategory.SECURITY,
         "HLEDAC_ENABLE_EPHEMERAL_WIPE": FlagCategory.SECURITY,
-        "HLEDAC_ENABLE_NATIVE_EXTRACTION": FlagCategory.FORENSICS,
-        "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED": FlagCategory.SECURITY,
         # Cognitive / Runtime
         "HLEDAC_ENABLE_COGNITIVE_SATURATION": FlagCategory.BRAIN,
-        "HLEDAC_ENABLE_AUTO_RE": FlagCategory.BRAIN,
-        "HLEDAC_ENABLE_SUBINTERPRETERS": FlagCategory.SYSTEM,
         # Async / Logging
         "HLEDAC_ASYNC_LOG": FlagCategory.SYSTEM,
         # Browser
@@ -889,7 +777,6 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_METAL_HASHCRACK": 64,
     }
 
-    # Build metadata for each enum member
     for flag in FeatureFlag:
         env_name = flag.value
         category = category_map.get(env_name, FlagCategory.SYSTEM)
@@ -910,11 +797,6 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
     return metadata
 
 
-# ============================================================================
-# FeatureFlags Class
-# ============================================================================
-
-
 @dataclass(frozen=True, slots=True)
 class FlagValidationError:
     """A validation error or warning."""
@@ -931,11 +813,9 @@ class FeatureFlags:
     Usage:
         from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 
-        # Check a flag
         if FeatureFlags.get(FeatureFlag.DSPY):
             ...
 
-        # Validate at startup
         errors, warnings = FeatureFlags.validate()
         if errors:
             sys.exit(2)
@@ -949,7 +829,8 @@ class FeatureFlags:
 
     # MODERN-M4+ NEW-ISSUE Fix: Import from SSOT UmaBudget instead of hardcoding
     # NOTE: RAM_FATAL_MB was 7000 (7.0 GiB) which EXCEEDED SSOT ceiling (6.25 GiB)!
-    from hledac.universal.utils.uma_budget import FLAG_RAM_WARN_MB, FLAG_RAM_FATAL_MB
+    from hledac.universal.utils.uma_budget import FLAG_RAM_FATAL_MB, FLAG_RAM_WARN_MB
+
     RAM_WARN_MB: ClassVar[int] = FLAG_RAM_WARN_MB  # 5632 MB (was 5500)
     RAM_FATAL_MB: ClassVar[int] = FLAG_RAM_FATAL_MB  # 6400 MB (was 7000 — EXCEEDED CEILING!)
 
@@ -962,8 +843,6 @@ class FeatureFlags:
         if cls._metadata is None:
             cls._metadata = _build_metadata()
         return cls._metadata
-
-    # ─── Core Getters ───────────────────────────────────────────────────
 
     @staticmethod
     def _parse_bool(value: str | None, default: bool = False) -> bool:
@@ -995,7 +874,6 @@ class FeatureFlags:
         """
         env_name = flag.value
 
-        # Check for deprecated aliases
         if env_name in DEPRECATED_FLAGS:
             deprecated = DEPRECATED_FLAGS[env_name]
             # Check if deprecated form is set
@@ -1004,10 +882,9 @@ class FeatureFlags:
                 logger.warning(
                     f"[SWARM-010] DEPRECATED flag {deprecated.old_name} is set. "
                     f"Use {deprecated.new_name} instead. Reason: {deprecated.reason}"
-    )
+                )
                 return cls._parse_bool(deprecated_value)
 
-        # Check current env var
         return cls._parse_bool(os.environ.get(env_name))
 
     @classmethod
@@ -1019,7 +896,7 @@ class FeatureFlags:
             return default
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return default
 
     @classmethod
@@ -1031,7 +908,7 @@ class FeatureFlags:
             return default
         try:
             return float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return default
 
     @classmethod
@@ -1039,10 +916,6 @@ class FeatureFlags:
         """Get a string config value."""
         env_name = flag.value
         return os.environ.get(env_name, default)
-
-    # ─── Validation ─────────────────────────────────────────────────────
-
-
 
     @classmethod
     def validate(cls) -> tuple[list[FlagValidationError], list[FlagValidationError]]:
@@ -1071,11 +944,13 @@ class FeatureFlags:
         """Check for deprecated flag usage - appends warnings."""
         for deprecated in DEPRECATED_FLAGS.values():
             if deprecated.old_name in os.environ:
-                warnings.append(FlagValidationError(
-                    flag=deprecated.old_name,
-                    message=f"DEPRECATED: Use {deprecated.new_name} instead. {deprecated.reason}",
-                    is_error=False,
-                ))
+                warnings.append(
+                    FlagValidationError(
+                        flag=deprecated.old_name,
+                        message=f"DEPRECATED: Use {deprecated.new_name} instead. {deprecated.reason}",
+                        is_error=False,
+                    )
+                )
 
     @classmethod
     def _check_implications_into(cls, metadata: dict, active: set[str], warnings: list[FlagValidationError]) -> None:
@@ -1085,11 +960,13 @@ class FeatureFlags:
                 continue
             for implied in metadata[flag].get("implies", ()):
                 if os.environ.get(implied) is None or not cls._parse_bool(os.environ.get(implied)):
-                    warnings.append(FlagValidationError(
-                        flag=flag.value,
-                        message=f"Flag {flag.value} implies {implied} but {implied} is not set.",
-                        is_error=False,
-                    ))
+                    warnings.append(
+                        FlagValidationError(
+                            flag=flag.value,
+                            message=f"Flag {flag.value} implies {implied} but {implied} is not set.",
+                            is_error=False,
+                        )
+                    )
 
     @classmethod
     def _check_conflicts_into(cls, metadata: dict, active: set[str], errors: list[FlagValidationError]) -> None:
@@ -1099,11 +976,13 @@ class FeatureFlags:
                 continue
             for conflict in metadata[flag].get("conflicts_with", ()):
                 if conflict in active and flag.value in active:
-                    errors.append(FlagValidationError(
-                        flag=flag.value,
-                        message=f"Flag {flag.value} conflicts with {conflict}.",
-                        is_error=True,
-                    ))
+                    errors.append(
+                        FlagValidationError(
+                            flag=flag.value,
+                            message=f"Flag {flag.value} conflicts with {conflict}.",
+                            is_error=True,
+                        )
+                    )
 
     @classmethod
     def _check_ram_budget_into(
@@ -1114,25 +993,25 @@ class FeatureFlags:
         warnings: list[FlagValidationError],
     ) -> None:
         """Check RAM budget - appends errors and warnings."""
-        total_ram = sum(
-            metadata[f].get("min_ram_mb", 0)
-            for f in FeatureFlag
-            if f.value in active and f in metadata
-    )
+        total_ram = sum(metadata[f].get("min_ram_mb", 0) for f in FeatureFlag if f.value in active and f in metadata)
         if total_ram > cls.RAM_FATAL_MB:
-            errors.append(FlagValidationError(
-                flag="RAM_BUDGET",
-                message=f"FATAL: Estimated RAM {total_ram}MB exceeds M1 8GB limit ({cls.RAM_FATAL_MB}MB). "
-                        f"Disable some features to proceed.",
-                is_error=True,
-            ))
+            errors.append(
+                FlagValidationError(
+                    flag="RAM_BUDGET",
+                    message=f"FATAL: Estimated RAM {total_ram}MB exceeds M1 8GB limit ({cls.RAM_FATAL_MB}MB). "
+                    f"Disable some features to proceed.",
+                    is_error=True,
+                )
+            )
         elif total_ram > cls.RAM_WARN_MB:
-            warnings.append(FlagValidationError(
-                flag="RAM_BUDGET",
-                message=f"WARNING: Estimated RAM {total_ram}MB approaching M1 8GB limit "
-                        f"(warn at {cls.RAM_WARN_MB}MB, fatal at {cls.RAM_FATAL_MB}MB).",
-                is_error=False,
-            ))
+            warnings.append(
+                FlagValidationError(
+                    flag="RAM_BUDGET",
+                    message=f"WARNING: Estimated RAM {total_ram}MB approaching M1 8GB limit "
+                    f"(warn at {cls.RAM_WARN_MB}MB, fatal at {cls.RAM_FATAL_MB}MB).",
+                    is_error=False,
+                )
+            )
 
     @classmethod
     def _check_unknown_flags_into(cls, warnings: list[FlagValidationError]) -> None:
@@ -1148,20 +1027,20 @@ class FeatureFlags:
             "HLEDAC_RAG_",
             "HLEDAC_MLX",
             "HLEDAC_HOT_EDGES",
-    )
+        )
         for env_key in os.environ:
             if env_key.startswith("HLEDAC_"):
                 is_known = any(env_key.startswith(p) for p in known_prefixes)
                 if not is_known and env_key not in DEPRECATED_FLAGS:
                     known = any(f.value == env_key for f in FeatureFlag)
                     if not known:
-                        warnings.append(FlagValidationError(
-                            flag=env_key,
-                            message=f"Unknown flag {env_key}. This may be a typo or deprecated flag.",
-                            is_error=False,
-                        ))
-
-    # ─── Discovery ──────────────────────────────────────────────────────
+                        warnings.append(
+                            FlagValidationError(
+                                flag=env_key,
+                                message=f"Unknown flag {env_key}. This may be a typo or deprecated flag.",
+                                is_error=False,
+                            )
+                        )
 
     @classmethod
     def list_all(cls) -> list[FlagInfo]:
@@ -1203,7 +1082,7 @@ class FeatureFlags:
                     is_deprecated=is_deprecated,
                     deprecated_replacement=deprecated.new_name if deprecated else None,
                     is_active=current_value,
-    )
+                )
             )
 
         # Sort by category then name
@@ -1225,18 +1104,13 @@ class FeatureFlags:
         """List all deprecated flags."""
         return [f for f in cls.list_all() if f.is_deprecated]
 
-    # ─── Utilities ──────────────────────────────────────────────────────
-
     @classmethod
     def get_deprecated_warnings(cls) -> list[str]:
         """Get warning messages for all deprecated flags in use."""
         warnings = []
         for deprecated in DEPRECATED_FLAGS.values():
             if deprecated.old_name in os.environ:
-                warnings.append(
-                    f"[DEPRECATED] {deprecated.old_name} → {deprecated.new_name}: "
-                    f"{deprecated.reason}"
-    )
+                warnings.append(f"[DEPRECATED] {deprecated.old_name} → {deprecated.new_name}: {deprecated.reason}")
         return warnings
 
     @classmethod
@@ -1270,11 +1144,6 @@ class FeatureFlags:
         print("\n" + "=" * 70, file=stream)
 
 
-# ============================================================================
-# Standalone validation function for CLI
-# ============================================================================
-
-
 def validate_sprint_flags() -> int:
     """
     Run flag validation and exit with appropriate code.
@@ -1291,7 +1160,7 @@ def validate_sprint_flags() -> int:
             f"\n[SWARM-010] Flag validation failed with {len(errors)} error(s). "
             "Fix the issues above or set --force to bypass.",
             file=sys.stderr,
-    )
+        )
         return 2
 
     if warnings:
@@ -1299,11 +1168,6 @@ def validate_sprint_flags() -> int:
             print(f"[WARN] {w.flag}: {w.message}", file=sys.stderr)
 
     return 0
-
-
-# ============================================================================
-# Backward-compat helpers (for existing code using os.environ directly)
-# ============================================================================
 
 
 def get_flag_value(name: str) -> bool:
@@ -1323,11 +1187,6 @@ def get_flag_value(name: str) -> bool:
 
     # Unknown flag — fall back to raw env check
     return FeatureFlags._parse_bool(os.environ.get(name))
-
-
-# ============================================================================
-# Module-level convenience functions
-# ============================================================================
 
 
 def is_enabled(flag: FeatureFlag) -> bool:

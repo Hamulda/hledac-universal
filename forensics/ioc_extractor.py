@@ -35,18 +35,18 @@ warnings.warn(
 
 # Re-export everything from the unified facade for backward compatibility
 from hledac.universal.knowledge.ioc_processor import (  # noqa: F401,E402,F811
+    _HASH_VALIDATORS,
+    _IOC_COMBINED,
+    _IOC_PATTERNS,
+    _IOC_TYPE_NAMES,
+    _TRACKING_PARAMS,
+    batch_dedup_urls,
     # Note: forensics/ is part of hledac.universal package, so hledac.universal.* imports work
     # when the package is installed. This is the standard project import convention.
     fast_ioc_extract,
-    url_normalize,
-    batch_dedup_urls,
     ioc_extract_to_canonical_findings,
     ioc_extract_to_canonical_findings_bulk,
-    _IOC_PATTERNS,
-    _IOC_COMBINED,
-    _HASH_VALIDATORS,
-    _TRACKING_PARAMS,
-    _IOC_TYPE_NAMES,
+    url_normalize,
 )
 
 # Backward compatibility — module-level flag for callers that checked this
@@ -67,7 +67,6 @@ __all__ = [
     "ioc_extract_to_canonical_findings",
     "ioc_extract_to_canonical_findings_bulk",
     "IOC_FINDINGS_MAX",
-    # Patterns re-export (used by core/rust_backend/ioc.py Python fallback)
     "_IOC_PATTERNS",
     "_IOC_COMBINED",
     "_HASH_VALIDATORS",

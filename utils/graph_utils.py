@@ -9,7 +9,6 @@ Bounded, fail-safe, M1-optimized.
 
 import logging
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     pass
@@ -37,6 +36,7 @@ def lazy_ig() -> Any:
     """
     try:
         import igraph as ig_mod  # type: ignore[import-not-found]
+
         return ig_mod
     except Exception as e:
         logger.debug(f"lazy_ig: igraph unavailable: {e}")

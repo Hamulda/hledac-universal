@@ -12,6 +12,7 @@ Invariant tests:
 - payload_text bounded to 4096 chars
 - 10MB cap enforced by fetch_ipfs
 """
+
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -28,7 +29,7 @@ from hledac.universal.network.ipfs_client import (
 class TestIpfsContentToFindingDict:
     """Test transform from IPFS content to CanonicalFinding-compatible dict."""
 
-    def test_produces_valid_dict_structure(self):
+    def test_produces_valid_dict_structure(self) -> None:
         """Dict has all required CanonicalFinding fields."""
         result = ipfs_content_to_finding_dict(
             cid="QmT5NvUtoM5nWFfrQdVrFtvGfKFmG7AHE8P34isapyhCxX",
@@ -47,7 +48,7 @@ class TestIpfsContentToFindingDict:
         assert isinstance(result["provenance"], tuple)
         assert "payload_text" in result
 
-    def test_source_type_is_ipfs_fetch(self):
+    def test_source_type_is_ipfs_fetch(self) -> None:
         """source_type is 'ipfs_fetch' for direct CID fetch."""
         result = ipfs_content_to_finding_dict(
             cid="QmABC",
@@ -57,7 +58,7 @@ class TestIpfsContentToFindingDict:
         )
         assert result["source_type"] == "ipfs_fetch"
 
-    def test_source_type_is_ipfs_search(self):
+    def test_source_type_is_ipfs_search(self) -> None:
         """source_type is 'ipfs_search' for search-based discovery."""
         result = ipfs_content_to_finding_dict(
             cid="QmDEF",
@@ -67,7 +68,7 @@ class TestIpfsContentToFindingDict:
         )
         assert result["source_type"] == "ipfs_search"
 
-    def test_provenance_tuple_is_ipfs_uri(self):
+    def test_provenance_tuple_is_ipfs_uri(self) -> None:
         """Provenance is a 1-tuple: ("ipfs://{cid}",)."""
         result = ipfs_content_to_finding_dict(
             cid="QmTestCID123",
@@ -80,7 +81,7 @@ class TestIpfsContentToFindingDict:
         assert len(provenance) == 1
         assert provenance[0] == "ipfs://QmTestCID123"
 
-    def test_payload_text_bounded_to_4096_chars(self):
+    def test_payload_text_bounded_to_4096_chars(self) -> None:
         """payload_text is truncated to 4096 chars (LMDB WAL limit)."""
         long_content = b"x" * 5000
         result = ipfs_content_to_finding_dict(
@@ -93,50 +94,38 @@ class TestIpfsContentToFindingDict:
         assert result["payload_text"] is not None
         assert len(result["payload_text"]) <= 4096
 
-    def test_finding_id_is_unique_per_content(self):
+    def test_finding_id_is_unique_per_content(self) -> None:
         """Different content produces different finding_id."""
         cid = "QmTest"
         time.time()
 
-        result1 = ipfs_content_to_finding_dict(
-            cid=cid, content=b"content1", query="q", source_type="ipfs_fetch"
-        )
-        result2 = ipfs_content_to_finding_dict(
-            cid=cid, content=b"content2", query="q", source_type="ipfs_fetch"
-        )
+        result1 = ipfs_content_to_finding_dict(cid=cid, content=b"content1", query="q", source_type="ipfs_fetch")
+        result2 = ipfs_content_to_finding_dict(cid=cid, content=b"content2", query="q", source_type="ipfs_fetch")
 
         assert result1["finding_id"] != result2["finding_id"]
 
-    def test_bytes_and_str_content_both_accepted(self):
+    def test_bytes_and_str_content_both_accepted(self) -> None:
         """Content can be bytes or str."""
-        result_bytes = ipfs_content_to_finding_dict(
-            cid="QmTest", content=b"hello", query="q", source_type="ipfs_fetch"
-        )
-        result_str = ipfs_content_to_finding_dict(
-            cid="QmTest", content="hello", query="q", source_type="ipfs_fetch"
-        )
+        result_bytes = ipfs_content_to_finding_dict(cid="QmTest", content=b"hello", query="q", source_type="ipfs_fetch")
+        result_str = ipfs_content_to_finding_dict(cid="QmTest", content="hello", query="q", source_type="ipfs_fetch")
 
         assert result_bytes["payload_text"] == result_str["payload_text"]
 
-    def test_confidence_is_075_for_ipfs_fetch(self):
+    def test_confidence_is_075_for_ipfs_fetch(self) -> None:
         """Direct CID fetch has confidence 0.75."""
-        result = ipfs_content_to_finding_dict(
-            cid="QmX", content=b"x", query="q", source_type="ipfs_fetch"
-        )
+        result = ipfs_content_to_finding_dict(cid="QmX", content=b"x", query="q", source_type="ipfs_fetch")
         assert result["confidence"] == 0.75
 
-    def test_query_field_preserved(self):
+    def test_query_field_preserved(self) -> None:
         """Query field is preserved from input."""
-        result = ipfs_content_to_finding_dict(
-            cid="QmX", content=b"x", query="myioc", source_type="ipfs_fetch"
-        )
+        result = ipfs_content_to_finding_dict(cid="QmX", content=b"x", query="myioc", source_type="ipfs_fetch")
         assert result["query"] == "myioc"
 
 
 class TestFetchIpfsSizeCap:
     """Test 10MB size cap enforcement."""
 
-    def test_max_file_size_constant_is_10mb(self):
+    def test_max_file_size_constant_is_10mb(self) -> None:
         """MAX_FILE_SIZE_BYTES is exactly 10 MB."""
         assert MAX_FILE_SIZE_BYTES == 10 * 1024 * 1024
 
@@ -145,7 +134,7 @@ class TestIpfsFetchAsFindings:
     """Test ipfs_fetch_as_findings returns CanonicalFinding list."""
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_on_fetch_failure(self):
+    async def test_returns_empty_list_on_fetch_failure(self) -> None:
         """Fail-soft: returns [] when fetch_ipfs returns None."""
         with patch(
             "hledac.universal.network.ipfs_client.fetch_ipfs",
@@ -156,7 +145,7 @@ class TestIpfsFetchAsFindings:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_on_exception(self):
+    async def test_returns_empty_list_on_exception(self) -> None:
         """Fail-soft: returns [] when fetch_ipfs raises."""
         with patch(
             "hledac.universal.network.ipfs_client.fetch_ipfs",
@@ -167,7 +156,7 @@ class TestIpfsFetchAsFindings:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_finding_on_success(self):
+    async def test_returns_finding_on_success(self) -> None:
         """Returns CanonicalFinding list when fetch succeeds."""
         with patch(
             "hledac.universal.network.ipfs_client.fetch_ipfs",
@@ -184,7 +173,7 @@ class TestIpfsSearchAsFindings:
     """Test ipfs_search_as_findings returns CanonicalFinding list."""
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_on_search_failure(self):
+    async def test_returns_empty_list_on_search_failure(self) -> None:
         """Fail-soft: returns [] when search_ipfs raises."""
         with patch(
             "hledac.universal.network.ipfs_client.search_ipfs",
@@ -195,7 +184,7 @@ class TestIpfsSearchAsFindings:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_cids(self):
+    async def test_returns_empty_list_when_no_cids(self) -> None:
         """Fail-soft: returns [] when search_ipfs returns empty list."""
         with patch(
             "hledac.universal.network.ipfs_client.search_ipfs",
@@ -206,7 +195,7 @@ class TestIpfsSearchAsFindings:
             assert result == []
 
     @pytest.mark.asyncio
-    async def test_caps_at_20_cids(self):
+    async def test_caps_at_20_cids(self) -> None:
         """Search caps at 20 CIDs for M1 safety."""
         many_cids = [f"Qm{i:046d}" for i in range(30)]
         with patch(

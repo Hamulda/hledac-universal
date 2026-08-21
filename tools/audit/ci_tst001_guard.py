@@ -13,7 +13,6 @@ for "import-from-tests" enforcement.
 import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 ROOT = Path(__file__).parent.parent
 TESTS_TRANSPORTS = ROOT / "tests" / "transports"
@@ -41,21 +40,46 @@ def _check_file(src_path: Path) -> list[tuple[int, str]]:
             continue
         if node.module and node.module.startswith("tests.transports"):
             for alias in node.names:
-                violations.append((node.lineno, f"TST001: {src_path.relative_to(ROOT)} imports from tests.transports ({alias.name})"))
+                violations.append(
+                    (node.lineno, f"TST001: {src_path.relative_to(ROOT)} imports from tests.transports ({alias.name})")
+                )
         # from hledac.universal.tests.transports import ...
         if node.module and "hledac" in str(node.module) and "tests.transports" in str(node.module):
             for alias in node.names:
-                violations.append((node.lineno, f"TST001: {src_path.relative_to(ROOT)} imports from tests.transports ({alias.name})"))
+                violations.append(
+                    (node.lineno, f"TST001: {src_path.relative_to(ROOT)} imports from tests.transports ({alias.name})")
+                )
 
     return violations
 
 
 def _iter_production_files():
     """Yield production .py files in key production dirs only (fast CI scan)."""
-    scan_dirs = {"transport", "coordinators", "federated", "brain", "runtime", "knowledge",
-                 "fetching", "intelligence", "layers", "utils", "core"}
-    skip_dirs = {"tests", "stubs", ".venv", "build", "dist", ".git", ".claude", "node_modules",
-                 "__pycache__", ".pytest_cache"}
+    scan_dirs = {
+        "transport",
+        "coordinators",
+        "federated",
+        "brain",
+        "runtime",
+        "knowledge",
+        "fetching",
+        "intelligence",
+        "layers",
+        "utils",
+        "core",
+    }
+    skip_dirs = {
+        "tests",
+        "stubs",
+        ".venv",
+        "build",
+        "dist",
+        ".git",
+        ".claude",
+        "node_modules",
+        "__pycache__",
+        ".pytest_cache",
+    }
     for scan_dir in scan_dirs:
         d = ROOT / scan_dir
         if not d.exists():

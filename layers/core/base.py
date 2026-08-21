@@ -20,14 +20,13 @@ Usage:
 
     layer = MyLayer()
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from abc import abstractmethod
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 class LayerStats(Struct, gc=False):
     """Layer statistics with timestamps. F350M-R: gc=False for M1 8GB."""
+
     processed: int = 0
     failed: int = 0
     rollbacks: int = 0
@@ -89,7 +89,7 @@ class BaseLayer:
     """
 
     # Subclasses MUST define these
-    layer_name: str = 'base_layer'
+    layer_name: str = "base_layer"
 
     # Optional configuration
     _priority: int = 0
@@ -97,10 +97,10 @@ class BaseLayer:
 
     # Internal state - use __slots__ for memory efficiency
     __slots__ = (
-        '_ctx',
-        '_initialized',
-        '_mount_time',
-        '_stats',
+        "_ctx",
+        "_initialized",
+        "_mount_time",
+        "_stats",
     )
 
     def __init__(self) -> None:
@@ -108,8 +108,6 @@ class BaseLayer:
         self._initialized: bool = False
         self._mount_time: float = 0.0
         self._stats = LayerStats()
-
-    # ─── Lifecycle ────────────────────────────────────────────────────────────
 
     async def mount(self, ctx: Any) -> None:
         """
@@ -120,7 +118,7 @@ class BaseLayer:
         self._ctx = ctx
         self._mount_time = time.time()
         self._initialized = True
-        logger.info(f'Layer mounted: {self.layer_name}')
+        logger.info(f"Layer mounted: {self.layer_name}")
 
     async def unmount(self, ctx: Any) -> None:
         """
@@ -131,8 +129,7 @@ class BaseLayer:
         if self._initialized:
             uptime = time.time() - self._mount_time
             logger.info(
-                f'Layer unmounted: {self.layer_name} '
-                f'(uptime: {uptime:.1f}s, processed: {self._stats.processed})'
+                f"Layer unmounted: {self.layer_name} (uptime: {uptime:.1f}s, processed: {self._stats.processed})"
             )
         self._ctx = None
         self._initialized = False
@@ -167,7 +164,7 @@ class BaseLayer:
         Returns:
             Processed data
         """
-        raise NotImplementedError(f'{self.layer_name} must implement _process()')
+        raise NotImplementedError(f"{self.layer_name} must implement _process()")
 
     async def rollback(self, ctx: Any, error: Exception) -> None:
         """Public rollback interface."""
@@ -181,11 +178,9 @@ class BaseLayer:
         """
         self._stats.rollbacks += 1
         logger.warning(
-            f'Layer rollback: {self.layer_name} - {error}',
+            f"Layer rollback: {self.layer_name} - {error}",
             exc_info=True,
         )
-
-    # ─── Statistics ────────────────────────────────────────────────────────────
 
     def _record_success(self, start_time: float) -> None:
         """Record successful processing."""
@@ -211,20 +206,18 @@ class BaseLayer:
             Statistics dictionary
         """
         return {
-            'name': self.layer_name,
-            'enabled': self._enabled,
-            'priority': self._priority,
-            'processed': self._stats.processed,
-            'failed': self._stats.failed,
-            'rollbacks': self._stats.rollbacks,
-            'success_rate': self._stats.success_rate,
-            'avg_processing_time_ms': self._stats.avg_processing_time * 1000,
-            'last_processed_at': self._stats.last_processed_at,
-            'last_failed_at': self._stats.last_failed_at,
-            'uptime_seconds': time.time() - self._mount_time if self._initialized else 0,
+            "name": self.layer_name,
+            "enabled": self._enabled,
+            "priority": self._priority,
+            "processed": self._stats.processed,
+            "failed": self._stats.failed,
+            "rollbacks": self._stats.rollbacks,
+            "success_rate": self._stats.success_rate,
+            "avg_processing_time_ms": self._stats.avg_processing_time * 1000,
+            "last_processed_at": self._stats.last_processed_at,
+            "last_failed_at": self._stats.last_failed_at,
+            "uptime_seconds": time.time() - self._mount_time if self._initialized else 0,
         }
-
-    # ─── Configuration ────────────────────────────────────────────────────────
 
     @property
     def priority(self) -> int:
@@ -251,8 +244,6 @@ class BaseLayer:
         """Check if layer is initialized."""
         return self._initialized
 
-    # ─── Compatibility ────────────────────────────────────────────────────────
-
     async def initialize(self) -> bool:
         """
         Compatibility: initialize layer.
@@ -269,12 +260,8 @@ class BaseLayer:
         Default implementation is a no-op since unmount() handles cleanup.
         Override if custom cleanup logic is needed.
         """
-        pass
 
     def __repr__(self) -> str:
         return (
-            f'{self.__class__.__name__}('
-            f'name={self.layer_name!r}, '
-            f'priority={self._priority}, '
-            f'enabled={self._enabled})'
+            f"{self.__class__.__name__}(name={self.layer_name!r}, priority={self._priority}, enabled={self._enabled})"
         )

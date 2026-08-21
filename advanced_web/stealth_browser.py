@@ -11,29 +11,58 @@ Returns dict with: url, content, title, links, status, js_rendered
 F1: Content is NFC-normalized before returning for accurate pattern matching
     on Unicode text (100× faster via Rust nfc_normalize).
 """
+
 import asyncio
 import logging
 import os
 import secrets
 from typing import Any
-from hledac.universal.utils.asyncx import parallel
-from hledac.universal.transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
+
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
 from hledac.universal.transport.session_pool import session_pool
+from hledac.universal.utils.asyncx import parallel
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
+
 class MemoryPressureError(Exception):
     """Raised when system RSS exceeds the browser launch threshold."""
-    pass
+
+
 logger = logging.getLogger(__name__)
 _MAX_CONCURRENT_TABS = 2
-from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from _core import aclose
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
 _semaphore = get_semaphore(ConcurrencyCategory.JS_RENDERER)
-_CHROME_UAS = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36']
-_TLS_FINGERPRINT_PAIRS: list[tuple[str, str]] = [('Chrome/126', 'chrome120'), ('Chrome/125', 'chrome120'), ('Chrome/124', 'chrome120'), ('Chrome/123', 'chrome120'), ('Chrome/122', 'chrome120'), ('Safari/605', 'safari17_0')]
-_TLS_FALLBACK_IMPERSONATE = 'chrome120'
+_CHROME_UAS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+]
+_TLS_FINGERPRINT_PAIRS: list[tuple[str, str]] = [
+    ("Chrome/126", "chrome120"),
+    ("Chrome/125", "chrome120"),
+    ("Chrome/124", "chrome120"),
+    ("Chrome/123", "chrome120"),
+    ("Chrome/122", "chrome120"),
+    ("Safari/605", "safari17_0"),
+]
+_TLS_FALLBACK_IMPERSONATE = "chrome120"
 _TLS_IMPERSONATE_AVAILABLE: bool | None = None
 
 # F1: Text norm wiring - lazy import for NFC normalization
@@ -47,6 +76,7 @@ def _get_text_norm():
     if _text_norm_nfc is None:
         try:
             from rust_extensions.wiring.text_norm_wiring import nfc_normalize as _nfc
+
             _text_norm_nfc = _nfc
         except Exception:
             _text_norm_nfc = None
@@ -59,6 +89,7 @@ def _get_text_norm_batch():
     if _text_norm_batch is None:
         try:
             from rust_extensions.wiring.text_norm_wiring import batch_nfc_normalize_fast as _batch
+
             _text_norm_batch = _batch
         except Exception:
             _text_norm_batch = None
@@ -86,6 +117,7 @@ def _normalize_content(text: str) -> str:
         return text
     try:
         import unicodedata
+
         return unicodedata.normalize("NFC", text)
     except Exception:
         return text
@@ -123,6 +155,7 @@ def _normalize_contents_batch(texts: list[str]) -> list[str]:
     # Fallback: per-item normalization
     return [_normalize_content(t) for t in texts]
 
+
 def _pick_fingerprint_pair() -> tuple[str, str]:
     """Pick a random (UA, curl_cffi impersonate) pair.
 
@@ -137,6 +170,7 @@ def _pick_fingerprint_pair() -> tuple[str, str]:
             break
     return (ua, impersonate)
 
+
 def _is_curl_cffi_available() -> bool:
     """Lazy check whether curl_cffi is importable in the current env.
 
@@ -148,12 +182,16 @@ def _is_curl_cffi_available() -> bool:
         return _TLS_IMPERSONATE_AVAILABLE
     try:
         from importlib import util as _importlib_util
-        _TLS_IMPERSONATE_AVAILABLE = _importlib_util.find_spec('curl_cffi') is not None
-    except (ImportError, ValueError):
+
+        _TLS_IMPERSONATE_AVAILABLE = _importlib_util.find_spec("curl_cffi") is not None
+    except ImportError, ValueError:
         _TLS_IMPERSONATE_AVAILABLE = False
     return _TLS_IMPERSONATE_AVAILABLE
 
-async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: str, timeout: float) -> tuple[int, str] | None:
+
+async def _fetch_with_curl_cffi_async(
+    url: str, user_agent: str, impersonate: str, timeout: float
+) -> tuple[int, str] | None:
     """Async curl_cffi fetch via canonical session cache — returns (status, html) or None.
 
     Uses ``transport/curl_cffi_fetch.async_get_curl_cffi_session_for_host()``
@@ -167,31 +205,38 @@ async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: st
     try:
         from hledac.universal.transport.curl_cffi_fetch import (
             async_get_curl_cffi_session_for_host,
-    )
+        )
+
         ok, session, _used_profile, _host = await async_get_curl_cffi_session_for_host(
-            url, impersonate,
-    )
+            url,
+            impersonate,
+        )
         if not ok or session is None:
             return None
         response = await session.get(
             url,
-            headers={'User-Agent': user_agent},
+            headers={"User-Agent": user_agent},
             timeout=timeout,
             allow_redirects=True,
-    )
+        )
         return (response.status_code, response.text)
     except OSError as e:
-        logger.debug(f'curl_cffi fetch failed for {url}: {e}')
+        logger.debug(f"curl_cffi fetch failed for {url}: {e}")
         return None
+
+
 _FETCH_TIMEOUT = 30
+
 
 def _rss_gib() -> float:
     """Return current process RSS in GiB, or 0.0 on any error (fail-soft)."""
     try:
         import psutil
-        return psutil.Process(os.getpid()).memory_info().rss / 1024 ** 3
+
+        return psutil.Process(os.getpid()).memory_info().rss / 1024**3
     except OSError:
         return 0.0
+
 
 def _check_browser_memory_pressure() -> None:
     """Raise MemoryPressureError if RSS exceeds HLEDAC_BROWSER_MEM_THRESHOLD_GIB.
@@ -202,12 +247,15 @@ def _check_browser_memory_pressure() -> None:
     not parseable.
     """
     try:
-        threshold = float(os.environ.get('HLEDAC_BROWSER_MEM_THRESHOLD_GIB', '1.0'))
-    except (ValueError, TypeError):
+        threshold = float(os.environ.get("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", "1.0"))
+    except ValueError, TypeError:
         threshold = 1.0
     rss = _rss_gib()
     if rss > threshold > 0:
-        raise MemoryPressureError(f'Browser launch blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB (HLEDAC_BROWSER_MEM_THRESHOLD_GIB). Free memory before launching browser.')
+        raise MemoryPressureError(
+            f"Browser launch blocked: RSS={rss:.2f} GiB > threshold={threshold:.2f} GiB (HLEDAC_BROWSER_MEM_THRESHOLD_GIB). Free memory before launching browser."
+        )
+
 
 class StealthBrowser:
     """
@@ -215,9 +263,10 @@ class StealthBrowser:
 
     Falls back to httpx + BeautifulSoup if nodriver unavailable.
     """
-    __slots__ = tuple(('_nodriver_available', '_session', 'respect_robots_txt'))
 
-    def __init__(self, respect_robots_txt: bool=True):
+    __slots__ = ("_nodriver_available", "_session", "respect_robots_txt")
+
+    def __init__(self, respect_robots_txt: bool = True) -> None:
         self.respect_robots_txt = respect_robots_txt
         self._nodriver_available = self._check_nodriver()
         self._session = None
@@ -226,13 +275,14 @@ class StealthBrowser:
         """Check if nodriver is available."""
         try:
             from importlib import util as _importlib_util
-            _importlib_util.find_spec('nodriver')
+
+            _importlib_util.find_spec("nodriver")
             return True
-        except (ImportError, ValueError):
-            logger.debug('nodriver not available, using httpx fallback')
+        except ImportError, ValueError:
+            logger.debug("nodriver not available, using httpx fallback")
             return False
 
-    async def fetch(self, url: str, depth: int=1, extract_structured: bool=True) -> dict[str, Any]:
+    async def fetch(self, url: str, depth: int = 1, extract_structured: bool = True) -> dict[str, Any]:
         """
         Fetch URL with optional same-domain crawl depth.
 
@@ -253,16 +303,16 @@ class StealthBrowser:
                     return await self._crawl(url, depth, extract_structured)
                 return await self._fetch_single(url, extract_structured)
         except Exception as e:
-            logger.error(f'StealthBrowser.fetch failed for {url}: {e}')
+            logger.error(f"StealthBrowser.fetch failed for {url}: {e}")
             return self._error_result(url, str(e))
 
-    async def _fetch_single(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
+    async def _fetch_single(self, url: str, extract_structured: bool = True) -> dict[str, Any]:
         """Fetch single URL."""
         if self._nodriver_available:
             return await self._fetch_nodriver(url, extract_structured)
         return await self._fetch_httpx(url, extract_structured)
 
-    async def _fetch_nodriver(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
+    async def _fetch_nodriver(self, url: str, extract_structured: bool = True) -> dict[str, Any]:
         """Fetch using nodriver CDP via BrowserPool (F-02).
 
         BrowserPool eliminates the ~1.5-2 s Chromium cold-start penalty by
@@ -287,12 +337,19 @@ class StealthBrowser:
             js_rendered = True
             # F1: NFC normalize content before pattern matching
             content = _normalize_content(content)
-            result: dict[str, Any] = {'url': url, 'content': content, 'title': title or '', 'links': links, 'status': status, 'js_rendered': js_rendered}
+            result: dict[str, Any] = {
+                "url": url,
+                "content": content,
+                "title": title or "",
+                "links": links,
+                "status": status,
+                "js_rendered": js_rendered,
+            }
             if extract_structured:
                 _attach_structured(result, content, url)
             return result
         except Exception as e:
-            logger.warning(f'nodriver fetch failed for {url}: {e}')
+            logger.warning(f"nodriver fetch failed for {url}: {e}")
             return await self._fetch_httpx(url, extract_structured)
         finally:
             await aclose(tab)
@@ -302,7 +359,7 @@ class StealthBrowser:
                 except Exception:  # noqa: BLE001
                     pass
 
-    async def _fetch_httpx(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
+    async def _fetch_httpx(self, url: str, extract_structured: bool = True) -> dict[str, Any]:
         """Fallback fetch using httpx + selectolax/regex.
 
         ISSUE-043 FIX: Uses async httpx.AsyncClient via session_pool.
@@ -316,16 +373,15 @@ class StealthBrowser:
         G1 FIX: beautifulsoup4 REMOVED — uses selectolax or regex fallback.
         """
         _ = extract_structured
-        import httpx
-        import re
         from urllib.parse import urlparse
+
         ua, _impersonate = _pick_fingerprint_pair()
-        headers = {'User-Agent': ua}
+        headers = {"User-Agent": ua}
         domain = urlparse(url).netloc
         decision = domain_breaker_check(domain)
         if not decision.allowed:
-            logger.debug(f'_fetch_httpx skipped (CB open) for {url}')
-            return self._error_result(url, f'circuit_breaker_open:{decision.reason}')
+            logger.debug(f"_fetch_httpx skipped (CB open) for {url}")
+            return self._error_result(url, f"circuit_breaker_open:{decision.reason}")
         try:
             curl_cffi_result: tuple[int, str] | None = None
             if _is_curl_cffi_available():
@@ -339,17 +395,23 @@ class StealthBrowser:
                 status = response.status_code
                 html = response.text
                 domain_breaker_record_success(domain)
-            # Extract title and links using selectolax or regex
             title, links = self._extract_title_and_links(html)
             # F1: NFC normalize content before pattern matching
             html = _normalize_content(html)
-            result: dict[str, Any] = {'url': url, 'content': html, 'title': title or '', 'links': links, 'status': status, 'js_rendered': False}
+            result: dict[str, Any] = {
+                "url": url,
+                "content": html,
+                "title": title or "",
+                "links": links,
+                "status": status,
+                "js_rendered": False,
+            }
             if extract_structured:
                 _attach_structured(result, html, url)
             return result
         except Exception as e:
-            domain_breaker_record_failure(domain, failure_kind=f'{type(e).__name__}')
-            logger.warning(f'httpx fetch failed for {url}: {e}')
+            domain_breaker_record_failure(domain, failure_kind=f"{type(e).__name__}")
+            logger.warning(f"httpx fetch failed for {url}: {e}")
             return self._error_result(url, str(e))
 
     def _extract_title_and_links(self, html: str) -> tuple[str, list[str]]:
@@ -359,24 +421,26 @@ class StealthBrowser:
         Returns (title, list of http links).
         """
         import re
-        title = ''
+
+        title = ""
         links: list[str] = []
         # Try selectolax first
         try:
             from selectolax.parser import HTMLParser as _Parser
+
             tree = _Parser(html)
-            title_tag = tree.css_first('title')
-            title = title_tag.text(strip=True) if title_tag else ''
-            for a in tree.css('a[href]'):
-                href = a.attributes.get('href', '')
-                if isinstance(href, str) and href.startswith('http'):
+            title_tag = tree.css_first("title")
+            title = title_tag.text(strip=True) if title_tag else ""
+            for a in tree.css("a[href]"):
+                href = a.attributes.get("href", "")
+                if isinstance(href, str) and href.startswith("http"):
                     links.append(href)
             return title, links
         except ImportError:
             pass
         # Fallback: regex-only (stdlib)
-        title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
-        title = title_match.group(1).strip() if title_match else ''
+        title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+        title = title_match.group(1).strip() if title_match else ""
         link_pattern = re.compile(r'<a[^>]+href=["\'](https?://[^"\']+)["\']', re.IGNORECASE)
         links = list(set(link_pattern.findall(html)))
         return title, links
@@ -385,32 +449,35 @@ class StealthBrowser:
         """Extract same-domain links from nodriver tab."""
         try:
             from urllib.parse import urlparse
+
             parsed_base = urlparse(base_url)
             base_domain = parsed_base.netloc
-            links = await tab.evaluate("\n                Array.from(document.querySelectorAll('a[href]'))\n                    .map(a => a.href)\n                    .filter(href => href.startsWith('http'))\n            ")
+            links = await tab.evaluate(
+                "\n                Array.from(document.querySelectorAll('a[href]'))\n                    .map(a => a.href)\n                    .filter(href => href.startsWith('http'))\n            "
+            )
             same_domain = [link for link in links if urlparse(link).netloc == base_domain]
             return list(set(same_domain))[:50]
         except Exception as e:
-            logger.debug(f'Link extraction failed: {e}')
+            logger.debug(f"Link extraction failed: {e}")
             return []
 
-    async def _crawl(self, url: str, depth: int, extract_structured: bool=True) -> dict[str, Any]:
+    async def _crawl(self, url: str, depth: int, extract_structured: bool = True) -> dict[str, Any]:
         """Crawl URL with same-domain link following."""
         visited: set[str] = set()
         content_parts: list[str] = []
         all_links: set[str] = set()
         all_entities: list[dict[str, Any]] = []
 
-        async def crawl_page(current_url: str, current_depth: int):
+        async def crawl_page(current_url: str, current_depth: int) -> None:
             if current_depth > depth or current_url in visited:
                 return
             visited.add(current_url)
             result = await self._fetch_single(current_url, extract_structured)
-            if result.get('status') == 200:
+            if result.get("status") == 200:
                 content_parts.append(f"\n\n<!-- From: {current_url} -->\n{result.get('content', '')}")
-                all_links.update(result.get('links', []))
+                all_links.update(result.get("links", []))
                 if extract_structured:
-                    all_entities.extend(result.get('structured_entities', []))
+                    all_entities.extend(result.get("structured_entities", []))
                 if current_depth < depth:
                     tasks = []
                     for link in list(all_links)[:10]:
@@ -418,34 +485,43 @@ class StealthBrowser:
                             tasks.append(crawl_page(link, current_depth + 1))
                     if tasks:
                         await parallel(tasks, policy="log", ctx="stealth_browser:373")
+
         try:
             await crawl_page(url, 1)
         except Exception as e:
-            logger.error(f'Crawl failed: {e}')
-        combined = '\n'.join(content_parts)
+            logger.error(f"Crawl failed: {e}")
+        combined = "\n".join(content_parts)
         # F1: NFC normalize combined content before pattern matching
         combined = _normalize_content(combined)
-        result_dict: dict[str, Any] = {'url': url, 'content': combined, 'title': f'Crawled: {url}', 'links': list(all_links), 'status': 200 if content_parts else 0, 'js_rendered': self._nodriver_available}
+        result_dict: dict[str, Any] = {
+            "url": url,
+            "content": combined,
+            "title": f"Crawled: {url}",
+            "links": list(all_links),
+            "status": 200 if content_parts else 0,
+            "js_rendered": self._nodriver_available,
+        }
         if extract_structured:
-            result_dict['structured_entities'] = all_entities
+            result_dict["structured_entities"] = all_entities
         return result_dict
 
     def _error_result(self, url: str, error: str) -> dict[str, Any]:
         """Return error result dict."""
-        return {'url': url, 'content': '', 'title': '', 'links': [], 'status': 0, 'js_rendered': False, 'error': error}
+        return {"url": url, "content": "", "title": "", "links": [], "status": 0, "js_rendered": False, "error": error}
 
     async def cleanup(self) -> None:
         """Cleanup browser resources. Defensive: _session may be None or have
         no async close — guard with hasattr and run_in_executor for sync close.
         """
-        session = getattr(self, '_session', None)
+        session = getattr(self, "_session", None)
         if session is None:
             return
         try:
-            close_fn = getattr(session, 'close', None)
+            close_fn = getattr(session, "close", None)
             if close_fn is None:
                 return
             import inspect
+
             if inspect.iscoroutinefunction(close_fn):
                 await close_fn()
             else:
@@ -454,6 +530,7 @@ class StealthBrowser:
             pass
         finally:
             self._session = None
+
 
 def _attach_structured(result: dict[str, Any], content: str, url: str) -> None:
     """Run StructuredExtractor on fetched HTML and attach to result dict.
@@ -467,19 +544,47 @@ def _attach_structured(result: dict[str, Any], content: str, url: str) -> None:
     Bounded, fail-soft: any exception → empty result + warning log.
     """
     if not content:
-        result.setdefault('structured_entities', [])
-        result.setdefault('structured_relations', [])
-        result.setdefault('structured_meta', {'jsonld_blocks': 0, 'microdata_blocks': 0, 'rdfa_blocks': 0, 'bytes': 0, 'truncated': False, 'extractor_available': False})
+        result.setdefault("structured_entities", [])
+        result.setdefault("structured_relations", [])
+        result.setdefault(
+            "structured_meta",
+            {
+                "jsonld_blocks": 0,
+                "microdata_blocks": 0,
+                "rdfa_blocks": 0,
+                "bytes": 0,
+                "truncated": False,
+                "extractor_available": False,
+            },
+        )
         return
     try:
         from .structured_extractor import StructuredExtractor, entity_to_dict, relation_to_dict
+
         extractor = StructuredExtractor()
         extraction = extractor.extract(content, source_url=url)
-        result['structured_entities'] = [entity_to_dict(e) for e in extraction.entities]
-        result['structured_relations'] = [relation_to_dict(r) for r in extraction.relations]
-        result['structured_meta'] = {'jsonld_blocks': extraction.jsonld_blocks, 'microdata_blocks': extraction.microdata_blocks, 'rdfa_blocks': extraction.rdfa_blocks, 'bytes': extraction.bytes_processed, 'truncated': extraction.truncated, 'extractor_available': True}
+        result["structured_entities"] = [entity_to_dict(e) for e in extraction.entities]
+        result["structured_relations"] = [relation_to_dict(r) for r in extraction.relations]
+        result["structured_meta"] = {
+            "jsonld_blocks": extraction.jsonld_blocks,
+            "microdata_blocks": extraction.microdata_blocks,
+            "rdfa_blocks": extraction.rdfa_blocks,
+            "bytes": extraction.bytes_processed,
+            "truncated": extraction.truncated,
+            "extractor_available": True,
+        }
     except Exception as e:
-        logger.warning(f'StructuredExtractor failed for {url}: {e}')
-        result.setdefault('structured_entities', [])
-        result.setdefault('structured_relations', [])
-        result.setdefault('structured_meta', {'jsonld_blocks': 0, 'microdata_blocks': 0, 'rdfa_blocks': 0, 'bytes': 0, 'truncated': False, 'extractor_available': False})
+        logger.warning(f"StructuredExtractor failed for {url}: {e}")
+        result.setdefault("structured_entities", [])
+        result.setdefault("structured_relations", [])
+        result.setdefault(
+            "structured_meta",
+            {
+                "jsonld_blocks": 0,
+                "microdata_blocks": 0,
+                "rdfa_blocks": 0,
+                "bytes": 0,
+                "truncated": False,
+                "extractor_available": False,
+            },
+        )

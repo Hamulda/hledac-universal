@@ -63,16 +63,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, TypeVar
-from _core import aclose
+
 from hledac.universal.runtime.worker_pool import get_rayon_channels
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# ---------------------------------------------------------------------------
-# MODERN-04: Safety net wrapper for rayon handles
-# ---------------------------------------------------------------------------
 
 class RayonHandle:
     """Safety net wrapper for rayon handle.
@@ -109,6 +106,7 @@ class RayonHandle:
 
         try:
             from hledac.universal._core.rust_backend import rust
+
             rust.raw.rayon_drop_channel(self._handle)
             self._dropped = True
         except Exception:  # noqa: BLE001
@@ -126,15 +124,12 @@ class RayonHandle:
             return
         try:
             from hledac.universal._core.rust_backend import rust
+
             rust.raw.rayon_drop_channel(self._handle)
             self._dropped = True
         except Exception:  # noqa: BLE001
             pass
 
-
-# ---------------------------------------------------------------------------
-# Lazy availability check — cached after first call
-# ---------------------------------------------------------------------------
 
 _RAYON_CHANNEL_AVAILABLE: bool | None = None
 
@@ -146,18 +141,18 @@ def _check_rayon_channel() -> bool:
         return _RAYON_CHANNEL_AVAILABLE
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     raw = rust.raw
-    if raw.rayon_submit_channel is not None and raw.rayon_join_channel is not None and raw.rayon_abort_channel is not None:
+    if (
+        raw.rayon_submit_channel is not None
+        and raw.rayon_join_channel is not None
+        and raw.rayon_abort_channel is not None
+    ):
         _RAYON_CHANNEL_AVAILABLE = True
     else:
         logger.debug("rayon_channel: hledac_rust_extensions not available, using fallback")
         _RAYON_CHANNEL_AVAILABLE = False
     return _RAYON_CHANNEL_AVAILABLE
-
-
-# ---------------------------------------------------------------------------
-# Core dispatch — submit + join with cancel-aware abort
-# ---------------------------------------------------------------------------
 
 
 async def dispatch_rayon(
@@ -193,10 +188,6 @@ async def dispatch_rayon(
 
     loop = asyncio.get_running_loop()
 
-    # Phase 1: Submit to rayon pool via channel
-    # This must run with GIL held (PyO3), so we use asyncio.to_thread.
-    # The submit itself is ~5μs — negligible.
-
     # R6: Centralized Rust access via core.rust_backend
     channels = get_rayon_channels()
     rayon_submit_channel = channels.submit
@@ -208,12 +199,6 @@ async def dispatch_rayon(
         return rayon_submit_channel(pool_type, n_items, fn, args)
 
     handle: int = await asyncio.to_thread(_submit)
-
-    # Phase 2: Join — wait for result with optional timeout
-    # rayon_join_channel uses py.detach() which releases the GIL during
-    # the condvar wait, so this is truly non-blocking for the event loop.
-    # We use run_in_executor with a dedicated thread so the join's
-    # GIL-held preamble (acquiring the mutex) doesn't stall the loop.
 
     def _join(h: int) -> Any:
         return rayon_join_channel(h, timeout)
@@ -233,7 +218,7 @@ async def dispatch_rayon(
         else:
             async with asyncio.timeout(timeout):
                 return await loop.run_in_executor(None, _join, handle)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Abort the rayon task on timeout
         try:
             await asyncio.to_thread(rayon_abort_channel, handle)
@@ -256,11 +241,6 @@ async def dispatch_rayon(
             await asyncio.to_thread(_drop, handle)
         except Exception:  # noqa: BLE001
             pass  # Best-effort — auto-release via capsule destructor handles this
-
-
-# ---------------------------------------------------------------------------
-# Typed convenience dispatchers
-# ---------------------------------------------------------------------------
 
 
 async def dispatch_cpu(
@@ -316,11 +296,6 @@ async def dispatch_mixed(
         result = await dispatch_mixed(len(texts), ioc_extract_batch, texts)
     """
     return await dispatch_rayon("mixed", fn, *args, timeout=timeout, n_items=n_items)
-
-
-# ---------------------------------------------------------------------------
-# Batch helpers — common patterns
-# ---------------------------------------------------------------------------
 
 
 async def dispatch_cpu_batch(

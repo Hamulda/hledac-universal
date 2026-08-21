@@ -13,38 +13,46 @@ Funkce:
 
 Migrated from networkx to native Python DAG (Issue #28).
 """
+
 import asyncio
 import inspect
 import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
+
 from .async_helpers import parallel_ok
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class TaskType(Enum):
     """Typy úkolů"""
-    NORMAL = 'normal'
-    CONDITIONAL = 'conditional'
-    LOOP = 'loop'
-    PARALLEL = 'parallel'
+
+    NORMAL = "normal"
+    CONDITIONAL = "conditional"
+    LOOP = "loop"
+    PARALLEL = "parallel"
+
 
 class TaskStatus(Enum):
     """Stavy úkolů"""
-    PENDING = 'pending'
-    RUNNING = 'running'
-    COMPLETED = 'completed'
-    FAILED = 'failed'
-    SKIPPED = 'skipped'
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
 
 class Task(Struct):
     """Úkol ve workflow"""
+
     id: str
     name: str
     task_type: TaskType = TaskType.NORMAL
@@ -93,8 +101,10 @@ class Task(Struct):
             return self.end_time - self.start_time
         return None
 
+
 class Workflow(Struct, frozen=True):
     """Workflow definice"""
+
     id: str
     name: str
     tasks: dict[str, Task] = field(default_factory=dict)
@@ -109,6 +119,7 @@ class Workflow(Struct, frozen=True):
         if task_id in self.tasks:
             self.tasks[task_id].dependencies.append(depends_on)
 
+
 class WorkflowEngine:
     """
     Engine pro DAG-based workflow execution.
@@ -120,9 +131,10 @@ class WorkflowEngine:
     - Retry s exponential backoff
     - Podmíněné a smyčkové úkoly
     """
-    __slots__ = tuple(('_execution_history', 'max_concurrency'))
 
-    def __init__(self, max_concurrency: int=5):
+    __slots__ = ("_execution_history", "max_concurrency")
+
+    def __init__(self, max_concurrency: int = 5) -> None:
         self.max_concurrency = max_concurrency
         self._execution_history: deque[dict[str, Any]] = deque(maxlen=512)
 
@@ -139,16 +151,16 @@ class WorkflowEngine:
         try:
             dag = self._build_dag(workflow)
             if not self._is_dag(dag):
-                logger.error('Workflow contains cycles')
+                logger.error("Workflow contains cycles")
                 return False
             for task in workflow.tasks.values():
                 for dep in task.dependencies:
                     if dep not in workflow.tasks:
-                        logger.error(f'Task {task.id} depends on non-existent task {dep}')
+                        logger.error(f"Task {task.id} depends on non-existent task {dep}")
                         return False
             return True
         except Exception as e:
-            logger.error(f'Validation failed: {e}')
+            logger.error(f"Validation failed: {e}")
             return False
 
     def _build_dag(self, workflow: Workflow) -> dict[str, list[str]]:
@@ -160,7 +172,7 @@ class WorkflowEngine:
 
     def _is_dag(self, dag: dict[str, list[str]]) -> bool:
         """Kontrolovat cykly pomocí Kahn's algorithm."""
-        in_degree: dict[str, int] = {n: 0 for n in dag}
+        in_degree: dict[str, int] = dict.fromkeys(dag, 0)
         for node in dag:
             for dep in dag[node]:
                 in_degree[dep] += 1
@@ -177,7 +189,7 @@ class WorkflowEngine:
 
     def _topological_sort(self, dag: dict[str, list[str]]) -> list[str]:
         """Topologické řazení pomocí Kahn's algorithm."""
-        in_degree: dict[str, int] = {n: 0 for n in dag}
+        in_degree: dict[str, int] = dict.fromkeys(dag, 0)
         for node in dag:
             for dep in dag[node]:
                 in_degree[dep] += 1
@@ -192,7 +204,7 @@ class WorkflowEngine:
                     queue.append(dep)
         return result
 
-    async def execute(self, workflow: Workflow, on_task_complete: Callable | None=None) -> dict[str, Any]:
+    async def execute(self, workflow: Workflow, on_task_complete: Callable | None = None) -> dict[str, Any]:
         """
         Vykonat workflow.
 
@@ -204,14 +216,14 @@ class WorkflowEngine:
             Výsledky všech úkolů
         """
         if not self.validate(workflow):
-            raise ValueError('Invalid workflow')
-        logger.info(f'Executing workflow: {workflow.name}')
+            raise ValueError("Invalid workflow")
+        logger.info(f"Executing workflow: {workflow.name}")
         dag = self._build_dag(workflow)
         execution_order = self._topological_sort(dag)
-        logger.info(f'Execution order: {execution_order}')
+        logger.info(f"Execution order: {execution_order}")
         levels = self._group_by_levels(dag, execution_order)
         for level_idx, level_tasks in enumerate(levels):
-            logger.info(f'Executing level {level_idx + 1}/{len(levels)}: {len(level_tasks)} tasks')
+            logger.info(f"Executing level {level_idx + 1}/{len(levels)}: {len(level_tasks)} tasks")
             semaphore = asyncio.Semaphore(self.max_concurrency)
 
             async def run_task(task_id: str) -> None:
@@ -221,17 +233,18 @@ class WorkflowEngine:
                     except Exception as e:
                         workflow.tasks[task_id].error = str(e)
                         workflow.tasks[task_id].status = TaskStatus.FAILED
-                        logger.error(f'Task {task_id} permanently failed: {e}')
-            results = await parallel_ok(*[run_task(tid) for tid in level_tasks], label='workflow_engine:242')
+                        logger.error(f"Task {task_id} permanently failed: {e}")
+
+            results = await parallel_ok(*[run_task(tid) for tid in level_tasks], label="workflow_engine:242")
             for tid, result in zip(level_tasks, results, strict=False):
                 if isinstance(result, Exception):
-                    logger.error(f'Task {tid} unexpected exception: {result}')
+                    logger.error(f"Task {tid} unexpected exception: {result}")
             if on_task_complete:
                 for tid in level_tasks:
                     task = workflow.tasks[tid]
                     on_task_complete(task)
         results = {tid: task.result for tid, task in workflow.tasks.items()}
-        logger.info(f'Workflow completed: {workflow.name}')
+        logger.info(f"Workflow completed: {workflow.name}")
         return results
 
     def _group_by_levels(self, dag: dict[str, list[str]], execution_order: list[str]) -> list[list[str]]:
@@ -251,7 +264,7 @@ class WorkflowEngine:
                 if deps <= completed:
                     ready.append(task_id)
             if not ready:
-                raise ValueError('Cannot resolve dependencies')
+                raise ValueError("Cannot resolve dependencies")
             levels.append(ready)
             completed.update(ready)
             remaining -= set(ready)
@@ -265,16 +278,16 @@ class WorkflowEngine:
             try:
                 self._resolve_params(task.params, workflow.context)
                 result = await task.execute(workflow.context)
-                workflow.context[f'{task_id}_result'] = result
-                logger.info(f'Task {task_id} completed')
+                workflow.context[f"{task_id}_result"] = result
+                logger.info(f"Task {task_id} completed")
                 return
             except Exception as e:
-                logger.warning(f'Task {task_id} failed (attempt {task.attempts}): {e}')
+                logger.warning(f"Task {task_id} failed (attempt {task.attempts}): {e}")
                 if task.attempts >= task.max_retries:
-                    logger.error(f'Task {task_id} failed after {task.max_retries} attempts')
+                    logger.error(f"Task {task_id} failed after {task.max_retries} attempts")
                     raise
                 delay = task.retry_delay * 2 ** (task.attempts - 1)
-                logger.info(f'Retrying in {delay}s...')
+                logger.info(f"Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
     def _resolve_params(self, params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -285,9 +298,9 @@ class WorkflowEngine:
         """
         resolved = {}
         for key, value in params.items():
-            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
                 ref = value[2:-1]
-                parts = ref.split('.')
+                parts = ref.split(".")
                 val = context.get(parts[0])
                 for part in parts[1:]:
                     if isinstance(val, dict):

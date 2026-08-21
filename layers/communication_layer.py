@@ -8,6 +8,7 @@ This module is DEPRECATED. Import from `layers.communication` instead:
 
 This file exists for backward compatibility only and will be removed in a future version.
 """
+
 import warnings
 
 # Deprecation warning for direct imports
@@ -19,19 +20,19 @@ warnings.warn(
 
 # Re-export from consolidated module
 from layers.communication import (
+    CleaningResult,
     CommunicationLayer,
     ContentCleaner,
-    SimpleHTMLCleaner,
-    OutputFormat,
-    CleaningResult,
     InMemoryMessageBroker,
+    OutputFormat,
+    SimpleHTMLCleaner,
 )
 
 __all__ = [
-    'CommunicationLayer',
-    'ContentCleaner',
-    'SimpleHTMLCleaner',
-    'OutputFormat',
-    'CleaningResult',
-    'InMemoryMessageBroker',
+    "CommunicationLayer",
+    "ContentCleaner",
+    "SimpleHTMLCleaner",
+    "OutputFormat",
+    "CleaningResult",
+    "InMemoryMessageBroker",
 ]

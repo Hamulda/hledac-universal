@@ -10,12 +10,11 @@ Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 import msgspec
-from _core import aclose
 
 from compat.msgspec_gc_compat import Struct
 
@@ -27,6 +26,7 @@ def _utc_now() -> datetime:
 
 class TestType(Enum):
     """Types of tests that can be designed and executed."""
+
     EXISTENCE_CHECK = "existence_check"
     CORRELATION_TEST = "correlation_test"
     CAUSAL_TEST = "causal_test"
@@ -38,6 +38,7 @@ class TestType(Enum):
 
 class TestResult(Struct):
     """Result of executing a test against a hypothesis."""
+
     test_type: str
     result: str  # passed, failed, inconclusive
     confidence: float
@@ -52,6 +53,7 @@ class TestResult(Struct):
 
 class TestDesign(Struct):
     """Design for testing a hypothesis."""
+
     test_type: str
     description: str
     required_data: list[str] = msgspec.field(default_factory=list)
@@ -63,6 +65,7 @@ class TestDesign(Struct):
 
 class FalsificationResult(Struct):
     """Result of a falsification attempt."""
+
     falsified: bool
     confidence: float
     counter_evidence: list[str] = msgspec.field(default_factory=list)

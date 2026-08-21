@@ -56,24 +56,24 @@ class TestDecisionMatrix:
             ("safetensors.kv_cache", StorageKind.STRING),
         ],
     )
-    def test_classify_exact(self, data_kind, expected_kind):
+    def test_classify_exact(self, data_kind, expected_kind) -> None:
         policy = _classify(data_kind)
         assert policy.kind == expected_kind, f"{data_kind} → {policy.kind}, expected {expected_kind}"
 
-    def test_classify_glob_float16(self):
+    def test_classify_glob_float16(self) -> None:
         policy = _classify("embedding.float16[512]")
         assert policy.kind == StorageKind.HOT
 
-    def test_classify_glob_float32(self):
+    def test_classify_glob_float32(self) -> None:
         policy = _classify("embedding.float32[2048]")
         assert policy.kind == StorageKind.WARM
 
-    def test_classify_default(self):
+    def test_classify_default(self) -> None:
         policy = _classify("unknown.data.type")
         assert policy.kind == StorageKind.COLD  # default is COLD
 
-    def test_all_matrix_keys_have_valid_policy(self):
-        for key, policy in _DECISION_MATRIX.items():
+    def test_all_matrix_keys_have_valid_policy(self) -> None:
+        for _key, policy in _DECISION_MATRIX.items():
             assert isinstance(policy, StoragePolicy)
             assert isinstance(policy.kind, StorageKind)
             assert policy.max_bytes > 0
@@ -85,38 +85,38 @@ class TestDecisionMatrix:
 
 
 class TestStoragePolicy:
-    def test_policy_frozen(self):
+    def test_policy_frozen(self) -> None:
         policy = _DECISION_MATRIX["embedding.float16[256]"]
         # msgspec.Struct with frozen=True is immutable — assignment raises AttributeError
         with pytest.raises(AttributeError):
             policy.kind = StorageKind.COLD
 
-    def test_policy_slots(self):
+    def test_policy_slots(self) -> None:
         policy = _DECISION_MATRIX["embedding.float16[256]"]
         # slots=True means __dict__ is empty
         assert not hasattr(policy, "__dict__") or len(policy.__dict__) == 0
 
-    def test_spill_target_hot(self):
+    def test_spill_target_hot(self) -> None:
         policy = _DECISION_MATRIX["embedding.float16[256]"]
         assert policy.spill_target == StorageKind.WARM
 
-    def test_spill_target_float32(self):
+    def test_spill_target_float32(self) -> None:
         policy = _DECISION_MATRIX["embedding.float32[768]"]
         assert policy.spill_target is None
 
-    def test_hot_invalidates_warm(self):
+    def test_hot_invalidates_warm(self) -> None:
         assert StorageKind.WARM in _INVALIDATION_CHAIN[StorageKind.HOT]
 
-    def test_warm_invalidates_cold(self):
+    def test_warm_invalidates_cold(self) -> None:
         assert StorageKind.COLD in _INVALIDATION_CHAIN[StorageKind.WARM]
 
-    def test_cold_invalidates_kv(self):
+    def test_cold_invalidates_kv(self) -> None:
         assert StorageKind.KEYVALUE in _INVALIDATION_CHAIN[StorageKind.COLD]
 
-    def test_kv_invalidates_nothing(self):
+    def test_kv_invalidates_nothing(self) -> None:
         assert _INVALIDATION_CHAIN[StorageKind.KEYVALUE] == ()
 
-    def test_string_invalidates_nothing(self):
+    def test_string_invalidates_nothing(self) -> None:
         assert _INVALIDATION_CHAIN[StorageKind.STRING] == ()
 
 
@@ -126,25 +126,25 @@ class TestStoragePolicy:
 
 
 class TestStorageRouterBasics:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
         self.router = StorageRouter()
 
-    def test_register_backend(self):
+    def test_register_backend(self) -> None:
         mock_backend = MagicMock()
         self.router.register_backend(StorageKind.HOT, mock_backend)
         assert self.router._backends[StorageKind.HOT] is mock_backend
 
-    def test_put_without_backend_returns_false(self):
+    def test_put_without_backend_returns_false(self) -> None:
         # No backend registered — fail-safe, returns False
         result = self.router.put("key", "value", data_kind="embedding.float16[256]")
         assert result is False
 
-    def test_get_without_backend_returns_none(self):
+    def test_get_without_backend_returns_none(self) -> None:
         result = self.router.get("key", data_kind="embedding.float16[256]")
         assert result is None
 
-    def test_stats_initialized(self):
+    def test_stats_initialized(self) -> None:
         stats = self.router.get_stats()
         assert stats["puts"] == 0
         assert stats["gets"] == 0
@@ -152,11 +152,11 @@ class TestStorageRouterBasics:
         assert stats["spills"] == 0
         assert stats["invalidations"] == 0
 
-    def test_stats_incremented_on_put(self):
+    def test_stats_incremented_on_put(self) -> None:
         self.router.put("k", "v", data_kind="ioc.findings")
         assert self.router._stats["puts"] == 1
 
-    def test_stats_incremented_on_get_miss(self):
+    def test_stats_incremented_on_get_miss(self) -> None:
         self.router.get("nonexistent", data_kind="ioc.findings")
         assert self.router._stats["gets"] == 1
         assert self.router._stats["misses"] == 1
@@ -168,11 +168,11 @@ class TestStorageRouterBasics:
 
 
 class TestInvalidationChain:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
         self.router = StorageRouter()
 
-    def test_invalidation_callback_fired_on_put(self):
+    def test_invalidation_callback_fired_on_put(self) -> None:
         callback = MagicMock()
         self.router.register_invalidation_callback(StorageKind.WARM, callback)
 
@@ -186,7 +186,7 @@ class TestInvalidationChain:
 
         callback.assert_called_once_with("key", source_kind=StorageKind.HOT)
 
-    def test_invalidation_callback_fired_on_delete(self):
+    def test_invalidation_callback_fired_on_delete(self) -> None:
         callback = MagicMock()
         # COLD.delete() → fires invalidation chain → KEYVALUE subscribers notified
         self.router.register_invalidation_callback(StorageKind.KEYVALUE, callback)
@@ -198,14 +198,14 @@ class TestInvalidationChain:
 
         callback.assert_called_once_with("key", source_kind=StorageKind.COLD)
 
-    def test_no_callback_for_non_subscribed_kind(self):
+    def test_no_callback_for_non_subscribed_kind(self) -> None:
         callback = MagicMock()
         # HOT → WARM, but we subscribe COLD — no call
         self.router.register_invalidation_callback(StorageKind.COLD, callback)
         self.router.put("key", "value", data_kind="embedding.float16[256]")
         callback.assert_not_called()
 
-    def test_invalidation_propagates_through_chain(self):
+    def test_invalidation_propagates_through_chain(self) -> None:
         # WARM → invalidates COLD. Subscribe to COLD to receive the cascade notification.
         hot_callback = MagicMock()
         cold_callback = MagicMock()
@@ -225,11 +225,11 @@ class TestInvalidationChain:
 
 
 class TestGetCascade:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
         self.router = StorageRouter()
 
-    def test_get_tries_primary_first(self):
+    def test_get_tries_primary_first(self) -> None:
         mock_backend = MagicMock()
         mock_backend.get.return_value = "found"
         self.router.register_backend(StorageKind.HOT, mock_backend)
@@ -238,7 +238,7 @@ class TestGetCascade:
         assert result == "found"
         mock_backend.get.assert_called_once_with("key")
 
-    def test_get_cascades_hot_to_warm_to_cold(self):
+    def test_get_cascades_hot_to_warm_to_cold(self) -> None:
         hot_backend = MagicMock()
         hot_backend.get.return_value = None  # miss
         warm_backend = MagicMock()
@@ -257,7 +257,7 @@ class TestGetCascade:
         # COLD should NOT be called (WARM hit)
         cold_backend.get.assert_not_called()
 
-    def test_get_promotes_cross_layer_hit(self):
+    def test_get_promotes_cross_layer_hit(self) -> None:
         warm_backend = MagicMock()
         warm_backend.get.return_value = "from_warm"
 
@@ -277,7 +277,7 @@ class TestGetCascade:
         # HOT put was called to promote
         assert hot_backend.put.called or hot_backend.set.called
 
-    def test_get_all_miss_returns_none(self):
+    def test_get_all_miss_returns_none(self) -> None:
         # All backends must return None on miss
         hot = MagicMock()
         hot.get.return_value = None
@@ -300,10 +300,10 @@ class TestGetCascade:
 
 
 class TestSpillOnPressure:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
 
-    def test_spill_to_warm_on_emergency(self):
+    def test_spill_to_warm_on_emergency(self) -> None:
         """Emergency pressure → HOT policy redirects to WARM."""
         mock_governor = MagicMock()
         mock_uma = MagicMock()
@@ -324,7 +324,7 @@ class TestSpillOnPressure:
         assert not (hot_backend.put.call_count or hot_backend.set.call_count)
         assert router._stats["spills"] == 1
 
-    def test_no_spill_on_normal_state(self):
+    def test_no_spill_on_normal_state(self) -> None:
         mock_governor = MagicMock()
         mock_uma = MagicMock()
         mock_uma.uma_state = "ok"
@@ -340,7 +340,7 @@ class TestSpillOnPressure:
         assert hot_backend.put.call_count or hot_backend.set.call_count
         assert router._stats["spills"] == 0
 
-    def test_governor_unavailable_no_spill(self):
+    def test_governor_unavailable_no_spill(self) -> None:
         """No governor → no spill detection."""
         router = StorageRouter(governor=None)
         hot_backend = MagicMock()
@@ -358,11 +358,11 @@ class TestSpillOnPressure:
 
 
 class TestBackendOperations:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
         self.router = StorageRouter()
 
-    def test_backend_raises_is_caught(self):
+    def test_backend_raises_is_caught(self) -> None:
         broken_backend = MagicMock()
         broken_backend.put.side_effect = RuntimeError("backend error")
         self.router.register_backend(StorageKind.HOT, broken_backend)
@@ -370,17 +370,17 @@ class TestBackendOperations:
         result = self.router.put("key", "value", data_kind="embedding.float16[256]")
         assert result is False
 
-    def test_async_backend_set_is_called(self):
+    def test_async_backend_set_is_called(self) -> None:
         async_backend = MagicMock()
         async_backend.set = AsyncMock(return_value=True)
         self.router.register_backend(StorageKind.HOT, async_backend)
 
         # Router should detect async set and handle it
-        result = self.router.put("key", "value", data_kind="embedding.float16[256]")
+        self.router.put("key", "value", data_kind="embedding.float16[256]")
         # set() may not be called if router looks for sync put() first
         # The important thing is it doesn't raise
 
-    def test_multiple_backends_same_kind_last_wins(self):
+    def test_multiple_backends_same_kind_last_wins(self) -> None:
         first = MagicMock()
         second = MagicMock()
         router = StorageRouter()
@@ -396,10 +396,10 @@ class TestBackendOperations:
 
 
 class TestTelemetry:
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
 
-    def test_get_stats_includes_backend_stats(self):
+    def test_get_stats_includes_backend_stats(self) -> None:
         router = StorageRouter()
         mock_backend = MagicMock()
         mock_backend.get_stats.return_value = {"entries": 42, "evictions": 3}
@@ -409,7 +409,7 @@ class TestTelemetry:
         assert "backend.hot" in stats
         assert stats["backend.hot"]["entries"] == 42
 
-    def test_spill_increments_counter(self):
+    def test_spill_increments_counter(self) -> None:
         mock_governor = MagicMock()
         mock_uma = MagicMock()
         mock_uma.uma_state = "critical"
@@ -421,7 +421,7 @@ class TestTelemetry:
         router.put("key", "value", data_kind="embedding.float16[256]")
         assert router._stats["spills"] == 1
 
-    def test_invalidation_increments_counter(self):
+    def test_invalidation_increments_counter(self) -> None:
         router = StorageRouter()
         router.register_backend(StorageKind.HOT, MagicMock())
         callback = MagicMock()
@@ -438,14 +438,14 @@ class TestTelemetry:
 
 class TestAsyncSingleton:
     @pytest.mark.asyncio
-    async def test_get_storage_router_creates_singleton(self):
+    async def test_get_storage_router_creates_singleton(self) -> None:
         reset_storage_router()
         router1 = await get_storage_router()
         router2 = await get_storage_router()
         assert router1 is router2
 
     @pytest.mark.asyncio
-    async def test_reset_clears_singleton(self):
+    async def test_reset_clears_singleton(self) -> None:
         reset_storage_router()
         router1 = await get_storage_router()
         reset_storage_router()
@@ -461,10 +461,10 @@ class TestAsyncSingleton:
 class TestIntegrationWiring:
     """Verify StorageRouter can wrap existing store classes."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         reset_storage_router()
 
-    def test_can_wrap_lmdb_like_backend(self):
+    def test_can_wrap_lmdb_like_backend(self) -> None:
         """LMDBHotCacheStore has put/get/delete — StorageRouter handles it."""
         router = StorageRouter()
         mock_lmdb = MagicMock()
@@ -481,7 +481,7 @@ class TestIntegrationWiring:
         mock_lmdb.get.assert_called_once()
         mock_lmdb.delete.assert_called_once()
 
-    def test_embedding_policy_sizings(self):
+    def test_embedding_policy_sizings(self) -> None:
         """Verify embedding policies respect M1 8GB budget."""
         p256 = _classify("embedding.float16[256]")
         assert p256.max_bytes <= 512 * 1024 * 1024  # ≤ 512 MB
@@ -489,12 +489,12 @@ class TestIntegrationWiring:
         p768 = _classify("embedding.float32[768]")
         assert p768.max_bytes <= 8 * 1024**3  # ≤ 8 GB
 
-    def test_all_policies_have_max_bytes(self):
+    def test_all_policies_have_max_bytes(self) -> None:
         """Every policy in matrix has explicit bounded max_bytes."""
         for key, policy in _DECISION_MATRIX.items():
             assert policy.max_bytes > 0, f"{key} has zero max_bytes"
 
-    def test_all_policies_ttl_is_explicit(self):
+    def test_all_policies_ttl_is_explicit(self) -> None:
         """Every policy has explicit ttl (None or positive)."""
-        for key, policy in _DECISION_MATRIX.items():
+        for _key, policy in _DECISION_MATRIX.items():
             assert policy.ttl_seconds is None or policy.ttl_seconds > 0

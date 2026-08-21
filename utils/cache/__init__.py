@@ -33,44 +33,12 @@ from hledac.universal.utils.lru_cache import LRUCache      → from utils.cache 
 from hledac.universal.utils.async_cache import AsyncLRUCache → from utils.cache import AsyncLRUCache
 from hledac.universal.utils.intelligent_cache import IntelligentCache → from utils.cache import IntelligentCache
 
-Note: PyCacheDict, AsyncPyCacheDict, BoundedLoRACache, GenerationalCache 
+Note: PyCacheDict, AsyncPyCacheDict, BoundedLoRACache, GenerationalCache
 remain in utils/cache.py (the parent module) for backward compatibility.
 They are accessible via `from utils.cache import PyCacheDict` (imports from utils/cache.py).
 """
 
 from __future__ import annotations
-
-# ── Base interfaces & shared logic ────────────────────────────────────────────
-from ._base import (
-    CacheMetrics,
-    EvictionPolicy,
-    CacheStats,
-    )
-
-# ── Synchronous caches ────────────────────────────────────────────────────────
-from ._sync import (
-    LRUCache,
-    TTLCache,
-    SlidingWindowKVCache,
-    )
-
-# ── Async caches ───────────────────────────────────────────────────────────────
-from ._async import (
-    AsyncLRUCache,
-    AsyncCacheError,
-    async_cached,
-    cached_awaitable,
-    )
-
-# ── Adaptive/ML caches ─────────────────────────────────────────────────────────
-from ._adaptive import (
-    IntelligentCache,
-    MemoryOptimizedURLSet,
-    CacheConfig,
-    CacheEntry,
-    EvictionStrategy,
-    get_global_cache,
-    )
 
 # ── Legacy classes from utils/cache.py ─────────────────────────────────────────
 # Import directly from the file to avoid circular imports
@@ -78,14 +46,47 @@ from ._adaptive import (
 # Using importlib.util to import from the file directly
 import importlib.util
 import sys
-from _core import aclose
 
-_legacy_cache_classes = frozenset({
-    "PyCacheDict",
-    "AsyncPyCacheDict",
-    "BoundedLoRACache",
-    "GenerationalCache",
-})
+# ── Adaptive/ML caches ─────────────────────────────────────────────────────────
+from ._adaptive import (
+    CacheConfig,
+    CacheEntry,
+    EvictionStrategy,
+    IntelligentCache,
+    MemoryOptimizedURLSet,
+    get_global_cache,
+)
+
+# ── Async caches ───────────────────────────────────────────────────────────────
+from ._async import (
+    AsyncCacheError,
+    AsyncLRUCache,
+    async_cached,
+    cached_awaitable,
+)
+
+# ── Base interfaces & shared logic ────────────────────────────────────────────
+from ._base import (
+    CacheMetrics,
+    CacheStats,
+    EvictionPolicy,
+)
+
+# ── Synchronous caches ────────────────────────────────────────────────────────
+from ._sync import (
+    LRUCache,
+    SlidingWindowKVCache,
+    TTLCache,
+)
+
+_legacy_cache_classes = frozenset(
+    {
+        "PyCacheDict",
+        "AsyncPyCacheDict",
+        "BoundedLoRACache",
+        "GenerationalCache",
+    }
+)
 
 # Lazy load legacy classes from utils/cache.py (the file)
 _legacy_cache_module_loaded = False
@@ -96,11 +97,7 @@ def _get_legacy_module():
     """Load the legacy utils.cache module (the file, not the package)."""
     global _legacy_cache_module_loaded, _legacy_cache_module
     if not _legacy_cache_module_loaded:
-        # Import the file utils/cache.py directly
-        spec = importlib.util.spec_from_file_location(
-            "utils._cache_legacy", 
-            "utils/cache.py"
-    )
+        spec = importlib.util.spec_from_file_location("utils._cache_legacy", "utils/cache.py")
         if spec and spec.loader:
             _legacy_cache_module = importlib.util.module_from_spec(spec)
             sys.modules["utils._cache_legacy"] = _legacy_cache_module

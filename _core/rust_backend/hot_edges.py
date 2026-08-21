@@ -10,15 +10,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-
-
-# =============================================================================
-# Hot Edges Domain
-# =============================================================================
 
 
 class _RustHotEdgesDomain:
@@ -91,7 +85,7 @@ class _PythonHotEdgesDomain:
 
     def bulk_bump_aggregate(self, counter: _PythonHotEdgeCounter, indices: list[int], deltas: list[int]) -> None:
         """Python fallback: bulk bump."""
-        for idx, delta in zip(indices, deltas):
+        for idx, delta in zip(indices, deltas, strict=False):
             counter.bump_edge(idx, idx, delta)
 
     def bulk_snapshot_dict(self, counter: _PythonHotEdgeCounter) -> dict[int, int]:
@@ -102,11 +96,6 @@ class _PythonHotEdgesDomain:
             key = hash((src, dst))
             result[key] = count
         return result
-
-
-# =============================================================================
-# Python Fallback Implementations
-# =============================================================================
 
 
 class _PythonHotEdgeCounter:

@@ -35,26 +35,30 @@ Issue #082 optimizations:
 Invariant: always-on, bounded, fail-safe — no feature flag to toggle,
            no exception propagation, no unbounded RAM growth.
 """
+
 import logging
 import os
 import threading
 import typing
 from pathlib import Path
+
 import diskcache
+
 if typing.TYPE_CHECKING:
     from diskcache import Cache
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
+
 logger = logging.getLogger("hledac.universal.pipeline.deduper")
 _DEDUP_DISK: bool = FeatureFlags.get(FeatureFlag.DEDUP_DISK)
 _DEDUP_SIZE_MB: int = FeatureFlags.get_int(FeatureFlag.DEDUP_SIZE_MB, 64)
 _DEDUP_DIR: str = os.path.expanduser(FeatureFlags.get_str(FeatureFlag.DEDUP_DIR, "~/.cache/hledac/dedup"))
-_dedup_cache: 'Cache | None' = None
+_dedup_cache: Cache | None = None
 _size_warning_logged: bool = False
 _stats_hits: int = 0
 _stats_misses: int = 0
 
-def _open_dedup_cache() -> 'Cache':
+
+def _open_dedup_cache() -> Cache:
     """Open (or return existing) process-shared diskcache dedup store.
 
     Creates directory and cache on first call; subsequent calls return same instance.
@@ -72,10 +76,19 @@ def _open_dedup_cache() -> 'Cache':
         try:
             cache_dir = Path(_DEDUP_DIR).expanduser()
             cache_dir.mkdir(parents=True, exist_ok=True)
-            _dedup_cache = diskcache.Cache(str(cache_dir), size_limit=_DEDUP_SIZE_MB * 1024 * 1024, sqlite_journal_mode="wal", sqlite_mmap_size=8 * 1024 * 1024, sqlite_cache_size=-2048, sqlite_synchronous=1, sqlite_auto_vacuum=1)
+            _dedup_cache = diskcache.Cache(
+                str(cache_dir),
+                size_limit=_DEDUP_SIZE_MB * 1024 * 1024,
+                sqlite_journal_mode="wal",
+                sqlite_mmap_size=8 * 1024 * 1024,
+                sqlite_cache_size=-2048,
+                sqlite_synchronous=1,
+                sqlite_auto_vacuum=1,
+            )
         except Exception:
             _dedup_cache = diskcache.Cache(memory=True)
     return _dedup_cache
+
 
 def _check_cache_size() -> None:
     """Monitor cache size and log warning at 80% threshold.
@@ -89,12 +102,15 @@ def _check_cache_size() -> None:
         limit = _DEDUP_SIZE_MB * 1024 * 1024
         ratio = current_size / limit if limit > 0 else 0
         if ratio >= 0.8 and (not _size_warning_logged):
-            logger.warning(f"[DEDUP] Cache at {ratio:.0%} of size limit ({current_size / 1024 / 1024:.1f}MB / {_DEDUP_SIZE_MB}MB). LRU eviction will begin soon.")
+            logger.warning(
+                f"[DEDUP] Cache at {ratio:.0%} of size limit ({current_size / 1024 / 1024:.1f}MB / {_DEDUP_SIZE_MB}MB). LRU eviction will begin soon."
+            )
             _size_warning_logged = True
         elif ratio < 0.5:
             _size_warning_logged = False
     except Exception:  # noqa: BLE001
         pass
+
 
 class _InMemoryRunDeduper:
     """Per-run preserve-first dedup by entry_url.
@@ -111,13 +127,13 @@ class _InMemoryRunDeduper:
     """
 
     _DEDUP_MAX: int = 50000
-    __slots__ = tuple(("_lock", "_seen"))
+    __slots__ = ("_lock", "_seen")
 
     def __init__(self) -> None:
         self._seen: dict[str, None] = {}
         self._lock = threading.Lock()
 
-    def is_new(self, entry_url: str, _title: str="", _raw: str="") -> bool:
+    def is_new(self, entry_url: str, _title: str = "", _raw: str = "") -> bool:
         with self._lock:
             if entry_url in self._seen:
                 return False
@@ -127,6 +143,7 @@ class _InMemoryRunDeduper:
                 for url in list(self._seen)[:evict_count]:
                     del self._seen[url]
             return True
+
 
 class _InMemoryEntryDeduper:
     """Per-entry dedup by (label, pattern, value) preserve-first.
@@ -151,13 +168,13 @@ class _InMemoryEntryDeduper:
     _HIGH_CONF_THRESHOLD: float = 0.7
     _LOW_CONF_DEDUP_THRESHOLD: float = 0.8
     _SKIP_DEDUP_CONFIDENCE: float = 0.5
-    __slots__ = tuple(("_lock", "_seen"))
+    __slots__ = ("_lock", "_seen")
 
     def __init__(self) -> None:
         self._seen: dict[tuple[str, str, str], None] = {}
         self._lock = threading.Lock()
 
-    def is_new(self, label: str, pattern: str, value: str, confidence: float=1.0) -> bool:
+    def is_new(self, label: str, pattern: str, value: str, confidence: float = 1.0) -> bool:
         key = (label or "", pattern, value)
         with self._lock:
             if key in self._seen:
@@ -170,6 +187,7 @@ class _InMemoryEntryDeduper:
                 for k in list(self._seen)[:evict_count]:
                     del self._seen[k]
             return True
+
 
 class _DiskRunDeduper:
     """Per-entry_url deduper backed by diskcache.
@@ -187,12 +205,12 @@ class _DiskRunDeduper:
       - Size monitoring on each call to catch 80% threshold
     """
 
-    __slots__ = tuple(("_cache",))
+    __slots__ = ("_cache",)
 
     def __init__(self) -> None:
         self._cache = _open_dedup_cache()
 
-    def is_new(self, entry_url: str, _title: str="", _raw: str="") -> bool:
+    def is_new(self, entry_url: str, _title: str = "", _raw: str = "") -> bool:
         """Return True if entry_url has NOT been seen before (across all runs).
 
         Returns False if entry_url was already in the persistent dedup cache.
@@ -209,6 +227,7 @@ class _DiskRunDeduper:
         except Exception:
             return True
 
+
 class _DiskEntryDeduper:
     r"""Per-(label, pattern, value) deduper backed by diskcache.
 
@@ -224,7 +243,7 @@ class _DiskEntryDeduper:
     _HIGH_CONF_THRESHOLD: float = 0.7
     _LOW_CONF_DEDUP_THRESHOLD: float = 0.8
     _SKIP_DEDUP_CONFIDENCE: float = 0.5
-    __slots__ = tuple(("_cache",))
+    __slots__ = ("_cache",)
 
     def __init__(self) -> None:
         self._cache = _open_dedup_cache()
@@ -233,7 +252,7 @@ class _DiskEntryDeduper:
         """Encode (label, pattern, value) triple into a null-byte-separated bytes key."""
         return b"\x00".join([label.encode("utf-8") if label else b"", pattern.encode("utf-8"), value.encode("utf-8")])
 
-    def is_new(self, label: str, pattern: str, value: str, confidence: float=1.0) -> bool:
+    def is_new(self, label: str, pattern: str, value: str, confidence: float = 1.0) -> bool:
         """Return True if (label, pattern, value) has NOT been seen before.
 
         Confidence gating same as in-memory version.
@@ -252,8 +271,11 @@ class _DiskEntryDeduper:
             return True
         except Exception:
             return True
+
+
 _RunDeduper = _DiskRunDeduper if _DEDUP_DISK else _InMemoryRunDeduper
 _EntryDeduper = _DiskEntryDeduper if _DEDUP_DISK else _InMemoryEntryDeduper
+
 
 def make_run_deduper() -> _InMemoryRunDeduper | _DiskRunDeduper:
     """Return the appropriate RunDeduper instance.
@@ -263,6 +285,7 @@ def make_run_deduper() -> _InMemoryRunDeduper | _DiskRunDeduper:
     if _DEDUP_DISK:
         return _DiskRunDeduper()
     return _InMemoryRunDeduper()
+
 
 def make_entry_deduper() -> _InMemoryEntryDeduper | _DiskEntryDeduper:
     """Return the appropriate EntryDeduper instance.

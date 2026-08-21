@@ -42,16 +42,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 log = logging.getLogger(__name__)
 
@@ -279,7 +276,6 @@ class MediaIocPipeline:
                 error='RAM guard denied',
     )
 
-        # Phase 1: Decode + Transcribe
         t_decode = _time.monotonic()
         transcript_text = ""
         confidence = 0.0
@@ -320,7 +316,6 @@ class MediaIocPipeline:
 
         decode_transcribe_time = (_time.monotonic() - t_decode) * 1000
 
-        # Phase 2: IOC Scan
         t_scan = _time.monotonic()
         iocs, scanner_name, scan_ok = await self._scan_text_for_iocs(transcript_text)
         scan_time = (_time.monotonic() - t_scan) * 1000
@@ -369,7 +364,6 @@ class MediaIocPipeline:
                 error='RAM guard denied',
     )
 
-        # Phase 1: Decode + Transcribe + OCR
         t_decode = _time.monotonic()
         audio_transcript = ""
         audio_confidence = 0.0
@@ -414,7 +408,6 @@ class MediaIocPipeline:
 
         decode_transcribe_time = (_time.monotonic() - t_decode) * 1000
 
-        # Phase 2: IOC Scan on all text
         t_scan = _time.monotonic()
         all_text_parts = [audio_transcript] if audio_transcript else []
         all_text_parts.extend(frame_texts)

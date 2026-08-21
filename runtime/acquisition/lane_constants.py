@@ -10,9 +10,7 @@ MODERNIZATION (Issue #18):
   - TERMINAL_STATES / NON_TERMINAL_STATES kept here (were inline in acquisition_strategy.py)
 """
 
-
 from enum import StrEnum
-from _core import aclose
 
 
 class AcquisitionLane:
@@ -119,27 +117,31 @@ def get_lane_ram_budget(lane_id: str) -> int:
 
 
 # Terminal states — lanes that have reached a terminal condition
-TERMINAL_STATES = frozenset({
-    "COMPLETE",
-    "COMPLETE_ZERO",
-    "FETCH_ZERO_SUCCESS",
-    "QUALITY_REJECTED",
-    "DUPLICATE_REJECTED",
-    "LOW_INFORMATION",
-    "PROVIDER_ERROR",
-    "DISCOVERY_ERROR",
-    "TIMEOUT",
-    "CIRCUIT_BREAKER_OPEN",
-    "QUARANTINED",
-    "SKIPPED",
-    "MISSING_REQUIREMENT",
-})
+TERMINAL_STATES = frozenset(
+    {
+        "COMPLETE",
+        "COMPLETE_ZERO",
+        "FETCH_ZERO_SUCCESS",
+        "QUALITY_REJECTED",
+        "DUPLICATE_REJECTED",
+        "LOW_INFORMATION",
+        "PROVIDER_ERROR",
+        "DISCOVERY_ERROR",
+        "TIMEOUT",
+        "CIRCUIT_BREAKER_OPEN",
+        "QUARANTINED",
+        "SKIPPED",
+        "MISSING_REQUIREMENT",
+    }
+)
 
 # Non-terminal states — lanes still in progress or soft terminal
-NON_TERMINAL_STATES = frozenset({
-    "PENDING",
-    "RUNNING",
-    "DISABLED",
-    "ADVISORY",
-    "UNMET_GATE",
-})
+NON_TERMINAL_STATES = frozenset(
+    {
+        "PENDING",
+        "RUNNING",
+        "DISABLED",
+        "ADVISORY",
+        "UNMET_GATE",
+    }
+)

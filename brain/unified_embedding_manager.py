@@ -14,22 +14,19 @@ Default 512d for backward compatibility with existing 384d code.
 
 M1 8GB: Single model instance, lazy loading, fail-soft degradation.
 """
+
 import asyncio
 import concurrent.futures
 import hashlib
 import logging
 import threading
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
-
 from _core.lock_registry import LockCategory, register_lock
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.cache import PyCacheDict
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +58,8 @@ class EmbeddingResult(Struct, frozen=True):
         """Validate embedding dimension matches vector length."""
         if len(self.vector) != self.dimensions:
             raise ValueError(
-                f"EmbeddingResult dimension mismatch: dimensions={self.dimensions} "
-                f"but len(vector)={len(self.vector)}"
-    )
+                f"EmbeddingResult dimension mismatch: dimensions={self.dimensions} but len(vector)={len(self.vector)}"
+            )
 
     @classmethod
     def from_text(
@@ -72,7 +68,7 @@ class EmbeddingResult(Struct, frozen=True):
         vector: list[float],
         dimensions: int,
         model: str,
-    ) -> "EmbeddingResult":
+    ) -> EmbeddingResult:
         """
         Create EmbeddingResult from raw embedding computation.
 
@@ -84,7 +80,9 @@ class EmbeddingResult(Struct, frozen=True):
             dimensions=dimensions,
             vector=vector,
             model=model,
-    )
+        )
+
+
 _unified_manager: UnifiedEmbeddingManager | None = None
 
 
@@ -99,6 +97,7 @@ DEFAULT_DIM = 512
 # FLOW-02: M1 8GB safe — truncate text before MLX tokenization to prevent OOM
 MAX_TEXT_LENGTH = 8192
 
+
 class UnifiedEmbeddingManager:
     """
     Single embedding source for entire codebase.
@@ -111,9 +110,10 @@ class UnifiedEmbeddingManager:
         embeddings = manager.embed(["text1", "text2"])  # list of lists
         embedding = manager.embed_one("single text")     # single list
     """
-    __slots__ = tuple(('_dim', '_embed_cache', '_embedder', '_is_loaded', '_lazy_load', '_mlx_manager', '_model_path'))
 
-    def __init__(self, dim: int=DEFAULT_DIM, model_path: str | Path | None=None, lazy_load: bool=True):
+    __slots__ = ("_dim", "_embed_cache", "_embedder", "_is_loaded", "_lazy_load", "_mlx_manager", "_model_path")
+
+    def __init__(self, dim: int = DEFAULT_DIM, model_path: str | Path | None = None, lazy_load: bool = True) -> None:
         """
         Initialize unified embedder.
 
@@ -123,7 +123,7 @@ class UnifiedEmbeddingManager:
             lazy_load: Defer model loading until first use.
         """
         if dim not in SUPPORTED_DIMS:
-            raise ValueError(f'dim={dim} not supported. Must be one of {SUPPORTED_DIMS}')
+            raise ValueError(f"dim={dim} not supported. Must be one of {SUPPORTED_DIMS}")
         self._dim = dim
         self._model_path = model_path
         self._lazy_load = lazy_load
@@ -156,13 +156,16 @@ class UnifiedEmbeddingManager:
                 # no double-loads on M1 8GB. Custom model_path is handled by the
                 # singleton's prewarm() during sprint pre-flight.
                 from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
                 self._mlx_manager = get_mlx_embedder()
                 if not self._mlx_manager._is_loaded:
                     self._mlx_manager._load_model()
                 self._is_loaded = True
-                logger.info(f'[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, model={self._mlx_manager.model_path}')
+                logger.info(
+                    f"[UnifiedEmbedder] MLX backend loaded: dim={self._dim}, model={self._mlx_manager.model_path}"
+                )
             except Exception as e:
-                logger.warning(f'[UnifiedEmbedder] MLX load failed: {e}')
+                logger.warning(f"[UnifiedEmbedder] MLX load failed: {e}")
                 self._mlx_manager = None
                 self._is_loaded = False
 
@@ -189,6 +192,7 @@ class UnifiedEmbeddingManager:
     def _parallel_encode(self, texts: list[str]) -> np.ndarray:
         """Execute parallel encoding with M1 optimization."""
         from hledac.universal.utils.domain_executors import get_or_create
+
         n = len(texts)
         if n > 4:
             mid = (n + 1) // 2
@@ -224,7 +228,7 @@ class UnifiedEmbeddingManager:
                 self._embed_cache[key] = emb
             return results
         except Exception as e:
-            logger.warning(f'[UnifiedEmbedder] embed failed: {e}')
+            logger.warning(f"[UnifiedEmbedder] embed failed: {e}")
             return self._fill_results_from_cache(texts, cached)
 
     def embed_one(self, text: str) -> list[float]:
@@ -247,7 +251,7 @@ class UnifiedEmbeddingManager:
             return [[0.0] * self._dim for _ in chunk_texts]
         arr = mgr.encode(chunk_texts, truncate_dim=self._dim, normalize=True)
         if arr.shape[0] != len(chunk_texts) or (len(arr.shape) > 1 and arr.shape[1] != self._dim):
-            logger.warning(f'[UnifiedEmbedder] encode shape mismatch: {arr.shape}')
+            logger.warning(f"[UnifiedEmbedder] encode shape mismatch: {arr.shape}")
             return [[0.0] * self._dim for _ in chunk_texts]
         return [arr[i].tolist() for i in range(arr.shape[0])]
 
@@ -260,7 +264,7 @@ class UnifiedEmbeddingManager:
             mid = (n + 1) // 2
             return [texts[:mid], texts[mid:]], "embed_two_chunk"
         chunk_size = (n + 3) // 4
-        return [texts[i:i + chunk_size] for i in range(0, n, chunk_size)], "embed_multi_chunk"
+        return [texts[i : i + chunk_size] for i in range(0, n, chunk_size)], "embed_multi_chunk"
 
     async def embed_async(self, texts: list[str]) -> list[list[float]]:
         """
@@ -282,19 +286,20 @@ class UnifiedEmbeddingManager:
         try:
             chunks, ctx = self._split_into_chunks(texts)
             from hledac.universal.utils.asyncx import parallel
+
             if len(chunks) == 1:
                 return await asyncio.to_thread(self._encode_chunk_sync, texts)
             p_result = await parallel(
                 [asyncio.to_thread(self._encode_chunk_sync, chunk) for chunk in chunks],
                 policy="raise",
                 ctx=ctx,
-    )
+            )
             embeddings: list[list[float]] = []
             for result in p_result.ok:
                 embeddings.extend(result)
                 return embeddings
         except Exception as e:
-            logger.warning(f'[UnifiedEmbedder] embed_async failed: {e}')
+            logger.warning(f"[UnifiedEmbedder] embed_async failed: {e}")
             return [[0.0] * self._dim for _ in texts]
 
     def embed_structured(self, texts: list[str]) -> list[EmbeddingResult]:
@@ -324,14 +329,14 @@ class UnifiedEmbeddingManager:
                     f"[FLOW-04] Wrong-dimension embedding detected: "
                     f"expected dim={self._dim}, got {len(vector)}. "
                     f"Returning zero vector for text[{i}]."
-    )
+                )
                 vector = [0.0] * self._dim
             result = EmbeddingResult.from_text(
                 text=text,
                 vector=vector,
                 dimensions=self._dim,
                 model=model_name,
-    )
+            )
             results.append(result)
         return results
 
@@ -356,6 +361,7 @@ class UnifiedEmbeddingManager:
             return result[0] if result else np.array([])
         return result
 
+
 class FastEmbedShim:
     """
     Compatibility shim that makes UnifiedEmbeddingManager look like FastEmbed.
@@ -363,9 +369,10 @@ class FastEmbedShim:
     Some code may check for FastEmbed-specific attributes or behavior.
     This shim provides a minimal FastEmbed-like interface.
     """
-    __slots__ = tuple(('_manager',))
 
-    def __init__(self, manager: UnifiedEmbeddingManager):
+    __slots__ = ("_manager",)
+
+    def __init__(self, manager: UnifiedEmbeddingManager) -> None:
         self._manager = manager
 
     def embed(self, texts: list[str]) -> list[np.ndarray]:
@@ -378,7 +385,8 @@ class FastEmbedShim:
             texts = [texts]
         return self.embed(texts)
 
-def get_unified_embedder(dim: int=DEFAULT_DIM) -> UnifiedEmbeddingManager:
+
+def get_unified_embedder(dim: int = DEFAULT_DIM) -> UnifiedEmbeddingManager:
     """
     Get or create the global UnifiedEmbeddingManager singleton.
 
@@ -392,6 +400,7 @@ def get_unified_embedder(dim: int=DEFAULT_DIM) -> UnifiedEmbeddingManager:
     if _unified_manager is None:
         _unified_manager = UnifiedEmbeddingManager(dim=dim, lazy_load=True)
     return _unified_manager
+
 
 def reset_unified_embedder() -> None:
     """Reset singleton (for testing)."""

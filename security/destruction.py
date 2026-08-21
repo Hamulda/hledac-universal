@@ -10,23 +10,24 @@ Implementuje standardy:
 
 Pro bezpečné smazání citlivých výzkumných dat.
 """
+
 import logging
 import os
 import secrets
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 
+from compat.msgspec_gc_compat import Struct
+
 # G1: ctypes-based secure wipe (M1 Metal-safe, ~100× faster than Python loop)
 from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
+
 class DestructionConfig(Struct):
     """Konfigurace bezpečného mazání"""
+
     passes: int = 3
     pass_patterns: list[bytes] | None = None
     verify_destruction: bool = True
@@ -35,7 +36,8 @@ class DestructionConfig(Struct):
     rename_before_delete: bool = True
     secure_memory_wipe: bool = True
     wipe_free_space: bool = False
-    compliance_standard: str = 'dod'
+    compliance_standard: str = "dod"
+
 
 class SecureDestructor:
     """
@@ -51,25 +53,52 @@ class SecureDestructor:
         >>> await destructor.destroy_file("secret_data.txt")
         >>> await destructor.destroy_directory("research_data/")
     """
-    DOD_PATTERNS = [b'\x00', b'\xff', None]
-    NIST_PATTERNS = [None]
-    GUTMANN_PATTERNS = [b'U', b'\xaa', b'\x92', b'I', b'$', b'\x00', b'\x11', b'"', b'3', b'D', b'U', b'f', b'w', b'\x88', b'\x99', b'\xaa', b'\xbb', b'\xcc', b'\xdd', b'\xee', b'\xff', b'\x92', b'I', b'$', b'\x00']
-    __slots__ = tuple(('_stats', 'config'))
 
-    def __init__(self, config: DestructionConfig | None=None):
+    DOD_PATTERNS = [b"\x00", b"\xff", None]
+    NIST_PATTERNS = [None]
+    GUTMANN_PATTERNS = [
+        b"U",
+        b"\xaa",
+        b"\x92",
+        b"I",
+        b"$",
+        b"\x00",
+        b"\x11",
+        b'"',
+        b"3",
+        b"D",
+        b"U",
+        b"f",
+        b"w",
+        b"\x88",
+        b"\x99",
+        b"\xaa",
+        b"\xbb",
+        b"\xcc",
+        b"\xdd",
+        b"\xee",
+        b"\xff",
+        b"\x92",
+        b"I",
+        b"$",
+        b"\x00",
+    ]
+    __slots__ = ("_stats", "config")
+
+    def __init__(self, config: DestructionConfig | None = None) -> None:
         self.config = config or DestructionConfig()
         if self.config.pass_patterns is None:
-            if self.config.compliance_standard == 'dod':
+            if self.config.compliance_standard == "dod":
                 self.config.pass_patterns = self.DOD_PATTERNS
-            elif self.config.compliance_standard == 'nist':
+            elif self.config.compliance_standard == "nist":
                 self.config.pass_patterns = self.NIST_PATTERNS
-            elif self.config.compliance_standard == 'gutmann':
+            elif self.config.compliance_standard == "gutmann":
                 self.config.pass_patterns = self.GUTMANN_PATTERNS
             else:
                 self.config.pass_patterns = self.DOD_PATTERNS
-        self._stats = {'files_destroyed': 0, 'bytes_overwritten': 0, 'directories_destroyed': 0}
+        self._stats = {"files_destroyed": 0, "bytes_overwritten": 0, "directories_destroyed": 0}
 
-    async def destroy_file(self, path: str | Path, verify: bool | None=None) -> dict[str, Any]:
+    async def destroy_file(self, path: str | Path, verify: bool | None = None) -> dict[str, Any]:
         """
         Bezpečně zničit soubor.
 
@@ -83,10 +112,10 @@ class SecureDestructor:
         path = Path(path)
         verify = verify if verify is not None else self.config.verify_destruction
         if not path.exists():
-            logger.warning(f'File not found: {path}')
-            return {'success': False, 'error': 'File not found'}
+            logger.warning(f"File not found: {path}")
+            return {"success": False, "error": "File not found"}
         file_size = path.stat().st_size
-        logger.info(f'Destroying file: {path} ({file_size} bytes)')
+        logger.info(f"Destroying file: {path} ({file_size} bytes)")
         try:
             if self.config.rename_before_delete:
                 temp_name = secrets.token_hex(16)
@@ -98,17 +127,24 @@ class SecureDestructor:
             if verify:
                 verification_result = await self._verify_destruction(path)
             path.unlink()
-            self._stats['files_destroyed'] += 1
-            self._stats['bytes_overwritten'] += file_size * self.config.passes
-            return {'success': True, 'file': str(path), 'size': file_size, 'passes': self.config.passes, 'standard': self.config.compliance_standard, 'verification': verification_result}
+            self._stats["files_destroyed"] += 1
+            self._stats["bytes_overwritten"] += file_size * self.config.passes
+            return {
+                "success": True,
+                "file": str(path),
+                "size": file_size,
+                "passes": self.config.passes,
+                "standard": self.config.compliance_standard,
+                "verification": verification_result,
+            }
         except Exception as e:
-            logger.error(f'Destruction failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Destruction failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def _overwrite_file(self, path: Path) -> None:
         """Přepsat soubor vzory"""
         file_size = path.stat().st_size
-        with open(path, 'r+b') as f:
+        with open(path, "r+b") as f:
             for pass_num, pattern in enumerate(self.config.pass_patterns, 1):
                 f.seek(0)
                 if pattern is None:
@@ -117,29 +153,34 @@ class SecureDestructor:
                     data = pattern * (65536 // len(pattern) + 1)
                 bytes_written = 0
                 while bytes_written < file_size:
-                    chunk = data[:min(len(data), file_size - bytes_written)]
+                    chunk = data[: min(len(data), file_size - bytes_written)]
                     f.write(chunk)
                     bytes_written += len(chunk)
                 f.flush()
                 os.fsync(f.fileno())
-                logger.debug(f'Pass {pass_num}/{len(self.config.pass_patterns)} complete')
+                logger.debug(f"Pass {pass_num}/{len(self.config.pass_patterns)} complete")
 
     async def _verify_destruction(self, path: Path) -> dict[str, Any]:
         """Ověřit, že soubor je skutečně přepsaný"""
         file_size = path.stat().st_size
         samples = []
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             for _ in range(min(self.config.verification_samples, file_size)):
                 pos = secrets.randbelow(file_size)
                 f.seek(pos)
                 byte = f.read(1)
                 if byte:
                     samples.append(byte[0])
-        all_zeros = all((b == 0 for b in samples))
-        all_ones = all((b == 255 for b in samples))
-        return {'samples_taken': len(samples), 'all_zeros': all_zeros, 'all_ones': all_ones, 'random_distribution': len(set(samples)) > 1}
+        all_zeros = all(b == 0 for b in samples)
+        all_ones = all(b == 255 for b in samples)
+        return {
+            "samples_taken": len(samples),
+            "all_zeros": all_zeros,
+            "all_ones": all_ones,
+            "random_distribution": len(set(samples)) > 1,
+        }
 
-    async def destroy_directory(self, path: str | Path, recursive: bool=True) -> dict[str, Any]:
+    async def destroy_directory(self, path: str | Path, recursive: bool = True) -> dict[str, Any]:
         """
         Bezpečně zničit adresář.
 
@@ -152,19 +193,24 @@ class SecureDestructor:
         """
         path = Path(path)
         if not path.exists():
-            return {'success': False, 'error': 'Directory not found'}
+            return {"success": False, "error": "Directory not found"}
         results = []
         if recursive:
-            for item in path.rglob('*'):
+            for item in path.rglob("*"):
                 if item.is_file():
                     result = await self.destroy_file(item)
                     results.append(result)
-        for item in sorted(path.rglob('*'), reverse=True):
+        for item in sorted(path.rglob("*"), reverse=True):
             if item.is_dir():
                 item.rmdir()
         path.rmdir()
-        self._stats['directories_destroyed'] += 1
-        return {'success': True, 'directory': str(path), 'files_destroyed': len([r for r in results if r.get('success')]), 'recursive': recursive}
+        self._stats["directories_destroyed"] += 1
+        return {
+            "success": True,
+            "directory": str(path),
+            "files_destroyed": len([r for r in results if r.get("success")]),
+            "recursive": recursive,
+        }
 
     async def secure_memory_wipe(self, data: bytearray) -> None:
         """
@@ -179,4 +225,13 @@ class SecureDestructor:
 
     def get_stats(self) -> dict[str, Any]:
         """Získat statistiky destrukce"""
-        return {'files_destroyed': self._stats['files_destroyed'], 'directories_destroyed': self._stats['directories_destroyed'], 'bytes_overwritten': self._stats['bytes_overwritten'], 'config': {'passes': self.config.passes, 'standard': self.config.compliance_standard, 'verify': self.config.verify_destruction}}
+        return {
+            "files_destroyed": self._stats["files_destroyed"],
+            "directories_destroyed": self._stats["directories_destroyed"],
+            "bytes_overwritten": self._stats["bytes_overwritten"],
+            "config": {
+                "passes": self.config.passes,
+                "standard": self.config.compliance_standard,
+                "verify": self.config.verify_destruction,
+            },
+        }

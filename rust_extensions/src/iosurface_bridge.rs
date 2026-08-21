@@ -70,8 +70,6 @@ use std::collections::HashMap;
 #[cfg(feature = "otel")]
 use tracing;
 
-// ─── CoreVideo FFI Bindings ───────────────────────────────────────────────────
-
 /// CVPixelBufferGetIOSurfaceDescription extracts the IOSurface from a CVPixelBuffer.
 /// On Apple Silicon, CVPixelBuffer wraps IOSurface natively.
 #[cfg(target_os = "macos")]
@@ -496,8 +494,6 @@ unsafe fn iosurface_create_metal_texture(
     }
 }
 
-// ─── IOSurface Constants ─────────────────────────────────────────────────────
-
 /// IOSurface pixel format: 32-bit BGRA (matches CVPixelBuffer kCVPixelFormatType_32BGRA)
 #[cfg(target_os = "macos")]
 const IOSURFACE_BGRA: u32 = 0x42475241; // 'BGRA'
@@ -505,8 +501,6 @@ const IOSURFACE_BGRA: u32 = 0x42475241; // 'BGRA'
 /// IOSurface pixel format: 32-bit RGBA
 #[cfg(target_os = "macos")]
 const IOSURFACE_RGBA: u32 = 0x52474241; // 'RGBA'
-
-// ─── Global Metal Device (lazy, thread-safe) ─────────────────────────────────
 
 /// Maximum concurrent textures per M1 GPU (GPU texture table limit).
 /// On M1, the GPU texture table is limited to 4 concurrent textures.
@@ -559,8 +553,6 @@ impl MetalDeviceWrapper {
     }
 }
 
-// ─── Error Types ─────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
 pub enum IOSurfaceError {
@@ -594,8 +586,6 @@ impl std::fmt::Display for IOSurfaceError {
 
 #[cfg(target_os = "macos")]
 impl std::error::Error for IOSurfaceError {}
-
-// ─── Texture Descriptor ──────────────────────────────────────────────────────
 
 /// Descriptor for creating a Metal texture from IOSurface.
 /// Python passes IOSurface pointer and dimensions; Rust creates MTLTexture.
@@ -654,8 +644,6 @@ impl IOSurfaceTextureDescriptor {
     }
 }
 
-// ─── IOSurface Bridge API ────────────────────────────────────────────────────
-
 /// Check if IOSurface bridge is available (Metal device present).
 ///
 /// Returns: (available: bool, device_name: Option<String>)
@@ -697,7 +685,6 @@ pub fn get_iosurface_from_pixelbuffer(
 
     let pb_raw = pixel_buffer_ptr as *mut std::ffi::c_void;
 
-    // Extract dimensions from CVPixelBuffer
     let width = unsafe { cv_pixelbuffer_get_width(pb_raw) };
     let height = unsafe { cv_pixelbuffer_get_height(pb_raw) };
     let bytes_per_row = unsafe { cv_pixelbuffer_get_bytes_per_row(pb_raw) };
@@ -708,7 +695,6 @@ pub fn get_iosurface_from_pixelbuffer(
         ));
     }
 
-    // Extract IOSurface from CVPixelBuffer
     let iosurface_ref = unsafe { cv_pixelbuffer_get_iosurface(pb_raw) };
 
     if iosurface_ref.is_null() {
@@ -745,7 +731,6 @@ pub fn get_iosurface_from_pixelbuffer(
             ));
         }
 
-        // Return descriptor with base address as IOSurface pointer
         return Ok(IOSurfaceTextureDescriptor {
             iosurface_ptr: base_addr as usize,
             width,
@@ -755,7 +740,6 @@ pub fn get_iosurface_from_pixelbuffer(
         });
     }
 
-    // Return descriptor with IOSurface reference
     Ok(IOSurfaceTextureDescriptor {
         iosurface_ptr: iosurface_ref as usize,
         width,
@@ -824,7 +808,6 @@ pub fn create_metal_texture_from_iosurface(
         }
     };
 
-    // Get raw device pointer for FFI call
     let device_raw = {
         let device_ptr: *const metal::Device = device;
         let device_id_ptr = device_ptr as *const *mut std::ffi::c_void;
@@ -845,7 +828,6 @@ pub fn create_metal_texture_from_iosurface(
             width, height, pixel_format
         );
         
-        // Return texture pointer as identifier
         let texture_ptr = mtl_texture_ptr as usize;
         return Ok((texture_ptr, width, height));
     }
@@ -985,8 +967,6 @@ pub fn get_iosurface_bridge_telemetry() -> HashMap<String, String> {
     m
 }
 
-// ─── Module Registration ─────────────────────────────────────────────────────
-
 /// Register IOSurface bridge functions with PyO3 module.
 #[cfg(target_os = "macos")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1011,8 +991,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 pub fn register(_m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[cfg(target_os = "macos")]

@@ -17,25 +17,31 @@ Usage:
     async with cb:
         await duckdb_ingest(data)
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Optional, TypeVar
 from collections.abc import Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, TypeVar
+
 from hledac.universal.utils.asyncx import safe_create_task
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class CircuitState(Enum):
     """Circuit breaker states."""
-    CLOSED = 'closed'
-    OPEN = 'open'
-    HALF_OPEN = 'half_open'
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
 
 class CircuitBreakerOpen(Exception):
     """
@@ -50,7 +56,10 @@ class CircuitBreakerOpen(Exception):
         self.failure_count = failure_count
         self.last_failure = last_failure
         self.recovery_timeout = recovery_timeout
-        super().__init__(f"Circuit '{circuit_name}' is OPEN. {failure_count} failures, last: {last_failure}. Retry after {recovery_timeout:.0f}s.")
+        super().__init__(
+            f"Circuit '{circuit_name}' is OPEN. {failure_count} failures, last: {last_failure}. Retry after {recovery_timeout:.0f}s."
+        )
+
 
 @dataclass(slots=True)
 class CircuitBreakerConfig:
@@ -59,14 +68,17 @@ class CircuitBreakerConfig:
 
     Defaults tuned for 30min sprints on M1 8GB.
     """
+
     failure_threshold: int = 3
     recovery_timeout: float = 30.0
     success_threshold: int = 2
     failure_window: float = 60.0
 
+
 @dataclass(slots=True)
 class CircuitMetrics:
     """Runtime metrics for circuit breaker."""
+
     total_calls: int = 0
     total_failures: int = 0
     total_successes: int = 0
@@ -75,12 +87,13 @@ class CircuitMetrics:
     consecutive_successes: int = 0
     last_failure_ts: float = 0.0
     last_success_ts: float = 0.0
-    opened_at: Optional[float] = None
-    closed_at: Optional[float] = None
+    opened_at: float | None = None
+    closed_at: float | None = None
 
     @property
     def is_open(self) -> bool:
         return self.opened_at is not None and self.closed_at is None
+
 
 class CircuitBreaker:
     """
@@ -97,9 +110,25 @@ class CircuitBreaker:
         HALF_OPEN → CLOSED: After success_threshold consecutive successes
         HALF_OPEN → OPEN: On any failure
     """
-    __slots__ = ('_failure_timestamps', '_lock', '_metrics', '_on_close_callbacks', '_on_open_callbacks', '_state', 'config', 'name')
 
-    def __init__(self, name: str, config: Optional[CircuitBreakerConfig]=None, on_open: Optional[Callable[['CircuitBreaker'], None]]=None, on_close: Optional[Callable[['CircuitBreaker'], None]]=None) -> None:
+    __slots__ = (
+        "_failure_timestamps",
+        "_lock",
+        "_metrics",
+        "_on_close_callbacks",
+        "_on_open_callbacks",
+        "_state",
+        "config",
+        "name",
+    )
+
+    def __init__(
+        self,
+        name: str,
+        config: CircuitBreakerConfig | None = None,
+        on_open: Callable[[CircuitBreaker], None] | None = None,
+        on_close: Callable[[CircuitBreaker], None] | None = None,
+    ) -> None:
         self.name = name
         self.config = config or CircuitBreakerConfig()
         self._state = CircuitState.CLOSED
@@ -117,11 +146,11 @@ class CircuitBreaker:
     def metrics(self) -> CircuitMetrics:
         return self._metrics
 
-    def on_open(self, callback: Callable[['CircuitBreaker'], None]) -> None:
+    def on_open(self, callback: Callable[[CircuitBreaker], None]) -> None:
         """Register callback for circuit open events."""
         self._on_open_callbacks.append(callback)
 
-    def on_close(self, callback: Callable[['CircuitBreaker'], None]) -> None:
+    def on_close(self, callback: Callable[[CircuitBreaker], None]) -> None:
         """Register callback for circuit close events."""
         self._on_close_callbacks.append(callback)
 
@@ -160,11 +189,12 @@ class CircuitBreaker:
 
     async def _transition_to(self, new_state: CircuitState) -> None:
         """Execute state transition with callbacks."""
-        old_state = self._state
         self._state = new_state
         if new_state == CircuitState.OPEN:
             self._metrics.opened_at = time.monotonic()
-            logger.warning("Circuit '%s' OPENED after %d consecutive failures", self.name, self._metrics.consecutive_failures)
+            logger.warning(
+                "Circuit '%s' OPENED after %d consecutive failures", self.name, self._metrics.consecutive_failures
+            )
             for cb in self._on_open_callbacks:
                 try:
                     cb(self)
@@ -187,7 +217,12 @@ class CircuitBreaker:
         failures_in_window = len(self._failure_timestamps)
         if failures_in_window >= self.config.failure_threshold:
             await self._transition_to(CircuitState.OPEN)
-            raise CircuitBreakerOpen(circuit_name=self.name, failure_count=failures_in_window, last_failure='multiple failures in window', recovery_timeout=self.config.recovery_timeout)
+            raise CircuitBreakerOpen(
+                circuit_name=self.name,
+                failure_count=failures_in_window,
+                last_failure="multiple failures in window",
+                recovery_timeout=self.config.recovery_timeout,
+            )
 
     async def _check_half_open_close(self) -> None:
         """Check if we should close from half-open."""
@@ -217,13 +252,13 @@ class CircuitBreaker:
             self._record_success()
             await self._check_half_open_close()
             return result
-        except Exception as e:
+        except Exception:
             self._record_failure()
             await self._check_open()
             raise
 
     @asynccontextmanager
-    async def __call__(self, component: Optional[str]=None, severity_on_failure: int=2):
+    async def __call__(self, component: str | None = None, severity_on_failure: int = 2):
         """
         Async context manager for circuit breaker.
 
@@ -237,7 +272,7 @@ class CircuitBreaker:
         """
         await self.can_execute()
         self._metrics.total_calls += 1
-        context = {'component': component or self.name}
+        context = {"component": component or self.name}
         try:
             yield
             self._record_success()
@@ -250,9 +285,18 @@ class CircuitBreaker:
             self._record_failure()
             await self._check_open()
             try:
-                from hledac.universal.utils.resilience import FailureRegistry, FailureSeverity, get_ledger
+                from hledac.universal.utils.resilience import FailureSeverity, get_ledger
+
                 ledger = get_ledger()
-                safe_create_task(ledger.record_failure(component=context['component'], severity=FailureSeverity(self._get_severity_from_state()), error=e, context={'circuit': self.name, 'state': self._state.value}), name=f'circuit_breaker:failure:{self.name}')
+                safe_create_task(
+                    ledger.record_failure(
+                        component=context["component"],
+                        severity=FailureSeverity(self._get_severity_from_state()),
+                        error=e,
+                        context={"circuit": self.name, "state": self._state.value},
+                    ),
+                    name=f"circuit_breaker:failure:{self.name}",
+                )
             except Exception:
                 pass
             raise
@@ -273,7 +317,25 @@ class CircuitBreaker:
 
     def get_status(self) -> dict[str, Any]:
         """Get circuit breaker status for reporting."""
-        return {'name': self.name, 'state': self._state.value, 'config': {'failure_threshold': self.config.failure_threshold, 'recovery_timeout': self.config.recovery_timeout, 'success_threshold': self.config.success_threshold}, 'metrics': {'total_calls': self._metrics.total_calls, 'total_failures': self._metrics.total_failures, 'total_successes': self._metrics.total_successes, 'total_rejections': self._metrics.total_rejections, 'consecutive_failures': self._metrics.consecutive_failures, 'consecutive_successes': self._metrics.consecutive_successes, 'is_open': self._metrics.is_open}}
+        return {
+            "name": self.name,
+            "state": self._state.value,
+            "config": {
+                "failure_threshold": self.config.failure_threshold,
+                "recovery_timeout": self.config.recovery_timeout,
+                "success_threshold": self.config.success_threshold,
+            },
+            "metrics": {
+                "total_calls": self._metrics.total_calls,
+                "total_failures": self._metrics.total_failures,
+                "total_successes": self._metrics.total_successes,
+                "total_rejections": self._metrics.total_rejections,
+                "consecutive_failures": self._metrics.consecutive_failures,
+                "consecutive_successes": self._metrics.consecutive_successes,
+                "is_open": self._metrics.is_open,
+            },
+        }
+
 
 class CircuitBreakers:
     """Factory for pre-configured circuit breakers."""
@@ -281,19 +343,30 @@ class CircuitBreakers:
     @staticmethod
     def duckdb_ingest() -> CircuitBreaker:
         """Circuit breaker for DuckDB ingest operations."""
-        return CircuitBreaker(name='duckdb_ingest', config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0, success_threshold=2))
+        return CircuitBreaker(
+            name="duckdb_ingest",
+            config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0, success_threshold=2),
+        )
 
     @staticmethod
     def graph_operations() -> CircuitBreaker:
         """Circuit breaker for graph operations."""
-        return CircuitBreaker(name='graph_operations', config=CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0, success_threshold=3))
+        return CircuitBreaker(
+            name="graph_operations",
+            config=CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0, success_threshold=3),
+        )
 
     @staticmethod
     def export() -> CircuitBreaker:
         """Circuit breaker for export operations."""
-        return CircuitBreaker(name='export', config=CircuitBreakerConfig(failure_threshold=2, recovery_timeout=15.0, success_threshold=1))
+        return CircuitBreaker(
+            name="export", config=CircuitBreakerConfig(failure_threshold=2, recovery_timeout=15.0, success_threshold=1)
+        )
 
     @staticmethod
     def sidecar(name: str) -> CircuitBreaker:
         """Circuit breaker for sidecar operations."""
-        return CircuitBreaker(name=f'sidecar_{name}', config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0, success_threshold=2))
+        return CircuitBreaker(
+            name=f"sidecar_{name}",
+            config=CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0, success_threshold=2),
+        )

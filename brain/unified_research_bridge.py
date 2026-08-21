@@ -4,28 +4,27 @@ Moved from compat/core_unified_ai_orchestrator.py (F350M-R A-01).
 
 Provides real implementation by bridging to enhanced_research.py.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-from _core import aclose
-
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
 
 logger = logging.getLogger(__name__)
 
-_EngineCls: type["UnifiedEmbeddingManager"] | None = None
+_EngineCls: type[UnifiedEmbeddingManager] | None = None
 
 
-def _get_engine_cls() -> type["UnifiedEmbeddingManager"] | None:
+def _get_engine_cls() -> type[UnifiedEmbeddingManager] | None:
     """Lazy-load engine class (only used at runtime, TYPE_CHECKING safe)."""
     global _EngineCls
     if _EngineCls is None:
         try:
             from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
+
             _EngineCls = UnifiedEmbeddingManager
         except ImportError:
             return None
@@ -34,11 +33,12 @@ def _get_engine_cls() -> type["UnifiedEmbeddingManager"] | None:
 
 class ResearchResult:
     """Result container for research operations."""
-    __slots__ = ('summary', 'confidence_score', 'total_sources_found', 'findings', 'coverage_score')
-    
+
+    __slots__ = ("summary", "confidence_score", "total_sources_found", "findings", "coverage_score")
+
     def __init__(
         self,
-        summary: str = '',
+        summary: str = "",
         confidence: float = 0.0,
         sources: int = 0,
         findings: list[str] | None = None,
@@ -61,13 +61,14 @@ class UnifiedAIOrchestrator:
     - async process_request(dict) -> dict  — returns {'summary': str, 'confidence': float, ...}
     - async cleanup()             — optional
     """
-    __slots__ = tuple(('_engine', '_initialized'))
+
+    __slots__ = ("_engine", "_initialized")
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._engine: Any = None
         self._initialized: bool = False
         self._engine_cls = _get_engine_cls()
-        logger.debug('UnifiedAIOrchestrator: bridge initialized')
+        logger.debug("UnifiedAIOrchestrator: bridge initialized")
 
     async def initialize(self) -> None:
         """Initialize the underlying engine."""
@@ -77,9 +78,9 @@ class UnifiedAIOrchestrator:
             if self._engine_cls is not None:
                 self._engine = self._engine_cls()
                 self._initialized = True
-                logger.info('UnifiedAIOrchestrator: engine initialized')
+                logger.info("UnifiedAIOrchestrator: engine initialized")
         except Exception as e:
-            logger.warning(f'UnifiedAIOrchestrator: init failed: {e}')
+            logger.warning(f"UnifiedAIOrchestrator: init failed: {e}")
             self._initialized = False
 
     async def process_request(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -96,12 +97,12 @@ class UnifiedAIOrchestrator:
         if not self._initialized or self._engine is None:
             await self.initialize()
         if self._engine is None:
-            return {'summary': '', 'confidence': 0.0, 'sources_used': 0, 'findings': []}
-        
-        query = request.get('query', '')
-        depth_arg = request.get('depth') or request.get('research_depth')
-        max_results = request.get('max_results', 50)
-        
+            return {"summary": "", "confidence": 0.0, "sources_used": 0, "findings": []}
+
+        query = request.get("query", "")
+        depth_arg = request.get("depth") or request.get("research_depth")
+        max_results = request.get("max_results", 50)
+
         try:
             result = await self._engine.deep_research(
                 query=query,
@@ -110,41 +111,41 @@ class UnifiedAIOrchestrator:
                 max_results=max_results,
             )
             return {
-                'summary': getattr(result, 'summary', '') or _extract_summary(result),
-                'confidence': getattr(result, 'confidence_score', 0.5),
-                'sources_used': getattr(result, 'total_sources_found', 0),
-                'findings': getattr(result, 'findings', []) or _extract_findings(result),
-                'coverage_score': getattr(result, 'coverage_score', 0.0),
+                "summary": getattr(result, "summary", "") or _extract_summary(result),
+                "confidence": getattr(result, "confidence_score", 0.5),
+                "sources_used": getattr(result, "total_sources_found", 0),
+                "findings": getattr(result, "findings", []) or _extract_findings(result),
+                "coverage_score": getattr(result, "coverage_score", 0.0),
             }
         except Exception as e:
-            logger.error(f'UnifiedAIOrchestrator.process_request failed: {e}')
-            return {'summary': '', 'confidence': 0.0, 'sources_used': 0, 'findings': [], 'error': str(e)}
+            logger.error(f"UnifiedAIOrchestrator.process_request failed: {e}")
+            return {"summary": "", "confidence": 0.0, "sources_used": 0, "findings": [], "error": str(e)}
 
     async def cleanup(self) -> None:
         """Cleanup engine resources."""
-        if self._engine and hasattr(self._engine, 'cleanup'):
+        if self._engine and hasattr(self._engine, "cleanup"):
             try:
                 await self._engine.cleanup()
             except Exception as e:
-                logger.warning(f'UnifiedAIOrchestrator cleanup error: {e}')
+                logger.warning(f"UnifiedAIOrchestrator cleanup error: {e}")
         self._engine = None
         self._initialized = False
 
 
 def _extract_summary(result: Any) -> str:
     """Extract summary from result object."""
-    if hasattr(result, 'query'):
-        findings_count = len(getattr(result, 'findings', []) or [])
+    if hasattr(result, "query"):
+        findings_count = len(getattr(result, "findings", []) or [])
         return f"Research on '{result.query}' — {findings_count} findings"
     return str(result)
 
 
 def _extract_findings(result: Any) -> list[str]:
     """Extract findings list from result object."""
-    findings = getattr(result, 'findings', None)
+    findings = getattr(result, "findings", None)
     if findings is not None:
         return findings
-    fused = getattr(result, 'fused_results', None)
+    fused = getattr(result, "fused_results", None)
     if fused:
         return fused
     return []

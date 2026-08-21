@@ -48,20 +48,14 @@ Public surface:
     async def build_cache_transport(base_transport=None) -> AsyncBaseTransport
 """
 
-
-
 import logging
 from pathlib import Path
 from typing import Any, cast
 
 import hishel.httpx as hh  # hishel.httpx provides AsyncCacheTransport (httpx-compatible API)
-from _core import aclose
 
 logger = logging.getLogger("hledac.universal.transport.http_cache")
 
-# -----------------------------------------------------------------------------
-# Bounded constants — explicit, fail-safe, M1-friendly
-# -----------------------------------------------------------------------------
 DEFAULT_CACHE_DIR: Path = Path.home() / ".cache" / "hledac"
 DEFAULT_CACHE_DB: str = "hishel.db"
 
@@ -75,7 +69,16 @@ DEFAULT_TTL_SECONDS: int = 7 * 24 * 3600  # 604800
 
 # Cacheable HTTP status codes (RFC 7234 §3 + safe extensions)
 CACHEABLE_STATUS_CODES: list[int] = [
-    200, 203, 204, 300, 301, 404, 405, 410, 414, 501,
+    200,
+    203,
+    204,
+    300,
+    301,
+    404,
+    405,
+    410,
+    414,
+    501,
 ]
 
 
@@ -127,14 +130,10 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
           ``ETag``, ``Last-Modified``).
         * Cacheable status codes: see ``CACHEABLE_STATUS_CODES``.
     """
-    # --- fail-soft import gate ------------------------------------------------
     try:
         import hishel
     except ImportError:
-        logger.info(
-            "hishel not installed — HTTP cache disabled (install: "
-            "uv pip install hishel aiosqlite"
-    )
+        logger.info("hishel not installed — HTTP cache disabled (install: uv pip install hishel aiosqlite")
         return base_transport
 
     try:
@@ -143,7 +142,6 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
         logger.warning("httpx not installed; cannot build hishel cache transport")
         return base_transport
 
-    # --- storage directory ----------------------------------------------------
     try:
         DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     except Exception as exc:  # noqa: BLE001 — fail-soft
@@ -155,14 +153,10 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
     # Apply WAL + page-count cap BEFORE hishel opens its own connection
     await _apply_sqlite_pragmas(db_path)
 
-    # --- storage + policy ----------------------------------------------------
-    # hishel.AsyncSqliteStorage requires `anysqlite` extra (pip install hishel[async])
-    # If not available, ImportError triggers fail-soft: PRAGMAs still applied via aiosqlite
-    # but hishel falls back to null storage (cache disabled, transport still works)
     try:
         storage = hishel.AsyncSqliteStorage(  # type: ignore[attr-defined]
             default_ttl=float(DEFAULT_TTL_SECONDS),
-    )
+        )
     except (TypeError, ImportError) as exc:
         # Fallback: storage=None lets AsyncCacheTransport use default (null/in-memory)
         logger.debug("hishel AsyncSqliteStorage unavailable (%s), using null storage", exc)
@@ -175,10 +169,9 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
             shared=True,
             supported_methods=["GET", "HEAD"],
             allow_stale=True,
-    )
+        )
     )
 
-    # --- wrap base transport --------------------------------------------------
     if base_transport is None:
         try:
             base_transport = httpx.AsyncHTTPTransport()
@@ -195,15 +188,17 @@ async def build_cache_transport(base_transport: Any = None) -> Any:
             next_transport=base_transport,
             storage=cast(hishel.AsyncBaseStorage | None, storage),
             policy=policy,
-    )
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("hishel AsyncCacheTransport wrap failed: %s", exc)
         return base_transport
 
     logger.info(
         "HTTP cache enabled: db=%s, max=%dMB, ttl=%ds, codes=%s",
-        db_path, MAX_CACHE_SIZE_BYTES // (1024 * 1024),
-        DEFAULT_TTL_SECONDS, CACHEABLE_STATUS_CODES,
+        db_path,
+        MAX_CACHE_SIZE_BYTES // (1024 * 1024),
+        DEFAULT_TTL_SECONDS,
+        CACHEABLE_STATUS_CODES,
     )
     return cached_transport
 

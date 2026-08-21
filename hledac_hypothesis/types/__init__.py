@@ -33,50 +33,44 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import directly from submodules — DO NOT import from _types (circular)
-from .evidence import (
-    Evidence,
-    SourceCredibility,
-    Event,
+from .anomaly import (
+    AdversarialReport,
+    Contradiction,
+    CrossReferenceResult,
 )
-
-from .test import (
-    TestType,
-    TestResult,
-    TestDesign,
-    FalsificationResult,
-)
-
-from .query import (
-    DarkQueryType,
-    DarkQuery,
-    _DarkQueryListResponse,
-)
-
 from .causal import (
-    CausalEntity,
-    TemporalSequence,
-    AnomalySignal,
-    CausalHypothesis,
+    CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
     MAX_CAUSAL_FINDINGS,
     MAX_CAUSAL_HYPOTHESES,
     MAX_CO_OCCURRENCE_MATRIX_SIZE,
-    CO_OCCURRENCE_FP16,
+    AnomalySignal,
+    CausalEntity,
+    CausalHypothesis,
+    TemporalSequence,
 )
-
+from .evidence import (
+    Event,
+    Evidence,
+    SourceCredibility,
+)
 from .hypothesis import (
-    HypothesisType,
     HypothesisStatus,
+    HypothesisType,
     InferenceEngineProtocol,
     _to_operator_shortlist,
 )
-
-from .anomaly import (
-    Contradiction,
-    CrossReferenceResult,
-    AdversarialReport,
+from .query import (
+    DarkQuery,
+    DarkQueryType,
+    _DarkQueryListResponse,
 )
-
+from .test import (
+    FalsificationResult,
+    TestDesign,
+    TestResult,
+    TestType,
+)
 
 __all__ = [
     # Enums

@@ -2,7 +2,6 @@
 META-007: Finding Collapser with Consistency Gate
 =================================================
 
-
 Combines PropositionalConsistencyVerifier with FindingCollapser for
 the "confident liar" detection feedback loop.
 
@@ -26,7 +25,6 @@ from __future__ import annotations
 import json as _json
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +57,16 @@ class FindingCollapserWithConsistency:
         # Try to import finding_collapser
         try:
             from hledac.universal._core.rust_backend import rust
+
             raw = rust.raw
             if hasattr(raw, "collapse_findings"):
                 self._collapser_available = True
         except ImportError:  # noqa: BLE001
             pass
 
-        # Get consistency bridge
         try:
             from hledac.universal.brain.consistency_bridge import get_consistency_bridge
+
             self._consistency_bridge = get_consistency_bridge()
         except ImportError:  # noqa: BLE001
             pass
@@ -105,35 +104,33 @@ class FindingCollapserWithConsistency:
                 - batch_consistency_score: Batch-level score [0.0-1.0]
         """
         # META-007: Direct async call — no asyncio.run() / run_until_complete()
-        consistency_result = await self._consistency_bridge.check_batch(
-            findings, emit_alerts=emit_alerts
-        ) if self._consistency_bridge else None
+        consistency_result = (
+            await self._consistency_bridge.check_batch(findings, emit_alerts=emit_alerts)
+            if self._consistency_bridge
+            else None
+        )
 
         # Prepare findings for collapser
         if consistency_result and consistency_result.contradictory:
-            # Remove contradictory findings from collapser input
             contradictory_ids = {f.get("finding_id") for f in consistency_result.contradictory if f.get("finding_id")}
-            clean_for_collapse = [
-                f for f in findings
-                if f.get("finding_id") not in contradictory_ids
-            ]
+            clean_for_collapse = [f for f in findings if f.get("finding_id") not in contradictory_ids]
         else:
             clean_for_collapse = findings
 
-        # Run collapser on clean findings
         markdown = ""
         if self._collapser_available and clean_for_collapse:
             try:
                 from hledac.universal._core.rust_backend import rust
+
                 findings_json = _json.dumps(clean_for_collapse).encode("utf-8")
                 result = rust.raw.collapse_findings(
                     findings_json,
                     max_groups,
                     max_chars_per_group,
                     max_sources_per_group,
-    )
+                )
                 markdown = result.decode("utf-8") if isinstance(result, bytes) else result
-                
+
                 # [SWARM]-004: Apply entropy-guided word pruning BEFORE returning
                 # This is a fast Rust pre-pass (~5-10μs for 4000 chars) that:
                 # - Removes boilerplate words (TF-IDF: words in >=80% of groups)
@@ -149,18 +146,17 @@ class FindingCollapserWithConsistency:
                         logger.debug(
                             f"[COLLAPSER] [SWARM]-004: compress_prompt "
                             f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
-    )
+                        )
                         markdown = compressed
                 except Exception as compress_err:
                     logger.debug(f"[COLLAPSER] [SWARM]-004: compress_prompt failed: {compress_err}")
-                    
+
             except Exception as e:
                 logger.debug(f"[COLLAPSER] collapse_findings failed: {e}")
                 markdown = self._fallback_collapse(clean_for_collapse, max_groups, max_chars_per_group)
         else:
             markdown = self._fallback_collapse(clean_for_collapse, max_groups, max_chars_per_group)
 
-        # Build result
         result = {
             "markdown": markdown,
             "consistency_result": consistency_result,
@@ -227,7 +223,7 @@ class FindingCollapserWithConsistency:
     def _build_consistency_warning(self, consistency_result) -> str:
         """Build consistency warning markdown block."""
         lines = [
-            "!!! warning \"Propositional Contradictions Detected\"",
+            '!!! warning "Propositional Contradictions Detected"',
             f"**{len(consistency_result.contradictions)} contradiction(s)** found in this batch.",
             f"**Batch consistency score:** `{consistency_result.consistency_score:.3f}`",
             "",
@@ -237,9 +233,7 @@ class FindingCollapserWithConsistency:
             ctype = c.get("contradiction_type", "unknown")
             entity = c.get("entity", "")
             severity = c.get("severity", 0.0)
-            lines.append(
-                f"- **{ctype}**: `{entity}` (severity: {severity:.2f})"
-    )
+            lines.append(f"- **{ctype}**: `{entity}` (severity: {severity:.2f})")
 
         if consistency_result.suspect_sources:
             lines.append("")

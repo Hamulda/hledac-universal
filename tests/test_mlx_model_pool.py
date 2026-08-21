@@ -2,13 +2,11 @@
 Test MLXModelPool - Issue #18
 Tests unified LRU model pool for M1 8GB memory management.
 """
-import asyncio
+
 import pytest
 
 from hledac.universal.brain.mlx_model_pool import (
     MLXModelPool,
-    MLXModelPoolConfig,
-    ModelEntry,
     get_mlx_model_pool,
     get_pool_stats,
     pool_acquire,
@@ -58,15 +56,16 @@ class TestMLXModelPool:
     async def test_acquire_sync_loader(self) -> None:
         """Test acquire with sync loader."""
         pool = MLXModelPool(budget_gb=4.0)
-        
+
         class MockModel:
             model_name = "hermes"
+
         class MockTokenizer:
             pass
-        
+
         def loader():
             return (MockModel(), MockTokenizer())
-        
+
         model, tokenizer = await pool.acquire("test_model", loader)
         assert model is not None
         assert tokenizer is not None
@@ -76,24 +75,25 @@ class TestMLXModelPool:
     async def test_acquire_hit(self) -> None:
         """Test acquire hit (model already loaded)."""
         pool = MLXModelPool(budget_gb=4.0)
-        
+
         class MockModel:
             model_name = "hermes"
-        
+
         call_count = 0
+
         def loader():
             nonlocal call_count
             call_count += 1
             return (MockModel(), None)
-        
+
         # First acquire
         await pool.acquire("test", loader)
         assert call_count == 1
-        
+
         # Second acquire should hit cache
         await pool.acquire("test", loader)
         assert call_count == 1  # Not reloaded
-        
+
         stats = pool.get_stats()
         assert stats["hit_rate_pct"] > 0
 
@@ -101,10 +101,10 @@ class TestMLXModelPool:
     async def test_release(self) -> None:
         """Test release makes model eligible for eviction."""
         pool = MLXModelPool(budget_gb=4.0)
-        
+
         class MockModel:
             model_name = "hermes"
-        
+
         await pool.acquire("test", lambda: (MockModel(), None))
         await pool.release("test")
         assert pool.loaded_count == 1
@@ -113,30 +113,32 @@ class TestMLXModelPool:
     async def test_scoped_context_manager(self) -> None:
         """Test scoped context manager."""
         pool = MLXModelPool(budget_gb=4.0)
-        
+
         class MockModel:
             model_name = "hermes"
-        
+
         async with pool.scoped("test", lambda: (MockModel(), None)) as (model, _):
             assert model is not None
-        
+
         assert pool.loaded_count == 1
 
     def test_estimate_model_size_by_module(self) -> None:
         """Test size estimation by module name."""
         pool = MLXModelPool()
-        
+
         class HermesModule:
             pass
+
         HermesModule.__module__ = "hledac.universal.brain.deephermes3_engine"
-        
+
         class EmbedModule:
             pass
+
         EmbedModule.__module__ = "hledac.universal.brain.mlx_embedder"
-        
+
         size_hermes = pool._estimate_model_size(HermesModule(), None)
         size_embed = pool._estimate_model_size(EmbedModule(), None)
-        
+
         assert size_hermes == int(1.75 * 1024**3)
         assert size_embed == int(0.5 * 1024**3)
 
@@ -159,11 +161,12 @@ class TestModuleFunctions:
     @pytest.mark.asyncio
     async def test_pool_acquire_release(self) -> None:
         """Test pool_acquire and pool_release."""
+
         class MockModel:
             model_name = "test"
-        
+
         await pool_acquire("test", lambda: (MockModel(), None))
         assert get_pool_stats()["loaded_count"] == 1
-        
+
         await pool_release("test")
         assert get_pool_stats()["loaded_count"] == 1

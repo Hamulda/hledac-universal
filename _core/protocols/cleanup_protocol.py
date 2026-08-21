@@ -74,13 +74,13 @@ async def shutdown_aclose(
     try:
         async with asyncio.timeout(timeout_s):
             await coro
-    except asyncio.TimeoutError:
+    except TimeoutError:
         reason = _SHUTDOWN_TIMEOUT
         logger.warning(
             "[shutdown:force] %s aclose() timed out after %.1fs",
             name,
             timeout_s,
-    )
+        )
         if hasattr(coro, "close"):
             coro.close()
         await asyncio.sleep(1.0)

@@ -8,11 +8,14 @@ F350M-R / Issue #P2.
 Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from typing import Any, Final
+
 from collections.abc import Callable
-from _core import aclose
+from typing import Any, Final
+
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
+
 
 class OwnedResource(Struct):
     """Explicit lifecycle: acquire → use → release. Zero weakref.
@@ -21,6 +24,7 @@ class OwnedResource(Struct):
     reference counting. OwnedResource is NEVER collected by GC —
     only explicit release() or registry eviction.
     """
+
     obj: Any
     cleanup: Callable[[], None] | None = None
     released: bool = msgspec.field(default=False)
@@ -35,6 +39,7 @@ class OwnedResource(Struct):
                 except Exception:  # noqa: BLE001
                     pass
 
+
 class ResourceLifecycleRegistry:
     """Bounded LIFO registry for resource lifecycle management.
 
@@ -47,18 +52,20 @@ class ResourceLifecycleRegistry:
     - Deterministic release_all() — no surprise GC pause mid-sprint
     - Fully testable lifecycle — explicit acquire/release/release_all
     """
+
     MAX_REGISTRY_SIZE: Final[int] = 16
-    __slots__ = tuple(('_resources',))
+    __slots__ = ("_resources",)
 
     def __init__(self) -> None:
         self._resources: list[OwnedResource] = []
 
-    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None=None) -> str:
+    def register(self, obj: Any, cleanup_cb: Callable[[], None] | None = None) -> str:
         """Register object with optional cleanup callback. Returns token."""
         if len(self._resources) >= self.MAX_REGISTRY_SIZE:
             oldest = self._resources.pop(0)
             oldest.release()
         import uuid
+
         token = str(uuid.uuid7())[:8]
         self._resources.append(OwnedResource(obj, cleanup_cb))
         return token
@@ -67,4 +74,6 @@ class ResourceLifecycleRegistry:
         """Release all resources in LIFO order. Deterministic shutdown."""
         while self._resources:
             self._resources.pop().release()
+
+
 _graph_service_registry = ResourceLifecycleRegistry()

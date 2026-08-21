@@ -104,10 +104,6 @@ pub fn batch_content_hash_hex_parallel(items: Vec<String>) -> Vec<String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Zero-copy batch — bytes-in, u64-out (no UTF-8 decode)
-// ---------------------------------------------------------------------------
-
 /// Threshold for parallel processing in zero-copy batch.
 /// Below this, sequential is faster than rayon dispatch overhead.
 const XXHASH_ZC_PARALLEL_THRESHOLD: usize = 64;
@@ -189,10 +185,6 @@ pub fn batch_xxh3_64_bytes<'py>(
 
     Ok(pyo3::types::PyList::new(py, &results)?)
 }
-
-// ---------------------------------------------------------------------------
-// Existing API (kept for compatibility)
-// ---------------------------------------------------------------------------
 
 /// xxHash3-64 double-hash for BloomFilter-backed dedup (SIMD-accelerated).
 ///

@@ -37,14 +37,11 @@ INVARIANTS:
 No new behavior. No intelligence. Pure mechanical boundary extraction.
 """
 
-
-
 import asyncio
 import logging
 import time as _time
 from collections.abc import Callable
 from typing import Any
-from _core import aclose
 
 __all__ = ["SprintLifecycleRunner"]
 
@@ -61,8 +58,13 @@ class SprintLifecycleRunner:
     """
 
     __slots__ = (
-        "_lc", "_adapter", "_wall_clock_start", "_pre_windup_barrier",
-        "_guard_observation", "_phase_transition_callback", "_prev_phase",
+        "_lc",
+        "_adapter",
+        "_wall_clock_start",
+        "_pre_windup_barrier",
+        "_guard_observation",
+        "_phase_transition_callback",
+        "_prev_phase",
         "_progress_callback",
     )
 
@@ -79,9 +81,7 @@ class SprintLifecycleRunner:
         self._wall_clock_start: float | None = None
         self._pre_windup_barrier: Callable[[], bool] | None = pre_windup_barrier
         self._guard_observation: dict = {}
-        self._phase_transition_callback: Callable[[str, str], None] | None = (
-            phase_transition_callback
-    )
+        self._phase_transition_callback: Callable[[str, str], None] | None = phase_transition_callback
         self._prev_phase: str = "BOOT"
         # Issue #14: progress callback for dashboard updates during sleep
         self._progress_callback: Callable[..., None] | None = progress_callback
@@ -195,7 +195,7 @@ class SprintLifecycleRunner:
                     log.debug(
                         "[SprintLifecycleRunner] prewindup barrier callback error (allowing windup): %s",
                         exc,
-    )
+                    )
                     return False
             else:
                 self._guard_observation["callback_supplied"] = False
@@ -217,9 +217,7 @@ class SprintLifecycleRunner:
                 if not barrier_ok:
                     self._guard_observation["reason"] = "barrier_blocked"
                     self._guard_observation["allowed"] = False
-                    log.debug(
-                        "[SprintLifecycleRunner] Windup blocked by pre-windup barrier"
-    )
+                    log.debug("[SprintLifecycleRunner] Windup blocked by pre-windup barrier")
                     return False
                 else:
                     self._guard_observation["reason"] = "barrier_passed"
@@ -267,7 +265,7 @@ class SprintLifecycleRunner:
 
     def request_windup(self) -> None:
         """Request the lifecycle to enter WINDUP phase.
-        
+
         Delegates to the underlying lifecycle manager.
         Used by acquisition.py to force windup before the time-based threshold.
         """
@@ -276,6 +274,7 @@ class SprintLifecycleRunner:
             lc.request_windup()
         elif hasattr(lc, "transition_to"):
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+
             lc.transition_to(SprintPhase.WINDUP)
 
     # ── Abort check ─────────────────────────────────────────────────────────
@@ -357,6 +356,7 @@ class SprintLifecycleRunner:
         """
         try:
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+
             phase = self._lc.current_phase
             if phase == SprintPhase.WINDUP:
                 self._lc.mark_export_started()
@@ -390,7 +390,7 @@ class SprintLifecycleRunner:
             log.debug(
                 "[SprintLifecycleRunner] phase_transition_callback error: %s",
                 e,
-    )
+            )
         self._prev_phase = new_phase_str
 
     # ── Phase / wall clock accessors ────────────────────────────────────────
@@ -398,7 +398,7 @@ class SprintLifecycleRunner:
     @property
     def current_phase(self) -> str:
         """Current phase as string for scheduler callbacks.
-        
+
         Returns the phase name as a plain string (e.g., "ACTIVE", "WINDUP")
         not the enum representation. This is critical for acquisition.py
         comparisons like `_runner.current_phase == "ACTIVE"`.

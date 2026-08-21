@@ -35,26 +35,27 @@ from hledac.universal.coordinators.memory._core import (
     CacheEntry,
     CacheLocation,
     CacheType,
-    )
+)
+from hledac.universal.utils._patterns import AsyncLazyLockDescriptor
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
-from hledac.universal.utils._patterns import AsyncLazyLockDescriptor  # F320-REFACTOR-2
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
     from numpy.typing import NDArray
+
     HAS_NUMPY = True
 except ImportError:
     np = None
-    NDArray = 'NDArray'
+    NDArray = "NDArray"
     HAS_NUMPY = False
 
 try:
     import usearch
+
     USEARCH_AVAILABLE = True
 except ImportError:
     usearch = None
@@ -74,14 +75,31 @@ class MultiLevelContextCache:
     - Configurable similarity threshold
     - LFU eviction policy
     """
+
     __slots__ = (
-        '_embedding_cache', '_embedding_cache_lock', '_hnsw_ef_construction',
-        '_hnsw_ef_search', '_hnsw_index', '_hnsw_m', '_hnsw_max_elements',
-        '_l1_freq', '_l2_freq', '_lock',
-        'embedder', 'embedding_dim', 'embedding_model', 'embedding_to_cache_id',
-        'faiss_available', 'l1_cache', 'l1_max_size_bytes', 'l2_cache',
-        'l2_storage_path', 'max_entries', 'semantic_index', 'similarity_threshold',
-        'stats',
+        "_embedding_cache",
+        "_embedding_cache_lock",
+        "_hnsw_ef_construction",
+        "_hnsw_ef_search",
+        "_hnsw_index",
+        "_hnsw_m",
+        "_hnsw_max_elements",
+        "_l1_freq",
+        "_l2_freq",
+        "_lock",
+        "embedder",
+        "embedding_dim",
+        "embedding_model",
+        "embedding_to_cache_id",
+        "faiss_available",
+        "l1_cache",
+        "l1_max_size_bytes",
+        "l2_cache",
+        "l2_storage_path",
+        "max_entries",
+        "semantic_index",
+        "similarity_threshold",
+        "stats",
     )
 
     # F320-Issue2: NFC-normalized text embedding cache — now per-instance
@@ -90,9 +108,9 @@ class MultiLevelContextCache:
 
     def __init__(
         self,
-        embedding_model: str = 'nomic-ai/nomic-embed-text-v1.5',
+        embedding_model: str = "nomic-ai/nomic-embed-text-v1.5",
         l1_max_size_mb: float = 100.0,
-        l2_storage_path: str = 'cache_storage',
+        l2_storage_path: str = "cache_storage",
         similarity_threshold: float = 0.95,
         max_entries: int = 10000,
     ) -> None:
@@ -121,10 +139,11 @@ class MultiLevelContextCache:
         self._l2_freq: dict[str, int] = {}
         try:
             import faiss
+
             self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
             self.faiss_available = True
         except ImportError:
-            logger.warning('FAISS not available, semantic search disabled')
+            logger.warning("FAISS not available, semantic search disabled")
             self.semantic_index = None
             self.faiss_available = False
         self._hnsw_index = None
@@ -136,9 +155,13 @@ class MultiLevelContextCache:
             self._init_hnsw()
         self.embedding_to_cache_id: dict[int, str] = {}
         self.stats = {
-            'hits': 0, 'misses': 0, 'total_requests': 0,
-            'l1_promotions': 0, 'l2_demotions': 0, 'evictions': 0,
-            'similarities': [],
+            "hits": 0,
+            "misses": 0,
+            "total_requests": 0,
+            "l1_promotions": 0,
+            "l2_demotions": 0,
+            "evictions": 0,
+            "similarities": [],
         }
         # ISSUE-2984: lazy lock — NEVER asyncio.Lock() at import/construct time
         self._lock: asyncio.Lock | None = None
@@ -167,17 +190,18 @@ class MultiLevelContextCache:
             return
         try:
             import usearch.index
+
             self._hnsw_index = usearch.index.Index(
                 ndim=self.embedding_dim,
-                metric='cos',
-                dtype='f32',
+                metric="cos",
+                dtype="f32",
                 connectivity=self._hnsw_m,
                 expansion_add=min(self._hnsw_ef_construction, 100),
                 expansion_search=self._hnsw_ef_search,
-    )
-            logger.debug('USearch index initialized')
+            )
+            logger.debug("USearch index initialized")
         except Exception as e:
-            logger.warning(f'USearch index initialization failed: {e}')
+            logger.warning(f"USearch index initialization failed: {e}")
             self._hnsw_index = None
 
     def _hnsw_search(self, query_emb: Any, k: int) -> list[int]:
@@ -186,7 +210,7 @@ class MultiLevelContextCache:
             return []
         try:
             results = self._hnsw_index.search(query_emb.astype(np.float32), count=k)
-            return [int(getattr(r, 'key', 0)) for r in results]
+            return [int(getattr(r, "key", 0)) for r in results]
         except Exception:
             return []
 
@@ -206,46 +230,46 @@ class MultiLevelContextCache:
     def _load_l2_cache(self) -> None:
         """Load L2 cache from disk. Prefer zstd-compressed .json.zst, fallback to .json."""
         try:
-            zst_file = self.l2_storage_path / 'l2_cache.json.zst'
-            json_file = self.l2_storage_path / 'l2_cache.json'
+            zst_file = self.l2_storage_path / "l2_cache.json.zst"
+            json_file = self.l2_storage_path / "l2_cache.json"
             if zst_file.exists():
-                with open(zst_file, 'rb') as f:
+                with open(zst_file, "rb") as f:
                     cache_bytes = f.read()
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
-                        'L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh',
+                        "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",
                         len(cache_bytes) // (1024 * 1024),
-    )
+                    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = self._deserialize_from_json(cache_bytes)
-                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.zst)')
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.zst)")
             elif json_file.exists():
-                with open(json_file, 'rb') as f:
+                with open(json_file, "rb") as f:
                     cache_bytes = f.read()
                 if len(cache_bytes) > 50 * 1024 * 1024:
                     logger.warning(
-                        'L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh',
+                        "L2 cache too large (%d MB > 50MB limit) — skipping load, starting fresh",
                         len(cache_bytes) // (1024 * 1024),
-    )
+                    )
                     self.l2_cache = {}
                 else:
                     self.l2_cache = self._deserialize_from_json(cache_bytes)
-                logger.info(f'Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)')
+                logger.info(f"Loaded {len(self.l2_cache)} entries from L2 cache (.json legacy)")
             else:
                 self.l2_cache = {}
         except Exception as e:
-            logger.warning(f'Could not load L2 cache: {e}')
+            logger.warning(f"Could not load L2 cache: {e}")
             self.l2_cache = {}
 
     def _save_l2_cache(self) -> None:
         """Save L2 cache to disk as zstd-compressed .json.zst."""
         try:
-            cache_file = self.l2_storage_path / 'l2_cache.json.zst'
-            with open(cache_file, 'wb') as f:
+            cache_file = self.l2_storage_path / "l2_cache.json.zst"
+            with open(cache_file, "wb") as f:
                 f.write(self._serialize_to_json(self.l2_cache))
         except Exception as e:
-            logger.warning(f'Could not save L2 cache: {e}')
+            logger.warning(f"Could not save L2 cache: {e}")
 
     def _rebuild_semantic_index(self) -> None:
         """Rebuild FAISS semantic index from existing entries."""
@@ -253,6 +277,7 @@ class MultiLevelContextCache:
             return
         try:
             import faiss
+
             self.semantic_index = faiss.IndexFlatIP(self.embedding_dim)
             self.embedding_to_cache_id.clear()
             all_entries = list(self.l1_cache.values()) + list(self.l2_cache.values())
@@ -260,9 +285,9 @@ class MultiLevelContextCache:
                 if entry.embedding is not None:
                     embedding_id = len(self.embedding_to_cache_id)
                     self.embedding_to_cache_id[embedding_id] = entry.cache_id
-                    self.semantic_index.add(entry.embedding.reshape(1, -1).astype('float32'))
+                    self.semantic_index.add(entry.embedding.reshape(1, -1).astype("float32"))
         except Exception as e:
-            logger.warning(f'Could not rebuild semantic index: {e}')
+            logger.warning(f"Could not rebuild semantic index: {e}")
 
     async def _get_embedding_async(self, text: str) -> Any | None:
         """Get embedding for text using MLXEmbedder or FastEmbed (async).
@@ -271,8 +296,9 @@ class MultiLevelContextCache:
         re-encoding the same string across cycles.
         """
         import unicodedata
-        normalized = unicodedata.normalize('NFC', text)
-        
+
+        normalized = unicodedata.normalize("NFC", text)
+
         # Check cache (protected by lock)
         _emb_lock = await self._get_embedding_lock()
         if _emb_lock is not None:
@@ -284,12 +310,12 @@ class MultiLevelContextCache:
             cached = self._embedding_cache.get(normalized)
             if cached is not None:
                 return cached
-        
+
         # Compute embedding (outside lock - expensive operation)
         embedding = None
         if self.embedder:
             try:
-                if hasattr(self.embedder, 'encode_batch'):
+                if hasattr(self.embedder, "encode_batch"):
                     # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
                     # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
                     result = await self.embedder.encode_batch([text])
@@ -299,8 +325,8 @@ class MultiLevelContextCache:
                     if embeddings:
                         embedding = np.array(embeddings[0])
             except Exception as e:
-                logger.debug(f'Embedding failed: {e}')
-        
+                logger.debug(f"Embedding failed: {e}")
+
         # Store result (protected by lock)
         _emb_lock = await self._get_embedding_lock()
         if _emb_lock is not None:
@@ -308,7 +334,7 @@ class MultiLevelContextCache:
                 self._embedding_cache[normalized] = embedding
         else:
             self._embedding_cache[normalized] = embedding
-        
+
         return embedding
 
     def _get_embedding(self, text: str) -> Any | None:
@@ -320,7 +346,8 @@ class MultiLevelContextCache:
         import unicodedata
 
         from hledac.universal.utils.sync_bridge import run_sync_async
-        normalized = unicodedata.normalize('NFC', text)
+
+        normalized = unicodedata.normalize("NFC", text)
         cached = self._embedding_cache.get(normalized)
         if cached is not None:
             return cached
@@ -347,17 +374,17 @@ class MultiLevelContextCache:
             Cached content or None if not found
         """
         threshold = threshold or self.similarity_threshold
-        self.stats['total_requests'] += 1
+        self.stats["total_requests"] += 1
         input_text = str(input_data)
         similar_entry = await self._find_similar_entry(input_text, threshold)
         if similar_entry:
             async with await self._get_lock():
-                self.stats['hits'] += 1
+                self.stats["hits"] += 1
                 self._update_access(similar_entry.cache_id)
                 if similar_entry.cache_id in self.l2_cache:
                     self._promote_to_l1(similar_entry.cache_id)
             return similar_entry.content
-        self.stats['misses'] += 1
+        self.stats["misses"] += 1
         return None
 
     async def _find_similar_entry(self, input_text: str, threshold: float) -> CacheEntry | None:
@@ -370,7 +397,7 @@ class MultiLevelContextCache:
         if input_embedding is None:
             return None
         try:
-            query_embedding = input_embedding.reshape(1, -1).astype('float32')
+            query_embedding = input_embedding.reshape(1, -1).astype("float32")
             D, I = self.semantic_index.search(query_embedding, 10)
             for idx, similarity in zip(I[0], D[0], strict=False):
                 if float(similarity) >= threshold:
@@ -380,10 +407,10 @@ class MultiLevelContextCache:
                     entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                     if entry:
                         async with await self._get_lock():
-                            self.stats['similarities'].append(float(similarity))
+                            self.stats["similarities"].append(float(similarity))
                         return entry
         except Exception as e:
-            logger.debug(f'Similarity search failed: {e}')
+            logger.debug(f"Similarity search failed: {e}")
         return None
 
     async def _find_similar_entry_hnsw(
@@ -404,10 +431,10 @@ class MultiLevelContextCache:
                 entry = self.l1_cache.get(cache_id, self.l2_cache.get(cache_id))
                 if entry:
                     async with await self._get_lock():
-                        self.stats['similarities'].append(1.0)
+                        self.stats["similarities"].append(1.0)
                     return entry
         except Exception as e:
-            logger.debug(f'USearch similarity search failed: {e}')
+            logger.debug(f"USearch similarity search failed: {e}")
         return None
 
     async def set(
@@ -439,15 +466,15 @@ class MultiLevelContextCache:
             size_bytes=sys.getsizeof(content),
             cache_type=cache_type,
             metadata={},
-    )
+        )
         async with await self._get_lock():
             if embedding is not None and self.faiss_available:
                 try:
                     embedding_id = len(self.embedding_to_cache_id)
                     self.embedding_to_cache_id[embedding_id] = cache_id
-                    self.semantic_index.add(embedding.reshape(1, -1).astype('float32'))
+                    self.semantic_index.add(embedding.reshape(1, -1).astype("float32"))
                 except Exception as e:
-                    logger.debug(f'Could not add to semantic index: {e}')
+                    logger.debug(f"Could not add to semantic index: {e}")
             if self._get_l1_size_bytes() + cache_entry.size_bytes <= self.l1_max_size_bytes:
                 self.l1_cache[cache_id] = cache_entry
                 self.l1_cache.move_to_end(cache_id)
@@ -489,7 +516,7 @@ class MultiLevelContextCache:
         entry = self.l2_cache.pop(cache_id)
         if self._get_l1_size_bytes() + entry.size_bytes <= self.l1_max_size_bytes:
             self.l1_cache[cache_id] = entry
-            self.stats['l1_promotions'] += 1
+            self.stats["l1_promotions"] += 1
         else:
             self.l2_cache[cache_id] = entry
         self._save_l2_cache()
@@ -511,7 +538,7 @@ class MultiLevelContextCache:
                 self._l1_freq.pop(oldest_id, None)
             self.l2_cache[oldest_id] = oldest_entry
             self._l2_freq[oldest_id] = self._l1_freq.get(oldest_id, 1)
-            self.stats['l2_demotions'] += 1
+            self.stats["l2_demotions"] += 1
         total_entries = len(self.l1_cache) + len(self.l2_cache)
         if total_entries > self.max_entries and self.l2_cache:
             batch_size = max(1, int(self.max_entries * 0.1))
@@ -527,32 +554,32 @@ class MultiLevelContextCache:
                     oldest_id = min(
                         self.l2_cache.keys(),
                         key=lambda k: self.l2_cache[k].last_accessed,
-    )
+                    )
                     del self.l2_cache[oldest_id]
                     self._l2_freq.pop(oldest_id, None)
-                self.stats['evictions'] += 1
+                self.stats["evictions"] += 1
                 evicted += 1
             if evicted > 0:
                 self._save_l2_cache()
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        total = self.stats['hits'] + self.stats['misses']
+        total = self.stats["hits"] + self.stats["misses"]
         avg_similarity = 0.0
-        if self.stats['similarities']:
-            avg_similarity = sum(self.stats['similarities']) / len(self.stats['similarities'])
+        if self.stats["similarities"]:
+            avg_similarity = sum(self.stats["similarities"]) / len(self.stats["similarities"])
         return {
-            'total_entries': len(self.l1_cache) + len(self.l2_cache),
-            'l1_entries': len(self.l1_cache),
-            'l2_entries': len(self.l2_cache),
-            'hit_count': self.stats['hits'],
-            'miss_count': self.stats['misses'],
-            'hit_rate': self.stats['hits'] / total if total > 0 else 0.0,
-            'l1_size_mb': self._get_l1_size_bytes() / (1024 * 1024),
-            'avg_similarity_score': avg_similarity,
-            'l1_promotions': self.stats['l1_promotions'],
-            'l2_demotions': self.stats['l2_demotions'],
-            'evictions': self.stats['evictions'],
+            "total_entries": len(self.l1_cache) + len(self.l2_cache),
+            "l1_entries": len(self.l1_cache),
+            "l2_entries": len(self.l2_cache),
+            "hit_count": self.stats["hits"],
+            "miss_count": self.stats["misses"],
+            "hit_rate": self.stats["hits"] / total if total > 0 else 0.0,
+            "l1_size_mb": self._get_l1_size_bytes() / (1024 * 1024),
+            "avg_similarity_score": avg_similarity,
+            "l1_promotions": self.stats["l1_promotions"],
+            "l2_demotions": self.stats["l2_demotions"],
+            "evictions": self.stats["evictions"],
         }
 
     async def clear(self, location: CacheLocation | None = None) -> None:

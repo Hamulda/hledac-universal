@@ -15,14 +15,12 @@ Classification:
 - RUNTIME_CRITICAL_DEFER: major runtime change, defer to later sprint
 """
 
-
 import json
 import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
-from _core import aclose
 
 
 class Finding(NamedTuple):
@@ -75,15 +73,17 @@ def audit_file(path: Path) -> list[Finding]:
         for pat, reason in ASYNC_PATTERNS:
             if re.search(pat, line):
                 m = re.search(pat, line)
-                findings.append(Finding(
-                    file=str(path),
-                    line=lineno,
-                    col=m.start() if m else 0,
-                    pattern=pat,
-                    code_snippet=line.strip(),
-                    classification=classify(str(path)),
-                    reason=reason,
-                ))
+                findings.append(
+                    Finding(
+                        file=str(path),
+                        line=lineno,
+                        col=m.start() if m else 0,
+                        pattern=pat,
+                        code_snippet=line.strip(),
+                        classification=classify(str(path)),
+                        reason=reason,
+                    )
+                )
     return findings
 
 
@@ -131,7 +131,12 @@ if __name__ == "__main__":
 
     for classification in ["SIMPLE_HELPER_FIX", "NEEDS_REVIEW", "RUNTIME_CRITICAL_DEFER", "SAFE_TEST_ONLY"]:
         count = report["summary"].get(classification, 0)
-        emoji = {"SIMPLE_HELPER_FIX": "🔧", "NEEDS_REVIEW": "👀", "RUNTIME_CRITICAL_DEFER": "🚧", "SAFE_TEST_ONLY": "✅"}.get(classification, "")  # noqa: E501
+        emoji = {
+            "SIMPLE_HELPER_FIX": "🔧",
+            "NEEDS_REVIEW": "👀",
+            "RUNTIME_CRITICAL_DEFER": "🚧",
+            "SAFE_TEST_ONLY": "✅",
+        }.get(classification, "")  # noqa: E501
         lines.append(f"- **{emoji} {classification}:** {count}")
 
     lines.append("\n## Findings by Classification\n")

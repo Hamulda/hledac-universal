@@ -8,12 +8,12 @@ Tests:
 
 Run with: pytest tests/test_brain_distillation.py -v
 """
+
 import logging
 
 import pytest
 
 from hledac.universal.brain.distillation_engine import (
-    DistillationEngine,
     DistillationExample,
     create_distillation_engine,
 )
@@ -25,7 +25,7 @@ class TestDistillationEngine:
     """Smoke tests for DistillationEngine."""
 
     @pytest.mark.asyncio
-    async def test_smoke(self):
+    async def test_smoke(self) -> None:
         """Smoke test: create engine, add example, score chain, train, cleanup."""
         engine = await create_distillation_engine()
         if engine is None:

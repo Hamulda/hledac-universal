@@ -81,10 +81,6 @@ class DarkWebLane(BaseIntelligenceLane):
         except Exception:
             return False
 
-    # -------------------------------------------------------------------------
-    # Phase 1: Resolve
-    # -------------------------------------------------------------------------
-
     async def resolve(self, target: str, ctx: LaneContext) -> ResolveResult:
         """
         Resolve a target to a .onion URL.
@@ -125,10 +121,6 @@ class DarkWebLane(BaseIntelligenceLane):
             kind=kind,
             metadata={"address": addr, "aggressive": aggressive},
         )
-
-    # -------------------------------------------------------------------------
-    # Phase 2: Fetch
-    # -------------------------------------------------------------------------
 
     async def fetch(self, resolved: ResolveResult, ctx: LaneContext) -> FetchResult:
         """
@@ -223,10 +215,6 @@ class DarkWebLane(BaseIntelligenceLane):
                     elapsed_ms=(time.monotonic() - start) * 1000,
                 )
 
-    # -------------------------------------------------------------------------
-    # Phase 3: Parse
-    # -------------------------------------------------------------------------
-
     async def parse(self, fetch_result: FetchResult, ctx: LaneContext) -> ParsedResult:
         """
         Parse dark web content for IOCs.
@@ -246,11 +234,9 @@ class DarkWebLane(BaseIntelligenceLane):
         mp = ctx.memory_pressure
         max_per_type = 100 if mp < 0.5 else (20 if mp < 0.8 else 5)
 
-        # Extract IOCs via regex
         btc_addrs = BTC_ADDRESS_PATTERN.findall(body)
         xmr_addrs = XMR_ADDRESS_PATTERN.findall(body)
 
-        # Extract emails
         email_pattern = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
         emails = email_pattern.findall(body)
 
@@ -272,7 +258,6 @@ class DarkWebLane(BaseIntelligenceLane):
             "email": list(set(emails)),
         }
 
-        # Remove empty lists
         iocs = {k: v for k, v in iocs.items() if v}
 
         return ParsedResult(
@@ -282,20 +267,6 @@ class DarkWebLane(BaseIntelligenceLane):
             confidence=0.75 if iocs else 0.5,
             metadata={"url": fetch_result.url, "status": fetch_result.status_code},
         )
-
-    # -------------------------------------------------------------------------
-    # Dedup — inherited from base (uses URL as key)
-    # -------------------------------------------------------------------------
-    # No override needed — base class dedup() uses FetchResult.url as key
-
-    # -------------------------------------------------------------------------
-    # Emit — inherited from base
-    # -------------------------------------------------------------------------
-    # No override needed — base class emit() handles iocs dict
-
-    # -------------------------------------------------------------------------
-    # Lazy initialization helpers
-    # -------------------------------------------------------------------------
 
     async def _get_crawler(self) -> Any | None:
         """Lazy-initialize TorProxyManager + DarkWebCrawler."""

@@ -20,7 +20,6 @@ import concurrent.futures
 from unittest import mock
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -60,13 +59,13 @@ SAMPLE_HTML_LARGE = """
 class TestExtractIocsFromTextsBatch:
     """Tests for extract_iocs_from_texts (Rust batch path)."""
 
-    def test_empty_input_returns_empty_list(self):
+    def test_empty_input_returns_empty_list(self) -> None:
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts
 
         result = extract_iocs_from_texts([])
         assert result == []
 
-    def test_single_short_text_uses_per_text_path(self):
+    def test_single_short_text_uses_per_text_path(self) -> None:
         """Single short text (< 4 texts, < 16KB) → per-text path."""
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts
 
@@ -78,7 +77,7 @@ class TestExtractIocsFromTextsBatch:
             assert mock_single.called
             assert result == [[("a@b.com", "email")]]
 
-    def test_result_is_list_of_lists(self):
+    def test_result_is_list_of_lists(self) -> None:
         """Result structure: list of lists, one per input text."""
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts
 
@@ -88,7 +87,7 @@ class TestExtractIocsFromTextsBatch:
                 "support@corp.org",
                 "192.168.1.1",
             ]
-    )
+        )
         assert isinstance(result, list)
         assert len(result) == 3
         for sublist in result:
@@ -98,13 +97,13 @@ class TestExtractIocsFromTextsBatch:
 class TestExtractIocsFromTextOriginal:
     """Ensure original single-text extract_iocs_from_text still works."""
 
-    def test_single_text_returns_list(self):
+    def test_single_text_returns_list(self) -> None:
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_text
 
         result = extract_iocs_from_text("Contact admin@example.com for info")
         assert isinstance(result, list)
 
-    def test_empty_text_returns_empty_list(self):
+    def test_empty_text_returns_empty_list(self) -> None:
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_text
 
         result = extract_iocs_from_text("")
@@ -119,13 +118,13 @@ class TestExtractIocsFromTextOriginal:
 class TestBatchSyncProcessHtml:
     """Tests for _batch_sync_process_html (selectolax path)."""
 
-    def test_empty_input_returns_empty_list(self):
+    def test_empty_input_returns_empty_list(self) -> None:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         result = _batch_sync_process_html([])
         assert result == []
 
-    def test_single_html_returns_text_links_metadata(self):
+    def test_single_html_returns_text_links_metadata(self) -> None:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         result = _batch_sync_process_html([(SAMPLE_HTML, "https://example.com")])
@@ -135,7 +134,7 @@ class TestBatchSyncProcessHtml:
         assert isinstance(links, list)
         assert isinstance(metadata, dict)
 
-    def test_multiple_html_preserves_order(self):
+    def test_multiple_html_preserves_order(self) -> None:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         items = [
@@ -147,7 +146,7 @@ class TestBatchSyncProcessHtml:
         for r in result:
             assert len(r) == 3
 
-    def test_cap_at_1000_items(self):
+    def test_cap_at_1000_items(self) -> None:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         items = [(SAMPLE_HTML, f"https://example.com/{i}") for i in range(2000)]
@@ -155,9 +154,10 @@ class TestBatchSyncProcessHtml:
         # Should be capped at 1000
         assert len(result) == 1000
 
-    def test_links_resolved_correctly(self):
+    def test_links_resolved_correctly(self) -> None:
         """Rust batch path: relative links resolved to absolute via lol_html urljoin."""
         from _core.rust_backend import rust
+
         if not rust.is_available:
             pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
@@ -167,9 +167,10 @@ class TestBatchSyncProcessHtml:
         _text, links, _metadata = result[0]
         assert any("example.com/path" in link for link in links)
 
-    def test_relative_links_not_duplicated(self):
+    def test_relative_links_not_duplicated(self) -> None:
         """Rust batch path: relative links resolved to absolute, no http/https duplication."""
         from _core.rust_backend import rust
+
         if not rust.is_available:
             pytest.skip("Rust extension not available")
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
@@ -180,7 +181,7 @@ class TestBatchSyncProcessHtml:
         http_links = [l for l in links if l.startswith("http")]
         assert len(http_links) == len(links)
 
-    def test_ignores_none_href_attributes(self):
+    def test_ignores_none_href_attributes(self) -> None:
         from hledac.universal.fetching.public_fetcher import _batch_sync_process_html
 
         html_no_href = "<html><body><a>No href here</a></body></html>"
@@ -193,7 +194,7 @@ class TestProcessHtmlPayloadBatch:
     """Tests for process_html_payload_batch (async ThreadPoolExecutor wrapper)."""
 
     @pytest.mark.asyncio
-    async def test_empty_input_returns_empty_list(self):
+    async def test_empty_input_returns_empty_list(self) -> None:
         """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         from hledac.universal.fetching.public_fetcher import process_html_payload_batch
 
@@ -201,12 +202,12 @@ class TestProcessHtmlPayloadBatch:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_submits_to_thread_pool_executor(self):
+    async def test_submits_to_thread_pool_executor(self) -> None:
         """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         from hledac.universal.fetching.public_fetcher import (
             _batch_sync_process_html,
             process_html_payload_batch,
-    )
+        )
 
         submitted_fn = None
 
@@ -236,7 +237,7 @@ class TestBatchExtractIocsFast:
     """Tests for batch_extract_iocs_fast (extract_iocs_zero_copy Rust path)."""
 
     @pytest.mark.asyncio
-    async def test_empty_input_returns_empty_list(self):
+    async def test_empty_input_returns_empty_list(self) -> None:
         """E2: Empty input → returns empty list."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 
@@ -244,7 +245,7 @@ class TestBatchExtractIocsFast:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_single_text_extracts_iocs(self):
+    async def test_single_text_extracts_iocs(self) -> None:
         """E2: Single text extracts IOCs correctly."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 
@@ -258,7 +259,7 @@ class TestBatchExtractIocsFast:
         assert "email" in ioc_types
 
     @pytest.mark.asyncio
-    async def test_multiple_texts_preserves_order(self):
+    async def test_multiple_texts_preserves_order(self) -> None:
         """E2: Multiple texts return results in same order."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 
@@ -277,7 +278,7 @@ class TestBatchExtractIocsFast:
         assert any(ioc_type == "domain" for _, ioc_type in result[2])
 
     @pytest.mark.asyncio
-    async def test_returns_list_of_tuples(self):
+    async def test_returns_list_of_tuples(self) -> None:
         """E2: Result is list of (value, type) tuples."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 
@@ -290,7 +291,7 @@ class TestBatchExtractIocsFast:
         assert value == "CVE-2024-12345"
 
     @pytest.mark.asyncio
-    async def test_large_batch_handles_gracefully(self):
+    async def test_large_batch_handles_gracefully(self) -> None:
         """E2: Large batch (1000 texts) is handled with memory guard."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 
@@ -301,7 +302,7 @@ class TestBatchExtractIocsFast:
         assert len(result) == 1000
 
     @pytest.mark.asyncio
-    async def test_hash_extraction_with_validation(self):
+    async def test_hash_extraction_with_validation(self) -> None:
         """E2: Hash extraction validates length correctly."""
         from hledac.universal.knowledge.ioc_processor import batch_extract_iocs_fast
 

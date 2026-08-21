@@ -19,26 +19,16 @@ Migration (ISSUE-18):
 - NEW: with duckdb_ro_connection(db_path) as conn
 """
 
-
-
 import asyncio
 import time
 
-from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 from _core.duckdb_pool import duckdb_ro_connection
-from _core import aclose
+from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
 
 # DuckDB store interface for historical query
 _HISTORICAL_STORE_PATH = "~/.hledac/hledac.duckdb"
 
-
-# ---------------------------------------------------------------------------
-# Historical Frontier
-# ---------------------------------------------------------------------------
-
-_PROVENANCE_SOURCE_RE = __import__("re").compile(
-    r'"source"\s*:\s*"([^"]+)"'
-    )
+_PROVENANCE_SOURCE_RE = __import__("re").compile(r'"source"\s*:\s*"([^"]+)"')
 
 
 def _extract_source_from_provenance(provenance_json: str | None) -> str:
@@ -73,7 +63,7 @@ async def async_search_historical_frontier(
     # Bounds
     try:
         max_results = max(1, min(int(max_results), 20))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         max_results = 10
     query = query.strip() if query else ""
     if not query:
@@ -139,9 +129,8 @@ async def async_search_historical_frontier(
             provider_name="historical_frontier",
             provider_chain=("historical_frontier",),
             source_family="historical",
-    )
+        )
 
-    # Build hits — score by token overlap
     seen_urls: set[str] = set()
     hits_list: list[DiscoveryHit] = []
     now_ts = time.time()
@@ -180,7 +169,7 @@ async def async_search_historical_frontier(
                 retrieved_ts=now_ts,
                 score=score,
                 reason=reason,
-    )
+            )
         )
         seen_urls.add(url)
         if len(hits_list) >= max_results:

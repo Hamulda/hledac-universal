@@ -33,13 +33,12 @@ from hledac.universal.utils.asyncx import safe_create_task
 import logging
 import time
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import field
 import msgspec
 from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 if TYPE_CHECKING:
     import httpx
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -142,7 +141,6 @@ def _extract_jarm_from_payload(payload_text: str | None) -> str | None:
     if not payload_text:
         return None
     try:
-        import json
         data = _msgspec_loads(payload_text) if isinstance(payload_text, str) else payload_text
         h = data.get('jarm_hash') or data.get('jarm') or data.get('hash')
         if h and len(h) == 62:
@@ -192,7 +190,6 @@ async def _detect_open_buckets_async(entity_name: str) -> list[dict]:
     """
     import asyncio
     try:
-        from hledac.universal.network.session_runtime import async_get_httpx_session
     except Exception:
         return []
     candidates = _generate_bucket_candidates(entity_name)
@@ -407,7 +404,6 @@ def extract_signals(findings: list[CanonicalFinding]) -> list[AssetSignal]:
         confidence = getattr(finding, 'confidence', 0.5) or 0.5
         payload = getattr(finding, 'payload_text', None) or '{}'
         try:
-            import json
             data = _msgspec_loads(payload) if isinstance(payload, str) else payload
         except Exception:
             data = {}
@@ -623,7 +619,6 @@ def to_canonical_findings(findings: list[ExposureFinding], query: str) -> list[C
     for finding in findings[:MAX_FINDINGS]:
         id_input = f'{finding.asset_key}:{finding.corr_type}:{int(ts)}'
         fid = f'exp_{hashlib.sha256(id_input.encode()).hexdigest()[:24]}'
-        import json
         payload = {'corr_type': finding.corr_type, 'asset_key': finding.asset_key, 'summary': finding.summary, 'evidence_pointers': finding.evidence_pointers, 'signal_facets': finding.signal_facets, 'suggested_pivots': finding.suggested_pivots, 'correlation_payload': finding.payload, '_f202c': True}
         canonical.append(CanonicalFinding(finding_id=fid, query=query, source_type='exposure_correlation', confidence=finding.confidence, ts=ts, provenance=('exposure_correlator', finding.corr_type), payload_text=_msgspec_dumps_str(payload, ensure_ascii=False)))
     return canonical

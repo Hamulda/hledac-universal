@@ -26,11 +26,11 @@ Sprint companion to F-Bloom-Regression — verify pickle-free hot path.
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_graphs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -62,8 +62,9 @@ def tiny_nx_graph():
 # Test: round-trip via JSON+orjson
 # ---------------------------------------------------------------------------
 
+
 class TestGraphSerdeJsonRoundtrip:
-    def test_save_and_load_roundtrip(self, tmp_graphs_dir: Path, tiny_nx_graph):
+    def test_save_and_load_roundtrip(self, tmp_graphs_dir: Path, tiny_nx_graph) -> None:
         from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
         out = tmp_graphs_dir / "graph.jsonl"
@@ -84,11 +85,11 @@ class TestGraphSerdeJsonRoundtrip:
         assert a_to_b is not None
         assert a_to_b.get("weight") == 0.9
 
-    def test_our_format_detector(self, tmp_graphs_dir: Path, tiny_nx_graph):
+    def test_our_format_detector(self, tmp_graphs_dir: Path, tiny_nx_graph) -> None:
         from intelligence._graph_serde import (
             is_our_format,
             save_nx_graph_jsonl,
-    )
+        )
 
         out = tmp_graphs_dir / "g.jsonl"
         save_nx_graph_jsonl(str(out), tiny_nx_graph, max_nodes=10_000)
@@ -105,8 +106,9 @@ class TestGraphSerdeJsonRoundtrip:
 # Test: bound (MAX_NODES prune)
 # ---------------------------------------------------------------------------
 
+
 class TestGraphSerdeBound:
-    def test_prune_on_write_when_over_max(self, tmp_graphs_dir: Path):
+    def test_prune_on_write_when_over_max(self, tmp_graphs_dir: Path) -> None:
         nx = pytest.importorskip("networkx")
         from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
@@ -114,7 +116,7 @@ class TestGraphSerdeBound:
         for i in range(100):
             g.add_node(f"n{i}")
         for i in range(99):
-            g.add_edge(f"n{i}", f"n{i+1}", weight=1.0)
+            g.add_edge(f"n{i}", f"n{i + 1}", weight=1.0)
         out = tmp_graphs_dir / "pruned.jsonl"
         ok = save_nx_graph_jsonl(str(out), g, max_nodes=20)
         assert ok is True
@@ -123,7 +125,7 @@ class TestGraphSerdeBound:
         # Should be pruned to 20
         assert loaded.number_of_nodes() == 20
 
-    def test_bound_preserves_edges(self, tmp_graphs_dir: Path):
+    def test_bound_preserves_edges(self, tmp_graphs_dir: Path) -> None:
         nx = pytest.importorskip("networkx")
         from intelligence._graph_serde import load_nx_graph_jsonl, save_nx_graph_jsonl
 
@@ -131,7 +133,7 @@ class TestGraphSerdeBound:
         for i in range(50):
             g.add_node(f"n{i}")
         for i in range(49):
-            g.add_edge(f"n{i}", f"n{i+1}")
+            g.add_edge(f"n{i}", f"n{i + 1}")
         out = tmp_graphs_dir / "chain.jsonl"
         save_nx_graph_jsonl(str(out), g, max_nodes=10)
         loaded = load_nx_graph_jsonl(str(out), max_nodes=10)
@@ -145,8 +147,9 @@ class TestGraphSerdeBound:
 # Test: legacy pickle migration (F196B safe path only)
 # ---------------------------------------------------------------------------
 
+
 class TestGraphSerdeLegacyMigration:
-    def test_legacy_pickle_loads_on_safe_path(self, tmp_graphs_dir: Path):
+    def test_legacy_pickle_loads_on_safe_path(self, tmp_graphs_dir: Path) -> None:
         nx = pytest.importorskip("networkx")
         import pickle
 
@@ -163,6 +166,7 @@ class TestGraphSerdeLegacyMigration:
 
         # is_our_format must be False (legacy is not our JSON)
         from intelligence._graph_serde import is_our_format
+
         assert is_our_format(str(legacy_path)) is False
 
         # load_nx_graph_jsonl should still load it (legacy migration path)
@@ -171,7 +175,7 @@ class TestGraphSerdeLegacyMigration:
         assert loaded.number_of_nodes() == 2
         assert loaded.number_of_edges() == 1
 
-    def test_safe_path_rejects_outside_graphs_dir(self, tmp_path: Path, monkeypatch):
+    def test_safe_path_rejects_outside_graphs_dir(self, tmp_path: Path, monkeypatch) -> None:
         nx = pytest.importorskip("networkx")
         import pickle
 
@@ -200,12 +204,14 @@ class TestGraphSerdeLegacyMigration:
 # Test: relationship_discovery integration — no Python pickle in hot path
 # ---------------------------------------------------------------------------
 
+
 class TestRelationshipDiscoveryNoPickleInHotPath:
     """Verify the 5 remaining ``pickle`` refs in relationship_discovery.py
     are all legacy-migration-only (F196B-safe)."""
 
-    def test_remaining_pickle_sites_are_legacy_only(self):
+    def test_remaining_pickle_sites_are_legacy_only(self) -> None:
         from pathlib import Path
+
         src_path = Path(__file__).parent.parent / "intelligence" / "relationship_discovery.py"
         text = src_path.read_text()
         # Every remaining ``import pickle`` must be immediately followed by
@@ -216,30 +222,31 @@ class TestRelationshipDiscoveryNoPickleInHotPath:
         for i, line in enumerate(lines):
             if "import pickle" in line and "from pickle" not in line:
                 window = "\n".join(lines[max(0, i - 3) : i + 3])
-                assert (
-                    "legacy" in window.lower() or "f196b" in window.lower()
-                ), f"Line {i + 1} imports pickle without legacy/F196B guard: {line!r}"
+                assert "legacy" in window.lower() or "f196b" in window.lower(), (
+                    f"Line {i + 1} imports pickle without legacy/F196B guard: {line!r}"
+                )
 
-    def test_no_bare_pickle_load_in_writes(self):
+    def test_no_bare_pickle_load_in_writes(self) -> None:
         """``pickle.dump`` must never appear in our module (only pickle.load
         for legacy reads)."""
         from pathlib import Path
+
         src_path = Path(__file__).parent.parent / "intelligence" / "relationship_discovery.py"
         text = src_path.read_text()
-        assert "pickle.dump" not in text, (
-            "pickle.dump must NOT appear — new writes are JSON+orjson only"
-    )
+        assert "pickle.dump" not in text, "pickle.dump must NOT appear — new writes are JSON+orjson only"
 
 
 # ---------------------------------------------------------------------------
 # Test: igraph write_picklez is the igraph native format, not Python pickle
 # ---------------------------------------------------------------------------
 
+
 class TestIgraphNativeFormatUnchanged:
-    def test_igraph_write_picklez_preserved(self):
+    def test_igraph_write_picklez_preserved(self) -> None:
         """The igraph hot path keeps its own ``write_picklez`` — that is
         igraph's C-level compact format, NOT the Python ``pickle`` module."""
         from pathlib import Path
+
         src_path = Path(__file__).parent.parent / "intelligence" / "relationship_discovery.py"
         text = src_path.read_text()
         # The igraph hot path must still call write_picklez
@@ -252,16 +259,19 @@ class TestIgraphNativeFormatUnchanged:
 # Test: orjson speed vs pickle (informational, not gating)
 # ---------------------------------------------------------------------------
 
+
 class TestGraphSerdeSmoke:
-    def test_module_imports_cleanly(self):
+    def test_module_imports_cleanly(self) -> None:
         import intelligence._graph_serde as mod
+
         assert mod.save_nx_graph_jsonl is not None
         assert mod.load_nx_graph_jsonl is not None
         assert mod.is_our_format is not None
 
-    def test_failure_is_soft(self, tmp_graphs_dir: Path, capsys):
+    def test_failure_is_soft(self, tmp_graphs_dir: Path, capsys) -> None:
         """save_nx_graph_jsonl with a non-Graph object returns False, no raise."""
         from intelligence._graph_serde import save_nx_graph_jsonl
+
         # Pass None
         ok = save_nx_graph_jsonl(str(tmp_graphs_dir / "x.jsonl"), None, max_nodes=10)
         assert ok is False

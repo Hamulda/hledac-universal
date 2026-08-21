@@ -18,10 +18,9 @@ Use in acquisition: source prioritization via Q-value argmax.
 from __future__ import annotations
 
 from typing import Any
-from _core._util import aclose
 
 
-def get_domain() -> "FederatedQTableDomain":
+def get_domain() -> FederatedQTableDomain:
     from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
 
     _probe = getattr(_ext, "FederatedQLearning", None)
@@ -93,9 +92,7 @@ class FederatedQTableDomain:
         """
         return inst.update_batch(items)
 
-    def get_q(
-        self, inst: Any, lane: str, state_key: str, action: str
-    ) -> float:
+    def get_q(self, inst: Any, lane: str, state_key: str, action: str) -> float:
         """Get Q-value for (lane, state, action)."""
         return inst.get_q(lane, state_key, action)
 
@@ -132,10 +129,6 @@ class FederatedQTableDomain:
         return inst.is_empty()
 
 
-# ---------------------------------------------------------------------------
-# Module-level batch update (no instance needed)
-# ---------------------------------------------------------------------------
-
 def batch_update_module_level(
     items: list[tuple[str, str, str, float, str]],
 ) -> int:
@@ -153,10 +146,6 @@ def batch_update_module_level(
     return func(items)
 
 
-# ---------------------------------------------------------------------------
-# Python fallback — pure Python Q-table
-# ---------------------------------------------------------------------------
-
 class PythonFallbackQTableDomain:
     """Pure-Python Q-table fallback when Rust is unavailable."""
 
@@ -173,19 +162,17 @@ class PythonFallbackQTableDomain:
         self._gamma = gamma
         self._max_entries = max_entries
 
-    def from_config(self, **kwargs: Any) -> "PythonFallbackQTableDomain":
+    def from_config(self, **kwargs: Any) -> PythonFallbackQTableDomain:
         return PythonFallbackQTableDomain(**kwargs)
 
-    def load(self, path: str) -> "PythonFallbackQTableDomain":
+    def load(self, path: str) -> PythonFallbackQTableDomain:
         import json
 
         with open(path) as f:
             self._table = json.load(f)
         return self
 
-    def _make_key(
-        self, lane: str, state_key: str, action: str
-    ) -> str:
+    def _make_key(self, lane: str, state_key: str, action: str) -> str:
         return f"{lane}::{state_key}|{action}"
 
     def update(
@@ -201,11 +188,9 @@ class PythonFallbackQTableDomain:
         next_max = max(
             (v for k, v in self._table.items() if k.startswith(next_key_prefix)),
             default=0.0,
-    )
+        )
         old = self._table.get(key, 0.0)
-        self._table[key] = old + self._alpha * (
-            reward + self._gamma * next_max - old
-    )
+        self._table[key] = old + self._alpha * (reward + self._gamma * next_max - old)
         if len(self._table) > self._max_entries:
             # evict 10 lowest
             sorted_entries = sorted(self._table.items(), key=lambda x: x[1])
@@ -220,14 +205,10 @@ class PythonFallbackQTableDomain:
             self.update(*item)
         return len(items)
 
-    def get_q(
-        self, lane: str, state_key: str, action: str
-    ) -> float:
+    def get_q(self, lane: str, state_key: str, action: str) -> float:
         return self._table.get(self._make_key(lane, state_key, action), 0.0)
 
-    def get_best_action(
-        self, lane: str, state_key: str, actions: list[str]
-    ) -> str:
+    def get_best_action(self, lane: str, state_key: str, actions: list[str]) -> str:
         if not actions:
             return ""
         best = actions[0]

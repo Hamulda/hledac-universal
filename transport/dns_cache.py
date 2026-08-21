@@ -21,15 +21,15 @@ Invariants:
   [DNS-3] Fire-and-forget prefetch, never blocks transport
   [DNS-4] rust.dns primary path — DoT bypasses mDNSResponder bottleneck
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
 from typing import Any
 
-from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.asyncx import async_getaddrinfo, safe_create_task
-from _core import aclose
+from hledac.universal.utils.lru_cache import LRUCache
 
 # [PHYSICS]-03: Lazy check for rust.dns availability — True when dns feature
 # is enabled in the Rust build (default since [PHYSICS]-03/04 fix).
@@ -40,6 +40,7 @@ _HAS_RUST_DNS: bool = False
 _HAS_RUST_DNS_ASYNC: bool = False
 try:
     import rust
+
     _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
     # MODERN-09: Check for async version
     _HAS_RUST_DNS_ASYNC = hasattr(rust.dns, "resolve_async_await")
@@ -59,9 +60,16 @@ class DnsCache:
     SEC-01: Darknet hosts (.onion, .i2p) are never resolved via the
     OS resolver. The Tor/I2P proxy handles DNS internally via socks5h://.
     """
+
     __slots__ = (
-        '_cache', '_inflight', '_order', '_lock', '_max_size', '_ttl_s',
-        '_prefetch_max_urls', '_prefetch_semaphore',
+        "_cache",
+        "_inflight",
+        "_order",
+        "_lock",
+        "_max_size",
+        "_ttl_s",
+        "_prefetch_max_urls",
+        "_prefetch_semaphore",
     )
 
     # [PHYSICS]-03: Default cache size raised from 256 to 1024 to match
@@ -112,7 +120,7 @@ class DnsCache:
             ips = await loop.run_in_executor(
                 None,
                 lambda: rust.dns.resolve_async(real_host, "A"),
-    )
+            )
             return ips if ips else None
         except Exception:
             return None
@@ -128,12 +136,12 @@ class DnsCache:
         wait on a shared Future instead of spawning parallel DNS queries.
         """
         # SEC-01: Darknet hosts must never hit the OS resolver.
-        if host.lower().endswith('.onion') or host.lower().endswith('.i2p'):
+        if host.lower().endswith(".onion") or host.lower().endswith(".i2p"):
             return None
 
         now = time.monotonic()
         inflight_fut: asyncio.Future[list[str] | None] | None = None
-        
+
         async with self._lock:
             if host in self._cache:
                 ips, cached_at = self._cache[host]
@@ -145,7 +153,7 @@ class DnsCache:
             # Single-flight: if another task is already resolving this host, wait on it
             if host in self._inflight:
                 inflight_fut = self._inflight[host]
-        
+
         # P4-2a FIX: Await OUTSIDE the lock - prevents deadlock when set_result needs the lock
         if inflight_fut is not None:
             return await inflight_fut
@@ -153,18 +161,20 @@ class DnsCache:
         # Reserve slot for new resolution (only one task per host reaches here)
         # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
         # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
-        fut: asyncio.Future[list[str] | None] = asyncio.get_running_loop().create_future(name=f"dns_cache_resolve:{host}")
+        fut: asyncio.Future[list[str] | None] = asyncio.get_running_loop().create_future(
+            name=f"dns_cache_resolve:{host}"
+        )
         self._inflight[host] = fut
 
         # Resolution outside the lock
         try:
             # Extract port from host:port if present
-            if ':' in host:
-                parts = host.rsplit(':', 1)
+            if ":" in host:
+                parts = host.rsplit(":", 1)
                 try:
                     port = int(parts[1])
                     real_host = parts[0]
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     port = 443
                     real_host = host
             else:
@@ -217,12 +227,12 @@ class DnsCache:
             try:
                 parsed = urlparse(url)
                 if parsed.netloc:
-                    clean_host = parsed.netloc.split(':')[0]
+                    clean_host = parsed.netloc.split(":")[0]
                     # SEC-01: Skip darknet hosts
-                    if clean_host.lower().endswith('.onion') or clean_host.lower().endswith('.i2p'):
+                    if clean_host.lower().endswith(".onion") or clean_host.lower().endswith(".i2p"):
                         continue
                     hosts.add(clean_host)
-            except (ValueError, OSError):
+            except ValueError, OSError:
                 continue
 
         host_list = list(hosts)
@@ -234,7 +244,6 @@ class DnsCache:
             try:
                 # rust.dns.prefetch_async returns dict[str, list[str]] of resolved IPs
                 results: dict[str, list[str]] = await rust.dns.prefetch_async(host_list)
-                # Update cache with batch results
                 now = time.monotonic()
                 async with self._lock:
                     for host, ips in results.items():
@@ -253,7 +262,7 @@ class DnsCache:
             # of queueing, preserving fire-and-forget semantics.
             if self._prefetch_semaphore.locked():
                 continue
-            safe_create_task(self._prefetch_one(host), name=f'dns_prefetch:{host}')
+            safe_create_task(self._prefetch_one(host), name=f"dns_prefetch:{host}")
 
     async def _prefetch_one(self, host: str) -> None:
         """Resolve a single host for prefetch, holding the semaphore slot."""
@@ -272,12 +281,12 @@ class DnsCache:
         [PHYSICS]-05: Now includes prefetch_max_urls and prefetch concurrency.
         """
         return {
-            'cached_hosts': len(self._cache),
-            'max_size': self._max_size,
-            'ttl_s': self._ttl_s,
-            'rust_dns_available': _HAS_RUST_DNS,
-            'prefetch_max_urls': self._prefetch_max_urls,
-            'prefetch_saturated': self._prefetch_semaphore.locked(),
+            "cached_hosts": len(self._cache),
+            "max_size": self._max_size,
+            "ttl_s": self._ttl_s,
+            "rust_dns_available": _HAS_RUST_DNS,
+            "prefetch_max_urls": self._prefetch_max_urls,
+            "prefetch_saturated": self._prefetch_semaphore.locked(),
         }
 
 

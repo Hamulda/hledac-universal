@@ -58,7 +58,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 # B4 FIX: Use cachetools for bounded Python fallback (M1 8GB safety)
 from cachetools import LRUCache
@@ -68,14 +67,12 @@ logger = logging.getLogger(__name__)
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _dedup_bloom_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "dedup_bloom")
     and getattr(_rust_backend, "dedup_bloom", None) is not None
 )
 
-# Get module reference
 _dedup_bloom_module = getattr(_rust_backend, "dedup_bloom", None) if _dedup_bloom_available else None
 
 # Module-level cache
@@ -84,7 +81,6 @@ _cached_instance: Any = None
 # B4 FIX: Bounded cache size for Python fallback (M1 8GB safety)
 # 50K URLs × ~200 bytes avg URL length ≈ 10 MB max
 _PYTHON_FALLBACK_MAX_SIZE = 50_000
-
 
 def get_dedup_bloom(cache_dir: str | Path | None = None) -> DedupBloom | None:
     """
@@ -116,12 +112,6 @@ def get_dedup_bloom(cache_dir: str | Path | None = None) -> DedupBloom | None:
     except Exception as e:
         logger.warning("Failed to initialize DedupBloom: %s", e)
         return None
-
-
-# =============================================================================
-# DedupBloom Wrapper
-# =============================================================================
-
 
 class DedupBloom:
     """
@@ -334,12 +324,6 @@ class DedupBloom:
         else:
             self._python_fallback.clear()
 
-
-# =============================================================================
-# Convenience Functions
-# =============================================================================
-
-
 def bloom_check(url: str, bloom: DedupBloom | None) -> bool:
     """
     Quick bloom filter check.
@@ -356,7 +340,6 @@ def bloom_check(url: str, bloom: DedupBloom | None) -> bool:
         return False
     return bloom.contains(url)
 
-
 def bloom_skip(url: str, bloom: DedupBloom | None) -> bool:
     """
     Check if URL should be skipped based on bloom filter.
@@ -370,7 +353,6 @@ def bloom_skip(url: str, bloom: DedupBloom | None) -> bool:
         False if URL should proceed to canonical dedup.
     """
     return bloom_check(url, bloom)
-
 
 def bloom_add(url: str, bloom: DedupBloom | None) -> bool:
     """
@@ -386,7 +368,6 @@ def bloom_add(url: str, bloom: DedupBloom | None) -> bool:
     if bloom is None:
         return True
     return bloom.add(url)
-
 
 def bloom_skip_batch(urls: list[str], bloom: DedupBloom | None) -> tuple[list[str], int]:
     """

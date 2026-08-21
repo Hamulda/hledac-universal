@@ -19,7 +19,6 @@ TENTO MODUL vs. OSTATNÍ PAMĚŤOVÉ MODULY (A5-04 consolidation)
  ŽÁDNÝ PŘEKRYV FUNKCÍ — každý modul má jinou roli.
 
 MLX METRICS: Pro MLX-specific metriky použij:
-    from hledac.universal.utils.mlx_memory import get_mlx_memory_metrics
     # dict: active_mb, peak_mb, cache_mb, pressure_pct, pressure_level
 
 SYSTEM METRICS: Pro system-wide metriky použij:
@@ -32,7 +31,6 @@ Import: from _core.memory import get_memory_snapshot
 
 import logging
 from typing import Any
-from _core._util import aclose
 
 __all__ = [
     "get_memory_snapshot",
@@ -60,6 +58,7 @@ def _ensure_rust() -> bool:
     _RUST_LOADED = True
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     raw = rust.raw
     _rust_snapshot = raw.get_memory_snapshot
     _rust_rss = raw.get_process_rss_gib
@@ -83,11 +82,6 @@ def _ensure_rust() -> bool:
     else:
         logger.debug("[memory] Rust extension unavailable, using Python fallback")
     return _RUST_AVAILABLE
-
-
-# ---------------------------------------------------------------------------
-# Public API — vždy fail-safe (0 / 0.0 na chybu)
-# ---------------------------------------------------------------------------
 
 
 def get_memory_snapshot() -> dict[str, Any]:
@@ -182,15 +176,11 @@ def peak_rss_bytes() -> int:
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Fallback — používá psutil když Rust není dostupný
-# ---------------------------------------------------------------------------
-
-
 def _fallback_snapshot() -> dict[str, Any]:
     """Fallback pomocí psutil když Rust extension není dostupná."""
     try:
         import psutil
+
         process = psutil.Process()
         vm = psutil.virtual_memory()
 
@@ -216,6 +206,7 @@ def _get_metal_active_python() -> int:
     """Python-only MLX Metal active memory probe."""
     try:
         import mlx.core as mx
+
         if hasattr(mx, "get_active_memory"):
             return mx.get_active_memory()
         if hasattr(mx.metal, "get_active_memory"):
@@ -227,17 +218,18 @@ def _get_metal_active_python() -> int:
 
 def _calc_pressure_level(rss_bytes: int) -> int:
     """Calculate pressure level from RSS bytes.
-    
+
     ISSUE-3 fix: Uses two distinct SSOT thresholds instead of SOFT==HARD bug.
     - SOFT threshold: THRESHOLD_SOFT_WARN_GIB (5.5 GiB) — first signal of pressure
     - HARD threshold: THRESHOLD_WARN_GIB (5.94 GiB) — critical, reduce concurrency
-    
+
     Pressure levels:
         0 (normal)     — RSS < 5.5 GiB (SOFT threshold)
         1 (elevated)  — RSS 5.5–5.94 GiB (SOFT→WARN zone)
         2 (critical)   — RSS >= 5.94 GiB (HARD threshold)
     """
     from hledac.universal.utils.uma_budget import UmaBudget
+
     # ISSUE-3 fix: Use distinct thresholds for SOFT vs HARD
     SOFT = int(UmaBudget.THRESHOLD_SOFT_WARN_GIB * 1024**3)  # 5.5 GiB (SSOT)
     HARD = int(UmaBudget.THRESHOLD_WARN_GIB * 1024**3)  # 5.94 GiB (SSOT) — NOT MISSION_PEAK_RSS

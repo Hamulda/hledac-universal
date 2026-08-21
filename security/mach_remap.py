@@ -45,11 +45,11 @@ On M1 8GB, the 500 MB sits in the sandbox's RSS, not Hledac's.
     - Single active remap at a time (Rust semaphore)
     - Opt-in only (HLEDAC_ENABLE_MACH_REMAP=1)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from hledac.universal.utils.asyncx import safe_wait_for
 import os
 import subprocess
 import sys
@@ -58,15 +58,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from hledac.universal.utils.asyncx import safe_wait_for
+
 if TYPE_CHECKING:
     pass
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ─── Feature Gates ───────────────────────────────────────────────────────────
 
 _HLEDAC_ENABLE_MACH_REMAP: bool = FeatureFlags.get(FeatureFlag.MACH_REMAP, default=False)
 
@@ -74,9 +73,7 @@ _HLEDAC_ENABLE_MACH_REMAP: bool = FeatureFlags.get(FeatureFlag.MACH_REMAP, defau
 # Below this, tempfile path is always faster (no fork overhead).
 _HLEDAC_MACH_REMAP_MIN_SIZE: int = int(
     os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))  # 100 MB
-    )
-
-# ─── Lazy Import ─────────────────────────────────────────────────────────────
+)
 
 # MachRemapError is raised by the Rust extension.
 # We lazy-import the Rust module to avoid compile-time errors when
@@ -104,6 +101,7 @@ def _get_mach_module() -> object | None:
         # Import the Rust extension — requires --features mach during compile
         # and HLEDAC_ENABLE_MACH_REMAP=1 at runtime
         from hledac_rust_extensions import mach_remap as _mod
+
         _MACH_REMOTE_MODULE = _mod
         return _mod
     except ImportError as exc:
@@ -111,12 +109,9 @@ def _get_mach_module() -> object | None:
             "[MACH-REMAP] Rust extension unavailable: %s (set HLEDAC_ENABLE_MACH_REMAP=1 "
             "and compile with --features mach if needed)",
             exc,
-    )
+        )
         _MACH_REMOTE_MODULE = None
         return None
-
-
-# ─── Result Types ────────────────────────────────────────────────────────────
 
 
 class MachRemapResult(NamedTuple):
@@ -148,13 +143,10 @@ class MachRemapError(Exception):
     This exception is intentionally NOT a HledacError (not actionable for user).
     """
 
-    def __init__(self, message: str, errno_code: str):
+    def __init__(self, message: str, errno_code: str) -> None:
         super().__init__(message)
         self.message = message
         self.errno_code = errno_code
-
-
-# ─── Core Bridge ─────────────────────────────────────────────────────────────
 
 
 @dataclass(slots=True)
@@ -191,23 +183,22 @@ class _MachRemapBridge:
         Returns False (and logs reason) if any guard fails.
         """
         if not _HLEDAC_ENABLE_MACH_REMAP:
-            logger.debug(
-                "[MACH-REMAP] skipped: HLEDAC_ENABLE_MACH_REMAP != 1"
-    )
+            logger.debug("[MACH-REMAP] skipped: HLEDAC_ENABLE_MACH_REMAP != 1")
             return False
 
         if file_size < _HLEDAC_MACH_REMAP_MIN_SIZE:
             logger.debug(
                 "[MACH-REMAP] skipped: file_size=%d < min_size=%d",
-                file_size, _HLEDAC_MACH_REMAP_MIN_SIZE,
-    )
+                file_size,
+                _HLEDAC_MACH_REMAP_MIN_SIZE,
+            )
             return False
 
         if sys.platform != "darwin":
             logger.debug(
                 "[MACH-REMAP] skipped: platform=%r (macOS only)",
                 sys.platform,
-    )
+            )
             return False
 
         # Check Rust-level can_remap() which probes available memory
@@ -218,10 +209,7 @@ class _MachRemapBridge:
 
         try:
             if not mod.can_remap():
-                logger.warning(
-                    "[MACH-REMAP] skipped: can_remap() returned False "
-                    "(memory guard or not enabled)"
-    )
+                logger.warning("[MACH-REMAP] skipped: can_remap() returned False (memory guard or not enabled)")
                 return False
         except Exception as exc:
             logger.debug("[MACH-REMAP] can_remap() raised: %s", exc)
@@ -270,7 +258,7 @@ class _MachRemapBridge:
                 logger.debug(
                     "[MACH-REMAP] skipped: cannot stat %s",
                     file_path,
-    )
+                )
                 return None
 
         # Check all guards first (early exit)
@@ -285,29 +273,33 @@ class _MachRemapBridge:
             child_pid, mapped_addr, mapped_size = mod.vm_remap_and_exec(
                 str(file_path),
                 file_size,
-    )
+            )
             logger.info(
                 "[MACH-REMAP] vm_remap_and_exec: pid=%d addr=0x%x size=%d path=%s",
-                child_pid, mapped_addr, mapped_size, file_path.name,
-    )
+                child_pid,
+                mapped_addr,
+                mapped_size,
+                file_path.name,
+            )
             return MachRemapResult(
                 child_pid=child_pid,
                 file_descriptor=-1,
                 mapped_addr=mapped_addr,
                 mapped_size=mapped_size,
-    )
+            )
         except MachRemapError as exc:
             logger.debug(
                 "[MACH-REMAP] remap failed: %s (%s) — falling back to tempfile",
-                exc.message, exc.errno_code,
-    )
+                exc.message,
+                exc.errno_code,
+            )
             return None
         except Exception as exc:
             # Catch everything — fail-soft, never propagate
             logger.debug(
                 "[MACH-REMAP] unexpected error: %s — falling back to tempfile",
                 exc,
-    )
+            )
             return None
 
     def get_stats(self) -> dict:
@@ -346,8 +338,6 @@ class _MachRemapBridge:
             }
 
 
-# ─── Singleton ───────────────────────────────────────────────────────────────
-
 _bridge_instance: _MachRemapBridge | None = None
 
 
@@ -357,9 +347,6 @@ def get_mach_remap_bridge() -> _MachRemapBridge:
     if _bridge_instance is None:
         _bridge_instance = _MachRemapBridge()
     return _bridge_instance
-
-
-# ─── Async Convenience ───────────────────────────────────────────────────────
 
 
 async def remap_file_async(
@@ -380,9 +367,6 @@ async def remap_file_async(
         str(file_path),
         file_size,
     )
-
-
-# ─── Fallback Tempfile ───────────────────────────────────────────────────────
 
 
 def create_tempfile_for_sandbox(
@@ -414,9 +398,6 @@ def create_tempfile_for_sandbox(
         return Path(tmp.name), size
 
 
-# ─── High-Level Sandbox Helper ───────────────────────────────────────────────
-
-
 async def run_with_zero_copy_sandbox(
     file_path: str | Path,
     analysis_cmd: list[str],
@@ -442,17 +423,24 @@ async def run_with_zero_copy_sandbox(
     file_path = Path(file_path)
     file_size = file_path.stat().st_size
 
-    bridge = get_mach_remap_bridge()
+    get_mach_remap_bridge()
 
     # Strip sensitive environment variables
     safe_env = {
-        k: v for k, v in (env or os.environ).items()
+        k: v
+        for k, v in (env or os.environ).items()
         if not any(
             prefix in k
             for prefix in (
-                "API_", "KEY_", "TOKEN", "SECRET", "HLEDAC_",
-                "SHODAN", "CENSYS", "GREYNOISE",
-    )
+                "API_",
+                "KEY_",
+                "TOKEN",
+                "SECRET",
+                "HLEDAC_",
+                "SHODAN",
+                "CENSYS",
+                "GREYNOISE",
+            )
         )
     }
 
@@ -462,16 +450,15 @@ async def run_with_zero_copy_sandbox(
     if remap_result is not None:
         logger.info(
             "[MACH-REMAP] Using zero-copy path: pid=%d addr=0x%x",
-            remap_result.child_pid, remap_result.mapped_addr,
-    )
+            remap_result.child_pid,
+            remap_result.mapped_addr,
+        )
         # Note: In the full implementation, the Rust bridge handles
         # exec()ing the analysis_cmd in the child process.
         # For now, fall through to tempfile path (see TODO below).
 
     # Strategy 2: Fallback to tempfile
-    temp_path, _ = await asyncio.to_thread(
-        create_tempfile_for_sandbox, file_path
-    )
+    temp_path, _ = await asyncio.to_thread(create_tempfile_for_sandbox, file_path)
 
     logger.debug(
         "[MACH-REMAP] Using tempfile fallback: %s (Mach remap unavailable)",
@@ -484,16 +471,14 @@ async def run_with_zero_copy_sandbox(
             env=safe_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-    )
-        stdout, stderr = await safe_wait_for(
-            proc.communicate(), timeout=timeout_s
-    )
+        )
+        stdout, stderr = await safe_wait_for(proc.communicate(), timeout=timeout_s)
         return subprocess.CompletedProcess(
             args=analysis_cmd,
             returncode=proc.returncode,
             stdout=stdout,
             stderr=stderr,
-    )
+        )
     finally:
         if temp_path.exists():
             try:

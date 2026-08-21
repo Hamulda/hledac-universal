@@ -52,12 +52,12 @@ class JSONFormatter:
         """
         import orjson
 
-        from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
         from hledac.universal.export import sprint_exporter as _se
-        from hledac.universal.paths import get_sprint_json_report_path
+        from hledac.universal.export.COMPAT_HANDOFF import ensure_export_handoff
         from hledac.universal.export.components.pivot_builder import (
             _get_correlation_from_handoff,
-    )
+        )
+        from hledac.universal.paths import get_sprint_json_report_path
 
         # Sprint F186C: Tighten typed contract
         eh = ensure_export_handoff(handoff, default_sprint_id=sprint_id or "unknown")
@@ -75,13 +75,16 @@ class JSONFormatter:
         if enable_security_enrichment and export_mode == "full":
             try:
                 from hledac.universal.coordinators.security_coordinator import UniversalSecurityCoordinator
+
                 sec_coordinator = UniversalSecurityCoordinator(max_concurrent=2)
                 await sec_coordinator.initialize()
                 gate_result = await sec_coordinator.sanitize_outbound(boundary_text, force_fallback=True)
                 if "sanitized" in gate_result:
                     sanitized_str = gate_result["sanitized"]
                 else:
-                    logger.warning("[EXPORT] sanitize_outbound returned no 'sanitized' key  --  using degraded structure")
+                    logger.warning(
+                        "[EXPORT] sanitize_outbound returned no 'sanitized' key  --  using degraded structure"
+                    )
                     degraded = {
                         "_sanitize_failure": True,
                         "sprint_id": _sprint_id,
@@ -89,8 +92,11 @@ class JSONFormatter:
                     }
                     sanitized_str = orjson.dumps(degraded).decode()
                 if gate_result.get("pii_count"):
-                    logger.info("[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
-                                gate_result.get("pii_count"), gate_result.get("risk_level", "unknown"))
+                    logger.info(
+                        "[EXPORT] sanitize_outbound: pii_count=%s, risk=%s",
+                        gate_result.get("pii_count"),
+                        gate_result.get("risk_level", "unknown"),
+                    )
             except Exception as e:
                 logger.warning("[EXPORT] sanitize_outbound failed (non-fatal): %s", e)
                 degraded = {
@@ -114,8 +120,9 @@ class JSONFormatter:
         except (orjson.JSONDecodeError, TypeError) as parse_err:
             logger.warning(
                 "[EXPORT] sanitize boundary parse failed (size=%d): %s. Using boundary_content as degraded fallback.",
-                len(sanitized_str), parse_err
-    )
+                len(sanitized_str),
+                parse_err,
+            )
             sanitized_obj = boundary_content if isinstance(boundary_content, dict) else {}
 
         # Sprint F150I Section  2: Build product_value_summary
@@ -127,13 +134,15 @@ class JSONFormatter:
         _cached_acq_truth = _se._get_acquisition_truth(eh)
         reconciled_pvs, _, truth_recon_applied, truth_recon_reason = _se.reconcile_terminal_truth(
             pvs, eh_scorecard, _cached_runtime_truth
-    )
+        )
         if truth_recon_applied:
             pvs = reconciled_pvs
             logger.info(f"[EXPORT] F229A truth reconciliation: {truth_recon_reason}")
 
         # Sprint F225F/F228D: capability_synthesis
-        acquisition_report = _cached_acq_truth.get("acquisition_report") if isinstance(_cached_acq_truth, dict) else None
+        acquisition_report = (
+            _cached_acq_truth.get("acquisition_report") if isinstance(_cached_acq_truth, dict) else None
+        )
         capability_synthesis = _se._build_capability_synthesis(eh, pvs, acquisition_report)
 
         # Sprint F150H: Branch value and trend
@@ -142,9 +151,12 @@ class JSONFormatter:
 
         # Sprint F150J: Seeds (async I/O heavy, move to tail)
         seeds_path = await _se._generate_next_sprint_seeds(
-            store, pvs, eh.analyst_brief, eh.investigation_packet,
+            store,
+            pvs,
+            eh.analyst_brief,
+            eh.investigation_packet,
             export_mode=export_mode,
-    )
+        )
 
         # Sprint F150K: sprint_summary
         try:
@@ -168,16 +180,45 @@ class JSONFormatter:
         sprint_verdict = _se._get_sprint_verdict(eh)
         synthesis_outcome_payload = _se._get_synthesis_outcome_payload(eh)
 
-        run_truth_note = _se._derive_run_truth_note(runtime_truth, canonical_run_summary, sprint_verdict, pvs) if pvs else ""
+        run_truth_note = (
+            _se._derive_run_truth_note(runtime_truth, canonical_run_summary, sprint_verdict, pvs) if pvs else ""
+        )
         branch_truth = _se._derive_branch_truth(feed_verdict, public_verdict, branch_value)
-        best_first_move = _se._derive_best_first_move(runtime_truth, signal_path, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""
-        why_this_run_matters = _se._derive_why_this_run_matters(runtime_truth, signal_path, hypothesis_pack, canonical_run_summary, sprint_verdict, pvs, correlation) if pvs else ""
+        best_first_move = (
+            _se._derive_best_first_move(
+                runtime_truth, signal_path, canonical_run_summary, sprint_verdict, pvs, correlation
+            )
+            if pvs
+            else ""
+        )
+        why_this_run_matters = (
+            _se._derive_why_this_run_matters(
+                runtime_truth, signal_path, hypothesis_pack, canonical_run_summary, sprint_verdict, pvs, correlation
+            )
+            if pvs
+            else ""
+        )
 
-        operator_brief = _se._build_operator_brief(
-            pvs, branch_value, sprint_trend, source_leaderboard, seeds_count, correlation,
-            runtime_truth, feed_verdict, public_verdict, signal_path, hypothesis_pack,
-            canonical_run_summary, sprint_verdict, synthesis_outcome_payload
-        ) if pvs else None
+        operator_brief = (
+            _se._build_operator_brief(
+                pvs,
+                branch_value,
+                sprint_trend,
+                source_leaderboard,
+                seeds_count,
+                correlation,
+                runtime_truth,
+                feed_verdict,
+                public_verdict,
+                signal_path,
+                hypothesis_pack,
+                canonical_run_summary,
+                sprint_verdict,
+                synthesis_outcome_payload,
+            )
+            if pvs
+            else None
+        )
 
         research_depth = _se._compute_research_depth(eh, pvs, signal_path, hypothesis_pack, correlation)
 
@@ -192,7 +233,7 @@ class JSONFormatter:
             "steganography_detection",
             "digital_ghost_detection",
             "blockchain_forensics",
-    )
+        )
         try:
             if hasattr(store, "async_query_recent_findings"):
                 _all_findings = await store.async_query_recent_findings(limit=_EXPORT_FINDINGS_LIMIT)
@@ -224,7 +265,7 @@ class JSONFormatter:
             try:
                 graph_context_annotations = store.annotate_findings_with_graph_context(
                     findings_for_annotation, max_hops=2, max_annotations=50
-    )
+                )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -239,6 +280,7 @@ class JSONFormatter:
         if export_mode == "full":
             try:
                 from hledac.universal.knowledge.evidence_chain import get_all_chains
+
                 all_chains = get_all_chains()
                 all_chains.sort(key=lambda c: len(c.steps), reverse=True)
                 evidence_chains = [
@@ -263,6 +305,7 @@ class JSONFormatter:
 
         try:
             from hledac.universal.brain.ane_embedder import semantic_dedup_findings
+
             envelope_findings = await semantic_dedup_findings(envelope_findings, threshold=0.92)
             logger.debug("[ANE:export] %d findings after export dedup", len(envelope_findings))
         except Exception as _ane_err:
@@ -271,7 +314,7 @@ class JSONFormatter:
         # [META]-009: Build standalone investigator dashboard (opt-in)
         dashboard_html_path: str | None = None
         try:
-            _ff = getattr(store, 'FeatureFlags', None)
+            _ff = getattr(store, "FeatureFlags", None)
             if _ff is not None:
                 if isinstance(_ff, dict):
                     _dashboard_enabled = _ff.get("DASHBOARD", False)
@@ -279,6 +322,7 @@ class JSONFormatter:
                     _dashboard_enabled = getattr(_ff, "DASHBOARD", False)
                 if _dashboard_enabled:
                     from hledac.universal.export.dashboard_builder import WASMDashboardBuilder
+
                     _ga = getattr(store, "_graph_attachment", None)
                     if _ga is not None:
                         try:
@@ -298,7 +342,7 @@ class JSONFormatter:
                             sprint_trend=sprint_trend,
                             source_leaderboard=source_leaderboard or [],
                             capability_synthesis=capability_synthesis,
-    )
+                        )
                     except Exception as _dash_err:
                         logger.debug("[EXPORT] dashboard build skipped: %s", _dash_err)
         except Exception:  # noqa: BLE001

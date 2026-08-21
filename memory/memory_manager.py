@@ -2,7 +2,6 @@
 Memory Manager with LMDB Persistence
 ====================================
 
-
 Dual-layer architecture for session-bound ephemeral storage:
 
 LAYER 1 — Direct Module API (here in memory_manager.py):
@@ -30,22 +29,26 @@ M1 8GB Optimized:
 - Lazy session cleanup (cleanup_old_sessions called on put/get)
 - orjson zero-copy deserialization
 """
+
 import asyncio
 import logging
-import weakref
 import time
+import weakref
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
-from _core import aclose
+
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
+
 try:
     import orjson
+
     ORJSON_AVAILABLE = True
 except ImportError:
-    import json
     ORJSON_AVAILABLE = False
 try:
     import lmdb
+
     LMDB_AVAILABLE = True
 except ImportError:
     LMDB_AVAILABLE = False
@@ -56,7 +59,7 @@ except ImportError:
 
 # S-01: Import UnifiedLMDB for memory manager migration
 try:
-    from hledac.universal._core.lmdb_unified import get_unified_lmdb, SubDB
+    from hledac.universal._core.lmdb_unified import SubDB, get_unified_lmdb
 except ImportError:
     get_unified_lmdb = None
     SubDB = None  # type: ignore[assignment]
@@ -66,11 +69,13 @@ MAX_KEYS_PER_SESSION = 1000
 MAX_SESSIONS = 1000
 SESSION_TTL_DAYS = 30
 
+
 def _json_dumps(obj: Any) -> bytes:
     """Serialize object to JSON bytes."""
     if ORJSON_AVAILABLE:
         return orjson.dumps(obj)
-    return _msgspec_dumps_str(obj).encode('utf-8')
+    return _msgspec_dumps_str(obj).encode("utf-8")
+
 
 def _json_loads(data) -> Any:
     """Deserialize JSON bytes to object."""
@@ -83,12 +88,13 @@ def _json_loads(data) -> Any:
             pass
     try:
         if isinstance(data, bytes):
-            return _msgspec_loads(data.decode('utf-8'))
+            return _msgspec_loads(data.decode("utf-8"))
         elif isinstance(data, str):
             return _msgspec_loads(data)
     except Exception:  # noqa: BLE001
         pass
     return None
+
 
 class MemoryManager:
     """
@@ -97,9 +103,26 @@ class MemoryManager:
     Provides session-based storage for entities, queries, and files.
     Each session has its own key namespace with automatic expiration.
     """
-    __slots__ = tuple(('_sub_db', '_env', '_lock', '_map_size', '_max_keys_per_session', '_max_sessions', '_session_ttl_days', '_finalizer'))
 
-    def __init__(self, db_path: str | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys_per_session: int=MAX_KEYS_PER_SESSION, max_sessions: int=MAX_SESSIONS, session_ttl_days: int=SESSION_TTL_DAYS):
+    __slots__ = (
+        "_sub_db",
+        "_env",
+        "_lock",
+        "_map_size",
+        "_max_keys_per_session",
+        "_max_sessions",
+        "_session_ttl_days",
+        "_finalizer",
+    )
+
+    def __init__(
+        self,
+        db_path: str | None = None,
+        map_size: int = DEFAULT_MAP_SIZE,
+        max_keys_per_session: int = MAX_KEYS_PER_SESSION,
+        max_sessions: int = MAX_SESSIONS,
+        session_ttl_days: int = SESSION_TTL_DAYS,
+    ) -> None:
         """
         Initialize Memory Manager.
 
@@ -111,7 +134,7 @@ class MemoryManager:
             session_ttl_days: Session TTL in days.
         """
         if not LMDB_AVAILABLE:
-            raise ImportError('lmdb package not available')
+            raise ImportError("lmdb package not available")
         self._map_size = map_size  # kept for compat, not used
         self._max_keys_per_session = max_keys_per_session
         self._max_sessions = max_sessions
@@ -125,24 +148,29 @@ class MemoryManager:
             # Fallback for environments where UnifiedLMDB is not available
             try:
                 from hledac.universal.paths import DB_ROOT
-                db_path_fallback = Path(db_path) if db_path else DB_ROOT / 'memory_manager.lmdb'
+
+                db_path_fallback = Path(db_path) if db_path else DB_ROOT / "memory_manager.lmdb"
             except ImportError:
-                db_path_fallback = Path(db_path) if db_path else Path('~/memory_manager.lmdb').expanduser()
+                db_path_fallback = Path(db_path) if db_path else Path("~/memory_manager.lmdb").expanduser()
             db_path_fallback.parent.mkdir(parents=True, exist_ok=True)
             self._env = lmdb.open(str(db_path_fallback), map_size=map_size, max_dbs=4, writemap=False, metasync=True)
             self._sub_db = None
         self._lock = asyncio.Lock()
-        logger.info('MemoryManager initialized (UnifiedLMDB)' if self._sub_db is not None else f'MemoryManager initialized at fallback path')
+        logger.info(
+            "MemoryManager initialized (UnifiedLMDB)"
+            if self._sub_db is not None
+            else "MemoryManager initialized at fallback path"
+        )
         # F264: weakref.finalize for deterministic cleanup (Python 3.14+ compatible)
         self._finalizer = weakref.finalize(self, _memory_manager_cleanup, self._env)
 
     def _make_session_key(self, session_id: str, key: str) -> bytes:
         """Create a full LMDB key from session_id and key."""
-        return f'session:{session_id}:{key}'.encode()
+        return f"session:{session_id}:{key}".encode()
 
     def _make_session_index_key(self, session_id: str) -> bytes:
         """Create session index key."""
-        return f'sessions:{session_id}'.encode()
+        return f"sessions:{session_id}".encode()
 
     async def put(self, session_id: str, key: str, value: dict) -> bool:
         """
@@ -162,17 +190,22 @@ class MemoryManager:
                 session_index_key = self._make_session_index_key(session_id)
                 data = _json_dumps(value)
                 now = time.time()
-                session_meta = {'session_id': session_id, 'last_access': now, 'created': now}
+                session_meta = {"session_id": session_id, "last_access": now, "created": now}
                 if putmulti_bounded is not None:
                     # S-01: Use sub_db for UnifiedLMDB isolation
-                    putmulti_bounded(self._env, [(full_key, data), (session_index_key, _json_dumps(session_meta))], overwrite=True, sub_db=self._sub_db)
+                    putmulti_bounded(
+                        self._env,
+                        [(full_key, data), (session_index_key, _json_dumps(session_meta))],
+                        overwrite=True,
+                        sub_db=self._sub_db,
+                    )
                 else:
                     with self._env.begin(write=True, db=self._sub_db) as txn:
                         txn.put(full_key, data)
                         txn.put(session_index_key, _json_dumps(session_meta))
                 return True
             except Exception as e:
-                logger.error(f'MemoryManager put failed: {e}')
+                logger.error(f"MemoryManager put failed: {e}")
                 return False
 
     async def get(self, session_id: str, key: str) -> dict | None:
@@ -191,7 +224,6 @@ class MemoryManager:
                 full_key = self._make_session_key(session_id, key)
                 session_index_key = self._make_session_index_key(session_id)
 
-                # Phase 1: Read-only txn for data retrieval (zero-copy via buffers=True)
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     value = txn.get(full_key)
                     if value is None:
@@ -206,16 +238,14 @@ class MemoryManager:
                         session_meta_bytes = bytes(session_meta_bytes)
                     session_meta = _json_loads(session_meta_bytes) if session_meta_bytes else None
 
-                # Phase 2: Separate write txn only if session_meta needs update
-                # (P1-3 fix: txn.put() in read-only txn caused silent ReadonlyError)
                 if session_meta:
-                    session_meta['last_access'] = time.time()
+                    session_meta["last_access"] = time.time()
                     with self._env.begin(write=True, db=self._sub_db) as txn:
                         txn.put(session_index_key, _json_dumps(session_meta))
 
                 return _json_loads(value)
             except Exception as e:
-                logger.error(f'MemoryManager get failed: {e}')
+                logger.error(f"MemoryManager get failed: {e}")
                 return None
 
     async def delete(self, session_id: str, key: str) -> bool:
@@ -233,7 +263,7 @@ class MemoryManager:
             try:
                 full_key = self._make_session_key(session_id, key)
                 session_index_key = self._make_session_index_key(session_id)
-                prefix = f'session:{session_id}:'.encode()
+                prefix = f"session:{session_id}:".encode()
 
                 with self._env.begin(write=True, db=self._sub_db) as txn:
                     # Check if this is the last key in session
@@ -249,7 +279,6 @@ class MemoryManager:
                             break
                         cursor.next()
 
-                    # Delete the key
                     deleted = txn.delete(full_key)
 
                     # If this was the last key, clean up session_index_key to prevent orphan
@@ -258,7 +287,7 @@ class MemoryManager:
 
                     return deleted
             except Exception as e:
-                logger.error(f'MemoryManager delete failed: {e}')
+                logger.error(f"MemoryManager delete failed: {e}")
                 return False
 
     async def get_session_keys(self, session_id: str) -> list[str]:
@@ -274,7 +303,7 @@ class MemoryManager:
         async with self._lock:
             try:
                 keys = []
-                prefix = f'session:{session_id}:'.encode()
+                prefix = f"session:{session_id}:".encode()
                 # buffers=True for zero-copy reads, consistent with get() optimization
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
@@ -284,15 +313,15 @@ class MemoryManager:
                         if key is None or not key.startswith(prefix):
                             break
                         # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
-                        key_part = key[len(prefix):].decode('utf-8')
+                        key_part = key[len(prefix) :].decode("utf-8")
                         keys.append(key_part)
                         cursor.next()
                 return keys
             except Exception as e:
-                logger.error(f'MemoryManager get_session_keys failed: {e}')
+                logger.error(f"MemoryManager get_session_keys failed: {e}")
                 return []
 
-    async def get_session_history(self, session_id: str, limit: int=100) -> list[dict]:
+    async def get_session_history(self, session_id: str, limit: int = 100) -> list[dict]:
         """
         Get recent history for a session.
 
@@ -306,7 +335,7 @@ class MemoryManager:
         keys = await self.get_session_keys(session_id)
         history = []
         # Direct LMDB read to avoid triggering last_access update on every history access
-        full_prefix = f'session:{session_id}:'.encode()
+        full_prefix = f"session:{session_id}:".encode()
         with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
             for key in keys[:limit]:
                 full_key = full_prefix + key.encode()
@@ -314,9 +343,9 @@ class MemoryManager:
                 if value_bytes is not None:
                     value = _json_loads(value_bytes)
                     if value is not None:
-                        history.append({'key': key, 'value': value})
+                        history.append({"key": key, "value": value})
         # Sort by timestamp if available, otherwise maintain insertion order
-        history.sort(key=lambda item: item.get('value', {}).get('timestamp', 0), reverse=True)
+        history.sort(key=lambda item: item.get("value", {}).get("timestamp", 0), reverse=True)
         return history[:limit]
 
     async def clear_session(self, session_id: str) -> bool:
@@ -340,7 +369,7 @@ class MemoryManager:
                     txn.delete(session_index_key)
                 return True
             except Exception as e:
-                logger.error(f'MemoryManager clear_session failed: {e}')
+                logger.error(f"MemoryManager clear_session failed: {e}")
                 return False
 
     async def list_sessions(self) -> list[str]:
@@ -353,7 +382,7 @@ class MemoryManager:
         async with self._lock:
             try:
                 sessions = []
-                prefix = b'sessions:'
+                prefix = b"sessions:"
                 # buffers=True for zero-copy reads, consistent with other read paths
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     cursor = txn.cursor()
@@ -363,12 +392,12 @@ class MemoryManager:
                         if key is None or not key.startswith(prefix):
                             break
                         # S-02: zero-copy — removeprefix then decode only the suffix (+1 allocs vs +2)
-                        session_id = key[len(prefix):].decode('utf-8')
+                        session_id = key[len(prefix) :].decode("utf-8")
                         sessions.append(session_id)
                         cursor.next()
                 return sessions
             except Exception as e:
-                logger.error(f'MemoryManager list_sessions failed: {e}')
+                logger.error(f"MemoryManager list_sessions failed: {e}")
                 return []
 
     async def cleanup_old_sessions(self) -> int:
@@ -387,7 +416,6 @@ class MemoryManager:
                 # OPTIMIZATION: Single read transaction for all session metas
                 # (was: N transactions for N sessions)
                 expired_session_ids: list[str] = []
-                prefix = b'sessions:'
 
                 with self._env.begin(write=False, buffers=True, db=self._sub_db) as txn:
                     for session_id in sessions:
@@ -400,7 +428,7 @@ class MemoryManager:
                             meta = _json_loads(meta_bytes)
                             if meta is None:
                                 continue
-                            last_access = meta.get('last_access', 0)
+                            last_access = meta.get("last_access", 0)
                             if now - last_access > ttl_seconds:
                                 expired_session_ids.append(session_id)
                         except Exception:
@@ -419,14 +447,14 @@ class MemoryManager:
 
                 return removed
             except Exception as e:
-                logger.error(f'MemoryManager cleanup_old_sessions failed: {e}')
+                logger.error(f"MemoryManager cleanup_old_sessions failed: {e}")
                 return 0
 
     def close(self) -> None:
         """Close the database."""
-        if hasattr(self, '_env') and self._env:
+        if hasattr(self, "_env") and self._env:
             self._env.close()
-            logger.info('MemoryManager closed')
+            logger.info("MemoryManager closed")
 
     def __enter__(self) -> MemoryManager:
         return self
@@ -437,19 +465,19 @@ class MemoryManager:
     def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self.close()
 
 
 def _memory_manager_cleanup(env: Any) -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Close LMDB environment when MemoryManager is garbage collected.
     Called automatically by weakref.finalize when the object is GC'd.
     """
@@ -461,6 +489,7 @@ def _memory_manager_cleanup(env: Any) -> None:
 
 
 _memory_manager: MemoryManager | None = None
+
 
 async def get_memory_manager() -> MemoryManager:
     """
@@ -474,6 +503,7 @@ async def get_memory_manager() -> MemoryManager:
         _memory_manager = MemoryManager()
     return _memory_manager
 
+
 async def close_memory_manager() -> None:
     """Close the singleton MemoryManager."""
     global _memory_manager
@@ -481,25 +511,30 @@ async def close_memory_manager() -> None:
         _memory_manager.close()
         _memory_manager = None
 
+
 async def memory_put(session_id: str, key: str, value: dict) -> bool:
     """Store a value in memory."""
     mgr = await get_memory_manager()
     return await mgr.put(session_id, key, value)
+
 
 async def memory_get(session_id: str, key: str) -> dict | None:
     """Retrieve a value from memory."""
     mgr = await get_memory_manager()
     return await mgr.get(session_id, key)
 
+
 async def memory_delete(session_id: str, key: str) -> bool:
     """Delete a key from memory."""
     mgr = await get_memory_manager()
     return await mgr.delete(session_id, key)
 
-async def memory_get_history(session_id: str, limit: int=100) -> list[dict]:
+
+async def memory_get_history(session_id: str, limit: int = 100) -> list[dict]:
     """Get session history from memory."""
     mgr = await get_memory_manager()
     return await mgr.get_session_history(session_id, limit)
+
 
 async def export_session(session_id: str) -> dict[str, Any]:
     """
@@ -517,7 +552,7 @@ async def export_session(session_id: str) -> dict[str, Any]:
     hypotheses: list[dict] = []
     other: list[dict] = []
     # Direct LMDB read to avoid triggering last_access update during export
-    full_prefix = f'session:{session_id}:'.encode()
+    full_prefix = f"session:{session_id}:".encode()
     with mgr._env.begin(write=False, buffers=True, db=mgr._sub_db) as txn:
         for key in keys:
             full_key = full_prefix + key.encode()
@@ -527,11 +562,29 @@ async def export_session(session_id: str) -> dict[str, Any]:
             value = _json_loads(value_bytes)
             if value is None:
                 continue
-            if key.startswith('finding:'):
+            if key.startswith("finding:"):
                 findings.append(value)
-            elif key.startswith('hypothesis:'):
+            elif key.startswith("hypothesis:"):
                 hypotheses.append(value)
             else:
-                other.append({'key': key, 'value': value})
-    return {'session_id': session_id, 'findings': findings, 'hypotheses': hypotheses, 'other': other, 'findings_count': len(findings), 'hypotheses_count': len(hypotheses)}
-__all__ = ['MemoryManager', 'get_memory_manager', 'close_memory_manager', 'memory_put', 'memory_get', 'memory_delete', 'memory_get_history', 'export_session']
+                other.append({"key": key, "value": value})
+    return {
+        "session_id": session_id,
+        "findings": findings,
+        "hypotheses": hypotheses,
+        "other": other,
+        "findings_count": len(findings),
+        "hypotheses_count": len(hypotheses),
+    }
+
+
+__all__ = [
+    "MemoryManager",
+    "get_memory_manager",
+    "close_memory_manager",
+    "memory_put",
+    "memory_get",
+    "memory_delete",
+    "memory_get_history",
+    "export_session",
+]

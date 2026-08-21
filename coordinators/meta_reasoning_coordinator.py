@@ -2,14 +2,6 @@
 Universal Meta-Reasoning Coordinator
 ====================================
 
-
-
-
-
-
-
-
-
 Integrated meta-reasoning from:
 - MetaReasoningCoordinator: Chain of Thought, Tree of Thoughts, Graph reasoning
 - Advanced reasoning strategies with automatic selection
@@ -28,6 +20,7 @@ Features:
 - Fetch directive generation for acquisition lane targeting [SILICON-05]
 - Step-Level PRM (Process Reward Model) for branch scoring [BREAKTHROUGH #3]
 """
+
 import asyncio
 import logging
 import os
@@ -40,12 +33,10 @@ from dataclasses import field
 from enum import Enum
 from typing import Any
 
-from operator import attrgetter, itemgetter
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 import numpy as np
 
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok
 
 try:
@@ -59,8 +50,7 @@ except ImportError:
     FetchDirective = None  # type: ignore[assignment,misc]
     VoidRegion = None  # type: ignore[assignment,misc]
 
-from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from _core import aclose
+from .base import DecisionResponse, ExecutionResult, OperationType, UniversalCoordinator
 
 # BREAKTHROUGH #3: Step-Level PRM imports (lazy-loaded for M1 8GB compatibility)
 # NEXTGEN-05: Prefer RustPRMScorer for Rust-native CoreML ANE inference
@@ -97,23 +87,24 @@ def _get_prm_scorer():
             # Try RustPRMScorer first (NEXTGEN-05: Rust-native CoreML)
             try:
                 from planning.step_reward_model import RustPRMScorer
+
                 _PRM_SCORER_RUST = RustPRMScorer()
                 if _PRM_SCORER_RUST.is_available:
                     _PRM_SCORER_RUST.load()
-                    logger.info('[ToT-PRM] Using Rust-native CoreML ANE inference')
-                    # Return the Rust scorer as the PRM scorer
+                    logger.info("[ToT-PRM] Using Rust-native CoreML ANE inference")
                     _PRM_SCORER = _PRM_SCORER_RUST
                     return _PRM_SCORER
             except Exception as e:
-                logger.debug(f'[ToT-PRM] RustPRMScorer not available: {e}')
+                logger.debug(f"[ToT-PRM] RustPRMScorer not available: {e}")
 
             # Fall back to Python PRMInference
             try:
                 from planning.step_reward_model import create_default_prm_scorer
+
                 _PRM_SCORER = create_default_prm_scorer()
-                logger.info('[ToT-PRM] PRM scorer initialized (Python path)')
+                logger.info("[ToT-PRM] PRM scorer initialized (Python path)")
             except Exception as e:
-                logger.warning(f'[ToT-PRM] Failed to initialize PRM scorer: {e}')
+                logger.warning(f"[ToT-PRM] Failed to initialize PRM scorer: {e}")
                 return None
     return _PRM_SCORER
 
@@ -134,16 +125,17 @@ def _get_rust_prm_scorer():
         if _PRM_SCORER_RUST is None:
             try:
                 from planning.step_reward_model import RustPRMScorer
+
                 _PRM_SCORER_RUST = RustPRMScorer()
                 if _PRM_SCORER_RUST.is_available:
                     _PRM_SCORER_RUST.load()
-                    logger.info('[ToT-PRM] Rust PRM scorer loaded')
+                    logger.info("[ToT-PRM] Rust PRM scorer loaded")
                     return _PRM_SCORER_RUST
                 else:
-                    logger.debug('[ToT-PRM] Rust ANE not available')
+                    logger.debug("[ToT-PRM] Rust ANE not available")
                     return None
             except Exception as e:
-                logger.debug(f'[ToT-PRM] RustPRMScorer failed: {e}')
+                logger.debug(f"[ToT-PRM] RustPRMScorer failed: {e}")
                 return None
     return _PRM_SCORER_RUST
 
@@ -170,6 +162,7 @@ def _get_seeded_rng() -> random.Random | secrets.SystemRandom:
     if not _SPRINT_SEED_STATE_IMPORTED:
         try:
             from hledac.universal.runtime.sprint_entrypoint import get_sprint_seed_state
+
             _SPRINT_SEED_STATE_IMPORTED = True
         except ImportError:
             return _RNG
@@ -177,11 +170,12 @@ def _get_seeded_rng() -> random.Random | secrets.SystemRandom:
     try:
         # Re-import locally to avoid keeping a reference to the module
         from hledac.universal.runtime.sprint_entrypoint import get_sprint_seed_state
+
         seed_state = get_sprint_seed_state()
         if seed_state is not None:
             # Use the PRNG seed from SprintSeedState for deterministic replay
             return random.Random(seed_state.prng_seed)
-    except (ImportError, AttributeError):  # noqa: BLE001
+    except ImportError, AttributeError:  # noqa: BLE001
         pass
     return _RNG
 
@@ -198,10 +192,10 @@ _DEAD_END_TIMEOUT_S = 10.0  # 10s without new IOCs = dead-end
 # IGD = Δ|unique_ioc_values| / Δt — measures actual IOC discovery rate per branch.
 # Complements _DEAD_END_TIMEOUT_S by adding a rate-sensitive abort that catches
 # branches still delivering but below useful density.
-_IGD_WINDOW_S = 30.0           # Sliding window: look back 30 s for IOC rate
-_IGD_ABORT_THRESHOLD = 0.1     # Abort branch if IGD < 0.1 unique IOC/s
-_IGD_PERSIST_S = 5.0          # Abort only after 5 consecutive s below threshold
-_IGD_MIN_DEPTH = 1            # Apply IGD pruning after depth 1+ (not root)
+_IGD_WINDOW_S = 30.0  # Sliding window: look back 30 s for IOC rate
+_IGD_ABORT_THRESHOLD = 0.1  # Abort branch if IGD < 0.1 unique IOC/s
+_IGD_PERSIST_S = 5.0  # Abort only after 5 consecutive s below threshold
+_IGD_MIN_DEPTH = 1  # Apply IGD pruning after depth 1+ (not root)
 _IGD_REPORT_MIN_IOC_VALUE = 0.5  # Only count IOC reports with estimated_value >= this
 
 _VALUE_PREDICTOR_FEATURE_DIM = 16  # lightweight feature dim for ToT value prediction
@@ -209,16 +203,16 @@ _VALUE_PREDICTOR_FEATURE_DIM = 16  # lightweight feature dim for ToT value predi
 # BLITZ-04: Urgency thresholds for sprint-phase-aware reasoning parameter clamping.
 # Urgency = 1.0 / max(remaining_minutes, 0.5). Higher = less time remaining.
 # Derived from SprintClock.remaining_s at call time.
-_URGENCY_TOT_SKIP = 4.0       # Skip ToT entirely, fall back to CoT with max_steps=3
-_URGENCY_TOT_LIGHT = 2.0      # Light ToT: max_depth=2, branching_factor=2, beam_width=1
-_URGENCY_TOT_REDUCED = 1.0    # Reduced ToT: max_depth=4, branching_factor=3 (beam unchanged)
+_URGENCY_TOT_SKIP = 4.0  # Skip ToT entirely, fall back to CoT with max_steps=3
+_URGENCY_TOT_LIGHT = 2.0  # Light ToT: max_depth=2, branching_factor=2, beam_width=1
+_URGENCY_TOT_REDUCED = 1.0  # Reduced ToT: max_depth=4, branching_factor=3 (beam unchanged)
 _URGENCY_MIN_REMAINING_M = 0.5  # Floor for denominator to avoid division by zero
 
 # BLITZ-06: Ensemble reasoning time-gating thresholds (in seconds remaining).
 # When sprint time is critically low, ensemble degrades to avoid wasted compute
 # on redundant parallel strategies.
-_ENSEMBLE_CO_T_ONLY_REMAINING_S = 120   # 2 min: ensemble → CoT only
-_ENSEMBLE_SKIP_TOT_REMAINING_S = 300    # 5 min: ensemble → CoT + Graph (skip ToT)
+_ENSEMBLE_CO_T_ONLY_REMAINING_S = 120  # 2 min: ensemble → CoT only
+_ENSEMBLE_SKIP_TOT_REMAINING_S = 300  # 5 min: ensemble → CoT + Graph (skip ToT)
 
 
 class SprintClock(Struct, frozen=True):
@@ -235,6 +229,7 @@ class SprintClock(Struct, frozen=True):
 
     M1 8GB safe: single frozen struct, zero allocations after construction.
     """
+
     hard_deadline_monotonic: float = 0.0
     sprint_start_monotonic: float = 0.0
     total_duration_s: float = 0.0
@@ -243,7 +238,7 @@ class SprintClock(Struct, frozen=True):
     def remaining_s(self) -> float:
         """Seconds remaining until hard deadline (inf if no deadline)."""
         if self.hard_deadline_monotonic <= 0.0:
-            return float('inf')
+            return float("inf")
         return max(self.hard_deadline_monotonic - time.monotonic(), 0.0)
 
     @property
@@ -262,7 +257,7 @@ class SprintClock(Struct, frozen=True):
         """
         remaining_m = self.remaining_s / 60.0
         if remaining_m <= 0.0:
-            return float('inf')
+            return float("inf")
         return 1.0 / max(remaining_m, _URGENCY_MIN_REMAINING_M)
 
     @classmethod
@@ -271,7 +266,7 @@ class SprintClock(Struct, frozen=True):
         hard_deadline_monotonic: float = 0.0,
         total_duration_s: float = 0.0,
         sprint_start_monotonic: float | None = None,
-    ) -> 'SprintClock':
+    ) -> SprintClock:
         """Construct from SprintTelemetry fields.
 
         Args:
@@ -285,18 +280,21 @@ class SprintClock(Struct, frozen=True):
             hard_deadline_monotonic=hard_deadline_monotonic,
             sprint_start_monotonic=sprint_start_monotonic,
             total_duration_s=total_duration_s,
-    )
+        )
 
 
 class ReasoningStrategy(Enum):
     """Available reasoning strategies."""
-    CHAIN_OF_THOUGHT = 'cot'
-    TREE_OF_THOUGHTS = 'tot'
-    GRAPH_REASONING = 'graph'
-    HYBRID = 'hybrid'
+
+    CHAIN_OF_THOUGHT = "cot"
+    TREE_OF_THOUGHTS = "tot"
+    GRAPH_REASONING = "graph"
+    HYBRID = "hybrid"
+
 
 class ReasoningStep(Struct):
     """Single reasoning step."""
+
     step_id: str
     description: str
     reasoning: str
@@ -305,15 +303,19 @@ class ReasoningStep(Struct):
     parent_steps: list[str] = field(default_factory=list)
     sub_steps: list[str] = field(default_factory=list)
 
+
 class ReasoningChain(Struct, frozen=True):
     """Chain of reasoning steps."""
+
     chain_id: str
     steps: list[ReasoningStep] = field(default_factory=list)
     final_conclusion: str | None = None
     overall_confidence: float = 0.0
 
+
 class ThoughtNode(Struct, frozen=True):
     """Node in Tree of Thoughts."""
+
     node_id: str
     thought: str
     value_estimate: float
@@ -336,7 +338,8 @@ class _DeadEndDetector:
     Memory-efficient: uses monotonic timestamps, no heavy data structures.
     M1 8GB safe: O(active_leaves) memory.
     """
-    __slots__ = ('_last_progress', '_timeout_s')
+
+    __slots__ = ("_last_progress", "_timeout_s")
 
     def __init__(self, timeout_s: float = _DEAD_END_TIMEOUT_S) -> None:
         self._timeout_s = timeout_s
@@ -367,6 +370,7 @@ class _DeadEndDetector:
 
 # ── [NEXUS]-018-02: IGD Pruning ──────────────────────────────────────────────
 
+
 class _IGDPruningPolicy:
     """[NEXUS]-018-02: Information Gain Density (IGD) dynamic branch pruning.
 
@@ -394,11 +398,13 @@ class _IGDPruningPolicy:
     """
 
     __slots__ = (
-        '_window_s', '_threshold', '_persist_s',
-        '_report_min',        # minimum IOC value to count (HLEDAC_IGD_REPORT_MIN)
-        '_buffers',           # dict[node_id, deque[(ioc_value, ts)]]
-        '_below_since',       # dict[node_id, float | None]  — when IGD fell below
-        '_abort_count',       # total branches aborted
+        "_window_s",
+        "_threshold",
+        "_persist_s",
+        "_report_min",  # minimum IOC value to count (HLEDAC_IGD_REPORT_MIN)
+        "_buffers",  # dict[node_id, deque[(ioc_value, ts)]]
+        "_below_since",  # dict[node_id, float | None]  — when IGD fell below
+        "_abort_count",  # total branches aborted
     )
 
     def __init__(
@@ -411,24 +417,28 @@ class _IGDPruningPolicy:
         # Env-override for thresholds so operators can tune without code changes.
         # Guard against empty-string env vars that would cause float("") → ValueError.
         def _env_float(key: str, fallback: str) -> float:
-            raw = os.environ.get(key, '')
+            raw = os.environ.get(key, "")
             if raw and raw.strip():
                 return float(raw)
             return float(fallback)
 
         self._window_s: float = _env_float(
-            'HLEDAC_IGD_WINDOW_S', str(window_s or _IGD_WINDOW_S),
-    )
+            "HLEDAC_IGD_WINDOW_S",
+            str(window_s or _IGD_WINDOW_S),
+        )
         self._threshold: float = _env_float(
-            'HLEDAC_IGD_THRESHOLD', str(threshold or _IGD_ABORT_THRESHOLD),
-    )
+            "HLEDAC_IGD_THRESHOLD",
+            str(threshold or _IGD_ABORT_THRESHOLD),
+        )
         self._persist_s: float = _env_float(
-            'HLEDAC_IGD_PERSIST_S', str(persist_s or _IGD_PERSIST_S),
-    )
+            "HLEDAC_IGD_PERSIST_S",
+            str(persist_s or _IGD_PERSIST_S),
+        )
         # Minimum IOC value to count in the window (filter low-confidence reports)
         self._report_min: float = _env_float(
-            'HLEDAC_IGD_REPORT_MIN', str(report_min or _IGD_REPORT_MIN_IOC_VALUE),
-    )
+            "HLEDAC_IGD_REPORT_MIN",
+            str(report_min or _IGD_REPORT_MIN_IOC_VALUE),
+        )
         self._buffers: dict[str, deque[tuple[float, float]]] = {}
         self._below_since: dict[str, float | None] = {}
         self._abort_count: int = 0
@@ -488,9 +498,12 @@ class _IGDPruningPolicy:
             elif (now - self._below_since[node_id]) >= self._persist_s:
                 self._abort_count += 1
                 logger.debug(
-                    '[NEXUS]-018-02 IGD abort: node=%s igd=%.4f < %.4f for %.1fs',
-                    node_id, igd, self._threshold, now - self._below_since[node_id],
-    )
+                    "[NEXUS]-018-02 IGD abort: node=%s igd=%.4f < %.4f for %.1fs",
+                    node_id,
+                    igd,
+                    self._threshold,
+                    now - self._below_since[node_id],
+                )
                 return True
         else:
             self._below_since[node_id] = None
@@ -540,11 +553,11 @@ class _IGDPruningPolicy:
     def stats(self) -> dict[str, Any]:
         """Return telemetry dict for observability."""
         return {
-            'tracked_branches': len(self._buffers),
-            'abort_count': self._abort_count,
-            'threshold': self._threshold,
-            'persist_s': self._persist_s,
-            'window_s': self._window_s,
+            "tracked_branches": len(self._buffers),
+            "abort_count": self._abort_count,
+            "threshold": self._threshold,
+            "persist_s": self._persist_s,
+            "window_s": self._window_s,
         }
 
 
@@ -566,7 +579,8 @@ class _TotValuePredictor:
     - No additional model weights — reuses existing SSM
     - ULTIMATE-001: Caches seeded RNG to avoid repeated imports and ensure determinism
     """
-    __slots__ = ('_cost_model', '_history', '_warmup_predictions', '_rng')
+
+    __slots__ = ("_cost_model", "_history", "_warmup_predictions", "_rng")
 
     def __init__(self, cost_model: Any | None = None) -> None:
         self._cost_model = cost_model
@@ -592,17 +606,17 @@ class _TotValuePredictor:
             try:
                 sys_state = system_state or {}
                 params = {
-                    'depth': depth,
-                    'parent_value': parent_value,
-                    'query_complexity': query_complexity,
+                    "depth": depth,
+                    "parent_value": parent_value,
+                    "query_complexity": query_complexity,
                 }
-                result = self._cost_model.predict('analyse', params, sys_state)
+                result = self._cost_model.predict("analyse", params, sys_state)
                 # result = (cost, ram, network, value, uncertainty)
                 value = float(np.clip(result[3], 0.0, 1.0))
                 uncertainty = float(result[4]) if result[4] is not None else 0.0
                 return value, uncertainty
             except Exception:
-                logger.debug('TotValuePredictor: cost_model.predict failed, using fallback')
+                logger.debug("TotValuePredictor: cost_model.predict failed, using fallback")
 
         # Fallback: depth-decayed heuristic with parent value anchoring
         # Deeper nodes get slightly lower estimates (exploration penalty)
@@ -634,6 +648,7 @@ class _TotValuePredictor:
     def is_learned(self) -> bool:
         """Whether the predictor is using learned values (vs heuristic)."""
         return self._cost_model is not None and self._cost_model.baseline_ready
+
 
 class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     """
@@ -668,15 +683,22 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
       branches that explore semantic voids; ``suggest_fetch_targets()``
       returns actionable directives for the acquisition pipeline.
     """
+
     __slots__ = (
-        '_cost_model', '_stats', 'reasoning_history',
-        'strategy_configs', 'strategy_keywords',
-        '_checkpointer', '_duckdb_store', '_sprint_id',
-        '_sprint_clock',  # BLITZ-04
-        '_resume_from', '_resume_step',  # UNIFIED-006
-        '_query_hash',  # UNIFIED-006: for checkpoint writes during recovery
-        '_gravity_field',  # SILICON-05: semantic void detection
-        '_igd_policy',     # [NEXUS]-018-02: IGD dynamic pruning policy
+        "_cost_model",
+        "_stats",
+        "reasoning_history",
+        "strategy_configs",
+        "strategy_keywords",
+        "_checkpointer",
+        "_duckdb_store",
+        "_sprint_id",
+        "_sprint_clock",  # BLITZ-04
+        "_resume_from",
+        "_resume_step",  # UNIFIED-006
+        "_query_hash",  # UNIFIED-006: for checkpoint writes during recovery
+        "_gravity_field",  # SILICON-05: semantic void detection
+        "_igd_policy",  # [NEXUS]-018-02: IGD dynamic pruning policy
     )
 
     def __init__(
@@ -684,11 +706,11 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         max_concurrent: int = 3,
         cost_model: Any | None = None,
         duckdb_store: Any | None = None,  # UNIFIED-005: DuckDBShadowStore for checkpointing
-        sprint_id: str | None = None,     # UNIFIED-005: sprint identifier for checkpoint isolation
+        sprint_id: str | None = None,  # UNIFIED-005: sprint identifier for checkpoint isolation
         sprint_clock: SprintClock | None = None,  # BLITZ-04: time-awareness for reasoning
         resume_from: dict | None = None,  # UNIFIED-006: pre-populated ToT nodes from checkpoint
-        resume_step: int = 0,             # UNIFIED-006: step counter at resume point
-        query_hash: str = "",             # UNIFIED-006: BLAKE2b-16 hex for cross-sprint recovery
+        resume_step: int = 0,  # UNIFIED-006: step counter at resume point
+        query_hash: str = "",  # UNIFIED-006: BLAKE2b-16 hex for cross-sprint recovery
         gravity_field: Any | None = None,  # SILICON-05: SemanticGravityField for void detection
     ) -> None:
         """
@@ -700,7 +722,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         query_hash is the deterministic BLAKE2b-16 hex of the query — passed through
         to TransactionalToTCheckpointer so future restarts can find checkpoints.
         """
-        super().__init__(name='universal_meta_reasoning_coordinator', max_concurrent=max_concurrent, memory_aware=True)
+        super().__init__(name="universal_meta_reasoning_coordinator", max_concurrent=max_concurrent, memory_aware=True)
         self._cost_model = cost_model
         self._duckdb_store = duckdb_store
         self._sprint_id = sprint_id
@@ -711,9 +733,67 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         self._query_hash: str = query_hash  # UNIFIED-006
         self._gravity_field: Any | None = gravity_field  # SILICON-05
         self._igd_policy = _IGDPruningPolicy()  # [NEXUS]-018-02: IGD dynamic pruning
-        self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: {'max_steps': 10, 'min_confidence': 0.7, 'step_description_template': 'Step {i}: {thought}'}, ReasoningStrategy.TREE_OF_THOUGHTS: {'max_depth': 5, 'branching_factor': 3, 'beam_width': 2, 'exploration_strategy': 'beam_search'}, ReasoningStrategy.GRAPH_REASONING: {'max_nodes': 50, 'connection_density': 0.3, 'centrality_metric': 'betweenness'}}
-        self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: ['step by step', 'explain', 'how', 'why', 'derive', 'calculate', 'sequence', 'process', 'procedure', 'logical'], ReasoningStrategy.TREE_OF_THOUGHTS: ['options', 'alternatives', 'compare', 'decide', 'choose', 'select', 'best', 'optimal', 'trade-off', 'multiple'], ReasoningStrategy.GRAPH_REASONING: ['connections', 'relationships', 'network', 'dependencies', 'interconnected', 'linked', 'graph', 'structure']}
-        self._stats = {'chains_executed': 0, 'trees_explored': 0, 'graphs_traversed': 0, 'strategy_switches': 0, 'avg_confidence': 0.0}
+        self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {
+            ReasoningStrategy.CHAIN_OF_THOUGHT: {
+                "max_steps": 10,
+                "min_confidence": 0.7,
+                "step_description_template": "Step {i}: {thought}",
+            },
+            ReasoningStrategy.TREE_OF_THOUGHTS: {
+                "max_depth": 5,
+                "branching_factor": 3,
+                "beam_width": 2,
+                "exploration_strategy": "beam_search",
+            },
+            ReasoningStrategy.GRAPH_REASONING: {
+                "max_nodes": 50,
+                "connection_density": 0.3,
+                "centrality_metric": "betweenness",
+            },
+        }
+        self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {
+            ReasoningStrategy.CHAIN_OF_THOUGHT: [
+                "step by step",
+                "explain",
+                "how",
+                "why",
+                "derive",
+                "calculate",
+                "sequence",
+                "process",
+                "procedure",
+                "logical",
+            ],
+            ReasoningStrategy.TREE_OF_THOUGHTS: [
+                "options",
+                "alternatives",
+                "compare",
+                "decide",
+                "choose",
+                "select",
+                "best",
+                "optimal",
+                "trade-off",
+                "multiple",
+            ],
+            ReasoningStrategy.GRAPH_REASONING: [
+                "connections",
+                "relationships",
+                "network",
+                "dependencies",
+                "interconnected",
+                "linked",
+                "graph",
+                "structure",
+            ],
+        }
+        self._stats = {
+            "chains_executed": 0,
+            "trees_explored": 0,
+            "graphs_traversed": 0,
+            "strategy_switches": 0,
+            "avg_confidence": 0.0,
+        }
         self.reasoning_history: deque = deque(maxlen=100)
 
     def get_supported_operations(self) -> list[OperationType]:
@@ -721,35 +801,35 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
     def _get_operation_type_for_tracking(self) -> str:
         """Return operation type for tracking."""
-        return 'meta_reasoning'
+        return "meta_reasoning"
 
     async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle meta-reasoning request."""
         try:
-            operation = decision.metadata.get('reasoning_operation', 'reason')
-            query = decision.metadata.get('query', '')
-            if operation == 'reason':
+            operation = decision.metadata.get("reasoning_operation", "reason")
+            query = decision.metadata.get("query", "")
+            if operation == "reason":
                 strategy = self._select_strategy(query)
                 result = await self.reason(query, strategy)
-            elif operation == 'ensemble':
+            elif operation == "ensemble":
                 result = await self._ensemble_reason(query)
             else:
-                result = {'success': False, 'error': f'Unknown operation: {operation}'}
+                result = {"success": False, "error": f"Unknown operation: {operation}"}
             return ExecutionResult(
-                status='completed' if result.get('success') else 'failed',
-                result_summary=result.get('summary', 'Meta-reasoning completed'),
-                success=result.get('success', False),
+                status="completed" if result.get("success") else "failed",
+                result_summary=result.get("summary", "Meta-reasoning completed"),
+                success=result.get("success", False),
                 metadata=result,
-    )
+            )
         except Exception as e:
             return ExecutionResult(
-                status='failed',
-                result_summary=f'Meta-reasoning failed: {str(e)}',
+                status="failed",
+                result_summary=f"Meta-reasoning failed: {str(e)}",
                 success=False,
                 error_message=str(e),
-    )
+            )
 
-    async def reason(self, query: str, strategy: ReasoningStrategy | None=None) -> dict[str, Any]:
+    async def reason(self, query: str, strategy: ReasoningStrategy | None = None) -> dict[str, Any]:
         """
         Perform meta-reasoning on query.
 
@@ -762,30 +842,30 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         """
         if strategy is None:
             strategy = self._select_strategy(query)
-        logger.info(f'Reasoning with strategy: {strategy.value}')
+        logger.info(f"Reasoning with strategy: {strategy.value}")
         if strategy == ReasoningStrategy.CHAIN_OF_THOUGHT:
             result = await self._chain_of_thought_reasoning(query)
         elif strategy == ReasoningStrategy.TREE_OF_THOUGHTS:
             result = await self._tree_of_thoughts_reasoning(query)
             # BLITZ-04: if ToT was skipped due to urgency, fall back to CoT
-            if result.get('fallback_recommended') == 'chain_of_thought':
+            if result.get("fallback_recommended") == "chain_of_thought":
                 logger.info(
-                    '[BLITZ-04] ToT skipped → falling back to CoT (urgency=%.2f)',
+                    "[BLITZ-04] ToT skipped → falling back to CoT (urgency=%.2f)",
                     self._compute_urgency(),
-    )
+                )
                 result = await self._chain_of_thought_reasoning(query)
-                result['strategy'] = 'cot_fallback_from_tot_urgency'
+                result["strategy"] = "cot_fallback_from_tot_urgency"
         elif strategy == ReasoningStrategy.GRAPH_REASONING:
             result = await self._graph_reasoning(query)
         else:
             result = await self._chain_of_thought_reasoning(query)
         if strategy == ReasoningStrategy.CHAIN_OF_THOUGHT:
-            self._stats['chains_executed'] += 1
+            self._stats["chains_executed"] += 1
         elif strategy == ReasoningStrategy.TREE_OF_THOUGHTS:
-            self._stats['trees_explored'] += 1
+            self._stats["trees_explored"] += 1
         elif strategy == ReasoningStrategy.GRAPH_REASONING:
-            self._stats['graphs_traversed'] += 1
-        return {'success': True, 'strategy': strategy.value, 'query': query, **result}
+            self._stats["graphs_traversed"] += 1
+        return {"success": True, "strategy": strategy.value, "query": query, **result}
 
     def _select_strategy(self, query: str) -> ReasoningStrategy:
         """Select best reasoning strategy based on query, sprint urgency,
@@ -824,32 +904,34 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                         scores[ReasoningStrategy.TREE_OF_THOUGHTS] += 2
                         scores[ReasoningStrategy.GRAPH_REASONING] += 1
                         logger.debug(
-                            '[SILICON-05] Gravity: %d voids detected — boosting ToT+Graph',
+                            "[SILICON-05] Gravity: %d voids detected — boosting ToT+Graph",
                             gravity_voids,
-    )
+                        )
                     elif gravity_voids >= 1:
                         # Minor gaps — slight boost to ToT
                         scores[ReasoningStrategy.TREE_OF_THOUGHTS] += 1
             except Exception:
-                logger.debug('[SILICON-05] Gravity query failed in _select_strategy')
+                logger.debug("[SILICON-05] Gravity query failed in _select_strategy")
 
         # BLITZ-04: urgency override — force CoT when time is critical
         urgency = self._compute_urgency()
         if urgency >= _URGENCY_TOT_SKIP and scores.get(ReasoningStrategy.TREE_OF_THOUGHTS, 0) > 0:
             logger.info(
-                '[BLITZ-04] Urgency=%.2f — overriding ToT selection to CoT (time-critical phase)',
+                "[BLITZ-04] Urgency=%.2f — overriding ToT selection to CoT (time-critical phase)",
                 urgency,
-    )
-            self._stats['strategy_switches'] += 1
+            )
+            self._stats["strategy_switches"] += 1
             return ReasoningStrategy.CHAIN_OF_THOUGHT
 
         if max(scores.values()) > 0:
             selected = max(scores, key=scores.get)
             if gravity_voids > 0:
                 logger.info(
-                    '[SILICON-05] Strategy=%s selected (gravity_voids=%d ready=%s)',
-                    selected.value, gravity_voids, gravity_ready,
-    )
+                    "[SILICON-05] Strategy=%s selected (gravity_voids=%d ready=%s)",
+                    selected.value,
+                    gravity_voids,
+                    gravity_ready,
+                )
             return selected
         return ReasoningStrategy.CHAIN_OF_THOUGHT
 
@@ -877,36 +959,37 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         Returns a copy — never mutates the canonical config on the instance.
         """
         urgency = self._compute_urgency()
-        if urgency <= 0.0:           # No clock → no clamping
+        if urgency <= 0.0:  # No clock → no clamping
             return dict(config)
         if urgency >= _URGENCY_TOT_SKIP:
             logger.warning(
-                '[BLITZ-04] Urgency=%.2f >= %.1f — skipping ToT (fallback to CoT)',
-                urgency, _URGENCY_TOT_SKIP,
-    )
+                "[BLITZ-04] Urgency=%.2f >= %.1f — skipping ToT (fallback to CoT)",
+                urgency,
+                _URGENCY_TOT_SKIP,
+            )
             return {
-                'max_depth': 0,
-                'branching_factor': 0,
-                'beam_width': 0,
-                'exploration_strategy': 'skipped_high_urgency',
+                "max_depth": 0,
+                "branching_factor": 0,
+                "beam_width": 0,
+                "exploration_strategy": "skipped_high_urgency",
             }
         if urgency >= _URGENCY_TOT_LIGHT:
             logger.info(
-                '[BLITZ-04] Urgency=%.2f — light ToT (depth=2, branch=2, beam=1)',
+                "[BLITZ-04] Urgency=%.2f — light ToT (depth=2, branch=2, beam=1)",
                 urgency,
-    )
+            )
             return {
                 **config,
-                'max_depth': 2,
-                'branching_factor': 2,
-                'beam_width': 1,
+                "max_depth": 2,
+                "branching_factor": 2,
+                "beam_width": 1,
             }
         if urgency >= _URGENCY_TOT_REDUCED:
             logger.info(
-                '[BLITZ-04] Urgency=%.2f — reduced ToT (depth=4)',
+                "[BLITZ-04] Urgency=%.2f — reduced ToT (depth=4)",
                 urgency,
-    )
-            return {**config, 'max_depth': 4}
+            )
+            return {**config, "max_depth": 4}
         return dict(config)
 
     def _clamp_cot_config(self, config: dict[str, Any]) -> dict[str, Any]:
@@ -924,12 +1007,12 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         if urgency <= 0.0:
             return dict(config)
         if urgency >= _URGENCY_TOT_SKIP:
-            logger.info('[BLITZ-04] Urgency=%.2f — minimal CoT (max_steps=3)', urgency)
-            return {**config, 'max_steps': 3}
+            logger.info("[BLITZ-04] Urgency=%.2f — minimal CoT (max_steps=3)", urgency)
+            return {**config, "max_steps": 3}
         if urgency >= _URGENCY_TOT_LIGHT:
-            return {**config, 'max_steps': 5}
+            return {**config, "max_steps": 5}
         if urgency >= _URGENCY_TOT_REDUCED:
-            return {**config, 'max_steps': 7}
+            return {**config, "max_steps": 7}
         return dict(config)
 
     # ── SILICON-05: Semantic gravity field passthrough ───────────────────
@@ -943,7 +1026,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             try:
                 self._gravity_field.add_embedding(entity_id, vec)
             except Exception:
-                logger.debug('[SILICON-05] add_embedding failed')
+                logger.debug("[SILICON-05] add_embedding failed")
 
     def add_embeddings_batch(self, ids: list[str], vecs: Any) -> None:
         """SILICON-05: Push a batch of IOC embeddings into the gravity field.
@@ -954,7 +1037,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             try:
                 self._gravity_field.add_embeddings_batch(ids, vecs)
             except Exception:
-                logger.debug('[SILICON-05] add_embeddings_batch failed')
+                logger.debug("[SILICON-05] add_embeddings_batch failed")
 
     def report_iocs(self, branch_id: str, ioc_values: list[float]) -> None:
         """[NEXUS]-018-02: Report IOC quality scores to the IGD pruning policy.
@@ -979,32 +1062,36 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         try:
             return self._gravity_field.suggest_fetch_targets(n)
         except Exception:
-            logger.debug('[SILICON-05] suggest_fetch_targets failed')
+            logger.debug("[SILICON-05] suggest_fetch_targets failed")
             return []
 
     def get_gravity_stats(self) -> dict[str, Any]:
         """SILICON-05: Get gravity field statistics for monitoring."""
         if self._gravity_field is None:
-            return {'enabled': False}
+            return {"enabled": False}
         try:
-            return {'enabled': True, **self._gravity_field.get_stats()}
+            return {"enabled": True, **self._gravity_field.get_stats()}
         except Exception:
-            return {'enabled': True, 'error': 'stats_failed'}
+            return {"enabled": True, "error": "stats_failed"}
 
     # ── Reasoning strategy execution ────────────────────────────────────
 
     async def _chain_of_thought_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Chain of Thought reasoning with BLITZ-04 urgency clamping."""
-        config = self._clamp_cot_config(
-            self.strategy_configs[ReasoningStrategy.CHAIN_OF_THOUGHT]
-    )
-        max_steps = config['max_steps']
-        min_confidence = config['min_confidence']
-        chain = ReasoningChain(chain_id=f'cot_{int(time.time())}')
+        config = self._clamp_cot_config(self.strategy_configs[ReasoningStrategy.CHAIN_OF_THOUGHT])
+        max_steps = config["max_steps"]
+        min_confidence = config["min_confidence"]
+        chain = ReasoningChain(chain_id=f"cot_{int(time.time())}")
         steps = []
         steps_since_yield = 0
         for i in range(max_steps):
-            step = ReasoningStep(step_id=f'step_{i}', description=f'Analysis step {i + 1}', reasoning=f"Based on the query '{query[:50]}...', analyzing aspect {i + 1}", conclusion=f'Conclusion for step {i + 1}', confidence=0.7 + 0.1 * (max_steps - i) / max_steps)
+            step = ReasoningStep(
+                step_id=f"step_{i}",
+                description=f"Analysis step {i + 1}",
+                reasoning=f"Based on the query '{query[:50]}...', analyzing aspect {i + 1}",
+                conclusion=f"Conclusion for step {i + 1}",
+                confidence=0.7 + 0.1 * (max_steps - i) / max_steps,
+            )
             steps.append(step)
             if step.confidence < min_confidence:
                 break
@@ -1013,9 +1100,25 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 await asyncio.sleep(0)
                 steps_since_yield = 0
         chain.steps = steps
-        chain.final_conclusion = steps[-1].conclusion if steps else 'No conclusion'
+        chain.final_conclusion = steps[-1].conclusion if steps else "No conclusion"
         chain.overall_confidence = sum(s.confidence for s in steps) / len(steps) if steps else 0
-        return {'type': 'chain_of_thought', 'steps': len(steps), 'reasoning_steps': [{'step': i + 1, 'description': s.description, 'reasoning': s.reasoning, 'conclusion': s.conclusion, 'confidence': s.confidence} for i, s in enumerate(steps)], 'final_conclusion': chain.final_conclusion, 'confidence': chain.overall_confidence, 'summary': f'CoT reasoning: {len(steps)} steps, confidence {chain.overall_confidence:.2f}'}
+        return {
+            "type": "chain_of_thought",
+            "steps": len(steps),
+            "reasoning_steps": [
+                {
+                    "step": i + 1,
+                    "description": s.description,
+                    "reasoning": s.reasoning,
+                    "conclusion": s.conclusion,
+                    "confidence": s.confidence,
+                }
+                for i, s in enumerate(steps)
+            ],
+            "final_conclusion": chain.final_conclusion,
+            "confidence": chain.overall_confidence,
+            "summary": f"CoT reasoning: {len(steps)} steps, confidence {chain.overall_confidence:.2f}",
+        }
 
     async def _tree_of_thoughts_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Tree of Thoughts reasoning.
@@ -1033,61 +1136,77 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         UNIFIED-005: Periodic checkpointing via TransactionalToTCheckpointer.
         """
         config = self._clamp_tot_config(self.strategy_configs[ReasoningStrategy.TREE_OF_THOUGHTS])
-        max_depth, branching_factor, beam_width = config['max_depth'], config['branching_factor'], config['beam_width']
-        
+        max_depth, branching_factor, beam_width = config["max_depth"], config["branching_factor"], config["beam_width"]
+
         if max_depth == 0:
             return _tot_urgency_skip(self._compute_urgency())
-        
+
         checkpointer = await _init_tot_checkpointer(self, query)
         value_predictor = _TotValuePredictor(cost_model=self._cost_model)
         dead_end_detector = _DeadEndDetector(timeout_s=_DEAD_END_TIMEOUT_S)
         query_complexity = min(len(set(query.split())) / 20.0, 1.0)
-        
+
         nodes, leaves, _resumed = await _resume_or_create_root(self, checkpointer)
-        
+
         branching_factor = await _apply_gravity_void_boost(self, branching_factor, query)
-        
+
         if checkpointer:
             checkpointer._step = self._resume_step if _resumed else 0
             checkpointer.bind(nodes)
             await checkpointer.start()
             await checkpointer.checkpoint(nodes=nodes, step=checkpointer._step)
-        
+
         result = await _run_tot_search(
-            self, query, nodes, leaves, max_depth, branching_factor, beam_width,
-            value_predictor, dead_end_detector, query_complexity, checkpointer
-    )
-        
+            self,
+            query,
+            nodes,
+            leaves,
+            max_depth,
+            branching_factor,
+            beam_width,
+            value_predictor,
+            dead_end_detector,
+            query_complexity,
+            checkpointer,
+        )
+
         if checkpointer:
             try:
                 await checkpointer.checkpoint(nodes=nodes)
                 await checkpointer.stop(final_checkpoint=False)
             except Exception:
                 pass
-        
-        return result
 
+        return result
 
     async def _graph_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Graph reasoning."""
         config = self.strategy_configs[ReasoningStrategy.GRAPH_REASONING]
-        max_nodes = config['max_nodes']
+        max_nodes = config["max_nodes"]
         nodes: dict[str, dict[str, Any]] = {}
         edges: list[tuple[str, str]] = []
         aspects = query.split()[:max_nodes]
         # ULTIMATE-001: Use seeded RNG for deterministic graph structure
         rng = _get_seeded_rng()
         for i, aspect in enumerate(aspects):
-            nodes[f'node_{i}'] = {'concept': aspect, 'importance': rng.uniform(0.3, 1.0), 'connections': []}
+            nodes[f"node_{i}"] = {"concept": aspect, "importance": rng.uniform(0.3, 1.0), "connections": []}
         for i in range(len(aspects)):
             for j in range(i + 1, min(i + 3, len(aspects))):
-                if rng.random() < config['connection_density']:
-                    edges.append((f'node_{i}', f'node_{j}'))
-                    nodes[f'node_{i}']['connections'].append(f'node_{j}')
-                    nodes[f'node_{j}']['connections'].append(f'node_{i}')
-        centrality = {node_id: len(data['connections']) for node_id, data in nodes.items()}
+                if rng.random() < config["connection_density"]:
+                    edges.append((f"node_{i}", f"node_{j}"))
+                    nodes[f"node_{i}"]["connections"].append(f"node_{j}")
+                    nodes[f"node_{j}"]["connections"].append(f"node_{i}")
+        centrality = {node_id: len(data["connections"]) for node_id, data in nodes.items()}
         central_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:3]
-        return {'type': 'graph_reasoning', 'nodes': len(nodes), 'edges': len(edges), 'central_concepts': [{'concept': nodes[nid]['concept'], 'connections': count} for nid, count in central_nodes], 'summary': f'Graph reasoning: {len(nodes)} concepts, {len(edges)} relationships'}
+        return {
+            "type": "graph_reasoning",
+            "nodes": len(nodes),
+            "edges": len(edges),
+            "central_concepts": [
+                {"concept": nodes[nid]["concept"], "connections": count} for nid, count in central_nodes
+            ],
+            "summary": f"Graph reasoning: {len(nodes)} concepts, {len(edges)} relationships",
+        }
 
     async def _ensemble_reason(self, query: str) -> dict[str, Any]:
         """Execute ensemble reasoning with urgency-aware strategy selection.
@@ -1102,32 +1221,25 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         ToT is the most expensive (5-50× CoT) and only worth it with
         sufficient time budget.
         """
-        remaining_s: float = (
-            self._sprint_clock.remaining_s
-            if self._sprint_clock is not None
-            else float('inf')
-    )
+        remaining_s: float = self._sprint_clock.remaining_s if self._sprint_clock is not None else float("inf")
 
         # BLITZ-06: Urgency-aware strategy selection
         if remaining_s <= _ENSEMBLE_CO_T_ONLY_REMAINING_S:
             logger.warning(
-                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble degraded to CoT-only '
-                '(skipping ToT + Graph, sprint critically low on time)',
-                remaining_s, _ENSEMBLE_CO_T_ONLY_REMAINING_S,
-    )
-            self._stats['ensemble_degraded_cot_only'] = (
-                self._stats.get('ensemble_degraded_cot_only', 0) + 1
-    )
+                "[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble degraded to CoT-only "
+                "(skipping ToT + Graph, sprint critically low on time)",
+                remaining_s,
+                _ENSEMBLE_CO_T_ONLY_REMAINING_S,
+            )
+            self._stats["ensemble_degraded_cot_only"] = self._stats.get("ensemble_degraded_cot_only", 0) + 1
             strategies = [ReasoningStrategy.CHAIN_OF_THOUGHT]
         elif remaining_s <= _ENSEMBLE_SKIP_TOT_REMAINING_S:
             logger.info(
-                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble skipping ToT '
-                '(CoT + Graph only, ToT too expensive)',
-                remaining_s, _ENSEMBLE_SKIP_TOT_REMAINING_S,
-    )
-            self._stats['ensemble_skipped_tot'] = (
-                self._stats.get('ensemble_skipped_tot', 0) + 1
-    )
+                "[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble skipping ToT (CoT + Graph only, ToT too expensive)",
+                remaining_s,
+                _ENSEMBLE_SKIP_TOT_REMAINING_S,
+            )
+            self._stats["ensemble_skipped_tot"] = self._stats.get("ensemble_skipped_tot", 0) + 1
             strategies = [
                 ReasoningStrategy.CHAIN_OF_THOUGHT,
                 ReasoningStrategy.GRAPH_REASONING,
@@ -1140,25 +1252,25 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             ]
 
         tasks = [self.reason(query, s) for s in strategies]
-        results = await parallel_ok(*tasks, label='meta_reasoning_coordinator:422')
-        successful = [r for r in results if isinstance(r, dict) and r.get('success')]
+        results = await parallel_ok(*tasks, label="meta_reasoning_coordinator:422")
+        successful = [r for r in results if isinstance(r, dict) and r.get("success")]
         if not successful:
-            return {'success': False, 'error': 'All reasoning strategies failed'}
+            return {"success": False, "error": "All reasoning strategies failed"}
         strategy_counts = {}
         for r in successful:
-            s = r.get('strategy', 'unknown')
+            s = r.get("strategy", "unknown")
             strategy_counts[s] = strategy_counts.get(s, 0) + 1
         best_strategy = max(strategy_counts, key=strategy_counts.get)
         return {
-            'success': True,
-            'ensemble_size': len(successful),
-            'strategies_used': [r.get('strategy') for r in successful],
-            'selected_strategy': best_strategy,
-            'results': successful,
-            'summary': (
-                f'Ensemble reasoning: {len(successful)} strategies, '
-                f'selected {best_strategy}'
-                f'{" (urgency-degraded)" if len(strategies) < 3 else ""}'
+            "success": True,
+            "ensemble_size": len(successful),
+            "strategies_used": [r.get("strategy") for r in successful],
+            "selected_strategy": best_strategy,
+            "results": successful,
+            "summary": (
+                f"Ensemble reasoning: {len(successful)} strategies, "
+                f"selected {best_strategy}"
+                f"{' (urgency-degraded)' if len(strategies) < 3 else ''}"
             ),
         }
 
@@ -1166,14 +1278,14 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         """Get reasoning statistics including BLITZ-04 urgency info."""
         stats = {
             **self._stats,
-            'history_size': len(self.reasoning_history),
-            'urgency': self._compute_urgency(),  # BLITZ-04
+            "history_size": len(self.reasoning_history),
+            "urgency": self._compute_urgency(),  # BLITZ-04
         }
         if self._checkpointer is not None:
-            stats['checkpointer'] = self._checkpointer.stats
+            stats["checkpointer"] = self._checkpointer.stats
         if self._sprint_clock is not None:
-            stats['remaining_s'] = self._sprint_clock.remaining_s
-            stats['total_duration_s'] = self._sprint_clock.total_duration_s
+            stats["remaining_s"] = self._sprint_clock.remaining_s
+            stats["total_duration_s"] = self._sprint_clock.total_duration_s
         return stats
 
     # ── UNIFIED-005: ToT State Persistence ────────────────────────────────
@@ -1195,7 +1307,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             if self._checkpointer._nodes_ref is not None:
                 return await self._checkpointer.checkpoint(
                     nodes=self._checkpointer._nodes_ref,
-    )
+                )
             return False
         except Exception:
             return False
@@ -1221,12 +1333,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         try:
             from hledac.universal.coordinators.tot_checkpointer import (
                 TransactionalToTCheckpointer,
-    )
+            )
+
             temp_ckpt = TransactionalToTCheckpointer(
                 sprint_id=sprint_id,
                 duckdb_store=duckdb_store,
                 interval_s=30.0,
-    )
+            )
             restored = await temp_ckpt.restore()
             if restored is None:
                 return None
@@ -1237,7 +1350,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 step,
                 len(nodes_dict),
                 checksum[:16],
-    )
+            )
             # Store for later use
             self._sprint_id = sprint_id
             self._duckdb_store = duckdb_store
@@ -1266,48 +1379,59 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
     def _get_feature_list(self) -> list[str]:
         return [
-            'Chain of Thought reasoning',
-            'Tree of Thoughts exploration',
-            'Graph reasoning',
-            'Automatic strategy selection',
-            'Ensemble reasoning',
-            'Strategy switching',
-            'Learned value prediction (SOVEREIGN-005)',
-            'Cost-weighted branch pruning (SOVEREIGN-005)',
-            'Dead-end detection (SOVEREIGN-005)',
-            'SprintClock urgency clamping (BLITZ-04)',
-            'Ensemble urgency gating (BLITZ-06)',
-            'Semantic gravity field void detection [SILICON-05]',
-            'Gravity-aware strategy selection [SILICON-05]',
-            'Void-aware ToT branch boosting [SILICON-05]',
-            'Fetch directive generation [SILICON-05]',
-            'Step-Level PRM — ANE-accelerated branch scoring (BREAKTHROUGH #3)',
-            'Multi-layer ToT crash resilience — LMDB+DuckDB+FS (UNIFIED-007/008)',
+            "Chain of Thought reasoning",
+            "Tree of Thoughts exploration",
+            "Graph reasoning",
+            "Automatic strategy selection",
+            "Ensemble reasoning",
+            "Strategy switching",
+            "Learned value prediction (SOVEREIGN-005)",
+            "Cost-weighted branch pruning (SOVEREIGN-005)",
+            "Dead-end detection (SOVEREIGN-005)",
+            "SprintClock urgency clamping (BLITZ-04)",
+            "Ensemble urgency gating (BLITZ-06)",
+            "Semantic gravity field void detection [SILICON-05]",
+            "Gravity-aware strategy selection [SILICON-05]",
+            "Void-aware ToT branch boosting [SILICON-05]",
+            "Fetch directive generation [SILICON-05]",
+            "Step-Level PRM — ANE-accelerated branch scoring (BREAKTHROUGH #3)",
+            "Multi-layer ToT crash resilience — LMDB+DuckDB+FS (UNIFIED-007/008)",
         ]
+
+
 async def _init_tot_checkpointer(self, query: str):
     """Initialize ToT checkpointer if duckdb_store is available."""
-    from msgspec import to_builtins as _to_builtins
     if self._duckdb_store is not None and self._sprint_id is not None:
         try:
             from hledac.universal.coordinators.tot_checkpointer import TransactionalToTCheckpointer
+
             checkpointer = TransactionalToTCheckpointer(
-                sprint_id=self._sprint_id, duckdb_store=self._duckdb_store,
-                interval_s=30.0, query_hash=self._query_hash,
-    )
+                sprint_id=self._sprint_id,
+                duckdb_store=self._duckdb_store,
+                interval_s=30.0,
+                query_hash=self._query_hash,
+            )
             self._checkpointer = checkpointer
             return checkpointer
         except Exception:
-            logger.debug('ToT checkpointer init failed')
+            logger.debug("ToT checkpointer init failed")
     return None
 
 
 def _tot_urgency_skip(urgency: float) -> dict[str, Any]:
     """Return urgency skip result."""
     return {
-        'type': 'tree_of_thoughts_skipped_urgency', 'nodes': 0, 'depth': 0, 'best_path': [],
-        'best_value': 0.0, 'pruned_branches': 0, 'dead_ends': 0, 'used_learned_values': False,
-        'urgency': urgency, 'fallback_recommended': 'chain_of_thought',
-        'summary': 'ToT skipped due to high urgency — use CoT with max_steps=3',
+        "type": "tree_of_thoughts_skipped_urgency",
+        "nodes": 0,
+        "depth": 0,
+        "best_path": [],
+        "best_value": 0.0,
+        "pruned_branches": 0,
+        "dead_ends": 0,
+        "used_learned_values": False,
+        "urgency": urgency,
+        "fallback_recommended": "chain_of_thought",
+        "summary": "ToT skipped due to high urgency — use CoT with max_steps=3",
     }
 
 
@@ -1319,14 +1443,22 @@ async def _resume_or_create_root(self, checkpointer):
         root = root_candidates[0] if root_candidates else next(iter(nodes.values()))
         max_depth = max((n.depth for n in nodes.values()), default=0)
         leaves = [n for n in nodes.values() if not n.expanded and n.depth == max_depth] or [root]
-        logger.info('[UNIFIED-006] ToT resumed: step=%d nodes=%d leaves=%d', self._resume_step, len(nodes), len(leaves))
+        logger.info("[UNIFIED-006] ToT resumed: step=%d nodes=%d leaves=%d", self._resume_step, len(nodes), len(leaves))
         return nodes, leaves, True
-    
-    root = ThoughtNode(node_id='root', thought=f'Exploring: {self._query[:50]}...', value_estimate=0.5, depth=0, cost=0.0, uncertainty=0.0)
-    nodes = {'root': root}
+
+    root = ThoughtNode(
+        node_id="root",
+        thought=f"Exploring: {self._query[:50]}...",
+        value_estimate=0.5,
+        depth=0,
+        cost=0.0,
+        uncertainty=0.0,
+    )
+    nodes = {"root": root}
     if checkpointer:
         from msgspec import to_builtins as _to_builtins
-        await checkpointer.incremental_checkpoint('root', _to_builtins(root), step=0)
+
+        await checkpointer.incremental_checkpoint("root", _to_builtins(root), step=0)
     return nodes, [root], False
 
 
@@ -1340,52 +1472,69 @@ async def _apply_gravity_void_boost(self, branching_factor: int, query: str) -> 
             max_radius = max(v.radius for v in voids)
             bonus = min(0.15, 0.02 * len(voids) * (1.0 + max_radius))
             if bonus > 0:
-                logger.debug('[SILICON-05] ToT exploration bonus=%.3f', bonus)
+                logger.debug("[SILICON-05] ToT exploration bonus=%.3f", bonus)
             if len(voids) >= 3:
                 branching_factor = min(branching_factor + 1, 6)
-                logger.debug('[SILICON-05] ToT branching boosted to %d', branching_factor)
+                logger.debug("[SILICON-05] ToT branching boosted to %d", branching_factor)
             return branching_factor
     except Exception:
-        logger.debug('[SILICON-05] Gravity void query failed')
+        logger.debug("[SILICON-05] Gravity void query failed")
     return branching_factor
 
 
 async def _run_tot_search(
-    self, query, nodes, leaves, max_depth, branching_factor, beam_width,
-    value_predictor, dead_end_detector, query_complexity, checkpointer
+    self,
+    query,
+    nodes,
+    leaves,
+    max_depth,
+    branching_factor,
+    beam_width,
+    value_predictor,
+    dead_end_detector,
+    query_complexity,
+    checkpointer,
 ):
     """Run the main ToT search loop."""
-    best_value, pruned_count, dead_end_count, igd_count = float('-inf'), 0, 0, 0
+    best_value, pruned_count, dead_end_count, igd_count = float("-inf"), 0, 0, 0
     best_path = []
     nodes_since_yield = 0
-    
-    dead_end_detector.register_branch('root')
-    self._igd_policy.register_branch('root')
-    
+
+    dead_end_detector.register_branch("root")
+    self._igd_policy.register_branch("root")
+
     for depth in range(max_depth):
         new_leaves = []
         # PRM-1 FIX: Accumulate all new leaves across iterations
         all_new_leaves = []
-        
+
         for leaf in leaves:
             if leaf.expanded:
                 continue
             if self._igd_policy.should_abort(leaf.node_id, depth=leaf.depth):
                 igd_count += 1
                 # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
-                object.__setattr__(leaf, 'expanded', True)
+                object.__setattr__(leaf, "expanded", True)
                 continue
             if dead_end_detector.is_dead_end(leaf.node_id):
                 dead_end_count += 1
                 # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
-                object.__setattr__(leaf, 'expanded', True)
+                object.__setattr__(leaf, "expanded", True)
                 continue
-            
+
             # _expand_branches returns (new_leaves, local_pruned_count)
             expanded_result = await _expand_branches(
-                self, leaf, depth, branching_factor, value_predictor, query_complexity,
-                nodes, dead_end_detector, checkpointer, pruned_count
-    )
+                self,
+                leaf,
+                depth,
+                branching_factor,
+                value_predictor,
+                query_complexity,
+                nodes,
+                dead_end_detector,
+                checkpointer,
+                pruned_count,
+            )
             if isinstance(expanded_result, tuple) and len(expanded_result) == 2:
                 new_leaves, local_pruned = expanded_result
                 pruned_count += local_pruned
@@ -1393,27 +1542,45 @@ async def _run_tot_search(
                 # Backward compatibility: old return format
                 new_leaves = expanded_result
             # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
-            object.__setattr__(leaf, 'expanded', True)
+            object.__setattr__(leaf, "expanded", True)
             # PRM-1 FIX: Accumulate new leaves instead of overwriting
             all_new_leaves.extend(new_leaves)
             nodes_since_yield = await _yield_if_needed(nodes_since_yield)
-        
+
         # PRM-1 FIX: Use accumulated leaves
         leaves = _select_beam(all_new_leaves, beam_width)
         _cleanup_detectors(dead_end_detector, self._igd_policy, leaves)
-        
+
         if checkpointer:
             await checkpointer.checkpoint(nodes=nodes, step=depth + 1)
-        
+
         best_path, best_value = _find_best_path(nodes, leaves, best_path, best_value)
-    
+
     return _build_tot_result(
-        nodes, best_path, best_value, pruned_count, dead_end_count, igd_count,
-        value_predictor, self._resume_step if self._resume_from else 0, self._resume_from is not None
+        nodes,
+        best_path,
+        best_value,
+        pruned_count,
+        dead_end_count,
+        igd_count,
+        value_predictor,
+        self._resume_step if self._resume_from else 0,
+        self._resume_from is not None,
     )
 
 
-async def _expand_branches(self, leaf, depth, branching_factor, value_predictor, query_complexity, nodes, dead_end_detector, checkpointer, pruned_count):
+async def _expand_branches(
+    self,
+    leaf,
+    depth,
+    branching_factor,
+    value_predictor,
+    query_complexity,
+    nodes,
+    dead_end_detector,
+    checkpointer,
+    pruned_count,
+):
     """
     Expand leaf node into branches.
 
@@ -1435,21 +1602,30 @@ async def _expand_branches(self, leaf, depth, branching_factor, value_predictor,
     prm_enabled = prm_scorer is not None
 
     for i in range(branching_factor):
-        child_id = f'node_{depth}_{i}_{leaf.node_id}'
+        child_id = f"node_{depth}_{i}_{leaf.node_id}"
         value_est, uncertainty = value_predictor.predict_value(child_id, depth + 1, parent_value, query_complexity)
 
-        child = ThoughtNode(node_id=child_id, thought=f'Branch {i + 1} at depth {depth + 1}', value_estimate=value_est, parent=leaf.node_id, depth=depth + 1, cost=leaf.cost + 1.0, uncertainty=uncertainty)
+        child = ThoughtNode(
+            node_id=child_id,
+            thought=f"Branch {i + 1} at depth {depth + 1}",
+            value_estimate=value_est,
+            parent=leaf.node_id,
+            depth=depth + 1,
+            cost=leaf.cost + 1.0,
+            uncertainty=uncertainty,
+        )
 
         # BREAKTHROUGH #3: Compute gain using PRM cumulative reward when available
         if prm_enabled:
             try:
                 from planning.step_reward_model import PRMInferenceContext
+
                 context = PRMInferenceContext(
                     parent=leaf,
                     sibling_values=[n.value_estimate for n in new_leaves] if new_leaves else [],
                     query_complexity=query_complexity,
-                    sprint_urgency=self._compute_urgency() if hasattr(self, '_compute_urgency') else 0.0,
-    )
+                    sprint_urgency=self._compute_urgency() if hasattr(self, "_compute_urgency") else 0.0,
+                )
                 # Get PRM cumulative score (replaces naive gain = value_est - parent_value)
                 gain, step_reward = prm_scorer.score_node(child, context)
             except Exception:
@@ -1462,11 +1638,12 @@ async def _expand_branches(self, leaf, depth, branching_factor, value_predictor,
         if depth >= _PRUNE_MIN_DEPTH and gain < _PRUNE_GAIN_THRESHOLD:
             local_pruned_count += 1
             # PRM-1 FIX: Use object.__setattr__ for frozen ThoughtNode mutation
-            object.__setattr__(child, 'thought', f'Pruned branch {i + 1} at depth {depth + 1} (gain={gain:.3f})')
+            object.__setattr__(child, "thought", f"Pruned branch {i + 1} at depth {depth + 1} (gain={gain:.3f})")
             nodes[child_id] = child
             leaf.children.append(child_id)
             if checkpointer:
                 from msgspec import to_builtins as _to_builtins
+
                 await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
             continue
 
@@ -1476,6 +1653,7 @@ async def _expand_branches(self, leaf, depth, branching_factor, value_predictor,
 
         if checkpointer:
             from msgspec import to_builtins as _to_builtins
+
             await checkpointer.incremental_checkpoint(child_id, _to_builtins(child), step=depth + 1)
 
         self._igd_policy.register_branch(child_id)
@@ -1505,9 +1683,9 @@ def _select_beam(new_leaves: list, beam_width: int) -> list:
     return new_leaves
 
 
-def _cleanup_detectors(dead_end_detector, igd_policy, leaves):
+def _cleanup_detectors(dead_end_detector, igd_policy, leaves) -> None:
     """Cleanup detectors for pruned branches."""
-    active_ids = {n.node_id for n in leaves} | {'root'}
+    active_ids = {n.node_id for n in leaves} | {"root"}
     dead_end_detector.cleanup_pruned(active_ids)
     igd_policy.cleanup_pruned(active_ids)
 
@@ -1526,15 +1704,22 @@ def _find_best_path(nodes: dict, leaves: list, best_path: list, best_value: floa
     return best_path, best_value
 
 
-def _build_tot_result(nodes, best_path, best_value, pruned_count, dead_end_count, igd_count, value_predictor, resume_step, resumed):
+def _build_tot_result(
+    nodes, best_path, best_value, pruned_count, dead_end_count, igd_count, value_predictor, resume_step, resumed
+):
     """Build final ToT result."""
     return {
-        'type': 'tree_of_thoughts', 'nodes': len(nodes), 'depth': len(best_path),
-        'best_path': best_path, 'best_value': best_value,
-        'pruned_branches': pruned_count, 'dead_ends': dead_end_count, 'igd_aborts': igd_count,
-        'used_learned_values': value_predictor.is_learned,
-        'resumed': resumed, 'resume_step': resume_step,
-        'igd_policy_stats': {},  # Simplified
-        'summary': f"ToT: {len(nodes)} nodes, {pruned_count} pruned, {dead_end_count} dead-ends, {igd_count} IGD-aborts, learned={value_predictor.is_learned}{', RESUMED' if resumed else ''}",
+        "type": "tree_of_thoughts",
+        "nodes": len(nodes),
+        "depth": len(best_path),
+        "best_path": best_path,
+        "best_value": best_value,
+        "pruned_branches": pruned_count,
+        "dead_ends": dead_end_count,
+        "igd_aborts": igd_count,
+        "used_learned_values": value_predictor.is_learned,
+        "resumed": resumed,
+        "resume_step": resume_step,
+        "igd_policy_stats": {},  # Simplified
+        "summary": f"ToT: {len(nodes)} nodes, {pruned_count} pruned, {dead_end_count} dead-ends, {igd_count} IGD-aborts, learned={value_predictor.is_learned}{', RESUMED' if resumed else ''}",
     }
-

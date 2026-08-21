@@ -19,7 +19,6 @@ Sprint 52: Document Metadata Extractor
 Extended: Sprint FOCADI-16 FOCA-style metadata pipeline
 """
 
-
 import asyncio
 import hashlib
 import io
@@ -29,17 +28,13 @@ import sqlite3
 import zipfile
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# LIBRARY AVAILABILITY FLAGS
-# =============================================================================
 
 # fitz (PyMuPDF) — strict import with fallback
 try:
     import fitz
+
     FITZ_AVAILABLE = True
 except ImportError:
     fitz = None  # type: ignore[assignment]
@@ -48,6 +43,7 @@ except ImportError:
 # docx — strict import with fallback
 try:
     import docx
+
     DOCX_AVAILABLE = True
 except ImportError:
     docx = None  # type: ignore[assignment]
@@ -56,6 +52,7 @@ except ImportError:
 # openpyxl — strict import with fallback
 try:
     import openpyxl
+
     OPENPYXL_AVAILABLE = True
 except ImportError:
     openpyxl = None  # type: ignore[assignment]
@@ -64,6 +61,7 @@ except ImportError:
 # PIL — strict import with fallback
 try:
     from PIL import Image as PIL_Image
+
     PIL_AVAILABLE = True
 except ImportError:
     PIL_Image = None  # type: ignore[assignment]
@@ -72,16 +70,13 @@ except ImportError:
 # olevba — strict import with fallback
 try:
     import olevba
+
     OLEVB_AVAILABLE = True
 except ImportError:
     olevba = None  # type: ignore[assignment]
     OLEVB_AVAILABLE = False
 
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.svg', '.dxf', '.eml', '.msg'}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".odt", ".svg", ".dxf", ".eml", ".msg"}
 MAX_INTERNAL_PATHS = 100
 MAX_EMBEDDED_FONTS = 50
 MAX_PDF_OBJECTS = 500
@@ -95,6 +90,7 @@ try:
     from hledac.universal.paths import CACHE_ROOT
 except ImportError:
     from pathlib import Path
+
     CACHE_ROOT = Path("/tmp/hledac_cache")
 
 MAX_GPS_COORDS = 20
@@ -104,33 +100,33 @@ PDF_DEEP_TIMEOUT = 15.0
 
 # Cache DB path - under RAMDISK CACHE_ROOT, not home-relative
 CACHE_DIR = CACHE_ROOT
-CACHE_DB_PATH = CACHE_DIR / 'doc_meta_cache.db'
+CACHE_DB_PATH = CACHE_DIR / "doc_meta_cache.db"
 
 # Regex patterns for internal paths
 INTERNAL_PATH_PATTERNS = {
-    'windows': re.compile(r'[A-Za-z]:\\[^<>"\'\s]{3,}'),
-    'unc': re.compile(r'\\\\[^<>"\'\s]{3,}'),
-    'unix': re.compile(r'(?:/home/|/Users/|/var/|/etc/)[^<>"\'\s]{2,}'),
+    "windows": re.compile(r'[A-Za-z]:\\[^<>"\'\s]{3,}'),
+    "unc": re.compile(r'\\\\[^<>"\'\s]{3,}'),
+    "unix": re.compile(r'(?:/home/|/Users/|/var/|/etc/)[^<>"\'\s]{2,}'),
 }
 
 # Macro detection
 VBA_PROJECT_PATTERNS = [
-    b'vbaProject.bin',
-    b'xl/vbaProject.bin',
-    b'word/vbaProject.bin',
+    b"vbaProject.bin",
+    b"xl/vbaProject.bin",
+    b"word/vbaProject.bin",
 ]
 
 # PDF macro detection patterns
 PDF_MACRO_PATTERNS = [
-    b'/JS',
-    b'/JavaScript',
-    b'/Launch',
+    b"/JS",
+    b"/JavaScript",
+    b"/Launch",
 ]
 
 # C2 URL patterns in macros (common malware patterns)
 C2_URL_PATTERNS = [
     re.compile(r'https?://[^\s<>"\']+\.(php|asp|jsp|cgi|pl)', re.IGNORECASE),
-    re.compile(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', re.IGNORECASE),
+    re.compile(r"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", re.IGNORECASE),
     re.compile(r'https?://[^\s<>"\']+\.tk\.', re.IGNORECASE),
     re.compile(r'https?://[^\s<>"\']+\.ga\.', re.IGNORECASE),
     re.compile(r'https?://[^\s<>"\']+\.cf\.', re.IGNORECASE),
@@ -139,23 +135,23 @@ C2_URL_PATTERNS = [
 
 # Suspicious API call patterns in macros
 SUSPICIOUS_API_PATTERNS = [
-    re.compile(r'CreateObject|Wscript\.Shell', re.IGNORECASE),
-    re.compile(r'UrlDownloadToFile|XMLHTTP', re.IGNORECASE),
-    re.compile(r'WinHttp\.WinHttpRequest', re.IGNORECASE),
-    re.compile(r'Process32|Module32', re.IGNORECASE),
-    re.compile(r'RegOpenKey|RegSetValue', re.IGNORECASE),
+    re.compile(r"CreateObject|Wscript\.Shell", re.IGNORECASE),
+    re.compile(r"UrlDownloadToFile|XMLHTTP", re.IGNORECASE),
+    re.compile(r"WinHttp\.WinHttpRequest", re.IGNORECASE),
+    re.compile(r"Process32|Module32", re.IGNORECASE),
+    re.compile(r"RegOpenKey|RegSetValue", re.IGNORECASE),
 ]
 
 # Email header analysis patterns
-RECEIVED_HEADER_PATTERN = re.compile(r'from\s+([^\s\(]+)\s+\(?(.*?)\)?\s+by\s+([^\s\(]+)', re.IGNORECASE)
-X_ORIGINATING_IP_PATTERN = re.compile(r'X-Originating-IP:\s*\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]?', re.IGNORECASE)
-MESSAGE_ID_DOMAIN_PATTERN = re.compile(r'@([a-zA-Z0-9\-\.]+)>')
+RECEIVED_HEADER_PATTERN = re.compile(r"from\s+([^\s\(]+)\s+\(?(.*?)\)?\s+by\s+([^\s\(]+)", re.IGNORECASE)
+X_ORIGINATING_IP_PATTERN = re.compile(r"X-Originating-IP:\s*\[?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]?", re.IGNORECASE)
+MESSAGE_ID_DOMAIN_PATTERN = re.compile(r"@([a-zA-Z0-9\-\.]+)>")
 
 # SVG metadata patterns
 SVG_METADATA_PATTERNS = {
-    'author': re.compile(r'<dc:creator[^>]*>([^<]+)</dc:creator>', re.IGNORECASE),
-    'title': re.compile(r'<dc:title[^>]*>([^<]+)</dc:title>', re.IGNORECASE),
-    'description': re.compile(r'<dc:description[^>]*>([^<]+)</dc:description>', re.IGNORECASE),
+    "author": re.compile(r"<dc:creator[^>]*>([^<]+)</dc:creator>", re.IGNORECASE),
+    "title": re.compile(r"<dc:title[^>]*>([^<]+)</dc:title>", re.IGNORECASE),
+    "description": re.compile(r"<dc:description[^>]*>([^<]+)</dc:description>", re.IGNORECASE),
 }
 
 
@@ -179,7 +175,7 @@ class _DocumentMetadataExtractor:
     Results cached in SQLite with 30-day TTL.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize extractor with SQLite cache."""
         self._init_cache()
         logger.debug("[DOCMETA] FOCA DocumentMetadataExtractor initialized")
@@ -189,17 +185,17 @@ class _DocumentMetadataExtractor:
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(CACHE_DB_PATH), timeout=5.0)
-            self._conn.execute('''
+            self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS doc_meta_cache (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     timestamp INTEGER NOT NULL
     )
-            ''')
-            self._conn.execute('''
+            """)
+            self._conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_timestamp
                 ON doc_meta_cache(timestamp)
-            ''')
+            """)
             self._conn.commit()
         except Exception as e:
             logger.warning(f"[DOCMETA] Cache init failed: {e}")
@@ -213,6 +209,7 @@ class _DocumentMetadataExtractor:
     def _is_cache_valid(self, timestamp: int) -> bool:
         """Check if cache entry is still valid (within TTL)."""
         import time
+
         age_days = (time.time() - timestamp) / 86400
         return age_days < CACHE_TTL_DAYS
 
@@ -222,13 +219,11 @@ class _DocumentMetadataExtractor:
             return None
         try:
             key = self._get_cache_key(content)
-            cursor = self._conn.execute(
-                'SELECT value, timestamp FROM doc_meta_cache WHERE key = ?',
-                (key,)
-    )
+            cursor = self._conn.execute("SELECT value, timestamp FROM doc_meta_cache WHERE key = ?", (key,))
             row = cursor.fetchone()
             if row and self._is_cache_valid(row[1]):
                 import json
+
                 return json.loads(row[0])
         except Exception:  # noqa: BLE001
             pass
@@ -241,22 +236,23 @@ class _DocumentMetadataExtractor:
         try:
             import json
             import time
+
             key = self._get_cache_key(content)
             value = json.dumps(result)
             timestamp = int(time.time())
             self._conn.execute(
-                'INSERT OR REPLACE INTO doc_meta_cache (key, value, timestamp) VALUES (?, ?, ?)',
-                (key, value, timestamp)
-    )
+                "INSERT OR REPLACE INTO doc_meta_cache (key, value, timestamp) VALUES (?, ?, ?)",
+                (key, value, timestamp),
+            )
             self._conn.commit()
         except Exception:  # noqa: BLE001
             pass
 
     def _get_extension(self, url: str) -> str:
         """Get file extension from URL."""
-        path = url.lower().rsplit('/', 1)[-1] if '/' in url else url
-        ext = '.' + path.rsplit('.', 1)[-1] if '.' in path else ''
-        return ext if ext in SUPPORTED_EXTENSIONS else ''
+        path = url.lower().rsplit("/", 1)[-1] if "/" in url else url
+        ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
+        return ext if ext in SUPPORTED_EXTENSIONS else ""
 
     async def extract(self, content: bytes, url: str) -> dict:
         """
@@ -276,7 +272,6 @@ class _DocumentMetadataExtractor:
         if not ext or ext not in SUPPORTED_EXTENSIONS:
             return {}
 
-        # Check cache
         cached = self._get_cached(content)
         if cached is not None:
             return cached
@@ -291,9 +286,10 @@ class _DocumentMetadataExtractor:
         except TimeoutError:
             logger.debug(
                 "[DOCMETA] Timeout extracting from %s (%.1fs)",
-                url, EXTRACTION_TIMEOUT,
+                url,
+                EXTRACTION_TIMEOUT,
                 extra={"url": url, "ext": ext, "timeout_s": EXTRACTION_TIMEOUT},
-    )
+            )
             return {}
         except Exception as e:
             logger.debug(f"[DOCMETA] Extraction failed for {url}: {e}")
@@ -302,51 +298,47 @@ class _DocumentMetadataExtractor:
     def _extract_sync(self, content: bytes, ext: str) -> dict:
         """Blocking extraction - runs in executor."""
         extractors = {
-            '.pdf': self._extract_pdf,
-            '.docx': self._extract_docx,
-            '.xlsx': self._extract_xlsx,
-            '.pptx': self._extract_pptx,
-            '.odt': self._extract_odt,
-            '.svg': self._extract_svg,
-            '.dxf': self._extract_dxf,
-            '.eml': self._extract_email,
-            '.msg': self._extract_msg,
+            ".pdf": self._extract_pdf,
+            ".docx": self._extract_docx,
+            ".xlsx": self._extract_xlsx,
+            ".pptx": self._extract_pptx,
+            ".odt": self._extract_odt,
+            ".svg": self._extract_svg,
+            ".dxf": self._extract_dxf,
+            ".eml": self._extract_email,
+            ".msg": self._extract_msg,
         }
         return extractors.get(ext, lambda _: {})(content)
 
-    # =========================================================================
-    # PDF EXTRACTION
-    # =========================================================================
-
     def _extract_pdf(self, content: bytes) -> dict:
         """Extract from PDF using PyMuPDF with FOCA-style deep analysis."""
-        result: dict[str, Any] = {'format': 'pdf'}
+        result: dict[str, Any] = {"format": "pdf"}
 
         if not FITZ_AVAILABLE:
             return self._extract_pdf_fallback(content, result)
 
         try:
-            doc = fitz.open(stream=content, filetype='pdf')
+            doc = fitz.open(stream=content, filetype="pdf")
 
             # Basic metadata
             meta = doc.metadata
-            result['author'] = meta.get('author') or None
-            result['creator'] = meta.get('creator') or None
-            result['organization'] = meta.get('producer') or None
-            result['last_modified_by'] = meta.get('modDate') or None
-            result['title'] = meta.get('title') or None
-            result['subject'] = meta.get('subject') or None
+            result["author"] = meta.get("author") or None
+            result["creator"] = meta.get("creator") or None
+            result["organization"] = meta.get("producer") or None
+            result["last_modified_by"] = meta.get("modDate") or None
+            result["title"] = meta.get("title") or None
+            result["subject"] = meta.get("subject") or None
 
             # Company (often in producer field for MS Office PDFs)
-            producer = meta.get('producer') or ''
-            if 'microsoft' in producer.lower() or 'adobe' in producer.lower():
-                result['company'] = self._extract_company_from_pdf_producer(producer)
+            producer = meta.get("producer") or ""
+            if "microsoft" in producer.lower() or "adobe" in producer.lower():
+                result["company"] = self._extract_company_from_pdf_producer(producer)
 
             # Page count
-            result['page_count'] = len(doc)
+            result["page_count"] = len(doc)
 
             # Revision count (from PDF info dictionary)
-            result['revision_count'] = self._extract_pdf_revisions(doc, content)
+            result["revision_count"] = self._extract_pdf_revisions(doc, content)
 
             # Internal paths (search first 10 pages)
             internal_paths = []
@@ -355,23 +347,23 @@ class _DocumentMetadataExtractor:
                 text = page.get_text()
                 paths = self._find_internal_paths(text)
                 internal_paths.extend(paths)
-            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
             # Embedded fonts (geographic indication)
-            result['embedded_fonts'] = self._extract_pdf_fonts(doc)[:MAX_EMBEDDED_FONTS]
+            result["embedded_fonts"] = self._extract_pdf_fonts(doc)[:MAX_EMBEDDED_FONTS]
 
             # GPS coords from embedded images
-            result['gps_coords'] = self._extract_pdf_gps(doc)
+            result["gps_coords"] = self._extract_pdf_gps(doc)
 
             # Hidden content analysis (PDF deep extraction)
-            result['hidden_content'] = self._extract_pdf_hidden_content(doc, content)
+            result["hidden_content"] = self._extract_pdf_hidden_content(doc, content)
 
             # Macro detection
             prefix = content[:50000]
-            result['has_macros'] = any(p in prefix for p in PDF_MACRO_PATTERNS)
+            result["has_macros"] = any(p in prefix for p in PDF_MACRO_PATTERNS)
 
             # Template path (for Office-generated PDFs)
-            result['template_path'] = self._extract_pdf_template_path(doc, content)
+            result["template_path"] = self._extract_pdf_template_path(doc, content)
 
             doc.close()
             return result
@@ -382,25 +374,25 @@ class _DocumentMetadataExtractor:
 
     def _extract_pdf_fallback(self, content: bytes, result: dict) -> dict:
         """Fallback PDF extraction without PyMuPDF."""
-        result['format'] = 'pdf'
-        result['author'] = None
-        result['creator'] = None
-        result['organization'] = None
-        result['last_modified_by'] = None
-        result['title'] = None
-        result['subject'] = None
-        result['company'] = None
-        result['page_count'] = 0
-        result['revision_count'] = 0
-        result['internal_paths'] = []
-        result['embedded_fonts'] = []
-        result['gps_coords'] = []
-        result['hidden_content'] = {}
-        result['template_path'] = None
+        result["format"] = "pdf"
+        result["author"] = None
+        result["creator"] = None
+        result["organization"] = None
+        result["last_modified_by"] = None
+        result["title"] = None
+        result["subject"] = None
+        result["company"] = None
+        result["page_count"] = 0
+        result["revision_count"] = 0
+        result["internal_paths"] = []
+        result["embedded_fonts"] = []
+        result["gps_coords"] = []
+        result["hidden_content"] = {}
+        result["template_path"] = None
 
         # Macro detection
         prefix = content[:50000]
-        result['has_macros'] = any(p in prefix for p in PDF_MACRO_PATTERNS)
+        result["has_macros"] = any(p in prefix for p in PDF_MACRO_PATTERNS)
 
         return result
 
@@ -410,10 +402,10 @@ class _DocumentMetadataExtractor:
             info = doc.metadata
             if info:
                 for key, value in info.items():
-                    if key and 'revision' in key.lower():
+                    if key and "revision" in key.lower():
                         try:
                             return int(value)
-                        except (ValueError, TypeError):  # noqa: BLE001
+                        except ValueError, TypeError:  # noqa: BLE001
                             pass
             return 0
         except Exception:
@@ -432,11 +424,7 @@ class _DocumentMetadataExtractor:
                         ext = font[1] if len(font) > 1 else None
                         type_ = font[2] if len(font) > 2 else None
                         if name:
-                            fonts.append({
-                                'name': name,
-                                'type': type_,
-                                'embedding': ext
-                            })
+                            fonts.append({"name": name, "type": type_, "embedding": ext})
                     except Exception:
                         continue
         except Exception:  # noqa: BLE001
@@ -449,7 +437,7 @@ class _DocumentMetadataExtractor:
             meta = doc.metadata
             if meta:
                 for key, value in meta.items():
-                    if value and ('template' in key.lower() or 'template' in str(value).lower()):
+                    if value and ("template" in key.lower() or "template" in str(value).lower()):
                         return str(value)
             return None
         except Exception:
@@ -465,49 +453,43 @@ class _DocumentMetadataExtractor:
         - Incremental updates
         """
         hidden: dict[str, Any] = {
-            'has_invisible_text': False,
-            'has_form_fields': False,
-            'has_javascript': False,
-            'embedded_files': [],
-            'incremental_updates': 0,
-            'suspicious_objects': [],
+            "has_invisible_text": False,
+            "has_form_fields": False,
+            "has_javascript": False,
+            "embedded_files": [],
+            "incremental_updates": 0,
+            "suspicious_objects": [],
         }
 
         try:
-            # Check for form fields
             for page_num in range(min(10, len(doc))):
                 page = doc[page_num]
                 widgets = page.widgets()
                 if widgets:
-                    hidden['has_form_fields'] = True
+                    hidden["has_form_fields"] = True
 
-            # Check for JavaScript
             if doc.has_javascript():
-                hidden['has_javascript'] = True
+                hidden["has_javascript"] = True
 
-            # Check for embedded files
             try:
                 embeds = doc.embfile_names
                 for name in embeds[:20]:
-                    hidden['embedded_files'].append(name)
+                    hidden["embedded_files"].append(name)
             except Exception:  # noqa: BLE001
                 pass
 
             # Count incremental updates (xref tables)
             xref_count = doc.xref_length()
             if xref_count > 10:
-                hidden['incremental_updates'] = xref_count - 1
+                hidden["incremental_updates"] = xref_count - 1
 
             # Scan for suspicious objects
             for i in range(min(MAX_PDF_OBJECTS, xref_count)):
                 try:
                     obj_str = doc.xref_object(i, compressed=False)
                     if obj_str:
-                        if any(p in obj_str for p in ['/JS', '/JavaScript', '/Launch']):
-                            hidden['suspicious_objects'].append({
-                                'xref': i,
-                                'type': 'script_or_launch'
-                            })
+                        if any(p in obj_str for p in ["/JS", "/JavaScript", "/Launch"]):
+                            hidden["suspicious_objects"].append({"xref": i, "type": "script_or_launch"})
                 except Exception:
                     continue
 
@@ -530,7 +512,7 @@ class _DocumentMetadataExtractor:
                     try:
                         pix = fitz.Pixmap(doc, img[0])
                         if pix.n - pix.alpha > 3:
-                            img_data = pix.tobytes('png')
+                            img_data = pix.tobytes("png")
                             img_obj = io.BytesIO(img_data)
                             img_obj = Image.open(img_obj)
                             exif = img_obj._getexif()
@@ -571,11 +553,11 @@ class _DocumentMetadataExtractor:
                 lon = _exif_to_float(gps_ifd[4])
 
             if lat and lon:
-                if lat_ref == 'S':
+                if lat_ref == "S":
                     lat = -lat
-                if lon_ref == 'W':
+                if lon_ref == "W":
                     lon = -lon
-                return {'lat': lat, 'lon': lon, 'source': 'exif'}
+                return {"lat": lat, "lon": lon, "source": "exif"}
 
             return None
         except Exception:
@@ -586,55 +568,52 @@ class _DocumentMetadataExtractor:
         if not producer:
             return None
         patterns = [
-            (r'Microsoft Office', 'Microsoft'),
-            (r'Adobe Acrobat', 'Adobe'),
-            (r'LibreOffice', 'LibreOffice'),
-            (r'OpenOffice', 'Apache OpenOffice'),
-            (r'Word', 'Microsoft'),
-            (r'Excel', 'Microsoft'),
-            (r'PowerPoint', 'Microsoft'),
+            (r"Microsoft Office", "Microsoft"),
+            (r"Adobe Acrobat", "Adobe"),
+            (r"LibreOffice", "LibreOffice"),
+            (r"OpenOffice", "Apache OpenOffice"),
+            (r"Word", "Microsoft"),
+            (r"Excel", "Microsoft"),
+            (r"PowerPoint", "Microsoft"),
         ]
         for pattern, company in patterns:
             if re.search(pattern, producer, re.IGNORECASE):
                 return company
         return None
 
-    # =========================================================================
-    # DOCX EXTRACTION
-    # =========================================================================
-
     def _extract_docx(self, content: bytes) -> dict:
         """Extract from DOCX with FOCA-style revision history and fonts."""
-        result: dict[str, Any] = {'format': 'docx'}
+        result: dict[str, Any] = {"format": "docx"}
 
         # R-21: Try Rust docx-rs first (~5-10× faster than python-docx)
         try:
             from rust_extensions import office as rust_office
+
             rust_meta = rust_office.extract_metadata_from_bytes(content, "docx")
-            result['title'] = rust_meta.title
-            result['subject'] = rust_meta.subject
-            result['author'] = rust_meta.author
-            result['creator'] = rust_meta.last_modified_by
-            result['last_modified_by'] = rust_meta.last_modified_by
-            result['revision'] = rust_meta.revision
-            result['company'] = rust_meta.company
-            result['keywords'] = rust_meta.keywords
-            result['category'] = rust_meta.category
-            result['comments'] = rust_meta.comments
-            result['template'] = rust_meta.template
-            result['manager'] = rust_meta.manager
-            result['total_editing_time'] = rust_meta.total_editing_time
+            result["title"] = rust_meta.title
+            result["subject"] = rust_meta.subject
+            result["author"] = rust_meta.author
+            result["creator"] = rust_meta.last_modified_by
+            result["last_modified_by"] = rust_meta.last_modified_by
+            result["revision"] = rust_meta.revision
+            result["company"] = rust_meta.company
+            result["keywords"] = rust_meta.keywords
+            result["category"] = rust_meta.category
+            result["comments"] = rust_meta.comments
+            result["template"] = rust_meta.template
+            result["manager"] = rust_meta.manager
+            result["total_editing_time"] = rust_meta.total_editing_time
             # Rust metadata extracted — add extended props + text extraction via ZIP
             result.update(self._extract_docx_extended_props(content))
-            result['embedded_fonts'] = []
-            result['revision_history'] = self._extract_docx_revisions(content)[:MAX_REVISIONS]
+            result["embedded_fonts"] = []
+            result["revision_history"] = self._extract_docx_revisions(content)[:MAX_REVISIONS]
             internal_paths = self._find_internal_paths_from_docx_zip(content)
-            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
-            result['has_macros'] = self._check_docx_macros(content)
-            if result['has_macros'] and OLEVB_AVAILABLE:
-                result['macro_analysis'] = self._analyze_macros_olevba(content, 'docm')
-            result['gps_coords'] = []
-            result['page_count'] = 0
+            result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result["has_macros"] = self._check_docx_macros(content)
+            if result["has_macros"] and OLEVB_AVAILABLE:
+                result["macro_analysis"] = self._analyze_macros_olevba(content, "docm")
+            result["gps_coords"] = []
+            result["page_count"] = 0
             return result
         except Exception:  # noqa: BLE001
             pass
@@ -647,25 +626,24 @@ class _DocumentMetadataExtractor:
 
             # Core properties
             core = doc.core_properties
-            result['author'] = core.author or None
-            result['creator'] = core.last_modified_by or None
-            result['last_modified_by'] = core.last_modified_by or None
-            result['revision_count'] = core.revision or 0
-            result['title'] = core.title or None
-            result['subject'] = core.subject or None
+            result["author"] = core.author or None
+            result["creator"] = core.last_modified_by or None
+            result["last_modified_by"] = core.last_modified_by or None
+            result["revision_count"] = core.revision or 0
+            result["title"] = core.title or None
+            result["subject"] = core.subject or None
 
             # Company and template path from custom properties
-            result['company'] = None
-            result['template_path'] = None
+            result["company"] = None
+            result["template_path"] = None
 
-            # Extract from ZIP directly for extended properties
             result.update(self._extract_docx_extended_props(content))
 
             # Embedded fonts
-            result['embedded_fonts'] = self._extract_docx_fonts(doc)[:MAX_EMBEDDED_FONTS]
+            result["embedded_fonts"] = self._extract_docx_fonts(doc)[:MAX_EMBEDDED_FONTS]
 
             # Revision history (track changes)
-            result['revision_history'] = self._extract_docx_revisions(content)[:MAX_REVISIONS]
+            result["revision_history"] = self._extract_docx_revisions(content)[:MAX_REVISIONS]
 
             # Internal paths
             internal_paths = []
@@ -677,17 +655,17 @@ class _DocumentMetadataExtractor:
                     for cell in row.cells:
                         paths = self._find_internal_paths(cell.text)
                         internal_paths.extend(paths)
-            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
             # Macro detection via ZIP
-            result['has_macros'] = self._check_docx_macros(content)
+            result["has_macros"] = self._check_docx_macros(content)
 
             # Macro analysis with olevba
-            if result['has_macros'] and OLEVB_AVAILABLE:
-                result['macro_analysis'] = self._analyze_macros_olevba(content, 'docm')
+            if result["has_macros"] and OLEVB_AVAILABLE:
+                result["macro_analysis"] = self._analyze_macros_olevba(content, "docm")
 
-            result['gps_coords'] = []
-            result['page_count'] = 0
+            result["gps_coords"] = []
+            result["page_count"] = 0
 
             return result
 
@@ -697,23 +675,23 @@ class _DocumentMetadataExtractor:
 
     def _extract_docx_fallback(self, content: bytes, result: dict) -> dict:
         """Fallback DOCX extraction without python-docx."""
-        result['format'] = 'docx'
-        result['author'] = None
-        result['creator'] = None
-        result['last_modified_by'] = None
-        result['organization'] = None
-        result['company'] = None
-        result['title'] = None
-        result['subject'] = None
-        result['template_path'] = None
-        result['revision_count'] = 0
-        result['revision_history'] = []
-        result['embedded_fonts'] = []
-        result['internal_paths'] = self._find_internal_paths(content.decode('utf-8', errors='ignore'))
-        result['has_macros'] = self._check_docx_macros(content)
-        result['macro_analysis'] = {}
-        result['gps_coords'] = []
-        result['page_count'] = 0
+        result["format"] = "docx"
+        result["author"] = None
+        result["creator"] = None
+        result["last_modified_by"] = None
+        result["organization"] = None
+        result["company"] = None
+        result["title"] = None
+        result["subject"] = None
+        result["template_path"] = None
+        result["revision_count"] = 0
+        result["revision_history"] = []
+        result["embedded_fonts"] = []
+        result["internal_paths"] = self._find_internal_paths(content.decode("utf-8", errors="ignore"))
+        result["has_macros"] = self._check_docx_macros(content)
+        result["macro_analysis"] = {}
+        result["gps_coords"] = []
+        result["page_count"] = 0
         return result
 
     def _extract_docx_extended_props(self, content: bytes) -> dict[str, Any]:
@@ -721,21 +699,23 @@ class _DocumentMetadataExtractor:
         props = {}
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                if 'docProps/app.xml' in zf.namelist():
-                    app_xml = zf.read('docProps/app.xml').decode('utf-8', errors='ignore')
-                    company_match = re.search(r'<Company>([^<]*)</Company>', app_xml)
+                if "docProps/app.xml" in zf.namelist():
+                    app_xml = zf.read("docProps/app.xml").decode("utf-8", errors="ignore")
+                    company_match = re.search(r"<Company>([^<]*)</Company>", app_xml)
                     if company_match:
-                        props['company'] = company_match.group(1)
+                        props["company"] = company_match.group(1)
 
-                    template_match = re.search(r'<Template>([^<]*)</Template>', app_xml)
+                    template_match = re.search(r"<Template>([^<]*)</Template>", app_xml)
                     if template_match:
-                        props['template_path'] = template_match.group(1)
+                        props["template_path"] = template_match.group(1)
 
-                if 'docProps/custom.xml' in zf.namelist():
-                    custom_xml = zf.read('docProps/custom.xml').decode('utf-8', errors='ignore')
-                    company_matches = re.findall(r'<property[^>]*name="[^"]*company[^"]*"[^>]*><value>([^<]*)</value>', custom_xml, re.IGNORECASE)  # noqa: E501
-                    if company_matches and 'company' not in props:
-                        props['company'] = company_matches[0]
+                if "docProps/custom.xml" in zf.namelist():
+                    custom_xml = zf.read("docProps/custom.xml").decode("utf-8", errors="ignore")
+                    company_matches = re.findall(
+                        r'<property[^>]*name="[^"]*company[^"]*"[^>]*><value>([^<]*)</value>', custom_xml, re.IGNORECASE
+                    )  # noqa: E501
+                    if company_matches and "company" not in props:
+                        props["company"] = company_matches[0]
 
         except Exception as e:
             logger.debug(f"[DOCMETA] DOCX extended props extraction failed: {e}")
@@ -749,10 +729,10 @@ class _DocumentMetadataExtractor:
                 for run in para.runs:
                     if run.font:
                         font_info = {
-                            'name': run.font.name,
-                            'family': str(run.font.family) if run.font.family else None,
+                            "name": run.font.name,
+                            "family": str(run.font.family) if run.font.family else None,
                         }
-                        if font_info['name'] and font_info not in fonts:
+                        if font_info["name"] and font_info not in fonts:
                             fonts.append(font_info)
         except Exception:  # noqa: BLE001
             pass
@@ -763,68 +743,68 @@ class _DocumentMetadataExtractor:
         revisions = []
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                if 'word/document.xml' in zf.namelist():
-                    doc_xml = zf.read('word/document.xml').decode('utf-8', errors='ignore')
+                if "word/document.xml" in zf.namelist():
+                    doc_xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
 
-                    ins_pattern = re.compile(r'<w:ins[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)  # noqa: E501
-                    del_pattern = re.compile(r'<w:del[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE)  # noqa: E501
+                    ins_pattern = re.compile(
+                        r'<w:ins[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE
+                    )  # noqa: E501
+                    del_pattern = re.compile(
+                        r'<w:del[^>]*w:id="(\d+)"[^>]*w:author="([^"]*)"[^>]*w:date="([^"]*)"', re.IGNORECASE
+                    )  # noqa: E501
 
                     for match in ins_pattern.finditer(doc_xml):
-                        revisions.append({
-                            'id': match.group(1),
-                            'author': match.group(2),
-                            'date': match.group(3),
-                            'type': 'insertion'
-                        })
+                        revisions.append(
+                            {
+                                "id": match.group(1),
+                                "author": match.group(2),
+                                "date": match.group(3),
+                                "type": "insertion",
+                            }
+                        )
 
                     for match in del_pattern.finditer(doc_xml):
-                        revisions.append({
-                            'id': match.group(1),
-                            'author': match.group(2),
-                            'date': match.group(3),
-                            'type': 'deletion'
-                        })
+                        revisions.append(
+                            {"id": match.group(1), "author": match.group(2), "date": match.group(3), "type": "deletion"}
+                        )
 
         except Exception as e:
             logger.debug(f"[DOCMETA] DOCX revision extraction failed: {e}")
         return revisions[:MAX_REVISIONS]
 
-    # =========================================================================
-    # XLSX EXTRACTION
-    # =========================================================================
-
     def _extract_xlsx(self, content: bytes) -> dict:
         """Extract from XLSX with embedded fonts."""
-        result: dict[str, Any] = {'format': 'xlsx'}
+        result: dict[str, Any] = {"format": "xlsx"}
 
         # R-21: Try Rust calamine first (~5-10× faster than openpyxl)
         try:
             from rust_extensions import office as rust_office
+
             rust_meta = rust_office.extract_metadata_from_bytes(content, "xlsx")
-            result['title'] = rust_meta.title
-            result['subject'] = rust_meta.subject
-            result['author'] = rust_meta.author
-            result['creator'] = rust_meta.author
-            result['last_modified_by'] = rust_meta.last_modified_by
-            result['company'] = rust_meta.company
-            result['keywords'] = rust_meta.keywords
-            result['category'] = rust_meta.category
-            result['comments'] = rust_meta.comments
-            result['revision'] = rust_meta.revision
-            result['sheet_count'] = rust_meta.sheet_count
-            result['page_count'] = rust_meta.page_count
-            result['total_editing_time'] = rust_meta.total_editing_time
-            result['template'] = rust_meta.template
-            result['manager'] = rust_meta.manager
+            result["title"] = rust_meta.title
+            result["subject"] = rust_meta.subject
+            result["author"] = rust_meta.author
+            result["creator"] = rust_meta.author
+            result["last_modified_by"] = rust_meta.last_modified_by
+            result["company"] = rust_meta.company
+            result["keywords"] = rust_meta.keywords
+            result["category"] = rust_meta.category
+            result["comments"] = rust_meta.comments
+            result["revision"] = rust_meta.revision
+            result["sheet_count"] = rust_meta.sheet_count
+            result["page_count"] = rust_meta.page_count
+            result["total_editing_time"] = rust_meta.total_editing_time
+            result["template"] = rust_meta.template
+            result["manager"] = rust_meta.manager
             # Rust metadata extracted successfully — add extended props + cell scan
             result.update(self._extract_xlsx_extended_props(content))
             internal_paths = self._find_internal_paths_from_xlsx_zip(content)
-            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
-            result['embedded_fonts'] = []
-            result['has_macros'] = self._check_docx_macros(content)
-            if result['has_macros'] and OLEVB_AVAILABLE:
-                result['macro_analysis'] = self._analyze_macros_olevba(content, 'xlsm')
-            result['gps_coords'] = []
+            result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result["embedded_fonts"] = []
+            result["has_macros"] = self._check_docx_macros(content)
+            if result["has_macros"] and OLEVB_AVAILABLE:
+                result["macro_analysis"] = self._analyze_macros_olevba(content, "xlsm")
+            result["gps_coords"] = []
             return result
         except Exception:  # noqa: BLE001
             pass
@@ -837,16 +817,16 @@ class _DocumentMetadataExtractor:
             wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
 
             props = wb.properties
-            result['author'] = props.creator or None
-            result['creator'] = props.creator or None
-            result['last_modified_by'] = props.lastModifiedBy or None
-            result['organization'] = None
-            result['title'] = props.title or None
-            result['subject'] = props.subject or None
+            result["author"] = props.creator or None
+            result["creator"] = props.creator or None
+            result["last_modified_by"] = props.lastModifiedBy or None
+            result["organization"] = None
+            result["title"] = props.title or None
+            result["subject"] = props.subject or None
 
             result.update(self._extract_xlsx_extended_props(content))
 
-            result['revision_count'] = 0
+            result["revision_count"] = 0
 
             internal_paths = []
             cell_count = 0
@@ -864,17 +844,17 @@ class _DocumentMetadataExtractor:
                 if cell_count >= 1000:
                     break
 
-            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
-            result['embedded_fonts'] = []
+            result["embedded_fonts"] = []
 
-            result['has_macros'] = self._check_docx_macros(content)
+            result["has_macros"] = self._check_docx_macros(content)
 
-            if result['has_macros'] and OLEVB_AVAILABLE:
-                result['macro_analysis'] = self._analyze_macros_olevba(content, 'xlsm')
+            if result["has_macros"] and OLEVB_AVAILABLE:
+                result["macro_analysis"] = self._analyze_macros_olevba(content, "xlsm")
 
-            result['gps_coords'] = []
-            result['page_count'] = 0
+            result["gps_coords"] = []
+            result["page_count"] = 0
 
             wb.close()
             return result
@@ -888,61 +868,58 @@ class _DocumentMetadataExtractor:
         props = {}
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                if 'docProps/app.xml' in zf.namelist():
-                    app_xml = zf.read('docProps/app.xml').decode('utf-8', errors='ignore')
-                    company_match = re.search(r'<Company>([^<]*)</Company>', app_xml)
+                if "docProps/app.xml" in zf.namelist():
+                    app_xml = zf.read("docProps/app.xml").decode("utf-8", errors="ignore")
+                    company_match = re.search(r"<Company>([^<]*)</Company>", app_xml)
                     if company_match:
-                        props['company'] = company_match.group(1)
+                        props["company"] = company_match.group(1)
         except Exception:  # noqa: BLE001
             pass
         return props
 
     def _extract_xlsx_fallback(self, content: bytes, result: dict) -> dict:
         """Fallback XLSX extraction without openpyxl."""
-        result['format'] = 'xlsx'
-        result['author'] = None
-        result['creator'] = None
-        result['last_modified_by'] = None
-        result['organization'] = None
-        result['company'] = None
-        result['title'] = None
-        result['subject'] = None
-        result['template_path'] = None
-        result['revision_count'] = 0
-        result['embedded_fonts'] = []
-        result['internal_paths'] = []
-        result['has_macros'] = self._check_docx_macros(content)
-        result['macro_analysis'] = {}
-        result['gps_coords'] = []
-        result['page_count'] = 0
+        result["format"] = "xlsx"
+        result["author"] = None
+        result["creator"] = None
+        result["last_modified_by"] = None
+        result["organization"] = None
+        result["company"] = None
+        result["title"] = None
+        result["subject"] = None
+        result["template_path"] = None
+        result["revision_count"] = 0
+        result["embedded_fonts"] = []
+        result["internal_paths"] = []
+        result["has_macros"] = self._check_docx_macros(content)
+        result["macro_analysis"] = {}
+        result["gps_coords"] = []
+        result["page_count"] = 0
         return result
-
-    # =========================================================================
-    # PPTX EXTRACTION
-    # =========================================================================
 
     def _extract_pptx(self, content: bytes) -> dict:
         """Extract from PPTX with speaker notes and hidden slides."""
-        result: dict[str, Any] = {'format': 'pptx'}
+        result: dict[str, Any] = {"format": "pptx"}
 
         # R-21: Try Rust docx-rs first (~5-10× faster)
         try:
             from rust_extensions import office as rust_office
+
             rust_meta = rust_office.extract_metadata_from_bytes(content, "pptx")
-            result['title'] = rust_meta.title
-            result['subject'] = rust_meta.subject
-            result['author'] = rust_meta.author
-            result['creator'] = rust_meta.last_modified_by
-            result['last_modified_by'] = rust_meta.last_modified_by
-            result['company'] = rust_meta.company
-            result['keywords'] = rust_meta.keywords
-            result['category'] = rust_meta.category
-            result['comments'] = rust_meta.comments
-            result['revision'] = rust_meta.revision
-            result['slide_count'] = rust_meta.slide_count
-            result['template'] = rust_meta.template
-            result['manager'] = rust_meta.manager
-            result['total_editing_time'] = rust_meta.total_editing_time
+            result["title"] = rust_meta.title
+            result["subject"] = rust_meta.subject
+            result["author"] = rust_meta.author
+            result["creator"] = rust_meta.last_modified_by
+            result["last_modified_by"] = rust_meta.last_modified_by
+            result["company"] = rust_meta.company
+            result["keywords"] = rust_meta.keywords
+            result["category"] = rust_meta.category
+            result["comments"] = rust_meta.comments
+            result["revision"] = rust_meta.revision
+            result["slide_count"] = rust_meta.slide_count
+            result["template"] = rust_meta.template
+            result["manager"] = rust_meta.manager
+            result["total_editing_time"] = rust_meta.total_editing_time
         except Exception:  # noqa: BLE001
             pass
 
@@ -950,47 +927,47 @@ class _DocumentMetadataExtractor:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 names = zf.namelist()
 
-                if 'docProps/core.xml' in names:
-                    core_xml = zf.read('docProps/core.xml').decode('utf-8', errors='ignore')
-                    result.setdefault('author', self._extract_xml_value(core_xml, 'dc:creator'))
-                    result.setdefault('last_modified_by', self._extract_xml_value(core_xml, 'cp:lastModifiedBy'))
-                    result.setdefault('title', self._extract_xml_value(core_xml, 'dc:title'))
-                    result.setdefault('subject', self._extract_xml_value(core_xml, 'dc:subject'))
+                if "docProps/core.xml" in names:
+                    core_xml = zf.read("docProps/core.xml").decode("utf-8", errors="ignore")
+                    result.setdefault("author", self._extract_xml_value(core_xml, "dc:creator"))
+                    result.setdefault("last_modified_by", self._extract_xml_value(core_xml, "cp:lastModifiedBy"))
+                    result.setdefault("title", self._extract_xml_value(core_xml, "dc:title"))
+                    result.setdefault("subject", self._extract_xml_value(core_xml, "dc:subject"))
 
-                if 'docProps/app.xml' in names:
-                    app_xml = zf.read('docProps/app.xml').decode('utf-8', errors='ignore')
-                    result.setdefault('company', self._extract_xml_value(app_xml, 'Company'))
-                    result.setdefault('template_path', self._extract_xml_value(app_xml, 'Template'))
+                if "docProps/app.xml" in names:
+                    app_xml = zf.read("docProps/app.xml").decode("utf-8", errors="ignore")
+                    result.setdefault("company", self._extract_xml_value(app_xml, "Company"))
+                    result.setdefault("template_path", self._extract_xml_value(app_xml, "Template"))
 
-                result['speaker_notes'] = self._extract_pptx_speaker_notes(zf, names)
-                result['hidden_slides'] = self._extract_pptx_hidden_slides(zf, names)
+                result["speaker_notes"] = self._extract_pptx_speaker_notes(zf, names)
+                result["hidden_slides"] = self._extract_pptx_hidden_slides(zf, names)
 
-                if 'slide_count' not in result:
-                    slide_count = len([n for n in names if re.match(r'ppt/slides/slide\d+\.xml', n)])
-                    result['slide_count'] = slide_count
+                if "slide_count" not in result:
+                    slide_count = len([n for n in names if re.match(r"ppt/slides/slide\d+\.xml", n)])
+                    result["slide_count"] = slide_count
 
                 internal_paths = []
                 for name in names:
-                    if name.endswith('.xml'):
+                    if name.endswith(".xml"):
                         try:
-                            xml_content = zf.read(name).decode('utf-8', errors='ignore')
+                            xml_content = zf.read(name).decode("utf-8", errors="ignore")
                             paths = self._find_internal_paths(xml_content)
                             internal_paths.extend(paths)
                         except Exception:  # noqa: BLE001
                             pass
-                result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+                result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
-                result['has_macros'] = self._check_docx_macros(content)
+                result["has_macros"] = self._check_docx_macros(content)
 
-                if result['has_macros'] and OLEVB_AVAILABLE:
-                    result['macro_analysis'] = self._analyze_macros_olevba(content, 'pptm')
+                if result["has_macros"] and OLEVB_AVAILABLE:
+                    result["macro_analysis"] = self._analyze_macros_olevba(content, "pptm")
 
-                result['gps_coords'] = []
-                result['embedded_fonts'] = []
+                result["gps_coords"] = []
+                result["embedded_fonts"] = []
 
         except Exception as e:
             logger.debug(f"[DOCMETA] PPTX extraction failed: {e}")
-            result = {'format': 'pptx', 'error': str(e)}
+            result = {"format": "pptx", "error": str(e)}
 
         return result
 
@@ -999,12 +976,12 @@ class _DocumentMetadataExtractor:
         notes = []
         try:
             for name in names:
-                if re.match(r'ppt/notesSlides/notesSlide\d+\.xml', name):
+                if re.match(r"ppt/notesSlides/notesSlide\d+\.xml", name):
                     try:
-                        xml_content = zf.read(name).decode('utf-8', errors='ignore')
-                        text_matches = re.findall(r'<a:t>([^<]+)</a:t>', xml_content)
+                        xml_content = zf.read(name).decode("utf-8", errors="ignore")
+                        text_matches = re.findall(r"<a:t>([^<]+)</a:t>", xml_content)
                         if text_matches:
-                            note_text = ' '.join(text_matches)
+                            note_text = " ".join(text_matches)
                             if note_text.strip():
                                 notes.append(note_text.strip())
                     except Exception:  # noqa: BLE001
@@ -1017,85 +994,74 @@ class _DocumentMetadataExtractor:
         """Extract hidden slides from PPTX."""
         hidden = []
         try:
-            if 'ppt/presentation.xml' in names:
-                pres_xml = zf.read('ppt/presentation.xml').decode('utf-8', errors='ignore')
+            if "ppt/presentation.xml" in names:
+                pres_xml = zf.read("ppt/presentation.xml").decode("utf-8", errors="ignore")
 
                 visible_ids = set()
-                for sld_id in re.finditer(r'<p:sldId\b[^>]*>', pres_xml):
+                for sld_id in re.finditer(r"<p:sldId\b[^>]*>", pres_xml):
                     attrs = sld_id.group(0)
-                    if 'show' not in attrs or 'show="1"' in attrs.lower():
+                    if "show" not in attrs or 'show="1"' in attrs.lower():
                         rid_match = re.search(r'r:id="([^"]*)"', attrs)
                         if rid_match:
                             visible_ids.add(rid_match.group(1))
 
-                if 'ppt/_rels/presentation.xml.rels' in names:
-                    rels_xml = zf.read('ppt/_rels/presentation.xml.rels').decode('utf-8', errors='ignore')
+                if "ppt/_rels/presentation.xml.rels" in names:
+                    rels_xml = zf.read("ppt/_rels/presentation.xml.rels").decode("utf-8", errors="ignore")
                     for rel_match in re.finditer(r'<Relationship[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"', rels_xml):
                         rid = rel_match.group(1)
                         target = rel_match.group(2)
-                        if 'slides/slide' in target and rid not in visible_ids:
-                            slide_num = re.search(r'slide(\d+)', target)
+                        if "slides/slide" in target and rid not in visible_ids:
+                            slide_num = re.search(r"slide(\d+)", target)
                             if slide_num:
-                                hidden.append({
-                                    'slide_number': int(slide_num.group(1)),
-                                    'relationship_id': rid
-                                })
+                                hidden.append({"slide_number": int(slide_num.group(1)), "relationship_id": rid})
 
         except Exception as e:
             logger.debug(f"[DOCMETA] PPTX hidden slides extraction failed: {e}")
         return hidden[:MAX_HIDDEN_SLIDES]
 
-    # =========================================================================
-    # ODT EXTRACTION
-    # =========================================================================
-
     def _extract_odt(self, content: bytes) -> dict:
         """Extract from ODT (OpenDocument Text)."""
-        result: dict[str, Any] = {'format': 'odt'}
+        result: dict[str, Any] = {"format": "odt"}
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 names = zf.namelist()
 
-                if 'meta.xml' in names:
-                    meta_xml = zf.read('meta.xml').decode('utf-8', errors='ignore')
-                    result['author'] = self._extract_xml_value(meta_xml, 'meta:initial-creator')
-                    result['creator'] = self._extract_xml_value(meta_xml, 'dc:creator')
-                    result['title'] = self._extract_xml_value(meta_xml, 'dc:title')
-                    result['subject'] = self._extract_xml_value(meta_xml, 'dc:subject')
-                    result['company'] = self._extract_xml_value(meta_xml, 'meta:company')
+                if "meta.xml" in names:
+                    meta_xml = zf.read("meta.xml").decode("utf-8", errors="ignore")
+                    result["author"] = self._extract_xml_value(meta_xml, "meta:initial-creator")
+                    result["creator"] = self._extract_xml_value(meta_xml, "dc:creator")
+                    result["title"] = self._extract_xml_value(meta_xml, "dc:title")
+                    result["subject"] = self._extract_xml_value(meta_xml, "dc:subject")
+                    result["company"] = self._extract_xml_value(meta_xml, "meta:company")
 
                 internal_paths = []
                 for name in names:
-                    if name.endswith('.xml'):
+                    if name.endswith(".xml"):
                         try:
-                            xml_content = zf.read(name).decode('utf-8', errors='ignore')
+                            xml_content = zf.read(name).decode("utf-8", errors="ignore")
                             paths = self._find_internal_paths(xml_content)
                             internal_paths.extend(paths)
                         except Exception:  # noqa: BLE001
                             pass
-                result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+                result["internal_paths"] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
 
-                result['has_macros'] = False
-                result['gps_coords'] = []
-                result['embedded_fonts'] = []
+                result["has_macros"] = False
+                result["gps_coords"] = []
+                result["embedded_fonts"] = []
 
         except Exception as e:
             logger.debug(f"[DOCMETA] ODT extraction failed: {e}")
-            result = {'format': 'odt', 'error': str(e)}
+            result = {"format": "odt", "error": str(e)}
 
         return result
 
-    # =========================================================================
-    # SVG EXTRACTION
-    # =========================================================================
-
     def _extract_svg(self, content: bytes) -> dict:
         """Extract metadata from SVG files."""
-        result: dict[str, Any] = {'format': 'svg'}
+        result: dict[str, Any] = {"format": "svg"}
 
         try:
-            svg_content = content.decode('utf-8', errors='ignore')
+            svg_content = content.decode("utf-8", errors="ignore")
 
             for key, pattern in SVG_METADATA_PATTERNS.items():
                 match = pattern.search(svg_content)
@@ -1104,124 +1070,118 @@ class _DocumentMetadataExtractor:
 
             viewbox_match = re.search(r'viewBox="([^"]*)"', svg_content)
             if viewbox_match:
-                result['viewBox'] = viewbox_match.group(1)
+                result["viewBox"] = viewbox_match.group(1)
 
             width_match = re.search(r'width="([^"]*)"', svg_content)
             height_match = re.search(r'height="([^"]*)"', svg_content)
             if width_match:
-                result['width'] = width_match.group(1)
+                result["width"] = width_match.group(1)
             if height_match:
-                result['height'] = height_match.group(1)
+                result["height"] = height_match.group(1)
 
             author_match = re.search(r'<svg[^>]*author="([^"]*)"', svg_content, re.IGNORECASE)
             if author_match:
-                result['author'] = author_match.group(1)
+                result["author"] = author_match.group(1)
 
-            result['internal_paths'] = self._find_internal_paths(svg_content)[:MAX_INTERNAL_PATHS]
+            result["internal_paths"] = self._find_internal_paths(svg_content)[:MAX_INTERNAL_PATHS]
 
-            result['has_macros'] = False
-            result['gps_coords'] = []
+            result["has_macros"] = False
+            result["gps_coords"] = []
 
         except Exception as e:
             logger.debug(f"[DOCMETA] SVG extraction failed: {e}")
-            result = {'format': 'svg', 'error': str(e)}
+            result = {"format": "svg", "error": str(e)}
 
         return result
-
-    # =========================================================================
-    # DXF EXTRACTION
-    # =========================================================================
 
     def _extract_dxf(self, content: bytes) -> dict:
         """Extract metadata from DXF files (CAD drawings)."""
-        result: dict[str, Any] = {'format': 'dxf'}
+        result: dict[str, Any] = {"format": "dxf"}
 
         try:
-            dxf_content = content.decode('utf-8', errors='ignore')
+            dxf_content = content.decode("utf-8", errors="ignore")
 
-            header_match = re.search(r'\[HEADER\](.*?)\[ENDTAB\]', dxf_content, re.DOTALL | re.IGNORECASE)
+            header_match = re.search(r"\[HEADER\](.*?)\[ENDTAB\]", dxf_content, re.DOTALL | re.IGNORECASE)
             if header_match:
                 header = header_match.group(1)
 
-                acadver = re.search(r'\$ACADVER\s*\n\s*1\s*\n([^\s]+)', header)
+                acadver = re.search(r"\$ACADVER\s*\n\s*1\s*\n([^\s]+)", header)
                 if acadver:
-                    result['autocad_version'] = acadver.group(1)
+                    result["autocad_version"] = acadver.group(1)
 
-                insbase = re.search(r'\$INSBASE\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)\s*\n\s*30\s*\n([^\s]+)', header)  # noqa: E501
+                insbase = re.search(
+                    r"\$INSBASE\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)\s*\n\s*30\s*\n([^\s]+)", header
+                )  # noqa: E501
                 if insbase:
-                    result['insertion_base'] = {
-                        'x': float(insbase.group(1)),
-                        'y': float(insbase.group(2)),
-                        'z': float(insbase.group(3))
+                    result["insertion_base"] = {
+                        "x": float(insbase.group(1)),
+                        "y": float(insbase.group(2)),
+                        "z": float(insbase.group(3)),
                     }
 
-                extmin = re.search(r'\$EXTMIN\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)', header)
-                extmax = re.search(r'\$EXTMAX\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)', header)
+                extmin = re.search(r"\$EXTMIN\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)", header)
+                extmax = re.search(r"\$EXTMAX\s*\n\s*10\s*\n([^\s]+)\s*\n\s*20\s*\n([^\s]+)", header)
                 if extmin and extmax:
-                    result['coordinate_extents'] = {
-                        'min': {'x': float(extmin.group(1)), 'y': float(extmin.group(2))},
-                        'max': {'x': float(extmax.group(1)), 'y': float(extmax.group(2))}
+                    result["coordinate_extents"] = {
+                        "min": {"x": float(extmin.group(1)), "y": float(extmin.group(2))},
+                        "max": {"x": float(extmax.group(1)), "y": float(extmax.group(2))},
                     }
 
-            result['internal_paths'] = self._find_internal_paths(dxf_content)[:MAX_INTERNAL_PATHS]
-            result['has_macros'] = False
+            result["internal_paths"] = self._find_internal_paths(dxf_content)[:MAX_INTERNAL_PATHS]
+            result["has_macros"] = False
 
         except Exception as e:
             logger.debug(f"[DOCMETA] DXF extraction failed: {e}")
-            result = {'format': 'dxf', 'error': str(e)}
+            result = {"format": "dxf", "error": str(e)}
 
         return result
 
-    # =========================================================================
-    # EMAIL EXTRACTION
-    # =========================================================================
-
     def _extract_email(self, content: bytes) -> dict:
         """Extract email headers with forensics analysis."""
-        result: dict[str, Any] = {'format': 'eml'}
+        result: dict[str, Any] = {"format": "eml"}
 
         try:
-            email_content = content.decode('utf-8', errors='ignore')
+            email_content = content.decode("utf-8", errors="ignore")
 
-            if '\n\n' in email_content:
-                header_section, _ = email_content.split('\n\n', 1)
+            if "\n\n" in email_content:
+                header_section, _ = email_content.split("\n\n", 1)
             else:
                 header_section = email_content
 
             headers = {}
-            for line in header_section.split('\n'):
-                if ':' in line:
-                    key, value = line.split(':', 1)
+            for line in header_section.split("\n"):
+                if ":" in line:
+                    key, value = line.split(":", 1)
                     headers[key.strip().lower()] = value.strip()
 
-            result['headers'] = dict(list(headers.items())[:MAX_EMAIL_HEADERS])
+            result["headers"] = dict(list(headers.items())[:MAX_EMAIL_HEADERS])
 
-            result['received_chain'] = self._analyze_received_chain(headers.get('received', ''))
+            result["received_chain"] = self._analyze_received_chain(headers.get("received", ""))
 
             originating_ip = X_ORIGINATING_IP_PATTERN.search(email_content)
             if originating_ip:
-                result['originating_ip'] = originating_ip.group(1)
+                result["originating_ip"] = originating_ip.group(1)
 
-            msg_id = headers.get('message-id', '')
+            msg_id = headers.get("message-id", "")
             domain_match = MESSAGE_ID_DOMAIN_PATTERN.search(msg_id)
             if domain_match:
-                result['message_id_domain'] = domain_match.group(1)
+                result["message_id_domain"] = domain_match.group(1)
 
-            dkim = headers.get('dkim-signature', '')
+            dkim = headers.get("dkim-signature", "")
             if dkim:
-                dkim_domain = re.search(r'd=([^;\s]+)', dkim)
+                dkim_domain = re.search(r"d=([^;\s]+)", dkim)
                 if dkim_domain:
-                    result['dkim_domain'] = dkim_domain.group(1)
+                    result["dkim_domain"] = dkim_domain.group(1)
 
-            result['spf'] = headers.get('received-spf', None)
-            result['from'] = headers.get('from', None)
-            result['reply_to'] = headers.get('reply-to', None)
-            result['date'] = headers.get('date', None)
-            result['subject'] = headers.get('subject', None)
+            result["spf"] = headers.get("received-spf", None)
+            result["from"] = headers.get("from", None)
+            result["reply_to"] = headers.get("reply-to", None)
+            result["date"] = headers.get("date", None)
+            result["subject"] = headers.get("subject", None)
 
         except Exception as e:
             logger.debug(f"[DOCMETA] Email extraction failed: {e}")
-            result = {'format': 'eml', 'error': str(e)}
+            result = {"format": "eml", "error": str(e)}
 
         return result
 
@@ -1232,28 +1192,28 @@ class _DocumentMetadataExtractor:
             if not received_header:
                 return chain
 
-            for line in received_header.split('\n')[:10]:
+            for line in received_header.split("\n")[:10]:
                 line = line.strip()
                 if not line:
                     continue
 
                 entry: dict[str, Any] = {}
 
-                from_match = re.search(r'from\s+([^\s\(]+)', line, re.IGNORECASE)
+                from_match = re.search(r"from\s+([^\s\(]+)", line, re.IGNORECASE)
                 if from_match:
-                    entry['from'] = from_match.group(1)
+                    entry["from"] = from_match.group(1)
 
-                by_match = re.search(r'by\s+([^\s\(]+)', line, re.IGNORECASE)
+                by_match = re.search(r"by\s+([^\s\(]+)", line, re.IGNORECASE)
                 if by_match:
-                    entry['by'] = by_match.group(1)
+                    entry["by"] = by_match.group(1)
 
-                ip_match = re.search(r'\(([^)]+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^)]*)\)', line)
+                ip_match = re.search(r"\(([^)]+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^)]*)\)", line)
                 if ip_match:
-                    entry['ip'] = ip_match.group(1)
+                    entry["ip"] = ip_match.group(1)
 
-                with_match = re.search(r'with\s+(\S+)', line, re.IGNORECASE)
+                with_match = re.search(r"with\s+(\S+)", line, re.IGNORECASE)
                 if with_match:
-                    entry['with'] = with_match.group(1)
+                    entry["with"] = with_match.group(1)
 
                 if entry:
                     chain.append(entry)
@@ -1264,28 +1224,28 @@ class _DocumentMetadataExtractor:
 
     def _extract_msg(self, content: bytes) -> dict:
         """Extract from Outlook MSG files."""
-        result: dict[str, Any] = {'format': 'msg'}
+        result: dict[str, Any] = {"format": "msg"}
 
         try:
             try:
                 with zipfile.ZipFile(io.BytesIO(content)) as zf:
                     zf.namelist()
-                    result['has_macros'] = False
+                    result["has_macros"] = False
             except Exception:
-                content_str = content.decode('utf-8', errors='ignore')
-                result['author'] = self._extract_email_field(content_str, 'author')
-                result['subject'] = self._extract_email_field(content_str, 'subject')
+                content_str = content.decode("utf-8", errors="ignore")
+                result["author"] = self._extract_email_field(content_str, "author")
+                result["subject"] = self._extract_email_field(content_str, "subject")
 
         except Exception as e:
             logger.debug(f"[DOCMETA] MSG extraction failed: {e}")
-            result = {'format': 'msg', 'error': str(e)}
+            result = {"format": "msg", "error": str(e)}
 
         return result
 
     def _extract_email_field(self, content: str, field: str) -> str | None:
         """Extract field from email content."""
         patterns = [
-            rf'{field}:\s*([^\n]+)',
+            rf"{field}:\s*([^\n]+)",
             rf'"{field}"\s*:\s*"([^"]+)"',
         ]
         for pattern in patterns:
@@ -1294,16 +1254,12 @@ class _DocumentMetadataExtractor:
                 return match.group(1).strip()
         return None
 
-    # =========================================================================
-    # MACRO ANALYSIS
-    # =========================================================================
-
     def _check_docx_macros(self, content: bytes) -> bool:
         """Check if DOCX/XLSX/PPTX contains VBA macros."""
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 names = zf.namelist()
-                return any('vbaProject.bin' in n for n in names)
+                return any("vbaProject.bin" in n for n in names)
         except Exception:
             return False
 
@@ -1313,11 +1269,11 @@ class _DocumentMetadataExtractor:
         Returns analysis results with threat indicators.
         """
         analysis: dict[str, Any] = {
-            'c2_urls': [],
-            'suspicious_api_calls': [],
-            'macro_strings': [],
-            'is_suspicious': False,
-            'threat_level': 'low',
+            "c2_urls": [],
+            "suspicious_api_calls": [],
+            "macro_strings": [],
+            "is_suspicious": False,
+            "threat_level": "low",
         }
 
         if not OLEVB_AVAILABLE:
@@ -1331,27 +1287,27 @@ class _DocumentMetadataExtractor:
             for pattern in C2_URL_PATTERNS:
                 for match in pattern.finditer(vba_code):
                     url = match.group(0)
-                    if url not in analysis['c2_urls']:
-                        analysis['c2_urls'].append(url)
-                        analysis['is_suspicious'] = True
+                    if url not in analysis["c2_urls"]:
+                        analysis["c2_urls"].append(url)
+                        analysis["is_suspicious"] = True
 
             for pattern in SUSPICIOUS_API_PATTERNS:
                 for match in pattern.finditer(vba_code):
                     api_call = match.group(0)
-                    if api_call not in analysis['suspicious_api_calls']:
-                        analysis['suspicious_api_calls'].append(api_call)
-                        analysis['is_suspicious'] = True
+                    if api_call not in analysis["suspicious_api_calls"]:
+                        analysis["suspicious_api_calls"].append(api_call)
+                        analysis["is_suspicious"] = True
 
             string_pattern = re.compile(r'"([^"]{4,100})"')
             for match in string_pattern.finditer(vba_code):
                 s = match.group(1)
                 if any(c.isdigit() for c in s) and len(s) > 8:
-                    analysis['macro_strings'].append(s)
+                    analysis["macro_strings"].append(s)
 
-            if len(analysis['c2_urls']) > 0 or len(analysis['suspicious_api_calls']) > 3:
-                analysis['threat_level'] = 'high'
-            elif len(analysis['suspicious_api_calls']) > 0:
-                analysis['threat_level'] = 'medium'
+            if len(analysis["c2_urls"]) > 0 or len(analysis["suspicious_api_calls"]) > 3:
+                analysis["threat_level"] = "high"
+            elif len(analysis["suspicious_api_calls"]) > 0:
+                analysis["threat_level"] = "medium"
 
         except Exception as e:
             logger.debug(f"[DOCMETA] Macro analysis failed: {e}")
@@ -1364,28 +1320,24 @@ class _DocumentMetadataExtractor:
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 for name in zf.namelist():
-                    if 'vbaProject.bin' in name or name.endswith('.cls') or name.endswith('.bas'):
+                    if "vbaProject.bin" in name or name.endswith(".cls") or name.endswith(".bas"):
                         try:
                             vba_data = zf.read(name)
                             try:
-                                vba_code.append(vba_data.decode('utf-8', errors='ignore'))
+                                vba_code.append(vba_data.decode("utf-8", errors="ignore"))
                             except Exception:
-                                vba_code.append(vba_data.decode('latin-1', errors='ignore'))
+                                vba_code.append(vba_data.decode("latin-1", errors="ignore"))
                         except Exception:  # noqa: BLE001
                             pass
         except Exception:  # noqa: BLE001
             pass
-        return '\n'.join(vba_code)[:MAX_MACRO_ANALYSIS_CHARS]
-
-    # =========================================================================
-    # UTILITIES
-    # =========================================================================
+        return "\n".join(vba_code)[:MAX_MACRO_ANALYSIS_CHARS]
 
     def _extract_xml_value(self, xml_content: str, tag: str) -> str | None:
         """Extract value from XML tag."""
         patterns = [
-            rf'<{tag}>([^<]+)</{tag}>',
-            rf'<{tag}\s+[^>]*>([^<]+)</{tag}>',
+            rf"<{tag}>([^<]+)</{tag}>",
+            rf"<{tag}\s+[^>]*>([^<]+)</{tag}>",
         ]
         for pattern in patterns:
             match = re.search(pattern, xml_content, re.IGNORECASE)
@@ -1409,10 +1361,10 @@ class _DocumentMetadataExtractor:
         paths = []
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                if 'xl/sharedStrings.xml' in zf.namelist():
-                    xml_data = zf.read('xl/sharedStrings.xml').decode('utf-8', errors='ignore')
+                if "xl/sharedStrings.xml" in zf.namelist():
+                    xml_data = zf.read("xl/sharedStrings.xml").decode("utf-8", errors="ignore")
                     # Extract text content between <t> tags
-                    for match in re.finditer(r'<t[^>]*>([^<]*)</t>', xml_data):
+                    for match in re.finditer(r"<t[^>]*>([^<]*)</t>", xml_data):
                         text = match.group(1)
                         if text:
                             paths.extend(self._find_internal_paths(text))
@@ -1428,10 +1380,10 @@ class _DocumentMetadataExtractor:
         paths = []
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                if 'word/document.xml' in zf.namelist():
-                    xml_data = zf.read('word/document.xml').decode('utf-8', errors='ignore')
+                if "word/document.xml" in zf.namelist():
+                    xml_data = zf.read("word/document.xml").decode("utf-8", errors="ignore")
                     # Extract text content between <w:t> tags
-                    for match in re.finditer(r'<w:t[^>]*>([^<]*)</w:t>', xml_data):
+                    for match in re.finditer(r"<w:t[^>]*>([^<]*)</w:t>", xml_data):
                         text = match.group(1)
                         if text:
                             paths.extend(self._find_internal_paths(text))
@@ -1445,6 +1397,6 @@ def _exif_to_float(val):
     if isinstance(val, (tuple, list)):
         try:
             return val[0] / val[1]
-        except (ZeroDivisionError, TypeError):
+        except ZeroDivisionError, TypeError:
             return 0.0
     return float(val) if val else 0.0

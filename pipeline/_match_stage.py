@@ -4,6 +4,7 @@ Role: Match stage přijímá PageResult z FetchStage, provádí pattern matching
 posílá matches do EnrichStage.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, StageContext
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -33,9 +33,7 @@ class MatchStage:
 
     name: str = "match"
 
-    __slots__ = (
-        "_running",
-    )
+    __slots__ = ("_running",)
 
     def __init__(self) -> None:
         self._running = False
@@ -65,7 +63,7 @@ class MatchStage:
                         break
                     async with asyncio.timeout(5.0):
                         page_result = await input_queue.get()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if input_queue is not None and input_queue.is_empty():
                         break
                     continue

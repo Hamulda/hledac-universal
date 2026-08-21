@@ -16,12 +16,6 @@ Policy rules (deterministic, no MLX, no network):
   - default: returned when no modifiers apply
 """
 
-
-
-# ------------------------------------------------------------------
-# Source baseline constants
-# ------------------------------------------------------------------
-
 FEED: float = 0.65
 """Feed/rss source baseline — aggregated third-party signal"""
 
@@ -46,10 +40,6 @@ PLANNER: float = 0.75
 STEALTH: float = 0.58
 """Stealth crawler source baseline — indirect collection"""
 
-# ------------------------------------------------------------------
-# Policy constants
-# ------------------------------------------------------------------
-
 MIN_CONFIDENCE: float = 0.10
 MAX_CONFIDENCE: float = 0.95
 DEFAULT_CONFIDENCE: float = 0.5
@@ -62,10 +52,6 @@ CORROBORATION_CAP: int = 4
 
 # Penalties
 REJECTION_PENALTY: float = 0.10
-
-# ------------------------------------------------------------------
-# Source baselines (module-level constant for efficiency)
-# ------------------------------------------------------------------
 
 _SOURCE_BASELINES: dict[str, float] = {
     "FEED": 0.65,
@@ -155,10 +141,6 @@ def compute_confidence(
 
     return confidence
 
-
-# ------------------------------------------------------------------
-# Convenience export
-# ------------------------------------------------------------------
 
 __all__ = [
     "compute_confidence",

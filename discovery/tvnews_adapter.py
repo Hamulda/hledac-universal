@@ -3,7 +3,6 @@ Internet Archive TV News Adapter.
 
 Sprint P2-1: Internet Archive TV News crawler pro OSINT orchestrátor.
 
-
 API:
 - Archive.org Advanced Search API pro TV News collection
 - Endpoint: https://archive.org/advancedsearch.php
@@ -24,15 +23,9 @@ import logging
 import time
 from typing import Any
 
-from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
-from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
-from _core import aclose
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryBatchResult, DiscoveryHit, DiscoveryResult
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _SOURCE_NAME: str = "tvnews"
 _MAX_RESULTS: int = 20
@@ -40,11 +33,6 @@ _HARD_MAX_RESULTS: int = 50
 _DEFAULT_TIMEOUT_S: float = 15.0
 _BASE_URL: str = "https://archive.org"
 _SEARCH_URL: str = f"{_BASE_URL}/advancedsearch.php"
-
-
-# ---------------------------------------------------------------------------
-# Discovery hit builder
-# ---------------------------------------------------------------------------
 
 
 def _make_hit(
@@ -86,11 +74,6 @@ def _make_hit(
     )
 
 
-# ---------------------------------------------------------------------------
-# Main search function
-# ---------------------------------------------------------------------------
-
-
 # Status code error mapping
 _STATUS_ERRORS: dict[int | str, tuple[str, str]] = {
     403: ("http_403", "tvnews_forbidden"),
@@ -119,7 +102,7 @@ async def async_search_tvnews(
     # Bounds
     try:
         max_results = max(1, min(int(max_results), _HARD_MAX_RESULTS))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         max_results = _MAX_RESULTS
 
     query = query.strip() if query else ""
@@ -138,9 +121,8 @@ async def async_search_tvnews(
             error_type="import_error",
             elapsed_s=elapsed,
             error=f"session_pool_unavailable:{exc}",
-    )
+        )
 
-    # Build search params — TV News collection
     params = {
         "q": f"collection:tvnews AND ({query})",
         "output": "json",
@@ -174,14 +156,15 @@ async def _fetch_tvnews_data(session_pool, params: dict, timeout_s: float, start
     except asyncio.CancelledError:
         raise
     except Exception:
-        return _make_error_result("provider_exception", time.monotonic() - start, "tvnews_error"), time.monotonic() - start
+        return _make_error_result(
+            "provider_exception", time.monotonic() - start, "tvnews_error"
+        ), time.monotonic() - start
 
 
 async def _handle_tvnews_response(response, elapsed: float, start: float):
     """Handle TV News HTTP response and return parsed data."""
     status = response.status
 
-    # Check status-specific errors
     if status in _STATUS_ERRORS:
         error_type, error_msg = _STATUS_ERRORS[status]
         return _make_error_result(error_type, elapsed, error_msg), elapsed
@@ -190,7 +173,6 @@ async def _handle_tvnews_response(response, elapsed: float, start: float):
     if status != 200:
         return _make_error_result("server_error", elapsed, f"tvnews_http_{status}"), elapsed
 
-    # Parse JSON response
     try:
         return await response.json(), elapsed
     except Exception as e:
@@ -214,16 +196,24 @@ def _process_tvnews_response(data: dict, query: str, max_results: int, elapsed: 
     """Process TV News API response and extract hits."""
     if not isinstance(data, dict):
         return DiscoveryBatchResult(
-            hits=(), error_type="provider_empty", elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
-    )
+            hits=(),
+            error_type="provider_empty",
+            elapsed_s=elapsed,
+            provider_name=_SOURCE_NAME,
+            provider_chain=(_SOURCE_NAME,),
+            source_family="archive",
+        )
 
     docs = data.get("response", {}).get("docs", [])
     if not docs:
         return DiscoveryBatchResult(
-            hits=(), error_type="provider_empty", elapsed_s=elapsed,
-            provider_name=_SOURCE_NAME, provider_chain=(_SOURCE_NAME,), source_family="archive",
-    )
+            hits=(),
+            error_type="provider_empty",
+            elapsed_s=elapsed,
+            provider_name=_SOURCE_NAME,
+            provider_chain=(_SOURCE_NAME,),
+            source_family="archive",
+        )
 
     seen_ids: set[str] = set()
     hits_list: list[DiscoveryHit] = []
@@ -277,11 +267,6 @@ def _process_tvnews_doc(doc: dict, query: str, now_ts: float, rank: int, seen_id
     )
 
 
-# ---------------------------------------------------------------------------
-# Standalone query function for direct use
-# ---------------------------------------------------------------------------
-
-
 async def search_tvnews_for_query(
     query: str,
     max_results: int = 10,
@@ -313,8 +298,9 @@ async def search_tvnews_for_query(
                 "retrieved_ts": hit.retrieved_ts,
                 "reason": hit.reason,
             }
-    )
+        )
     return findings
+
 
 class TVNewsAdapter(BaseDiscoveryMixin):
     """
@@ -342,9 +328,7 @@ class TVNewsAdapter(BaseDiscoveryMixin):
     def timeout_s(self) -> float:
         return 15.0
 
-    async def _do_discover(
-        self, query: str, limit: int
-    ):
+    async def _do_discover(self, query: str, limit: int):
         """Wrap async_search_tvnews() as an async iterator."""
         try:
             result = await async_search_tvnews(query, max_results=limit)
@@ -366,4 +350,4 @@ class TVNewsAdapter(BaseDiscoveryMixin):
                 score=hit.score,
                 reason=hit.reason,
                 metadata=metadata,
-    )
+            )

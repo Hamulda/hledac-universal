@@ -2,7 +2,6 @@
 Embedding Pipeline - Semantic Search Integration (P13)
 ====================================================
 
-
 P13: Embedding pipeline for semantic search with MMR and RRF fusion.
 
 ROLE: Primary embedder using MLXEmbeddingManager from core.mlx_embeddings.
@@ -26,6 +25,7 @@ Anti-patterns:
 - No PyTorch: uses MLX only
 - No model swaps mid-pipeline: singleton ensures single model
 """
+
 import asyncio
 import gc
 import inspect
@@ -33,11 +33,13 @@ import logging
 import threading
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
+
 import numpy as np
-from hledac.universal._core.psutil_shim import psutil, process
+
+from hledac.universal._core.psutil_shim import process, psutil
 from hledac.universal.utils.exceptions import MemoryPressureError
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
 logger = logging.getLogger(__name__)
@@ -46,24 +48,26 @@ _EMBEDDING_DIM = 256
 _BATCH_SIZE = 16
 _ESTIMATED_EMBEDDING_MODEL_SIZE_GB = 0.5
 _DEFAULT_BATCH_SIZE = 16
-_ENV_BATCH_SIZE_VAR = 'HLEDAC_MLX_EMBED_BATCH'
-_ENV_ALLOW_LARGE_BATCH_VAR = 'HLEDAC_ALLOW_LARGE_MLX_BATCH'
+_ENV_BATCH_SIZE_VAR = "HLEDAC_MLX_EMBED_BATCH"
+_ENV_ALLOW_LARGE_BATCH_VAR = "HLEDAC_ALLOW_LARGE_MLX_BATCH"
 
 # SWARM-002: Multilingual embedding support
 _MULTILINGUAL_AVAILABLE = False
 try:
     from hledac.universal._core.multilingual import (
-        detect_language,
-        get_lang_detector,
-        get_bge_m3_embedder,
-        LangDetector,
         BGEM3Embedder,
+        LangDetector,
+        detect_language,
+        get_bge_m3_embedder,
+        get_lang_detector,
     )
+
     _MULTILINGUAL_AVAILABLE = True
 except ImportError:
     LangDetector = None
     BGEM3Embedder = None
-    logger.debug('[EMBED] Multilingual modules not available (SWARM-002 disabled)')
+    logger.debug("[EMBED] Multilingual modules not available (SWARM-002 disabled)")
+
 
 class EmbeddingRouter:
     """
@@ -75,7 +79,8 @@ class EmbeddingRouter:
     Large batches (>16) route through GPU (MLX ModernBERT or fallback).
     All inference is in-process on M1 — no subprocess, no blocking.
     """
-    __slots__ = tuple(('_modernbert',))
+
+    __slots__ = ("_modernbert",)
 
     # SILICON-06: ANE small-batch threshold
     _ANE_BATCH_THRESHOLD = 16
@@ -87,6 +92,7 @@ class EmbeddingRouter:
         """Load MLX ModernBERT embedder. Raises on failure."""
         if self._modernbert is None:
             from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
+
             self._modernbert = ModernBERTEmbedder(lazy_load=True)
         assert self._modernbert is not None
         if not self._modernbert.is_loaded:
@@ -154,7 +160,6 @@ class EmbeddingRouter:
         if 0 < len(text_list) <= self._ANE_BATCH_THRESHOLD:
             # Launch ANE and GPU in parallel - ANE typically faster on M1 for small batches
             ane_coro = self._try_ane_encode_async(text_list, **kwargs)
-            gpu_task = None  # Will be launched after ANE fails or we decide to skip
 
             # Try ANE with timeout - if it completes first, return immediately
             # This gives ANE priority when it's available and fast
@@ -162,7 +167,7 @@ class EmbeddingRouter:
                 ane_result = await asyncio.wait_for(ane_coro, timeout=0.5)  # 500ms timeout
                 if ane_result is not None:
                     return ane_result
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # ANE taking too long - fall back to GPU
                 pass
             except Exception:
@@ -181,14 +186,14 @@ class EmbeddingRouter:
             return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
         try:
-            if hasattr(embedder, 'encode'):
+            if hasattr(embedder, "encode"):
                 encode_fn = embedder.encode
                 if inspect.iscoroutinefunction(encode_fn):
                     return await encode_fn(texts, **kwargs)
                 else:
                     # Sync embedder - run in thread pool to avoid blocking
                     return await asyncio.to_thread(encode_fn, texts, **kwargs)
-            elif hasattr(embedder, 'embed_batch'):
+            elif hasattr(embedder, "embed_batch"):
                 embed_fn = embedder.embed_batch
                 if inspect.iscoroutinefunction(embed_fn):
                     return await embed_fn(texts, **kwargs)
@@ -209,25 +214,25 @@ class EmbeddingRouter:
         """
         try:
             from hledac.universal.brain.ane_inference import get_ane_engine, is_ane_available
+
             if not is_ane_available():
                 return None
             ane = get_ane_engine()
 
-            result = await ane.embed_batch_ane(texts, model_key='bge-small')
+            result = await ane.embed_batch_ane(texts, model_key="bge-small")
 
             if result is not None:
-                logger.debug('[EMBED:ROUTER] ANE embed OK: %d texts', len(texts))
+                logger.debug("[EMBED:ROUTER] ANE embed OK: %d texts", len(texts))
                 # Truncate/pad to target dim
                 if result.shape[1] > _EMBEDDING_DIM:
                     result = result[:, :_EMBEDDING_DIM]
                 elif result.shape[1] < _EMBEDDING_DIM:
-                    pad = np.zeros((result.shape[0], _EMBEDDING_DIM - result.shape[1]),
-                                   dtype=np.float32)
+                    pad = np.zeros((result.shape[0], _EMBEDDING_DIM - result.shape[1]), dtype=np.float32)
                     result = np.hstack([result, pad])
                 return result
             return None
         except Exception as e:
-            logger.debug('[EMBED:ROUTER] ANE encode failed: %s', e)
+            logger.debug("[EMBED:ROUTER] ANE encode failed: %s", e)
             return None
 
     def _try_ane_encode(self, texts: list[str], **kwargs) -> np.ndarray | None:
@@ -254,17 +259,18 @@ class EmbeddingRouter:
         if self._check_mlx_loaded():
             try:
                 mb = self._load_modernbert()
-                logger.debug('[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT')
+                logger.debug("[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT")
                 return mb
             except Exception:  # noqa: BLE001 — fail-soft
                 pass
         try:
             mb = self._load_modernbert()
-            logger.debug('[EMBED:ROUTER] sync: MLX ModernBERT loaded')
+            logger.debug("[EMBED:ROUTER] sync: MLX ModernBERT loaded")
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft
-            logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
+            logger.debug(f"[EMBED:ROUTER] ModernBERT sync load failed: {e}")
         from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
         return get_mlx_embedder()
 
     async def get_embedder(self):
@@ -275,31 +281,32 @@ class EmbeddingRouter:
         if self._check_mlx_loaded():
             try:
                 mb = self._load_modernbert()
-                logger.debug('[EMBED:ROUTER] async: MLX in UMA, using ModernBERT')
+                logger.debug("[EMBED:ROUTER] async: MLX in UMA, using ModernBERT")
                 return mb
             except Exception:  # noqa: BLE001 — fail-soft
                 pass
         try:
             mb = self._load_modernbert()
-            logger.debug('[EMBED:ROUTER] async: MLX ModernBERT loaded')
+            logger.debug("[EMBED:ROUTER] async: MLX ModernBERT loaded")
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft
-            logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
+            logger.warning(f"[EMBED:ROUTER] ModernBERT load failed: {e}")
         from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
         return get_mlx_embedder()
 
-    async def warmup(self):
+    async def warmup(self) -> None:
         """Warmup the selected embedder."""
         embedder = await self.get_embedder()
         if embedder is None:
             return
-        if hasattr(embedder, 'warmup'):
+        if hasattr(embedder, "warmup"):
             if inspect.iscoroutinefunction(embedder.warmup):
                 await embedder.warmup()
             else:
                 embedder.warmup()
 
-    def unload_all(self):
+    def unload_all(self) -> None:
         """Release all embedders from memory (GPU + ANE)."""
         if self._modernbert is not None:
             try:
@@ -310,10 +317,13 @@ class EmbeddingRouter:
         # SILICON-06: Also unload ANE models
         try:
             from hledac.universal.brain.ane_inference import unload_ane_engine
+
             unload_ane_engine()
         except Exception:  # noqa: BLE001 — best-effort
             pass
-        logger.info('[EMBED:ROUTER] All embedders unloaded')
+        logger.info("[EMBED:ROUTER] All embedders unloaded")
+
+
 _embedding_router = None
 
 # SWARM-002: Singleton language detector
@@ -326,11 +336,7 @@ def _get_lang_detector() -> LangDetector | None:
     if not _MULTILINGUAL_AVAILABLE:
         return None
     if _lang_detector_instance is None:
-        _lang_detector_instance = get_lang_detector(
-            use_fasttext=True,
-            use_langdetect=True,
-            confidence_threshold=0.7
-    )
+        _lang_detector_instance = get_lang_detector(use_fasttext=True, use_langdetect=True, confidence_threshold=0.7)
     return _lang_detector_instance
 
 
@@ -351,6 +357,7 @@ def _get_embedder():
         _embedding_router = EmbeddingRouter()
     return _embedding_router._get_embedder_sync()
 
+
 def _is_swap_detected() -> bool:
     """Check if system is swapping (heuristic: psutil shows non-zero swap)."""
     try:
@@ -361,6 +368,7 @@ def _is_swap_detected() -> bool:
         return swap.used > 0
     except Exception:  # noqa: BLE001 — fail-soft: psutil probe failure should not prevent embedding
         return False
+
 
 def get_adaptive_batch_size() -> int:
     """
@@ -382,6 +390,7 @@ def get_adaptive_batch_size() -> int:
     """
     try:
         from hledac.universal.utils.uma_budget import is_uma_critical, is_uma_emergency, is_uma_warn
+
         if is_uma_emergency() or is_uma_critical() or is_uma_warn():
             return 16
     except Exception:  # noqa: BLE001 — fail-soft: uma_budget import/usage failure should not prevent batch size calculation
@@ -389,7 +398,8 @@ def get_adaptive_batch_size() -> int:
     if _is_swap_detected():
         return 16
     import os
-    raw_env = os.environ.get(_ENV_BATCH_SIZE_VAR, '').strip()
+
+    raw_env = os.environ.get(_ENV_BATCH_SIZE_VAR, "").strip()
     if raw_env:
         try:
             env_batch = int(raw_env)
@@ -398,13 +408,14 @@ def get_adaptive_batch_size() -> int:
             if env_batch > 64:
                 env_batch = 64
             if env_batch > 32:
-                allow_large = os.environ.get(_ENV_ALLOW_LARGE_BATCH_VAR, '').strip()
-                if allow_large != '1':
+                allow_large = os.environ.get(_ENV_ALLOW_LARGE_BATCH_VAR, "").strip()
+                if allow_large != "1":
                     return 32
             return env_batch
         except ValueError:  # noqa: BLE001
             pass
     return _DEFAULT_BATCH_SIZE
+
 
 def _check_memory_guard() -> bool:
     """
@@ -418,22 +429,26 @@ def _check_memory_guard() -> bool:
     """
     current_rss = _get_current_rss_gb()
     if current_rss > _embed_max_rss_gb:
-        logger.warning(f'[EMBED] Memory guard triggered: RSS={current_rss:.2f}GB > limit={_embed_max_rss_gb:.2f}GB')
+        logger.warning(f"[EMBED] Memory guard triggered: RSS={current_rss:.2f}GB > limit={_embed_max_rss_gb:.2f}GB")
         return False
     with _embedding_depth_lock:
         if _embedding_depth > 0:
-            logger.warning('[EMBED] Already in embedding context — skipping recursive call')
+            logger.warning("[EMBED] Already in embedding context — skipping recursive call")
             return False
     try:
         from hledac.universal.utils.uma_budget import get_uma_pressure_level
+
         level_int, level_str = get_uma_pressure_level()
-        if level_str != 'normal':
-            logger.warning(f'[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding')
+        if level_str != "normal":
+            logger.warning(f"[EMBED] UmaWatchdog level={level_str} ({level_int}%) — skipping embedding")
             return False
     except Exception:  # noqa: BLE001 — fail-soft: uma_budget probe failure should not prevent embedding
         pass
     return True
+
+
 _UMA_GUARD_THRESHOLD_MB: int | None = None
+
 
 def _get_uma_guard_threshold() -> int:
     """
@@ -453,11 +468,13 @@ def _get_uma_guard_threshold() -> int:
         return _UMA_GUARD_THRESHOLD_MB
     try:
         from hledac.universal._core.resource_governor import _THRESHOLD_CRITICAL_GIB
+
         _UMA_GUARD_THRESHOLD_MB = int(_THRESHOLD_CRITICAL_GIB * 1024)
     except Exception:  # noqa: BLE001 — fail-soft: resource_governor import failure should not prevent threshold calculation
         _UMA_GUARD_THRESHOLD_MB = 6656
-        logger.debug('[EMBED:UMA] Could not import _THRESHOLD_CRITICAL_GIB, using fallback 6656MB')
+        logger.debug("[EMBED:UMA] Could not import _THRESHOLD_CRITICAL_GIB, using fallback 6656MB")
     return _UMA_GUARD_THRESHOLD_MB
+
 
 def _uma_guard_before_batch() -> tuple[bool, dict]:
     """
@@ -470,24 +487,34 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
         (True, {}) if safe to proceed.
         (False, telemetry_dict) if batch blocked — caller MUST record telemetry.
     """
-    telemetry: dict = {'uma_guard_blocked_batch': False, 'uma_guard_reason': '', 'combined_memory_mb': 0, 'rss_mb': 0, 'metal_active_mb': 0}
+    telemetry: dict = {
+        "uma_guard_blocked_batch": False,
+        "uma_guard_reason": "",
+        "combined_memory_mb": 0,
+        "rss_mb": 0,
+        "metal_active_mb": 0,
+    }
     try:
         from hledac.universal.utils.mlx_memory import get_mlx_active_memory_mb
+
         active_mb = get_mlx_active_memory_mb()
         if active_mb is None:
             return (True, {})
         rss_mb = process().memory_info().rss // (1024 * 1024) if process() else 0
         combined_mb = active_mb + rss_mb
         threshold_mb = _get_uma_guard_threshold()
-        telemetry['combined_memory_mb'] = combined_mb
-        telemetry['rss_mb'] = rss_mb
-        telemetry['metal_active_mb'] = active_mb
+        telemetry["combined_memory_mb"] = combined_mb
+        telemetry["rss_mb"] = rss_mb
+        telemetry["metal_active_mb"] = active_mb
         if combined_mb > threshold_mb:
-            telemetry['uma_guard_blocked_batch'] = True
-            telemetry['uma_guard_reason'] = f'combined_uma_pressure_{combined_mb}mb_exceeds_{threshold_mb}mb'
-            logger.warning(f'[EMBED:UMA] Combined UMA pressure {combined_mb}MB (Metal={active_mb}MB + RSS={rss_mb}MB) > {threshold_mb}MB — flushing cache')
+            telemetry["uma_guard_blocked_batch"] = True
+            telemetry["uma_guard_reason"] = f"combined_uma_pressure_{combined_mb}mb_exceeds_{threshold_mb}mb"
+            logger.warning(
+                f"[EMBED:UMA] Combined UMA pressure {combined_mb}MB (Metal={active_mb}MB + RSS={rss_mb}MB) > {threshold_mb}MB — flushing cache"
+            )
             try:
                 from hledac.universal.utils.mlx_cache import get_mx
+
                 mx = get_mx()
                 if mx is not None:
                     mx.eval([])
@@ -508,12 +535,13 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
         return (True, {})
     except ImportError:
         # mlx.core unavailable — cannot clear cache, return unsafe to be conservative
-        telemetry['uma_guard_blocked_batch'] = True
-        telemetry['uma_guard_reason'] = 'mlx_import_failed'
-        logger.warning('[EMBED:UMA] mlx.core import failed — cannot determine memory state, blocking batch')
+        telemetry["uma_guard_blocked_batch"] = True
+        telemetry["uma_guard_reason"] = "mlx_import_failed"
+        logger.warning("[EMBED:UMA] mlx.core import failed — cannot determine memory state, blocking batch")
         return (False, telemetry)
     except Exception:  # noqa: BLE001 — fail-soft: uma guard should not block embedding on unknown errors
         return (True, {})
+
 
 def _get_current_rss_gb() -> float:
     """Get current RSS memory in GB. P19: For memory guard checks."""
@@ -521,6 +549,7 @@ def _get_current_rss_gb() -> float:
         return process().memory_info().rss / 1000000000.0 if process() else 0.0
     except Exception:
         return 0.0
+
 
 def _check_memory_before_load(max_rss_gb: float, model_size_gb: float) -> None:
     """
@@ -536,7 +565,10 @@ def _check_memory_before_load(max_rss_gb: float, model_size_gb: float) -> None:
     current_rss = _get_current_rss_gb()
     threshold = max_rss_gb - model_size_gb
     if current_rss > threshold:
-        raise MemoryPressureError(f'[EMBED] Memory pressure: RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB (max_rss_gb={max_rss_gb}, model_size_gb={model_size_gb}). Skipping embedder load.')
+        raise MemoryPressureError(
+            f"[EMBED] Memory pressure: RSS {current_rss:.2f}GB > threshold {threshold:.2f}GB (max_rss_gb={max_rss_gb}, model_size_gb={model_size_gb}). Skipping embedder load."
+        )
+
 
 def _release_embedder() -> None:
     """Release embedder from memory if loaded."""
@@ -544,13 +576,13 @@ def _release_embedder() -> None:
         embedder = _get_embedder()
         if embedder.is_loaded:
             embedder.unload()
-            logger.info('[EMBED] MLXEmbeddingManager unloaded')
+            logger.info("[EMBED] MLXEmbeddingManager unloaded")
     except Exception as e:
-        logger.debug(f'[EMBED] Failed to unload embedder: {e}')
+        logger.debug(f"[EMBED] Failed to unload embedder: {e}")
 
 
 # SWARM-002: Multilingual embedding helper
-def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bool=False) -> np.ndarray:
+def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bool = False) -> np.ndarray:
     """
     Generate embeddings for multilingual texts via BGE-M3.
 
@@ -566,7 +598,7 @@ def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bo
         numpy ndarray dtype=float32, shape=(len(texts), 256).
     """
     if not _MULTILINGUAL_AVAILABLE:
-        logger.warning('[EMBED] Multilingual requested but not available')
+        logger.warning("[EMBED] Multilingual requested but not available")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
     bge_embedder = _get_multilingual_embedder()
@@ -588,18 +620,17 @@ def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bo
         #   - No loop: uses asyncio.Runner() (PEP 654, Python 3.11+)
         #   - Running loop: uses asyncio.run_coroutine_threadsafe().result()
         from hledac.universal.utils.sync_bridge import run_sync_async
-        embeddings = run_sync_async(
-            bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM)
-    )
+
+        embeddings = run_sync_async(bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM))
 
         if embeddings.dtype != np.float32:
             embeddings = embeddings.astype(np.float32)
 
-        logger.debug(f'[EMBED] Multilingual batch embedded {len(texts)} texts via BGE-M3')
+        logger.debug(f"[EMBED] Multilingual batch embedded {len(texts)} texts via BGE-M3")
         return embeddings
 
     except Exception as e:
-        logger.error(f'[EMBED] BGE-M3 batch embedding failed: {e}')
+        logger.error(f"[EMBED] BGE-M3 batch embedding failed: {e}")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
     finally:
         # Unload BGE-M3 if we loaded it and caller doesn't want to keep it
@@ -610,7 +641,7 @@ def _embed_multilingual_batch(texts: list[str], batch_size: int, keep_loaded: bo
                 pass
 
 
-def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_loaded: bool=False) -> np.ndarray:
+def generate_embeddings(texts: list[str], batch_size: int | None = None, keep_loaded: bool = False) -> np.ndarray:
     """
     Generate embeddings for a list of texts using ModernBERT via MLX.
 
@@ -643,7 +674,8 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
     # inference. Return zero vectors so callers don't crash — downstream
     # GraphRAG and similarity search naturally degrade with zero embeddings.
     try:
-        from hledac.universal._core.resource_governor import get_current_degradation_level, QoSLevel
+        from hledac.universal._core.resource_governor import QoSLevel, get_current_degradation_level
+
         level = get_current_degradation_level()
         if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY):
             return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
@@ -677,12 +709,8 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
         english_texts = texts
 
     if multilingual_texts:
-        logger.debug(
-            f'[EMBED] Language split: {len(english_texts)} English, '
-            f'{len(multilingual_texts)} multilingual'
-    )
+        logger.debug(f"[EMBED] Language split: {len(english_texts)} English, {len(multilingual_texts)} multilingual")
 
-    # Initialize result array
     result = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
     # F3 FIX: Parallel language bucket embedding via asyncio.gather.
@@ -696,15 +724,15 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
     from hledac.universal.utils.sync_bridge import run_sync_async
 
     async def _embed_both() -> None:
-        # Check UMA pressure for memory-safe parallel execution
         should_parallel = True
         if english_texts and multilingual_texts:
             try:
                 from hledac.universal.utils.uma_budget import get_uma_pressure_level
+
                 _, level_str = get_uma_pressure_level()
-                if level_str in ('high', 'critical', 'emergency'):
+                if level_str in ("high", "critical", "emergency"):
                     should_parallel = False
-                    logger.debug('[EMBED:F3] UMA pressure=%s — sequential execution to avoid memory spike', level_str)
+                    logger.debug("[EMBED:F3] UMA pressure=%s — sequential execution to avoid memory spike", level_str)
             except Exception:  # noqa: BLE001
                 pass  # UMA check failed — proceed with parallel
 
@@ -712,7 +740,9 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             # Parallel execution: both models load simultaneously
             # SAFE when: UMA is normal/warn and system has headroom
             english_task = asyncio.to_thread(_embed_english_batch, english_texts, batch_size, keep_loaded)
-            multilingual_task = asyncio.to_thread(_embed_multilingual_batch, multilingual_texts, batch_size, keep_loaded)
+            multilingual_task = asyncio.to_thread(
+                _embed_multilingual_batch, multilingual_texts, batch_size, keep_loaded
+            )
             english_embeddings, multilingual_embeddings = await asyncio.gather(english_task, multilingual_task)
             for i, emb_idx in enumerate(english_indices):
                 result[emb_idx] = english_embeddings[i]
@@ -722,11 +752,15 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             # Sequential execution: safer for M1 8GB memory
             # Order: English first (ModernBERT is typically smaller), then multilingual
             if english_texts:
-                english_embeddings = await asyncio.to_thread(_embed_english_batch, english_texts, batch_size, keep_loaded)
+                english_embeddings = await asyncio.to_thread(
+                    _embed_english_batch, english_texts, batch_size, keep_loaded
+                )
                 for i, emb_idx in enumerate(english_indices):
                     result[emb_idx] = english_embeddings[i]
             if multilingual_texts:
-                multilingual_embeddings = await asyncio.to_thread(_embed_multilingual_batch, multilingual_texts, batch_size, keep_loaded)
+                multilingual_embeddings = await asyncio.to_thread(
+                    _embed_multilingual_batch, multilingual_texts, batch_size, keep_loaded
+                )
                 for i, emb_idx in enumerate(multilingual_indices):
                     result[emb_idx] = multilingual_embeddings[i]
 
@@ -739,34 +773,40 @@ def _deduplicate_texts(texts: list[str]) -> tuple[list[str], list[int], bool]:
     """Deduplicate texts using xxhash, return (deduped_texts, original_to_unique, dedup_happened)."""
     try:
         import xxhash
+
         seen: dict[str, int] = {}
         unique_list: list[str] = []
         original_to_unique = []
         for text in texts:
-            h = xxhash.xxh3_64(text.encode('utf-8', errors='replace')).hexdigest()
+            h = xxhash.xxh3_64(text.encode("utf-8", errors="replace")).hexdigest()
             if h not in seen:
                 seen[h] = len(unique_list)
                 unique_list.append(text)
             original_to_unique.append(seen[h])
         if len(unique_list) < len(texts):
             dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
-            logger.debug('[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)', len(texts), len(unique_list), dedup_ratio * 100)
+            logger.debug(
+                "[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)",
+                len(texts),
+                len(unique_list),
+                dedup_ratio * 100,
+            )
             return unique_list, original_to_unique, True
     except ImportError:
-        logger.debug('[EMBED:J] xxhash not available — skipping dedup')
+        logger.debug("[EMBED:J] xxhash not available — skipping dedup")
     return texts, [], False
 
 
 def _detect_backend_name(embedder) -> str:
     """Detect and normalize backend name from embedder type."""
     backend_name = type(embedder).__name__.lower()
-    if 'coreml' in backend_name:
-        return 'coreml_bge'
-    elif 'ane' in backend_name or 'allminilm' in backend_name:
-        return 'ane_allminilm'
-    elif 'modernbert' in backend_name:
-        return 'mlx_modernbert'
-    return 'cpu'
+    if "coreml" in backend_name:
+        return "coreml_bge"
+    elif "ane" in backend_name or "allminilm" in backend_name:
+        return "ane_allminilm"
+    elif "modernbert" in backend_name:
+        return "mlx_modernbert"
+    return "cpu"
 
 
 def _normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
@@ -781,7 +821,9 @@ def _normalize_embeddings(embeddings: np.ndarray) -> np.ndarray:
     return embeddings
 
 
-def _restore_deduplicated_embeddings(original_count: int, embeddings: np.ndarray, original_to_unique: list[int]) -> np.ndarray:
+def _restore_deduplicated_embeddings(
+    original_count: int, embeddings: np.ndarray, original_to_unique: list[int]
+) -> np.ndarray:
     """Restore embeddings to original order after deduplication."""
     full_embeddings = np.zeros((original_count, _EMBEDDING_DIM), dtype=np.float32)
     for orig_idx, unique_idx in enumerate(original_to_unique):
@@ -807,12 +849,12 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
     texts_to_embed, original_to_unique, dedup_happened = _deduplicate_texts(texts)
 
     if not _check_memory_guard():
-        logger.warning('[EMBED] Skipping English embedding generation due to memory pressure')
+        logger.warning("[EMBED] Skipping English embedding generation due to memory pressure")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
     embedder = _get_embedder()
     if embedder is None:
-        logger.warning('[EMBED] No embedder available — returning zero array')
+        logger.warning("[EMBED] No embedder available — returning zero array")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
     try:
@@ -823,17 +865,17 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
             max_batch_size=128,
             normalize=True,
             truncate_dim=_EMBEDDING_DIM,
-            memory_pressure_provider=_uma_pressure_provider
-    )
+            memory_pressure_provider=_uma_pressure_provider,
+        )
         _log_embedding_stats(embedder, embeddings, len(texts_to_embed))
         embeddings = _normalize_embeddings(embeddings)
-        logger.debug(f'[EMBED] Generated English embeddings shape: {embeddings.shape}')
+        logger.debug(f"[EMBED] Generated English embeddings shape: {embeddings.shape}")
 
         if dedup_happened:
             embeddings = _restore_deduplicated_embeddings(len(texts), embeddings, original_to_unique)
         return embeddings
     except Exception as e:
-        logger.error(f'[EMBED] English batch embedding failed: {e}')
+        logger.error(f"[EMBED] English batch embedding failed: {e}")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
     finally:
         if not keep_loaded:
@@ -846,9 +888,12 @@ def _log_embedding_stats(embedder, embeddings, text_count: int) -> None:
         if psutil is not None:
             backend_name = _detect_backend_name(embedder)
             ram = psutil.virtual_memory().percent
-            logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, text_count, embeddings.shape, ram)
+            logger.debug(
+                "EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%", backend_name, text_count, embeddings.shape, ram
+            )
     except Exception:  # noqa: BLE001
         pass
+
 
 def embed_query(text: str) -> np.ndarray:
     """
@@ -868,7 +913,7 @@ def embed_query(text: str) -> np.ndarray:
         Returns array of zeros if memory guard triggers or on error.
     """
     if not _check_memory_guard():
-        logger.warning('[EMBED] Skipping query embedding due to memory pressure')
+        logger.warning("[EMBED] Skipping query embedding due to memory pressure")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
     # SWARM-002: Language detection for multilingual routing
@@ -895,7 +940,7 @@ def embed_query(text: str) -> np.ndarray:
             emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
         return emb
     except Exception as e:
-        logger.error(f'[EMBED] Query embedding failed: {e}')
+        logger.error(f"[EMBED] Query embedding failed: {e}")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
@@ -910,7 +955,7 @@ def _embed_query_multilingual(text: str) -> np.ndarray:
         numpy ndarray dtype=float32, shape=(256,).
     """
     if not _MULTILINGUAL_AVAILABLE:
-        logger.warning('[EMBED] Multilingual query but BGE-M3 not available')
+        logger.warning("[EMBED] Multilingual query but BGE-M3 not available")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
     try:
@@ -931,11 +976,13 @@ def _embed_query_multilingual(text: str) -> np.ndarray:
         elif len(emb) < _EMBEDDING_DIM:
             emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
 
-        logger.debug(f'[EMBED] Query embedded via BGE-M3: lang={detect_language(text).language if _MULTILINGUAL_AVAILABLE else "unknown"}')
+        logger.debug(
+            f"[EMBED] Query embedded via BGE-M3: lang={detect_language(text).language if _MULTILINGUAL_AVAILABLE else 'unknown'}"
+        )
         return emb
 
     except Exception as e:
-        logger.error(f'[EMBED] Multilingual query embedding failed: {e}')
+        logger.error(f"[EMBED] Multilingual query embedding failed: {e}")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
@@ -982,7 +1029,7 @@ def embed_document(text: str) -> np.ndarray:
             emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
         return emb
     except Exception as e:
-        logger.error(f'[EMBED] Document embedding failed: {e}')
+        logger.error(f"[EMBED] Document embedding failed: {e}")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 
@@ -997,7 +1044,7 @@ def _embed_document_multilingual(text: str) -> np.ndarray:
         numpy ndarray dtype=float32, shape=(256,).
     """
     if not _MULTILINGUAL_AVAILABLE:
-        logger.warning('[EMBED] Multilingual document but BGE-M3 not available')
+        logger.warning("[EMBED] Multilingual document but BGE-M3 not available")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
     try:
@@ -1018,14 +1065,17 @@ def _embed_document_multilingual(text: str) -> np.ndarray:
         elif len(emb) < _EMBEDDING_DIM:
             emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
 
-        logger.debug(f'[EMBED] Document embedded via BGE-M3')
+        logger.debug("[EMBED] Document embedded via BGE-M3")
         return emb
 
     except Exception as e:
-        logger.error(f'[EMBED] Multilingual document embedding failed: {e}')
+        logger.error(f"[EMBED] Multilingual document embedding failed: {e}")
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
-async def generate_embeddings_async(texts: list[str], batch_size: int=_BATCH_SIZE, keep_loaded: bool=False) -> np.ndarray:
+
+async def generate_embeddings_async(
+    texts: list[str], batch_size: int = _BATCH_SIZE, keep_loaded: bool = False
+) -> np.ndarray:
     """
     Async wrapper for generate_embeddings.
 
@@ -1042,6 +1092,7 @@ async def generate_embeddings_async(texts: list[str], batch_size: int=_BATCH_SIZ
     """
     return await asyncio.to_thread(generate_embeddings, texts, batch_size, keep_loaded)
 
+
 async def embed_query_async(text: str) -> np.ndarray:
     """
     Async wrapper for embed_query.
@@ -1057,6 +1108,8 @@ async def embed_query_async(text: str) -> np.ndarray:
         numpy ndarray dtype=float32, shape=(256,).
     """
     return await asyncio.to_thread(embed_query, text)
+
+
 _embed_max_rss_gb: float = 5.5
 _embedding_depth: int = 0
 _embedding_depth_lock = threading.Lock()
@@ -1066,6 +1119,7 @@ _embed_refcount: int = 0
 # ContextVar keyed by Task gives per-context isolation without manual tracking.
 _embed_refcount_lock_var: ContextVar[asyncio.Lock | None] = ContextVar("_embed_refcount_lock_var", default=None)
 
+
 def _get_embed_refcount_lock() -> asyncio.Lock:
     """Get the ContextVar-backed refcount lock for the current async context."""
     lock = _embed_refcount_lock_var.get()
@@ -1073,6 +1127,7 @@ def _get_embed_refcount_lock() -> asyncio.Lock:
         lock = asyncio.Lock()
         _embed_refcount_lock_var.set(lock)
     return lock
+
 
 class embedding_session:
     """
@@ -1116,15 +1171,18 @@ class embedding_session:
         if should_unload:
             await asyncio.to_thread(unload_embedding_model)
 
+
 def is_embedding_context_active() -> bool:
     """F197C: True if we are currently in an active embedding lifecycle context."""
     with _embedding_depth_lock:
         return _embedding_depth > 0
 
+
 def set_embed_memory_limit(max_rss_gb: float) -> None:
     """P19: Set max RSS GB threshold for embedder memory guard."""
     global _embed_max_rss_gb
     _embed_max_rss_gb = max_rss_gb
+
 
 def load_embedding_model() -> bool:
     """
@@ -1149,16 +1207,17 @@ def load_embedding_model() -> bool:
         embedder = _get_embedder()
         if not embedder.is_loaded:
             embedder._load_model()
-        logger.info(f'[EMBED] Embedding model loaded (RSS before={rss_before:.2f}GB)')
+        logger.info(f"[EMBED] Embedding model loaded (RSS before={rss_before:.2f}GB)")
         return True
     except MemoryPressureError:
-        logger.warning(f'[EMBED] Memory pressure - skipping embedder load (RSS={rss_before:.2f}GB)')
+        logger.warning(f"[EMBED] Memory pressure - skipping embedder load (RSS={rss_before:.2f}GB)")
         with _embedding_depth_lock:
             _embedding_depth -= 1
         return False
     except Exception as e:
-        logger.error(f'[EMBED] Failed to load embedding model: {e}')
+        logger.error(f"[EMBED] Failed to load embedding model: {e}")
         return False
+
 
 def unload_embedding_model() -> bool:
     """
@@ -1190,19 +1249,25 @@ def unload_embedding_model() -> bool:
             dropped = rss_before - rss_after
             expected_drop = _ESTIMATED_EMBEDDING_MODEL_SIZE_GB
             if dropped < expected_drop * 0.5:
-                logger.warning(f'[EMBED] RSS did not drop expected amount after unload: dropped={dropped:.2f}GB, expected~{expected_drop:.2f}GB (RSS before={rss_before:.2f}GB, after={rss_after:.2f}GB)')
+                logger.warning(
+                    f"[EMBED] RSS did not drop expected amount after unload: dropped={dropped:.2f}GB, expected~{expected_drop:.2f}GB (RSS before={rss_before:.2f}GB, after={rss_after:.2f}GB)"
+                )
             else:
-                logger.info(f'[EMBED] Embedding model unloaded (RSS dropped={dropped:.2f}GB)')
+                logger.info(f"[EMBED] Embedding model unloaded (RSS dropped={dropped:.2f}GB)")
         return True
     except Exception as e:
-        logger.error(f'[EMBED] Failed to unload embedding model: {e}')
+        logger.error(f"[EMBED] Failed to unload embedding model: {e}")
         return False
+
 
 def get_embedding_dimension() -> int:
     """Return the MRL embedding dimension (256)."""
     return _EMBEDDING_DIM
 
-async def generate_embeddings_streaming(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIterator[tuple[list[str], np.ndarray]]:
+
+async def generate_embeddings_streaming(
+    texts: list[str], batch_size: int = _BATCH_SIZE
+) -> AsyncIterator[tuple[list[str], np.ndarray]]:
     """
     F203I: Streaming batch embedder — yields (ids, embeddings) per batch.
 
@@ -1234,7 +1299,7 @@ async def generate_embeddings_streaming(texts: list[str], batch_size: int=_BATCH
         return
     batch_size = min(batch_size, _BATCH_SIZE)
     if not _check_memory_guard():
-        logger.warning('[EMBED:streaming] Skipped due to memory pressure')
+        logger.warning("[EMBED:streaming] Skipped due to memory pressure")
         return
     model_loaded = False
     try:
@@ -1244,7 +1309,7 @@ async def generate_embeddings_streaming(texts: list[str], batch_size: int=_BATCH
                 # Fallback: process in per-batch chunks using _uma_guard_before_batch
                 # per batch (same as main loop below) instead of materializing all at once.
                 for i in range(0, len(texts), batch_size):
-                    chunk = texts[i:i + batch_size]
+                    chunk = texts[i : i + batch_size]
                     chunk_ids = [str(i + j) for j in range(len(chunk))]
                     safe, _telemetry = _uma_guard_before_batch()
                     if not safe:
@@ -1256,26 +1321,30 @@ async def generate_embeddings_streaming(texts: list[str], batch_size: int=_BATCH
                 return
             model_loaded = True
         for i in range(0, len(texts), batch_size):
-            chunk = texts[i:i + batch_size]
+            chunk = texts[i : i + batch_size]
             chunk_ids = [str(i + j) for j in range(len(chunk))]
             safe, telemetry = _uma_guard_before_batch()
             if not safe:
-                logger.warning(f"[EMBED:streaming] Batch {i} skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB")
+                logger.warning(
+                    f"[EMBED:streaming] Batch {i} skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB"
+                )
                 break
             try:
                 embs = await asyncio.to_thread(_generate_embeddings_chunk, chunk, batch_size)
                 if embs is not None and embs.shape[0] == len(chunk):
                     yield (chunk_ids, embs)
             except Exception as e:
-                logger.debug(f'[EMBED:streaming] batch error at offset {i}: {e}')
+                logger.debug(f"[EMBED:streaming] batch error at offset {i}: {e}")
                 continue
     finally:
         if model_loaded:
             unload_embedding_model()
 
+
 def _generate_embeddings_chunk(texts: list[str], batch_size: int) -> np.ndarray:
     """Sync helper for a single chunk — runs in thread executor."""
     return generate_embeddings(texts, batch_size=batch_size)
+
 
 def _encode_batch_no_release(texts: list[str], _batch_size: int) -> np.ndarray:
     """
@@ -1302,17 +1371,19 @@ def _encode_batch_no_release(texts: list[str], _batch_size: int) -> np.ndarray:
             embeddings = np.hstack([embeddings, pad])
         return embeddings
     except Exception as e:
-        logger.error(f'[EMBED] _encode_batch_no_release failed: {e}')
+        logger.error(f"[EMBED] _encode_batch_no_release failed: {e}")
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
 
-async def _async_enumerate(iterator: AsyncIterator[str], start: int=0) -> AsyncIterator[tuple[str, str]]:
+
+async def _async_enumerate(iterator: AsyncIterator[str], start: int = 0) -> AsyncIterator[tuple[str, str]]:
     """Async enumerate — yields (str(index), item) from AsyncIterator."""
     idx = start
     async for item in iterator:
         yield (str(idx), item)
         idx += 1
 
-async def embed_stream(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIterator[tuple[str, np.ndarray]]:
+
+async def embed_stream(texts: list[str], batch_size: int = _BATCH_SIZE) -> AsyncIterator[tuple[str, np.ndarray]]:
     """
     Issue-3: Batch-oriented per-item embedding stream.
 
@@ -1360,19 +1431,22 @@ async def embed_stream(texts: list[str], batch_size: int=_BATCH_SIZE) -> AsyncIt
             if len(batch) >= batch_size:
                 result = await _batch_encode_with_guard(batch, batch_size)
                 if result is not None:
-                    for (orig_idx, _), emb_vec in zip(result[0], result[1]):
+                    for (orig_idx, _), emb_vec in zip(result[0], result[1], strict=False):
                         yield (str(orig_idx), emb_vec)
                 batch.clear()
         if batch:
             result = await _batch_encode_with_guard(batch, batch_size)
             if result is not None:
-                for (orig_idx, _), emb_vec in zip(result[0], result[1]):
+                for (orig_idx, _), emb_vec in zip(result[0], result[1], strict=False):
                     yield (str(orig_idx), emb_vec)
     finally:
         if model_loaded:
             unload_embedding_model()
 
-async def generate_embeddings_from_iterator(texts_iter: AsyncIterator[str], batch_size: int=_BATCH_SIZE) -> AsyncIterator[tuple[str, np.ndarray]]:
+
+async def generate_embeddings_from_iterator(
+    texts_iter: AsyncIterator[str], batch_size: int = _BATCH_SIZE
+) -> AsyncIterator[tuple[str, np.ndarray]]:
     """
     Issue #15: True streaming encode from AsyncIterator[str].
 
@@ -1408,7 +1482,7 @@ async def generate_embeddings_from_iterator(texts_iter: AsyncIterator[str], batc
             print(f"Item {item_id}: shape={emb.shape}")
     """
     if not _check_memory_guard():
-        logger.warning('[EMBED:from_iter] Skipped due to memory pressure')
+        logger.warning("[EMBED:from_iter] Skipped due to memory pressure")
         return
     batch: list[tuple[str | int, str]] = []
     batch_size = min(batch_size, _BATCH_SIZE)
@@ -1423,17 +1497,18 @@ async def generate_embeddings_from_iterator(texts_iter: AsyncIterator[str], batc
             if len(batch) >= batch_size:
                 result = await _batch_encode_with_guard(batch, batch_size)
                 if result is not None:
-                    for cid, emb_vec in zip(result[0], result[1]):
+                    for cid, emb_vec in zip(result[0], result[1], strict=False):
                         yield (str(cid), emb_vec)
                 batch.clear()
         if batch:
             result = await _batch_encode_with_guard(batch, batch_size)
             if result is not None:
-                for cid, emb_vec in zip(result[0], result[1]):
+                for cid, emb_vec in zip(result[0], result[1], strict=False):
                     yield (str(cid), emb_vec)
     finally:
         if model_loaded:
             unload_embedding_model()
+
 
 def _encode_single_item(text: str) -> np.ndarray | None:
     """Sync helper: encode single text, return 256d embedding or None on error."""
@@ -1442,6 +1517,7 @@ def _encode_single_item(text: str) -> np.ndarray | None:
         return emb
     except Exception:
         return None
+
 
 def _uma_pressure_provider() -> float:
     """
@@ -1452,17 +1528,12 @@ def _uma_pressure_provider() -> float:
     """
     try:
         from hledac.universal.utils.uma_budget import get_uma_pressure_level
+
         level_int, _ = get_uma_pressure_level()
         return level_int / 100.0
     except Exception:
         return 0.5
 
-
-# ---------------------------------------------------------------------------
-# Shared streaming helpers — single source of truth for M1 8GB UMA guard +
-# mx.eval / mx.metal.clear_cache barrier. Used by embed_stream,
-# generate_embeddings_from_iterator, and embed_stream_chunks.
-# ---------------------------------------------------------------------------
 
 def _clear_mlx_cache() -> None:
     """
@@ -1477,6 +1548,7 @@ def _clear_mlx_cache() -> None:
     """
     try:
         from hledac.universal.utils.mlx_cache import get_mx
+
         mx = get_mx()
         if mx is None:
             return
@@ -1519,12 +1591,11 @@ async def _batch_encode_with_guard(
     safe, telemetry = _uma_guard_before_batch()
     if not safe:
         logger.warning(
-            f"[EMBED:_batch] Skipped due to UMA pressure: "
-            f"combined={telemetry.get('combined_memory_mb', 0)}MB"
-    )
+            f"[EMBED:_batch] Skipped due to UMA pressure: combined={telemetry.get('combined_memory_mb', 0)}MB"
+        )
         return None
     try:
-        _, texts = zip(*batch)
+        _, texts = zip(*batch, strict=False)
         embs = await asyncio.to_thread(_encode_batch_no_release, list(texts), batch_size)
         if embs is None or embs.shape[0] != len(batch):
             return None
@@ -1569,11 +1640,9 @@ async def embed_stream_chunks(
                 return
             model_loaded = True
         for i in range(0, len(texts), batch_size):
-            chunk = texts[i:i + batch_size]
+            chunk = texts[i : i + batch_size]
             chunk_ids = [str(i + j) for j in range(len(chunk))]
-            result = await _batch_encode_with_guard(
-                list(zip(chunk_ids, chunk)), batch_size
-    )
+            result = await _batch_encode_with_guard(list(zip(chunk_ids, chunk, strict=False)), batch_size)
             if result is not None:
                 batch_tuples, embs = result
                 ids = [str(item[0]) for item in batch_tuples]
@@ -1584,7 +1653,15 @@ async def embed_stream_chunks(
         if model_loaded:
             unload_embedding_model()
 
-async def generate_embeddings_adaptive_streaming(texts: list[str], initial_batch_size: int=32, min_batch_size: int=4, max_batch_size: int=128, pressure_high: float=0.8, pressure_low: float=0.5) -> AsyncIterator[tuple[list[int], np.ndarray]]:
+
+async def generate_embeddings_adaptive_streaming(
+    texts: list[str],
+    initial_batch_size: int = 32,
+    min_batch_size: int = 4,
+    max_batch_size: int = 128,
+    pressure_high: float = 0.8,
+    pressure_low: float = 0.5,
+) -> AsyncIterator[tuple[list[int], np.ndarray]]:
     """
     Adaptive streaming batch embedder with per-batch memory pressure feedback.
 
@@ -1617,14 +1694,22 @@ async def generate_embeddings_adaptive_streaming(texts: list[str], initial_batch
     if not texts:
         return
     if not _check_memory_guard():
-        logger.warning('[EMBED:adaptive] Skipped due to memory pressure')
+        logger.warning("[EMBED:adaptive] Skipped due to memory pressure")
         return
     from hledac.universal._core.embeddings.manager import AdaptiveEmbeddingBatcher, get_mlx_embedder
+
     embedder = get_mlx_embedder()
     await embedder.ensure_loaded()
-    batcher = AdaptiveEmbeddingBatcher(initial_batch_size=initial_batch_size, min_batch_size=min_batch_size, max_batch_size=max_batch_size, pressure_high=pressure_high, pressure_low=pressure_low)
+    batcher = AdaptiveEmbeddingBatcher(
+        initial_batch_size=initial_batch_size,
+        min_batch_size=min_batch_size,
+        max_batch_size=max_batch_size,
+        pressure_high=pressure_high,
+        pressure_low=pressure_low,
+    )
     async for indices, emb_batch in batcher.process_streaming(texts, embedder, _uma_pressure_provider):
         yield (indices, emb_batch)
+
 
 def get_canonical_embedder() -> EmbeddingRouter:
     """
@@ -1642,7 +1727,8 @@ def get_canonical_embedder() -> EmbeddingRouter:
         _embedding_router = EmbeddingRouter()
     return _embedding_router
 
-def embed_texts_canonical(texts: list[str], batch_size: int=_BATCH_SIZE) -> np.ndarray:
+
+def embed_texts_canonical(texts: list[str], batch_size: int = _BATCH_SIZE) -> np.ndarray:
     """
     F218A: Canonical batch text embedding entrypoint.
 
@@ -1659,13 +1745,6 @@ def embed_texts_canonical(texts: list[str], batch_size: int=_BATCH_SIZE) -> np.n
     """
     return generate_embeddings(texts, batch_size=batch_size, keep_loaded=False)
 
-# =============================================================================
-# Binary Quantization for Sub-1ms ANN (Breakthrough #1)
-# =============================================================================
-# 1-bit binary embeddings: 256d float32 → 32B packed binary
-# Memory: 50K × 32B = 1.6 MB (vs 51.2 MB float32 = 32× compression)
-# Speed: NEON popcount for Hamming distance ~0.1ms vs 5-15ms float32 cosine
-# =============================================================================
 
 def binary_quantize(embeddings: np.ndarray) -> bytes:
     """
@@ -1685,7 +1764,7 @@ def binary_quantize(embeddings: np.ndarray) -> bytes:
                where num_bytes = (256 + 7) // 8 = 32
     """
     if embeddings is None or len(embeddings) == 0:
-        return b''
+        return b""
 
     # Ensure float32
     if embeddings.dtype != np.float32:
@@ -1727,7 +1806,7 @@ def binary_quantize_single(embedding: np.ndarray) -> bytes:
         bytes: Packed binary vector (32 bytes)
     """
     if embedding is None or len(embedding) == 0:
-        return b'\x00' * 32
+        return b"\x00" * 32
 
     # Ensure 1D
     if embedding.ndim == 2:
@@ -1743,6 +1822,7 @@ def binary_quantize_single(embedding: np.ndarray) -> bytes:
     # C3: Try Rust quantization first (NEON-accelerated)
     try:
         from hledac.universal._core.rust_backend import rust
+
         bm = rust.raw.binary_matryoshka
         if bm is not None:
             result = bm.quantize_to_binary(embedding.tolist())
@@ -1776,6 +1856,7 @@ def binary_quantize_batch(embeddings: np.ndarray) -> tuple[bytes, int]:
     # C3: Try Rust batch quantization first (3× faster on M1 via NEON)
     try:
         from hledac.universal._core.rust_backend import rust
+
         bm = rust.raw.binary_matryoshka
         if bm is not None:
             # Flatten embeddings: (N, 256) -> [N*256 floats]
@@ -1784,7 +1865,7 @@ def binary_quantize_batch(embeddings: np.ndarray) -> tuple[bytes, int]:
             results = bm.batch_quantize_to_binary(embeddings_flat, num_embeddings)
             # Flatten results: [[32 bytes] x N] -> [N*32 bytes]
             if results:
-                packed = b''.join(bytes(r) for r in results)
+                packed = b"".join(bytes(r) for r in results)
                 return packed, 32
     except Exception:
         pass  # Fall through to Python fallback
@@ -1809,6 +1890,7 @@ def unpack_binary(packed_bytes: bytes, num_bytes: int) -> np.ndarray:
         np.ndarray of shape (num_bytes * 8,) uint8 with 0/1 values
     """
     import numpy as np
+
     arr = np.frombuffer(packed_bytes, dtype=np.uint8)
     dim = num_bytes * 8
 
@@ -1835,14 +1917,10 @@ def hamming_to_similarity(hamming_dist: int, dim: int) -> float:
     return 1.0 - (hamming_dist / max_bits)
 
 
-# =============================================================================
-# BREAKTHROUGH #1: Rust SIMD Batch Hamming Wrapper
-# =============================================================================
-# NEON-accelerated popcount for sub-1ms Hamming distance on M1
-
 _RUST_SIMD_AVAILABLE = False
 try:
     from hledac.universal.rust_extensions.simd_similarity import batch_hamming_scores
+
     _RUST_SIMD_AVAILABLE = True
 except ImportError:
     batch_hamming_scores = None  # type: ignore[assignment]
@@ -1882,12 +1960,7 @@ def batch_hamming_similarity(
             query_list = list(query_packed)
 
             # Call Rust SIMD batch hamming
-            scores = batch_hamming_scores(
-                query_list,
-                candidates_list,
-                len(candidate_embeddings),
-                num_bytes
-    )
+            scores = batch_hamming_scores(query_list, candidates_list, len(candidate_embeddings), num_bytes)
             return np.array(scores, dtype=np.float32)
         except Exception:
             pass  # Fall through to numpy
@@ -1917,10 +1990,6 @@ def batch_hamming_similarity(
     return scores
 
 
-# =============================================================================
-# Legacy alias for compatibility
-# =============================================================================
-
 def get_embedding_backend() -> str:
     """
     F218A: Return which embedding backend is currently active.
@@ -1935,21 +2004,22 @@ def get_embedding_backend() -> str:
     """
     global _embedding_router
     if _embedding_router is None:
-        return 'not_loaded'
+        return "not_loaded"
     try:
         router = _embedding_router
         # SILICON-06: Check ANE first
         try:
-            from hledac.universal.brain.ane_inference import is_ane_available, get_ane_engine
+            from hledac.universal.brain.ane_inference import get_ane_engine, is_ane_available
+
             if is_ane_available() and get_ane_engine().is_ready:
-                return 'ane'
+                return "ane"
         except Exception:  # noqa: BLE001
             pass
         if router._check_mlx_loaded():
             if router._modernbert is not None and router._modernbert.is_loaded:
-                return 'mlx'
+                return "mlx"
         if router._modernbert is not None and router._modernbert.is_loaded:
-            return 'mlx'
-        return 'not_loaded'
+            return "mlx"
+        return "not_loaded"
     except Exception:
-        return 'unknown'
+        return "unknown"

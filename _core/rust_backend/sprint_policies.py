@@ -3,37 +3,34 @@
 Feed dominance guard and lane budget pool for sprint scheduling.
 Implements feed dominance detection and per-lane budget allocation.
 
-
-
-
-
-
-
-
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-
 
 # Sprint F-ISSUE-155: Type-level enum for lane names.
 # C11: Extended with sprint lanes for adaptive lane balancing.
 # Values: sprint lanes (discovery, ioc_validation, enrichment) + original classification lanes.
 LaneName = Literal[
-    "discovery", "ioc_validation", "enrichment",  # C11: sprint lanes
-    "public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"  # Original
+    "discovery",
+    "ioc_validation",
+    "enrichment",  # C11: sprint lanes
+    "public",
+    "feed",
+    "ct",
+    "dns",
+    "passive",
+    "structured",
+    "deep",
+    "hot",
+    "warm",
+    "cold",  # Original
 ]
-
-
-# =============================================================================
-# Shared helpers
-# =============================================================================
 
 
 def _feed_dominance_ratio_class(ratio: float) -> str:
@@ -47,11 +44,6 @@ def _feed_dominance_ratio_class(ratio: float) -> str:
     return "low"
 
 
-# =============================================================================
-# Feed Dominance Result
-# =============================================================================
-
-
 @dataclass(slots=True)
 class _FeedDominanceResult:
     """Result object for FeedDominanceGuard.compute()."""
@@ -63,11 +55,6 @@ class _FeedDominanceResult:
     guard_triggered: bool
     block_early_exit: bool
     reason: str
-
-
-# =============================================================================
-# Rust Sprint Policies Domain
-# =============================================================================
 
 
 class _RustSprintPoliciesDomain:
@@ -102,7 +89,9 @@ class _RustFeedDominanceGuard:
 
     __slots__ = ("_threshold", "_min_nonfeed", "_strict", "_ext")
 
-    def __init__(self, dominance_ratio_threshold: float, min_nonfeed_findings: int, strict: bool, ext: hledac_rust_extensions) -> None:
+    def __init__(
+        self, dominance_ratio_threshold: float, min_nonfeed_findings: int, strict: bool, ext: hledac_rust_extensions
+    ) -> None:
         self._threshold = dominance_ratio_threshold
         self._min_nonfeed = min_nonfeed_findings
         self._strict = strict
@@ -116,9 +105,12 @@ class _RustFeedDominanceGuard:
         **kwargs: Any,
     ) -> _FeedDominanceResult:
         d = self._ext.compute_feed_dominance(
-            total_accepted, feed_accepted, nonfeed_accepted,
-            self._threshold, self._min_nonfeed,
-    )
+            total_accepted,
+            feed_accepted,
+            nonfeed_accepted,
+            self._threshold,
+            self._min_nonfeed,
+        )
         ratio = d["feed_dominance_ratio"]
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
         block_early_exit = self._strict and guard_triggered
@@ -130,7 +122,7 @@ class _RustFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=d["reason"],
-    )
+        )
 
     def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _FeedDominanceResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
@@ -169,11 +161,6 @@ class _RustLaneBudgetPool:
         return self._pool.lane_count()
 
 
-# =============================================================================
-# Python Sprint Policies Domain
-# =============================================================================
-
-
 class _PythonSprintPoliciesDomain:
     __slots__ = ()
 
@@ -200,11 +187,6 @@ class _PythonSprintPoliciesDomain:
         ratio = feed_accepted / total_accepted
         guard_triggered = ratio >= 0.95 and nonfeed_accepted < 5
         return {"feed_dominance_ratio": ratio, "guard_triggered": guard_triggered}
-
-
-# =============================================================================
-# Python Feed Dominance Guard
-# =============================================================================
 
 
 @dataclass(slots=True)
@@ -245,7 +227,7 @@ class PythonFeedDominanceGuard:
                 guard_triggered=False,
                 block_early_exit=False,
                 reason="zero findings",
-    )
+            )
 
         ratio = feed_accepted / total_accepted
         cls = _feed_dominance_ratio_class(ratio)
@@ -265,19 +247,16 @@ class PythonFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=reason,
-    )
+        )
 
-    def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> PythonFeedDominanceGuardResult:
+    def compute_simple(
+        self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int
+    ) -> PythonFeedDominanceGuardResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
 
     @staticmethod
     def ratio_class(ratio: float) -> str:
         return _feed_dominance_ratio_class(ratio)
-
-
-# =============================================================================
-# Python Lane Budget Pool
-# =============================================================================
 
 
 class PythonLaneBudgetAllocation:
@@ -311,7 +290,6 @@ class PythonLaneBudgetPool:
 
     def allocate(self, lane_name: LaneName, budget_s: float) -> None:
         if lane_name in self._allocations:
-            # Update existing allocation
             alloc = self._allocations[lane_name]
             alloc.allocated_s = budget_s
         else:

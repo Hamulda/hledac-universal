@@ -3,9 +3,9 @@
 Role: Fetch stage přijímá URLy z DedupStage, fetchuje je s AIMD rate limiting
 a posílá PageResult do MatchStage přes bounded queue.
 
-
 Wires existující _fetch_and_process_page() z public_fetch module.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,9 +13,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from ._stage_protocol import BoundedStageQueue, Stage, StageContext
 from hledac.universal.utils.concurrency import AtomicAdaptiveSemaphore  # ISSUE-008: safe AIMD resize
-from _core import aclose
+
+from ._stage_protocol import BoundedStageQueue, StageContext
 
 if TYPE_CHECKING:
     pass
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Default queue sizes pro M1 8GB
-DEFAULT_FETCH_QUEUE_IN = 32   # URLy čekající na fetch
+DEFAULT_FETCH_QUEUE_IN = 32  # URLy čekající na fetch
 DEFAULT_FETCH_QUEUE_OUT = 64  # PageResult čekající na match
 
 
@@ -63,7 +63,7 @@ class FetchStage:
         fetch_max_bytes: int = 2_000_000,
         fetch_concurrency: int = 8,
         uma_state: str = "ok",
-    ):
+    ) -> None:
         from hledac.universal.coordinators.aimd_controllers import make_fetch_aimd
 
         self._aimd = aimd_controller or make_fetch_aimd()
@@ -117,13 +117,12 @@ class FetchStage:
 
         try:
             while self._running:
-                # Get next URL s timeout
                 try:
                     if input_queue is None:
                         break  # No input, end
                     async with asyncio.timeout(5.0):
                         url = await input_queue.get()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Check if we should exit (input empty + upstream done)
                     if input_queue is not None and input_queue.is_empty():
                         break
@@ -131,7 +130,6 @@ class FetchStage:
                 except asyncio.CancelledError:
                     break
 
-                # Fetch s AIMD-gated semaphore
                 result = await self._fetch_one(url, ctx)
                 metrics.record_processed()
 
@@ -197,7 +195,7 @@ class FetchStage:
                     discovery_reason=discovery_reason,
                     vector_store=ctx.vector_store,
                     graph=ctx.graph,
-    )
+                )
                 return result
             except asyncio.CancelledError:
                 raise

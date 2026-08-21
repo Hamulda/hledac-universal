@@ -24,11 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any
 
 import msgspec.json as _json
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +76,7 @@ class CTLogCacheStore:
         """Get DuckDB connection."""
         if self._db_store is None:
             from hledac.universal.knowledge.db import get_db
+
             self._db_store = get_db().duckdb
         return self._db_store._get_connection()
 
@@ -104,7 +103,7 @@ class CTLogCacheStore:
                 "SELECT subdomains FROM ct_cache WHERE domain = ? AND fetched_at >= ?",
                 (domain, cutoff),
             ).fetchall()
-    )
+        )
 
         if not rows:
             return None
@@ -138,7 +137,7 @@ class CTLogCacheStore:
                 VALUES (?, ?, ?)
                 """,
                 (domain, subdomains_json, fetched_at),
-    )
+            )
         )
 
     async def delete(self, domain: str) -> None:
@@ -152,9 +151,7 @@ class CTLogCacheStore:
             await self.initialize()
 
         conn = self._get_connection()
-        await asyncio.to_thread(
-            lambda: conn.execute("DELETE FROM ct_cache WHERE domain = ?", (domain,))
-    )
+        await asyncio.to_thread(lambda: conn.execute("DELETE FROM ct_cache WHERE domain = ?", (domain,)))
 
     async def cleanup_expired(self) -> int:
         """
@@ -175,7 +172,7 @@ class CTLogCacheStore:
             lambda: conn.execute(
                 "DELETE FROM ct_cache WHERE fetched_at < ?",
                 (cutoff,),
-    )
+            )
         )
         return result.rowcount if hasattr(result, "rowcount") else 0
 

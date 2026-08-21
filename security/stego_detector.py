@@ -8,21 +8,22 @@ that use the hledac.universal.security.stego_detector import path.
 """
 
 # Direct aliases — no re-export module overhead, zero-cost indirection
+# Additional exports from canonical
 from forensics.stego_detector import (  # noqa: F401, E402
-    StatisticalStegoDetector as StegoDetector,
-    StegoConfig,
-    StegoResult as StegoAnalysisResult,
     ChiSquareResult,
-    RSResult,
     DCTResult,
+    RSResult,
+    StatisticalStegoDetector,
+    StegoConfig,
+    StegoResult,
     create_stego_detector,
     quick_stego_check,
 )
-
-# Additional exports from canonical
 from forensics.stego_detector import (  # noqa: F401, E402
-    StatisticalStegoDetector,
-    StegoResult,
+    StatisticalStegoDetector as StegoDetector,
+)
+from forensics.stego_detector import (
+    StegoResult as StegoAnalysisResult,
 )
 
 __all__ = [

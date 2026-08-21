@@ -5,19 +5,24 @@ Yields Mermaid diagram chunks — bounded by MAX_NODES/MAX_EDGES, fail-soft.
 
 import asyncio
 from collections.abc import AsyncGenerator
-from _core import aclose
-__all__ = ['stream_graph_viz_section', 'GraphVizSection']
+
+__all__ = ["stream_graph_viz_section", "GraphVizSection"]
+
 
 class GraphVizSection:
     """Result of graph rendering — keeps node/edge counts for telemetry."""
-    __slots__ = tuple(('capped', 'edge_count', 'node_count'))
 
-    def __init__(self, node_count: int=0, edge_count: int=0, capped: bool=False) -> None:
+    __slots__ = ("capped", "edge_count", "node_count")
+
+    def __init__(self, node_count: int = 0, edge_count: int = 0, capped: bool = False) -> None:
         self.node_count = node_count
         self.edge_count = edge_count
         self.capped = capped
 
-async def stream_graph_viz_section(graph_manager: object, *, max_nodes: int=200, max_edges: int=400) -> AsyncGenerator[str]:
+
+async def stream_graph_viz_section(
+    graph_manager: object, *, max_nodes: int = 200, max_edges: int = 400
+) -> AsyncGenerator[str]:
     """
     Stream graph visualization as a Mermaid flowchart section.
 
@@ -42,17 +47,17 @@ async def stream_graph_viz_section(graph_manager: object, *, max_nodes: int=200,
         val = getattr(obj, attr, None)
         if val is not None:
             return val
-        getter = getattr(obj, f'get_{attr}', None)
+        getter = getattr(obj, f"get_{attr}", None)
         if callable(getter):
             return getter()
         return []
 
     try:
-        nodes = _get_nodes_or_edges(graph_manager, 'nodes')
+        nodes = _get_nodes_or_edges(graph_manager, "nodes")
     except Exception:
         nodes = []
     try:
-        edges = _get_nodes_or_edges(graph_manager, 'edges')
+        edges = _get_nodes_or_edges(graph_manager, "edges")
     except Exception:
         edges = []
 
@@ -60,48 +65,48 @@ async def stream_graph_viz_section(graph_manager: object, *, max_nodes: int=200,
         node_count = len(nodes) if nodes else 0
         edge_count = len(edges) if edges else 0
         capped = node_count > max_nodes or edge_count > max_edges
-        yield '# Graph Visualization\n\n'
-        yield f'_Nodes: {node_count} | Edges: {edge_count}'
+        yield "# Graph Visualization\n\n"
+        yield f"_Nodes: {node_count} | Edges: {edge_count}"
         if capped:
-            yield f' (cap: {max_nodes} nodes / {max_edges} edges)'
-        yield '\n\n'
+            yield f" (cap: {max_nodes} nodes / {max_edges} edges)"
+        yield "\n\n"
         if not nodes and (not edges):
-            yield '_No graph data available._\n'
+            yield "_No graph data available._\n"
             return
-        yield '```mermaid\nflowchart TD\n'
+        yield "```mermaid\nflowchart TD\n"
         rendered_nodes: set = set()
         for node in (nodes or [])[:max_nodes]:
             if isinstance(node, dict):
-                node_id = node.get('id', node.get('ioc_value', 'unnamed'))
-                label = node.get('label', node.get('ioc_value', node.get('type', '?')))
-                _node_type = node.get('type', 'ioc')
+                node_id = node.get("id", node.get("ioc_value", "unnamed"))
+                label = node.get("label", node.get("ioc_value", node.get("type", "?")))
+                _node_type = node.get("type", "ioc")
             else:
                 node_id = str(node)
                 label = str(node)
-            safe_id = node_id.replace('-', '_').replace(' ', '_')[:40]
+            safe_id = node_id.replace("-", "_").replace(" ", "_")[:40]
             if safe_id not in rendered_nodes:
-                yield f'    {safe_id}[{label}]\n'
+                yield f"    {safe_id}[{label}]\n"
                 rendered_nodes.add(safe_id)
         rendered_edges = 0
         for edge in (edges or [])[:max_edges]:
             if isinstance(edge, dict):
-                src = str(edge.get('source', edge.get('src', '?')))
-                dst = str(edge.get('target', edge.get('dst', '?')))
-                rel = edge.get('relation', edge.get('type', 'related_to'))
+                src = str(edge.get("source", edge.get("src", "?")))
+                dst = str(edge.get("target", edge.get("dst", "?")))
+                rel = edge.get("relation", edge.get("type", "related_to"))
             else:
-                src, dst, rel = (str(edge), '?', 'related_to')
-            safe_src = src.replace('-', '_').replace(' ', '_')[:40]
-            safe_dst = dst.replace('-', '_').replace(' ', '_')[:40]
+                src, dst, rel = (str(edge), "?", "related_to")
+            safe_src = src.replace("-", "_").replace(" ", "_")[:40]
+            safe_dst = dst.replace("-", "_").replace(" ", "_")[:40]
             if safe_src == safe_dst:
                 continue
-            rel_safe = rel.replace(' ', '-')[:20] if rel else 'related'
-            yield f'    {safe_src} -->|{rel_safe}| {safe_dst}\n'
+            rel_safe = rel.replace(" ", "-")[:20] if rel else "related"
+            yield f"    {safe_src} -->|{rel_safe}| {safe_dst}\n"
             rendered_edges += 1
             if rendered_edges % 50 == 0:
                 await asyncio.sleep(0)
-        yield '```\n'
+        yield "```\n"
         if capped:
-            yield f'\n_Warning: graph capped at {max_nodes} nodes / {max_edges} edges._\n'
+            yield f"\n_Warning: graph capped at {max_nodes} nodes / {max_edges} edges._\n"
     finally:
         # Cleanup: clear references to allow garbage collection
         # when generator is abandoned mid-stream

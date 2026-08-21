@@ -3,8 +3,6 @@ ConsistencyVerifier — META-008 auto-retraction hook for systematic dissenters.
 
 Runs AFTER ContradictionFeedbackBridge.run_contradiction_audit() to identify
 
-
-
 sources that are systematic dissenters and trigger automatic JTMS retraction.
 
 ARCHITECTURE:
@@ -52,13 +50,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Bounds (M1 8GB safe)
-# ---------------------------------------------------------------------------
 
 MAX_FINDINGS: int = 200
 MAX_SIGNALS: int = 250
@@ -67,22 +60,20 @@ TRI_SOURCE_MIN_SOURCES: int = 3  # minimum total sources for voting
 RATIO_THRESHOLD: float = 0.3
 
 
-# ---------------------------------------------------------------------------
-# DTO
-# ---------------------------------------------------------------------------
-
 @dataclass(slots=True)
 class SourceVote:
     """Per-source voting record for tri-source consensus detection."""
+
     source_id: str
-    agreement_count: int = 0   # times this source agreed with majority
-    dissent_count: int = 0     # times this source dissented from majority
+    agreement_count: int = 0  # times this source agreed with majority
+    dissent_count: int = 0  # times this source dissented from majority
     entities_involved: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True, frozen=True)
 class RetractionDecision:
     """A decision to auto-retract a source."""
+
     source_id: str
     reason: str  # 'tri_source_voting' | 'ratio_threshold' | 'both'
     dissent_count: int = 0
@@ -90,10 +81,6 @@ class RetractionDecision:
     ratio: float = 0.0
     entities_affected: list[str] = field(default_factory=list)
 
-
-# ---------------------------------------------------------------------------
-# ConsistencyVerifier
-# ---------------------------------------------------------------------------
 
 class ConsistencyVerifier:
     """Identifies systematic dissenters and triggers auto-retraction.
@@ -151,10 +138,7 @@ class ConsistencyVerifier:
             ratio_decisions = self._source_reliability_ratio(findings, signals)
             # Deduplicate — don't retract same source twice
             already_retracted = {d.source_id for d in decisions}
-            ratio_decisions = [
-                d for d in ratio_decisions
-                if d.source_id not in already_retracted
-            ]
+            ratio_decisions = [d for d in ratio_decisions if d.source_id not in already_retracted]
             decisions.extend(ratio_decisions)
             self._stats["sources_retracted_ratio"] += len(ratio_decisions)
 
@@ -169,24 +153,24 @@ class ConsistencyVerifier:
                     len(decisions),
                     len(tri_vote_decisions),
                     len(ratio_decisions),
-    )
+                )
                 for d in decisions:
                     logger.info(
                         "[ConsistencyVerifier] RETRACT %s: %s (dissent=%d, ratio=%.3f)",
-                        d.source_id, d.reason, d.dissent_count, d.ratio,
-    )
+                        d.source_id,
+                        d.reason,
+                        d.dissent_count,
+                        d.ratio,
+                    )
 
             return decisions
 
         except Exception as e:
             logger.debug(
-                "[ConsistencyVerifier] check_batch failed (fail-soft): %s", e,
-    )
+                "[ConsistencyVerifier] check_batch failed (fail-soft): %s",
+                e,
+            )
             return []
-
-    # ------------------------------------------------------------------
-    # Phase 1: Tri-source voting - helper methods
-    # ------------------------------------------------------------------
 
     def _tri_source_voting(
         self,
@@ -259,7 +243,10 @@ class ConsistencyVerifier:
             if source_id == majority_source:
                 self._record_agreement(source_id, entity_key, source_votes)
             elif self._check_entity_contradiction(
-                entity_sources[majority_source], findings_list, signals, entity_key,
+                entity_sources[majority_source],
+                findings_list,
+                signals,
+                entity_key,
             ):
                 self._record_dissent(source_id, entity_key, source_votes)
 
@@ -315,19 +302,17 @@ class ConsistencyVerifier:
             if vote.dissent_count >= TRI_SOURCE_MIN_VOTES:
                 total = vote.agreement_count + vote.dissent_count
                 ratio = vote.dissent_count / total if total > 0 else 0.0
-                decisions.append(RetractionDecision(
-                    source_id=source_id,
-                    reason="tri_source_voting",
-                    dissent_count=vote.dissent_count,
-                    total_claims=total,
-                    ratio=round(ratio, 3),
-                    entities_affected=vote.entities_involved[:20],
-                ))
+                decisions.append(
+                    RetractionDecision(
+                        source_id=source_id,
+                        reason="tri_source_voting",
+                        dissent_count=vote.dissent_count,
+                        total_claims=total,
+                        ratio=round(ratio, 3),
+                        entities_affected=vote.entities_involved[:20],
+                    )
+                )
         return decisions
-
-    # ------------------------------------------------------------------
-    # Phase 2: Source reliability ratio
-    # ------------------------------------------------------------------
 
     def _source_reliability_ratio(
         self,
@@ -349,23 +334,16 @@ class ConsistencyVerifier:
         source_contradictions: dict[str, int] = {}
         for signal in signals:
             try:
-                # Extract source from signal based on engine type
                 engine = getattr(signal, "engine", "")
                 source_id = None
 
                 if engine == "adversarial":
                     # AdversarialVerifier tracks source via claim context
-                    source_id = self._extract_source_from_claim(
-                        getattr(signal, "claim_a", "")
-    )
+                    source_id = self._extract_source_from_claim(getattr(signal, "claim_a", ""))
                     if not source_id:
-                        source_id = self._extract_source_from_claim(
-                            getattr(signal, "claim_b", "")
-    )
+                        source_id = self._extract_source_from_claim(getattr(signal, "claim_b", ""))
                 elif engine == "insight":
-                    source_id = self._extract_source_from_claim(
-                        getattr(signal, "claim_a", "")
-    )
+                    source_id = self._extract_source_from_claim(getattr(signal, "claim_a", ""))
                 elif engine == "dempster_shafer":
                     # DS signals are holistic — skip per-source extraction
                     continue
@@ -377,23 +355,15 @@ class ConsistencyVerifier:
                     source_id = self._extract_source_from_claim(description)
 
                 if source_id:
-                    source_contradictions[source_id] = (
-                        source_contradictions.get(source_id, 0) + 1
-    )
+                    source_contradictions[source_id] = source_contradictions.get(source_id, 0) + 1
             except Exception:
                 continue
 
-        # Build total claims per source from findings
         source_total_claims: dict[str, int] = {}
         for f in findings:
-            source = (
-                f.get("source_type")
-                or f.get("source_id")
-                or f.get("source", "unknown")
-    )
+            source = f.get("source_type") or f.get("source_id") or f.get("source", "unknown")
             source_total_claims[source] = source_total_claims.get(source, 0) + 1
 
-        # Check ratio
         decisions: list[RetractionDecision] = []
         for source_id, contradiction_count in source_contradictions.items():
             if contradiction_count < TRI_SOURCE_MIN_VOTES:
@@ -403,19 +373,17 @@ class ConsistencyVerifier:
             ratio = contradiction_count / total if total > 0 else 0.0
 
             if ratio > RATIO_THRESHOLD:
-                decisions.append(RetractionDecision(
-                    source_id=source_id,
-                    reason="ratio_threshold",
-                    dissent_count=contradiction_count,
-                    total_claims=total,
-                    ratio=round(ratio, 3),
-                ))
+                decisions.append(
+                    RetractionDecision(
+                        source_id=source_id,
+                        reason="ratio_threshold",
+                        dissent_count=contradiction_count,
+                        total_claims=total,
+                        ratio=round(ratio, 3),
+                    )
+                )
 
         return decisions
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _check_entity_contradiction(
@@ -434,7 +402,6 @@ class ConsistencyVerifier:
         Returns:
             True if contradiction detected.
         """
-        # Check signals for this entity
         for signal in signals:
             try:
                 sig_entity = getattr(signal, "entity_value", "") or ""
@@ -444,16 +411,9 @@ class ConsistencyVerifier:
             except Exception:
                 continue
 
-        # Check confidence divergence
-        majority_confs = [
-            float(f.get("confidence", 0.5))
-            for f in majority_findings
-            if f.get("confidence") is not None
-        ]
+        majority_confs = [float(f.get("confidence", 0.5)) for f in majority_findings if f.get("confidence") is not None]
         dissenter_confs = [
-            float(f.get("confidence", 0.5))
-            for f in dissenter_findings
-            if f.get("confidence") is not None
+            float(f.get("confidence", 0.5)) for f in dissenter_findings if f.get("confidence") is not None
         ]
 
         if majority_confs and dissenter_confs:
@@ -464,14 +424,8 @@ class ConsistencyVerifier:
                 return True
 
         # Simple check: different values for the same entity?
-        majority_values = {
-            f.get("value") or f.get("payload_text", "")[:100]
-            for f in majority_findings
-        }
-        dissenter_values = {
-            f.get("value") or f.get("payload_text", "")[:100]
-            for f in dissenter_findings
-        }
+        majority_values = {f.get("value") or f.get("payload_text", "")[:100] for f in majority_findings}
+        dissenter_values = {f.get("value") or f.get("payload_text", "")[:100] for f in dissenter_findings}
         # Non-empty disjoint sets = potential contradiction
         if majority_values and dissenter_values and not majority_values.intersection(dissenter_values):
             return True
@@ -489,6 +443,7 @@ class ConsistencyVerifier:
             return None
 
         import re
+
         # Common patterns in contradiction descriptions
         patterns = [
             r'source[:\s]+["\']?([a-zA-Z0-9_\-\.]+)["\']?',
@@ -501,10 +456,6 @@ class ConsistencyVerifier:
                 return m.group(1)
 
         return None
-
-    # ------------------------------------------------------------------
-    # Stats
-    # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, int]:
         """Return telemetry counters."""
@@ -519,10 +470,6 @@ class ConsistencyVerifier:
             "total_retractions": 0,
         }
 
-
-# ---------------------------------------------------------------------------
-# Global singleton
-# ---------------------------------------------------------------------------
 
 _CONSISTENCY_VERIFIER: ConsistencyVerifier | None = None
 _TRACKER_LOCK = asyncio.Lock()

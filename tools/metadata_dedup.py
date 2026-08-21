@@ -16,15 +16,15 @@ Uses binning to reduce O(n^2) comparisons:
 Stores minimal info to Decision Ledger:
 - winner evidence_id/url, loser hash, score, top_field_reasons
 """
+
 import hashlib
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from difflib import SequenceMatcher
 from typing import Any
-from _core import aclose
+
 from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
@@ -32,42 +32,48 @@ TOP_K = 200
 MAX_COMPARISONS = 50000
 MAX_FIELD_REASONS = 5
 
+
 class MetadataEntry(Struct):
     """A single metadata entry for deduplication."""
+
     url: str
-    canonical_url: str = ''
-    title: str = ''
-    description: str = ''
-    og_title: str = ''
-    og_description: str = ''
+    canonical_url: str = ""
+    title: str = ""
+    description: str = ""
+    og_title: str = ""
+    og_description: str = ""
     jsonld_types: list[str] = field(default_factory=list)
-    published_at: str = ''
-    evidence_id: str = ''
+    published_at: str = ""
+    evidence_id: str = ""
 
     @property
     def domain(self) -> str:
         """Extract domain from URL."""
         try:
             from urllib.parse import urlparse
+
             parsed = urlparse(self.url)
             return parsed.netloc.lower() or parsed.path.lower()
         except Exception:
-            return ''
+            return ""
 
     @property
     def hash(self) -> str:
         """Generate stable hash for this entry."""
-        data = f'{self.canonical_url or self.url}|{self.title}|{self.description}'
+        data = f"{self.canonical_url or self.url}|{self.title}|{self.description}"
         return hashlib.sha256(data.encode()).hexdigest()[:16]
+
 
 class DedupResult(Struct, frozen=True):
     """Result of metadata deduplication."""
+
     winner: str
     loser_hash: str
     score: float
     field_reasons: list[str]
     winner_url: str
     loser_url: str
+
 
 class MetadataDeduplicator:
     """
@@ -78,11 +84,20 @@ class MetadataDeduplicator:
     - Then compare within domain
     - Cap total comparisons
     """
-    FIELD_WEIGHTS = {'canonical_url': 2.0, 'title': 1.5, 'description': 1.0, 'og_title': 1.5, 'og_description': 1.0, 'jsonld_types': 0.5, 'published_at': 0.3}
-    SYNDICATION_PATTERNS = ['syndication', 'feeds?', 'atom', 'rss', 'republish', 'share']
-    __slots__ = tuple(('logger', 'max_comparisons', 'threshold', 'top_k'))
 
-    def __init__(self, top_k: int=TOP_K, max_comparisons: int=MAX_COMPARISONS, threshold: float=0.85):
+    FIELD_WEIGHTS = {
+        "canonical_url": 2.0,
+        "title": 1.5,
+        "description": 1.0,
+        "og_title": 1.5,
+        "og_description": 1.0,
+        "jsonld_types": 0.5,
+        "published_at": 0.3,
+    }
+    SYNDICATION_PATTERNS = ["syndication", "feeds?", "atom", "rss", "republish", "share"]
+    __slots__ = ("logger", "max_comparisons", "threshold", "top_k")
+
+    def __init__(self, top_k: int = TOP_K, max_comparisons: int = MAX_COMPARISONS, threshold: float = 0.85) -> None:
         """
         Initialize metadata deduplicator.
 
@@ -98,11 +113,21 @@ class MetadataDeduplicator:
 
     def _parse_metadata(self, data: dict[str, Any]) -> MetadataEntry:
         """Parse metadata dict into MetadataEntry."""
-        entry = MetadataEntry(url=data.get('url', ''), canonical_url=data.get('canonical_url', ''), title=data.get('title', ''), description=data.get('description', ''), og_title=data.get('og:title', ''), og_description=data.get('og:description', ''), jsonld_types=data.get('jsonld_types', []), published_at=data.get('published_at', ''), evidence_id=data.get('evidence_id', ''))
+        entry = MetadataEntry(
+            url=data.get("url", ""),
+            canonical_url=data.get("canonical_url", ""),
+            title=data.get("title", ""),
+            description=data.get("description", ""),
+            og_title=data.get("og:title", ""),
+            og_description=data.get("og:description", ""),
+            jsonld_types=data.get("jsonld_types", []),
+            published_at=data.get("published_at", ""),
+            evidence_id=data.get("evidence_id", ""),
+        )
         if not entry.og_title:
-            entry.og_title = data.get('og_title', '')
+            entry.og_title = data.get("og_title", "")
         if not entry.og_description:
-            entry.og_description = data.get('og_description', '')
+            entry.og_description = data.get("og_description", "")
         return entry
 
     def _compute_similarity(self, a: MetadataEntry, b: MetadataEntry) -> tuple[float, list[str]]:
@@ -116,45 +141,45 @@ class MetadataDeduplicator:
         weighted_sum = 0.0
         total_weight = 0.0
         if a.canonical_url and b.canonical_url:
-            weight = self.FIELD_WEIGHTS['canonical_url']
+            weight = self.FIELD_WEIGHTS["canonical_url"]
             if a.canonical_url == b.canonical_url:
                 weighted_sum += weight
-                field_reasons.append('canonical_url:exact')
+                field_reasons.append("canonical_url:exact")
             total_weight += weight
         if a.title and b.title:
-            weight = self.FIELD_WEIGHTS['title']
+            weight = self.FIELD_WEIGHTS["title"]
             score = self._text_similarity(a.title, b.title)
             if score > 0.8:
                 weighted_sum += score * weight
-                field_reasons.append(f'title:{score:.2f}')
+                field_reasons.append(f"title:{score:.2f}")
             total_weight += weight
         if a.description and b.description:
-            weight = self.FIELD_WEIGHTS['description']
+            weight = self.FIELD_WEIGHTS["description"]
             score = self._text_similarity(a.description, b.description)
             if score > 0.6:
                 weighted_sum += score * weight
-                field_reasons.append(f'description:{score:.2f}')
+                field_reasons.append(f"description:{score:.2f}")
             total_weight += weight
         if a.og_title and b.og_title:
-            weight = self.FIELD_WEIGHTS['og_title']
+            weight = self.FIELD_WEIGHTS["og_title"]
             score = self._text_similarity(a.og_title, b.og_title)
             if score > 0.8:
                 weighted_sum += score * weight
-                field_reasons.append(f'og_title:{score:.2f}')
+                field_reasons.append(f"og_title:{score:.2f}")
             total_weight += weight
         if a.og_description and b.og_description:
-            weight = self.FIELD_WEIGHTS['og_description']
+            weight = self.FIELD_WEIGHTS["og_description"]
             score = self._text_similarity(a.og_description, b.og_description)
             if score > 0.6:
                 weighted_sum += score * weight
-                field_reasons.append(f'og_description:{score:.2f}')
+                field_reasons.append(f"og_description:{score:.2f}")
             total_weight += weight
         if a.jsonld_types and b.jsonld_types:
-            weight = self.FIELD_WEIGHTS['jsonld_types']
+            weight = self.FIELD_WEIGHTS["jsonld_types"]
             score = self._list_similarity(a.jsonld_types, b.jsonld_types)
             if score > 0.5:
                 weighted_sum += score * weight
-                field_reasons.append(f'jsonld_types:{score:.2f}')
+                field_reasons.append(f"jsonld_types:{score:.2f}")
             total_weight += weight
         if total_weight == 0:
             return (0.0, [])
@@ -193,7 +218,9 @@ class MetadataDeduplicator:
                     return True
         return False
 
-    def deduplicate(self, metadata_list: list[dict[str, Any]], log_callback: Callable[[DedupResult], None] | None=None) -> list[DedupResult]:
+    def deduplicate(
+        self, metadata_list: list[dict[str, Any]], log_callback: Callable[[DedupResult], None] | None = None
+    ) -> list[DedupResult]:
         """
         Deduplicate metadata entries.
 
@@ -208,7 +235,7 @@ class MetadataDeduplicator:
             return []
         entries = [self._parse_metadata(m) for m in metadata_list]
         if len(entries) > self.top_k:
-            entries = entries[:self.top_k]
+            entries = entries[: self.top_k]
         domain_bins: dict[str, list[MetadataEntry]] = {}
         for entry in entries:
             domain = entry.domain
@@ -223,7 +250,7 @@ class MetadataDeduplicator:
             for i, a in enumerate(bin_entries):
                 if comparisons >= self.max_comparisons:
                     break
-                for b in bin_entries[i + 1:]:
+                for b in bin_entries[i + 1 :]:
                     if comparisons >= self.max_comparisons:
                         break
                     comparisons += 1
@@ -236,14 +263,24 @@ class MetadataDeduplicator:
                             winner, loser = (b, a)
                         else:
                             winner, loser = (a, b)
-                        result = DedupResult(winner=winner.evidence_id or winner.url, loser_hash=loser.hash, score=score, field_reasons=reasons, winner_url=winner.url, loser_url=loser.url)
+                        result = DedupResult(
+                            winner=winner.evidence_id or winner.url,
+                            loser_hash=loser.hash,
+                            score=score,
+                            field_reasons=reasons,
+                            winner_url=winner.url,
+                            loser_url=loser.url,
+                        )
                         results.append(result)
                         if log_callback:
                             log_callback(result)
-        self.logger.info(f'Metadata dedup: {len(results)} duplicates from {len(entries)} entries, {comparisons} comparisons')
+        self.logger.info(
+            f"Metadata dedup: {len(results)} duplicates from {len(entries)} entries, {comparisons} comparisons"
+        )
         return results
 
-def deduplicate_metadata(metadata_list: list[dict[str, Any]], threshold: float=0.85) -> list[DedupResult]:
+
+def deduplicate_metadata(metadata_list: list[dict[str, Any]], threshold: float = 0.85) -> list[DedupResult]:
     """
     Convenience function to deduplicate metadata.
 

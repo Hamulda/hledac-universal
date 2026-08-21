@@ -30,21 +30,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_claims_extraction
 
-# Create singleton instance
 _claims_extraction = get_claims_extraction()
-
 
 def claims_extraction_wired():
     """Get the wired claims extraction integration."""
     return _claims_extraction
-
 
 def extract_claims(
     text: str,
@@ -75,7 +70,6 @@ def extract_claims(
         text, title, summary, source_type, evidence_type
     )
 
-
 def extract_hypothesis_claims(
     evidence_text: str,
     hypothesis_statement: str,
@@ -98,7 +92,6 @@ def extract_hypothesis_claims(
         source_type=source_type,
         evidence_type="hypothesis_evidence",
     )
-
 
 def compute_claim_confidence(
     claims: list[dict],
@@ -134,8 +127,6 @@ def compute_claim_confidence(
 
     return weighted_sum / total_weight if total_weight > 0 else 0.0
 
-
-# Check availability at import time for logging
 if _claims_extraction.available:
     logger.info("[ClaimsExtraction] Rust claims_extraction.rs integration: ENABLED")
 else:

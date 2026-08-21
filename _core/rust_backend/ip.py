@@ -1,8 +1,6 @@
 # ip.py — IP parsing and classification domain
 
-from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -54,11 +52,6 @@ class _PythonIpDomain:
     @staticmethod
     def cidr_contains(cidr: str, ip: str) -> bool:
         return _python_cidr_contains(cidr, ip)
-
-
-# ------------------------------------------------------------------
-# Pure-Python IP helpers (moved from top of rust_backend.py)
-# ------------------------------------------------------------------
 
 
 def _python_parse_ip_fast(ip_str: str) -> tuple[int, int] | None:

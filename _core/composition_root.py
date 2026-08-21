@@ -32,15 +32,18 @@ from typing import Any
 # F350M-R: Lazy import to break core ↔ runtime cycle
 _cancel_all_tasks_impl = None
 
+
 def _get_cancel_all_tasks():
     """Lazy getter for _cancel_all_tasks from runtime.sprint_entrypoint."""
     global _cancel_all_tasks_impl
     if _cancel_all_tasks_impl is None:
         from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks as _impl
+
         _cancel_all_tasks_impl = _impl
     return _cancel_all_tasks_impl
-from hledac.universal.utils.asyncx import safe_create_task, first_completed  # ISSUE-15
-from _core._util import aclose
+
+
+from hledac.universal.utils.asyncx import first_completed, safe_create_task
 
 # uvloop: 2× I/O speedup on M1 kqueue. Try uvloop.new_event_loop() first,
 # fall back to asyncio.new_event_loop() if uvloop is unavailable (CI, non-M1).
@@ -59,7 +62,7 @@ def _get_event_loop() -> asyncio.AbstractEventLoop:
             # uvloop.install() was called in __main__.py, but we use the direct constructor
             # to guarantee uvloop is used even if asyncio's policy isn't fully propagated.
             return uvloop.new_event_loop()
-        except (ImportError, OSError):
+        except ImportError, OSError:
             _UVLOOP_AVAILABLE = False
     return asyncio.new_event_loop()
 
@@ -74,24 +77,24 @@ def _init_uvloop() -> bool:
 
     # ISSUE-010: Check feature flag first
     from hledac.universal._core.env_config import ENV
+
     if not ENV.UVLOOP_ENABLED:
         _UVLOOP_AVAILABLE = False
         return False
 
     try:
-        import uvloop
         import platform
 
-        _is_darwin_arm = (
-            platform.system() == "Darwin"
-            and platform.machine().lower() in ("arm64", "aarch64")
-    )
+        import uvloop
+
+        _is_darwin_arm = platform.system() == "Darwin" and platform.machine().lower() in ("arm64", "aarch64")
         if _is_darwin_arm and sys.version_info < (3, 15):
             _UVLOOP_AVAILABLE = True
             # ISSUE-010 FIX: Update RuntimeState to reflect actual uvloop status
             # This ensures get_session_runtime_status()["uvloop_enabled"] is accurate
             try:
                 from hledac.universal.runtime.state import mark_uvloop_installed
+
                 mark_uvloop_installed()
             except Exception:  # noqa: BLE001
                 pass  # Non-fatal: RuntimeState is for observability only
@@ -101,12 +104,8 @@ def _init_uvloop() -> bool:
     _UVLOOP_AVAILABLE = False
     return False
 
+
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Signal handling
-# =============================================================================
 
 
 def install_signal_handler(
@@ -141,7 +140,7 @@ def install_signal_handler(
             getattr(signal.Signals, "SIGINT", None) and signal.Signals(signum).name
             if hasattr(signal, "Signals")
             else str(signum)
-    )
+        )
         logger.info(f"[SIGNAL] Received {sig_name} — cooperative shutdown")
         try:
             # Always call set() directly — it is async-signal-safe (Python 3.10+).
@@ -201,11 +200,6 @@ def install_signal_handler(
     return restore
 
 
-# =============================================================================
-# Memory hygiene
-# =============================================================================
-
-
 def configure_memory_for_sprint() -> dict[str, Any]:
     """M218A: GC startup tuning for M1 UMA stability. Returns gc snapshot."""
     gc_config: dict[str, Any] = {}
@@ -231,11 +225,6 @@ def start_malloc_pressure_relief() -> None:
         logger.debug("[UMA] malloc_zone_pressure_relief called")
     except Exception as e:
         logger.debug("[UMA] malloc_zone_pressure_relief unavailable: %s", e)
-
-
-# =============================================================================
-# Sprint task factory
-# =============================================================================
 
 
 async def _run_sprint_task(
@@ -294,7 +283,7 @@ async def _run_sprint_task(
     try:
         winner_task: asyncio.Task[None]
         _, winner_task = await first_completed(sprint_task, sig_task)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise  # Should not happen with no timeout
 
     # Surface sprint exceptions (first_completed preserves exceptions)
@@ -307,11 +296,6 @@ async def _run_sprint_task(
         sprint_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sprint_task
-
-
-# =============================================================================
-# Runtime lifecycle
-# =============================================================================
 
 
 def build_runtime(
@@ -356,6 +340,7 @@ def build_runtime(
 
     # O-01: Initialize unified TelemetryContext for this sprint session
     from hledac.universal._core.telemetry.context_state import init_telemetry_context
+
     init_telemetry_context()
 
     # Pre-sprint checks (sync, fail-loud)
@@ -365,6 +350,7 @@ def build_runtime(
         # D) PRE-FLIGHT: fail-loud — preflight checks must pass
         # Changed from warning to sys.exit(2) per sprint requirements
         import sys
+
         sys.exit(2)
 
     # Signal handling
@@ -392,7 +378,7 @@ def build_runtime(
             prng_seed=prng_seed,
             replay_seed=replay_seed,
             warc_dir=warc_dir,
-    )
+        )
     )
 
     return loop, sprint_task, shutdown_event, restore_signals

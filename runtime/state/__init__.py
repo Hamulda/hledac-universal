@@ -40,19 +40,15 @@ INTENT:
     Centralized state management replacing scattered mutable state in
     sprint_scheduler.py, evidence_log.py, and __main__.py.
 """
+
 from __future__ import annotations
 
-
 import contextvars
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Any
-from _core import aclose
 
+import msgspec
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RuntimeState — Canonical Runtime Flags (set once at boot)
-# ─────────────────────────────────────────────────────────────────────────────
+from compat.msgspec_gc_compat import Struct
 
 
 class RuntimeState(Struct, frozen=True):
@@ -103,11 +99,6 @@ def mark_uvloop_installed() -> None:
     """
     global _RUNTIME_STATE
     _RUNTIME_STATE = _RUNTIME_STATE.mark_uvloop_installed()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ResearchContextSnapshot — Sprint-Start Snapshot
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class ResearchContextSnapshot(Struct, frozen=True):
@@ -166,11 +157,6 @@ class ResearchContextSnapshot(Struct, frozen=True):
             "provider_id": None,
             "action_id": None,
         }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SprintMetrics — Per-Sprint Atomic Counters (frozen, copy-on-write)
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class SprintMetrics(Struct, frozen=True):
@@ -301,7 +287,7 @@ class SprintMetrics(Struct, frozen=True):
 # SprintMetrics ContextVar — per-sprint copy-on-write state
 _sprint_metrics_var: contextvars.ContextVar[SprintMetrics] = contextvars.ContextVar(
     "sprint_metrics", default=SprintMetrics()
-    )
+)
 
 
 def get_sprint_metrics() -> SprintMetrics:
@@ -322,11 +308,6 @@ def set_sprint_metrics(metrics: SprintMetrics) -> None:
 def reset_sprint_metrics() -> None:
     """Reset to empty metrics (call between sprints)."""
     _sprint_metrics_var.set(SprintMetrics())
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SprintRunSnapshot — Immutable Per-Sprint Snapshot
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class SprintRunSnapshot(Struct, frozen=True):
@@ -378,7 +359,7 @@ class SprintRunSnapshot(Struct, frozen=True):
     # Metrics reference (SprintMetrics already frozen)
     metrics: SprintMetrics | None = None
 
-    def evolve(self, **kwargs: Any) -> "SprintRunSnapshot":
+    def evolve(self, **kwargs: Any) -> SprintRunSnapshot:
         """
         Return NEW snapshot with updated fields (copy-on-write).
 
@@ -405,7 +386,7 @@ class SprintRunSnapshot(Struct, frozen=True):
 # SprintRunSnapshot ContextVar — per-sprint immutable state machine
 _sprint_snapshot_var: contextvars.ContextVar[SprintRunSnapshot] = contextvars.ContextVar(
     "sprint_snapshot", default=SprintRunSnapshot()
-    )
+)
 
 
 def get_sprint_snapshot() -> SprintRunSnapshot:

@@ -22,36 +22,42 @@ Usage:
         session_cache_maxsize=8,
         prefix_cache_maxsize=64,
     )
-    
+
     # In DeepHermes3Engine.__init__():
     self._cache_manager = manager
-    
+
     # For cleanup (unload/reset_session):
     await self._cache_manager.clear_all()
-    
+
     # For memory estimation:
     memory_bytes = self._cache_manager.get_memory_footprint()
 """
+
 from __future__ import annotations
+
 import gc
 import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+
 if TYPE_CHECKING:
     from hledac.universal.utils.cache._sync import LRUCache, SlidingWindowKVCache
 
 # Type aliases for cache types (TYPE_CHECKING only)
 CacheT = LRUCache | SlidingWindowKVCache
-K = TypeVar('K')
-V = TypeVar('V')
+K = TypeVar("K")
+V = TypeVar("V")
 logger: Any = None
+
 
 def _get_logger():
     global logger
     if logger is None:
         import logging
+
         logger = logging.getLogger(__name__)
     return logger
+
 
 class Cache(Protocol):
     """Protocol defining the cache interface for UnifiedCacheManager."""
@@ -64,33 +70,38 @@ class Cache(Protocol):
         """Return number of entries in cache."""
         ...
 
+
 class LRUCacheAny:
     """Wrapper for LRUCache to provide unified interface."""
-    __slots__ = ('_cache',)
+
+    __slots__ = ("_cache",)
 
     def __init__(self, cache: Any) -> None:
         self._cache = cache
 
     def clear(self) -> None:
-        if hasattr(self._cache, 'clear'):
+        if hasattr(self._cache, "clear"):
             self._cache.clear()
 
     def __len__(self) -> int:
         return len(self._cache)
+
 
 class SlidingWindowKVCacheAny:
     """Wrapper for SlidingWindowKVCache to provide unified interface."""
-    __slots__ = ('_cache',)
+
+    __slots__ = ("_cache",)
 
     def __init__(self, cache: Any) -> None:
         self._cache = cache
 
     def clear(self) -> None:
-        if hasattr(self._cache, 'clear'):
+        if hasattr(self._cache, "clear"):
             self._cache.clear()
 
     def __len__(self) -> int:
         return len(self._cache)
+
 
 @dataclass(slots=True)
 class UnifiedCacheManager:
@@ -113,6 +124,7 @@ class UnifiedCacheManager:
         - All managed caches should be thread-safe if accessed from multiple threads
         - clear_all() is NOT thread-safe - call from single-threaded context
     """
+
     _kv_cache: Any = field(default=None, repr=False)
     _session_cache: Any = field(default=None, repr=False)
     _prefix_cache: Any = field(default=None, repr=False)
@@ -126,7 +138,19 @@ class UnifiedCacheManager:
     _session_cache_maxsize: int = 8
     _prefix_cache_maxsize: int = 64
 
-    def __init__(self, *, kv_cache_maxsize: int=4, kv_cache_window_tokens: int=16, kv_cache_decay_base: float=0.85, kv_cache_token_interval_s: float=5.0, session_cache_maxsize: int=8, prefix_cache_maxsize: int=64, kv_cache_pool: Any=None, session_cache_pool: Any=None, prefix_cache: Any=None) -> None:
+    def __init__(
+        self,
+        *,
+        kv_cache_maxsize: int = 4,
+        kv_cache_window_tokens: int = 16,
+        kv_cache_decay_base: float = 0.85,
+        kv_cache_token_interval_s: float = 5.0,
+        session_cache_maxsize: int = 8,
+        prefix_cache_maxsize: int = 64,
+        kv_cache_pool: Any = None,
+        session_cache_pool: Any = None,
+        prefix_cache: Any = None,
+    ) -> None:
         """
         Initialize UnifiedCacheManager with cache configurations.
 
@@ -158,13 +182,21 @@ class UnifiedCacheManager:
         """Lazily create KV cache pool."""
         if self._kv_cache is None:
             from utils.cache._sync import SlidingWindowKVCache
-            self._kv_cache = SlidingWindowKVCache(max_size=self._kv_cache_maxsize, window_tokens=self._kv_cache_window_tokens, decay_base=self._kv_cache_decay_base, token_interval_s=self._kv_cache_token_interval_s, thread_safe=False)
+
+            self._kv_cache = SlidingWindowKVCache(
+                max_size=self._kv_cache_maxsize,
+                window_tokens=self._kv_cache_window_tokens,
+                decay_base=self._kv_cache_decay_base,
+                token_interval_s=self._kv_cache_token_interval_s,
+                thread_safe=False,
+            )
         return self._kv_cache
 
     def _ensure_session_cache(self) -> LRUCache:
         """Lazily create session cache pool."""
         if self._session_cache is None:
             from utils.cache._sync import LRUCache
+
             self._session_cache = LRUCache(max_size=self._session_cache_maxsize, thread_safe=False)
         return self._session_cache
 
@@ -172,6 +204,7 @@ class UnifiedCacheManager:
         """Lazily create prefix cache."""
         if self._prefix_cache is None:
             from utils.cache._sync import LRUCache
+
             self._prefix_cache = LRUCache(max_size=self._prefix_cache_maxsize, thread_safe=False)
         return self._prefix_cache
 
@@ -220,7 +253,7 @@ class UnifiedCacheManager:
         """Set system prompt cache."""
         self._system_prompt_cache = value
 
-    async def clear_all(self, sync_context: bool=False) -> dict[str, int]:
+    async def clear_all(self, sync_context: bool = False) -> dict[str, int]:
         """
         ROADMAP-001: Canonical cleanup - call before model unload.
 
@@ -245,44 +278,45 @@ class UnifiedCacheManager:
         cleared: dict[str, int] = {}
         try:
             self._warmup_cache.clear()
-            cleared['warmup_cache'] = 1
+            cleared["warmup_cache"] = 1
         except Exception:
             self._warmup_cache = {}
-            cleared['warmup_cache'] = 1
+            cleared["warmup_cache"] = 1
         if self._prefix_cache is not None:
             try:
                 self._prefix_cache.clear()
-                cleared['prefix_cache'] = 1
+                cleared["prefix_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] prefix_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] prefix_cache clear failed: %s", e)
         if self._session_cache is not None:
             try:
                 self._session_cache.clear()
-                cleared['session_cache'] = 1
+                cleared["session_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] session_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] session_cache clear failed: %s", e)
         if self._kv_cache is not None:
             try:
                 self._kv_cache.clear()
-                cleared['kv_cache'] = 1
+                cleared["kv_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] kv_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] kv_cache clear failed: %s", e)
         self._prompt_cache = None
-        cleared['prompt_cache'] = 1
+        cleared["prompt_cache"] = 1
         self._system_prompt_cache = None
-        cleared['system_prompt_cache'] = 1
+        cleared["system_prompt_cache"] = 1
         try:
             import mlx.core as mx
+
             mx.eval([])
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-            cleared['metal_cache'] = 1
+            cleared["metal_cache"] = 1
         except ImportError:
             pass
         except Exception as e:
-            _log.debug('[ROADMAP-001] GPU barrier failed: %s', e)
+            _log.debug("[ROADMAP-001] GPU barrier failed: %s", e)
         gc.collect()
-        _log.debug('[ROADMAP-001] Caches cleared: %s', list(cleared.keys()))
+        _log.debug("[ROADMAP-001] Caches cleared: %s", list(cleared.keys()))
         return cleared
 
     def clear_all_sync(self) -> dict[str, int]:
@@ -296,42 +330,43 @@ class UnifiedCacheManager:
         cleared: dict[str, int] = {}
         try:
             self._warmup_cache.clear()
-            cleared['warmup_cache'] = 1
+            cleared["warmup_cache"] = 1
         except Exception:
             self._warmup_cache = {}
-            cleared['warmup_cache'] = 1
+            cleared["warmup_cache"] = 1
         if self._prefix_cache is not None:
             try:
                 self._prefix_cache.clear()
-                cleared['prefix_cache'] = 1
+                cleared["prefix_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] prefix_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] prefix_cache clear failed: %s", e)
         if self._session_cache is not None:
             try:
                 self._session_cache.clear()
-                cleared['session_cache'] = 1
+                cleared["session_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] session_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] session_cache clear failed: %s", e)
         if self._kv_cache is not None:
             try:
                 self._kv_cache.clear()
-                cleared['kv_cache'] = 1
+                cleared["kv_cache"] = 1
             except Exception as e:
-                _log.debug('[ROADMAP-001] kv_cache clear failed: %s', e)
+                _log.debug("[ROADMAP-001] kv_cache clear failed: %s", e)
         self._prompt_cache = None
-        cleared['prompt_cache'] = 1
+        cleared["prompt_cache"] = 1
         self._system_prompt_cache = None
-        cleared['system_prompt_cache'] = 1
+        cleared["system_prompt_cache"] = 1
         try:
             import mlx.core as mx
+
             mx.eval([])
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-            cleared['metal_cache'] = 1
+            cleared["metal_cache"] = 1
         except ImportError:
             pass
         except Exception as e:
-            _log.debug('[ROADMAP-001] GPU barrier failed: %s', e)
+            _log.debug("[ROADMAP-001] GPU barrier failed: %s", e)
         gc.collect()
         return cleared
 
@@ -351,11 +386,11 @@ class UnifiedCacheManager:
         """
         total_bytes = 0
         total_bytes += self._estimate_dict_memory(self._warmup_cache)
-        if self._prefix_cache is not None and hasattr(self._prefix_cache, '_data'):
+        if self._prefix_cache is not None and hasattr(self._prefix_cache, "_data"):
             total_bytes += self._estimate_dict_memory(self._prefix_cache._data)
-        if self._session_cache is not None and hasattr(self._session_cache, '_data'):
+        if self._session_cache is not None and hasattr(self._session_cache, "_data"):
             total_bytes += self._estimate_dict_memory(self._session_cache._data)
-        if self._kv_cache is not None and hasattr(self._kv_cache, '_data'):
+        if self._kv_cache is not None and hasattr(self._kv_cache, "_data"):
             total_bytes += self._estimate_kv_cache_memory(self._kv_cache)
         if self._prompt_cache is not None:
             total_bytes += self._estimate_mlx_cache_memory(self._prompt_cache)
@@ -369,6 +404,7 @@ class UnifiedCacheManager:
             return 0
         try:
             import sys
+
             size = sys.getsizeof(d)
             for k, v in d.items():
                 size += sys.getsizeof(k)
@@ -383,7 +419,7 @@ class UnifiedCacheManager:
 
     def _estimate_kv_cache_memory(self, kv_cache: Any) -> int:
         """Estimate memory for SlidingWindowKVCache."""
-        if not hasattr(kv_cache, '_data'):
+        if not hasattr(kv_cache, "_data"):
             return 0
         entries = len(kv_cache._data)
         return entries * 100 * 1024 * 1024
@@ -394,14 +430,15 @@ class UnifiedCacheManager:
             return 0
         try:
             import mlx.core as mx
-            if hasattr(mx, 'get_active_memory'):
+
+            if hasattr(mx, "get_active_memory"):
                 active_mem = mx.get_active_memory()
                 return int(active_mem * 0.1)
-            if hasattr(cache, 'memory_size'):
+            if hasattr(cache, "memory_size"):
                 return cache.memory_size
-            if hasattr(cache, 'size'):
+            if hasattr(cache, "size"):
                 return cache.size * 256 * 1024 * 1024
-        except (ImportError, Exception):
+        except ImportError, Exception:
             pass
         return 256 * 1024 * 1024
 
@@ -413,40 +450,47 @@ class UnifiedCacheManager:
             dict with per-cache stats and total memory estimate
         """
         memory_bytes = self.get_memory_footprint()
-        stats: dict[str, Any] = {'total_memory_bytes': memory_bytes, 'total_memory_mb': memory_bytes / (1024 * 1024)}
+        stats: dict[str, Any] = {"total_memory_bytes": memory_bytes, "total_memory_mb": memory_bytes / (1024 * 1024)}
         if self._kv_cache is not None:
-            if hasattr(self._kv_cache, 'stats'):
-                stats['kv_cache'] = self._kv_cache.stats
+            if hasattr(self._kv_cache, "stats"):
+                stats["kv_cache"] = self._kv_cache.stats
             else:
-                stats['kv_cache'] = {'size': len(self._kv_cache), 'type': 'SlidingWindowKVCache'}
+                stats["kv_cache"] = {"size": len(self._kv_cache), "type": "SlidingWindowKVCache"}
         if self._session_cache is not None:
-            if hasattr(self._session_cache, 'stats'):
-                stats['session_cache'] = self._session_cache.stats
+            if hasattr(self._session_cache, "stats"):
+                stats["session_cache"] = self._session_cache.stats
             else:
-                stats['session_cache'] = {'size': len(self._session_cache), 'type': 'LRUCache'}
+                stats["session_cache"] = {"size": len(self._session_cache), "type": "LRUCache"}
         if self._prefix_cache is not None:
-            if hasattr(self._prefix_cache, 'stats'):
-                stats['prefix_cache'] = self._prefix_cache.stats
+            if hasattr(self._prefix_cache, "stats"):
+                stats["prefix_cache"] = self._prefix_cache.stats
             else:
-                stats['prefix_cache'] = {'size': len(self._prefix_cache), 'type': 'LRUCache'}
-        stats['warmup_cache'] = {'size': len(self._warmup_cache), 'type': 'dict'}
+                stats["prefix_cache"] = {"size": len(self._prefix_cache), "type": "LRUCache"}
+        stats["warmup_cache"] = {"size": len(self._warmup_cache), "type": "dict"}
         if self._prompt_cache is not None:
-            stats['prompt_cache_loaded'] = True
-            stats['prompt_cache_memory_mb'] = self._estimate_mlx_cache_memory(self._prompt_cache) / (1024 * 1024)
+            stats["prompt_cache_loaded"] = True
+            stats["prompt_cache_memory_mb"] = self._estimate_mlx_cache_memory(self._prompt_cache) / (1024 * 1024)
         else:
-            stats['prompt_cache_loaded'] = False
+            stats["prompt_cache_loaded"] = False
         if self._system_prompt_cache is not None:
-            stats['system_prompt_cache_loaded'] = True
-            stats['system_prompt_cache_memory_mb'] = self._estimate_mlx_cache_memory(self._system_prompt_cache) / (1024 * 1024)
+            stats["system_prompt_cache_loaded"] = True
+            stats["system_prompt_cache_memory_mb"] = self._estimate_mlx_cache_memory(self._system_prompt_cache) / (
+                1024 * 1024
+            )
         else:
-            stats['system_prompt_cache_loaded'] = False
-        stats['memory_breakdown'] = {'kv_cache_mb': stats.get('kv_cache', {}).get('estimated_memory_mb', 0), 'warmup_cache_kb': sys.getsizeof(self._warmup_cache) / 1024 if self._warmup_cache else 0, 'prefix_cache_mb': 0, 'session_cache_mb': 0}
+            stats["system_prompt_cache_loaded"] = False
+        stats["memory_breakdown"] = {
+            "kv_cache_mb": stats.get("kv_cache", {}).get("estimated_memory_mb", 0),
+            "warmup_cache_kb": sys.getsizeof(self._warmup_cache) / 1024 if self._warmup_cache else 0,
+            "prefix_cache_mb": 0,
+            "session_cache_mb": 0,
+        }
         return stats
 
-    def clear_prefix_cache(self, *, reset_stats: bool=True) -> None:
+    def clear_prefix_cache(self, *, reset_stats: bool = True) -> None:
         """
         Clear only prefix cache (for session reset).
-        
+
         Args:
             reset_stats: If True, reset prefix cache stats dict.
         """
@@ -459,10 +503,10 @@ class UnifiedCacheManager:
         """
         self.clear_prefix_cache()
 
-    def clear_session_cache(self, *, reset_stats: bool=True) -> None:
+    def clear_session_cache(self, *, reset_stats: bool = True) -> None:
         """
         Clear only session cache (for full session reset).
-        
+
         Args:
             reset_stats: If True, reset session cache stats dict.
         """
@@ -475,10 +519,10 @@ class UnifiedCacheManager:
         """
         self.clear_session_cache()
 
-    def clear_kv_cache(self, *, reset_stats: bool=True) -> None:
+    def clear_kv_cache(self, *, reset_stats: bool = True) -> None:
         """
         Clear only KV cache pool (for full session reset).
-        
+
         Args:
             reset_stats: If True, reset KV cache stats dict.
         """
@@ -505,7 +549,7 @@ class UnifiedCacheManager:
     def sync_warmup_cache(self, cache: dict | None) -> None:
         """
         Synchronize warmup cache from engine to manager.
-        
+
         Args:
             cache: The warmup cache dict from engine. None means clear.
         """
@@ -517,7 +561,7 @@ class UnifiedCacheManager:
     def sync_prompt_cache(self, cache: Any) -> None:
         """
         Synchronize MLX prompt cache from engine to manager.
-        
+
         Args:
             cache: The MLX prompt cache. None is valid (means no cache).
         """
@@ -526,7 +570,7 @@ class UnifiedCacheManager:
     def sync_system_prompt_cache(self, cache: Any) -> None:
         """
         Synchronize MLX system prompt cache from engine to manager.
-        
+
         Args:
             cache: The MLX system prompt cache. None is valid (means no cache).
         """
@@ -535,7 +579,7 @@ class UnifiedCacheManager:
     def sync_kv_cache(self, cache: Any) -> None:
         """
         Synchronize KV cache pool from engine to manager.
-        
+
         Args:
             cache: The KV cache pool. None means skip.
         """
@@ -545,7 +589,7 @@ class UnifiedCacheManager:
     def sync_session_cache(self, cache: Any) -> None:
         """
         Synchronize session cache pool from engine to manager.
-        
+
         Args:
             cache: The session cache pool. None means skip.
         """
@@ -555,21 +599,21 @@ class UnifiedCacheManager:
     def sync_prefix_cache(self, cache: Any) -> None:
         """
         Synchronize prefix cache from engine to manager.
-        
+
         Args:
             cache: The prefix cache. None means skip.
         """
         if cache is not None:
             self._prefix_cache = cache
 
-    async def __aenter__(self) -> 'UnifiedCacheManager':
+    async def __aenter__(self) -> UnifiedCacheManager:
         """Async context manager entry - returns self for cleanup patterns."""
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """
         Async context manager exit - automatic cleanup.
-        
+
         Usage:
             async with UnifiedCacheManager() as cm:
                 # use caches
@@ -578,14 +622,14 @@ class UnifiedCacheManager:
         await self.clear_all()
         return None
 
-    def __enter__(self) -> 'UnifiedCacheManager':
+    def __enter__(self) -> UnifiedCacheManager:
         """Sync context manager entry - for non-async cleanup patterns."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """
         Sync context manager exit - automatic synchronous cleanup.
-        
+
         Usage:
             with UnifiedCacheManager() as cm:
                 # use caches

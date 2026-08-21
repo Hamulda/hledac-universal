@@ -17,23 +17,21 @@ Edit ONLY these files:
 - hledac/universal/tests/test_e2e_first_finding.py
 """
 
-
 import asyncio
-import msgspec
 import tempfile
 import time as time_module
 from pathlib import Path
 from typing import Any
-
-import pytest
 from unittest.mock import patch
 
+import pytest
+
 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 from hledac.universal.pipeline.live_feed_pipeline import (
     FeedPipelineRunResult,
     async_run_live_feed_pipeline,
 )
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
 # ---------------------------------------------------------------------------
 # Module-level sentinel for store injection (bypasses scheduler's broken wiring)
@@ -46,6 +44,7 @@ _canned_store_ref: Any = None
 # ---------------------------------------------------------------------------
 # Canned feed entry factory
 # ---------------------------------------------------------------------------
+
 
 def _make_canned_entry() -> dict[str, Any]:
     """Single high-quality feed entry that triggers CVE pattern."""
@@ -65,6 +64,7 @@ def _make_canned_entry() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Feed adapter patch — returns canned FeedEntryHit objects, no real HTTP
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def canned_feed_adapter():
@@ -131,9 +131,8 @@ def canned_feed_adapter():
     ) -> FeedPipelineRunResult:
         """Canned feed pipeline that simulates pattern-matched findings with store persistence."""
         import logging as _log
-        _log.getLogger().debug(
-            f"_canned_live_feed_pipeline ENTER: feed_url={feed_url}, store={store is not None}"
-        )
+
+        _log.getLogger().debug(f"_canned_live_feed_pipeline ENTER: feed_url={feed_url}, store={store is not None}")
         from hledac.universal.utils.patterns import pattern_matcher as pm_module
 
         pm_module.configure_default_bootstrap_patterns_if_empty()
@@ -147,7 +146,8 @@ def canned_feed_adapter():
         import uuid
 
         import hledac.universal.tests.test_e2e_first_finding as _test_mod
-        _effective_store = store if store is not None else getattr(_test_mod, '_canned_store_ref', None)
+
+        _effective_store = store if store is not None else getattr(_test_mod, "_canned_store_ref", None)
         if _effective_store is not None:
             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -161,9 +161,12 @@ def canned_feed_adapter():
                 provenance=("feed",),
             )
             results = await _effective_store.async_ingest_findings_batch([finding])
-            stored = sum(1 for r in results if (r.get('accepted') if isinstance(r, dict) else getattr(r, 'accepted', False)))
+            stored = sum(
+                1 for r in results if (r.get("accepted") if isinstance(r, dict) else getattr(r, "accepted", False))
+            )
             # Debug: log the result
             import logging as _log
+
             _log.getLogger().debug(
                 f"_canned_live_feed_pipeline ingest: finding_id={finding.finding_id}, "
                 f"results={results}, stored={stored}"
@@ -186,6 +189,7 @@ def canned_feed_adapter():
 
     # Also patch the LOCAL import name so the test's direct call uses the canned version
     import hledac.universal.tests.test_e2e_first_finding as _test_mod
+
     _test_mod.async_run_live_feed_pipeline = _canned_live_feed_pipeline
 
     # Also patch the scheduler's lazy import functions so its captured
@@ -204,9 +208,14 @@ def canned_feed_adapter():
     async def _mock_public_pipeline(*args, **kwargs) -> PipelineRunResult:
         return PipelineRunResult(
             query=kwargs.get("query", "test"),
-            discovered=1, fetched=1, matched_patterns=1,
-            accepted_findings=1, stored_findings=1,
-            patterns_configured=3, pages=(), error=None,
+            discovered=1,
+            fetched=1,
+            matched_patterns=1,
+            accepted_findings=1,
+            stored_findings=1,
+            patterns_configured=3,
+            pages=(),
+            error=None,
         )
 
     def _patched_public_pipeline():
@@ -228,6 +237,7 @@ def canned_feed_adapter():
 # Pattern matcher patch — configure bootstrap + return canned CVE PatternHit
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def canned_pattern_matcher():
     """
@@ -240,7 +250,7 @@ def canned_pattern_matcher():
     # Ensure bootstrap patterns are loaded
     pm_module.configure_default_bootstrap_patterns_if_empty()
     _original_match_text = pm_module.match_text
-    _original_lfp_match_text = getattr(lfp_module, 'match_text', None)
+    _original_lfp_match_text = getattr(lfp_module, "match_text", None)
 
     def _canned_match_text(text: str, *, boundary_policy: str = "none") -> list[PatternHit]:
         """Return canned CVE hit when the canned entry text is scanned."""
@@ -253,7 +263,7 @@ def canned_pattern_matcher():
                     pattern="cve-",
                     start=idx,
                     end=idx + 14,
-                    value=text[idx:idx + 14],
+                    value=text[idx : idx + 14],
                     label="vulnerability_id",
                 ),
             ]
@@ -274,6 +284,7 @@ def canned_pattern_matcher():
 # DuckDB store fixture — uses temp directory with isolated dedup LMDB
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 async def temp_duckdb_store():
     """
@@ -286,7 +297,7 @@ async def temp_duckdb_store():
     db_path = Path(tmp) / "shadow.duckdb"
     store = DuckDBShadowStore(db_path=str(db_path))
     # Bypass shared persistent dedup LMDB — use isolated hot-cache only
-    with patch.object(DuckDBShadowStore, '_init_persistent_dedup_lmdb', lambda self: None):
+    with patch.object(DuckDBShadowStore, "_init_persistent_dedup_lmdb", lambda self: None):
         await store.async_initialize()
     yield store
     try:
@@ -294,6 +305,7 @@ async def temp_duckdb_store():
     except Exception:  # noqa: BLE001
         pass
     import shutil
+
     try:
         shutil.rmtree(tmp, ignore_errors=True)
     except Exception:  # noqa: BLE001
@@ -304,13 +316,14 @@ async def temp_duckdb_store():
 # E2E Smoke Test — First Persisted Finding
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_e2e_first_persisted_finding(
     canned_feed_adapter,
     canned_pattern_matcher,
     temp_duckdb_store,
-):
+) -> None:
     """
     Canonical path smoke test: run live feed pipeline against a canned feed
     and verify that >=1 finding is persisted in the store with all
@@ -335,10 +348,7 @@ async def test_e2e_first_persisted_finding(
     )
 
     # Pipeline must have processed entries (no fetch error)
-    assert result.fetched_entries > 0, (
-        f"Pipeline fetched 0 entries — feed adapter patch failed. "
-        f"error={result.error}"
-    )
+    assert result.fetched_entries > 0, f"Pipeline fetched 0 entries — feed adapter patch failed. error={result.error}"
 
     # Pipeline must have scanned and found pattern hits
     assert result.matched_patterns >= 1, (
@@ -348,8 +358,7 @@ async def test_e2e_first_persisted_finding(
     )
 
     assert result.matched_patterns >= 1, (
-        f"Pipeline matched_patterns={result.matched_patterns} — expected >=1. "
-        f"fetched_entries={result.fetched_entries}"
+        f"Pipeline matched_patterns={result.matched_patterns} — expected >=1. fetched_entries={result.fetched_entries}"
     )
 
     # Query the store directly to verify persistence
@@ -374,16 +383,14 @@ async def test_e2e_first_persisted_finding(
 
     # source_type: must be canonical source type
     source_type = getattr(finding, "source_type", None)
-    assert source_type and source_type in (
-        "rss_atom_pipeline", "live_public_pipeline", "ct_log_pipeline"
-    ), f"Invalid source_type '{source_type}' — expected canonical pipeline type"
+    assert source_type and source_type in ("rss_atom_pipeline", "live_public_pipeline", "ct_log_pipeline"), (
+        f"Invalid source_type '{source_type}' — expected canonical pipeline type"
+    )
 
     # confidence: float in [0.0, 1.0]
     confidence = getattr(finding, "confidence", None)
     assert confidence is not None, f"Missing confidence field: {finding}"
-    assert isinstance(confidence, (int, float)) and 0.0 <= confidence <= 1.0, (
-        f"confidence out of range: {confidence}"
-    )
+    assert isinstance(confidence, (int, float)) and 0.0 <= confidence <= 1.0, f"confidence out of range: {confidence}"
 
     # payload_text or content: at least one must be non-empty
     # NOTE: DuckDB async_get_recent_findings query does NOT SELECT payload_text,
@@ -394,9 +401,7 @@ async def test_e2e_first_persisted_finding(
     has_content = getattr(finding, "content", None)
     payload_val = has_payload or has_content
     if payload_val is not None:
-        assert isinstance(payload_val, str) and payload_val, (
-            f"Finding payload/content is empty: {payload_val!r}"
-        )
+        assert isinstance(payload_val, str) and payload_val, f"Finding payload/content is empty: {payload_val!r}"
 
     # ts: Unix timestamp, must be reasonable (2024-2030 range)
     ts = getattr(finding, "ts", None)
@@ -421,7 +426,7 @@ async def test_e2e_export_handoff_sees_non_zero_findings(
     canned_feed_adapter,
     canned_pattern_matcher,
     temp_duckdb_store,
-):
+) -> None:
     """
     Verify that ExportHandoff receives non-zero finding count from the store.
 
@@ -463,21 +468,19 @@ async def test_e2e_export_handoff_sees_non_zero_findings(
     for f in findings:
         conf = getattr(f, "confidence", -1.0)
         assert isinstance(conf, (int, float)) and 0.0 <= conf <= 1.0, (
-            f"Finding confidence out of range: {conf} "
-            f"(finding_id={getattr(f, 'finding_id', 'unknown')})"
+            f"Finding confidence out of range: {conf} (finding_id={getattr(f, 'finding_id', 'unknown')})"
         )
 
     # Verify all findings have a persisted finding_id
     for f in findings:
         fid = getattr(f, "finding_id", None)
-        assert fid and isinstance(fid, str) and len(fid) >= 8, (
-            f"Finding missing/invalid finding_id: {fid!r}"
-        )
+        assert fid and isinstance(fid, str) and len(fid) >= 8, f"Finding missing/invalid finding_id: {fid!r}"
 
 
 # ---------------------------------------------------------------------------
 # Canned public OSINT entry factory
 # ---------------------------------------------------------------------------
+
 
 def _make_canned_public_entry() -> dict[str, Any]:
     """Single high-quality public-discovery entry that triggers CVE pattern."""
@@ -495,6 +498,7 @@ def _make_canned_public_entry() -> dict[str, Any]:
 # Canned CT log entry factory
 # ---------------------------------------------------------------------------
 
+
 def _make_canned_ct_result(domain: str = "example.com") -> dict[str, Any]:
     """Canned CT log pivot result for a domain."""
     return {
@@ -510,6 +514,7 @@ def _make_canned_ct_result(domain: str = "example.com") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Public adapter patch — returns canned result, no real HTTP
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def canned_public_adapter():
@@ -537,7 +542,7 @@ def canned_public_adapter():
                     pattern="cve-",
                     start=idx,
                     end=idx + 14,
-                    value=text[idx:idx + 14],
+                    value=text[idx : idx + 14],
                     label="vulnerability_id",
                 ),
             ]
@@ -570,6 +575,7 @@ def canned_public_adapter():
 # CT log client patch — returns canned CT findings, no real backend
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def canned_ct_adapter():
     """
@@ -594,6 +600,7 @@ def canned_ct_adapter():
 # Canonical sprint smoke test — persist + export with mixed sources
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_canonical_run_sprint_persists_and_exports_findings(
@@ -603,7 +610,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     canned_ct_adapter,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Canonical sprint smoke test: run_sprint() path exercised with bounded
     doubles for feed, public, and CT discovery branches.
@@ -621,14 +628,14 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     from hledac.universal.export.sprint_exporter import export_sprint
     from hledac.universal.intel.ct_log_client import CTLogClient
     from hledac.universal.paths import get_sprint_json_report_path
-    from hledac.universal.utils.patterns.pattern_matcher import (
-        configure_default_bootstrap_patterns_if_empty,
-    )
     from hledac.universal.project_types import ExportHandoff
     from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
     from hledac.universal.runtime.sprint_scheduler import (
         SprintScheduler,
         SprintSchedulerConfig,
+    )
+    from hledac.universal.utils.patterns.pattern_matcher import (
+        configure_default_bootstrap_patterns_if_empty,
     )
 
     store = temp_duckdb_store
@@ -655,6 +662,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     # _canned_live_feed_pipeline (which receives store=None from the scheduler's
     # broken fetch_one closure) can still persist findings directly.
     import hledac.universal.tests.test_e2e_first_finding as _test_mod
+
     _test_mod._canned_store_ref = store
 
     # Canonical feed source URL (patched via canned_feed_adapter)
@@ -677,6 +685,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
 
     # Debug: log result stats
     import logging as _log
+
     _log.getLogger().debug(
         f"Scheduler result: cycles_started={result.cycles_started}, "
         f"cycles_completed={result.cycles_completed}, "
@@ -691,11 +700,7 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     # return values which may not be wired to the scheduler accumulator)
     # The _canned_live_feed_pipeline patches store persistence correctly,
     # and the scheduler's _process_result should accumulate accepted_findings.
-    total_accepted = (
-        result.accepted_findings
-        + result.public_accepted_findings
-        + result.ct_log_stored
-    )
+    total_accepted = result.accepted_findings + result.public_accepted_findings + result.ct_log_stored
 
     # ---- Persistence check ----
     persisted_findings = await store.async_get_recent_findings(limit=20)
@@ -773,42 +778,38 @@ async def test_canonical_run_sprint_persists_and_exports_findings(
     # export_sprint must write a JSON report artifact
     report_path = get_sprint_json_report_path("test_canonical_smoke")
     assert report_path.exists(), (
-        f"export_sprint did not write report artifact at {report_path}. "
-        f"export_result={export_result}"
+        f"export_sprint did not write report artifact at {report_path}. export_result={export_result}"
     )
 
     # Report must contain non-zero finding count
     # The accepted count lives in product_value_summary.accepted (line 783 of sprint_exporter.py)
     import orjson
+
     report_data = orjson.loads(report_path.read_bytes())
     pvs = report_data.get("product_value_summary", {})
     report_accepted = pvs.get("accepted", 0)
     assert report_accepted >= 1, (
-        f"Report artifact has accepted={report_accepted} — expected >=1. "
-        f"Full report: {report_data}"
+        f"Report artifact has accepted={report_accepted} — expected >=1. Full report: {report_data}"
     )
 
     # ---- Source mix consistency ----
     # Source mix in runtime truth must match the canned input sources
     branch_mix = runtime_truth["branch_mix"]
     assert branch_mix["feed_findings"] >= 1 or branch_mix["public_findings"] >= 1 or branch_mix["ct_findings"] >= 1, (
-        f"Source mix is all-zero — no branch produced findings. "
-        f"branch_mix={branch_mix}"
+        f"Source mix is all-zero — no branch produced findings. branch_mix={branch_mix}"
     )
 
     # Report branch_mix must be consistent with runtime truth
-    report_branch_mix = report_data.get("canonical_run_summary", {}).get(
-        "primary_signal", "unknown"
-    )
+    report_branch_mix = report_data.get("canonical_run_summary", {}).get("primary_signal", "unknown")
     assert report_branch_mix != "none", (
-        f"Report has primary_signal={report_branch_mix} — expected a real signal source. "
-        f"Full report: {report_data}"
+        f"Report has primary_signal={report_branch_mix} — expected a real signal source. Full report: {report_data}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Aggressive Mode Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hermetic
 @pytest.mark.asyncio
@@ -819,7 +820,7 @@ async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently(
     canned_ct_adapter,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Aggressive mode: feed, public, and CT branches fire concurrently.
 
@@ -864,8 +865,7 @@ async def test_aggressive_cycle_fans_out_feed_public_ct_concurrently(
 
     # Aggressive mode: CT should run in-cycle, producing discoveries
     assert result.ct_log_discovered > 0, (
-        f"Aggressive mode should run CT discovery in-cycle. "
-        f"ct_log_discovered={result.ct_log_discovered}"
+        f"Aggressive mode should run CT discovery in-cycle. ct_log_discovered={result.ct_log_discovered}"
     )
 
     print(
@@ -883,7 +883,7 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
     canned_pattern_matcher,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Slow branch timeout: if public branch times out, feed should still complete.
 
@@ -942,6 +942,7 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
         ct_client = CTLogClient(cache_dir=ct_cache)
 
         import time as time_module
+
         start_time = time_module.monotonic()
 
         result = await scheduler.run(
@@ -955,24 +956,15 @@ async def test_slow_branch_timeout_does_not_block_other_branches(
         elapsed = time_module.monotonic() - start_time
 
         # Cycle should complete without hanging
-        assert elapsed < 30.0, (
-            f"Cycle took too long ({elapsed:.1f}s), slow branch may have blocked"
-        )
+        assert elapsed < 30.0, f"Cycle took too long ({elapsed:.1f}s), slow branch may have blocked"
 
         # Feed should have produced findings
-        assert result.accepted_findings >= 0, (
-            f"Feed branch should run. accepted={result.accepted_findings}"
-        )
+        assert result.accepted_findings >= 0, f"Feed branch should run. accepted={result.accepted_findings}"
 
         # Public timeout should be recorded
-        assert result.public_error is not None, (
-            "Public branch timeout should be recorded"
-        )
+        assert result.public_error is not None, "Public branch timeout should be recorded"
 
-        print(
-            f"\n[slow_branch] test passed: elapsed={elapsed:.1f}s "
-            f"public_error={result.public_error}"
-        )
+        print(f"\n[slow_branch] test passed: elapsed={elapsed:.1f}s public_error={result.public_error}")
     finally:
         pub_module.async_run_live_public_pipeline = _orig_public
 
@@ -984,7 +976,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
     canned_pattern_matcher,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Partial success: if public times out but feed succeeds, feed findings
     should still be persisted and count toward runtime truth.
@@ -1049,10 +1041,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
 
         # Get persisted findings
         persisted_findings = await store.async_get_recent_findings(limit=100)
-        feed_findings = [
-            f for f in persisted_findings
-            if getattr(f, "source_type", "") == "rss_atom_pipeline"
-        ]
+        feed_findings = [f for f in persisted_findings if getattr(f, "source_type", "") == "rss_atom_pipeline"]
 
         # Successful branch persists findings even if another branch fails
         assert feed_findings or result.accepted_findings >= 0, (
@@ -1062,9 +1051,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
         )
 
         # Public timeout should be recorded
-        assert result.public_error is not None, (
-            "Public timeout should be recorded in result.public_error"
-        )
+        assert result.public_error is not None, "Public timeout should be recorded in result.public_error"
 
         print(
             f"\n[partial_success] test passed: "
@@ -1080,6 +1067,7 @@ async def test_partial_branch_success_still_updates_runtime_truth(
 # Sprint F195B: Partial Export Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.hermetic
 @pytest.mark.asyncio
 async def test_partial_export_written_every_ten_findings(
@@ -1087,7 +1075,7 @@ async def test_partial_export_written_every_ten_findings(
     canned_pattern_matcher,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Aggressive mode writes a partial JSON artifact every N findings (default 10).
 
@@ -1133,17 +1121,13 @@ async def test_partial_export_written_every_ten_findings(
     scheduler._finding_count = 7
     scheduler._last_partial_finding_count = 0
     await scheduler._maybe_export_partial(lifecycle)
-    assert not partial_path.exists(), (
-        f"Partial export fired before interval threshold: {partial_path.exists()}"
-    )
+    assert not partial_path.exists(), f"Partial export fired before interval threshold: {partial_path.exists()}"
 
     # Cross threshold: 12 findings, delta=12 >= 10 → partial must be written
     scheduler._finding_count = 12
     scheduler._last_partial_finding_count = 0  # simulate first crossing
     await scheduler._maybe_export_partial(lifecycle)
-    assert partial_path.exists(), (
-        "Partial export not written when findings crossed interval threshold."
-    )
+    assert partial_path.exists(), "Partial export not written when findings crossed interval threshold."
     data = json_module.loads(partial_path.read_text())
     assert data.get("is_partial") is True, f"Partial artifact missing is_partial flag: {data}"
     assert data.get("finding_count") == 12, f"Partial artifact has wrong finding_count: {data}"
@@ -1157,10 +1141,7 @@ async def test_partial_export_written_every_ten_findings(
     data = json_module.loads(partial_path.read_text())
     assert data.get("finding_count") == 23
 
-    print(
-        f"\n[partial_export_interval] passed: "
-        f"findings={scheduler._finding_count}, artifact={partial_path}"
-    )
+    print(f"\n[partial_export_interval] passed: findings={scheduler._finding_count}, artifact={partial_path}")
 
 
 @pytest.mark.hermetic
@@ -1170,7 +1151,7 @@ async def test_partial_export_survives_early_windup(
     canned_pattern_matcher,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Early windup (panic exit) still leaves the latest partial artifact intact.
 
@@ -1224,9 +1205,7 @@ async def test_partial_export_survives_early_windup(
         finding_count=scheduler._finding_count,
     )
 
-    assert partial_path.exists(), (
-        f"Partial artifact not written on early windup. result={result}"
-    )
+    assert partial_path.exists(), f"Partial artifact not written on early windup. result={result}"
     data = orjson.loads(partial_path.read_bytes())
     assert data.get("is_partial") is True
     assert data.get("finding_count") == 8
@@ -1247,15 +1226,14 @@ async def test_partial_export_survives_early_windup(
     assert abort_data.get("finding_count") == 11
 
     print(
-        f"\n[partial_export_windup] passed: "
-        f"finding_count={abort_data.get('finding_count')}, "
-        f"partial_path={abort_path}"
+        f"\n[partial_export_windup] passed: finding_count={abort_data.get('finding_count')}, partial_path={abort_path}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Sprint F195B: Partial Export — Final Export Contract
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.hermetic
 @pytest.mark.asyncio
@@ -1266,7 +1244,7 @@ async def test_final_export_still_replaces_partial_as_terminal_artifact(
     canned_ct_adapter,
     temp_duckdb_store,
     tmp_path: Path,
-):
+) -> None:
     """
     Final export (export_sprint) is the canonical terminal artifact.
     Partial export artifact is NOT deleted or overwritten — it survives as a
@@ -1342,9 +1320,7 @@ async def test_final_export_still_replaces_partial_as_terminal_artifact(
 
     # Canonical report must be written
     canonical_path = get_sprint_json_report_path(sprint_id)
-    assert canonical_path.exists(), (
-        f"export_sprint did not write canonical report. result={export_result}"
-    )
+    assert canonical_path.exists(), f"export_sprint did not write canonical report. result={export_result}"
 
     # Partial artifact must NOT be deleted (recovery surface survives final export)
     assert partial_path.exists(), (
@@ -1357,16 +1333,11 @@ async def test_final_export_still_replaces_partial_as_terminal_artifact(
 
     # Canonical report must NOT have is_partial flag set to True
     canonical_data = orjson.loads(canonical_path.read_bytes())
-    assert (
-        "is_partial" not in canonical_data or canonical_data.get("is_partial") is not True
-    ), "Canonical report must not carry is_partial=True"
+    assert "is_partial" not in canonical_data or canonical_data.get("is_partial") is not True, (
+        "Canonical report must not carry is_partial=True"
+    )
 
     # Canonical and partial must be distinct paths
-    assert canonical_path != partial_path, (
-        "Canonical report and partial artifact must be distinct files"
-    )
+    assert canonical_path != partial_path, "Canonical report and partial artifact must be distinct files"
 
-    print(
-        f"\n[final_export_terminal] passed: "
-        f"canonical={canonical_path.name}, partial={partial_path.name}"
-    )
+    print(f"\n[final_export_terminal] passed: canonical={canonical_path.name}, partial={partial_path.name}")

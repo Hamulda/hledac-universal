@@ -28,10 +28,6 @@ __all__ = [
     "run_batch_in_subinterpreter",
 ]
 
-# ---------------------------------------------------------------------------
-# Feature detection
-# ---------------------------------------------------------------------------
-
 _SUBINTERPRETER_AVAILABLE: bool | None = None
 
 
@@ -47,7 +43,6 @@ def is_subinterpreter_available() -> bool:
     if _SUBINTERPRETER_AVAILABLE is not None:
         return _SUBINTERPRETER_AVAILABLE
 
-    # Check env var
     env_val = os.environ.get("HLEDAC_ENABLE_SUBINTERPRETER", "0")
     if env_val not in ("1", "true", "yes", "on"):
         _SUBINTERPRETER_AVAILABLE = False
@@ -69,10 +64,6 @@ def is_subinterpreter_available() -> bool:
         _SUBINTERPRETER_AVAILABLE = False
         return False
 
-
-# ---------------------------------------------------------------------------
-# Pool singleton
-# ---------------------------------------------------------------------------
 
 _pool: Any = None
 
@@ -106,12 +97,7 @@ def _get_pool(max_workers: int | None = None) -> Any | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-async def run_in_subinterpreter(
+async def run_in_subinterpreter[T](
     fn: Callable[..., T],
     /,
     *args: Any,
@@ -163,7 +149,7 @@ async def run_in_subinterpreter(
     return await loop.run_in_executor(pool, fn, *args)
 
 
-async def run_batch_in_subinterpreter(
+async def run_batch_in_subinterpreter[T](
     fn: Callable[[Any], T],
     items: list[Any],
     *,

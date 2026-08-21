@@ -103,6 +103,7 @@ Each worker has its own GIL — no GIL contention.
 For DuckDB + MLX coexistence on M1 8GB, ThreadPoolExecutor (bounded)
 is optimal — DuckDB releases GIL in C extension, MLX runs on Metal.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -115,7 +116,6 @@ import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Final
-from _core import aclose
 
 _log = logging.getLogger(__name__)
 
@@ -123,15 +123,11 @@ _log = logging.getLogger(__name__)
 
 # Hard cap: 24 threads total (8 cores × 3 + main asyncio)
 # Override via HLEDAC_TOTAL_THREAD_CAP env var
-_TOTAL_THREAD_HARD_CAP: Final[int] = int(
-    os.environ.get("HLEDAC_TOTAL_THREAD_CAP", "24")
-    )
+_TOTAL_THREAD_HARD_CAP: Final[int] = int(os.environ.get("HLEDAC_TOTAL_THREAD_CAP", "24"))
 
 # Emergency cap: 12 threads when memory pressure CRITICAL or above
 # Override via HLEDAC_EMERGENCY_THREAD_CAP env var
-_EMERGENCY_THREAD_CAP: Final[int] = int(
-    os.environ.get("HLEDAC_EMERGENCY_THREAD_CAP", "12")
-    )
+_EMERGENCY_THREAD_CAP: Final[int] = int(os.environ.get("HLEDAC_EMERGENCY_THREAD_CAP", "12"))
 
 # ── Per-domain worker presets ──────────────────────────────────────────────────
 
@@ -148,44 +144,44 @@ def _bounded_workers(preset: int) -> int:
 
 _DOMAIN_PRESETS: dict[str, int] = {
     # ── Core domains (existing) ──
-    "html": 8,          # ISSUE-5: 100pages×200ms/8=2.5s < 6s target
-    "duckdb": 2,        # DuckDB sync queries
-    "infer": 1,         # CoreML/MLX sync bridge
-    "crypto": 1,        # yara-python, Pycryptodome
-    "semantic": 2,      # SimHash, embedding deduplication
-    "content": 3,       # content hashing
-    "metadata": 2,      # metadata processing
-    "dns": 1,           # DNS/mlx operations
-    "parallel": 3,      # general parallel execution
-    "nlp": 2,           # GLiNER2, fast-langdetect, ghost forensics
-    "vision": 2,        # PyMuPDF, vision encoder, CoreML
-    "embed": 1,         # MLX embed sync bridge
-    "storage": 2,       # DuckDB sync adapter
-    "captcha": 1,       # PIL CAPTCHA image analysis
-    "exposure_db": 1,   # LMDB single-writer for exposure cache
-    "default": 2,       # unmapped fallback
+    "html": 8,  # ISSUE-5: 100pages×200ms/8=2.5s < 6s target
+    "duckdb": 2,  # DuckDB sync queries
+    "infer": 1,  # CoreML/MLX sync bridge
+    "crypto": 1,  # yara-python, Pycryptodome
+    "semantic": 2,  # SimHash, embedding deduplication
+    "content": 3,  # content hashing
+    "metadata": 2,  # metadata processing
+    "dns": 1,  # DNS/mlx operations
+    "parallel": 3,  # general parallel execution
+    "nlp": 2,  # GLiNER2, fast-langdetect, ghost forensics
+    "vision": 2,  # PyMuPDF, vision encoder, CoreML
+    "embed": 1,  # MLX embed sync bridge
+    "storage": 2,  # DuckDB sync adapter
+    "captcha": 1,  # PIL CAPTCHA image analysis
+    "exposure_db": 1,  # LMDB single-writer for exposure cache
+    "default": 2,  # unmapped fallback
     # ── R5: Hermes engine fallback domains (Issue 2 fix) ──
-    "hermes_prep_fb": 3,       # ChatML format + tokenization (fallback)
-    "hermes_post_fb": 2,       # JSON parse + model_validate (fallback)
+    "hermes_prep_fb": 3,  # ChatML format + tokenization (fallback)
+    "hermes_post_fb": 2,  # JSON parse + model_validate (fallback)
     "hermes_inference_fb": 1,  # MLX inference (fallback)
-    "hermes_compile_fb": 1,    # Prompt compilation (fallback, lazy)
+    "hermes_compile_fb": 1,  # Prompt compilation (fallback, lazy)
     # ── R5: Ad-hoc pool migration domains (Issues 1/3/4 fix) ──
-    "inference_engine": 1,     # InferenceEngine thread pool
-    "evidence_duckdb": 2,      # Evidence log DuckDB writes
-    "evidence_sqlite": 1,      # Evidence log SQLite writes (WAL serialized)
-    "forensics": 2,            # Document forensics CPU
-    "vision_ocr_batch": 2,     # Vision OCR batch processing
-    "forensics_sync": 1,       # Forensics sync wrapper
-    "uma_callback": 2,         # UMA watchdog callbacks
-    "legacy_cpu": 2,           # Deprecated CPU_EXECUTOR compat
-    "legacy_io": 4,            # Deprecated IO_EXECUTOR compat
-    "parquet": 1,              # Parquet writer executor
+    "inference_engine": 1,  # InferenceEngine thread pool
+    "evidence_duckdb": 2,  # Evidence log DuckDB writes
+    "evidence_sqlite": 1,  # Evidence log SQLite writes (WAL serialized)
+    "forensics": 2,  # Document forensics CPU
+    "vision_ocr_batch": 2,  # Vision OCR batch processing
+    "forensics_sync": 1,  # Forensics sync wrapper
+    "uma_callback": 2,  # UMA watchdog callbacks
+    "legacy_cpu": 2,  # Deprecated CPU_EXECUTOR compat
+    "legacy_io": 4,  # Deprecated IO_EXECUTOR compat
+    "parquet": 1,  # Parquet writer executor
     "evidence_log_sqlite": 1,  # Evidence log SQLite (alt key)
     "evidence_log_duckdb": 2,  # Evidence log DuckDB (alt key)
 }
 
-
 # ── Internal helper: memory pressure check ─────────────────────────────────────
+
 
 def _is_emergency() -> bool:
     """Check if system is under CRITICAL or EMERGENCY memory pressure.
@@ -195,6 +191,7 @@ def _is_emergency() -> bool:
     """
     try:
         from hledac.universal._core.resource_governor import sample_uma_status
+
         status = sample_uma_status()
         return status in ("CRITICAL", "EMERGENCY")
     except Exception:
@@ -247,13 +244,12 @@ def _shutdown_all_executors(*, cancel_futures: bool = True) -> None:
                     executor.shutdown(wait=False, cancel_futures=cancel_futures)
                 except Exception:
                     _log.debug(
-                        "[domain_executors] shutdown error for '%s'", name,
+                        "[domain_executors] shutdown error for '%s'",
+                        name,
                         exc_info=True,
-    )
+                    )
         _executors.clear()
-        _log.info(
-            "[domain_executors] shutdown_all: %d executors shut down", len(names)
-    )
+        _log.info("[domain_executors] shutdown_all: %d executors shut down", len(names))
 
 
 def shutdown_all() -> None:
@@ -284,7 +280,7 @@ def _register_signal_handlers() -> None:
         _log.warning(
             "[domain_executors] signal %s received — shutting down executors",
             signal.Signals(signum).name,
-    )
+        )
         _shutdown_all_executors(cancel_futures=True)
         # Chain to original handler or default behavior
         if signum == signal.SIGINT:
@@ -413,7 +409,6 @@ def get_or_create(
         preset = _DOMAIN_PRESETS.get(name, max_workers or 2)
         workers = _bounded_workers(preset if max_workers is None else max_workers)
 
-        # Check memory pressure — tighten cap under duress
         emergency = _is_emergency()
         effective_cap = _EMERGENCY_THREAD_CAP if emergency else _TOTAL_THREAD_HARD_CAP
 
@@ -430,19 +425,22 @@ def get_or_create(
                     f"emergency={emergency}). "
                     f"Cannot create executor '{name}'. "
                     f"Reuse an existing executor or reduce worker counts."
-    )
+                )
             # Clamp workers to available slots
             workers = max(1, available)
             _log.warning(
-                "[domain_executors] CAPPED '%s' to %d workers "
-                "(available=%d, cap=%d, emergency=%s)",
-                name, workers, available, effective_cap, emergency,
-    )
+                "[domain_executors] CAPPED '%s' to %d workers (available=%d, cap=%d, emergency=%s)",
+                name,
+                workers,
+                available,
+                effective_cap,
+                emergency,
+            )
 
         executor = ThreadPoolExecutor(
             max_workers=workers,
             thread_name_prefix=name,
-    )
+        )
         _executors[name] = executor
 
         # One-time init on first executor creation
@@ -450,8 +448,12 @@ def get_or_create(
 
         _log.debug(
             "[domain_executors] Created '%s' with %d workers (total=%d/%d, emergency=%s)",
-            name, workers, _get_current_total(), effective_cap, emergency,
-    )
+            name,
+            workers,
+            _get_current_total(),
+            effective_cap,
+            emergency,
+        )
 
         return executor
 
@@ -494,15 +496,18 @@ def register_existing(
             raise RuntimeError(
                 f"[domain_executors] HARD CAP REACHED: cannot adopt '{name}' "
                 f"({workers} workers). Current={current_total}, cap={effective_cap}."
-    )
+            )
 
         _executors[name] = executor
         _ensure_initialized()
 
         _log.debug(
             "[domain_executors] Adopted '%s' with %d workers (total=%d/%d)",
-            name, workers, _get_current_total(), effective_cap,
-    )
+            name,
+            workers,
+            _get_current_total(),
+            effective_cap,
+        )
         return executor
 
 

@@ -27,21 +27,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_accelerate
 
-# Create singleton instance
 _accelerate = get_accelerate()
-
 
 def accelerate_wired():
     """Get the wired accelerate integration."""
     return _accelerate
-
 
 def cosine_similarity(
     vec_a: list[float],
@@ -61,7 +56,6 @@ def cosine_similarity(
     """
     return _accelerate.cosine_similarity(vec_a, vec_b)
 
-
 def batch_cosine_scores(
     query: list[float],
     candidates: list[list[float]],
@@ -77,7 +71,6 @@ def batch_cosine_scores(
         List of cosine similarity scores, one per candidate.
     """
     return _accelerate.batch_cosine_scores(query, candidates)
-
 
 def embedding_similarity_scores(
     query_embedding: list[float],
@@ -97,7 +90,6 @@ def embedding_similarity_scores(
     """
     scores = batch_cosine_scores(query_embedding, candidate_embeddings)
 
-    # Create index-score pairs
     indexed_scores = [(i, s) for i, s in enumerate(scores)]
 
     # Sort by score descending
@@ -107,8 +99,6 @@ def embedding_similarity_scores(
         return indexed_scores[:top_k]
     return indexed_scores
 
-
-# Check availability at import time for logging
 if _accelerate.available:
     backend = _accelerate.backend
     logger.info(f"[Accelerate] Rust accelerate.rs integration: ENABLED (backend: {backend})")

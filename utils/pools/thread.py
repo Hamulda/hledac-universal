@@ -26,22 +26,18 @@ __all__ = [
     "run_in_thread_pool_async",
 ]
 
-# ---------------------------------------------------------------------------
-# Default thread count
-# ---------------------------------------------------------------------------
-
 _DEFAULT_MAX_WORKERS = 3  # M1 8GB: conservative default
 
 
 def _get_max_workers_from_governor() -> int:
     """Get current max_workers from M1ResourceGovernor state."""
     try:
+        import psutil
+
         from hledac.universal._core.resource_governor import (
             ConcurrencyPreset,
             evaluate_uma_state,
         )
-
-        import psutil
 
         mem = psutil.virtual_memory()
         system_used_gib = mem.used / 1024**3
@@ -51,10 +47,6 @@ def _get_max_workers_from_governor() -> int:
     except Exception:
         return _DEFAULT_MAX_WORKERS
 
-
-# ---------------------------------------------------------------------------
-# Thread pool singleton
-# ---------------------------------------------------------------------------
 
 _thread_pool: ThreadPoolExecutor | None = None
 
@@ -93,9 +85,7 @@ def get_thread_pool(max_workers: int | None = None) -> ThreadPoolExecutor:
     return _thread_pool
 
 
-def run_in_thread_pool[T](
-    fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T:
+def run_in_thread_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """
     Run a function in the shared thread pool synchronously.
 
@@ -117,9 +107,7 @@ def run_in_thread_pool[T](
     return future.result()
 
 
-async def run_in_thread_pool_async[T](
-    fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T:
+async def run_in_thread_pool_async[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T:
     """
     Run a function in the shared thread pool asynchronously.
 

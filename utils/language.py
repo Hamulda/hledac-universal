@@ -1,17 +1,20 @@
 import hashlib
 import logging
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
 
 try:
     from fast_langdetect import detect as fast_detect
+
     FAST_LANGDETECT_AVAILABLE = True
 except ImportError:
     FAST_LANGDETECT_AVAILABLE = False
     from ._warnings import warn_once_log
-    warn_once_log('fast-langdetect-missing', 'fast-langdetect not available, using fallback detection')
+
+    warn_once_log("fast-langdetect-missing", "fast-langdetect not available, using fallback detection")
+
 
 class LanguageDetector:
     """Fast Language Detection optimized for M1 Apple Silicon.
@@ -19,10 +22,47 @@ class LanguageDetector:
     Uses fast-langdetect (FTZ format) for ultra-fast language detection.
     Falls back to simple heuristic if fast-langdetect is not installed.
     """
-    LANGUAGE_NAMES = {'en': 'English', 'cs': 'Czech', 'sk': 'Slovak', 'de': 'German', 'fr': 'French', 'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean', 'ar': 'Arabic', 'pt': 'Portuguese', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian', 'fi': 'Finnish', 'hu': 'Hungarian', 'tr': 'Turkish', 'uk': 'Ukrainian', 'bg': 'Bulgarian', 'ro': 'Romanian', 'el': 'Greek', 'he': 'Hebrew', 'th': 'Thai', 'vi': 'Vietnamese', 'id': 'Indonesian', 'ms': 'Malay', 'hi': 'Hindi', 'bn': 'Bengali', 'fa': 'Persian', 'ur': 'Urdu', 'sw': 'Swahili'}
-    __slots__ = tuple(('_char_ranges', 'fallback_mode'))
 
-    def __init__(self, fallback_mode: bool=True):
+    LANGUAGE_NAMES = {
+        "en": "English",
+        "cs": "Czech",
+        "sk": "Slovak",
+        "de": "German",
+        "fr": "French",
+        "es": "Spanish",
+        "it": "Italian",
+        "pl": "Polish",
+        "ru": "Russian",
+        "zh": "Chinese",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "ar": "Arabic",
+        "pt": "Portuguese",
+        "nl": "Dutch",
+        "sv": "Swedish",
+        "da": "Danish",
+        "no": "Norwegian",
+        "fi": "Finnish",
+        "hu": "Hungarian",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+        "bg": "Bulgarian",
+        "ro": "Romanian",
+        "el": "Greek",
+        "he": "Hebrew",
+        "th": "Thai",
+        "vi": "Vietnamese",
+        "id": "Indonesian",
+        "ms": "Malay",
+        "hi": "Hindi",
+        "bn": "Bengali",
+        "fa": "Persian",
+        "ur": "Urdu",
+        "sw": "Swahili",
+    }
+    __slots__ = ("_char_ranges", "fallback_mode")
+
+    def __init__(self, fallback_mode: bool = True) -> None:
         """Initialize language detector.
 
         Args:
@@ -33,9 +73,18 @@ class LanguageDetector:
 
     def _build_char_ranges(self) -> dict[str, tuple]:
         """Build character range mappings for fallback detection."""
-        return {'zh': (19968, 40959), 'ja': (12352, 12447), 'ko': (44032, 55215), 'ru': (1024, 1279), 'ar': (1536, 1791), 'el': (880, 1023), 'th': (3584, 3711), 'he': (1424, 1535)}
+        return {
+            "zh": (19968, 40959),
+            "ja": (12352, 12447),
+            "ko": (44032, 55215),
+            "ru": (1024, 1279),
+            "ar": (1536, 1791),
+            "el": (880, 1023),
+            "th": (3584, 3711),
+            "he": (1424, 1535),
+        }
 
-    def detect(self, text: str, min_length: int=10) -> str:
+    def detect(self, text: str, min_length: int = 10) -> str:
         """Detect language of text.
 
         Args:
@@ -53,7 +102,7 @@ class LanguageDetector:
             'en'
         """
         if not text or len(text.strip()) < min_length:
-            return 'unknown'
+            return "unknown"
         text = text.strip()
         if FAST_LANGDETECT_AVAILABLE:
             try:
@@ -62,37 +111,71 @@ class LanguageDetector:
                     return result
                 if isinstance(result, list) and result:
                     first = result[0]
-                    if isinstance(first, dict) and 'lang' in first:
-                        return str(first['lang'])
-                return 'unknown'
+                    if isinstance(first, dict) and "lang" in first:
+                        return str(first["lang"])
+                return "unknown"
             except Exception as e:
-                logger.warning(f'fast-langdetect failed: {e}, using fallback')
+                logger.warning(f"fast-langdetect failed: {e}, using fallback")
         if self.fallback_mode:
             return self._fallback_detect(text)
-        return 'unknown'
+        return "unknown"
 
     def _fallback_detect(self, text: str) -> str:
         """Fallback detection using simple character analysis."""
         sample = text[:200]
-        czech_chars = set('ěščřžýáíéďťňóůúĚŠČŘŽÝÁÍÉĎŤŇÓŮÚ')
+        czech_chars = set("ěščřžýáíéďťňóůúĚŠČŘŽÝÁÍÉĎŤŇÓŮÚ")
         if czech_chars.intersection(sample):
-            return 'cs'
+            return "cs"
         for lang, (start, end) in self._char_ranges.items():
             for char in sample:
                 if start <= ord(char) <= end:
                     return lang
-        common_czech_words = {'a', 'se', 'na', 'je', 'to', 'že', 's', 'v', 'o', 'z', 'do', 'ne', 'si', 'jako', 'ale', 'tak', 'jsem'}
-        common_english_words = {'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 'on', 'with'}
+        common_czech_words = {
+            "a",
+            "se",
+            "na",
+            "je",
+            "to",
+            "že",
+            "s",
+            "v",
+            "o",
+            "z",
+            "do",
+            "ne",
+            "si",
+            "jako",
+            "ale",
+            "tak",
+            "jsem",
+        }
+        common_english_words = {
+            "the",
+            "be",
+            "to",
+            "of",
+            "and",
+            "a",
+            "in",
+            "that",
+            "have",
+            "i",
+            "it",
+            "for",
+            "not",
+            "on",
+            "with",
+        }
         words = sample.lower().split()
         if not words:
-            return 'unknown'
-        czech_count = sum((1 for word in words if word in common_czech_words))
-        english_count = sum((1 for word in words if word in common_english_words))
+            return "unknown"
+        czech_count = sum(1 for word in words if word in common_czech_words)
+        english_count = sum(1 for word in words if word in common_english_words)
         if czech_count > english_count and czech_count > 0:
-            return 'cs'
+            return "cs"
         if english_count > czech_count and english_count > 0:
-            return 'en'
-        return 'en'
+            return "en"
+        return "en"
 
     def is_supported(self, lang_code: str) -> bool:
         """Check if language code is supported.
@@ -116,7 +199,7 @@ class LanguageDetector:
         """
         return self.LANGUAGE_NAMES.get(lang_code, lang_code)
 
-    def batch_detect(self, texts: list, min_length: int=10) -> list:
+    def batch_detect(self, texts: list, min_length: int = 10) -> list:
         """Detect languages for multiple texts.
 
         Args:
@@ -152,7 +235,8 @@ class LanguageDetector:
                     filtered.append(text)
         return filtered
 
-def create_language_detector(fallback_mode: bool=True) -> LanguageDetector:
+
+def create_language_detector(fallback_mode: bool = True) -> LanguageDetector:
     """Factory function to create language detector.
 
     Args:
@@ -163,21 +247,23 @@ def create_language_detector(fallback_mode: bool=True) -> LanguageDetector:
     """
     return LanguageDetector(fallback_mode=fallback_mode)
 
+
 class FastLangDetector:
     """Fast language detection adapter with bounded output for evidence metadata.
 
     Returns a bounded dict with lang code, confidence bucket, and hash.
     Used for metadata deduplication and cross-language comparison control.
     """
+
     MAX_CHARS = 4000
     MIN_LENGTH = 10
-    __slots__ = tuple(('_detector',))
+    __slots__ = ("_detector",)
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the fast language detector."""
         self._detector = LanguageDetector(fallback_mode=True)
 
-    def detect(self, text: str, *, max_chars: int=4000) -> dict[str, Any]:
+    def detect(self, text: str, *, max_chars: int = 4000) -> dict[str, Any]:
         """
         Detect language with bounded output.
 
@@ -207,18 +293,23 @@ class FastLangDetector:
         else:
             confidence = 0.4
         if confidence >= 0.7:
-            conf_bucket = 'high'
+            conf_bucket = "high"
         elif confidence >= 0.4:
-            conf_bucket = 'med'
+            conf_bucket = "med"
         else:
-            conf_bucket = 'low'
-        lang_hash_input = f'{lang_code}:{conf_bucket}'
+            conf_bucket = "low"
+        lang_hash_input = f"{lang_code}:{conf_bucket}"
         lang_hash = hashlib.sha256(lang_hash_input.encode()).hexdigest()[:8]
-        return {'lang': lang_code if lang_code != 'unknown' else 'und', 'confidence': confidence, 'conf_bucket': conf_bucket, 'lang_hash': lang_hash}
+        return {
+            "lang": lang_code if lang_code != "unknown" else "und",
+            "confidence": confidence,
+            "conf_bucket": conf_bucket,
+            "lang_hash": lang_hash,
+        }
 
     def _default_result(self) -> dict[str, Any]:
         """Return default result for insufficient text or error."""
-        return {'lang': 'und', 'confidence': 0.0, 'conf_bucket': 'low', 'lang_hash': '00000000'}
+        return {"lang": "und", "confidence": 0.0, "conf_bucket": "low", "lang_hash": "00000000"}
 
     def is_cross_language_comparable(self, result1: dict[str, Any], result2: dict[str, Any]) -> bool:
         """
@@ -229,10 +320,10 @@ class FastLangDetector:
         - Both have low confidence
         - Both have same language code
         """
-        if result1['lang'] == 'und' and result2['lang'] == 'und':
+        if result1["lang"] == "und" and result2["lang"] == "und":
             return True
-        if result1['conf_bucket'] == 'low' and result2['conf_bucket'] == 'low':
+        if result1["conf_bucket"] == "low" and result2["conf_bucket"] == "low":
             return True
-        if result1['lang'] == result2['lang']:
+        if result1["lang"] == result2["lang"]:
             return True
         return False

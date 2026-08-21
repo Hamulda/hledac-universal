@@ -1,4 +1,4 @@
-"""  # noqa: N999
+"""# noqa: N999
 O-04: tools/ and scripts/ smoke tests
 ================================================================
 
@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _core import aclose
 
 REPO_ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 TOOLS_DIR = REPO_ROOT / "tools"
@@ -163,13 +162,20 @@ def test_script_shellcheck(script_name: str) -> None:
     result = subprocess.run(
         [
             str(shellcheck),
-            "-S", "error",
-            "-e", "SC1090",
-            "-e", "SC1007",
-            "-e", "SC2048",
-            "-e", "SC2006",
-            "-e", "SC2028",
-            "-e", "SC2086",
+            "-S",
+            "error",
+            "-e",
+            "SC1090",
+            "-e",
+            "SC1007",
+            "-e",
+            "SC2048",
+            "-e",
+            "SC2006",
+            "-e",
+            "SC2028",
+            "-e",
+            "SC2086",
             str(script_path),
         ],
         capture_output=True,
@@ -182,21 +188,16 @@ def test_script_shellcheck(script_name: str) -> None:
             f"shellcheck failed for {script_name} (exit {result.returncode}):\n"
             f"STDOUT:\n{result.stdout}\n"
             f"STDERR:\n{result.stderr}"
-    )
+        )
 
 
 # =============================================================================
 # O-04: Tools metadata smoke test — tools/__init__.py exports
 # =============================================================================
 
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register O-04 smoke test markers."""
-    config.addinivalue_line(
-        "markers", "tools_smoke: O-04 smoke tests for tools/ and scripts/"
-    )
-    config.addinivalue_line(
-        "markers", "tool_smoke: Python module import smoke tests"
-    )
-    config.addinivalue_line(
-        "markers", "script_smoke: shell script validation tests"
-    )
+    config.addinivalue_line("markers", "tools_smoke: O-04 smoke tests for tools/ and scripts/")
+    config.addinivalue_line("markers", "tool_smoke: Python module import smoke tests")
+    config.addinivalue_line("markers", "script_smoke: shell script validation tests")

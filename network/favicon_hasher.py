@@ -3,7 +3,6 @@
 import importlib.util
 import logging
 from collections.abc import Callable
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 

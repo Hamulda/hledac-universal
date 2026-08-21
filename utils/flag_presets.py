@@ -19,15 +19,8 @@ explicit env is the override — invariant from the sprint spec).
 Source: docs/flag_analysis/FLAGS_TAXONOMY_AND_VALIDATION.md §5.1.
 """
 
-
-
 import os
 from typing import Final
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Preset definitions (Phase 3 spec)
-# ---------------------------------------------------------------------------
 
 MINIMAL: Final[dict[str, str]] = {
     # CI / unit tests — no network, no LLM, no sidecars.
@@ -84,6 +77,7 @@ RESEARCH: Final[dict[str, str]] = {
     "HLEDAC_ENABLE_DEEP_RESEARCH": "1",
 }
 
+
 # FULL is built dynamically from FLAG_REGISTRY at import-time of this
 # module so it stays in sync with newly registered flags. The dict
 # has to be materialised eagerly because consumers (CLI --preset)
@@ -92,6 +86,7 @@ def _build_full() -> dict[str, str]:
     # Local import to avoid hard dependency on registry import order
     # (utils.flag_presets is independent of utils.flag_registry).
     from .flag_registry import FLAG_REGISTRY
+
     return dict.fromkeys(FLAG_REGISTRY, "1")
 
 
@@ -106,10 +101,6 @@ PRESETS: Final[dict[str, dict[str, str]]] = {
     "full": FULL,
 }
 
-
-# ---------------------------------------------------------------------------
-# Preset application — never overwrites explicit env vars
-# ---------------------------------------------------------------------------
 
 def apply_preset(
     name: str,
@@ -135,9 +126,7 @@ def apply_preset(
         KeyError: if ``name`` is not in :data:`PRESETS`.
     """
     if name not in PRESETS:
-        raise KeyError(
-            f"Unknown preset {name!r}. Available: {sorted(PRESETS)}"
-    )
+        raise KeyError(f"Unknown preset {name!r}. Available: {sorted(PRESETS)}")
     preset = PRESETS[name]
     applied: dict[str, str] = {}
     for flag, value in preset.items():
@@ -192,9 +181,7 @@ def list_presets_table() -> str:
     widths = [max(len(r[i]) for r in rows + [header]) for i in range(4)]
     line = "  ".join(h.ljust(w) for h, w in zip(header, widths, strict=False))
     sep = "  ".join("-" * w for w in widths)
-    body = "\n".join(
-        "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=False)) for row in rows
-    )
+    body = "\n".join("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=False)) for row in rows)
     return f"{line}\n{sep}\n{body}"
 
 

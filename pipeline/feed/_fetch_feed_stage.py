@@ -9,14 +9,13 @@ Responsibilities:
 Input: feed_url string
 Output: FeedEntryBatch (entry_urls, entry_titles, entry_summaries, entry_published_dates, feed_url, entry_hashes)
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedEntryBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +43,7 @@ class FetchFeedStage:
     def name(self) -> str:
         return "fetch_feed"
 
-    async def process(
-        self, input_feed_url: str | None
-    ) -> tuple[FeedEntryBatch, dict[str, Any]]:
+    async def process(self, input_feed_url: str | None) -> tuple[FeedEntryBatch, dict[str, Any]]:
         """Fetch and parse a feed.
 
         Args:
@@ -69,14 +66,14 @@ class FetchFeedStage:
         try:
             from hledac.universal.discovery.rss_atom_adapter import (
                 async_fetch_feed_entries,
-    )
+            )
 
             batch = await async_fetch_feed_entries(
                 feed_url=input_feed_url,
                 max_entries=20,  # default
                 timeout_s=self._timeout_s,
                 max_bytes=self._max_bytes,
-    )
+            )
 
             # Convert to FeedEntryBatch
             entry_urls = [e.get("url", "") for e in batch]
@@ -95,7 +92,7 @@ class FetchFeedStage:
                 entry_published_dates=entry_published_dates,
                 feed_url=input_feed_url,
                 entry_hashes=entry_hashes,
-    )
+            )
 
             return feed_batch, telemetry
 
@@ -112,4 +109,4 @@ class FetchFeedStage:
             entry_published_dates=[],
             feed_url="",
             entry_hashes=[],
-    )
+        )

@@ -25,7 +25,6 @@ Why these tests exist
 
 import re
 from pathlib import Path
-from _core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -84,7 +83,7 @@ def _all_python_files() -> list[Path]:
 
 
 class TestScalableBloomFilterRemoval:
-    def test_no_production_module_imports_scalable_bloom_filter(self):
+    def test_no_production_module_imports_scalable_bloom_filter(self) -> None:
         """Production code must not import ScalableBloomFilter."""
         violations: list[tuple[Path, int, str]] = []
         for py in _all_python_files():
@@ -105,24 +104,24 @@ class TestScalableBloomFilterRemoval:
             "CLAUDE.md invariant #7 violated: ScalableBloomFilter imported in "
             "production code. Use RotatingBloomFilter (bounded, M1 8GB safe).\n"
             + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {lt}" for p, ln, lt in violations)
-    )
+        )
 
-    def test_scalable_bloom_filter_not_in_bloom_filter_module(self):
+    def test_scalable_bloom_filter_not_in_bloom_filter_module(self) -> None:
         """ScalableBloomFilter must be completely removed from bloom_filter.py."""
         from utils import bloom_filter
 
         assert not hasattr(bloom_filter, "ScalableBloomFilter"), (
             "ScalableBloomFilter must be removed from utils.bloom_filter"
-    )
+        )
 
-    def test_scalable_bloom_filter_not_exported_from_utils(self):
+    def test_scalable_bloom_filter_not_exported_from_utils(self) -> None:
         """ScalableBloomFilter must not be exported from utils.__init__."""
         import pytest
 
         with pytest.raises(ImportError):
             from utils import ScalableBloomFilter  # noqa: F401
 
-    def test_not_in_bloom_filter_all(self):
+    def test_not_in_bloom_filter_all(self) -> None:
         """ScalableBloomFilter must not appear in bloom_filter.__all__."""
         from utils import bloom_filter
 

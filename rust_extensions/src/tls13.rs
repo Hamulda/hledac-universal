@@ -71,10 +71,6 @@ use std::sync::Arc;
 #[cfg(feature = "tls13")]
 use std::time::Instant;
 
-// ============================================================================
-// Error Types
-// ============================================================================
-
 /// TLS fingerprinting error kinds.
 #[derive(Debug, Clone)]
 pub enum Tls13Error {
@@ -111,10 +107,6 @@ impl Tls13Error {
         }
     }
 }
-
-// ============================================================================
-// JA4 Core Algorithm
-// ============================================================================
 
 /// JA4 fingerprint from raw TLS ClientHello bytes.
 ///
@@ -198,7 +190,6 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
     let extensions_end = (extensions_start + extensions_len).min(client_hello.len());
     let extensions_data = &client_hello[extensions_start..extensions_end];
 
-    // Parse extensions
     let mut extension_types: Vec<u16> = Vec::new();
     let mut alpn_protocols: Vec<String> = Vec::new();
     let mut sni_present = false;
@@ -230,7 +221,6 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
         ext_pos += ext_len;
     }
 
-    // Build JA4 string
     let tls_version_str = format!("{:x}", version);
 
     // Cipher suites: first 12 sorted, hex
@@ -272,7 +262,6 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
         alpn_protocols.join("_")
     };
 
-    // Build ja4_part_a
     let sni_char = if sni_present { "s" } else { "d" };
     let ja4_part_a = format!(
         "t{}{}{}{}",
@@ -282,11 +271,9 @@ fn compute_ja4(client_hello: &[u8]) -> Result<String, Tls13Error> {
         ext_count_str                 // byte length of extensions (4 hex chars)
     );
 
-    // Build ja4_part_b
     let ja4_part_b_cipher = cipher_hex[..20.min(cipher_hex.len())]);
     let ja4_part_b_ext = extension_hex[..8.min(extension_hex.len())]);
 
-    // Build ja4_part_c from ALPN or fallback
     let ja4_part_c = if !alpn_str.is_empty() {
         alpn_str
     } else {
@@ -329,10 +316,6 @@ fn parse_alpn(data: &[u8], protocols: &mut Vec<String>) {
         pos += proto_len;
     }
 }
-
-// ============================================================================
-// TLS Connection + Fingerprint (using rustls)
-// ============================================================================
 
 /// Result of TLS connection + fingerprint.
 #[cfg(feature = "tls13")]
@@ -447,7 +430,6 @@ fn connect_and_fingerprint_internal(
 
     let sni_host = sni.unwrap_or_else(|| host.to_string());
 
-    // Build TLS config with dangerous cert verification bypass
     let verifier = std::sync::Arc::new(NoVerifier);
     let config = rustls::ClientConfig::builder()
         .dangerous()
@@ -516,7 +498,6 @@ fn connect_and_fingerprint_internal(
         }
     }
 
-    // Extract connection data
     let peer_certs = session);
     let cert_verified = peer_certs.map(|certs| !certs.is_empty()).unwrap_or(false);
     let negotiated_alpn = session
@@ -526,7 +507,6 @@ fn connect_and_fingerprint_internal(
         .trim_start_matches("ProtocolVersion::")
         );
 
-    // Get cipher suite
     let server_ciphers: Vec<String> = session
         .get_cipher_suites()
         .iter()
@@ -671,10 +651,6 @@ fn extract_client_hello_from_session(
     Ok(chello)
 }
 
-// ============================================================================
-// PyO3 Public API
-// ============================================================================
-
 /// ja4_from_client_hello(chello_hex: str) -> str
 ///
 /// Compute JA4 fingerprint from raw ClientHello bytes (hex-encoded).
@@ -694,7 +670,6 @@ fn extract_client_hello_from_session(
 #[cfg(feature = "tls13")]
 #[pyfunction]
 pub fn ja4_from_client_hello(chello_hex: &str) -> PyResult<String> {
-    // Remove whitespace and validate hex
     let hex_clean: String = chello_hex.chars().filter(|c| !c.is_whitespace()));
 
     let client_hello = hex::decode(&hex_clean).map_err(|e| {
@@ -844,10 +819,6 @@ pub fn batch_ja4(
     Ok(results)
 }
 
-// ============================================================================
-// Stub implementations (when tls13 feature NOT enabled)
-// ============================================================================
-
 #[cfg(not(feature = "tls13"))]
 #[pyfunction]
 pub fn ja4_from_client_hello(_chello_hex: &str) -> PyResult<String> {
@@ -894,10 +865,6 @@ pub fn batch_ja4(
         Install with: pip install hledac-rust-extensions[tls13] or build with --features tls13",
     ))
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 /// Register tls13 functions into the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {

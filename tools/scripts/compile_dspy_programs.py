@@ -47,7 +47,6 @@ Returns ``0`` on success, ``1`` on any unrecoverable error. The runner
 never raises an unhandled exception.
 """
 
-
 import argparse
 import json
 import logging
@@ -55,7 +54,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 # Ensure repo root is on sys.path so ``hledac.universal.brain.dspy_programs``
 # (and the rest of the package) is importable when the script is invoked
@@ -85,6 +83,7 @@ COMPILED_SCHEMA_VERSION = "hledac.dspy.compiled.v1"
 
 
 # ── Few-shot training examples (deterministic, 10 max) ─────────────────────
+
 
 def _build_hypothesis_trainset(num_examples: int = DEFAULT_NUM_EXAMPLES) -> list[dict[str, Any]]:
     """Build 10 OSINT research-query → hypothesis few-shot examples.
@@ -181,6 +180,7 @@ def _build_hypothesis_trainset(num_examples: int = DEFAULT_NUM_EXAMPLES) -> list
 
 # ── M1 MLX buffer init / cleanup ───────────────────────────────────────────
 
+
 def _init_mlx_buffers() -> None:
     """Initialize Metal cache limit per M1 invariant.
 
@@ -190,12 +190,13 @@ def _init_mlx_buffers() -> None:
     """
     try:
         import mlx.core as mx  # type: ignore[import-not-found]  # INVARIANT: lazy import
+
         if mx.metal.is_available():
             mx.metal.set_cache_limit(METAL_CACHE_LIMIT_BYTES)
             logger.debug(
                 "MLX Metal cache limit set to %.2f GiB",
                 METAL_CACHE_LIMIT_BYTES / 2**30,
-    )
+            )
     except Exception as e:  # fail-soft
         logger.debug("MLX buffer init skipped: %s", e)
 
@@ -208,9 +209,10 @@ def _clear_mlx_cache() -> None:
     """
     try:
         import mlx.core as mx  # type: ignore[import-not-found]  # INVARIANT: lazy import
+
         if mx.metal.is_available():
-            mx.eval([])              # barrier BEFORE clear
-            mx.metal.clear_cache()   # now the clear is real
+            mx.eval([])  # barrier BEFORE clear
+            mx.metal.clear_cache()  # now the clear is real
             logger.debug("MLX Metal cache cleared (eval → clear_cache)")
     except Exception as e:  # fail-soft
         logger.debug("MLX cache clear skipped: %s", e)
@@ -218,10 +220,12 @@ def _clear_mlx_cache() -> None:
 
 # ── DSPy helpers (lazy imports, fail-soft) ─────────────────────────────────
 
+
 def _check_dspy() -> bool:
     """Return True if ``dspy`` is importable (top-level)."""
     try:
         import importlib.util
+
         return importlib.util.find_spec("dspy") is not None
     except Exception:
         return False
@@ -238,9 +242,11 @@ def _configure_dspy_with_mlx() -> Any | None:
         import dspy  # type: ignore[import-not-found]
 
         # Lazy import: avoids loading Hermes3 / MLX at module import
-        from hledac.universal.brain.dspy_service import Hermes3DSPyLM  # type: ignore[import-not-found]
+        from hledac.universal.brain.dspy_service import Hermes3DSPyLM
+
         try:
-            from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex  # type: ignore[import-not-found]
+            from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
+
             mutex = get_ane_mlx_mutex()
             mutex.acquire_mlx(model_size_mb=2000.0)
         except Exception as e:
@@ -266,7 +272,8 @@ def _build_program(program_name: str) -> Any | None:
             DarkQueryProgram,
             HypothesisGeneratorProgram,
             HypothesisRankProgram,
-    )
+        )
+
         registry = {
             "dark_query": DarkQueryProgram,
             "hypothesis_generator": HypothesisGeneratorProgram,
@@ -276,8 +283,9 @@ def _build_program(program_name: str) -> Any | None:
         if cls is None:
             logger.error(
                 "Unknown program: %s. Known: %s",
-                program_name, sorted(registry.keys()),
-    )
+                program_name,
+                sorted(registry.keys()),
+            )
             return None
         return cls()
     except Exception as e:
@@ -293,7 +301,7 @@ def _compile_with_few_shot(
 ) -> Any | None:
     """Compile ``program`` with ``BootstrapFewShot`` (fail-soft)."""
     try:
-        from dspy.teleprompt import BootstrapFewShot  # type: ignore[import-not-found]
+        from dspy.teleprompt import BootstrapFewShot
 
         examples = []
         for ex in trainset:
@@ -303,7 +311,7 @@ def _compile_with_few_shot(
                 "graph_summary",
                 "reward_context",
                 "existing_hypotheses",
-    )
+            )
             examples.append(example)
         examples = examples[:MAX_NUM_EXAMPLES]
 
@@ -319,8 +327,9 @@ def _compile_with_few_shot(
 
         logger.info(
             "Compiling %s with BootstrapFewShot (%d examples)...",
-            program_name, len(examples),
-    )
+            program_name,
+            len(examples),
+        )
         compiled = teleprompter.compile(program=program, trainset=examples)
         n_demos = len(getattr(compiled, "demos", []) or [])
         logger.info("Compilation complete: %d demos baked in", n_demos)
@@ -340,14 +349,21 @@ def _extract_demos(compiled_program: Any) -> list[dict[str, Any]]:
                 if hasattr(demo, "toDict"):
                     extracted.append(dict(demo.toDict()))
                 elif hasattr(demo, "__dict__"):
-                    extracted.append({k: v for k, v in demo.__dict__.items()
-                                      if not k.startswith("_")})
+                    extracted.append({k: v for k, v in demo.__dict__.items() if not k.startswith("_")})
                 else:
-                    extracted.append({
-                        k: getattr(demo, k, "")
-                        for k in ("research_query", "rag_context", "graph_summary",
-                                  "reward_context", "existing_hypotheses", "hypotheses")
-                    })
+                    extracted.append(
+                        {
+                            k: getattr(demo, k, "")
+                            for k in (
+                                "research_query",
+                                "rag_context",
+                                "graph_summary",
+                                "reward_context",
+                                "existing_hypotheses",
+                                "hypotheses",
+                            )
+                        }
+                    )
             except Exception:
                 continue
         return extracted
@@ -379,8 +395,7 @@ def _save_compiled_state(
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))
         tmp.replace(path)  # atomic on POSIX
-        logger.info("Saved compiled program: %s (%d demos, %d bytes)",
-                    path, len(demos), path.stat().st_size)
+        logger.info("Saved compiled program: %s (%d demos, %d bytes)", path, len(demos), path.stat().st_size)
         return path
     except Exception as e:
         logger.warning("Failed to save compiled program: %s", e)
@@ -388,6 +403,7 @@ def _save_compiled_state(
 
 
 # ── Main pipeline ───────────────────────────────────────────────────────────
+
 
 def compile_program(
     program_name: str = DEFAULT_PROGRAM,
@@ -403,7 +419,10 @@ def compile_program(
     logger.info("=== DSPy compilation pipeline ===")
     logger.info(
         "program=%s examples=%d output=%s dry_run=%s",
-        program_name, num_examples, output_dir, dry_run,
+        program_name,
+        num_examples,
+        output_dir,
+        dry_run,
     )
 
     if dry_run:
@@ -445,7 +464,8 @@ def compile_program(
             "num_demos": len(demos),
             "lm_backend": "Hermes3DSPyLM (MLX)",
             "model_id": os.getenv(
-                "HLEDAC_LLM_MODEL", "hermes-3-llama-3.2-3b-4bit",
+                "HLEDAC_LLM_MODEL",
+                "hermes-3-llama-3.2-3b-4bit",
             ),
         }
         path = _save_compiled_state(output_dir, program_name, demos, metadata)
@@ -478,16 +498,16 @@ def _dry_run(
     # failing fast if hledac.universal.brain.dspy_programs is unreachable.
     try:
         import importlib
+
         _mod = importlib.import_module("hledac.universal.brain.dspy_programs")  # type: ignore
         _has_programs = all(
-            hasattr(_mod, name)
-            for name in ("DarkQueryProgram", "HypothesisGeneratorProgram", "HypothesisRankProgram")
-    )
+            hasattr(_mod, name) for name in ("DarkQueryProgram", "HypothesisGeneratorProgram", "HypothesisRankProgram")
+        )
         logger.info(
             "Program registry for '%s': resolved=%s",
             program_name,
             _has_programs,
-    )
+        )
     except Exception as e:
         logger.warning("Could not import program classes: %s", e)
 

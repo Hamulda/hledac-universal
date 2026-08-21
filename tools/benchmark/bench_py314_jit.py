@@ -15,7 +15,6 @@ Exit codes:
   65 = benchmark error
 """
 
-
 import os
 import subprocess
 import sys
@@ -23,7 +22,6 @@ import textwrap
 import time
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
 
 
 class JTStatus(NamedTuple):
@@ -51,7 +49,7 @@ def check_jit(python: Path) -> JTStatus:
             capture_output=True,
             text=True,
             timeout=10,
-    )
+        )
         has_jit = result.stdout.strip()
     except Exception as e:
         return JTStatus(False, f"subprocess check failed: {e}")
@@ -62,16 +60,15 @@ def check_jit(python: Path) -> JTStatus:
             "sys.jit attribute NOT_FOUND. "
             "Python 3.14.4 was built WITHOUT --with-jit. "
             "PYTHON_JIT=1 has no effect on this interpreter.",
-    )
+        )
 
     try:
         result = subprocess.run(
-            [str(python), "-c",
-             "import sys; print(getattr(sys.flags, 'jit', 0))"],
+            [str(python), "-c", "import sys; print(getattr(sys.flags, 'jit', 0))"],
             capture_output=True,
             text=True,
             timeout=10,
-    )
+        )
         jit_flag = result.stdout.strip()
         if jit_flag in ("0", "False"):
             return JTStatus(False, f"sys.flags.jit={jit_flag} — JIT not active")
@@ -94,6 +91,7 @@ def _run_py(
     def _rss() -> int:
         try:
             import resource
+
             return resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024
         except Exception:
             return 0
@@ -106,7 +104,7 @@ def _run_py(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(PROJECT_ROOT),
-    )
+        )
         _stdout, _stderr = proc.communicate(timeout=timeout)
         wall_s = time.perf_counter() - t0
         exit_code = proc.returncode
@@ -126,9 +124,7 @@ def _run_py(
 
     warnings = sum(1 for line in stderr_text.splitlines() if "Warning" in line)
     errors = sum(
-        1
-        for line in stderr_text.splitlines()
-        if "Error" in line or "Exception" in line or "Traceback" in line
+        1 for line in stderr_text.splitlines() if "Error" in line or "Exception" in line or "Traceback" in line
     )
     return wall_s, rss_kb, exit_code, stderr_text, warnings, errors
 
@@ -204,7 +200,7 @@ def bench_content_miner(python: Path, env: dict[str, str] | None) -> BenchResult
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=str(PROJECT_ROOT),
-    )
+        )
         _stdout, stderr_data = proc.communicate(timeout=60)
         wall_s = time.perf_counter() - t0
         stderr_text = stderr_data.decode(errors="replace")
@@ -289,7 +285,7 @@ def main() -> int:
                 f"delta={delta:+.3f}s ({pct:+.1f}%)  "
                 f"rss_default={d.rss_kb}KB  rss_jit={j.rss_kb}KB  "
                 f"rss_delta={rss_delta:+d}KB"
-    )
+            )
             if j.wall_s < d.wall_s:
                 any_improvement = True
         elif d:

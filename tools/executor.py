@@ -26,13 +26,10 @@ Execution flow:
 
 import asyncio
 import inspect
-import threading
-from typing import TYPE_CHECKING, Any
-
-from hledac.universal.utils.executor_decorator import offload_to
+from typing import TYPE_CHECKING, Any, Never
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
+from hledac.universal.utils.executor_decorator import offload_to
 
 if TYPE_CHECKING:
     from .registry import Tool, ToolRegistry
@@ -100,7 +97,7 @@ class ToolExecutor:
                 f"[TOOL EXECUTOR] execute_with_limits(tool_name={tool_name!r}, available_capabilities=None) — capability check SKIPPED.",
                 DeprecationWarning,
                 stacklevel=2,
-    )
+            )
         validated = tool.validate_args(args)
         allowed, reason = registry.validate_call(tool_name)
         if not allowed:
@@ -156,7 +153,7 @@ class ToolExecutor:
                             status=status,
                             error=error,
                             correlation=normalized_corr,
-    )
+                        )
                     except Exception as logger_error:
                         import logging
 
@@ -167,7 +164,7 @@ class ToolExecutor:
         """Execute tool handler with validated arguments."""
         handler = tool.handler
         # Convert msgspec.Struct to dict for handler - use msgspec.json.encode/decode
-        if hasattr(validated_args, '__dict__'):
+        if hasattr(validated_args, "__dict__"):
             kwargs = msgspec.json.decode(msgspec.json.encode(validated_args))
         else:
             kwargs = validated_args
@@ -249,7 +246,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=2000, network=True, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=50, max_parallel=5),
             handler=_web_search_handler,
-    )
+        )
     )
     registry.register(
         Tool(
@@ -260,7 +257,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=100, time_ms_est=500, network=False, risk_level=RiskLevel.LOW),
             rate_limits=RateLimits(max_calls_per_run=1000, max_parallel=10),
             handler=_entity_extraction_handler,
-    )
+        )
     )
     registry.register(
         Tool(
@@ -271,7 +268,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=3000, network=True, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=30, max_parallel=3),
             handler=_academic_search_handler,
-    )
+        )
     )
     registry.register(
         Tool(
@@ -282,7 +279,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=10, time_ms_est=100, network=False, risk_level=RiskLevel.LOW),
             rate_limits=RateLimits(max_calls_per_run=1000, max_parallel=20),
             handler=_file_read_handler,
-    )
+        )
     )
     registry.register(
         Tool(
@@ -293,7 +290,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=10, time_ms_est=100, network=False, risk_level=RiskLevel.MEDIUM),
             rate_limits=RateLimits(max_calls_per_run=100, max_parallel=5),
             handler=_file_write_handler,
-    )
+        )
     )
     registry.register(
         Tool(
@@ -304,7 +301,7 @@ def create_default_registry() -> ToolRegistry:
             cost_model=CostModel(ram_mb_est=50, time_ms_est=1000, network=False, risk_level=RiskLevel.HIGH),
             rate_limits=RateLimits(max_calls_per_run=20, max_parallel=1),
             handler=_python_execute_handler,
-    )
+        )
     )
     registry.get_tool("web_search").required_capabilities = {"reranking"}
     registry.get_tool("academic_search").required_capabilities = {"reranking", "entity_linking"}
@@ -420,7 +417,7 @@ async def _python_execute_handler(
     class _TimeoutError(Exception):
         pass
 
-    def _timeout_handler(signum, frame):
+    def _timeout_handler(signum, frame) -> Never:
         raise _TimeoutError(f"Execution timed out after {timeout_seconds}s")
 
     _alarm_registered = False
@@ -430,7 +427,7 @@ async def _python_execute_handler(
             _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(timeout_seconds)
             _alarm_registered = True
-        except (ValueError, OSError):  # noqa: BLE001
+        except ValueError, OSError:  # noqa: BLE001
             pass
     safe_builtins = {
         "abs": builtins.abs,
@@ -489,6 +486,10 @@ async def _python_execute_handler(
         "__loader__": None,
         "__spec__": None,
         "breakpoint": None,
+        "getattr": None,
+        "setattr": None,
+        "delattr": None,
+        "__getattribute__": None,
     }
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
@@ -505,7 +506,18 @@ async def _python_execute_handler(
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 raise ValueError("Import statements are not allowed in sandboxed code")
             if isinstance(node, ast.Call):
-                if getattr(node.func, "id", None) in ("eval", "exec", "compile", "__import__", "open", "breakpoint"):
+                if getattr(node.func, "id", None) in (
+                    "eval",
+                    "exec",
+                    "compile",
+                    "__import__",
+                    "open",
+                    "breakpoint",
+                    "getattr",
+                    "setattr",
+                    "delattr",
+                    "__getattribute__",
+                ):
                     raise ValueError(f"Disallowed function call: {getattr(node.func, 'id', '')}")
         compiled = compile(code, "<restricted>", "exec")
         exec(compiled, {"__builtins__": safe_builtins})

@@ -26,13 +26,11 @@ Vision/CoreML fallback is secondary. Local OCR is off-by-default.
 import asyncio
 import logging
 import secrets
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import Any, Protocol, runtime_checkable
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import safe_create_task
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -40,23 +38,18 @@ logger = logging.getLogger(__name__)
 _RNG = secrets.SystemRandom()
 
 __all__ = [
-    'StealthStrategy',
-    'UARotationConfig',
-    'UARotationStrategy',
-    'HeaderRandomizationConfig',
-    'HeaderRandomizationStrategy',
-    'CircuitManagementConfig',
-    'CircuitManagementStrategy',
-    'FingerprintMuterConfig',
-    'FingerprintMuterStrategy',
-    'CaptchaSolvingConfig',
-    'CaptchaSolvingStrategy',
+    "StealthStrategy",
+    "UARotationConfig",
+    "UARotationStrategy",
+    "HeaderRandomizationConfig",
+    "HeaderRandomizationStrategy",
+    "CircuitManagementConfig",
+    "CircuitManagementStrategy",
+    "FingerprintMuterConfig",
+    "FingerprintMuterStrategy",
+    "CaptchaSolvingConfig",
+    "CaptchaSolvingStrategy",
 ]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Strategy Protocol
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @runtime_checkable
@@ -78,11 +71,6 @@ class StealthStrategy(Protocol):
         ...
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. UA Rotation Strategy
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class UARotationConfig(Struct):
     rotate_on_each_request: bool = False
     min_rotation_interval: float = 300.0  # 5 minutes
@@ -98,7 +86,7 @@ class UARotationConfig(Struct):
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    )
+        )
     )
 
 
@@ -146,11 +134,6 @@ class UARotationStrategy:
             "rotations": self._rotation_count,
             "current_ua": self._current_ua[:80],
         }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Header Randomization Strategy
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class HeaderRandomizationConfig(Struct):
@@ -231,11 +214,6 @@ class HeaderRandomizationStrategy:
             "requests": self._header_count,
             "chaff_headers": self._chaff_count,
         }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Circuit / Tor Management Strategy
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class CircuitManagementConfig(Struct):
@@ -333,11 +311,6 @@ class CircuitManagementStrategy:
         }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Fingerprint Muting Strategy
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class FingerprintMuterConfig(Struct):
     enabled: bool = True
     mute_canvas: bool = True
@@ -371,9 +344,7 @@ class FingerprintMuterStrategy:
         # Lazy import unified pipeline — APEX-1005/1006/1007
         from hledac.universal.layers.evasion_pipeline import (
             ProfileGenerator,
-            _EvasionScriptGenerator,
-            FingerprintProfile,
-    )
+        )
 
         self._profile_gen = ProfileGenerator()
         self._current_profile = self._profile_gen.generate()
@@ -383,7 +354,7 @@ class FingerprintMuterStrategy:
     async def unmount(self, ctx: Any) -> None:
         logger.debug(
             f"FingerprintMuterStrategy: {self._evasions_applied} evasions, {self._profile_rotations} rotations"
-    )
+        )
 
     async def on_event(self, ctx: Any, event: Any) -> Any:
         if event.type == "pre_fetch" and self._config.enabled:
@@ -410,9 +381,8 @@ class FingerprintMuterStrategy:
     def get_detection_score(self) -> dict[str, Any]:
         if self._current_profile is not None:
             from hledac.universal.layers.evasion_pipeline import compute_detection_score
-            return compute_detection_score(
-                self._current_profile.to_evasion_scripts()
-    )
+
+            return compute_detection_score(self._current_profile.to_evasion_scripts())
         return {}
 
     def get_stats(self) -> dict[str, Any]:
@@ -429,11 +399,6 @@ class FingerprintMuterStrategy:
                 "randomize_timezone": self._config.randomize_timezone,
             },
         }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. CAPTCHA Solving Strategy
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class CaptchaSolvingConfig(Struct):
@@ -540,8 +505,9 @@ class CaptchaSolvingStrategy:
 
         # F-01: Canonical session pool
         try:
-            from hledac.universal.transport.session_pool import session_pool
             import httpx
+
+            from hledac.universal.transport.session_pool import session_pool
         except Exception:
             return None
 
@@ -555,7 +521,7 @@ class CaptchaSolvingStrategy:
                 self._config.provider_endpoint,
                 data={"key": api_key, "method": "base64", "body": b64},
                 timeout=httpx.Timeout(30.0),
-    )
+            )
             result = response.text
 
             if not result.startswith("OK|"):
@@ -569,7 +535,7 @@ class CaptchaSolvingStrategy:
                 poll_response = await session.get(
                     f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}",
                     timeout=httpx.Timeout(10.0),
-    )
+                )
                 res = poll_response.text
 
                 if res.startswith("OK|"):
@@ -594,15 +560,11 @@ class CaptchaSolvingStrategy:
         }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Strategy Registry
-# ─────────────────────────────────────────────────────────────────────────────
-
 STEALTH_STRATEGIES: tuple[type[StealthStrategy], ...] = (
     UARotationStrategy,
     HeaderRandomizationStrategy,
     CircuitManagementStrategy,
     FingerprintMuterStrategy,
     CaptchaSolvingStrategy,
-    )
+)
 """All registered stealth strategies — used by StealthLayer to instantiate."""

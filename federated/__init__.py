@@ -36,8 +36,6 @@ backward compatibility but is no longer the canonical entry. Importing
 from hledac.universal.federated should use this __init__.py instead.
 """
 
-
-
 from typing import Any
 
 from .bridge import (
@@ -50,7 +48,7 @@ from .bridge import (
     LMDB_PERSIST_KEY,
     FederatedBridge,
     QTableProtocol,
-    )
+)
 from .coordinator import (
     AGGREGATION_MAX_FINDINGS,
     DISTRIBUTE_TOTAL_TIMEOUT_S,
@@ -62,9 +60,8 @@ from .coordinator import (
     NodeLane,
     NodeResult,
     is_federated_enabled,
-    )
+)
 from .qtable import MAX_QTABLE_ENTRIES, FederatedQTable
-from _core import aclose
 
 # Transports — imported lazily through __getattr__ to avoid pulling
 # heavy modules (cryptography, zeroconf) into the cold-start path when
@@ -132,8 +129,11 @@ def __getattr__(name: str) -> Any:
     if name in __all__:
         if name in _TRANSPORT_EXPORTS:
             import importlib
+
             module_path, attr = _TRANSPORT_EXPORTS[name].rsplit(".", 1)
-            mod = importlib.import_module(module_path)  # nosem: B404 — _TRANSPORT_EXPORTS is static whitelist, no user input
+            mod = importlib.import_module(
+                module_path
+            )  # nosem: B404 — _TRANSPORT_EXPORTS is static whitelist, no user input
             value = getattr(mod, attr)
             # Cache for subsequent accesses.
             globals()[name] = value
@@ -142,7 +142,4 @@ def __getattr__(name: str) -> Any:
         # not normally fire. Provided for forward-compat with dynamic
         # attribute injection.
         return globals().get(name)  # nosem: B102 — only reads pre-defined __all__ names, no user input
-    raise AttributeError(
-        f"module {__name__!r} has no attribute {name!r} "
-        f"(known: {sorted(__all__)})"
-    )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r} (known: {sorted(__all__)})")

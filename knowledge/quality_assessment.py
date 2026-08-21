@@ -2,9 +2,6 @@
 Quality Assessment — Sprint F216G refactor
 ==========================================
 
-
-
-
 ROLE: Quality gate delegate for DuckDBShadowStore.
 
 Handles quality decision logic (entropy, dedup, URL-first fingerprinting),
@@ -20,27 +17,24 @@ CANONICAL WRITE PATH: Remains in DuckDBShadowStore.async_ingest_findings_batch()
 This module provides quality decision helpers that DuckDBShadowStore delegates to.
 """
 
-
-
 import asyncio
+import collections.abc
 import hashlib
 import logging as _logging
-import os
 import math as _math
+import os
 import re
 import string as _string
 from collections import Counter, OrderedDict
-import collections.abc
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from logging import Logger
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
 
+from compat.msgspec_gc_compat import Struct
+
 if TYPE_CHECKING:
-    from .duckdb_store import CanonicalFinding
     from ._quality_types import FindingQualityDecision
+    from .duckdb_store import CanonicalFinding
 
 __all__ = [
     "QualityRejectionRecord",
@@ -59,47 +53,40 @@ __all__ = [
     "assess_findings_quality_batch",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Rust backend — centralized access via core.rust_backend (F265C refactor)
-# ---------------------------------------------------------------------------
 from hledac.universal._core.rust_backend import rust as _rust_backend
+
 
 # Convenience flags — LAZY, resolved on every call.
 # Previously set at import time (False even if Rust became available later).
 def _url_engine_available() -> bool:
     return _rust_backend.is_available and _rust_backend.url is not None
 
+
 def _quality_gate_rust_available() -> bool:
     return _rust_backend.is_available and _rust_backend.quality is not None
+
 
 def _quality_gate_batch_available() -> bool:
     return _quality_gate_rust_available()
 
 
-# ---------------------------------------------------------------------------
-# Quality helper constants and functions (module-level, stateless)
-# ---------------------------------------------------------------------------
-
 # Sprint 8W: Configurable entropy threshold (bits per character)
 # Env var support for consistency with dominant DI config pattern (73% of knowledge/ files
 # use direct env var access; DedupSettings.from_env() in config/settings.py is canonical)
-_QUALITY_ENTROPY_THRESHOLD: float = float(os.environ.get(
-    "HLEDAC_QUALITY_ENTROPY_THRESHOLD", "0.5"
-))
+_QUALITY_ENTROPY_THRESHOLD: float = float(os.environ.get("HLEDAC_QUALITY_ENTROPY_THRESHOLD", "0.5"))
 # Strings shorter than this skip entropy filtering
-_QUALITY_MIN_ENTROPY_LEN: int = int(os.environ.get(
-    "HLEDAC_QUALITY_MIN_ENTROPY_LEN", "8"
-))
+_QUALITY_MIN_ENTROPY_LEN: int = int(os.environ.get("HLEDAC_QUALITY_MIN_ENTROPY_LEN", "8"))
 
 # Sprint F265D: Feed source types that skip semantic dedup (high recall, low precision acceptable).
 # Feed pipelines prioritize recall over precision — semantic dedup threshold 0.75 is too
 # aggressive for feed content which naturally shares structure (titles, metadata).
-_FEED_SOURCE_TYPES: frozenset[str] = frozenset({
-    "rss_atom_pipeline",
-    "ti_feed_adapter",
-    "feed_pipeline",
-})
+_FEED_SOURCE_TYPES: frozenset[str] = frozenset(
+    {
+        "rss_atom_pipeline",
+        "ti_feed_adapter",
+        "feed_pipeline",
+    }
+)
 
 # Sprint-F265B P2: High-confidence IoC bypass — SHA256/MD5/Hash patterns skip
 # semantic dedup entirely (exact match = trust the hash as dedup key).
@@ -224,12 +211,17 @@ def _normalize_osint_url(url: str) -> str:
     fragment = ""
     path = parsed.path.rstrip("/") if len(parsed.path) > 1 else parsed.path
 
-    TRACKING_QUERY_PARAMS = frozenset({  # noqa: N806
-        "utm_source", "utm_medium", "utm_campaign",
-        "utm_content", "utm_term",
-        "fbclid",
-        "ref",
-    })
+    TRACKING_QUERY_PARAMS = frozenset(
+        {  # noqa: N806
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_content",
+            "utm_term",
+            "fbclid",
+            "ref",
+        }
+    )
     try:
         query_params = parse_qsl(parsed.query, keep_blank_values=True)
         filtered = [(k, v) for k, v in query_params if k.lower() not in TRACKING_QUERY_PARAMS]
@@ -291,7 +283,7 @@ def _compute_url_fingerprint(url: str) -> str:
     if _url_engine_available() and _rust_backend.url is not None:
         fp = _rust_backend.url.fingerprint(url)
         # Convert u64 to 16-char hex string (backward compatible)
-        return format(fp, '016x')
+        return format(fp, "016x")
 
     # Python fallback: normalize then BLAKE2b
     normalized_url = _normalize_osint_url(url)
@@ -362,13 +354,15 @@ def _build_rust_findings_input(findings: list) -> list[dict]:
             if provenance is None:
                 provenance = str(f.provenance) if f.provenance else None
 
-        result.append({
-            "finding_id": f.finding_id,
-            "source_type": f.source_type,
-            "provenance": provenance,
-            "payload_text": f.payload_text,
-            "query": f.query,
-        })
+        result.append(
+            {
+                "finding_id": f.finding_id,
+                "source_type": f.source_type,
+                "provenance": provenance,
+                "payload_text": f.payload_text,
+                "query": f.query,
+            }
+        )
     return result
 
 
@@ -422,8 +416,7 @@ class QualityRejectionRecord(Struct, frozen=True):
 
 
 # Sprint 8AG §6.17: Persistent dedup config
-from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE  # noqa: E402
-from _core import aclose
+from hledac.universal.config.dedup_config import DEDUP_HOT_CACHE_MAX, DEDUP_LMDB_MAP_SIZE
 
 # Backward compatibility: module-level aliases (DEPRECATED — use config.dedup_config)
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
@@ -498,7 +491,7 @@ class QualityAssessmentState:
             reason=decision.reason or "unknown",
             finding_id=(getattr(finding, "finding_id", "") or "")[:40],
             url_sample=url_sample,
-    )
+        )
         self._quality_rejection_ledger.append(record)
         if len(self._quality_rejection_ledger) > self._MAX_QUALITY_REJECTION_LEDGER:
             self._quality_rejection_ledger.pop(0)
@@ -545,7 +538,6 @@ class QualityAssessmentState:
                     return url
         return ""
 
-    # Hot cache helpers (used by QualityAssessor)
     def hot_cache_lookup(self, fingerprint: str) -> str | None:
         """Look up fingerprint in hot cache. Returns finding_id or None."""
         return self._dedup_hot_cache.get(fingerprint)
@@ -603,7 +595,7 @@ class QualityAssessor:
         lmdb_store_fn: collections.abc.Callable | None = None,
         semantic_dedup_cache: object | None = None,
         sprint_id: str | None = None,
-        ) -> None:
+    ) -> None:
         """
         Args:
         state: QualityAssessmentState instance (owned by DuckDBShadowStore)
@@ -658,7 +650,9 @@ class QualityAssessor:
 
         # Short string path
         if len(fingerprint) < _QUALITY_MIN_ENTROPY_LEN:
-            return self._assess_short_string(finding, fingerprint, entropy, text_for_embed, is_feed_source, url_from_provenance, _logger)
+            return self._assess_short_string(
+                finding, fingerprint, entropy, text_for_embed, is_feed_source, url_from_provenance, _logger
+            )
 
         # High-confidence IoC check
         is_high_conf_ioc = self._is_high_conf_ioc(text_for_embed)
@@ -668,7 +662,9 @@ class QualityAssessor:
             return self._reject_low_entropy(finding, entropy, fingerprint, text_for_embed, url_from_provenance, _logger)
 
         # Semantic dedup
-        sem_dup_decision = self._check_semantic_dedup(fingerprint, entropy, text_for_embed, is_high_conf_ioc, is_feed_source, url_from_provenance, _logger)
+        sem_dup_decision = self._check_semantic_dedup(
+            fingerprint, entropy, text_for_embed, is_high_conf_ioc, is_feed_source, url_from_provenance, _logger
+        )
         if sem_dup_decision is not None:
             return sem_dup_decision
 
@@ -685,25 +681,46 @@ class QualityAssessor:
         normalized = _normalize_for_quality(text)
         return _compute_dedup_fingerprint(normalized), _compute_entropy(normalized)
 
-    def _check_duplicate_caches(self, fingerprint: str, url_fingerprint: str, entropy: float) -> FindingQualityDecision | None:
+    def _check_duplicate_caches(
+        self, fingerprint: str, url_fingerprint: str, entropy: float
+    ) -> FindingQualityDecision | None:
         """Check hot cache and LMDB for duplicates."""
         duplicate = self._state.hot_cache_lookup(fingerprint)
         if duplicate is not None:
             self._state._quality_duplicate_count += 1
-            return self._make_decision(False, "persistent_duplicate" if url_fingerprint else "duplicate_detected", entropy, fingerprint, True)
+            return self._make_decision(
+                False, "persistent_duplicate" if url_fingerprint else "duplicate_detected", entropy, fingerprint, True
+            )
         if self._lmdb_lookup_fn is not None:
             stored_finding_id = self._lmdb_lookup_fn(fingerprint)
             if stored_finding_id is not None:
                 self._state.add_to_hot_cache(fingerprint, stored_finding_id)
                 self._state._persistent_duplicate_count += 1
-                return self._make_decision(False, "persistent_duplicate" if url_fingerprint else "duplicate_detected", entropy, fingerprint, True)
+                return self._make_decision(
+                    False,
+                    "persistent_duplicate" if url_fingerprint else "duplicate_detected",
+                    entropy,
+                    fingerprint,
+                    True,
+                )
         return None
 
-    def _assess_short_string(self, finding: CanonicalFinding, fingerprint: str, entropy: float, text_for_embed: str, is_feed_source: bool, url_from_provenance: str, _logger) -> FindingQualityDecision:
+    def _assess_short_string(
+        self,
+        finding: CanonicalFinding,
+        fingerprint: str,
+        entropy: float,
+        text_for_embed: str,
+        is_feed_source: bool,
+        url_from_provenance: str,
+        _logger,
+    ) -> FindingQualityDecision:
         """Assess short strings that skip entropy filter."""
         is_high_conf_ioc = self._is_high_conf_ioc(text_for_embed)
         if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
-            dup_decision = self._try_semantic_dedup_short(fingerprint, entropy, text_for_embed, url_from_provenance, _logger)
+            dup_decision = self._try_semantic_dedup_short(
+                fingerprint, entropy, text_for_embed, url_from_provenance, _logger
+            )
             if dup_decision is not None:
                 return dup_decision
         if self._lmdb_store_fn is not None:
@@ -711,14 +728,20 @@ class QualityAssessor:
         self._state.add_to_hot_cache(fingerprint, finding.finding_id)
         return self._make_decision(True, "short_string_skip", entropy, fingerprint, False)
 
-    def _try_semantic_dedup_short(self, fingerprint: str, entropy: float, text_for_embed: str, url_from_provenance: str, _logger) -> FindingQualityDecision | None:
+    def _try_semantic_dedup_short(
+        self, fingerprint: str, entropy: float, text_for_embed: str, url_from_provenance: str, _logger
+    ) -> FindingQualityDecision | None:
         """Try semantic dedup for short strings."""
         try:
             if text_for_embed and len(text_for_embed) >= 16:
                 is_dup = self._semantic_dedup_cache.check_and_cache(text_for_embed, threshold=0.75)
                 if is_dup:
                     self._state._quality_duplicate_count += 1
-                    _logger.debug("[QUALITY] short_string semantic_dup hit fp=%s url=%s", fingerprint[:16], (url_from_provenance or "")[:80])
+                    _logger.debug(
+                        "[QUALITY] short_string semantic_dup hit fp=%s url=%s",
+                        fingerprint[:16],
+                        (url_from_provenance or "")[:80],
+                    )
                     return self._make_decision(False, "semantic_duplicate", entropy, fingerprint, True)
         except Exception as e:
             _logger.warning(f"Quality gate error (short_string path): {e}")
@@ -728,14 +751,37 @@ class QualityAssessor:
         """Check if text is high-confidence IoC."""
         return text_for_embed is not None and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
 
-    def _reject_low_entropy(self, finding: CanonicalFinding, entropy: float, fingerprint: str, text_for_embed: str, url_from_provenance: str, _logger) -> FindingQualityDecision:
+    def _reject_low_entropy(
+        self,
+        finding: CanonicalFinding,
+        entropy: float,
+        fingerprint: str,
+        text_for_embed: str,
+        url_from_provenance: str,
+        _logger,
+    ) -> FindingQualityDecision:
         """Reject finding due to low entropy."""
         self._state._quality_rejected_count += 1
-        _logger.debug("[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s url=%s text=%s",
-            entropy, _QUALITY_ENTROPY_THRESHOLD, fingerprint[:16], (url_from_provenance or "")[:80], (finding.payload_text or "")[:60])
+        _logger.debug(
+            "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s url=%s text=%s",
+            entropy,
+            _QUALITY_ENTROPY_THRESHOLD,
+            fingerprint[:16],
+            (url_from_provenance or "")[:80],
+            (finding.payload_text or "")[:60],
+        )
         return self._make_decision(False, "low_entropy_rejected", entropy, fingerprint, False)
 
-    def _check_semantic_dedup(self, fingerprint: str, entropy: float, text_for_embed: str, is_high_conf_ioc: bool, is_feed_source: bool, url_from_provenance: str, _logger) -> FindingQualityDecision | None:
+    def _check_semantic_dedup(
+        self,
+        fingerprint: str,
+        entropy: float,
+        text_for_embed: str,
+        is_high_conf_ioc: bool,
+        is_feed_source: bool,
+        url_from_provenance: str,
+        _logger,
+    ) -> FindingQualityDecision | None:
         """Check semantic dedup (skip for high-conf IOC and feed sources)."""
         if self._semantic_dedup_cache is None or is_high_conf_ioc or is_feed_source:
             return None
@@ -744,7 +790,9 @@ class QualityAssessor:
                 is_dup = self._semantic_dedup_cache.check_and_cache(text_for_embed, threshold=0.75)
                 if is_dup:
                     self._state._quality_duplicate_count += 1
-                    _logger.debug("[QUALITY] semantic_dup hit fp=%s url=%s", fingerprint[:16], (url_from_provenance or "")[:80])
+                    _logger.debug(
+                        "[QUALITY] semantic_dup hit fp=%s url=%s", fingerprint[:16], (url_from_provenance or "")[:80]
+                    )
                     return self._make_decision(False, "semantic_duplicate", entropy, fingerprint, True)
         except Exception as e:
             _logger.warning(f"Quality gate error (entropy path): {e}")
@@ -756,10 +804,6 @@ class QualityAssessor:
             self._lmdb_store_fn(fingerprint, finding.finding_id)
         self._state.add_to_hot_cache(fingerprint, finding.finding_id)
         return self._make_decision(True, None, entropy, fingerprint, False)
-
-    # ---------------------------------------------------------------------------
-    # Sprint P1-2: Batch quality gate — rayon-parallel Rust kernels
-    # ---------------------------------------------------------------------------
 
     def assess_batch(
         self,
@@ -787,7 +831,6 @@ class QualityAssessor:
         results: list[FindingQualityDecision] = [None] * n  # type: ignore[list-item]
         _batch_logger: Logger = _logging.getLogger(__name__)
 
-        # --- ISSUE-022: Try Rust assess_findings_quality_batch fast path ---
         rust_results = assess_findings_quality_batch(_build_rust_findings_input(findings))
 
         if rust_results is not None:
@@ -815,8 +858,7 @@ class QualityAssessor:
                     is_feed_source = f.source_type in _FEED_SOURCE_TYPES
                     text_for_embed = url_fp or (f.payload_text or f.query)
                     is_high_conf_ioc = (
-                        text_for_embed is not None
-                        and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+                        text_for_embed is not None and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
                     )
                     results[idx] = self._assess_batch_item_phase2(
                         f=f,
@@ -833,14 +875,16 @@ class QualityAssessor:
                     # but still check stateful duplicates for accurate counting
                     rust_reason = rust_dec.get("rejection_reason") or rust_dec.get("reason") or "rust_rejected"
 
-                    # Phase 2: check hot_cache/LMDB for duplicate counting even after Rust rejection
-                    # This ensures accurate duplicate metrics regardless of Rust's pure-compute rejection
                     if fp:  # Only check if we have a fingerprint (skip for URL-only findings)
                         dup_hit = self._state.hot_cache_lookup(fp)
                         if dup_hit is not None:
                             self._state._quality_duplicate_count += 1
                             results[idx] = self._make_decision(
-                                False, "persistent_duplicate", entropy, fp, True,
+                                False,
+                                "persistent_duplicate",
+                                entropy,
+                                fp,
+                                True,
                             )
                             continue
 
@@ -850,7 +894,11 @@ class QualityAssessor:
                                 self._state.add_to_hot_cache(fp, stored_id)
                                 self._state._persistent_duplicate_count += 1
                                 results[idx] = self._make_decision(
-                                    False, "persistent_duplicate", entropy, fp, True,
+                                    False,
+                                    "persistent_duplicate",
+                                    entropy,
+                                    fp,
+                                    True,
                                 )
                                 continue
 
@@ -858,11 +906,17 @@ class QualityAssessor:
                     self._state._quality_rejected_count += 1
                     _batch_logger.debug(
                         "[QUALITY] rust_rejected reason=%s entropy=%.3f fp=%s finding_id=%s",
-                        rust_reason, entropy, fp[:16] if fp else "",
+                        rust_reason,
+                        entropy,
+                        fp[:16] if fp else "",
                         f.finding_id[:16] if f.finding_id else "",
                     )
                     results[idx] = self._make_decision(
-                        False, rust_reason, entropy, fp or url_fp, False,
+                        False,
+                        rust_reason,
+                        entropy,
+                        fp or url_fp,
+                        False,
                     )
         else:
             # Fallback: individual batch calls (legacy path)
@@ -905,7 +959,7 @@ class QualityAssessor:
         # Chunk findings within bounds
         chunks: list[list[CanonicalFinding]] = []
         for i in range(0, n, _QUALITY_BATCH_SIZE_MAX):
-            chunk = findings[i:i + _QUALITY_BATCH_SIZE_MAX]
+            chunk = findings[i : i + _QUALITY_BATCH_SIZE_MAX]
             if len(chunk) >= _QUALITY_BATCH_SIZE_MIN or i + _QUALITY_BATCH_SIZE_MAX >= n:
                 chunks.append(chunk)
             else:
@@ -915,7 +969,6 @@ class QualityAssessor:
                 else:
                     chunks.append(chunk)
 
-        # Process chunks in parallel via asyncio.to_thread
         results: list[FindingQualityDecision] = []
         tasks = [asyncio.to_thread(self.assess_batch, chunk) for chunk in chunks]
         chunk_results = await asyncio.gather(*tasks)
@@ -938,20 +991,19 @@ class QualityAssessor:
         n = len(findings)
         results: list[FindingQualityDecision] = [None] * n  # type: ignore[list-item]
 
-        # --- Phase 1: pre-compute fingerprints + entropies via Rust batch ---
-        url_fingerprints: list[str] = [''] * n
+        url_fingerprints: list[str] = [""] * n
         entropies: list[float] = [0.0] * n
-        fingerprints: list[str] = [''] * n
+        fingerprints: list[str] = [""] * n
         url_indices: list[int] = []
         payload_indices: list[int] = []
         texts: list[str] = []
 
         for idx, f in enumerate(findings):
-            url = self._state._extract_url_from_provenance(f.provenance) if f.provenance else ''
+            url = self._state._extract_url_from_provenance(f.provenance) if f.provenance else ""
             if url:
                 url_fingerprints[idx] = url
                 url_indices.append(idx)
-                texts.append('')
+                texts.append("")
             else:
                 payload_text = f.payload_text if f.payload_text else f.query
                 if not (payload_text and payload_text.strip()):
@@ -981,7 +1033,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_normalize_quality_text(lst),
                 single_fn=_normalize_for_quality,
                 py_fn=_normalize_for_quality,
-    )
+            )
 
             # Batch entropy via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             entropies_batch = self._rust_batch_float(
@@ -989,7 +1041,7 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_entropy(lst),
                 single_fn=_compute_entropy,
                 py_fn=_compute_entropy,
-    )
+            )
 
             # Batch dedup fingerprints via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
             fps_batch = self._rust_batch_str(
@@ -997,13 +1049,12 @@ class QualityAssessor:
                 batch_fn=lambda lst: _rust_backend.quality.batch_dedup_fingerprints(lst),
                 single_fn=_compute_dedup_fingerprint,
                 py_fn=_compute_dedup_fingerprint,
-    )
+            )
 
             for j, idx in enumerate(payload_indices):
                 entropies[idx] = entropies_batch[j]
                 fingerprints[idx] = fps_batch[j]
 
-        # --- Phase 2: apply decision logic per finding (same as assess()) ---
         _batch_logger: Logger = _logging.getLogger(__name__)
         for idx, f in enumerate(findings):
             url_fp = url_fingerprints[idx]
@@ -1012,11 +1063,9 @@ class QualityAssessor:
             is_feed_source = f.source_type in _FEED_SOURCE_TYPES
             text_for_embed = url_fp or (f.payload_text or f.query)
             is_high_conf_ioc = (
-                text_for_embed is not None
-                and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
-    )
+                text_for_embed is not None and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
+            )
 
-            # --- Phase 2: per-finding decision logic (CC = 5) ---
             results[idx] = self._assess_batch_item_phase2(
                 f=f,
                 url_fp=url_fp,
@@ -1026,17 +1075,9 @@ class QualityAssessor:
                 is_high_conf_ioc=is_high_conf_ioc,
                 text_for_embed=text_for_embed,
                 _logger=_batch_logger,
-    )
+            )
 
         return results
-
-    # ---------------------------------------------------------------------------
-    # Rust batch fallback helper — CC = 3
-    # ---------------------------------------------------------------------------
-
-    # ---------------------------------------------------------------------------
-    # Rust batch fallback helpers — CC = 3 each
-    # ---------------------------------------------------------------------------
 
     def _rust_batch_str(
         self,
@@ -1075,10 +1116,6 @@ class QualityAssessor:
             return [single_fn(item) for item in items]
         except Exception:
             return [py_fn(item) for item in items]
-
-    # ---------------------------------------------------------------------------
-    # Phase 2 per-finding decision guard — CC = 5
-    # ---------------------------------------------------------------------------
 
     def _assess_batch_item_phase2(
         self,
@@ -1127,8 +1164,13 @@ class QualityAssessor:
         # Short strings: semantic dedup guard
         if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
             dup_result = self._apply_semantic_dedup_guard(
-                fp, text_for_embed, is_high_conf_ioc, is_feed_source, "short_string batch", _logger,
-    )
+                fp,
+                text_for_embed,
+                is_high_conf_ioc,
+                is_feed_source,
+                "short_string batch",
+                _logger,
+            )
             if dup_result is not None:
                 return dup_result
             if self._lmdb_store_fn is not None:
@@ -1142,14 +1184,21 @@ class QualityAssessor:
             self._state._quality_rejected_count += 1
             _logger.debug(
                 "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s",
-                entropy, _QUALITY_ENTROPY_THRESHOLD, fp[:16] if fp else "",
-    )
+                entropy,
+                _QUALITY_ENTROPY_THRESHOLD,
+                fp[:16] if fp else "",
+            )
             return self._make_decision(False, "low_entropy_rejected", entropy, fp, False)
 
         # Semantic dedup guard (entropy path)
         dup_result = self._apply_semantic_dedup_guard(
-            fp, text_for_embed, is_high_conf_ioc, is_feed_source, "entropy batch", _logger,
-    )
+            fp,
+            text_for_embed,
+            is_high_conf_ioc,
+            is_feed_source,
+            "entropy batch",
+            _logger,
+        )
         if dup_result is not None:
             return dup_result
 
@@ -1159,10 +1208,6 @@ class QualityAssessor:
         if not is_feed_source:
             self._state.add_to_hot_cache(fp, f.finding_id)
         return self._make_decision(True, None, entropy, fp, False)
-
-    # ---------------------------------------------------------------------------
-    # Shared semantic dedup guard — CC = 3
-    # ---------------------------------------------------------------------------
 
     def _apply_semantic_dedup_guard(
         self,
@@ -1177,11 +1222,7 @@ class QualityAssessor:
 
         CC = 3: 1 (guard check) + 1 (text length) + 1 (is_dup)
         """
-        if (
-            self._semantic_dedup_cache is None
-            or is_high_conf_ioc
-            or is_feed_source
-        ):
+        if self._semantic_dedup_cache is None or is_high_conf_ioc or is_feed_source:
             return None
         _cache = self._semantic_dedup_cache
         assert _cache is not None
@@ -1189,15 +1230,16 @@ class QualityAssessor:
             if not (text_for_embed and len(text_for_embed) >= 16):
                 return None
             is_dup = _cache.check_and_cache(
-                text_for_embed, threshold=0.75,
-    )
+                text_for_embed,
+                threshold=0.75,
+            )
             if is_dup:
                 self._state._quality_duplicate_count += 1
                 _logger.debug(
                     "[QUALITY] %s semantic_dup hit fp=%s",
                     path_label,
                     fp[:16] if fp else "",
-    )
+                )
                 return self._make_decision(False, "semantic_duplicate", 0.0, fp, True)
         except Exception as e:
             _logger.warning(f"Quality gate err ({path_label}): {e}")
@@ -1220,7 +1262,7 @@ class QualityAssessor:
             entropy=entropy,
             normalized_hash=fingerprint,
             duplicate=duplicate,
-    )
+        )
 
     def record_rejection(
         self,

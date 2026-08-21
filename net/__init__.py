@@ -21,16 +21,11 @@ INVARIANTS:
   [N-3] All functions are sync (network I/O belongs in transport/ or intelligence/)
 """
 
-
 import ipaddress
 import re
 import struct
-from dataclasses import dataclass
 from collections.abc import Iterator
-from _core import aclose
 
-
-# --- IP Utilities ---
 
 def is_ipv4(value: str) -> bool:
     try:
@@ -75,14 +70,14 @@ def is_bogon(value: str) -> bool:
     try:
         ip = ipaddress.ip_address(value)
         return (
-            ip.is_loopback or
-            ip.is_private or
-            ip.is_reserved or
-            ip.is_multicast or
-            str(ip).startswith("0.") or
-            str(ip).startswith("127.") or
-            str(ip).startswith("255.255.255.255")
-    )
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_reserved
+            or ip.is_multicast
+            or str(ip).startswith("0.")
+            or str(ip).startswith("127.")
+            or str(ip).startswith("255.255.255.255")
+        )
     except ValueError:
         return False
 
@@ -113,8 +108,6 @@ def ip_sort_key(value: str) -> tuple[int, int]:
     except ValueError:
         return (2, 0)
 
-
-# --- CIDR Utilities ---
 
 def parse_cidr(cidr: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:
     try:
@@ -160,8 +153,6 @@ def cidr_count(cidr: str) -> int | None:
     return network.num_addresses
 
 
-# --- ASN Utilities ---
-
 _ASN_RE = re.compile(r"^(?:AS)?(\d+)$", re.IGNORECASE)
 
 
@@ -183,17 +174,11 @@ def is_valid_asn(value: str) -> bool:
     return parse_asn(value) is not None
 
 
-# --- GeoIP (struct-based, no external DB) ---
-
-# Heuristic: First byte of IPv4 encodes rough regional data
-# This is NOT accurate GeoIP — use intelligence/geoip_lane.py for real data.
-# This module provides FAST rough classification for routing decisions.
-
 _COUNTRY_HEURISTIC: dict[int, str] = {
-    1: "US",   # ARIN
-    2: "EU",   # RIPE (approximate)
-    5: "EU",   # RIPE
-    8: "US",   # ARIN
+    1: "US",  # ARIN
+    2: "EU",  # RIPE (approximate)
+    5: "EU",  # RIPE
+    8: "US",  # ARIN
     12: "US",  # ARIN
     14: "AP",  # APNIC
     23: "US",  # ARIN
@@ -247,11 +232,7 @@ def country_from_ip_heuristic(ip: str) -> str:
     return _COUNTRY_HEURISTIC.get(first_byte, "XX")
 
 
-# --- Domain Utilities ---
-
-_DOMAIN_RE = re.compile(
-    r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
-    )
+_DOMAIN_RE = re.compile(r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$")
 
 
 def is_domain(value: str) -> bool:
@@ -277,14 +258,29 @@ def extract_domain_from_url(url: str) -> str | None:
     return None
 
 
-# --- Port Utilities ---
-
 _PORT_KNOWN = {
-    20: "FTP-DATA", 21: "FTP", 22: "SSH", 23: "TELNET", 25: "SMTP",
-    53: "DNS", 80: "HTTP", 110: "POP3", 119: "NNTP", 123: "NTP",
-    143: "IMAP", 161: "SNMP", 194: "IRC", 443: "HTTPS", 465: "SMTPS",
-    587: "SMTP-SUB", 993: "IMAPS", 995: "POP3S",
-    3306: "MYSQL", 5432: "POSTGRES", 6379: "REDIS", 27017: "MONGODB",
+    20: "FTP-DATA",
+    21: "FTP",
+    22: "SSH",
+    23: "TELNET",
+    25: "SMTP",
+    53: "DNS",
+    80: "HTTP",
+    110: "POP3",
+    119: "NNTP",
+    123: "NTP",
+    143: "IMAP",
+    161: "SNMP",
+    194: "IRC",
+    443: "HTTPS",
+    465: "SMTPS",
+    587: "SMTP-SUB",
+    993: "IMAPS",
+    995: "POP3S",
+    3306: "MYSQL",
+    5432: "POSTGRES",
+    6379: "REDIS",
+    27017: "MONGODB",
 }
 
 
@@ -296,8 +292,6 @@ def is_port_known(port: int) -> bool:
     return port in _PORT_KNOWN
 
 
-# --- Protocol Detection ---
-
 _PROTO_RE = re.compile(r"\b(TCP|UDP|SCTP|DCCP)\b", re.IGNORECASE)
 
 
@@ -306,22 +300,37 @@ def parse_protocol(proto: str) -> str | None:
     return m.group(1).upper() if m else None
 
 
-# --- Exported API ---
-
 __all__ = [
     # IP
-    "is_ipv4", "is_ipv6", "is_ip", "classify_ip",
-    "is_private_ip", "is_bogon", "ip_to_int", "int_to_ipv4", "ip_sort_key",
+    "is_ipv4",
+    "is_ipv6",
+    "is_ip",
+    "classify_ip",
+    "is_private_ip",
+    "is_bogon",
+    "ip_to_int",
+    "int_to_ipv4",
+    "ip_sort_key",
     # CIDR
-    "parse_cidr", "is_ip_in_cidr", "cidr_overlap", "cidr_subnets", "cidr_count",
+    "parse_cidr",
+    "is_ip_in_cidr",
+    "cidr_overlap",
+    "cidr_subnets",
+    "cidr_count",
     # ASN
-    "parse_asn", "format_asn", "is_valid_asn",
+    "parse_asn",
+    "format_asn",
+    "is_valid_asn",
     # GeoIP
     "country_from_ip_heuristic",
     # Domain
-    "is_domain", "domain_depth", "parent_domain", "extract_domain_from_url",
+    "is_domain",
+    "domain_depth",
+    "parent_domain",
+    "extract_domain_from_url",
     # Port
-    "port_name", "is_port_known",
+    "port_name",
+    "is_port_known",
     # Protocol
     "parse_protocol",
 ]

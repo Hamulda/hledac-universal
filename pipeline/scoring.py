@@ -7,15 +7,8 @@ and live_feed_pipeline.py into a single module. Both pipelines import from it.
 Invariant: scoring logic lives in ONE place. Tests for scoring live in one place.
 """
 
-
-
 import html
 import re
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Feed Entry Quality Signal
-# ---------------------------------------------------------------------------
 
 # Minimum content length that qualifies as "substantive" for quality scoring
 _MIN_SUBSTANTIVE_CHARS: int = 80
@@ -30,6 +23,7 @@ _OSINT_RELEVANT_LANGUAGES: frozenset[str] = frozenset({"en", "cs", "sk", "de", "
 _markdownify_available: bool = False
 try:
     import markdownify  # noqa: F401
+
     _markdownify_available = True
 except ImportError:
     markdownify = None  # type: ignore[assignment]
@@ -70,7 +64,7 @@ class EntryQualitySignal:
             f"EntryQualitySignal(band={self.quality_band!r}, score={self.quality_score}, "
             f"tag={self.quality_reason_tag!r}, boost={self.metadata_boost}, "
             f"mismatch={self.language_mismatch})"
-    )
+        )
 
     def __eq__(self, other: object) -> bool:
         """Check equality based on quality band and score."""
@@ -82,7 +76,7 @@ class EntryQualitySignal:
             and self.quality_reason_tag == other.quality_reason_tag
             and self.metadata_boost == other.metadata_boost
             and self.language_mismatch == other.language_mismatch
-    )
+        )
 
 
 def _compute_entry_quality_signal(
@@ -190,16 +184,12 @@ def _compute_entry_quality_signal(
     )
 
 
-# ---------------------------------------------------------------------------
-# Feed HTML text processing utilities
-# ---------------------------------------------------------------------------
-
 # Match entire <script>...</script> or <style>...</style> blocks (DOTALL)
 _SCRIPT_STYLE_RE = re.compile(
     r"<script[^>]*>.*?</script>|"
     r"<style[^>]*>.*?</style>",
     re.DOTALL | re.IGNORECASE,
-    )
+)
 # Replace any HTML tag with a single space
 _STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 _MULTI_WHITESPACE_RE = re.compile(r"[ \t\r\n]+")
@@ -220,13 +210,9 @@ def _strip_html_tags_from_text(text: str) -> str:
         return ""
     if not isinstance(text, str):
         return ""
-    # Step 1: Remove script/style blocks completely
     cleaned = _SCRIPT_STYLE_RE.sub("", text)
-    # Step 2: Replace tags with space
     cleaned = _STRIP_TAGS_RE.sub(" ", cleaned)
-    # Step 3: Normalize whitespace
     cleaned = _MULTI_WHITESPACE_RE.sub(" ", cleaned).strip()
-    # Step 4: Unescape HTML entities AFTER tag removal
     cleaned = html.unescape(cleaned)
     return cleaned
 
@@ -254,10 +240,6 @@ def _convert_rich_html_to_text(rich_html: str) -> str:
             pass
     return _strip_html_tags_from_text(rich_html)
 
-
-# ---------------------------------------------------------------------------
-# Assembly substance tiers (used to diagnose WHERE signal is lost)
-# ---------------------------------------------------------------------------
 
 # Assembly substance tiers — used to diagnose WHERE signal is lost
 # in the feed-native assembly phase
@@ -305,11 +287,6 @@ def _classify_assembly_substance(
             return ("title_only", ASSEMBLY_TIER_TITLE_ONLY)
 
     return ("no_content", ASSEMBLY_TIER_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# Deterministic clean text assembly
-# ---------------------------------------------------------------------------
 
 
 def _assemble_enriched_feed_text(
@@ -410,5 +387,4 @@ def _assemble_clean_feed_text(title: str, summary: str) -> str:
     return "\n\n".join(parts)
 
 
-# Backwards-compatible alias (used by probe_8ah tests)
 _entry_payload_text = _assemble_clean_feed_text

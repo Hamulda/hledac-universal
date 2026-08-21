@@ -10,7 +10,6 @@ MODERNIZATION (Issue #18):
   - No lazy import needed: this module has no heavy deps
 """
 
-
 # Bounded LRU cache for threat actors and malware families (M1 8GB safe)
 # format: "name": ("type", ["alias1", "alias2", ...])
 # max 500 entries total — bounded per invariant
@@ -149,7 +148,6 @@ _THREAT_DICTIONARY: dict[str, tuple[str, list[str]]] = {
     "tick": ("threat_actor", ["tick", "thrip"]),
     "thrip": ("threat_actor", ["tick", "thrip"]),
     "lazarus": ("threat_actor", ["lazarus group", "hidden cobra"]),
-    "hidden cobra": ("threat_actor", ["lazarus", "lazarus group"]),
     # Additional aliases / expansions
     "wizard spider": ("threat_actor", ["conti", "wizard spider"]),
 }

@@ -14,14 +14,16 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency, streaming for large pages.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import re
 import threading
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
@@ -29,12 +31,9 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
 class SpeculativeConfig(Struct, frozen=True):
     """Speculative prefetch configuration. M1 8GB: msgspec.Struct for fast init."""
+
     max_prefetch_depth: int = 2
     max_urls_per_page: int = 100
     prefetch_concurrency: int = 10
@@ -44,13 +43,10 @@ class SpeculativeConfig(Struct, frozen=True):
     priority_base_score: int = 10
 
 
-# =============================================================================
-# Priority Queue Entry
-# =============================================================================
-
 @dataclass(slots=True, order=True)
 class URLPriorityEntry:
     """URL entry with priority for prefetch queue."""
+
     priority: int = field(compare=True)
     url: str = field(compare=False)
     depth: int = field(compare=False)
@@ -62,10 +58,6 @@ class URLPriorityEntry:
         if not isinstance(self.priority, int):
             self.priority = 0
 
-
-# =============================================================================
-# Streaming Link Extractor
-# =============================================================================
 
 class StreamingLinkExtractor:
     """
@@ -79,11 +71,9 @@ class StreamingLinkExtractor:
 
     def __init__(self, base_url: str, pattern: str | None = None, thread_safe: bool = True) -> None:
         self.base_url = base_url
-        self.pattern = re.compile(pattern) if pattern else re.compile(
-            r'href=["\']([^"\']+)["\']'
-        )
+        self.pattern = re.compile(pattern) if pattern else re.compile(r'href=["\']([^"\']+)["\']')
         self.links: list[str] = []
-        self._buffer: str = ''
+        self._buffer: str = ""
         self._in_script: bool = False
         self._in_style: bool = False
         self._tag_depth: int = 0
@@ -105,13 +95,12 @@ class StreamingLinkExtractor:
         new_links: list[str] = []
 
         try:
-            text = chunk.decode('utf-8', errors='ignore')
+            text = chunk.decode("utf-8", errors="ignore")
         except Exception:  # noqa: BLE001
-            text = chunk.decode('latin-1', errors='ignore')
+            text = chunk.decode("latin-1", errors="ignore")
 
         self._buffer += text
 
-        # Process buffer in chunks for efficiency
         while len(self._buffer) > 1024:
             # Find potential link patterns
             for match in self.pattern.finditer(self._buffer):
@@ -129,11 +118,11 @@ class StreamingLinkExtractor:
 
     def _process_url(self, url: str) -> str | None:
         """Process and normalize URL."""
-        if not url or url.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+        if not url or url.startswith(("#", "javascript:", "mailto:", "tel:")):
             return None
 
         # Skip fragment-only URLs
-        if url.startswith('#'):
+        if url.startswith("#"):
             return None
 
         try:
@@ -142,11 +131,10 @@ class StreamingLinkExtractor:
             parsed = urlparse(resolved)
 
             # Only HTTP/HTTPS
-            if parsed.scheme not in ('http', 'https'):
+            if parsed.scheme not in ("http", "https"):
                 return None
 
-            # Remove fragments for deduplication
-            return resolved.split('#')[0]
+            return resolved.split("#")[0]
         except Exception:  # noqa: BLE001
             return None
 
@@ -155,10 +143,6 @@ class StreamingLinkExtractor:
         """Get all discovered links."""
         return list(self.links)
 
-
-# =============================================================================
-# Speculative Prefetch Service
-# =============================================================================
 
 @dataclass(slots=True)
 class SpeculativePrefetchService:
@@ -172,18 +156,21 @@ class SpeculativePrefetchService:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
+
     config: SpeculativeConfig = field(default_factory=SpeculativeConfig)
 
     _queue: asyncio.PriorityQueue[URLPriorityEntry] = field(default_factory=lambda: asyncio.PriorityQueue())
     _seen_urls: set[str] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _mmap_index: dict[str, float] = field(default_factory=dict)  # url -> last_seen
-    _prefetch_stats: dict[str, int] = field(default_factory=lambda: {
-        'pages_processed': 0,
-        'links_found': 0,
-        'links_prefetched': 0,
-        'dedup_skipped': 0,
-    })
+    _prefetch_stats: dict[str, int] = field(
+        default_factory=lambda: {
+            "pages_processed": 0,
+            "links_found": 0,
+            "links_prefetched": 0,
+            "dedup_skipped": 0,
+        }
+    )
 
     def __post_init__(self) -> None:
         self._queue = asyncio.PriorityQueue()
@@ -203,7 +190,7 @@ class SpeculativePrefetchService:
         depth_bonus = max(0, (self.config.max_prefetch_depth - depth) * 3)
 
         # Common resource types = +2
-        resource_bonus = 2 if any(ext in url.lower() for ext in ['.css', '.js', '.jpg', '.png']) else 0
+        resource_bonus = 2 if any(ext in url.lower() for ext in [".css", ".js", ".jpg", ".png"]) else 0
 
         return base + domain_bonus + depth_bonus + resource_bonus
 
@@ -218,23 +205,14 @@ class SpeculativePrefetchService:
         Yields:
             Discovered links as they are found
         """
-        extractor = StreamingLinkExtractor(
-            base_url=base_url,
-            pattern=self.config.link_pattern
-        )
+        extractor = StreamingLinkExtractor(base_url=base_url, pattern=self.config.link_pattern)
 
         async for chunk in html_chunks:
             links = extractor.feed(chunk)
             for link in links:
                 yield link
 
-    async def add_urls(
-        self,
-        urls: list[str],
-        source_url: str,
-        depth: int = 0,
-        base_priority: int | None = None
-    ) -> int:
+    async def add_urls(self, urls: list[str], source_url: str, depth: int = 0, base_priority: int | None = None) -> int:
         """
         Add URLs to prefetch queue.
 
@@ -248,12 +226,11 @@ class SpeculativePrefetchService:
             Number of URLs actually added (after dedup)
         """
         added = 0
-        base = base_priority or self.config.priority_base_score
 
         async with self._lock:
-            for url in urls[:self.config.max_urls_per_page]:
+            for url in urls[: self.config.max_urls_per_page]:
                 if url in self._seen_urls:
-                    self._prefetch_stats['dedup_skipped'] += 1
+                    self._prefetch_stats["dedup_skipped"] += 1
                     continue
 
                 # Compute priority
@@ -273,7 +250,7 @@ class SpeculativePrefetchService:
                 self._seen_urls.add(url)
                 self._mmap_index[url] = asyncio.get_running_loop().time()
                 added += 1
-                self._prefetch_stats['links_found'] += 1
+                self._prefetch_stats["links_found"] += 1
 
         return added
 
@@ -284,7 +261,7 @@ class SpeculativePrefetchService:
 
         try:
             entry = self._queue.get_nowait()
-            self._prefetch_stats['links_prefetched'] += 1
+            self._prefetch_stats["links_prefetched"] += 1
             return entry
         except asyncio.QueueEmpty:
             return None
@@ -308,9 +285,9 @@ class SpeculativePrefetchService:
         """Get prefetch statistics."""
         return {
             **self._prefetch_stats,
-            'queue_size': self._queue.qsize(),
-            'seen_urls_count': len(self._seen_urls),
-            'index_size': len(self._mmap_index),
+            "queue_size": self._queue.qsize(),
+            "seen_urls_count": len(self._seen_urls),
+            "index_size": len(self._mmap_index),
         }
 
     def reset(self) -> None:
@@ -325,10 +302,10 @@ class SpeculativePrefetchService:
         self._seen_urls.clear()
         self._mmap_index.clear()
         self._prefetch_stats = {
-            'pages_processed': 0,
-            'links_found': 0,
-            'links_prefetched': 0,
-            'dedup_skipped': 0,
+            "pages_processed": 0,
+            "links_found": 0,
+            "links_prefetched": 0,
+            "dedup_skipped": 0,
         }
 
     async def aclose(self) -> None:
@@ -338,8 +315,8 @@ class SpeculativePrefetchService:
 
 
 __all__ = [
-    'SpeculativeConfig',
-    'URLPriorityEntry',
-    'StreamingLinkExtractor',
-    'SpeculativePrefetchService',
+    "SpeculativeConfig",
+    "URLPriorityEntry",
+    "StreamingLinkExtractor",
+    "SpeculativePrefetchService",
 ]

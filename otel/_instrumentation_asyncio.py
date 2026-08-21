@@ -18,16 +18,18 @@ Usage (canonical path):
     from hledac.universal.utils.asyncx import current_otel_context
     ctx = current_otel_context()  # {trace_id, span_id} or None
 """
+
 from __future__ import annotations
+
 import asyncio
 import contextvars
 import sys
-from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Coroutine
-from _core import aclose
+from typing import TYPE_CHECKING, Any
 
 try:
     from cachetools import LRUCache as _LRUCache
+
     _LRU_AVAILABLE = True
 except ImportError:
     _LRU_AVAILABLE = False
@@ -35,7 +37,7 @@ except ImportError:
 if TYPE_CHECKING:
     pass
 
-__all__ = ['TaskContext', 'task_context', 'current_otel_context', 'create_task_with_context']
+__all__ = ["TaskContext", "task_context", "current_otel_context", "create_task_with_context"]
 
 # P0-3: cachetools LRUCache replaces hand-rolled OrderedDict LRU.
 # _MAX_TASK_CACHE raised from 256 → 512 for better hit rate.
@@ -47,7 +49,7 @@ _MAX_TASK_CACHE = 512
 #   BEFORE calling into the event loop, so uvloop does NOT block this
 # - Feature flag HLEDAC_EAGER_START_ENABLED controls global eager_start behavior
 _PY_312_PLUS: bool = sys.version_info >= (3, 12)
-_UVLOOP_INSTALLED: bool = sys.modules.get('uvloop') is not None
+_UVLOOP_INSTALLED: bool = sys.modules.get("uvloop") is not None
 
 # eager_start is supported when Python >= 3.12 (stdlib TaskGroup.create_task
 # handles it natively, independent of whether uvloop is installed)
@@ -76,27 +78,34 @@ def _should_use_eager_start() -> bool:
 
     return ENV.EAGER_START_ENABLED
 
+
 if _LRU_AVAILABLE:
     _task_context_cache = _LRUCache(maxsize=_MAX_TASK_CACHE)  # type: ignore[assignment, misc]
 else:
     from collections import OrderedDict
+
     _task_context_cache: Any = OrderedDict()
-_current_task_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar('_current_task_context', default=None)
+_current_task_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "_current_task_context", default=None
+)
+
 
 def _get_current_otel_context() -> dict[str, Any]:
     """Extract trace_id/span_id from OTel context, or empty dict."""
     out: dict[str, Any] = {}
     try:
         from otel._instrumentation import current_span_id, current_trace_id
+
         tid = current_trace_id()
         sid = current_span_id()
         if tid:
-            out['trace_id'] = tid
+            out["trace_id"] = tid
         if sid:
-            out['span_id'] = sid
+            out["span_id"] = sid
     except Exception:  # noqa: BLE001
         pass
     return out
+
 
 def current_otel_context() -> dict[str, Any] | None:
     """
@@ -111,7 +120,10 @@ def current_otel_context() -> dict[str, Any] | None:
     """
     return _current_task_context.get()
 
-def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: bool=True, otel_trace: bool=True) -> asyncio.Task[Any]:
+
+def create_task_with_context(
+    coro: Any, *, name: str | None = None, eager_start: bool = True, otel_trace: bool = True
+) -> asyncio.Task[Any]:
     """
     Create an asyncio.Task with OTel trace context propagation.
 
@@ -169,8 +181,10 @@ def create_task_with_context(coro: Any, *, name: str | None=None, eager_start: b
     def _clear(t: asyncio.Task[Any]) -> None:
         _task_context_cache.pop(id(t), None)
         _current_task_context.set(None)
+
     task.add_done_callback(_clear)
     return task
+
 
 class TaskContext:
     """High-level asyncio.Task wrapper that propagates OTel + sprint context.
@@ -183,19 +197,31 @@ class TaskContext:
     For the canonical path used by the codebase, prefer safe_create_task().
     TaskContext is useful when you need sprint_id / mode tags.
     """
-    __slots__ = tuple(('_tasks',))
+
+    __slots__ = ("_tasks",)
 
     def __init__(self) -> None:
         self._tasks: list[asyncio.Task[Any]] = []
 
     @staticmethod
-    def create_task(coro: Coroutine[Any, Any, Any], *, sprint_id: str | None=None, mode: str | None=None, extra: dict[str, Any] | None=None) -> asyncio.Task[Any]:
+    def create_task(
+        coro: Coroutine[Any, Any, Any],
+        *,
+        sprint_id: str | None = None,
+        mode: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> asyncio.Task[Any]:
         """Create an asyncio.Task with OTel + sprint context propagated.
 
         ISSUE-010: Respects HLEDAC_EAGER_START_ENABLED feature flag when Python 3.12+.
         """
         import os
-        ctx_data: dict[str, Any] = {**_get_current_otel_context(), 'sprint_id': sprint_id or os.environ.get('HLEDAC_SPRINT_ID', ''), 'mode': mode or ''}
+
+        ctx_data: dict[str, Any] = {
+            **_get_current_otel_context(),
+            "sprint_id": sprint_id or os.environ.get("HLEDAC_SPRINT_ID", ""),
+            "mode": mode or "",
+        }
         if extra:
             ctx_data.update(extra)
         # P0-3: LRUCache handles eviction automatically; OrderedDict fallback
@@ -224,11 +250,14 @@ class TaskContext:
         def _clear(t: asyncio.Task[Any]) -> None:
             _task_context_cache.pop(id(t), None)
             _current_task_context.set(None)
+
         task.add_done_callback(_clear)
         return task
 
     @staticmethod
-    async def gather(*tasks: asyncio.Task[Any], timeout: float | None=None, return_exceptions: bool=False) -> list[Any]:
+    async def gather(
+        *tasks: asyncio.Task[Any], timeout: float | None = None, return_exceptions: bool = False
+    ) -> list[Any]:
         """Await multiple tasks, propagating context to all."""
         if timeout is not None:
             async with asyncio.timeout(timeout):
@@ -236,7 +265,7 @@ class TaskContext:
         return await asyncio.gather(*tasks, return_exceptions=return_exceptions)
 
     @staticmethod
-    def current() -> 'TaskContextManager':
+    def current() -> TaskContextManager:
         """Return a context manager for the current task's context."""
         return TaskContextManager()
 
@@ -252,9 +281,11 @@ class TaskContext:
         if ctx is not None:
             ctx[key] = value
 
+
 class TaskContextManager:
     """Async context manager that exposes the current task's context."""
-    __slots__ = ('_token',)
+
+    __slots__ = ("_token",)
 
     def __init__(self) -> None:
         self._token: contextvars.Token[dict[str, Any] | None] | None = None
@@ -272,6 +303,7 @@ class TaskContextManager:
         if ctx is not None:
             ctx[key] = value
 
+
 class task_context:
     """Sync+async context manager that binds structlog fields + OTel trace.
 
@@ -283,7 +315,8 @@ class task_context:
         async with task_context(sprint_id=sprint_id, mode="aggressive"):
             await fetch()
     """
-    __slots__ = ('_kwargs', '_token')
+
+    __slots__ = ("_kwargs", "_token")
 
     def __init__(self, **kwargs: Any) -> None:
         self._kwargs = kwargs

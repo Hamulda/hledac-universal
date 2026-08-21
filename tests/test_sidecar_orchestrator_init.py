@@ -12,12 +12,12 @@ The fix: scheduler.py now passes result_sink=governor=scheduler=
 
 Acceptance: test_sidecar_orchestrator_init_succeeds — init_sidecars: ok
 """
+
 from __future__ import annotations
 
-import pytest
-import asyncio
 from unittest.mock import MagicMock
-from _core import aclose
+
+import pytest
 
 
 class TestSidecarOrchestratorSignature:
@@ -103,7 +103,7 @@ class TestSidecarOrchestratorInitFlow:
             result_sink=mock_result,
             governor=mock_governor,
             scheduler=mock_scheduler,
-    )
+        )
 
         assert orch._result is mock_result
         assert orch._governor is mock_governor
@@ -118,7 +118,6 @@ class TestSidecarOrchestratorInitFlow:
         The original bug was TypeError from wrong kwargs — caught by except Exception
         and returned as InitResult.failure (silent sidecar disable).
         """
-        from runtime.scheduler_v2.protocol import InitResult
         from runtime.sidecar_orchestrator import SidecarOrchestrator
 
         mock_result = MagicMock()
@@ -131,12 +130,12 @@ class TestSidecarOrchestratorInitFlow:
                 result_sink=mock_result,
                 governor=mock_governor,
                 scheduler=mock_scheduler,
-    )
+            )
         except TypeError as e:
             pytest.fail(
                 f"SidecarOrchestrator() raised TypeError — constructor kwargs don't match "
                 f"what scheduler.py:304 passes: {e}"
-    )
+            )
 
         assert orch._result is mock_result
         assert orch._governor is mock_governor

@@ -27,21 +27,25 @@ Verify:
     python -m pytest tests/probe_f207k_nonfeed_accepted_path/ -v
 """
 
-
 import hashlib
 import heapq
 import logging
-import re
 import time
 from typing import Any
 
+from hledac.universal.runtime.patterns.discovery import (
+    _TRAILING_DOT_RE,
+    _URL_SCHEME_RE,
+    _URL_TRAILING_SLASH_RE,
+    _WILDCARD_RE,
+)
 from hledac.universal.runtime.source_finding_config import (
+    CT_BRIDGE,
     MAX_BRIDGE_OUTPUT,
     MAX_CT_QUARANTINE_SAMPLES,
     MAX_EXPANSION_CLUE_EXAMPLES,
     MAX_PAYLOAD_TEXT_CHARS,
     MAX_PROVENANCE_ITEMS,
-    MAX_SAMPLE_REJECTIONS,
     PDNS_BRIDGE,
     RDAP_BRIDGE,
     REJECTION_CANDIDATE_BUILT_NOT_STORED,
@@ -54,21 +58,10 @@ from hledac.universal.runtime.source_finding_config import (
     REJECTION_STORAGE_UNAVAILABLE,
     REJECTION_UNSUPPORTED_SHAPE,
     REJECTION_WILDCARD_DOMAIN,
+    WAYBACK_BRIDGE,
     Rejection,
     RejectionReason,
     is_private_host,
-    CT_BRIDGE,
-    WAYBACK_BRIDGE,
-)
-from hledac.universal.runtime.patterns.discovery import (
-    _IP_LIKE_RE,
-    _TRAILING_DOT_RE,
-    _URL_SCHEME_RE,
-    _URL_TRAILING_SLASH_RE,
-    _WILDCARD_RE,
-    is_ip_like as _is_ip_like_pattern,
-)
-from hledac.universal.runtime.source_finding_config import (
     is_private_hostname,
     is_private_ip_prefix,
 )
@@ -234,10 +227,6 @@ def _is_wildcard_domain(domain: str) -> bool:
     return bool(_WILDCARD_RE.match(domain))
 
 
-# ---------------------------------------------------------------------------
-# CT → CanonicalFinding
-# ---------------------------------------------------------------------------
-
 _CT_CONFIDENCE: float = 0.65
 _CT_SOURCE_TYPE: str = "ct"
 _CT_SALT: str = "ctbridge"
@@ -382,11 +371,6 @@ def _build_ct_provenance(
     return tuple(prov)
 
 
-# ---------------------------------------------------------------------------
-# ct_results_to_findings helpers — extracted to reduce cyclomatic complexity
-# ---------------------------------------------------------------------------
-
-
 def _ct_make_empty_telemetry() -> dict[str, Any]:
     """Return zeroed CT telemetry for early-return paths."""
     return {
@@ -422,8 +406,7 @@ def _build_ct_telemetry(
     """
     ct_rejected_wildcard = sum(1 for r in rejections if r == REJECTION_WILDCARD_DOMAIN)
     ct_rejected_invalid = sum(
-        1 for r in rejections
-        if r in (REJECTION_PRIVATE_OR_RESERVED_DOMAIN, REJECTION_LOW_INFORMATION)
+        1 for r in rejections if r in (REJECTION_PRIVATE_OR_RESERVED_DOMAIN, REJECTION_LOW_INFORMATION)
     )
     ct_rejected_duplicate = sum(1 for r in rejections if r == REJECTION_DUPLICATE_CANDIDATE)
     ct_rejected_missing_domain = sum(1 for r in rejections if r == REJECTION_MISSING_DOMAIN)
@@ -840,7 +823,6 @@ def ct_results_to_findings(
         # Always initialize ts from retrieved_ts (used in both branches)
         ts = retrieved_ts if retrieved_ts > 0 else time.time()
 
-        # Handle case where no candidate domains were extracted
         if not candidate_domains:
             _ct_handle_missing_candidates(
                 url=url,
@@ -936,17 +918,11 @@ def record_ct_storage_results(
     telemetry["ct_candidates_stored"] = stored
     telemetry["ct_storage_rejected"] = rejected
     # F226C: quality_rejected = candidates_built - stored (rejected at storage quality gate)
-    telemetry["ct_bridge_quality_rejected_count"] = max(
-        0, telemetry.get("ct_candidates_built", 0) - stored
-    )
+    telemetry["ct_bridge_quality_rejected_count"] = max(0, telemetry.get("ct_candidates_built", 0) - stored)
     # accepted_candidates reflects what the bridge built (candidates), not stored
     # The caller should use ct_candidates_stored for actual stored count
     return telemetry
 
-
-# ---------------------------------------------------------------------------
-# Wayback → CanonicalFinding
-# ---------------------------------------------------------------------------
 
 _WAYBACK_CONFIDENCE: float = 0.75
 _WAYBACK_SOURCE_TYPE: str = "wayback_diff"
@@ -983,26 +959,34 @@ def wayback_results_to_findings(
 
     if not hasattr(diff_result, "change_events"):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections, {
-            "wayback_change_events": 0,
-            "wayback_changed_count": 0,
-            "wayback_added_count": 0,
-            "wayback_changed_url_count": 0,
-            "wayback_digest_changed_count": 0,
-            "wayback_unchanged_rejected": 0,
-        }
+        return (
+            [],
+            rejections,
+            {
+                "wayback_change_events": 0,
+                "wayback_changed_count": 0,
+                "wayback_added_count": 0,
+                "wayback_changed_url_count": 0,
+                "wayback_digest_changed_count": 0,
+                "wayback_unchanged_rejected": 0,
+            },
+        )
 
     events = diff_result.change_events
     if not events:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections, {
-            "wayback_change_events": 0,
-            "wayback_changed_count": 0,
-            "wayback_added_count": 0,
-            "wayback_changed_url_count": 0,
-            "wayback_digest_changed_count": 0,
-            "wayback_unchanged_rejected": 0,
-        }
+        return (
+            [],
+            rejections,
+            {
+                "wayback_change_events": 0,
+                "wayback_changed_count": 0,
+                "wayback_added_count": 0,
+                "wayback_changed_url_count": 0,
+                "wayback_digest_changed_count": 0,
+                "wayback_unchanged_rejected": 0,
+            },
+        )
 
     capped = events[:MAX_BRIDGE_OUTPUT]
 
@@ -1088,10 +1072,6 @@ def wayback_results_to_findings(
     return findings, rejections, telemetry
 
 
-# ---------------------------------------------------------------------------
-# PassiveDNS → CanonicalFinding
-# ---------------------------------------------------------------------------
-
 _PDNS_CONFIDENCE: float = 0.5
 _PDNS_SOURCE_TYPE: str = "passive_dns"
 _PDNS_SALT: str = "pdnsbridge"
@@ -1147,34 +1127,46 @@ def passive_dns_results_to_findings(
     # [F213C] Validate input shape before iterating
     if not isinstance(ips, list):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections, {
-            "pdns_ip_total": 0,
-            "pdns_private_rejected": 0,
-            "pdns_empty_rejected": 0,
-            "pdns_duplicate_rejected": 0,
-            "pdns_public_accepted": 0,
-        }
+        return (
+            [],
+            rejections,
+            {
+                "pdns_ip_total": 0,
+                "pdns_private_rejected": 0,
+                "pdns_empty_rejected": 0,
+                "pdns_duplicate_rejected": 0,
+                "pdns_public_accepted": 0,
+            },
+        )
 
     query_stripped = query.strip() if query else ""
     if not query_stripped:
         rejections.append(REJECTION_MISSING_DOMAIN)
-        return [], rejections, {
-            "pdns_ip_total": 0,
-            "pdns_private_rejected": 0,
-            "pdns_empty_rejected": 0,
-            "pdns_duplicate_rejected": 0,
-            "pdns_public_accepted": 0,
-        }
+        return (
+            [],
+            rejections,
+            {
+                "pdns_ip_total": 0,
+                "pdns_private_rejected": 0,
+                "pdns_empty_rejected": 0,
+                "pdns_duplicate_rejected": 0,
+                "pdns_public_accepted": 0,
+            },
+        )
 
     if not ips:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections, {
-            "pdns_ip_total": 0,
-            "pdns_private_rejected": 0,
-            "pdns_empty_rejected": 0,
-            "pdns_duplicate_rejected": 0,
-            "pdns_public_accepted": 0,
-        }
+        return (
+            [],
+            rejections,
+            {
+                "pdns_ip_total": 0,
+                "pdns_private_rejected": 0,
+                "pdns_empty_rejected": 0,
+                "pdns_duplicate_rejected": 0,
+                "pdns_public_accepted": 0,
+            },
+        )
 
     capped = ips[:MAX_BRIDGE_OUTPUT]
     seen_pairs: set[str] = set()
@@ -1242,11 +1234,6 @@ def passive_dns_results_to_findings(
     return findings, rejections, telemetry
 
 
-# ---------------------------------------------------------------------------
-# Bridge conversion summary helper
-# ---------------------------------------------------------------------------
-
-
 def summarize_bridge_conversion(
     family: str,
     findings: list[Any],
@@ -1283,6 +1270,7 @@ def summarize_bridge_conversion(
 
 
 # ── Shared summarize helpers (eliminate 2× replicated rejection-counting boilerplate) ──
+
 
 def _count_rejections(rejections: list[RejectionReason], top_n: int = 20) -> tuple[dict[str, int], dict[str, int]]:
     """
@@ -1465,7 +1453,6 @@ def summarize_ct_conversion(
     """
     rejection_counts, all_rejection_reasons = _count_rejections(rejections)
 
-    # Build taxonomy breakdown
     taxonomy = {
         "rejectedMissingDomain": rejection_counts.get(REJECTION_MISSING_DOMAIN, 0),
         "rejectedMissingValue": rejection_counts.get(REJECTION_MISSING_VALUE, 0),
@@ -1473,9 +1460,7 @@ def summarize_ct_conversion(
         "rejectedDuplicateCandidate": rejection_counts.get(REJECTION_DUPLICATE_CANDIDATE, 0),
         "rejectedUnsupportedShape": rejection_counts.get(REJECTION_UNSUPPORTED_SHAPE, 0),
         "rejectedWildcardDomain": rejection_counts.get(REJECTION_WILDCARD_DOMAIN, 0),
-        "rejectedPrivateOrReservedDomain": rejection_counts.get(
-            REJECTION_PRIVATE_OR_RESERVED_DOMAIN, 0
-        ),
+        "rejectedPrivateOrReservedDomain": rejection_counts.get(REJECTION_PRIVATE_OR_RESERVED_DOMAIN, 0),
     }
 
     total_rejected = sum(taxonomy.values())
@@ -1555,7 +1540,6 @@ def summarize_ct_conversion(
 
 
 # ── F234A: DOH → CanonicalFinding ───────────────────────────────────────────
-
 
 _DOH_SOURCE_TYPE = "doh"
 _DOH_CONFIDENCE = 0.55  # DOH records are authoritative DNS, medium-high confidence
@@ -1649,7 +1633,6 @@ def doh_results_to_findings(
             f"sprint:{sprint_id[:16]}",
         )
 
-        # Build enriched payload_text — consolidated field mapping
         field_map = [
             ("spf_policy", spf),
             ("dmarc_policy", dmarc),
@@ -1772,12 +1755,11 @@ def summarize_doh_conversion(
 
 # ── R9: Academic → CanonicalFinding ─────────────────────────────────────────
 
-
 _RDAP_SOURCE_TYPE = "rdap_enrichment"
 _RDAP_BASE_CONFIDENCE = 0.70
 
-
 # ── RDAP domain-specific extractors ──────────────────────────────────────────
+
 
 def _rdap_extract_nameservers(
     rdap_data: dict[str, Any], target: str, now: float, confidence: float, sprint_id: str
@@ -1945,7 +1927,9 @@ def _rdap_extract_entities(
             org_name = ent.get("fullName") or ent.get("name") or ent.get("handle") or ""
         else:
             roles = list(_safe_getattr(ent, "roles") or [])
-            org_name = _safe_getattr(ent, "fullName") or _safe_getattr(ent, "name") or _safe_getattr(ent, "handle") or ""
+            org_name = (
+                _safe_getattr(ent, "fullName") or _safe_getattr(ent, "name") or _safe_getattr(ent, "handle") or ""
+            )
 
         if not org_name:
             continue
@@ -2056,13 +2040,11 @@ def _rdap_extract_domain_payload(
     if not domain_name:
         return None
 
-    # Extract components using helpers
     registrar_name = _extract_registrar(rdap_data)
     ns_list = _extract_nameservers(rdap_data)
     status_list = _extract_status_list(rdap_data)
     event_list = _extract_events(rdap_data)
 
-    # Build payload
     provenance: tuple[str, ...] = (
         "source_family:rdap_enrichment",
         f"domain:{domain_name}",
@@ -2214,17 +2196,21 @@ def rdap_result_to_findings(
 
     if not target or not isinstance(target, str) or not target.strip():
         rejections.append(REJECTION_MISSING_DOMAIN)
-        return (), (REJECTION_MISSING_DOMAIN,), {
-            "rdap_target": "",
-            "rdap_built": 0,
-            "rdap_ns_count": 0,
-            "rdap_status_count": 0,
-            "rdap_event_count": 0,
-            "rdap_entity_count": 0,
-            "rdap_network_count": 0,
-            "rdap_securedns": False,
-            "rdap_rejection_count": 1,
-        }
+        return (
+            (),
+            (REJECTION_MISSING_DOMAIN,),
+            {
+                "rdap_target": "",
+                "rdap_built": 0,
+                "rdap_ns_count": 0,
+                "rdap_status_count": 0,
+                "rdap_event_count": 0,
+                "rdap_entity_count": 0,
+                "rdap_network_count": 0,
+                "rdap_securedns": False,
+                "rdap_rejection_count": 1,
+            },
+        )
 
     rdap_data: dict[str, Any] = {}
     if isinstance(rdap_result, dict):
@@ -2232,17 +2218,21 @@ def rdap_result_to_findings(
 
     if not rdap_data:
         rejections.append(REJECTION_LOW_INFORMATION)
-        return (), (REJECTION_LOW_INFORMATION,), {
-            "rdap_target": target,
-            "rdap_built": 0,
-            "rdap_ns_count": 0,
-            "rdap_status_count": 0,
-            "rdap_event_count": 0,
-            "rdap_entity_count": 0,
-            "rdap_network_count": 0,
-            "rdap_securedns": False,
-            "rdap_rejection_count": 1,
-        }
+        return (
+            (),
+            (REJECTION_LOW_INFORMATION,),
+            {
+                "rdap_target": target,
+                "rdap_built": 0,
+                "rdap_ns_count": 0,
+                "rdap_status_count": 0,
+                "rdap_event_count": 0,
+                "rdap_entity_count": 0,
+                "rdap_network_count": 0,
+                "rdap_securedns": False,
+                "rdap_rejection_count": 1,
+            },
+        )
 
     # Compute confidence
     if trigger_confidence is not None:
@@ -2256,11 +2246,8 @@ def rdap_result_to_findings(
     # Track per-category counts for telemetry
     securedns_found = False
 
-    # --- Domain / registrar / ns / status / event (extracted helper) ----------
     domain_name = rdap_data.get("name", "") or rdap_data.get("ldhName", "") or ""
-    domain_result = _rdap_extract_domain_payload(
-        rdap_data, domain_name, now, confidence, sprint_id
-    )
+    domain_result = _rdap_extract_domain_payload(rdap_data, domain_name, now, confidence, sprint_id)
     ns_count = 0
     status_count = 0
     event_count = 0
@@ -2269,7 +2256,6 @@ def rdap_result_to_findings(
         if domain_finding is not None:
             findings.append(domain_finding)
 
-    # --- Nameservers / statuses / events (individual finding extractors) --------
     ns_findings, _ns_ex = _rdap_extract_nameservers(rdap_data, target, now, confidence, sprint_id)
     findings.extend(ns_findings)
 
@@ -2279,7 +2265,6 @@ def rdap_result_to_findings(
     ev_findings, _ev_ex = _rdap_extract_events(rdap_data, target, now, confidence, sprint_id)
     findings.extend(ev_findings)
 
-    # --- SecureDNS (inline — only 17 lines, not worth a handler) ---------------
     securedns: Any = rdap_data.get("secureDNS")
     if securedns and isinstance(securedns, dict):
         securedns_found = True
@@ -2311,7 +2296,6 @@ def rdap_result_to_findings(
     net_findings, network_count = _rdap_extract_net_autnum(rdap_data, target, now, confidence, sprint_id)
     findings.extend(net_findings)
 
-    # --- Cap total findings ------------------------------------------------
     capped = findings[:max_findings]
 
     telemetry = {
@@ -2444,6 +2428,7 @@ def academic_results_to_findings(
             # xxh3-64 dedup (~10× faster than blake2b on M1 via NEON SIMD)
             try:
                 from hledac.universal.utils.hashing import xxh3_64_hex
+
                 url_hash = xxh3_64_hex(url)
             except Exception:
                 # Fallback to blake2b if hashing utils unavailable
@@ -2461,7 +2446,6 @@ def academic_results_to_findings(
                 continue
             seen.add(url_hash)
 
-            # Extract metadata
             metadata = getattr(result, "metadata", None) or {}
             authors = metadata.get("authors", []) or []
             if not isinstance(authors, list):
@@ -2488,7 +2472,6 @@ def academic_results_to_findings(
 
             payload_text = "\n".join(parts)
 
-
             finding_id_str = f"acad-{url_hash[:20]}"
             if sprint_id:
                 finding_id_str = f"{sprint_id[:12]}-{url_hash[:16]}"
@@ -2512,11 +2495,6 @@ def academic_results_to_findings(
             continue
 
     return tuple(candidates), tuple(rejections), {}
-
-
-# ---------------------------------------------------------------------------
-# F246A: Network Reconnaissance CanonicalFinding Bridge
-# ---------------------------------------------------------------------------
 
 
 def network_recon_result_to_findings(
@@ -2567,16 +2545,20 @@ def network_recon_result_to_findings(
 
     if not target or not isinstance(target, str) or not target.strip():
         rejections.append(REJECTION_MISSING_DOMAIN)
-        return (), (REJECTION_MISSING_DOMAIN,), {
-            "network_recon_target": "",
-            "network_recon_built": 0,
-            "network_recon_rejected": 1,
-            "network_recon_hostinfo": 0,
-            "network_recon_whois": 0,
-            "network_recon_ssl": 0,
-            "network_recon_ips": 0,
-            "network_recon_asn": 0,
-        }
+        return (
+            (),
+            (REJECTION_MISSING_DOMAIN,),
+            {
+                "network_recon_target": "",
+                "network_recon_built": 0,
+                "network_recon_rejected": 1,
+                "network_recon_hostinfo": 0,
+                "network_recon_whois": 0,
+                "network_recon_ssl": 0,
+                "network_recon_ips": 0,
+                "network_recon_asn": 0,
+            },
+        )
 
     # Base confidence
     base_confidence = 0.65
@@ -2599,16 +2581,20 @@ def network_recon_result_to_findings(
             result_kind = result_dict.get("__kind__", "dict")
         else:
             rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-            return (), (REJECTION_UNSUPPORTED_SHAPE,), {
-                "network_recon_target": target,
-                "network_recon_built": 0,
-                "network_recon_rejected": 1,
-                "network_recon_hostinfo": 0,
-                "network_recon_whois": 0,
-                "network_recon_ssl": 0,
-                "network_recon_ips": 0,
-                "network_recon_asn": 0,
-            }
+            return (
+                (),
+                (REJECTION_UNSUPPORTED_SHAPE,),
+                {
+                    "network_recon_target": target,
+                    "network_recon_built": 0,
+                    "network_recon_rejected": 1,
+                    "network_recon_hostinfo": 0,
+                    "network_recon_whois": 0,
+                    "network_recon_ssl": 0,
+                    "network_recon_ips": 0,
+                    "network_recon_asn": 0,
+                },
+            )
 
         built = 0
         rejected = 0
@@ -2643,7 +2629,9 @@ def network_recon_result_to_findings(
             built = _emit_hostinfo_asn(findings, built, max_findings, target, effective_confidence, asn_info)
 
             # Geolocation — extracted, depth 4→2
-            built = _emit_hostinfo_geo(findings, built, max_findings, target, effective_confidence, result_dict.get("geolocation"))
+            built = _emit_hostinfo_geo(
+                findings, built, max_findings, target, effective_confidence, result_dict.get("geolocation")
+            )
 
         # ── WHOISData ──────────────────────────────────────────────────────
         whois_dict = _extract_whois_dict(result_dict, result_kind)
@@ -2677,29 +2665,37 @@ def network_recon_result_to_findings(
             rejections.append(REJECTION_LOW_INFORMATION)
             rejected = 1
 
-        return tuple(findings), tuple(rejections), {
-            "network_recon_target": target,
-            "network_recon_built": built,
-            "network_recon_rejected": rejected,
-            "network_recon_hostinfo": 1 if result_kind == "HostInfo" or "ip_addresses" in result_dict else 0,
-            "network_recon_whois": 1 if result_kind == "WHOISData" or whois_dict is not None else 0,
-            "network_recon_ssl": 1 if result_kind == "SSLCertificate" or ssl_dict is not None else 0,
-            "network_recon_ips": built,
-            "network_recon_asn": 1 if result_kind == "HostInfo" and result_dict.get("asn_info") else 0,
-        }
+        return (
+            tuple(findings),
+            tuple(rejections),
+            {
+                "network_recon_target": target,
+                "network_recon_built": built,
+                "network_recon_rejected": rejected,
+                "network_recon_hostinfo": 1 if result_kind == "HostInfo" or "ip_addresses" in result_dict else 0,
+                "network_recon_whois": 1 if result_kind == "WHOISData" or whois_dict is not None else 0,
+                "network_recon_ssl": 1 if result_kind == "SSLCertificate" or ssl_dict is not None else 0,
+                "network_recon_ips": built,
+                "network_recon_asn": 1 if result_kind == "HostInfo" and result_dict.get("asn_info") else 0,
+            },
+        )
 
     except Exception:
         # Fail-soft: return empty on any unexpected error
-        return tuple(findings), tuple(rejections), {
-            "network_recon_target": target,
-            "network_recon_built": len(findings),
-            "network_recon_rejected": len(rejections) + 1,
-            "network_recon_hostinfo": 0,
-            "network_recon_whois": 0,
-            "network_recon_ssl": 0,
-            "network_recon_ips": 0,
-            "network_recon_asn": 0,
-        }
+        return (
+            tuple(findings),
+            tuple(rejections),
+            {
+                "network_recon_target": target,
+                "network_recon_built": len(findings),
+                "network_recon_rejected": len(rejections) + 1,
+                "network_recon_hostinfo": 0,
+                "network_recon_whois": 0,
+                "network_recon_ssl": 0,
+                "network_recon_ips": 0,
+                "network_recon_asn": 0,
+            },
+        )
 
 
 def _make_network_recon_finding(
@@ -2755,10 +2751,7 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
             if hasattr(val, "__dataclass_fields__"):
                 result[name] = _dataclass_to_dict(val)
             elif isinstance(val, list):
-                result[name] = [
-                    _dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__") else v
-                    for v in val
-                ]
+                result[name] = [_dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__") else v for v in val]
             else:
                 result[name] = val
         result["__kind__"] = type(obj).__name__
@@ -2786,10 +2779,6 @@ def _safe_dict_str(d: Any, key: str) -> str | None:
         return None
     return _safe_str(d.get(key))
 
-
-# ---------------------------------------------------------------------------
-# Network Recon helpers — extracted from network_recon_result_to_findings
-# ---------------------------------------------------------------------------
 
 def _emit_hostinfo_asn(
     findings: list[Any],

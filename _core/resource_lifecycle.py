@@ -4,8 +4,6 @@ core/resource_lifecycle.py — Centralized Resource Lifecycle Manager
 
 R1 Solution: Single authority for all sprint resource creation and teardown.
 
-
-
 PROBLEMS SOLVED:
   1. No single authority knows when all executors, pools, sessions, and
      singletons are truly dead.
@@ -78,7 +76,6 @@ import signal
 import threading
 import time
 import weakref
-from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import AsyncExitStack, suppress
 from contextvars import ContextVar
@@ -88,14 +85,12 @@ from typing import TYPE_CHECKING, Any, Final
 from collections.abc import Callable
 
 if TYPE_CHECKING:
-    from types import FrameType
 
 # MODERN-36 Fix: Import UmaBudget at module level for SSOT constant derivation
 from hledac.universal.utils.uma_budget import UmaBudget
 from _core._util import aclose
 
 logger = logging.getLogger(__name__)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Constants — M1 8GB UMA bounds
@@ -133,11 +128,9 @@ _DEFAULT_EXECUTOR_WORKERS: Final[dict[str, int]] = {
     "default": 2,
 }
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Type definitions
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 class ShutdownLayer(Enum):
     """Deterministic shutdown order — layers shut down in declaration order."""
@@ -162,14 +155,12 @@ class ShutdownLayer(Enum):
     def label(self) -> str:
         return self._label
 
-
 class ResourceState(Enum):
     REGISTERED = auto()  # Registered but not yet acquired
     ACTIVE = auto()  # In use
     CLOSING = auto()  # Shutdown in progress
     CLOSED = auto()  # Successfully shut down
     ERROR = auto()  # Shutdown failed
-
 
 @dataclass(slots=True)
 class ResourceHandle:
@@ -195,7 +186,6 @@ class ResourceHandle:
         self.error = error
         self.closed_at = time.monotonic()
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Leak sentinel — detects unregistered resources holding C memory
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -212,16 +202,13 @@ _current_rlm: ContextVar[ResourceLifecycleManager | None] = ContextVar(
     "current_rlm", default=None
     )
 
-
 def get_current_rlm() -> ResourceLifecycleManager | None:
     """Get the currently active ResourceLifecycleManager, if any."""
     return _current_rlm.get()
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # ResourceLifecycleManager
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 class ResourceLifecycleManager:
     """Centralized lifecycle manager for all sprint resources.
@@ -359,7 +346,6 @@ class ResourceLifecycleManager:
                 errors.append(e)
             self._exit_stack = None
 
-        # Log shutdown summary
         self._log_shutdown_summary(errors)
 
         # Re-raise if there were errors (using ExceptionGroup for Python 3.14+)
@@ -973,17 +959,14 @@ class ResourceLifecycleManager:
                 pass
         self._duckdb_connections.clear()
 
-        # Run finalizers
         await self._run_finalizers()
 
         self._stats["shutdown_errors"] += 1
         logger.info("[RLM] Force shutdown complete")
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Module-level convenience — get the currently active RLM
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 def require_rlm() -> ResourceLifecycleManager:
     """Get the active RLM or raise RuntimeError.
@@ -997,11 +980,9 @@ def require_rlm() -> ResourceLifecycleManager:
     )
     return rlm
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sentinel mixin — for objects that want automatic leak detection
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 class TrackedResource:
     """Mixin for objects that should be tracked by a ResourceLifecycleManager.
@@ -1037,7 +1018,6 @@ class TrackedResource:
                 pass
 
         cls.__init__ = _tracked_init  # type: ignore[method-assign]
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API

@@ -43,14 +43,11 @@ T = TypeVar("T", default=Any)
 logger = __import__("logging").getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# DNS resolution via rust.dns (hickory-dns, DoH/DoT/DoQ)
-# ---------------------------------------------------------------------------
-
 _HAS_RUST_DNS: bool = False
 _HAS_RUST_DNS_ASYNC: bool = False
 try:
     import rust
+
     _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
     # MODERN-09: Check for async version
     _HAS_RUST_DNS_ASYNC = hasattr(rust.dns, "resolve_async_await")
@@ -106,10 +103,7 @@ async def async_getaddrinfo(
                 ips = await loop.run_in_executor(None, lambda: rust.dns.resolve_async(host, qtype))
             if ips:
                 af = socket.AF_INET if family != socket.AF_INET6 else socket.AF_INET6
-                return [
-                    (af, socket.SOCK_STREAM, 0, host, (addr, port))
-                    for addr in ips
-                ]
+                return [(af, socket.SOCK_STREAM, 0, host, (addr, port)) for addr in ips]
             return []
         except Exception:  # noqa: BLE001
             pass
@@ -122,10 +116,6 @@ async def async_getaddrinfo(
     else:
         return await loop.getaddrinfo(host, port, family=family, type=type_, proto=proto)
 
-
-# ---------------------------------------------------------------------------
-# safe_wait_for — asyncio.timeout replacement for Python 3.14+ compatibility
-# ---------------------------------------------------------------------------
 
 async def safe_wait_for[T](
     coro: Awaitable[T],
@@ -171,14 +161,10 @@ async def safe_wait_for[T](
     try:
         async with asyncio.timeout(timeout):
             return await coro
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _log.debug(f"[GHOST] safe_wait_for{'_' + label if label else ''} timeout after {timeout}s")
         raise
 
-
-# ---------------------------------------------------------------------------
-# first_completed — PEP 654 asyncio.wait(FIRST_COMPLETED) replacement
-# ---------------------------------------------------------------------------
 
 async def first_completed[T](
     *tasks: asyncio.Task[T],
@@ -206,7 +192,9 @@ async def first_completed[T](
 
     # ISSUE-10 FIX: get_running_loop() instead of deprecated get_event_loop() (Python 3.12+)
     # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
-    winner_future: asyncio.Future[asyncio.Task[T]] = asyncio.get_running_loop().create_future(name="asyncx:first_completed")
+    winner_future: asyncio.Future[asyncio.Task[T]] = asyncio.get_running_loop().create_future(
+        name="asyncx:first_completed"
+    )
 
     def on_done(task: asyncio.Task[T]) -> None:
         if not winner_future.done():
@@ -221,7 +209,7 @@ async def first_completed[T](
                 winner = await winner_future
         else:
             winner = await winner_future
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise
     except BaseException:
         raise
@@ -229,18 +217,10 @@ async def first_completed[T](
     return winner.result(), winner
 
 
-# ---------------------------------------------------------------------------
-# Timing utilities
-# ---------------------------------------------------------------------------
-
 def monotonic_ms() -> float:
     """Return current monotonic time in milliseconds (float)."""
     return time.monotonic() * 1000.0
 
-
-# ---------------------------------------------------------------------------
-# Lifecycle helpers — stop pattern (F360)
-# ---------------------------------------------------------------------------
 
 async def stop_task(coro: asyncio.Task[Any] | None) -> None:
     """Stop a background task gracefully — cancel and await CancelledError.
@@ -265,10 +245,6 @@ async def stop_task(coro: asyncio.Task[Any] | None) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await coro
 
-
-# ---------------------------------------------------------------------------
-# ISSUE-04: parallel_close — parallel resource teardown helper
-# ---------------------------------------------------------------------------
 
 async def _safe_aclose(
     resource: Any,
@@ -321,10 +297,7 @@ async def parallel_close(
     if not resources:
         return []
 
-    coros: list[Awaitable[Exception | None]] = [
-        _safe_aclose(r, ctx=ctx, logger_instance=_log)
-        for r in resources
-    ]
+    coros: list[Awaitable[Exception | None]] = [_safe_aclose(r, ctx=ctx, logger_instance=_log) for r in resources]
 
     result = await parallel(
         coros,
@@ -386,8 +359,7 @@ async def parallel_close_async(
         return {}
 
     coros: list[Awaitable[tuple[str, Exception | None]]] = [
-        _safe_close_async(fn, name, ctx=ctx, logger_instance=_log)
-        for name, fn in close_funcs
+        _safe_close_async(fn, name, ctx=ctx, logger_instance=_log) for name, fn in close_funcs
     ]
 
     result = await parallel(
@@ -407,10 +379,6 @@ async def parallel_close_async(
             out[str(item)] = None
     return out
 
-
-# ---------------------------------------------------------------------------
-# E1: retry_backoff_async — exponential backoff with jitter
-# ---------------------------------------------------------------------------
 
 async def retry_backoff_async(
     coro_fn: Callable[[], Awaitable[T]],
@@ -457,7 +425,7 @@ async def retry_backoff_async(
         delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
 
         if jitter:
-            delay *= (0.75 + random.random() * 0.5)
+            delay *= 0.75 + random.random() * 0.5
 
         try:
             await asyncio.sleep(delay)

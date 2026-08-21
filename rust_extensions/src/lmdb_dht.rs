@@ -44,10 +44,6 @@ use pyo3::prelude::*;
 // RUST-PANIC-001 FIX: use release_gil_py (panic→PyErr) for all LMDB FFI closures
 use crate::gil::release_gil_py;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// LMDB helpers — direct Python lmdb calls without caching
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// R4-07: Cached LMDB environments — eliminates lmdb.open() overhead per operation.
 ///
 /// Uses OnceLock<RwLock<HashMap>> per path so multiple paths can coexist.
@@ -88,10 +84,6 @@ fn close_lmdb_env(path: &str) {
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LMDB helpers — typed wrappers around Python lmdb objects
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Execute a read-only LMDB transaction.
 fn lmdb_get(env: &Bound<'_, PyAny>, key: &[u8]) -> PyResult<Option<Vec<u8>>> {
@@ -148,10 +140,6 @@ fn lmdb_put_two(
     txn.call_method0("commit")?;
     Ok(())
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Node operations (encrypted blob + neighbors)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Store a graph node: raw bytes (pre-encrypted by Python) + neighbors list.
 ///
@@ -227,10 +215,6 @@ pub fn lmdb_dht_get_node<'py>(
         _ => None,
     })
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DHT node operations (unencrypted — routing table)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Store a DHT node record: JSON-encoded {host, port, node_id} (pre-encrypted).
 ///
@@ -443,7 +427,6 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<
             drop(cursor);
             drop(txn);
 
-            // Delete in write transaction
             let write_txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((true,))?;
             for key in &to_delete {
                 let _ = write_txn.call_method1("delete", (key,));
@@ -454,10 +437,6 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(py: Python<'py>, path: String) -> PyResult<
         })
     })
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Routing snapshot operations
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Save routing table snapshot (encrypted by Python).
 ///
@@ -501,10 +480,6 @@ pub fn lmdb_dht_load_routing_snapshot<'py>(
         })
     })
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Full DB scan — ISSUE-004: replaces asyncio.to_thread full-cursor scan
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Scan ALL node IDs (excluding "neighbors:" prefix entries).
 ///
@@ -570,12 +545,6 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
         })
     })
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Bulk BFS traversal — ISSUE-004 key optimization
-//
-// Single Rust call replaces 5-10 Python asyncio.to_thread() hops.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// BFS neighbor traversal — single Rust call, no asyncio.to_thread.
 ///
@@ -661,10 +630,6 @@ pub fn lmdb_dht_close_env(path: String) -> PyResult<()> {
     close_lmdb_env(&path);
     Ok(())
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Generic async LMDB operations — P4-3: async LMDB via py.detach()
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Async single-key put with GIL release via py.detach().
 ///
@@ -959,10 +924,6 @@ fn _resolve_env<'py>(
         Ok(path_or_env.clone())
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Module registration
-// ─────────────────────────────────────────────────────────────────────────────
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lmdb_dht_put_node))?;

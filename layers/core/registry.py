@@ -19,18 +19,16 @@ Usage:
     registry = LayerRegistry()
     registry.register('my', MyLayer())
 
-    # Execute all layers in priority order
     result = await registry.execute(ctx, data)
 """
+
 from __future__ import annotations
 
-import asyncio
 import gc
 import logging
-import time
 from typing import Any
 
-from hledac.universal.utils.asyncx import safe_create_task, safe_wait_for
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +56,6 @@ class LayerRegistry:
         ctx = LayerContext()
         await registry.mount(ctx)
 
-        # Execute pipeline
         result = await registry.execute(ctx, initial_data)
 
         # Unmount all
@@ -66,13 +63,13 @@ class LayerRegistry:
     """
 
     __slots__ = (
-        '_ctx',
-        '_dependencies',
-        '_enabled_layers',
-        '_layers',
-        '_mounted',
-        '_pipeline',
-        '_shutdown_requested',
+        "_ctx",
+        "_dependencies",
+        "_enabled_layers",
+        "_layers",
+        "_mounted",
+        "_pipeline",
+        "_shutdown_requested",
     )
 
     def __init__(self) -> None:
@@ -83,8 +80,6 @@ class LayerRegistry:
         self._dependencies: dict[str, list[str]] = {}
         self._enabled_layers: set[str] = set()
         self._shutdown_requested = False
-
-    # ─── Registration ────────────────────────────────────────────────────────
 
     def register(
         self,
@@ -107,10 +102,9 @@ class LayerRegistry:
             ValueError: If layer name already registered
         """
         if name in self._layers:
-            raise ValueError(f'Layer already registered: {name}')
+            raise ValueError(f"Layer already registered: {name}")
 
-        # Get priority from layer or parameter
-        layer_priority = priority if priority is not None else getattr(layer, '_priority', 0)
+        layer_priority = priority if priority is not None else getattr(layer, "_priority", 0)
 
         # Store layer
         self._layers[name] = layer
@@ -123,7 +117,7 @@ class LayerRegistry:
         # Rebuild pipeline with new layer
         self._rebuild_pipeline()
 
-        logger.debug(f'Layer registered: {name} (priority={layer_priority})')
+        logger.debug(f"Layer registered: {name} (priority={layer_priority})")
 
     def unregister(self, name: str) -> bool:
         """
@@ -143,7 +137,7 @@ class LayerRegistry:
         self._dependencies.pop(name, None)
         self._rebuild_pipeline()
 
-        logger.debug(f'Layer unregistered: {name}')
+        logger.debug(f"Layer unregistered: {name}")
         return True
 
     def get(self, name: str) -> Any | None:
@@ -155,13 +149,11 @@ class LayerRegistry:
         self._pipeline = []
         for name, layer in self._layers.items():
             if name in self._enabled_layers:
-                priority = getattr(layer, '_priority', 0)
+                priority = getattr(layer, "_priority", 0)
                 self._pipeline.append((priority, name, layer))
 
         # Sort by priority (descending - higher priority first)
         self._pipeline.sort(key=lambda x: -x[0])
-
-    # ─── Lifecycle ────────────────────────────────────────────────────────────
 
     async def mount(self, ctx: Any) -> None:
         """
@@ -174,7 +166,7 @@ class LayerRegistry:
             ctx: Layer context for all layers
         """
         if self._mounted:
-            logger.warning('LayerRegistry already mounted')
+            logger.warning("LayerRegistry already mounted")
             return
 
         self._ctx = ctx
@@ -186,26 +178,26 @@ class LayerRegistry:
         # Mount in order
         mounted: list[Any] = []
         for name, layer in ordered:
-            layer_name = getattr(layer, 'layer_name', name)
+            getattr(layer, "layer_name", name)
             try:
-                logger.debug(f'Mounting layer: {name}')
-                await safe_wait_for(layer.mount(ctx), timeout=30.0, label=f'mount:{name}')
+                logger.debug(f"Mounting layer: {name}")
+                await safe_wait_for(layer.mount(ctx), timeout=30.0, label=f"mount:{name}")
                 mounted.append(layer)
             except Exception as e:
-                logger.error(f'Layer mount failed: {name} — {e}')
+                logger.error(f"Layer mount failed: {name} — {e}")
                 # Rollback already mounted layers
                 for rollback in reversed(mounted):
-                    rname = getattr(rollback, 'layer_name', name)
+                    rname = getattr(rollback, "layer_name", name)
                     try:
-                        await safe_wait_for(rollback.unmount(ctx), timeout=10.0, label=f'unmount:{rname}')
+                        await safe_wait_for(rollback.unmount(ctx), timeout=10.0, label=f"unmount:{rname}")
                     except Exception as rollback_err:
-                        logger.warning(f'Rollback unmount failed: {rname} — {rollback_err}')
+                        logger.warning(f"Rollback unmount failed: {rname} — {rollback_err}")
                 self._layers.clear()
                 self._mounted = False
                 raise
 
         self._mounted = True
-        logger.info(f'LayerRegistry mounted ({len(self._layers)} layers)')
+        logger.info(f"LayerRegistry mounted ({len(self._layers)} layers)")
 
     async def unmount(self, ctx: Any) -> None:
         """
@@ -222,14 +214,14 @@ class LayerRegistry:
         self._shutdown_requested = True
 
         # Unmount in reverse order
-        for priority, name, layer in reversed(self._pipeline):
+        for _priority, name, layer in reversed(self._pipeline):
             try:
-                await safe_wait_for(layer.unmount(ctx), timeout=10.0, label=f'unmount:{name}')
+                await safe_wait_for(layer.unmount(ctx), timeout=10.0, label=f"unmount:{name}")
             except Exception as e:
-                logger.warning(f'Layer unmount error: {name} — {e}')
+                logger.warning(f"Layer unmount error: {name} — {e}")
 
         self._mounted = False
-        logger.info('LayerRegistry unmounted')
+        logger.info("LayerRegistry unmounted")
 
     def _resolve_order(self) -> list[tuple[str, Any]]:
         """
@@ -240,8 +232,7 @@ class LayerRegistry:
         Returns:
             List of (name, layer) tuples in execution order
         """
-        # Build adjacency list for topological sort
-        in_degree: dict[str, int] = {name: 0 for name in self._layers}
+        in_degree: dict[str, int] = dict.fromkeys(self._layers, 0)
         dependents: dict[str, list[str]] = {name: [] for name in self._layers}
 
         for name, deps in self._dependencies.items():
@@ -252,12 +243,12 @@ class LayerRegistry:
 
         # Kahn's algorithm with priority tiebreaker
         queue = [name for name, degree in in_degree.items() if degree == 0]
-        queue.sort(key=lambda n: -getattr(self._layers[n], '_priority', 0))
+        queue.sort(key=lambda n: -getattr(self._layers[n], "_priority", 0))
 
         result: list[tuple[str, Any]] = []
         while queue:
             # Sort by priority
-            queue.sort(key=lambda n: -getattr(self._layers[n], '_priority', 0))
+            queue.sort(key=lambda n: -getattr(self._layers[n], "_priority", 0))
             name = queue.pop(0)
             result.append((name, self._layers[name]))
 
@@ -266,17 +257,14 @@ class LayerRegistry:
                 if in_degree[dependent] == 0:
                     queue.append(dependent)
 
-        # Check for cycles
         if len(result) != len(self._layers):
             remaining = set(self._layers.keys()) - {n for n, _ in result}
-            logger.warning(f'Circular dependency detected involving: {remaining}')
+            logger.warning(f"Circular dependency detected involving: {remaining}")
             # Add remaining in priority order (break cycle arbitrarily)
             for name in remaining:
                 result.append((name, self._layers[name]))
 
         return result
-
-    # ─── Execution ───────────────────────────────────────────────────────────
 
     async def execute(self, ctx: Any, data: Any) -> Any:
         """
@@ -293,11 +281,11 @@ class LayerRegistry:
             Final processed data
         """
         result = data
-        for priority, name, layer in self._pipeline:
+        for _priority, name, layer in self._pipeline:
             try:
                 result = await layer.process(ctx, result)
             except Exception as e:
-                logger.warning(f'Layer {name} failed: {e}')
+                logger.warning(f"Layer {name} failed: {e}")
                 await layer.rollback(ctx, e)
                 raise
         return result
@@ -315,18 +303,16 @@ class LayerRegistry:
             Processed data up to and including the target layer
         """
         result = data
-        for priority, name, layer in self._pipeline:
+        for _priority, name, layer in self._pipeline:
             try:
                 result = await layer.process(ctx, result)
             except Exception as e:
-                logger.warning(f'Layer {name} failed: {e}')
+                logger.warning(f"Layer {name} failed: {e}")
                 await layer.rollback(ctx, e)
                 raise
             if name == until:
                 break
         return result
-
-    # ─── Context Management ───────────────────────────────────────────────────
 
     def enable_layer(self, name: str) -> bool:
         """Enable a layer for execution."""
@@ -348,8 +334,6 @@ class LayerRegistry:
         """Check if layer is enabled."""
         return name in self._enabled_layers
 
-    # ─── Memory Management (M1 8GB) ─────────────────────────────────────────
-
     async def context_swap(
         self,
         ctx: Any,
@@ -366,7 +350,7 @@ class LayerRegistry:
             enable: Layer names to enable
             disable: Layer names to disable
         """
-        logger.info(f'Context swap: disable={disable}, enable={enable}')
+        logger.info(f"Context swap: disable={disable}, enable={enable}")
 
         # Disable layers
         for name in disable:
@@ -379,7 +363,7 @@ class LayerRegistry:
         for name in enable:
             self.enable_layer(name)
 
-        logger.info('Context swap complete')
+        logger.info("Context swap complete")
 
     async def _force_cleanup(self) -> None:
         """Force memory cleanup for M1 8GB."""
@@ -387,20 +371,19 @@ class LayerRegistry:
             # Clear MLX cache if available
             try:
                 import mlx.core as mx
+
                 mx.eval([])
                 mx.clear_cache()
-                logger.debug('MLX cache cleared')
+                logger.debug("MLX cache cleared")
             except Exception:
                 pass
 
             # Force garbage collection
             gc.collect()
-            logger.debug('Garbage collection run')
+            logger.debug("Garbage collection run")
 
         except Exception as e:
-            logger.warning(f'Memory cleanup failed: {e}')
-
-    # ─── Inspection ──────────────────────────────────────────────────────────
+            logger.warning(f"Memory cleanup failed: {e}")
 
     @property
     def layers(self) -> dict[str, Any]:
@@ -421,10 +404,10 @@ class LayerRegistry:
         """Get statistics for all layers."""
         stats = {}
         for name, layer in self._layers.items():
-            if hasattr(layer, 'get_stats'):
+            if hasattr(layer, "get_stats"):
                 stats[name] = layer.get_stats()
             else:
-                stats[name] = {'name': name, 'enabled': name in self._enabled_layers}
+                stats[name] = {"name": name, "enabled": name in self._enabled_layers}
         return stats
 
     def health_check(self) -> dict[str, dict[str, Any]]:
@@ -432,12 +415,12 @@ class LayerRegistry:
         health = {}
         for name, layer in self._layers.items():
             try:
-                initialized = getattr(layer, '_initialized', False)
+                initialized = getattr(layer, "_initialized", False)
                 health[name] = {
-                    'status': 'ready' if initialized else 'not_initialized',
-                    'enabled': name in self._enabled_layers,
-                    'priority': getattr(layer, '_priority', 0),
+                    "status": "ready" if initialized else "not_initialized",
+                    "enabled": name in self._enabled_layers,
+                    "priority": getattr(layer, "_priority", 0),
                 }
             except Exception as e:
-                health[name] = {'status': 'error', 'error': str(e)}
+                health[name] = {"status": "error", "error": str(e)}
         return health

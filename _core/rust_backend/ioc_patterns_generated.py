@@ -9,7 +9,6 @@
 
 import re
 from typing import Final
-from _core._util import aclose
 
 # === IOC Patterns (must match rust_extensions/src/ioc_patterns.rs) ===
 

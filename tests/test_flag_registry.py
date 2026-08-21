@@ -10,7 +10,6 @@ Run with::
     uv run pytest tests/test_flag_registry.py -q
 """
 
-
 from typing import cast
 
 import pytest
@@ -18,8 +17,8 @@ import pytest
 from hledac.universal.utils.feature_flags import is_enabled
 from hledac.universal.utils.flag_registry import (
     FLAG_REGISTRY,
-    FlagGroup,
     VALID_GROUPS,
+    FlagGroup,
     FlagRegistryError,
     FlagSpec,
     get_spec,
@@ -31,6 +30,7 @@ from hledac.universal.utils.flag_registry import (
 # Group integrity
 # ---------------------------------------------------------------------------
 
+
 def test_all_registered_flags_have_valid_groups() -> None:
     """Every spec in the registry must declare one of the 8 taxonomy groups.
 
@@ -40,18 +40,15 @@ def test_all_registered_flags_have_valid_groups() -> None:
     """
     assert FLAG_REGISTRY, "registry must not be empty"
     for name, spec in FLAG_REGISTRY.items():
-        assert spec.group in VALID_GROUPS, (
-            f"{name}: group {spec.group!r} is not in {sorted(VALID_GROUPS)}"
-        )
+        assert spec.group in VALID_GROUPS, f"{name}: group {spec.group!r} is not in {sorted(VALID_GROUPS)}"
     # Sanity: at least 20 flags (taxonomy top-N coverage)
-    assert len(FLAG_REGISTRY) >= 20, (
-        f"expected >= 20 registered flags, found {len(FLAG_REGISTRY)}"
-    )
+    assert len(FLAG_REGISTRY) >= 20, f"expected >= 20 registered flags, found {len(FLAG_REGISTRY)}"
 
 
 # ---------------------------------------------------------------------------
 # Implication graph integrity
 # ---------------------------------------------------------------------------
+
 
 def test_implies_references_known_flags() -> None:
     """Every flag listed in ``spec.implies`` must be registered.
@@ -65,14 +62,13 @@ def test_implies_references_known_flags() -> None:
         for imp in spec.implies:
             if imp not in FLAG_REGISTRY:
                 dangling.append((name, imp))
-    assert not dangling, (
-        f"implies references unknown flags: {dangling}"
-    )
+    assert not dangling, f"implies references unknown flags: {dangling}"
 
 
 # ---------------------------------------------------------------------------
 # Conflict symmetry
 # ---------------------------------------------------------------------------
+
 
 def test_conflicts_are_symmetric() -> None:
     """For every (A,B) conflict, B must list A as a conflict too.
@@ -90,15 +86,13 @@ def test_conflicts_are_symmetric() -> None:
                 continue
             if name not in other_spec.conflicts_with:
                 broken.append((name, other))
-    assert not broken, (
-        f"asymmetric conflicts: {broken}; "
-        f"use _register_symmetric_conflict() helper"
-    )
+    assert not broken, f"asymmetric conflicts: {broken}; use _register_symmetric_conflict() helper"
 
 
 # ---------------------------------------------------------------------------
 # is_enabled() — fail-safe default
 # ---------------------------------------------------------------------------
+
 
 def test_is_enabled_default_false(monkeypatch: pytest.MonkeyPatch) -> None:
     """A flag that is unset returns ``False`` (fail-safe off)."""
@@ -114,6 +108,7 @@ def test_is_enabled_default_false(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 # is_enabled() — env override
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "value,expected",
@@ -148,6 +143,7 @@ def test_is_enabled_env_override(
 # Duplicate registration
 # ---------------------------------------------------------------------------
 
+
 def test_registry_no_duplicates() -> None:
     """Re-registering the same flag name raises :class:`FlagRegistryError`.
 
@@ -174,6 +170,7 @@ def test_registry_no_duplicates() -> None:
 # ---------------------------------------------------------------------------
 # Bonus: discovery helpers + invalid group rejection
 # ---------------------------------------------------------------------------
+
 
 def test_list_flags_and_get_spec() -> None:
     """Discovery helpers must return consistent views of the registry."""

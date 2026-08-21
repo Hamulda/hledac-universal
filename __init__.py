@@ -22,18 +22,14 @@ Adding a new public symbol:
 3. Done — no edit needed to this file for symbol additions
 """
 
+import re as _re
+import threading
+import weakref
 from importlib import import_module
 from importlib.util import find_spec as _find_spec
 from types import ModuleType
 from typing import Any
-import re as _re
-import threading
-import weakref
 
-# -----------------------------------------------------------------------------
-# Lazy namespace bootstrap (runs once on first __getattr__ call, not at import)
-# Thread-safe via double-checked locking pattern.
-# -----------------------------------------------------------------------------
 _BOOTSTRAP_LOCK = threading.RLock()  # RLock: reentrant pro případ rekurzivního volání z _bootstrap_* chain
 _BOOTSTRAPPED: bool = False
 
@@ -66,16 +62,9 @@ def _ensure_bootstrap() -> None:
             # ImportError propagates — namespace is broken, not silently ignorable
             raise
 
-# -----------------------------------------------------------------------------
-# Lazy index builder (extracted for maintainability)
-# -----------------------------------------------------------------------------
+
 from _lazy_index import build_module_index
-from _core._util import aclose
 
-
-# -----------------------------------------------------------------------------
-# Ordered module paths for __getattr__ lookup.
-# Earlier entries take priority on name collisions.
 _AUTO_MODULE_PATHS = [
     # Config
     "hledac.universal.config",
@@ -111,65 +100,105 @@ _AUTO_MODULE_PATHS = [
 # Keeping it as a static dict preserves the exact API surface from the original _LAZY_EXPORTS.
 _EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
     # Config — original _LAZY_EXPORTS entries
-    "hledac.universal.config": frozenset({
-        "UniversalConfig", "create_config", "load_config_from_file",
-    }),
+    "hledac.universal.config": frozenset(
+        {
+            "UniversalConfig",
+            "create_config",
+            "load_config_from_file",
+        }
+    ),
     # Pattern matcher
-    "hledac.universal.utils.patterns.pattern_matcher": frozenset({
-        "PatternHit", "ExtractedEntity", "get_pattern_pack_metadata",
-        "extract_high_precision_entities", "get_pattern_matcher", "configure_patterns",
-        "match_text", "reset_pattern_matcher", "get_default_bootstrap_patterns",
-        "configure_default_bootstrap_patterns_if_empty", "benchmark_build", "benchmark_match",
-    }),
+    "hledac.universal.utils.patterns.pattern_matcher": frozenset(
+        {
+            "PatternHit",
+            "ExtractedEntity",
+            "get_pattern_pack_metadata",
+            "extract_high_precision_entities",
+            "get_pattern_matcher",
+            "configure_patterns",
+            "match_text",
+            "reset_pattern_matcher",
+            "get_default_bootstrap_patterns",
+            "configure_default_bootstrap_patterns_if_empty",
+            "benchmark_build",
+            "benchmark_match",
+        }
+    ),
     # DuckDB store
-    "hledac.universal.knowledge.duckdb_store": frozenset({
-        "DuckDBShadowStore", "ActivationResult", "ReplayResult",
-        "CanonicalFinding", "create_owned_store",
-    }),
+    "hledac.universal.knowledge.duckdb_store": frozenset(
+        {
+            "DuckDBShadowStore",
+            "ActivationResult",
+            "ReplayResult",
+            "CanonicalFinding",
+            "create_owned_store",
+        }
+    ),
     # Graph RAG
     "hledac.universal.knowledge.graph_rag": frozenset({"GraphRAGOrchestrator"}),
     # Public fetcher
-    "hledac.universal.fetching.public_fetcher": frozenset({
-        "async_fetch_public_text", "process_html_payload", "DEFAULT_UA",
-        "MAX_BYTES_DEFAULT", "MAX_BYTES_HARD", "MAX_RETRIES", "FetchResult",
-    }),
+    "hledac.universal.fetching.public_fetcher": frozenset(
+        {
+            "async_fetch_public_text",
+            "process_html_payload",
+            "DEFAULT_UA",
+            "MAX_BYTES_DEFAULT",
+            "MAX_BYTES_HARD",
+            "MAX_RETRIES",
+            "FetchResult",
+        }
+    ),
     # Evidence network analyzer
-    "hledac.universal.transport.transport_resolver": frozenset({
-        "TransportContext", "TransportResolver", "Transport",
-    }),
+    "hledac.universal.transport.transport_resolver": frozenset(
+        {
+            "TransportContext",
+            "TransportResolver",
+            "Transport",
+        }
+    ),
     # Layers
-    "hledac.universal.layers.temporal_signal_runtime": frozenset({
-        "build_temporal_priority_hints",
-    }),
+    "hledac.universal.layers.temporal_signal_runtime": frozenset(
+        {
+            "build_temporal_priority_hints",
+        }
+    ),
     # Resource allocator
     "hledac.universal.resource_allocator": frozenset({"AdaptiveSemaphore"}),
     # Concurrency
-    "hledac.universal.utils.concurrency": frozenset({
-        "FETCH_SEMAPHORE", "adjust_fetch_workers",
-    }),
+    "hledac.universal.utils.concurrency": frozenset(
+        {
+            "FETCH_SEMAPHORE",
+            "adjust_fetch_workers",
+        }
+    ),
     # Utils
     "hledac.universal.utils.action_result": frozenset({"ActionResult"}),
     "hledac.universal.utils": frozenset({"get_uuid7_compat_status"}),
     # Sibling re-exports (hledac.core) — wired via _namespace_bootstrap._bootstrap_core()
     "hledac.core": frozenset({"AgentExecutionError", "CircuitBreakerOpen", "CircuitBreakerOpenError"}),
-    "hledac.core.mlx_embeddings": frozenset({
-        "MLXEmbeddingManager", "get_embedding_manager", "get_mlx_embedder",
-    }),
+    "hledac.core.mlx_embeddings": frozenset(
+        {
+            "MLXEmbeddingManager",
+            "get_embedding_manager",
+            "get_mlx_embedder",
+        }
+    ),
     # Sibling re-exports (hledac.security) — wired via _namespace_bootstrap._bootstrap_security()
-    "hledac.security": frozenset({
-        "KeyManager",
-        "StealthEngine",
-        "ThreatIntelligence",
-        "QuantumResistantCrypto",
-        "ZKPResearchEngine",
-        "TemporalAnonymizer",
-        "ZeroAttributionEngine",
-    }),
+    "hledac.security": frozenset(
+        {
+            "KeyManager",
+            "StealthEngine",
+            "ThreatIntelligence",
+            "QuantumResistantCrypto",
+            "ZKPResearchEngine",
+            "TemporalAnonymizer",
+            "ZeroAttributionEngine",
+        }
+    ),
 }
 
 # Ghost entries: deleted/migrated symbols that must raise ImportError with a helpful msg
 _GHOST_ENTRIES: dict[str, str] = {
-    # ---- REMOVED COMPAT SHIMS (F350M-R A-01) ----
     "GhostDirector": (
         "GhostDirector was a non-functional compat stub and has been removed (F350M-R A-01). "
         "No replacement — this symbol never existed in any backend."
@@ -183,15 +212,10 @@ _GHOST_ENTRIES: dict[str, str] = {
         "Use hledac.core.resilience.CircuitBreakerOpenError instead. "
         "From hledac.core.resilience import CircuitBreakerOpenError"
     ),
-    # ---- NEVER-EXISTED STUBS ----
     "UnifiedAIOrchestrator": (
-        "UnifiedAIOrchestrator was a non-functional compat stub and has been removed (F350M-R A-01). "
-        "No replacement."
+        "UnifiedAIOrchestrator was a non-functional compat stub and has been removed (F350M-R A-01). No replacement."
     ),
-    "Watchdog": (
-        "Watchdog is at hledac.core.watchdog.Watchdog. "
-        "Use: from hledac.core.watchdog import Watchdog"
-    ),
+    "Watchdog": ("Watchdog is at hledac.core.watchdog.Watchdog. Use: from hledac.core.watchdog import Watchdog"),
     "fetch_json": (
         "fetch_json was a compat stub removed in F350M-R A-01. "
         "Use hledac.universal.fetching.public_fetcher.async_fetch_public_text directly."
@@ -200,10 +224,8 @@ _GHOST_ENTRIES: dict[str, str] = {
         "safe_fetch was a compat stub removed in F350M-R A-01. "
         "Use hledac.universal.fetching.public_fetcher.async_fetch_public_text directly."
     ),
-    # ---- REMOVED SECURITY SHIMS (F350M-R A-01) ----
     "StealthEngine": (
-        "StealthEngine is at hledac.security.StealthEngine. "
-        "Use: from hledac.security import StealthEngine"
+        "StealthEngine is at hledac.security.StealthEngine. Use: from hledac.security import StealthEngine"
     ),
     "ThreatIntelligence": (
         "ThreatIntelligence is at hledac.security.ThreatIntelligence. "
@@ -214,8 +236,7 @@ _GHOST_ENTRIES: dict[str, str] = {
         "Use: from hledac.security import QuantumResistantCrypto"
     ),
     "ZKPResearchEngine": (
-        "ZKPResearchEngine is at hledac.security.ZKPResearchEngine. "
-        "Use: from hledac.security import ZKPResearchEngine"
+        "ZKPResearchEngine is at hledac.security.ZKPResearchEngine. Use: from hledac.security import ZKPResearchEngine"
     ),
     "TemporalAnonymizer": (
         "TemporalAnonymizer is at hledac.security.TemporalAnonymizer. "
@@ -227,12 +248,6 @@ _GHOST_ENTRIES: dict[str, str] = {
     ),
 }
 
-# -----------------------------------------------------------------------------
-# Lazy attribute index — built once on first __getattr__ access
-# Maps: attribute name → module path  (e.g. "DuckDBShadowStore" → "hledac.universal.knowledge.duckdb_store")
-# Pre-populated from _EXPLICIT_ATTRS_BY_MODULE (authoritative whitelist).
-# Modules without explicit entries contribute via __all__ scan at index build time.
-# -----------------------------------------------------------------------------
 _ATTRIBUTE_INDEX: dict[str, str] | None = None
 
 
@@ -241,9 +256,6 @@ def _build_index() -> dict[str, str]:
     return build_module_index(_AUTO_MODULE_PATHS, _EXPLICIT_ATTRS_BY_MODULE)
 
 
-# -----------------------------------------------------------------------------
-# Runtime __getattr__ with index-accelerated lookup
-# -----------------------------------------------------------------------------
 _cache: dict[str, Any] = {}
 # Sprint-scoped: clear cache between sprints to prevent symbol accumulation.
 # weakref.WeakValueDictionary cannot be used here because _cache stores
@@ -264,7 +276,6 @@ def __getattr__(name: str) -> Any:
     if name == "__all__":
         return _cache.setdefault(name, __all__)
 
-    # Build index once on first miss
     global _ATTRIBUTE_INDEX
     if _ATTRIBUTE_INDEX is None:
         _ATTRIBUTE_INDEX = _build_index()
@@ -274,7 +285,7 @@ def __getattr__(name: str) -> Any:
     if mod_path is not None:
         try:
             mod = import_module(mod_path)
-        except (ImportError, ModuleNotFoundError):
+        except ImportError, ModuleNotFoundError:
             # Index was built from stale data — rebuild and retry once
             _ATTRIBUTE_INDEX = _build_index()
             mod_path = _ATTRIBUTE_INDEX.get(name)
@@ -304,9 +315,6 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-# -----------------------------------------------------------------------------
-# load_optional: safe loader for arbitrary submodules
-# -----------------------------------------------------------------------------
 _IDENTIFIER_RE = _re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
@@ -327,11 +335,6 @@ def load_optional(name: str) -> ModuleType:
         raise ImportError(f"Module spec not found: {name!r}")
     return import_module(name, package="hledac.universal")
 
-
-# -----------------------------------------------------------------------------
-# Public __all__ — union of all discoverable + ghost + special symbols
-# Built dynamically so the list NEVER goes stale relative to module __all__.
-# -----------------------------------------------------------------------------
 
 # __all__ = union of all explicit attrs + load_optional
 _all_names: set[str] = set()

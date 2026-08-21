@@ -4,7 +4,6 @@ Split from the monolithic live_public_pipeline.py (5737L) into focused modules.
 """
 
 from __future__ import annotations
-from _core import aclose
 
 __all__ = [
     "FeedPipelineEntryResult",
@@ -18,11 +17,11 @@ __all__ = [
 def __getattr__(name: str) -> object | None:
     """Lazy import to avoid msgspec dependency at package load time."""
     if name in ("PipelinePageResult", "PipelineRunResult"):
-        from .public_stages import PipelinePageResult, PipelineRunResult  # noqa: PLC0415
+        from .public_stages import PipelinePageResult, PipelineRunResult
 
         return (PipelinePageResult, PipelineRunResult)[name == "PipelineRunResult"]
     if name == "FeedSignalTelemetry":
-        from .live_feed_pipeline import FeedSignalTelemetry  # noqa: PLC0415
+        from .live_feed_pipeline import FeedSignalTelemetry
 
         return FeedSignalTelemetry
     if name == "live_public_pipeline":

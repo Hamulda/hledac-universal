@@ -7,13 +7,15 @@ Provides random delay for rate limiting in intelligence modules.
 Real implementation deferred — stub provides interface compatibility
 with callers expecting get_random_delay() method.
 """
+
 import logging
 import secrets
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
+
 
 class TemporalAnonymizer:
     """
@@ -26,13 +28,14 @@ class TemporalAnonymizer:
     - intelligence/data_leak_hunter.py
     - knowledge/duckdb_store.py
     """
-    __slots__ = tuple(('_max_delay', '_min_delay'))
+
+    __slots__ = ("_max_delay", "_min_delay")
 
     def __init__(self, **kwargs) -> None:
         """Initialize with optional min/max delay bounds."""
-        self._min_delay = kwargs.get('min_delay', 0.1)
-        self._max_delay = kwargs.get('max_delay', 2.0)
-        logger.debug(f'TemporalAnonymizer: delay range [{self._min_delay}, {self._max_delay}]s')
+        self._min_delay = kwargs.get("min_delay", 0.1)
+        self._max_delay = kwargs.get("max_delay", 2.0)
+        logger.debug(f"TemporalAnonymizer: delay range [{self._min_delay}, {self._max_delay}]s")
 
     def get_random_delay(self) -> float:
         """
@@ -42,4 +45,6 @@ class TemporalAnonymizer:
             float: Random delay between min_delay and max_delay
         """
         return _JITTER_RNG.uniform(self._min_delay, self._max_delay)
-__all__ = ['TemporalAnonymizer']
+
+
+__all__ = ["TemporalAnonymizer"]

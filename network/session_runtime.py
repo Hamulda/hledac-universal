@@ -21,15 +21,13 @@ INVARIANTS (enforced by probe_8aa tests):
 - [I11] uvloop.install() is fail-soft (diagnostic on failure)
 """
 
-
 import asyncio
 import logging
-import os
 from typing import Any
 
 import httpx
 
-from hledac.universal.runtime.state import get_runtime_state  # noqa: E402
+from hledac.universal.runtime.state import get_runtime_state
 
 # Backward-compat alias for tests that used _uvloop_enabled (misspelling)
 _uvloop_enabled = get_runtime_state().uvloop_installed
@@ -37,17 +35,10 @@ _uvloop_enabled = get_runtime_state().uvloop_installed
 from .domain_concurrency import (  # noqa: F401, E402  # pragma: no cover
     ARM_VALUES,
     DomainConcurrencyBandit,
-    )
+)
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# =============================================================================
-# =============================================================================
-# Timeout Constants Surface — canonical timeouts for session consumers
-# Use with asyncio.timeout() — NOT with httpx.AsyncClient timeout= parameter
-# =============================================================================
-# API calls: fast, short timeouts
 API_CONNECT_TIMEOUT_S: float = 10.0
 API_READ_TIMEOUT_S: float = 20.0
 
@@ -63,52 +54,13 @@ CT_READ_TIMEOUT_S: float = 15.0
 TOR_CONNECT_TIMEOUT_S: float = 45.0
 TOR_READ_TIMEOUT_S: float = 75.0
 
-# =============================================================================
-# F4XX: httpx Session Surface — PLAIN TCP WORLD (replaces aiohttp)
-# =============================================================================
-#
-# AUTHORITY SPLIT (Sprint 8VX):
-#   This module provides the PLAIN TCP async HTTP session surface only.
-#   It is NOT the source-ingress owner — that is FetchCoordinator.
-#   It is NOT the persisted session authority — that is SessionManager.
-#   It is NOT the curl world — that is StealthCrawler/curl_cffi.
-#
-#   PLAIN TCP SURFACE consumers (runtime-usable):
-#     - fetching/public_fetcher.py — passive text/HTML fetcher (via httpx)
-#     - pipeline/live_feed_pipeline.py:_fetch_article_text() — article fallback seam
-#
-#   Tor/I2P SOCKS: use httpx-socks via transport/session_pool.py:httpx_socks_client()
-#   curl_cffi WORLD: separate transport — JA3 fingerprint spoofing, completely
-#   separate TLS/fingerprint plane. Must NOT be unified with httpx session world.
-
 
 # Sprint F266-UVLOOP: canonical uvloop state — single source of truth
 # do NOT import uvloop here — that happens in __main__.py before this module is loaded
 
 
-# -----------------------------------------------------------------------
-# F266-UV7: Session Runtime State — replaces 5 module-level mutable globals
-# F4XX: Migrated from aiohttp to httpx
-#
-# PROBLEMS FIXED:
-# 1. Module-level mutable globals violate isolation between async tasks.
-# 2. asyncio.Lock() created inside async def via get_event_loop() is racy —
-#    the loop may differ between the lock creation call site and the actual
-#    await site where the lock is used.  Lock is bound to the creating loop.
-# 3. No test isolation — singletons cannot be reset between test cases.
-#
-# SOLUTION: ContextVar[SessionRuntimeState] — each async task gets its own
-# state.  Lock is created INSIDE an async context (guaranteed event loop).
-# The _reset_session_runtime_for_tests() helper survives by operating on
-# the ContextVar directly, enabling hermetic test suites.
-#
-# M1 8GB: __slots__ (no __dict__) saves ~200 bytes per instance.
-# -----------------------------------------------------------------------
-
 import contextvars  # noqa: E402
-
-from typing import TYPE_CHECKING  # noqa: E402
-from _core import aclose
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass  # httpx is always available — no TYPE_CHECKING guard needed
@@ -159,7 +111,7 @@ class _SessionRuntimeState:
 _session_state_var: contextvars.ContextVar[_SessionRuntimeState | None] = contextvars.ContextVar(
     "_session_state_var",
     default=None,
-    )
+)
 
 
 def _get_state() -> _SessionRuntimeState:
@@ -179,19 +131,6 @@ def __getattr__(name: str) -> object:
     # All other names raise AttributeError so normal module globals work
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")  # noqa: BLE001
 
-
-# =============================================================================
-# Domain Concurrency Bandit State — Sprint 8AC
-# Per-domain adaptive concurrency via Gradient Bandit
-#
-# F-UV7-FIX: Migrated to ContextVar-backed _SessionRuntimeState.
-# Each async task gets its own bandits — no module-level globals,
-# no cross-task pollution, bounded by task lifetime.
-# Sprint winddown calls clear_bandits() which clears the task-local state.
-#
-# Bounded: bandits live in _SessionRuntimeState._bandits (per-task ContextVar).
-# The bandit dict grows per unique host per task, and is cleared at windown.
-# =============================================================================
 
 def get_domain_limit(host: str) -> int:
     """
@@ -214,9 +153,7 @@ def get_domain_limit(host: str) -> int:
     return state._bandits[host].current_limit
 
 
-def record_domain_outcome(
-    host: str, latency_ms: float, status_code: int, got_captcha: bool = False
-) -> None:
+def record_domain_outcome(host: str, latency_ms: float, status_code: int, got_captcha: bool = False) -> None:
     """
     Record an HTTP outcome for a host and update its bandit (task-local).
 
@@ -285,16 +222,6 @@ def get_default_limit() -> int:
     return ARM_VALUES[-1]  # 8 — highest/conservative default
 
 
-# =============================================================================
-# F4XX: httpx Session Surface — replaces aiohttp
-# F350M-R ISSUE-010: httpx singleton DELEGATED to transport.session_pool
-#   This module retains: ContextVar bandits, timeout constants,
-#   and test isolation helpers.
-#   The httpx client itself now comes from session_pool.httpx_client().
-#   Connection limits are managed by session_pool (M1 8GB safe: 25/10).
-# =============================================================================
-
-
 async def async_get_httpx_session() -> httpx.AsyncClient:
     """
     Get or create the shared httpx.AsyncClient instance (async).
@@ -338,7 +265,8 @@ def set_httpx_cache_transport(_transport: Any) -> None:
     using session_pool directly.
     """
     # ISSUE-010: No-op — session_pool manages its own cache transport
-    pass
+
+
 def get_aiohttp_session() -> httpx.AsyncClient:
     """F4XX: alias for async_get_httpx_session(). Provided for backward compatibility."""
     import asyncio
@@ -347,14 +275,14 @@ def get_aiohttp_session() -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         raise RuntimeError(
-            "get_aiohttp_session() called in non-async context. "
-            "Use async_get_httpx_session() instead."
+            "get_aiohttp_session() called in non-async context. Use async_get_httpx_session() instead."
         ) from None
     # Run in a separate thread so the caller (which may be a sync thread
     # with its own loop) doesn't nest event loops — eliminates M1 crash vector.
     # run_in_executor with None uses the default ThreadPoolExecutor (bounded 8 threads on M1).
     future = loop.run_in_executor(None, _get_httpx_session_blocking)
     return future.result()
+
 
 def _get_httpx_session_blocking() -> httpx.AsyncClient:
     """
@@ -368,6 +296,7 @@ def _get_httpx_session_blocking() -> httpx.AsyncClient:
       - Running loop   → run_coroutine_threadsafe to bridge loop
     """
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     return run_sync_async(async_get_httpx_session())
 
 
@@ -387,8 +316,10 @@ def close_httpx_session() -> None:
     """
     # ISSUE-010: Delegate to canonical session_pool
     from hledac.universal.transport.session_pool import close_httpx as _close_httpx
+
     # P1-1: run_sync_async handles both running and non-running loop cases.
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     run_sync_async(_close_httpx())
 
 
@@ -446,10 +377,6 @@ def get_session_runtime_status() -> dict:
     }
 
 
-# =============================================================================
-# Test-Only Cleanup Helper — F208G / F266-UV7
-# =============================================================================
-
 def _reset_session_runtime_for_tests() -> None:
     """
     Reset the session state to pristine state for test isolation.
@@ -477,12 +404,6 @@ def _reset_session_runtime_for_tests() -> None:
     # Clear bandits
     clear_bandits()
 
-
-# =============================================================================
-# Lazy aiohttp stubs for backward compatibility — F4XX REMOVED
-# These will raise ImportError if called without aiohttp-fallback extra installed.
-# Use ONLY for tests that directly access the deprecated API.
-# =============================================================================
 
 def _raise_aiohttp_unavailable() -> None:
     """Raise ImportError for any code trying to use the removed aiohttp API."""

@@ -306,7 +306,6 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         IocType::EthAddr,
     ];
 
-    // Iterate all matches using captures_iter to get pattern info
     for caps in regex.captures_iter(text) {
         // Get the matched pattern using pattern() which returns PatternID
         let m = match caps.get_match() {
@@ -314,7 +313,6 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
             None => continue,
         };
         
-        // Get pattern ID to determine which IOC type matched
         let pattern_id = m);
         let pattern_idx = pattern_id);
         
@@ -324,7 +322,6 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
         
         let ioc_type = &ioc_types[pattern_idx];
         
-        // Extract the matched string from haystack
         let value = &text[m.start()..m.end()];
         if value.is_empty() {
             continue;
@@ -399,7 +396,6 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         IocType::EthAddr,
     ];
 
-    // Iterate all matches using captures_iter to get pattern info
     for caps in regex.captures_iter(text) {
         // Get the matched pattern using pattern() which returns PatternID
         let m = match caps.get_match() {
@@ -407,7 +403,6 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
             None => continue,
         };
         
-        // Get pattern ID to determine which IOC type matched
         let pattern_id = m);
         let pattern_idx = pattern_id);
         
@@ -417,7 +412,6 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         
         let ioc_type = &ioc_types[pattern_idx];
         
-        // Extract the matched string from haystack
         let value = &text[m.start()..m.end()];
         if value.is_empty() {
             continue;
@@ -425,7 +419,6 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
         let start = m);
         let end = m);
 
-        // Validate hashes
         if ioc_type.is_hash() && !is_valid_hex_hash(value, *ioc_type) {
             continue;
         }
@@ -563,8 +556,6 @@ pub fn batch_ioc_extract_unified_python<'py>(
     let texts: Vec<String> = texts.into_iter().take(BATCH_MAX_TEXTS));
     let n = texts);
 
-    // Phase 1: rayon-parallel extraction — pure Rust, no Python objects.
-    // Release GIL so rayon workers don't block other coroutines.
     let rust_results: Vec<Vec<(String, String)>> = release_gil(py, move || {
         crate::mixed_pool(n).install(|| {
             texts
@@ -580,7 +571,6 @@ pub fn batch_ioc_extract_unified_python<'py>(
         })
     });
 
-    // Phase 2: build Python objects AFTER rayon completes (GIL block, no rayon active)
     let outer: Bound<'py, PyList> = PyList::empty(py);
     for inner_vec in rust_results {
         let inner_list: Bound<'py, PyList> = PyList::empty(py);

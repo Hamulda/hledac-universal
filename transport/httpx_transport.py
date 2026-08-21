@@ -2,7 +2,6 @@
 HTTPX Transport Routing — Transport Capability Layer 2026
 =======================================================
 
-
 Sprint F206AF: HTTPX/H2 Auto-Fallback to curl_cffi
 
 Provides:
@@ -19,13 +18,10 @@ F206AF INVARIANTS:
   [H2-A6] Auto-disable gates: disabled after 3 failures in current process
 """
 
-
-
 import asyncio
 import functools
 import ipaddress
 import logging
-import os
 import re
 import socket
 import urllib.parse
@@ -34,17 +30,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy inside fetch_via_httpx_h2
 
+from hledac.universal._core.env_config import ENV
+
 from ..utils.async_helpers import async_getaddrinfo
-from hledac.universal._core.env_config import ENV  # noqa: E402
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# HTTPX H2 Circuit Breaker — instance-based (S-02 fix)
-# =============================================================================
+_MAX_HTTPX_H2_FAILURES: int = 3  # [H2-A1] bounded
 
-_MAX_HTTPX_H2_FAILURES: int = 3       # [H2-A1] bounded
 
 class H2CircuitBreaker:
     """Per-instance httpx H2 circuit breaker state.
@@ -78,7 +71,7 @@ class H2CircuitBreaker:
             logger.warning(
                 f"[HTTPX] httpx_h2 auto-disabled after {self._failure_count} failures "
                 f"(threshold={_MAX_HTTPX_H2_FAILURES})"
-    )
+            )
 
     def reset(self) -> None:
         """Reset state — for tests only."""
@@ -188,36 +181,35 @@ def classify_httpx_h2_error(exc_or_result) -> str:
 
     return "unknown_httpx_error"
 
-# =============================================================================
-# URL Classification Helpers
-# =============================================================================
 
 # API-like URL patterns — suggest same-host batch or structured API calls
 _API_URL_PATTERNS: list[re.Pattern] = [
-    re.compile(r"^https?://cdn\."),                                    # CDN hosts (cdn.*)
-    re.compile(r"^https?://static\."),                                 # static hosts
-    re.compile(r"^https?://[^/]+\.workers\.dev"),                    # Cloudflare Workers subdomain
-    re.compile(r"^https?://[^/]+\.on\.microsoft\.com"),               # Azure Front Door
+    re.compile(r"^https?://cdn\."),  # CDN hosts (cdn.*)
+    re.compile(r"^https?://static\."),  # static hosts
+    re.compile(r"^https?://[^/]+\.workers\.dev"),  # Cloudflare Workers subdomain
+    re.compile(r"^https?://[^/]+\.on\.microsoft\.com"),  # Azure Front Door
 ]
 _API_PATH_PATTERNS: list[re.Pattern] = [
-    re.compile(r"^https?://[^/]+/api/v\d+/"),                         # /api/v1/, /api/v2/
-    re.compile(r"^https?://[^/]+/api/"),                               # /api/ (exact)
-    re.compile(r"^https?://[^/]+/v\d+/api/"),                         # /v1/api/, /v2/
+    re.compile(r"^https?://[^/]+/api/v\d+/"),  # /api/v1/, /api/v2/
+    re.compile(r"^https?://[^/]+/api/"),  # /api/ (exact)
+    re.compile(r"^https?://[^/]+/v\d+/api/"),  # /v1/api/, /v2/
 ]
 
 # Known API host suffixes that benefit from HTTP/2 multiplexing
-_KNOWN_API_HOST_SUFFIXES: frozenset[str] = frozenset({
-    "cloudflare.com",
-    "akamai.com",
-    "fastly.com",
-    "cloudfront.net",
-    "workers.dev",
-    "azureedge.net",
-    "azure.com",
-    "digitaloceanspaces.com",
-    "linode.com",
-    "vultr.com",
-})
+_KNOWN_API_HOST_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "cloudflare.com",
+        "akamai.com",
+        "fastly.com",
+        "cloudfront.net",
+        "workers.dev",
+        "azureedge.net",
+        "azure.com",
+        "digitaloceanspaces.com",
+        "linode.com",
+        "vultr.com",
+    }
+)
 
 
 @functools.lru_cache(maxsize=2048)
@@ -237,7 +229,6 @@ def _is_api_like_url(url: str) -> bool:
         parsed = urllib.parse.urlparse(url)
         host = parsed.hostname or ""
 
-        # Check hostname patterns
         if not host:
             return False
 
@@ -280,17 +271,11 @@ def _extract_host(url: str) -> str:
     # Fallback: urllib.parse
     try:
         netloc = urllib.parse.urlparse(url).netloc
-        # Remove port
         if ":" in netloc:
             netloc = netloc.split(":")[0]
         return netloc.lower()
     except Exception:
         return ""
-
-
-# =============================================================================
-# Transport Selection Policy
-# =============================================================================
 
 
 def should_use_httpx_h2(
@@ -372,11 +357,6 @@ def should_use_httpx_h2(
     return False, "clearnet_default"
 
 
-# =============================================================================
-# HTTPX H2 Fetch Path
-# =============================================================================
-
-
 async def fetch_via_httpx_h2(
     url: str,
     timeout_s: float = 20.0,
@@ -438,10 +418,9 @@ async def fetch_via_httpx_h2(
             headers=headers,
             timeout=timeout_s,
             follow_redirects=False,  # Manual handling required for SSRF validation
-    )
+        )
         last_response = response
 
-        # Check for redirect status codes
         if response.status_code in (301, 302, 303, 307, 308):
             location = response.headers.get("location")
             if not location:
@@ -470,29 +449,28 @@ async def fetch_via_httpx_h2(
 
 class _SSRFBlockError(Exception):
     """Raised when redirect URL fails SSRF validation."""
-    pass
 
 
 # OPSEC-002: SSRF protection — comprehensive private network ranges
 # IPv4: RFC 1918 + link-local + loopback + benchmark + reserved
 # IPv6: RFC 4193 (ULA) + RFC 4291 link-local + loopback + Teredo
 _PRIVATE_NETS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (  # noqa: N806
-    ipaddress.ip_network("10.0.0.0/8"),       # RFC 1918: private
-    ipaddress.ip_network("172.16.0.0/12"),    # RFC 1918: private
-    ipaddress.ip_network("192.168.0.0/16"),   # RFC 1918: private
-    ipaddress.ip_network("127.0.0.0/8"),      # RFC 1122: loopback
-    ipaddress.ip_network("169.254.0.0/16"),   # RFC 3927: link-local
-    ipaddress.ip_network("100.64.0.0/10"),    # RFC 6598: CG-NAT
-    ipaddress.ip_network("0.0.0.0/8"),        # RFC 1122: "this" network
-    ipaddress.ip_network("224.0.0.0/4"),     # RFC 1112: multicast
-    ipaddress.ip_network("240.0.0.0/4"),     # RFC 1112: reserved
+    ipaddress.ip_network("10.0.0.0/8"),  # RFC 1918: private
+    ipaddress.ip_network("172.16.0.0/12"),  # RFC 1918: private
+    ipaddress.ip_network("192.168.0.0/16"),  # RFC 1918: private
+    ipaddress.ip_network("127.0.0.0/8"),  # RFC 1122: loopback
+    ipaddress.ip_network("169.254.0.0/16"),  # RFC 3927: link-local
+    ipaddress.ip_network("100.64.0.0/10"),  # RFC 6598: CG-NAT
+    ipaddress.ip_network("0.0.0.0/8"),  # RFC 1122: "this" network
+    ipaddress.ip_network("224.0.0.0/4"),  # RFC 1112: multicast
+    ipaddress.ip_network("240.0.0.0/4"),  # RFC 1112: reserved
     # IPv6
-    ipaddress.ip_network("::1/128"),          # RFC 4291: loopback
-    ipaddress.ip_network("fc00::/7"),         # RFC 4193: unique local (fc00::/8 + fd00::/8)
-    ipaddress.ip_network("fe80::/10"),        # RFC 4291: link-local unicast
-    ipaddress.ip_network("2001::/32"),        # RFC 4380: Teredo tunnel
-    ipaddress.ip_network("ff00::/8"),         # RFC 4291: multicast
-    )
+    ipaddress.ip_network("::1/128"),  # RFC 4291: loopback
+    ipaddress.ip_network("fc00::/7"),  # RFC 4193: unique local (fc00::/8 + fd00::/8)
+    ipaddress.ip_network("fe80::/10"),  # RFC 4291: link-local unicast
+    ipaddress.ip_network("2001::/32"),  # RFC 4380: Teredo tunnel
+    ipaddress.ip_network("ff00::/8"),  # RFC 4291: multicast
+)
 
 
 def _is_ssrf_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -508,7 +486,6 @@ def _is_ssrf_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         return False
     if ip.is_unspecified:
         return False
-    # Check against private network ranges
     for net in _PRIVATE_NETS:
         if ip in net:
             return False
@@ -561,7 +538,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
                     raise _SSRFBlockError(
                         f"Redirect to private/reserved IP via DNS rebinding blocked: {redirect_url} "
                         f"(resolved to {ip_str})"
-    )
+                    )
             except ValueError:  # noqa: BLE001
                 pass  # Not an IP format, skip (shouldn't happen from getaddrinfo)
     except _SSRFBlockError:

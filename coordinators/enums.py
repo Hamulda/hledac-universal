@@ -5,14 +5,12 @@ Coordinator Enums
 Shared enums for coordinators. Single source of truth to avoid circular imports.
 """
 
-
-
 from enum import Enum
-from _core import aclose
 
 
 class MemoryPressureLevel(Enum):
     """Memory pressure levels for M1 8GB optimization."""
+
     NORMAL = "normal"
     ELEVATED = "elevated"
     HIGH = "high"

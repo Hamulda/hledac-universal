@@ -9,11 +9,8 @@ injected SemanticStore instance (or silently no-ops when no store is present).
 No behavior change — fail-open semantics preserved.
 """
 
-
-
 import logging
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.semantic_store import SemanticStore
@@ -32,10 +29,6 @@ class SemanticStoreBuffer:
 
     def __init__(self) -> None:
         self._store: SemanticStore | None = None
-
-    # ------------------------------------------------------------------
-    # Public seam
-    # ------------------------------------------------------------------
 
     def inject(self, store: Any) -> None:
         """
@@ -78,6 +71,6 @@ class SemanticStoreBuffer:
                     finding_id=getattr(f, "finding_id", ""),
                     ioc_types=ioc_types,
                     ts=getattr(f, "ts", None),
-    )
+                )
         except Exception as exc:
             logging.getLogger(__name__).debug("Semantic buffering skipped: %s", exc)

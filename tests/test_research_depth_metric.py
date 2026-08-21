@@ -44,7 +44,7 @@ from hledac.universal.export.sprint_exporter import (
 class TestResearchDepthOutputShape:
     """Output dict keys and types must be stable across all input combinations."""
 
-    def test_surface_run_returns_all_required_keys(self):
+    def test_surface_run_returns_all_required_keys(self) -> None:
         """surface/smoke run still returns complete structure (no KeyError)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"entries_per_source": {}, "hits_per_source": {}}),
@@ -58,7 +58,7 @@ class TestResearchDepthOutputShape:
         assert "breakdown" in result
         assert "depth_signals" in result
 
-    def test_full_run_returns_all_required_breakdown_keys(self):
+    def test_full_run_returns_all_required_breakdown_keys(self) -> None:
         """breakdown always has all 5 component keys."""
         result = _compute_research_depth(
             eh=_mock_handoff(_full_source_counts()),
@@ -76,7 +76,7 @@ class TestResearchDepthOutputShape:
             "pivot_depth",
         }
 
-    def test_full_run_returns_all_required_depth_signals_keys(self):
+    def test_full_run_returns_all_required_depth_signals_keys(self) -> None:
         """depth_signals always has all 8 signal keys."""
         result = _compute_research_depth(
             eh=_mock_handoff(_full_source_counts()),
@@ -107,7 +107,7 @@ class TestResearchDepthOutputShape:
 class TestResearchDepthScoreBounds:
     """Score must never exceed 100.0 or go below 0.0."""
 
-    def test_surface_smoke_run_score_not_negative(self):
+    def test_surface_smoke_run_score_not_negative(self) -> None:
         """Zero sources yields score >= 0."""
         result = _compute_research_depth(
             eh=_mock_handoff({}),
@@ -118,7 +118,7 @@ class TestResearchDepthScoreBounds:
         )
         assert result["score"] >= 0.0
 
-    def test_all_signals_max_score_is_100(self):
+    def test_all_signals_max_score_is_100(self) -> None:
         """All signals active yields score <= 100."""
         result = _compute_research_depth(
             eh=_mock_handoff(_full_source_counts()),
@@ -130,7 +130,7 @@ class TestResearchDepthScoreBounds:
         assert result["score"] <= 100.0
         assert result["score"] >= 0.0
 
-    def test_score_is_float(self):
+    def test_score_is_float(self) -> None:
         """Score type is always float (not int, not None)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -151,7 +151,7 @@ class TestResearchDepthScoreBounds:
 class TestResearchDepthLevelThresholds:
     """Level assignment must follow threshold boundaries exactly."""
 
-    def test_surface_level_at_minimum(self):
+    def test_surface_level_at_minimum(self) -> None:
         """Empty inputs → surface level."""
         result = _compute_research_depth(
             eh=_mock_handoff({}),
@@ -162,7 +162,7 @@ class TestResearchDepthLevelThresholds:
         )
         assert result["level"] == "surface"
 
-    def test_shallow_level_single_indexed_source(self):
+    def test_shallow_level_single_indexed_source(self) -> None:
         """Single indexed source + no corroboration → shallow."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -174,7 +174,7 @@ class TestResearchDepthLevelThresholds:
         # source_diversity ~2.5 only, everything else 0 → ~2.5 → surface
         assert result["level"] == "surface"
 
-    def test_moderate_level_with_deep_sources(self):
+    def test_moderate_level_with_deep_sources(self) -> None:
         """Deep sources + no corroboration → moderate."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -195,7 +195,7 @@ class TestResearchDepthLevelThresholds:
         # Need more components to reach moderate
         assert result["level"] in ("surface", "shallow")
 
-    def test_deep_level_with_corrob_and_branches(self):
+    def test_deep_level_with_corrob_and_branches(self) -> None:
         """Corroborated + branches active → deep level."""
         result = _compute_research_depth(
             eh=_mock_handoff_with_runtime_truth(
@@ -214,7 +214,7 @@ class TestResearchDepthLevelThresholds:
         # total ≈ 45.7 → moderate/deep
         assert result["level"] in ("moderate", "deep")
 
-    def test_comprehensive_level_at_maximum(self):
+    def test_comprehensive_level_at_maximum(self) -> None:
         """All signals active + 3 branches → comprehensive level."""
         result = _compute_research_depth(
             eh=_mock_handoff_with_runtime_truth(
@@ -243,7 +243,7 @@ class TestResearchDepthLevelThresholds:
 class TestSourceDiversityComponent:
     """Source diversity score responds correctly to source type diversity."""
 
-    def test_single_indexed_source_low_diversity(self):
+    def test_single_indexed_source_low_diversity(self) -> None:
         """One indexed source → low diversity score."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 100}),
@@ -255,7 +255,7 @@ class TestSourceDiversityComponent:
         # Single source: entropy=0, unique_types bonus=2.5 → ~2.5
         assert result["breakdown"]["source_diversity"] < 10.0
 
-    def test_multiple_diverse_sources_high_diversity(self):
+    def test_multiple_diverse_sources_high_diversity(self) -> None:
         """3+ diverse sources with even distribution → high diversity score."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -273,18 +273,18 @@ class TestSourceDiversityComponent:
         # 3 sources, high entropy → diversity score should be significant
         assert result["breakdown"]["source_diversity"] >= 10.0
 
-    def test_source_tier_classification_tier2_deep(self):
+    def test_source_tier_classification_tier2_deep(self) -> None:
         """Tier-2 sources (rl_research, tot_synthesis) are classified as deep."""
         assert _SOURCE_TIER.get("rl_research") == 2
         assert _SOURCE_TIER.get("tot_synthesis") == 2
         assert _SOURCE_TIER.get("report") == 2
 
-    def test_source_tier_classification_tier1_structured(self):
+    def test_source_tier_classification_tier1_structured(self) -> None:
         """Tier-1 sources (ct_log_pipeline, circl_pdns) are classified as structured."""
         assert _SOURCE_TIER.get("ct_log_pipeline") == 1
         assert _SOURCE_TIER.get("circl_pdns") == 1
 
-    def test_source_tier_classification_tier0_indexed(self):
+    def test_source_tier_classification_tier0_indexed(self) -> None:
         """Tier-0 sources (rss_atom_pipeline, live_public_pipeline) are indexed."""
         assert _SOURCE_TIER.get("rss_atom_pipeline") == 0
         assert _SOURCE_TIER.get("live_public_pipeline") == 0
@@ -299,7 +299,7 @@ class TestSourceDiversityComponent:
 class TestNonIndexedRatioComponent:
     """Non-indexed ratio rewards use of deep/structured sources."""
 
-    def test_all_indexed_gives_zero_non_indexed_score(self):
+    def test_all_indexed_gives_zero_non_indexed_score(self) -> None:
         """Only tier-0 sources → non_indexed_ratio = 0."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 100, "live_public_pipeline": 100}),
@@ -310,7 +310,7 @@ class TestNonIndexedRatioComponent:
         )
         assert result["breakdown"]["non_indexed_ratio"] == 0.0
 
-    def test_all_deep_gives_max_non_indexed_score(self):
+    def test_all_deep_gives_max_non_indexed_score(self) -> None:
         """Only tier-1+tier-2 sources → non_indexed_ratio score = 20."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -327,7 +327,7 @@ class TestNonIndexedRatioComponent:
         )
         assert result["breakdown"]["non_indexed_ratio"] == 20.0
 
-    def test_mixed_gives_partial_non_indexed_score(self):
+    def test_mixed_gives_partial_non_indexed_score(self) -> None:
         """50% deep sources → partial non_indexed_ratio."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -354,7 +354,7 @@ class TestNonIndexedRatioComponent:
 class TestCorroborationComponent:
     """Corroboration score rewards cross-source signal validation."""
 
-    def test_no_signals_gives_zero_corrob(self):
+    def test_no_signals_gives_zero_corrob(self) -> None:
         """No corroboration signals → corroboration = 0."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -365,7 +365,7 @@ class TestCorroborationComponent:
         )
         assert result["breakdown"]["corroboration"] == 0.0
 
-    def test_is_corroborated_true_gives_15(self):
+    def test_is_corroborated_true_gives_15(self) -> None:
         """is_corroborated=True → 15 points."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -376,7 +376,7 @@ class TestCorroborationComponent:
         )
         assert result["breakdown"]["corroboration"] == 15.0
 
-    def test_is_noisy_false_gives_5(self):
+    def test_is_noisy_false_gives_5(self) -> None:
         """is_noisy=False → 5 points (distinct from is_corroborated)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -387,7 +387,7 @@ class TestCorroborationComponent:
         )
         assert result["breakdown"]["corroboration"] == 5.0
 
-    def test_campaign_hints_3_plus_gives_5_bonus(self):
+    def test_campaign_hints_3_plus_gives_5_bonus(self) -> None:
         """3+ campaign hints → +5 corroboration bonus (capped at 25)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -399,7 +399,7 @@ class TestCorroborationComponent:
         # 15 (corr) + 5 (noisy=False) + 5 (3+ hints) = 25
         assert result["breakdown"]["corroboration"] == 25.0
 
-    def test_corrob_capped_at_25(self):
+    def test_corrob_capped_at_25(self) -> None:
         """Corroboration score cannot exceed 25."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -420,7 +420,7 @@ class TestCorroborationComponent:
 class TestBranchDiversityComponent:
     """Branch diversity rewards parallel use of feed + public + CT branches."""
 
-    def test_no_runtime_truth_zero_branch_score(self):
+    def test_no_runtime_truth_zero_branch_score(self) -> None:
         """No runtime_truth → branch_diversity = 0."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -431,7 +431,7 @@ class TestBranchDiversityComponent:
         )
         assert result["breakdown"]["branch_diversity"] == 0.0
 
-    def test_single_branch_gives_5_points(self):
+    def test_single_branch_gives_5_points(self) -> None:
         """1 active branch → 5 points."""
         _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -453,7 +453,7 @@ class TestBranchDiversityComponent:
         )
         assert result2["breakdown"]["branch_diversity"] == 5.0
 
-    def test_three_branches_active_gives_15_points(self):
+    def test_three_branches_active_gives_15_points(self) -> None:
         """3 active branches → 15 points (cap)."""
         result = _compute_research_depth(
             eh=_mock_handoff_with_runtime_truth(
@@ -477,7 +477,7 @@ class TestBranchDiversityComponent:
 class TestPivotDepthComponent:
     """Pivot depth rewards hypothesis generation and pivot recommendations."""
 
-    def test_no_signals_gives_zero_pivot(self):
+    def test_no_signals_gives_zero_pivot(self) -> None:
         """No hypothesis_pack or pivot signal → pivot_depth = 0."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -488,7 +488,7 @@ class TestPivotDepthComponent:
         )
         assert result["breakdown"]["pivot_depth"] == 0.0
 
-    def test_hypothesis_count_gives_5(self):
+    def test_hypothesis_count_gives_5(self) -> None:
         """hypothesis_count > 0 → 5 points."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -499,7 +499,7 @@ class TestPivotDepthComponent:
         )
         assert result["breakdown"]["pivot_depth"] == 5.0
 
-    def test_pivot_recommended_gives_10(self):
+    def test_pivot_recommended_gives_10(self) -> None:
         """next_pivot_recommendation != continue → 10 points."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -510,7 +510,7 @@ class TestPivotDepthComponent:
         )
         assert result["breakdown"]["pivot_depth"] == 10.0
 
-    def test_pivot_depth_capped_at_15(self):
+    def test_pivot_depth_capped_at_15(self) -> None:
         """Both hypothesis + pivot recommended → capped at 15."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -522,7 +522,7 @@ class TestPivotDepthComponent:
         # 5 + 10 = 15 (capped)
         assert result["breakdown"]["pivot_depth"] == 15.0
 
-    def test_continue_pivot_not_counted(self):
+    def test_continue_pivot_not_counted(self) -> None:
         """next_pivot_recommendation='continue' → 0 pivot points."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -543,7 +543,7 @@ class TestPivotDepthComponent:
 class TestDepthSignalsReflectInputs:
     """depth_signals dict must accurately reflect the computed inputs."""
 
-    def test_unique_source_types_reflected(self):
+    def test_unique_source_types_reflected(self) -> None:
         """unique_source_types in depth_signals matches number of source types."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -560,7 +560,7 @@ class TestDepthSignalsReflectInputs:
         )
         assert result["depth_signals"]["unique_source_types"] == 3
 
-    def test_deep_sources_found_accumulates_tier1_tier2(self):
+    def test_deep_sources_found_accumulates_tier1_tier2(self) -> None:
         """deep_sources_found sums hits from tier1 + tier2 sources."""
         result = _compute_research_depth(
             eh=_mock_handoff(
@@ -577,7 +577,7 @@ class TestDepthSignalsReflectInputs:
         )
         assert result["depth_signals"]["deep_sources_found"] == 8
 
-    def test_campaign_hints_count_from_correlation(self):
+    def test_campaign_hints_count_from_correlation(self) -> None:
         """campaign_hints count matches correlation input."""
         result = _compute_research_depth(
             eh=_mock_handoff({"rss_atom_pipeline": 10}),
@@ -598,7 +598,7 @@ class TestDepthSignalsReflectInputs:
 class TestResearchDepthInExportReturn:
     """export_sprint() must include research_depth_metric in its return dict."""
 
-    def test_export_sprint_includes_research_depth_metric(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_export_sprint_includes_research_depth_metric(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """The export_sprint return dict must contain research_depth_metric key."""
         import asyncio
@@ -662,7 +662,7 @@ class TestResearchDepthInExportReturn:
 class TestArchiveAcademicContributionSurface:
     """F193B: CommonCrawl and academic findings surface in canonical export."""
 
-    def test_pvs_commoncrawl_field_present(self):
+    def test_pvs_commoncrawl_field_present(self) -> None:
         """product_value_summary includes commoncrawl_archive_augmented when CC is active."""
         # Simulate: _build_product_value_summary receives canonical_run_summary with cc_archive_injected
         from unittest.mock import MagicMock
@@ -687,7 +687,7 @@ class TestArchiveAcademicContributionSurface:
         assert "commoncrawl_archive_augmented" in pvs
         assert pvs["commoncrawl_archive_augmented"] == 12
 
-    def test_pvs_academic_field_present(self):
+    def test_pvs_academic_field_present(self) -> None:
         """product_value_summary includes academic_discovery_contribution when academic is active."""
         from unittest.mock import MagicMock
 
@@ -709,7 +709,7 @@ class TestArchiveAcademicContributionSurface:
         assert "academic_discovery_contribution" in pvs
         assert pvs["academic_discovery_contribution"] == 7
 
-    def test_pvs_zero_when_missing_canonical_run_summary(self):
+    def test_pvs_zero_when_missing_canonical_run_summary(self) -> None:
         """Both fields default to 0 when canonical_run_summary is absent."""
         from unittest.mock import MagicMock
 
@@ -728,13 +728,13 @@ class TestArchiveAcademicContributionSurface:
         assert pvs.get("commoncrawl_archive_augmented", 0) == 0
         assert pvs.get("academic_discovery_contribution", 0) == 0
 
-    def test_academic_discovery_in_source_tier_tier1(self):
+    def test_academic_discovery_in_source_tier_tier1(self) -> None:
         """academic_discovery is classified as tier-1 (structured TI)."""
         from hledac.universal.export.sprint_exporter import _SOURCE_TIER
 
         assert _SOURCE_TIER.get("academic_discovery") == 1
 
-    def test_source_tier_tier1_contributes_to_non_indexed_ratio(self):
+    def test_source_tier_tier1_contributes_to_non_indexed_ratio(self) -> None:
         """Tier-1 academic_discovery hits contribute to non_indexed_ratio component."""
         result = _compute_research_depth(
             eh=_mock_handoff({"academic_discovery": 50, "rss_atom_pipeline": 50}),
@@ -764,43 +764,43 @@ class TestSourceTaxonomyNormalization:
       - bgp_monitor (ti_feed_adapter.py:1742) — missing from tier map
     """
 
-    def test_ct_log_is_tier1(self):
+    def test_ct_log_is_tier1(self) -> None:
         """ct_log (ct_log_client.py:273) is tier 1 — structured TI."""
         assert _SOURCE_TIER.get("ct_log") == 1
 
-    def test_ct_log_pipeline_also_tier1(self):
+    def test_ct_log_pipeline_also_tier1(self) -> None:
         """ct_log_pipeline alias is also tier 1 — backward compat."""
         assert _SOURCE_TIER.get("ct_log_pipeline") == 1
 
-    def test_onion_discovery_is_tier2(self):
+    def test_onion_discovery_is_tier2(self) -> None:
         """onion_discovery (live_public_pipeline.py:1785) is tier 2 — deep/dark web."""
         assert _SOURCE_TIER.get("onion_discovery") == 2
 
-    def test_ipfs_is_tier1(self):
+    def test_ipfs_is_tier1(self) -> None:
         """ipfs (ti_feed_adapter.py:1367) is tier 1 — structured TI."""
         assert _SOURCE_TIER.get("ipfs") == 1
 
-    def test_shodan_search_is_tier1(self):
+    def test_shodan_search_is_tier1(self) -> None:
         """shodan_search (shodan_wrapper.py:204) is tier 1 — structured TI."""
         assert _SOURCE_TIER.get("shodan_search") == 1
 
-    def test_bgp_monitor_is_tier1(self):
+    def test_bgp_monitor_is_tier1(self) -> None:
         """bgp_monitor (ti_feed_adapter.py:1742) is tier 1 — structured TI."""
         assert _SOURCE_TIER.get("bgp_monitor") == 1
 
-    def test_live_public_pipeline_is_tier0(self):
+    def test_live_public_pipeline_is_tier0(self) -> None:
         """live_public_pipeline (live_public_pipeline.py) is tier 0 — indexed/surface."""
         assert _SOURCE_TIER.get("live_public_pipeline") == 0
 
-    def test_academic_discovery_is_tier1(self):
+    def test_academic_discovery_is_tier1(self) -> None:
         """academic_discovery (live_public_pipeline.py:1995) is tier 1."""
         assert _SOURCE_TIER.get("academic_discovery") == 1
 
-    def test_pastebin_monitor_is_tier1(self):
+    def test_pastebin_monitor_is_tier1(self) -> None:
         """pastebin_monitor (live_public_pipeline.py:2067) is tier 1."""
         assert _SOURCE_TIER.get("pastebin_monitor") == 1
 
-    def test_github_secret_scanner_is_tier1(self):
+    def test_github_secret_scanner_is_tier1(self) -> None:
         """github_secret_scanner (live_public_pipeline.py:2107) is tier 1."""
         assert _SOURCE_TIER.get("github_secret_scanner") == 1
 
@@ -809,7 +809,7 @@ class TestSourceTaxonomyNormalization:
 class TestSourceTaxonomyContribution:
     """Verify each new source type contributes correctly to research depth components."""
 
-    def test_ct_log_contributes_to_non_indexed_ratio(self):
+    def test_ct_log_contributes_to_non_indexed_ratio(self) -> None:
         """ct_log hits contribute to non_indexed_ratio component (tier 1)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"ct_log": 50, "rss_atom_pipeline": 50}),
@@ -822,7 +822,7 @@ class TestSourceTaxonomyContribution:
         assert result["breakdown"]["non_indexed_ratio"] == 10.0
         assert result["depth_signals"]["deep_sources_found"] == 50
 
-    def test_onion_discovery_contributes_as_deep(self):
+    def test_onion_discovery_contributes_as_deep(self) -> None:
         """onion_discovery hits count as tier 2 (deep) for non_indexed_ratio."""
         result = _compute_research_depth(
             eh=_mock_handoff({"onion_discovery": 30, "live_public_pipeline": 70}),
@@ -835,7 +835,7 @@ class TestSourceTaxonomyContribution:
         assert result["breakdown"]["non_indexed_ratio"] == 6.0
         assert result["depth_signals"]["deep_sources_found"] == 30
 
-    def test_ipfs_contributes_to_non_indexed_ratio(self):
+    def test_ipfs_contributes_to_non_indexed_ratio(self) -> None:
         """ipfs hits contribute to non_indexed_ratio component (tier 1)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"ipfs": 25, "rss_atom_pipeline": 75}),
@@ -847,7 +847,7 @@ class TestSourceTaxonomyContribution:
         # 25 tier-1 hits / 100 total = 0.25 ratio → 5.0 score
         assert result["breakdown"]["non_indexed_ratio"] == 5.0
 
-    def test_shodan_search_contributes_to_non_indexed_ratio(self):
+    def test_shodan_search_contributes_to_non_indexed_ratio(self) -> None:
         """shodan_search hits contribute to non_indexed_ratio component (tier 1)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"shodan_search": 40, "live_public_pipeline": 60}),
@@ -859,7 +859,7 @@ class TestSourceTaxonomyContribution:
         # 40 tier-1 hits / 100 total = 0.4 ratio → 8.0 score
         assert result["breakdown"]["non_indexed_ratio"] == 8.0
 
-    def test_bgp_monitor_contributes_to_non_indexed_ratio(self):
+    def test_bgp_monitor_contributes_to_non_indexed_ratio(self) -> None:
         """bgp_monitor hits contribute to non_indexed_ratio component (tier 1)."""
         result = _compute_research_depth(
             eh=_mock_handoff({"bgp_monitor": 20, "rss_atom_pipeline": 80}),
@@ -871,7 +871,7 @@ class TestSourceTaxonomyContribution:
         # 20 tier-1 hits / 100 total = 0.2 ratio → 4.0 score
         assert result["breakdown"]["non_indexed_ratio"] == 4.0
 
-    def test_all_new_sources_diverse_contributes_high_diversity(self):
+    def test_all_new_sources_diverse_contributes_high_diversity(self) -> None:
         """5 diverse sources including new types → high source_diversity score."""
         result = _compute_research_depth(
             eh=_mock_handoff(

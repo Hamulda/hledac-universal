@@ -54,10 +54,6 @@ extern "C" {
     ) -> i32;
 }
 
-// ---------------------------------------------------------------------------
-// Error types
-// ---------------------------------------------------------------------------
-
 #[derive(Debug)]
 pub enum SendFileError {
     /// File does not exist or cannot be opened
@@ -94,10 +90,6 @@ impl From<SendFileError> for pyo3::PyErr {
         pyo3::exceptions::PyIOError::new_err(err.to_string())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Darwin sendfile wrapper
-// ---------------------------------------------------------------------------
 
 /// Send file data to a connected socket using sendfile(2).
 ///
@@ -239,10 +231,6 @@ pub fn fallback_sendfile(
     Ok(total_sent)
 }
 
-// ---------------------------------------------------------------------------
-// Python bindings via PyO3
-// ---------------------------------------------------------------------------
-
 // sendfile is always available on Darwin (core functionality)
 // #[cfg(feature)] removed — sendfile is platform-gated via #[cfg(target_os = "macos")]
 mod py_bindings {
@@ -340,10 +328,6 @@ mod py_bindings {
 }
 
 pub use py_bindings::register_functions;
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

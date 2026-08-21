@@ -23,7 +23,6 @@ import asyncio
 import logging
 import os
 from typing import Literal
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +32,14 @@ __all__ = [
 ]
 
 
-# ─── aiofiles lazy import ────────────────────────────────────────────────────
-
 def _get_aiofiles():
     """Lazy aiofiles import — fails gracefully if not installed."""
     try:
         import aiofiles
+
         return aiofiles
     except ImportError:
         return None
-
-
-# ─── Core async file operations ─────────────────────────────────────────────
 
 
 async def async_write_file(
@@ -93,6 +88,7 @@ async def async_write_file(
                 def _fsync() -> None:
                     with open(path, "r+b") as sf:
                         os.fsync(sf.fileno())
+
                 await asyncio.to_thread(_fsync)
             return True
         except Exception as _e:
@@ -101,6 +97,7 @@ async def async_write_file(
 
     # Fallback: asyncio.to_thread (still non-blocking for event loop)
     try:
+
         def _write_sync() -> None:
             with open(path, mode) as f:
                 f.write(data)
@@ -151,8 +148,9 @@ async def async_read_file_text(
 
     # Fallback: asyncio.to_thread
     try:
+
         def _read_sync() -> str:
-            with open(path, "r", encoding=encoding) as f:
+            with open(path, encoding=encoding) as f:
                 return f.read()
 
         return await asyncio.to_thread(_read_sync)

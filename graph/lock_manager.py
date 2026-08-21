@@ -32,8 +32,6 @@ USAGE
       # graph will open read-only or skip writes
 """
 
-
-
 import fcntl
 import logging
 import os
@@ -46,7 +44,7 @@ from typing import TYPE_CHECKING
 from _core.lock_registry import LockCategory, register_lock
 
 if TYPE_CHECKING:
-    import psutil
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +57,7 @@ def _REGISTRY_LOCK() -> threading.Lock:
     """Module-level lock for graph lock registry."""
     return threading.Lock()
 
+
 # Safety bounds
 MAX_LOCK_WAIT_S: float = 2.0
 LOCK_FILE_SUFFIX: str = ".lock"
@@ -70,7 +69,6 @@ _LOCK_AGE_THRESHOLD_SECONDS: float = 10.0
 
 # Issue #17: psutil lazy import via centralized psutil_shim.
 from hledac.universal._core.psutil_shim import psutil_module as _psutil_mod
-from _core import aclose
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -118,7 +116,6 @@ def _is_process_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # Process exists but we lack permission — treat as alive
         return True
     except OSError:
         return False
@@ -244,7 +241,6 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                         except psutil.Error:  # noqa: BLE001
                             pass  # status() not supported on this platform
                     except psutil.NoSuchProcess:
-                        # Process died between _is_process_alive and here → stale
                         return True, f"holder_process_died_during_check(pid={pid})"
                     except psutil.AccessDenied:  # noqa: BLE001
                         # Cannot inspect but process exists → treat as alive
@@ -369,13 +365,11 @@ class GraphLockManager:
             self._denial_reason = ""
             self._holder_pid = None
 
-            # Step 1: Clean up obviously stale lock file (age threshold)
-            # This is an optimization only — flock() will catch any races.
             if self._lock_path.exists():
                 is_stale, reason = _is_lock_stale(
                     self._lock_path,
                     pathlib.Path(self._db_path),
-    )
+                )
                 if is_stale:
                     try:
                         self._lock_path.unlink(missing_ok=True)
@@ -383,7 +377,6 @@ class GraphLockManager:
                     except OSError as e:
                         logger.debug(f"[GRAPH] Stale lock cleanup failed: {e}")
 
-            # Step 2: ALWAYS attempt flock — this is the authoritative check
             deadline = time.monotonic() + timeout_s
             lock_file_dir = self._lock_path.parent
             lock_file_dir.mkdir(parents=True, exist_ok=True)
@@ -417,9 +410,9 @@ class GraphLockManager:
                         return False
                     # Jitter: avoid thundering herd when multiple processes compete
                     import random
+
                     time.sleep(0.05 + random.random() * 0.05)
 
-            # Step 3: We hold the lock — write PID header
             my_pid = os.getpid()
             try:
                 os.ftruncate(fd, 0)
@@ -472,7 +465,7 @@ class GraphLockManager:
         weakref.finalize) is the canonical cleanup path.
         """
         # Detach finalizer to prevent double-cleanup
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             # We took ownership — run cleanup now
             self.release()
 
@@ -491,7 +484,7 @@ def _release_graph_lock(lock_path: pathlib.Path) -> None:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
-    except (OSError, FileNotFoundError):  # noqa: BLE001
+    except OSError, FileNotFoundError:  # noqa: BLE001
         pass
 
 

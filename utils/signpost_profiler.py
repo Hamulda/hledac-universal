@@ -7,16 +7,14 @@ Provides:
 - Safe harness for macOS API with fallback for non-Darwin
 """
 
-
 import ctypes
 import sys
 from contextlib import contextmanager
-from _core import aclose
 
 # Try to load macOS System APIs
 if sys.platform == "darwin":
     try:
-        _libsys = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+        _libsys = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
         _sp_start = _libsys.kdebug_signpost_start
         _sp_end = _libsys.kdebug_signpost_end
         for fn in (_sp_start, _sp_end):
@@ -36,6 +34,7 @@ def _get_code(name: str) -> int:
     """Generate deterministic code for consistent signposts across runs."""
     if name not in _CODE_REGISTRY:
         import hashlib
+
         _CODE_REGISTRY[name] = int(hashlib.sha256(name.encode()).hexdigest()[:8], 16)
     return _CODE_REGISTRY[name]
 

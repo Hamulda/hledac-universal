@@ -13,6 +13,7 @@ Provides:
 
 Invariant: always-on, bounded, fail-safe.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,28 +21,24 @@ import logging
 import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential_jitter,
-    )
+)
+
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-
-# -----------------------------------------------------------------------
-# DiscoveryResult — canonical output type
-# -----------------------------------------------------------------------
 
 class DiscoveryResult(Struct, frozen=True):
     """
@@ -74,18 +71,13 @@ class DiscoveryResult(Struct, frozen=True):
     metadata: dict[str, str] = msgspec.field(default_factory=dict)
 
 
-# -----------------------------------------------------------------------
-# RateLimiter — token-bucket rate limiter (Rust-backed)
-# -----------------------------------------------------------------------
-
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
-from _core import aclose
 
 _RustGeneralRateLimiter: type | None = None
 _rate_limit = rust.rate_limit
 if _rate_limit is not None:
-    _RustGeneralRateLimiter = getattr(_rate_limit, 'RustGeneralRateLimiter', None)
+    _RustGeneralRateLimiter = getattr(_rate_limit, "RustGeneralRateLimiter", None)
 
 
 class RateLimiter:
@@ -103,7 +95,15 @@ class RateLimiter:
     - Fail-safe: returns immediately if Rust limiter fails.
     """
 
-    __slots__ = ("_rust_limiter", "_python_tokens", "_python_max_tokens", "_python_refill_rate", "_python_lock", "_python_sync_lock", "_python_last_refill")
+    __slots__ = (
+        "_rust_limiter",
+        "_python_tokens",
+        "_python_max_tokens",
+        "_python_refill_rate",
+        "_python_lock",
+        "_python_sync_lock",
+        "_python_last_refill",
+    )
 
     def __init__(self, rpm: int = 60, burst_size: int | None = None) -> None:
         """
@@ -207,10 +207,6 @@ class RateLimiter:
         }
 
 
-# -----------------------------------------------------------------------
-# DiscoveryHit — shared DTO for batch-oriented adapters (SSOT, F350M-R)
-# -----------------------------------------------------------------------
-
 class DiscoveryHit(Struct, frozen=True):
     """
     Single web discovery result for batch-oriented adapters.
@@ -274,21 +270,17 @@ class DiscoveryBatchResult(Struct, frozen=True):
     # F234-FIX / F253B: provider selection debug context
     provider_status_debug: list[dict] | None = None
 
-# DiscoveryAdapterProtocol — Protocol for type-checker compatibility
-# -----------------------------------------------------------------------
 
 class DiscoveryAdapterProtocol(ABC):
     """Protocol defining the discovery adapter interface."""
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def source_type(self) -> str:
-        ...
+    def source_type(self) -> str: ...
 
     @property
     def rate_limit_rpm(self) -> int:
@@ -307,19 +299,12 @@ class DiscoveryAdapterProtocol(ABC):
         return 8.0
 
     @abstractmethod
-    async def _do_discover(self, query: str, limit: int) -> AsyncIterator[DiscoveryResult]:
-        ...
+    async def _do_discover(self, query: str, limit: int) -> AsyncIterator[DiscoveryResult]: ...
 
-    async def discover(self, query: str, *, limit: int = 100) -> AsyncIterator[DiscoveryResult]:
-        ...
+    async def discover(self, query: str, *, limit: int = 100) -> AsyncIterator[DiscoveryResult]: ...
 
-    async def health_check(self) -> bool:
-        ...
+    async def health_check(self) -> bool: ...
 
-
-# -----------------------------------------------------------------------
-# BaseDiscoveryMixin — shared infrastructure
-# -----------------------------------------------------------------------
 
 class BaseDiscoveryMixin(ABC):
     """
@@ -382,13 +367,9 @@ class BaseDiscoveryMixin(ABC):
         return 8.0
 
     def __init__(self) -> None:
-        object.__setattr__(
-            self, "_rate_limiter", RateLimiter(self.rate_limit_rpm, self.burst_size)
-    )
+        object.__setattr__(self, "_rate_limiter", RateLimiter(self.rate_limit_rpm, self.burst_size))
 
-    async def _discover_single_attempt(
-        self, query: str, limit: int
-    ) -> list[DiscoveryResult]:
+    async def _discover_single_attempt(self, query: str, limit: int) -> list[DiscoveryResult]:
         """G6: Single discovery attempt (decorated with tenacity retry)."""
         await self._rate_limiter.acquire()
         results: list[DiscoveryResult] = []
@@ -406,11 +387,13 @@ class BaseDiscoveryMixin(ABC):
         G6: Uses tenacity @retry with exponential backoff + jitter.
         """
         _retry_decorator = retry(
-            wait=wait_exponential_jitter(base=self.retry_base_delay_s, max=self.retry_base_delay_s * (2 ** self.retry_attempts)),
+            wait=wait_exponential_jitter(
+                base=self.retry_base_delay_s, max=self.retry_base_delay_s * (2**self.retry_attempts)
+            ),
             stop=stop_after_attempt(self.retry_attempts),
             retry=retry_if_exception_type(Exception),
             reraise=True,
-    )
+        )
         _attempt_fn = _retry_decorator(self._discover_single_attempt)
 
         try:
@@ -423,7 +406,7 @@ class BaseDiscoveryMixin(ABC):
                 self.name,
                 self.retry_attempts,
                 exc,
-    )
+            )
         finally:
             # PEP 479: Cleanup when generator is abandoned mid-stream
             results = None
@@ -449,9 +432,7 @@ class BaseDiscoveryMixin(ABC):
             return False
 
     @abstractmethod
-    async def _do_discover(
-        self, query: str, limit: int
-    ) -> AsyncIterator[DiscoveryResult]:
+    async def _do_discover(self, query: str, limit: int) -> AsyncIterator[DiscoveryResult]:
         """
         Subclass implementation of discovery logic.
 

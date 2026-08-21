@@ -2,9 +2,6 @@
 CertstreamWebSocketClient — Real-time Certificate Transparency monitoring
 ==========================================================================
 
-
-
-
 SOVEREIGN-007: Real-time CT log WebSocket streaming for live certificate monitoring.
 
 Connects to Certstream WebSocket (wss://certstream.calidog.io/) for real-time
@@ -37,6 +34,7 @@ USAGE:
     # Stop when done:
     await client.stop()
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,26 +44,18 @@ from collections.abc import Callable
 from typing import Any
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Constants
-# ============================================================================
-
-CERTSTREAM_URL = 'wss://certstream.calidog.io/'
+CERTSTREAM_URL = "wss://certstream.calidog.io/"
 MAX_CERTS_PER_SECOND = 1000
 RECONNECT_BASE_DELAY = 1.0
 RECONNECT_MAX_DELAY = 60.0
 PING_INTERVAL = 20.0
 CLOSE_TIMEOUT = 5.0
 
-
-# ============================================================================
-# Data Structures
-# ============================================================================
 
 @Struct(frozen=True)
 class CertstreamCertificate:
@@ -81,6 +71,7 @@ class CertstreamCertificate:
         cert_index: Certificate Transparency log index
         seen: Timestamp when certificate was observed
     """
+
     subject_common_name: str
     issuer: str
     san_names: list[str]
@@ -102,16 +93,13 @@ class CertstreamStats:
         last_reconnect_time: Timestamp of last reconnection attempt
         certs_per_second: Current processing rate (rolling average)
     """
+
     total_certs_received: int = 0
     certs_matching_watchlist: int = 0
     connection_failures: int = 0
     last_reconnect_time: float = 0.0
     certs_per_second: float = 0.0
 
-
-# ============================================================================
-# CertstreamWebSocketClient
-# ============================================================================
 
 class CertstreamWebSocketClient:
     """Real-time Certificate Transparency monitoring via Certstream WebSocket.
@@ -136,21 +124,22 @@ class CertstreamWebSocketClient:
         # Monitor runs in background
         await client.stop()
     """
+
     __slots__ = (
-        '_watch_domains',
-        '_ioc_graph',
-        '_websocket',
-        '_websockets_module',
-        '_aho_matcher',
-        '_fallback_automaton',
-        '_stats',
-        '_running',
-        '_stop_event',
-        '_monitor_task',
-        '_last_cert_time',
-        '_certs_in_window',
-        '_reconnect_delay',
-        '_on_certificate_callback',
+        "_watch_domains",
+        "_ioc_graph",
+        "_websocket",
+        "_websockets_module",
+        "_aho_matcher",
+        "_fallback_automaton",
+        "_stats",
+        "_running",
+        "_stop_event",
+        "_monitor_task",
+        "_last_cert_time",
+        "_certs_in_window",
+        "_reconnect_delay",
+        "_on_certificate_callback",
     )
 
     def __init__(
@@ -188,24 +177,24 @@ class CertstreamWebSocketClient:
         Automatically reconnects on connection failures with exponential backoff.
         """
         if self._running:
-            logger.warning('[Certstream] Already running')
+            logger.warning("[Certstream] Already running")
             return
 
         # Lazy import websockets
         try:
             import websockets
+
             self._websockets_module = websockets
         except ImportError:
-            logger.error('[Certstream] websockets not installed. Run: pip install websockets')
+            logger.error("[Certstream] websockets not installed. Run: pip install websockets")
             return
 
-        # Initialize Aho-Corasick matcher
         self._init_aho_corasick()
 
         self._running = True
         self._stop_event.clear()
-        self._monitor_task = asyncio.create_task(self._monitor_loop(), name='certstream:monitor')
-        logger.info(f'[Certstream] Started monitoring {len(self._watch_domains)} domains')
+        self._monitor_task = asyncio.create_task(self._monitor_loop(), name="certstream:monitor")
+        logger.info(f"[Certstream] Started monitoring {len(self._watch_domains)} domains")
 
     async def stop(self) -> None:
         """Stop Certstream WebSocket monitoring.
@@ -230,10 +219,12 @@ class CertstreamWebSocketClient:
             try:
                 await self._websocket.close()
             except Exception as e:
-                logger.debug(f'[Certstream] WebSocket close error: {e}')
+                logger.debug(f"[Certstream] WebSocket close error: {e}")
             self._websocket = None
 
-        logger.info(f'[Certstream] Stopped. Stats: {self._stats.total_certs_received} certs received, {self._stats.certs_matching_watchlist} matched')
+        logger.info(
+            f"[Certstream] Stopped. Stats: {self._stats.total_certs_received} certs received, {self._stats.certs_matching_watchlist} matched"
+        )
 
     async def _monitor_loop(self) -> None:
         """Main monitoring loop with automatic reconnection.
@@ -247,7 +238,7 @@ class CertstreamWebSocketClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f'[Certstream] Monitor error: {e}')
+                logger.error(f"[Certstream] Monitor error: {e}")
                 self._stats.connection_failures += 1
                 self._stats.last_reconnect_time = time.time()
 
@@ -260,9 +251,9 @@ class CertstreamWebSocketClient:
 
         Establishes WebSocket connection and processes incoming certificate messages.
         """
-        assert self._websockets_module is not None, 'websockets not initialized'
+        assert self._websockets_module is not None, "websockets not initialized"
 
-        logger.info(f'[Certstream] Connecting to {CERTSTREAM_URL}')
+        logger.info(f"[Certstream] Connecting to {CERTSTREAM_URL}")
 
         async with self._websockets_module.connect(
             CERTSTREAM_URL,
@@ -271,7 +262,7 @@ class CertstreamWebSocketClient:
         ) as ws:
             self._websocket = ws
             self._reconnect_delay = RECONNECT_BASE_DELAY  # Reset backoff on success
-            logger.info('[Certstream] Connected successfully')
+            logger.info("[Certstream] Connected successfully")
 
             async for message in ws:
                 if not self._running or self._stop_event.is_set():
@@ -292,9 +283,8 @@ class CertstreamWebSocketClient:
             # Parse JSON via msgspec (zero-copy)
             data = msgspec.json.decode(message)
 
-            # Extract certificate data
-            cert_data = data.get('data', {})
-            leaf_cert = cert_data.get('leaf_cert', {})
+            cert_data = data.get("data", {})
+            leaf_cert = cert_data.get("leaf_cert", {})
 
             if not leaf_cert:
                 return
@@ -311,17 +301,15 @@ class CertstreamWebSocketClient:
             self._certs_in_window += 1
             self._stats.total_certs_received += 1
 
-            # Extract certificate fields
-            subject = leaf_cert.get('subject', {})
-            cn = subject.get('CN', '')
-            issuer = cert_data.get('issuer', {}).get('CN', '')
-            san_names = leaf_cert.get('san', [])
-            serial = leaf_cert.get('serial', '')
-            not_before = leaf_cert.get('not_before', '')
-            not_after = leaf_cert.get('not_after', '')
-            cert_index = cert_data.get('cert_index', 0)
+            subject = leaf_cert.get("subject", {})
+            cn = subject.get("CN", "")
+            issuer = cert_data.get("issuer", {}).get("CN", "")
+            san_names = leaf_cert.get("san", [])
+            serial = leaf_cert.get("serial", "")
+            not_before = leaf_cert.get("not_before", "")
+            not_after = leaf_cert.get("not_after", "")
+            cert_index = cert_data.get("cert_index", 0)
 
-            # Create certificate object
             cert = CertstreamCertificate(
                 subject_common_name=cn,
                 issuer=issuer,
@@ -331,12 +319,12 @@ class CertstreamWebSocketClient:
                 not_after=not_after,
                 cert_index=cert_index,
                 seen=current_time,
-    )
+            )
 
             # Filter using Aho-Corasick
             if self._certificate_matches_watchlist(cert):
                 self._stats.certs_matching_watchlist += 1
-                logger.info(f'[Certstream] Match: {cn} (SANs: {len(san_names)})')
+                logger.info(f"[Certstream] Match: {cn} (SANs: {len(san_names)})")
 
                 # Buffer to IOCGraph
                 if self._ioc_graph:
@@ -347,10 +335,10 @@ class CertstreamWebSocketClient:
                     try:
                         await self._on_certificate_callback(cert)
                     except Exception as e:
-                        logger.warning(f'[Certstream] Callback error: {e}')
+                        logger.warning(f"[Certstream] Callback error: {e}")
 
         except Exception as e:
-            logger.debug(f'[Certstream] Parse error: {e}')
+            logger.debug(f"[Certstream] Parse error: {e}")
 
     def _init_aho_corasick(self) -> None:
         """Initialize Aho-Corasick matcher for domain filtering.
@@ -359,27 +347,29 @@ class CertstreamWebSocketClient:
         """
         try:
             from hledac.universal._core.rust_backend import rust as _rust_backend
+
             if _rust_backend.is_available and _rust_backend.aho is not None:
                 self._aho_matcher = _rust_backend.aho.AhoCorasickMatcher(
                     self._watch_domains,
                     labels=self._watch_domains,
-    )
-                logger.info(f'[Certstream] Rust Aho-Corasick initialized with {len(self._watch_domains)} patterns')
+                )
+                logger.info(f"[Certstream] Rust Aho-Corasick initialized with {len(self._watch_domains)} patterns")
                 return
         except Exception as e:
-            logger.debug(f'[Certstream] Rust Aho-Corasick unavailable: {e}')
+            logger.debug(f"[Certstream] Rust Aho-Corasick unavailable: {e}")
 
         # Fallback to Python pyahocorasick
         try:
             import ahocorasick
+
             ac = ahocorasick.Automaton()
             for i, domain in enumerate(self._watch_domains):
                 ac.add_word(domain.lower(), (i, domain))
             ac.make_automaton()
             self._aho_matcher = ac
-            logger.info(f'[Certstream] Python Aho-Corasick initialized with {len(self._watch_domains)} patterns')
+            logger.info(f"[Certstream] Python Aho-Corasick initialized with {len(self._watch_domains)} patterns")
         except ImportError:
-            logger.warning('[Certstream] Aho-Corasick unavailable, using substring matching')
+            logger.warning("[Certstream] Aho-Corasick unavailable, using substring matching")
             self._aho_matcher = None
             self._fallback_automaton = None  # built lazily in fallback path
 
@@ -394,34 +384,32 @@ class CertstreamWebSocketClient:
         Returns:
             True if certificate matches watchlist
         """
-        # Check CN
         cn_lower = cert.subject_common_name.lower()
         if self._aho_matcher:
             try:
                 # Rust Aho-Corasick
-                if hasattr(self._aho_matcher, 'scan'):
+                if hasattr(self._aho_matcher, "scan"):
                     matches = self._aho_matcher.scan(cn_lower)
                     if matches:
                         return True
                 # Python pyahocorasick
-                elif hasattr(self._aho_matcher, 'iter'):
+                elif hasattr(self._aho_matcher, "iter"):
                     for _ in self._aho_matcher.iter(cn_lower):
                         return True
             except Exception:  # noqa: BLE001
                 pass
 
-        # Check SANs
         for san in cert.san_names:
             san_lower = san.lower()
             if self._aho_matcher:
                 try:
                     # Rust Aho-Corasick
-                    if hasattr(self._aho_matcher, 'scan'):
+                    if hasattr(self._aho_matcher, "scan"):
                         matches = self._aho_matcher.scan(san_lower)
                         if matches:
                             return True
                     # Python pyahocorasick
-                    elif hasattr(self._aho_matcher, 'iter'):
+                    elif hasattr(self._aho_matcher, "iter"):
                         for _ in self._aho_matcher.iter(san_lower):
                             return True
                 except Exception:  # noqa: BLE001
@@ -438,6 +426,7 @@ class CertstreamWebSocketClient:
             if self._fallback_automaton is None:
                 try:
                     import ahocorasick
+
                     ac = ahocorasick.Automaton()
                     for domain in self._watch_domains:
                         ac.add_word(domain.lower(), domain)
@@ -470,8 +459,9 @@ class CertstreamWebSocketClient:
         observed_at: float | None = None
         if cert.not_before:
             try:
-                from datetime import datetime, timezone
-                dt = datetime.fromisoformat(cert.not_before.replace('Z', '+00:00'))
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(cert.not_before.replace("Z", "+00:00"))
                 observed_at = dt.timestamp()
             except Exception:  # noqa: BLE001
                 pass
@@ -479,14 +469,16 @@ class CertstreamWebSocketClient:
         try:
             # Buffer CN
             if cert.subject_common_name:
-                await self._ioc_graph.buffer_ioc('domain', cert.subject_common_name, confidence=0.85, observed_at=observed_at)
+                await self._ioc_graph.buffer_ioc(
+                    "domain", cert.subject_common_name, confidence=0.85, observed_at=observed_at
+                )
 
             # Buffer SANs
             for san in cert.san_names:
-                await self._ioc_graph.buffer_ioc('domain', san, confidence=0.85, observed_at=observed_at)
+                await self._ioc_graph.buffer_ioc("domain", san, confidence=0.85, observed_at=observed_at)
 
         except Exception as e:
-            logger.warning(f'[Certstream] IOCGraph buffer error: {e}')
+            logger.warning(f"[Certstream] IOCGraph buffer error: {e}")
 
     def get_stats(self) -> CertstreamStats:
         """Get current monitoring statistics.
@@ -504,10 +496,6 @@ class CertstreamWebSocketClient:
         """
         return self._running
 
-
-# ============================================================================
-# Factory Function
-# ============================================================================
 
 def create_certstream_client(
     watch_domains: list[str],
@@ -532,8 +520,8 @@ def create_certstream_client(
 
 
 __all__ = [
-    'CertstreamWebSocketClient',
-    'CertstreamCertificate',
-    'CertstreamStats',
-    'create_certstream_client',
+    "CertstreamWebSocketClient",
+    "CertstreamCertificate",
+    "CertstreamStats",
+    "create_certstream_client",
 ]

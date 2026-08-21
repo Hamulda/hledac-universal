@@ -46,10 +46,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 from collections.abc import Callable
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
 
 __all__ = [
     "Severity",
@@ -63,7 +61,6 @@ __all__ = [
     "set_config",
     "configure_severity",
 ]
-
 
 # ── Severity Hierarchy ───────────────────────────────────────────────────────
 
@@ -130,7 +127,6 @@ class Severity(Enum):
             Severity.P4_DEBUG: "[DBG]",
         }[self]
 
-
 # ── Exception Event ────────────────────────────────────────────────────────
 
 @dataclass(slots=True, frozen=True)
@@ -171,7 +167,6 @@ class ExceptionEvent:
     file: str = field(default="")
     line: int = field(default=0)
 
-
 # ── Event Registry (singleton) ─────────────────────────────────────────────
 
 class _EventRegistry:
@@ -205,10 +200,8 @@ class _EventRegistry:
         key = event.exc_hash or f"{event.scope}:{event.exc_type}"
 
         with self._lock:
-            # Check for existing event for aggregation
             if key in self._aggregation:
                 existing = self._aggregation[key]
-                # Update counters
                 new_count = existing.count + 1
                 suppressed = 0
 
@@ -221,7 +214,6 @@ class _EventRegistry:
                         if random.random() > event.severity.sample_rate:
                             suppressed = 1
 
-                # Return aggregated event
                 aggregated = ExceptionEvent(
                     event_id=event.event_id,
                     cascade_id=event.cascade_id or existing.cascade_id,
@@ -290,12 +282,10 @@ class _EventRegistry:
             self._last_flush = time.time()
             return events
 
-
 # ── Context Manager: exc_event ─────────────────────────────────────────────
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
-
 
 class _ExcEventContext:
     """Context manager for exception event tracking."""
@@ -329,11 +319,9 @@ class _ExcEventContext:
         if exc_val is None:
             return True  # No exception
 
-        # Build event
         import uuid as _uuid
         exc_hash = f"{exc_type.__name__}:{str(exc_val)[:100]}"
 
-        # Extract location from traceback
         file = ""
         line = 0
         if exc_tb:
@@ -365,7 +353,6 @@ class _ExcEventContext:
         # Register and potentially suppress
         registered = _EventRegistry().register(event)
 
-        # Log based on severity and rate-limiting
         self._log_event(registered)
 
         # P0 always re-raised - fail-closed for critical errors
@@ -402,7 +389,6 @@ class _ExcEventContext:
                 exc_info=(event.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR)),
                 extra=extra,
     )
-
 
 def exc_event(
     severity: Severity,
@@ -442,7 +428,6 @@ def exc_event(
         cascade_id=cascade_id,
         logger=logger,
     )
-
 
 # ── Decorator: severity_decorator ─────────────────────────────────────────
 
@@ -488,7 +473,6 @@ def severity_decorator(
         return sync_wrapper  # type: ignore[return-value]
 
     return decorator
-
 
 # ── Runtime Configuration ────────────────────────────────────────────────────
 
@@ -538,21 +522,17 @@ class SeverityConfig:
             p4_sample_rate=float(os.environ.get("HLEDAC_SEVERITY_P4_SAMPLE", 0.01)),
     )
 
-
 # Global configuration (can be replaced at runtime)
 _config: SeverityConfig = SeverityConfig.from_env()
-
 
 def get_config() -> SeverityConfig:
     """Get the current severity configuration."""
     return _config
 
-
 def set_config(config: SeverityConfig) -> None:
     """Set the severity configuration at runtime."""
     global _config
     _config = config
-
 
 def configure_severity(
     *,
@@ -595,7 +575,6 @@ def configure_severity(
         p4_refill_rate=_config.p4_refill_rate,
     )
 
-
 # ── Helper: rate_limited_log ──────────────────────────────────────────────
 
 class _RateLimitBucket:
@@ -622,11 +601,9 @@ class _RateLimitBucket:
             return True
         return False
 
-
 # Module-level rate limiters per scope
 _LOG_BUCKETS: dict[str, _RateLimitBucket] = {}
 _LOG_BUCKETS_LOCK = __import__('threading').Lock()
-
 
 def rate_limited_log(
     logger: logging.Logger,

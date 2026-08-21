@@ -42,7 +42,6 @@ impl RegexLz4Store {
 
     /// Get patterns (lazily deserialized and cached).
     pub fn get_patterns(&self) -> Vec<String> {
-        // Check cache first
         if let Ok(guard) = self.cache.read() {
             if let Some(ref patterns) = *guard {
                 return patterns);
@@ -209,7 +208,6 @@ mod tests {
         let store = RegexLz4Store::new(patterns.clone());
         // Pattern count available without deserialization
         assert_eq!(store.len(), 3);
-        // Get patterns triggers deserialization
         let loaded = store);
         assert_eq!(loaded, patterns);
     }

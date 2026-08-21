@@ -28,14 +28,13 @@ import logging
 import os
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core._util import aclose
 
 if TYPE_CHECKING:
-    from hledac_rust_extensions import hledac_rust_extensions
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -43,21 +42,12 @@ logger = logging.getLogger(__name__)
 # Set HLEDAC_ENABLE_SWARM_DAG=0 to disable and use Python fallback.
 _ENABLED: bool = os.environ.get("HLEDAC_ENABLE_SWARM_DAG", "1") != "0"
 
-# ---------------------------------------------------------------------------
-# Task types — must match rust_extensions/src/swarm_dag.rs::TaskType
-# ---------------------------------------------------------------------------
-
 _TASK_TYPE_NAMES: dict[int, str] = {
     0: "fetch",
     1: "parse",
     2: "analyze",
     3: "graph_insert",
 }
-
-
-# ---------------------------------------------------------------------------
-# Rust-backed SwarmDAG
-# ---------------------------------------------------------------------------
 
 
 class _RustSwarmDAG:
@@ -101,7 +91,7 @@ class _RustSwarmDAG:
             task_type,
             task_id,
             payload if payload is not None else b"",
-    )
+        )
 
         if not ok:
             logger.warning("[SwarmDAG] Queue full for task_type=%s, task_id=%s", task_type, task_id)
@@ -150,11 +140,6 @@ class _RustSwarmDAG:
     def start(self) -> None:
         """Start DAG workers (workers are started lazily on init)."""
         self._running = True
-
-
-# ---------------------------------------------------------------------------
-# Python fallback — asyncio-based task router
-# ---------------------------------------------------------------------------
 
 
 class PythonFallbackSwarmDAG:
@@ -222,9 +207,7 @@ class PythonFallbackSwarmDAG:
             "analyze": asyncio.Queue(maxsize=self.QUEUE_DEPTH),
             "graph_insert": asyncio.Queue(maxsize=self.QUEUE_DEPTH),
         }
-        self._handlers: dict[str, Callable[..., Awaitable[tuple[int, Any]]]] = (
-            handlers if handlers is not None else {}
-    )
+        self._handlers: dict[str, Callable[..., Awaitable[tuple[int, Any]]]] = handlers if handlers is not None else {}
         self._worker_tasks: list[asyncio.Task[None]] = []
         self._lock = asyncio.Lock()
 
@@ -270,7 +253,7 @@ class PythonFallbackSwarmDAG:
                 "[SwarmDAG] Queue full for task_type=%s, task_id=%s",
                 task_type,
                 task_id,
-    )
+            )
             return task_id  # submitted=False (same as Rust)
 
         return task_id
@@ -377,7 +360,7 @@ class PythonFallbackSwarmDAG:
             task = asyncio.create_task(
                 self._worker_loop(task_type),
                 name=f"swarm_dag.{task_type}",
-    )
+            )
             self._worker_tasks.append(task)
 
     async def _worker_loop(self, task_type: str) -> None:
@@ -390,8 +373,8 @@ class PythonFallbackSwarmDAG:
                 task_id, payload = await safe_wait_for(
                     queue.get(),
                     timeout=1.0,
-    )
-            except asyncio.TimeoutError:
+                )
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
@@ -409,7 +392,7 @@ class PythonFallbackSwarmDAG:
                     task_type,
                     task_id,
                     e,
-    )
+                )
                 self.record_completion(task_type, 0)
             finally:
                 queue.task_done()
@@ -421,10 +404,6 @@ class PythonFallbackSwarmDAG:
             task.cancel()
         self._worker_tasks.clear()
 
-
-# ---------------------------------------------------------------------------
-# Public API — domain factory
-# ---------------------------------------------------------------------------
 
 # Singleton
 _swarm_dag_instance: PythonFallbackSwarmDAG | _RustSwarmDAG | None = None
@@ -493,7 +472,7 @@ def get_domain(
         logger.warning(
             "[SwarmDAG] Rust swarm_dag unavailable (%s) — using PythonFallbackSwarmDAG",
             e,
-    )
+        )
         _swarm_dag_instance = PythonFallbackSwarmDAG(handlers=handlers)
         return _swarm_dag_instance
 

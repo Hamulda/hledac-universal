@@ -19,21 +19,14 @@ Invarianty:
   • M1 8GB safe: žádná alokace mimo NumPy pole, žádné blocking I/O
 """
 
-
-
 import logging
 from collections.abc import Callable
+from operator import attrgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
 import numpy as np
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Rust SIMD detection
-# ---------------------------------------------------------------------------
 
 _RUST_SIMD_AVAILABLE = False
 _RUST_NPY_AVAILABLE = False
@@ -48,6 +41,7 @@ _rust_topk_fn: Callable[..., Any] | None = None
 try:
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     _rust_mod = rust.raw.module
 
     # Prefer zero-copy npy path (ISSUE-001 fix).
@@ -79,18 +73,10 @@ except Exception as _exc:
     logger.warning(f"[reranker] Rust extensions load failed: {_exc}")
 
 
-# ---------------------------------------------------------------------------
-# Constants (mirror Rust constants for validation)
-# ---------------------------------------------------------------------------
-
 _MAX_DIM: int = 2048
 _MAX_CANDIDATES: int = 10_000
 _MAX_QUERIES: int = 100
 
-
-# ---------------------------------------------------------------------------
-# NumPy fallback — pure Python batch cosine
-# ---------------------------------------------------------------------------
 
 def _numpy_batch_cosine_scores(
     query_emb: np.ndarray,
@@ -110,10 +96,6 @@ def _numpy_batch_cosine_scores(
     c_norm = candidates / (np.linalg.norm(candidates, axis=1, keepdims=True) + 1e-8)
     return q_norm @ c_norm.T
 
-
-# ---------------------------------------------------------------------------
-# Rust SIMD wrapper — validates → flatten → call → reshape
-# ---------------------------------------------------------------------------
 
 def _rust_batch_cosine_scores(
     query_emb: np.ndarray,
@@ -161,10 +143,6 @@ def _rust_batch_cosine_scores(
     return np.array(result, dtype=np.float32)
 
 
-# ---------------------------------------------------------------------------
-# Zero-copy Rust SIMD wrapper — ISSUE-001 fix
-# ---------------------------------------------------------------------------
-
 def _rust_batch_cosine_scores_npy(
     query_emb: np.ndarray,
     candidates: np.ndarray,
@@ -201,8 +179,8 @@ def _rust_batch_cosine_scores_npy(
     # Pass flattened arrays directly — Rust sees NumPy memory via PyReadonlyArray1.
     # np.asarray(arr) below gives a zero-copy view into Rust-allocated PyArray2.
     arr = _rust_fn_npy(
-        q.reshape(-1),   # PyReadonlyArray1<f32>, shape (Q*D,)
-        c.reshape(-1),   # PyReadonlyArray1<f32>, shape (N*D,)
+        q.reshape(-1),  # PyReadonlyArray1<f32>, shape (Q*D,)
+        c.reshape(-1),  # PyReadonlyArray1<f32>, shape (N*D,)
         num_queries,
         num_candidates,
         dim,
@@ -211,10 +189,6 @@ def _rust_batch_cosine_scores_npy(
     # No data copy — Python shares the memory.
     return np.asarray(arr)
 
-
-# ---------------------------------------------------------------------------
-# NumPy vectorized batch_topk — fallback when Rust unavailable
-# ---------------------------------------------------------------------------
 
 def _numpy_batch_topk(
     scores: np.ndarray,
@@ -260,10 +234,6 @@ def _numpy_batch_topk(
     return top_scores.astype(np.float32), top_indices.astype(np.int64)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def batch_rerank(
     query_emb: np.ndarray,
     candidates: np.ndarray,
@@ -292,9 +262,7 @@ def batch_rerank(
     if candidates.ndim != 2:
         raise ValueError(f"candidates must be 2D, got {candidates.ndim}D")
     if query_emb.shape[1] != candidates.shape[1]:
-        raise ValueError(
-            f"Embedding dimension mismatch: query={query_emb.shape[1]}, candidates={candidates.shape[1]}"
-    )
+        raise ValueError(f"Embedding dimension mismatch: query={query_emb.shape[1]}, candidates={candidates.shape[1]}")
     if query_emb.size == 0 or candidates.size == 0:
         raise ValueError("query_emb and candidates must be non-empty")
 
@@ -302,7 +270,9 @@ def batch_rerank(
         try:
             return _rust_batch_cosine_scores_npy(query_emb, candidates)
         except Exception as exc:
-            logger.warning(f"[reranker] Rust batch_cosine_scores_npy failed ({exc}), falling back to list-marshaling path")
+            logger.warning(
+                f"[reranker] Rust batch_cosine_scores_npy failed ({exc}), falling back to list-marshaling path"
+            )
 
     if _RUST_SIMD_AVAILABLE:
         try:
@@ -390,11 +360,9 @@ def rerank_findings(
     # Build candidate embeddings via ModernBERTEmbedder (canonical embedder)
     try:
         from embeddings.modernbert_embedder import ModernBERTEmbedder
+
         embedder = ModernBERTEmbedder()
-        texts = [
-            (f.get(text_key) or f"{f.get('title', '')} {f.get('snippet', '')}".strip())[:512]
-            for f in findings
-        ]
+        texts = [(f.get(text_key) or f"{f.get('title', '')} {f.get('snippet', '')}".strip())[:512] for f in findings]
         corp_emb = embedder.encode(texts)  # (N, D)
     except Exception as exc:
         logger.warning(f"[reranker] ModernBERTEmbedder failed ({exc}), using confidence fallback")

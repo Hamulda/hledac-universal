@@ -42,10 +42,6 @@ use rayon::prelude::*;
 use crate::gil::release_gil;
 use crate::pools::cpu_pool;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 const PACKFILE_HEADER: &[u8] = b"PACK";
 const ZLIB_WINDOW_SIZE: usize = 64 * 1024;
 const MAX_DELTA_CHAIN_DEPTH: usize = 100;
@@ -143,10 +139,6 @@ pub struct GitForensicStats {
     #[pyo3(get)]
     pub extraction_time_ms: u64,
 }
-
-// ============================================================================
-// Mmap Packfile Reader
-// ============================================================================
 
 /// Memory-mapped packfile reader for zero-copy access
 struct MmapPackfileReader {
@@ -414,10 +406,6 @@ impl MmapPackfileReader {
     }
 }
 
-// ============================================================================
-// Delta Chain Resolution
-// ============================================================================
-
 /// Cache for resolved objects (to handle delta references)
 struct DeltaResolver {
     /// Base objects cache: offset -> resolved content
@@ -508,7 +496,6 @@ impl DeltaResolver {
                         if base_offset + copy_size <= base.len() {
                             result.extend_from_slice(&base[base_offset..base_offset + copy_size]);
                         } else {
-                            // Handle overflow
                             let available = base.len().saturating_sub(base_offset);
                             result.extend_from_slice(&base[base_offset..base_offset + available]);
                             // Copy rest as zeros
@@ -564,10 +551,6 @@ fn decode_varint(data: &[u8]) -> (usize, usize) {
     (value, pos)
 }
 
-// ============================================================================
-// Forensic Extraction
-// ============================================================================
-
 /// Email regex patterns for extraction
 const EMAIL_PATTERNS: &[&str] = &[
     r"<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>",
@@ -601,7 +584,6 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
         Err(_) => return GitForensicRecord::new_placeholder(sha1),
     };
 
-    // Parse commit format
     let mut record = GitForensicRecord::new_placeholder(sha1);
     record.object_type = "commit".to_string();
 
@@ -653,7 +635,6 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
         }
     }
 
-    // Extract PGP keys
     for pattern in PGP_PATTERNS {
         if content.contains(&pattern.replace("\\", "").replace("-----BEGIN PGP", "-----BEGIN PGP")) {
             // Look for key IDs in the content
@@ -664,7 +645,6 @@ fn extract_forensics(commit_data: &[u8], sha1: &str) -> GitForensicRecord {
         }
     }
 
-    // Extract SSH fingerprints
     if content.contains("ssh-") || content.contains("-----BEGIN") {
         if let Some(ssh_match) = extract_ssh_fingerprint(content) {
             record.ssh_fingerprint = Some(ssh_match);
@@ -761,7 +741,6 @@ fn extract_ssh_fingerprint(content: &str) -> Option<String> {
         regex::Regex::new(r"ssh-ed25519\s+([A-Za-z0-9+/=]{20,})").unwrap()
     });
 
-    // Check standard SSH keys first
     if let Some(caps) = SSH_KEY_RE.captures(content) {
         let key_type = caps.get(1).map(|m| m.as_str()).unwrap_or("ssh");
         let key_part = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -772,7 +751,6 @@ fn extract_ssh_fingerprint(content: &str) -> Option<String> {
         }
     }
 
-    // Check Ed25519 format
     if let Some(caps) = ED25519_RE.captures(content) {
         let key_part = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         if key_part.len() >= 20 {
@@ -803,10 +781,6 @@ impl GitForensicRecord {
         }
     }
 }
-
-// ============================================================================
-// Main Extraction Function
-// ============================================================================
 
 /// Git forensics extractor for packfiles
 #[pyclass]
@@ -853,7 +827,6 @@ impl GitForensicsExtractor {
             extraction_time_ms: 0,
         };
 
-        // Process objects
         let offsets: Vec<usize> = packfile.object_index.keys().copied().take(max_objs).collect();
 
         for offset in offsets {
@@ -879,7 +852,6 @@ impl GitForensicsExtractor {
                         let sha1 = format!("{:040x}", fnv1a_hash(&data));
                         let record = extract_forensics(&data, &sha1);
 
-                        // Update stats
                         if record.author_email.is_some() || record.committer_email.is_some() {
                             stats.emails_extracted += 1;
                         }
@@ -991,10 +963,6 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
     }
     hash
 }
-
-// ============================================================================
-// Kuzu Graph Integration
-// ============================================================================
 
 /// Export forensic records to Kuzu format for graph DB insertion
 #[pyfunction]

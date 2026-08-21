@@ -40,7 +40,6 @@ AST scan on ~200 production files = <2s. Hermetic. No network. No I/O.
 
 import ast
 from pathlib import Path
-from _core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -261,9 +260,7 @@ def _has_running_loop_guard(tree: ast.Module, run_node: ast.Call) -> bool:
     return False
 
 
-def _try_block_has_get_running_loop(
-    parent_of: dict[int, ast.AST], handler: ast.ExceptHandler
-) -> bool:
+def _try_block_has_get_running_loop(parent_of: dict[int, ast.AST], handler: ast.ExceptHandler) -> bool:
     """Return True if the corresponding ``try`` block contains a call to
     ``asyncio.get_running_loop()``."""
     try_node = parent_of.get(id(handler))
@@ -300,7 +297,7 @@ def _is_allowed(path: Path, qualname: str | None) -> bool:
 
 
 class TestAsyncioRunAudit:
-    def test_no_asyncio_run_in_async_def(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_no_asyncio_run_in_async_def(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """No ``session_event_loop.run_until_complete(...)`` call may appear inside an ``async def``."""
         violations: list[tuple[Path, int, str]] = []
         for py in _all_python_files():
@@ -335,16 +332,14 @@ class TestAsyncioRunAudit:
                                 line_no,
                                 f"session_event_loop.run_until_complete() inside async def "
                                 f"({qualname or '?'}) — nested event loop, M1 Metal crash",
-    )
+                            )
                         )
         assert not violations, (
             "CLAUDE.md invariant violated: session_event_loop.run_until_complete() inside async def.\n"
-            + "\n".join(
-                f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-    )
+            + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations)
         )
 
-    def test_no_asyncio_run_in_threadpoolexecutor(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_no_asyncio_run_in_threadpoolexecutor(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """No ``session_event_loop.run_until_complete(...)`` may be the entry of a callable that
         the module submits to a ThreadPoolExecutor.
 
@@ -387,17 +382,14 @@ class TestAsyncioRunAudit:
                                 f"a function in a module that imports "
                                 f"ThreadPoolExecutor ({qualname or '?'}) — "
                                 f"M1 Metal crash if submitted to executor",
-    )
+                            )
                         )
         assert not violations, (
             "CLAUDE.md invariant #4 violated: session_event_loop.run_until_complete() in ThreadPoolExecutor-submitted "
-            "callable.\n"
-            + "\n".join(
-                f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-    )
+            "callable.\n" + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations)
         )
 
-    def test_no_new_event_loop_in_async_context(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_no_new_event_loop_in_async_context(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """No ``asyncio.new_event_loop()`` call may appear inside an ``async def``
         or be used unsafely in a running loop context without M1-SAFE guard.
 
@@ -420,13 +412,13 @@ class TestAsyncioRunAudit:
                     and isinstance(func.value, ast.Name)
                     and func.value.id == "asyncio"
                     and func.attr == "new_event_loop"
-    )
+                )
                 is_run_until_complete = (
                     isinstance(func, ast.Attribute)
                     and isinstance(func.value, ast.Name)
                     and func.value.id in ("loop", "_loop")
                     and func.attr == "run_until_complete"
-    )
+                )
                 if not (is_new_event_loop or is_run_until_complete):
                     continue
 
@@ -435,14 +427,14 @@ class TestAsyncioRunAudit:
                     continue
 
                 # Check for M1-SAFE guard comment nearby
-                lines = py.read_text(encoding="utf-8", errors="replace").split('\n')
+                lines = py.read_text(encoding="utf-8", errors="replace").split("\n")
                 start = max(0, node.lineno - 20)
                 end = min(len(lines), node.lineno + 5)
-                context = '\n'.join(lines[start:end])
+                context = "\n".join(lines[start:end])
                 has_m1_safe = any(
                     marker in context
                     for marker in ["M1-SAFE", "C7-FIX", "get_running_loop", "RuntimeError", "asyncio.Runner"]
-    )
+                )
                 if has_m1_safe:
                     continue
 
@@ -454,17 +446,15 @@ class TestAsyncioRunAudit:
                             node.lineno,
                             f"asyncio.new_event_loop() or loop.run_until_complete() inside async def "
                             f"({qualname or '?'}) — nested event loop risk",
-    )
+                        )
                     )
 
         assert not violations, (
             "C7 invariant violated: asyncio.new_event_loop()/run_until_complete() in async context.\n"
-            + "\n".join(
-                f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations
-    )
+            + "\n".join(f"  {p.relative_to(REPO_ROOT)}:{ln}  {msg}" for p, ln, msg in violations)
         )
 
-    def test_known_safe_sites_remain_safe(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_known_safe_sites_remain_safe(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """Sanity: the explicit comment markers in known-safe sites are still
         in place. If any of these disappear, the audit allow-list above
         needs updating.
@@ -474,6 +464,4 @@ class TestAsyncioRunAudit:
         # catches it.
         opt_path = REPO_ROOT / "utils" / "execution_optimizer.py"
         text = opt_path.read_text()
-        assert "F206L" in text or "M1-SAFE" in text, (
-            "execution_optimizer M1-SAFE marker missing — verify F196C fix"
-    )
+        assert "F206L" in text or "M1-SAFE" in text, "execution_optimizer M1-SAFE marker missing — verify F196C fix"

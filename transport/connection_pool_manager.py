@@ -28,7 +28,7 @@ Usage:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+
 import warnings
 
 # ISSUE-010: DeprecationWarning on every import of this deprecated module
@@ -42,13 +42,13 @@ warnings.warn(
 
 # Re-export from session_pool for backward compatibility
 from .session_pool import (
-    httpx_socks_client,
-    close_httpx_socks,
-    session_pool,
-    SessionPool,
     PoolKind,
-    get_tor_pool,
+    SessionPool,
+    close_httpx_socks,
     get_i2p_pool,
+    get_tor_pool,
+    httpx_socks_client,
+    session_pool,
 )
 
 # Backward-compat class aliases (delegate to session_pool internals)

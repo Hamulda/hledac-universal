@@ -8,11 +8,10 @@ import os
 import sys
 import types
 import unittest
-from _core import aclose
 
 
 # Cleanup helper for sys.modules pollution
-def _install_hledac_skeleton():
+def _install_hledac_skeleton() -> None:
     """Install fake hledac modules. Call _remove_hledac_skeleton() in teardown."""
     _brain_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "brain"))
     _hledac = types.ModuleType("hledac")
@@ -24,7 +23,7 @@ def _install_hledac_skeleton():
     sys.modules["hledac.universal.brain"] = _brain_pkg
 
 
-def _remove_hledac_skeleton():
+def _remove_hledac_skeleton() -> None:
     """Remove fake hledac modules from sys.modules."""
     for k in list(sys.modules.keys()):
         if k.startswith("hledac"):
@@ -34,7 +33,7 @@ def _remove_hledac_skeleton():
 class TestPipelinerConstants(unittest.TestCase):
     """Test pipeliner constants and structure."""
 
-    def test_pipeliner_constants(self):
+    def test_pipeliner_constants(self) -> None:
         """Test pipeliner constants and structure."""
         import importlib.util
 
@@ -57,7 +56,7 @@ class TestPipelinerConstants(unittest.TestCase):
 class TestPendingRequest(unittest.TestCase):
     """Test PendingRequest dataclass."""
 
-    def test_pending_request_fields(self):
+    def test_pending_request_fields(self) -> None:
         """Test PendingRequest has all required fields."""
         import asyncio
         import importlib.util
@@ -80,7 +79,7 @@ class TestPendingRequest(unittest.TestCase):
                     system_msg="test system",
                     thinking=True,
                     submitted_at=123456.0,
-    )
+                )
                 self.assertEqual(req.prompt, "test prompt")
                 self.assertEqual(req.temperature, 0.1)
                 self.assertEqual(req.max_tokens, 50)
@@ -96,7 +95,7 @@ class TestPendingRequest(unittest.TestCase):
 class TestSynthesisRunnerWire(unittest.TestCase):
     """Test SynthesisRunner has pipeliner wiring."""
 
-    def test_synthesis_runner_has_pipeliner_field(self):
+    def test_synthesis_runner_has_pipeliner_field(self) -> None:
         """Test SynthesisRunner has _inference_pipeliner field."""
         import importlib.util
 

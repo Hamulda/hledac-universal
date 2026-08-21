@@ -10,13 +10,11 @@ These tests are hermetic: they import pure helper functions and do not touch
 the network, the filesystem, or the M1 MLX stack.
 """
 
-
 import statistics
 
 import pytest
 
 from fetching.public_fetcher import _compute_backoff_seconds
-from _core import aclose
 
 
 class TestComputeBackoffJitter:
@@ -24,13 +22,10 @@ class TestComputeBackoffJitter:
 
     def test_backoff_never_exceeds_cap(self) -> None:
         """100 jittered calls must stay within the 8 s hard cap."""
-        samples = [
-            _compute_backoff_seconds(None, attempt, jitter=True)
-            for attempt in range(100)
-        ]
+        samples = [_compute_backoff_seconds(None, attempt, jitter=True) for attempt in range(100)]
         assert all(0.0 <= s <= 8.0 for s in samples), (
             f"out-of-range samples: {[s for s in samples if not (0.0 <= s <= 8.0)]}"
-    )
+        )
 
     def test_backoff_has_variance(self) -> None:
         """Decorrelated jitter must produce non-trivial spread (stddev > 0.5).
@@ -38,10 +33,7 @@ class TestComputeBackoffJitter:
         Deterministic exponential backoff (``base * 2**attempt``) would yield
         stddev = 0.0. We require enough variance to de-correlate retry storms.
         """
-        samples = [
-            _compute_backoff_seconds(None, attempt, jitter=True)
-            for attempt in range(50)
-        ]
+        samples = [_compute_backoff_seconds(None, attempt, jitter=True) for attempt in range(50)]
         stddev = statistics.pstdev(samples)
         assert stddev > 0.5, f"stddev={stddev:.3f} too low — jitter not active"
 

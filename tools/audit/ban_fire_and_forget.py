@@ -16,21 +16,29 @@ Fix: Use safe_create_task() from utils.asyncx
 
 Run: python tools/audit/ban_fire_and_forget.py [--fix]
 """
+
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]]:
     """Find raw asyncio.create_task() calls without safe wrapper or done-callback."""
     violations = []
     skip_dirs = {
-        "__pycache__", ".venv", ".venv-test", "archive", "probe_", "tests/archive",
-        ".git", ".claude", "tools/migrate", "tests",  # tests use raw create_task legitimately
+        "__pycache__",
+        ".venv",
+        ".venv-test",
+        "archive",
+        "probe_",
+        "tests/archive",
+        ".git",
+        ".claude",
+        "tools/migrate",
+        "tests",  # tests use raw create_task legitimately
     }
     skip_files = {
         "tools/migrate/migrate_create_task_to_safe.py",
@@ -46,7 +54,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             continue
         try:
             content = py_file.read_text()
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             continue
 
         try:
@@ -57,12 +65,12 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            
+
             # Check if it's asyncio.create_task(...) or asyncio.create_task(..., ...)
             is_create_task = False
             is_safe_wrapper = False
             is_internal = False
-            
+
             if isinstance(node.func, ast.Attribute):
                 if node.func.attr == "create_task":
                     if isinstance(node.func.value, ast.Name):
@@ -81,7 +89,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 
             # Check if it's wrapped in safe_create_task call
             # e.g., safe_create_task(asyncio.create_task(...)) - this is a violation
-            parent = getattr(node, '_parent', None)
+            parent = getattr(node, "_parent", None)
             if parent and isinstance(parent, ast.Call):
                 if isinstance(parent.func, ast.Name) and parent.func.id == "safe_create_task":
                     is_safe_wrapper = True
@@ -92,7 +100,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             has_callback = False
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 # Check if parent of this node has add_done_callback
-                if hasattr(node, '_parent') and node._parent:
+                if hasattr(node, "_parent") and node._parent:
                     parent = node._parent
                     if isinstance(parent, ast.Attribute) and parent.attr == "add_done_callback":
                         has_callback = True
@@ -100,7 +108,9 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             # Violation: raw asyncio.create_task without safe wrapper or callback
             if is_create_task and not is_safe_wrapper and not has_callback:
                 lineno = node.lineno
-                violations.append((py_file, lineno, f"asyncio.create_task(...) without safe_create_task or done-callback"))
+                violations.append(
+                    (py_file, lineno, "asyncio.create_task(...) without safe_create_task or done-callback")
+                )
 
     return violations
 
@@ -108,7 +118,9 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ban raw asyncio.create_task() without safe_create_task")
     parser.add_argument("--fix", action="store_true", help="Auto-fix violations (not yet implemented)")
-    parser.add_argument("--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+    )
     args = parser.parse_args()
 
     violations = find_violations(args.root)

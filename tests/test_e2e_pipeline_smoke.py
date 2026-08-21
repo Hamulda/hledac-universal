@@ -10,7 +10,6 @@ Invariant tested:
 - Network errors → SKIP (not FAIL)
 """
 
-
 import logging
 
 import pytest
@@ -22,7 +21,7 @@ from hledac.universal.pipeline.live_feed_pipeline import (
 
 @pytest.mark.live
 @pytest.mark.asyncio
-async def test_pipeline_produces_findings_for_known_feed():
+async def test_pipeline_produces_findings_for_known_feed() -> None:
     """
     Smoke test: alespoň 1 feed z default seeds musí vrátit
     accepted_findings > 0 NEBO signal_stage != 'empty_registry'.
@@ -89,8 +88,9 @@ async def test_pipeline_produces_findings_for_known_feed():
             )
 
     log.info("=" * 60)
-    log.info("SUMMARY: non_empty=%d empty=%d errors=%d",
-             len(non_empty_registry), len(empty_registry), len(network_errors))
+    log.info(
+        "SUMMARY: non_empty=%d empty=%d errors=%d", len(non_empty_registry), len(empty_registry), len(network_errors)
+    )
     log.info("=" * 60)
 
     # Assert: at least 1 feed returned non-empty_registry

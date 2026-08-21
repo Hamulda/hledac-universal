@@ -8,71 +8,71 @@ Covers: truthy/falsy, timeout, require_truthy modes, curl_cffi session tuple pat
 from __future__ import annotations
 
 import asyncio
+from typing import Never
 
 import pytest
 
 from hledac.universal.utils.asyncx import race_first_success
-from _core import aclose
 
 
 class TestRaceFirstSuccessTruthy:
     """Truthy result wins — others are cancelled."""
 
     @pytest.mark.asyncio
-    async def test_truthy_int_wins(self):
+    async def test_truthy_int_wins(self) -> None:
         """First truthy integer result wins — falsy values don't qualify."""
 
-        async def slow_true():
+        async def slow_true() -> int:
             await asyncio.sleep(0.05)
             return 42
 
-        async def fast_false():
+        async def fast_false() -> int:
             await asyncio.sleep(0.01)
             return 0  # falsy — does NOT qualify as winner
 
         result = await race_first_success(
             (slow_true(), "slow"),
             (fast_false(), "fast"),
-    )
+        )
         # slow (truthy) wins — falsy 0 doesn't qualify as winner
         assert result.result == 42
         assert result.winner_label == "slow"
 
     @pytest.mark.asyncio
-    async def test_first_to_complete_wins_not_first_in_list(self):
+    async def test_first_to_complete_wins_not_first_in_list(self) -> None:
         """Winner is first to COMPLETE, not first in argument order."""
 
-        async def first_slow():
+        async def first_slow() -> bool:
             await asyncio.sleep(0.05)
             return True
 
-        async def second_fast():
+        async def second_fast() -> bool:
             await asyncio.sleep(0.01)
             return True
 
         result = await race_first_success(
             (first_slow(), "slow"),
             (second_fast(), "fast"),
-    )
+        )
         assert result.result is True
         assert result.winner_label == "fast"
 
     @pytest.mark.asyncio
-    async def test_non_bool_truthy_wins(self):
+    async def test_non_bool_truthy_wins(self) -> None:
         """Non-boolean truthy values (non-empty string, non-zero int) win."""
 
-        async def winner():
+        async def winner() -> str:
             await asyncio.sleep(0.01)
             return "hello"
 
-        async def loser():
+        async def loser() -> str:
             await asyncio.sleep(0.05)
             return ""
 
         result = await race_first_success(
             (winner(), "winner"),
             (loser(), "loser"),
-    )
+        )
         assert result.result == "hello"
         assert result.winner_label == "winner"
 
@@ -81,7 +81,7 @@ class TestRaceFirstSuccessFalsy:
     """When require_truthy=True (default), falsy results don't qualify as wins."""
 
     @pytest.mark.asyncio
-    async def test_falsy_tuple_timeout(self):
+    async def test_falsy_tuple_timeout(self) -> None:
         """(False, None) session tuple is falsy → doesn't win → all timeout."""
 
         async def create_session_fail():
@@ -92,13 +92,13 @@ class TestRaceFirstSuccessFalsy:
             (create_session_fail(), "fail1"),
             (create_session_fail(), "fail2"),
             timeout=0.1,
-    )
+        )
         # All falsy → no winner → timeout returns None
         assert result.result is None
         assert result.winner_index == -1
 
     @pytest.mark.asyncio
-    async def test_truthy_tuple_wins_over_falsy(self):
+    async def test_truthy_tuple_wins_over_falsy(self) -> None:
         """(True, session) wins over (False, None) regardless of order."""
 
         async def truthy_tuple():
@@ -116,13 +116,13 @@ class TestRaceFirstSuccessFalsy:
         result = await race_first_success(
             (truthy_tuple(), "truthy"),
             (falsy_tuple(), "falsy"),
-    )
+        )
         # truthy wins despite being slower
         assert result.result[0] is True
         assert result.winner_label == "truthy"
 
     @pytest.mark.asyncio
-    async def test_require_truthy_false_wins_falsy(self):
+    async def test_require_truthy_false_wins_falsy(self) -> None:
         """require_truthy=False: first to complete wins regardless of truthiness."""
 
         async def falsy_wins():
@@ -137,19 +137,19 @@ class TestRaceFirstSuccessFalsy:
             (falsy_wins(), "falsy"),
             (truthy_loses(), "truthy"),
             require_truthy=False,
-    )
+        )
         assert result.result == (False, None)
         assert result.winner_label == "falsy"
 
     @pytest.mark.asyncio
-    async def test_require_truthy_false_mode(self):
+    async def test_require_truthy_false_mode(self) -> None:
         """require_truthy=False: first to complete wins, even with 0/False."""
 
-        async def fast_zero():
+        async def fast_zero() -> int:
             await asyncio.sleep(0.01)
             return 0
 
-        async def slow_one():
+        async def slow_one() -> int:
             await asyncio.sleep(0.05)
             return 1
 
@@ -157,7 +157,7 @@ class TestRaceFirstSuccessFalsy:
             (fast_zero(), "zero"),
             (slow_one(), "one"),
             require_truthy=False,
-    )
+        )
         assert result.result == 0
         assert result.winner_label == "zero"
 
@@ -166,41 +166,41 @@ class TestRaceFirstSuccessExceptions:
     """Exceptions from losers are collected, not raised."""
 
     @pytest.mark.asyncio
-    async def test_exception_collected_not_raised(self):
+    async def test_exception_collected_not_raised(self) -> None:
         """Exceptions from failed coroutines land in .errors, not in raise path."""
 
-        async def raises():
+        async def raises() -> Never:
             await asyncio.sleep(0.01)
             raise ValueError("boom")
 
-        async def wins():
+        async def wins() -> bool:
             await asyncio.sleep(0.05)
             return True
 
         result = await race_first_success(
             (raises(), "fail"),
             (wins(), "win"),
-    )
+        )
         assert result.result is True
         assert result.winner_label == "win"
         assert len(result.errors) >= 1
         assert any(isinstance(e, ValueError) for e in result.errors)
 
     @pytest.mark.asyncio
-    async def test_all_fail_returns_errors(self):
+    async def test_all_fail_returns_errors(self) -> None:
         """All coroutines fail → .errors contains all exceptions."""
 
-        async def fail_a():
+        async def fail_a() -> Never:
             raise RuntimeError("a")
 
-        async def fail_b():
+        async def fail_b() -> Never:
             raise RuntimeError("b")
 
         result = await race_first_success(
             (fail_a(), "a"),
             (fail_b(), "b"),
             timeout=1.0,
-    )
+        )
         assert result.result is None
         assert len(result.errors) == 2
 
@@ -209,30 +209,30 @@ class TestRaceFirstSuccessTimeout:
     """Global timeout enforcement."""
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_none(self):
+    async def test_timeout_returns_none(self) -> None:
         """Timeout → result is None, winner_index -1."""
 
-        async def never():
+        async def never() -> bool:
             await asyncio.sleep(10.0)
             return True
 
         result = await race_first_success(
             (never(), "never"),
             timeout=0.05,
-    )
+        )
         assert result.result is None
         assert result.winner_index == -1
         assert result.winner_label == ""
 
     @pytest.mark.asyncio
-    async def test_timeout_not_hit_when_winner_early(self):
+    async def test_timeout_not_hit_when_winner_early(self) -> None:
         """Winner completes before timeout → timeout has no effect."""
 
-        async def fast_win():
+        async def fast_win() -> bool:
             await asyncio.sleep(0.01)
             return True
 
-        async def slow_wait():
+        async def slow_wait() -> bool:
             await asyncio.sleep(0.5)  # won't be reached — cancelled on winner
             return True
 
@@ -240,12 +240,12 @@ class TestRaceFirstSuccessTimeout:
             (fast_win(), "fast"),
             (slow_wait(), "slow"),
             timeout=2.0,
-    )
+        )
         assert result.result is True
         assert result.winner_label == "fast"
 
     @pytest.mark.asyncio
-    async def test_empty_coros_returns_empty(self):
+    async def test_empty_coros_returns_empty(self) -> None:
         """Empty coros list → returns empty result immediately."""
         result = await race_first_success()
         assert result.result is None
@@ -257,7 +257,7 @@ class TestRaceFirstSuccessCurlCffiPattern:
     """Simulate curl_cffi session-creation pattern: (bool_ok, session_or_none)."""
 
     @pytest.mark.asyncio
-    async def test_session_tuple_true_wins(self):
+    async def test_session_tuple_true_wins(self) -> None:
         """(True, session) tuple wins when require_truthy=True."""
 
         class FakeSession:
@@ -274,13 +274,13 @@ class TestRaceFirstSuccessCurlCffiPattern:
         result = await race_first_success(
             (ok_chrome136(), "chrome136"),
             (fail_chrome110(), "chrome110"),
-    )
+        )
         assert result.result[0] is True
         assert isinstance(result.result[1], FakeSession)
         assert result.winner_label == "chrome136"
 
     @pytest.mark.asyncio
-    async def test_session_tuple_false_wins_when_require_truthy_false(self):
+    async def test_session_tuple_false_wins_when_require_truthy_false(self) -> None:
         """(False, None) wins when require_truthy=False (first to complete)."""
 
         async def false_tuple():
@@ -295,15 +295,15 @@ class TestRaceFirstSuccessCurlCffiPattern:
             (false_tuple(), "falsy"),
             (true_tuple(), "truthy"),
             require_truthy=False,
-    )
+        )
         assert result.result == (False, None)
         assert result.winner_label == "falsy"
 
     @pytest.mark.asyncio
-    async def test_mixed_results_order_not_determinant(self):
+    async def test_mixed_results_order_not_determinant(self) -> None:
         """Order in coros list doesn't determine winner — completion time does."""
 
-        async def coro_a():
+        async def coro_a() -> bool:
             await asyncio.sleep(0.03)
             return True
 
@@ -316,7 +316,7 @@ class TestRaceFirstSuccessCurlCffiPattern:
         result = await race_first_success(
             (coro_a(), "truthy_late"),
             (coro_b(), "falsy_early"),
-    )
+        )
         assert result.result is True
         assert result.winner_label == "truthy_late"
 
@@ -325,7 +325,7 @@ class TestRaceFirstSuccessFalsyResults:
     """falsy_results field — tracks non-exception falsy returns for timeout diagnosis."""
 
     @pytest.mark.asyncio
-    async def test_falsy_results_collected_on_timeout(self):
+    async def test_falsy_results_collected_on_timeout(self) -> None:
         """All return (False, None) → timeout → falsy_results contains all of them."""
 
         async def fail1():
@@ -340,14 +340,14 @@ class TestRaceFirstSuccessFalsyResults:
             (fail1(), "fail1"),
             (fail2(), "fail2"),
             timeout=0.05,
-    )
+        )
         assert result.result is None
         assert result.winner_index == -1
         assert len(result.falsy_results) == 2
         assert all(r == (False, None) for r in result.falsy_results)
 
     @pytest.mark.asyncio
-    async def test_falsy_results_tracks_completed_losers(self):
+    async def test_falsy_results_tracks_completed_losers(self) -> None:
         """Falsy losers that complete before winner → tracked in falsy_results.
 
         TaskGroup only cancels when a winner RAISES (exception) or times out.
@@ -356,6 +356,7 @@ class TestRaceFirstSuccessFalsyResults:
         - Winner raises → losers cancelled → falsy_results empty
         - Winner returns → losers complete → falsy_results contains completions
         """
+
         class FakeSession:
             pass
 
@@ -370,14 +371,14 @@ class TestRaceFirstSuccessFalsyResults:
         result = await race_first_success(
             (truthy_winner(), "winner"),
             (falsy_loser(), "loser"),
-    )
+        )
         assert result.result[0] is True
         assert result.winner_label == "winner"
         # Loser completes before TaskGroup exits → tracked
         assert result.falsy_results == [(False, None)]
 
     @pytest.mark.asyncio
-    async def test_exception_captured_and_falsy_completions_tracked(self):
+    async def test_exception_captured_and_falsy_completions_tracked(self) -> None:
         """Winner raises → loser completes → exception in .errors, falsy in .falsy_results.
 
         TaskGroup cancels remaining tasks after a task raises, but the cancel
@@ -385,7 +386,8 @@ class TestRaceFirstSuccessFalsyResults:
         is delivered, it returns normally and is tracked in falsy_results.
         The winner's exception is in .errors (via the BaseExceptionGroup).
         """
-        async def raising_winner():
+
+        async def raising_winner() -> Never:
             await asyncio.sleep(0.01)
             raise RuntimeError("winner error")
 
@@ -397,7 +399,7 @@ class TestRaceFirstSuccessFalsyResults:
             (raising_winner(), "win"),
             (falsy_loser(), "falsy"),
             timeout=1.0,
-    )
+        )
         # Loser completed (0.05s) before cancel took effect → tracked
         assert result.falsy_results == [(False, None)]
         # Winner raised → exception must be somewhere (errors or re-raised)
@@ -405,7 +407,7 @@ class TestRaceFirstSuccessFalsyResults:
         assert result.result is None
 
     @pytest.mark.asyncio
-    async def test_falsy_results_partial_timeout(self):
+    async def test_falsy_results_partial_timeout(self) -> None:
         """Mixed: one truthy winner, one falsy, one exception → falsy tracked."""
 
         class FakeSession:
@@ -423,7 +425,7 @@ class TestRaceFirstSuccessFalsyResults:
             (winner(), "win"),
             (falsy_completion(), "falsy"),
             timeout=1.0,
-    )
+        )
         # winner already set → falsy runner should still run and complete
         assert result.result[0] is True
         # falsy result may or may not be captured depending on TaskGroup timing
@@ -431,23 +433,23 @@ class TestRaceFirstSuccessFalsyResults:
         assert isinstance(result.falsy_results, list)
 
     @pytest.mark.asyncio
-    async def test_empty_coros_no_falsy_results(self):
+    async def test_empty_coros_no_falsy_results(self) -> None:
         """Empty coros → falsy_results is empty list."""
         result = await race_first_success()
         assert result.falsy_results == []
 
     @pytest.mark.asyncio
-    async def test_exception_no_falsy_results(self):
+    async def test_exception_no_falsy_results(self) -> None:
         """Exception path → falsy_results empty (exception goes to .errors)."""
 
-        async def raises():
+        async def raises() -> Never:
             await asyncio.sleep(0.01)
             raise RuntimeError("boom")
 
         result = await race_first_success(
             (raises(), "fail"),
             timeout=0.1,
-    )
+        )
         assert result.result is None
         assert len(result.errors) >= 1
         assert result.falsy_results == []

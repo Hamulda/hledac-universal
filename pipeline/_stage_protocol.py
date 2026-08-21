@@ -18,6 +18,7 @@ Invarianty:
 - Fail-safe: stage vrací prázdný iterator při chybě, neexception
 - TaskGroup cancellation: Ctrl-C → všechny stagesGraceful shutdown
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,25 +26,18 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
-from collections.abc import Awaitable, Callable
 
 import msgspec
+
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 if TYPE_CHECKING:
     from typing import Protocol
-    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
 T_in = TypeVar("T_in")
 T_out = TypeVar("T_out")
-
-
-# ----------------------------------------------------------------------
-# Stage Metrics
-# ----------------------------------------------------------------------
 
 
 class StageMetrics(Struct):
@@ -97,11 +91,6 @@ class StageMetrics(Struct):
         }
 
 
-# ----------------------------------------------------------------------
-# Stage Context
-# ----------------------------------------------------------------------
-
-
 class StageContext(Struct):
     """Sdílený kontext mezi všemi stages.
 
@@ -138,13 +127,8 @@ class StageContext(Struct):
         return self.uma_state == "emergency"
 
 
-# ----------------------------------------------------------------------
-# Bounded Stage Queue
-# ----------------------------------------------------------------------
-
-
 @dataclass(slots=True)
-class BoundedStageQueue(Generic[T_out]):
+class BoundedStageQueue[T_out]:
     """asyncio.Queue s bounded maxsize a drop metrikou.
 
     Rozdíl od plain asyncio.Queue:
@@ -245,14 +229,14 @@ class BoundedStageQueue(Generic[T_out]):
                 new_max,
                 new_max,
                 dropped_by_shrink,
-    )
+            )
         else:
             logger.debug(
                 "BoundedStageQueue[%s]: UMA=%s, maxsize grew to %d",
                 self.stage_name,
                 state,
                 new_max,
-    )
+            )
 
     async def put(self, item: T_out) -> bool:
         """Vloží item do fronty.
@@ -277,7 +261,7 @@ class BoundedStageQueue(Generic[T_out]):
                     "BoundedStageQueue[%s]: dropped item (queue full, size=%d)",
                     self.stage_name,
                     self.maxsize,
-    )
+                )
                 return False
 
     async def get(self) -> T_out:
@@ -300,11 +284,6 @@ class BoundedStageQueue(Generic[T_out]):
 
     def is_empty(self) -> bool:
         return self._queue.empty()
-
-
-# ----------------------------------------------------------------------
-# Stage Protocol
-# ----------------------------------------------------------------------
 
 
 class Stage(Generic[T_in, T_out], Protocol):
@@ -343,11 +322,6 @@ class Stage(Generic[T_in, T_out], Protocol):
     async def aclose(self) -> None:
         """Graceful shutdown — zavře resources, flushne buffer."""
         ...
-
-
-# ----------------------------------------------------------------------
-# StageResult
-# ----------------------------------------------------------------------
 
 
 class StageResult(Struct):

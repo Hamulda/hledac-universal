@@ -2,9 +2,6 @@
 knowledge/duckdb_audit_store.py — DuckDB-backed Audit Store
 =========================================================
 
-
-
-
 ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 
 Drop-in replacement for security/audit.py AuditLogger.
@@ -32,29 +29,26 @@ M1 8GB: DuckDB in-process, WAL mode, 2 threads.
 """
 
 from __future__ import annotations
-import msgspec
-from hledac.universal.compat.msgspec_gc_compat import Struct
 
 import asyncio
 import hashlib
-import hmac
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 import msgspec.json as _json
 
-from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 
 class AuditLevel(Enum):
     """Audit levels."""
+
     DEBUG = "debug"
     INFO = "info"
     WARNING = "warning"
@@ -64,6 +58,7 @@ class AuditLevel(Enum):
 
 class AuditEventType(Enum):
     """Audit event types."""
+
     QUERY = "query"
     DATA_ACCESS = "data_access"
     DATA_STORE = "data_store"
@@ -77,6 +72,7 @@ class AuditEventType(Enum):
 
 class AuditEvent(Struct):
     """Audit event."""
+
     timestamp: datetime
     event_type: AuditEventType
     action: str
@@ -96,6 +92,7 @@ class AuditEvent(Struct):
 
 class AuditConfig(Struct):
     """Audit configuration."""
+
     db_path: str = "data/audit.duckdb"
     min_level: AuditLevel = AuditLevel.INFO
     log_to_console: bool = True
@@ -120,9 +117,7 @@ class DuckDBAuditStore:
         audit = DuckDBAuditStore()
     """
 
-    __slots__ = tuple(
-        "_db_store _conn _hmac_key _initialized config".split()
-    )
+    __slots__ = tuple("_db_store _conn _hmac_key _initialized config".split())
 
     def __init__(self, config: AuditConfig | None = None) -> None:
         self.config = config or AuditConfig()
@@ -143,7 +138,6 @@ class DuckDBAuditStore:
         db = get_db()
         self._db_store = db.duckdb
 
-        # Initialize schema
         self._db_store.init_audit_schema()
 
         self._initialized = True
@@ -153,6 +147,7 @@ class DuckDBAuditStore:
         """Get DuckDB connection."""
         if self._db_store is None:
             from hledac.universal.knowledge.db import get_db
+
             self._db_store = get_db().duckdb
         return self._db_store._get_connection()
 
@@ -193,7 +188,7 @@ class DuckDBAuditStore:
                     event.level.value,
                     event.hash,
                 ),
-    )
+            )
         )
 
         if self.config.log_to_console:
@@ -202,7 +197,7 @@ class DuckDBAuditStore:
                 event.event_type.value,
                 event.action,
                 event.resource,
-    )
+            )
 
     async def query(
         self,
@@ -248,9 +243,7 @@ class DuckDBAuditStore:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
 
-        rows = await asyncio.to_thread(
-            lambda: conn.execute(query, params).fetchall()
-    )
+        rows = await asyncio.to_thread(lambda: conn.execute(query, params).fetchall())
 
         events = []
         for row in rows:
@@ -266,7 +259,7 @@ class DuckDBAuditStore:
                     level=AuditLevel(row[8]),
                     hash=row[9],
                     _hmac_key=self._hmac_key,
-    )
+                )
             )
         return events
 
@@ -307,7 +300,7 @@ class DuckDBAuditStore:
                 f"SELECT COUNT(*) FROM audit_events WHERE {where}",
                 params,
             ).fetchone()[0]
-    )
+        )
 
         # By event type
         type_rows = await asyncio.to_thread(
@@ -315,7 +308,7 @@ class DuckDBAuditStore:
                 f"SELECT event_type, COUNT(*) FROM audit_events WHERE {where} GROUP BY event_type",
                 params,
             ).fetchall()
-    )
+        )
         by_type = {row[0]: row[1] for row in type_rows}
 
         # By level
@@ -324,7 +317,7 @@ class DuckDBAuditStore:
                 f"SELECT level, COUNT(*) FROM audit_events WHERE {where} GROUP BY level",
                 params,
             ).fetchall()
-    )
+        )
         by_level = {row[0]: row[1] for row in level_rows}
 
         return {

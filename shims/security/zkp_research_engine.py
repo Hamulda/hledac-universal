@@ -11,17 +11,13 @@ This stub is a placeholder for future ZKP integration.
 Gated by HLEDAC_ENABLE_ZKP=1 (shows warning instead of crashing).
 """
 
-
 import logging
-import os
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 
 class ZKPError(Exception):
     """Raised when ZKP operations are attempted."""
-    pass
 
 
 class ZKPResearchEngine:
@@ -41,12 +37,13 @@ class ZKPResearchEngine:
 
     def __init__(self) -> None:
         from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
         if FeatureFlags.get(FeatureFlag.ZKP):
             logger.warning(
                 "ZKP not implemented — HLEDAC_ENABLE_ZKP=1 is set but "
                 "ZKPResearchEngine is a stub. Real ZKP requires libsnark or "
                 "circom WASM binding with a trusted setup ceremony."
-    )
+            )
 
     def is_available(self) -> bool:
         """ZKP is never available from this stub."""
@@ -55,9 +52,8 @@ class ZKPResearchEngine:
     def prove(self, witness: dict, statement: dict) -> bytes:
         """Stub — raises ZKPError."""
         raise ZKPError(
-            "ZKP proof generation not implemented. "
-            "Requires: libsnark/circom WASM, R1CS constraints, trusted setup."
-    )
+            "ZKP proof generation not implemented. Requires: libsnark/circom WASM, R1CS constraints, trusted setup."
+        )
 
     def verify(self, proof: bytes, statement: dict) -> bool:
         """Stub — always returns False."""

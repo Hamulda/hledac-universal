@@ -7,25 +7,27 @@ validation and nested encoding detection.
 
 
 """
+
 from __future__ import annotations
+
 import base64
 import logging
 import math
 import re
-from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from operator import attrgetter, itemgetter
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-BASE64_REGEX = '[A-Za-z0-9+/]{20,}={0,2}'
-BASE32_REGEX = '[A-Z2-7]{20,}={0,6}'
-BASE85_REGEX = '<~[!-u]+~>'
-HEX_REGEX = '(?:[0-9a-fA-F]{2}){10,}'
-URL_ENCODING_REGEX = '(?:%[0-9A-Fa-f]{2})+'
+BASE64_REGEX = "[A-Za-z0-9+/]{20,}={0,2}"
+BASE32_REGEX = "[A-Z2-7]{20,}={0,6}"
+BASE85_REGEX = "<~[!-u]+~>"
+HEX_REGEX = "(?:[0-9a-fA-F]{2}){10,}"
+URL_ENCODING_REGEX = "(?:%[0-9A-Fa-f]{2})+"
 MIN_ENTROPY = 2.5
 MAX_ENTROPY = 7.5
+
 
 class EncodingChain(Struct):
     """Represents a chain of nested encodings.
@@ -35,9 +37,11 @@ class EncodingChain(Struct):
         final_content: Final decoded content
         depth: Depth of the encoding chain
     """
+
     encodings: list[str]
     final_content: str
     depth: int
+
 
 class EncodingFinding(Struct):
     """Sprint F300: msgspec.Struct for detected encoding in text.
@@ -53,6 +57,7 @@ class EncodingFinding(Struct):
         is_printable: Whether decoded content is printable ASCII
         entropy: Shannon entropy of decoded content
     """
+
     encoding_type: str
     position: int
     length: int
@@ -62,6 +67,7 @@ class EncodingFinding(Struct):
     is_printable: bool = False
     entropy: float = 0.0
     nested_chain: EncodingChain | None = None
+
 
 class EncodingConfig(Struct):
     """Sprint F300: msgspec.Struct for encoding detection configuration.
@@ -74,12 +80,14 @@ class EncodingConfig(Struct):
         min_entropy: Minimum entropy threshold
         max_entropy: Maximum entropy threshold
     """
+
     min_length: int = 20
     max_depth: int = 5
     detect_nested: bool = True
     chunk_size: int = 1048576
     min_entropy: float = 2.5
     max_entropy: float = 7.5
+
 
 class BaseEncodingDetector:
     """Detects various base encodings in text.
@@ -94,16 +102,24 @@ class BaseEncodingDetector:
         for finding in findings:
             print(f"Found {finding.encoding_type} at {finding.position}")
     """
-    __slots__ = tuple(('_stats', 'config'))
 
-    def __init__(self, config: EncodingConfig | None=None):
+    __slots__ = ("_stats", "config")
+
+    def __init__(self, config: EncodingConfig | None = None) -> None:
         """Initialize the encoding detector.
 
         Args:
             config: Optional configuration object
         """
         self.config = config or EncodingConfig()
-        self._stats: dict[str, int] = {'base64_found': 0, 'base32_found': 0, 'base85_found': 0, 'hex_found': 0, 'url_found': 0, 'nested_found': 0}
+        self._stats: dict[str, int] = {
+            "base64_found": 0,
+            "base32_found": 0,
+            "base85_found": 0,
+            "hex_found": 0,
+            "url_found": 0,
+            "nested_found": 0,
+        }
 
     def _calculate_entropy(self, data: bytes) -> float:
         """Calculate Shannon entropy of data.
@@ -132,9 +148,9 @@ class BaseEncodingDetector:
         Returns:
             True if all bytes are printable ASCII
         """
-        return all((32 <= b <= 126 or b in (9, 10, 13) for b in data))
+        return all(32 <= b <= 126 or b in (9, 10, 13) for b in data)
 
-    def _get_preview(self, data: bytes, max_length: int=100) -> str:
+    def _get_preview(self, data: bytes, max_length: int = 100) -> str:
         """Get a preview of decoded content.
 
         Args:
@@ -145,12 +161,12 @@ class BaseEncodingDetector:
             String preview of content
         """
         try:
-            text = data.decode('utf-8', errors='ignore')
+            text = data.decode("utf-8", errors="ignore")
             if len(text) > max_length:
-                text = text[:max_length] + '...'
+                text = text[:max_length] + "..."
             return text
         except UnicodeDecodeError:
-            return f'<binary data: {len(data)} bytes>'
+            return f"<binary data: {len(data)} bytes>"
 
     async def detect_text(self, text: str) -> list[EncodingFinding]:
         """Detect encodings in text.
@@ -173,7 +189,7 @@ class BaseEncodingDetector:
                 nested = await self._analyze_nested(finding)
                 if nested:
                     finding.nested_chain = nested
-                    self._stats['nested_found'] += 1
+                    self._stats["nested_found"] += 1
         return findings
 
     async def detect_file(self, file_path: str) -> list[EncodingFinding]:
@@ -190,11 +206,11 @@ class BaseEncodingDetector:
         overlap = 1000
         path = Path(file_path)
         if not path.exists():
-            logger.error(f'File not found: {file_path}')
+            logger.error(f"File not found: {file_path}")
             return findings
         try:
-            with open(path, encoding='utf-8', errors='ignore') as f:
-                previous_chunk = ''
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                previous_chunk = ""
                 offset = 0
                 while True:
                     chunk = f.read(chunk_size)
@@ -208,8 +224,8 @@ class BaseEncodingDetector:
                             findings.append(finding)
                     previous_chunk = chunk[-overlap:] if len(chunk) >= overlap else chunk
                     offset += len(chunk)
-        except (OSError, IOError) as e:
-            logger.error(f'Error processing file {file_path}: {e}')
+        except OSError as e:
+            logger.error(f"Error processing file {file_path}: {e}")
         return findings
 
     def _detect_base64(self, text: str) -> list[EncodingFinding]:
@@ -229,7 +245,7 @@ class BaseEncodingDetector:
             if len(candidate) % 4 != 0:
                 continue
             try:
-                if not re.match('^[A-Za-z0-9+/]+={0,2}$', candidate):
+                if not re.match("^[A-Za-z0-9+/]+={0,2}$", candidate):
                     continue
                 decoded = base64.b64decode(candidate, validate=True)
                 if not decoded:
@@ -243,9 +259,20 @@ class BaseEncodingDetector:
                     confidence += 0.2
                 if len(candidate) >= 40:
                     confidence += 0.1
-                findings.append(EncodingFinding(encoding_type='base64', position=match.start(), length=len(candidate), confidence=min(confidence, 1.0), decoded_preview=self._get_preview(decoded), original=candidate, is_printable=is_printable, entropy=entropy))
-                self._stats['base64_found'] += 1
-            except (ValueError, LookupError):
+                findings.append(
+                    EncodingFinding(
+                        encoding_type="base64",
+                        position=match.start(),
+                        length=len(candidate),
+                        confidence=min(confidence, 1.0),
+                        decoded_preview=self._get_preview(decoded),
+                        original=candidate,
+                        is_printable=is_printable,
+                        entropy=entropy,
+                    )
+                )
+                self._stats["base64_found"] += 1
+            except ValueError, LookupError:
                 continue
         return findings
 
@@ -274,9 +301,20 @@ class BaseEncodingDetector:
                     continue
                 confidence = 0.8
                 is_printable = self._is_printable(decoded)
-                findings.append(EncodingFinding(encoding_type='base32', position=match.start(), length=len(candidate), confidence=confidence, decoded_preview=self._get_preview(decoded), original=candidate, is_printable=is_printable, entropy=entropy))
-                self._stats['base32_found'] += 1
-            except (ValueError, LookupError):
+                findings.append(
+                    EncodingFinding(
+                        encoding_type="base32",
+                        position=match.start(),
+                        length=len(candidate),
+                        confidence=confidence,
+                        decoded_preview=self._get_preview(decoded),
+                        original=candidate,
+                        is_printable=is_printable,
+                        entropy=entropy,
+                    )
+                )
+                self._stats["base32_found"] += 1
+            except ValueError, LookupError:
                 continue
         return findings
 
@@ -302,9 +340,20 @@ class BaseEncodingDetector:
                 entropy = self._calculate_entropy(decoded)
                 if entropy < self.config.min_entropy:
                     continue
-                findings.append(EncodingFinding(encoding_type='base85', position=match.start(), length=len(candidate), confidence=0.9, decoded_preview=self._get_preview(decoded), original=candidate, is_printable=self._is_printable(decoded), entropy=entropy))
-                self._stats['base85_found'] += 1
-            except (ValueError, LookupError):
+                findings.append(
+                    EncodingFinding(
+                        encoding_type="base85",
+                        position=match.start(),
+                        length=len(candidate),
+                        confidence=0.9,
+                        decoded_preview=self._get_preview(decoded),
+                        original=candidate,
+                        is_printable=self._is_printable(decoded),
+                        entropy=entropy,
+                    )
+                )
+                self._stats["base85_found"] += 1
+            except ValueError, LookupError:
                 continue
         return findings
 
@@ -335,9 +384,20 @@ class BaseEncodingDetector:
                 is_printable = self._is_printable(decoded)
                 if is_printable:
                     confidence += 0.2
-                findings.append(EncodingFinding(encoding_type='hex', position=match.start(), length=len(candidate), confidence=confidence, decoded_preview=self._get_preview(decoded), original=candidate, is_printable=is_printable, entropy=entropy))
-                self._stats['hex_found'] += 1
-            except (ValueError, LookupError):
+                findings.append(
+                    EncodingFinding(
+                        encoding_type="hex",
+                        position=match.start(),
+                        length=len(candidate),
+                        confidence=confidence,
+                        decoded_preview=self._get_preview(decoded),
+                        original=candidate,
+                        is_printable=is_printable,
+                        entropy=entropy,
+                    )
+                )
+                self._stats["hex_found"] += 1
+            except ValueError, LookupError:
                 continue
         return findings
 
@@ -356,15 +416,26 @@ class BaseEncodingDetector:
             if len(candidate) < 6:
                 continue
             try:
-                decoded = bytes.fromhex(candidate.replace('%', ''))
+                decoded = bytes.fromhex(candidate.replace("%", ""))
                 if not decoded:
                     continue
                 is_printable = self._is_printable(decoded)
                 if not is_printable:
                     continue
-                findings.append(EncodingFinding(encoding_type='url_encoded', position=match.start(), length=len(candidate), confidence=0.75, decoded_preview=self._get_preview(decoded), original=candidate, is_printable=True, entropy=self._calculate_entropy(decoded)))
-                self._stats['url_found'] += 1
-            except (ValueError, LookupError):
+                findings.append(
+                    EncodingFinding(
+                        encoding_type="url_encoded",
+                        position=match.start(),
+                        length=len(candidate),
+                        confidence=0.75,
+                        decoded_preview=self._get_preview(decoded),
+                        original=candidate,
+                        is_printable=True,
+                        entropy=self._calculate_entropy(decoded),
+                    )
+                )
+                self._stats["url_found"] += 1
+            except ValueError, LookupError:
                 continue
         return findings
 
@@ -380,19 +451,19 @@ class BaseEncodingDetector:
         if finding.nested_chain and finding.nested_chain.depth >= self.config.max_depth:
             return None
         try:
-            if finding.encoding_type == 'base64':
+            if finding.encoding_type == "base64":
                 decoded = base64.b64decode(finding.original)
-            elif finding.encoding_type == 'base32':
+            elif finding.encoding_type == "base32":
                 decoded = base64.b32decode(finding.original)
-            elif finding.encoding_type == 'base85':
+            elif finding.encoding_type == "base85":
                 decoded = base64.b85decode(finding.original[2:-2])
-            elif finding.encoding_type == 'hex':
+            elif finding.encoding_type == "hex":
                 decoded = bytes.fromhex(finding.original)
             else:
                 return None
             try:
-                decoded_str = decoded.decode('utf-8', errors='ignore')
-            except (UnicodeDecodeError, ValueError):
+                decoded_str = decoded.decode("utf-8", errors="ignore")
+            except UnicodeDecodeError, ValueError:
                 return None
             nested_findings = await self.detect_text(decoded_str)
             if nested_findings:
@@ -400,15 +471,15 @@ class BaseEncodingDetector:
                 for nf in nested_findings[:3]:
                     chain.encodings.append(nf.encoding_type)
                     try:
-                        if nf.encoding_type == 'base64':
-                            chain.final_content = base64.b64decode(nf.original).decode('utf-8', errors='ignore')
-                        elif nf.encoding_type == 'hex':
-                            chain.final_content = bytes.fromhex(nf.original).decode('utf-8', errors='ignore')
-                    except (UnicodeDecodeError, ValueError):  # noqa: BLE001
+                        if nf.encoding_type == "base64":
+                            chain.final_content = base64.b64decode(nf.original).decode("utf-8", errors="ignore")
+                        elif nf.encoding_type == "hex":
+                            chain.final_content = bytes.fromhex(nf.original).decode("utf-8", errors="ignore")
+                    except UnicodeDecodeError, ValueError:  # noqa: BLE001
                         pass
                 chain.depth = len(chain.encodings)
                 return chain
-        except (UnicodeDecodeError, ValueError, LookupError, OSError):  # noqa: BLE001
+        except UnicodeDecodeError, ValueError, LookupError, OSError:  # noqa: BLE001
             pass
         return None
 
@@ -425,7 +496,8 @@ class BaseEncodingDetector:
         for key in self._stats:
             self._stats[key] = 0
 
-def create_encoding_detector(config: EncodingConfig | None=None) -> BaseEncodingDetector:
+
+def create_encoding_detector(config: EncodingConfig | None = None) -> BaseEncodingDetector:
     """Create a configured BaseEncodingDetector instance.
 
     Args:
@@ -436,7 +508,8 @@ def create_encoding_detector(config: EncodingConfig | None=None) -> BaseEncoding
     """
     return BaseEncodingDetector(config)
 
-async def detect_encodings(text: str, config: EncodingConfig | None=None) -> list[EncodingFinding]:
+
+async def detect_encodings(text: str, config: EncodingConfig | None = None) -> list[EncodingFinding]:
     """Convenience function to detect encodings in text.
 
     Args:

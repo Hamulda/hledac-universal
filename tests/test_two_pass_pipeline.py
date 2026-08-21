@@ -9,14 +9,12 @@ Covers:
 - M1 8GB invariants: bounded queue, no unbounded growth
 """
 
-
 import asyncio
 from typing import Any
 
 import pytest
 
 from hledac.universal.utils.two_pass_pipeline import (
-    PipelineStats,
     TwoPassPipeline,
     TwoPassPipelineConfig,
     consumer_fn_to_thread,
@@ -80,6 +78,7 @@ class TestTwoPassPipeline:
     @pytest.mark.asyncio
     async def test_backpressure_queue_size(self) -> None:
         """Queue respects maxsize=512 (never grows beyond bound)."""
+
         # Use a trivial async producer that completes immediately
         async def producer() -> list[int]:
             return list(range(1000))
@@ -203,6 +202,7 @@ class TestConsumerFnToThread:
     @pytest.mark.asyncio
     async def test_error_suppression(self) -> None:
         """Errors in consumer are suppressed, not raised."""
+
         def bad(x: int) -> int:
             if x == 2:
                 raise RuntimeError("skip")

@@ -12,6 +12,7 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +20,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
@@ -27,49 +28,39 @@ from hledac.universal.compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
 class EvidenceConfig(Struct, frozen=True):
     """Evidence configuration. M1 8GB: msgspec.Struct for fast init."""
+
     enable_fingerprinting: bool = True
-    hash_algorithms: tuple[str, ...] = ('sha256', 'md5')
+    hash_algorithms: tuple[str, ...] = ("sha256", "md5")
     max_content_stored: int = 1024 * 1024  # 1MB
     enable_metadata: bool = True
     evidence_queue_size: int = 10000
 
 
-# =============================================================================
-# Evidence Record
-# =============================================================================
-
 def _utc_now() -> datetime:
     """Factory for UTC now timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(slots=True)
 class EvidenceRecord:
     """Evidence record for a fetch result."""
+
     url: str
     timestamp: datetime = field(default_factory=_utc_now)
-    content_hash: str = ''
-    content_type: str = ''
+    content_hash: str = ""
+    content_type: str = ""
     status_code: int = 0
     headers: dict[str, str] = field(default_factory=dict)
     fetch_duration_ms: float = 0.0
-    transport: str = 'clearnet'
+    transport: str = "clearnet"
     entropy_score: float = 0.0
     error: str | None = None
-    content_fingerprint: str = ''
+    content_fingerprint: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     size_bytes: int = 0
 
-
-# =============================================================================
-# Evidence Sink Service
-# =============================================================================
 
 @dataclass(slots=True)
 class EvidenceSinkService:
@@ -84,19 +75,20 @@ class EvidenceSinkService:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
+
     config: EvidenceConfig = field(default_factory=EvidenceConfig)
 
-    _evidence_queue: asyncio.Queue[EvidenceRecord] = field(
-        default_factory=lambda: asyncio.Queue(maxsize=10000)
-    )
+    _evidence_queue: asyncio.Queue[EvidenceRecord] = field(default_factory=lambda: asyncio.Queue(maxsize=10000))
     _storage_backend: Any = field(default=None, init=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
-    _stats: dict[str, Any] = field(default_factory=lambda: {
-        'records_created': 0,
-        'records_stored': 0,
-        'storage_errors': 0,
-        'total_size_bytes': 0,
-    })
+    _stats: dict[str, Any] = field(
+        default_factory=lambda: {
+            "records_created": 0,
+            "records_stored": 0,
+            "storage_errors": 0,
+            "total_size_bytes": 0,
+        }
+    )
 
     def set_storage_backend(self, backend: Any) -> None:
         """
@@ -116,7 +108,7 @@ class EvidenceSinkService:
         status_code: int = 0,
         headers: dict[str, str] | None = None,
         fetch_duration_ms: float = 0.0,
-        transport: str = 'clearnet',
+        transport: str = "clearnet",
         entropy_score: float = 0.0,
         error: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -157,18 +149,19 @@ class EvidenceSinkService:
 
         # Enrich metadata
         if self.config.enable_metadata:
-            record.metadata.update({
-                'created_at': time.time(),
-                'content_length': len(content) if content else 0,
-                'content_type': headers.get('Content-Type', '') if headers else '',
-                'server': headers.get('Server', '') if headers else '',
-            })
+            record.metadata.update(
+                {
+                    "created_at": time.time(),
+                    "content_length": len(content) if content else 0,
+                    "content_type": headers.get("Content-Type", "") if headers else "",
+                    "server": headers.get("Server", "") if headers else "",
+                }
+            )
 
         async with self._lock:
-            self._stats['records_created'] += 1
-            self._stats['total_size_bytes'] += record.size_bytes
+            self._stats["records_created"] += 1
+            self._stats["total_size_bytes"] += record.size_bytes
 
-        # Queue for storage
         try:
             self._evidence_queue.put_nowait(record)
         except asyncio.QueueFull:
@@ -190,7 +183,7 @@ class EvidenceSinkService:
         for algo in self.config.hash_algorithms:
             try:
                 h = hashlib.new(algo)
-                h.update(content[:self.config.max_content_stored])
+                h.update(content[: self.config.max_content_stored])
                 hashes[algo] = h.hexdigest()
             except Exception:  # noqa: BLE001
                 pass
@@ -210,18 +203,18 @@ class EvidenceSinkService:
         if self._storage_backend is None:
             # In-memory only
             async with self._lock:
-                self._stats['records_stored'] += 1
+                self._stats["records_stored"] += 1
             return True
 
         try:
             success = await self._storage_backend.store(record)
             async with self._lock:
-                self._stats['records_stored'] += 1 if success else 0
+                self._stats["records_stored"] += 1 if success else 0
             return success
         except Exception as e:  # noqa: BLE001
             logger.error(f"Evidence storage error: {e}")
             async with self._lock:
-                self._stats['storage_errors'] += 1
+                self._stats["storage_errors"] += 1
             return False
 
     async def retrieve(self, url: str) -> EvidenceRecord | None:
@@ -294,22 +287,17 @@ class EvidenceSinkService:
         """Get evidence statistics."""
         return {
             **self._stats,
-            'queue_size': self._evidence_queue.qsize(),
-            'has_storage_backend': self._storage_backend is not None,
+            "queue_size": self._evidence_queue.qsize(),
+            "has_storage_backend": self._storage_backend is not None,
         }
 
     async def aclose(self) -> None:
         """Close evidence sink service and release resources."""
-        # Process remaining queue
         await self.process_queue()
         async with self._lock:
             self._storage_backend = None
         logger.debug("EvidenceSinkService closed")
 
-
-# =============================================================================
-# In-Memory Storage Backend
-# =============================================================================
 
 class InMemoryEvidenceStorage:
     """In-memory storage backend for evidence records."""
@@ -323,7 +311,6 @@ class InMemoryEvidenceStorage:
         """Store evidence record."""
         async with self._lock:
             if len(self._records) >= self.max_records:
-                # Remove oldest
                 oldest = min(self._records.keys(), key=lambda k: self._records[k].timestamp)
                 del self._records[oldest]
 
@@ -357,9 +344,9 @@ class InMemoryEvidenceStorage:
 
 
 __all__ = [
-    'EvidenceConfig',
-    'EvidenceRecord',
-    'EvidenceSinkService',
-    'InMemoryEvidenceStorage',
-    '_utc_now',  # Exported for testing
+    "EvidenceConfig",
+    "EvidenceRecord",
+    "EvidenceSinkService",
+    "InMemoryEvidenceStorage",
+    "_utc_now",  # Exported for testing
 ]

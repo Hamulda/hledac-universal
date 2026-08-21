@@ -2,8 +2,6 @@
 CanonicalFinding — Sprint Facts DTO Layer
 =========================================
 
-
-
 Canonical internal finding DTO for the sprint facts store.
 Uses msgspec.Struct (frozen=True) for zero-copy serialization.
 
@@ -12,11 +10,13 @@ MIGRATION NOTE (Issue #2):
     Import from here for new code: from knowledge.sprint_facts import CanonicalFinding
     The alias in duckdb_store.py is preserved for backward compatibility.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
@@ -97,7 +97,7 @@ class CanonicalFinding(Struct, frozen=True):
         confidence: float = 0.9,
         payload_text: str | None = None,
         provenance: tuple[str, ...] | None = None,
-    ) -> "CanonicalFinding":
+    ) -> CanonicalFinding:
         """
         ISSUE F5-FIX: Factory method to create CanonicalFinding from WARC record metadata.
 
@@ -129,12 +129,11 @@ class CanonicalFinding(Struct, frozen=True):
         fid_input = f"{warc_record_id}\x00{warc_url}\x00{compressed_offset}"
         finding_id = hashlib.sha256(fid_input.encode()).hexdigest()[:16]
 
-        # Build provenance chain with WARC metadata
         warc_provenance = (
             f"warc:{warc_record_id}",
             f"offset:{compressed_offset}",
             f"size:{compressed_size}",
-    )
+        )
         if provenance:
             final_provenance = tuple(list(provenance) + list(warc_provenance))
         else:
@@ -153,7 +152,7 @@ class CanonicalFinding(Struct, frozen=True):
             compressed_offset=compressed_offset,
             compressed_size=compressed_size,
             warc_url=warc_url,
-    )
+        )
 
     @classmethod
     def from_adapters(
@@ -161,7 +160,7 @@ class CanonicalFinding(Struct, frozen=True):
         adapters: list[Any],
         query: str,
         source_type: str,
-    ) -> list["CanonicalFinding"]:
+    ) -> list[CanonicalFinding]:
         """
         Gap C FIX: Unified factory for adapter-based finding creation.
 
@@ -186,8 +185,9 @@ class CanonicalFinding(Struct, frozen=True):
             List of CanonicalFinding from all adapters
         """
         import logging
+
         _logger = logging.getLogger(__name__)
-        
+
         findings: list[CanonicalFinding] = []
         for adapter in adapters:
             adapter_name = type(adapter).__name__
@@ -201,21 +201,19 @@ class CanonicalFinding(Struct, frozen=True):
                             adapter_name,
                             len(results),
                             query[:50],
-    )
+                        )
             except Exception as e:  # noqa: BLE001 — fail-soft per adapter
                 _logger.warning(
                     "[CanonicalFinding] %s.to_canonical_findings() failed for query '%s': %s",
                     adapter_name,
                     query[:50],
                     e,
-    )
+                )
         return findings
 
 
 # FindingQualityDecision is defined in knowledge/_quality_types.py.
 # Re-exported here for backward compatibility with code that imports it from this module.
-from .._quality_types import FindingQualityDecision
-from _core import aclose
 
 
 class ActivationResult(Struct, frozen=True):

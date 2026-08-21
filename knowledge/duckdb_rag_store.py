@@ -2,10 +2,6 @@
 knowledge/duckdb_rag_store.py — Unified DuckDB-Backed RAG & Identity Store
 ========================================================================
 
-
-
-
-
 F350M-R: Phase 2 Knowledge consolidation — LanceDB → DuckDB migration.
 
 ROLE: Single unified DuckDB-backed store replacing:
@@ -43,13 +39,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-from hledac.universal.utils.asyncx import parallel, _check_gathered
 from hledac.universal.knowledge.duckdb_parallel import vectorized_build_candidates
-from _core import aclose
+from hledac.universal.utils.asyncx import _check_gathered, parallel
 
 if TYPE_CHECKING:
     pass
@@ -62,12 +57,13 @@ _EMBED_DIM: int = 384
 _MAX_BATCH: int = 100  # M1 8GB safety cap for embedding batches
 _DEFAULT_DB_PATH: Path = Path.home() / ".hledac" / "duckdb_rag.duckdb"
 
-
 # ── Dataclasses matching LanceDB API shapes ────────────────────────────────────
+
 
 @dataclass(slots=True)
 class RetrievedChunk:
     """RAG retrieved chunk — matches LanceDBRAGEngine.RetrievedChunk."""
+
     chunk_id: str
     content: str
     document_id: str
@@ -79,6 +75,7 @@ class RetrievedChunk:
 @dataclass(slots=True)
 class EntityCandidate:
     """Entity resolution candidate — matches LanceDBIdentityStore.EntityCandidate."""
+
     entity_id: str
     entity_value: str
     entity_type: str
@@ -87,6 +84,7 @@ class EntityCandidate:
 
 
 # ── RAG Store ─────────────────────────────────────────────────────────────────
+
 
 class DuckDBRAGStore:
     """
@@ -159,7 +157,8 @@ class DuckDBRAGStore:
             try:
                 from hledac.universal.brain.mlx_embedder import (
                     MLXEmbedder,
-    )
+                )
+
                 self._embedder = MLXEmbedder()
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"[DUCKDB:RAG] Embedder unavailable: {e}")
@@ -238,11 +237,7 @@ class DuckDBRAGStore:
             return []
 
         # Compute embeddings for those missing them
-        texts_without_emb = [
-            (i, d["content"])
-            for i, d in enumerate(documents)
-            if d.get("embedding") is None
-        ]
+        texts_without_emb = [(i, d["content"]) for i, d in enumerate(documents) if d.get("embedding") is None]
 
         computed_embeddings: dict[int, list[float]] = {}
         if texts_without_emb:
@@ -255,7 +250,7 @@ class DuckDBRAGStore:
                     for i in range(0, len(texts), _MAX_BATCH):
                         chunk_embs = await embedder.embed(texts[i : i + _MAX_BATCH])
                         all_embs.extend(chunk_embs)
-                    for (idx, _), emb in zip(texts_without_emb, all_embs):
+                    for (idx, _), emb in zip(texts_without_emb, all_embs, strict=False):
                         computed_embeddings[idx] = emb
                 except Exception:  # noqa: BLE001
                     pass
@@ -266,14 +261,16 @@ class DuckDBRAGStore:
             chunk_id = f"{doc['document_id']}:{i}"
             chunk_ids.append(chunk_id)
             embedding = doc.get("embedding") or computed_embeddings.get(i) or [0.0] * _EMBED_DIM
-            chunks.append({
-                "chunk_id": chunk_id,
-                "document_id": doc["document_id"],
-                "content": doc.get("content", ""),
-                "metadata": doc.get("metadata", {}),
-                "embedding": embedding,
-                "created_at": time.time(),
-            })
+            chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "document_id": doc["document_id"],
+                    "content": doc.get("content", ""),
+                    "metadata": doc.get("metadata", {}),
+                    "embedding": embedding,
+                    "created_at": time.time(),
+                }
+            )
 
         if chunks:
             await self._store.upsert_rag_embeddings(chunks)
@@ -320,14 +317,11 @@ class DuckDBRAGStore:
 
         # Pure ANN vector search over rag_embeddings — no cross-table FTS join
         # (fts_search_findings queries canonical_findings, NOT rag_embeddings)
-        vec_results = await self._store.vector_search_rag(
-            query_vector, k=k * 2, document_id=document_id
-    )
+        vec_results = await self._store.vector_search_rag(query_vector, k=k * 2, document_id=document_id)
 
         if not vec_results:
             return []
 
-        # Build candidates from vector results
         candidates: dict[str, RetrievedChunk] = {}
         for r in vec_results:
             cid = r.get("chunk_id", "")
@@ -339,15 +333,16 @@ class DuckDBRAGStore:
                 vector_score=1.0 / (distance + 0.001),
                 fts_score=0.0,
                 final_score=1.0 / (distance + 0.001),
-    )
+            )
 
         sorted_chunks = sorted(candidates.values(), key=attrgetter("final_score"), reverse=True)
 
         # F350M-R P4 FIX: MMR was a no-op — now applies maximal_marginal_relevance
         if use_mmr and len(sorted_chunks) > k:
             try:
-                from context_optimization.mmr import maximal_marginal_relevance
                 import numpy as np
+
+                from context_optimization.mmr import maximal_marginal_relevance
 
                 q_vec = np.array(query_vector, dtype=np.float32)
                 # Re-embed document contents for true MMR diversity computation
@@ -362,9 +357,7 @@ class DuckDBRAGStore:
                     doc_matrix = np.array([query_vector] * len(sorted_chunks), dtype=np.float32)
 
                 mmr_k = min(k, len(sorted_chunks))
-                mmr_indices = maximal_marginal_relevance(
-                    q_vec, list(doc_matrix), top_k=mmr_k, lambda_param=0.5
-    )
+                mmr_indices = maximal_marginal_relevance(q_vec, list(doc_matrix), top_k=mmr_k, lambda_param=0.5)
                 sorted_chunks = [sorted_chunks[i] for i in mmr_indices]
             except Exception:  # noqa: BLE001 — fall back to score-sorted
                 pass
@@ -407,6 +400,7 @@ class DuckDBRAGStore:
         if not text.strip():
             return
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -420,9 +414,7 @@ class DuckDBRAGStore:
             "ts": ts_val,
         }
         # Immediate upsert — track task so close() can await pending writes
-        task = asyncio.create_task(
-            self._upsert_text_async(finding_id, text, metadata)
-    )
+        task = asyncio.create_task(self._upsert_text_async(finding_id, text, metadata))
         async with self._pending_lock:
             self._pending_tasks.append(task)
         task.add_done_callback(self._make_pending_done_callback())
@@ -448,14 +440,18 @@ class DuckDBRAGStore:
                 query_vector = [0.0] * _EMBED_DIM
 
             chunk_id = f"{metadata.get('finding_id', finding_id)}:0"
-            await self._store.upsert_rag_embeddings([{
-                "chunk_id": chunk_id,
-                "document_id": finding_id,
-                "content": text,
-                "metadata": metadata,
-                "embedding": query_vector,
-                "created_at": metadata.get("ts", 0.0),
-            }])
+            await self._store.upsert_rag_embeddings(
+                [
+                    {
+                        "chunk_id": chunk_id,
+                        "document_id": finding_id,
+                        "content": text,
+                        "metadata": metadata,
+                        "embedding": query_vector,
+                        "created_at": metadata.get("ts", 0.0),
+                    }
+                ]
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -477,14 +473,16 @@ class DuckDBRAGStore:
         results = []
         for c in chunks:
             metadata = c.document_id if isinstance(c.document_id, dict) else {}
-            results.append({
-                "text": c.content,
-                "source_type": metadata.get("source_type", ""),
-                "finding_id": metadata.get("finding_id", c.chunk_id),
-                "ts": metadata.get("ts", 0.0),
-                "ioc_types": metadata.get("ioc_types", ""),
-                "score": c.final_score if c.final_score > 0 else c.vector_score,
-            })
+            results.append(
+                {
+                    "text": c.content,
+                    "source_type": metadata.get("source_type", ""),
+                    "finding_id": metadata.get("finding_id", c.chunk_id),
+                    "ts": metadata.get("ts", 0.0),
+                    "ioc_types": metadata.get("ioc_types", ""),
+                    "score": c.final_score if c.final_score > 0 else c.vector_score,
+                }
+            )
         return results
 
     def count_documents(self) -> int:
@@ -495,9 +493,7 @@ class DuckDBRAGStore:
             conn = store._conn
             if conn is None:
                 return 0
-            result = conn.execute(
-                "SELECT COUNT(*) FROM rag_embeddings"
-            ).fetchone()
+            result = conn.execute("SELECT COUNT(*) FROM rag_embeddings").fetchone()
             return result[0] if result else 0
         except Exception:  # noqa: BLE001
             return 0
@@ -505,6 +501,7 @@ class DuckDBRAGStore:
     def _make_pending_done_callback(self) -> Any:
         """Create a done-callback that removes the task from _pending_tasks."""
         import weakref
+
         _self_ref = weakref.ref(self)
 
         def _cb(task: asyncio.Task) -> None:
@@ -518,6 +515,7 @@ class DuckDBRAGStore:
                     pass
             except Exception:  # noqa: BLE001
                 pass
+
         return _cb
 
     async def close(self) -> None:
@@ -537,11 +535,12 @@ class DuckDBRAGStore:
                     ok_results, errors = _check_gathered(gathered)
                     for err in errors:
                         _logger.debug("[DUCKDB:RAG] close: pending task failed: %s", err)
-            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+            except TimeoutError, Exception:  # noqa: BLE001
                 pass
 
 
 # ── Entity Store ───────────────────────────────────────────────────────────────
+
 
 class DuckDBEntityStore:
     """
@@ -600,7 +599,8 @@ class DuckDBEntityStore:
             try:
                 from hledac.universal.brain.mlx_embedder import (
                     MLXEmbedder,
-    )
+                )
+
                 self._embedder = MLXEmbedder()
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"[DUCKDB:ENTITY] Embedder unavailable: {e}")
@@ -701,7 +701,7 @@ class DuckDBEntityStore:
             policy="collect",
             concurrency=2,
             ctx="duckdb_rag_store:hybrid_search",
-    )
+        )
         fts_results = hybrid_results[0] if len(hybrid_results) > 0 else []
         vec_results = hybrid_results[1] if len(hybrid_results) > 1 else []
 
@@ -735,7 +735,7 @@ class DuckDBEntityStore:
                     entity_type=cand.get("entity_type", ""),
                     distance=combined_dist,
                     metadata=cand.get("metadata", {}),
-            )
+                )
             )
 
         # Sort by combined distance (lower is better)
@@ -805,9 +805,7 @@ class DuckDBEntityStore:
         if query_vector is None:
             query_vector = [0.0] * _EMBED_DIM
 
-        vec_results = await self._store.vector_search_entities(
-            query_vector, k=fetch_k, entity_type=entity_type
-    )
+        vec_results = await self._store.vector_search_entities(query_vector, k=fetch_k, entity_type=entity_type)
 
         if not vec_results:
             return []
@@ -820,13 +818,14 @@ class DuckDBEntityStore:
                     entity_type=r.get("entity_type", ""),
                     distance=r.get("distance", 1.0),
                     metadata=r.get("metadata", {}),
-    )
+                )
                 for r in vec_results
             ]
 
         # MMR reranking
         try:
             import numpy as np
+
             from context_optimization.mmr import maximal_marginal_relevance
 
             vectors = []
@@ -839,9 +838,7 @@ class DuckDBEntityStore:
             if vectors:
                 matrix = np.vstack(vectors)
                 query_vec = np.array(query_vector, dtype=np.float32)
-                mmr_indices = maximal_marginal_relevance(
-                    query_vec, list(matrix), top_k=k, lambda_param=lambda_mult
-    )
+                mmr_indices = maximal_marginal_relevance(query_vec, list(matrix), top_k=k, lambda_param=lambda_mult)
 
                 return [
                     EntityCandidate(
@@ -850,7 +847,7 @@ class DuckDBEntityStore:
                         entity_type=vec_results[i].get("entity_type", ""),
                         distance=vec_results[i].get("distance", 1.0),
                         metadata=vec_results[i].get("metadata", {}),
-    )
+                    )
                     for i in mmr_indices
                     if i < len(vec_results)
                 ]
@@ -864,7 +861,7 @@ class DuckDBEntityStore:
                 entity_type=r.get("entity_type", ""),
                 distance=r.get("distance", 1.0),
                 metadata=r.get("metadata", {}),
-    )
+            )
             for r in vec_results[:k]
         ]
 
@@ -877,9 +874,7 @@ class DuckDBEntityStore:
             if conn is None:
                 return {"status": "disconnected", "entity_count": 0}
 
-            entity_count = conn.execute(
-                "SELECT COUNT(*) FROM entity_embeddings"
-            ).fetchone()[0] or 0
+            entity_count = conn.execute("SELECT COUNT(*) FROM entity_embeddings").fetchone()[0] or 0
 
             return {
                 "status": "healthy",

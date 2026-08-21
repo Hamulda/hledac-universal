@@ -11,15 +11,12 @@ Verifies:
 No live execution. No network. No MLX.
 """
 
-
-
 import ast
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-from _core import aclose
 
 # test file: hledac/universal/tests/probe_f229d_next_action_import_compat/test_*.py
 # parent chain: test_f229d... -> tests/probe_f229d... -> tests -> hledac/universal
@@ -35,13 +32,13 @@ NAM_PATH = UNIVERSAL_ROOT / "benchmarks" / "live_measurement_next_action.py"
 class TestSourceAssertions:
     """lsm imports _derive_next_action from live_measurement_next_action."""
 
-    def test_lsm_file_exists(self):
+    def test_lsm_file_exists(self) -> None:
         assert LSM_PATH.exists(), f"live_sprint_measurement.py not found at {LSM_PATH}"
 
-    def test_nam_file_exists(self):
+    def test_nam_file_exists(self) -> None:
         assert NAM_PATH.exists(), f"live_measurement_next_action.py not found at {NAM_PATH}"
 
-    def test_lsm_imports_derive_next_action(self):
+    def test_lsm_imports_derive_next_action(self) -> None:
         """Line ~676: from benchmarks.live_measurement_next_action import _derive_next_action."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
@@ -49,13 +46,11 @@ class TestSourceAssertions:
             if isinstance(node, ast.ImportFrom):
                 if node.module == "benchmarks.live_measurement_next_action":
                     names = [alias.name for alias in node.names]
-                    assert "_derive_next_action" in names, (
-                        f"_derive_next_action not in import statement: {names}"
-    )
+                    assert "_derive_next_action" in names, f"_derive_next_action not in import statement: {names}"
                     return
         pytest.fail("_derive_next_action import from benchmarks.live_measurement_next_action not found")
 
-    def test_lsm_imports_next_action_input(self):
+    def test_lsm_imports_next_action_input(self) -> None:
         """Line ~677: NextActionInput also imported from next_action module."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
@@ -63,13 +58,11 @@ class TestSourceAssertions:
             if isinstance(node, ast.ImportFrom):
                 if node.module == "benchmarks.live_measurement_next_action":
                     names = [alias.name for alias in node.names]
-                    assert "NextActionInput" in names, (
-                        f"NextActionInput not in import statement: {names}"
-    )
+                    assert "NextActionInput" in names, f"NextActionInput not in import statement: {names}"
                     return
         pytest.fail("NextActionInput import from benchmarks.live_measurement_next_action not found")
 
-    def test_lsm_imports_was_family_attempted(self):
+    def test_lsm_imports_was_family_attempted(self) -> None:
         """Line ~679: _was_family_attempted also imported."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
@@ -77,13 +70,11 @@ class TestSourceAssertions:
             if isinstance(node, ast.ImportFrom):
                 if node.module == "benchmarks.live_measurement_next_action":
                     names = [alias.name for alias in node.names]
-                    assert "_was_family_attempted" in names, (
-                        f"_was_family_attempted not in import statement: {names}"
-    )
+                    assert "_was_family_attempted" in names, f"_was_family_attempted not in import statement: {names}"
                     return
         pytest.fail("_was_family_attempted import from benchmarks.live_measurement_next_action not found")
 
-    def test_lsm_no_local_next_action_input(self):
+    def test_lsm_no_local_next_action_input(self) -> None:
         """live_sprint_measurement.py does NOT locally define NextActionInput."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
@@ -91,28 +82,26 @@ class TestSourceAssertions:
             if isinstance(node, ast.ClassDef) and node.name == "NextActionInput":
                 pytest.fail("NextActionInput defined locally in live_sprint_measurement.py — extraction incomplete")
 
-    def test_lsm_no_local_rule_helpers(self):
+    def test_lsm_no_local_rule_helpers(self) -> None:
         """live_sprint_measurement.py does NOT locally define any _rule_* helpers."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
         local_rules = [
-            node.name for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef)
-            and node.name.startswith("_rule")
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name.startswith("_rule")
         ]
-        assert not local_rules, (
-            f"Local _rule_* definitions found in live_sprint_measurement.py: {local_rules}"
-    )
+        assert not local_rules, f"Local _rule_* definitions found in live_sprint_measurement.py: {local_rules}"
 
-    def test_lsm_no_local_was_family_attempted(self):
+    def test_lsm_no_local_was_family_attempted(self) -> None:
         """live_sprint_measurement.py does NOT locally define _was_family_attempted."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "_was_family_attempted":
-                pytest.fail("_was_family_attempted defined locally in live_sprint_measurement.py — extraction incomplete")
+                pytest.fail(
+                    "_was_family_attempted defined locally in live_sprint_measurement.py — extraction incomplete"
+                )
 
-    def test_lsm_no_local_derive_next_action(self):
+    def test_lsm_no_local_derive_next_action(self) -> None:
         """live_sprint_measurement.py does NOT locally define _derive_next_action."""
         src = LSM_PATH.read_text()
         tree = ast.parse(src)
@@ -120,7 +109,7 @@ class TestSourceAssertions:
             if isinstance(node, ast.FunctionDef) and node.name == "_derive_next_action":
                 pytest.fail("_derive_next_action defined locally in live_sprint_measurement.py — extraction incomplete")
 
-    def test_nam_exports_expected_symbols(self):
+    def test_nam_exports_expected_symbols(self) -> None:
         """next_action module __all__ contains the expected public symbols."""
         src = NAM_PATH.read_text()
         tree = ast.parse(src)
@@ -131,9 +120,7 @@ class TestSourceAssertions:
                         if isinstance(node.value, ast.List):
                             names = [elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)]
                             expected = {"NextActionInput", "_derive_next_action", "_was_family_attempted"}
-                            assert expected.issubset(set(names)), (
-                                f"__all__ missing expected symbols. Found: {names}"
-    )
+                            assert expected.issubset(set(names)), f"__all__ missing expected symbols. Found: {names}"
                             return
         pytest.fail("__all__ not found in live_measurement_next_action.py")
 
@@ -155,6 +142,7 @@ class TestImportAssertions:
             sys.path.insert(0, root)
         # Import the module (no live execution)
         import benchmarks.live_sprint_measurement as m
+
         return m
 
     @pytest.fixture
@@ -164,55 +152,61 @@ class TestImportAssertions:
         if root not in sys.path:
             sys.path.insert(0, root)
         import benchmarks.live_measurement_next_action as m
+
         return m
 
-    def test_nam_import_succeeds(self, nam_module):
+    def test_nam_import_succeeds(self, nam_module) -> None:
         """import benchmarks.live_measurement_next_action succeeds without runtime deps."""
         assert nam_module is not None
 
-    def test_lsm_import_succeeds(self, lsm_module):
+    def test_lsm_import_succeeds(self, lsm_module) -> None:
         """import benchmarks.live_sprint_measurement succeeds without live execution."""
         assert lsm_module is not None
 
-    def test_lsm_derive_next_action_is_callable(self, lsm_module):
+    def test_lsm_derive_next_action_is_callable(self, lsm_module) -> None:
         """lsm._derive_next_action is callable."""
         assert callable(lsm_module._derive_next_action)
 
-    def test_nam_derive_next_action_is_callable(self, nam_module):
+    def test_nam_derive_next_action_is_callable(self, nam_module) -> None:
         """next_action_module._derive_next_action is callable."""
         assert callable(nam_module._derive_next_action)
 
-    def test_lsm_next_action_input_is_callable_ctor(self, lsm_module):
+    def test_lsm_next_action_input_is_callable_ctor(self, lsm_module) -> None:
         """lsm.NextActionInput is a dataclass (constructible)."""
         # NextActionInput is a frozen dataclass — verify it exists and has fields
         assert hasattr(lsm_module, "NextActionInput")
         cls = lsm_module.NextActionInput
         assert hasattr(cls, "__dataclass_fields__")
 
-    def test_nam_next_action_input_fields(self, nam_module):
+    def test_nam_next_action_input_fields(self, nam_module) -> None:
         """NAM NextActionInput has the expected fields."""
         cls = nam_module.NextActionInput
         fields = cls.__dataclass_fields__
         required = {
-            "status", "is_memory_gate_abort", "nonfeed_accepted_findings",
-            "public_fetch_attempted", "public_findings", "feed_findings",
-            "total_findings", "ct_findings", "runtime_truth",
+            "status",
+            "is_memory_gate_abort",
+            "nonfeed_accepted_findings",
+            "public_fetch_attempted",
+            "public_findings",
+            "feed_findings",
+            "total_findings",
+            "ct_findings",
+            "runtime_truth",
         }
         actual = set(fields.keys())
         missing = required - actual
         assert not missing, f"NextActionInput missing fields: {missing}"
 
-    def test_nam_rule_count(self):
+    def test_nam_rule_count(self) -> None:
         """next_action module defines 8 _rule helper functions."""
         src = NAM_PATH.read_text()
         tree = ast.parse(src)
         rules = [
-            node.name for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("_rule")
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name.startswith("_rule")
         ]
         assert len(rules) == 8, f"Expected 8 _rule helpers, found {len(rules)}: {rules}"
 
-    def test_lsm_rules_re_exported(self, lsm_module):
+    def test_lsm_rules_re_exported(self, lsm_module) -> None:
         """live_sprint_measurement re-exports all _rule helpers from NAM."""
         for name in [
             "_rule_wallclock_enforcement",
@@ -241,6 +235,7 @@ class TestBehaviorAssertion:
         if root not in sys.path:
             sys.path.insert(0, root)
         import benchmarks.live_measurement_next_action as m
+
         return m
 
     @pytest.fixture
@@ -249,6 +244,7 @@ class TestBehaviorAssertion:
         if root not in sys.path:
             sys.path.insert(0, root)
         import benchmarks.live_sprint_measurement as m
+
         return m
 
     def _make_minimal_input(self, nam_module) -> Any:
@@ -270,9 +266,9 @@ class TestBehaviorAssertion:
             total_findings=0,
             ct_findings=0,
             runtime_truth=runtime_truth,
-    )
+        )
 
-    def test_same_input_same_output_nam_path(self, nam_module):
+    def test_same_input_same_output_nam_path(self, nam_module) -> None:
         """NAM path produces a well-formed (action, detail) tuple."""
         inp = self._make_minimal_input(nam_module)
         result = nam_module._derive_next_action(
@@ -311,15 +307,15 @@ class TestBehaviorAssertion:
             windup_guard_observation=getattr(inp, "windup_guard_observation", None),
             scheduler_deadline_enforced=getattr(inp, "scheduler_deadline_enforced", False),
             scheduler_deadline_checks=getattr(inp, "scheduler_deadline_checks", 0),
-    )
+        )
         assert isinstance(result, tuple), f"result must be tuple, got {type(result)}"
         action = result[0]
         assert isinstance(action, str), f"action must be str, got {type(action)}"
         assert action == "unknown" or action.startswith("fix_") or action.startswith("clean_"), (
             f"Unexpected action: {action}"
-    )
+        )
 
-    def test_same_input_same_output_both_paths(self, nam_module, lsm_module):
+    def test_same_input_same_output_both_paths(self, nam_module, lsm_module) -> None:
         """Identical inputs produce identical (action, detail) tuples via lsm and nam."""
         # Build a fixture with mixed findings
         runtime_truth = {
@@ -364,7 +360,7 @@ class TestBehaviorAssertion:
             windup_guard_observation=None,
             scheduler_deadline_enforced=False,
             scheduler_deadline_checks=0,
-    )
+        )
 
         def call(mod, input_inp):
             return mod._derive_next_action(
@@ -403,16 +399,14 @@ class TestBehaviorAssertion:
                 windup_guard_observation=getattr(input_inp, "windup_guard_observation", None),
                 scheduler_deadline_enforced=getattr(input_inp, "scheduler_deadline_enforced", False),
                 scheduler_deadline_checks=getattr(input_inp, "scheduler_deadline_checks", 0),
-    )
+            )
 
         nam_result = call(nam_module, inp)
         lsm_result = call(lsm_module, inp)
 
-        assert nam_result == lsm_result, (
-            f"Behavior mismatch:\n  NAM result: {nam_result}\n  LSM result: {lsm_result}"
-    )
+        assert nam_result == lsm_result, f"Behavior mismatch:\n  NAM result: {nam_result}\n  LSM result: {lsm_result}"
 
-    def test_was_family_attempted_both_paths(self, nam_module, lsm_module):
+    def test_was_family_attempted_both_paths(self, nam_module, lsm_module) -> None:
         """_was_family_attempted returns same result via both modules."""
         rt = {"branch_mix": {"public_findings": 5}, "public_branch_timed_out": False}
         assert nam_module._was_family_attempted(rt, "public") == lsm_module._was_family_attempted(rt, "public")

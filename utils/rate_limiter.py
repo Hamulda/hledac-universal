@@ -7,8 +7,6 @@ This module is kept as a backward-compatibility shim only.
 SSOT moved to rate_limiters.py (Sprint 7C).
 """
 
-
-
 # Re-export everything from the canonical implementation
 from .rate_limiters import (
     QOS_CLASS_BACKGROUND,

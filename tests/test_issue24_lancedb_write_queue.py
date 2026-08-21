@@ -9,14 +9,12 @@ import asyncio
 from unittest.mock import MagicMock
 
 from hledac.universal.knowledge.lancedb_store import (
+    _NUM_WRITERS,
     _ensure_write_worker,
     _ensure_write_workers,
     _get_table_queue,
     _get_write_queue,
-    _register_table,
-    _writer_loop,
     _write_worker,
-    _NUM_WRITERS,
 )
 
 
@@ -43,7 +41,7 @@ class TestWriteQueueBasics:
         mock_table = MagicMock()
         queue: asyncio.Queue[tuple[list | None, float]] = asyncio.Queue()
 
-        async def run():
+        async def run() -> None:
             # Put one item
             import time
 
@@ -68,9 +66,10 @@ class TestMultiWriterArchitecture:
 
     def test_get_table_queue_returns_shared_queue(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """M5: Same table name returns same queue instance."""
-        async def run():
-            q1 = await _get_table_queue('entities')
-            q2 = await _get_table_queue('entities')
+
+        async def run() -> bool:
+            q1 = await _get_table_queue("entities")
+            q2 = await _get_table_queue("entities")
             assert q1 is q2
             return True
 
@@ -78,9 +77,10 @@ class TestMultiWriterArchitecture:
 
     def test_different_tables_get_different_queues(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """M5: Different table names get different queues."""
-        async def run():
-            q1 = await _get_table_queue('entities')
-            q2 = await _get_table_queue('papers')
+
+        async def run() -> bool:
+            q1 = await _get_table_queue("entities")
+            q2 = await _get_table_queue("papers")
             assert q1 is not q2
             return True
 
@@ -88,9 +88,11 @@ class TestMultiWriterArchitecture:
 
     def test_multi_writer_startup(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """M5: _ensure_write_workers starts 4 writer tasks."""
-        async def run():
+
+        async def run() -> bool:
             await _ensure_write_workers()
             from hledac.universal.knowledge.lancedb_store import _writer_tasks
+
             assert len(_writer_tasks) == _NUM_WRITERS
             # All tasks should be running (not done)
             for t in _writer_tasks:
@@ -103,9 +105,10 @@ class TestMultiWriterArchitecture:
         """M5: Legacy _ensure_write_worker still works and starts the pool."""
         mock_table = MagicMock()
 
-        async def run():
+        async def run() -> bool:
             await _ensure_write_worker(mock_table)
             from hledac.universal.knowledge.lancedb_store import _writer_tasks
+
             assert len(_writer_tasks) == _NUM_WRITERS
             return True
 

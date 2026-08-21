@@ -20,25 +20,25 @@ Or use the central re-export:
 
 This module re-exports everything from runtime.sidecars for seamless migration.
 """
+
 from __future__ import annotations
 
 # Re-export everything from the new canonical location
 from hledac.universal.runtime.sidecars import (  # noqa: F401
-    OnionDiscoverySidecarAdapter,
+    BannerGrabSidecarAdapter,
+    BGPEnrichmentSidecarAdapter,
+    CommonCrawlSidecarAdapter,
+    DHTDiscoverySidecarAdapter,
+    DigitalGhostSidecarAdapter,
     I2PDiscoverySidecarAdapter,
     IPFSDiscoverySidecarAdapter,
-    DHTDiscoverySidecarAdapter,
-    CommonCrawlSidecarAdapter,
-    BGPEnrichmentSidecarAdapter,
-    BannerGrabSidecarAdapter,
-    TIFeedSidecarAdapter,
-    DigitalGhostSidecarAdapter,
+    OnionDiscoverySidecarAdapter,
     SteganographySidecarAdapter,
-    )
+    TIFeedSidecarAdapter,
+)
 
 # Backward-compatibility shim: bind_scheduler delegates to the new location
-from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler
-from _core import aclose
+
 
 # Re-export ensure_legacy_adapters_registered as a no-op (adapters auto-register)
 def ensure_legacy_adapters_registered() -> None:

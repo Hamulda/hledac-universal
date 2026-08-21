@@ -4,6 +4,7 @@ Multimodal module — Apple Silicon media pipeline (SILICON-02/07).
 Shared helpers:
   - check_ram_guard(governor) — canonical M1 UMA headroom check
 """
+
 from __future__ import annotations
 
 import logging
@@ -55,24 +56,23 @@ from .media_engine import (  # [SILICON-02]
     is_audio_file,
     is_media_file,
     is_video_file,
-    )
+)
 from .media_ioc_pipeline import (  # [SILICON-07]
     MediaIocPipeline,
     MediaIocResult,
-    scan_text_for_iocs,
-    get_pipeline,
     close_pipeline,
-    )
+    get_pipeline,
+    scan_text_for_iocs,
+)
+from .vision_encoder import VisionEncoder
 from .whisper_transcriber import (  # [SILICON-02b]
-    TranscriptionRouter,
     EngineChoice,
     TranscriptionEngine,
+    TranscriptionRouter,
     get_transcription_router,
-    transcribe_audio,
     transcribe_and_extract_iocs,
-    )
-from .vision_encoder import VisionEncoder
-from _core import aclose
+    transcribe_audio,
+)
 
 __all__ = [
     # Shared helpers

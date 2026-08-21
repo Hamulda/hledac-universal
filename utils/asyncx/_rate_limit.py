@@ -12,7 +12,6 @@
 # - Fully async: uses asyncio.sleep() not blocking time.sleep()
 
 
-
 """
 Rate limiting primitives
 
@@ -35,15 +34,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.lru_cache import LRUCache
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-
-# ---------------------------------------------------------------------------
-# BoundedPerHostGate — LRU-bounded per-host concurrency gate
-# ---------------------------------------------------------------------------
 
 class BoundedPerHostGate:
     """
@@ -66,9 +60,6 @@ class BoundedPerHostGate:
         self._gates: LRUCache[str, asyncio.Semaphore] = LRUCache(max_size=max_hosts)
         self._stats: dict[str, int] = {"evicted": 0, "hits": 0, "misses": 0}
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
     def _evict_idle(self) -> None:
         """Evict LRU hosts when over capacity (called lazily on miss).
 
@@ -82,9 +73,6 @@ class BoundedPerHostGate:
             self._gates.popitem(last=False)  # O(1) LRU evict
         self._stats["evicted"] += evict_count
 
-    # ------------------------------------------------------------------
-    # Public API — acquire / release pair
-    # ------------------------------------------------------------------
     async def acquire(self, host: str) -> tuple[asyncio.Semaphore, str]:
         """
         Acquire a per-host concurrency slot.
@@ -116,9 +104,6 @@ class BoundedPerHostGate:
         except ValueError:  # noqa: BLE001
             pass  # already released
 
-    # ------------------------------------------------------------------
-    # Stats
-    # ------------------------------------------------------------------
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot."""
         cache_stats = self._gates.stats
@@ -131,13 +116,10 @@ class BoundedPerHostGate:
         }
 
 
-# ---------------------------------------------------------------------------
-# DomainRateLimiter — per-domain token-bucket rate limiter (CB-02)
-# ---------------------------------------------------------------------------
-
 @dataclass(slots=True)
 class _TokenBucketState:
     """Internal state for a single domain's token bucket."""
+
     tokens: float
     last_refill: float
 
@@ -188,9 +170,6 @@ class DomainRateLimiter:
         self._stats: dict[str, int] = {"evicted": 0, "hits": 0, "misses": 0, "waited": 0}
         self._lock = asyncio.Lock()
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
     def _evict_idle(self) -> None:
         """Evict LRU hosts when over capacity (called lazily on miss)."""
         if len(self._buckets) < self._max_hosts:
@@ -200,9 +179,6 @@ class DomainRateLimiter:
             self._buckets.popitem(last=False)
         self._stats["evicted"] += evict_count
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     async def acquire(self, host: str) -> float:
         """
         Acquire permission to make a request to the given domain.
@@ -257,9 +233,6 @@ class DomainRateLimiter:
                     bucket.tokens -= 1.0
         return wait_time
 
-    # ------------------------------------------------------------------
-    # Stats
-    # ------------------------------------------------------------------
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot."""
         cache_stats = self._buckets.stats

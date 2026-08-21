@@ -12,17 +12,14 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
-import msgspec
 import orjson
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ─── EvidenceQuery ───────────────────────────────────────────────────────────────
 
 
 class EvidenceQuery:
@@ -35,8 +32,13 @@ class EvidenceQuery:
     """
 
     __slots__ = (
-        '_events', '_index', '_run_id', '_total_count',
-        '_chain_head', '_genesis_hash', '_frozen',
+        "_events",
+        "_index",
+        "_run_id",
+        "_total_count",
+        "_chain_head",
+        "_genesis_hash",
+        "_frozen",
     )
 
     def __init__(
@@ -51,7 +53,7 @@ class EvidenceQuery:
         self._run_id = run_id
         self._total_count = len(self._events)
         self._chain_head = chain_head
-        self._genesis_hash = genesis_hash or ''
+        self._genesis_hash = genesis_hash or ""
         self._frozen = True
         self._rebuild_index()
 
@@ -117,28 +119,28 @@ class EvidenceQuery:
     def get_summary_lines(self, last_n: int = 10) -> Iterator[str]:
         """Yield summary lines for last N events."""
         for event in list(self._events)[-last_n:]:
-            ts = datetime.fromtimestamp(event.timestamp).strftime('%H:%M:%S')
+            ts = datetime.fromtimestamp(event.timestamp).strftime("%H:%M:%S")
             summary = self._summarize_payload(event.payload)
             yield f"[{ts}] {event.event_type}: {summary}"
 
     def get_summary(self, last_n: int = 10) -> str:
         """Get summary of last N events."""
-        return '\n'.join(self.get_summary_lines(last_n))
+        return "\n".join(self.get_summary_lines(last_n))
 
     @staticmethod
     def _summarize_payload(payload: dict[str, Any] | None, max_length: int = 60) -> str:
         """Summarize payload for display."""
         if not payload:
-            return ''
-        kind = payload.get('kind', 'unknown')
-        if kind == 'claim':
-            text = payload.get('claim', {}).get('text', '')[:max_length]
+            return ""
+        kind = payload.get("kind", "unknown")
+        if kind == "claim":
+            text = payload.get("claim", {}).get("text", "")[:max_length]
             return f"claim: {text}"
-        if kind == 'decision':
-            summary = payload.get('summary', {})[:max_length]
+        if kind == "decision":
+            summary = payload.get("summary", {})[:max_length]
             return f"decision: {summary}"
-        if kind == 'evidence_packet':
-            source = payload.get('source', 'unknown')
+        if kind == "evidence_packet":
+            source = payload.get("source", "unknown")
             return f"evidence: {source}"
         return str(payload)[:max_length]
 
@@ -146,22 +148,23 @@ class EvidenceQuery:
         """Export events to JSONL."""
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, 'wb') as f:
+            with open(path, "wb") as f:
                 for event in self._events:
-                    f.write(event.to_jsonl_line().encode('utf-8') + b'\n')
+                    f.write(event.to_jsonl_line().encode("utf-8") + b"\n")
             return None
-        return '\n'.join(e.to_jsonl_line() for e in self._events)
+        return "\n".join(e.to_jsonl_line() for e in self._events)
 
     @classmethod
     def from_jsonl(cls, path: Path, run_id: str | None = None) -> EvidenceQuery:
         """Load events from JSONL."""
         from hledac.universal.evidence._writer import EvidenceEvent
+
         events = []
         chain_head = None
         total_count = 0
 
         try:
-            with open(path, 'rb') as f:
+            with open(path, "rb") as f:
                 for line in f:
                     try:
                         data = orjson.loads(line)
@@ -175,10 +178,10 @@ class EvidenceQuery:
             pass
 
         return cls(
-            run_id=run_id or 'unknown',
+            run_id=run_id or "unknown",
             events=list(events),
             chain_head=chain_head,
-    )
+        )
 
     def verify_all(self) -> dict[str, Any]:
         """Verify integrity of all events."""
@@ -200,11 +203,11 @@ class EvidenceQuery:
             prev_hash = event.chain_hash
 
         return {
-            'total': len(self._events),
-            'valid': valid,
-            'invalid': invalid,
-            'broken_chains': broken_chains,
-            'verified': invalid == 0 and len(broken_chains) == 0,
+            "total": len(self._events),
+            "valid": valid,
+            "invalid": invalid,
+            "broken_chains": broken_chains,
+            "verified": invalid == 0 and len(broken_chains) == 0,
         }
 
     def get_chain(self, event_id: str) -> list:
@@ -212,7 +215,7 @@ class EvidenceQuery:
         chain = []
         visited = set()
 
-        def traverse(eid: str):
+        def traverse(eid: str) -> None:
             if eid in visited:
                 return
             visited.add(eid)
@@ -229,60 +232,61 @@ class EvidenceQuery:
     def get_statistics(self) -> dict[str, Any]:
         """Get event statistics."""
         from collections import Counter
+
         event_types = Counter(e.event_type for e in self._events)
         confidences = [e.confidence for e in self._events]
 
         return {
-            'total_events': len(self._events),
-            'event_types': dict(event_types),
-            'avg_confidence': sum(confidences) / len(confidences) if confidences else 0,
-            'low_confidence_count': sum(1 for c in confidences if c < 0.7),
+            "total_events": len(self._events),
+            "event_types": dict(event_types),
+            "avg_confidence": sum(confidences) / len(confidences) if confidences else 0,
+            "low_confidence_count": sum(1 for c in confidences if c < 0.7),
         }
 
     def get_sprint_health_summary(self) -> dict[str, Any]:
         """Get sprint health summary."""
         stats = self.get_statistics()
-        total = stats['total_events']
-        avg_conf = stats['avg_confidence']
-        low_conf = stats['low_confidence_count']
+        total = stats["total_events"]
+        avg_conf = stats["avg_confidence"]
+        low_conf = stats["low_confidence_count"]
 
-        error_count = stats['event_types'].get('error', 0)
+        error_count = stats["event_types"].get("error", 0)
         error_rate = error_count / total if total > 0 else 0
 
-        health = 'healthy'
+        health = "healthy"
         if error_rate > 0.2:
-            health = 'noisy'
+            health = "noisy"
         elif low_conf > total * 0.3:
-            health = 'low_confidence'
+            health = "low_confidence"
 
         return {
-            'total_events': total,
-            'health': health,
-            'error_rate_pct': error_rate * 100,
-            'low_conf_pressure': 'high' if low_conf > total * 0.3 else 'normal',
-            'avg_confidence': avg_conf,
-            'decision_count': stats['event_types'].get('decision', 0),
+            "total_events": total,
+            "health": health,
+            "error_rate_pct": error_rate * 100,
+            "low_conf_pressure": "high" if low_conf > total * 0.3 else "normal",
+            "avg_confidence": avg_conf,
+            "decision_count": stats["event_types"].get("decision", 0),
         }
 
     def get_retrospective_bundle(self) -> dict[str, Any]:
         """Single-call retrospective seam for private sprint retro."""
         health = self.get_sprint_health_summary()
-        total = health['total_events']
+        total = health["total_events"]
 
-        verdict = 'confident'
-        if health['health'] == 'noisy':
-            verdict = 'uncertain'
-        elif health['low_conf_pressure'] == 'high':
-            verdict = 'low_confidence'
+        verdict = "confident"
+        if health["health"] == "noisy":
+            verdict = "uncertain"
+        elif health["low_conf_pressure"] == "high":
+            verdict = "low_confidence"
 
         return {
-            'run_id': self._run_id,
-            'total_events': total,
-            'verdict': verdict,
-            'health': health['health'],
-            'operator_retro_brief': f"Sprint processed {total} events with {verdict} verdict.",
-            'continue_reason': 'healthy sprint, no pivot needed' if health['health'] == 'healthy' else 'review needed',
-            'trust_level': 'high' if health['health'] == 'healthy' else 'moderate',
-            'biggest_win': '',
-            'retro_priority': 'review errors' if health['health'] == 'noisy' else 'continue monitoring',
+            "run_id": self._run_id,
+            "total_events": total,
+            "verdict": verdict,
+            "health": health["health"],
+            "operator_retro_brief": f"Sprint processed {total} events with {verdict} verdict.",
+            "continue_reason": "healthy sprint, no pivot needed" if health["health"] == "healthy" else "review needed",
+            "trust_level": "high" if health["health"] == "healthy" else "moderate",
+            "biggest_win": "",
+            "retro_priority": "review errors" if health["health"] == "noisy" else "continue monitoring",
         }

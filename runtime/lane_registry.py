@@ -35,12 +35,9 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 __all__ = [
     "LaneRegistry",
@@ -474,75 +471,185 @@ _LANE_SPECS: dict[str, LaneSpec] = {
 
 _PROFILE_LANES: dict[str, frozenset[str]] = {
     # Default: clearnet only, minimal footprint
-    "default": frozenset({
-        "bgp", "whois", "social", "network_recon",
-        "providerless_discovery", "threat_intel",
-    }),
+    "default": frozenset(
+        {
+            "bgp",
+            "whois",
+            "social",
+            "network_recon",
+            "providerless_discovery",
+            "threat_intel",
+        }
+    ),
     # Non-feed diagnostic: same as default + research lanes
-    "nonfeed_diagnostic": frozenset({
-        "bgp", "whois", "social", "network_recon",
-        "providerless_discovery", "threat_intel",
-        "hypothesis", "graph_analysis",
-    }),
+    "nonfeed_diagnostic": frozenset(
+        {
+            "bgp",
+            "whois",
+            "social",
+            "network_recon",
+            "providerless_discovery",
+            "threat_intel",
+            "hypothesis",
+            "graph_analysis",
+        }
+    ),
     # Deep OSINT M1: all M1-safe lanes
-    "deep_osint_m1": frozenset({
-        "tor", "i2p", "nym", "dht", "ipfs",
-        "bgp", "bgp_pdns", "shodan", "censys", "greynoise",
-        "dark_pivots", "common_crawl", "wayback", "providerless_discovery",
-        "fediverse", "academic", "alt_protocols", "leak_sentinel",
-        "social", "social_identity_surface",
-        "passive_fingerprint", "passive_tech_stack",
-        "identity_stitching", "temporal_archaeology",
-        "hypothesis", "dspy", "hermes_synthesis", "graph_analysis",
-        "stealth_layer", "privacy_layer",
-        "layers", "research_layer", "content_layer",
-        "ti_feeds", "image_osint", "captcha_detection",
-        "network_recon", "banner_grab",
-    }),
+    "deep_osint_m1": frozenset(
+        {
+            "tor",
+            "i2p",
+            "nym",
+            "dht",
+            "ipfs",
+            "bgp",
+            "bgp_pdns",
+            "shodan",
+            "censys",
+            "greynoise",
+            "dark_pivots",
+            "common_crawl",
+            "wayback",
+            "providerless_discovery",
+            "fediverse",
+            "academic",
+            "alt_protocols",
+            "leak_sentinel",
+            "social",
+            "social_identity_surface",
+            "passive_fingerprint",
+            "passive_tech_stack",
+            "identity_stitching",
+            "temporal_archaeology",
+            "hypothesis",
+            "dspy",
+            "hermes_synthesis",
+            "graph_analysis",
+            "stealth_layer",
+            "privacy_layer",
+            "layers",
+            "research_layer",
+            "content_layer",
+            "ti_feeds",
+            "image_osint",
+            "captcha_detection",
+            "network_recon",
+            "banner_grab",
+        }
+    ),
     # Research: LLM + graph + research APIs, no dark surface
-    "research": frozenset({
-        "academic", "hypothesis", "dspy", "hermes_synthesis",
-        "graph_analysis", "graph_rag", "lancedb_rag",
-        "common_crawl", "wayback", "providerless_discovery",
-        "bgp", "shodan", "censys", "greynoise",
-        "social", "fediverse", "github_gist",
-        "layers", "research_layer", "content_layer",
-        "threat_intel", "ti_feeds",
-        "whois", "network_recon", "image_osint",
-    }),
+    "research": frozenset(
+        {
+            "academic",
+            "hypothesis",
+            "dspy",
+            "hermes_synthesis",
+            "graph_analysis",
+            "graph_rag",
+            "lancedb_rag",
+            "common_crawl",
+            "wayback",
+            "providerless_discovery",
+            "bgp",
+            "shodan",
+            "censys",
+            "greynoise",
+            "social",
+            "fediverse",
+            "github_gist",
+            "layers",
+            "research_layer",
+            "content_layer",
+            "threat_intel",
+            "ti_feeds",
+            "whois",
+            "network_recon",
+            "image_osint",
+        }
+    ),
     # Academic: research + geopolitical sources
-    "academic": frozenset({
-        "academic", "hypothesis", "dspy", "hermes_synthesis",
-        "graph_analysis", "lancedb_rag",
-        "common_crawl", "wayback", "providerless_discovery",
-        "bgp", "shodan", "censys", "greynoise",
-        "social", "fediverse", "github_gist",
-        "layers", "research_layer", "content_layer",
-        "threat_intel", "ti_feeds",
-        "whois", "network_recon",
-    }),
+    "academic": frozenset(
+        {
+            "academic",
+            "hypothesis",
+            "dspy",
+            "hermes_synthesis",
+            "graph_analysis",
+            "lancedb_rag",
+            "common_crawl",
+            "wayback",
+            "providerless_discovery",
+            "bgp",
+            "shodan",
+            "censys",
+            "greynoise",
+            "social",
+            "fediverse",
+            "github_gist",
+            "layers",
+            "research_layer",
+            "content_layer",
+            "threat_intel",
+            "ti_feeds",
+            "whois",
+            "network_recon",
+        }
+    ),
     # Geopolitical: academic + additional intelligence feeds
-    "geopolitical": frozenset({
-        "academic", "hypothesis", "dspy", "hermes_synthesis",
-        "graph_analysis", "lancedb_rag",
-        "common_crawl", "wayback", "providerless_discovery",
-        "bgp", "bgp_pdns", "shodan", "censys", "greynoise",
-        "social", "fediverse", "github_gist",
-        "layers", "research_layer", "content_layer",
-        "threat_intel", "ti_feeds",
-        "whois", "network_recon", "banner_grab",
-        "image_osint",
-    }),
+    "geopolitical": frozenset(
+        {
+            "academic",
+            "hypothesis",
+            "dspy",
+            "hermes_synthesis",
+            "graph_analysis",
+            "lancedb_rag",
+            "common_crawl",
+            "wayback",
+            "providerless_discovery",
+            "bgp",
+            "bgp_pdns",
+            "shodan",
+            "censys",
+            "greynoise",
+            "social",
+            "fediverse",
+            "github_gist",
+            "layers",
+            "research_layer",
+            "content_layer",
+            "threat_intel",
+            "ti_feeds",
+            "whois",
+            "network_recon",
+            "banner_grab",
+            "image_osint",
+        }
+    ),
     # Threat intelligence: TI-specific lanes
-    "threat_intel": frozenset({
-        "bgp", "bgp_pdns", "shodan", "censys", "greynoise",
-        "threat_intel", "ti_feeds",
-        "hypothesis", "dspy", "hermes_synthesis",
-        "dark_pivots", "common_crawl", "wayback",
-        "leak_sentinel", "identity_stitching",
-        "layers", "research_layer",
-        "whois", "network_recon",
-    }),
+    "threat_intel": frozenset(
+        {
+            "bgp",
+            "bgp_pdns",
+            "shodan",
+            "censys",
+            "greynoise",
+            "threat_intel",
+            "ti_feeds",
+            "hypothesis",
+            "dspy",
+            "hermes_synthesis",
+            "dark_pivots",
+            "common_crawl",
+            "wayback",
+            "leak_sentinel",
+            "identity_stitching",
+            "layers",
+            "research_layer",
+            "whois",
+            "network_recon",
+        }
+    ),
 }
 
 
@@ -578,7 +685,7 @@ class LaneRegistry:
             "LaneRegistry: profile=%s lanes=%s",
             profile,
             sorted(cls._profile_lanes),
-    )
+        )
 
     @classmethod
     def get_profile_lanes(cls) -> frozenset[str]:

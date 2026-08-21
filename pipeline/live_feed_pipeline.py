@@ -3,12 +3,6 @@
 feed_url -> 8AF fetch+parse -> entry normalization
     -> HTML->text (word-boundary safe, entity-safe)
 
-
-
-
-
-
-
     -> pattern scan via PatternMatcher (offloaded, bounded concurrency)
     -> CanonicalFinding per PatternHit
     -> storage
@@ -48,22 +42,32 @@ import threading
 import time
 import typing
 from collections import Counter
+from operator import attrgetter
 from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-from hledac.universal._core.rust_backend import get_accel
-
 import httpx
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 
+from compat.msgspec_gc_compat import Struct
+
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal._core.rust_backend import rust
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.pipeline._deduper import (
     _DiskEntryDeduper,
     _InMemoryEntryDeduper,
     make_entry_deduper,
     make_run_deduper,
-    )
+)
+
+# C3: Feed DTOs and Rust-accelerated decision functions
+from hledac.universal.pipeline._feed_dtos import (
+    _MIN_ARTICLE_FALLBACK_CHARS,
+    FallbackDecision,
+    compute_feed_branch_hint,
+    compute_feed_branch_verdict,
+    compute_feed_economics_verdict,
+    diagnose_signal_stage,
+)
 from hledac.universal.pipeline.scoring import (
     EntryQualitySignal,
     _assemble_clean_feed_text,
@@ -72,33 +76,8 @@ from hledac.universal.pipeline.scoring import (
     _compute_entry_quality_signal,
     _entry_payload_text,
     _strip_html_tags_from_text,
-    )
+)
 from hledac.universal.utils.confidence import clamp_confidence
-# C3: Feed DTOs and Rust-accelerated decision functions
-from hledac.universal.pipeline._feed_dtos import (
-    FeedQualityMetrics,
-    FeedFallbackMetrics,
-    FeedEconomicsVerdict,
-    FeedTelemetry,
-    FallbackDecision,
-    classify_fallback_decision,
-    diagnose_signal_stage,
-    compute_feed_branch_hint,
-    compute_feed_economics_verdict,
-    compute_feed_branch_verdict,
-    classify_fallback_decision_python,
-    diagnose_signal_stage_python,
-    compute_feed_branch_hint_python,
-    compute_feed_economics_verdict_python,
-    compute_feed_branch_verdict_python,
-    _MIN_ARTICLE_FALLBACK_CHARS,
-    batch_classify_fallback_decisions,
-    )
-
-
-
-# R6: Centralized Rust access via core.rust_backend
-from hledac.universal._core.rust_backend import rust
 
 _rust_extract_payload_context = rust.raw.extract_payload_context
 _rust_scan_query_context = rust.raw.scan_query_context
@@ -108,10 +87,6 @@ if TYPE_CHECKING:
         CanonicalFinding,
         DuckDBShadowStore,
     )
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 MAX_FEED_TEXT_CHARS: int = 4000
 FEED_PAYLOAD_CONTEXT_CHARS: int = 200
@@ -123,16 +98,7 @@ _MAX_FEED_PATTERN_TASKS: int = min(max(4, (os.cpu_count() or 4) - 1), 8)
 # Timeout per arm (Wayback CDX 4s, primary fetch 8s) vs serial 4s+8s=12s worst case.
 _MAX_WAYBACK_FETCH_TIMEOUT: float = 8.0
 
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Patchable symbol for pattern offload (tests patch this, not asyncio.to_thread)
-# ---------------------------------------------------------------------------
-
 _ASYNC_PATTERN_OFFLOAD: Any = asyncio.to_thread
-
-# ---------------------------------------------------------------------------
-# Shared semaphore for bounded pattern offload concurrency — double-checked locking
-# ---------------------------------------------------------------------------
 
 _pattern_semaphore: asyncio.Semaphore | None = None
 _pattern_init_lock: threading.Lock = threading.Lock()
@@ -150,11 +116,6 @@ def _get_pattern_offload_semaphore() -> asyncio.Semaphore:
             if _pattern_semaphore is None:  # DCLP second check
                 _pattern_semaphore = asyncio.Semaphore(_MAX_FEED_PATTERN_TASKS)
     return _pattern_semaphore
-
-
-# ---------------------------------------------------------------------------
-# DTOs
-# ---------------------------------------------------------------------------
 
 
 class FeedPipelineEntryResult(Struct, frozen=True):
@@ -282,7 +243,7 @@ class FeedPipelineRunResult(Struct, frozen=True):
         return self.error is None
 
     @classmethod
-    def empty(cls, feed_url: str = "") -> "FeedPipelineRunResult":
+    def empty(cls, feed_url: str = "") -> FeedPipelineRunResult:
         """Skipped feed — zero results, no error."""
         return cls(
             feed_url=feed_url,
@@ -293,7 +254,7 @@ class FeedPipelineRunResult(Struct, frozen=True):
             matched_patterns=0,
             pages=(),
             error=None,
-    )
+        )
 
 
 @dataclasses.dataclass(slots=True)
@@ -404,17 +365,6 @@ class FeedIngestContext:
     zero_hit_feed_fetch_samples: tuple = ()  # (title, url) pairs, max 5
 
 
-# ---------------------------------------------------------------------------
-# Pre-store signal diagnosis helper (Sprint 8AU)
-# ---------------------------------------------------------------------------
-
-
-# ==============================================================================
-# Fallback decision classifier — Sprint F160A consolidation
-# Replaces 5+ scattered booleans with a single structured decision tree
-# ==============================================================================
-
-
 class FallbackDecision(Struct, frozen=True):
     """Structured fallback decision output.
 
@@ -464,7 +414,7 @@ def _classify_fallback_decision(
             wasted=True,
             helpful=False,
             skip_because="feed-native already carried hits",
-    )
+        )
 
     # Case 2: article fallback was not attempted — classify why
     if not article_fallback_attempted:
@@ -477,7 +427,7 @@ def _classify_fallback_decision(
                 wasted=False,
                 helpful=False,
                 skip_because=f"high quality ({quality_signal.quality_band}), assembled {assembled_text_len} chars",
-    )
+            )
         # Adapter override: high source priority bias skips even medium quality
         if adapter_source_priority_bias >= 0.1 and assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS:
             return FallbackDecision(
@@ -487,7 +437,7 @@ def _classify_fallback_decision(
                 wasted=False,
                 helpful=False,
                 skip_because=f"adapter source_priority_bias={adapter_source_priority_bias:.2f}",
-    )
+            )
         # Unknown / no signal possible
         return FallbackDecision(
             reason="no_fetch_warranted",
@@ -496,7 +446,7 @@ def _classify_fallback_decision(
             wasted=False,
             helpful=False,
             skip_because=f"assembled={assembled_text_len}, quality={quality_signal.quality_band}",
-    )
+        )
 
     # Case 3: fallback was forced by metadata/content mismatch
     if (
@@ -512,7 +462,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=False,
                 helpful=True,
-    )
+            )
         else:
             return FallbackDecision(
                 reason="forced_no_yield",
@@ -520,7 +470,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=True,
                 helpful=False,
-    )
+            )
 
     # Case 4: aged but structured entry (low quality but above threshold)
     if assembled_text_len >= _MIN_ARTICLE_FALLBACK_CHARS and quality_signal.quality_band == "low":
@@ -531,7 +481,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=False,
                 helpful=True,
-    )
+            )
         else:
             return FallbackDecision(
                 reason="aged_structured_no_yield",
@@ -539,7 +489,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=True,
                 helpful=False,
-    )
+            )
 
     # Case 5: adapter-mandated fallback (high metadata richness band, weak content)
     if adapter_metadata_richness_band == "high" and assembled_text_len < _MIN_ARTICLE_FALLBACK_CHARS:
@@ -550,7 +500,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=False,
                 helpful=True,
-    )
+            )
         else:
             return FallbackDecision(
                 reason="forced_adapter_no_yield",
@@ -558,7 +508,7 @@ def _classify_fallback_decision(
                 forced=True,
                 wasted=True,
                 helpful=False,
-    )
+            )
 
     # Case 6: normal below-threshold fallback
     if post_fallback_findings_count > 0:
@@ -568,7 +518,7 @@ def _classify_fallback_decision(
             forced=False,
             wasted=False,
             helpful=True,
-    )
+        )
     else:
         return FallbackDecision(
             reason="normal_fallback_no_yield",
@@ -576,7 +526,7 @@ def _classify_fallback_decision(
             forced=False,
             wasted=False,
             helpful=False,
-    )
+        )
 
 
 def _compute_feed_next_action_and_confidence(
@@ -716,11 +666,6 @@ def _compute_adapter_adjusted_confidence(
     return max(0, min(100, adjusted))
 
 
-# ---------------------------------------------------------------------------
-# Batch DTOs (Sprint 8AL)
-# ---------------------------------------------------------------------------
-
-
 class FeedSourceRunResult(Struct, frozen=True):
     """Result for a single feed source run within a batch."""
 
@@ -765,18 +710,10 @@ class FeedSourceBatchRunResult(Struct, frozen=True):
     estimated_per_source_soft_cap: int = 0
 
 
-# ---------------------------------------------------------------------------
-# --- HTML text processing (imported from pipeline.scoring) ---
-
-
-# ---------------------------------------------------------------------------
-# Query-derived domain/IP context for feed entries
-# ---------------------------------------------------------------------------
-
 _QUERY_DOMAIN_RE: re.Pattern[str] = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 _QUERY_IPV4_RE: re.Pattern[str] = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})\b"
-    )
+)
 _QUERY_IPV6_RE: re.Pattern[str] = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b")
 # Low-signal terms stripped from query before domain extraction
 # P0-2 FIX: Removed threat-generic and software vulnerability terms from stopwords.
@@ -847,12 +784,12 @@ _QUERY_STOPWORDS: typing.Final[frozenset[str]] = frozenset(
         "zerologon",
         "printnightmare",
     }
-    )
+)
 
 # Issue #6: pre-compiled single-pass stopword pattern — O(1) vs O(N) per re.sub()
 _QUERY_STOPWORD_PATTERN: typing.Final[re.Pattern[str]] = re.compile(
     r"\b(?:" + "|".join(re.escape(sw) for sw in _QUERY_STOPWORDS) + r")\b"
-    )
+)
 
 
 @functools.lru_cache(maxsize=256)
@@ -887,7 +824,6 @@ def _derive_query_context_terms(
     ipv6s: list[str] = []
     terms: list[str] = []
 
-    # Extract quoted strings as high-signal terms
     for part in re.findall(r'"([^"]{2,62})"', query):
         lp = part.lower().strip()
         if _QUERY_IPV4_RE.match(lp):
@@ -934,7 +870,6 @@ def _derive_query_context_terms(
     # O(1) set membership — identifiers already extracted are skipped
     terms.extend([t for t in remaining.split() if len(t) >= 2 and t not in _QUERY_STOPWORDS and t not in all_ids])
 
-    # Return tuples for LRU cache hashability
     return tuple(domains), tuple(ipv4s), tuple(ipv6s), tuple(terms)
 
 
@@ -992,7 +927,7 @@ async def _scan_query_context_terms(
                     "start": pos,
                     "end": pos + len(dom),
                 }
-    )
+            )
             pos = text_lower.find(dom.lower(), pos + 1)
 
     for ip in ipv4s:
@@ -1006,7 +941,7 @@ async def _scan_query_context_terms(
                     "start": pos,
                     "end": pos + len(ip),
                 }
-    )
+            )
             pos = text_lower.find(ip, pos + 1)
 
     for ip in ipv6s:
@@ -1020,7 +955,7 @@ async def _scan_query_context_terms(
                     "start": pos,
                     "end": pos + len(ip),
                 }
-    )
+            )
             pos = text_lower.find(ip.lower(), pos + 1)
 
     for term in terms[:20]:
@@ -1034,7 +969,7 @@ async def _scan_query_context_terms(
                     "start": pos,
                     "end": pos + len(term),
                 }
-    )
+            )
             pos = text_lower.find(term, pos + 1)
 
     return hits
@@ -1062,15 +997,7 @@ def _assemble_clean_feed_text(title: str, summary: str) -> str:  # noqa: F811
     return "\n\n".join(parts)
 
 
-# --- Feed text assembly (imported from pipeline.scoring) ---
-
-# Backwards-compatible alias (used by probe_8ah tests)
 _entry_payload_text = _assemble_clean_feed_text  # noqa: F811
-
-# ---------------------------------------------------------------------------
-# Backwards-compatible entry-to-candidate-findings (used by probe_8ah tests)
-# DEPRECATED: pipeline now uses pattern-backed approach via _entry_to_pattern_findings
-# ---------------------------------------------------------------------------
 
 
 def _entry_to_candidate_findings(
@@ -1110,10 +1037,6 @@ def _entry_to_candidate_findings(
     ]
 
 
-# ---------------------------------------------------------------------------
-# Timestamp sanity
-# ---------------------------------------------------------------------------
-
 _MIN_SANE_TS = 946684800.0  # 2000-01-01 00:00:00 UTC
 _ONE_DAY_S = 86400.0
 
@@ -1128,11 +1051,6 @@ def _sane_timestamp(published_ts: float | None) -> float:
     return published_ts
 
 
-# ---------------------------------------------------------------------------
-# Deterministic finding ID
-# ---------------------------------------------------------------------------
-
-
 def _make_feed_finding_id(
     feed_url: str,
     entry_url: str,
@@ -1143,23 +1061,18 @@ def _make_feed_finding_id(
     """Deterministic ID via sha256 using pattern identity fields.
 
     No hash() — deterministic across runs.
-    
+
     E1: Uses hardware-accelerated SHA-256 (ARM NEON on Apple Silicon).
     """
     key = f"{feed_url}\x00{entry_url}\x00{label}\x00{pattern}\x00{value}"
     try:
         from _core.rust_backend import rust
+
         hashes = rust.crypto.batch_sha256_hw([key])
         return hashes[0][:16] if hashes else hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     except Exception:
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
-
-# ---------------------------------------------------------------------------
-# Per-run dedup
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 
 # E4: StreamingIocScanner-based IOC batch stage for RSS/Live feed throughput.
 # Replaces line-by-line re.findall with batch Aho-Corasick scan via Rust.
@@ -1167,16 +1080,19 @@ def _make_feed_finding_id(
 # ponytail: shared scanner, one automaton build, batch call — no abstraction needed beyond this class.
 
 import threading
+
 from hledac.universal._core.rust_backend.ioc_stream_scan import (
-    scan_batch as _rust_scan_batch,
     is_available as _rust_ioc_available,
 )
+from hledac.universal._core.rust_backend.ioc_stream_scan import (
+    scan_batch as _rust_scan_batch,
+)
 
-_feed_ioc_stage: "FeedIocStage | None" = None
+_feed_ioc_stage: FeedIocStage | None = None
 _feed_ioc_init_lock = threading.Lock()
 
 
-def _get_feed_ioc_stage() -> "FeedIocStage":
+def _get_feed_ioc_stage() -> FeedIocStage:
     """Return the shared FeedIocStage singleton (DCLP thread-safe)."""
     global _feed_ioc_stage
     if _feed_ioc_stage is None:
@@ -1252,7 +1168,7 @@ class FeedIocStage:
                 patterns=self._patterns or None,
                 labels=self._labels or None,
             )
-            for item, iocs in zip(feed_items, results):
+            for item, iocs in zip(feed_items, results, strict=False):
                 item["iocs"] = iocs
         except Exception:
             # Fail-safe: never crash pipeline
@@ -1262,21 +1178,13 @@ class FeedIocStage:
         return feed_items
 
 
-# PatternMatcher import and helpers
-# ---------------------------------------------------------------------------
-
 # Import here so that absence of pattern_matcher is a hard fail at import time
-from hledac.universal.utils.asyncx import parallel  # noqa: E402
-from hledac.universal.utils.patterns.pattern_matcher import match_text  # noqa: E402
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E402
     feed_entry_pipeline_fast,
     is_feed_pipeline_available,
-    )
-from _core import aclose
-
-# ---------------------------------------------------------------------------
-# Pattern scan — offloaded, bounded concurrency
-# ---------------------------------------------------------------------------
+)
+from hledac.universal.utils.patterns.pattern_matcher import match_text
 
 
 def _keyword_filter_entries(entries: list | tuple, query_context: str) -> list:
@@ -1341,11 +1249,6 @@ async def _async_scan_feed_text(text: str) -> list:
     return hits
 
 
-# ---------------------------------------------------------------------------
-# Payload text extraction around hit — unicode-safe, 200 char radius
-# ---------------------------------------------------------------------------
-
-
 def _extract_payload_context(
     text: str,
     hit_start: int,
@@ -1395,11 +1298,6 @@ def _extract_payload_context(
     return ctx
 
 
-# ---------------------------------------------------------------------------
-# PatternHit -> CanonicalFinding
-# ---------------------------------------------------------------------------
-
-
 def _pattern_hit_to_finding(
     feed_url: str,
     entry_url: str,
@@ -1439,11 +1337,6 @@ def _pattern_hit_to_finding(
     }
 
 
-# ---------------------------------------------------------------------------
-# Entry -> pattern-backed findings (replaces _entry_to_candidate_findings)
-# ---------------------------------------------------------------------------
-
-
 # Threshold for triggering article fallback.
 # Feed entries with >= 250 chars of feed-native text (rich_content/summary)
 # are considered substantive enough — no article fetch needed.
@@ -1474,7 +1367,7 @@ async def _check_wayback_cdx(entry_url: str, session: httpx.AsyncClient) -> str 
             if resp.status_code != 200:
                 return None
             raw = resp.read()
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None
     except asyncio.CancelledError:
         raise
@@ -1517,14 +1410,13 @@ async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -
         wayback_url = await _check_wayback_cdx(entry_url, wayback_session)
         if not wayback_url:
             return ("", False, 0)
-        # Fetch from archive — same decode/strip logic as primary path
         try:
             async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
                 resp = await wayback_session.get(wayback_url, timeout=_MAX_WAYBACK_FETCH_TIMEOUT)
                 if resp.status_code != 200:
                     return ("", False, 0)
                 raw = resp.read()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ("", False, 0)
         except asyncio.CancelledError:
             raise
@@ -1570,7 +1462,7 @@ async def _safe_fetch(session: httpx.AsyncClient, fetch_url: str) -> tuple[bytes
         async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
             resp = await session.get(fetch_url, timeout=_MAX_WAYBACK_FETCH_TIMEOUT)
             return (resp.read(), resp.status_code)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return (b"", 0)
     except asyncio.CancelledError:
         raise
@@ -1608,12 +1500,12 @@ async def _fetch_with_wayback_fallback(
                     t_primary = tg.create_task(
                         _safe_fetch(session, entry_url),
                         name=f"wayback:primary:{entry_url[:32]}",
-    )
+                    )
                     t_wayback = tg.create_task(
                         _check_wayback_cdx(entry_url, wayback_session),
                         name=f"wayback:cdx:{entry_url[:32]}",
-    )
-            except* asyncio.TimeoutError, OSError:
+                    )
+            except* TimeoutError, OSError:
                 # Timeout or OS-level network error → try Wayback fallback
                 _do_wayback_fallback = True
             except* asyncio.CancelledError:
@@ -1951,7 +1843,7 @@ async def _entry_to_pattern_findings(
                 patterns_configured,
                 _empty_reason,
                 query_context[:50] if query_context else None,
-    )
+            )
 
     if not hits:
         # F182D: matched_patterns=0 is the canonical post-scan truth.
@@ -1977,7 +1869,7 @@ async def _entry_to_pattern_findings(
             pre_fallback_hits_count,
             findings_lost_to_dedup_early,
             article_decode_replacement_count,
-    )
+        )
 
     # Per-entry dedup by (label, pattern, value)
     # Sprint F300: entry_deduper is now passed from run level (cross-entry dedup)
@@ -2014,11 +1906,6 @@ async def _entry_to_pattern_findings(
     )
 
 
-# ---------------------------------------------------------------------------
-# UMA interaction
-# ---------------------------------------------------------------------------
-
-
 async def _check_uma_emergency() -> bool:
     """Return True if UMA is in emergency state.
 
@@ -2035,11 +1922,6 @@ async def _check_uma_emergency() -> bool:
         return uma.state == "emergency"
     except Exception:
         return False
-
-
-# ---------------------------------------------------------------------------
-# Main pipeline (pattern-backed)
-# ---------------------------------------------------------------------------
 
 
 async def async_run_live_feed_pipeline(
@@ -2086,7 +1968,6 @@ async def async_run_live_feed_pipeline(
         With patterns_configured and matched_patterns observability.
 
     """
-    # Step 1: UMA emergency check
     try:
         if await _check_uma_emergency():
             return FeedPipelineRunResult(
@@ -2098,11 +1979,10 @@ async def async_run_live_feed_pipeline(
                 matched_patterns=0,
                 pages=(),
                 error="uma_emergency_abort",
-    )
+            )
     except Exception:  # noqa: BLE001
         pass  # noqa: BLE001  # UMA check is best-effort; continue with pipeline
 
-    # Step 2: Fetch via 8AF
     from hledac.universal.discovery.rss_atom_adapter import async_fetch_feed_entries
 
     try:
@@ -2111,7 +1991,7 @@ async def async_run_live_feed_pipeline(
             max_entries=max_entries,
             timeout_s=timeout_s,
             max_bytes=max_bytes,
-    )
+        )
     except asyncio.CancelledError:
         raise  # never swallow
     except Exception as exc:
@@ -2124,9 +2004,8 @@ async def async_run_live_feed_pipeline(
             matched_patterns=0,
             pages=(),
             error=f"fetch_exception:{type(exc).__name__}:{exc}",
-    )
+        )
 
-    # Handle fetch-level errors fail-soft
     if batch.error:
         # F170C: extract granular upstream blocker from batch.error
         _fetch_err = batch.error or ""
@@ -2173,16 +2052,14 @@ async def async_run_live_feed_pipeline(
                 source_accessibility_blocker=_source_blocker,
                 root_zero_yield_reason="fetch_error",
             ),
-    )
+        )
 
     entries = batch.entries
-    # E2: Fast path — single-call parse+scan+dedup via Rust feed_entry_pipeline
-    # Replaces the 4-stage pipeline: parse→fetch→scan→dedup with one Rust call.
-    # Only active when Rust extension is available and we have patterns configured.
     _rust_fast_path_used = False
     _run_deduper_fast = make_run_deduper()
     if is_feed_pipeline_available() and batch.raw_xml:
         from hledac.universal.utils.patterns.pattern_matcher import get_pattern_matcher
+
         _matcher = get_pattern_matcher()
         _patterns = list(_matcher._registry_snapshot)
         if _patterns:
@@ -2193,7 +2070,7 @@ async def async_run_live_feed_pipeline(
                 max_entries=max_entries,
                 patterns=_pattern_strs,
                 labels=_pattern_labels,
-    )
+            )
             if _rust_results:
                 _rust_fast_path_used = True
                 # Convert Rust results back to FeedPipelineEntryResult format
@@ -2206,17 +2083,19 @@ async def async_run_live_feed_pipeline(
                     # Convert hits to PatternHit-like objects
                     _converted_hits = []
                     for _h_start, _h_end, _h_pat, _h_lbl, _h_val in _combined_hits:
+
                         class _Hit:
                             __slots__ = ("pattern", "start", "end", "value", "label", "confidence")
-                            def __init__(self):
+
+                            def __init__(self) -> None:
                                 self.pattern = _h_pat
                                 self.start = _h_start
                                 self.end = _h_end
                                 self.value = _h_val
                                 self.label = _h_lbl
                                 self.confidence = 0.8  # E2: hit_confidence not yet surfaced from Rust
+
                         _converted_hits.append(_Hit())
-                    # Run entry_deduper check and build finding
                     for _hit in _converted_hits:
                         _lbl = _hit.label or ""
                         _pat = _hit.pattern
@@ -2225,7 +2104,7 @@ async def async_run_live_feed_pipeline(
                             continue
                         _hit_confidence = getattr(_hit, "confidence", None)
                         _conf = clamp_confidence(_hit_confidence, default=0.8) if _hit_confidence is not None else 0.8
-                        _finding = _pattern_hit_to_finding(feed_url, _entry_url, _hit, query_context, f"{{{{_hit.value}}}}")
+                        _finding = _pattern_hit_to_finding(feed_url, _entry_url, _hit, query_context, "{{_hit.value}}")
                         if _finding:
                             _findings_list = [_finding]
                             total_accepted += 1
@@ -2235,7 +2114,7 @@ async def async_run_live_feed_pipeline(
                                     accepted_findings=len(_findings_list),
                                     stored_findings=len(_findings_list),
                                     error=None,
-    )
+                                )
                             )
                             total_matched += 1
                 # Skip slow path entirely when fast path produced results
@@ -2265,7 +2144,7 @@ async def async_run_live_feed_pipeline(
                         source_accessibility_blocker=None,
                         root_zero_yield_reason=None,
                         had_substantive_content_but_no_hits=False,
-    )
+                    )
                     return FeedPipelineRunResult(
                         feed_url=feed_url,
                         fetched_entries=fetched_count,
@@ -2277,8 +2156,7 @@ async def async_run_live_feed_pipeline(
                         error=None,
                         telemetry=_telemetry,
                         raw_xml=batch.raw_xml,
-    )
-
+                    )
 
     fetched_count = len(entries)
 
@@ -2290,7 +2168,6 @@ async def async_run_live_feed_pipeline(
 
     fetched_count = len(entries)
 
-    # Handle empty but valid response
     if fetched_count == 0:
         # F170C: source_accessibility_error from adapter carries source-level truth
         _source_blocker_empty: str | None = None
@@ -2331,9 +2208,8 @@ async def async_run_live_feed_pipeline(
                 root_zero_yield_reason="empty_fetch",
                 had_substantive_content_but_no_hits=False,
             ),
-    )
+        )
 
-    # Step 3: Per-entry processing — pattern-backed
     run_deduper = make_run_deduper()
     # Sprint F300: Cross-entry dedup — one deduper instance per run (not per entry)
     entry_deduper = make_entry_deduper()
@@ -2426,7 +2302,7 @@ async def async_run_live_feed_pipeline(
                     accepted_findings=0,
                     stored_findings=0,
                     error=None,
-    )
+                )
             )
         else:
             prefilted.append((idx, entry, entry_url))
@@ -2435,8 +2311,12 @@ async def async_run_live_feed_pipeline(
         # Stage 1: bounded parallel fetch + pattern scan for all non-skipped entries
         entry_tasks = [_process_entry(idx, entry, entry_url) for idx, entry, entry_url in prefilted]
         build = await parallel(
-            entry_tasks, concurrency=_MAX_FEED_PATTERN_TASKS, policy="collect", taskgroup=True, ctx="live_feed_pipeline:entry_processing"
-    )
+            entry_tasks,
+            concurrency=_MAX_FEED_PATTERN_TASKS,
+            policy="collect",
+            taskgroup=True,
+            ctx="live_feed_pipeline:entry_processing",
+        )
         results_raw = build.ok
 
         # Sort by original index to preserve deterministic order in accumulators
@@ -2453,7 +2333,7 @@ async def async_run_live_feed_pipeline(
                         accepted_findings=0,
                         stored_findings=0,
                         error="pattern_step_failed",
-    )
+                    )
                 )
                 continue
 
@@ -2611,7 +2491,7 @@ async def async_run_live_feed_pipeline(
                 )  # noqa: E501
                 _adapter_selection_reason_acc = _adapter_selection_reason_acc or _str_attr(
                     entry, "selection_reason", ""
-    )
+                )
                 _adapter_signal_count += 1
 
                 # W4 FIX: temporal_feed_vocabulary_mismatch — true when feed has substantive
@@ -2626,7 +2506,7 @@ async def async_run_live_feed_pipeline(
                 feed_native_carried = pre_fallback_hits > 0
                 entry_breakdown = _compute_winning_source_breakdown(
                     feed_native_carried, article_fallback_used, findings, _adapter_selection_reason_acc
-    )
+                )
                 for k, v in entry_breakdown.items():
                     _winning_source_breakdown_acc[k] = _winning_source_breakdown_acc.get(k, 0) + v
 
@@ -2639,15 +2519,10 @@ async def async_run_live_feed_pipeline(
                         error=None,
                         assembly_tier=assembly_tier,
                         quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
-    )
+                    )
                 )
                 continue
 
-            # Step 4: Storage
-            # F180B FIX: accepted_findings and stored_findings must be isolated from
-            # each other and preserved across exceptions (fail-soft semantics).
-            # accepted_findings = quality-gated count (from async_ingest_findings_batch results)
-            # stored_findings = actual storage success count (from lmdb_success field)
             accepted_findings = len(findings)  # pre-set: quality gate pass = all findings
             stored_findings = 0
             _entry_store_error: str | None = None
@@ -2678,7 +2553,6 @@ async def async_run_live_feed_pipeline(
                     _gated: list[CanonicalFinding] = canonicals
                     _ctx = ingest_ctx
 
-                    # Step 1: Evidence — CREATED event
                     if _ctx is not None and _ctx.evidence_log is not None:
                         try:
                             _ctx.evidence_log.create_event(
@@ -2693,22 +2567,20 @@ async def async_run_live_feed_pipeline(
                                 },
                                 source_ids=[],
                                 confidence=1.0,
-    )
+                            )
                         except Exception:  # noqa: BLE001
                             pass
 
-                    # Step 2: Privacy gate
                     if _ctx is not None:
                         _privacy = _ctx.privacy_layer or (
                             getattr(_ctx.layer_manager, "privacy", None) if _ctx.layer_manager else None
-    )
+                        )
                         if _privacy is not None:
                             try:
                                 _gated, _pii_count = await _privacy.anonymize_findings(canonicals)
                             except Exception:
                                 _gated = canonicals
 
-                    # Step 3: Evidence — CANDIDATE event (before ingest)
                     if _ctx is not None and _ctx.evidence_log is not None:
                         try:
                             _finding_ids = [
@@ -2724,14 +2596,12 @@ async def async_run_live_feed_pipeline(
                                 },
                                 source_ids=_finding_ids[:20],
                                 confidence=1.0,
-    )
+                            )
                         except Exception:  # noqa: BLE001
                             pass
 
-                    # Step 4: DuckDB write via Arrow pipeline
                     results = await store.drain_and_get_accepted(_gated)
 
-                    # Step 5: Compute accepted/stored counts — O(n) via index mapping
                     accepted_findings = 0
                     stored_findings = 0
                     accepted_list: list[CanonicalFinding] = []
@@ -2752,34 +2622,30 @@ async def async_run_live_feed_pipeline(
                             if getattr(r, "accepted", False):
                                 accepted_list.append(r)
 
-                    # Step 6: Evidence — ACCEPTED / REJECTED events
                     if _ctx is not None and _ctx.evidence_log is not None and results:
                         try:
                             _accepted = sum(
                                 1
                                 for r in results
                                 if (isinstance(r, dict) and r.get("accepted")) or getattr(r, "accepted", False)
-    )
+                            )
                             _rejected = len(results) - _accepted
                             _ctx.evidence_log.create_event(
                                 "observation",
                                 {"phase": "ACCEPTED", "accepted_count": _accepted, "total": len(results)},
                                 source_ids=[],
                                 confidence=1.0,
-    )
+                            )
                             if _rejected > 0:
                                 _ctx.evidence_log.create_event(
                                     "observation",
                                     {"phase": "REJECTED", "rejected_count": _rejected, "total": len(results)},
                                     source_ids=[],
                                     confidence=1.0,
-    )
+                                )
                         except Exception:  # noqa: BLE001
                             pass
 
-                    # Step 7: Graph accumulation — accepted findings only (NOT raw canonicals)
-                    # Bug-4 FIX: previously used raw canonicals which includes rejected findings.
-                    # Nonfeed path uses accepted results — feed should too.
                     if accepted_list and sprint_id:
                         try:
                             if _ctx is not None and _ctx.graph_accumulator is not None:
@@ -2787,14 +2653,13 @@ async def async_run_live_feed_pipeline(
                             else:
                                 from hledac.universal.runtime.graph_accumulator import (
                                     SprintGraphAccumulator,
-    )
+                                )
 
                                 _acc = SprintGraphAccumulator()
                                 _acc.accumulate_findings(accepted_list, sprint_id=sprint_id)
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # fail-soft: graph never blocks storage
 
-                    # Step 8: Temporal predictor — accepted findings only
                     if _ctx is not None and _ctx.temporal_predictor is not None and accepted_list:
                         try:
                             _ctx.temporal_predictor.observe_findings(accepted_list)
@@ -2821,7 +2686,7 @@ async def async_run_live_feed_pipeline(
                     try:
                         from hledac.universal.runtime.graph_accumulator import (
                             SprintGraphAccumulator,
-    )
+                        )
 
                         _acc = SprintGraphAccumulator()
                         _acc.accumulate_findings(canonicals, sprint_id=sprint_id)
@@ -2839,7 +2704,7 @@ async def async_run_live_feed_pipeline(
                 error=_entry_store_error,
                 assembly_tier=assembly_tier,
                 quality_reason_tag=quality_signal.quality_reason_tag if quality_signal else "",
-    )
+            )
         )
 
     # Sprint 8AU + F160A: compute signal stage diagnosis with findings_build_loss tracking
@@ -2881,7 +2746,7 @@ async def async_run_live_feed_pipeline(
             "no_pattern_hits_with_content",
             "findings_build_loss",
             "empty_registry",
-    )
+        )
         else None
     )
     _telemetry = FeedSignalTelemetry(
@@ -2987,9 +2852,9 @@ async def async_run_live_feed_pipeline(
                 "no_pattern_hits_with_content",
                 "findings_build_loss",
                 "empty_registry",
-    )
+            )
             and total_accepted == 0
-    )
+        )
         else None,
         had_substantive_content_but_no_hits=bool(
             entries_with_text > 0 and entries_with_hits == 0 and total_accepted == 0
@@ -3015,11 +2880,6 @@ async def async_run_live_feed_pipeline(
         telemetry=_telemetry,
         raw_xml=batch.raw_xml,
     )
-
-
-# ---------------------------------------------------------------------------
-# Batch source coercion (Sprint 8AL — unchanged public signature)
-# ---------------------------------------------------------------------------
 
 
 def _coerce_source_to_tuple(
@@ -3054,11 +2914,6 @@ def _coerce_source_to_tuple(
     return (feed_url, label, origin, priority)
 
 
-# ---------------------------------------------------------------------------
-# Feed Dominance Scoring (Sprint F207I)
-# ---------------------------------------------------------------------------
-
-
 def compute_feed_dominance_score(
     dominant_feed_share_pct: float,
     total_feed_findings: int,
@@ -3085,12 +2940,15 @@ def compute_feed_dominance_score(
     # We re-use the same 60/40 weighted formula in Python but with Rust ratio.
     try:
         from hledac.universal._core.rust_backend import rust as _rust
+
         if _rust.is_available:
             _feed_accepted = int(total_feed_findings * dominant_feed_share_pct / 100.0)
             _nonfeed_accepted = total_feed_findings - _feed_accepted
             _rust_result = _rust.sprint_policies.compute_dominance(
-                total_feed_findings, _feed_accepted, _nonfeed_accepted,
-    )
+                total_feed_findings,
+                _feed_accepted,
+                _nonfeed_accepted,
+            )
             _rust_ratio = _rust_result.get("feed_dominance_ratio", 0.0)
             # Match pure-Python weighted formula: 60% ratio + 40% concentration
             _source_count = max(1, feed_sources_successful)
@@ -3157,11 +3015,6 @@ def estimate_per_source_soft_cap(
     return max(1, _soft_cap)
 
 
-# ---------------------------------------------------------------------------
-# Batch runner (Sprint 8AL -- unchanged public signature)
-# ---------------------------------------------------------------------------
-
-
 async def async_run_feed_source_batch(
     sources: tuple[object, ...],
     store: Any | None = None,
@@ -3184,7 +3037,7 @@ async def async_run_feed_source_batch(
             stored_findings=0,
             sources=(),
             error=None,
-    )
+        )
 
     normalized: list[tuple[str, str, str, int]] = [_coerce_source_to_tuple(s) for s in sources]
     normalized.sort(key=lambda x: -x[3])
@@ -3213,7 +3066,7 @@ async def async_run_feed_source_batch(
             stored_findings=0,
             sources=(),
             error="uma_emergency_abort",
-    )
+        )
 
     effective_concurrency = max(2, feed_concurrency // 2) if critical_clamp else feed_concurrency
 
@@ -3238,7 +3091,7 @@ async def async_run_feed_source_batch(
                     query_context=resolved_query,
                     max_entries=max_entries_per_feed,
                     timeout_s=per_feed_timeout_s,
-    )
+                )
         except asyncio.CancelledError:
             raise  # never swallow
         except TimeoutError:
@@ -3253,7 +3106,7 @@ async def async_run_feed_source_batch(
                 stored_findings=0,
                 elapsed_ms=elapsed_ms,
                 error="per_feed_timeout",
-    )
+            )
         except BaseException as exc:
             elapsed_ms = (time.monotonic() - start) * 1000.0
             return FeedSourceRunResult(
@@ -3266,7 +3119,7 @@ async def async_run_feed_source_batch(
                 stored_findings=0,
                 elapsed_ms=elapsed_ms,
                 error=f"unexpected:{type(exc).__name__}:{exc}",
-    )
+            )
 
         elapsed_ms = (time.monotonic() - start) * 1000.0
         return FeedSourceRunResult(
@@ -3282,7 +3135,7 @@ async def async_run_feed_source_batch(
             signal_stage=result.signal_stage,
             # F164C: propagate per-source dedup loss counter
             findings_lost_to_dedup=result.findings_lost_to_dedup,
-    )
+        )
 
     results: list[FeedSourceRunResult] = []
 
@@ -3298,7 +3151,7 @@ async def async_run_feed_source_batch(
                 policy="collect",
                 taskgroup=True,  # ISSUE #33: Python 3.11+ structured concurrency
                 ctx="live_feed_pipeline:3071",
-    )
+            )
             ok_results, err_results = _build.ok, list(_build.errors)
             for res in ok_results:
                 results.append(res)
@@ -3315,7 +3168,7 @@ async def async_run_feed_source_batch(
                         accepted_findings=0,
                         stored_findings=0,
                         error=f"gather_exception:{type(exc).__name__}:{exc}",
-    )
+                    )
                 )
     except asyncio.CancelledError:
         raise  # never swallow

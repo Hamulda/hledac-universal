@@ -24,7 +24,7 @@ Usage:
         batch_decode_ioc_candidates,
         decode_ioc_candidates,
     )
-    
+
     # In IOCProcessor.extract():
     decoded = batch_decode_ioc_candidates([text])
     iocs = extract_iocs_from_text(text)
@@ -37,10 +37,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_deobfuscate
 
-# Create singleton instance
 _deobfuscate = get_deobfuscate()
 
 
@@ -94,7 +92,6 @@ def reset_telemetry() -> None:
     _deobfuscate.reset_telemetry()
 
 
-# Check availability at import time for logging
 if _deobfuscate.available:
     logger.info("[Deobfuscate] Rust deobfuscate.rs integration: ENABLED")
 else:

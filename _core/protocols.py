@@ -39,9 +39,7 @@ KEPT: FindingProto, FindingWithPayloadProto, DuckDBStoreProtocol,
   GraphServiceProtocol, FetchCoordinatorProtocol (all have isinstance() checks).
 """
 
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from typing import Any
@@ -52,10 +50,6 @@ if TYPE_CHECKING:
         FindingQualityDecision,
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Finding / IOC structural protocols (replaces ~45 getattr() calls)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class FindingProto(Protocol):
@@ -94,10 +88,6 @@ class FindingWithPayloadProto(Protocol):
     def to_dict(self) -> dict[str, Any]: ...
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DuckDB Store Protocol
-# ─────────────────────────────────────────────────────────────────────────────
-
 @runtime_checkable
 class FindingsWritePort(Protocol):
     """
@@ -122,10 +112,6 @@ class FindingsWritePort(Protocol):
 DuckDBStoreProtocol = FindingsWritePort
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph / IOC graph protocols
-# ─────────────────────────────────────────────────────────────────────────────
-
 @runtime_checkable
 class GraphServiceProtocol(Protocol):
     """
@@ -148,10 +134,6 @@ class GraphServiceProtocol(Protocol):
         max_depth: int = 2,
     ) -> list[dict[str, Any]]: ...
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Fetch / network protocols
-# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class FetchCoordinatorProtocol(Protocol):
@@ -181,10 +163,6 @@ def get_governor() -> Any:
 
     return _gg()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Safe attribute access helpers (replaces getattr() abuse)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def safe_get_finding_field(obj: Any, field: str, default: Any = None) -> Any:
     """
@@ -226,10 +204,6 @@ def safe_get_uma_state(obj: Any, default: str = "ok") -> str:
         return default
     return state
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Protocol verification helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def is_finding(obj: Any) -> bool:
     """Check if object satisfies FindingProto."""

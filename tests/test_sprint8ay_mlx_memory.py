@@ -25,7 +25,7 @@ UNIVERSAL_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
 class TestMlxHelperLazyImport(unittest.TestCase):
     """Test that helper does NOT import MLX at module load time."""
 
-    def test_mlx_helper_lazy_import_behavior(self):
+    def test_mlx_helper_lazy_import_behavior(self) -> None:
         """MLX detection runs at import time (lazy module init, not eager).
 
         The key invariant: MLX_AVAILABLE reflects whether mlx is available
@@ -56,7 +56,7 @@ print("LAZY_OK")
 class TestMlxHelperAbsentEnv(unittest.TestCase):
     """Test helper degrades safely when MLX is absent."""
 
-    def test_mlx_helper_absent_env_safe_via_monkeypatch(self):
+    def test_mlx_helper_absent_env_safe_via_monkeypatch(self) -> None:
         """When MLX unavailable, all APIs return safe defaults."""
         import hledac.universal.utils.mlx_memory as mm
 
@@ -84,7 +84,7 @@ class TestMlxHelperAbsentEnv(unittest.TestCase):
 class TestMlxHelperApiShape(unittest.TestCase):
     """Test all helper APIs return correct types."""
 
-    def test_mlx_helper_api_shape(self):
+    def test_mlx_helper_api_shape(self) -> None:
         """Each API returns the documented type."""
         from hledac.universal.utils.mlx_memory import (
             clear_mlx_cache,
@@ -93,7 +93,8 @@ class TestMlxHelperApiShape(unittest.TestCase):
             get_mlx_memory_metrics,
             get_mlx_memory_pressure,
             get_mlx_peak_memory_mb,
-    )
+        )
+
         result = clear_mlx_cache()
         self.assertIsInstance(result, bool)
 
@@ -117,17 +118,21 @@ class TestMlxHelperApiShape(unittest.TestCase):
 class TestMlxHelperMbConversion(unittest.TestCase):
     """Test MB conversion from bytes."""
 
-    @unittest.skip("F330: mocking internal get_mx() lazy accessor no longer works — mlx detection now uses sys.modules lookup, not module-level variables. Tested via integration tests.")
-    def test_mlx_helper_mb_conversion_from_mock_bytes(self):
+    @unittest.skip(
+        "F330: mocking internal get_mx() lazy accessor no longer works — mlx detection now uses sys.modules lookup, not module-level variables. Tested via integration tests."
+    )
+    def test_mlx_helper_mb_conversion_from_mock_bytes(self) -> None:
         """_mb functions must use integer division by 1024*1024."""
-        pass  # Skipped — F330 changed internal mlx core access pattern
+        # Skipped — F330 changed internal mlx core access pattern
 
 
 class TestMlxMemoryPressureThresholds(unittest.TestCase):
     """Test memory pressure levels on M1 8GB UMA."""
 
-    @unittest.skip("F330: mocking internal get_mx() lazy accessor no longer works — mlx detection now uses sys.modules lookup, not module-level variables. Tested via integration tests.")
-    def test_mlx_memory_pressure_thresholds(self):
+    @unittest.skip(
+        "F330: mocking internal get_mx() lazy accessor no longer works — mlx detection now uses sys.modules lookup, not module-level variables. Tested via integration tests."
+    )
+    def test_mlx_memory_pressure_thresholds(self) -> None:
         """Pressure levels: NORMAL<80%, WARNING>=80%, CRITICAL>=90%.
 
         M1 8GB UMA budget = 6.25 GiB = 6400 MiB (binary, matching
@@ -137,14 +142,14 @@ class TestMlxMemoryPressureThresholds(unittest.TestCase):
         import hledac.universal.utils.mlx_memory as mm
 
         test_cases = [
-            (0, "NORMAL"),      # 0% -> NORMAL
-            (4999, "NORMAL"),   # 4999/6400 = 78.1% < 80% -> NORMAL
-            (5119, "NORMAL"),   # 5119/6400 = 79.98% < 80% -> NORMAL (boundary)
+            (0, "NORMAL"),  # 0% -> NORMAL
+            (4999, "NORMAL"),  # 4999/6400 = 78.1% < 80% -> NORMAL
+            (5119, "NORMAL"),  # 5119/6400 = 79.98% < 80% -> NORMAL (boundary)
             (5120, "WARNING"),  # 5120/6400 = 80.0% >= 80% -> WARNING (lower bound)
             (5759, "WARNING"),  # 5759/6400 = 89.98% >= 80% and < 90% -> WARNING
-            (5760, "CRITICAL"), # 5760/6400 = 90.0% >= 90% -> CRITICAL (lower bound)
-            (6399, "CRITICAL"), # 6399/6400 = 99.98% >= 90% -> CRITICAL
-            (7000, "CRITICAL"), # 109.4% >= 90% -> CRITICAL
+            (5760, "CRITICAL"),  # 5760/6400 = 90.0% >= 90% -> CRITICAL (lower bound)
+            (6399, "CRITICAL"),  # 6399/6400 = 99.98% >= 90% -> CRITICAL
+            (7000, "CRITICAL"),  # 109.4% >= 90% -> CRITICAL
         ]
 
         # F330: internal state moved to _core_module
@@ -163,9 +168,8 @@ class TestMlxMemoryPressureThresholds(unittest.TestCase):
 
                 pct, level = mm.get_mlx_memory_pressure()
                 self.assertEqual(
-                    level, expected_level,
-                    f"Failed for active={active_mb}: got {level}, expected {expected_level}"
-    )
+                    level, expected_level, f"Failed for active={active_mb}: got {level}, expected {expected_level}"
+                )
         finally:
             _core.MLX_AVAILABLE = orig_available
             _core._mlx_core = orig_core
@@ -186,7 +190,7 @@ class TestReplacedAoCallsitesSurgical(unittest.TestCase):
       surgical refactor targets hot cleanup paths, not every site.
     """
 
-    def test_replaced_ao_callsites_are_surgical(self):
+    def test_replaced_ao_callsites_are_surgical(self) -> None:
         """Both AO sites in legacy orchestrator replaced with clear_mlx_cache()."""
         # Real implementation lives in legacy/autonomous_orchestrator.py.
         # The root autonomous_orchestrator.py is a re-export facade (F181A).
@@ -198,21 +202,29 @@ class TestReplacedAoCallsitesSurgical(unittest.TestCase):
         # nested inside Hermes profile swap)
         site1_pattern = "gc.collect()\n                        clear_mlx_cache()"
         idx1 = source.find(site1_pattern)
-        self.assertGreater(idx1, 0, (
-            f"Site 1 surgical replacement not found in legacy/autonomous_orchestrator.py. "
-            f"Expected pattern: {site1_pattern!r}"
-        ))
+        self.assertGreater(
+            idx1,
+            0,
+            (
+                f"Site 1 surgical replacement not found in legacy/autonomous_orchestrator.py. "
+                f"Expected pattern: {site1_pattern!r}"
+            ),
+        )
 
         # Site 2 (line ~22849): "MLX cache clear pokud je dostupný" comment + clear_mlx_cache()
         # (8-space indent, top-level _aggressive_gc method)
         site2_pattern = "# MLX cache clear pokud je dostupný\n        clear_mlx_cache()"
         idx2 = source.find(site2_pattern)
-        self.assertGreater(idx2, 0, (
-            f"Site 2 surgical replacement not found in legacy/autonomous_orchestrator.py. "
-            f"Expected pattern: {site2_pattern!r}"
-        ))
+        self.assertGreater(
+            idx2,
+            0,
+            (
+                f"Site 2 surgical replacement not found in legacy/autonomous_orchestrator.py. "
+                f"Expected pattern: {site2_pattern!r}"
+            ),
+        )
 
-    def test_root_facade_does_not_duplicate_pattern(self):
+    def test_root_facade_does_not_duplicate_pattern(self) -> None:
         """Root autonomous_orchestrator.py is a thin re-export — it must NOT
         re-implement the surgical pattern. Single source of truth = legacy/.
         """
@@ -223,15 +235,13 @@ class TestReplacedAoCallsitesSurgical(unittest.TestCase):
         # The root facade should not contain the legacy surgical pattern
         self.assertNotIn("gc.collect()\n                        clear_mlx_cache()", source)
         # It should re-export from legacy (canonical ownership)
-        self.assertIn("legacy", source.lower(), (
-            "Root facade should reference legacy/ as canonical owner"
-        ))
+        self.assertIn("legacy", source.lower(), ("Root facade should reference legacy/ as canonical owner"))
 
 
 class TestEvalPlusClearPattern(unittest.TestCase):
     """Test clear_mlx_cache() includes mx.eval([]) before metal.clear_cache."""
 
-    def test_eval_plus_clear_pattern_for_eligible_files(self):
+    def test_eval_plus_clear_pattern_for_eligible_files(self) -> None:
         """clear_mlx_cache() must call gc.collect() + mx.eval([]) + metal.clear_cache()."""
         import inspect
 

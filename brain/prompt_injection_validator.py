@@ -2,9 +2,6 @@
 P1G-A + ISSUE-8.2: Prompt Injection Validator v2
 =================================================
 
-
-
-
 Lightweight deterministic heuristic sanitizer for scraped content before
 it reaches the Hermes prompt. 3-layer defense against injection bypass.
 
@@ -30,33 +27,29 @@ before _sanitize_for_llm callback or fallback_sanitize.
 M1 8GB: Rust layer fail-open (returns original on any error).
 Always-on, bounded, fail-safe.
 """
+
 from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import field
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 
 # ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
 from hledac.universal._core.rust_backend.unicode_fingerprint import (
-    get_unicode_fingerprint_domain,
     ENABLE_UNICODE_ATTRIBUTION,
 )
+
 _unicode_domain = None  # Lazy initialization
 
 __all__ = [
-    'PromptInjectionValidationResult',
-    'sanitize_prompt_injection_patterns',
-    'sanitize_for_llm',
-    'PromptInjectionValidator',
+    "PromptInjectionValidationResult",
+    "sanitize_prompt_injection_patterns",
+    "sanitize_for_llm",
+    "PromptInjectionValidator",
 ]
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _MAX_CHARS = 200_000
 _MAX_PATTERNS = 50_000  # Aho-Corasick upper bound
@@ -69,8 +62,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
     'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'ɡ': 'g', 'һ': 'h',  # U+0456, U+0458, U+0455, U+0501, U+0261, U+0572
     'Ӏ': 'l', 'מ': 'm', 'נ': 'n', 'ג': 'g', 'ש': 'w', 'ף': 'f',  # U+04CF, U+05DE, U+05E0, U+05D2, U+05E9, U+05E3
     'г': 'r', 'ь': 'b', 'т': 't', 'ү': 'y', 'в': 'B', 'к': 'k',  # U+0433, U+044C, U+0442, U+04AF, U+0432, U+043A
-    'И': 'N', 'Н': 'H', 'Р': 'P', 'С': 'C', 'Х': 'X', 'О': 'O',  # Capital Cyrillic
-    'і': 'i', 'ј': 'j', 'Ѕ': 'S', 'ꙁ': 'z', 'ԁ': 'd', '�قف': 'f', # Lowercase extended
+    'И': 'N', 'Н': 'H', 'Р': 'P', 'С': 'C', 'Х': 'X', 'О': 'O', 'Ѕ': 'S', 'ꙁ': 'z', '�قف': 'f', # Lowercase extended
     # Greek → Latin
     'α': 'a', 'β': 'B', 'γ': 'r', 'δ': 'd', 'ε': 'e', 'ζ': 's',  # U+03B1-03B6
     'η': 'n', 'θ': '0', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'u',  # U+03B7-03BC
@@ -96,109 +88,73 @@ _HOMOGLYPH_MAP: dict[str, str] = {
 
 # Combined instruction override patterns (layer 2 - fallback when Rust unavailable)
 _INSTRUCTION_OVERRIDE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ('ignore_previous_instructions', re.compile(
-        r'ignore[\s\w]*previous[\s\w]*instructions?', re.IGNORECASE
-    )),
-    ('disregard_instructions', re.compile(
-        r'disregard[\s\w]*instructions?', re.IGNORECASE
-    )),
-    ('forget_instructions', re.compile(
-        r'forget[\s\w]*instructions?', re.IGNORECASE
-    )),
-    ('ignore_all_previous', re.compile(
-        r'ignore\s+all\s+previous', re.IGNORECASE
-    )),
-    ('do_not_follow', re.compile(
-        r'do\s+not\s+follow', re.IGNORECASE
-    )),
-    ('ignore_prior', re.compile(
-        r'ignore\s+prior', re.IGNORECASE
-    )),
-    ('disregard_previous', re.compile(
-        r'disregard\s+previous', re.IGNORECASE
-    )),
-    ('disregard_all', re.compile(
-        r'disregard\s+all', re.IGNORECASE
-    )),
-    ('forget_all', re.compile(
-        r'forget\s+all', re.IGNORECASE
-    )),
+    ("ignore_previous_instructions", re.compile(r"ignore[\s\w]*previous[\s\w]*instructions?", re.IGNORECASE)),
+    ("disregard_instructions", re.compile(r"disregard[\s\w]*instructions?", re.IGNORECASE)),
+    ("forget_instructions", re.compile(r"forget[\s\w]*instructions?", re.IGNORECASE)),
+    ("ignore_all_previous", re.compile(r"ignore\s+all\s+previous", re.IGNORECASE)),
+    ("do_not_follow", re.compile(r"do\s+not\s+follow", re.IGNORECASE)),
+    ("ignore_prior", re.compile(r"ignore\s+prior", re.IGNORECASE)),
+    ("disregard_previous", re.compile(r"disregard\s+previous", re.IGNORECASE)),
+    ("disregard_all", re.compile(r"disregard\s+all", re.IGNORECASE)),
+    ("forget_all", re.compile(r"forget\s+all", re.IGNORECASE)),
 ]
 
 # System impersonation patterns
 _SYSTEM_IMPERSONATION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ('system_prompt_injection', re.compile(
-        r'(?:^|\n)[\s]*(?:system[\s]*prompt)[\s]*:', re.IGNORECASE | re.MULTILINE
-    )),
-    ('developer_message_injection', re.compile(
-        r'(?:^|\n)[\s]*(?:developer[\s]*message)[\s]*:', re.IGNORECASE | re.MULTILINE
-    )),
-    ('you_are_chatgpt', re.compile(
-        r'you\s+are\s+(?:ChatGPT|claude|gemini|llama|gpt)', re.IGNORECASE
-    )),
-    ('as_an_ai', re.compile(
-        r'as\s+an?\s+(?:AI|artificial\s+intelligence|ML|language\s+model)', re.IGNORECASE
-    )),
-    ('you_are_an_ai', re.compile(
-        r'you\s+are\s+an?\s+(?:AI|artificial\s+intelligence)', re.IGNORECASE
-    )),
+    ("system_prompt_injection", re.compile(r"(?:^|\n)[\s]*(?:system[\s]*prompt)[\s]*:", re.IGNORECASE | re.MULTILINE)),
+    (
+        "developer_message_injection",
+        re.compile(r"(?:^|\n)[\s]*(?:developer[\s]*message)[\s]*:", re.IGNORECASE | re.MULTILINE),
+    ),
+    ("you_are_chatgpt", re.compile(r"you\s+are\s+(?:ChatGPT|claude|gemini|llama|gpt)", re.IGNORECASE)),
+    ("as_an_ai", re.compile(r"as\s+an?\s+(?:AI|artificial\s+intelligence|ML|language\s+model)", re.IGNORECASE)),
+    ("you_are_an_ai", re.compile(r"you\s+are\s+an?\s+(?:AI|artificial\s+intelligence)", re.IGNORECASE)),
 ]
 
 # Delimiter injection patterns
 _DELIMITER_INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ('repeated_hash_system', re.compile(
-        r'(?:^[ \t]*[#]{1,6}[\s]*system[\s]*$){2,}', re.MULTILINE | re.IGNORECASE
-    )),
-    ('repeated_dash_system', re.compile(
-        r'(?:^[ \t]*[-]{3,}[\s]*(?:system|instruction|role)[\s]*$){2,}', re.MULTILINE | re.IGNORECASE
-    )),
-    ('repeated_underscore_role', re.compile(
-        r'(?:^[ \t]*[_]{3,}[\s]*(?:system|instruction)[\s]*$){2,}', re.MULTILINE | re.IGNORECASE
-    )),
-    ('triple_hash_system', re.compile(
-        r'(?:^[ \t]*###[\s]*(?:system|instruction|role)[\s]*$)', re.MULTILINE | re.IGNORECASE
-    )),
+    ("repeated_hash_system", re.compile(r"(?:^[ \t]*[#]{1,6}[\s]*system[\s]*$){2,}", re.MULTILINE | re.IGNORECASE)),
+    (
+        "repeated_dash_system",
+        re.compile(r"(?:^[ \t]*[-]{3,}[\s]*(?:system|instruction|role)[\s]*$){2,}", re.MULTILINE | re.IGNORECASE),
+    ),
+    (
+        "repeated_underscore_role",
+        re.compile(r"(?:^[ \t]*[_]{3,}[\s]*(?:system|instruction)[\s]*$){2,}", re.MULTILINE | re.IGNORECASE),
+    ),
+    (
+        "triple_hash_system",
+        re.compile(r"(?:^[ \t]*###[\s]*(?:system|instruction|role)[\s]*$)", re.MULTILINE | re.IGNORECASE),
+    ),
     # New: nested/mixed delimiters
-    ('mixed_delimiter_injection', re.compile(
-        r'(?:[#_*-]{3,}[\s]*){3,}', re.MULTILINE
-    )),
+    ("mixed_delimiter_injection", re.compile(r"(?:[#_*-]{3,}[\s]*){3,}", re.MULTILINE)),
 ]
 
 # Hidden block patterns
 _HIDDEN_BLOCK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ('html_comment_injection', re.compile(
-        r'<!--[\s\S]*?(?:ignore|system|prompt|instruction|developer)[\s\S]*?-->', re.IGNORECASE
-    )),
-    ('markdown_details_hide', re.compile(
-        r'<details>[\s\S]*?</details>', re.IGNORECASE
-    )),
-    ('zero_width_chars', re.compile(
-        r'[​‌‍﻿]'
-    )),
-    ('bom_injection', re.compile(
-        r'﻿'
-    )),
+    (
+        "html_comment_injection",
+        re.compile(r"<!--[\s\S]*?(?:ignore|system|prompt|instruction|developer)[\s\S]*?-->", re.IGNORECASE),
+    ),
+    ("markdown_details_hide", re.compile(r"<details>[\s\S]*?</details>", re.IGNORECASE)),
+    ("zero_width_chars", re.compile(r"[​‌‍﻿]")),
+    ("bom_injection", re.compile(r"﻿")),
     # New: hidden Unicode injection attempts
-    ('unicode_override_attempt', re.compile(
-        r'[‪-‮​‌‍]+', re.IGNORECASE
-    )),
+    ("unicode_override_attempt", re.compile(r"[‪-‮​‌‍]+", re.IGNORECASE)),
 ]
 
 # All patterns for layer 3
 _ALL_PATTERNS: list[tuple[str, re.Pattern[str]]] = (
-    _INSTRUCTION_OVERRIDE_PATTERNS +
-    _SYSTEM_IMPERSONATION_PATTERNS +
-    _DELIMITER_INJECTION_PATTERNS +
-    _HIDDEN_BLOCK_PATTERNS
+    _INSTRUCTION_OVERRIDE_PATTERNS
+    + _SYSTEM_IMPERSONATION_PATTERNS
+    + _DELIMITER_INJECTION_PATTERNS
+    + _HIDDEN_BLOCK_PATTERNS
 )
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 class PromptInjectionValidationResult(Struct, frozen=True):
     """Result of prompt injection validation."""
+
     safe_text: str
     suspicious: bool
     patterns: tuple[str, ...]
@@ -214,10 +170,6 @@ class PromptInjectionValidationResult(Struct, frozen=True):
     unicode_fingerprint: dict[str, Any] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# Layer 1: Unicode Normalization (Python fallback when Rust unavailable)
-# ---------------------------------------------------------------------------
-
 # ISSUE [ULTIMATE]-005: Lazy domain initialization
 _unicode_domain = None
 
@@ -227,8 +179,10 @@ def _get_unicode_domain():
     global _unicode_domain
     if _unicode_domain is None:
         from hledac.universal._core.rust_backend import rust
-        ext = getattr(rust, '_ext', None)
+
+        ext = getattr(rust, "_ext", None)
         from hledac.universal._core.rust_backend.unicode_fingerprint import get_unicode_fingerprint_domain
+
         _unicode_domain = get_unicode_fingerprint_domain(ext)
     return _unicode_domain
 
@@ -242,10 +196,9 @@ def _extract_unicode_fingerprint(text: str) -> dict[str, Any]:
     Respects HLEDAC_ENABLE_UNICODE_ATTRIBUTION feature flag (default ON).
     """
     # ISSUE [ULTIMATE]-005: Respect feature flag
-    from hledac.universal._core.rust_backend.unicode_fingerprint import ENABLE_UNICODE_ATTRIBUTION
     if not ENABLE_UNICODE_ATTRIBUTION:
         return {}
-    
+
     try:
         domain = _get_unicode_domain()
         fingerprint = domain.extract_fingerprint(text)
@@ -270,35 +223,25 @@ def _normalize_unicode(text: str) -> tuple[str, int, dict[str, Any]]:
     replacements = 0
     result = text
 
-    # Step 0: ISSUE [ULTIMATE]-005: Extract fingerprint BEFORE stripping
     unicode_fingerprint = _extract_unicode_fingerprint(result)
 
-    # Step 1: NFC normalization
-    result = unicodedata.normalize('NFC', result)
+    result = unicodedata.normalize("NFC", result)
 
-    # Step 2: Homoglyph replacement
     for non_ascii, ascii_char in _HOMOGLYPH_MAP.items():
         if non_ascii in result:
             count = result.count(non_ascii)
             result = result.replace(non_ascii, ascii_char)
             replacements += count
 
-    # Step 3: Collapse multiple spaces (including normalized Unicode spaces)
-    result = re.sub(r'[ \t ]{2,}', ' ', result)
+    result = re.sub(r"[ \t ]{2,}", " ", result)
 
-    # Step 4: Remove zero-width and directional characters
-    zw_chars = ['​', '‌', '‍', '‎', '‏',
-                '‪', '‫', '‬', '‭', '‮']
+    zw_chars = ["​", "‌", "‍", "‎", "‏", "‪", "‫", "‬", "‭", "‮"]
     for zw in zw_chars:
         if zw in result:
-            result = result.replace(zw, '')
+            result = result.replace(zw, "")
 
     return result, replacements, unicode_fingerprint
 
-
-# ---------------------------------------------------------------------------
-# Layer 2: Aho-Corasick via Rust (with Python fallback)
-# ---------------------------------------------------------------------------
 
 # Blacklisted phrases for Aho-Corasick (10k+ in production)
 # This is the core injection pattern set
@@ -352,15 +295,16 @@ _INJECTION_BLACKLIST: list[str] = [
 
 class _AhoCorasickCache:
     """Singleton cache for Aho-Corasick matcher (lazy initialization)."""
-    _instance: '_AhoCorasickCache | None' = None
+
+    _instance: _AhoCorasickCache | None = None
     _lock: Any = None  # Placeholder for threading.Lock
 
-    def __new__(cls) -> '_AhoCorasickCache':
+    def __new__(cls) -> _AhoCorasickCache:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._matcher = None
             cls._instance._failed = False
-            cls._instance._lock = __import__('threading').Lock()
+            cls._instance._lock = __import__("threading").Lock()
         return cls._instance
 
     def get_matcher(self):
@@ -375,6 +319,7 @@ class _AhoCorasickCache:
             try:
                 # R6: Centralized Rust access via core.rust_backend
                 from hledac.universal._core.rust_backend import rust
+
                 AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
                 if AhoCorasickMatcher is None:
                     raise ImportError("AhoCorasickMatcher not available")
@@ -429,10 +374,6 @@ def _scan_aho_corasick(text: str) -> tuple[bool, list[str], bool]:
     return bool(matched), matched, rust_used
 
 
-# ---------------------------------------------------------------------------
-# Layer 3: Structural Heuristics
-# ---------------------------------------------------------------------------
-
 def _detect_structural_injection(text: str) -> list[str]:
     """
     Layer 3: Detect structural injection patterns that evade text matching.
@@ -447,57 +388,54 @@ def _detect_structural_injection(text: str) -> list[str]:
 
     # Check for repeated delimiter blocks (3+ consecutive lines starting with delimiter)
     # A line "starts with delimiter" if it begins with 3+ delimiter chars at column 0
-    lines = text.split('\n')
+    lines = text.split("\n")
     consecutive_delimiter_lines = 0
     for line in lines:
         stripped = line.strip()
         # Check if line starts with 3+ delimiter characters (with optional leading whitespace)
-        if stripped and len(stripped) >= 3 and all(c in '#*_-' for c in stripped[:3]):
+        if stripped and len(stripped) >= 3 and all(c in "#*_-" for c in stripped[:3]):
             # It's a delimiter line - but only count if it's delimiter-only or system/role/instruction
-            if all(c in '#*_-' for c in stripped) or any(kw in stripped.lower() for kw in ['system', 'instruction', 'role', 'prompt']):
+            if all(c in "#*_-" for c in stripped) or any(
+                kw in stripped.lower() for kw in ["system", "instruction", "role", "prompt"]
+            ):
                 consecutive_delimiter_lines += 1
                 if consecutive_delimiter_lines >= 3:
-                    detected.append('structural_repeated_delimiters')
+                    detected.append("structural_repeated_delimiters")
                     break
         else:
             consecutive_delimiter_lines = 0
 
-    # Check for HTML/XML hidden blocks
-    if re.search(r'<!--[\s\S]*?-->', text):
-        detected.append('structural_html_comment')
-    if re.search(r'<details>[\s\S]*?</details>', text, re.IGNORECASE):
-        detected.append('structural_hidden_details')
+    if re.search(r"<!--[\s\S]*?-->", text):
+        detected.append("structural_html_comment")
+    if re.search(r"<details>[\s\S]*?</details>", text, re.IGNORECASE):
+        detected.append("structural_hidden_details")
 
-    # Check for Unicode directional override
-    if re.search(r'[‪-‮]', text):
-        detected.append('structural_directional_override')
+    if re.search(r"[‪-‮]", text):
+        detected.append("structural_directional_override")
 
     # NOTE: non_ascii_ratio check is now done in validate() BEFORE normalization
     # because normalization replaces homoglyphs (reducing the ratio).
     # This comment documents why the check was moved.
 
-    # Check for zero-width character flood
-    zw_count = sum(1 for c in text if c in '\u200b\u200c\u200d\ufeff\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e')
+    zw_count = sum(
+        1 for c in text if c in "\u200b\u200c\u200d\ufeff\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e"
+    )
     if zw_count > 10:
-        detected.append('structural_zero_width_flood')
+        detected.append("structural_zero_width_flood")
 
     # Check for line-ending anomalies (mixed \r\n, \r, unusual)
-    crlf_count = text.count('\r\n')
-    lf_only = text.count('\n') - crlf_count
-    cr_only = text.count('\r') - crlf_count
+    crlf_count = text.count("\r\n")
+    lf_only = text.count("\n") - crlf_count
+    cr_only = text.count("\r") - crlf_count
     if cr_only > lf_only * 0.5:
-        detected.append('structural_unusual_line_endings')
+        detected.append("structural_unusual_line_endings")
 
     # Check for context overflow attempt (padding)
-    if re.search(r'(?:[ \t]{20,}){5,}', text):
-        detected.append('structural_padding_detected')
+    if re.search(r"(?:[ \t]{20,}){5,}", text):
+        detected.append("structural_padding_detected")
 
     return detected
 
-
-# ---------------------------------------------------------------------------
-# Main API
-# ---------------------------------------------------------------------------
 
 class PromptInjectionValidator:
     """
@@ -511,7 +449,7 @@ class PromptInjectionValidator:
     M1 8GB safe: no MLX, minimal memory footprint.
     """
 
-    __slots__ = ('_cache', '_rust_available')
+    __slots__ = ("_cache", "_rust_available")
 
     def __init__(self) -> None:
         self._cache = _AhoCorasickCache()
@@ -531,12 +469,12 @@ class PromptInjectionValidator:
 
         if not isinstance(text, str):
             return PromptInjectionValidationResult(
-                safe_text='',
+                safe_text="",
                 suspicious=False,
                 patterns=(),
                 original_chars=0,
                 final_chars=0,
-                reason='non_string_input',
+                reason="non_string_input",
             )
 
         # Truncate if too long (context overflow protection)
@@ -554,17 +492,16 @@ class PromptInjectionValidator:
         original_non_ascii = sum(1 for c in text if ord(c) > 127)
         original_non_ascii_ratio = original_non_ascii / max(len(text), 1)
         if original_non_ascii_ratio > 0.3:
-            detected.append('structural_high_non_ascii')
+            detected.append("structural_high_non_ascii")
         # Check for excessive NBSP (U+00A0) in original text
-        if ' ' in text or '\u00a0' in text:
-            detected.append('structural_nnbsp_injection')
+        if " " in text or "\u00a0" in text:
+            detected.append("structural_nnbsp_injection")
         # Check for Unicode directional override in ORIGINAL text (Layer 1 removes them)
-        directional_overrides = '\u202a\u202b\u202c\u202d\u202e'
+        directional_overrides = "\u202a\u202b\u202c\u202d\u202e"
         if any(c in text for c in directional_overrides):
-            detected.append('structural_directional_override')
+            detected.append("structural_directional_override")
 
         try:
-            # ===== LAYER 1: Unicode Normalization =====
             try:
                 normalized, homoglyph_replacements, unicode_fingerprint = _normalize_unicode(text)
                 normalization_applied = True
@@ -574,13 +511,11 @@ class PromptInjectionValidator:
                 homoglyph_replacements = 0
                 unicode_fingerprint = {}
 
-            # ===== LAYER 2: Aho-Corasick Scan =====
             is_malicious, matched_patterns, rust_aho_used = _scan_aho_corasick(normalized)
             if is_malicious:
                 detected.extend(matched_patterns)
             layers_passed = max(layers_passed, 2)
 
-            # ===== LAYER 3: Structural Heuristics =====
             structural = _detect_structural_injection(normalized)
             if structural:
                 detected.extend(structural)
@@ -591,17 +526,16 @@ class PromptInjectionValidator:
 
             # Apply whitespace normalization for repeated delimiters
             result = normalized
-            if 'structural_repeated_delimiters' in detected:
-                result = re.sub(r'\n{3,}', '\n\n[WARN: repeated delimiter removed]\n', result)
+            if "structural_repeated_delimiters" in detected:
+                result = re.sub(r"\n{3,}", "\n\n[WARN: repeated delimiter removed]\n", result)
                 if result != normalized:
-                    detected.append('whitespace_collapse')
+                    detected.append("whitespace_collapse")
 
             final_chars = len(result)
             detected_tuple = tuple(detected)
 
             reason = (
-                f"detected {len(detected_tuple)} pattern(s): {', '.join(detected_tuple)}"
-                if detected_tuple else 'clean'
+                f"detected {len(detected_tuple)} pattern(s): {', '.join(detected_tuple)}" if detected_tuple else "clean"
             )
 
             return PromptInjectionValidationResult(
@@ -626,14 +560,10 @@ class PromptInjectionValidator:
                 patterns=(),
                 original_chars=original_chars,
                 final_chars=min(original_chars, max_chars),
-                reason='internal_error_fallback',
+                reason="internal_error_fallback",
                 unicode_fingerprint={},
             )
 
-
-# ---------------------------------------------------------------------------
-# Legacy API (backward compatibility)
-# ---------------------------------------------------------------------------
 
 # Global validator instance
 _validator: PromptInjectionValidator | None = None
@@ -669,11 +599,6 @@ def sanitize_prompt_injection_patterns(
     return validator.validate(text, max_chars=max_chars)
 
 
-# ---------------------------------------------------------------------------
-# ISSUE [LLM-SEC-001]: sanitize_for_llm — HTML strip + control char + token limit
-# Centralized LLM input sanitization for web content
-# ---------------------------------------------------------------------------
-
 _LLM_MAX_TOKENS: int = 3500  # Leave buffer for system prompt (Hermes3 context: 4096)
 _LLM_TOKENIZER: Any = None  # Lazy-loaded tokenizer instance
 
@@ -694,7 +619,7 @@ def _get_tokenizer() -> Any | None:
 
             mm = get_model_manager()
             # model_manager may have a tokenizer cached
-            if hasattr(mm, '_tokenizer') and mm._tokenizer is not None:
+            if hasattr(mm, "_tokenizer") and mm._tokenizer is not None:
                 _LLM_TOKENIZER = mm._tokenizer
                 return _LLM_TOKENIZER
         except Exception:  # noqa: BLE001
@@ -703,6 +628,7 @@ def _get_tokenizer() -> Any | None:
         try:
             # Fallback: load model + tokenizer (expensive, ~2GB RAM)
             from mlx_lm import load
+
             from hledac.universal._core.constants import MLX
 
             cfg = MLX()
@@ -740,15 +666,10 @@ def sanitize_for_llm(raw_content: str, *, max_tokens: int = _LLM_MAX_TOKENS) -> 
         return ""
 
     try:
-        # ---- Layer 1: HTML removal via selectolax (M1 RAM friendly) ----
         text = _strip_html_sanitize(raw_content)
 
-        # ---- Layer 2: Control character removal ----
-        # Removes prompt injection via \\x00-\\x1f (C0 controls) and \\x7f-\\x9f (DEL + C1)
-        # Also removes zero-width joiners, BOM, directional override chars
         text = _remove_control_and_hidden_chars(text)
 
-        # ---- Layer 3: Token limit ----
         text = _truncate_by_token_count(text, max_tokens)
 
         return text
@@ -782,17 +703,15 @@ def _strip_html_sanitize(text: str) -> str:
         from selectolax.parser import HTMLParser
 
         tree = HTMLParser(text)
-        # Remove dangerous/script blocks first
-        for tag in ('script', 'style', 'noscript', 'embed', 'object', 'iframe', 'svg', 'math'):
+        for tag in ("script", "style", "noscript", "embed", "object", "iframe", "svg", "math"):
             for node in tree.css(tag):
                 node.decompose()
-        # Remove comments
-        for comment in tree.css('!--'):
+        for comment in tree.css("!--"):
             comment.decompose()
         # Get text content (selectolax strips tags automatically)
         text = tree.text()
         # Collapse whitespace
-        text = re.sub(r'[ \t\r\n]+', ' ', text).strip()
+        text = re.sub(r"[ \t\r\n]+", " ", text).strip()
         return text
     except Exception:
         # Fallback: naive regex strip (still better than raw HTML)
@@ -813,20 +732,18 @@ def _strip_html_naive(text: str) -> str:
     import html
 
     result = text
-    # Remove script and style blocks completely
-    result = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'<noscript[^>]*>[\s\S]*?</noscript>', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'<embed[^>]*>[\s\S]*?</embed>', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'<object[^>]*>[\s\S]*?</object>', '', result, flags=re.IGNORECASE)
-    result = re.sub(r'<iframe[^>]*>[\s\S]*?</iframe>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r"<script[^>]*>[\s\S]*?</script>", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"<style[^>]*>[\s\S]*?</style>", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"<noscript[^>]*>[\s\S]*?</noscript>", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"<embed[^>]*>[\s\S]*?</embed>", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"<object[^>]*>[\s\S]*?</object>", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"<iframe[^>]*>[\s\S]*?</iframe>", "", result, flags=re.IGNORECASE)
     # Remove HTML comments (including conditional IE comments)
-    result = re.sub(r'<!--[\s\S]*?-->', '', result)
-    result = re.sub(r'<!\[if[^\]]*\]>[\s\S]*?<!\[endif\]>', '', result)
+    result = re.sub(r"<!--[\s\S]*?-->", "", result)
+    result = re.sub(r"<!\[if[^\]]*\]>[\s\S]*?<!\[endif\]>", "", result)
     # Strip remaining HTML tags
-    result = re.sub(r'<[^>]+>', ' ', result)
-    # Remove extra whitespace
-    result = re.sub(r'[ \t\r\n]+', ' ', result).strip()
+    result = re.sub(r"<[^>]+>", " ", result)
+    result = re.sub(r"[ \t\r\n]+", " ", result).strip()
     # Unescape HTML entities
     try:
         result = html.unescape(result)
@@ -847,35 +764,34 @@ def _remove_control_and_hidden_chars(text: str) -> str:
     - Directional override characters (LRE, RLE, LRO, RLO, PDF, LRM, RLM)
     - Inline HTML/Unicode whitespace that normalizes to space
     """
-    # Remove zero-width and directional characters
     zw_chars = [
-        '​',  # Zero-width space
-        '‌',  # Zero-width non-joiner
-        '‍',  # Zero-width joiner
-        '﻿',  # BOM / Zero-width no-break space
-        '‎',  # Left-to-right mark
-        '‏',  # Right-to-left mark
-        '‪',  # Left-to-right embedding
-        '‫',  # Right-to-left embedding
-        '‬',  # Pop directional formatting
-        '‭',  # Left-to-right override
-        '‮',  # Right-to-left override
-        '⁦',  # Left-to-right isolate
-        '⁧',  # Right-to-left isolate
-        '⁨',  # First strong isolate
-        '⁩',  # Pop directional isolate
+        "​",  # Zero-width space
+        "‌",  # Zero-width non-joiner
+        "‍",  # Zero-width joiner
+        "﻿",  # BOM / Zero-width no-break space
+        "‎",  # Left-to-right mark
+        "‏",  # Right-to-left mark
+        "‪",  # Left-to-right embedding
+        "‫",  # Right-to-left embedding
+        "‬",  # Pop directional formatting
+        "‭",  # Left-to-right override
+        "‮",  # Right-to-left override
+        "⁦",  # Left-to-right isolate
+        "⁧",  # Right-to-left isolate
+        "⁨",  # First strong isolate
+        "⁩",  # Pop directional isolate
     ]
     for zw in zw_chars:
-        text = text.replace(zw, '')
+        text = text.replace(zw, "")
 
     # Remove control characters (keep TAB=9, LF=10, CR=13)
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
 
     # Remove C1 controls (\\x80-\\x9f in Windows-1252 encodings used in injections)
-    text = re.sub(r'[\x80-\x9f]', '', text)
+    text = re.sub(r"[\x80-\x9f]", "", text)
 
     # Collapse multiple spaces (including Unicode spaces that passed through)
-    text = re.sub(r'[ \xa0 ᠎ -   　]{2,}', ' ', text)
+    text = re.sub(r"[ \xa0 ᠎ -   　]{2,}", " ", text)
 
     return text
 

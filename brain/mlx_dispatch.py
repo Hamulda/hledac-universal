@@ -34,9 +34,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S: float = 60.0

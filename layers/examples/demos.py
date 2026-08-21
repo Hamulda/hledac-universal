@@ -9,10 +9,12 @@ Moved from:
 - layers/hive_coordination.py (demo_connected_coordination)
 - layers/smart_coordination.py (demo_smart_spawned_integration)
 """
+
 import asyncio
-import msgspec.json as _json
 from datetime import UTC, datetime
 from typing import Any
+
+import msgspec.json as _json
 
 from hledac.universal.layers.hive_coordination import (
     ConnectedCoordinationSystem,

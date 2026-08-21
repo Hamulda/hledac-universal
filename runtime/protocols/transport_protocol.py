@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: DHT node count limited
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable

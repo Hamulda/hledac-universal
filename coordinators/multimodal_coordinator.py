@@ -22,30 +22,29 @@ Features:
 - Unified embedding generation
 - Modality-specific processing pipelines
 """
+
 import logging
-import time
 from dataclasses import field
 from enum import Enum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 try:
     import numpy as np
     from numpy.typing import NDArray
+
     HAS_NUMPY = True
 except ImportError:
     np = None
-    NDArray = 'NDArray'
+    NDArray = "NDArray"
     HAS_NUMPY = False
-from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
+
+from .base import DecisionResponse, ExecutionResult, OperationType, UniversalCoordinator
 
 
 # ISSUE-08 FIX: Lazy MLX import helpers — zero-cost until first MLX use
@@ -53,6 +52,7 @@ def _get_mx() -> Any:
     """Lazily import mlx.core, returning None if unavailable."""
     if MLX_AVAILABLE:
         from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
         return _get_mx_from_core()
     return None
 
@@ -62,60 +62,74 @@ def _get_nn() -> Any:
     if MLX_AVAILABLE:
         try:
             from mlx import nn as _nn
+
             return _nn
         except ImportError:
             return None
     return None
 
+
 logger = logging.getLogger(__name__)
+
 
 class ModalityType(Enum):
     """Supported modalities."""
-    TEXT = 'text'
-    IMAGE = 'image'
-    AUDIO = 'audio'
-    VIDEO = 'video'
-    DOCUMENT = 'document'
-    CHART = 'chart'
-    MOLECULAR = 'molecular'
-    MIXED = 'mixed'
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    DOCUMENT = "document"
+    CHART = "chart"
+    MOLECULAR = "molecular"
+    MIXED = "mixed"
+
 
 class ModalityInput(Struct):
     """Input with modality information."""
+
     content: Any
     modality: ModalityType
     metadata: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
 
+
 class ModalityOutput(Struct, frozen=True):
     """Output from modality processing."""
+
     modality: ModalityType
     embedding: Any | None = None
     features: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
 
+
 class FusedRepresentation(Struct, frozen=True):
     """Fused multimodal representation."""
+
     fused_embedding: Any
     modalities: list[ModalityType]
     weights: dict[ModalityType, float]
     metadata: dict[str, Any] = field(default_factory=dict)
 
+
 class ContrastiveExample(Struct, frozen=True):
     """Example for contrastive learning."""
+
     text_embedding: Any
     image_embedding: Any
     label: int
+
 
 class MLXMultimodalEncoder:
     """
     MLX-based multimodal encoder for M1 optimization.
     Implements vision, audio, and text encoders using MLX.
     """
-    __slots__ = ('embedding_dim', 'mlx_available')
 
-    def __init__(self, embedding_dim: int=768) -> None:
+    __slots__ = ("embedding_dim", "mlx_available")
+
+    def __init__(self, embedding_dim: int = 768) -> None:
         self.embedding_dim = embedding_dim
         self.mlx_available = MLX_AVAILABLE
         if self.mlx_available:
@@ -127,7 +141,7 @@ class MLXMultimodalEncoder:
         mx = _get_mx()
 
         class VisionEncoder:
-            __slots__ = ('conv1', 'conv2', 'fc')
+            __slots__ = ("conv1", "conv2", "fc")
 
             def __init__(self, embed_dim: int) -> None:
                 self.conv1 = lambda x: mx.conv2d(x, weight=mx.random.normal((32, 3, 3, 3)))
@@ -142,7 +156,7 @@ class MLXMultimodalEncoder:
                 return mx.l2_normalize(x, axis=-1)
 
         class AudioEncoder:
-            __slots__ = ('conv1', 'conv2', 'fc')
+            __slots__ = ("conv1", "conv2", "fc")
 
             def __init__(self, embed_dim: int) -> None:
                 self.conv1 = lambda x: mx.conv1d(x, weight=mx.random.normal((64, 1, 3)))
@@ -157,9 +171,9 @@ class MLXMultimodalEncoder:
                 return mx.l2_normalize(x, axis=-1)
 
         class TextEncoder:
-            __slots__ = ('embedding', 'fc')
+            __slots__ = ("embedding", "fc")
 
-            def __init__(self, embed_dim: int, vocab_size: int=30000) -> None:
+            def __init__(self, embed_dim: int, vocab_size: int = 30000) -> None:
                 self.embedding = lambda x: mx.take(mx.random.normal((vocab_size, 256)), x, axis=0)
                 self.fc = lambda x: mx.matmul(x, mx.random.normal((256, embed_dim)))
 
@@ -168,6 +182,7 @@ class MLXMultimodalEncoder:
                 x = mx.mean(x, axis=1)
                 x = self.fc(x)
                 return mx.l2_normalize(x, axis=-1)
+
         self.vision_encoder = VisionEncoder(self.embedding_dim)
         self.audio_encoder = AudioEncoder(self.embedding_dim)
         self.text_encoder = TextEncoder(self.embedding_dim)
@@ -189,7 +204,7 @@ class MLXMultimodalEncoder:
             embedding = self.vision_encoder(x)
             return np.array(embedding)
         except Exception as e:
-            logger.warning(f'MLX vision encoding failed: {e}, using fallback')
+            logger.warning(f"MLX vision encoding failed: {e}, using fallback")
             return self._fallback_vision_encode(image)
 
     def encode_audio(self, audio: Any) -> Any:
@@ -209,7 +224,7 @@ class MLXMultimodalEncoder:
             embedding = self.audio_encoder(x)
             return np.array(embedding)
         except Exception as e:
-            logger.warning(f'MLX audio encoding failed: {e}, using fallback')
+            logger.warning(f"MLX audio encoding failed: {e}, using fallback")
             return self._fallback_audio_encode(audio)
 
     def encode_text(self, text: str) -> Any:
@@ -224,10 +239,10 @@ class MLXMultimodalEncoder:
             embedding = self.text_encoder(x)
             return np.array(embedding)
         except Exception as e:
-            logger.warning(f'MLX text encoding failed: {e}, using fallback')
+            logger.warning(f"MLX text encoding failed: {e}, using fallback")
             return self._fallback_text_encode(text)
 
-    def _simple_tokenize(self, text: str, max_length: int=128) -> np.ndarray:
+    def _simple_tokenize(self, text: str, max_length: int = 128) -> np.ndarray:
         """Simple whitespace tokenization."""
         words = text.lower().split()[:max_length]
         tokens = [hash(word) % 30000 for word in words]
@@ -245,8 +260,8 @@ class MLXMultimodalEncoder:
         else:
             features = np.histogram(image, bins=48, range=(0, 255))[0]
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-        embedding = self._get_deterministic_embedding('vision_fallback', scale=1.0)
-        embedding[:len(features)] = features[:self.embedding_dim]
+        embedding = self._get_deterministic_embedding("vision_fallback", scale=1.0)
+        embedding[: len(features)] = features[: self.embedding_dim]
         embedding = embedding / np.linalg.norm(embedding)
         return embedding
 
@@ -255,11 +270,11 @@ class MLXMultimodalEncoder:
         if audio.ndim > 1:
             audio = audio.flatten()
         features = [np.mean(np.abs(audio)), np.std(audio), np.max(np.abs(audio))]
-        fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
+        fft = np.abs(np.fft.fft(audio[: min(len(audio), 1024)]))
         features.extend(fft[:10])
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-        embedding = self._get_deterministic_embedding('audio_fallback', scale=1.0)
-        embedding[:len(features)] = features[:self.embedding_dim]
+        embedding = self._get_deterministic_embedding("audio_fallback", scale=1.0)
+        embedding[: len(features)] = features[: self.embedding_dim]
         embedding = embedding / np.linalg.norm(embedding)
         return embedding
 
@@ -279,18 +294,18 @@ class MLXMultimodalEncoder:
     def _get_deterministic_embedding(self, seed: str | int, scale: float = 0.1) -> np.ndarray:
         """
         IO-4 fix: Deterministic fallback embedding using hash-based RNG.
-        
+
         Replaces np.random.randn() fallbacks to avoid poisoning LanceDB ANN index
         with non-deterministic vectors. Uses a stable hash of the seed to
         produce reproducible embeddings for the same input.
-        
+
         F6 FIX: When this embedding is used in ModalityOutput, set metadata['is_hash_fallback']=True
         to allow consumers to filter out noise vectors from ANN queries.
-        
+
         Args:
             seed: String or int used to seed the RNG deterministically
             scale: Scale factor for the random vector (default 0.1)
-            
+
         Returns:
             L2-normalized random vector of shape (embedding_dim,)
         """
@@ -305,14 +320,16 @@ class MLXMultimodalEncoder:
             embedding = embedding / norm
         return embedding
 
+
 class ContrastiveLearning:
     """
     CLIP-style contrastive learning for multimodal alignment.
     Aligns vision and text embeddings in shared space.
     """
-    __slots__ = ('embedding_dim', 'image_projection', 'temperature', 'text_projection')
 
-    def __init__(self, embedding_dim: int=768, temperature: float=0.07) -> None:
+    __slots__ = ("embedding_dim", "image_projection", "temperature", "text_projection")
+
+    def __init__(self, embedding_dim: int = 768, temperature: float = 0.07) -> None:
         self.embedding_dim = embedding_dim
         self.temperature = temperature
         self.text_projection = self._init_projection()
@@ -366,7 +383,9 @@ class ContrastiveLearning:
         loss = -np.log(probs[np.arange(batch_size), labels] + 1e-08).mean()
         return loss
 
-    def find_best_matches(self, text_embeddings: np.ndarray, image_embeddings: np.ndarray, top_k: int=5) -> list[list[int]]:
+    def find_best_matches(
+        self, text_embeddings: np.ndarray, image_embeddings: np.ndarray, top_k: int = 5
+    ) -> list[list[int]]:
         """
         Find best matching images for each text.
 
@@ -382,6 +401,7 @@ class ContrastiveLearning:
             matches.append(top_indices.tolist())
         return matches
 
+
 class UniversalMultimodalCoordinator(UniversalCoordinator):
     """
     Universal coordinator for multimodal processing.
@@ -392,22 +412,45 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
     - Memory-efficient batching
     - Unified embeddings
     """
-    __slots__ = ('_stats', 'contrastive_learner', 'embedding_dim', 'fusion_weights', 'mlx_encoder', 'modality_processors', 'use_mlx')
 
-    def __init__(self, max_concurrent: int=5, embedding_dim: int=768, use_mlx: bool=True) -> None:
-        super().__init__(name='universal_multimodal_coordinator', max_concurrent=max_concurrent, memory_aware=True)
+    __slots__ = (
+        "_stats",
+        "contrastive_learner",
+        "embedding_dim",
+        "fusion_weights",
+        "mlx_encoder",
+        "modality_processors",
+        "use_mlx",
+    )
+
+    def __init__(self, max_concurrent: int = 5, embedding_dim: int = 768, use_mlx: bool = True) -> None:
+        super().__init__(name="universal_multimodal_coordinator", max_concurrent=max_concurrent, memory_aware=True)
         self.embedding_dim = embedding_dim
         self.use_mlx = use_mlx and MLX_AVAILABLE
         if self.use_mlx:
-            logger.info('Initializing MLX multimodal encoder for M1 optimization')
+            logger.info("Initializing MLX multimodal encoder for M1 optimization")
             self.mlx_encoder = MLXMultimodalEncoder(embedding_dim)
         else:
             self.mlx_encoder = None
         self.contrastive_learner = ContrastiveLearning(embedding_dim)
         self.modality_processors: dict[ModalityType, callable] = {}
         self._initialize_processors()
-        self.fusion_weights: dict[ModalityType, float] = {ModalityType.TEXT: 1.0, ModalityType.IMAGE: 0.9, ModalityType.AUDIO: 0.8, ModalityType.VIDEO: 0.85, ModalityType.DOCUMENT: 0.95, ModalityType.CHART: 0.7, ModalityType.MOLECULAR: 0.75}
-        self._stats = {'processed_by_modality': dict.fromkeys(ModalityType, 0), 'fusions_performed': 0, 'modality_detection_accuracy': 0.95, 'mlx_used': self.use_mlx, 'contrastive_alignments': 0}
+        self.fusion_weights: dict[ModalityType, float] = {
+            ModalityType.TEXT: 1.0,
+            ModalityType.IMAGE: 0.9,
+            ModalityType.AUDIO: 0.8,
+            ModalityType.VIDEO: 0.85,
+            ModalityType.DOCUMENT: 0.95,
+            ModalityType.CHART: 0.7,
+            ModalityType.MOLECULAR: 0.75,
+        }
+        self._stats = {
+            "processed_by_modality": dict.fromkeys(ModalityType, 0),
+            "fusions_performed": 0,
+            "modality_detection_accuracy": 0.95,
+            "mlx_used": self.use_mlx,
+            "contrastive_alignments": 0,
+        }
 
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.RESEARCH, OperationType.SYNTHESIS]
@@ -423,33 +466,33 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
 
     def _get_operation_type_for_tracking(self) -> str:
         """Return operation type for tracking."""
-        return 'multimodal'
+        return "multimodal"
 
     async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle multimodal processing request."""
         try:
-            operation = decision.metadata.get('multimodal_operation', 'detect_and_process')
-            if operation == 'detect_and_process':
-                content = decision.metadata.get('content', '')
+            operation = decision.metadata.get("multimodal_operation", "detect_and_process")
+            if operation == "detect_and_process":
+                content = decision.metadata.get("content", "")
                 result = await self.process_content(content)
-            elif operation == 'fuse':
-                contents = decision.metadata.get('contents', [])
+            elif operation == "fuse":
+                contents = decision.metadata.get("contents", [])
                 result = await self.fuse_multimodal(contents)
             else:
-                result = {'success': False, 'error': f'Unknown operation: {operation}'}
+                result = {"success": False, "error": f"Unknown operation: {operation}"}
             return ExecutionResult(
-                status='completed' if result.get('success') else 'failed',
-                result_summary=result.get('summary', 'Multimodal processing completed'),
-                success=result.get('success', False),
+                status="completed" if result.get("success") else "failed",
+                result_summary=result.get("summary", "Multimodal processing completed"),
+                success=result.get("success", False),
                 metadata=result,
-    )
+            )
         except Exception as e:
             return ExecutionResult(
-                status='failed',
-                result_summary=f'Multimodal processing failed: {str(e)}',
+                status="failed",
+                result_summary=f"Multimodal processing failed: {str(e)}",
                 success=False,
                 error_message=str(e),
-    )
+            )
 
     async def detect_modality(self, content: Any) -> ModalityType:
         """
@@ -463,13 +506,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         """
         if isinstance(content, str):
             content.lower()
-            if any(ext in content for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+            if any(ext in content for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]):
                 return ModalityType.IMAGE
-            if any(ext in content for ext in ['.mp3', '.wav', '.ogg', '.flac']):
+            if any(ext in content for ext in [".mp3", ".wav", ".ogg", ".flac"]):
                 return ModalityType.AUDIO
-            if any(ext in content for ext in ['.mp4', '.avi', '.mov', '.mkv']):
+            if any(ext in content for ext in [".mp4", ".avi", ".mov", ".mkv"]):
                 return ModalityType.VIDEO
-            if any(ext in content for ext in ['.pdf', '.doc', '.docx', '.txt']):
+            if any(ext in content for ext in [".pdf", ".doc", ".docx", ".txt"]):
                 return ModalityType.DOCUMENT
             return ModalityType.TEXT
         if isinstance(content, np.ndarray):
@@ -479,7 +522,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 return ModalityType.AUDIO
         return ModalityType.TEXT
 
-    async def process_content(self, content: Any, modality: ModalityType | None=None) -> dict[str, Any]:
+    async def process_content(self, content: Any, modality: ModalityType | None = None) -> dict[str, Any]:
         """
         Process content with automatic modality detection.
 
@@ -492,11 +535,18 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         """
         if modality is None:
             modality = await self.detect_modality(content)
-        logger.info(f'Processing content with modality: {modality.value}')
+        logger.info(f"Processing content with modality: {modality.value}")
         processor = self.modality_processors.get(modality, self._process_text)
         output = await processor(content)
-        self._stats['processed_by_modality'][modality] += 1
-        return {'success': True, 'modality': modality.value, 'embedding_shape': output.embedding.shape if output.embedding is not None else None, 'features': output.features, 'confidence': output.confidence, 'summary': f'Processed {modality.value} content'}
+        self._stats["processed_by_modality"][modality] += 1
+        return {
+            "success": True,
+            "modality": modality.value,
+            "embedding_shape": output.embedding.shape if output.embedding is not None else None,
+            "features": output.features,
+            "confidence": output.confidence,
+            "summary": f"Processed {modality.value} content",
+        }
 
     async def fuse_multimodal(self, contents: list[Any | tuple[Any, ModalityType]]) -> dict[str, Any]:
         """
@@ -508,7 +558,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         Returns:
             Fused representation
         """
-        logger.info(f'Fusing {len(contents)} modalities')
+        logger.info(f"Fusing {len(contents)} modalities")
         outputs: list[ModalityOutput] = []
         modalities: list[ModalityType] = []
         for item in contents:
@@ -519,7 +569,11 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 modality = await self.detect_modality(content)
             result = await self.process_content(content, modality)
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-            output = ModalityOutput(modality=modality, embedding=self._get_deterministic_embedding(f'fuse_{modality.value}'), confidence=result.get('confidence', 0.8))
+            output = ModalityOutput(
+                modality=modality,
+                embedding=self._get_deterministic_embedding(f"fuse_{modality.value}"),
+                confidence=result.get("confidence", 0.8),
+            )
             outputs.append(output)
             modalities.append(modality)
         weights = {}
@@ -539,23 +593,33 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         fused_norm = np.linalg.norm(fused)
         if fused_norm > 0:
             fused = fused / fused_norm
-        self._stats['fusions_performed'] += 1
-        return {'success': True, 'fused_embedding_shape': fused.shape, 'modalities': [m.value for m in modalities], 'weights': {k.value: v for k, v in weights.items()}, 'summary': f'Fused {len(outputs)} modalities'}
+        self._stats["fusions_performed"] += 1
+        return {
+            "success": True,
+            "fused_embedding_shape": fused.shape,
+            "modalities": [m.value for m in modalities],
+            "weights": {k.value: v for k, v in weights.items()},
+            "summary": f"Fused {len(outputs)} modalities",
+        }
 
     async def _process_text(self, content: str) -> ModalityOutput:
         """Process text content."""
         words = content.split()
-        features = {'word_count': len(words), 'char_count': len(content), 'avg_word_length': sum(len(w) for w in words) / max(len(words), 1)}
+        features = {
+            "word_count": len(words),
+            "char_count": len(content),
+            "avg_word_length": sum(len(w) for w in words) / max(len(words), 1),
+        }
         embedding = self._generate_text_embedding(content)
         return ModalityOutput(modality=ModalityType.TEXT, embedding=embedding, features=features, confidence=0.95)
 
     async def _process_image(self, content: Any) -> ModalityOutput:
         """Process image content using MLX if available."""
-        features = {'size': 'unknown', 'format': 'unknown'}
+        features = {"size": "unknown", "format": "unknown"}
         try:
             if isinstance(content, np.ndarray):
-                features['size'] = f'{content.shape}'
-                features['format'] = 'numpy_array'
+                features["size"] = f"{content.shape}"
+                features["format"] = "numpy_array"
                 if self.mlx_encoder:
                     embedding = self.mlx_encoder.encode_vision(content)
                     confidence = 0.92
@@ -563,35 +627,46 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     embedding = self._generate_image_embedding_fallback(content)
                     confidence = 0.85
             elif isinstance(content, str):
-                features['format'] = 'path'
+                features["format"] = "path"
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-                embedding = self._get_deterministic_embedding(f'image_path_{content}', scale=0.1)
+                embedding = self._get_deterministic_embedding(f"image_path_{content}", scale=0.1)
                 # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'path_not_processable'}
+                fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "path_not_processable"}
                 return ModalityOutput(
-                    modality=ModalityType.IMAGE, embedding=embedding, features=features,
-                    metadata=fallback_metadata, confidence=0.8,
-    )
+                    modality=ModalityType.IMAGE,
+                    embedding=embedding,
+                    features=features,
+                    metadata=fallback_metadata,
+                    confidence=0.8,
+                )
             else:
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-                embedding = self._get_deterministic_embedding('image_unknown', scale=0.1)
+                embedding = self._get_deterministic_embedding("image_unknown", scale=0.1)
                 # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'unknown_format'}
+                fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "unknown_format"}
                 return ModalityOutput(
-                    modality=ModalityType.IMAGE, embedding=embedding, features=features,
-                    metadata=fallback_metadata, confidence=0.75,
-    )
+                    modality=ModalityType.IMAGE,
+                    embedding=embedding,
+                    features=features,
+                    metadata=fallback_metadata,
+                    confidence=0.75,
+                )
         except Exception as e:
-            logger.warning(f'Image processing failed: {e}')
+            logger.warning(f"Image processing failed: {e}")
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-            embedding = self._get_deterministic_embedding('image_error', scale=0.1)
+            embedding = self._get_deterministic_embedding("image_error", scale=0.1)
             # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "processing_error"}
             return ModalityOutput(
-                modality=ModalityType.IMAGE, embedding=embedding, features=features,
-                metadata=fallback_metadata, confidence=0.7,
-    )
-        return ModalityOutput(modality=ModalityType.IMAGE, embedding=embedding, features=features, confidence=confidence)
+                modality=ModalityType.IMAGE,
+                embedding=embedding,
+                features=features,
+                metadata=fallback_metadata,
+                confidence=0.7,
+            )
+        return ModalityOutput(
+            modality=ModalityType.IMAGE, embedding=embedding, features=features, confidence=confidence
+        )
 
     def _generate_image_embedding_fallback(self, image: Any) -> Any:
         """Generate image embedding using numpy fallback."""
@@ -603,8 +678,8 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 hist = np.histogram(image[..., i], bins=16, range=(0, 255))[0]
                 features.extend(hist / (hist.sum() + 1e-08))
         embedding = np.zeros(self.embedding_dim)
-        feature_array = np.array(features[:self.embedding_dim])
-        embedding[:len(feature_array)] = feature_array
+        feature_array = np.array(features[: self.embedding_dim])
+        embedding[: len(feature_array)] = feature_array
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
@@ -627,12 +702,12 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         Fail-safe: returns random embedding on any error — never blocks the sprint.
         """
         features: dict[str, Any] = {
-            'duration': 'unknown',
-            'sample_rate': 0,
-            'transcribed': False,
-            'iocs': [],
-            'ioc_count': 0,
-            'ioc_scanner': '',
+            "duration": "unknown",
+            "sample_rate": 0,
+            "transcribed": False,
+            "iocs": [],
+            "ioc_count": 0,
+            "ioc_scanner": "",
         }
         try:
             # ── String file path → canonical MediaIocPipeline ─────────────────
@@ -642,35 +717,35 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 if is_audio_file(content):
                     from hledac.universal.multimodal import get_pipeline
 
-                    pipeline = await get_pipeline(self._governor if hasattr(self, '_governor') else None)
+                    pipeline = await get_pipeline(self._governor if hasattr(self, "_governor") else None)
                     result = await pipeline.process_audio(content)
 
                     # Map MediaIocResult → features dict
-                    features['duration'] = result.duration_s
-                    features['sample_rate'] = 16000
-                    features['transcribed'] = bool(result.transcript)
-                    features['transcript_preview'] = result.transcript[:500] if result.transcript else ''
-                    features['confidence'] = result.transcript_confidence
-                    features['segments'] = result.segments
-                    features['iocs'] = result.iocs
-                    features['ioc_count'] = result.ioc_count
-                    features['ioc_scanner'] = result.ioc_scanner
+                    features["duration"] = result.duration_s
+                    features["sample_rate"] = 16000
+                    features["transcribed"] = bool(result.transcript)
+                    features["transcript_preview"] = result.transcript[:500] if result.transcript else ""
+                    features["confidence"] = result.transcript_confidence
+                    features["segments"] = result.segments
+                    features["iocs"] = result.iocs
+                    features["ioc_count"] = result.ioc_count
+                    features["ioc_scanner"] = result.ioc_scanner
                     # Performance metrics from the pipeline
-                    features['decode_time_ms'] = result.decode_time_ms
-                    features['ioc_scan_time_ms'] = result.ioc_scan_time_ms
-                    features['total_time_ms'] = result.total_time_ms
+                    features["decode_time_ms"] = result.decode_time_ms
+                    features["ioc_scan_time_ms"] = result.ioc_scan_time_ms
+                    features["total_time_ms"] = result.total_time_ms
 
                     if result.error:
-                        logger.debug('[SILICON-07] Audio pipeline: %s', result.error)
+                        logger.debug("[SILICON-07] Audio pipeline: %s", result.error)
 
                     # Generate embedding from transcript text for cross-modal fusion
-                    text_for_embedding = result.transcript if result.transcript else ''
+                    text_for_embedding = result.transcript if result.transcript else ""
                     if text_for_embedding:
                         embedding = self._generate_text_embedding(text_for_embedding)
                         confidence = max(result.transcript_confidence, 0.75)
                     else:
                         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-                        embedding = self._get_deterministic_embedding('audio_no_transcript', scale=0.1)
+                        embedding = self._get_deterministic_embedding("audio_no_transcript", scale=0.1)
                         confidence = 0.65
 
                     return ModalityOutput(
@@ -678,12 +753,12 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                         embedding=embedding,
                         features=features,
                         confidence=confidence,
-    )
+                    )
 
             # ── Raw numpy PCM samples → MLX encoder or numpy fallback ──────────
             if isinstance(content, np.ndarray):
-                features['duration'] = len(content)
-                features['sample_rate'] = 16000
+                features["duration"] = len(content)
+                features["sample_rate"] = 16000
                 if self.mlx_encoder:
                     embedding = self.mlx_encoder.encode_audio(content)
                     confidence = 0.88
@@ -692,35 +767,35 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                     confidence = 0.78
             else:
                 # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-                embedding = self._get_deterministic_embedding('audio_non_array', scale=0.1)
+                embedding = self._get_deterministic_embedding("audio_non_array", scale=0.1)
                 # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-                fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'non_array_input'}
+                fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "non_array_input"}
                 return ModalityOutput(
                     modality=ModalityType.AUDIO,
                     embedding=embedding,
                     features=features,
                     metadata=fallback_metadata,
                     confidence=0.7,
-    )
+                )
         except Exception as e:
-            logger.warning(f'Audio processing failed: {e}')
+            logger.warning(f"Audio processing failed: {e}")
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-            embedding = self._get_deterministic_embedding('audio_error', scale=0.1)
+            embedding = self._get_deterministic_embedding("audio_error", scale=0.1)
             # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "processing_error"}
             return ModalityOutput(
                 modality=ModalityType.AUDIO,
                 embedding=embedding,
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.7,
-    )
+            )
         return ModalityOutput(
             modality=ModalityType.AUDIO,
             embedding=embedding,
             features=features,
             confidence=confidence,
-    )
+        )
 
     async def _process_video(self, content: Any) -> ModalityOutput:
         """
@@ -744,13 +819,13 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         Fail-safe: returns ModalityOutput with random embedding on any error.
         """
         features: dict[str, Any] = {
-            'duration': 'unknown',
-            'transcribed': False,
-            'frames_ocr': 0,
-            'combined_text_len': 0,
-            'iocs': [],
-            'ioc_count': 0,
-            'ioc_scanner': '',
+            "duration": "unknown",
+            "transcribed": False,
+            "frames_ocr": 0,
+            "combined_text_len": 0,
+            "iocs": [],
+            "ioc_count": 0,
+            "ioc_scanner": "",
         }
         try:
             if isinstance(content, str):
@@ -759,97 +834,97 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 if is_video_file(content):
                     from hledac.universal.multimodal import get_pipeline
 
-                    pipeline = await get_pipeline(self._governor if hasattr(self, '_governor') else None)
+                    pipeline = await get_pipeline(self._governor if hasattr(self, "_governor") else None)
                     result = await pipeline.process_video(content)
 
                     # Map MediaIocResult → features dict
-                    features['duration'] = result.duration_s
-                    features['transcribed'] = bool(result.transcript)
-                    features['transcript_preview'] = result.transcript[:500] if result.transcript else ''
-                    features['audio_confidence'] = result.transcript_confidence
-                    features['frames_ocr'] = result.frame_count
-                    features['frame_texts'] = result.frame_texts
-                    features['frame_timestamps'] = result.frame_timestamps
-                    features['combined_text_len'] = len(result.all_text)
-                    features['iocs'] = result.iocs
-                    features['ioc_count'] = result.ioc_count
-                    features['ioc_scanner'] = result.ioc_scanner
+                    features["duration"] = result.duration_s
+                    features["transcribed"] = bool(result.transcript)
+                    features["transcript_preview"] = result.transcript[:500] if result.transcript else ""
+                    features["audio_confidence"] = result.transcript_confidence
+                    features["frames_ocr"] = result.frame_count
+                    features["frame_texts"] = result.frame_texts
+                    features["frame_timestamps"] = result.frame_timestamps
+                    features["combined_text_len"] = len(result.all_text)
+                    features["iocs"] = result.iocs
+                    features["ioc_count"] = result.ioc_count
+                    features["ioc_scanner"] = result.ioc_scanner
                     # Performance metrics
-                    features['decode_time_ms'] = result.decode_time_ms
-                    features['ioc_scan_time_ms'] = result.ioc_scan_time_ms
-                    features['total_time_ms'] = result.total_time_ms
+                    features["decode_time_ms"] = result.decode_time_ms
+                    features["ioc_scan_time_ms"] = result.ioc_scan_time_ms
+                    features["total_time_ms"] = result.total_time_ms
 
                     if result.error:
-                        logger.debug('[SILICON-07] Video pipeline: %s', result.error)
+                        logger.debug("[SILICON-07] Video pipeline: %s", result.error)
 
                     # Generate embedding from combined text for cross-modal fusion
-                    text_for_embedding = result.all_text if result.all_text else ''
+                    text_for_embedding = result.all_text if result.all_text else ""
                     if text_for_embedding:
                         embedding = self._generate_text_embedding(text_for_embedding)
                         confidence = max(result.transcript_confidence, 0.6)
                     else:
                         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-                        embedding = self._get_deterministic_embedding('video_no_text', scale=0.1)
+                        embedding = self._get_deterministic_embedding("video_no_text", scale=0.1)
                         # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-                        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'no_text_content'}
+                        fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "no_text_content"}
                         return ModalityOutput(
                             modality=ModalityType.VIDEO,
                             embedding=embedding,
                             features=features,
                             metadata=fallback_metadata,
                             confidence=0.5,
-    )
+                        )
 
                     return ModalityOutput(
                         modality=ModalityType.VIDEO,
                         embedding=embedding,
                         features=features,
                         confidence=confidence,
-    )
+                    )
 
             # Fallback: no valid video content
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-            embedding = self._get_deterministic_embedding('video_no_content', scale=0.1)
+            embedding = self._get_deterministic_embedding("video_no_content", scale=0.1)
             # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'no_valid_video'}
+            fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "no_valid_video"}
             return ModalityOutput(
                 modality=ModalityType.VIDEO,
                 embedding=embedding,
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.65,
-    )
+            )
         except Exception as e:
-            logger.warning(f'Video processing failed: {e}')
+            logger.warning(f"Video processing failed: {e}")
             # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-            embedding = self._get_deterministic_embedding('video_error', scale=0.1)
+            embedding = self._get_deterministic_embedding("video_error", scale=0.1)
             # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-            fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'processing_error'}
+            fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "processing_error"}
             return ModalityOutput(
                 modality=ModalityType.VIDEO,
                 embedding=embedding,
                 features=features,
                 metadata=fallback_metadata,
                 confidence=0.6,
-    )
+            )
         return ModalityOutput(
             modality=ModalityType.VIDEO,
             embedding=embedding,
             features=features,
             confidence=confidence,
-    )
+        )
 
     def _generate_audio_embedding_fallback(self, audio: Any) -> Any:
         """Generate audio embedding using numpy fallback."""
         if not HAS_NUMPY:
             raise ImportError("numpy required for audio embedding — pip install 'hledac[dev]'")
-        features = [np.mean(np.abs(audio)), np.std(audio), np.max(np.abs(audio)), np.mean(audio ** 2)]
+        features = [np.mean(np.abs(audio)), np.std(audio), np.max(np.abs(audio)), np.mean(audio**2)]
         if audio:
-            fft = np.abs(np.fft.fft(audio[:min(len(audio), 1024)]))
+            fft = np.abs(np.fft.fft(audio[: min(len(audio), 1024)]))
             features.extend(fft[:20])
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
-        embedding = self._get_deterministic_embedding('audio_features', scale=0.05)
-        embedding[:len(features)] = np.array(features[:self.embedding_dim])
+        embedding = self._get_deterministic_embedding("audio_features", scale=0.05)
+        embedding[: len(features)] = np.array(features[: self.embedding_dim])
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
@@ -859,27 +934,27 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         """Process document content (placeholder)."""
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
         # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'placeholder_implementation'}
+        fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "placeholder_implementation"}
         return ModalityOutput(
             modality=ModalityType.DOCUMENT,
-            embedding=self._get_deterministic_embedding('document', scale=0.1),
-            features={'pages': 0, 'type': 'document'},
+            embedding=self._get_deterministic_embedding("document", scale=0.1),
+            features={"pages": 0, "type": "document"},
             metadata=fallback_metadata,
             confidence=0.9,
-    )
+        )
 
     async def _process_chart(self, content: Any) -> ModalityOutput:
         """Process chart content (placeholder)."""
         # IO-4 fix: Use deterministic fallback to avoid poisoning LanceDB ANN index
         # F6 FIX: Mark hash-fallback embeddings so consumers can filter from ANN
-        fallback_metadata = {'is_hash_fallback': True, 'fallback_reason': 'placeholder_implementation'}
+        fallback_metadata = {"is_hash_fallback": True, "fallback_reason": "placeholder_implementation"}
         return ModalityOutput(
             modality=ModalityType.CHART,
-            embedding=self._get_deterministic_embedding('chart', scale=0.1),
-            features={'type': 'chart', 'data_points': 0},
+            embedding=self._get_deterministic_embedding("chart", scale=0.1),
+            features={"type": "chart", "data_points": 0},
             metadata=fallback_metadata,
             confidence=0.7,
-    )
+        )
 
     def _generate_text_embedding(self, text: str) -> Any:
         """Generate text embedding using MLX if available, fast hash fallback otherwise."""
@@ -887,7 +962,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             try:
                 return self.mlx_encoder.encode_text(text)
             except Exception as e:
-                logger.warning(f'MLX text encoding failed: {e}, using fallback')
+                logger.warning(f"MLX text encoding failed: {e}, using fallback")
         if not HAS_NUMPY:
             raise ImportError("numpy required for text embedding — pip install 'hledac[dev]'")
         # Fast hash-based bag-of-words — O(|words|) via builtin hash, no crypto
@@ -911,7 +986,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             Alignment results with similarity matrix
         """
         if len(texts) != len(images):
-            raise ValueError('Number of texts and images must match')
+            raise ValueError("Number of texts and images must match")
         text_embeddings = np.array([self._generate_text_embedding(t) for t in texts])
         image_embeddings = []
         for img in images:
@@ -923,12 +998,29 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         image_embeddings = np.array(image_embeddings)
         loss = self.contrastive_learner.compute_contrastive_loss(text_embeddings, image_embeddings)
         matches = self.contrastive_learner.find_best_matches(text_embeddings, image_embeddings)
-        self._stats['contrastive_alignments'] += 1
-        return {'success': True, 'loss': loss, 'matches': matches, 'text_embeddings_shape': text_embeddings.shape, 'image_embeddings_shape': image_embeddings.shape}
+        self._stats["contrastive_alignments"] += 1
+        return {
+            "success": True,
+            "loss": loss,
+            "matches": matches,
+            "text_embeddings_shape": text_embeddings.shape,
+            "image_embeddings_shape": image_embeddings.shape,
+        }
 
     def get_statistics(self) -> dict[str, Any]:
         """Get multimodal processing statistics."""
-        return {**self._stats, 'processed_by_modality': {k.value: v for k, v in self._stats['processed_by_modality'].items()}, 'embedding_dimension': self.embedding_dim}
+        return {
+            **self._stats,
+            "processed_by_modality": {k.value: v for k, v in self._stats["processed_by_modality"].items()},
+            "embedding_dimension": self.embedding_dim,
+        }
 
     def _get_feature_list(self) -> list[str]:
-        return ['Automatic modality detection', 'Cross-modal fusion', 'Text embedding generation', 'Memory-efficient processing', 'Modality-specific pipelines', 'Weighted fusion']
+        return [
+            "Automatic modality detection",
+            "Cross-modal fusion",
+            "Text embedding generation",
+            "Memory-efficient processing",
+            "Modality-specific pipelines",
+            "Weighted fusion",
+        ]

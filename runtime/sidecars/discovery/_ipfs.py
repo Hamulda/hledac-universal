@@ -20,8 +20,8 @@ REAL IMPLEMENTATION:
   This sidecar performs IPFS content discovery via HTTP gateways.
   Full IPFS (libp2p) requires rust p2p_harvest implementation.
 """
+
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from _core import aclose
 
 
 class IPFSDiscoverySidecarAdapter(DarknetSidecarAdapter):

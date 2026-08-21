@@ -19,30 +19,40 @@ Key features:
 
 Migrated to ConcurrencyBudgetRegistry (F268).
 """
+
 import logging
 import os
 import time
+
 import msgspec.json as _json
+
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-I2P_PROXY_HOST: str = '127.0.0.1'
+I2P_PROXY_HOST: str = "127.0.0.1"
 # Port 7656 is the I2P SAM v3 bridge (native protocol, preferred).
 # Port 4444 is the I2P SOCKS proxy (httpx-socks based, fallback).
 I2P_PROXY_PORT: int = 4444
 I2P_SOCKS_PORT: int = 4444
-I2P_PROXY_URL: str = f'http://{I2P_PROXY_HOST}:{I2P_PROXY_PORT}'
+I2P_PROXY_URL: str = f"http://{I2P_PROXY_HOST}:{I2P_PROXY_PORT}"
 # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
-I2P_SOCKS_URL: str = f'socks5h://{I2P_PROXY_HOST}:{I2P_SOCKS_PORT}'
+I2P_SOCKS_URL: str = f"socks5h://{I2P_PROXY_HOST}:{I2P_SOCKS_PORT}"
 I2P_TIMEOUT: int = 30
 I2P_MAX_SIZE: int = 2 * 1024 * 1024
-KNOWN_EEPSITES: list[dict] = [{'name': 'I2P Wiki', 'url': 'http://i2pwiki.i2p', 'description': 'I2P documentation'}, {'name': 'NotBob', 'url': 'http://notbob.i2p', 'description': 'I2P community forum'}, {'name': 'I2P Stats', 'url': 'http://stats.i2p', 'description': 'Network statistics'}, {'name': 'Zeronet', 'url': 'http://127.0.0.1:43110', 'description': 'Decentralized websites'}, {'name': 'I2P Forum', 'url': 'http://forum.i2p', 'description': 'I2P discussion'}]
+KNOWN_EEPSITES: list[dict] = [
+    {"name": "I2P Wiki", "url": "http://i2pwiki.i2p", "description": "I2P documentation"},
+    {"name": "NotBob", "url": "http://notbob.i2p", "description": "I2P community forum"},
+    {"name": "I2P Stats", "url": "http://stats.i2p", "description": "Network statistics"},
+    {"name": "Zeronet", "url": "http://127.0.0.1:43110", "description": "Decentralized websites"},
+    {"name": "I2P Forum", "url": "http://forum.i2p", "description": "I2P discussion"},
+]
 _i2p_http_available: bool | None = None
 _i2p_socks_available: bool | None = None
 _i2p_check_time: float = 0
 _I2P_CHECK_TTL: float = 60.0
 
-async def is_i2p_available(proxy_type: str='http') -> bool:
+
+async def is_i2p_available(proxy_type: str = "http") -> bool:
     """
     Check if I2P proxy is running and accessible.
 
@@ -61,11 +71,11 @@ async def is_i2p_available(proxy_type: str='http') -> bool:
     global _i2p_http_available, _i2p_socks_available, _i2p_check_time
     now = time.monotonic()
     if now - _i2p_check_time < _I2P_CHECK_TTL:
-        if proxy_type == 'http':
+        if proxy_type == "http":
             return _i2p_http_available if _i2p_http_available is not None else False
         else:
             return _i2p_socks_available if _i2p_socks_available is not None else False
-    if os.getenv('HLEDAC_I2P_FORCE_UNAVAILABLE', '').lower() in ('1', 'true', 'yes'):
+    if os.getenv("HLEDAC_I2P_FORCE_UNAVAILABLE", "").lower() in ("1", "true", "yes"):
         _i2p_http_available = False
         _i2p_socks_available = False
         _i2p_check_time = now
@@ -73,10 +83,12 @@ async def is_i2p_available(proxy_type: str='http') -> bool:
     try:
         import httpx
         import httpx_socks
+
         from hledac.universal.transport.session_pool import session_pool
+
         try:
             session = await session_pool.httpx()
-            resp = await session.get(f'{I2P_PROXY_URL}/', timeout=httpx.Timeout(5.0), proxy=I2P_PROXY_URL)
+            resp = await session.get(f"{I2P_PROXY_URL}/", timeout=httpx.Timeout(5.0), proxy=I2P_PROXY_URL)
             if resp.status_code < 500:
                 _i2p_http_available = True
             else:
@@ -85,25 +97,26 @@ async def is_i2p_available(proxy_type: str='http') -> bool:
             _i2p_http_available = False
         try:
             session = await session_pool.httpx_socks(I2P_SOCKS_URL)
-            resp = await session.get('http://i2pwiki.i2p', timeout=httpx.Timeout(3.0))
+            resp = await session.get("http://i2pwiki.i2p", timeout=httpx.Timeout(3.0))
             _i2p_socks_available = resp.status_code < 500
         except Exception:
             _i2p_socks_available = False
     except ImportError:
-        if proxy_type == 'socks5':
+        if proxy_type == "socks5":
             _i2p_socks_available = False
-        logger.debug('httpx-socks not available, SOCKS5 check skipped')
+        logger.debug("httpx-socks not available, SOCKS5 check skipped")
     except Exception as e:
-        logger.debug(f'I2P proxy check error: {e}')
+        logger.debug(f"I2P proxy check error: {e}")
         _i2p_http_available = False
         _i2p_socks_available = False
     _i2p_check_time = now
-    if proxy_type == 'http':
+    if proxy_type == "http":
         return _i2p_http_available or False
     else:
         return _i2p_socks_available or False
 
-async def fetch_eepsite(url: str, timeout: int=I2P_TIMEOUT, max_size: int=I2P_MAX_SIZE) -> str | None:
+
+async def fetch_eepsite(url: str, timeout: int = I2P_TIMEOUT, max_size: int = I2P_MAX_SIZE) -> str | None:
     """
     Fetch content from an I2P eepsite via HTTP proxy.
 
@@ -117,35 +130,38 @@ async def fetch_eepsite(url: str, timeout: int=I2P_TIMEOUT, max_size: int=I2P_MA
     """
     if not await is_i2p_available():
         return None
-    if not url.startswith('http'):
-        url = f'http://{url}'
+    if not url.startswith("http"):
+        url = f"http://{url}"
     try:
         import httpx
+
         from hledac.universal.transport.session_pool import session_pool
+
         session = await session_pool.httpx()
         resp = await session.get(url, timeout=httpx.Timeout(timeout), proxy=I2P_PROXY_URL)
         if resp.status_code == 200:
-            content_length = resp.headers.get('Content-Length')
+            content_length = resp.headers.get("Content-Length")
             if content_length:
                 if int(content_length) > max_size:
-                    logger.warning(f'I2P response too large: {content_length} bytes')
+                    logger.warning(f"I2P response too large: {content_length} bytes")
                     return None
             content = resp.text
-            if len(content.encode('utf-8')) > max_size:
-                logger.warning('I2P response too large after decode')
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning("I2P response too large after decode")
                 return None
             return content
         else:
-            logger.debug(f'I2P fetch failed: status {resp.status_code} for {url}')
+            logger.debug(f"I2P fetch failed: status {resp.status_code} for {url}")
             return None
     except TimeoutError:
-        logger.debug(f'I2P fetch timeout: {url}')
+        logger.debug(f"I2P fetch timeout: {url}")
         return None
     except Exception as e:
-        logger.debug(f'I2P fetch error {url}: {e}')
+        logger.debug(f"I2P fetch error {url}: {e}")
         return None
 
-async def fetch_eepsite_socks5(url: str, timeout: int=I2P_TIMEOUT, max_size: int=I2P_MAX_SIZE) -> str | None:
+
+async def fetch_eepsite_socks5(url: str, timeout: int = I2P_TIMEOUT, max_size: int = I2P_MAX_SIZE) -> str | None:
     """
     Fetch content from an I2P eepsite via SOCKS5 proxy.
 
@@ -162,37 +178,40 @@ async def fetch_eepsite_socks5(url: str, timeout: int=I2P_TIMEOUT, max_size: int
     Returns:
         Response text as string, or None if fetch failed
     """
-    if not await is_i2p_available(proxy_type='socks5'):
+    if not await is_i2p_available(proxy_type="socks5"):
         return None
-    if not url.startswith('http'):
-        url = f'http://{url}'
+    if not url.startswith("http"):
+        url = f"http://{url}"
     try:
         import httpx
+
         from hledac.universal.transport.session_pool import session_pool
+
         session = await session_pool.httpx_socks(I2P_SOCKS_URL)
         resp = await session.get(url, timeout=httpx.Timeout(timeout))
         if resp.status_code == 200:
-            content_length = resp.headers.get('Content-Length')
+            content_length = resp.headers.get("Content-Length")
             if content_length and int(content_length) > max_size:
-                logger.warning(f'I2P SOCKS5 response too large: {content_length}')
+                logger.warning(f"I2P SOCKS5 response too large: {content_length}")
                 return None
             content = resp.text
-            if len(content.encode('utf-8')) > max_size:
-                logger.warning('I2P SOCKS5 response too large after decode')
+            if len(content.encode("utf-8")) > max_size:
+                logger.warning("I2P SOCKS5 response too large after decode")
                 return None
             return content
         else:
-            logger.debug(f'I2P SOCKS5 fetch failed: status {resp.status_code} for {url}')
+            logger.debug(f"I2P SOCKS5 fetch failed: status {resp.status_code} for {url}")
             return None
     except ImportError:
-        logger.debug('httpx-socks not available for SOCKS5 fetch')
+        logger.debug("httpx-socks not available for SOCKS5 fetch")
         return None
     except TimeoutError:
-        logger.debug(f'I2P SOCKS5 fetch timeout: {url}')
+        logger.debug(f"I2P SOCKS5 fetch timeout: {url}")
         return None
     except Exception as e:
-        logger.debug(f'I2P SOCKS5 fetch error {url}: {e}')
+        logger.debug(f"I2P SOCKS5 fetch error {url}: {e}")
         return None
+
 
 async def discover_eepsites() -> list[dict]:
     """
@@ -205,29 +224,33 @@ async def discover_eepsites() -> list[dict]:
     if not await is_i2p_available():
         return discovered
     from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
     sem = get_semaphore(ConcurrencyCategory.TRANSPORT_I2P)
 
     async def fetch_one(eepsite: dict) -> dict | None:
         async with sem:
             try:
-                content = await fetch_eepsite(eepsite['url'])
+                content = await fetch_eepsite(eepsite["url"])
                 if content:
-                    title = eepsite['name']
-                    if '<title' in content.lower():
+                    title = eepsite["name"]
+                    if "<title" in content.lower():
                         import re
-                        title_match = re.search('<title[^>]*>([^<]+)', content, re.IGNORECASE)
+
+                        title_match = re.search("<title[^>]*>([^<]+)", content, re.IGNORECASE)
                         if title_match:
                             title = title_match.group(1).strip()
-                    return {'url': eepsite['url'], 'name': eepsite['name'], 'content': content[:10000], 'title': title}
+                    return {"url": eepsite["url"], "name": eepsite["name"], "content": content[:10000], "title": title}
             except Exception:  # noqa: BLE001
                 pass
             return None
+
     tasks = [fetch_one(e) for e in KNOWN_EEPSITES]
-    results = await parallel_ok(*tasks, label='i2p_client:299')
+    results = await parallel_ok(*tasks, label="i2p_client:299")
     for result in results:
         if isinstance(result, dict) and result:
             discovered.append(result)
     return discovered
+
 
 async def i2p_to_findings(query: str) -> list:
     """
@@ -239,20 +262,30 @@ async def i2p_to_findings(query: str) -> list:
     Returns:
         List of CanonicalFinding
     """
-    if os.getenv('HLEDAC_ENABLE_ALT_PROTOCOLS', '0') != '1':
+    if os.getenv("HLEDAC_ENABLE_ALT_PROTOCOLS", "0") != "1":
         return []
     if not await is_i2p_available():
         return []
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
     findings: list = []
     try:
         eepsites = await discover_eepsites()
         for site in eepsites:
-            finding = CanonicalFinding(finding_id=f'i2p-{int(time.time() * 1000)}', query=query, source_type='i2p_content', confidence=0.65, ts=time.time(), provenance=(site['url'],), payload_text=site.get('content', '')[:4096] if site.get('content') else None)
+            finding = CanonicalFinding(
+                finding_id=f"i2p-{int(time.time() * 1000)}",
+                query=query,
+                source_type="i2p_content",
+                confidence=0.65,
+                ts=time.time(),
+                provenance=(site["url"],),
+                payload_text=site.get("content", "")[:4096] if site.get("content") else None,
+            )
             findings.append(finding)
     except Exception as e:
-        logger.debug(f'I2P to findings failed: {e}')
+        logger.debug(f"I2P to findings failed: {e}")
     return findings
+
 
 async def get_i2p_router_info() -> dict | None:
     """
@@ -265,15 +298,17 @@ async def get_i2p_router_info() -> dict | None:
         return None
     try:
         import httpx
+
         from hledac.universal.transport.session_pool import session_pool
+
         session = await session_pool.httpx()
-        resp = await session.get(f'{I2P_PROXY_URL}/?page=stats', timeout=httpx.Timeout(10.0), proxy=I2P_PROXY_URL)
+        resp = await session.get(f"{I2P_PROXY_URL}/?page=stats", timeout=httpx.Timeout(10.0), proxy=I2P_PROXY_URL)
         if resp.status_code == 200:
             text = resp.text
             try:
                 return _json.decode(text)
             except Exception:
-                return {'raw': text[:1000]}
+                return {"raw": text[:1000]}
     except Exception:  # noqa: BLE001
         pass
     return None

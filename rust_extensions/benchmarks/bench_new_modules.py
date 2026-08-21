@@ -15,6 +15,7 @@ def bench(name: str, fn: Callable[..., Any], iterations: int = 10_000) -> None:
     median_ns = statistics.median(times)
     print(f"{name:50s} {median_ns:10.1f} ns/op")
 
+
 # xxhash vs hashlib.md5
 import hashlib  # noqa: E402
 
@@ -82,7 +83,6 @@ bench("batch_content_hash_hex(100 items) [Rust]", lambda: batch_content_hash_hex
 
 # Batch simhash
 from hledac_rust_extensions import batch_compute_simhash  # noqa: E402
-from _core import aclose
 
 texts = [f"Document number {i} with some content for simhash testing" for i in range(100)]
 bench("batch_compute_simhash(100 texts) [Rust]", lambda: batch_compute_simhash(texts))

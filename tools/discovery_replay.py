@@ -32,10 +32,7 @@ def replay_strict_enabled() -> bool:
     missing cassettes become hard errors. ``HLEDAC_REPLAY_STRICT=1``
     alone is ignored — it is a sub-flag, not an independent enable.
     """
-    return (
-        _os.environ.get("HLEDAC_DISCOVERY_REPLAY") == "1"
-        and _os.environ.get("HLEDAC_REPLAY_STRICT") == "1"
-    )
+    return _os.environ.get("HLEDAC_DISCOVERY_REPLAY") == "1" and _os.environ.get("HLEDAC_REPLAY_STRICT") == "1"
 
 
 def read_cassette(adapter: str, key: str) -> dict[str, Any] | None:
@@ -73,6 +70,7 @@ def read_cassette(adapter: str, key: str) -> dict[str, Any] | None:
         return None
 
     import time as _time
+
     now = _time.time()
     best_response: dict[str, Any] | None = None
 
@@ -139,6 +137,7 @@ def write_cassette(
         return
 
     import time as _time
+
     effective_ttl = ttl_s if ttl_s is not None else _default_ttl()
     envelope: dict[str, Any] = {
         "ts": _time.time(),
@@ -155,11 +154,10 @@ def write_cassette(
     line = payload + b"\n"
     if len(line) > CASSETTE_MAX_BYTES:
         raise CassetteSizeExceeded(
-            f"Cassette payload for {adapter}/{key} exceeds "
-            f"{CASSETTE_MAX_BYTES} bytes (actual={len(line)})",
+            f"Cassette payload for {adapter}/{key} exceeds {CASSETTE_MAX_BYTES} bytes (actual={len(line)})",
             max_bytes=CASSETTE_MAX_BYTES,
             actual_bytes=len(line),
-    )
+        )
     path = cassette_path(adapter, key)
     tmp_path: _pathlib.Path | None = None
     try:
@@ -188,18 +186,10 @@ if TYPE_CHECKING:
     pass
 
 
-# ---------------------------------------------------------------------------
-# Sprint F239A extensions — added to satisfy the probe test suite
-# (tests/probe_f239a_discovery_replay, tests/probe_f254c_*).  These
-# helpers were originally defined in the test-side stubs and are
-# back-ported here so production callers can rely on them.
-# ---------------------------------------------------------------------------
-
 import hashlib as _hashlib  # noqa: E402
 import os as _os  # noqa: E402
 import pathlib as _pathlib  # noqa: E402
 import re as _re  # noqa: E402
-from _core import aclose
 
 # Bounded cassette size — keeps individual cassettes under 1 MB to
 # avoid LMDB/DuckDB bloat and to make corruption easier to detect.
@@ -244,7 +234,7 @@ def _default_ttl() -> int:
             value = int(raw)
             if value > 0:
                 return value
-        except (TypeError, ValueError):  # noqa: BLE001
+        except TypeError, ValueError:  # noqa: BLE001
             pass
     return _DEFAULT_TTL_SECONDS
 

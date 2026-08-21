@@ -20,9 +20,7 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -63,7 +61,7 @@ class Injector:
                 query="test",
                 result=SprintSchedulerResult(),
                 duckdb_store_result=InitResult.success(store, 0.0),
-    )
+            )
             object.__setattr__(scheduler, "_ctx", minimal_ctx)
 
         # Backward-compat: also set _duckdb_store directly on scheduler for
@@ -162,7 +160,7 @@ class Injector:
     @staticmethod
     def inject_meta_reasoning_coordinator(scheduler: Any, coordinator: Any) -> None:
         """UNIFIED-006: Wire UniversalMetaReasoningCoordinator into scheduler.
-        
+
         The coordinator provides CoT/ToT/Graph reasoning strategies with
         deterministic crash recovery via DuckDB checkpointing.
         Fail-soft: stored as instance attribute, used by advisory runners.
@@ -217,8 +215,9 @@ class Injector:
             def make_bound(name: str, method: Any) -> Any:
                 def bound(*args: Any, **kwargs: Any) -> Any:
                     return method(scheduler, *args, **kwargs)
+
                 bound.__name__ = name
-                bound.__doc__ = getattr(method, '__doc__', None)
+                bound.__doc__ = getattr(method, "__doc__", None)
                 return bound
 
             setattr(scheduler, name, make_bound(name, method))

@@ -2,33 +2,36 @@
 Sprint 8VI §E: E2E dry-run test — celá pipeline bez reálných HTTP requestů.
 30s timeout, max 10 findings, všechny external fetches mockované.
 """
+
 import pathlib
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from _core import aclose
 
 
-def test_none_file_absent_after_run():
+def test_none_file_absent_after_run() -> None:
     """P0 guard: soubor 'None' nesmí existovat."""
-    assert not pathlib.Path("None").exists(), \
-        "Soubor 'None' existuje — porušen P0 guard"
+    assert not pathlib.Path("None").exists(), "Soubor 'None' existuje — porušen P0 guard"
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_e2e_pipeline_completes():
+async def test_e2e_pipeline_completes() -> None:
     """Spustí WINDUP (mock) → EXPORT. WARMUP/ACTIVE jsou v produkčním run_sprint()."""
-    from export.sprint_exporter import export_sprint
     from runtime.windup_engine import run_windup
 
     # Mock scheduler (v1 SprintScheduler je nahrazen v2, windup_engine používá getattr)
     scheduler = MagicMock()
     scheduler._finding_count = 5
     scheduler._all_findings = [
-        {"url": f"http://test{i}.com", "title": f"Finding {i}",
-         "snippet": f"C2 at 10.0.0.{i}", "source": "test", "confidence": 0.8}
+        {
+            "url": f"http://test{i}.com",
+            "title": f"Finding {i}",
+            "snippet": f"C2 at 10.0.0.{i}",
+            "source": "test",
+            "confidence": 0.8,
+        }
         for i in range(5)
     ]
     scheduler._ioc_graph = MagicMock()
@@ -46,12 +49,11 @@ async def test_e2e_pipeline_completes():
     scheduler._ioc_scorer = None
 
     import time
+
     t_now = time.monotonic()
 
     # WINDUP (DORMANT path — ověřuje že export funguje s scorecard)
-    scorecard = await run_windup(
-        scheduler, "test threat query", t_now, t_now + 5.0
-    )
+    scorecard = await run_windup(scheduler, "test threat query", t_now, t_now + 5.0)
     assert isinstance(scorecard, dict)
     assert "peak_rss_mb" in scorecard
     assert "accepted_findings_count" in scorecard
@@ -61,7 +63,7 @@ async def test_e2e_pipeline_completes():
 @pytest.mark.hermetic
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
+async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth() -> None:
     """
     Sprint P12 + F195B: Hypothesis burst does not break canonical truth accounting.
 
@@ -77,8 +79,8 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
     import tempfile
 
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
     tmp = tempfile.mkdtemp(prefix="hledac_hypothesis_truth_")
     db_path = Path(tmp) / "shadow.duckdb"
@@ -86,30 +88,32 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
     try:
         # Canned discovery: returns one hit
         class _CannedDiscoveryResult:
-            def __init__(self, hits):
+            def __init__(self, hits) -> None:
                 self.hits = hits
                 self.error = None
 
         class _CannedDiscoveryHit:
-            def __init__(self, url, title="", snippet="", rank=0):
+            def __init__(self, url, title="", snippet="", rank=0) -> None:
                 self.url = url
                 self.title = title
                 self.snippet = snippet
                 self.rank = rank
 
         async def canned_search(q, m):
-            return _CannedDiscoveryResult([
-                _CannedDiscoveryHit(
-                    url="https://www.example.com/security/cve-2026-9999",
-                    title="CVE-2026-9999 Security Advisory",
-                    snippet="Critical vulnerability in ExampleServer",
-                    rank=0,
-                ),
-            ])
+            return _CannedDiscoveryResult(
+                [
+                    _CannedDiscoveryHit(
+                        url="https://www.example.com/security/cve-2026-9999",
+                        title="CVE-2026-9999 Security Advisory",
+                        snippet="Critical vulnerability in ExampleServer",
+                        rank=0,
+                    ),
+                ]
+            )
 
         # Canned fetcher: HTML with a CVE pattern hit
         class _CannedFetchResult:
-            def __init__(self, text, url="http://example.com"):
+            def __init__(self, text, url="http://example.com") -> None:
                 self.text = text
                 self.content_type = "text/html"
                 self.url = url
@@ -131,25 +135,31 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
                     "</article></html>"
                 ),
                 url=url,
-    )
+            )
 
         # Patch discovery and fetcher
         from hledac.universal.pipeline.live_public_pipeline import (
             _patch_discovery,
             _patch_fetcher_and_matcher,
-    )
+        )
 
         _patch_discovery(canned_search)
         _patch_fetcher_and_matcher(
             canned_fetch,
-            lambda t: [PatternHit(
-                pattern="CVE-2026-9999",
-                start=0,
-                end=13,
-                value="CVE-2026-9999",
-                label="vulnerability_id",
-            )] if "CVE-2026-9999" in t else [],
-    )
+            lambda t: (
+                [
+                    PatternHit(
+                        pattern="CVE-2026-9999",
+                        start=0,
+                        end=13,
+                        value="CVE-2026-9999",
+                        label="vulnerability_id",
+                    )
+                ]
+                if "CVE-2026-9999" in t
+                else []
+            ),
+        )
 
         # Create store
         store = DuckDBShadowStore(db_path=str(db_path))
@@ -164,26 +174,22 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
             fetch_timeout_s=10.0,
             fetch_max_bytes=200_000,
             fetch_concurrency=1,
-    )
+        )
 
         # Query DuckDB for persisted findings
         findings = await store.async_get_recent_findings(limit=20)
-        pipeline_findings = [
-            f for f in findings
-            if getattr(f, "source_type", "") == "live_public_pipeline"
-        ]
+        pipeline_findings = [f for f in findings if getattr(f, "source_type", "") == "live_public_pipeline"]
 
         # Canonical truth invariant: finding count in store matches pipeline result
         assert len(pipeline_findings) >= 1 or pipeline_result.accepted_findings >= 1, (
             f"Expected >=1 finding. store={len(pipeline_findings)}, "
             f"pipeline accepted={pipeline_result.accepted_findings}"
-    )
+        )
 
         # Runtime truth: accepted_findings in pipeline result should be consistent
         assert pipeline_result.accepted_findings >= 0, (
-            f"pipeline_result.accepted_findings should be >= 0, "
-            f"got {pipeline_result.accepted_findings}"
-    )
+            f"pipeline_result.accepted_findings should be >= 0, got {pipeline_result.accepted_findings}"
+        )
 
         # If findings exist in store, verify their structure
         for f in pipeline_findings:
@@ -193,28 +199,25 @@ async def test_aggressive_mode_hypothesis_burst_preserves_canonical_truth():
 
         # Verify P12 hypothesis burst code path exists in async_run_live_public_pipeline
         import inspect
+
         source = inspect.getsource(async_run_live_public_pipeline)
         p12_start = source.find("# P12: Hypothesis generation")
-        assert p12_start != -1, (
-            "P12 hypothesis generation code not found in async_run_live_public_pipeline"
-    )
-        p12_block = source[p12_start:p12_start + 5000]
+        assert p12_start != -1, "P12 hypothesis generation code not found in async_run_live_public_pipeline"
+        p12_block = source[p12_start : p12_start + 5000]
 
         # P12 must use fail-soft (except asyncio.TimeoutError with return "")
         assert "asyncio.TimeoutError" in p12_block and 'return ""' in p12_block, (
             "P12 must catch TimeoutError per-task and return empty string — fail-soft"
-    )
+        )
         # P12 must use as_completed for concurrent ToT evaluation
-        assert "as_completed" in p12_block, (
-            "P12 must use asyncio.as_completed for concurrent ToT evaluation"
-    )
+        assert "as_completed" in p12_block, "P12 must use asyncio.as_completed for concurrent ToT evaluation"
 
         print(
             f"\n[hypothesis_burst_truth] test passed: "
             f"store_findings={len(pipeline_findings)} "
             f"pipeline_accepted={pipeline_result.accepted_findings} "
             f"p12_code_present=True"
-    )
+        )
 
         await store.aclose()
     finally:

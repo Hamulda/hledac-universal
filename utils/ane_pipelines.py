@@ -6,14 +6,12 @@ Module-level functions for ANE acceleration with @mx.compile support.
 Designed for M1/Apple Silicon with fail-safe fallbacks.
 """
 
-
 import logging
 from typing import Any
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 # We type `mx` as `Any` (not `ModuleType | None`) so downstream signatures
 # like `mx.array`, `mx.zeros`, `mx.compile` stay statically valid — `Any`
@@ -31,11 +29,7 @@ DEFAULT_SRAM_BYTES = 28 * 1024 * 1024  # 28 MB budget for M1
 DEFAULT_DTYPE_BYTES = 2  # float16
 
 
-def _compute_safe_batch_size(
-    seq_len: int,
-    hidden: int,
-    dtype_bytes: int = DEFAULT_DTYPE_BYTES
-) -> int:
+def _compute_safe_batch_size(seq_len: int, hidden: int, dtype_bytes: int = DEFAULT_DTYPE_BYTES) -> int:
     """
     Compute safe batch size based on SRAM budget.
 
@@ -69,15 +63,15 @@ def _get_hidden_size_from_model(model) -> int:
         Hidden dimension size (default 768)
     """
     # Try attribute access first
-    if hasattr(model, 'config'):
+    if hasattr(model, "config"):
         config = model.config
-        if hasattr(config, 'hidden_size'):
+        if hasattr(config, "hidden_size"):
             return config.hidden_size
         if isinstance(config, dict):
-            return config.get('hidden_size', 768)
+            return config.get("hidden_size", 768)
 
     # Try direct attribute
-    if hasattr(model, 'hidden_size'):
+    if hasattr(model, "hidden_size"):
         return model.hidden_size
 
     # Default fallback
@@ -98,16 +92,9 @@ def _tokenize_texts(texts: list, tokenizer, max_len: int = 512) -> list:
     """
     try:
         if callable(tokenizer):
-            # Handle batch tokenization
-            encoded = tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=max_len,
-                return_tensors='np'
-    )
+            encoded = tokenizer(texts, padding=True, truncation=True, max_length=max_len, return_tensors="np")
             # Convert to list of arrays
-            return list(encoded['input_ids'])
+            return list(encoded["input_ids"])
         return texts
     except Exception as e:
         logger.warning(f"Tokenization failed: {e}, using raw texts")
@@ -134,7 +121,7 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
         with get_metal_stream_context():
             if callable(model):
                 return model(tokens)
-            if hasattr(model, 'embed'):
+            if hasattr(model, "embed"):
                 return model.embed(tokens)
     except Exception as e:
         logger.warning(f"Model forward failed: {e}")
@@ -145,11 +132,7 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
     vocab_size = 50000
 
     try:
-        # Create a simple embedding matrix
-        embed_matrix = mx.random.uniform(
-            low=-0.1, high=0.1,
-            shape=(vocab_size, embedding_dim)
-    )
+        embed_matrix = mx.random.uniform(low=-0.1, high=0.1, shape=(vocab_size, embedding_dim))
 
         # Clamp tokens to valid range
         safe_tokens = mx.clip(tokens, 0, vocab_size - 1)
@@ -164,7 +147,6 @@ def _mlx_embed(tokens: mx.array, model, hidden_size: int) -> mx.array:
         return embeddings
     except Exception as e:
         logger.error(f"Embedding fallback failed: {e}")
-        # Return zeros as last resort
         return mx.zeros((tokens.shape[0], embedding_dim))
 
 
@@ -182,10 +164,8 @@ if MLX_AVAILABLE:
                 @mx.compile
                 def _compiled_embed_inner(x: mx.array, hidden: int) -> mx.array:
                     # Simple identity for compilation test
-                    return x @ mx.random.uniform(
-                        low=-0.1, high=0.1,
-                        shape=(x.shape[-1], hidden)
-    )
+                    return x @ mx.random.uniform(low=-0.1, high=0.1, shape=(x.shape[-1], hidden))
+
                 return _compiled_embed_inner
 
             _compiled_embed = _create_embed_fn()
@@ -197,12 +177,7 @@ if MLX_AVAILABLE:
         logger.debug(f"MLX compile setup failed: {e}")
 
 
-def embed_batch(
-    texts: list,
-    model,
-    tokenizer,
-    max_len: int = 512
-) -> mx.array:
+def embed_batch(texts: list, model, tokenizer, max_len: int = 512) -> mx.array:
     """
     Embed a batch of texts using MLX acceleration.
 
@@ -221,7 +196,6 @@ def embed_batch(
         return mx.zeros((len(texts), hidden))
 
     try:
-        # Get hidden size from model
         hidden = _get_hidden_size_from_model(model)
 
         # Compute safe batch size
@@ -231,7 +205,7 @@ def embed_batch(
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):
-            chunk = texts[i:i + batch_size]
+            chunk = texts[i : i + batch_size]
 
             # Tokenize
             tokens = _tokenize_texts(chunk, tokenizer, max_len)
@@ -242,7 +216,6 @@ def embed_batch(
             else:
                 tokens_array = tokens
 
-            # Get embeddings
             embeddings = _mlx_embed(tokens_array, model, hidden)
             all_embeddings.append(embeddings)
 
@@ -261,10 +234,7 @@ def embed_batch(
         return mx.zeros((len(texts), hidden))
 
 
-def embed_with_compiled(
-    tokens: mx.array,
-    hidden: int
-) -> mx.array:
+def embed_with_compiled(tokens: mx.array, hidden: int) -> mx.array:
     """
     Embed using compiled function if available.
 
@@ -298,12 +268,7 @@ def get_embedding_dimension(model) -> int:
     return _get_hidden_size_from_model(model)
 
 
-def estimate_memory_usage(
-    batch_size: int,
-    seq_len: int,
-    hidden: int,
-    dtype_bytes: int = DEFAULT_DTYPE_BYTES
-) -> int:
+def estimate_memory_usage(batch_size: int, seq_len: int, hidden: int, dtype_bytes: int = DEFAULT_DTYPE_BYTES) -> int:
     """
     Estimate memory usage for a batch.
 

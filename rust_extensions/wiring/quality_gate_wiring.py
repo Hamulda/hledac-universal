@@ -28,21 +28,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_quality_gate
 
-# Create singleton instance
 _quality_gate = get_quality_gate()
-
 
 def quality_gate_wired():
     """Get the wired quality gate integration."""
     return _quality_gate
-
 
 def compute_entropy(text: str) -> float:
     """
@@ -52,7 +47,6 @@ def compute_entropy(text: str) -> float:
     """
     return _quality_gate.compute_entropy(text)
 
-
 def normalize_text(text: str) -> str:
     """
     Normalize text for quality checks using Rust fast-path.
@@ -60,7 +54,6 @@ def normalize_text(text: str) -> str:
     Falls back to pure Python implementation.
     """
     return _quality_gate.normalize_quality_text(text)
-
 
 def batch_entropy(texts: list[str]) -> list[float]:
     """
@@ -70,7 +63,6 @@ def batch_entropy(texts: list[str]) -> list[float]:
     """
     return _quality_gate.batch_entropy(texts)
 
-
 def dedup_fingerprint(text: str) -> str:
     """
     Compute BLAKE2b-128 hex fingerprint for deduplication.
@@ -78,7 +70,6 @@ def dedup_fingerprint(text: str) -> str:
     Falls back to Python hashlib.blake2b.
     """
     return _quality_gate.dedup_fingerprint(text)
-
 
 def batch_dedup_fingerprint(texts: list[str]) -> list[str]:
     """
@@ -88,8 +79,6 @@ def batch_dedup_fingerprint(texts: list[str]) -> list[str]:
     """
     return _quality_gate.batch_dedup_fingerprint_par(texts)
 
-
-# Check availability at import time for logging
 if _quality_gate.available:
     logger.info("[QualityGate] Rust quality_gate.rs integration: ENABLED")
 else:

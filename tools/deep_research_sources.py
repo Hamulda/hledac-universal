@@ -18,18 +18,15 @@ import os
 from urllib.parse import quote
 
 import httpx
-from _core import aclose
 
-__all__ = ['wayback_cdx_lookup', 'rdap_lookup', 'urlscan_search']
+__all__ = ["wayback_cdx_lookup", "rdap_lookup", "urlscan_search"]
 
 WAYBACK_CDX = "https://web.archive.org/cdx/search/cdx"
 RDAP_DOMAIN = "https://rdap.org/domain/"
 URLSCAN_SEARCH = "https://urlscan.io/api/v1/search/"
 
 
-async def wayback_cdx_lookup(
-    url_or_host: str, limit: int = 10, timeout_s: float = 8.0
-) -> list[dict]:
+async def wayback_cdx_lookup(url_or_host: str, limit: int = 10, timeout_s: float = 8.0) -> list[dict]:
     """Compat: Wayback CDX lookup — forwarding na archive_discovery.wayback_cdx_lookup.
     AUTHORITY: archive_discovery.wayback_cdx_lookup() je canonical.
     DEPRECATION: TECH-DEBT-001 — pending removal after fetch_coordinator migration.
@@ -55,7 +52,7 @@ async def rdap_lookup(domain: str, timeout_s: float = 8.0) -> dict | None:
         response = await session.get(
             RDAP_DOMAIN + quote(domain, safe=""),
             timeout=httpx.Timeout(timeout_s),
-    )
+        )
         if response.status_code >= 400:
             return None
         data: dict = await response.json()
@@ -93,7 +90,7 @@ async def urlscan_search(query: str, size: int = 10, timeout_s: float = 8.0) -> 
             params=params,
             headers=headers,
             timeout=httpx.Timeout(timeout_s),
-    )
+        )
         response.raise_for_status()
         data: dict = await response.json()
     except Exception:
@@ -113,5 +110,5 @@ async def urlscan_search(query: str, size: int = 10, timeout_s: float = 8.0) -> 
                 "provider": "urlscan_search",
                 "source": "urlscan",
             }
-    )
+        )
     return out

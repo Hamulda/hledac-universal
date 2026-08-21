@@ -19,14 +19,12 @@ Usage:
     cfg.libc_perf_opt  # False (LIBC_PERF_OPT env var)
     cfg.is_tmp_acceptable()  # True if LIBC_PERF_OPT=1
 
-    # Validate at startup
     M1AirConfig.validate()
 """
+
 import msgspec
 
-
-from hledac.universal._core.config.m1_air_config import M1AirConfig, M1_AIR
+from hledac.universal._core.config.m1_air_config import M1_AIR, M1AirConfig
 from hledac.universal._core.config.storage_config import StorageConfig, get_storage_config
-from _core._util import aclose
 
 __all__ = ["M1AirConfig", "M1_AIR", "StorageConfig", "get_storage_config"]

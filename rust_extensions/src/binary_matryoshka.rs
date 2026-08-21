@@ -55,10 +55,6 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// 256 dimensions -> 32 bytes (1 bit per dimension)
 const BINARY_NUM_BYTES: usize = 32;
 
@@ -67,10 +63,6 @@ const MAX_BINARY_ENTRIES: usize = 10_000_000;
 
 /// Maximum file size: 10M x 32B + 8B header + metadata
 const MAX_BINARY_DB_SIZE: usize = MAX_BINARY_ENTRIES * BINARY_NUM_BYTES + 8 + 100_000_000;
-
-// ---------------------------------------------------------------------------
-// SimHash from Binary Vectors (for LSH Pre-filter)
-// ---------------------------------------------------------------------------
 
 /// Compute 64-bit SimHash from a 32-byte binary vector.
 ///
@@ -176,10 +168,6 @@ pub fn batch_simhash_from_embeddings(embeddings: Vec<Vec<f32>>) -> PyResult<(Vec
     Ok((indices, fingerprints))
 }
 
-// ---------------------------------------------------------------------------
-// NEON Sign Extraction (ARM SIMD)
-// ---------------------------------------------------------------------------
-
 /// Extract sign bits from 256 f32 values using ARM NEON.
 ///
 /// Algorithm:
@@ -208,7 +196,6 @@ unsafe fn quantize_to_binary_neon(embedding: &[f32]) -> [u8; BINARY_NUM_BYTES] {
     for i in 0..16 {
         let offset = i * 16;
 
-        // Load 16 f32 values as two 128-bit vectors
         let vals0 = vld1q_f32(embedding.as_ptr().add(offset));
         let vals1 = vld1q_f32(embedding.as_ptr().add(offset + 4));
         let vals2 = vld1q_f32(embedding.as_ptr().add(offset + 8));
@@ -278,10 +265,6 @@ fn quantize_to_binary_impl(embedding: &[f32]) -> [u8; BINARY_NUM_BYTES] {
         quantize_to_binary_scalar(embedding)
     }
 }
-
-// ---------------------------------------------------------------------------
-// NEON Hamming Distance (Popcount)
-// ---------------------------------------------------------------------------
 
 /// Count differing bits between two 16-byte chunks using ARM NEON.
 /// MRL-2 FIX: Added vcntq_u8 before vpaddlq_u8 (was missing in simd_similarity.rs)
@@ -357,10 +340,6 @@ fn hamming_distance_32(a: &[u8; BINARY_NUM_BYTES], b: &[u8; BINARY_NUM_BYTES]) -
             )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Brute-Force NEON Scan
-// ---------------------------------------------------------------------------
 
 /// Brute-force Hamming search using raw NEON.
 ///
@@ -497,10 +476,6 @@ fn bruteforce_hamming_scan_parallel(
     all_results.truncate(top_k);
     all_results
 }
-
-// ---------------------------------------------------------------------------
-// Matryoshka Progressive Search
-// ---------------------------------------------------------------------------
 
 /// Matryoshka prefix levels for progressive narrowing.
 ///
@@ -686,10 +661,6 @@ fn full_scan_on_candidates(
     results
 }
 
-// ---------------------------------------------------------------------------
-// Memory-Mapped Binary Database
-// ---------------------------------------------------------------------------
-
 /// Binary database with memory-mapped storage.
 ///
 /// Format:
@@ -829,7 +800,6 @@ impl BinaryDatabase {
                     pyo3::exceptions::PyValueError::new_err(format!("invalid UTF-8: {}", e))
                 })?;
 
-                // Parse metadata JSON
                 if let Ok(parsed) = serde_json_rs::parse(&meta_str) {
                     let finding_keys: Vec<String> = parsed
                         .get("finding_keys")
@@ -890,29 +860,24 @@ impl BinaryDatabase {
             data.extend_from_slice(entry);
         }
 
-        // Build metadata JSON
         let metadata = serde_json::to_string(&serde_json::json!({
             "finding_keys": finding_keys,
             "text_hashes": text_hashes,
         }))
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("JSON serialize: {}", e)))?;
 
-        // Write to file
         let mut file = File::create(path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("create failed: {}", e)))?;
 
-        // Write header
         let header = (n_entries as u64).to_le_bytes();
         file.write_all(&header).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e))
         })?;
 
-        // Write entries
         file.write_all(&data).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write entries failed: {}", e))
         })?;
 
-        // Write metadata offset and metadata
         let meta_offset = 8 + n_entries * BINARY_NUM_BYTES + 8; // header + entries + meta_offset field
         let meta_offset_bytes = meta_offset.to_le_bytes();
         file.write_all(&meta_offset_bytes).map_err(|e| {
@@ -965,10 +930,6 @@ impl BinaryDatabase {
         self.text_hashes.get(idx).map(|s| s.as_str())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Python-Facing API
-// ---------------------------------------------------------------------------
 
 /// Quantize 256d float32 embedding to 32-byte packed binary.
 ///
@@ -1349,7 +1310,6 @@ pub fn search_binary_database_candidates(
     results.sort_by_key(|&(_, d)| d);
     results.truncate(top_k);
 
-    // Build output
     let py = pyo3::Python::acquire_gil();
     let mut output = Vec::with_capacity(results.len());
 
@@ -1486,10 +1446,6 @@ pub fn search_binary_database(
     Ok(output)
 }
 
-// ---------------------------------------------------------------------------
-// Module Registration
-// ---------------------------------------------------------------------------
-
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quantize_to_binary))?;
     m.add_function(wrap_pyfunction!(batch_quantize_to_binary))?;
@@ -1513,10 +1469,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

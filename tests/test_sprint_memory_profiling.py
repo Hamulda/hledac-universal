@@ -34,7 +34,7 @@ from tests.utils.memory_profiler import (
     TracemallocStats,
     assert_no_leak,
     get_rss_mb,
-    )
+)
 
 
 def _leak_in_subprocess(size: int = 5_000_000, threshold_mb: float = 1.0) -> bool:
@@ -75,7 +75,7 @@ sys.exit(0 if delta > {threshold_mb} else 1)
             [sys.executable, "-c", code],
             capture_output=True,
             timeout=30,
-    )
+        )
         return proc.returncode == 0
     except subprocess.TimeoutExpired, OSError:
         return False
@@ -84,29 +84,29 @@ sys.exit(0 if delta > {threshold_mb} else 1)
 class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
     """A. RSS snapshot and delta measurement."""
 
-    def test_get_rss_mb_returns_positive(self):
+    def test_get_rss_mb_returns_positive(self) -> None:
         """get_rss_mb() returns a positive float (or 0 on error)."""
         rss = get_rss_mb()
         assert isinstance(rss, float)
         assert rss >= 0.0, f"RSS should be non-negative, got {rss}"
 
-    def test_snapshot_takes_rss_on_init(self):
+    def test_snapshot_takes_rss_on_init(self) -> None:
         """Snapshot captures RSS at construction time."""
         snap = Snapshot()
         assert snap.rss_mb >= 0.0
         current = get_rss_mb()
         assert abs(snap.rss_mb - current) < 100, (
             f"Snapshot RSS {snap.rss_mb:.0f} MB differs too much from current {current:.0f} MB"
-    )
+        )
 
-    def test_delta_mb_zero_on_noop(self):
+    def test_delta_mb_zero_on_noop(self) -> None:
         """delta_mb() returns ~0 for no-op (within GC noise margin)."""
         gc.collect()
         snap = Snapshot()
         delta = snap.delta_mb(force_gc=True)
         assert abs(delta) < 5.0, f"Delta should be ~0 for no-op, got {delta:.1f} MB"
 
-    def test_delta_mb_with_allocation(self):
+    def test_delta_mb_with_allocation(self) -> None:
         """delta_mb() captures deliberate allocation growth."""
         gc.collect()
         snap = Snapshot()
@@ -115,7 +115,7 @@ class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
         assert delta >= -5.0, f"Delta should not show large freeing, got {delta:.1f} MB"
         del _big
 
-    def test_assert_no_leak_passes_when_clean(self):
+    def test_assert_no_leak_passes_when_clean(self) -> None:
         """assert_no_leak() does not raise when delta is within threshold."""
         gc.collect()
         snap = Snapshot()
@@ -123,7 +123,7 @@ class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
         if abs(delta) < 5.0:
             snap.assert_no_leak(threshold_mb=50)
 
-    def test_assert_no_leak_fails_over_threshold(self):
+    def test_assert_no_leak_fails_over_threshold(self) -> None:
         """assert_no_leak() raises AssertionError when delta exceeds threshold."""
         gc.freeze()  # Pin objects during measurement
         gc.collect()
@@ -137,7 +137,7 @@ class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
         finally:
             gc.unfreeze()
 
-    def test_assert_no_leak_default_threshold(self):
+    def test_assert_no_leak_default_threshold(self) -> None:
         """Default LEAK_THRESHOLD_MB is 50.0."""
         assert LEAK_THRESHOLD_MB == 50.0
 
@@ -145,7 +145,7 @@ class TestSprintMemoryProfilingA_RssSnapshot(unittest.IsolatedAsyncioTestCase):
 class TestSprintMemoryProfilingB_MemoryTracker(unittest.IsolatedAsyncioTestCase):
     """B. MemoryTracker context manager — bookend + assertion."""
 
-    def test_tracker_enters_and_exits_cleanly(self):
+    def test_tracker_enters_and_exits_cleanly(self) -> None:
         """MemoryTracker __enter__ / __exit__ cycle completes without error."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -156,7 +156,7 @@ class TestSprintMemoryProfilingB_MemoryTracker(unittest.IsolatedAsyncioTestCase)
         except Exception as e:
             pytest.fail(f"__exit__ raised: {e}")
 
-    def test_tracker_measures_delta(self):
+    def test_tracker_measures_delta(self) -> None:
         """MemoryTracker captures RSS delta between enter and assert."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -167,14 +167,14 @@ class TestSprintMemoryProfilingB_MemoryTracker(unittest.IsolatedAsyncioTestCase)
         # Should not raise — no leak
         tracker.assert_leak_threshold(50)
 
-    def test_tracker_tracemalloc_included_by_default(self):
+    def test_tracker_tracemalloc_included_by_default(self) -> None:
         """MemoryTracker includes tracemalloc by default."""
         from tests.utils.memory_profiler import MemoryTracker
 
         tracker = MemoryTracker()
         assert tracker.include_tracemalloc is True
 
-    def test_tracker_custom_threshold(self):
+    def test_tracker_custom_threshold(self) -> None:
         """Custom threshold is respected by assert_leak_threshold."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -188,7 +188,7 @@ class TestSprintMemoryProfilingB_MemoryTracker(unittest.IsolatedAsyncioTestCase)
         except AssertionError:
             pass  # expected if delta > 1MB
 
-    def test_tracker_assertion_message_contains_details(self):
+    def test_tracker_assertion_message_contains_details(self) -> None:
         """AssertionError message includes delta, threshold, and RSS values."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -206,7 +206,7 @@ class TestSprintMemoryProfilingB_MemoryTracker(unittest.IsolatedAsyncioTestCase)
 class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTestCase):
     """C. TracemallocSnapshot — Python object allocation tracking."""
 
-    def test_tracemalloc_starts_on_init(self):
+    def test_tracemalloc_starts_on_init(self) -> None:
         """TracemallocSnapshot starts tracemalloc on __post_init__."""
         snap = TracemallocSnapshot()
         try:
@@ -214,7 +214,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
         finally:
             snap.stop()
 
-    def test_take_captures_baseline(self):
+    def test_take_captures_baseline(self) -> None:
         """take() stores current tracemalloc snapshot."""
         snap = TracemallocSnapshot()
         try:
@@ -223,7 +223,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
         finally:
             snap.stop()
 
-    def test_compare_top_n_returns_list(self):
+    def test_compare_top_n_returns_list(self) -> None:
         """compare_top_n() returns a list of stat pairs."""
         snap = TracemallocSnapshot()
         try:
@@ -235,7 +235,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
         finally:
             snap.stop()
 
-    def test_format_top_deltas_returns_string(self):
+    def test_format_top_deltas_returns_string(self) -> None:
         """format_top_deltas() returns a formatted string."""
         snap = TracemallocSnapshot()
         try:
@@ -245,7 +245,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
         finally:
             snap.stop()
 
-    def test_has_leak_false_when_clean(self):
+    def test_has_leak_false_when_clean(self) -> None:
         """has_leak() returns False when no significant allocation growth."""
         snap = TracemallocSnapshot()
         try:
@@ -255,7 +255,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
         finally:
             snap.stop()
 
-    def test_has_leak_true_when_growing(self):
+    def test_has_leak_true_when_growing(self) -> None:
         """has_leak() returns True when any site grows beyond threshold."""
         snap = TracemallocSnapshot()
         try:
@@ -273,7 +273,7 @@ class TestSprintMemoryProfilingC_TracemallocSnapshot(unittest.IsolatedAsyncioTes
 class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCase):
     """H. TracemallocStats — lightweight 2-number tracemalloc without take_snapshot()."""
 
-    def test_take_returns_started_stats(self):
+    def test_take_returns_started_stats(self) -> None:
         """TracemallocStats.take() returns a started instance with 2 numbers."""
         stats = TracemallocStats.take()
         try:
@@ -285,7 +285,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
         finally:
             stats.stop()
 
-    def test_delta_bytes_zero_on_noop(self):
+    def test_delta_bytes_zero_on_noop(self) -> None:
         """delta_bytes() returns ~0 for no-op."""
         stats = TracemallocStats.take()
         try:
@@ -294,7 +294,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
         finally:
             stats.stop()
 
-    def test_delta_bytes_captures_allocation(self):
+    def test_delta_bytes_captures_allocation(self) -> None:
         """delta_bytes() captures Python object allocation growth."""
         stats = TracemallocStats.take()
         try:
@@ -304,7 +304,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
         finally:
             stats.stop()
 
-    def test_delta_mb_returns_float(self):
+    def test_delta_mb_returns_float(self) -> None:
         """delta_mb() returns delta in MB as float."""
         stats = TracemallocStats.take()
         try:
@@ -313,7 +313,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
         finally:
             stats.stop()
 
-    def test_peak_delta_mb_returns_float(self):
+    def test_peak_delta_mb_returns_float(self) -> None:
         """peak_delta_mb() returns peak memory growth in MB."""
         stats = TracemallocStats.take()
         try:
@@ -324,7 +324,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
         finally:
             stats.stop()
 
-    def test_stop_is_noop_when_not_started(self):
+    def test_stop_is_noop_when_not_started(self) -> None:
         """stop() is safe to call on non-started instance."""
         stats = TracemallocStats(current_bytes=0, peak_bytes=0, _started=False)
         stats.stop()
@@ -333,7 +333,7 @@ class TestSprintMemoryProfilingH_TracemallocStats(unittest.IsolatedAsyncioTestCa
 class TestSprintMemoryProfilingI_MemoryTrackerWeakref(unittest.IsolatedAsyncioTestCase):
     """I. MemoryTracker weakref finalizer safety net (Issue #12)."""
 
-    def test_register_allocation_returns_finalizer(self):
+    def test_register_allocation_returns_finalizer(self) -> None:
         """register_allocation() returns a weakref.finalize object."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -347,7 +347,7 @@ class TestSprintMemoryProfilingI_MemoryTrackerWeakref(unittest.IsolatedAsyncioTe
         finally:
             tracker.__exit__(None, None, None)
 
-    def test_finalizers_invoked_on_exit(self):
+    def test_finalizers_invoked_on_exit(self) -> None:
         """weakref finalizers are invoked when MemoryTracker exits."""
         import weakref
 
@@ -359,7 +359,7 @@ class TestSprintMemoryProfilingI_MemoryTrackerWeakref(unittest.IsolatedAsyncioTe
             sentinel = [None]
             called = []
 
-            def tracker_finalizer():
+            def tracker_finalizer() -> None:
                 called.append(1)
 
             sentinel_fin = weakref.finalize(sentinel, tracker_finalizer)
@@ -369,7 +369,7 @@ class TestSprintMemoryProfilingI_MemoryTrackerWeakref(unittest.IsolatedAsyncioTe
 
         assert len(called) == 1, "weakref finalizer should have been invoked"
 
-    def test_weakref_finalizers_cleared_on_exit(self):
+    def test_weakref_finalizers_cleared_on_exit(self) -> None:
         """_weakref_finalizers list is cleared after __exit__."""
         from tests.utils.memory_profiler import MemoryTracker
 
@@ -393,7 +393,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         except Exception:
             pass
 
-    def test_init_session_tracer_starts_tracing(self):
+    def test_init_session_tracer_starts_tracing(self) -> None:
         """init_session_tracer() starts tracemalloc and returns True."""
         from tests.utils.memory_profiler import init_session_tracer, is_tracing, stop_session_tracer
 
@@ -405,7 +405,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         finally:
             stop_session_tracer()
 
-    def test_init_session_tracer_idempotent(self):
+    def test_init_session_tracer_idempotent(self) -> None:
         """init_session_tracer() is safe to call multiple times."""
         from tests.utils.memory_profiler import init_session_tracer, is_tracing, stop_session_tracer
 
@@ -419,7 +419,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         finally:
             stop_session_tracer()
 
-    def test_stop_session_tracer_stops_tracing(self):
+    def test_stop_session_tracer_stops_tracing(self) -> None:
         """stop_session_tracer() stops tracemalloc."""
         from tests.utils.memory_profiler import init_session_tracer, is_tracing, stop_session_tracer
 
@@ -427,7 +427,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         stop_session_tracer()
         assert is_tracing() is False
 
-    def test_stop_session_tracer_idempotent(self):
+    def test_stop_session_tracer_idempotent(self) -> None:
         """stop_session_tracer() is safe to call when not started."""
         from tests.utils.memory_profiler import is_tracing, stop_session_tracer
 
@@ -435,13 +435,13 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         stop_session_tracer()
         assert is_tracing() is False
 
-    def test_tracemalloc_snapshot_uses_session_mode(self):
+    def test_tracemalloc_snapshot_uses_session_mode(self) -> None:
         """TracemallocSnapshot detects session tracer and sets _session_mode=True."""
         from tests.utils.memory_profiler import (
             TracemallocSnapshot,
             init_session_tracer,
             stop_session_tracer,
-    )
+        )
 
         stop_session_tracer()
         init_session_tracer(nframes=10)
@@ -457,7 +457,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         finally:
             stop_session_tracer()
 
-    def test_stop_noop_in_session_mode(self):
+    def test_stop_noop_in_session_mode(self) -> None:
         """stop() does NOT stop the session tracer."""
         from tests.utils.memory_profiler import init_session_tracer, is_tracing, stop_session_tracer
 
@@ -470,13 +470,13 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
         assert is_tracing() is True
         stop_session_tracer()
 
-    def test_tracemalloc_snapshot_legacy_mode(self):
+    def test_tracemalloc_snapshot_legacy_mode(self) -> None:
         """TracemallocSnapshot falls back to legacy mode when no session tracer."""
         from tests.utils.memory_profiler import (
             TracemallocSnapshot,
             is_tracing,
             stop_session_tracer,
-    )
+        )
 
         stop_session_tracer()
         snap = TracemallocSnapshot()
@@ -493,7 +493,7 @@ class TestSprintMemoryProfilingG_SessionTracer(unittest.IsolatedAsyncioTestCase)
 class TestSprintMemoryProfilingD_FixtureIntegration:
     """D. Sprint cycle memory leak detection — integration with lifecycle."""
 
-    def test_sprint_lifecycle_no_leak(self):
+    def test_sprint_lifecycle_no_leak(self) -> None:
         """SprintLifecycleManager import + instantiation does not leak memory."""
         gc.collect()
         from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
@@ -504,12 +504,12 @@ class TestSprintMemoryProfilingD_FixtureIntegration:
         assert_no_leak(before_rss, after_rss, threshold_mb=50)
         del lc  # noqa: F841
 
-    def test_snapshot_fixture_returns_snapshot(self, memory_snapshot):
+    def test_snapshot_fixture_returns_snapshot(self, memory_snapshot) -> None:
         """memory_snapshot fixture returns a Snapshot object."""
         assert memory_snapshot is not None
         assert isinstance(memory_snapshot, Snapshot)
 
-    def test_memory_tracker_fixture_returns_tracker(self, memory_tracker):
+    def test_memory_tracker_fixture_returns_tracker(self, memory_tracker) -> None:
         """memory_tracker fixture returns a MemoryTracker object."""
         assert memory_tracker is not None
         assert hasattr(memory_tracker, "assert_leak_threshold")
@@ -518,7 +518,7 @@ class TestSprintMemoryProfilingD_FixtureIntegration:
 class TestSprintMemoryProfilingE_ConftestFixtures:
     """E. Conftest fixtures integration — memory_snapshot, memory_tracker, assert_memory_leak."""
 
-    def test_memory_snapshot_fixture_delta(self, memory_snapshot):
+    def test_memory_snapshot_fixture_delta(self, memory_snapshot) -> None:
         """memory_snapshot captures RSS on enter, provides delta on exit."""
         gc.collect()
         _before = memory_snapshot.rss_mb
@@ -528,7 +528,7 @@ class TestSprintMemoryProfilingE_ConftestFixtures:
         # Delta should be small (within 5MB)
         assert delta > -5.0, f"Delta should not show large freeing, got {delta:.1f}"
 
-    def test_assert_memory_leak_fixture_noop_when_clean(self, assert_memory_leak):
+    def test_assert_memory_leak_fixture_noop_when_clean(self, assert_memory_leak) -> None:
         """assert_memory_leak fixture passes when delta is within threshold."""
         gc.collect()
         before = get_rss_mb()
@@ -536,7 +536,7 @@ class TestSprintMemoryProfilingE_ConftestFixtures:
         # No meaningful allocation — should not raise
         assert_memory_leak(before, after, threshold_mb=50)
 
-    def test_assert_memory_leak_fixture_fails_over_threshold(self, assert_memory_leak):
+    def test_assert_memory_leak_fixture_fails_over_threshold(self, assert_memory_leak) -> None:
         """assert_memory_leak fixture raises AssertionError when delta > threshold."""
         # Isolated leak test — subprocess measures true RSS delta
         detected = _leak_in_subprocess(size=5_000_000, threshold_mb=5.0)
@@ -544,7 +544,7 @@ class TestSprintMemoryProfilingE_ConftestFixtures:
             with pytest.raises(AssertionError):
                 assert_memory_leak(0.0, 999.0, threshold_mb=1.0)
 
-    def test_memory_tracker_fixture_bookend(self, memory_tracker):
+    def test_memory_tracker_fixture_bookend(self, memory_tracker) -> None:
         """memory_tracker fixture provides context manager that captures RSS delta."""
         gc.collect()
         with memory_tracker:
@@ -556,7 +556,7 @@ class TestSprintMemoryProfilingE_ConftestFixtures:
         # Should not raise — allocation was freed before assert
         memory_tracker.assert_leak_threshold(50)
 
-    def test_memory_tracker_fixture_reports_leak(self, memory_tracker):
+    def test_memory_tracker_fixture_reports_leak(self, memory_tracker) -> None:
         """memory_tracker fixture raises AssertionError with leak details."""
         # Isolated leak test — subprocess gives clean RSS delta
         detected = _leak_in_subprocess(size=5_000_000, threshold_mb=5.0)
@@ -571,14 +571,14 @@ class TestSprintMemoryProfilingE_ConftestFixtures:
 class TestSprintMemoryProfilingF_StandaloneAssertNoLeak(unittest.IsolatedAsyncioTestCase):
     """F. Standalone assert_no_leak() helper function."""
 
-    def test_assert_no_leak_passes_within_threshold(self):
+    def test_assert_no_leak_passes_within_threshold(self) -> None:
         """assert_no_leak() does not raise when delta ≤ threshold."""
         gc.collect()
         before = get_rss_mb()
         after = get_rss_mb()
         assert_no_leak(before, after, threshold_mb=50)
 
-    def test_assert_no_leak_fails_over_threshold(self):
+    def test_assert_no_leak_fails_over_threshold(self) -> None:
         """assert_no_leak() raises AssertionError when delta > threshold."""
         # Isolated leak test — subprocess measures true RSS delta without GC noise
         detected = _leak_in_subprocess(size=5_000_000, threshold_mb=10.0)
@@ -586,7 +586,7 @@ class TestSprintMemoryProfilingF_StandaloneAssertNoLeak(unittest.IsolatedAsyncio
             with pytest.raises(AssertionError, match="Memory leak"):
                 assert_no_leak(0.0, 999.0, threshold_mb=1.0)
 
-    def test_assert_no_leak_with_context(self):
+    def test_assert_no_leak_with_context(self) -> None:
         """assert_no_leak() includes context string in error message."""
         # Isolated leak test — subprocess measures true RSS delta
         detected = _leak_in_subprocess(size=5_000_000, threshold_mb=10.0)

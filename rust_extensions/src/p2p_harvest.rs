@@ -69,10 +69,6 @@ use pyo3::prelude::*;
 #[cfg(feature = "p2p_harvest")]
 use crate::async_bridge::future_into_py;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Maximum concurrent peers per protocol (M1 8GB safety).
 const MAX_CONCURRENT_PEERS: usize = 20;
 
@@ -123,10 +119,6 @@ const IPNS_GATEWAYS: &[&str] = &[
     "https://cloudflare-ipfs.com/ipns/",
     "https://dweb.link/ipns/",
 ];
-
-// ============================================================================
-// Data Structures
-// ============================================================================
 
 /// Protocol types for P2P harvest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,10 +240,6 @@ pub struct HarvestStats {
     pub errors: Vec<String>,
 }
 
-// ============================================================================
-// Arrow IPC Streaming (MODERN-25 Extended)
-// ============================================================================
-
 /// Build Arrow IPC RecordBatch bytes from P2P findings.
 #[cfg(feature = "p2p_harvest")]
 fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String> {
@@ -265,7 +253,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
         return Ok(Vec::new());
     }
 
-    // Extract fields
     let mut ids = Vec::with_capacity(n);
     let mut queries = Vec::with_capacity(n);
     let mut source_types = Vec::with_capacity(n);
@@ -287,7 +274,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
         claims_jsons.push(record.7);
     }
 
-    // Build Arrow Schema
     let schema = Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
         Field::new("query", DataType::Utf8, false),
@@ -299,7 +285,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
         Field::new("claims_json", DataType::Utf8, true),
     ]);
 
-    // Build arrays
     let ids_array: ArrayRef = Arc::new(StringArray::from(ids));
     let queries_array: ArrayRef = Arc::new(StringArray::from(queries));
     let source_types_array: ArrayRef = Arc::new(StringArray::from(source_types));
@@ -309,7 +294,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     let payloads_array: ArrayRef = Arc::new(StringArray::from(payload_texts));
     let claims_array: ArrayRef = Arc::new(StringArray::from(claims_jsons));
 
-    // Create record batch
     let batch = RecordBatch::try_new(
         Arc::new(schema),
         vec![
@@ -325,7 +309,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
     )
     .map_err(|e| format!("Failed to create RecordBatch: {}", e))?;
 
-    // Write IPC stream
     let mut buf = Vec::with_capacity(n * 1024);
     let mut writer = StreamWriter::try_new(&mut buf, &batch.schema())
         .map_err(|e| format!("Failed to create StreamWriter: {}", e))?;
@@ -338,10 +321,6 @@ fn findings_to_arrow_ipc(findings: &[HarvestFinding]) -> Result<Vec<u8>, String>
 
     Ok(buf)
 }
-
-// ============================================================================
-// Unified Harvest API
-// ============================================================================
 
 /// Unified P2P harvest function — searches multiple protocols concurrently.
 #[cfg(feature = "p2p_harvest")]
@@ -477,10 +456,6 @@ pub fn harvest_ipc(
     })
 }
 
-// ============================================================================
-// BitTorrent DHT Crawler (BEP-5)
-// ============================================================================
-
 /// Harvest from BitTorrent DHT network (BEP-5).
 #[cfg(feature = "p2p_harvest")]
 async fn bt_dht_crawl(
@@ -561,10 +536,6 @@ async fn bt_dht_crawl(
 
     Ok(findings)
 }
-
-// ============================================================================
-// IPFS Gateway Crawler (HTTP-based)
-// ============================================================================
 
 /// Harvest from IPFS using public gateways.
 ///
@@ -743,7 +714,6 @@ async fn resolve_ipns(ipns_name: &str, gateway: &str) -> Option<String> {
     match client.get(&url).send().await {
         Ok(response) => {
             if response.status().is_success() {
-                // Check for IPNS-related headers
                 for (name, value) in response.headers() {
                     if name == "ipfs-redirect" || name == "x-ipfs-path" {
                         if let Ok(v) = value.to_str() {
@@ -757,10 +727,6 @@ async fn resolve_ipns(ipns_name: &str, gateway: &str) -> Option<String> {
     }
     None
 }
-
-// ============================================================================
-// Tor Consensus Crawler
-// ============================================================================
 
 /// Harvest from Tor consensus directory.
 #[cfg(feature = "p2p_harvest")]
@@ -850,10 +816,6 @@ async fn tor_consensus_crawl(
 
     Ok(findings)
 }
-
-// ============================================================================
-// I2P SAM v3 LeaseSet Resolver
-// ============================================================================
 
 /// Harvest from I2P LeaseSet network.
 #[cfg(feature = "p2p_harvest")]
@@ -1016,10 +978,6 @@ async fn i2p_leaseset_crawl(
     Ok(findings)
 }
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /// Generate a random 20-byte node ID for DHT.
 fn generate_random_node_id() -> [u8; 20] {
     let mut id = [0u8; 20];
@@ -1172,10 +1130,6 @@ async fn get_peers_for_keyword(
 
     None
 }
-
-// ============================================================================
-// Individual Protocol Functions (Python-callable)
-// ============================================================================
 
 /// BitTorrent DHT crawler — Python-callable async function.
 #[cfg(feature = "p2p_harvest")]
@@ -1360,10 +1314,6 @@ pub fn i2p_leaseset_resolve_async(
         }
     })
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 /// Register p2p_harvest functions with the Python module.
 #[cfg(feature = "p2p_harvest")]

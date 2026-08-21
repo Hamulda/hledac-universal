@@ -15,15 +15,12 @@ Fail-open: returns (0, "nominal") on non-macOS or error.
 - read_smc_thermal_zones() -> dict  # ACTUAL SMC thermal zone readings
 """
 
-
-
 import ctypes
 import ctypes.util
 import logging
 import platform
 import struct
 import subprocess
-from _core import aclose
 
 __all__ = [
     "get_thermal_state",
@@ -36,9 +33,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------
-# Thermal level constants (mach/oceanic.h / IOKit)
-# -----------------------------------------------------------------------
 _THERMAL_LEVELS = {
     0: "nominal",
     1: "fair",
@@ -67,7 +61,6 @@ def _get_pdl_handle():
         return None
 
     try:
-        # Load IOKit
         iokit = ctypes.util.find_library("IOKit")
         if iokit is None:
             return None
@@ -87,10 +80,14 @@ def _get_pdl_handle():
         iokit_lib.IOObjectRelease.restype = ctypes.c_int
 
         # IOServiceOpen
-        iokit_lib.IOServiceOpen.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int)]  # noqa: E501
+        iokit_lib.IOServiceOpen.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_int),
+        ]  # noqa: E501
         iokit_lib.IOServiceOpen.restype = ctypes.c_int
 
-        # Create matching dict for AppleSMC
         smc_service = iokit_lib.IOServiceMatching(b"AppleSMC")
         if not smc_service:
             return None
@@ -145,7 +142,7 @@ def get_thermal_state() -> tuple[int, str]:
             capture_output=True,
             text=True,
             timeout=1,
-    )
+        )
         if result.returncode == 0:
             try:
                 level = int(result.stdout.strip())
@@ -205,17 +202,6 @@ def format_thermal_snapshot() -> dict:
     }
 
 
-# -----------------------------------------------------------------------
-# AppleSMC IOKit thermal zone reader (ISSUE-014 fix)
-# -----------------------------------------------------------------------
-# SMC keys for thermal zones (4-char codes, big-endian uint32)
-# TC0P = CPU 0 proximity (main CPU package temp — most reliable for throttling)
-# TC0H = CPU 0 heatsink
-# TG0P = GPU 0 proximity
-# TM0P = Memory board temp
-# TB0T = Battery 0 temp
-# TA0P = Ambient / enclosure temp
-# TW0P = WLAN temp
 _SMC_THERMAL_KEYS: tuple[bytes, ...] = (
     b"TC0P",  # CPU proximity (primary for M1 throttling decisions)
     b"TC0H",  # CPU heatsink
@@ -224,7 +210,7 @@ _SMC_THERMAL_KEYS: tuple[bytes, ...] = (
     b"TA0P",  # Ambient
     b"TB0T",  # Battery 0
     b"TW0P",  # WLAN
-    )
+)
 
 # SMC command selectors
 _SMC_CMD_READ_KEY = 5
@@ -346,14 +332,14 @@ def _smc_read_key(key: bytes) -> float | None:
         # struct_smc_key_t from AppleSMC.h
         class SMCKeyData(ctypes.Structure):
             _fields_ = [
-                ("key", ctypes.c_uint32),          # 4-char key as uint32
-                ("vers", ctypes.c_uint8),            # data version (1)
-                ("pLimitData", ctypes.c_uint8),      # plimit data (1)
-                ("keyInfo", ctypes.c_uint8),         # key info (1)
-                ("result", ctypes.c_uint8),           # result (1)
-                ("status", ctypes.c_uint8),          # status (1)
-                ("data8", ctypes.c_uint8),           # data size (1) — INPUT
-                ("data32", ctypes.c_uint32),         # data (4) — INPUT/OUTPUT
+                ("key", ctypes.c_uint32),  # 4-char key as uint32
+                ("vers", ctypes.c_uint8),  # data version (1)
+                ("pLimitData", ctypes.c_uint8),  # plimit data (1)
+                ("keyInfo", ctypes.c_uint8),  # key info (1)
+                ("result", ctypes.c_uint8),  # result (1)
+                ("status", ctypes.c_uint8),  # status (1)
+                ("data8", ctypes.c_uint8),  # data size (1) — INPUT
+                ("data32", ctypes.c_uint32),  # data (4) — INPUT/OUTPUT
             ]
 
         class SMCKeyDataOut(ctypes.Structure):
@@ -384,7 +370,6 @@ def _smc_read_key(key: bytes) -> float | None:
         # Convert 4-char key to big-endian uint32
         key_code = struct.unpack(">I", key)[0]
 
-        # Step 1: Read key info (selector = 9 = kSMCGetKeyInfo)
         input_info = SMCKeyData(
             key=key_code,
             vers=0,
@@ -394,7 +379,7 @@ def _smc_read_key(key: bytes) -> float | None:
             status=0,
             data8=0,
             data32=0,
-    )
+        )
         output_info = SMCKeyDataOut()
         output_size = ctypes.c_size_t(ctypes.sizeof(output_info))
 
@@ -405,7 +390,7 @@ def _smc_read_key(key: bytes) -> float | None:
             ctypes.sizeof(input_info),
             ctypes.byref(output_info),
             ctypes.byref(output_size),
-    )
+        )
         if ret != 0 or output_info.result != 0:
             return None
 
@@ -413,7 +398,6 @@ def _smc_read_key(key: bytes) -> float | None:
         if data_size == 0:
             return None
 
-        # Step 2: Read key value (selector = 5 = kSMCReadKey)
         input_read = SMCKeyData(
             key=key_code,
             vers=0,
@@ -423,7 +407,7 @@ def _smc_read_key(key: bytes) -> float | None:
             status=0,
             data8=data_size,
             data32=0,
-    )
+        )
 
         output_val = SMCKeyDataVal()
         output_val_size = ctypes.c_size_t(ctypes.sizeof(output_val))
@@ -435,7 +419,7 @@ def _smc_read_key(key: bytes) -> float | None:
             ctypes.sizeof(input_read),
             ctypes.byref(output_val),
             ctypes.byref(output_val_size),
-    )
+        )
         if ret != 0 or output_val.result != 0:
             return None
 

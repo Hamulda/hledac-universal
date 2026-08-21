@@ -8,13 +8,15 @@ Implements:
 
 Uses rolling hash for chunking and superfeatures for fast similarity.
 """
+
 import logging
 from collections.abc import Callable
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 MAX_TEXT_SIZE = 200 * 1024
 NEAR_DUP_THRESHOLD = 0.9
 MIN_SAVINGS_BYTES = 1024
+
 
 class SmartDeduplicator:
     """
@@ -25,9 +27,15 @@ class SmartDeduplicator:
     - Compute superfeatures from chunks
     - Jaccard similarity of superfeatures = near-dup score
     """
-    __slots__ = tuple(('delta', 'hasher', 'logger', 'max_text_size', 'min_savings_bytes', 'near_dup_threshold'))
 
-    def __init__(self, max_text_size: int=MAX_TEXT_SIZE, near_dup_threshold: float=NEAR_DUP_THRESHOLD, min_savings_bytes: int=MIN_SAVINGS_BYTES):
+    __slots__ = ("delta", "hasher", "logger", "max_text_size", "min_savings_bytes", "near_dup_threshold")
+
+    def __init__(
+        self,
+        max_text_size: int = MAX_TEXT_SIZE,
+        near_dup_threshold: float = NEAR_DUP_THRESHOLD,
+        min_savings_bytes: int = MIN_SAVINGS_BYTES,
+    ) -> None:
         """
         Initialize smart deduplicator.
 
@@ -42,6 +50,7 @@ class SmartDeduplicator:
         self.logger = logging.getLogger(__name__)
         from .delta_compressor import DeltaCompressor
         from .rolling_hash_engine import RollingHashEngine
+
         self.hasher = RollingHashEngine()
         self.delta = DeltaCompressor()
 
@@ -66,8 +75,8 @@ class SmartDeduplicator:
             return 0.0
         if a == b:
             return 1.0
-        a = a[:self.max_text_size]
-        b = b[:self.max_text_size]
+        a = a[: self.max_text_size]
+        b = b[: self.max_text_size]
         try:
             chunks_a = self.hasher.chunk_bytes(a, chunk_size=32)
             chunks_b = self.hasher.chunk_bytes(b, chunk_size=32)
@@ -83,10 +92,12 @@ class SmartDeduplicator:
                 return 0.0
             return intersection / union
         except Exception as e:
-            self.logger.warning(f'Near-dup score computation failed: {e}')
+            self.logger.warning(f"Near-dup score computation failed: {e}")
             return 0.0
 
-    def maybe_store_delta(self, url: str, base_text: str, new_text: str, store_cb: Callable[[str, str, bytes], str]) -> dict:
+    def maybe_store_delta(
+        self, url: str, base_text: str, new_text: str, store_cb: Callable[[str, str, bytes], str]
+    ) -> dict:
         """
         Decide whether to store delta or full text.
 
@@ -109,40 +120,42 @@ class SmartDeduplicator:
             - bytes_saved_est: estimated bytes saved
             - artifact_id: storage result from callback
         """
-        result = {'stored_as': 'full', 'near_dup_score': 0.0, 'bytes_saved_est': 0, 'artifact_id': None}
+        result = {"stored_as": "full", "near_dup_score": 0.0, "bytes_saved_est": 0, "artifact_id": None}
         if len(new_text) > self.max_text_size:
-            self.logger.debug(f'Text too large for delta: {len(new_text)} > {self.max_text_size}')
-            result['artifact_id'] = store_cb('delta_run', url, new_text.encode('utf-8'))
+            self.logger.debug(f"Text too large for delta: {len(new_text)} > {self.max_text_size}")
+            result["artifact_id"] = store_cb("delta_run", url, new_text.encode("utf-8"))
             return result
-        base_bytes = base_text.encode('utf-8')[:self.max_text_size]
-        new_bytes = new_text.encode('utf-8')[:self.max_text_size]
+        base_bytes = base_text.encode("utf-8")[: self.max_text_size]
+        new_bytes = new_text.encode("utf-8")[: self.max_text_size]
         score = self.compute_near_dup_score(base_bytes, new_bytes)
-        result['near_dup_score'] = score
+        result["near_dup_score"] = score
         if score < self.near_dup_threshold:
-            self.logger.debug(f'Not near-duplicate: {score} < {self.near_dup_threshold}')
-            result['artifact_id'] = store_cb('delta_run', url, new_text.encode('utf-8'))
+            self.logger.debug(f"Not near-duplicate: {score} < {self.near_dup_threshold}")
+            result["artifact_id"] = store_cb("delta_run", url, new_text.encode("utf-8"))
             return result
         try:
             delta = self.delta.make_text_delta(base_text, new_text)
             full_compressed = self._compress_full(new_text)
             savings = len(full_compressed) - len(delta)
-            result['bytes_saved_est'] = savings
+            result["bytes_saved_est"] = savings
             if savings >= self.min_savings_bytes:
-                result['stored_as'] = 'delta'
-                result['artifact_id'] = store_cb('delta_run', url, delta)
-                self.logger.debug(f'Stored delta for {url}, savings: {savings}')
+                result["stored_as"] = "delta"
+                result["artifact_id"] = store_cb("delta_run", url, delta)
+                self.logger.debug(f"Stored delta for {url}, savings: {savings}")
             else:
-                result['artifact_id'] = store_cb('delta_run', url, new_text.encode('utf-8'))
-                self.logger.debug(f'Delta savings too small: {savings} < {self.min_savings_bytes}')
+                result["artifact_id"] = store_cb("delta_run", url, new_text.encode("utf-8"))
+                self.logger.debug(f"Delta savings too small: {savings} < {self.min_savings_bytes}")
         except Exception as e:
-            self.logger.warning(f'Delta creation failed: {e}')
-            result['artifact_id'] = store_cb('delta_run', url, new_text.encode('utf-8'))
+            self.logger.warning(f"Delta creation failed: {e}")
+            result["artifact_id"] = store_cb("delta_run", url, new_text.encode("utf-8"))
         return result
 
     def _compress_full(self, text: str) -> bytes:
         """Compress full text for size comparison."""
         import zlib
-        return zlib.compress(text.encode('utf-8'), level=6)
+
+        return zlib.compress(text.encode("utf-8"), level=6)
+
 
 def compute_similarity(a: bytes, b: bytes) -> float:
     """

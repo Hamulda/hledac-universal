@@ -18,6 +18,7 @@ class GenerationResult:
 
 class BatchResponse:
     """Result from batch_generate call."""
+
     file: str
     text: str
     prompt_tokens: int
@@ -25,6 +26,7 @@ class BatchResponse:
 
 class BatchStats:
     """Aggregate stats from batch_generate."""
+
     total_prompt_tokens: int
     total_generation_tokens: int
     total_time_s: float
@@ -32,6 +34,7 @@ class BatchStats:
 
 class PromptCacheState:
     """Mutable state for a prompt cache."""
+
     cache: Any
     metadata: Any
     @property
@@ -75,7 +78,9 @@ def batch_generate(
     max_tokens: int = 256,
     **kwargs: Any,
 ) -> list[BatchResponse]: ...
-def apply_chat_template(processor: Any, messages: list[dict[str, Any]], tokenize: bool = False, add_generation_prompt: bool = True) -> str: ...
+def apply_chat_template(
+    processor: Any, messages: list[dict[str, Any]], tokenize: bool = False, add_generation_prompt: bool = True
+) -> str: ...
 def load(path_or_hf_repo: str, **kwargs: Any) -> tuple[Any, Any]: ...
 def process_image(processor: Any, image: str | bytes, **kwargs: Any) -> Any: ...
 def get_message_json(messages: list[dict[str, Any]]) -> str: ...

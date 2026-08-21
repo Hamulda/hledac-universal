@@ -20,17 +20,19 @@ Plus exact next action for the operator.
 
 No live execution. No network. No MLX load. No scheduler.
 """
+
 import argparse
 import json
 import re
 import sys
 import textwrap
 from collections import defaultdict
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import StrEnum
 from pathlib import Path
-_SPRINT_ID_RE = re.compile('^F(\\d{3,})[A-Z]?(?:_[A-Z_]+)?$')
+
+_SPRINT_ID_RE = re.compile("^F(\\d{3,})[A-Z]?(?:_[A-Z_]+)?$")
+
 
 class SprintIdCollision(Struct):
     sprint_id: str
@@ -39,11 +41,13 @@ class SprintIdCollision(Struct):
     report_paths: list[str] = field(default_factory=list)
     json_paths: list[str] = field(default_factory=list)
 
+
 class SprintCollisionReport(Struct, frozen=True):
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
     total_probes_scanned: int = 0
     warnings: list[str] = field(default_factory=list)
+
 
 def _canonical_base(sprint_id: str) -> tuple[str, str]:
     """Return (base, qualifier) for disambiguation.
@@ -53,12 +57,13 @@ def _canonical_base(sprint_id: str) -> tuple[str, str]:
     """
     m = _SPRINT_ID_RE.match(sprint_id)
     if not m:
-        return (sprint_id, '')
+        return (sprint_id, "")
     digits = m.group(1)
-    suffix = sprint_id[len(f'F{digits}'):]
-    base = f'F{digits}'
-    qualifier = suffix if suffix else ''
+    suffix = sprint_id[len(f"F{digits}") :]
+    base = f"F{digits}"
+    qualifier = suffix if suffix else ""
     return (base, qualifier)
+
 
 def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
     """Scan probe_f* directories for sprint ID collisions.
@@ -69,7 +74,7 @@ def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
 
     Returns SprintCollisionReport with collision list and warnings.
     """
-    universal_root = repo_root / 'hledac' / 'universal'
+    universal_root = repo_root / "hledac" / "universal"
     probe_root = universal_root if universal_root.exists() else repo_root
     by_base: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     probe_dirs_found = []
@@ -78,28 +83,35 @@ def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
             if not item.is_dir():
                 continue
             name = item.name
-            if not name.startswith('probe_f'):
+            if not name.startswith("probe_f"):
                 continue
             probe_dirs_found.append(name)
             report_path = None
             json_path = None
             sprint_id = name
-            json_files = list(item.glob('*.json'))
+            json_files = list(item.glob("*.json"))
             if json_files:
                 json_path = json_files[0]
                 try:
-                    with open(json_path, encoding='utf-8') as f:
+                    with open(json_path, encoding="utf-8") as f:
                         data = json.load(f)
-                        sprint_id = data.get('sprint_id', name)
+                        sprint_id = data.get("sprint_id", name)
                 except Exception:  # noqa: BLE001
                     pass
-            md_files = list(item.glob('REPORT_*.md'))
+            md_files = list(item.glob("REPORT_*.md"))
             if md_files:
                 report_path = md_files[0]
             base, qualifier = _canonical_base(sprint_id)
-            by_base[base][qualifier if qualifier else ''].append({'probe_dir': name, 'sprint_id': sprint_id, 'report_path': str(report_path) if report_path else '', 'json_path': str(json_path) if json_path else ''})
+            by_base[base][qualifier if qualifier else ""].append(
+                {
+                    "probe_dir": name,
+                    "sprint_id": sprint_id,
+                    "report_path": str(report_path) if report_path else "",
+                    "json_path": str(json_path) if json_path else "",
+                }
+            )
     except Exception as exc:
-        return SprintCollisionReport(warnings=[f'scan_probe_artifacts failed: {exc}'])
+        return SprintCollisionReport(warnings=[f"scan_probe_artifacts failed: {exc}"])
     collisions = []
     for base, qualifiers in sorted(by_base.items()):
         entries_by_qual = {q: v for q, v in qualifiers.items() if q}
@@ -108,29 +120,45 @@ def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
             all_aliases = []
             for q, entries in entries_by_qual.items():
                 for e in entries:
-                    all_aliases.append(f'{base}{q}')
+                    all_aliases.append(f"{base}{q}")
                     all_entries.append(e)
-            collisions.append(SprintIdCollision(sprint_id=base, aliases=list(dict.fromkeys(all_aliases)), probe_dirs=[e['probe_dir'] for e in all_entries], report_paths=[e['report_path'] for e in all_entries], json_paths=[e['json_path'] for e in all_entries]))
-    return SprintCollisionReport(has_collisions=collisions, collisions=collisions, total_probes_scanned=len(probe_dirs_found))
+            collisions.append(
+                SprintIdCollision(
+                    sprint_id=base,
+                    aliases=list(dict.fromkeys(all_aliases)),
+                    probe_dirs=[e["probe_dir"] for e in all_entries],
+                    report_paths=[e["report_path"] for e in all_entries],
+                    json_paths=[e["json_path"] for e in all_entries],
+                )
+            )
+    return SprintCollisionReport(
+        has_collisions=collisions, collisions=collisions, total_probes_scanned=len(probe_dirs_found)
+    )
+
 
 def render_collision_warning(report: SprintCollisionReport) -> list[str]:
     """Render collision warnings as markdown lines."""
     if not report.has_collisions:
         return []
-    lines = ['', '## Sprint ID Collision Warning', '']
-    lines.append(f'⚠️ **Detected {len(report.collisions)} sprint ID collision(s)** across {report.total_probes_scanned} probes scanned.')
-    lines.append('')
+    lines = ["", "## Sprint ID Collision Warning", ""]
+    lines.append(
+        f"⚠️ **Detected {len(report.collisions)} sprint ID collision(s)** across {report.total_probes_scanned} probes scanned."
+    )
+    lines.append("")
     for coll in report.collisions:
-        lines.append(f'### Collision: `{coll.sprint_id}`')
-        lines.append(f"**Aliases:** {', '.join((f'`{a}`' for a in coll.aliases))}")
-        lines.append('')
-        lines.append('| Probe Directory | Report | JSON |')
-        lines.append('|----------------|--------|-----|')
+        lines.append(f"### Collision: `{coll.sprint_id}`")
+        lines.append(f"**Aliases:** {', '.join(f'`{a}`' for a in coll.aliases)}")
+        lines.append("")
+        lines.append("| Probe Directory | Report | JSON |")
+        lines.append("|----------------|--------|-----|")
         for probe_dir, report_p, json_p in zip(coll.probe_dirs, coll.report_paths, coll.json_paths, strict=False):
             lines.append(f"| `{probe_dir}` | {report_p or 'N/A'} | {json_p or 'N/A'} |")
-        lines.append('')
-        lines.append(f'**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit.')
+        lines.append("")
+        lines.append(
+            f"**Action:** Operator reports may show ambiguous labels. Use full alias (e.g. `{coll.aliases[0]}`) to disambiguate. **Live is NOT blocked** — required artifact paths are explicit."
+        )
     return lines
+
 
 class SprintIdCollisionWarning(Struct, frozen=True):
     has_collisions: bool = False
@@ -139,47 +167,56 @@ class SprintIdCollisionWarning(Struct, frozen=True):
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {'has_collisions': self.has_collisions, 'collision_count': self.collision_count, 'total_probes_scanned': self.total_probes_scanned, 'warnings': self.warnings}
+        return {
+            "has_collisions": self.has_collisions,
+            "collision_count": self.collision_count,
+            "total_probes_scanned": self.total_probes_scanned,
+            "warnings": self.warnings,
+        }
+
 
 class Verdict(StrEnum):
-    READY_TO_RUN_NOW = 'READY_TO_RUN_NOW'
-    READY_DIAGNOSTIC_ONLY = 'READY_DIAGNOSTIC_ONLY'
-    READY_TO_RESTART_AND_RUN = 'READY_TO_RESTART_AND_RUN'
-    READY_FOR_FEED_BASELINE_ONLY = 'READY_FOR_FEED_BASELINE_ONLY'
-    READY_FOR_NONFEED_CAPABILITY = 'READY_FOR_NONFEED_CAPABILITY'
-    BLOCKED_BY_HARDWARE = 'BLOCKED_BY_HARDWARE'
-    BLOCKED_BY_ARTIFACTS = 'BLOCKED_BY_ARTIFACTS'
-    BLOCKED_BY_MEMORY = 'BLOCKED_BY_MEMORY'
-    BLOCKED_BY_PROVIDER_SURFACE = 'BLOCKED_BY_PROVIDER_SURFACE'
-    BLOCKED_BY_CONTRACT = 'BLOCKED_BY_CONTRACT'
-    BLOCKED_BY_UNKNOWN = 'BLOCKED_BY_UNKNOWN'
+    READY_TO_RUN_NOW = "READY_TO_RUN_NOW"
+    READY_DIAGNOSTIC_ONLY = "READY_DIAGNOSTIC_ONLY"
+    READY_TO_RESTART_AND_RUN = "READY_TO_RESTART_AND_RUN"
+    READY_FOR_FEED_BASELINE_ONLY = "READY_FOR_FEED_BASELINE_ONLY"
+    READY_FOR_NONFEED_CAPABILITY = "READY_FOR_NONFEED_CAPABILITY"
+    BLOCKED_BY_HARDWARE = "BLOCKED_BY_HARDWARE"
+    BLOCKED_BY_ARTIFACTS = "BLOCKED_BY_ARTIFACTS"
+    BLOCKED_BY_MEMORY = "BLOCKED_BY_MEMORY"
+    BLOCKED_BY_PROVIDER_SURFACE = "BLOCKED_BY_PROVIDER_SURFACE"
+    BLOCKED_BY_CONTRACT = "BLOCKED_BY_CONTRACT"
+    BLOCKED_BY_UNKNOWN = "BLOCKED_BY_UNKNOWN"
+
 
 class NextAction(StrEnum):
-    RUN_LIVE_NOW = 'run_live_now'
-    RUN_WITH_HARDWARE_TAINT = 'run_with_hardware_taint'
-    RESTART_THEN_RUN_LIVE = 'restart_then_run_live'
-    RUN_NONFEED_DIAGNOSTIC = 'run_nonfeed_diagnostic'
-    RUN_MISSING_PROBE = 'run_missing_probe'
-    FIX_PROVIDER_SURFACE = 'fix_provider_surface'
-    FIX_CONTRACT_GATE = 'fix_contract_gate'
+    RUN_LIVE_NOW = "run_live_now"
+    RUN_WITH_HARDWARE_TAINT = "run_with_hardware_taint"
+    RESTART_THEN_RUN_LIVE = "restart_then_run_live"
+    RUN_NONFEED_DIAGNOSTIC = "run_nonfeed_diagnostic"
+    RUN_MISSING_PROBE = "run_missing_probe"
+    FIX_PROVIDER_SURFACE = "fix_provider_surface"
+    FIX_CONTRACT_GATE = "fix_contract_gate"
+
 
 class UmaState(Struct, frozen=True):
     system_used_gib: float = 0.0
     swap_used_gib: float = 0.0
     swap_detected: bool = False
-    uma_state: str = 'unknown'
+    uma_state: str = "unknown"
     io_only: bool = False
     error: str | None = None
     hardware_constrained: bool = False
-    swap_policy_tier: str = 'unknown'
-    swap_gate_reason: str = ''
+    swap_policy_tier: str = "unknown"
+    swap_gate_reason: str = ""
+
 
 class CockpitResult(Struct, frozen=True):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction
-    next_action_detail: str = ''
-    gate_decision: str = ''
+    next_action_detail: str = ""
+    gate_decision: str = ""
     gate_live_allowed: bool = False
     gate_reasons: list[str] = field(default_factory=list)
     gate_warnings: list[str] = field(default_factory=list)
@@ -192,8 +229,8 @@ class CockpitResult(Struct, frozen=True):
     missing_required_probes: list[str] = field(default_factory=list)
     fallback_schema_blocked: bool = False
     hardware_constrained: bool = False
-    swap_policy_tier: str = 'unknown'
-    swap_gate_reason: str = ''
+    swap_policy_tier: str = "unknown"
+    swap_gate_reason: str = ""
     merge_log: list[str] = field(default_factory=list)
     sprint_collision: SprintIdCollisionWarning | None = None
     f224_core_ready: bool = False
@@ -205,364 +242,600 @@ class CockpitResult(Struct, frozen=True):
     feed_baseline_allowed: bool = False
     capability_live_allowed: bool = False
     capability_blockers: list[str] = field(default_factory=list)
-    next_action_feed_baseline: str = ''
-    next_action_capability: str = ''
+    next_action_feed_baseline: str = ""
+    next_action_capability: str = ""
 
     def to_dict(self) -> dict:
-        return {'verdict': self.verdict.value, 'live_allowed': self.live_allowed, 'next_action': self.next_action.value, 'next_action_detail': self.next_action_detail, 'gate': {'decision': self.gate_decision, 'live_allowed': self.gate_live_allowed, 'reasons': self.gate_reasons, 'warnings': self.gate_warnings}, 'artifacts': {'total': self.artifact_count, 'ready': self.artifact_ready, 'missing': self.artifact_missing, 'stale': self.artifact_stale}, 'uma': {'system_used_gib': self.uma.system_used_gib, 'swap_used_gib': self.uma.swap_used_gib, 'swap_detected': self.uma.swap_detected, 'uma_state': self.uma.uma_state, 'io_only': self.uma.io_only, 'error': self.uma.error, 'hardware_constrained': self.uma.hardware_constrained, 'swap_policy_tier': self.uma.swap_policy_tier, 'swap_gate_reason': self.uma.swap_gate_reason}, 'provider_surface_ok': self.provider_surface_ok, 'missing_required_probes': self.missing_required_probes, 'fallback_schema_blocked': self.fallback_schema_blocked, 'hardware_constrained': self.hardware_constrained, 'swap_policy_tier': self.swap_policy_tier, 'swap_gate_reason': self.swap_gate_reason, 'merge_log': self.merge_log, 'sprint_collision': self.sprint_collision.to_dict() if self.sprint_collision else None, 'f224_core_ready': self.f224_core_ready, 'f224_warnings': self.f224_warnings, 'missing_f224_artifacts': self.missing_f224_artifacts, 'f231_core_ready': self.f231_core_ready, 'f231_warnings': self.f231_warnings, 'missing_f231_artifacts': self.missing_f231_artifacts, 'feed_baseline_allowed': self.feed_baseline_allowed, 'capability_live_allowed': self.capability_live_allowed, 'capability_blockers': self.capability_blockers, 'next_action_feed_baseline': self.next_action_feed_baseline, 'next_action_capability': self.next_action_capability}
-from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
-from _core import aclose
-from compat.msgspec_gc_compat import Struct
+        return {
+            "verdict": self.verdict.value,
+            "live_allowed": self.live_allowed,
+            "next_action": self.next_action.value,
+            "next_action_detail": self.next_action_detail,
+            "gate": {
+                "decision": self.gate_decision,
+                "live_allowed": self.gate_live_allowed,
+                "reasons": self.gate_reasons,
+                "warnings": self.gate_warnings,
+            },
+            "artifacts": {
+                "total": self.artifact_count,
+                "ready": self.artifact_ready,
+                "missing": self.artifact_missing,
+                "stale": self.artifact_stale,
+            },
+            "uma": {
+                "system_used_gib": self.uma.system_used_gib,
+                "swap_used_gib": self.uma.swap_used_gib,
+                "swap_detected": self.uma.swap_detected,
+                "uma_state": self.uma.uma_state,
+                "io_only": self.uma.io_only,
+                "error": self.uma.error,
+                "hardware_constrained": self.uma.hardware_constrained,
+                "swap_policy_tier": self.uma.swap_policy_tier,
+                "swap_gate_reason": self.uma.swap_gate_reason,
+            },
+            "provider_surface_ok": self.provider_surface_ok,
+            "missing_required_probes": self.missing_required_probes,
+            "fallback_schema_blocked": self.fallback_schema_blocked,
+            "hardware_constrained": self.hardware_constrained,
+            "swap_policy_tier": self.swap_policy_tier,
+            "swap_gate_reason": self.swap_gate_reason,
+            "merge_log": self.merge_log,
+            "sprint_collision": self.sprint_collision.to_dict() if self.sprint_collision else None,
+            "f224_core_ready": self.f224_core_ready,
+            "f224_warnings": self.f224_warnings,
+            "missing_f224_artifacts": self.missing_f224_artifacts,
+            "f231_core_ready": self.f231_core_ready,
+            "f231_warnings": self.f231_warnings,
+            "missing_f231_artifacts": self.missing_f231_artifacts,
+            "feed_baseline_allowed": self.feed_baseline_allowed,
+            "capability_live_allowed": self.capability_live_allowed,
+            "capability_blockers": self.capability_blockers,
+            "next_action_feed_baseline": self.next_action_feed_baseline,
+            "next_action_capability": self.next_action_capability,
+        }
 
-_EXPECTED_REPO_ROOT = '/Users/vojtechhamada/PycharmProjects/Hledac'
-_UNIVERSAL_ROOT = f'{_EXPECTED_REPO_ROOT}/hledac/universal'
+
+from hledac.universal._core.resource_governor import CLEAN_SWAP_MAX_GIB, DIAGNOSTIC_SWAP_MAX_GIB, HARD_BLOCK_SWAP_GIB
+
+_EXPECTED_REPO_ROOT = "/Users/vojtechhamada/PycharmProjects/Hledac"
+_UNIVERSAL_ROOT = f"{_EXPECTED_REPO_ROOT}/hledac/universal"
+
 
 def _get_cwd_guard_state() -> dict:
     """Hermetic CWD diagnostic — no live run, no network, no MLX."""
     import os as _os
     from pathlib import Path as _P
+
     _cwd = _os.getcwd()
     _resolved = str(_P(_cwd).resolve())
     _universal = _UNIVERSAL_ROOT
-    _is_universal_root = _resolved == _universal or _resolved.startswith(f'{_universal}/')
-    _cwd_warning = f'WARNING: CWD={_cwd} is outside expected universal root ({_universal}). Artifact scans may glob wrong directory.' if not _is_universal_root else ''
-    return {'cwd': _cwd, 'resolved_cwd': _resolved, 'universal_root': _universal, 'cwd_is_universal_root': _is_universal_root, 'cwd_warning': _cwd_warning}
+    _is_universal_root = _resolved == _universal or _resolved.startswith(f"{_universal}/")
+    _cwd_warning = (
+        f"WARNING: CWD={_cwd} is outside expected universal root ({_universal}). Artifact scans may glob wrong directory."
+        if not _is_universal_root
+        else ""
+    )
+    return {
+        "cwd": _cwd,
+        "resolved_cwd": _resolved,
+        "universal_root": _universal,
+        "cwd_is_universal_root": _is_universal_root,
+        "cwd_warning": _cwd_warning,
+    }
+
 
 def load_decision_gate(path: Path) -> dict:
-    with open(path, encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
+
 def load_artifact_pack(path: Path) -> dict:
-    with open(path, encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
+
 
 def load_readiness(path: Path | None) -> dict | None:
     if path is None or not path.exists():
         return None
-    with open(path, encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
+
 def extract_uma(decision_data: dict) -> UmaState:
-    uma_raw = decision_data.get('uma', {})
+    uma_raw = decision_data.get("uma", {})
     if isinstance(uma_raw, str):
         return UmaState(error=uma_raw)
-    return UmaState(system_used_gib=uma_raw.get('system_used_gib', 0.0), swap_used_gib=uma_raw.get('swap_used_gib', 0.0), swap_detected=uma_raw.get('swap_detected', False), uma_state=uma_raw.get('uma_state', 'unknown'), io_only=uma_raw.get('io_only', False), error=uma_raw.get('error'))
+    return UmaState(
+        system_used_gib=uma_raw.get("system_used_gib", 0.0),
+        swap_used_gib=uma_raw.get("swap_used_gib", 0.0),
+        swap_detected=uma_raw.get("swap_detected", False),
+        uma_state=uma_raw.get("uma_state", "unknown"),
+        io_only=uma_raw.get("io_only", False),
+        error=uma_raw.get("error"),
+    )
+
 
 def analyze_artifact_pack(data: dict) -> tuple[int, int, int, int, list[str]]:
     """
     Returns (total, ready, missing, stale, missing_probes).
     """
-    required = data.get('required_artifacts', data.get('required', []))
+    required = data.get("required_artifacts", data.get("required", []))
     total = len(required)
-    ready = sum((1 for a in required if a.get('status') == 'READY_FOR_PRELIVE_GATE'))
-    missing = sum((1 for a in required if a.get('status') == 'MISSING_REQUIRED'))
-    stale = sum((1 for a in required if a.get('status') == 'STALE_OR_CORRUPT'))
-    missing_probes = [a['probe_dir'] for a in required if a.get('status') in ('MISSING_REQUIRED', 'STALE_OR_CORRUPT')]
+    ready = sum(1 for a in required if a.get("status") == "READY_FOR_PRELIVE_GATE")
+    missing = sum(1 for a in required if a.get("status") == "MISSING_REQUIRED")
+    stale = sum(1 for a in required if a.get("status") == "STALE_OR_CORRUPT")
+    missing_probes = [a["probe_dir"] for a in required if a.get("status") in ("MISSING_REQUIRED", "STALE_OR_CORRUPT")]
     return (total, ready, missing, stale, missing_probes)
 
+
 def check_provider_surface(decision_data: dict) -> bool:
-    checked = decision_data.get('checked_reports', {})
+    checked = decision_data.get("checked_reports", {})
     if not checked:
         return True
-    pub_bootstrap = checked.get('probe_f217c_public_bootstrap', {})
-    ct_resilience = checked.get('probe_f217d_ct_provider_resilience', {})
-    pub_session_seal = checked.get('probe_f219d_public_session_seal', {})
-    ct_cooldown = checked.get('probe_f219e_ct_provider_cooldown', {})
-    pub_ok = bool(pub_bootstrap.get('found', False) and pub_bootstrap.get('pass', False))
-    seal_ok = bool(pub_session_seal.get('found', False) and pub_session_seal.get('pass', False))
-    ct_ok = bool(ct_resilience.get('found', False) and ct_resilience.get('pass', False))
-    cooldown_ok = bool(ct_cooldown.get('found', False) and ct_cooldown.get('pass', False))
+    pub_bootstrap = checked.get("probe_f217c_public_bootstrap", {})
+    ct_resilience = checked.get("probe_f217d_ct_provider_resilience", {})
+    pub_session_seal = checked.get("probe_f219d_public_session_seal", {})
+    ct_cooldown = checked.get("probe_f219e_ct_provider_cooldown", {})
+    pub_ok = bool(pub_bootstrap.get("found", False) and pub_bootstrap.get("pass", False))
+    seal_ok = bool(pub_session_seal.get("found", False) and pub_session_seal.get("pass", False))
+    ct_ok = bool(ct_resilience.get("found", False) and ct_resilience.get("pass", False))
+    cooldown_ok = bool(ct_cooldown.get("found", False) and ct_cooldown.get("pass", False))
     pub_satisfied = pub_ok or seal_ok
     ct_satisfied = ct_ok or cooldown_ok
     return pub_satisfied and ct_satisfied
+
 
 def merge_cockpit(decision_data: dict, artifact_data: dict, readiness_data: dict | None) -> CockpitResult:
     """
     Merge decision gate + artifact pack + readiness into a single CockpitResult.
     """
     log: list[str] = []
-    gate_decision = decision_data.get('decision', 'BLOCKED_BY_UNKNOWN')
-    gate_live_allowed = decision_data.get('live_allowed', False)
-    gate_reasons = decision_data.get('reasons', [])
-    gate_warnings = decision_data.get('warnings', [])
-    fallback_schema_blocked = decision_data.get('fallback_schema_blocked', False)
-    log.append(f'gate_decision={gate_decision}')
+    gate_decision = decision_data.get("decision", "BLOCKED_BY_UNKNOWN")
+    gate_live_allowed = decision_data.get("live_allowed", False)
+    gate_reasons = decision_data.get("reasons", [])
+    gate_warnings = decision_data.get("warnings", [])
+    fallback_schema_blocked = decision_data.get("fallback_schema_blocked", False)
+    log.append(f"gate_decision={gate_decision}")
     uma = extract_uma(decision_data)
-    log.append(f'uma=swap={uma.swap_used_gib:.2f}GiB uma_state={uma.uma_state}')
+    log.append(f"uma=swap={uma.swap_used_gib:.2f}GiB uma_state={uma.uma_state}")
     total, ready, missing, stale, missing_probes = analyze_artifact_pack(artifact_data)
-    log.append(f'artifacts=ready:{ready}/{total} missing:{missing} stale:{stale}')
+    log.append(f"artifacts=ready:{ready}/{total} missing:{missing} stale:{stale}")
     provider_surface_ok = check_provider_surface(decision_data)
-    log.append(f'provider_surface_ok={provider_surface_ok}')
+    log.append(f"provider_surface_ok={provider_surface_ok}")
     readiness_ok = True
     if readiness_data:
-        readiness_ok = readiness_data.get('ready_for_live', True)
-        log.append(f'readiness={readiness_ok}')
+        readiness_ok = readiness_data.get("ready_for_live", True)
+        log.append(f"readiness={readiness_ok}")
     else:
-        log.append('readiness=not provided (OK)')
-    f224_core_ready = decision_data.get('f224_core_ready', False)
-    f224_warnings = decision_data.get('f224_warnings', [])
-    missing_f224_artifacts = decision_data.get('missing_f224_artifacts', [])
-    log.append(f'f224_core_ready={f224_core_ready} missing_f224={len(missing_f224_artifacts)}')
-    f231_core_ready = decision_data.get('f231_core_ready', False)
-    f231_warnings = decision_data.get('f231_warnings', [])
-    missing_f231_artifacts = decision_data.get('missing_f231_artifacts', [])
-    log.append(f'f231_core_ready={f231_core_ready} missing_f231={len(missing_f231_artifacts)}')
-    feed_baseline_allowed = decision_data.get('feed_baseline_allowed', False)
-    capability_live_allowed = decision_data.get('capability_live_allowed', False)
-    capability_blockers = decision_data.get('capability_blockers', [])
-    next_action_feed_baseline = decision_data.get('next_action_feed_baseline', '')
-    next_action_capability = decision_data.get('next_action_capability', '')
-    log.append(f'f234p feed_baseline_allowed={feed_baseline_allowed} capability_live_allowed={capability_live_allowed}')
+        log.append("readiness=not provided (OK)")
+    f224_core_ready = decision_data.get("f224_core_ready", False)
+    f224_warnings = decision_data.get("f224_warnings", [])
+    missing_f224_artifacts = decision_data.get("missing_f224_artifacts", [])
+    log.append(f"f224_core_ready={f224_core_ready} missing_f224={len(missing_f224_artifacts)}")
+    f231_core_ready = decision_data.get("f231_core_ready", False)
+    f231_warnings = decision_data.get("f231_warnings", [])
+    missing_f231_artifacts = decision_data.get("missing_f231_artifacts", [])
+    log.append(f"f231_core_ready={f231_core_ready} missing_f231={len(missing_f231_artifacts)}")
+    feed_baseline_allowed = decision_data.get("feed_baseline_allowed", False)
+    capability_live_allowed = decision_data.get("capability_live_allowed", False)
+    capability_blockers = decision_data.get("capability_blockers", [])
+    next_action_feed_baseline = decision_data.get("next_action_feed_baseline", "")
+    next_action_capability = decision_data.get("next_action_capability", "")
+    log.append(f"f234p feed_baseline_allowed={feed_baseline_allowed} capability_live_allowed={capability_live_allowed}")
     hardware_constrained = False
-    swap_policy_tier = 'unknown'
-    swap_gate_reason = ''
-    if fallback_schema_blocked or gate_decision == 'BLOCKED_BY_UNKNOWN':
+    swap_policy_tier = "unknown"
+    swap_gate_reason = ""
+    if fallback_schema_blocked or gate_decision == "BLOCKED_BY_UNKNOWN":
         verdict = Verdict.BLOCKED_BY_UNKNOWN
         next_action = NextAction.FIX_CONTRACT_GATE
-        next_action_detail = 'fallback schema detected in prelive reports'
+        next_action_detail = "fallback schema detected in prelive reports"
         live_allowed = False
-        swap_policy_tier = 'blocked'
-        swap_gate_reason = 'fallback schema or unknown'
-        log.append('verdict=BLOCKED_BY_UNKNOWN (fallback schema)')
-    elif gate_decision == 'BLOCKED_BY_PROVIDER_SURFACE' or not provider_surface_ok:
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "fallback schema or unknown"
+        log.append("verdict=BLOCKED_BY_UNKNOWN (fallback schema)")
+    elif gate_decision == "BLOCKED_BY_PROVIDER_SURFACE" or not provider_surface_ok:
         verdict = Verdict.BLOCKED_BY_PROVIDER_SURFACE
         next_action = NextAction.FIX_PROVIDER_SURFACE
-        next_action_detail = ''
+        next_action_detail = ""
         live_allowed = False
-        swap_policy_tier = 'blocked'
-        swap_gate_reason = 'provider surface issue'
-        log.append('verdict=BLOCKED_BY_PROVIDER_SURFACE')
-    elif gate_decision == 'BLOCKED_BY_MEMORY':
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "provider surface issue"
+        log.append("verdict=BLOCKED_BY_PROVIDER_SURFACE")
+    elif gate_decision == "BLOCKED_BY_MEMORY":
         verdict = Verdict.BLOCKED_BY_MEMORY
         next_action = NextAction.RESTART_THEN_RUN_LIVE
-        next_action_detail = 'memory pressure requires restart before live'
+        next_action_detail = "memory pressure requires restart before live"
         live_allowed = False
         hardware_constrained = True
-        swap_policy_tier = 'hard_block'
-        swap_gate_reason = f'blocked by memory gate: swap={uma.swap_used_gib:.2f}GiB'
-        log.append('verdict=BLOCKED_BY_MEMORY')
-    elif gate_decision == 'READY_FOR_FEED_BASELINE_ONLY':
+        swap_policy_tier = "hard_block"
+        swap_gate_reason = f"blocked by memory gate: swap={uma.swap_used_gib:.2f}GiB"
+        log.append("verdict=BLOCKED_BY_MEMORY")
+    elif gate_decision == "READY_FOR_FEED_BASELINE_ONLY":
         verdict = Verdict.READY_FOR_FEED_BASELINE_ONLY
         next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-        next_action_detail = 'feed baseline ready; nonfeed capability blocked'
+        next_action_detail = "feed baseline ready; nonfeed capability blocked"
         live_allowed = True
-        swap_policy_tier = 'clean'
-        swap_gate_reason = 'feed_baseline_only gate decision'
-        log.append('verdict=READY_FOR_FEED_BASELINE_ONLY (F234P: explicit feed baseline decision)')
-    elif gate_decision == 'BLOCKED_BY_CONTRACT' or (missing_f224_artifacts and (not f224_core_ready)) or (missing_f231_artifacts and (not f231_core_ready)):
+        swap_policy_tier = "clean"
+        swap_gate_reason = "feed_baseline_only gate decision"
+        log.append("verdict=READY_FOR_FEED_BASELINE_ONLY (F234P: explicit feed baseline decision)")
+    elif (
+        gate_decision == "BLOCKED_BY_CONTRACT"
+        or (missing_f224_artifacts and (not f224_core_ready))
+        or (missing_f231_artifacts and (not f231_core_ready))
+    ):
         verdict = Verdict.BLOCKED_BY_ARTIFACTS
         next_action = NextAction.RUN_MISSING_PROBE
         all_missing = list(set(missing_f224_artifacts + missing_f231_artifacts))
-        next_action_detail = ','.join(all_missing) if all_missing else ''
+        next_action_detail = ",".join(all_missing) if all_missing else ""
         live_allowed = False
-        swap_policy_tier = 'blocked'
-        swap_gate_reason = 'contract gate failure'
-        log.append('verdict=BLOCKED_BY_CONTRACT → BLOCKED_BY_ARTIFACTS')
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "contract gate failure"
+        log.append("verdict=BLOCKED_BY_CONTRACT → BLOCKED_BY_ARTIFACTS")
     elif missing > 0 or stale > 0:
         verdict = Verdict.BLOCKED_BY_ARTIFACTS
         next_action = NextAction.RUN_MISSING_PROBE
-        next_action_detail = ','.join(missing_probes) if missing_probes else ''
+        next_action_detail = ",".join(missing_probes) if missing_probes else ""
         live_allowed = False
-        swap_policy_tier = 'blocked'
-        swap_gate_reason = 'missing/stale artifacts'
-        log.append('verdict=BLOCKED_BY_ARTIFACTS')
+        swap_policy_tier = "blocked"
+        swap_gate_reason = "missing/stale artifacts"
+        log.append("verdict=BLOCKED_BY_ARTIFACTS")
     elif gate_live_allowed and ready == total:
-        suggested_cmd = decision_data.get('suggested_live_command', '')
-        suggested_highswap_cmd = decision_data.get('suggested_highswap_diagnostic_command', '')
-        nonfeed_signal = 'nonfeed_diagnostic' in suggested_cmd.lower() or 'nonfeed_diagnostic' in suggested_highswap_cmd.lower() or any(('nonfeed_diagnostic' in r.lower() for r in gate_reasons))
+        suggested_cmd = decision_data.get("suggested_live_command", "")
+        suggested_highswap_cmd = decision_data.get("suggested_highswap_diagnostic_command", "")
+        nonfeed_signal = (
+            "nonfeed_diagnostic" in suggested_cmd.lower()
+            or "nonfeed_diagnostic" in suggested_highswap_cmd.lower()
+            or any("nonfeed_diagnostic" in r.lower() for r in gate_reasons)
+        )
         if nonfeed_signal:
             if not provider_surface_ok:
                 verdict = Verdict.BLOCKED_BY_PROVIDER_SURFACE
                 next_action = NextAction.FIX_PROVIDER_SURFACE
-                next_action_detail = 'provider_surface_degraded: nonfeed capability blocked'
+                next_action_detail = "provider_surface_degraded: nonfeed capability blocked"
                 live_allowed = False
-                swap_policy_tier = 'blocked'
-                swap_gate_reason = 'provider_surface_ok=False blocks nonfeed capability'
-                log.append('verdict=BLOCKED_BY_PROVIDER_SURFACE (F232H: nonfeed_signal + provider_surface_degraded)')
+                swap_policy_tier = "blocked"
+                swap_gate_reason = "provider_surface_ok=False blocks nonfeed capability"
+                log.append("verdict=BLOCKED_BY_PROVIDER_SURFACE (F232H: nonfeed_signal + provider_surface_degraded)")
             elif fallback_schema_blocked:
                 verdict = Verdict.BLOCKED_BY_UNKNOWN
                 next_action = NextAction.FIX_CONTRACT_GATE
-                next_action_detail = 'fallback schema detected: nonfeed capability blocked'
+                next_action_detail = "fallback schema detected: nonfeed capability blocked"
                 live_allowed = False
-                swap_policy_tier = 'blocked'
-                swap_gate_reason = 'fallback_schema_blocked blocks nonfeed capability'
-                log.append('verdict=BLOCKED_BY_UNKNOWN (F232H: nonfeed_signal + fallback_schema_blocked)')
+                swap_policy_tier = "blocked"
+                swap_gate_reason = "fallback_schema_blocked blocks nonfeed capability"
+                log.append("verdict=BLOCKED_BY_UNKNOWN (F232H: nonfeed_signal + fallback_schema_blocked)")
             elif uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
                 verdict = Verdict.READY_FOR_FEED_BASELINE_ONLY
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = suggested_cmd or 'nonfeed_diagnostic180 — F220-like feed-only detected'
+                next_action_detail = suggested_cmd or "nonfeed_diagnostic180 — F220-like feed-only detected"
                 live_allowed = True
                 uma.hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
-                uma.swap_policy_tier = 'clean'
-                uma.swap_gate_reason = f'nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB'
+                uma.swap_policy_tier = "clean"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB"
                 hardware_constrained = uma.swap_used_gib > CLEAN_SWAP_MAX_GIB
-                swap_policy_tier = 'clean'
+                swap_policy_tier = "clean"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append('verdict=RUN_NONFEED_DIAGNOSTIC (feed-only nonfeed_diagnostic path)')
+                log.append("verdict=RUN_NONFEED_DIAGNOSTIC (feed-only nonfeed_diagnostic path)")
             elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
                 verdict = Verdict.READY_DIAGNOSTIC_ONLY
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = suggested_highswap_cmd or 'nonfeed_diagnostic180 — F220-like feed-only, hardware taint'
+                next_action_detail = (
+                    suggested_highswap_cmd or "nonfeed_diagnostic180 — F220-like feed-only, hardware taint"
+                )
                 live_allowed = True
                 uma.hardware_constrained = True
-                uma.swap_policy_tier = 'diagnostic'
-                uma.swap_gate_reason = f'nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB (diagnostic tier)'
+                uma.swap_policy_tier = "diagnostic"
+                uma.swap_gate_reason = f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB (diagnostic tier)"
                 hardware_constrained = True
-                swap_policy_tier = 'diagnostic'
+                swap_policy_tier = "diagnostic"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f'verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)')
+                log.append(
+                    f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, diagnostic tier)"
+                )
             else:
                 verdict = Verdict.READY_TO_RESTART_AND_RUN
                 next_action = NextAction.RUN_NONFEED_DIAGNOSTIC
-                next_action_detail = f'swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180'
+                next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart then nonfeed_diagnostic180"
                 live_allowed = False
                 uma.hardware_constrained = True
-                uma.swap_policy_tier = 'hard_block'
-                uma.swap_gate_reason = f'nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB'
+                uma.swap_policy_tier = "hard_block"
+                uma.swap_gate_reason = (
+                    f"nonfeed_diagnostic: swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
+                )
                 hardware_constrained = True
-                swap_policy_tier = 'hard_block'
+                swap_policy_tier = "hard_block"
                 swap_gate_reason = uma.swap_gate_reason
-                log.append(f'verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, hard_block)')
-            log.append('F221G: nonfeed_diagnostic feed-only path selected')
+                log.append(f"verdict=RUN_NONFEED_DIAGNOSTIC (feed-only, swap={uma.swap_used_gib:.2f}GiB, hard_block)")
+            log.append("F221G: nonfeed_diagnostic feed-only path selected")
         elif uma.swap_used_gib <= CLEAN_SWAP_MAX_GIB:
             verdict = Verdict.READY_TO_RUN_NOW
             next_action = NextAction.RUN_LIVE_NOW
-            next_action_detail = ''
+            next_action_detail = ""
             live_allowed = True
             uma.hardware_constrained = False
-            uma.swap_policy_tier = 'clean'
-            uma.swap_gate_reason = f'swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold'
+            uma.swap_policy_tier = "clean"
+            uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB <= {CLEAN_SWAP_MAX_GIB:.1f}GiB threshold"
             hardware_constrained = False
-            swap_policy_tier = 'clean'
+            swap_policy_tier = "clean"
             swap_gate_reason = uma.swap_gate_reason
-            log.append('verdict=READY_TO_RUN_NOW')
+            log.append("verdict=READY_TO_RUN_NOW")
         elif uma.swap_used_gib <= DIAGNOSTIC_SWAP_MAX_GIB:
             verdict = Verdict.READY_DIAGNOSTIC_ONLY
             next_action = NextAction.RUN_WITH_HARDWARE_TAINT
-            next_action_detail = f'swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint'
+            next_action_detail = f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB] — hardware taint"
             live_allowed = True
             uma.hardware_constrained = True
-            uma.swap_policy_tier = 'diagnostic'
-            uma.swap_gate_reason = f'swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]'
+            uma.swap_policy_tier = "diagnostic"
+            uma.swap_gate_reason = (
+                f"swap={uma.swap_used_gib:.2f}GiB in ({CLEAN_SWAP_MAX_GIB:.1f}GiB, {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB]"
+            )
             hardware_constrained = True
-            swap_policy_tier = 'diagnostic'
+            swap_policy_tier = "diagnostic"
             swap_gate_reason = uma.swap_gate_reason
-            log.append(f'verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})')
+            log.append(f"verdict=READY_DIAGNOSTIC_ONLY (swap={uma.swap_used_gib:.2f})")
         else:
             verdict = Verdict.READY_TO_RESTART_AND_RUN
             next_action = NextAction.RESTART_THEN_RUN_LIVE
-            next_action_detail = f'swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required'
+            next_action_detail = (
+                f"swap={uma.swap_used_gib:.2f}GiB > {DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB — restart required"
+            )
             live_allowed = False
             uma.hardware_constrained = True
-            uma.swap_policy_tier = 'hard_block'
-            uma.swap_gate_reason = f'swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB'
+            uma.swap_policy_tier = "hard_block"
+            uma.swap_gate_reason = f"swap={uma.swap_used_gib:.2f}GiB > {HARD_BLOCK_SWAP_GIB:.1f}GiB"
             hardware_constrained = True
-            swap_policy_tier = 'hard_block'
+            swap_policy_tier = "hard_block"
             swap_gate_reason = uma.swap_gate_reason
-            log.append(f'verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})')
+            log.append(f"verdict=READY_TO_RESTART_AND_RUN (swap={uma.swap_used_gib:.2f})")
     else:
         verdict = Verdict.BLOCKED_BY_UNKNOWN
         next_action = NextAction.FIX_CONTRACT_GATE
-        next_action_detail = f'unhandled combination: gate={gate_decision} artifacts=ready:{ready}/{total} uma_state={uma.uma_state}'
+        next_action_detail = (
+            f"unhandled combination: gate={gate_decision} artifacts=ready:{ready}/{total} uma_state={uma.uma_state}"
+        )
         live_allowed = False
-        log.append(f'verdict=BLOCKED_BY_UNKNOWN fallback (gate={gate_decision})')
-    return CockpitResult(verdict=verdict, live_allowed=live_allowed, next_action=next_action, next_action_detail=next_action_detail, gate_decision=gate_decision, gate_live_allowed=gate_live_allowed, gate_reasons=gate_reasons, gate_warnings=gate_warnings, artifact_count=total, artifact_ready=ready, artifact_missing=missing, artifact_stale=stale, uma=uma, provider_surface_ok=provider_surface_ok, missing_required_probes=missing_probes, fallback_schema_blocked=fallback_schema_blocked, hardware_constrained=hardware_constrained, swap_policy_tier=swap_policy_tier, swap_gate_reason=swap_gate_reason, merge_log=log, f224_core_ready=f224_core_ready, f224_warnings=f224_warnings, missing_f224_artifacts=missing_f224_artifacts, f231_core_ready=f231_core_ready, f231_warnings=f231_warnings, missing_f231_artifacts=missing_f231_artifacts, feed_baseline_allowed=feed_baseline_allowed, capability_live_allowed=capability_live_allowed, capability_blockers=capability_blockers, next_action_feed_baseline=next_action_feed_baseline, next_action_capability=next_action_capability)
+        log.append(f"verdict=BLOCKED_BY_UNKNOWN fallback (gate={gate_decision})")
+    return CockpitResult(
+        verdict=verdict,
+        live_allowed=live_allowed,
+        next_action=next_action,
+        next_action_detail=next_action_detail,
+        gate_decision=gate_decision,
+        gate_live_allowed=gate_live_allowed,
+        gate_reasons=gate_reasons,
+        gate_warnings=gate_warnings,
+        artifact_count=total,
+        artifact_ready=ready,
+        artifact_missing=missing,
+        artifact_stale=stale,
+        uma=uma,
+        provider_surface_ok=provider_surface_ok,
+        missing_required_probes=missing_probes,
+        fallback_schema_blocked=fallback_schema_blocked,
+        hardware_constrained=hardware_constrained,
+        swap_policy_tier=swap_policy_tier,
+        swap_gate_reason=swap_gate_reason,
+        merge_log=log,
+        f224_core_ready=f224_core_ready,
+        f224_warnings=f224_warnings,
+        missing_f224_artifacts=missing_f224_artifacts,
+        f231_core_ready=f231_core_ready,
+        f231_warnings=f231_warnings,
+        missing_f231_artifacts=missing_f231_artifacts,
+        feed_baseline_allowed=feed_baseline_allowed,
+        capability_live_allowed=capability_live_allowed,
+        capability_blockers=capability_blockers,
+        next_action_feed_baseline=next_action_feed_baseline,
+        next_action_capability=next_action_capability,
+    )
+
 
 def render_markdown(result: CockpitResult, profile: str, query: str) -> str:
     """Render cockpit result as markdown report."""
-    icon = '✅' if result.live_allowed else '❌'
-    action_icon = '🚀' if result.next_action in (NextAction.RUN_LIVE_NOW, NextAction.RUN_WITH_HARDWARE_TAINT, NextAction.RESTART_THEN_RUN_LIVE, NextAction.RUN_NONFEED_DIAGNOSTIC) else '🔧'
-    lines = ['# Pre-Live Artifact Cockpit Report', '', f'**Verdict:** {icon} `{result.verdict.value}`', f'**Live Allowed:** {result.live_allowed}', f'**Next Action:** {action_icon} `{result.next_action.value}`']
+    icon = "✅" if result.live_allowed else "❌"
+    action_icon = (
+        "🚀"
+        if result.next_action
+        in (
+            NextAction.RUN_LIVE_NOW,
+            NextAction.RUN_WITH_HARDWARE_TAINT,
+            NextAction.RESTART_THEN_RUN_LIVE,
+            NextAction.RUN_NONFEED_DIAGNOSTIC,
+        )
+        else "🔧"
+    )
+    lines = [
+        "# Pre-Live Artifact Cockpit Report",
+        "",
+        f"**Verdict:** {icon} `{result.verdict.value}`",
+        f"**Live Allowed:** {result.live_allowed}",
+        f"**Next Action:** {action_icon} `{result.next_action.value}`",
+    ]
     if result.next_action_detail:
-        lines.append(f'**Next Action Detail:** {result.next_action_detail}')
-    lines.extend(['', '## Feed Baseline vs Capability Readiness (F234P)', '', '| Capability Axis | Status |', '|-----------------|--------|', f"| **Feed Baseline Allowed** | {('✅ YES' if result.feed_baseline_allowed else '❌ NO')} |", f"| **Nonfeed Capability Live Allowed** | {('✅ YES' if result.capability_live_allowed else '❌ NO')} |"])
+        lines.append(f"**Next Action Detail:** {result.next_action_detail}")
+    lines.extend(
+        [
+            "",
+            "## Feed Baseline vs Capability Readiness (F234P)",
+            "",
+            "| Capability Axis | Status |",
+            "|-----------------|--------|",
+            f"| **Feed Baseline Allowed** | {('✅ YES' if result.feed_baseline_allowed else '❌ NO')} |",
+            f"| **Nonfeed Capability Live Allowed** | {('✅ YES' if result.capability_live_allowed else '❌ NO')} |",
+        ]
+    )
     if result.capability_blockers:
-        lines.append('')
-        lines.append('**Capability Blockers:**')
+        lines.append("")
+        lines.append("**Capability Blockers:**")
         for b in result.capability_blockers:
-            lines.append(f'  - `{b}`')
+            lines.append(f"  - `{b}`")
     if result.next_action_feed_baseline:
-        lines.append(f'**Next Action (Feed Baseline):** `{result.next_action_feed_baseline}`')
+        lines.append(f"**Next Action (Feed Baseline):** `{result.next_action_feed_baseline}`")
     if result.next_action_capability:
-        lines.append(f'**Next Action (Capability):** `{result.next_action_capability}`')
-    lines.extend(['', '## Decision Gate', '', f'- **Gate Decision:** `{result.gate_decision}`', f'- **Gate Live Allowed:** {result.gate_live_allowed}'])
+        lines.append(f"**Next Action (Capability):** `{result.next_action_capability}`")
+    lines.extend(
+        [
+            "",
+            "## Decision Gate",
+            "",
+            f"- **Gate Decision:** `{result.gate_decision}`",
+            f"- **Gate Live Allowed:** {result.gate_live_allowed}",
+        ]
+    )
     if result.gate_reasons:
-        lines.append('')
-        lines.append('**Reasons:**')
+        lines.append("")
+        lines.append("**Reasons:**")
         for r in result.gate_reasons:
-            lines.append(f'  - {r}')
+            lines.append(f"  - {r}")
     if result.gate_warnings:
-        lines.append('')
-        lines.append('**Warnings:**')
+        lines.append("")
+        lines.append("**Warnings:**")
         for w in result.gate_warnings:
-            lines.append(f'  - {w}')
-    lines.extend(['', '## Artifact Pack', '', '| Status | Count |', '|--------|-------|', f'| Total  | {result.artifact_count} |', f'| Ready  | {result.artifact_ready} |', f'| Missing | {result.artifact_missing} |', f'| Stale   | {result.artifact_stale} |'])
+            lines.append(f"  - {w}")
+    lines.extend(
+        [
+            "",
+            "## Artifact Pack",
+            "",
+            "| Status | Count |",
+            "|--------|-------|",
+            f"| Total  | {result.artifact_count} |",
+            f"| Ready  | {result.artifact_ready} |",
+            f"| Missing | {result.artifact_missing} |",
+            f"| Stale   | {result.artifact_stale} |",
+        ]
+    )
     if result.missing_required_probes:
-        lines.extend(['', '**Missing Required Probes:**'])
+        lines.extend(["", "**Missing Required Probes:**"])
         for p in result.missing_required_probes:
-            lines.append(f'  - `{p}`')
-    lines.extend(['', '## Memory (UMA)', '', f'- **System Used:** {result.uma.system_used_gib:.2f} GiB', f'- **Swap Used:** {result.uma.swap_used_gib:.2f} GiB', f'- **Swap Detected:** {result.uma.swap_detected}', f'- **UMA State:** `{result.uma.uma_state}`', f'- **IO Only:** {result.uma.io_only}', f'- **Hardware Constrained:** `{result.uma.hardware_constrained}`', f'- **Swap Policy Tier:** `{result.uma.swap_policy_tier}`', f'- **Swap Gate Reason:** `{result.uma.swap_gate_reason}`'])
+            lines.append(f"  - `{p}`")
+    lines.extend(
+        [
+            "",
+            "## Memory (UMA)",
+            "",
+            f"- **System Used:** {result.uma.system_used_gib:.2f} GiB",
+            f"- **Swap Used:** {result.uma.swap_used_gib:.2f} GiB",
+            f"- **Swap Detected:** {result.uma.swap_detected}",
+            f"- **UMA State:** `{result.uma.uma_state}`",
+            f"- **IO Only:** {result.uma.io_only}",
+            f"- **Hardware Constrained:** `{result.uma.hardware_constrained}`",
+            f"- **Swap Policy Tier:** `{result.uma.swap_policy_tier}`",
+            f"- **Swap Gate Reason:** `{result.uma.swap_gate_reason}`",
+        ]
+    )
     if result.uma.error:
-        lines.append(f'- **UMA Error:** {result.uma.error}')
-    lines.extend(['', '## Provider Surface', '', f'- **OK:** {result.provider_surface_ok}'])
+        lines.append(f"- **UMA Error:** {result.uma.error}")
+    lines.extend(["", "## Provider Surface", "", f"- **OK:** {result.provider_surface_ok}"])
     if result.sprint_collision and result.sprint_collision.has_collisions:
-        lines.extend(['', '## ⚠️ Sprint ID Collision Warning', '', f'**{result.sprint_collision.collision_count} collision(s)** detected across {result.sprint_collision.total_probes_scanned} probes.'])
+        lines.extend(
+            [
+                "",
+                "## ⚠️ Sprint ID Collision Warning",
+                "",
+                f"**{result.sprint_collision.collision_count} collision(s)** detected across {result.sprint_collision.total_probes_scanned} probes.",
+            ]
+        )
         for w in result.sprint_collision.warnings:
-            lines.append(f'- {w}')
-        lines.extend(['', '**Impact:** Operator reports may show ambiguous sprint ID labels. Live run is NOT blocked — required artifacts are unambiguous when paths are explicit.', '', '**Resolution:** Use full alias (e.g. `F223D_PRODUCT_VALUE`) in queries to disambiguate.'])
-    lines.extend(['', '## Next Actions', '', f'1. `{result.next_action.value}`'])
+            lines.append(f"- {w}")
+        lines.extend(
+            [
+                "",
+                "**Impact:** Operator reports may show ambiguous sprint ID labels. Live run is NOT blocked — required artifacts are unambiguous when paths are explicit.",
+                "",
+                "**Resolution:** Use full alias (e.g. `F223D_PRODUCT_VALUE`) in queries to disambiguate.",
+            ]
+        )
+    lines.extend(["", "## Next Actions", "", f"1. `{result.next_action.value}`"])
     if result.next_action == NextAction.RUN_MISSING_PROBE and result.next_action_detail:
-        probes = result.next_action_detail.split(',')
-        lines.append('')
-        lines.append('Run these probe lanes to restore artifacts:')
+        probes = result.next_action_detail.split(",")
+        lines.append("")
+        lines.append("Run these probe lanes to restore artifacts:")
         for probe in probes:
             probe_clean = probe.strip()
-            lines.append('```bash')
-            lines.append(f'python -m pytest tests/{probe_clean} -v --tb=short')
-            lines.append('```')
+            lines.append("```bash")
+            lines.append(f"python -m pytest tests/{probe_clean} -v --tb=short")
+            lines.append("```")
     elif result.next_action == NextAction.FIX_PROVIDER_SURFACE:
-        lines.extend(['', 'Run provider surface probe lanes:'])
-        lines.append('```bash')
-        lines.append('python -m pytest tests/probe_f217c_public_bootstrap -v --tb=short')
-        lines.append('python -m pytest tests/probe_f217d_ct_provider_resilience -v --tb=short')
-        lines.append('```')
+        lines.extend(["", "Run provider surface probe lanes:"])
+        lines.append("```bash")
+        lines.append("python -m pytest tests/probe_f217c_public_bootstrap -v --tb=short")
+        lines.append("python -m pytest tests/probe_f217d_ct_provider_resilience -v --tb=short")
+        lines.append("```")
     elif result.next_action == NextAction.FIX_CONTRACT_GATE:
-        lines.extend(['', 'Investigate contract gate failures in the decision gate report.'])
+        lines.extend(["", "Investigate contract gate failures in the decision gate report."])
     elif result.next_action == NextAction.RUN_NONFEED_DIAGNOSTIC:
-        lines.extend(['', 'F220-like feed-only detected. Run nonfeed diagnostic profile:'])
-        lines.append('```bash')
-        cmd = result.next_action_detail or 'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "mozilla.org certificate transparency subdomains april 2026" --live'
+        lines.extend(["", "F220-like feed-only detected. Run nonfeed diagnostic profile:"])
+        lines.append("```bash")
+        cmd = (
+            result.next_action_detail
+            or 'python benchmarks/live_sprint_measurement.py --profile nonfeed_diagnostic180 --query "mozilla.org certificate transparency subdomains april 2026" --live'
+        )
         lines.append(cmd)
-        lines.append('```')
-    lines.extend(['', '---', f'*Profile: `{profile}` | Query: `{query}`*'])
-    return '\n'.join(lines)
+        lines.append("```")
+    lines.extend(["", "---", f"*Profile: `{profile}` | Query: `{query}`*"])
+    return "\n".join(lines)
+
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Pre-Live Artifact Cockpit — Sprint F220D', formatter_class=argparse.RawDescriptionHelpFormatter, epilog=textwrap.dedent('            Examples:\n              python tools/prelive_artifact_cockpit.py \\\n                --decision-json probe_f219f_prelive_decision_gate/prelive_decision.json \\\n                --artifact-pack-json probe_f219i_prelive_artifact_pack/artifact_pack.json \\\n                --output-json probe_f220d_prelive_artifact_cockpit/prelive_artifact_cockpit.json \\\n                --output-md probe_f220d_prelive_artifact_cockpit/REPORT_PRELIVE_ARTIFACT_COCKPIT.md\n\n              # With optional readiness:\n              python tools/prelive_artifact_cockpit.py \\\n                --decision-json probe_f219f_prelive_decision_gate/prelive_decision.json \\\n                --artifact-pack-json probe_f219i_prelive_artifact_pack/artifact_pack.json \\\n                --readiness-json probe_f220c_clean_live_readiness/readiness.json \\\n                --output-json prelive_artifact_cockpit.json\n        '))
-    parser.add_argument('--decision-json', '-d', type=Path, required=True, help='Path to prelive_decision.json (from prelive_decision_gate.py)')
-    parser.add_argument('--artifact-pack-json', '-a', type=Path, required=True, help='Path to artifact_pack.json (from prelive_artifact_pack.py)')
-    parser.add_argument('--readiness-json', '-r', type=Path, default=None, help='Path to clean_live_readiness.json (optional)')
-    parser.add_argument('--output-json', '-o', type=Path, help='Write JSON report to this path.')
-    parser.add_argument('--output-md', '-m', type=Path, help='Write markdown report to this path.')
-    parser.add_argument('--profile', type=str, default='nonfeed_diagnostic', help='Profile name for report header.')
-    parser.add_argument('--query', type=str, default='mozilla.org certificate transparency subdomains april 2026', help='Query string for report header.')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Print merge log and details.')
-    parser.add_argument('--repo-root', '-R', type=Path, default=None, help='Override expected universal root for CWD guard. Defaults to internal detection based on CWD.')
+    parser = argparse.ArgumentParser(
+        description="Pre-Live Artifact Cockpit — Sprint F220D",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent(
+            "            Examples:\n              python tools/prelive_artifact_cockpit.py \\\n                --decision-json probe_f219f_prelive_decision_gate/prelive_decision.json \\\n                --artifact-pack-json probe_f219i_prelive_artifact_pack/artifact_pack.json \\\n                --output-json probe_f220d_prelive_artifact_cockpit/prelive_artifact_cockpit.json \\\n                --output-md probe_f220d_prelive_artifact_cockpit/REPORT_PRELIVE_ARTIFACT_COCKPIT.md\n\n              # With optional readiness:\n              python tools/prelive_artifact_cockpit.py \\\n                --decision-json probe_f219f_prelive_decision_gate/prelive_decision.json \\\n                --artifact-pack-json probe_f219i_prelive_artifact_pack/artifact_pack.json \\\n                --readiness-json probe_f220c_clean_live_readiness/readiness.json \\\n                --output-json prelive_artifact_cockpit.json\n        "
+        ),
+    )
+    parser.add_argument(
+        "--decision-json",
+        "-d",
+        type=Path,
+        required=True,
+        help="Path to prelive_decision.json (from prelive_decision_gate.py)",
+    )
+    parser.add_argument(
+        "--artifact-pack-json",
+        "-a",
+        type=Path,
+        required=True,
+        help="Path to artifact_pack.json (from prelive_artifact_pack.py)",
+    )
+    parser.add_argument(
+        "--readiness-json", "-r", type=Path, default=None, help="Path to clean_live_readiness.json (optional)"
+    )
+    parser.add_argument("--output-json", "-o", type=Path, help="Write JSON report to this path.")
+    parser.add_argument("--output-md", "-m", type=Path, help="Write markdown report to this path.")
+    parser.add_argument("--profile", type=str, default="nonfeed_diagnostic", help="Profile name for report header.")
+    parser.add_argument(
+        "--query",
+        type=str,
+        default="mozilla.org certificate transparency subdomains april 2026",
+        help="Query string for report header.",
+    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print merge log and details.")
+    parser.add_argument(
+        "--repo-root",
+        "-R",
+        type=Path,
+        default=None,
+        help="Override expected universal root for CWD guard. Defaults to internal detection based on CWD.",
+    )
     return parser
+
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     cwd_state = _get_cwd_guard_state()
-    if cwd_state['cwd_warning']:
+    if cwd_state["cwd_warning"]:
         print(f"CWD GUARD: {cwd_state['cwd_warning']}", file=sys.stderr)
-        print('Aborting artifact scan due to wrong CWD.', file=sys.stderr)
+        print("Aborting artifact scan due to wrong CWD.", file=sys.stderr)
         return 1
     if not args.decision_json.exists():
-        print(f'ERROR: decision JSON not found: {args.decision_json}', file=sys.stderr)
+        print(f"ERROR: decision JSON not found: {args.decision_json}", file=sys.stderr)
         return 1
     if not args.artifact_pack_json.exists():
-        print(f'ERROR: artifact pack JSON not found: {args.artifact_pack_json}', file=sys.stderr)
+        print(f"ERROR: artifact pack JSON not found: {args.artifact_pack_json}", file=sys.stderr)
         return 1
     decision_data = load_decision_gate(args.decision_json)
     artifact_data = load_artifact_pack(args.artifact_pack_json)
@@ -571,42 +844,51 @@ def main() -> int:
     collision_report = scan_probe_artifacts(repo_root)
     result = merge_cockpit(decision_data, artifact_data, readiness_data)
     if collision_report.has_collisions:
-        result.sprint_collision = SprintIdCollisionWarning(has_collisions=True, collision_count=len(collision_report.collisions), total_probes_scanned=collision_report.total_probes_scanned, warnings=[f'Sprint ID collision detected: {c.sprint_id}' for c in collision_report.collisions])
+        result.sprint_collision = SprintIdCollisionWarning(
+            has_collisions=True,
+            collision_count=len(collision_report.collisions),
+            total_probes_scanned=collision_report.total_probes_scanned,
+            warnings=[f"Sprint ID collision detected: {c.sprint_id}" for c in collision_report.collisions],
+        )
     if args.verbose:
-        print('Merge log:')
+        print("Merge log:")
         for entry in result.merge_log:
-            print(f'  {entry}')
+            print(f"  {entry}")
         print()
-    icon = '✅' if result.live_allowed else '❌'
+    icon = "✅" if result.live_allowed else "❌"
     print(f"{'=' * 60}")
-    print(f'  Verdict:      {icon} {result.verdict.value}')
-    print(f'  Live Allowed: {result.live_allowed}')
-    print(f'  Next Action:  {result.next_action.value}')
+    print(f"  Verdict:      {icon} {result.verdict.value}")
+    print(f"  Live Allowed: {result.live_allowed}")
+    print(f"  Next Action:  {result.next_action.value}")
     if result.next_action_detail:
-        print(f'  Detail:       {result.next_action_detail}')
+        print(f"  Detail:       {result.next_action_detail}")
     print(f"{'=' * 60}")
     if result.gate_reasons:
-        print('Gate reasons:')
+        print("Gate reasons:")
         for r in result.gate_reasons:
-            print(f'  - {r}')
+            print(f"  - {r}")
     if result.missing_required_probes:
-        print(f'Missing artifacts ({len(result.missing_required_probes)}):')
+        print(f"Missing artifacts ({len(result.missing_required_probes)}):")
         for p in result.missing_required_probes:
-            print(f'  - {p}')
+            print(f"  - {p}")
     uma_sw = result.uma.swap_used_gib
-    print(f'UMA: swap={uma_sw:.2f}GiB [clean<={CLEAN_SWAP_MAX_GIB:.1f}GiB | diagnostic<={DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB | hard_block>{HARD_BLOCK_SWAP_GIB:.1f}GiB]')
-    print(f'Swap policy tier: {result.swap_policy_tier} | Hardware constrained: {result.hardware_constrained}')
+    print(
+        f"UMA: swap={uma_sw:.2f}GiB [clean<={CLEAN_SWAP_MAX_GIB:.1f}GiB | diagnostic<={DIAGNOSTIC_SWAP_MAX_GIB:.1f}GiB | hard_block>{HARD_BLOCK_SWAP_GIB:.1f}GiB]"
+    )
+    print(f"Swap policy tier: {result.swap_policy_tier} | Hardware constrained: {result.hardware_constrained}")
     if args.output_json:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.output_json, 'w', encoding='utf-8') as fh:
+        with open(args.output_json, "w", encoding="utf-8") as fh:
             json.dump(result.to_dict(), fh, indent=2, default=str)
-        print(f'\nJSON report written: {args.output_json}')
+        print(f"\nJSON report written: {args.output_json}")
     if args.output_md:
         md_text = render_markdown(result, args.profile, args.query)
         args.output_md.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.output_md, 'w', encoding='utf-8') as fh:
+        with open(args.output_md, "w", encoding="utf-8") as fh:
             fh.write(md_text)
-        print(f'Markdown report written: {args.output_md}')
+        print(f"Markdown report written: {args.output_md}")
     return 0 if result.live_allowed else 1
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     sys.exit(main())

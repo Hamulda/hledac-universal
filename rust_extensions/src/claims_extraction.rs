@@ -58,10 +58,6 @@ pub struct Claim {
     pub evidence_type: String,
 }
 
-// ---------------------------------------------------------------------------
-// Regex patterns — pre-compiled once at startup via LazyLock
-// ---------------------------------------------------------------------------
-
 // Sentence-splitting: split on . ! ? followed by space + uppercase
 // Uses regex-automata with meta feature for look-around support.
 static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
@@ -72,10 +68,6 @@ static SENTENCE_SPLITTER: std::sync::LazyLock<regex_automata::meta::Regex> =
 
 // ISSUE-008 fix: IOC presence-check now uses ioc_extract::has_* functions
 // which use ioc_patterns.rs (the canonical source of truth)
-
-// ---------------------------------------------------------------------------
-// Polarity — pre-categorized word sets (compiled once, O(n) per sentence)
-// ---------------------------------------------------------------------------
 
 static NEGATIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
     vec![
@@ -118,10 +110,6 @@ static POSITIVE_WORDS: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyL
     ]
 });
 
-// ---------------------------------------------------------------------------
-// Constants — mirror of Python constants
-// ---------------------------------------------------------------------------
-
 const MAX_CLAIMS_PER_TEXT: usize = 20;
 const MAX_SENTENCE_LEN: usize = 512;
 const MIN_SENTENCE_LEN: usize = 20;
@@ -130,10 +118,6 @@ const URL_BONUS: f64 = 0.10;
 const PROVENANCE_BONUS: f64 = 0.10;
 const TITLE_AGREEMENT_BONUS: f64 = 0.10;
 const MAX_CONFIDENCE: f64 = 0.75;
-
-// ---------------------------------------------------------------------------
-// Core extraction logic
-// ---------------------------------------------------------------------------
 
 #[inline]
 fn split_sentences(text: &str) -> Vec<String> {
@@ -345,10 +329,6 @@ pub fn batch_extract_claims_inner(packets: &[(&str, &str, &str, &str, &str)]) ->
         results
     }
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 API
-// ---------------------------------------------------------------------------
 
 /// Extract claims from a single text (Python API).
 /// Returns list of (text, polarity, confidence, source, evidence_type) tuples.

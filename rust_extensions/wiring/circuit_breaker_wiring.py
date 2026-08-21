@@ -33,21 +33,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_circuit_breaker
 
-# Create singleton instance
 _circuit_breaker = get_circuit_breaker()
-
 
 def circuit_breaker_wired():
     """Get the wired circuit breaker integration."""
     return _circuit_breaker
-
 
 def should_allow_request(domain: str) -> tuple[bool, str]:
     """
@@ -60,11 +55,9 @@ def should_allow_request(domain: str) -> tuple[bool, str]:
     """
     return _circuit_breaker.should_allow_request(domain)
 
-
 def record_success(domain: str) -> None:
     """Record successful request for domain."""
     _circuit_breaker.record_success(domain)
-
 
 def record_failure(domain: str, is_timeout: bool = False) -> None:
     """
@@ -76,7 +69,6 @@ def record_failure(domain: str, is_timeout: bool = False) -> None:
     """
     _circuit_breaker.record_failure(domain, is_timeout)
 
-
 def get_domain_state(domain: str) -> dict:
     """
     Get detailed state for a domain.
@@ -85,7 +77,6 @@ def get_domain_state(domain: str) -> dict:
         Dict with state, failure_count, last_failure_time, etc.
     """
     return _circuit_breaker.get_domain_state(domain)
-
 
 class CircuitBreakerContext:
     """
@@ -128,21 +119,10 @@ class CircuitBreakerContext:
         """Get the circuit state reason."""
         return self._reason
 
-
-# Check availability at import time for logging
 if _circuit_breaker.available:
     logger.info("[CircuitBreaker] Rust circuit_breaker.rs integration: ENABLED")
 else:
     logger.info("[CircuitBreaker] Rust circuit_breaker.rs integration: DISABLED (using Python fallback)")
-
-
-# ---------------------------------------------------------------------------
-# Layer 2: AIMD Integration
-# ---------------------------------------------------------------------------
-# AIMD provides adaptive rate limiting on top of circuit breaking.
-# When circuit breaker records failures, AIMD reduces the concurrency window.
-# When circuit breaker records success, AIMD gradually increases it.
-# ---------------------------------------------------------------------------
 
 def get_aimd_window() -> float:
     """
@@ -157,7 +137,6 @@ def get_aimd_window() -> float:
     except (ImportError, AttributeError):
         # Fallback: return reasonable default
         return 10.0
-
 
 def reset_aimd() -> None:
     """Reset AIMD Layer 2 state (for testing)."""

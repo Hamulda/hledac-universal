@@ -2,12 +2,14 @@
 """Test script for Rust text fast-path in ioc_processor.py"""
 
 import sys
-sys.path.insert(0, '.')
+
+sys.path.insert(0, ".")
 
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 # Replicate the Rust text fast functions
 _RUST_TEXT_FAST = None
+
 
 def _get_rust_text_fast():
     global _RUST_TEXT_FAST
@@ -15,6 +17,7 @@ def _get_rust_text_fast():
         return _RUST_TEXT_FAST
     try:
         from hledac.universal._core.rust_backend import rust
+
         batch_nfc = rust.raw.batch_nfc_normalize_fast
         batch_strip = rust.raw.batch_strip_diacritics_fast
         if batch_nfc is not None and batch_strip is not None:
@@ -25,10 +28,12 @@ def _get_rust_text_fast():
     _RUST_TEXT_FAST = None
     return None
 
+
 def _rust_text_fast_single(text: str) -> str:
     rust_fast = _get_rust_text_fast()
     if rust_fast is None:
         import unicodedata
+
         try:
             nfkd = unicodedata.normalize("NFKD", text)
             return "".join(c for c in nfkd if not unicodedata.combining(c))
@@ -40,11 +45,13 @@ def _rust_text_fast_single(text: str) -> str:
         return batch_strip([normalized])[0]
     except Exception:
         import unicodedata
+
         try:
             nfkd = unicodedata.normalize("NFKD", text)
             return "".join(c for c in nfkd if not unicodedata.combining(c))
         except Exception:
             return text
+
 
 def _python_url_normalize(url: str) -> str:
     try:
@@ -78,6 +85,7 @@ def _python_url_normalize(url: str) -> str:
     except Exception:
         return url
 
+
 def _python_batch_dedup_urls(urls):
     if not urls:
         return []
@@ -102,6 +110,7 @@ def _python_batch_dedup_urls(urls):
             result.append(normalized)
     return result
 
+
 # Tests
 print("=" * 60)
 print("Testing Rust text fast-path in ioc_processor.py")
@@ -125,25 +134,26 @@ print(f"   'café' -> '{_rust_text_fast_single('café')}'")
 print("\n3. Testing _python_batch_dedup_urls:")
 # Same URLs should dedupe
 urls1 = [
-    'https://example.com/path',
-    'https://example.com/path',  # duplicate
+    "https://example.com/path",
+    "https://example.com/path",  # duplicate
 ]
 results1 = _python_batch_dedup_urls(urls1)
 print(f"   Same URL dedup: {len(urls1)} -> {len(results1)} (expected 1)")
 
 # Non-ASCII variants (munchen vs muenchen are different - diacritics stripped differently)
 urls2 = [
-    'https://münchen.example.com',  # ü -> u (NFD strip)
-    'https://muenchen.example.com',  # ü already as ue
+    "https://münchen.example.com",  # ü -> u (NFD strip)
+    "https://muenchen.example.com",  # ü already as ue
 ]
 results2 = _python_batch_dedup_urls(urls2)
 print(f"   Diacritic dedup: {len(urls2)} -> {len(results2)} unique URLs")
 print(f"     Input: {urls2}")
 print(f"     Output: {results2}")
-print(f"     Note: 'münchen' -> 'munchen', 'muenchen' stays 'muenchen' - different URLs!")
+print("     Note: 'münchen' -> 'munchen', 'muenchen' stays 'muenchen' - different URLs!")
 
 # NFC normalized versions should dedupe
 import unicodedata
+
 nfc_mun = unicodedata.normalize("NFC", "münchen")
 print(f"   NFC: 'münchen' -> '{nfc_mun}'")
 

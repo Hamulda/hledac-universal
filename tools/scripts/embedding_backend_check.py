@@ -9,14 +9,12 @@ Usage:
     python scripts/embedding_backend_check.py --batch 512  # custom batch size
 """
 
-
 import logging
 import sys
 import time
 from pathlib import Path
 
 import psutil
-from _core import aclose
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,6 +40,7 @@ def get_backend() -> str:
     # Check 1: MLX ModernBERT via EmbeddingRouter (primary path)
     try:
         from hledac.universal.embedding_pipeline import get_embedding_backend
+
         be = get_embedding_backend()
         if be in ("mlx", "mlx_manager"):
             return "mlx"
@@ -55,7 +54,8 @@ def get_backend() -> str:
 
     # Check 3: FastEmbed available (CPU fallback)
     try:
-        from fastembed import TextEmbedding as _  # noqa: F401 — availability check only
+        from fastembed import TextEmbedding as _
+
         return "cpu_fallback"  # FastEmbed on CPU
     except ImportError:  # noqa: BLE001
         pass
@@ -71,6 +71,7 @@ def measure_latency(n_texts: int = 100, batch_size: int = 32, warm_up: bool = Fa
     if warm_up:
         try:
             from fastembed import TextEmbedding
+
             model = TextEmbedding("BAAI/bge-small-en-v1.5")
             list(model.embed(["warmup"]))
             logger.info("Warm-up complete")
@@ -80,12 +81,13 @@ def measure_latency(n_texts: int = 100, batch_size: int = 32, warm_up: bool = Fa
     # Measure
     try:
         from fastembed import TextEmbedding
+
         model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
         start = time.monotonic()
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             emb = list(model.embed(batch))
             all_embeddings.extend(emb)
         elapsed_s = time.monotonic() - start
@@ -120,7 +122,9 @@ def print_report(backend: str, latency: dict, uma: dict) -> None:
     print(f"  Swap used:    {uma['swap_used_mb']:.0f} MB")
 
     if latency.get("success"):
-        print(f"  Latency:      {latency['latency_ms']:.1f} ms/text ({latency['n_texts']} texts in {latency['elapsed_s']:.3f}s)")  # noqa: E501
+        print(
+            f"  Latency:      {latency['latency_ms']:.1f} ms/text ({latency['n_texts']} texts in {latency['elapsed_s']:.3f}s)"
+        )  # noqa: E501
         print(f"  Throughput:   {latency['docs_per_sec']:.0f} docs/s")
         print(f"  Embed dim:    {latency['embedding_dim']}")
     else:
@@ -130,6 +134,7 @@ def print_report(backend: str, latency: dict, uma: dict) -> None:
     if backend == "mlx":
         try:
             from hledac.universal.embedding_pipeline import get_embedding_backend
+
             be = get_embedding_backend()
             print(f"  MLX backend:   {be}")
         except Exception:  # noqa: BLE001

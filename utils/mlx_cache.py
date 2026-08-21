@@ -7,17 +7,14 @@ Provides:
 - Thread-safe async access with lazy initialization
 """
 
-
 import asyncio
-import importlib.util
 import logging
 import threading
-from hledac.universal.utils.lru_cache import LRUCache
-from hledac.universal.utils.mlx_memory import mlx_cleanup_decorator
 from typing import Any
 
-from hledac.universal._core.psutil_shim import psutil
 from hledac.universal._core.locks import LockCategory, register_lock
+from hledac.universal._core.psutil_shim import psutil
+from hledac.universal.utils.lru_cache import LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +31,7 @@ def _detect_mlx_available() -> bool:
     """
     try:
         import importlib.metadata
+
         importlib.metadata.version("mlx")
         return True
     except Exception:
@@ -60,6 +58,7 @@ def get_mx():
         return None
     return _sys.modules.get("mlx.core")
 
+
 # LRU cache for MLX models (max 2 models)
 _MLX_CACHE: LRUCache[str, tuple[Any, Any]] = LRUCache(max_size=2)
 _MLX_CACHE_MAX = 2
@@ -85,6 +84,7 @@ _RUST_AVAILABLE = False
 # Try to load Rust atomic facade
 try:
     from hledac.universal._core.rust_backend import rust
+
     mlx_cache_hit = rust.raw.mlx_cache_hit  # None if unavailable
     mlx_cache_miss = rust.raw.mlx_cache_miss  # None if unavailable
     mlx_cache_stats = rust.raw.mlx_cache_stats  # None if unavailable
@@ -148,6 +148,7 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
     global _MLX_SEMAPHORE
     if _MLX_SEMAPHORE is None:
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         _MLX_SEMAPHORE = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
     return _MLX_SEMAPHORE
 
@@ -234,10 +235,6 @@ def reset_cache_stats() -> None:
     _reset_cache_stats()
 
 
-# =============================================================================
-# MLX Cleanup Functions (Sprint 72)
-# =============================================================================
-
 import gc  # noqa: E402
 
 _mx = None  # lazy singleton
@@ -248,6 +245,7 @@ def _get_mx():
     global _mx
     if _mx is None:
         import mlx.core as mx_module
+
         _mx = mx_module
     return _mx
 
@@ -279,8 +277,8 @@ def _get_mx():
 # Dynamic cache formula: min(max(available*0.2, 512MiB), 1.5GiB)
 # At boot (~5.5 GiB available): cache ≈ 1.1 GiB → MLX footprint ≈ 3.85 GiB,
 # leaving ~4.15 GiB for macOS → stays in warn zone, not critical.
-_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)   # 1.5 GiB — ceiling for dynamic cache
-_METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)  # 768 MiB — fixed pinned Metal memory
+_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024**3)  # 1.5 GiB — ceiling for dynamic cache
+_METAL_WIRED_LIMIT_BYTES = int(768 * 1024**2)  # 768 MiB — fixed pinned Metal memory
 
 # F265H: EMERGENCY floor — 256 MiB (half of normal 512 MiB floor)
 # Gives draft model more Metal memory headroom during EMERGENCY state.
@@ -306,7 +304,7 @@ def _format_limit_mib(value: int | None) -> str:
     """Format a memory limit in MiB for safe logging."""
     if value is None:
         return "unavailable"
-    return f"{value // 1024 ** 2} MiB"
+    return f"{value // 1024**2} MiB"
 
 
 # MEM-2: Dynamic Metal cache sizing for M1 8GB stability
@@ -408,10 +406,10 @@ def _ensure_metal_memory_limits() -> bool:
             _last_setter_error = f"mlx.core import failed: {e}"
             logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
             # Fail-open: MLX may not be available on non-Apple platforms
-            _MLX_METAL_LIMITS_CONFIGURED = True   # mark configured to skip retries
+            _MLX_METAL_LIMITS_CONFIGURED = True  # mark configured to skip retries
             return False
 
-        if not hasattr(mx, 'metal'):
+        if not hasattr(mx, "metal"):
             _last_setter_error = "mx.metal namespace missing"
             logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
             _MLX_METAL_LIMITS_CONFIGURED = True
@@ -422,7 +420,7 @@ def _ensure_metal_memory_limits() -> bool:
         dynamic_cache_limit = get_dynamic_metal_cache_limit()
 
         # ── set_cache_limit ───────────────────────────────────────────────────
-        if hasattr(mx, 'set_cache_limit'):
+        if hasattr(mx, "set_cache_limit"):
             try:
                 mx.set_cache_limit(dynamic_cache_limit)
                 _cache_limit_actual = dynamic_cache_limit
@@ -430,7 +428,7 @@ def _ensure_metal_memory_limits() -> bool:
                 _last_setter_error = f"set_cache_limit failed: {e}"
                 errors.append(_last_setter_error)
                 logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
-        elif hasattr(mx.metal, 'set_cache_limit'):
+        elif hasattr(mx.metal, "set_cache_limit"):
             try:
                 mx.metal.set_cache_limit(dynamic_cache_limit)
                 _cache_limit_actual = dynamic_cache_limit
@@ -443,7 +441,7 @@ def _ensure_metal_memory_limits() -> bool:
             errors.append(_last_setter_error)
 
         # ── set_wired_limit ────────────────────────────────────────────────────
-        if hasattr(mx, 'set_wired_limit'):
+        if hasattr(mx, "set_wired_limit"):
             try:
                 mx.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
                 _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
@@ -453,7 +451,7 @@ def _ensure_metal_memory_limits() -> bool:
                 if not _last_setter_error:
                     _last_setter_error = err
                 logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {err}")
-        elif hasattr(mx.metal, 'set_wired_limit'):
+        elif hasattr(mx.metal, "set_wired_limit"):
             try:
                 mx.metal.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
                 _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
@@ -469,7 +467,7 @@ def _ensure_metal_memory_limits() -> bool:
 
         if errors:
             # At least one setter was unavailable or failed
-            _MLX_METAL_LIMITS_CONFIGURED = True   # mark to prevent retry loops
+            _MLX_METAL_LIMITS_CONFIGURED = True  # mark to prevent retry loops
             return False
 
         _MLX_METAL_LIMITS_CONFIGURED = True
@@ -478,7 +476,7 @@ def _ensure_metal_memory_limits() -> bool:
             f"[Sprint 8T] Metal limits configured: "
             f"cache={dynamic_cache_limit // 1024**2} MiB (of {_METAL_CACHE_LIMIT_BYTES // 1024**2} MiB max), "
             f"wired={_METAL_WIRED_LIMIT_BYTES // 1024**2} MiB"
-    )
+        )
         return True
 
 
@@ -551,15 +549,13 @@ def reconfigure_metal_cache_limit(
         # The hasattr guards are safety nets — the try/except below is the
         # canonical error handler. Guard uses `or` semantics: fail only if
         # NEITHER mx.set_cache_limit NOR mx.metal.set_cache_limit exists.
-        if not hasattr(mx, 'set_cache_limit') and not (
-            hasattr(mx, 'metal') and hasattr(mx.metal, 'set_cache_limit')
-        ):
+        if not hasattr(mx, "set_cache_limit") and not (hasattr(mx, "metal") and hasattr(mx.metal, "set_cache_limit")):
             _last_setter_error = "neither mx.set_cache_limit nor mx.metal.set_cache_limit available"
             logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
             return False
-        if hasattr(mx, 'set_cache_limit'):
+        if hasattr(mx, "set_cache_limit"):
             mx.set_cache_limit(new_limit)
-        elif hasattr(mx.metal, 'set_cache_limit'):
+        elif hasattr(mx.metal, "set_cache_limit"):
             mx.metal.set_cache_limit(new_limit)
         _cache_limit_actual = new_limit
         _last_setter_error = None
@@ -567,7 +563,7 @@ def reconfigure_metal_cache_limit(
             f"[F265H] Metal cache reconfigured: {new_limit // 1024**2} MiB "
             f"(state={uma_state}, thermal_headroom={thermal_headroom:.2f}, "
             f"floor={_METAL_CACHE_EMERGENCY_FLOOR_BYTES // 1024**2} MiB)"
-    )
+        )
         return True
     except Exception as e:
         _last_setter_error = f"set_cache_limit failed: {e}"
@@ -599,9 +595,7 @@ async def async_reconfigure_metal_cache_limit(
         True if reconfiguration succeeded, False otherwise.
     """
     try:
-        return await asyncio.to_thread(
-            reconfigure_metal_cache_limit, uma_state, thermal_headroom
-    )
+        return await asyncio.to_thread(reconfigure_metal_cache_limit, uma_state, thermal_headroom)
     except Exception:
         return False
 
@@ -672,7 +666,7 @@ def mlx_cleanup_sync() -> None:
         # Krok 3: clear_cache — uvolní Metal cache
         # F185C: metal.clear_cache is canonical MLX API; check it FIRST, reuse mx ref
         mx = _get_mx()
-        if hasattr(mx, 'clear_cache'):
+        if hasattr(mx, "clear_cache"):
             mx.clear_cache()
 
         # F269: Release slab pool memory back to system
@@ -685,6 +679,7 @@ def mlx_cleanup_sync() -> None:
         # zvyšuje RAM pressure. malloc_zone_pressure_relief(NULL) releasuje všechny zóny.
         try:
             import ctypes
+
             libc = ctypes.CDLL(None)
             libc.malloc_zone_pressure_relief(None)
         except Exception as _e:
@@ -702,17 +697,17 @@ def mlx_cleanup_aggressive() -> None:
         mx = _get_mx()
 
         # Uložit starý limit — prefer mx.get_cache_limit (canonical) over mx.metal.* (deprecated)
-        if hasattr(mx, 'get_cache_limit'):
+        if hasattr(mx, "get_cache_limit"):
             old_limit = mx.get_cache_limit()
-        elif hasattr(mx.metal, 'get_cache_limit'):
+        elif hasattr(mx.metal, "get_cache_limit"):
             old_limit = mx.metal.get_cache_limit()
         else:
             old_limit = None
 
         # Nastavit nízký limit — prefer mx.set_cache_limit over mx.metal.* (deprecated)
-        if hasattr(mx, 'set_cache_limit'):
+        if hasattr(mx, "set_cache_limit"):
             mx.set_cache_limit(64 * 1024 * 1024)  # 64MB
-        elif hasattr(mx.metal, 'set_cache_limit'):
+        elif hasattr(mx.metal, "set_cache_limit"):
             mx.metal.set_cache_limit(64 * 1024 * 1024)  # 64MB
 
         # F183C canonical cleanup order: gc.collect() → mx.eval([]) → clear_cache()
@@ -721,7 +716,7 @@ def mlx_cleanup_aggressive() -> None:
             mx.eval([])
         except Exception as e:
             logger.debug(f"[MLX] mx.eval([]) barrier skipped: {e}")
-        if hasattr(mx, 'clear_cache'):
+        if hasattr(mx, "clear_cache"):
             mx.clear_cache()
 
         # F269: Release slab pool memory back to system
@@ -732,6 +727,7 @@ def mlx_cleanup_aggressive() -> None:
         # (synchronizováno s mlx_cleanup_sync pro konzistentní chování)
         try:
             import ctypes
+
             libc = ctypes.CDLL(None)
             libc.malloc_zone_pressure_relief(None)
         except Exception as _e:
@@ -739,9 +735,9 @@ def mlx_cleanup_aggressive() -> None:
 
         # Obnovit starý limit
         if old_limit is not None:
-            if hasattr(mx, 'set_cache_limit'):
+            if hasattr(mx, "set_cache_limit"):
                 mx.set_cache_limit(old_limit)
-            elif hasattr(mx.metal, 'set_cache_limit'):
+            elif hasattr(mx.metal, "set_cache_limit"):
                 mx.metal.set_cache_limit(old_limit)
     except Exception:
         mlx_cleanup_sync()  # fallback
@@ -753,21 +749,13 @@ try:
 except ImportError:
     _release_slab_pool: None = None  # type: ignore[assignment]
 
-
 # mlx_cleanup_decorator is now imported from utils.mlx_memory (canonical source)
 # This line kept for backward compatibility with existing imports
 
-
-# =============================================================================
-# ISSUE-7.2: Memory status poller — asyncio task for dynamic Metal cache reconfiguration
-# =============================================================================
-
-import asyncio
 import os
 import sys
 import time as _time_module
 from collections.abc import Callable
-from _core import aclose
 
 # Rust atomic UMA state — 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
 _rust_uma_state: Callable | None = None
@@ -777,14 +765,16 @@ _RUST_MEMORY_AVAILABLE: bool = False
 try:
     from hledac.universal.hledac_rust_extensions import (  # type: ignore[unresolved-import]
         get_uma_state_u8 as _get_uma_state_u8_rust,
+    )
+    from hledac.universal.hledac_rust_extensions import (
         set_uma_state_u8 as _set_uma_state_u8_rust,
     )
+
     _rust_uma_state = _get_uma_state_u8_rust
     _set_uma_state_u8 = _set_uma_state_u8_rust
     _RUST_MEMORY_AVAILABLE = True
 except ImportError:
     _RUST_MEMORY_AVAILABLE = False
-
 
 # Poller state — written by background task, read by get_dynamic_metal_cache_limit fast path
 _current_uma_state_u8: int = 0  # 0=ok initially
@@ -877,7 +867,6 @@ async def _memory_status_poller_task(interval_s: float = 0.5) -> None:
 
         new_state_u8 = _available_to_uma_state(available)
 
-        # Update Rust AtomicU8 — lock-free, ~10ns
         if _set_uma_state_u8 is not None:
             try:
                 _set_uma_state_u8(new_state_u8)
@@ -895,7 +884,7 @@ async def _memory_status_poller_task(interval_s: float = 0.5) -> None:
                     logger.info(
                         f"[ISSUE-7.2] Metal cache reconfigured: state={state_name}, "
                         f"available={available / 1024**2:.0f} MiB"
-    )
+                    )
                 except Exception as e:
                     logger.debug(f"[ISSUE-7.2] reconfigure_metal_cache_limit failed: {e}")
                 _current_uma_state_u8 = new_state_u8

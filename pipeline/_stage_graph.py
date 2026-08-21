@@ -37,7 +37,9 @@ Usage:
     ])
     result = await orch.run(initial_batch)
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -46,18 +48,19 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
-T = TypeVar('T')
-import msgspec
+from typing import TYPE_CHECKING, Any, TypeVar
+
+T = TypeVar("T")
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+
 try:
     from utils.asyncx._parallel import parallel_ok
 except ImportError:
 
-    async def parallel_ok(*coros, label='', logger_instance=None):
+    async def parallel_ok(*coros, label="", logger_instance=None):
         import asyncio
         import logging
+
         _log = logger_instance or logging.getLogger(__name__)
         if not coros:
             return []
@@ -65,22 +68,24 @@ except ImportError:
         ok = [r for r in raw if not isinstance(r, Exception)]
         errors = [r for r in raw if isinstance(r, Exception)]
         if errors:
-            _log.debug(f'[ISSUE-05] parallel_ok: dropped {len(errors)} exceptions')
+            _log.debug(f"[ISSUE-05] parallel_ok: dropped {len(errors)} exceptions")
         return ok
-_DEP_PATTERN = re.compile('^_?(\\w+)_to_(\\w+)$')
+
+
+_DEP_PATTERN = re.compile("^_?(\\w+)_to_(\\w+)$")
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable
     from typing import Protocol
 
     class StageLike(Protocol):
-
         @property
-        def name(self) -> str:
-            ...
+        def name(self) -> str: ...
 
-        async def process(self, input_batch: Any) -> tuple[Any, dict[str, Any]]:
-            ...
+        async def process(self, input_batch: Any) -> tuple[Any, dict[str, Any]]: ...
+
+
 logger = logging.getLogger(__name__)
+
 
 class StageLevel(Enum):
     """Stage workload classification for execution strategy.
@@ -92,11 +97,15 @@ class StageLevel(Enum):
     IO-bound: discovery, fetch, dedup, store (network, disk)
     ASYNC: stages that manage their own concurrency (fetch coordinator)
     """
+
     ASYNC_IO = auto()
     CPU_BOUND = auto()
     ASYNC_COORDINATED = auto()
+
+
 _CPU_POOL: ThreadPoolExecutor | None = None
 _CPU_POOL_LOCK = asyncio.Lock()
+
 
 async def _get_cpu_pool() -> ThreadPoolExecutor:
     """Get or create M1-safe CPU thread pool.
@@ -109,9 +118,10 @@ async def _get_cpu_pool() -> ThreadPoolExecutor:
         async with _CPU_POOL_LOCK:
             if _CPU_POOL is None:
                 cpu_count = min(os.cpu_count() or 4, 4)
-                _CPU_POOL = ThreadPoolExecutor(max_workers=cpu_count, thread_name_prefix='stage-cpu-pool')
-                logger.debug('[ISSUE-05] CPU pool initialized with %d workers (M1 8GB safe)', cpu_count)
+                _CPU_POOL = ThreadPoolExecutor(max_workers=cpu_count, thread_name_prefix="stage-cpu-pool")
+                logger.debug("[ISSUE-05] CPU pool initialized with %d workers (M1 8GB safe)", cpu_count)
     return _CPU_POOL
+
 
 async def _shutdown_cpu_pool() -> None:
     """Shutdown CPU pool on cleanup."""
@@ -119,7 +129,8 @@ async def _shutdown_cpu_pool() -> None:
     if _CPU_POOL is not None:
         _CPU_POOL.shutdown(wait=True)
         _CPU_POOL = None
-        logger.debug('[ISSUE-05] CPU pool shutdown complete')
+        logger.debug("[ISSUE-05] CPU pool shutdown complete")
+
 
 async def _run_in_cpu_pool(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run CPU-bound function in thread pool.
@@ -131,11 +142,13 @@ async def _run_in_cpu_pool(func: Callable[..., Any], *args: Any, **kwargs: Any) 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(pool, lambda: func(*args, **kwargs))
 
+
 class StageResult(Struct, frozen=True):
     """Typed result from a single stage run.
 
     All fields are explicitly typed for mypy/catch mismatches.
     """
+
     ok: bool
     stage_name: str
     output_batch: Any | None
@@ -146,14 +159,16 @@ class StageResult(Struct, frozen=True):
     execution_time_ms: float = 0.0
     parallel_group: str | None = None
 
+
 class StageStats(Struct, frozen=True):
     """
     Per-stage statistics accumulated during a pipeline run.
-    
+
     ISSUE-12: Made frozen=True for thread safety.
     Parallel stage execution can update stats concurrently;
     frozen=True prevents accidental mutations and helps catch races.
     """
+
     name: str
     invocations: int = 0
     total_time_ms: float = 0.0
@@ -161,22 +176,38 @@ class StageStats(Struct, frozen=True):
     items_out_total: int = 0
     errors: int = 0
 
+
 @dataclass(frozen=True, slots=True)
 class StageConfig:
     """Configuration for a single stage in the DAG.
 
     ISSUE-05: Enables parallel execution of independent stages.
     """
+
     name: str
     stage: StageLike
     level: StageLevel = StageLevel.ASYNC_IO
     depends_on: frozenset[str] = frozenset()
     max_queue_size: int = 256
-_DEFAULT_LEVEL_MAP: dict[str, StageLevel] = {'discovery': StageLevel.ASYNC_IO, 'fetch': StageLevel.ASYNC_COORDINATED, 'dedup': StageLevel.ASYNC_IO, 'match': StageLevel.CPU_BOUND, 'enrich': StageLevel.CPU_BOUND, 'build': StageLevel.CPU_BOUND, 'store': StageLevel.ASYNC_IO, 'extract': StageLevel.ASYNC_IO, 'scan': StageLevel.CPU_BOUND}
+
+
+_DEFAULT_LEVEL_MAP: dict[str, StageLevel] = {
+    "discovery": StageLevel.ASYNC_IO,
+    "fetch": StageLevel.ASYNC_COORDINATED,
+    "dedup": StageLevel.ASYNC_IO,
+    "match": StageLevel.CPU_BOUND,
+    "enrich": StageLevel.CPU_BOUND,
+    "build": StageLevel.CPU_BOUND,
+    "store": StageLevel.ASYNC_IO,
+    "extract": StageLevel.ASYNC_IO,
+    "scan": StageLevel.CPU_BOUND,
+}
+
 
 def _get_stage_level(stage_name: str) -> StageLevel:
     """Get the execution level for a stage by name."""
     return _DEFAULT_LEVEL_MAP.get(stage_name, StageLevel.ASYNC_IO)
+
 
 class ParallelStageExecutor:
     """Execute multiple stages concurrently with bounded fan-out.
@@ -204,9 +235,10 @@ class ParallelStageExecutor:
         - Group 5: enrich (depends on match)
         - Group 6: store (depends on enrich)
     """
-    __slots__ = ('_backpressure_maxsize', '_configs', '_name_to_config', '_parallel_groups', '_running')
 
-    def __init__(self, stage_configs: list[StageConfig], *, backpressure_maxsize: int=256) -> None:
+    __slots__ = ("_backpressure_maxsize", "_configs", "_name_to_config", "_parallel_groups", "_running")
+
+    def __init__(self, stage_configs: list[StageConfig], *, backpressure_maxsize: int = 256) -> None:
         self._configs = stage_configs
         self._backpressure_maxsize = backpressure_maxsize
         self._running = False
@@ -233,7 +265,10 @@ class ParallelStageExecutor:
                 if config.depends_on.isdisjoint(remaining):
                     ready.append(name)
             if not ready:
-                logger.warning('[ISSUE-05] ParallelStageExecutor: cycle detected, falling back to sequential for remaining: %s', remaining)
+                logger.warning(
+                    "[ISSUE-05] ParallelStageExecutor: cycle detected, falling back to sequential for remaining: %s",
+                    remaining,
+                )
                 groups.append(sorted(remaining))
                 break
             group_idx = len(groups)
@@ -241,10 +276,10 @@ class ParallelStageExecutor:
                 stage_groups[name] = group_idx
             groups.append(sorted(ready))
             remaining -= set(ready)
-        logger.debug('[ISSUE-05] Parallel groups: %s', [[c.name for c in self._configs if c.name in g] for g in groups])
+        logger.debug("[ISSUE-05] Parallel groups: %s", [[c.name for c in self._configs if c.name in g] for g in groups])
         return groups
 
-    async def run(self, initial_input: Any, *, bypass_stages: set[str] | None=None) -> tuple[StageResult, ...]:
+    async def run(self, initial_input: Any, *, bypass_stages: set[str] | None = None) -> tuple[StageResult, ...]:
         """Run all stage groups with parallel execution.
 
         Args:
@@ -255,11 +290,10 @@ class ParallelStageExecutor:
             Tuple of StageResult, one per stage (in stage order).
         """
         if self._running:
-            raise RuntimeError('ParallelStageExecutor.run() is not reentrant')
+            raise RuntimeError("ParallelStageExecutor.run() is not reentrant")
         self._running = True
         bypass = bypass_stages or set()
         results: dict[str, StageResult] = {}
-        ctx: Any = initial_input
         try:
             completed: set[str] = set()
             completed_results: dict[str, StageResult] = {}
@@ -272,17 +306,31 @@ class ParallelStageExecutor:
                 for name in active_in_group:
                     config = self._name_to_config[name]
                     stage_input = self._get_stage_input(config, completed_results)
-                    group_coros.append(self._run_stage(config, stage_input, f'group-{group_idx}'))
+                    group_coros.append(self._run_stage(config, stage_input, f"group-{group_idx}"))
                     group_names_filtered.append(name)
-                group_results = await parallel_ok(*group_coros, label=f'parallel-group-{group_idx}')
-                for name, result in zip(group_names_filtered, group_results):
+                group_results = await parallel_ok(*group_coros, label=f"parallel-group-{group_idx}")
+                for name, result in zip(group_names_filtered, group_results, strict=False):
                     results[name] = result
                     completed.add(name)
                     completed_results[name] = result
                     if result.ok and result.output_batch is not None:
-                        ctx = result.output_batch
+                        pass
             stage_order = [c.name for c in self._configs if c.name not in bypass]
-            return tuple((results.get(name, StageResult(ok=False, stage_name=name, output_batch=None, telemetry={}, error='stage_not_run', items_in=0, items_out=0)) for name in stage_order))
+            return tuple(
+                results.get(
+                    name,
+                    StageResult(
+                        ok=False,
+                        stage_name=name,
+                        output_batch=None,
+                        telemetry={},
+                        error="stage_not_run",
+                        items_in=0,
+                        items_out=0,
+                    ),
+                )
+                for name in stage_order
+            )
         finally:
             self._running = False
 
@@ -317,11 +365,31 @@ class ParallelStageExecutor:
             dt_ms = (time.monotonic() - t0) * 1000
             items_in = _batch_len(input_batch) if input_batch is not None else 0
             items_out = _batch_len(result[0]) if result[0] is not None else 0
-            return StageResult(ok=True, stage_name=stage_name, output_batch=result[0], telemetry=dict(result[1]) if result[1] else {}, error=None, items_in=items_in, items_out=items_out, execution_time_ms=dt_ms, parallel_group=parallel_group)
+            return StageResult(
+                ok=True,
+                stage_name=stage_name,
+                output_batch=result[0],
+                telemetry=dict(result[1]) if result[1] else {},
+                error=None,
+                items_in=items_in,
+                items_out=items_out,
+                execution_time_ms=dt_ms,
+                parallel_group=parallel_group,
+            )
         except Exception as exc:
             dt_ms = (time.monotonic() - t0) * 1000
             logger.exception("[ISSUE-05] ParallelStageExecutor: stage '%s' failed: %s", stage_name, exc)
-            return StageResult(ok=False, stage_name=stage_name, output_batch=None, telemetry={}, error=f'{type(exc).__name__}: {exc}', items_in=_batch_len(input_batch) if input_batch is not None else 0, items_out=0, execution_time_ms=dt_ms, parallel_group=parallel_group)
+            return StageResult(
+                ok=False,
+                stage_name=stage_name,
+                output_batch=None,
+                telemetry={},
+                error=f"{type(exc).__name__}: {exc}",
+                items_in=_batch_len(input_batch) if input_batch is not None else 0,
+                items_out=0,
+                execution_time_ms=dt_ms,
+                parallel_group=parallel_group,
+            )
 
     async def _run_stage_cpu_bound(self, stage: StageLike, input_batch: Any) -> tuple[Any, dict[str, Any]]:
         """Run CPU-bound stage.
@@ -336,7 +404,8 @@ class ParallelStageExecutor:
         """
         return await stage.process(input_batch)
 
-class BackpressureQueue(Generic[T]):
+
+class BackpressureQueue[T]:
     """asyncio.Queue wrapper with backpressure from resource governor.
 
     ISSUE-05: Prevents 8GB ceiling breach during bursts by streaming
@@ -348,7 +417,7 @@ class BackpressureQueue(Generic[T]):
     - Metrics for monitoring drop rate
     """
 
-    def __init__(self, maxsize: int=256, stage_name: str='unknown') -> None:
+    def __init__(self, maxsize: int = 256, stage_name: str = "unknown") -> None:
         self._maxsize = maxsize
         self._stage_name = stage_name
         self._queue: asyncio.Queue[T] = asyncio.Queue(maxsize=maxsize)
@@ -366,7 +435,9 @@ class BackpressureQueue(Generic[T]):
             return True
         except asyncio.QueueFull:
             self._dropped += 1
-            logger.debug('[ISSUE-05] BackpressureQueue[%s]: dropped item (full, size=%d)', self._stage_name, self._maxsize)
+            logger.debug(
+                "[ISSUE-05] BackpressureQueue[%s]: dropped item (full, size=%d)", self._stage_name, self._maxsize
+            )
             return False
 
     async def get(self) -> T:
@@ -401,6 +472,7 @@ class BackpressureQueue(Generic[T]):
                 except asyncio.QueueFull:
                     break
 
+
 class StageOrchestrator:
     """Orchestrates typed stages in DAG-based parallel order.
 
@@ -423,9 +495,10 @@ class StageOrchestrator:
     - Fail-safe: each stage wrapped in try/except
     - Bounded: max batch size enforced
     """
-    __slots__ = ('_stages', '_configs', '_stats', '_running', '_use_parallel')
 
-    def __init__(self, stages: list[tuple[str, 'StageLike']], *, use_parallel: bool=True) -> None:
+    __slots__ = ("_stages", "_configs", "_stats", "_running", "_use_parallel")
+
+    def __init__(self, stages: list[tuple[str, StageLike]], *, use_parallel: bool = True) -> None:
         """Initialize orchestrator with stages.
 
         Args:
@@ -437,11 +510,16 @@ class StageOrchestrator:
         """
         self._stages = stages
         self._use_parallel = use_parallel
-        self._configs: list[StageConfig] = [StageConfig(name=name, stage=stage, level=_get_stage_level(name), depends_on=self._infer_dependencies(name, stages)) for name, stage in stages]
+        self._configs: list[StageConfig] = [
+            StageConfig(
+                name=name, stage=stage, level=_get_stage_level(name), depends_on=self._infer_dependencies(name, stages)
+            )
+            for name, stage in stages
+        ]
         self._stats: dict[str, StageStats] = {name: StageStats(name=name) for name, _ in stages}
         self._running = False
 
-    def _infer_dependencies(self, stage_name: str, stages: list[tuple[str, 'StageLike']]) -> frozenset[str]:
+    def _infer_dependencies(self, stage_name: str, stages: list[tuple[str, StageLike]]) -> frozenset[str]:
         """Infer dependencies based on common pipeline patterns.
 
         Default pattern:
@@ -456,28 +534,28 @@ class StageOrchestrator:
             return frozenset()
         idx = names.index(stage_name)
         dependencies: set[str] = set()
-        if stage_name == 'dedup':
-            if 'discovery' in names:
-                dependencies.add('discovery')
-        elif stage_name == 'fetch':
-            if 'discovery' in names:
-                dependencies.add('discovery')
-        elif stage_name == 'match':
-            if 'fetch' in names:
-                dependencies.add('fetch')
-            if 'dedup' in names:
-                dependencies.add('dedup')
-        elif stage_name == 'enrich':
-            if 'match' in names:
-                dependencies.add('match')
-        elif stage_name == 'build':
-            if 'enrich' in names:
-                dependencies.add('enrich')
-        elif stage_name == 'store':
-            if 'enrich' in names:
-                dependencies.add('enrich')
-            if 'build' in names:
-                dependencies.add('build')
+        if stage_name == "dedup":
+            if "discovery" in names:
+                dependencies.add("discovery")
+        elif stage_name == "fetch":
+            if "discovery" in names:
+                dependencies.add("discovery")
+        elif stage_name == "match":
+            if "fetch" in names:
+                dependencies.add("fetch")
+            if "dedup" in names:
+                dependencies.add("dedup")
+        elif stage_name == "enrich":
+            if "match" in names:
+                dependencies.add("match")
+        elif stage_name == "build":
+            if "enrich" in names:
+                dependencies.add("enrich")
+        elif stage_name == "store":
+            if "enrich" in names:
+                dependencies.add("enrich")
+            if "build" in names:
+                dependencies.add("build")
         if not dependencies and idx > 0:
             dependencies.add(names[idx - 1])
         return frozenset(dependencies)
@@ -491,7 +569,7 @@ class StageOrchestrator:
         """Return per-stage statistics."""
         return dict(self._stats)
 
-    async def run(self, initial_input: Any, *, max_batch_size: int=256) -> tuple[StageResult, ...]:
+    async def run(self, initial_input: Any, *, max_batch_size: int = 256) -> tuple[StageResult, ...]:
         """Run all stages with parallel execution.
 
         ISSUE-05: Uses ParallelStageExecutor for DAG-based parallelism.
@@ -506,7 +584,7 @@ class StageOrchestrator:
 
         """
         if self._running:
-            raise RuntimeError('StageOrchestrator.run() is not reentrant')
+            raise RuntimeError("StageOrchestrator.run() is not reentrant")
         self._running = True
         try:
             if self._use_parallel:
@@ -521,7 +599,14 @@ class StageOrchestrator:
         executor = ParallelStageExecutor(self._configs, backpressure_maxsize=256)
         results = await executor.run(initial_input)
         for result in results:
-            self._update_stats(result.stage_name, invocations_delta=1, time_ms_delta=result.execution_time_ms, items_in_delta=result.items_in, items_out_delta=result.items_out, errors_delta=1 if not result.ok else 0)
+            self._update_stats(
+                result.stage_name,
+                invocations_delta=1,
+                time_ms_delta=result.execution_time_ms,
+                items_in_delta=result.items_in,
+                items_out_delta=result.items_out,
+                errors_delta=1 if not result.ok else 0,
+            )
         self._record_stage_timings(results)
         return results
 
@@ -536,19 +621,51 @@ class StageOrchestrator:
                 dt_ms = (time.monotonic() - t0) * 1000
                 items_in = _batch_len(ctx)
                 items_out = _batch_len(output) if output is not None else 0
-                self._update_stats(stage_name, invocations_delta=1, time_ms_delta=dt_ms, items_in_delta=items_in, items_out_delta=items_out)
-                results.append(StageResult(ok=True, stage_name=stage_name, output_batch=output, telemetry=dict(telemetry), error=None, items_in=items_in, items_out=items_out, execution_time_ms=dt_ms, parallel_group=None))
+                self._update_stats(
+                    stage_name,
+                    invocations_delta=1,
+                    time_ms_delta=dt_ms,
+                    items_in_delta=items_in,
+                    items_out_delta=items_out,
+                )
+                results.append(
+                    StageResult(
+                        ok=True,
+                        stage_name=stage_name,
+                        output_batch=output,
+                        telemetry=dict(telemetry),
+                        error=None,
+                        items_in=items_in,
+                        items_out=items_out,
+                        execution_time_ms=dt_ms,
+                        parallel_group=None,
+                    )
+                )
                 ctx = output
             except Exception as exc:
                 dt_ms = (time.monotonic() - t0) * 1000
                 self._update_stats(stage_name, time_ms_delta=dt_ms, errors_delta=1)
                 logger.exception(f"StageOrchestrator: stage '{stage_name}' failed: {exc}")
-                results.append(StageResult(ok=False, stage_name=stage_name, output_batch=None, telemetry={}, error=f'{type(exc).__name__}: {exc}', items_in=_batch_len(ctx) if ctx is not None else 0, items_out=0, execution_time_ms=dt_ms, parallel_group=None))
+                results.append(
+                    StageResult(
+                        ok=False,
+                        stage_name=stage_name,
+                        output_batch=None,
+                        telemetry={},
+                        error=f"{type(exc).__name__}: {exc}",
+                        items_in=_batch_len(ctx) if ctx is not None else 0,
+                        items_out=0,
+                        execution_time_ms=dt_ms,
+                        parallel_group=None,
+                    )
+                )
                 break
         self._record_sequential_timings(results)
         return tuple(results)
 
-    async def run_with_bypass(self, initial_input: Any, *, bypass_stages: set[str] | None=None) -> tuple[StageResult, ...]:
+    async def run_with_bypass(
+        self, initial_input: Any, *, bypass_stages: set[str] | None = None
+    ) -> tuple[StageResult, ...]:
         """Run stages, skipping any stages in bypass_stages.
 
         Args:
@@ -559,7 +676,7 @@ class StageOrchestrator:
         """
         bypass = bypass_stages or set()
         if self._running:
-            raise RuntimeError('StageOrchestrator.run() is not reentrant')
+            raise RuntimeError("StageOrchestrator.run() is not reentrant")
         self._running = True
         try:
             ctx: Any = initial_input
@@ -573,31 +690,76 @@ class StageOrchestrator:
                     dt_ms = (time.monotonic() - t0) * 1000
                     items_in = _batch_len(ctx)
                     items_out = _batch_len(output) if output is not None else 0
-                    self._update_stats(stage_name, invocations_delta=1, time_ms_delta=dt_ms, items_in_delta=items_in, items_out_delta=items_out)
-                    results.append(StageResult(ok=True, stage_name=stage_name, output_batch=output, telemetry=dict(telemetry), error=None, items_in=items_in, items_out=items_out, execution_time_ms=dt_ms, parallel_group=None))
+                    self._update_stats(
+                        stage_name,
+                        invocations_delta=1,
+                        time_ms_delta=dt_ms,
+                        items_in_delta=items_in,
+                        items_out_delta=items_out,
+                    )
+                    results.append(
+                        StageResult(
+                            ok=True,
+                            stage_name=stage_name,
+                            output_batch=output,
+                            telemetry=dict(telemetry),
+                            error=None,
+                            items_in=items_in,
+                            items_out=items_out,
+                            execution_time_ms=dt_ms,
+                            parallel_group=None,
+                        )
+                    )
                     ctx = output
                 except Exception as exc:
                     dt_ms = (time.monotonic() - t0) * 1000
                     self._update_stats(stage_name, time_ms_delta=dt_ms, errors_delta=1)
                     logger.exception(f"StageOrchestrator: stage '{stage_name}' failed: {exc}")
-                    results.append(StageResult(ok=False, stage_name=stage_name, output_batch=None, telemetry={}, error=f'{type(exc).__name__}: {exc}', items_in=_batch_len(ctx) if ctx is not None else 0, items_out=0, execution_time_ms=dt_ms, parallel_group=None))
+                    results.append(
+                        StageResult(
+                            ok=False,
+                            stage_name=stage_name,
+                            output_batch=None,
+                            telemetry={},
+                            error=f"{type(exc).__name__}: {exc}",
+                            items_in=_batch_len(ctx) if ctx is not None else 0,
+                            items_out=0,
+                            execution_time_ms=dt_ms,
+                            parallel_group=None,
+                        )
+                    )
                     break
             self._record_stage_timings(tuple(results))
             return tuple(results)
         finally:
             self._running = False
 
-    def _update_stats(self, stage_name: str, invocations_delta: int=0, time_ms_delta: float=0.0, items_in_delta: int=0, items_out_delta: int=0, errors_delta: int=0) -> None:
+    def _update_stats(
+        self,
+        stage_name: str,
+        invocations_delta: int = 0,
+        time_ms_delta: float = 0.0,
+        items_in_delta: int = 0,
+        items_out_delta: int = 0,
+        errors_delta: int = 0,
+    ) -> None:
         """
         Update StageStats for a stage (frozen=True compatible).
-        
+
         ISSUE-12: StageStats is frozen=True for thread safety,
         so we replace the object instead of mutating.
         """
         if stage_name not in self._stats:
             return
         old_stats = self._stats[stage_name]
-        self._stats[stage_name] = StageStats(name=old_stats.name, invocations=old_stats.invocations + invocations_delta, total_time_ms=old_stats.total_time_ms + time_ms_delta, items_in_total=old_stats.items_in_total + items_in_delta, items_out_total=old_stats.items_out_total + items_out_delta, errors=old_stats.errors + errors_delta)
+        self._stats[stage_name] = StageStats(
+            name=old_stats.name,
+            invocations=old_stats.invocations + invocations_delta,
+            total_time_ms=old_stats.total_time_ms + time_ms_delta,
+            items_in_total=old_stats.items_in_total + items_in_delta,
+            items_out_total=old_stats.items_out_total + items_out_delta,
+            errors=old_stats.errors + errors_delta,
+        )
 
     def _record_stage_timings(self, results: tuple[StageResult, ...]) -> None:
         """
@@ -609,12 +771,19 @@ class StageOrchestrator:
         """
         try:
             from hledac.universal.metrics_registry import get_metrics_registry
+
             registry = get_metrics_registry()
             for result in results:
-                registry.record_stage_timing(stage_name=result.stage_name, latency_ms=result.execution_time_ms, items_in=result.items_in, items_out=result.items_out, error=not result.ok)
-            total_latency = sum((r.execution_time_ms for r in results))
-            registry.set_gauge('pipeline_total_latency_ms', total_latency)
-            registry.set_gauge('pipeline_stage_count', float(len(results)))
+                registry.record_stage_timing(
+                    stage_name=result.stage_name,
+                    latency_ms=result.execution_time_ms,
+                    items_in=result.items_in,
+                    items_out=result.items_out,
+                    error=not result.ok,
+                )
+            total_latency = sum(r.execution_time_ms for r in results)
+            registry.set_gauge("pipeline_total_latency_ms", total_latency)
+            registry.set_gauge("pipeline_stage_count", float(len(results)))
         except ImportError:
             pass
         except Exception:
@@ -623,18 +792,19 @@ class StageOrchestrator:
     def _record_sequential_timings(self, results: list[StageResult]) -> None:
         """
         ISSUE-12: Wire sequential stage timing to metrics registry.
-        
+
         Called after _run_sequential completes.
         """
         self._record_stage_timings(tuple(results))
 
-def topological_sort(stages: list[tuple[str, 'StageLike']]) -> list[tuple[str, 'StageLike']]:
+
+def topological_sort(stages: list[tuple[str, StageLike]]) -> list[tuple[str, StageLike]]:
     """Sort stages topologically by name dependency.
 
     Convention: stage name ending with '_x_to_y' declares dependency on 'x'.
     Example: 'build' depends on 'match', 'match' depends on 'fetch'.
     """
-    name_to_stage = {name: stage for name, stage in stages}
+    name_to_stage = dict(stages)
     after: dict[str, set[str]] = {name: set() for name in name_to_stage}
     for name in name_to_stage:
         m = _DEP_PATTERN.match(name)
@@ -642,7 +812,7 @@ def topological_sort(stages: list[tuple[str, 'StageLike']]) -> list[tuple[str, '
             before, after_stage = (m.group(1), m.group(2))
             if before in after:
                 after[before].add(after_stage)
-    in_degree = {name: 0 for name in name_to_stage}
+    in_degree = dict.fromkeys(name_to_stage, 0)
     for deps in after.values():
         for d in deps:
             if d in in_degree:
@@ -657,9 +827,10 @@ def topological_sort(stages: list[tuple[str, 'StageLike']]) -> list[tuple[str, '
             if in_degree[dependent] == 0:
                 queue.append(dependent)
     if len(sorted_names) != len(name_to_stage):
-        logger.warning('StageOrchestrator: topological sort found cycle, using original order')
+        logger.warning("StageOrchestrator: topological sort found cycle, using original order")
         return stages
     return [(name, name_to_stage[name]) for name in sorted_names]
+
 
 def _batch_len(obj: Any) -> int:
     """Get the batch length of a stage object."""
@@ -673,10 +844,21 @@ def _batch_len(obj: Any) -> int:
         return 0
     if isinstance(obj, list):
         return len(obj)
-    if hasattr(obj, '__len__'):
+    if hasattr(obj, "__len__"):
         try:
             return len(obj)
         except Exception:
             return 0
     return 0
-__all__ = ['StageOrchestrator', 'StageResult', 'StageStats', 'StageConfig', 'StageLevel', 'ParallelStageExecutor', 'BackpressureQueue', 'topological_sort']
+
+
+__all__ = [
+    "StageOrchestrator",
+    "StageResult",
+    "StageStats",
+    "StageConfig",
+    "StageLevel",
+    "ParallelStageExecutor",
+    "BackpressureQueue",
+    "topological_sort",
+]

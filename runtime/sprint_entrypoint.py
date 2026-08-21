@@ -28,70 +28,21 @@ Migration:
 
 Both work identically. The old import is preserved for backward compatibility.
 """
+
 from __future__ import annotations
 
-# =============================================================================
-# Re-export all public APIs from the new modular structure
-# =============================================================================
-
-from hledac.universal.runtime.sprint import (
-    # Main entry point
-    run_sprint,
-    
-    # Phase functions
-    _run_sprint_boot,
-    _run_sprint_execute,
-    _run_sprint_windup,
-    _run_sprint_teardown,
-    
-    # Context
-    SprintRunContext,
-    SprintContextManager,
-    get_current_sprint_context,
-    set_current_sprint_context,
-    get_sprint_seed_state,
-    set_sprint_seed_state,
-    
-    # Types
-    SprintFlags,
-    VerdictHintInput,
-    CheckpointInput,
-    RuntimeTruthInput,
-    ReportBuildInput,
-    ExportHandoffInput,
-    
-    # Cleanup
-    _fail_safe,
-    _fail_safe_async,
-    _cleanup_stale_locks,
-    
-    # Truth logging
-    _runtime_truth,
-    compute_timing_truth,
-    build_observed_run_tuple,
-    
-    # Delta writer
-    write_sprint_delta,
-)
-
-# =============================================================================
-# Original CLI main() — preserved for backward compatibility
-# =============================================================================
 
 def main() -> None:
     """
     Synchronous entry point with structured exit-code handling.
-    
+
     Thin wrapper that delegates to the new modular implementation.
     Preserved for backward compatibility with existing CLI usage.
     """
     from hledac.universal.runtime.sprint._cli import main as _new_main
+
     _new_main()
 
-
-# =============================================================================
-# Legacy stubs (original module-level items - now removed or refactored)
-# =============================================================================
 
 # These functions have been removed from the codebase:
 # - _get_timing_fields: Refactored into compute_timing_truth()
@@ -99,11 +50,6 @@ def main() -> None:
 # - _serialize_payload_direct: Refactored into _build_report_dict()
 #
 # If any external code depends on these, update to use the new APIs.
-
-
-# =============================================================================
-# Module metadata
-# =============================================================================
 
 __doc__ = """
 runtime/sprint_entrypoint.py — Canonical Sprint Entry Point

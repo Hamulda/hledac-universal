@@ -10,6 +10,7 @@ New code should import directly from core:
 
 This stub will be removed in a future version.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -27,8 +28,7 @@ __all__ = [
 
 # Emit deprecation warning when imported
 warnings.warn(
-    "utils.bounded_collections is deprecated; "
-    "import from hledac.universal._core.bounded_collections instead",
+    "utils.bounded_collections is deprecated; import from hledac.universal._core.bounded_collections instead",
     DeprecationWarning,
     stacklevel=2,
 )

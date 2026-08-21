@@ -19,7 +19,6 @@ F230: Alternative Protocol Stack integration.
 ISSUE-005: Missing ZeroNet & Freenet/Hyphanet Content Mining.
 """
 
-import asyncio
 import logging
 import os
 import re
@@ -27,13 +26,13 @@ import time
 from typing import Final
 
 import httpx
+
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.network.freenet_client import (
     filter_sites_by_keyword,
     get_enumeration_semaphore,
-    )
+)
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -169,21 +168,25 @@ async def fetch_zeronet_site(
                     if int(content_length) > max_size:
                         logger.warning(
                             "ZeroNet response too large: %s bytes for %s",
-                            content_length, address,
-    )
+                            content_length,
+                            address,
+                        )
                         return None
                 content = resp.text
                 if len(content.encode("utf-8")) > max_size:
                     logger.warning(
-                        "ZeroNet response too large after decode: %s", address,
-    )
+                        "ZeroNet response too large after decode: %s",
+                        address,
+                    )
                     return None
                 return content
             logger.debug(
-                "ZeroNet fetch failed: status %s for %s", resp.status_code, address,
-    )
+                "ZeroNet fetch failed: status %s for %s",
+                resp.status_code,
+                address,
+            )
             return None
-    except (httpx.TimeoutException, asyncio.TimeoutError):
+    except TimeoutError, httpx.TimeoutException:
         logger.debug("ZeroNet fetch timeout: %s", address)
         return None
     except Exception as e:
@@ -268,17 +271,16 @@ class ZeroNetSiteEnumerator:
                         title = site["name"]
                         if "<title" in content.lower():
                             title_match = re.search(
-                                r"<title[^>]*>([^<]+)", content, re.IGNORECASE,
-    )
+                                r"<title[^>]*>([^<]+)",
+                                content,
+                                re.IGNORECASE,
+                            )
                             if title_match:
                                 title = title_match.group(1).strip()[:200]
                         # Discover cross-linked sites
                         found_addresses = SITE_ADDRESS_PATTERN.findall(content)
                         for addr in found_addresses:
-                            if (
-                                addr not in self._seen
-                                and len(self._seen) < self._max_sites
-                            ):
+                            if addr not in self._seen and len(self._seen) < self._max_sites:
                                 self._seen.add(addr)
                         return {
                             "name": title,
@@ -296,7 +298,7 @@ class ZeroNetSiteEnumerator:
             if isinstance(item, dict) and item:
                 results.append(item)
 
-        return results[:self._max_sites]
+        return results[: self._max_sites]
 
 
 # ── Finding conversion ────────────────────────────────────────────────────────
@@ -331,7 +333,7 @@ async def zeronet_to_findings(query: str) -> list[CanonicalFinding]:
                 ts=time.time(),
                 provenance=(f"zeronet://{site['address']}",),
                 payload_text=site.get("content_preview", "")[:4096],
-    )
+            )
             findings.append(finding)
     except Exception as e:
         logger.debug("ZeroNet to findings failed: %s", e)
@@ -367,12 +369,14 @@ async def search_zeronet_sites(keyword: str, max_results: int = 20) -> list[dict
             start = max(0, idx - 80)
             end = min(len(content), idx + len(keyword) + 80)
             snippet = content[start:end].replace("\n", " ").strip()
-            results.append({
-                "address": site["address"],
-                "name": site.get("name", ""),
-                "snippet": snippet,
-                "confidence": 0.65,
-            })
+            results.append(
+                {
+                    "address": site["address"],
+                    "name": site.get("name", ""),
+                    "snippet": snippet,
+                    "confidence": 0.65,
+                }
+            )
             if len(results) >= max_results:
                 break
 

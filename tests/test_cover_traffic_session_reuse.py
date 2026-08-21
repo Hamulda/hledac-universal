@@ -17,17 +17,16 @@ Coverage:
 """
 
 from __future__ import annotations
-import asyncio
+
 import pytest
-from _core import aclose
 
 
 class MockAsyncSession:
     """Minimal AsyncSession stand-in that records .get() calls."""
 
-    _instances: list["MockAsyncSession"] = []
+    _instances: list[MockAsyncSession] = []
 
-    def __init__(self, host: str):
+    def __init__(self, host: str) -> None:
         self.host = host
         self.closed = False
         MockAsyncSession._instances.append(self)
@@ -91,7 +90,7 @@ async def _mock_async_get_curl_cffi_session_for_host(
 
 
 @pytest.mark.asyncio
-async def test_cover_traffic_single_session():
+async def test_cover_traffic_single_session() -> None:
     """F-08: 100 cover-traffic URLs to the same host → 1 session reused."""
 
     # Reset global state
@@ -126,21 +125,17 @@ async def test_cover_traffic_single_session():
         for instance in MockAsyncSession._instances:
             unique_sessions.add(id(instance))
 
-        assert len(unique_sessions) == 1, (
-            f"Expected 1 session for 100 URLs to same host, got {len(unique_sessions)}"
-    )
+        assert len(unique_sessions) == 1, f"Expected 1 session for 100 URLs to same host, got {len(unique_sessions)}"
 
         # Host cache must have exactly 1 entry
         assert host in _mock_host_sessions, f"Host {host} not in session cache"
-        assert len(_mock_host_sessions) == 1, (
-            f"Expected 1 host in cache, got {len(_mock_host_sessions)}"
-    )
+        assert len(_mock_host_sessions) == 1, f"Expected 1 host in cache, got {len(_mock_host_sessions)}"
     finally:
         ccf.async_get_curl_cffi_session_for_host = original
 
 
 @pytest.mark.asyncio
-async def test_cover_traffic_session_reuse_multiple_hosts():
+async def test_cover_traffic_session_reuse_multiple_hosts() -> None:
     """F-08: 50 URLs × 2 hosts → 2 sessions total (one per host)."""
 
     MockAsyncSession._instances.clear()
@@ -168,9 +163,7 @@ async def test_cover_traffic_session_reuse_multiple_hosts():
         await fire_all()
 
         unique_sessions = {id(inst) for inst in MockAsyncSession._instances}
-        assert len(unique_sessions) == 2, (
-            f"Expected 2 sessions for 2 hosts, got {len(unique_sessions)}"
-    )
+        assert len(unique_sessions) == 2, f"Expected 2 sessions for 2 hosts, got {len(unique_sessions)}"
         assert len(_mock_host_sessions) == 2
     finally:
         ccf.async_get_curl_cffi_session_for_host = original

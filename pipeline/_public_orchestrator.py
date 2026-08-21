@@ -13,18 +13,12 @@ Usage:
     )
     results = await orch.run("example.com")
 """
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.pipeline._soa_types import (
-    FetchedBatch,
-    FindingBatch,
-    MatchedBatch,
-    PageBatch,
-    ScoredBatch,
-    )
 from hledac.universal.pipeline._stage_graph import StageOrchestrator, StageResult
 from hledac.universal.pipeline.public._build_stage import BuildStage
 from hledac.universal.pipeline.public._discovery_stage import DiscoveryStage
@@ -32,7 +26,6 @@ from hledac.universal.pipeline.public._export_stage import ExportStage
 from hledac.universal.pipeline.public._extract_stage import ExtractStage
 from hledac.universal.pipeline.public._fetch_stage import FetchStage
 from hledac.universal.pipeline.public._match_stage import MatchStage
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -90,11 +83,14 @@ class PublicPipelineOrchestrator:
         # Wire up stages in execution order
         stages = [
             ("discovery", DiscoveryStage()),
-            ("fetch", FetchStage(
-                fetch_timeout_s=35.0,
-                fetch_max_bytes=2_000_000,
-                fetch_concurrency=8,
-            )),
+            (
+                "fetch",
+                FetchStage(
+                    fetch_timeout_s=35.0,
+                    fetch_max_bytes=2_000_000,
+                    fetch_concurrency=8,
+                ),
+            ),
             ("extract", ExtractStage()),
             ("match", MatchStage(match_concurrency=8)),
             ("build", BuildStage(source_type="live_public_pipeline")),
@@ -124,11 +120,10 @@ class PublicPipelineOrchestrator:
         """
         self._query = query
 
-        # Run orchestrator with query as initial input
         results = await self._orchestrator.run(
             initial_input=query,
             max_batch_size=kwargs.get("max_batch_size", 256),
-    )
+        )
 
         return results
 

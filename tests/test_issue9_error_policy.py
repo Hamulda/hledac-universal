@@ -9,24 +9,25 @@ Run: pytest tests/test_issue9_error_policy.py -x -q
 """
 
 import asyncio
+from typing import Never
+
 import pytest
 
 from runtime.error_policy import (
-    Ok,
     Err,
+    LaneRunner,
+    Ok,
     Result,
-    result_of,
-    result_of_await,
+    cancel_scope_drain,
+    is_cancellation_tree,
     lane_result,
     lane_result_from_exceptions,
-    is_cancellation_tree,
-    cancel_scope_drain,
-    shield_cancel_scope,
-    LaneRunner,
+    result_of,
+    result_of_await,
     run_bounded_lane,
     run_lane_batch,
+    shield_cancel_scope,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Result monad tests
@@ -98,9 +99,11 @@ def test_result_of_sync() -> None:
 @pytest.mark.asyncio
 async def test_result_of_await_ok() -> None:
     """result_of_await() returns Ok on success."""
-    async def succeed():
+
+    async def succeed() -> int:
         await asyncio.sleep(0)
         return 42
+
     r = await result_of_await(succeed())
     assert isinstance(r, Ok)
     assert r.value == 42
@@ -109,8 +112,10 @@ async def test_result_of_await_ok() -> None:
 @pytest.mark.asyncio
 async def test_result_of_await_err() -> None:
     """result_of_await() returns Err on exception."""
-    async def fail():
+
+    async def fail() -> Never:
         raise RuntimeError("boom")
+
     r = await result_of_await(fail())
     assert isinstance(r, Err)
     assert isinstance(r.error, RuntimeError)
@@ -217,9 +222,11 @@ def test_is_cancellation_tree_deep_nested() -> None:
 @pytest.mark.asyncio
 async def test_cancel_scope_drain_ok() -> None:
     """cancel_scope_drain() returns result on success."""
-    async def fast():
+
+    async def fast() -> int:
         await asyncio.sleep(0.01)
         return 42
+
     r = await cancel_scope_drain(fast(), 5.0)
     assert r == 42
 
@@ -227,8 +234,10 @@ async def test_cancel_scope_drain_ok() -> None:
 @pytest.mark.asyncio
 async def test_cancel_scope_drain_timeout() -> None:
     """cancel_scope_drain() raises asyncio.TimeoutError on timeout."""
-    async def slow():
+
+    async def slow() -> None:
         await asyncio.sleep(10)
+
     with pytest.raises(asyncio.TimeoutError):
         await cancel_scope_drain(slow(), 0.01)
 
@@ -236,13 +245,14 @@ async def test_cancel_scope_drain_timeout() -> None:
 @pytest.mark.asyncio
 async def test_cancel_scope_drain_cancellation() -> None:
     """cancel_scope_drain() propagates CancelledError from outer cancellation."""
-    async def slow():
+
+    async def slow() -> None:
         try:
             await asyncio.sleep(10)
         except asyncio.CancelledError:
             raise
 
-    async def wrapper():
+    async def wrapper() -> None:
         try:
             async with asyncio.timeout(0.5):
                 await slow()
@@ -261,9 +271,11 @@ async def test_cancel_scope_drain_cancellation() -> None:
 @pytest.mark.asyncio
 async def test_shield_cancel_scope_ok() -> None:
     """shield_cancel_scope() returns result on success."""
-    async def fast():
+
+    async def fast() -> str:
         await asyncio.sleep(0.01)
         return "done"
+
     r = await shield_cancel_scope(fast())
     assert r == "done"
 
@@ -282,7 +294,7 @@ async def test_shield_protects_against_cancellation() -> None:
     """
     inner_completed = False
 
-    async def inner():
+    async def inner() -> str:
         nonlocal inner_completed
         await asyncio.sleep(0.05)
         inner_completed = True
@@ -297,7 +309,7 @@ async def test_shield_protects_against_cancellation() -> None:
             await shielded  # shielded intercepts; inner still completes
         return inner_completed
 
-    result = await run()
+    await run()
     assert inner_completed is True
 
 
@@ -346,6 +358,7 @@ async def test_run_bounded_lane_timeout() -> None:
 @pytest.mark.asyncio
 async def test_run_bounded_lane_no_timeout() -> None:
     """run_bounded_lane(timeout_s=None) runs without timeout."""
+
     async def runner() -> Result:
         await asyncio.sleep(0.02)
         return Ok("done")
@@ -363,11 +376,13 @@ async def test_run_bounded_lane_no_timeout() -> None:
 @pytest.mark.asyncio
 async def test_run_lane_batch_all_ok() -> None:
     """run_lane_batch() returns Ok with all lane results on full success."""
+
     async def ok(value: int) -> Result:
         return Ok(value)
 
     async def lane_a() -> Result:
         return await ok(1)
+
     async def lane_b() -> Result:
         return await ok(2)
 
@@ -383,6 +398,7 @@ async def test_run_lane_batch_all_ok() -> None:
 @pytest.mark.asyncio
 async def test_run_lane_batch_partial_err() -> None:
     """run_lane_batch() returns Err(ExceptionGroup) if any lane fails."""
+
     async def ok() -> Result:
         return Ok(1)
 

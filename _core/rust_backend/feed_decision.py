@@ -17,10 +17,9 @@ M1 8GB: all functions are pure computation, no GIL contention.
 from __future__ import annotations
 
 from typing import Any
-from _core._util import aclose
 
 
-def get_domain() -> "FeedDecisionDomain":
+def get_domain() -> FeedDecisionDomain:
     from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
 
     _probe = getattr(_ext, "feed_decision_classify", None)
@@ -67,7 +66,7 @@ class FeedDecisionDomain:
             post_fallback_findings_count,
             adapter_source_priority_bias,
             adapter_metadata_richness_band,
-    )
+        )
 
     def stage_diagnose(
         self,
@@ -94,7 +93,7 @@ class FeedDecisionDomain:
             findings_built_pre_store,
             patterns_configured,
             findings_lost_to_dedup_total,
-    )
+        )
 
     def branch_hint(
         self,
@@ -117,7 +116,7 @@ class FeedDecisionDomain:
             findings_rich,
             findings_fallback,
             entries_with_hits,
-    )
+        )
 
     def economics_verdict(
         self,
@@ -138,7 +137,7 @@ class FeedDecisionDomain:
             fallback_waste,
             findings_rich,
             findings_fallback,
-    )
+        )
 
     def branch_verdict(
         self,
@@ -181,12 +180,7 @@ class FeedDecisionDomain:
             entries_seen,
             feed_native_yield_ratio,
             fallback_value_ratio,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Python fallback — pure Python implementation
-# ---------------------------------------------------------------------------
+        )
 
 
 class PythonFallbackFeedDecisionDomain:
@@ -215,18 +209,30 @@ class PythonFallbackFeedDecisionDomain:
         if not article_fallback_attempted:
             if assembled_text_len >= self.MIN_ARTICLE_FALLBACK_CHARS and quality_band in ("high", "medium"):
                 return (
-                    "skipped_high_quality", False, False, False, False,
+                    "skipped_high_quality",
+                    False,
+                    False,
+                    False,
+                    False,
                     f"high quality ({quality_band}), assembled {assembled_text_len} chars",
-    )
+                )
             if adapter_source_priority_bias >= 0.1 and assembled_text_len >= self.MIN_ARTICLE_FALLBACK_CHARS:
                 return (
-                    "skipped_adapter_bias", False, False, False, False,
+                    "skipped_adapter_bias",
+                    False,
+                    False,
+                    False,
+                    False,
                     f"adapter source_priority_bias={adapter_source_priority_bias:.2f}",
-    )
+                )
             return (
-                "no_fetch_warranted", False, False, False, False,
+                "no_fetch_warranted",
+                False,
+                False,
+                False,
+                False,
                 f"assembled={assembled_text_len}, quality={quality_band}",
-    )
+            )
 
         if metadata_boost and not language_mismatch and assembled_text_len < self.MIN_ARTICLE_FALLBACK_CHARS:
             if post_fallback_findings_count > 0:
@@ -307,7 +313,9 @@ class PythonFallbackFeedDecisionDomain:
             return ("no_signal", int(feed_signal_present), fallback_useful, fallback_waste, 0)
 
         rich_ratio = findings_rich / total_findings if total_findings > 0 else 0.0
-        waste_ratio = fallback_waste / (fallback_useful + fallback_waste) if (fallback_useful + fallback_waste) > 0 else 0.0
+        waste_ratio = (
+            fallback_waste / (fallback_useful + fallback_waste) if (fallback_useful + fallback_waste) > 0 else 0.0
+        )
 
         if rich_ratio >= 0.7:
             verdict_tag = "feed_lean"

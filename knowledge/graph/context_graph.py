@@ -29,31 +29,31 @@ Usage:
         louvain_communities, pagerank,
         traverse_duckdb, compute_centrality_duckdb,
     )
-    
+
     # Standalone Louvain/PageRank
     communities = louvain_communities(nodes, edges, resolution=1.0)
-    
+
     # DuckDB graph traversal (Tier 0 - Rust petgraph)
     results = traverse_duckdb(
         db_path="/data/ioc.db",
         values=["evil.com", "malware.exe"],
         max_hops=2
     )
-    
+
     # DuckDB centrality (PageRank)
     centrality = compute_centrality_duckdb(
         db_path="/data/ioc.db",
         values=["evil.com", "malware.exe"]
     )
-    
+
     # Via DuckDBContextGraph class
     graph = DuckDBContextGraph(db_path="/data/ioc.db")
     results = graph.traverse(["evil.com"], max_hops=2)
     centrality = graph.compute_centrality(["evil.com", "malware.exe"])
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -62,20 +62,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# RUST LOUVAIN INTEGRATION (graph_analytics.rs)
-# ============================================================================
-# Import Rust-backed graph analytics with Python fallback
-# ============================================================================
-
 # Try to import Rust graph analytics first
 _RUST_GRAPH_ANALYTICS_AVAILABLE = False
 try:
     from rust_extensions.wiring.graph_analytics_wiring import (
-        louvain_communities as rust_louvain,
-        pagerank as rust_pagerank,
         analyze_ioc_graph,
     )
+    from rust_extensions.wiring.graph_analytics_wiring import (
+        louvain_communities as rust_louvain,
+    )
+    from rust_extensions.wiring.graph_analytics_wiring import (
+        pagerank as rust_pagerank,
+    )
+
     _RUST_GRAPH_ANALYTICS_AVAILABLE = True
     logger.info("[ContextGraph] Rust graph_analytics.rs integration: ENABLED")
 except ImportError:
@@ -102,30 +101,39 @@ try:
 except ImportError:
     nx = None
 
-# ============================================================================
-# C5: RUST GRAPH TRAVERSE INTEGRATION (graph_traverse.rs)
-# ============================================================================
-# Import Rust DuckDB graph traversal with async wrappers
-# ============================================================================
-
 _RUST_GRAPH_TRAVERSE_AVAILABLE = False
 try:
     from rust_extensions.wiring.graph_traverse_wiring import (
-        batch_graph_traverse as rust_batch_traverse,
-        graph_traverse_single as rust_traverse_single,
-        graph_stats as rust_graph_stats,
         batch_graph_centrality as rust_batch_centrality,
-        batch_graph_communities as rust_batch_communities,
-        batch_graph_traverse_flat as rust_batch_traverse_flat,
-        drop_connections as rust_drop_connections,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        batch_graph_centrality_async,
+        batch_graph_communities_async,
         # Async wrappers
         batch_graph_traverse_async,
-        graph_traverse_single_async,
-        batch_graph_centrality_async,
-        graph_stats_async,
-        batch_graph_communities_async,
         drop_connections_async,
+        graph_stats_async,
+        graph_traverse_single_async,
     )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        batch_graph_communities as rust_batch_communities,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        batch_graph_traverse as rust_batch_traverse,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        batch_graph_traverse_flat as rust_batch_traverse_flat,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        drop_connections as rust_drop_connections,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        graph_stats as rust_graph_stats,
+    )
+    from rust_extensions.wiring.graph_traverse_wiring import (
+        graph_traverse_single as rust_traverse_single,
+    )
+
     _RUST_GRAPH_TRAVERSE_AVAILABLE = True
     logger.info("[ContextGraph] Rust graph_traverse.rs integration: ENABLED")
 except ImportError:
@@ -153,6 +161,7 @@ _MAX_PYTHON_FALLBACK_EDGES = 50_000  # Max edges for Python fallback
 _DUCKDB_AVAILABLE = False
 try:
     import duckdb
+
     _DUCKDB_AVAILABLE = True
 except ImportError:
     duckdb = None
@@ -240,15 +249,14 @@ def _duckdb_centrality_python_fallback(
         Dict mapping value -> pagerank_score
     """
     if not _DUCKDB_AVAILABLE or not values:
-        return {v: 0.0 for v in values}
+        return dict.fromkeys(values, 0.0)
 
     try:
         conn = duckdb.connect(db_path, read_only=True)
         result: dict[str, float] = {}
 
-        # Get degree counts as simple centrality proxy
         sql = """
-            SELECT n.value, 
+            SELECT n.value,
                    COALESCE(out_deg.cnt, 0) + COALESCE(in_deg.cnt, 0) as degree
             FROM ioc_nodes n
             LEFT JOIN (
@@ -273,16 +281,11 @@ def _duckdb_centrality_python_fallback(
 
     except Exception as e:
         logger.warning(f"[ContextGraph] DuckDB centrality fallback failed: {e}")
-        return {v: 0.0 for v in values}
+        return dict.fromkeys(values, 0.0)
 
 
 # Centrality cache limits for M1 8GB
 _MAX_CENTRALITY_CACHE_SIZE = 10_000  # Max entries in centrality cache
-
-
-# ============================================================================
-# PUBLIC API
-# ============================================================================
 
 
 def louvain_communities(
@@ -344,8 +347,7 @@ def _python_louvain_fallback(
     # Memory safety: cap nodes for Python fallback (M1 8GB)
     if len(nodes) > _MAX_PYTHON_FALLBACK_NODES:
         logger.warning(
-            f"[ContextGraph] Python fallback: {len(nodes)} nodes exceeds "
-            f"limit {_MAX_PYTHON_FALLBACK_NODES}, truncating"
+            f"[ContextGraph] Python fallback: {len(nodes)} nodes exceeds limit {_MAX_PYTHON_FALLBACK_NODES}, truncating"
         )
         nodes = nodes[:_MAX_PYTHON_FALLBACK_NODES]
 
@@ -354,7 +356,6 @@ def _python_louvain_fallback(
         edges = edges[:_MAX_PYTHON_FALLBACK_EDGES]
 
     try:
-        # Build NetworkX graph
         G = nx.Graph()
         node_set = {n[0] for n in nodes}  # Track valid nodes
         for node_id, value, node_type in nodes:
@@ -368,7 +369,6 @@ def _python_louvain_fallback(
         if G.number_of_nodes() == 0:
             return {}
 
-        # Run Louvain
         partition = community_louvain.best_partition(G, weight="weight", resolution=resolution)
         return {int(k): int(v) for k, v in partition.items()}
 
@@ -437,8 +437,7 @@ def _python_pagerank_fallback(
     # Memory safety: cap nodes for Python fallback (M1 8GB)
     if len(nodes) > _MAX_PYTHON_FALLBACK_NODES:
         logger.warning(
-            f"[ContextGraph] Python PageRank: {len(nodes)} nodes exceeds "
-            f"limit {_MAX_PYTHON_FALLBACK_NODES}, truncating"
+            f"[ContextGraph] Python PageRank: {len(nodes)} nodes exceeds limit {_MAX_PYTHON_FALLBACK_NODES}, truncating"
         )
         nodes = nodes[:_MAX_PYTHON_FALLBACK_NODES]
 
@@ -447,7 +446,6 @@ def _python_pagerank_fallback(
         edges = edges[:_MAX_PYTHON_FALLBACK_EDGES]
 
     try:
-        # Build NetworkX graph
         G = nx.Graph()
         node_set = {n[0] for n in nodes}
         for node_id, value, node_type in nodes:
@@ -460,7 +458,6 @@ def _python_pagerank_fallback(
         if G.number_of_nodes() == 0:
             return {}
 
-        # Run PageRank
         pr = nx.pagerank(G, alpha=damping, max_iter=max_iter, weight="weight")
         return {int(k): float(v) for k, v in pr.items()}
 
@@ -489,6 +486,7 @@ def strongly_connected_components(
     if _RUST_GRAPH_ANALYTICS_AVAILABLE:
         try:
             from rust_extensions.wiring.graph_analytics_wiring import strongly_connected_components as rust_scc
+
             result = rust_scc(nodes, edges)
             if result is not None:
                 return result
@@ -518,15 +516,15 @@ def _python_scc_fallback(
         return []
 
     try:
-        # Build directed NetworkX graph
         import networkx as nx
+
         G = nx.DiGraph()
         node_set = {n[0] for n in nodes}
 
         for node_id, value, node_type in nodes:
             G.add_node(node_id, value=value, node_type=node_type)
 
-        for from_id, to_id, weight in edges:
+        for from_id, to_id, _weight in edges:
             if from_id in node_set and to_id in node_set:
                 G.add_edge(from_id, to_id)
 
@@ -540,11 +538,6 @@ def _python_scc_fallback(
     except Exception as e:
         logger.error(f"[ContextGraph] Python SCC fallback failed: {e}")
         return []
-
-
-# ============================================================================
-# C5: DUCKDB GRAPH TRAVERSAL FUNCTIONS (Tier 0 - Rust)
-# ============================================================================
 
 
 def traverse_duckdb(
@@ -716,11 +709,6 @@ def get_graph_stats_duckdb(
     return {}
 
 
-# ============================================================================
-# CONTEXT GRAPH CLASS
-# ============================================================================
-
-
 class ContextGraph:
     """
     Lightweight context graph with Rust-accelerated community detection.
@@ -840,7 +828,6 @@ class ContextGraph:
         if self._communities is not None:
             return self._communities
 
-        # Build node/edge format for Rust
         nodes: list[tuple[int, str, str]] = [
             (node_id, data.get("attributes", {}).get("value", ""), data["type"])
             for node_id, data in self._nodes.items()
@@ -870,7 +857,6 @@ class ContextGraph:
         if self._pagerank is not None:
             return self._pagerank
 
-        # Build node/edge format for Rust
         nodes: list[tuple[int, str, str]] = [
             (node_id, data.get("attributes", {}).get("value", ""), data["type"])
             for node_id, data in self._nodes.items()
@@ -933,11 +919,6 @@ class ContextGraph:
         self._edges.clear()
         self._communities = None
         self._pagerank = None
-
-
-# ============================================================================
-# C5: DUCKDB CONTEXT GRAPH CLASS
-# ============================================================================
 
 
 class DuckDBContextGraph:
@@ -1138,11 +1119,7 @@ class DuckDBContextGraph:
         if not self._centrality_cache:
             self.compute_centrality(values)
 
-        sorted_nodes = sorted(
-            self._centrality_cache.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
+        sorted_nodes = sorted(self._centrality_cache.items(), key=lambda x: x[1], reverse=True)
         return sorted_nodes[:top_k]
 
     async def drop_connections(self) -> bool:
@@ -1191,20 +1168,13 @@ class DuckDBContextGraph:
         self._centrality_cache.clear()
 
 
-# ============================================================================
-# MODULE STATUS
-# ============================================================================
-
-# Log availability at import time
 if _RUST_GRAPH_ANALYTICS_AVAILABLE:
     logger.info(
-        "[ContextGraph] Rust graph analytics: AVAILABLE "
-        f"(python-louvain fallback: {_PYTHON_LOUVAIN_AVAILABLE})"
+        f"[ContextGraph] Rust graph analytics: AVAILABLE (python-louvain fallback: {_PYTHON_LOUVAIN_AVAILABLE})"
     )
 else:
     logger.warning(
-        "[ContextGraph] Rust graph analytics: UNAVAILABLE "
-        f"(python-louvain fallback: {_PYTHON_LOUVAIN_AVAILABLE})"
+        f"[ContextGraph] Rust graph analytics: UNAVAILABLE (python-louvain fallback: {_PYTHON_LOUVAIN_AVAILABLE})"
     )
 
 if _RUST_GRAPH_TRAVERSE_AVAILABLE:
@@ -1213,10 +1183,7 @@ if _RUST_GRAPH_TRAVERSE_AVAILABLE:
         "(batch_graph_traverse, batch_graph_centrality, batch_graph_communities)"
     )
 else:
-    logger.warning(
-        "[ContextGraph] Rust graph_traverse: UNAVAILABLE "
-        "(falling back to DuckDB SQL traversal)"
-    )
+    logger.warning("[ContextGraph] Rust graph_traverse: UNAVAILABLE (falling back to DuckDB SQL traversal)")
 
 __all__ = [
     # Classes

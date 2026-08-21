@@ -15,18 +15,17 @@ This stub will be removed in a future release.
 import warnings
 
 warnings.warn(
-    "network.passive_fingerprint is deprecated — "
-    "import from 'hledac.universal.recon.passive_fingerprint' instead.",
+    "network.passive_fingerprint is deprecated — import from 'hledac.universal.recon.passive_fingerprint' instead.",
     DeprecationWarning,
     stacklevel=2,
 )
 
 # Re-export from canonical location for backward compatibility
 from hledac.universal.recon.passive_fingerprint import (  # noqa: F401, E402
+    FingerprintResult,
     PassiveFingerprintAdapter,
     PassiveTechStackAdapter,
     ServiceFingerprint,
-    FingerprintResult,
     TechStack,
 )
 

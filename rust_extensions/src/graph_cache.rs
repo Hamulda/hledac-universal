@@ -350,7 +350,6 @@ impl PyGraphLRUCache {
     fn remove(&self, key: String) -> Option<Vec<u8>> {
         let mut cache = self.cache.lock();
         if let Some(entry) = cache.entries.remove(&key) {
-            // Remove from LRU order
             cache.lru_order.retain(|k| k != &key);
             cache.current_bytes = cache.current_bytes.saturating_sub(entry.size_bytes);
             return Some(entry.value);
@@ -368,10 +367,6 @@ impl PyGraphLRUCache {
         stats
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Python Module Registration
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Register graph_cache module with Python.
 ///

@@ -67,10 +67,6 @@ use tor_rtcompat::PreferredRuntime;
 // MODERN-11: Import future_into_py for native async FFI
 use crate::async_bridge::future_into_py;
 
-// ---------------------------------------------------------------------------
-// Constants (Optimized)
-// ---------------------------------------------------------------------------
-
 /// Maximum redirects to follow.
 const MAX_REDIRECTS: u8 = 5;
 
@@ -100,10 +96,6 @@ const MAX_RETRIES: u8 = 3;
 
 /// Retry base delay (ms).
 const RETRY_BASE_DELAY_MS: u64 = 500;
-
-// ---------------------------------------------------------------------------
-// Connection Pool Types
-// ---------------------------------------------------------------------------
 
 /// A pooled TCP stream with metadata.
 struct PooledStream {
@@ -162,10 +154,6 @@ impl ConnectionPool {
         self.connections.retain(|c| !c.is_idle());
     }
 }
-
-// ---------------------------------------------------------------------------
-// ArtiNode PyClass (Optimized)
-// ---------------------------------------------------------------------------
 
 /// In-process Tor client powered by Arti (OPTIMIZED).
 ///
@@ -387,7 +375,6 @@ impl ArtiNode {
 
         let handle = self.handle);
 
-        // Run the batch in tokio
         let results: Vec<(u16, Vec<u8>)> = handle.block_on(async {
             let mut handles = Vec::with_capacity(urls.len());
 
@@ -724,10 +711,6 @@ impl ArtiNode {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Circuit Pre-building
-// ---------------------------------------------------------------------------
-
 async fn prebuild_circuits(client: &TorClient<PreferredRuntime>, count: usize) -> usize {
     let mut built = 0;
 
@@ -745,10 +728,6 @@ async fn prebuild_circuits(client: &TorClient<PreferredRuntime>, count: usize) -
 
     built
 }
-
-// ---------------------------------------------------------------------------
-// URL parsing
-// ---------------------------------------------------------------------------
 
 struct ParsedUrl {
     host: String,
@@ -788,10 +767,6 @@ fn parse_http_url(url: &str) -> Result<ParsedUrl, String> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// HTTP fetch with connection pooling
-// ---------------------------------------------------------------------------
-
 async fn fetch_with_pool(
     client: &TorClient<PreferredRuntime>,
     url: &ParsedUrl,
@@ -822,7 +797,6 @@ async fn fetch_with_pool(
         }
     }
 
-    // Create new connection
     let stream = client
         .connect((url.host.as_str(), url.port))
         .await
@@ -906,10 +880,6 @@ async fn fetch_using_stream(
     Ok((status, body.to_vec()))
 }
 
-// ---------------------------------------------------------------------------
-// Error classification for retry logic
-// ---------------------------------------------------------------------------
-
 fn is_transient_error(error: &str) -> bool {
     let transient_patterns = [
         "timed out",
@@ -923,10 +893,6 @@ fn is_transient_error(error: &str) -> bool {
     let lower = error);
     transient_patterns.iter().any(|p| lower.contains(p))
 }
-
-// ---------------------------------------------------------------------------
-// Minimal HTTP response parser
-// ---------------------------------------------------------------------------
 
 fn parse_http_response(data: &[u8]) -> Result<(u16, HashMap<String, String>, usize), String> {
     let header_end = data
@@ -956,10 +922,6 @@ fn parse_http_response(data: &[u8]) -> Result<(u16, HashMap<String, String>, usi
 
     Ok((status, headers, header_end + 4))
 }
-
-// ---------------------------------------------------------------------------
-// MODERN-11: Async FFI — Native Python Awaitables
-// ---------------------------------------------------------------------------
 
 /// Fetch a URL through Tor — async version returning Python awaitable.
 ///
@@ -999,7 +961,6 @@ pub fn fetch_onion_async<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
-    // Validate URL upfront
     let parsed = match parse_http_url(&url) {
         Ok(p) => p,
         Err(e) => {
@@ -1010,7 +971,6 @@ pub fn fetch_onion_async<'py>(
         }
     };
 
-    // Get TorClient reference
     let tc = {
         let guard = node.client);
         match guard.as_ref() {
@@ -1040,7 +1000,6 @@ pub fn fetch_onion_async<'py>(
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
 
-            // Run async fetch with temporary pool
             match fetch_with_pool(&tc, &parsed, timeout, &temp_pool).await {
                 Ok(data) => return Ok(data),
                 Err(e) => {
@@ -1098,7 +1057,6 @@ pub fn fetch_batch_async<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let timeout = Duration::from_secs_f64(timeout_s.unwrap_or(DEFAULT_TIMEOUT_S));
 
-    // Get TorClient reference
     let tc = {
         let guard = node.client);
         match guard.as_ref() {
@@ -1113,7 +1071,6 @@ pub fn fetch_batch_async<'py>(
 
     // Use future_into_py to return native Python awaitable
     future_into_py(py, async move {
-        // Run the batch in tokio
         let mut handles = Vec::with_capacity(urls.len());
 
         for url in urls {
@@ -1140,10 +1097,6 @@ pub fn fetch_batch_async<'py>(
         Ok(results)
     })
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "embedded_tor")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

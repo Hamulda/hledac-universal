@@ -22,46 +22,37 @@ Key invariants:
 """
 
 import asyncio
-import gc
-import importlib.util
 import logging
-import threading
-import sys as _sys
 from typing import Any
 
-from hledac.universal.utils.mlx_memory import (
-    get_dynamic_metal_cache_limit,
-    mlx_cleanup_aggressive as _canonical_mlx_cleanup_aggressive,
-    mlx_cleanup_sync as _canonical_mlx_cleanup_sync,
-    mlx_cleanup_decorator as _mlx_cleanup_decorator_canonical,
-    )
-
-# === Metal memory management — DELEGATED to utils.mlx_cache (canonical) ===
-# All Metal limit management is handled by the canonical implementation in utils.mlx_cache.
-# These imports provide backward compatibility for code that imports from here.
-
+from hledac.universal.utils.mlx_cache import (
+    _ensure_metal_memory_limits as _canonical_ensure_metal_memory_limits,
+)
 from hledac.universal.utils.mlx_cache import (
     get_metal_limits_status as _canonical_get_metal_limits_status,
+)
+from hledac.universal.utils.mlx_cache import (
     reconfigure_metal_cache_limit as _canonical_reconfigure_metal_cache_limit,
-    _ensure_metal_memory_limits as _canonical_ensure_metal_memory_limits,
-    )
+)
+from hledac.universal.utils.mlx_memory import (
+    mlx_cleanup_decorator as _mlx_cleanup_decorator_canonical,
+)
 
 logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core._util import aclose
 
 
 def get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
 
 
-# === Deprecated get_mlx_model — delegates to hermes_cache (M-11) ===
 async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
     """
     DEPRECATED — M-11: Use brain._hermes_cache.hermes_cache() instead.
@@ -97,9 +88,6 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         return None, None
 
 
-# === Metal memory management — DELEGATED to utils.mlx_cache (canonical) ===
-# Re-exported for backward compatibility with code that imports from here.
-
 _MLX_INITIALIZED = False
 
 
@@ -107,7 +95,7 @@ def _format_limit_mib(value: int | None) -> str:
     """Format a memory limit in bytes to MiB string."""
     if value is None:
         return "unavailable"
-    return f"{value // 1024 ** 2} MiB"
+    return f"{value // 1024**2} MiB"
 
 
 # Re-export canonical functions for backward compatibility
@@ -144,10 +132,8 @@ def init_mlx_buffers() -> bool:
     return True
 
 
-# === Cleanup — DELEGATED to utils.mlx_memory (canonical) ===
-# Re-export from canonical mlx_memory module to maintain API compatibility
-# while avoiding code duplication.
-
 mlx_cleanup_sync = _canonical_cleanup_sync
 mlx_cleanup_aggressive = _canonical_cleanup_aggressive
-mlx_cleanup_decorator = _mlx_cleanup_decorator_canonical  # DEPRECATED: use utils.mlx_memory.mlx_cleanup_decorator instead
+mlx_cleanup_decorator = (
+    _mlx_cleanup_decorator_canonical  # DEPRECATED: use utils.mlx_memory.mlx_cleanup_decorator instead
+)

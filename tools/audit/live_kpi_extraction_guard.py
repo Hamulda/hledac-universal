@@ -25,18 +25,12 @@ CLI:
         --output-md probe_f229b_live_kpi_extraction_guard/REPORT_LIVE_KPI_EXTRACTION_GUARD.md
 """
 
-
 import argparse
 import ast
 import json
 import sys
 from pathlib import Path
 from typing import Any
-from _core import aclose
-
-# --------------------------------------------------------------------------
-# Constants
-# --------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCHMARKS = REPO_ROOT / "benchmarks"
@@ -46,59 +40,61 @@ NEXT_ACTION_MODULE = BENCHMARKS / "live_measurement_next_action.py"
 KPI_MODULE = BENCHMARKS / "live_measurement_kpi.py"
 
 # Runtime module prefixes that KPI module must NOT import
-RUNTIME_IMPORT_PREFIXES = frozenset([
-    "hledac.universal.runtime",
-    "hledac.universal._core",
-    "hledac.universal.pipeline",
-    "hledac.universal.discovery",
-    "hledac.universal.fetching",
-    "hledac.universal.export",
-    "hledac.universal.intel",
-    "hledac.universal.knowledge",
-    "hledac.universal.coordinators",
-    "hledac.universal.brain",
-    "hledac.universal.security",
-    "mlx",
-    "aiohttp",
-    "curl_cffi",
-    "asyncio",
-])
+RUNTIME_IMPORT_PREFIXES = frozenset(
+    [
+        "hledac.universal.runtime",
+        "hledac.universal._core",
+        "hledac.universal.pipeline",
+        "hledac.universal.discovery",
+        "hledac.universal.fetching",
+        "hledac.universal.export",
+        "hledac.universal.intel",
+        "hledac.universal.knowledge",
+        "hledac.universal.coordinators",
+        "hledac.universal.brain",
+        "hledac.universal.security",
+        "mlx",
+        "aiohttp",
+        "curl_cffi",
+        "asyncio",
+    ]
+)
 
 # Old param names that must only be accessed via inp.attr in _derive_live_kpi_from_input
 # These are the flat params that LiveKpiInput replaces — bare access is a violation
-OLD_PARAM_NAMES = frozenset([
-    "status",
-    "runtime_truth",
-    "actual_duration_s",
-    "primary_signal_source",
-    "run_quality_verdict",
-    "hardware_constrained",
-    "public_pipeline",
-    "timing_truth",
-    "acquisition_strategy",
-    "windup_guard_observation",
-    "return_guard_observation",
-    "scheduler_exit",
-    "acquisition_report",
-    "profile_verdict",
-    "acquisition_terminality_checked",
-    "acquisition_terminality_satisfied",
-    "acquisition_terminality_missing_lanes",
-    "planned_duration_s",
-    "claims_runtime_status",
-])
+OLD_PARAM_NAMES = frozenset(
+    [
+        "status",
+        "runtime_truth",
+        "actual_duration_s",
+        "primary_signal_source",
+        "run_quality_verdict",
+        "hardware_constrained",
+        "public_pipeline",
+        "timing_truth",
+        "acquisition_strategy",
+        "windup_guard_observation",
+        "return_guard_observation",
+        "scheduler_exit",
+        "acquisition_report",
+        "profile_verdict",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "planned_duration_s",
+        "claims_runtime_status",
+    ]
+)
 
 # Required exports from live_measurement_kpi.py (post-extraction)
-KPI_MODULE_REQUIRED_EXPORTS = frozenset([
-    "LiveKpiInput",
-    "_derive_live_kpi_from_input",
-    "_derive_live_kpi",
-])
+KPI_MODULE_REQUIRED_EXPORTS = frozenset(
+    [
+        "LiveKpiInput",
+        "_derive_live_kpi_from_input",
+        "_derive_live_kpi",
+    ]
+)
 
-
-# --------------------------------------------------------------------------
-# Verdicts
-# --------------------------------------------------------------------------
 
 class Verdict:
     PRE_PASS = "KPI_EXTRACTION_PREP_PASS"
@@ -111,10 +107,6 @@ class Verdict:
     FAIL_KPI_MODULE_RUNTIME_IMPORT = "FAIL_KPI_MODULE_RUNTIME_IMPORT"
     FAIL_KPI_MISSING_EXPORTS = "FAIL_KPI_MISSING_EXPORTS"
 
-
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
 
 def _read_source(path: Path) -> str:
     with path.open() as f:
@@ -304,10 +296,6 @@ def _check_kpi_module_exports(kpi_path: Path) -> tuple[bool, list[str]]:
     return bool(missing), missing
 
 
-# --------------------------------------------------------------------------
-# Post-extraction checks (when KPI_MODULE exists)
-# --------------------------------------------------------------------------
-
 def _run_post_extraction_checks(repo_root: Path) -> dict[str, Any]:
     """Run post-extraction checks on live_measurement_kpi.py."""
     checks: list[dict[str, Any]] = []
@@ -330,11 +318,13 @@ def _run_post_extraction_checks(repo_root: Path) -> dict[str, Any]:
 
     # 2. Required exports (only check if no runtime import violation)
     missing_any, missing = _check_kpi_module_exports(kpi_path)
-    checks.append({
-        "check": "kpi_module_has_exports",
-        "pass": not missing_any,
-        "detail": f"Missing: {missing}" if missing else "OK",
-    })
+    checks.append(
+        {
+            "check": "kpi_module_has_exports",
+            "pass": not missing_any,
+            "detail": f"Missing: {missing}" if missing else "OK",
+        }
+    )
     if missing_any and verdict == Verdict.PRE_PASS:
         verdict = Verdict.FAIL_KPI_MISSING_EXPORTS
 
@@ -352,10 +342,6 @@ def _run_post_extraction_checks(repo_root: Path) -> dict[str, Any]:
 
     return {"verdict": verdict, "checks": checks, "phase": "post"}
 
-
-# --------------------------------------------------------------------------
-# Pre-extraction checks
-# --------------------------------------------------------------------------
 
 def _run_pre_extraction_checks_inner(runner: Path, post_extraction: bool = False) -> tuple[bool, list[dict[str, Any]]]:
     """Core pre-extraction checks shared between standalone and post-extraction.
@@ -435,17 +421,17 @@ def _derive_fail_verdict(checks: list[dict[str, Any]]) -> str:
     return Verdict.FAIL_KPI_EXTRACTION_NOT_READY
 
 
-# --------------------------------------------------------------------------
-# Output formatters
-# --------------------------------------------------------------------------
-
 def format_json(result: dict) -> str:
     return json.dumps(result, indent=2, default=str)
 
 
 def format_markdown(result: dict) -> str:
     phase = result.get("phase", "pre")
-    title = "F229B2 Live KPI Extraction Guard — Post-Extraction" if phase == "post" else "F229B2 Live KPI Extraction Guard — Pre-Extraction"  # noqa: E501
+    title = (
+        "F229B2 Live KPI Extraction Guard — Post-Extraction"
+        if phase == "post"
+        else "F229B2 Live KPI Extraction Guard — Pre-Extraction"
+    )  # noqa: E501
 
     lines = [
         f"# {title}",
@@ -466,49 +452,47 @@ def format_markdown(result: dict) -> str:
         pass_str = "PASS" if check.get("pass") else "FAIL"
         lines.append(f"| {check['check']} | {pass_str} | {detail} |")
 
-    lines.extend([
-        "",
-        "## Pre-Extraction Contract",
-        "",
-        "Before `live_measurement_kpi.py` can be extracted, these must all be true:",
-        "",
-        "| # | Condition | Verdict on fail |",
-        "|---|-----------|-----------------|",
-        "| 1 | `LiveKpiInput` dataclass exists in `live_sprint_measurement.py` | `FAIL_KPI_INPUT_MISSING` |",
-        "| 2 | `_derive_live_kpi(inp)` compatibility wrapper exists | `FAIL_KPI_WRAPPER_MISSING` |",
-        "| 3 | `_derive_live_kpi_from_input` body uses `inp.*` not bare params | `FAIL_KPI_BARE_PARAM_USAGE` |",
-        "| 4 | `_derive_next_action` imported from `live_measurement_next_action` | `FAIL_NEXT_ACTION_NOT_EXTRACTED` |",
-        "",
-        "## Post-Extraction Contract",
-        "",
-        "After extraction, `live_measurement_kpi.py` must:",
-        "",
-        "| # | Condition | Verdict on fail |",
-        "|---|-----------|-----------------|",
-        "| 1 | No runtime/network/MLX imports | `FAIL_KPI_MODULE_RUNTIME_IMPORT` |",
-        "| 2 | Exports: `LiveKpiInput`, `derive_live_kpi_from_input`, `derive_live_kpi` | `FAIL_KPI_MISSING_EXPORTS` |",
-        "| 3 | Pre-extraction contract still satisfied | `FAIL_KPI_EXTRACTION_NOT_READY` |",
-        "",
-        "## Verdict Reference",
-        "",
-        "```",
-        "KPI_EXTRACTION_PREP_PASS       — pre-extraction checks pass; ready when next_action is wired",
-        "FAIL_KPI_INPUT_MISSING          — LiveKpiInput not found",
-        "FAIL_KPI_WRAPPER_MISSING        — _derive_live_kpi wrapper missing or broken",
-        "FAIL_KPI_BARE_PARAM_USAGE       — _derive_live_kpi_from_input uses bare old params",
-        "FAIL_NEXT_ACTION_NOT_EXTRACTED   — next_action not imported from live_measurement_next_action",
-        "FAIL_KPI_EXTRACTION_NOT_READY    — post-extraction: pre-checks no longer pass",
-        "FAIL_KPI_MODULE_RUNTIME_IMPORT — KPI module imports runtime",
-        "FAIL_KPI_MISSING_EXPORTS        — KPI module missing required exports",
-        "```",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Pre-Extraction Contract",
+            "",
+            "Before `live_measurement_kpi.py` can be extracted, these must all be true:",
+            "",
+            "| # | Condition | Verdict on fail |",
+            "|---|-----------|-----------------|",
+            "| 1 | `LiveKpiInput` dataclass exists in `live_sprint_measurement.py` | `FAIL_KPI_INPUT_MISSING` |",
+            "| 2 | `_derive_live_kpi(inp)` compatibility wrapper exists | `FAIL_KPI_WRAPPER_MISSING` |",
+            "| 3 | `_derive_live_kpi_from_input` body uses `inp.*` not bare params | `FAIL_KPI_BARE_PARAM_USAGE` |",
+            "| 4 | `_derive_next_action` imported from `live_measurement_next_action` | `FAIL_NEXT_ACTION_NOT_EXTRACTED` |",
+            "",
+            "## Post-Extraction Contract",
+            "",
+            "After extraction, `live_measurement_kpi.py` must:",
+            "",
+            "| # | Condition | Verdict on fail |",
+            "|---|-----------|-----------------|",
+            "| 1 | No runtime/network/MLX imports | `FAIL_KPI_MODULE_RUNTIME_IMPORT` |",
+            "| 2 | Exports: `LiveKpiInput`, `derive_live_kpi_from_input`, `derive_live_kpi` | `FAIL_KPI_MISSING_EXPORTS` |",
+            "| 3 | Pre-extraction contract still satisfied | `FAIL_KPI_EXTRACTION_NOT_READY` |",
+            "",
+            "## Verdict Reference",
+            "",
+            "```",
+            "KPI_EXTRACTION_PREP_PASS       — pre-extraction checks pass; ready when next_action is wired",
+            "FAIL_KPI_INPUT_MISSING          — LiveKpiInput not found",
+            "FAIL_KPI_WRAPPER_MISSING        — _derive_live_kpi wrapper missing or broken",
+            "FAIL_KPI_BARE_PARAM_USAGE       — _derive_live_kpi_from_input uses bare old params",
+            "FAIL_NEXT_ACTION_NOT_EXTRACTED   — next_action not imported from live_measurement_next_action",
+            "FAIL_KPI_EXTRACTION_NOT_READY    — post-extraction: pre-checks no longer pass",
+            "FAIL_KPI_MODULE_RUNTIME_IMPORT — KPI module imports runtime",
+            "FAIL_KPI_MISSING_EXPORTS        — KPI module missing required exports",
+            "```",
+        ]
+    )
 
     return "\n".join(lines)
 
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="F229B2 Live KPI Extraction Guard")

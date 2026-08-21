@@ -16,29 +16,34 @@ Usage:
     async with circuit_protected("duckdb_ingest") as cb:
         await cb.execute(critical_operation)
 """
+
 from __future__ import annotations
+
 import asyncio
 import functools
 import logging
-from contextlib import asynccontextmanager
-from typing import Any, Optional, TypeVar
 from collections.abc import Callable
+from typing import Any, TypeVar
+
 from hledac.universal.utils.asyncx import safe_create_task
-from hledac.universal.utils.resilience.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpen, CircuitBreakers, CircuitState
+from hledac.universal.utils.resilience.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpen
 from hledac.universal.utils.resilience.degradation_modes import FailureSeverity
 from hledac.universal.utils.sync_bridge import run_sync_async
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-T = TypeVar('T')
+T = TypeVar("T")
 _CIRCUIT_REGISTRY: dict[str, CircuitBreaker] = {}
 
-def get_circuit(name: str) -> Optional[CircuitBreaker]:
+
+def get_circuit(name: str) -> CircuitBreaker | None:
     """Get circuit breaker from registry."""
     return _CIRCUIT_REGISTRY.get(name)
+
 
 def register_circuit(name: str, circuit: CircuitBreaker) -> None:
     """Register a circuit breaker."""
     _CIRCUIT_REGISTRY[name] = circuit
+
 
 def circuit_protected(name: str, **kwargs: Any):
     """
@@ -54,9 +59,11 @@ def circuit_protected(name: str, **kwargs: Any):
         _CIRCUIT_REGISTRY[name] = circuit
     return _ProtectedContext(circuit, **kwargs)
 
+
 class _ProtectedContext:
     """Context manager for protected execution."""
-    __slots__ = ('_circuit', '_kwargs')
+
+    __slots__ = ("_circuit", "_kwargs")
 
     def __init__(self, circuit: CircuitBreaker, **kwargs: Any) -> None:
         self._circuit = circuit
@@ -68,7 +75,13 @@ class _ProtectedContext:
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-def with_circuit_breaker(name: str, config: Optional[CircuitBreakerConfig]=None, severity: FailureSeverity=FailureSeverity.HIGH, record_to_registry: bool=True) -> Callable[[Callable[..., T]], Callable[..., T]]:
+
+def with_circuit_breaker(
+    name: str,
+    config: CircuitBreakerConfig | None = None,
+    severity: FailureSeverity = FailureSeverity.HIGH,
+    record_to_registry: bool = True,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator to wrap a function with circuit breaker protection.
 
@@ -97,7 +110,12 @@ def with_circuit_breaker(name: str, config: Optional[CircuitBreakerConfig]=None,
                 if not can_exec:
                     if record_to_registry:
                         _record_rejection(name, severity)
-                    raise CircuitBreakerOpen(circuit_name=name, failure_count=0, last_failure='circuit_open', recovery_timeout=circuit.config.recovery_timeout)
+                    raise CircuitBreakerOpen(
+                        circuit_name=name,
+                        failure_count=0,
+                        last_failure="circuit_open",
+                        recovery_timeout=circuit.config.recovery_timeout,
+                    )
                 circuit._metrics.total_calls += 1
                 try:
                     return await fn(*args, **kwargs)
@@ -114,14 +132,19 @@ def with_circuit_breaker(name: str, config: Optional[CircuitBreakerConfig]=None,
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                     can_exec = run_sync_async(circuit.can_execute())
                 except RuntimeError:
                     can_exec = run_sync_async(circuit.can_execute())
                 if not can_exec:
                     if record_to_registry:
                         _record_rejection(name, severity)
-                    raise CircuitBreakerOpen(circuit_name=name, failure_count=0, last_failure='circuit_open', recovery_timeout=circuit.config.recovery_timeout)
+                    raise CircuitBreakerOpen(
+                        circuit_name=name,
+                        failure_count=0,
+                        last_failure="circuit_open",
+                        recovery_timeout=circuit.config.recovery_timeout,
+                    )
                 circuit._metrics.total_calls += 1
                 try:
                     return fn(*args, **kwargs)
@@ -130,36 +153,49 @@ def with_circuit_breaker(name: str, config: Optional[CircuitBreakerConfig]=None,
                 except Exception as e:
                     circuit._record_failure()
                     try:
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                         run_sync_async(circuit._check_open())
                     except RuntimeError:
                         run_sync_async(circuit._check_open())
                     if record_to_registry:
                         _record_failure(name, severity, e)
                     raise
+
         return async_wrapper if asyncio.iscoroutinefunction(fn) else sync_wrapper
+
     return decorator
+
 
 def _record_failure(component: str, severity: FailureSeverity, error: Exception) -> None:
     """Record failure to SprintHealthLedger if available."""
     try:
         from hledac.universal.utils.resilience import get_ledger
+
         ledger = get_ledger()
-        safe_create_task(ledger.record_failure(component=component, severity=severity, error=error), name=f'resilience:record_failure:{component}')
+        safe_create_task(
+            ledger.record_failure(component=component, severity=severity, error=error),
+            name=f"resilience:record_failure:{component}",
+        )
     except Exception:
         pass
+
 
 def _record_rejection(component: str, severity: FailureSeverity) -> None:
     """Record circuit breaker rejection."""
     try:
         from hledac.universal.utils.resilience import get_ledger
+
         ledger = get_ledger()
-        rejection_error = RuntimeError(f'Circuit breaker {component} is OPEN')
-        safe_create_task(ledger.record_failure(component=component, severity=severity, error=rejection_error), name=f'resilience:record_rejection:{component}')
+        rejection_error = RuntimeError(f"Circuit breaker {component} is OPEN")
+        safe_create_task(
+            ledger.record_failure(component=component, severity=severity, error=rejection_error),
+            name=f"resilience:record_rejection:{component}",
+        )
     except Exception:
         pass
 
-def degradation_aware(component: str, critical: bool=False) -> Callable[[Callable[..., T]], Callable[..., T]]:
+
+def degradation_aware(component: str, critical: bool = False) -> Callable[[Callable[..., T]], Callable[..., T]]:
     """
     Decorator that makes function degradation-aware.
 
@@ -174,23 +210,28 @@ def degradation_aware(component: str, critical: bool=False) -> Callable[[Callabl
     """
 
     def decorator(fn: Callable[..., T]) -> Callable[..., T]:
-        severity = FailureSeverity.CRITICAL if critical else FailureSeverity.MEDIUM
         if asyncio.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     from hledac.universal.utils.resilience import get_ledger
+
                     ledger = get_ledger()
                     action = ledger.get_component_action(component)
                 except Exception:
-                    action = 'proceed'
-                if action == 'skip':
-                    logger.debug('[%s] Skipping %s due to degradation mode', ledger.sprint_id if 'ledger' in dir() else '?', component)
+                    action = "proceed"
+                if action == "skip":
+                    logger.debug(
+                        "[%s] Skipping %s due to degradation mode",
+                        ledger.sprint_id if "ledger" in dir() else "?",
+                        component,
+                    )
                     return None
-                if action == 'propagate':
-                    logger.warning('[DEGRADATION] %s in EMERGENCY mode - executing with error propagation', component)
+                if action == "propagate":
+                    logger.warning("[DEGRADATION] %s in EMERGENCY mode - executing with error propagation", component)
                     return await fn(*args, **kwargs)
+
             return async_wrapper
         else:
 
@@ -198,19 +239,24 @@ def degradation_aware(component: str, critical: bool=False) -> Callable[[Callabl
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     from hledac.universal.utils.resilience import get_ledger
+
                     ledger = get_ledger()
                     action = ledger.get_component_action(component)
                 except Exception:
-                    action = 'proceed'
-                if action == 'skip':
+                    action = "proceed"
+                if action == "skip":
                     return None
                 return fn(*args, **kwargs)
+
             return sync_wrapper
+
     return decorator
+
 
 def get_all_circuit_status() -> dict[str, dict[str, Any]]:
     """Get status of all registered circuit breakers."""
     return {name: circuit.get_status() for name, circuit in _CIRCUIT_REGISTRY.items()}
+
 
 def reset_all_circuits() -> None:
     """Reset all circuit breakers (for testing)."""

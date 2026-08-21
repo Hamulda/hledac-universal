@@ -8,9 +8,7 @@ Verifies HLEDAC_ENABLE_BGP gate behavior:
 - HLEDAC_ENABLE_BGP=1 → sidecar enabled
 """
 
-
 import pytest
-from _core import aclose
 
 
 def sidecar_should_run() -> bool:

@@ -8,6 +8,7 @@ This module is DEPRECATED. Import from `layers.stealth` instead:
 
 This file exists for backward compatibility only and will be removed in a future version.
 """
+
 import warnings
 
 # Deprecation warning for direct imports
@@ -19,25 +20,25 @@ warnings.warn(
 
 # Re-export from consolidated module
 from layers.stealth import (
-    StealthLayer,
-    BehaviorSimulator,
     BehaviorPattern,
-    ProfileGenerator,
-    FingerprintProfile,
+    BehaviorSimulator,
     EvasionCategory,
     EvasionScript,
-    SimulationConfig,
+    FingerprintProfile,
     MouseMovement,
+    ProfileGenerator,
+    SimulationConfig,
+    StealthLayer,
 )
 
 __all__ = [
-    'StealthLayer',
-    'BehaviorSimulator',
-    'BehaviorPattern',
-    'ProfileGenerator',
-    'FingerprintProfile',
-    'EvasionCategory',
-    'EvasionScript',
-    'SimulationConfig',
-    'MouseMovement',
+    "StealthLayer",
+    "BehaviorSimulator",
+    "BehaviorPattern",
+    "ProfileGenerator",
+    "FingerprintProfile",
+    "EvasionCategory",
+    "EvasionScript",
+    "SimulationConfig",
+    "MouseMovement",
 ]

@@ -61,16 +61,12 @@ M1 8GB OPTIMIZATIONS
 from __future__ import annotations
 import logging as _logging
 import time as _time
-import weakref
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
-from collections.abc import Iterator
 logger = _logging.getLogger(__name__)
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.target_memory import TargetMemoryUpdate
 
 class ProvenanceProtocol(Enum):
     """Supported source protocols for provenance tracking."""

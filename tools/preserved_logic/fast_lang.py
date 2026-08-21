@@ -4,11 +4,10 @@ LanguageDetector — fast language detection stub.
 Provides ultra-fast language detection for text.
 This is a fail-safe stub: all methods return safe defaults.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +40,7 @@ class LanguageDetector:
     """
 
     def __init__(self, *, fallback_mode: bool = True) -> None:
-        raise ImportError(
-            "LanguageDetector requires fast-langdetect — install with: uv add fast-langdetect"
-    )
+        raise ImportError("LanguageDetector requires fast-langdetect — install with: uv add fast-langdetect")
 
     def detect(self, text: str, *, min_length: int = 10) -> str:
         """Always returns 'unknown'."""

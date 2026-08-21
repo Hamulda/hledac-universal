@@ -58,21 +58,16 @@ import contextlib
 import functools
 import logging
 import threading
-import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
+
 from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 # M1 8GB: io_threads from ConcurrencyPreset (default 2, scales down at pressure)
 _RO_POOL_SIZE_DEFAULT = 2
@@ -85,38 +80,13 @@ _RW_POOL_SIZE = 1
 _HEALTH_CHECK_SQL = "SELECT 1"
 _CONNECTION_VALIDATION_SQL = "SELECT 1, 2"
 
-
-# =============================================================================
-# M1 8GB DuckDB Settings
-# =============================================================================
-
 _M1_DUCKDB_SETTINGS: tuple[tuple[str, Any], ...] = (
     ("memory_limit", "1GB"),
     ("max_temp_memory", "1GB"),
     ("threads", 2),
     ("preserve_insertion_order", False),
     ("busy_timeout", "30s"),
-    )
-
-
-# =============================================================================
-# ISSUE-17: Read-Write Coordination
-# =============================================================================
-#
-# Problem: Concurrent reads (DuckDB allows this) can saturate the RO pool while
-# a write is pending, causing busy_timeout delays. Additionally, reads during
-# writes can see inconsistent data.
-#
-# Solution: ReadCoordinator implements:
-# 1. asyncio.Semaphore(2) - limits concurrent reads to 2 for M1 8GB
-# 2. Write barrier pattern - new reads blocked during active writes
-# 3. Read versioning - detect stale reads after writes
-#
-# This prevents:
-# - 5× concurrent reads + 1 write deadlock scenario
-# - busy_timeout saturation from read queue buildup
-# - Inconsistent reads during writes
-#
+)
 
 _READ_CONCURRENCY_LIMIT = 2  # M1 8GB safe default
 
@@ -183,13 +153,11 @@ class ReadCoordinator:
         """
         self._stats["reads_total"] += 1
 
-        # Step 1: Wait for write barrier (no writes in progress)
         if not self._write_barrier.is_set():
             self._stats["reads_blocked_by_write"] += 1
             self._stats["write_barrier_waits"] += 1
             await self._write_barrier.wait()
 
-        # Step 2: Acquire read semaphore (limits concurrent reads)
         acquired = self._read_semaphore.locked()
         if acquired:
             self._stats["reads_waited_for_semaphore"] += 1
@@ -199,7 +167,6 @@ class ReadCoordinator:
             self._active_reads += 1
             version = self._write_version
 
-        # Get connection from pool
         conn = duckdb_ro_acquire(db_path)
 
         return _CoordinatedReadHandle(
@@ -310,11 +277,6 @@ def _get_duckdb_module() -> Any:
     return duckdb
 
 
-# =============================================================================
-# Resource Governor Integration
-# =============================================================================
-
-
 def _get_ro_pool_size() -> int:
     """
     Get RO pool size from resource_governor ConcurrencyPreset.
@@ -323,11 +285,12 @@ def _get_ro_pool_size() -> int:
     Falls back to default if governor unavailable.
     """
     try:
+        import psutil
+
         from hledac.universal._core.resource_governor import (
             ConcurrencyPreset,
             evaluate_uma_state,
-    )
-        import psutil
+        )
 
         mem = psutil.virtual_memory()
         system_used_gib = mem.used / 1024**3
@@ -336,11 +299,6 @@ def _get_ro_pool_size() -> int:
         return preset.io_threads
     except Exception:
         return _RO_POOL_SIZE_DEFAULT
-
-
-# =============================================================================
-# Connection Health Check
-# =============================================================================
 
 
 def _is_connection_alive(conn: Any) -> bool:
@@ -372,14 +330,10 @@ def _configure_connection(conn: Any, read_only: bool = True) -> None:
         logger.debug("[DUCKDB_POOL] Connection config warning: %s", e)
 
 
-# =============================================================================
-# RO Pool Entry
-# =============================================================================
-
-
 @dataclass(slots=True)
 class _ROPoolEntry:
     """A pooled RO connection with metadata."""
+
     conn: Any
     db_path: str
     created_at: float = field(default_factory=lambda: __import__("time").time())
@@ -401,11 +355,6 @@ class _ROPoolEntry:
             self.conn.close()
         except Exception:
             pass
-
-
-# =============================================================================
-# Canonical RO Connection Pool
-# =============================================================================
 
 
 class _DuckDBROPool:
@@ -478,7 +427,7 @@ class _DuckDBROPool:
         Raises:
             RuntimeError: If connection creation fails
         """
-        duckdb = _get_duckdb_module()
+        _get_duckdb_module()
         self._stats["acquire_total"] += 1
 
         with self._lock:
@@ -524,7 +473,6 @@ class _DuckDBROPool:
         """
         # No-op: connections stay in pool for reuse
         # Explicit release not needed with context manager pattern
-        pass
 
     def close_all(self) -> None:
         """Close all pooled connections. Call on process shutdown."""
@@ -558,11 +506,6 @@ class _DuckDBROPool:
                 self._max_size = new_size
                 while len(self._pool) > self._max_size:
                     self._evict_lru()
-
-
-# =============================================================================
-# RW Pool (Single Writer)
-# =============================================================================
 
 
 class _DuckDBRWPool:
@@ -679,10 +622,6 @@ class _DuckDBRWPool:
             }
 
 
-# =============================================================================
-# Module-Level Singleton Pools
-# =============================================================================
-
 # Global pool instances (lazily initialized)
 _ro_pool: _DuckDBROPool | None = None
 _rw_pool: _DuckDBRWPool | None = None
@@ -713,10 +652,6 @@ def _get_rw_pool() -> _DuckDBRWPool:
                 _rw_pool = _DuckDBRWPool()
     return _rw_pool
 
-
-# =============================================================================
-# Public API
-# =============================================================================
 
 @property
 def duckdb_ro_pool() -> _DuckDBROPool:
@@ -900,20 +835,18 @@ def get_pool_stats() -> dict[str, Any]:
     }
 
 
-# =============================================================================
-# CI Guard: Unauthorized duckdb.connect Detection
-# =============================================================================
-
 # Authorized modules that may use duckdb.connect directly:
-AUTHORIZED_DUCKDB_MODULES: frozenset[str] = frozenset([
-    "knowledge/duckdb_store.py",           # DuckDBShadowStore - canonical store
-    "knowledge/duckdb_wal_manager.py",     # WAL manager
-    "knowledge/duckdb_base.py",            # Base class
-    "core/duckdb_pool.py",                 # THIS module - canonical pool
-])
+AUTHORIZED_DUCKDB_MODULES: frozenset[str] = frozenset(
+    [
+        "knowledge/duckdb_store.py",  # DuckDBShadowStore - canonical store
+        "knowledge/duckdb_wal_manager.py",  # WAL manager
+        "knowledge/duckdb_base.py",  # Base class
+        "core/duckdb_pool.py",  # THIS module - canonical pool
+    ]
+)
 
 # Pattern for detecting raw duckdb.connect usage
-_DUCKDB_CONNECT_PATTERN = r'duckdb\.connect\s*\('
+_DUCKDB_CONNECT_PATTERN = r"duckdb\.connect\s*\("
 
 
 def check_unauthorized_duckdb_connect(file_path: str) -> list[str]:
@@ -939,7 +872,7 @@ def check_unauthorized_duckdb_connect(file_path: str) -> list[str]:
             return []
 
     try:
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             content = f.read()
 
         # Find all duckdb.connect( occurrences
@@ -965,7 +898,6 @@ def run_ci_guard() -> int:
         0 if clean, 1 if violations found
     """
     import glob
-    import sys
 
     print("[ISSUE-04 CI Guard] Checking for unauthorized duckdb.connect() usage...")
     print()

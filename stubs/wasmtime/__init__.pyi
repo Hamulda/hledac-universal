@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 class WasmtimeError(Exception): ...
+
 class ExitTrap(Exception):
     code: int
 

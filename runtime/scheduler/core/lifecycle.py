@@ -14,10 +14,7 @@ Adapter ensures begin_sprint() on any lifecycle object maps to start()
 for runtime objects, and bridges property vs method access patterns.
 """
 
-
-
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -147,6 +144,7 @@ class SprintLifecycleAdapter:
             lc.mark_warmup_done()
         elif hasattr(lc, "transition_to"):
             from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+
             lc.transition_to(SprintPhase.ACTIVE)
 
     # ── recommended_tool_mode ────────────────────────────────────────────

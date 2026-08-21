@@ -20,12 +20,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Awaitable, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 
 async def aclose(obj: Any | None, *, log_errors: bool = False) -> None:
     """Safely close an async resource, suppressing all exceptions.
@@ -78,7 +76,6 @@ async def aclose(obj: Any | None, *, log_errors: bool = False) -> None:
             logger.debug("aclose cleanup failed for %s: %s", type(obj).__name__, Exception)
         # Silent suppression for backward compatibility
 
-
 async def aclose_many(*objects: Any, log_errors: bool = False) -> None:
     """Safely close multiple async resources concurrently.
 
@@ -99,5 +96,4 @@ async def aclose_many(*objects: Any, log_errors: bool = False) -> None:
     if not coros:
         return
 
-    # Run all cleanups concurrently
     await asyncio.gather(*coros, return_exceptions=True)

@@ -7,7 +7,6 @@ Exports:
     ConvertResult, PredictResult — result models
 """
 
-
 from .client import CoreMLClient, CoreMLServiceError
 from .manager import CoreMLServiceManager
 from .service import (

@@ -54,11 +54,6 @@ M1 8GB Notes
 """
 
 from __future__ import annotations
-from _core._util import aclose
-
-# ---------------------------------------------------------------------------
-# Column Definitions
-# ---------------------------------------------------------------------------
 
 # Ordered list of column names (matches DuckDB canonical_findings table)
 # ISSUE F5-FIX: Extended to 13 columns for WARC provenance
@@ -77,14 +72,10 @@ CANONICAL_FINDINGS_COLUMNS: tuple[str, ...] = (
     "compressed_offset",
     "compressed_size",
     "warc_url",
-    )
+)
 
 # Number of columns (13)
 CANONICAL_FINDINGS_ARITY: int = len(CANONICAL_FINDINGS_COLUMNS)
-
-# ---------------------------------------------------------------------------
-# DuckDB DDL (for temp table creation)
-# ---------------------------------------------------------------------------
 
 # DuckDB DDL for creating temp tables with the canonical schema.
 # Used by:
@@ -123,10 +114,6 @@ def get_duckdb_temp_table_ddl(table_name: str) -> str:
     """
     return _CANONICAL_FINDINGS_DUCKDB_DDL_TEMPLATE.format(table_name=table_name)
 
-
-# ---------------------------------------------------------------------------
-# Arrow Schema (for PyArrow operations)
-# ---------------------------------------------------------------------------
 
 try:
     import pyarrow as pa
@@ -172,10 +159,6 @@ except ImportError:
     }
 
 
-# ---------------------------------------------------------------------------
-# Rust Arrow Schema (as Rust-compatible representation)
-# ---------------------------------------------------------------------------
-
 # Field definitions for Rust Arrow builder (arrow_batch_builder.rs).
 # This is a Python-side representation that documents the Rust schema.
 # The Rust code uses these same semantics via arrow crate DataType::Utf8/Float64.
@@ -196,12 +179,8 @@ CANONICAL_FINDINGS_RUST_FIELDS: tuple[tuple[str, str], ...] = (
     ("compressed_offset", "int64"),
     ("compressed_size", "int64"),
     ("warc_url", "utf8"),
-    )
+)
 
-
-# ---------------------------------------------------------------------------
-# Column Index Constants (for positional access)
-# ---------------------------------------------------------------------------
 
 # Zero-based column indices (matching CANONICAL_FINDINGS_COLUMNS order)
 # ISSUE F5-FIX: Extended to 13 columns including WARC provenance
@@ -236,15 +215,8 @@ def get_column_index(column_name: str) -> int:
     try:
         return CANONICAL_FINDINGS_COLUMNS.index(column_name)
     except ValueError:
-        raise ValueError(
-            f"Unknown column '{column_name}'. "
-            f"Valid columns: {list(CANONICAL_FINDINGS_COLUMNS)}"
-    )
+        raise ValueError(f"Unknown column '{column_name}'. Valid columns: {list(CANONICAL_FINDINGS_COLUMNS)}")
 
-
-# ---------------------------------------------------------------------------
-# Payload Padding Helpers
-# ---------------------------------------------------------------------------
 
 def pad_row_to_schema(row: list) -> list:
     """
@@ -274,17 +246,13 @@ def pad_row_to_schema(row: list) -> list:
     return row
 
 
-# ---------------------------------------------------------------------------
-# SQL Templates (for reference and generation)
-# ---------------------------------------------------------------------------
-
 # INSERT statement with all 8 columns
 CANONICAL_FINDINGS_INSERT_SQL: str = (
     "INSERT INTO canonical_findings "
     "(id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT (id) DO NOTHING"
-    )
+)
 
 # MERGE statement for Arrow bulk insert
 # ISSUE F5-FIX: Extended to 13 columns for WARC provenance
@@ -316,10 +284,6 @@ def get_merge_sql(reg_name: str) -> str:
     return CANONICAL_FINDINGS_MERGE_SQL_TEMPLATE.format(reg_name=reg_name)
 
 
-# ---------------------------------------------------------------------------
-# Module Self-Test
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     # ISSUE F5-FIX: Verify arity is now 13 columns (8 original + 5 WARC)
     assert CANONICAL_FINDINGS_ARITY == 13, f"Expected 13 columns, got {CANONICAL_FINDINGS_ARITY}"
@@ -327,10 +291,20 @@ if __name__ == "__main__":
     # Verify all expected columns present
     # ISSUE F5-FIX: Expected columns now include WARC provenance
     expected = {
-        "id", "query", "source_type", "confidence", "ts", 
-        "provenance_json", "payload_text", "claims_json",
+        "id",
+        "query",
+        "source_type",
+        "confidence",
+        "ts",
+        "provenance_json",
+        "payload_text",
+        "claims_json",
         # ISSUE F5-FIX: WARC provenance columns
-        "warc_record_id", "warc_path", "compressed_offset", "compressed_size", "warc_url"
+        "warc_record_id",
+        "warc_path",
+        "compressed_offset",
+        "compressed_size",
+        "warc_url",
     }
     actual = set(CANONICAL_FINDINGS_COLUMNS)
     assert actual == expected, f"Column mismatch: {actual} != {expected}"
@@ -341,7 +315,9 @@ if __name__ == "__main__":
     assert "claims_json VARCHAR" in ddl
     # ISSUE F5-FIX: 12 VARCHAR columns + 1 DOUBLE (compressed_offset/compressed_size are BIGINT)
     assert ddl.count("VARCHAR") == 12, f"Expected 12 VARCHAR columns, got {ddl.count('VARCHAR')}"
-    assert ddl.count("BIGINT") == 2, f"Expected 2 BIGINT columns (compressed_offset, compressed_size), got {ddl.count('BIGINT')}"
+    assert ddl.count("BIGINT") == 2, (
+        f"Expected 2 BIGINT columns (compressed_offset, compressed_size), got {ddl.count('BIGINT')}"
+    )
 
     # Verify padding
     row7 = ["a", "b", "c", 1.0, 2.0, "d", "e"]  # missing claims_json

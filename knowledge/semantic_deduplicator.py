@@ -2,9 +2,6 @@
 knowledge/semantic_deduplicator.py — A6: Near-Duplicate Detection via SimHash + MinHash
 ========================================================================================
 
-
-
-
 Provides two strategies for near-duplicate finding detection:
 1. SimHash — fast Hamming-distance based, ideal for near-exact duplicates
 2. MinHash + LSH — Jaccard similarity for longer content
@@ -34,24 +31,17 @@ Usage:
     decision = await dedup.check_duplicate(finding_id, text, metadata)
 """
 
-
 import asyncio
 import hashlib
 import logging
 import struct
-from collections.abc import Sequence
-from dataclasses import dataclass
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
-from _core import aclose
 
 if TYPE_CHECKING:
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-    from hledac.universal._core.rust_backend import AccelBackend
 
 __all__ = [
     "SemanticDeduplicator",
@@ -74,12 +64,10 @@ MINHASH_NUM_PERM: Final[int] = 128  # permutations for MinHash (M1 8GB balance)
 
 # ── Result Types ───────────────────────────────────────────────────────────────
 
-
 class SimHashResult(Struct, frozen=True):
     """SimHash fingerprint result."""
     fingerprint: int  # 64-bit integer
     bits: int  # actual bits used
-
 
 class DedupDecision(Struct, frozen=True):
     """Dedup advisory decision."""
@@ -89,9 +77,7 @@ class DedupDecision(Struct, frozen=True):
     fingerprint: int | None  # SimHash fingerprint if computed
     minhash_bytes: bytes | None  # Serialized MinHash if computed
 
-
 # ── SimHash Engine ─────────────────────────────────────────────────────────────
-
 
 def _normalize_text(text: str) -> str:
     """Normalize text for hashing: lowercase, collapse whitespace."""
@@ -99,10 +85,8 @@ def _normalize_text(text: str) -> str:
         return ""
     return " ".join(text.lower().split())
 
-
 # ISSUE 6.2 E-26: Lazy Rust simhash — avoid import-time cost, fail-soft if unavailable
 _rust_simhash: Any = None
-
 
 def _get_rust_simhash() -> Any:
     """Lazily resolve Rust simhash domain. Cached after first call."""
@@ -117,7 +101,6 @@ def _get_rust_simhash() -> Any:
         except Exception:  # noqa: BLE001
             pass
     return _rust_simhash
-
 
 def _compute_simhash(text: str) -> int:
     """
@@ -159,11 +142,9 @@ def _compute_simhash(text: str) -> int:
 
     return fingerprint
 
-
 def _hamming_distance(a: int, b: int) -> int:
     """Compute Hamming distance between two 64-bit integers."""
     return (a ^ b).bit_count()
-
 
 def _compute_minhash(text: str) -> MinHash:
     """
@@ -177,7 +158,6 @@ def _compute_minhash(text: str) -> MinHash:
     mh.update(normalized.encode("utf-8"))
     return mh
 
-
 def _minhash_to_bytes(mh: MinHash) -> bytes:
     """
     Serialize MinHash hashvalues to bytes for storage.
@@ -190,9 +170,7 @@ def _minhash_to_bytes(mh: MinHash) -> bytes:
     except Exception:
         return b""
 
-
 # ── SemanticDeduplicator ───────────────────────────────────────────────────────
-
 
 class SemanticDeduplicator:
     """
@@ -337,7 +315,6 @@ class SemanticDeduplicator:
             return self._simhash_cache[cache_key]
 
         async with self._lock:
-            # Check recent 5K entries for performance
             recent = list(self._simhash_store.items())[-5000:]
             for stored_id, stored_fp in recent:
                 dist = _hamming_distance(fingerprint, stored_fp)
@@ -449,11 +426,9 @@ class SemanticDeduplicator:
             "cache_hits": 0,
         }
 
-
 # ── Module-level singleton ─────────────────────────────────────────────────────
 
 _dedup: SemanticDeduplicator | None = None
-
 
 def get_semantic_deduplicator() -> SemanticDeduplicator:
     """Get the module-level SemanticDeduplicator singleton."""

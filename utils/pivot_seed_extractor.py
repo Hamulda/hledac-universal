@@ -8,14 +8,10 @@ feed finding payloads. Bounded: max 1000 texts, 20k chars/text, 256 seeds.
 No network, no ML, no heavy imports.
 """
 
-
-
 import re
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import Final
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 __all__ = [
     "PivotSeed",
@@ -23,16 +19,11 @@ __all__ = [
     "extract_pivot_seeds_from_texts",
 ]
 
-# ----------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------
 MAX_TEXTS: Final[int] = 1000
 MAX_TEXT_CHARS: Final[int] = 20_000
 MAX_SEEDS: Final[int] = 256
 
-# ----------------------------------------------------------------------
-# Dataclasses
-# ----------------------------------------------------------------------
+
 class PivotSeed(Struct, frozen=True):
     """A single pivot seed extracted from feed payload text."""
 
@@ -52,24 +43,15 @@ class PivotSeedExtractionResult(Struct, frozen=True):
     reason: str
 
 
-# ----------------------------------------------------------------------
-# Regex patterns — conservative, bounded
-# ----------------------------------------------------------------------
-_RE_DOMAIN: re.Pattern[str] = re.compile(
-    r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}"
-    )
+_RE_DOMAIN: re.Pattern[str] = re.compile(r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}")
 _RE_IPV4: re.Pattern[str] = re.compile(
     r"\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\."
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9]))\b"
-    )
-_RE_EMAIL: re.Pattern[str] = re.compile(
-    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-    )
-_RE_URL: re.Pattern[str] = re.compile(
-    r"https?://[^\s<>\"]+"
-    )
+)
+_RE_EMAIL: re.Pattern[str] = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+_RE_URL: re.Pattern[str] = re.compile(r"https?://[^\s<>\"]+")
 _RE_MD5: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{32}\b")
 _RE_SHA1: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{40}\b")
 _RE_SHA256: re.Pattern[str] = re.compile(r"\b[a-fA-F0-9]{64}\b")
@@ -80,35 +62,26 @@ _RE_ENTITY_STRICT: re.Pattern[str] = re.compile(
     r"revil|grief|sodinokibi|azov|moonlock|lac，减|bing|loader|c2|infrastructure|"
     r"threat.actor|victim|hive|breach|leak|exfil)\b",
     flags=re.IGNORECASE,
-    )
+)
 # Loose entity — extracts capitalised multi-word org-like strings (2-5 words)
-_RE_ENTITY_LOOSE: re.Pattern[str] = re.compile(
-    r"\b[A-Z][a-zA-Z0-9]?(?:[A-Za-z0-9][\ \-]?){1,20}[A-Za-z0-9]\b"
-    )
+_RE_ENTITY_LOOSE: re.Pattern[str] = re.compile(r"\b[A-Z][a-zA-Z0-9]?(?:[A-Za-z0-9][\ \-]?){1,20}[A-Za-z0-9]\b")
 # Additional loose patterns: all-caps acronyms + quoted strings
-_RE_ENTITY_QUOTED: re.Pattern[str] = re.compile(
-    r'"[^"]{3,80}"'
-    )
+_RE_ENTITY_QUOTED: re.Pattern[str] = re.compile(r'"[^"]{3,80}"')
 
-# ----------------------------------------------------------------------
-# Known false-positive domains (must not be emitted as seeds)
-# ----------------------------------------------------------------------
-_FALSE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "example.com",
-    "test.com",
-    "localhost",
-    "localhost.localdomain",
-    "example.org",
-    "example.net",
-    "invalid.com",
-    "example.edu",
-    "example.gov",
-    "example.mil",
-})
-
-# ----------------------------------------------------------------------
-# Internal extraction helpers
-# ----------------------------------------------------------------------
+_FALSE_DOMAINS: Final[frozenset[str]] = frozenset(
+    {
+        "example.com",
+        "test.com",
+        "localhost",
+        "localhost.localdomain",
+        "example.org",
+        "example.net",
+        "invalid.com",
+        "example.edu",
+        "example.gov",
+        "example.mil",
+    }
+)
 
 
 def _extract_domains(text: str) -> list[str]:
@@ -167,11 +140,6 @@ def _extract_entities(text: str) -> list[str]:
     return result
 
 
-# ----------------------------------------------------------------------
-# Normalisation
-# ----------------------------------------------------------------------
-
-
 def _normalise_domain(d: str) -> str:
     """Lowercase + strip trailing dot."""
     return d.rstrip(".").lower()
@@ -180,8 +148,6 @@ def _normalise_domain(d: str) -> str:
 def _normalise_email(e: str) -> str:
     """Lowercase email address."""
     return e.lower()
-
-
 
 
 def _normalise_url(url: str) -> str:
@@ -204,9 +170,6 @@ def _normalise_hash(h: str) -> str:
     return h.lower()
 
 
-# ----------------------------------------------------------------------
-# Ranking constants
-# ----------------------------------------------------------------------
 _TYPE_RANK: Final[dict[str, int]] = {
     "domain": 1,
     "url": 2,
@@ -228,11 +191,6 @@ def _confidence_for(seed_type: str) -> float:
     if seed_type == "email":
         return 0.80
     return 0.70
-
-
-# ----------------------------------------------------------------------
-# Public API
-# ----------------------------------------------------------------------
 
 
 def extract_pivot_seeds_from_texts(
@@ -279,84 +237,96 @@ def extract_pivot_seeds_from_texts(
         # Domains
         for d in _extract_domains(work):
             nd = _normalise_domain(d)
-            raw_seeds.append((
-                _TYPE_RANK["domain"],
-                PivotSeed(
-                    value=nd,
-                    seed_type="domain",
-                    source_family=source_family,
-                    confidence=_confidence_for("domain"),
-                    reason="domain_regex",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["domain"],
+                    PivotSeed(
+                        value=nd,
+                        seed_type="domain",
+                        source_family=source_family,
+                        confidence=_confidence_for("domain"),
+                        reason="domain_regex",
+                    ),
+                )
+            )
 
         # URLs
         for u in _extract_urls(work):
             nu = _normalise_url(u)
-            raw_seeds.append((
-                _TYPE_RANK["url"],
-                PivotSeed(
-                    value=nu,
-                    seed_type="url",
-                    source_family=source_family,
-                    confidence=_confidence_for("url"),
-                    reason="url_regex",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["url"],
+                    PivotSeed(
+                        value=nu,
+                        seed_type="url",
+                        source_family=source_family,
+                        confidence=_confidence_for("url"),
+                        reason="url_regex",
+                    ),
+                )
+            )
 
         # IPs
         for ip in _extract_ips(work):
-            raw_seeds.append((
-                _TYPE_RANK["ip"],
-                PivotSeed(
-                    value=ip,
-                    seed_type="ip",
-                    source_family=source_family,
-                    confidence=_confidence_for("ip"),
-                    reason="ipv4_regex",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["ip"],
+                    PivotSeed(
+                        value=ip,
+                        seed_type="ip",
+                        source_family=source_family,
+                        confidence=_confidence_for("ip"),
+                        reason="ipv4_regex",
+                    ),
+                )
+            )
 
         # Hashes
         for h in _extract_hashes(work):
             nh = _normalise_hash(h)
-            raw_seeds.append((
-                _TYPE_RANK["hash"],
-                PivotSeed(
-                    value=nh,
-                    seed_type="hash",
-                    source_family=source_family,
-                    confidence=_confidence_for("hash"),
-                    reason="hash_regex",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["hash"],
+                    PivotSeed(
+                        value=nh,
+                        seed_type="hash",
+                        source_family=source_family,
+                        confidence=_confidence_for("hash"),
+                        reason="hash_regex",
+                    ),
+                )
+            )
 
         # Emails
         for e in _extract_emails(work):
             ne = _normalise_email(e)
-            raw_seeds.append((
-                _TYPE_RANK["email"],
-                PivotSeed(
-                    value=ne,
-                    seed_type="email",
-                    source_family=source_family,
-                    confidence=_confidence_for("email"),
-                    reason="email_regex",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["email"],
+                    PivotSeed(
+                        value=ne,
+                        seed_type="email",
+                        source_family=source_family,
+                        confidence=_confidence_for("email"),
+                        reason="email_regex",
+                    ),
+                )
+            )
 
         # Entities — only if threat keywords present
         for ent in _extract_entities(work):
-            raw_seeds.append((
-                _TYPE_RANK["entity"],
-                PivotSeed(
-                    value=ent,
-                    seed_type="entity",
-                    source_family=source_family,
-                    confidence=_confidence_for("entity"),
-                    reason="entity_keyword_fallback",
-                ),
-            ))
+            raw_seeds.append(
+                (
+                    _TYPE_RANK["entity"],
+                    PivotSeed(
+                        value=ent,
+                        seed_type="entity",
+                        source_family=source_family,
+                        confidence=_confidence_for("entity"),
+                        reason="entity_keyword_fallback",
+                    ),
+                )
+            )
 
     # Deduplicate by (seed_type, normalised_value)
     seen: set[tuple[str, str]] = set()

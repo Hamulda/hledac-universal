@@ -26,29 +26,29 @@ MIGRACE:
 
 # Re-export everything from _core.locks for backward compatibility
 from _core.locks import (
+    # Async helpers
+    AsyncLockDCLP,
+    # Atomic counter
+    AtomicCounter,
     # Registry core
     LockCategory,
     LockInfo,
-    register_lock,
-    auto_register,
-    register_lock_decorator,
     # Multi-lock acquisition
     acquire_in_order,
     acquire_in_order_async,
+    assert_lock_registered,
+    auto_register,
+    get_lock_by_name,
+    get_locks_by_category,
     # Registry queries
     get_registered_locks,
-    get_locks_by_category,
-    get_lock_by_name,
-    assert_lock_registered,
-    # Async helpers
-    AsyncLockDCLP,
     make_async_lock_dclp,
+    make_atomic_counter,
     # Factories
     make_counter,
     make_lock,
-    make_atomic_counter,
-    # Atomic counter
-    AtomicCounter,
+    register_lock,
+    register_lock_decorator,
 )
 
 # Legacy LockRegistry class alias (for code that may use it)

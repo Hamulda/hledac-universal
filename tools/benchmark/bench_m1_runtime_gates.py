@@ -32,9 +32,8 @@ Exit codes:
     64 = no psutil (continues, reports wall-time only)
     65 = benchmark error
 """
-from __future__ import annotations
-import msgspec
 
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -49,9 +48,8 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from _core import aclose
-from compat.msgspec_gc_compat import Struct
 
+from compat.msgspec_gc_compat import Struct
 
 # ── paths ────────────────────────────────────────────────────────────────────────
 BENCH_FILE = Path(__file__).resolve()
@@ -60,27 +58,28 @@ REPORTS_DIR = UNIVERSAL_ROOT / "reports" / "benchmarks"
 
 assert UNIVERSAL_ROOT.name == "universal", f"UNIVERSAL_ROOT={UNIVERSAL_ROOT}"
 
-sys.path.insert(0, str(UNIVERSAL_ROOT))          # universal/ first → transport.*, utils.*
+sys.path.insert(0, str(UNIVERSAL_ROOT))  # universal/ first → transport.*, utils.*
 sys.path.insert(0, str(UNIVERSAL_ROOT.parent))  # hledac/ parent → hledac.universal.*
 
 # ── optional deps ────────────────────────────────────────────────────────────
 _HAS_PSUTIL = False
 try:
     import psutil
+
     _HAS_PSUTIL = True
 except ImportError:  # noqa: BLE001
     pass
 
 _HAS_SELECTOLAX = False
 try:
-    from selectolax.parser import HTMLParser as _SelectoLaxParser  # noqa: F401
     _HAS_SELECTOLAX = True
 except ImportError:  # noqa: BLE001
     pass
 
 _HAS_BS4 = False
 try:
-    from bs4 import BeautifulSoup as _BS4Parser  # noqa: F401
+    from bs4 import BeautifulSoup as _BS4Parser
+
     _HAS_BS4 = True
 except ImportError:  # noqa: BLE001
     pass
@@ -108,10 +107,8 @@ def _detect_interpreter_flags() -> dict[str, Any]:
             val = is_gil_disabled_fn()
             flags["free_threaded"] = bool(val)
             flags["free_threaded_reason"] = (
-                "GIL disabled (free-threaded build)"
-                if val
-                else "GIL enabled (standard build)"
-    )
+                "GIL disabled (free-threaded build)" if val else "GIL enabled (standard build)"
+            )
         else:
             flags["free_threaded_reason"] = "attribute _is_gil_disabled not present"
     except AttributeError:
@@ -357,6 +354,7 @@ def bench_html_parser_characterization() -> dict[str, Any]:
 
     # bs4 (html.parser — slowest but always available)
     if _HAS_BS4:
+
         def bs4_parse() -> str:
             soup = _BS4Parser(HTML_FIXTURE, "html.parser")
             return soup.get_text(separator=" ", strip=True)
@@ -399,8 +397,7 @@ def bench_msgspec_dto_serialization() -> dict[str, Any]:
         "source_type": "test_source",
         "query": "example domain investigation",
         "confidence": 0.85,
-        "payload_text": "Lorem ipsum dolor sit amet consectetur adipiscing elit. "
-        * 10,
+        "payload_text": "Lorem ipsum dolor sit amet consectetur adipiscing elit. " * 10,
         "timestamp": "2026-05-18T00:00:00Z",
     }
 
@@ -458,7 +455,7 @@ def bench_wal_manager_single_write_smoke() -> dict[str, Any]:
                 query="bench_query",
                 source_type="bench_source",
                 confidence=0.75,
-    )
+            )
 
         t_result = _time_it(one_write, runs=7, warmups=2)
 
@@ -505,7 +502,7 @@ def bench_batch_scheduler_queue_flush_smoke() -> dict[str, Any]:
             prompt="test prompt",
             response_model=str,  # simplest schema key
             priority=1.0,
-    )
+        )
         # Consume future result to suppress "never retrieved" warnings
         future.add_done_callback(lambda f: None)
         await asyncio.sleep(0.05)
@@ -620,7 +617,7 @@ def main() -> int:
                 rss_start_kb=rss_start_kb,
                 rss_psutil_start=rss_psutil_start,
                 quick=args.quick,
-    )
+            )
             _write_jsonl(record, out_path)
             status = result.get("status", "unknown")
             print(status)
@@ -636,7 +633,7 @@ def main() -> int:
                 rss_start_kb=rss_start_kb,
                 rss_psutil_start=rss_psutil_start,
                 quick=args.quick,
-    )
+            )
             _write_jsonl(record, out_path)
 
     rss_end_kb = _rss_kb()

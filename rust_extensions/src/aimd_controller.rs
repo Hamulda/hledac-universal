@@ -32,10 +32,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 #[cfg(feature = "data")]
 use pyo3::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const AIMD_SUCCESS_THRESHOLD: u32 = 8;
 const AIMD_ADDITIVE_INCREMENT: f64 = 2.0;
 const AIMD_MIN_CONCURRENCY: f64 = 1.0;
@@ -53,10 +49,6 @@ static AIMD_DECREASE_BY_STATE: std::sync::LazyLock<RwLock<HashMap<String, f64>>>
         RwLock::new(m)
     });
 
-// ---------------------------------------------------------------------------
-// Stats
-// ---------------------------------------------------------------------------
-
 #[derive(Default)]
 struct AIMDStats {
     increases: u64,
@@ -64,10 +56,6 @@ struct AIMDStats {
     clamp_events: u64,
     window_changes: u64,
 }
-
-// ---------------------------------------------------------------------------
-// PyAIMDController
-// ---------------------------------------------------------------------------
 
 /// Lock-free AIMD controller exposed to Python.
 ///
@@ -126,7 +114,6 @@ impl PyAIMDController {
     ///
     /// Returns (window, active_count).
     pub fn acquire(&self) -> (f64, u32) {
-        // Increment active count
         let active_after = self.active.fetch_add(1, Ordering::Relaxed) + 1;
         // Load window (Relaxed is fine — window is advisory for Python semaphore sizing)
         let window_bits = self.window.load(Ordering::Relaxed);
@@ -168,7 +155,6 @@ impl PyAIMDController {
                 }
                 Err(prev) => {
                     current = prev;
-                    // Loop continues — another coroutine bumped successes
                 }
             }
         }
@@ -214,7 +200,6 @@ impl PyAIMDController {
         // Increment failures counter (atomic, lock-free)
         self.failures.fetch_add(1, Ordering::Relaxed);
 
-        // Decrement active first
         let active = self
             .active
             .fetch_sub(1, Ordering::Relaxed)
@@ -338,10 +323,6 @@ impl PyAIMDController {
         result
     }
 }
-
-// ---------------------------------------------------------------------------
-// Registration (called from lib.rs)
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "data")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

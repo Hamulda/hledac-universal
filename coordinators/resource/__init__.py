@@ -23,6 +23,13 @@ M1 8GB invariants:
     - asyncio.gather with return_exceptions=True
 """
 
+from .blitz_gc import (
+    BLITZ_THRESHOLD,
+    BOOT_THRESHOLD,
+    POST_TEARDOWN_THRESHOLD,
+    BlitzGCStrategy,
+    blitz_gc,
+)
 from .resource_coordinator import (
     # AIMD
     AIMDController,
@@ -37,15 +44,7 @@ from .resource_coordinator import (
     gc_collect_aggressive,
     gc_collect_async,
     get_gc_stats,
-    )
-from .blitz_gc import (
-    BlitzGCStrategy,
-    blitz_gc,
-    BLITZ_THRESHOLD,
-    BOOT_THRESHOLD,
-    POST_TEARDOWN_THRESHOLD,
-    )
-from _core import aclose
+)
 
 __all__ = [
     # GC

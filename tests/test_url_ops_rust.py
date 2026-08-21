@@ -18,23 +18,23 @@ _rust = pytest.importorskip("hledac_rust_extensions")
 pytest.mark.skipif(
     not hasattr(_rust, "classify_url"),
     reason="hledac_rust_extensions.classify_url not present (older build?)",
-    )
+)
 
 
 class TestClassifyUrl:
     """Per-URL classification — kind + lowercase host."""
 
-    def test_classify_onion(self):
+    def test_classify_onion(self) -> None:
         kind, host = _rust.classify_url("http://abc.onion/path")
         assert kind == "onion"
         assert host == "abc.onion"
 
-    def test_classify_clearnet(self):
+    def test_classify_clearnet(self) -> None:
         kind, host = _rust.classify_url("https://google.com")
         assert kind == "clearnet"
         assert host == "google.com"
 
-    def test_classify_malformed(self):
+    def test_classify_malformed(self) -> None:
         # "not_a_url" has no scheme but is recoverable as clearnet host
         # via the synthetic http:// fallback. Truly malformed inputs
         # (e.g. with control chars) would return ("malformed", "").
@@ -47,7 +47,7 @@ class TestClassifyUrl:
         if kind == "clearnet":
             assert host == "not_a_url"
 
-    def test_classify_truly_malformed_returns_malformed_or_empty(self):
+    def test_classify_truly_malformed_returns_malformed_or_empty(self) -> None:
         # Pure garbage with no host-recoverable form.
         result = _rust.classify_url("???://@@@")
         kind = result[0]
@@ -56,22 +56,22 @@ class TestClassifyUrl:
         # Host is always a string (never raises).
         assert isinstance(host, str)
 
-    def test_classify_empty(self):
+    def test_classify_empty(self) -> None:
         kind, host = _rust.classify_url("")
         assert kind == "empty"
         assert host == ""
 
-    def test_classify_i2p(self):
+    def test_classify_i2p(self) -> None:
         kind, host = _rust.classify_url("http://example.i2p/page")
         assert kind == "i2p"
         assert host == "example.i2p"
 
-    def test_classify_freenet(self):
+    def test_classify_freenet(self) -> None:
         kind, host = _rust.classify_url("https://freenetproject.org")
         assert kind == "freenet"
         assert host == "freenetproject.org"
 
-    def test_classify_uppercase_host_is_lowercased(self):
+    def test_classify_uppercase_host_is_lowercased(self) -> None:
         kind, host = _rust.classify_url("https://ABC.onion/Path")
         assert kind == "onion"
         assert host == "abc.onion"
@@ -80,7 +80,7 @@ class TestClassifyUrl:
 class TestBatchClassify:
     """Batch hot path — must beat Python urlparse."""
 
-    def test_batch_1000(self):
+    def test_batch_1000(self) -> None:
         urls = [f"https://example{i}.com/path" for i in range(1000)]
         t0 = time.perf_counter()
         results = _rust.batch_classify(urls)
@@ -93,17 +93,17 @@ class TestBatchClassify:
             assert kind == "clearnet"
             assert host.startswith("example")
 
-    def test_batch_under_threshold_sequential(self):
+    def test_batch_under_threshold_sequential(self) -> None:
         # 50 URLs — well below the 100 threshold, sequential path used.
         urls = [f"https://x{i}.test" for i in range(50)]
         results = _rust.batch_classify(urls)
         assert len(results) == 50
         assert all(kind == "clearnet" for kind, _ in results)
 
-    def test_batch_empty_input(self):
+    def test_batch_empty_input(self) -> None:
         assert _rust.batch_classify([]) == []
 
-    def test_batch_with_malformed(self):
+    def test_batch_with_malformed(self) -> None:
         urls = ["http://good.com", "not_a_url", "??://@@@", ""]
         results = _rust.batch_classify(urls)
         assert len(results) == 4
@@ -119,20 +119,20 @@ class TestBatchClassify:
 class TestExtractHost:
     """Drop-in for urllib.parse.urlparse(url).hostname.lower()."""
 
-    def test_extract_basic(self):
+    def test_extract_basic(self) -> None:
         assert _rust.extract_host("https://Example.com/Path") == "example.com"
 
-    def test_extract_with_port(self):
+    def test_extract_with_port(self) -> None:
         assert _rust.extract_host("https://example.com:8080/") == "example.com"
 
-    def test_extract_empty(self):
+    def test_extract_empty(self) -> None:
         assert _rust.extract_host("") == ""
 
-    def test_extract_schemeless_fallback(self):
+    def test_extract_schemeless_fallback(self) -> None:
         # Permissive fallback — bare host is recoverable.
         assert _rust.extract_host("example.com/path") == "example.com"
 
-    def test_never_raises(self):
+    def test_never_raises(self) -> None:
         # Even the worst input must not panic.
         for bad in ["\x00", "??://@@@", " " * 100, "http://" + "a" * 5000]:
             result = _rust.extract_host(bad)
@@ -142,36 +142,36 @@ class TestExtractHost:
 class TestLooksLikeFeedUrl:
     """Pure-string feed-URL heuristic — no regex."""
 
-    def test_feed_rss(self):
+    def test_feed_rss(self) -> None:
         assert _rust.looks_like_feed_url("/feed/rss") is True
 
-    def test_feed_atom(self):
+    def test_feed_atom(self) -> None:
         assert _rust.looks_like_feed_url("/news.atom") is True
 
-    def test_feed_xml(self):
+    def test_feed_xml(self) -> None:
         assert _rust.looks_like_feed_url("/api/articles.xml") is True
 
-    def test_feed_sitemap(self):
+    def test_feed_sitemap(self) -> None:
         assert _rust.looks_like_feed_url("/sitemap.xml") is True
 
-    def test_feed_opensearch(self):
+    def test_feed_opensearch(self) -> None:
         assert _rust.looks_like_feed_url("/search.opensearch") is True
 
-    def test_not_feed_article(self):
+    def test_not_feed_article(self) -> None:
         assert _rust.looks_like_feed_url("/news/article") is False
 
-    def test_not_feed_feedback_avoid_substring(self):
+    def test_not_feed_feedback_avoid_substring(self) -> None:
         # "feedback" contains "feed" but is not a feed URL.
         assert _rust.looks_like_feed_url("/api/feedback") is False
 
-    def test_feed_with_query(self):
+    def test_feed_with_query(self) -> None:
         # Query string is stripped before segment analysis.
         assert _rust.looks_like_feed_url("/feed.rss?count=10") is True
 
-    def test_empty(self):
+    def test_empty(self) -> None:
         assert _rust.looks_like_feed_url("") is False
 
-    def test_case_insensitive(self):
+    def test_case_insensitive(self) -> None:
         assert _rust.looks_like_feed_url("/FEED.RSS") is True
         assert _rust.looks_like_feed_url("/Feed.Atom") is True
 
@@ -182,13 +182,12 @@ class TestLooksLikeFeedUrl:
 # ---------------------------------------------------------------------------
 
 import urllib.parse  # noqa: E402
-from _core import aclose
 
 
 class TestPublicFetcherMigration:
     """F271: url_ops migration parity with urllib.parse fallback."""
 
-    def test_url_ops_lazy_import_returns_module_with_required_symbols(self):
+    def test_url_ops_lazy_import_returns_module_with_required_symbols(self) -> None:
         """_get_url_ops() returns a module exposing extract_host/looks_like_feed_url/classify_url."""
         from hledac.universal.fetching import public_fetcher as pf
 
@@ -210,7 +209,7 @@ class TestPublicFetcherMigration:
             "",
         ],
     )
-    def test_altsvc_extract_host_matches_urlparse_fallback(self, url):
+    def test_altsvc_extract_host_matches_urlparse_fallback(self, url) -> None:
         """_altsvc_extract_host() Rust path must equal urllib.parse fallback.
 
         This is the F271 migration parity test for the swapped call site at
@@ -222,10 +221,7 @@ class TestPublicFetcherMigration:
 
         actual = pf._altsvc_extract_host(url)
         expected = (urllib.parse.urlparse(url).hostname or "").lower()
-        assert actual == expected, (
-            f"_altsvc_extract_host({url!r}) = {actual!r}, "
-            f"urlparse fallback = {expected!r}"
-    )
+        assert actual == expected, f"_altsvc_extract_host({url!r}) = {actual!r}, urlparse fallback = {expected!r}"
 
     @pytest.mark.parametrize(
         "url",
@@ -238,7 +234,7 @@ class TestPublicFetcherMigration:
             "",
         ],
     )
-    def test_doh_host_extraction_pattern_matches_urlparse(self, url):
+    def test_doh_host_extraction_pattern_matches_urlparse(self, url) -> None:
         """DoH hostname extraction (Rust fast path or urllib fallback) equals urlparse.
 
         The DoH block in public_fetcher.py is inline (not a named helper), so
@@ -258,13 +254,12 @@ class TestPublicFetcherMigration:
         if uops is not None:
             rust_host = uops.extract_host(url)
         else:
-            rust_host = (urllib.parse.urlparse(url).hostname or "")
+            rust_host = urllib.parse.urlparse(url).hostname or ""
 
-        py_fallback = (urllib.parse.urlparse(url).hostname or "")
+        py_fallback = urllib.parse.urlparse(url).hostname or ""
         assert rust_host == py_fallback, (
-            f"host extraction diverged for {url!r}: rust={rust_host!r}, "
-            f"urllib={py_fallback!r}"
-    )
+            f"host extraction diverged for {url!r}: rust={rust_host!r}, urllib={py_fallback!r}"
+        )
 
     @pytest.mark.parametrize(
         "url",
@@ -280,7 +275,7 @@ class TestPublicFetcherMigration:
             "https://example.com",
         ],
     )
-    def test_looks_like_feed_url_matches_urllib_fallback(self, url):
+    def test_looks_like_feed_url_matches_urllib_fallback(self, url) -> None:
         """_looks_like_feed_url() Rust path equals the urllib.parse fallback.
 
         F271 parity test for the swap at public_fetcher.py::_looks_like_feed_url.
@@ -301,10 +296,7 @@ class TestPublicFetcherMigration:
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.rstrip("/")
         expected = bool(pf._FEED_URL_RE.search(path))
-        assert actual == expected, (
-            f"_looks_like_feed_url({url!r}) = {actual!r}, "
-            f"urllib fallback = {expected!r}"
-    )
+        assert actual == expected, f"_looks_like_feed_url({url!r}) = {actual!r}, urllib fallback = {expected!r}"
 
     @pytest.mark.parametrize(
         "url",
@@ -314,7 +306,7 @@ class TestPublicFetcherMigration:
             "https://example.com/users/feedburner/profile",
         ],
     )
-    def test_looks_like_feed_url_avoids_feedback_substring(self, url):
+    def test_looks_like_feed_url_avoids_feedback_substring(self, url) -> None:
         """_looks_like_feed_url() (Rust path) must not match the 'feedback' substring.
 
         F271: the Rust looks_like_feed_url guards against the substring
@@ -332,9 +324,8 @@ class TestPublicFetcherMigration:
             pytest.skip("Rust url_ops not built; parity cannot be asserted")
 
         assert pf._looks_like_feed_url(url) is False, (
-            f"_looks_like_feed_url({url!r}) should reject 'feedback' "
-            f"substring via the Rust path; got True."
-    )
+            f"_looks_like_feed_url({url!r}) should reject 'feedback' substring via the Rust path; got True."
+        )
 
     @pytest.mark.parametrize(
         "url",
@@ -352,7 +343,7 @@ class TestPublicFetcherMigration:
             "???://@@@",
         ],
     )
-    def test_validate_url_rust_path_matches_python_fallback(self, url):
+    def test_validate_url_rust_path_matches_python_fallback(self, url) -> None:
         """_validate_url() result is identical to the inline urllib fallback.
 
         F271 parity test for the swap at public_fetcher.py::_validate_url.
@@ -384,14 +375,12 @@ class TestPublicFetcherMigration:
                         expected = "url_no_netloc"
                     else:
                         expected = None
-                except (ValueError, AttributeError):
+                except ValueError, AttributeError:
                     expected = "url_malformed"
 
-        assert actual == expected, (
-            f"_validate_url({url!r}) = {actual!r}, expected (python oracle) = {expected!r}"
-    )
+        assert actual == expected, f"_validate_url({url!r}) = {actual!r}, expected (python oracle) = {expected!r}"
 
-    def test_validate_url_unsupported_scheme_returns_scheme_error(self):
+    def test_validate_url_unsupported_scheme_returns_scheme_error(self) -> None:
         """Explicit guard: ftp/gopher etc. must surface as url_unsupported_scheme:xxx.
 
         The Rust classify_url treats unknown schemes as 'clearnet' with
@@ -406,21 +395,18 @@ class TestPublicFetcherMigration:
             url = f"{scheme}://example.com/path"
             result = pf._validate_url(url)
             assert result == f"url_unsupported_scheme:{scheme}", (
-                f"_validate_url({url!r}) = {result!r}, "
-                f"expected url_unsupported_scheme:{scheme}"
-    )
+                f"_validate_url({url!r}) = {result!r}, expected url_unsupported_scheme:{scheme}"
+            )
 
-    def test_validate_url_empty_inputs_are_url_empty(self):
+    def test_validate_url_empty_inputs_are_url_empty(self) -> None:
         """Empty / whitespace / non-string inputs must short-circuit to url_empty."""
         from hledac.universal.fetching import public_fetcher as pf
 
         for url in ("", "   ", "\n\t", None, 0, []):
             result = pf._validate_url(url)  # type: ignore[arg-type]
-            assert result == "url_empty", (
-                f"_validate_url({url!r}) = {result!r}, expected url_empty"
-    )
+            assert result == "url_empty", f"_validate_url({url!r}) = {result!r}, expected url_empty"
 
-    def test_looks_like_feed_url_empty_returns_false(self):
+    def test_looks_like_feed_url_empty_returns_false(self) -> None:
         """Empty URL must not raise and must return False (matches Rust contract)."""
         from hledac.universal.fetching import public_fetcher as pf
 
@@ -431,37 +417,37 @@ class TestPublicFetcherMigration:
 class TestCanonicalUrl:
     """canonical_url — normalize URL to canonical form for dedup."""
 
-    def test_lowercases_scheme_and_host(self):
+    def test_lowercases_scheme_and_host(self) -> None:
         result = _rust.canonical_url("HTTPS://Example.COM/Path")
         assert result == "https://example.com/path"
 
-    def test_strips_default_http_port(self):
+    def test_strips_default_http_port(self) -> None:
         assert _rust.canonical_url("http://example.com:80/path") == "http://example.com/path"
 
-    def test_strips_default_https_port(self):
+    def test_strips_default_https_port(self) -> None:
         assert _rust.canonical_url("https://example.com:443/path") == "https://example.com/path"
 
-    def test_keeps_non_default_port(self):
+    def test_keeps_non_default_port(self) -> None:
         assert _rust.canonical_url("http://example.com:8080/path") == "http://example.com:8080/path"
 
-    def test_sorts_query_params(self):
+    def test_sorts_query_params(self) -> None:
         result = _rust.canonical_url("https://example.com/search?z=1&a=2&m=3")
         assert result == "https://example.com/search?a=2&m=3&z=1"
 
-    def test_drops_fragment(self):
+    def test_drops_fragment(self) -> None:
         assert _rust.canonical_url("https://example.com/page#section") == "https://example.com/page"
 
-    def test_empty_input_returns_empty(self):
+    def test_empty_input_returns_empty(self) -> None:
         assert _rust.canonical_url("") == ""
 
-    def test_trims_trailing_slashes(self):
+    def test_trims_trailing_slashes(self) -> None:
         assert _rust.canonical_url("https://example.com/path///") == "https://example.com/path"
         assert _rust.canonical_url("https://example.com/") == "https://example.com/"
 
-    def test_preserves_root_trailing_slash(self):
+    def test_preserves_root_trailing_slash(self) -> None:
         assert _rust.canonical_url("https://example.com/") == "https://example.com/"
 
-    def test_urlencoded_query_params_decoded_and_sorted(self):
+    def test_urlencoded_query_params_decoded_and_sorted(self) -> None:
         result = _rust.canonical_url("https://example.com/search?q=%7Euser%2Fname&lang=en")
         assert "lang=en" in result
         assert "q=" in result
@@ -470,33 +456,33 @@ class TestCanonicalUrl:
 class TestUrlDedupKey:
     """url_dedup_key — BLAKE3-64 dedup key for BloomFilter."""
 
-    def test_returns_16_hex_chars(self):
+    def test_returns_16_hex_chars(self) -> None:
         key = _rust.url_dedup_key("https://google.com")
         assert len(key) == 16
         assert key.isascii()
         assert all(c in "0123456789abcdef" for c in key)
 
-    def test_deterministic(self):
+    def test_deterministic(self) -> None:
         url = "https://Example.COM:443/path?b=2&a=1"
         key1 = _rust.url_dedup_key(url)
         key2 = _rust.url_dedup_key(url)
         assert key1 == key2
 
-    def test_same_canonical_form_same_key(self):
+    def test_same_canonical_form_same_key(self) -> None:
         url1 = "https://example.com/path"
         url2 = "https://EXAMPLE.COM/path/"
         assert _rust.url_dedup_key(url1) == _rust.url_dedup_key(url2)
 
-    def test_different_urls_different_keys(self):
+    def test_different_urls_different_keys(self) -> None:
         key1 = _rust.url_dedup_key("https://google.com")
         key2 = _rust.url_dedup_key("https://apple.com")
         assert key1 != key2
 
-    def test_empty_input_returns_16_hex(self):
+    def test_empty_input_returns_16_hex(self) -> None:
         key = _rust.url_dedup_key("")
         assert len(key) == 16
         assert all(c in "0123456789abcdef" for c in key)
 
-    def test_whitespace_input_returns_16_hex(self):
+    def test_whitespace_input_returns_16_hex(self) -> None:
         key = _rust.url_dedup_key("   ")
         assert len(key) == 16

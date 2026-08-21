@@ -18,7 +18,6 @@
 
 import re
 import sys
-from _core import aclose
 
 FUNC_NAMES = ("safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict", "safe_gather")
 FUNC_PATTERN = "|".join(re.escape(f) for f in FUNC_NAMES)
@@ -76,6 +75,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
 
     try:
         import ast
+
         ast.parse(source)
         return True, "already parses"
     except SyntaxError:  # noqa: BLE001
@@ -92,7 +92,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
             continue
 
         prefix_start = m.start()
-        prefix_window = source[max(0, prefix_start - 10):prefix_start]
+        prefix_window = source[max(0, prefix_start - 10) : prefix_start]
         await_concat = ""
         if prefix_window.endswith("await"):
             await_concat = "await "
@@ -101,14 +101,14 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
             await_concat = "with "
             prefix_start -= len("with")
 
-        args_text = source[paren_start + 1:paren_end]
+        args_text = source[paren_start + 1 : paren_end]
         args_clean = drop_label_arg(args_text)
 
-        after = source[paren_end + 1:paren_end + 200]
+        after = source[paren_end + 1 : paren_end + 200]
         leftover_match = re.match(
             r"(\s+[A-Za-z_][\w., ]*?return_exceptions\s*=\s*True\s*\))",
             after,
-    )
+        )
         leftover_end = paren_end + 1
         if leftover_match:
             leftover_end += len(leftover_match.group(1))
@@ -124,6 +124,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
 
     try:
         import ast
+
         ast.parse(source)
     except SyntaxError as e:
         return False, f"still broken after {n_fixed} fixes: {e}"
@@ -133,7 +134,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
     return True, f"fixed {n_fixed} calls"
 
 
-def main(argv):
+def main(argv) -> int | None:
     if not argv:
         print("Usage: fix_broken_codemod.py <file.py> [...]", file=sys.stderr)
         return 2

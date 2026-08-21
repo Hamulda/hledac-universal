@@ -29,21 +29,22 @@ Přidání nového importu sem neznamená, že je "podporováno" nebo "productio
 Vždy kontroluj _AVAILABLE flag a přítomnost SKUTEČNÝCH call sites v kódu.
 """
 
-
 from enum import Enum
 
 # ISSUE-005: Centralized lazy-loading registry for brain engines
 # Imports registry utilities without triggering heavy module loads
 from brain._registry import (
-    EngineSpec,
     EngineLoadOrder,
+    EngineSpec,
+    get_dependencies,
     get_engine,
     get_engine_class,
+    get_resolve_order,
+    get_spec,
     is_available,
     list_engines,
-    get_spec,
-    get_dependencies,
-    get_resolve_order,
+)
+from brain._registry import (
     lazy_getattr as _registry_lazy_getattr,
 )
 
@@ -58,71 +59,66 @@ class DecisionType(Enum):
     ERROR = "error"
     COMPLETE = "complete"
 
+
 # ISSUE-005 FIX: Moved to lazy loading via __getattr__ below
 # from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output
 # NOTE: Individual brain modules import aclose directly from _core as needed.
 # brain/__init__.py is a facade - no need to re-export aclose here.
 
-# ─── Phase 2 Modular Brain Components (PEP 698) ───────────────────────────────
-# Extracted from DeepHermes3Engine God Class refactoring.
-# Module-level None defaults: needed for AVAILABLE_BRAIN_ENGINES dict (eval at import time).
-# __getattr__ updates these via globals() on first attribute access.
-# NOTE: "from brain import X" returns current value without triggering __getattr__;
-# use "getattr(brain, 'X')" or access brain.X to trigger lazy loading.
-
-# MODERN-36 PERFORMANCE FIX: Module-level cache tracking for memory leak prevention.
-# Tracks which engine modules have been loaded via __getattr__ so they can be
-# cleaned up when the module is unloaded or the process exits.
 _LOADED_ENGINES: dict[str, str] = {}  # module_spec -> exported symbols
+
 
 def _track_engine_load(module_spec: str, exported: tuple[str, ...]) -> None:
     """Track a loaded engine module for cleanup."""
     _LOADED_ENGINES[module_spec] = ",".join(exported)
 
+
 def _get_loaded_engines() -> dict[str, str]:
     """Return copy of loaded engines registry."""
     return dict(_LOADED_ENGINES)
 
+
 def _clear_engine_cache(clear_sys_modules: bool = True) -> int:
     """
     Clear all loaded engine symbols from globals() and optionally from sys.modules.
-    
+
     Args:
         clear_sys_modules: If True (default), also remove loaded modules from
             sys.modules to fully unload them and free their memory.
-    
+
     Returns:
         Number of engine symbols cleared from globals().
-    
+
     MODERN-36 PERFORMANCE FIX: Call this from shutdown hooks to prevent
     memory leaks from accumulated globals() entries and sys.modules references.
     Typically called when the process is exiting or when memory pressure is high.
-    
+
     Note: Setting clear_sys_modules=True fully unloads the modules, which may
     break existing references. Only use when the application is shutting down.
     """
     import sys
+
     cleared = 0
     g = globals()
     unloaded_modules: list[str] = []
-    
+
     for module_spec, symbols_str in list(_LOADED_ENGINES.items()):
         symbols = frozenset(symbols_str.split(",")) if symbols_str else frozenset()
         for sym in symbols:
             if sym in g:
                 g[sym] = None
                 cleared += 1
-        
+
         # Reset _AVAILABLE flags
         flag = f"{module_spec.upper()}_AVAILABLE"
         if flag in g:
             g[flag] = None
-        
+
         # Reset AVAILABLE_BRAIN_ENGINES entry
         brain_key = _MODULE_TO_ENGINE_KEY.get(module_spec)
         if brain_key and brain_key in AVAILABLE_BRAIN_ENGINES:
             AVAILABLE_BRAIN_ENGINES[brain_key] = None
-        
+
         # MODERN-36 FIX: Also clear from sys.modules for full module unload
         if clear_sys_modules:
             # Try to remove the actual module from sys.modules
@@ -137,9 +133,10 @@ def _clear_engine_cache(clear_sys_modules: bool = True) -> int:
                     # Clear module cache to free memory
                     sys.modules.pop(mod_name, None)
                     unloaded_modules.append(mod_name)
-    
+
     _LOADED_ENGINES.clear()
     return cleared
+
 
 # Mapping from module_spec to brain key for cleanup
 _MODULE_TO_ENGINE_KEY: dict[str, str] = {
@@ -278,20 +275,6 @@ transcribe_audio = None  # type: ignore[assignment,misc]
 is_whisper_available = None  # type: ignore[assignment,misc]
 
 
-# ─── Engine Registry — ISSUE-005 Fix ──────────────────────────────────────────
-# DEPRECATED: Old _ENGINE_REGISTRY tuple moved to brain/_registry.py
-# New registry provides:
-#   - Centralized lazy-loading with dependency-order resolution
-#   - TYPE_CHECKING for forward references
-#   - Clear module boundaries
-#   - Decorator-based registration
-#
-# Migration guide:
-#   OLD: _ENGINE_REGISTRY[(module, attr, exports, key)]
-#   NEW: Use brain._registry.get_engine("engine_name") or
-#        brain._registry.list_engines(by_order=True)
-#
-# Backward compatibility: _ENGINE_REGISTRY kept for existing code reference
 _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
     # NOTE: This tuple is DEPRECATED. Use brain._registry instead.
     # Keeping for backward compatibility with existing code.
@@ -302,67 +285,199 @@ _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
     ("mlx_batched_executor", "MLXBatchedExecutor", ("MLXBatchedExecutor", "MLX_BATCHED_EXECUTOR_AVAILABLE"), None),
     ("mlx_worker_thread", "MLXWorkerThread", ("MLXWorkerThread", "MLX_WORKER_THREAD_AVAILABLE"), None),
     ("inference_pipeliner", "InferencePipeliner", ("InferencePipeliner", "INFERENCE_PIPELINER_AVAILABLE"), None),
-    ("insight_engine", "INSIGHT_AVAILABLE", (
-        "Anomaly", "CausalRelationship", "Contradiction", "Gap", "Insight",
-        "InsightAnalysisResult", "InsightEngine", "Pattern", "SynthesisLevel",
-        "create_insight_engine", "INSIGHT_AVAILABLE",
-    ), "insight"),
-    ("inference_engine", "INFERENCE_AVAILABLE", (
-        "Evidence", "HopStep", "InferenceEngine", "InferenceRule", "InferenceStep",
-        "InferenceType", "MultiHopPath", "MultiHopReasoner", "ResolvedEntity",
-        "create_inference_engine", "InferenceHypothesis", "INFERENCE_AVAILABLE",
-    ), "inference"),
-    ("research_hypothesis_engine", "HYPOTHESIS_AVAILABLE", (
-        "AdversarialReport", "AdversarialVerifier", "FalsificationResult",
-        "Hypothesis", "HypothesisEngine", "HypothesisStatus", "HypothesisType",
-        "SourceCredibility", "TestDesign", "TestResult", "TestType",
-        "create_hypothesis_engine", "HypothesisEvidence", "_HE_Contradiction",
+    (
+        "insight_engine",
+        "INSIGHT_AVAILABLE",
+        (
+            "Anomaly",
+            "CausalRelationship",
+            "Contradiction",
+            "Gap",
+            "Insight",
+            "InsightAnalysisResult",
+            "InsightEngine",
+            "Pattern",
+            "SynthesisLevel",
+            "create_insight_engine",
+            "INSIGHT_AVAILABLE",
+        ),
+        "insight",
+    ),
+    (
+        "inference_engine",
+        "INFERENCE_AVAILABLE",
+        (
+            "Evidence",
+            "HopStep",
+            "InferenceEngine",
+            "InferenceRule",
+            "InferenceStep",
+            "InferenceType",
+            "MultiHopPath",
+            "MultiHopReasoner",
+            "ResolvedEntity",
+            "create_inference_engine",
+            "InferenceHypothesis",
+            "INFERENCE_AVAILABLE",
+        ),
+        "inference",
+    ),
+    (
+        "research_hypothesis_engine",
         "HYPOTHESIS_AVAILABLE",
-    ), "hypothesis"),
+        (
+            "AdversarialReport",
+            "AdversarialVerifier",
+            "FalsificationResult",
+            "Hypothesis",
+            "HypothesisEngine",
+            "HypothesisStatus",
+            "HypothesisType",
+            "SourceCredibility",
+            "TestDesign",
+            "TestResult",
+            "TestType",
+            "create_hypothesis_engine",
+            "HypothesisEvidence",
+            "_HE_Contradiction",
+            "HYPOTHESIS_AVAILABLE",
+        ),
+        "hypothesis",
+    ),
     ("moe_router", "MOE_AVAILABLE", ("MoERouter", "MoERouterConfig", "create_moe_router", "MOE_AVAILABLE"), "moe"),
-    ("micro_model_pool", "MICRO_MODEL_SWARM_AVAILABLE", ("MicroModelPool", "MicroModelSpec", "TaskType", "MICRO_MODELS", "MICRO_MODEL_SWARM_AVAILABLE"), "micro_model_swarm"),
-    ("content_router", "MICRO_MODEL_SWARM_AVAILABLE", ("ContentRouter", "classify_content", "get_preferred_model", "route_content"), None),
+    (
+        "micro_model_pool",
+        "MICRO_MODEL_SWARM_AVAILABLE",
+        ("MicroModelPool", "MicroModelSpec", "TaskType", "MICRO_MODELS", "MICRO_MODEL_SWARM_AVAILABLE"),
+        "micro_model_swarm",
+    ),
+    (
+        "content_router",
+        "MICRO_MODEL_SWARM_AVAILABLE",
+        ("ContentRouter", "classify_content", "get_preferred_model", "route_content"),
+        None,
+    ),
     ("micro_model_swarm", "MicroModelSwarmRouter", ("MicroModelSwarmRouter", "create_swarm_router"), None),
-    ("moe_swarm_integration", "ResourceGovernor", ("ResourceGovernor", "MoERouterSwarmMixin", "SwappableMicroModelPool"), None),
-    ("distillation_engine", "DISTILLATION_AVAILABLE", (
-        "CriticMLP", "DistillationEngine", "DistillationExample",
-        "create_distillation_engine", "DISTILLATION_AVAILABLE",
-    ), "distillation"),
+    (
+        "moe_swarm_integration",
+        "ResourceGovernor",
+        ("ResourceGovernor", "MoERouterSwarmMixin", "SwappableMicroModelPool"),
+        None,
+    ),
+    (
+        "distillation_engine",
+        "DISTILLATION_AVAILABLE",
+        (
+            "CriticMLP",
+            "DistillationEngine",
+            "DistillationExample",
+            "create_distillation_engine",
+            "DISTILLATION_AVAILABLE",
+        ),
+        "distillation",
+    ),
     ("modernbert_engine", "MODERNBERT_AVAILABLE", ("ModernBertEngine", "MODERNBERT_AVAILABLE"), "modernbert"),
     ("model_engine", "MODEL_ENGINE_AVAILABLE", ("ModelEngine", "MODEL_ENGINE_AVAILABLE"), "model_manager"),
     ("modernbert_adapter", "ModernBertModelAdapter", ("ModernBertModelAdapter",), None),
-    ("model_manager", "MODEL_MANAGER_AVAILABLE", (
-        "ModelManager", "ModelType", "get_model_manager", "reset_model_manager",
+    (
+        "model_manager",
         "MODEL_MANAGER_AVAILABLE",
-    ), "model_manager"),
-    ("ner_engine", "NER_ENGINE_AVAILABLE", (
-        "Entity", "IOCScorer", "NEREngine", "extract_iocs_from_text",
-        "get_ner_engine", "reset_ner_engine", "NER_ENGINE_AVAILABLE",
-    ), "ner_engine"),
-    ("embedding_pipeline", "EMBEDDING_AVAILABLE", ("load_embedding_model", "unload_embedding_model", "EMBEDDING_AVAILABLE"), "embedding"),
-    ("whisper_engine", "WHISPER_AVAILABLE", (
-        "WhisperEngine", "TranscriptionResult", "TranscriptionSegment",
-        "get_whisper_engine", "transcribe_audio", "is_whisper_available",
+        (
+            "ModelManager",
+            "ModelType",
+            "get_model_manager",
+            "reset_model_manager",
+            "MODEL_MANAGER_AVAILABLE",
+        ),
+        "model_manager",
+    ),
+    (
+        "ner_engine",
+        "NER_ENGINE_AVAILABLE",
+        (
+            "Entity",
+            "IOCScorer",
+            "NEREngine",
+            "extract_iocs_from_text",
+            "get_ner_engine",
+            "reset_ner_engine",
+            "NER_ENGINE_AVAILABLE",
+        ),
+        "ner_engine",
+    ),
+    (
+        "embedding_pipeline",
+        "EMBEDDING_AVAILABLE",
+        ("load_embedding_model", "unload_embedding_model", "EMBEDDING_AVAILABLE"),
+        "embedding",
+    ),
+    (
+        "whisper_engine",
         "WHISPER_AVAILABLE",
-    ), "whisper"),
-    ("absence_mining", "ABSENCE_MINING_AVAILABLE", (
-        "AbsenceMiningEngine", "AbsenceFinding", "AbsenceReport", "AbsenceType",
-        "get_absence_engine", "get_absence_engine_sync", "ABSENCE_MINING_AVAILABLE",
-    ), None),
-    ("gnn_node_mapper", "GNN_AVAILABLE", (
-        "get_node_mapper", "reset_node_mapper", "GNN_AVAILABLE",
-        "NodeMapping", "MappingLRUCache", "EmbeddingReference",
-        "make_kuzu_id", "parse_kuzu_id", "build_one_hot_type",
-        "fetch_node_embeddings", "normalize_ioc_type",
-        "GNN_IOC_TYPES", "NUM_GNN_IOC_TYPES",
-    ), None),
-    ("ane_gnn", "ANE_GNN_AVAILABLE", (
-        "ANEGNNEngine", "GraphSAGEModel", "HybridLinkPredictor",
-        "GNNConfig", "GNNBatchResult", "LinkPredictionResult",
-        "get_ane_gnn_engine", "get_hybrid_predictor",
-        "export_graphsage_to_coreml", "ANE_GNN_AVAILABLE",
-        "GNN_FEATURE_DIM", "GNN_ACTIVATION_THRESHOLD",
-    ), None),
+        (
+            "WhisperEngine",
+            "TranscriptionResult",
+            "TranscriptionSegment",
+            "get_whisper_engine",
+            "transcribe_audio",
+            "is_whisper_available",
+            "WHISPER_AVAILABLE",
+        ),
+        "whisper",
+    ),
+    (
+        "absence_mining",
+        "ABSENCE_MINING_AVAILABLE",
+        (
+            "AbsenceMiningEngine",
+            "AbsenceFinding",
+            "AbsenceReport",
+            "AbsenceType",
+            "get_absence_engine",
+            "get_absence_engine_sync",
+            "ABSENCE_MINING_AVAILABLE",
+        ),
+        None,
+    ),
+    (
+        "gnn_node_mapper",
+        "GNN_AVAILABLE",
+        (
+            "get_node_mapper",
+            "reset_node_mapper",
+            "GNN_AVAILABLE",
+            "NodeMapping",
+            "MappingLRUCache",
+            "EmbeddingReference",
+            "make_kuzu_id",
+            "parse_kuzu_id",
+            "build_one_hot_type",
+            "fetch_node_embeddings",
+            "normalize_ioc_type",
+            "GNN_IOC_TYPES",
+            "NUM_GNN_IOC_TYPES",
+        ),
+        None,
+    ),
+    (
+        "ane_gnn",
+        "ANE_GNN_AVAILABLE",
+        (
+            "ANEGNNEngine",
+            "GraphSAGEModel",
+            "HybridLinkPredictor",
+            "GNNConfig",
+            "GNNBatchResult",
+            "LinkPredictionResult",
+            "get_ane_gnn_engine",
+            "get_hybrid_predictor",
+            "export_graphsage_to_coreml",
+            "ANE_GNN_AVAILABLE",
+            "GNN_FEATURE_DIM",
+            "GNN_ACTIVATION_THRESHOLD",
+        ),
+        None,
+    ),
 )
 
 
@@ -379,6 +494,7 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
     if module_spec == "__lora_special__":
         try:
             import mlx_lm  # noqa: F401
+
             # Probe mlx_lm.lora without triggering type-checker "submodule not imported" warning
             _loader = getattr(mlx_lm, "lora", None)
             if _loader is not None:
@@ -397,6 +513,7 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
             if module_spec == "model_engine":
                 from . import model_engine as _me
                 from . import modernbert_adapter as _ma
+
                 g["MODEL_ENGINE_AVAILABLE"] = True
                 AVAILABLE_BRAIN_ENGINES[brain_key] = True
                 g["ModelEngine"] = _me.ModelEngine
@@ -406,6 +523,7 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
                 return g.get(name)
             if brain_key == "model_manager":
                 from . import model_manager as _mm
+
                 g["MODEL_MANAGER_AVAILABLE"] = getattr(_mm, "MODEL_MANAGER_AVAILABLE", True)
                 g["ModelManager"] = _mm.ModelManager
                 g["ModelType"] = _mm.ModelType
@@ -413,16 +531,28 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
                 g["reset_model_manager"] = _mm.reset_model_manager
                 AVAILABLE_BRAIN_ENGINES[brain_key] = True
                 # MODERN-36: Track loaded module for cleanup
-                _track_engine_load(module_spec, ("ModelManager", "ModelType", "get_model_manager", "reset_model_manager"))
+                _track_engine_load(
+                    module_spec, ("ModelManager", "ModelType", "get_model_manager", "reset_model_manager")
+                )
                 return g.get(name)
             if module_spec == "research_hypothesis_engine":
                 from .research_hypothesis_engine import (
-                    AdversarialReport, AdversarialVerifier, Contradiction,
-                    FalsificationResult, Hypothesis, HypothesisEngine,
-                    HypothesisStatus, HypothesisType, SourceCredibility,
-                    TestDesign, TestResult, TestType, create_hypothesis_engine,
-    )
+                    AdversarialReport,
+                    AdversarialVerifier,
+                    Contradiction,
+                    FalsificationResult,
+                    Hypothesis,
+                    HypothesisEngine,
+                    HypothesisStatus,
+                    HypothesisType,
+                    SourceCredibility,
+                    TestDesign,
+                    TestResult,
+                    TestType,
+                    create_hypothesis_engine,
+                )
                 from .research_hypothesis_engine import Evidence as HypothesisEvidence
+
                 g["AdversarialReport"] = AdversarialReport
                 g["AdversarialVerifier"] = AdversarialVerifier
                 g["FalsificationResult"] = FalsificationResult
@@ -440,15 +570,29 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
                 g["HYPOTHESIS_AVAILABLE"] = True
                 AVAILABLE_BRAIN_ENGINES[brain_key] = True
                 # MODERN-36: Track loaded module for cleanup
-                _track_engine_load(module_spec, (
-                    "AdversarialReport", "AdversarialVerifier", "FalsificationResult",
-                    "Hypothesis", "HypothesisEngine", "HypothesisStatus", "HypothesisType",
-                    "SourceCredibility", "TestDesign", "TestResult", "TestType",
-                    "create_hypothesis_engine", "HypothesisEvidence", "_HE_Contradiction"
-                ))
+                _track_engine_load(
+                    module_spec,
+                    (
+                        "AdversarialReport",
+                        "AdversarialVerifier",
+                        "FalsificationResult",
+                        "Hypothesis",
+                        "HypothesisEngine",
+                        "HypothesisStatus",
+                        "HypothesisType",
+                        "SourceCredibility",
+                        "TestDesign",
+                        "TestResult",
+                        "TestType",
+                        "create_hypothesis_engine",
+                        "HypothesisEvidence",
+                        "_HE_Contradiction",
+                    ),
+                )
                 return g.get(name)
             # Generic single-module import
             import importlib
+
             mod = importlib.import_module(f".{module_spec}", __package__)
             flag = f"{module_spec.upper()}_AVAILABLE"
             g[flag] = True
@@ -464,6 +608,7 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
         else:
             # No brain_key (MLXBatchedExecutor etc.)
             import importlib
+
             mod = importlib.import_module(f".{module_spec}", __package__)
             for sym in exported:
                 if hasattr(mod, sym):
@@ -479,32 +624,28 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
         return g.get(name)
 
 
-# ─── PEP 562 Lazy Imports via __getattr__ ─────────────────────────────────────
-# ISSUE-005 FIX: Now uses brain._registry for engines with circular dependencies.
-# New flow:
-#   1. Try lightweight special cases first (BrainCoordinator, LLMEngine, ANE)
-#   2. Try brain._registry.lazy_getattr for registered engines
-#   3. Fall back to legacy _load_engine for backward compatibility
-#
-# Cold import cost: ~150ms (enum + flag defs + registry imports only)
 def __getattr__(name: str) -> object:
     # ISSUE-005 FIX: DeepHermes3Engine - lazy load to prevent circular imports
     if name in ("DeepHermes3Engine", "parse_thinking_output"):
         from . import deephermes3_engine
+
         return getattr(deephermes3_engine, name)
 
     # ARCH-SRP-001: BrainCoordinator — composition layer (lightweight, no heavy deps)
     if name == "BrainCoordinator":
         from .brain_coordinator import BrainCoordinator
+
         return BrainCoordinator
     # ARCH-SRP-001: LLMEngine Protocol — inference contract
     if name == "LLMEngine":
         from ._inference import LLMEngine
+
         return LLMEngine
     # SILICON-06: ANE availability probe — lightweight, no heavy imports
     if name == "ANE_AVAILABLE":
         try:
             from .ane_inference import is_ane_available
+
             g = globals()
             g["ANE_AVAILABLE"] = is_ane_available()
             return g["ANE_AVAILABLE"]
@@ -515,7 +656,7 @@ def __getattr__(name: str) -> object:
     # ISSUE-005 FIX: Try registry first for engines with complex dependencies
     try:
         return _registry_lazy_getattr(name)
-    except (AttributeError, KeyError):
+    except AttributeError, KeyError:
         pass
 
     # Legacy fallback: iterate through _ENGINE_REGISTRY
@@ -524,11 +665,8 @@ def __getattr__(name: str) -> object:
             return _load_engine(name, module_spec, exported, brain_key)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-# ─── Capability Catalog ──────────────────────────────────────────────────────
-# Explicit catalog of brain engine availability. Callers should use
-# is_brain_engine_available("insight") rather than checking _AVAILABLE directly.
+
 AVAILABLE_BRAIN_ENGINES = {
-    # Phase 2: Modular Brain Components (None = not yet probed via __getattr__)
     "metal": None,
     "cache": None,
     "batch": None,
@@ -595,10 +733,10 @@ def get_available_brain_engines() -> dict[str, bool]:
     """Return the full capability catalog as a dict (None → False)."""
     return {k: bool(v) for k, v in AVAILABLE_BRAIN_ENGINES.items()}
 
+
 __all__ = [
     "DeepHermes3Engine",
     "parse_thinking_output",
-    # Phase 2: Modular Brain Components (extracted from DeepHermes3Engine)
     "METAL_AVAILABLE",
     "CACHE_AVAILABLE",
     "BATCH_AVAILABLE",

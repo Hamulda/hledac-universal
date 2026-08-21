@@ -12,18 +12,18 @@ Communication protocol:
     - Write JSON response to stdout: {"success": True, "results": [...]}
     - Or on error: {"success": False, "error": "message"}
 """
+
 from __future__ import annotations
 
 import asyncio
-import orjson as json
 import os
 import sys
-from _core import aclose
+
+import orjson as json
 
 
 async def main() -> None:
     """Main worker loop — load model once, process many requests."""
-    # Parse model name from args
     model_name = "knowledgator/gliner-relex-large-v0.5"
     args = sys.argv[1:]
     for i, arg in enumerate(args):
@@ -36,13 +36,11 @@ async def main() -> None:
     # Notify parent that we're ready
     print("READY", flush=True)
 
-    # Load model once
     gliner_model = None
     load_error: str | None = None
 
     try:
         from gliner import GLiNER
-        import torch
 
         gliner_model = GLiNER.from_pretrained(model_name, load_tokenizer=True)
         gliner_model.eval()
@@ -54,7 +52,6 @@ async def main() -> None:
         # Still notify ready even on error - let parent decide how to handle
         print(f"LOAD_ERROR:{load_error}", flush=True)
 
-    # Process requests from stdin
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -71,10 +68,7 @@ async def main() -> None:
         threshold = request.get("threshold", 0.5)
 
         if gliner_model is None:
-            print(json.dumps({
-                "success": False,
-                "error": load_error or "Model not loaded"
-            }), flush=True)
+            print(json.dumps({"success": False, "error": load_error or "Model not loaded"}), flush=True)
             continue
 
         try:
@@ -84,15 +78,17 @@ async def main() -> None:
             batch_results: list[list[dict]] = gliner_model.predict_entities(texts, labels, threshold=threshold)
             results: list[list[dict]] = []
             for ent_list in batch_results:
-                results.append([
-                    {
-                        "entity": e.get("text", ""),
-                        "label": e.get("label", ""),
-                        "span": (e.get("start", 0), e.get("end", 0)),
-                        "score": e.get("score", 0.0),
-                    }
-                    for e in ent_list
-                ])
+                results.append(
+                    [
+                        {
+                            "entity": e.get("text", ""),
+                            "label": e.get("label", ""),
+                            "span": (e.get("start", 0), e.get("end", 0)),
+                            "score": e.get("score", 0.0),
+                        }
+                        for e in ent_list
+                    ]
+                )
 
             print(json.dumps({"success": True, "results": results}), flush=True)
 

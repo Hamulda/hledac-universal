@@ -11,12 +11,11 @@ anywhere in the sprint is marked as "seen" everywhere.
 
 Acceptance: 0 duplicates in 10k URL batch.
 """
+
 from __future__ import annotations
 
-import asyncio
 import gc
 import os
-import sys
 
 import pytest
 
@@ -107,9 +106,7 @@ class TestDedupSharedSingleton:
                 f"Filter may be undersized for the dataset."
             )
 
-        assert deduped_count == unique_count, (
-            f"Expected {unique_count} unique URLs, got {deduped_count}"
-        )
+        assert deduped_count == unique_count, f"Expected {unique_count} unique URLs, got {deduped_count}"
 
     def test_shared_filter_between_adapters(self) -> None:
         """Simulate DDG adapter + live_pipeline sharing the same filter.
@@ -153,9 +150,7 @@ class TestDedupSharedSingleton:
 
         reset_default_bloom_filter()
         f2 = get_default_bloom_filter()
-        assert "https://already-seen.com" not in f2, (
-            "After reset, new filter must be empty"
-        )
+        assert "https://already-seen.com" not in f2, "After reset, new filter must be empty"
 
     def test_filter_interface_add_contains(self) -> None:
         """Filter must satisfy DeduplicationStrategy protocol."""
@@ -192,12 +187,8 @@ class TestDedupSharedWithHomeChange:
             os.environ["HOME"] = original_home + "/different-path"
             f2 = get_default_bloom_filter()
 
-            assert f1 is not f2, (
-                "HOME change must invalidate cached singleton"
-            )
-            assert "https://keep.com" not in f2, (
-                "New filter after HOME change must not contain old URLs"
-            )
+            assert f1 is not f2, "HOME change must invalidate cached singleton"
+            assert "https://keep.com" not in f2, "New filter after HOME change must not contain old URLs"
         finally:
             os.environ["HOME"] = original_home
 

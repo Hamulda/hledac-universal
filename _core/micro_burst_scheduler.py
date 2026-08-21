@@ -45,7 +45,6 @@ from typing import Final
 
 from hledac.universal.utils._patterns import module_singleton_creator
 from hledac.universal.utils.logger import get_logger
-from _core._util import aclose
 
 logger = get_logger(__name__)
 
@@ -102,12 +101,12 @@ class MicroBurstScheduler:
     """
 
     __slots__ = (
-        '_phase',
-        '_phase_lock',
-        '_phase_start_mono',
-        '_last_check_mono',
-        '_phase_transitions',
-        '_started',
+        "_phase",
+        "_phase_lock",
+        "_phase_start_mono",
+        "_last_check_mono",
+        "_phase_transitions",
+        "_started",
     )
 
     def __init__(self) -> None:
@@ -141,9 +140,11 @@ class MicroBurstScheduler:
             self._phase_transitions = 0
             self._started = True
         logger.debug(
-            '[PHYSICS-01] MicroBurstScheduler started: GPU=%.0fms IO=%.0fms cycle=%.0fms',
-            _BURST_GPU_MS, _BURST_IO_MS, _BURST_CYCLE_MS,
-    )
+            "[PHYSICS-01] MicroBurstScheduler started: GPU=%.0fms IO=%.0fms cycle=%.0fms",
+            _BURST_GPU_MS,
+            _BURST_IO_MS,
+            _BURST_CYCLE_MS,
+        )
 
     def get_phase(self) -> BurstPhase:
         """
@@ -197,9 +198,11 @@ class MicroBurstScheduler:
 
         _elapsed = (now_mono - self._phase_start_mono) * 1000.0 if False else 0.0  # unused
         logger.debug(
-            '[PHYSICS-01] Phase: %s → %s (transition #%d)',
-            old_phase.name, new_phase.name, self._phase_transitions,
-    )
+            "[PHYSICS-01] Phase: %s → %s (transition #%d)",
+            old_phase.name,
+            new_phase.name,
+            self._phase_transitions,
+        )
 
     def reset(self) -> None:
         """Reset to initial state (for testing or sprint re-initialisation)."""
@@ -259,13 +262,13 @@ async def yield_io_window() -> None:
 
 
 __all__ = [
-    'BurstPhase',
-    'MicroBurstScheduler',
-    'get_scheduler',
-    'get_burst_phase',
-    'step_burst_phase',
-    'yield_io_window',
-    '_BURST_GPU_MS',
-    '_BURST_IO_MS',
-    '_BURST_CYCLE_MS',
+    "BurstPhase",
+    "MicroBurstScheduler",
+    "get_scheduler",
+    "get_burst_phase",
+    "step_burst_phase",
+    "yield_io_window",
+    "_BURST_GPU_MS",
+    "_BURST_IO_MS",
+    "_BURST_CYCLE_MS",
 ]

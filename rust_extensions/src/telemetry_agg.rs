@@ -24,8 +24,6 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use parking_lot::Mutex;
 use pyo3::prelude::*;
 
-// ============== Atomic Counter ==============
-
 pub struct AtomicCounter {
     count: AtomicU64,
     bytes: AtomicU64,
@@ -72,8 +70,6 @@ impl Default for AtomicCounter {
         Self::new()
     }
 }
-
-// ============== HDR Histogram ==============
 
 pub struct Histogram {
     counts: Vec<AtomicU64>,
@@ -267,8 +263,6 @@ pub struct ExtendedHistogramStats {
     pub p999_ns: u64,
 }
 
-// ============== Gauge ==============
-
 /// Volatile gauge using parking_lot::Mutex<f64> for memory/CPU metrics.
 /// 
 /// SAFE-1 FIX: Replaced std::sync::Mutex with parking_lot::Mutex.
@@ -305,8 +299,6 @@ impl Default for Gauge {
         Self::new(0.0)
     }
 }
-
-// ============== Telemetry Aggregator ==============
 
 #[derive(Clone, Debug)]
 pub enum TelemetryEvent {
@@ -496,8 +488,6 @@ pub struct TelemetryExport {
     /// Export timestamp in milliseconds since epoch
     pub timestamp_ms: u64,
 }
-
-// ============== Python Bindings ==============
 
 // ISSUE-064: #[pyclass(unsendable)] is REQUIRED here because:
 //   1. TelemetryAggregator holds a crossbeam Sender<TelemetryEvent> — Senders

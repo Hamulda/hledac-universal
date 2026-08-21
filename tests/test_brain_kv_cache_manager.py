@@ -11,7 +11,6 @@ M1 8GB invariant: Bounded pool sizes (4/8/64 items).
 from __future__ import annotations
 
 import pytest
-from _core import aclose
 
 
 class TestKVCacheStats:
@@ -62,7 +61,7 @@ class TestKVCacheManagerInit:
             kv_pool_maxsize=8,
             session_cache_maxsize=16,
             prefix_cache_maxsize=128,
-    )
+        )
         assert manager.kv_pool_maxsize == 8
         assert manager.session_cache_maxsize == 16
         assert manager.prefix_cache_maxsize == 128
@@ -146,8 +145,7 @@ class TestKVCacheManagerStats:
 
     def test_get_stats_returns_kv_cache_stats(self) -> None:
         """Test get_stats returns KVCacheStats object."""
-        from brain._cache.kv_cache_manager import KVCacheManager
-        from brain._cache.kv_cache_manager import KVCacheStats
+        from brain._cache.kv_cache_manager import KVCacheManager, KVCacheStats
 
         manager = KVCacheManager()
         stats = manager.get_stats()
@@ -193,7 +191,7 @@ class TestKVCacheManagerSingleton:
 
     def test_singleton_returns_same_instance(self) -> None:
         """Test get_kv_cache_manager returns same instance."""
-        from brain._cache.kv_cache_manager import get_kv_cache_manager, KVCacheManager
+        from brain._cache.kv_cache_manager import KVCacheManager, get_kv_cache_manager
 
         manager1 = get_kv_cache_manager()
         manager2 = get_kv_cache_manager()

@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from _core._util import aclose
 
 
-def get_domain(ext: object | None = None) -> "AsyncQueryDomain | PythonFallbackAsyncQueryDomain":
+def get_domain(ext: object | None = None) -> AsyncQueryDomain | PythonFallbackAsyncQueryDomain:
     """Return Rust AsyncQueryDomain if rust_async_query is available, else PythonFallback.
 
     Args:
@@ -53,9 +52,7 @@ class AsyncQueryDomain:
         """
         return self._ext.rust_async_query(sql)
 
-    def query_with_params(
-        self, sql: str, params: list[Any]
-    ) -> list[list[str]]:
+    def query_with_params(self, sql: str, params: list[Any]) -> list[list[str]]:
         """Execute a parameterized SQL query.
 
         Args:
@@ -93,9 +90,7 @@ class AsyncQueryDomain:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.query, sql)
 
-    async def query_batch_async(
-        self, sqls: list[str]
-    ) -> list[list[list[str]]]:
+    async def query_batch_async(self, sqls: list[str]) -> list[list[list[str]]]:
         """Async wrapper — runs rust_async_query_batch in a thread pool.
 
         Args:
@@ -107,10 +102,6 @@ class AsyncQueryDomain:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.query_batch, sqls)
 
-
-# ---------------------------------------------------------------------------
-# Python fallback — duckdb stdlib connections
-# ---------------------------------------------------------------------------
 
 class PythonFallbackAsyncQueryDomain:
     """Pure-Python fallback using duckdb directly."""
@@ -126,9 +117,7 @@ class PythonFallbackAsyncQueryDomain:
         result = self._conn.execute(sql).fetchall()
         return [[str(c) for c in row] for row in result]
 
-    def query_with_params(
-        self, sql: str, params: list[Any]
-    ) -> list[list[str]]:
+    def query_with_params(self, sql: str, params: list[Any]) -> list[list[str]]:
         result = self._conn.execute(sql, params).fetchall()
         return [[str(c) for c in row] for row in result]
 

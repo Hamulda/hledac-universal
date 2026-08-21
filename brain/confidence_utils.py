@@ -24,13 +24,11 @@ Usage:
     decayed_conf = bb.belief_with_decay(decay_lambda=0.01)
 """
 
-
 import math
 import time
 import uuid
 
 from hledac.universal.brain.jtms import BetaEvidenceRecord
-from _core import aclose
 
 
 class BetaBinomial:
@@ -47,9 +45,9 @@ class BetaBinomial:
     decays exponentially over time.
     """
 
-    __slots__ = ('alpha', 'beta', '_evidence_log', '_source_index')
+    __slots__ = ("alpha", "beta", "_evidence_log", "_source_index")
 
-    def __init__(self, alpha: float = 1.0, beta: float = 1.0):
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0) -> None:
         self.alpha = alpha
         self.beta = beta
         # Evidence log for retraction and temporal decay
@@ -71,16 +69,14 @@ class BetaBinomial:
         if source_id is None:
             source_id = "anonymous"
 
-        # Log evidence
         record = BetaEvidenceRecord(
             evidence_id=evidence_id,
             weight=weight,
             source_id=source_id,
             timestamp=time.time(),
-    )
+        )
         self._evidence_log.append(record)
 
-        # Update source index
         if source_id not in self._source_index:
             self._source_index[source_id] = []
         self._source_index[source_id].append(evidence_id)
@@ -110,10 +106,9 @@ class BetaBinomial:
             weight=-weight,  # Negative = contradicting
             source_id=source_id,
             timestamp=time.time(),
-    )
+        )
         self._evidence_log.append(record)
 
-        # Update source index
         if source_id not in self._source_index:
             self._source_index[source_id] = []
         self._source_index[source_id].append(evidence_id)
@@ -157,7 +152,7 @@ class BetaBinomial:
 
         # Recompute alpha/beta with decay
         decayed_alpha = 1.0  # Prior
-        decayed_beta = 1.0   # Prior
+        decayed_beta = 1.0  # Prior
 
         for evidence in self._evidence_log:
             delta_hours = (current_time - evidence.timestamp) / 3600.0
@@ -194,7 +189,6 @@ class BetaBinomial:
         evidence_ids = self._source_index[source_id].copy()
         retracted_count = 0
 
-        # Remove all evidence from this source
         for evidence_id in evidence_ids:
             for idx, ev in enumerate(self._evidence_log):
                 if ev.evidence_id == evidence_id:
@@ -207,7 +201,6 @@ class BetaBinomial:
                     retracted_count += 1
                     break
 
-        # Clean up source index
         if source_id in self._source_index:
             del self._source_index[source_id]
 
@@ -237,10 +230,8 @@ class BetaBinomial:
         if evidence_idx is None:
             return False
 
-        # Remove from log
         evidence = self._evidence_log.pop(evidence_idx)
 
-        # Remove from source index
         if evidence.source_id in self._source_index:
             try:
                 self._source_index[evidence.source_id].remove(evidence_id)
@@ -273,14 +264,14 @@ class BetaBinomial:
     def to_dict(self) -> dict:
         """Serialize state including evidence log for retraction."""
         return {
-            'alpha': self.alpha,
-            'beta': self.beta,
-            'evidence_log': [
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "evidence_log": [
                 {
-                    'evidence_id': ev.evidence_id,
-                    'weight': ev.weight,
-                    'source_id': ev.source_id,
-                    'timestamp': ev.timestamp,
+                    "evidence_id": ev.evidence_id,
+                    "weight": ev.weight,
+                    "source_id": ev.source_id,
+                    "timestamp": ev.timestamp,
                 }
                 for ev in self._evidence_log
             ],
@@ -289,17 +280,17 @@ class BetaBinomial:
     @classmethod
     def from_dict(cls, d: dict) -> BetaBinomial:
         """Restore from dict including evidence log for retraction."""
-        bb = cls(alpha=d.get('alpha', 1.0), beta=d.get('beta', 1.0))
+        bb = cls(alpha=d.get("alpha", 1.0), beta=d.get("beta", 1.0))
 
         # Restore evidence log
-        evidence_log_data = d.get('evidence_log', [])
+        evidence_log_data = d.get("evidence_log", [])
         for ev_data in evidence_log_data:
             record = BetaEvidenceRecord(
-                evidence_id=ev_data['evidence_id'],
-                weight=ev_data['weight'],
-                source_id=ev_data['source_id'],
-                timestamp=ev_data['timestamp'],
-    )
+                evidence_id=ev_data["evidence_id"],
+                weight=ev_data["weight"],
+                source_id=ev_data["source_id"],
+                timestamp=ev_data["timestamp"],
+            )
             bb._evidence_log.append(record)
             if record.source_id not in bb._source_index:
                 bb._source_index[record.source_id] = []

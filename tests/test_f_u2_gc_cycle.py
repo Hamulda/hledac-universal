@@ -14,12 +14,11 @@ snapshot. Validates:
   - gc_cycle_maintain does not raise on any state.
 """
 
-
 import gc
 import sys
+from typing import Never
 
 import pytest
-from _core import aclose
 
 
 class TestGcCycleMaintain:
@@ -55,7 +54,7 @@ class TestGcCycleMaintain:
     def test_cooldown_skips_refreeze(self) -> None:
         from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
-    )
+        )
 
         if not hasattr(gc, "freeze"):
             pytest.skip("gc.freeze not available on this Python build")
@@ -93,7 +92,7 @@ class TestGcCycleMaintain:
         from hledac.universal._core.memory_cycle import (  # type: ignore[import-not-found]
             gc_cycle_maintain,
             get_stats,
-    )
+        )
 
         if not hasattr(gc, "freeze"):
             pytest.skip("gc.freeze not available on this Python build")
@@ -118,7 +117,7 @@ class TestGcCycleMaintain:
     def test_does_not_raise_on_get_stats_failure(self, monkeypatch) -> None:
         from hledac.universal._core import memory_cycle  # type: ignore[import-not-found]
 
-        def _boom():
+        def _boom() -> Never:
             raise RuntimeError("simulated")
 
         monkeypatch.setattr(gc, "get_stats", _boom)

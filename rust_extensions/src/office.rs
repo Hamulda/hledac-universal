@@ -70,7 +70,6 @@ pub fn extract_text(path: &str, format: &str) -> PyResult<String> {
     let path = Path::new(path);
     let fmt = parse_format(format)?;
 
-    // Check file size before loading
     let metadata = std::fs::metadata(path).map_err(|e| {
         pyo3::exceptions::PyIOError::new_err(format!("Failed to read file metadata: {e}"))
     })?;
@@ -155,10 +154,6 @@ pub fn extract_iocs_from_bytes(data: &[u8], format: &str) -> PyResult<Vec<(Strin
     let text = extract_text_from_bytes(data, format)?;
     Ok(crate::ioc_extract_fast::extract_iocs_from_text(&text))
 }
-
-// ---------------------------------------------------------------------------
-// Office metadata extraction via ZIP + XML
-// ---------------------------------------------------------------------------
 
 /// Office document metadata returned by extract_metadata functions.
 #[pyclass]
@@ -393,10 +388,6 @@ pub fn extract_metadata_from_bytes(data: &[u8], format: &str) -> PyResult<Office
     Ok(extract_office_metadata_from_zip(data, fmt))
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
 /// Parse format string to OfficeFormat enum.
 fn parse_format(format: &str) -> PyResult<OfficeFormat> {
     OfficeFormat::from_py_str(format).ok_or_else(|| {
@@ -406,10 +397,6 @@ fn parse_format(format: &str) -> PyResult<OfficeFormat> {
         ))
     })
 }
-
-// ---------------------------------------------------------------------------
-// DOCX extraction via docx-rs
-// ---------------------------------------------------------------------------
 
 fn extract_docx(path: &Path) -> PyResult<String> {
     let data = std::fs::read(path)
@@ -520,10 +507,6 @@ fn extract_text_from_docx_doc(doc: &docx_rs::Document) -> String {
 
     text.trim().to_string()
 }
-
-// ---------------------------------------------------------------------------
-// XLSX/PPTX extraction via calamine
-// ---------------------------------------------------------------------------
 
 fn extract_xlsx(path: &Path) -> PyResult<String> {
     let data = std::fs::read(path)

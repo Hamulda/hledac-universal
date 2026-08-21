@@ -11,29 +11,21 @@ MODERNIZATION (Issue #18):
   - Concurrency helpers (_base_concurrency, _lane_concurrency) isolated here
 """
 
-
 import re
 from typing import Any
 
 from hledac.universal.runtime.acquisition.budget import FeedDominanceBudget
-from hledac.universal.runtime.acquisition.domain_expansion import _get_keyword_domain_expansion
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane
-from hledac.universal.runtime.acquisition.lane_plan import AcquisitionContext
 from hledac.universal.runtime.acquisition.nonfeed_eligibility import (
-    _build_nonfeed_lane_eligibility,
-    _has_crypto_hash,
     _has_crypto_indicator,
-    _has_crypto_wallet,
     _has_domain_or_ip,
     _has_threat_indicator,
     _has_url,
 )
-from hledac.universal.runtime.acquisition.mission import infer_mission_intent
 from hledac.universal.runtime.acquisition.nonfeed_outcomes import (
     AcquisitionStrategySnapshot,
 )
 from hledac.universal.utils._patterns import normalize_source_family_name
-
 
 # Stable canonical schema version for acquisition report (F208C)
 ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
@@ -49,9 +41,7 @@ _DOMAIN_RE = re.compile(
     re.IGNORECASE,
 )
 # Crypto extraction: wallet + generic hash patterns
-_CRYPTO_WALLET_RE = re.compile(
-    r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b"
-)
+_CRYPTO_WALLET_RE = re.compile(r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b")
 _CRYPTO_HASH_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
 # Terminal state priority (module-level constant — avoids dict allocation per call)
 _TERMINAL_STATE_PRIORITY: dict[str, int] = {
@@ -249,7 +239,9 @@ def _build_plan_impl(
     if wayback_enabled:
         enabled_lanes.append(AcquisitionLane.WAYBACK)
     conc = _lane_concurrency(AcquisitionLane.WAYBACK, base, uma_state)
-    lane_plans.append(_make_lane_plan(AcquisitionLane.WAYBACK, wayback_enabled, conc, uma_state, "url_or_domain_or_budget"))
+    lane_plans.append(
+        _make_lane_plan(AcquisitionLane.WAYBACK, wayback_enabled, conc, uma_state, "url_or_domain_or_budget")
+    )
 
     # PASSIVE_DNS — domain/IP indicator
     pdns_enabled = has_domain
@@ -263,7 +255,9 @@ def _build_plan_impl(
     if blockchain_enabled:
         enabled_lanes.append(AcquisitionLane.BLOCKCHAIN)
     conc = _lane_concurrency(AcquisitionLane.BLOCKCHAIN, base, uma_state)
-    lane_plans.append(_make_lane_plan(AcquisitionLane.BLOCKCHAIN, blockchain_enabled, conc, uma_state, "crypto_indicator"))
+    lane_plans.append(
+        _make_lane_plan(AcquisitionLane.BLOCKCHAIN, blockchain_enabled, conc, uma_state, "crypto_indicator")
+    )
 
     return AcquisitionStrategySnapshot(
         query=query,
@@ -292,6 +286,7 @@ def _make_lane_plan(
     """Build a lane plan dict (inline, no circular deps)."""
     # Import here to avoid circular import
     from hledac.universal.runtime.acquisition.nonfeed_outcomes import AcquisitionLanePlan
+
     return AcquisitionLanePlan(
         lane=lane,
         enabled=enabled,
@@ -305,19 +300,21 @@ def _make_lane_plan(
 
 # Shared lane keys for _lane_* helpers (Type-1 exact duplicate extraction)
 _LANE_KEYS: tuple[str, ...] = (
-    "FEED", "PUBLIC", "CT", "WAYBACK", "PASSIVE_DNS", "BLOCKCHAIN", "PIVOT_EXECUTOR",
+    "FEED",
+    "PUBLIC",
+    "CT",
+    "WAYBACK",
+    "PASSIVE_DNS",
+    "BLOCKCHAIN",
+    "PIVOT_EXECUTOR",
 )
 
 # Default values shared across lane parameter lookups
-_LANE_MAX_ITEMS: dict[str, int] = {
-    k: v for k, v in zip(_LANE_KEYS, (500, 200, 100, 50, 100, 50, 100))
-}
-_LANE_TIMEOUTS: dict[str, float] = {
-    k: v for k, v in zip(_LANE_KEYS, (60.0, 120.0, 180.0, 120.0, 60.0, 120.0, 90.0))
-}
-_LANE_RISK: dict[str, str] = {
-    k: v for k, v in zip(_LANE_KEYS, ("low", "medium", "medium", "medium", "low", "high", "low"))
-}
+_LANE_MAX_ITEMS: dict[str, int] = dict(zip(_LANE_KEYS, (500, 200, 100, 50, 100, 50, 100), strict=False))
+_LANE_TIMEOUTS: dict[str, float] = dict(zip(_LANE_KEYS, (60.0, 120.0, 180.0, 120.0, 60.0, 120.0, 90.0), strict=False))
+_LANE_RISK: dict[str, str] = dict(
+    zip(_LANE_KEYS, ("low", "medium", "medium", "medium", "low", "high", "low"), strict=False)
+)
 
 
 def _lane_max_items(lane: str, uma_state: str) -> int:
@@ -436,9 +433,7 @@ def is_lane_enabled(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> bo
     return lane_name in snapshot.enabled_lanes
 
 
-def get_lane_plan(
-    snapshot: AcquisitionStrategySnapshot, lane_name: str
-) -> Any | None:  # AcquisitionLanePlan | None
+def get_lane_plan(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> Any | None:  # AcquisitionLanePlan | None
     """Return the lane plan for a lane, or None."""
     for plan in snapshot.lane_plans:
         if plan.lane == lane_name:
@@ -446,9 +441,7 @@ def get_lane_plan(
     return None
 
 
-def lane_skip_reason(
-    snapshot: AcquisitionStrategySnapshot, lane_name: str
-) -> str | None:
+def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> str | None:
     """Return the skip reason for a lane, or None."""
     plan = get_lane_plan(snapshot, lane_name)
     if plan is None:
@@ -456,7 +449,6 @@ def lane_skip_reason(
     if plan.enabled:
         return None
     return plan.reason
-
 
 
 def _pick_best_terminal(outcomes: list[dict]) -> str:

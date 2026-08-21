@@ -18,20 +18,16 @@ API:
     extract_ndjson_fields(line: bytes, fields: dict[str, str]) -> dict[str, bytes]
         Extract named fields from an NDJSON line using JSON Pointer paths.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Lazy Rust binding load
-# ---------------------------------------------------------------------------
 
 _json_pointer_extract = None
 _json_pointer_extract_multi = None
@@ -45,17 +41,16 @@ def _ensure_rust_bindings() -> None:
     try:
         from hledac.universal.rust_extensions import (
             json_pointer_extract as _jpe,
+        )
+        from hledac.universal.rust_extensions import (
             json_pointer_extract_multi as _jpem,
-    )
+        )
+
         _json_pointer_extract = _jpe
         _json_pointer_extract_multi = _jpem
     except ImportError:  # noqa: BLE001
         pass
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def json_pointer_extract(json_bytes: bytes, pointer: str) -> bytes | None:
     """
@@ -150,7 +145,7 @@ def extract_ndjson_fields(
         try:
             results = _json_pointer_extract_multi(line, pointers)
             result_dict: dict[str, bytes] = {}
-            for key, result_bytes in zip(keys, results):
+            for key, result_bytes in zip(keys, results, strict=False):
                 if result_bytes:  # Only include found fields
                     result_dict[key] = result_bytes
             return result_dict if result_dict else None
@@ -160,6 +155,7 @@ def extract_ndjson_fields(
     # Fallback: orjson full parse
     try:
         import orjson
+
         data = orjson.loads(line)
         if not isinstance(data, dict):
             return None
@@ -184,10 +180,6 @@ def extract_ndjson_fields(
         return None
 
 
-# ---------------------------------------------------------------------------
-# Fallback: orjson + manual JSON Pointer traversal
-# ---------------------------------------------------------------------------
-
 def _fallback_json_pointer_extract(json_bytes: bytes, pointer: str) -> bytes | None:
     """
     Fallback JSON Pointer extraction using orjson + manual traversal.
@@ -196,6 +188,7 @@ def _fallback_json_pointer_extract(json_bytes: bytes, pointer: str) -> bytes | N
     """
     try:
         import orjson
+
         data = orjson.loads(json_bytes)
         val = _resolve_orjson_pointer(data, pointer)
         if val is None:
@@ -235,7 +228,7 @@ def _resolve_orjson_pointer(data: object, pointer: str) -> object:
             try:
                 idx = int(unescaped)
                 current = current[idx]
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 return None
         else:
             return None

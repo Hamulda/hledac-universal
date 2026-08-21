@@ -14,43 +14,46 @@ Helper path discovery (priority order):
 Fail-soft throughout: any helper failure returns safe defaults.
 Never spawns subprocess at import time.
 """
+
 import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import logging
-import msgspec.json as _json
-import os
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import msgspec.json as _json
+
+from compat.msgspec_gc_compat import Struct
+from utils._patterns import get_secure_enclave_helper_path
+
 # Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
 from .pq_export_encryption import (
-    compute_aad_hash,
     Decryptability,
     ExportEncryptionEnvelope,
     HPKEAvailability,
     HPKEStatus,
     TestOnlyHPKERoundtripMaterial,
+    compute_aad_hash,
 )
-from utils._patterns import get_secure_enclave_helper_path  # noqa: E402,F401
 
 logger = logging.getLogger(__name__)
-HELPER_MISSING = 'HELPER_MISSING'
-HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'
-HELPER_TIMEOUT = 'HELPER_TIMEOUT'
-HELPER_BAD_JSON = 'HELPER_BAD_JSON'
-HELPER_NONZERO_EXIT = 'HELPER_NONZERO_EXIT'
+HELPER_MISSING = "HELPER_MISSING"
+HELPER_NOT_EXECUTABLE = "HELPER_NOT_EXECUTABLE"
+HELPER_TIMEOUT = "HELPER_TIMEOUT"
+HELPER_BAD_JSON = "HELPER_BAD_JSON"
+HELPER_NONZERO_EXIT = "HELPER_NONZERO_EXIT"
 _STATUS_CACHE_TTL_SECONDS = 30.0
+
 
 def _get_helper_path() -> Path | None:
     """Internal alias for get_secure_enclave_helper_path()."""
     return get_secure_enclave_helper_path()
 
-def _run_helper_sync(command: list[str], timeout: float=10.0) -> dict[str, Any] | None:
+
+def _run_helper_sync(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
     """
     Run the secure-enclave-helper synchronously and return parsed JSON.
     Returns None on any failure (timeout, non-zero exit, bad JSON).
@@ -61,24 +64,28 @@ def _run_helper_sync(command: list[str], timeout: float=10.0) -> dict[str, Any] 
     try:
         result = subprocess.run([str(helper_path)] + command, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
-            logger.debug(f'Helper exited {result.returncode}: {result.stderr}')
+            logger.debug(f"Helper exited {result.returncode}: {result.stderr}")
             return None
         return _json.decode(result.stdout)
     except Exception as e:
-        logger.debug(f'Helper failed: {e}')
+        logger.debug(f"Helper failed: {e}")
         return None
 
-async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str, Any] | None:
+
+async def _run_helper_async(command: list[str], timeout: float = 10.0) -> dict[str, Any] | None:
     """
     Run the secure-enclave-helper asynchronously via asyncio.to_thread.
     Returns None on any failure.
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
+
 class _CachedStatus(Struct):
     """Bounded status cache entry with short TTL."""
+
     status: HPKEStatus
     until: float
+
 
 class HPKEExportBackend(Struct):
     """
@@ -87,13 +94,14 @@ class HPKEExportBackend(Struct):
     Only active on macOS 26+ where HPKE X-Wing is available.
     Falls back gracefully when helper is unavailable or fails.
     """
-    key_id: str = 'com.hledac.pq.export.v1'
+
+    key_id: str = "com.hledac.pq.export.v1"
     _status: HPKEStatus = field(default_factory=lambda: HPKEStatus(availability=HPKEAvailability.UNAVAILABLE))
     _encrypted_count: int = 0
     _decrypted_count: int = 0
     _cache: _CachedStatus | None = None
 
-    def is_available(self, force_refresh: bool=False) -> bool:
+    def is_available(self, force_refresh: bool = False) -> bool:
         """
         Check if the Swift helper is available and HPKE X-Wing is supported.
 
@@ -104,28 +112,49 @@ class HPKEExportBackend(Struct):
             if time.monotonic() < self._cache.until:
                 self._status = self._cache.status
                 return self._status.availability == HPKEAvailability.AVAILABLE
-        result = _run_helper_sync(['hpke-status'])
+        result = _run_helper_sync(["hpke-status"])
         if result is None:
-            self._status = HPKEStatus(availability=HPKEAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='Helper unavailable or HPKE X-Wing not supported')
+            self._status = HPKEStatus(
+                availability=HPKEAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="Helper unavailable or HPKE X-Wing not supported",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        if not result.get('ok', False):
-            self._status = HPKEStatus(availability=HPKEAvailability.UNAVAILABLE, backend_name='swift-helper', error_message=result.get('message', 'HPKE status check failed'))
+        if not result.get("ok", False):
+            self._status = HPKEStatus(
+                availability=HPKEAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message=result.get("message", "HPKE status check failed"),
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        hpke_available = result.get('data', {}).get('available', 'false') == 'true'
-        pq_enabled = result.get('data', {}).get('pq', 'false') == 'true'
+        hpke_available = result.get("data", {}).get("available", "false") == "true"
+        pq_enabled = result.get("data", {}).get("pq", "false") == "true"
         if not hpke_available or not pq_enabled:
-            self._status = HPKEStatus(availability=HPKEAvailability.UNAVAILABLE, backend_name='swift-helper', error_message='HPKE X-Wing not available on this macOS version')
+            self._status = HPKEStatus(
+                availability=HPKEAvailability.UNAVAILABLE,
+                backend_name="swift-helper",
+                error_message="HPKE X-Wing not available on this macOS version",
+            )
             self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
             return False
-        self._status = HPKEStatus(availability=HPKEAvailability.AVAILABLE, backend_name='swift-helper', recipient_key_id=self.key_id)
+        self._status = HPKEStatus(
+            availability=HPKEAvailability.AVAILABLE, backend_name="swift-helper", recipient_key_id=self.key_id
+        )
         self._cache = _CachedStatus(self._status, time.monotonic() + _STATUS_CACHE_TTL_SECONDS)
         return True
 
     def hpke_status(self) -> HPKEStatus:
         """Return current HPKE status snapshot."""
-        return HPKEStatus(availability=self._status.availability, backend_name=self._status.backend_name, error_message=self._status.error_message, recipient_key_id=self._status.recipient_key_id, encrypted_count=self._encrypted_count, decrypted_count=self._decrypted_count)
+        return HPKEStatus(
+            availability=self._status.availability,
+            backend_name=self._status.backend_name,
+            error_message=self._status.error_message,
+            recipient_key_id=self._status.recipient_key_id,
+            encrypted_count=self._encrypted_count,
+            decrypted_count=self._decrypted_count,
+        )
 
     def generate_recipient_key(self, key_id: str) -> tuple[str, str, str] | None:
         """
@@ -138,17 +167,19 @@ class HPKEExportBackend(Struct):
             Tuple of (public_key_b64, key_id, fingerprint) or None on failure.
             The private key is stored in the keychain and referenced by key_id.
         """
-        result = _run_helper_sync(['hpke-generate-recipient-key', '--key-id', key_id])
-        if result is None or not result.get('ok', False):
+        result = _run_helper_sync(["hpke-generate-recipient-key", "--key-id", key_id])
+        if result is None or not result.get("ok", False):
             return None
-        public_key_b64 = result.get('data', {}).get('public_key_b64', '')
-        returned_key_id = result.get('data', {}).get('key_id', key_id)
-        fingerprint = result.get('data', {}).get('fingerprint', '')
+        public_key_b64 = result.get("data", {}).get("public_key_b64", "")
+        returned_key_id = result.get("data", {}).get("key_id", key_id)
+        fingerprint = result.get("data", {}).get("fingerprint", "")
         if not public_key_b64:
             return None
         return (public_key_b64, returned_key_id, fingerprint)
 
-    def encrypt_hpke(self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str='') -> ExportEncryptionEnvelope | None:
+    def encrypt_hpke(
+        self, plaintext: bytes, aad: bytes, recipient_public_key_b64: str, recipient_key_id: str = ""
+    ) -> ExportEncryptionEnvelope | None:
         """
         Encrypt plaintext using HPKE X-Wing via the helper.
 
@@ -163,24 +194,53 @@ class HPKEExportBackend(Struct):
         """
         import base64
         import hashlib
-        result = _run_helper_sync(['hpke-encrypt', '--plaintext-b64', base64.b64encode(plaintext).decode('ascii'), '--aad-b64', base64.b64encode(aad).decode('ascii'), '--recipient-key-b64', recipient_public_key_b64])
-        if result is None or not result.get('ok', False):
+
+        result = _run_helper_sync(
+            [
+                "hpke-encrypt",
+                "--plaintext-b64",
+                base64.b64encode(plaintext).decode("ascii"),
+                "--aad-b64",
+                base64.b64encode(aad).decode("ascii"),
+                "--recipient-key-b64",
+                recipient_public_key_b64,
+            ]
+        )
+        if result is None or not result.get("ok", False):
             return None
-        data = result.get('data', {})
-        encapsulated_key = data.get('encapsulated_key_b64', '')
-        ciphertext = data.get('ciphertext_b64', '')
+        data = result.get("data", {})
+        encapsulated_key = data.get("encapsulated_key_b64", "")
+        ciphertext = data.get("ciphertext_b64", "")
         if not encapsulated_key or not ciphertext:
             return None
         try:
             pubkey_bytes = base64.b64decode(recipient_public_key_b64)
             fingerprint = hashlib.sha256(pubkey_bytes).hexdigest()
         except Exception:
-            fingerprint = ''
-        envelope = ExportEncryptionEnvelope(mode='PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256', encapsulated_key_b64=encapsulated_key, aad_hash=compute_aad_hash(aad), aad_b64=base64.b64encode(aad).decode('ascii'), ciphertext_b64=ciphertext, recipient_public_key_b64=recipient_public_key_b64, recipient_key_id=recipient_key_id, recipient_public_key_fingerprint=fingerprint, decryptability=Decryptability.PERSISTENT_KEYCHAIN if recipient_key_id else Decryptability.UNSUPPORTED, pq=True, created_at=datetime.now(UTC).isoformat(), backend=self.name)
+            fingerprint = ""
+        envelope = ExportEncryptionEnvelope(
+            mode="PQ-HPKE-XWingMLKEM768X25519-SHA256-AES-GCM-256",
+            encapsulated_key_b64=encapsulated_key,
+            aad_hash=compute_aad_hash(aad),
+            aad_b64=base64.b64encode(aad).decode("ascii"),
+            ciphertext_b64=ciphertext,
+            recipient_public_key_b64=recipient_public_key_b64,
+            recipient_key_id=recipient_key_id,
+            recipient_public_key_fingerprint=fingerprint,
+            decryptability=Decryptability.PERSISTENT_KEYCHAIN if recipient_key_id else Decryptability.UNSUPPORTED,
+            pq=True,
+            created_at=datetime.now(UTC).isoformat(),
+            backend=self.name,
+        )
         self._encrypted_count += 1
         return envelope
 
-    def decrypt_hpke(self, envelope: ExportEncryptionEnvelope, plaintext_placeholder: bytes, test_material: TestOnlyHPKERoundtripMaterial | None=None) -> bytes | None:
+    def decrypt_hpke(
+        self,
+        envelope: ExportEncryptionEnvelope,
+        plaintext_placeholder: bytes,
+        test_material: TestOnlyHPKERoundtripMaterial | None = None,
+    ) -> bytes | None:
         """
         Decrypt HPKE-encrypted envelope via the helper.
 
@@ -196,21 +256,30 @@ class HPKEExportBackend(Struct):
             Decrypted bytes or None on failure
         """
         import base64
+
         if test_material is not None:
             private_key_b64 = test_material.private_key_b64
         else:
             private_key_b64 = None
-        cmd = ['hpke-decrypt', '--encapsulated-key-b64', envelope.encapsulated_key_b64, '--ciphertext-b64', envelope.ciphertext_b64, '--aad-b64', envelope.aad_b64]
+        cmd = [
+            "hpke-decrypt",
+            "--encapsulated-key-b64",
+            envelope.encapsulated_key_b64,
+            "--ciphertext-b64",
+            envelope.ciphertext_b64,
+            "--aad-b64",
+            envelope.aad_b64,
+        ]
         if private_key_b64 is not None:
-            cmd.extend(['--recipient-private-key-b64', private_key_b64])
+            cmd.extend(["--recipient-private-key-b64", private_key_b64])
         elif envelope.recipient_key_id:
-            cmd.extend(['--recipient-key-id', envelope.recipient_key_id])
+            cmd.extend(["--recipient-key-id", envelope.recipient_key_id])
         else:
             return None
         result = _run_helper_sync(cmd)
-        if result is None or not result.get('ok', False):
+        if result is None or not result.get("ok", False):
             return None
-        plaintext_b64 = result.get('data', {}).get('plaintext_b64', '')
+        plaintext_b64 = result.get("data", {}).get("plaintext_b64", "")
         if not plaintext_b64:
             return None
         try:
@@ -222,4 +291,4 @@ class HPKEExportBackend(Struct):
 
     @property
     def name(self) -> str:
-        return 'swift-helper-hpke'
+        return "swift-helper-hpke"

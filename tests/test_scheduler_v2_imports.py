@@ -2,10 +2,8 @@
 Smoke test: scheduler_v2 module-level imports are resolvable against the filesystem.
 F350M-R: verifies SprintLifecycleManager import is wired to the correct module.
 """
-from __future__ import annotations
 
-import pytest
-from _core import aclose
+from __future__ import annotations
 
 
 def test_scheduler_v2_basic_import() -> None:

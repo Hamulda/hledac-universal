@@ -13,11 +13,9 @@ Run: pytest tests/test_synthesis_session_no_leak.py -v
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from _core import aclose
 
 
 class TestSynthesisSessionNoLeak:
@@ -36,16 +34,18 @@ class TestSynthesisSessionNoLeak:
         mock_runner.synthesize_findings = AsyncMock(side_effect=RuntimeError("synthesis failed"))
         mock_runner._inference_pipeliner = None
         mock_runner._lifecycle = mock_lifecycle
+
         # close() must actually call self._lifecycle.unload() — wrap as async mock
-        async def mock_close():
+        async def mock_close() -> None:
             await mock_lifecycle.unload()
+
         mock_runner.close = AsyncMock(side_effect=mock_close)
 
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
             lifecycle=mock_lifecycle,
-    )
+        )
         session = SynthesisSession(synth_ctx)
         # Inject pre-created runner to avoid actual MLX initialization
         session._runner = mock_runner
@@ -78,15 +78,17 @@ class TestSynthesisSessionNoLeak:
         mock_lifecycle = MagicMock()
         mock_lifecycle.unload = AsyncMock()
         mock_runner._lifecycle = mock_lifecycle
-        async def mock_close():
+
+        async def mock_close() -> None:
             await mock_lifecycle.unload()
+
         mock_runner.close = AsyncMock(side_effect=mock_close)
 
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
             lifecycle=mock_lifecycle,
-    )
+        )
         session = SynthesisSession(synth_ctx)
         session._runner = mock_runner
         session._inited = True
@@ -104,7 +106,7 @@ class TestSynthesisSessionNoLeak:
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
-    )
+        )
         session = SynthesisSession(synth_ctx)
         # _runner is None — never created due to ImportError
         assert session._runner is None
@@ -143,7 +145,7 @@ class TestSynthesisSessionNoLeak:
         synth_ctx = SynthesisContext(
             query="test query",
             findings=[{"content": "test"}],
-    )
+        )
         session = SynthesisSession(synth_ctx)
         session._runner = mock_runner
         session._inited = True
@@ -165,8 +167,10 @@ class TestSynthesisSessionNoLeak:
         mock_runner.synthesize_findings = AsyncMock(side_effect=MemoryError("OOM"))
         mock_runner._lifecycle = mock_lifecycle
         mock_runner._inference_pipeliner = None
-        async def mock_close():
+
+        async def mock_close() -> None:
             await mock_lifecycle.unload()
+
         mock_runner.close = AsyncMock(side_effect=mock_close)
 
         synth_ctx = SynthesisContext(query="test", findings=[])

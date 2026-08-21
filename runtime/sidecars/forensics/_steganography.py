@@ -18,8 +18,8 @@ NOTE:
   Steganography detection analyzes image files for hidden data using
   statistical analysis, chi-square tests, and LSB manipulation detection.
 """
+
 from hledac.universal.runtime.sidecars._darknet_base import DarknetSidecarAdapter
-from _core import aclose
 
 
 # FIX-5: Inherit from DarknetSidecarAdapter for proper capability handling

@@ -18,13 +18,12 @@ import pytest
 
 from hledac.universal.layers.communication_layer import _BatchItem
 from hledac.universal.tools.source_bandit import SourceBandit
-from _core import aclose
 
 
 class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Batch Aging (anti-starvation)."""
 
-    async def test_starvation_prevention(self):
+    async def test_starvation_prevention(self) -> None:
         """Low VoI waiting >200ms should get priority boost."""
         # Low VoI (0.1) waiting 300ms
         old_item = _BatchItem(
@@ -33,7 +32,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             wait_since=time.time() - 0.3,
             query={"prompt": "low"},
             future=asyncio.Future(),
-    )
+        )
         # High VoI (0.9) just arrived
         new_item = _BatchItem(
             priority=-0.9,
@@ -41,7 +40,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             wait_since=time.time(),
             query={"prompt": "high"},
             future=asyncio.Future(),
-    )
+        )
 
         # Simulate aging
         now = time.time()
@@ -57,7 +56,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
                         wait_since=item.wait_since,
                         query=item.query,
                         future=item.future,
-    )
+                    )
                 )
             else:
                 aged_items.append(item)
@@ -71,7 +70,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
         self.assertGreater(aged_low.priority, -0.1)
         self.assertLess(aged_low.priority, -0.01)
 
-    async def test_aging_no_side_effect(self):
+    async def test_aging_no_side_effect(self) -> None:
         """Tasks waiting <200ms should not have priority changed."""
         now = time.time()
         item1 = _BatchItem(priority=-0.5, timestamp=now, wait_since=now, query={"prompt": "a"}, future=asyncio.Future())
@@ -91,7 +90,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
                         wait_since=item.wait_since,
                         query=item.query,
                         future=item.future,
-    )
+                    )
                 )
             else:
                 aged_items.append(item)
@@ -107,7 +106,7 @@ class TestSprint42A_Aging(unittest.IsolatedAsyncioTestCase):  # noqa: N801
 class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Predictive RSS Monitor (EMA)."""
 
-    async def test_ema_convergence(self):
+    async def test_ema_convergence(self) -> None:
         """EMA with alpha=0.3 should converge to true average within 5% after 5 samples."""
         # Create mock orchestrator
         orch = MagicMock()
@@ -135,7 +134,7 @@ class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):  # noqa: N8
 
         self.assertLess(abs(ema - true_avg), 5.0)
 
-    async def test_predictive_throttle(self):
+    async def test_predictive_throttle(self) -> None:
         """Predictive throttle should activate when derivative >5% and EMA <65%."""
         # Create minimal mock
         orch = MagicMock()
@@ -165,7 +164,7 @@ class TestSprint42B_PredictiveRSS(unittest.IsolatedAsyncioTestCase):  # noqa: N8
 class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for LinUCB Contextual Bandit."""
 
-    def test_linucb_selects_sources(self):
+    def test_linucb_selects_sources(self) -> None:
         """LinUCB should select n sources from list."""
         import tempfile
 
@@ -180,7 +179,7 @@ class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             for s in result:
                 self.assertIn(s, sources)
 
-    def test_linucb_fallback(self):
+    def test_linucb_fallback(self) -> None:
         """LinUCB should fallback to UCB1 when analysis is None."""
         import tempfile
 
@@ -194,7 +193,7 @@ class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             result = bandit.select_with_context(sources, analysis, n=2)
             self.assertEqual(len(result), 2)  # fallback returns sources
 
-    def test_linucb_persistence(self):
+    def test_linucb_persistence(self) -> None:
         """LinUCB arms should persist across instances."""
         import tempfile
         from pathlib import Path
@@ -212,7 +211,7 @@ class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             bandit2 = SourceBandit(lmdb_path=path)
             self.assertIn("arxiv", bandit2._linucb_arms)
 
-    def test_linucb_context_sensitivity(self):
+    def test_linucb_context_sensitivity(self) -> None:
         """Different context should result in different rankings."""
         import tempfile
         from pathlib import Path
@@ -228,7 +227,7 @@ class TestSprint42C_LinUCB(unittest.IsolatedAsyncioTestCase):  # noqa: N801
             for _ in range(20):
                 bandit.update_with_context(
                     "darkweb", 1.0, {"intent": "investigative", "query": "leak", "entities": ["APT"]}
-    )
+                )
 
             # AI context -> should prefer arxiv
             ai_analysis = {"intent": "technical", "query": "AI", "entities": None}

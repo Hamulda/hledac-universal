@@ -9,7 +9,6 @@ Run: pytest tests/test_resource_governor_authority_seal.py -v
 from unittest.mock import MagicMock, patch
 
 import pytest
-from _core import aclose
 
 
 class TestEvaluateBranchConcurrencyConsistency:
@@ -36,47 +35,48 @@ class TestEvaluateBranchConcurrencyConsistency:
     def _assert_branch_concurrency_match(self, gov: M1ResourceGovernor, uma_state: str, expected: int) -> None:
         """Helper: branch_concurrency must match between evaluate() and branch_admission()."""
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
-                import asyncio
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)
+            ):  # noqa: E501
                 decision = session_event_loop.run_until_complete(gov.evaluate())
                 branch = gov.branch_admission()
                 assert decision.branch_concurrency == expected, (
                     f"[{uma_state}] evaluate().branch_concurrency={decision.branch_concurrency} != "
                     f"branch_admission().branch_concurrency={branch.branch_concurrency}"
-    )
+                )
                 assert branch.branch_concurrency == expected
 
     def _assert_model_loaded_branch_concurrency_match(self, gov: M1ResourceGovernor, expected: int) -> None:
         """Helper: branch_concurrency must match when model is loaded."""
         with patch.object(gov, "_get_model_status", return_value={"loaded": True}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
-                import asyncio
-
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")
+            ):  # noqa: E501
                 decision = session_event_loop.run_until_complete(gov.evaluate())
                 branch = gov.branch_admission()
                 assert decision.branch_concurrency == expected, (
                     f"[model_loaded] evaluate().branch_concurrency={decision.branch_concurrency} != "
                     f"branch_admission().branch_concurrency={branch.branch_concurrency}"
-    )
+                )
                 assert branch.branch_concurrency == expected
 
-    def test_branch_concurrency_ok(self, governor):
+    def test_branch_concurrency_ok(self, governor) -> None:
         """branch_concurrency is 4 in normal (ok) state."""
         self._assert_branch_concurrency_match(governor, "ok", 4)
 
-    def test_branch_concurrency_warn(self, governor):
+    def test_branch_concurrency_warn(self, governor) -> None:
         """branch_concurrency is 3 in warn state."""
         self._assert_branch_concurrency_match(governor, "warn", 3)
 
-    def test_branch_concurrency_critical(self, governor):
+    def test_branch_concurrency_critical(self, governor) -> None:
         """branch_concurrency is 1 in critical state."""
         self._assert_branch_concurrency_match(governor, "critical", 1)
 
-    def test_branch_concurrency_emergency(self, governor):
+    def test_branch_concurrency_emergency(self, governor) -> None:
         """branch_concurrency is 1 in emergency state."""
         self._assert_branch_concurrency_match(governor, "emergency", 1)
 
-    def test_branch_concurrency_model_loaded(self, governor):
+    def test_branch_concurrency_model_loaded(self, governor) -> None:
         """branch_concurrency is 2 when model is loaded."""
         self._assert_model_loaded_branch_concurrency_match(governor, 2)
 
@@ -103,40 +103,40 @@ class TestRendererAdmissionConsistency:
 
     def _assert_renderer_consistency(self, gov: M1ResourceGovernor, uma_state: str, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
-                import asyncio
-
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)
+            ):  # noqa: E501
                 decision = session_event_loop.run_until_complete(gov.evaluate())
                 renderer = gov.renderer_admission()
                 assert decision.allow_renderer == expected, (
                     f"[{uma_state}] evaluate().allow_renderer={decision.allow_renderer} != "
                     f"renderer_admission().allowed={renderer.allowed}"
-    )
+                )
                 assert renderer.allowed == expected
 
     def _assert_renderer_model_loaded(self, gov: M1ResourceGovernor, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": True}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
-                import asyncio
-
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")
+            ):  # noqa: E501
                 decision = session_event_loop.run_until_complete(gov.evaluate())
                 renderer = gov.renderer_admission()
                 assert decision.allow_renderer == expected
                 assert renderer.allowed == expected
 
-    def test_renderer_allowed_ok(self, governor):
+    def test_renderer_allowed_ok(self, governor) -> None:
         """Renderer allowed in normal (ok) state."""
         self._assert_renderer_consistency(governor, "ok", True)
 
-    def test_renderer_denied_critical(self, governor):
+    def test_renderer_denied_critical(self, governor) -> None:
         """Renderer denied in critical state."""
         self._assert_renderer_consistency(governor, "critical", False)
 
-    def test_renderer_denied_emergency(self, governor):
+    def test_renderer_denied_emergency(self, governor) -> None:
         """Renderer denied in emergency state."""
         self._assert_renderer_consistency(governor, "emergency", False)
 
-    def test_renderer_denied_model_loaded(self, governor):
+    def test_renderer_denied_model_loaded(self, governor) -> None:
         """Renderer denied when model is loaded."""
         self._assert_renderer_model_loaded(governor, False)
 
@@ -163,26 +163,26 @@ class TestModelAdmissionConsistency:
 
     def _assert_model_load_consistency(self, gov: M1ResourceGovernor, uma_state: str, expected: bool) -> None:
         with patch.object(gov, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)):  # noqa: E501
-                import asyncio
-
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma(uma_state)
+            ):  # noqa: E501
                 decision = session_event_loop.run_until_complete(gov.evaluate())
                 model_adm = gov.model_admission()
                 assert decision.allow_model_load == expected, (
                     f"[{uma_state}] evaluate().allow_model_load={decision.allow_model_load} != "
                     f"model_admission().allowed={model_adm.allowed}"
-    )
+                )
                 assert model_adm.allowed == expected
 
-    def test_model_load_allowed_ok(self, governor):
+    def test_model_load_allowed_ok(self, governor) -> None:
         """Model load allowed in normal (ok) state."""
         self._assert_model_load_consistency(governor, "ok", True)
 
-    def test_model_load_denied_critical(self, governor):
+    def test_model_load_denied_critical(self, governor) -> None:
         """Model load denied in critical state."""
         self._assert_model_load_consistency(governor, "critical", False)
 
-    def test_model_load_denied_emergency(self, governor):
+    def test_model_load_denied_emergency(self, governor) -> None:
         """Model load denied in emergency state."""
         self._assert_model_load_consistency(governor, "emergency", False)
 
@@ -190,7 +190,7 @@ class TestModelAdmissionConsistency:
 class TestSidecarAdmissionHotPath:
     """F214R-4: sidecar_admission() has hot-path caller in runtime/sidecar_bus.py."""
 
-    def test_sidecar_admission_caller_in_sidecar_bus(self):
+    def test_sidecar_admission_caller_in_sidecar_bus(self) -> None:
         """Verify sidecar_admission is called from sidecar_bus.py at runtime."""
         import ast
 
@@ -201,7 +201,7 @@ class TestSidecarAdmissionHotPath:
         calls = []
 
         class CallFinder(ast.NodeVisitor):
-            def visit_Call(self, node):
+            def visit_Call(self, node) -> None:
                 if isinstance(node.func, ast.Attribute):
                     if node.func.attr == "sidecar_admission":
                         calls.append(node.func.attr)
@@ -214,7 +214,7 @@ class TestSidecarAdmissionHotPath:
 class TestLaneAdmissionHotPath:
     """F214R-5: lane_admission() has hot-path caller in runtime/sprint_scheduler.py."""
 
-    def test_lane_admission_caller_in_sprint_scheduler(self):
+    def test_lane_admission_caller_in_sprint_scheduler(self) -> None:
         """Verify lane_admission is called from sprint_scheduler.py at runtime."""
         import ast
 
@@ -225,7 +225,7 @@ class TestLaneAdmissionHotPath:
         calls = []
 
         class CallFinder(ast.NodeVisitor):
-            def visit_Call(self, node):
+            def visit_Call(self, node) -> None:
                 if isinstance(node.func, ast.Attribute):
                     if node.func.attr == "lane_admission":
                         calls.append(node.func.attr)
@@ -261,34 +261,39 @@ class TestPendingIntegrationMarkers:
         return mock
 
     @pytest.mark.xfail(reason="pending integration: renderer_admission() not wired to production call sites")
-    def test_renderer_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
+    def test_renderer_admission_has_pending_marker(
+        self, governor, session_event_loop: asyncio.AbstractEventLoop
+    ) -> None:
         """renderer_admission() carries @pending_integration marker."""
-        import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")
+            ):  # noqa: E501
                 result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, renderer_admission() is being called in production
                 assert result.allow_renderer is not None
 
     @pytest.mark.xfail(reason="pending integration: model_admission() not wired to production call sites")
-    def test_model_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
+    def test_model_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """model_admission() carries @pending_integration marker."""
-        import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")
+            ):  # noqa: E501
                 result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, model_admission() is being called in production
                 assert result.allow_model_load is not None
 
     @pytest.mark.xfail(reason="pending integration: branch_admission() not wired to production call sites")
-    def test_branch_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop):
+    def test_branch_admission_has_pending_marker(self, governor, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """branch_admission() carries @pending_integration marker."""
-        import asyncio
 
         with patch.object(governor, "_get_model_status", return_value={"loaded": False}):
-            with patch("hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")):  # noqa: E501
+            with patch(
+                "hledac.universal.runtime.resource_governor.sample_uma_status", return_value=self._mock_uma("ok")
+            ):  # noqa: E501
                 result = session_event_loop.run_until_complete(gov.evaluate())
                 # If this passes, branch_admission() is being called in production
                 assert result.branch_concurrency > 0

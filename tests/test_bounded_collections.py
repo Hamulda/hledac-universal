@@ -5,9 +5,9 @@ Tests that BoundedList, SlottedBoundedList, and the 6 converted modules
 (research_coordinator, privacy_enhanced_research, workflow_engine,
 predictive_planner) never grow beyond their declared maxlen.
 """
+
 from __future__ import annotations
 
-import asyncio
 import threading
 import time
 from collections import deque
@@ -16,8 +16,6 @@ from typing import Any
 import pytest
 
 from hledac.universal._core.bounded_collections import BoundedList, SlottedBoundedList
-from _core import aclose
-
 
 # ---------------------------------------------------------------------------
 # BoundedList / SlottedBoundedList unit tests
@@ -178,11 +176,13 @@ class TestPrivacyEnhancedResearchBounded:
 
         field: deque[dict[str, Any]] = deque(maxlen=2048)
         for i in range(100_000):
-            field.append({
-                "operation_id": f"op_{i}",
-                "timestamp": time.time(),
-                "operation_type": "test",
-            })
+            field.append(
+                {
+                    "operation_id": f"op_{i}",
+                    "timestamp": time.time(),
+                    "operation_type": "test",
+                }
+            )
         assert len(field) == 2048
 
 

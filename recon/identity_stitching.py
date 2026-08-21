@@ -2,13 +2,6 @@
 Identity Stitching Engine
 =========================
 
-
-
-
-
-
-
-
 Advanced cross-platform identity linking and probabilistic identity matching system.
 
 Features:
@@ -39,48 +32,54 @@ M1 8GB CEILING (HARD):
 
 PROMOTION GATE: requires production call site evidence beyond legacy path.
 """
+
+import asyncio
 import gc
 import logging
 import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from datetime import datetime, timedelta, UTC
-from typing import Any, Generic, TypeVar
-from operator import attrgetter, itemgetter
+from datetime import UTC, datetime, timedelta
+from operator import attrgetter
+from typing import Any, TypeVar
+
 import numpy as np
 
-T = TypeVar('T', default=object)
+from compat.msgspec_gc_compat import Struct
+
+T = TypeVar("T", default=object)
 
 # --------------------------------------------------------------------------- #
 # LSH pre-filtering — O(1) candidate reduction instead of O(N²) brute-force  #
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
+
 lsh_index_new = rust.raw.lsh_index_new
 LSHIndex = rust.raw.LSHIndex
 LSH_AVAILABLE = lsh_index_new is not None and LSHIndex is not None
 
 # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
 from hledac.universal._core.rust_backend.unicode_fingerprint import (
+    ENABLE_UNICODE_ATTRIBUTION,
     UnicodeFingerprint,
     get_unicode_fingerprint_domain,
-    ENABLE_UNICODE_ATTRIBUTION,
-    )
+)
+
 _unicode_domain = None  # Lazy initialization
+
 
 # --------------------------------------------------------------------------- #
 # Union-Find pro O(α(N)) clustering — nahrazuje O(N²) connected_components    #
 # --------------------------------------------------------------------------- #
 class _UnionFind:
     """Lightweight Union-Find s path compression + rank union."""
-    __slots__ = ('_parent', '_rank', '_count')
+
+    __slots__ = ("_parent", "_rank", "_count")
 
     def __init__(self, items: list[str]) -> None:
         self._parent: dict[str, str] = {item: item for item in items}
-        self._rank: dict[str, int] = {item: 0 for item in items}
+        self._rank: dict[str, int] = dict.fromkeys(items, 0)
         self._count: int = len(items)
 
     def find(self, x: str) -> str:
@@ -122,15 +121,15 @@ async def _bounded_gather_pairs(
     threshold: float,
     compute_fn,  # (str, str) -> 'IdentityMatch'
     concurrency: int | None = None,
-) -> list['IdentityMatch']:
+) -> list[IdentityMatch]:
     """O(α(N)) parallel pairwise — ISSUE-005: bounded_parallel_map refactor.
     F1 FIX: concurrency=None → UMA-aware dynamic limit via ConcurrencyBudgetRegistry.
 
     Replaces asyncio.gather + _check_gathered with bounded_parallel_map
     for cleaner API and proper GHOST I6/I7 exception routing.
     """
+    from hledac.universal._core.concurrency_registry import ConcurrencyCategory, concurrency_budget
     from hledac.universal.utils.asyncx import parallel
-    from hledac.universal._core.concurrency_registry import concurrency_budget, ConcurrencyCategory
 
     # F1 FIX: resolve dynamic concurrency before bounded_parallel_map call.
     if concurrency is None:
@@ -151,6 +150,7 @@ async def _bounded_gather_pairs(
             matches.append(r)
     return matches
 
+
 class _IdentityCache[T]:
     """
     Symmetric-key LRU cache backed by PyCacheDict.
@@ -161,7 +161,8 @@ class _IdentityCache[T]:
 
     PyCacheDict provides: TTL, thread-safe RLock, hit/miss/eviction stats.
     """
-    __slots__ = ('_inner', '_max_memory_bytes', '_memory_pressure_threshold', '_process')
+
+    __slots__ = ("_inner", "_max_memory_bytes", "_memory_pressure_threshold", "_process")
 
     def __init__(
         self,
@@ -171,6 +172,7 @@ class _IdentityCache[T]:
         memory_pressure_threshold: float = 0.8,
     ) -> None:
         from hledac.universal.utils.cache import PyCacheDict
+
         self._inner = PyCacheDict[object, T](maxsize=max_size, ttl_s=ttl_s)
         self._max_memory_bytes = max_memory_mb * 1024 * 1024
         self._memory_pressure_threshold = memory_pressure_threshold
@@ -196,6 +198,7 @@ class _IdentityCache[T]:
         try:
             if self._process is None:
                 import psutil
+
                 self._process = psutil.Process()
             rss = self._process.memory_info().rss
             if rss > self._max_memory_bytes * self._memory_pressure_threshold:
@@ -207,10 +210,7 @@ class _IdentityCache[T]:
                         self._inner._data.popitem(last=False)  # noqa: SLF001
                     except KeyError:
                         break
-                logger.debug(
-                    f'Cache pressure eviction: evicted {evict_count} entries '
-                    f'(RSS={rss / 1024 / 1024:.1f}MB)'
-    )
+                logger.debug(f"Cache pressure eviction: evicted {evict_count} entries (RSS={rss / 1024 / 1024:.1f}MB)")
         except Exception:  # noqa: BLE001
             pass
 
@@ -225,37 +225,41 @@ class _IdentityCache[T]:
         """Return cache statistics compatible with _BoundedCache API."""
         inner_stats = self._inner.stats
         return {
-            'entries': inner_stats.get('size', 0),
-            'max_size': self._inner.capacity,
-            'utilization': (
-                inner_stats.get('size', 0) / self._inner.capacity
-                if self._inner.capacity > 0 else 0
-            ),
+            "entries": inner_stats.get("size", 0),
+            "max_size": self._inner.capacity,
+            "utilization": (inner_stats.get("size", 0) / self._inner.capacity if self._inner.capacity > 0 else 0),
         }
-import numpy as np
-from _core import aclose
+
+
 NETWORKX_AVAILABLE = True
 _nx = None
 IGRAPH_AVAILABLE = True
 _ig = None
+
 
 def _get_nx():
     """Lazy networkx importer — imported only when first graph method is called."""
     global _nx
     if _nx is None:
         import networkx as _nx_mod
+
         _nx = _nx_mod
     return _nx
+
 
 def _get_ig():
     """Lazy igraph importer — M1-optimized C-core, preferred over networkx."""
     global _ig
     if _ig is None:
         import igraph as _ig_mod
+
         _ig = _ig_mod
     return _ig
+
+
 try:
     from rapidfuzz import distance, fuzz
+
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
@@ -263,7 +267,8 @@ except ImportError:
     distance = None
 SKLEARN_AVAILABLE = True
 try:
-    from .relationship_discovery import Entity, Relationship, RelationshipType, EntityType
+    from .relationship_discovery import Entity, EntityType, Relationship, RelationshipType
+
     RELATIONSHIP_AVAILABLE = True
 except ImportError:
     RELATIONSHIP_AVAILABLE = False
@@ -272,8 +277,10 @@ except ImportError:
     RelationshipType = None
 logger = logging.getLogger(__name__)
 
+
 class UsernameEntry(Struct):
     """Represents a username on a specific platform."""
+
     platform: str
     username: str
     verified: bool = False
@@ -289,7 +296,15 @@ class UsernameEntry(Struct):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {'platform': self.platform, 'username': self.username, 'verified': self.verified, 'first_seen': self.first_seen.isoformat() if self.first_seen else None, 'last_seen': self.last_seen.isoformat() if self.last_seen else None, 'metadata': self.metadata}
+        return {
+            "platform": self.platform,
+            "username": self.username,
+            "verified": self.verified,
+            "first_seen": self.first_seen.isoformat() if self.first_seen else None,
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+            "metadata": self.metadata,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class IdentityProfile:
@@ -313,6 +328,7 @@ class IdentityProfile:
         face_ids: List of face node IDs
         voice_ids: List of voiceprint node IDs
     """
+
     id: str
     primary_name: str
     aliases: list[str] = field(default_factory=list)
@@ -331,35 +347,39 @@ class IdentityProfile:
 
     def __post_init__(self) -> None:
         if self.updated_at is None:
-            object.__setattr__(self, 'updated_at', datetime.now(UTC))
+            object.__setattr__(self, "updated_at", datetime.now(UTC))
 
     def add_username(self, platform: str, username: str, **kwargs) -> UsernameEntry:
         """Add a username entry for a platform."""
         entry = UsernameEntry(platform=platform, username=username, **kwargs)
         self.usernames.append(entry)
-        object.__setattr__(self, 'updated_at', datetime.now(UTC))
+        object.__setattr__(self, "updated_at", datetime.now(UTC))
         return entry
 
     def add_face(self, embedding: list[float], face_id: str | None = None) -> str:
         """NEXTGEN-03: Add a face embedding to this profile."""
         if face_id is None:
-            import xxhash
             import time
+
+            import xxhash
+
             face_id = f"face_{xxhash.xxh64(str(time.time()).encode()).hexdigest()[:16]}"
         self.face_embeddings.append(embedding)
         self.face_ids.append(face_id)
-        object.__setattr__(self, 'updated_at', datetime.now(UTC))
+        object.__setattr__(self, "updated_at", datetime.now(UTC))
         return face_id
 
     def add_voice(self, embedding: list[float], voice_id: str | None = None) -> str:
         """NEXTGEN-03: Add a voiceprint embedding to this profile."""
         if voice_id is None:
-            import xxhash
             import time
+
+            import xxhash
+
             voice_id = f"voice_{xxhash.xxh64(str(time.time()).encode()).hexdigest()[:16]}"
         self.voice_embeddings.append(embedding)
         self.voice_ids.append(voice_id)
-        object.__setattr__(self, 'updated_at', datetime.now(UTC))
+        object.__setattr__(self, "updated_at", datetime.now(UTC))
         return voice_id
 
     def get_username(self, platform: str) -> str | None:
@@ -380,22 +400,23 @@ class IdentityProfile:
     def to_dict(self) -> dict[str, Any]:
         """Convert profile to dictionary."""
         return {
-            'id': self.id,
-            'primary_name': self.primary_name,
-            'aliases': self.aliases,
-            'emails': self.emails,
-            'usernames': [u.to_dict() for u in self.usernames],
-            'confidence': self.confidence,
-            'evidence': self.evidence,
-            'attributes': self.attributes,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "id": self.id,
+            "primary_name": self.primary_name,
+            "aliases": self.aliases,
+            "emails": self.emails,
+            "usernames": [u.to_dict() for u in self.usernames],
+            "confidence": self.confidence,
+            "evidence": self.evidence,
+            "attributes": self.attributes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             # NEXTGEN-03: Cross-modal fields
-            'face_ids': self.face_ids,
-            'voice_ids': self.voice_ids,
-            'has_faces': len(self.face_embeddings) > 0,
-            'has_voices': len(self.voice_embeddings) > 0,
+            "face_ids": self.face_ids,
+            "voice_ids": self.voice_ids,
+            "has_faces": len(self.face_embeddings) > 0,
+            "has_voices": len(self.voice_embeddings) > 0,
         }
+
 
 @dataclass(frozen=True, slots=True)
 class IdentityMatch:
@@ -410,6 +431,7 @@ class IdentityMatch:
         confidence: Confidence level (high, medium, low)
         evidence: List of evidence supporting the match
     """
+
     profile_a: str
     profile_b: str
     match_score: float
@@ -419,15 +441,22 @@ class IdentityMatch:
 
     def __post_init__(self) -> None:
         if self.match_score >= 0.85:
-            object.__setattr__(self, 'confidence', 0.85)
+            object.__setattr__(self, "confidence", 0.85)
         elif self.match_score >= 0.6:
-            object.__setattr__(self, 'confidence', 0.6)
+            object.__setattr__(self, "confidence", 0.6)
         else:
-            object.__setattr__(self, 'confidence', 0.35)
+            object.__setattr__(self, "confidence", 0.35)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert match to dictionary."""
-        return {'profile_a': self.profile_a, 'profile_b': self.profile_b, 'match_score': self.match_score, 'match_signals': self.match_signals, 'confidence': self.confidence, 'evidence': self.evidence}
+        return {
+            "profile_a": self.profile_a,
+            "profile_b": self.profile_b,
+            "match_score": self.match_score,
+            "match_signals": self.match_signals,
+            "confidence": self.confidence,
+            "evidence": self.evidence,
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -436,6 +465,7 @@ class IdentityMatch:
 # ISSUE ULTIMATE-005: Simhash-based cross-modal identity matching
 # Reuses existing content_hasher.rs infrastructure for face/voice similarity
 # --------------------------------------------------------------------------- #
+
 
 class CrossModalLSHMatcher:
     """
@@ -462,11 +492,11 @@ class CrossModalLSHMatcher:
     """
 
     __slots__ = (
-        '_face_lsh',
-        '_voice_lsh',
-        '_profiles',
-        '_simhash_available',
-        '_simd_available',
+        "_face_lsh",
+        "_voice_lsh",
+        "_profiles",
+        "_simhash_available",
+        "_simd_available",
     )
 
     # Simhash dimensions (output bit length)
@@ -504,7 +534,8 @@ class CrossModalLSHMatcher:
         """Check if Rust simhash backend is available."""
         try:
             from hledac.universal._core.rust_backend import rust
-            return hasattr(rust.raw, 'compute_simhash')
+
+            return hasattr(rust.raw, "compute_simhash")
         except Exception:
             return False
 
@@ -512,6 +543,7 @@ class CrossModalLSHMatcher:
         """Check if Rust vDSP SIMD similarity is available via accelerate_wired."""
         try:
             from hledac.universal.rust_extensions.wiring.accelerate_wiring import accelerate_wired
+
             return accelerate_wired().available
         except Exception:
             return False
@@ -532,6 +564,7 @@ class CrossModalLSHMatcher:
         if self._simhash_available:
             try:
                 from hledac.universal._core.rust_backend import rust
+
                 return rust.raw.compute_simhash(embedding)
             except Exception:
                 pass
@@ -541,10 +574,10 @@ class CrossModalLSHMatcher:
         # 1. Compute weighted hash components (v > 0 contributes to bit 1, v < 0 contributes to bit 0)
         # 2. Accumulate weights for each bit position
         # 3. Final hash: bit i is 1 if accumulated weight > 0
-        
+
         import hashlib
         import struct
-        
+
         vector = embedding
         if len(vector) == 0:
             return 0
@@ -557,11 +590,11 @@ class CrossModalLSHMatcher:
             # Compute a hash for this dimension to spread it across bit positions
             dim_hash = hashlib.sha256(f"simhash_dim:{dim_idx}".encode()).digest()
             # Use first 8 bytes as a stable hash for dimension-to-bits mapping
-            dim_weights = struct.unpack('<Q', dim_hash[:8])[0]
-            
+            dim_weights = struct.unpack("<Q", dim_hash[:8])[0]
+
             # Weight is the actual embedding value
             weight = float(val)
-            
+
             # Distribute weight across multiple bit positions
             for bit_pos in range(self.SIMHASH_BITS):
                 # Check if this bit should be set based on dimension hash
@@ -574,7 +607,7 @@ class CrossModalLSHMatcher:
         result = 0
         for i, acc in enumerate(accumulators):
             if acc > 0:
-                result |= (1 << i)
+                result |= 1 << i
 
         return result
 
@@ -591,7 +624,6 @@ class CrossModalLSHMatcher:
         buckets: list[int] = []
         for band in range(self.NUM_BANDS):
             start = band * self.BAND_SIZE
-            # Extract band bits
             band_bits = (simhash >> start) & ((1 << self.BAND_SIZE) - 1)
             # Hash band to bucket
             bucket = hash((band, band_bits)) % (1 << 20)  # 1M buckets
@@ -669,7 +701,7 @@ class CrossModalLSHMatcher:
     def _hamming_distance(self, a: int, b: int) -> int:
         """Compute Hamming distance between two 64-bit integers."""
         xor = a ^ b
-        return bin(xor).count('1')
+        return bin(xor).count("1")
 
     def _simhash_similarity(self, sig_a: int, sig_b: int) -> float:
         """Compute similarity from simhash Hamming distance."""
@@ -704,9 +736,7 @@ class CrossModalLSHMatcher:
             return []
 
         query_profile = self._profiles[profile_id]
-        candidates: dict[str, tuple[list[float], list[float]]] = defaultdict(
-            lambda: ([], [])
-    )
+        candidates: dict[str, tuple[list[float], list[float]]] = defaultdict(lambda: ([], []))
 
         # LSH lookup for face embeddings
         for embedding in query_profile.face_embeddings:
@@ -729,7 +759,6 @@ class CrossModalLSHMatcher:
         # Compute final scores using batch operations
         results: list[tuple[str, float]] = []
 
-        # Get query embeddings
         query_face_emb = query_profile.face_embeddings
         query_voice_emb = query_profile.voice_embeddings
 
@@ -784,16 +813,12 @@ class CrossModalLSHMatcher:
 
         # Face similarity using batch cosine similarity
         if profile_a.face_embeddings and profile_b.face_embeddings:
-            face_scores = self._batch_cosine_similarity(
-                profile_a.face_embeddings, profile_b.face_embeddings
-            )
+            face_scores = self._batch_cosine_similarity(profile_a.face_embeddings, profile_b.face_embeddings)
             face_score = max(face_scores) if face_scores else 0.0
 
         # Voice similarity using batch cosine similarity
         if profile_a.voice_embeddings and profile_b.voice_embeddings:
-            voice_scores = self._batch_cosine_similarity(
-                profile_a.voice_embeddings, profile_b.voice_embeddings
-            )
+            voice_scores = self._batch_cosine_similarity(profile_a.voice_embeddings, profile_b.voice_embeddings)
             voice_score = max(voice_scores) if voice_scores else 0.0
 
         # Weighted fusion
@@ -818,6 +843,7 @@ class CrossModalLSHMatcher:
         self._voice_lsh.clear()
         self._profiles.clear()
 
+
 class StitchedIdentity(Struct, frozen=True):
     """
     Represents a stitched identity combining multiple profiles.
@@ -832,6 +858,7 @@ class StitchedIdentity(Struct, frozen=True):
         stitch_confidence: Confidence in the stitching (0-1)
         match_evidence: Evidence supporting the stitch
     """
+
     id: str
     profile_ids: list[str]
     primary_profile: str
@@ -844,7 +871,18 @@ class StitchedIdentity(Struct, frozen=True):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert stitched identity to dictionary."""
-        return {'id': self.id, 'profile_ids': self.profile_ids, 'primary_profile': self.primary_profile, 'merged_names': self.merged_names, 'merged_emails': self.merged_emails, 'usernames': [u.to_dict() for u in self.merged_usernames], 'stitch_confidence': self.stitch_confidence, 'match_evidence': self.match_evidence, 'created_at': self.created_at.isoformat() if self.created_at else None}
+        return {
+            "id": self.id,
+            "profile_ids": self.profile_ids,
+            "primary_profile": self.primary_profile,
+            "merged_names": self.merged_names,
+            "merged_emails": self.merged_emails,
+            "usernames": [u.to_dict() for u in self.merged_usernames],
+            "stitch_confidence": self.stitch_confidence,
+            "match_evidence": self.match_evidence,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
 
 class IdentityStitchingEngine:
     """
@@ -885,32 +923,61 @@ class IdentityStitchingEngine:
         # Stitch identities
         stitched = engine.stitch_identities(match_threshold=0.8)
     """
-    DEFAULT_SIGNAL_WEIGHTS = {
-        'username_exact': 1.0,
-        'username_similarity': 0.7,
-        'email_exact': 1.0,
-        'email_domain': 0.3,
-        'alias_match': 0.8,
-        'style_similarity': 0.5,
-        'stylometry': 0.6,
-        'temporal_overlap': 0.4,
-        'network_overlap': 0.6,
-        'unicode_fingerprint': 0.8,
-        # NEXTGEN-03: Cross-modal signal weights
-        'face_match': 0.9,
-        'voice_match': 0.85,
-        'crossmodal': 0.8,
-    }
-    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index',
-                       '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles',
-                       '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer',
-                       '_stylometry_cache', '_transliteration_enabled', '_unicode_fingerprint_cache',
-                       # NEXTGEN-03: Cross-modal slots
-                       '_face_lsh_index', '_voice_lsh_index', '_crossmodal_available',
-                       'enable_fuzzy', 'enable_lsh', 'enable_unicode_attribution',
-                       'max_memory_mb', 'signal_weights', 'similarity_threshold'))
 
-    def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True, enable_unicode_attribution: bool=True):
+    DEFAULT_SIGNAL_WEIGHTS = {
+        "username_exact": 1.0,
+        "username_similarity": 0.7,
+        "email_exact": 1.0,
+        "email_domain": 0.3,
+        "alias_match": 0.8,
+        "style_similarity": 0.5,
+        "stylometry": 0.6,
+        "temporal_overlap": 0.4,
+        "network_overlap": 0.6,
+        "unicode_fingerprint": 0.8,
+        # NEXTGEN-03: Cross-modal signal weights
+        "face_match": 0.9,
+        "voice_match": 0.85,
+        "crossmodal": 0.8,
+    }
+    __slots__ = (
+        "_alias_index",
+        "_email_index",
+        "_identity_graph",
+        "_lsh_index",
+        "_lsh_fingerprint_cache",
+        "_match_cache",
+        "_platform_index",
+        "_profiles",
+        "_similarity_cache",
+        "_stats",
+        "_username_index",
+        "_stylometry_analyzer",
+        "_stylometry_cache",
+        "_transliteration_enabled",
+        "_unicode_fingerprint_cache",
+        # NEXTGEN-03: Cross-modal slots
+        "_face_lsh_index",
+        "_voice_lsh_index",
+        "_crossmodal_available",
+        "enable_fuzzy",
+        "enable_lsh",
+        "enable_unicode_attribution",
+        "max_memory_mb",
+        "signal_weights",
+        "similarity_threshold",
+    )
+
+    def __init__(
+        self,
+        similarity_threshold: float = 0.7,
+        signal_weights: dict[str, float] | None = None,
+        max_memory_mb: int = 512,
+        enable_fuzzy: bool = True,
+        enable_transliteration: bool = True,
+        enable_stylometry: bool = True,
+        enable_unicode_attribution: bool = True,
+    ) -> None:
         """
         Initialize the Identity Stitching Engine.
 
@@ -945,34 +1012,48 @@ class IdentityStitchingEngine:
         self._alias_index: dict[str, set[str]] = defaultdict(set)
         self._platform_index: dict[str, set[str]] = defaultdict(set)
         self._identity_graph: Any | None = None
-        self._similarity_cache = _IdentityCache[float](max_size=4096, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
-        self._match_cache = _IdentityCache[IdentityMatch](max_size=2048, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
-        self._stats = {'profiles_added': 0, 'matches_computed': 0, 'identities_stitched': 0, 'graphs_built': 0}
+        self._similarity_cache = _IdentityCache[float](
+            max_size=4096, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8
+        )
+        self._match_cache = _IdentityCache[IdentityMatch](
+            max_size=2048, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8
+        )
+        self._stats = {"profiles_added": 0, "matches_computed": 0, "identities_stitched": 0, "graphs_built": 0}
         # ISSUE-008: Trans-linguistic normalization
         self._transliteration_enabled: bool = enable_transliteration
         # ISSUE-007: Multi-dimensional stylometry
         self._stylometry_analyzer: Any = None
-        self._stylometry_cache: _IdentityCache[float] = _IdentityCache[float](
-            max_size=2048, ttl_s=7200, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8,
-        ) if enable_stylometry else _IdentityCache[float](max_size=0, ttl_s=0, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
+        self._stylometry_cache: _IdentityCache[float] = (
+            _IdentityCache[float](
+                max_size=2048,
+                ttl_s=7200,
+                max_memory_mb=max_memory_mb,
+                memory_pressure_threshold=0.8,
+            )
+            if enable_stylometry
+            else _IdentityCache[float](max_size=0, ttl_s=0, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
+        )
         # NEXTGEN-03: Cross-modal LSH indexes for face and voiceprint matching
         self._crossmodal_available: bool = False
         self._face_lsh_index: Any | None = None
         self._voice_lsh_index: Any | None = None
         self._init_crossmodal_indexes()
-        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry}, unicode_attr={self.enable_unicode_attribution}, crossmodal={self._crossmodal_available})')
+        logger.info(
+            f"IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry}, unicode_attr={self.enable_unicode_attribution}, crossmodal={self._crossmodal_available})"
+        )
 
     def _init_crossmodal_indexes(self) -> None:
         """NEXTGEN-03: Initialize cross-modal LSH indexes for face and voice matching."""
         try:
             from hledac.universal._core.rust_backend import rust
-            if hasattr(rust.ane, 'crossmodal_store_face'):
+
+            if hasattr(rust.ane, "crossmodal_store_face"):
                 self._crossmodal_available = True
-                logger.info('Cross-modal LSH indexes available (Rust backend)')
+                logger.info("Cross-modal LSH indexes available (Rust backend)")
             else:
-                logger.warning('Cross-modal LSH indexes not available (Rust backend missing)')
+                logger.warning("Cross-modal LSH indexes not available (Rust backend missing)")
         except ImportError:
-            logger.warning('Cross-modal LSH indexes not available (Rust import failed)')
+            logger.warning("Cross-modal LSH indexes not available (Rust import failed)")
 
     def add_profile(self, profile: IdentityProfile) -> bool:
         """
@@ -985,31 +1066,31 @@ class IdentityStitchingEngine:
             True if added, False if already exists
         """
         if profile.id in self._profiles:
-            logger.debug(f'Profile {profile.id} already exists, updating')
+            logger.debug(f"Profile {profile.id} already exists, updating")
             self._update_profile(profile)
             return False
         self._profiles[profile.id] = profile
-        self._stats['profiles_added'] += 1
+        self._stats["profiles_added"] += 1
         self._index_profile_fields(profile)
         self._register_profile_lsh(profile)
         self._invalidate_caches()
-        logger.debug(f'Added profile: {profile.id} ({profile.primary_name})')
+        logger.debug(f"Added profile: {profile.id} ({profile.primary_name})")
         return True
 
-    def _update_profile(self, profile: IdentityProfile):
+    def _update_profile(self, profile: IdentityProfile) -> None:
         """Update an existing profile (frozen dataclass — uses object.__setattr__)."""
         existing = self._profiles[profile.id]
-        object.__setattr__(existing, 'primary_name', profile.primary_name)
-        object.__setattr__(existing, 'aliases', list(set(existing.aliases + profile.aliases)))
-        object.__setattr__(existing, 'emails', list(set(existing.emails + profile.emails)))
-        object.__setattr__(existing, 'usernames', existing.usernames + profile.usernames)
-        object.__setattr__(existing, 'attributes', {**existing.attributes, **profile.attributes})
-        object.__setattr__(existing, 'updated_at', datetime.now(UTC))
+        object.__setattr__(existing, "primary_name", profile.primary_name)
+        object.__setattr__(existing, "aliases", list(set(existing.aliases + profile.aliases)))
+        object.__setattr__(existing, "emails", list(set(existing.emails + profile.emails)))
+        object.__setattr__(existing, "usernames", existing.usernames + profile.usernames)
+        object.__setattr__(existing, "attributes", {**existing.attributes, **profile.attributes})
+        object.__setattr__(existing, "updated_at", datetime.now(UTC))
         # Re-index fields (set operations are idempotent — no LSH re-registration).
         # LSH has no remove() — old fingerprint stays in index until next full rebuild.
         self._index_profile_fields(existing)
 
-    def _index_profile_fields(self, profile: IdentityProfile):
+    def _index_profile_fields(self, profile: IdentityProfile) -> None:
         """Index username/email/alias/platform fields into reverse maps. Idempotent."""
         for entry in profile.usernames:
             normalized = self._normalize_username_translingual(entry.username)
@@ -1023,14 +1104,14 @@ class IdentityStitchingEngine:
             self._alias_index[normalized].add(profile.id)
         normalized_name = self._normalize_text_translingual(profile.primary_name)
         self._alias_index[normalized_name].add(profile.id)
-        
+
         # NEXTGEN-03: Register face embeddings in cross-modal LSH index
         self._register_face_embeddings(profile)
-        
+
         # NEXTGEN-03: Register voiceprint embeddings in cross-modal LSH index
         self._register_voice_embeddings(profile)
 
-    def _register_profile_lsh(self, profile: IdentityProfile):
+    def _register_profile_lsh(self, profile: IdentityProfile) -> None:
         """Register profile fingerprint in LSH index. Call ONLY on first add.
         LSH has no remove() — calling this on update would duplicate entries."""
         if self.enable_lsh and self._lsh_index is not None:
@@ -1041,55 +1122,58 @@ class IdentityStitchingEngine:
     def _register_face_embeddings(self, profile: IdentityProfile) -> None:
         """
         NEXTGEN-03: Register face embeddings in cross-modal LSH index.
-        
+
         Creates a reverse mapping from face_id to profile_id for identity comparison.
         Also stores the embedding in the Rust cross-modal index.
         """
         if not self._crossmodal_available:
             return
-        
+
         try:
             from hledac.universal._core.rust_backend import rust
+
             ane = rust.ane
-            
+
             # Register each face embedding
-            for face_id, embedding in zip(profile.face_ids, profile.face_embeddings):
+            for face_id, embedding in zip(profile.face_ids, profile.face_embeddings, strict=False):
                 # Store in Rust cross-modal index
                 try:
                     ane.crossmodal_store_face(face_id, embedding)
                 except Exception as e:
-                    logger.debug(f'Failed to store face embedding {face_id}: {e}')
+                    logger.debug(f"Failed to store face embedding {face_id}: {e}")
         except ImportError:
-            logger.debug('Rust backend not available for face embedding registration')
+            logger.debug("Rust backend not available for face embedding registration")
 
     def _register_voice_embeddings(self, profile: IdentityProfile) -> None:
         """
         NEXTGEN-03: Register voiceprint embeddings in cross-modal LSH index.
-        
+
         Creates a reverse mapping from voice_id to profile_id for identity comparison.
         Also stores the embedding in the Rust cross-modal index.
         """
         if not self._crossmodal_available:
             return
-        
+
         try:
             from hledac.universal._core.rust_backend import rust
+
             ane = rust.ane
-            
+
             # Register each voiceprint embedding
-            for voice_id, embedding in zip(profile.voice_ids, profile.voice_embeddings):
+            for voice_id, embedding in zip(profile.voice_ids, profile.voice_embeddings, strict=False):
                 # Store in Rust cross-modal index
                 try:
                     ane.crossmodal_store_voice(voice_id, embedding)
                 except Exception as e:
-                    logger.debug(f'Failed to store voiceprint embedding {voice_id}: {e}')
+                    logger.debug(f"Failed to store voiceprint embedding {voice_id}: {e}")
         except ImportError:
-            logger.debug('Rust backend not available for voiceprint embedding registration')
+            logger.debug("Rust backend not available for voiceprint embedding registration")
 
     def _build_lsh_fingerprint(self, profile: IdentityProfile) -> int:
         """Build 64-bit SimHash fingerprint pro LSH candidate pre-filtering."""
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         simhash = rust.raw.simhash
         if simhash is None:
             # Stable fallback: hash string content, NOT object identity.
@@ -1102,7 +1186,7 @@ class IdentityStitchingEngine:
         for entry in profile.usernames:
             parts.append(entry.username)
         parts.extend(profile.emails)
-        combined = '|'.join(sorted(parts))
+        combined = "|".join(sorted(parts))
         return simhash(combined)
 
     def get_profile(self, profile_id: str) -> IdentityProfile | None:
@@ -1131,7 +1215,7 @@ class IdentityStitchingEngine:
         self._invalidate_caches()
         return True
 
-    def _invalidate_caches(self):
+    def _invalidate_caches(self) -> None:
         """Invalidate all cached computations."""
         self._identity_graph = None
         self._similarity_cache.clear()
@@ -1144,8 +1228,8 @@ class IdentityStitchingEngine:
     @staticmethod
     def _normalize_username(username: str) -> str:
         """Normalize username for comparison."""
-        normalized = username.lower().strip().lstrip('@')
-        normalized = re.sub('[._-]', '', normalized)
+        normalized = username.lower().strip().lstrip("@")
+        normalized = re.sub("[._-]", "", normalized)
         return normalized
 
     def _normalize_username_translingual(self, username: str) -> str:
@@ -1159,6 +1243,7 @@ class IdentityStitchingEngine:
         if self._transliteration_enabled:
             try:
                 from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
+
                 username = normalize_translinguistic(username)
             except ImportError:  # noqa: BLE001
                 pass
@@ -1188,6 +1273,7 @@ class IdentityStitchingEngine:
         if self._transliteration_enabled:
             try:
                 from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
+
                 return normalize_translinguistic(text)
             except ImportError:  # noqa: BLE001
                 pass
@@ -1196,8 +1282,8 @@ class IdentityStitchingEngine:
     @staticmethod
     def _extract_email_domain(email: str) -> str:
         """Extract domain from email address."""
-        parts = email.split('@')
-        return parts[-1] if len(parts) > 1 else ''
+        parts = email.split("@")
+        return parts[-1] if len(parts) > 1 else ""
 
     def compute_username_similarity(self, user1: str, user2: str) -> float:
         """
@@ -1239,7 +1325,7 @@ class IdentityStitchingEngine:
         len_sum = len(s1) + len(s2)
         if len_sum == 0:
             return 1.0
-        common = sum((c in s2 for c in s1))
+        common = sum(c in s2 for c in s1)
         return 2 * common / len_sum
 
     def compute_style_similarity(self, texts1: list[str], texts2: list[str]) -> float:
@@ -1265,8 +1351,8 @@ class IdentityStitchingEngine:
         try:
             analyzer = self._get_stylometry_analyzer()
             if analyzer is not None:
-                combined1 = '\n\n'.join(t for t in texts1 if t and len(t.strip()) >= 20)
-                combined2 = '\n\n'.join(t for t in texts2 if t and len(t.strip()) >= 20)
+                combined1 = "\n\n".join(t for t in texts1 if t and len(t.strip()) >= 20)
+                combined2 = "\n\n".join(t for t in texts2 if t and len(t.strip()) >= 20)
                 if len(combined1) >= 50 and len(combined2) >= 50:
                     profile_a = analyzer.extract_profile(combined1)
                     profile_b = analyzer.extract_profile(combined2)
@@ -1285,18 +1371,18 @@ class IdentityStitchingEngine:
         except ImportError as e:
             if "sklearn" in str(e) or "scikit-learn" in str(e):
                 logger.debug(
-                    f'TF-IDF similarity unavailable: scikit-learn not installed. '
-                    f'Install with: pip install hledac-universal[ml]'
-    )
+                    "TF-IDF similarity unavailable: scikit-learn not installed. "
+                    "Install with: pip install hledac-universal[ml]"
+                )
             return self._lexical_similarity(texts1, texts2)
         if len(all_texts) >= 2:
             try:
-                vectorizer = TfidfVectorizer(max_features=1000, stop_words='english', ngram_range=(1, 2), min_df=1)
+                vectorizer = TfidfVectorizer(max_features=1000, stop_words="english", ngram_range=(1, 2), min_df=1)
                 tfidf_matrix = vectorizer.fit_transform(all_texts)
-                similarities = cosine_similarity(tfidf_matrix[:len(texts1)], tfidf_matrix[len(texts1):])
+                similarities = cosine_similarity(tfidf_matrix[: len(texts1)], tfidf_matrix[len(texts1) :])
                 return float(np.max(similarities))
             except Exception as e:
-                logger.warning(f'TF-IDF similarity failed: {e}, falling back')
+                logger.warning(f"TF-IDF similarity failed: {e}, falling back")
         return self._lexical_similarity(texts1, texts2)
 
     def _get_stylometry_analyzer(self) -> Any | None:
@@ -1308,6 +1394,7 @@ class IdentityStitchingEngine:
             return self._stylometry_analyzer
         try:
             from hledac.universal.recon.stylometry_analyzer import StylometryAnalyzer
+
             self._stylometry_analyzer = StylometryAnalyzer()
             return self._stylometry_analyzer
         except ImportError:
@@ -1340,14 +1427,13 @@ class IdentityStitchingEngine:
         if isinstance(texts_b, str):
             texts_b = [texts_b]
 
-        combined_a = '\n\n'.join(t for t in texts_a if t and len(t.strip()) >= 20)
-        combined_b = '\n\n'.join(t for t in texts_b if t and len(t.strip()) >= 20)
+        combined_a = "\n\n".join(t for t in texts_a if t and len(t.strip()) >= 20)
+        combined_b = "\n\n".join(t for t in texts_b if t and len(t.strip()) >= 20)
 
         min_len = 50
         if len(combined_a) < min_len or len(combined_b) < min_len:
             return 0.0
 
-        # Check stylometry cache
         cache_key = (hash(combined_a), hash(combined_b))
         cached = self._stylometry_cache.get(cache_key)  # type: ignore[arg-type]
         if cached is not None:
@@ -1384,7 +1470,7 @@ class IdentityStitchingEngine:
     @staticmethod
     def _extract_words(text: str) -> set[str]:
         """Extract words from text."""
-        words = re.findall('\\b[a-zA-Z]{3,}\\b', text.lower())
+        words = re.findall("\\b[a-zA-Z]{3,}\\b", text.lower())
         return set(words)
 
     # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint similarity
@@ -1392,7 +1478,7 @@ class IdentityStitchingEngine:
         """Get or initialize the Unicode fingerprint domain."""
         global _unicode_domain
         if _unicode_domain is None:
-            ext = getattr(rust, '_ext', None)
+            ext = getattr(rust, "_ext", None)
             _unicode_domain = get_unicode_fingerprint_domain(ext)
         return _unicode_domain
 
@@ -1417,9 +1503,8 @@ class IdentityStitchingEngine:
         if not self.enable_unicode_attribution:
             return 0.0
 
-        # Get text samples from profiles
-        text_samples_a = profile_a.attributes.get('text_samples', []) if profile_a.attributes else []
-        text_samples_b = profile_b.attributes.get('text_samples', []) if profile_b.attributes else []
+        text_samples_a = profile_a.attributes.get("text_samples", []) if profile_a.attributes else []
+        text_samples_b = profile_b.attributes.get("text_samples", []) if profile_b.attributes else []
 
         if not text_samples_a or not text_samples_b:
             return 0.0
@@ -1429,10 +1514,9 @@ class IdentityStitchingEngine:
 
         # Extract fingerprints for both profiles
         # Use all text samples combined for better fingerprint coverage
-        combined_a = '\n\n'.join(text_samples_a) if isinstance(text_samples_a, list) else str(text_samples_a)
-        combined_b = '\n\n'.join(text_samples_b) if isinstance(text_samples_b, list) else str(text_samples_b)
+        combined_a = "\n\n".join(text_samples_a) if isinstance(text_samples_a, list) else str(text_samples_a)
+        combined_b = "\n\n".join(text_samples_b) if isinstance(text_samples_b, list) else str(text_samples_b)
 
-        # Extract fingerprints
         fp_a = domain.extract_fingerprint(combined_a)
         fp_b = domain.extract_fingerprint(combined_b)
 
@@ -1443,7 +1527,9 @@ class IdentityStitchingEngine:
         # Compute similarity
         return domain.compute_similarity(fp_a, fp_b)
 
-    def compute_temporal_overlap(self, activity1: list[datetime], activity2: list[datetime], window_days: int=30) -> float:
+    def compute_temporal_overlap(
+        self, activity1: list[datetime], activity2: list[datetime], window_days: int = 30
+    ) -> float:
         """
         Compute temporal overlap between two activity timelines.
 
@@ -1507,10 +1593,10 @@ class IdentityStitchingEngine:
                     sim = self.compute_username_similarity(u1, u2)
                     max_username_sim = max(max_username_sim, sim)
                     if sim == 1.0:
-                        evidence.append(f'Exact username match: {u1}')
+                        evidence.append(f"Exact username match: {u1}")
                     elif sim >= 0.8:
-                        evidence.append(f'Similar usernames: {u1} ~ {u2} ({sim:.2f})')
-            signals['username_similarity'] = max_username_sim
+                        evidence.append(f"Similar usernames: {u1} ~ {u2} ({sim:.2f})")
+            signals["username_similarity"] = max_username_sim
         return signals, evidence
 
     def _compute_email_signal(
@@ -1525,14 +1611,14 @@ class IdentityStitchingEngine:
         emails_a = set(profile_a.emails)
         emails_b = set(profile_b.emails)
         if emails_a & emails_b:
-            signals['email_exact'] = 1.0
-            evidence.append(f'Shared emails: {emails_a & emails_b}')
+            signals["email_exact"] = 1.0
+            evidence.append(f"Shared emails: {emails_a & emails_b}")
         elif emails_a and emails_b:
             domains_a = {self._extract_email_domain(e) for e in emails_a}
             domains_b = {self._extract_email_domain(e) for e in emails_b}
             if domains_a & domains_b:
-                signals['email_domain'] = 0.5
-                evidence.append(f'Shared email domains: {domains_a & domains_b}')
+                signals["email_domain"] = 0.5
+                evidence.append(f"Shared email domains: {domains_a & domains_b}")
         return signals, evidence
 
     def _compute_alias_signal(
@@ -1547,8 +1633,8 @@ class IdentityStitchingEngine:
         aliases_a = set(profile_a.aliases + [profile_a.primary_name])
         aliases_b = set(profile_b.aliases + [profile_b.primary_name])
         if aliases_a & aliases_b:
-            signals['alias_match'] = 1.0
-            evidence.append(f'Shared aliases: {aliases_a & aliases_b}')
+            signals["alias_match"] = 1.0
+            evidence.append(f"Shared aliases: {aliases_a & aliases_b}")
         else:
             max_alias_sim = 0.0
             for a1 in aliases_a:
@@ -1556,7 +1642,7 @@ class IdentityStitchingEngine:
                     sim = self.compute_username_similarity(a1, a2)
                     max_alias_sim = max(max_alias_sim, sim)
             if max_alias_sim > 0.7:
-                signals['alias_match'] = max_alias_sim
+                signals["alias_match"] = max_alias_sim
         return signals, evidence
 
     def _compute_stylometry_signal(
@@ -1568,13 +1654,13 @@ class IdentityStitchingEngine:
         signals: dict[str, float] = {}
         evidence: list[str] = []
 
-        text_samples_a = profile_a.attributes.get('text_samples', []) if profile_a.attributes else []
-        text_samples_b = profile_b.attributes.get('text_samples', []) if profile_b.attributes else []
+        text_samples_a = profile_a.attributes.get("text_samples", []) if profile_a.attributes else []
+        text_samples_b = profile_b.attributes.get("text_samples", []) if profile_b.attributes else []
         if text_samples_a and text_samples_b:
             stylometry_score = self.compute_stylometry_similarity(text_samples_a, text_samples_b)
             if stylometry_score > 0.3:
-                signals['stylometry'] = stylometry_score
-                evidence.append(f'Writing style similarity: {stylometry_score:.2f}')
+                signals["stylometry"] = stylometry_score
+                evidence.append(f"Writing style similarity: {stylometry_score:.2f}")
         return signals, evidence
 
     def _compute_unicode_signal(
@@ -1589,8 +1675,8 @@ class IdentityStitchingEngine:
         if self.enable_unicode_attribution:
             unicode_score = self.compute_unicode_fingerprint_similarity(profile_a, profile_b)
             if unicode_score > 0.1:
-                signals['unicode_fingerprint'] = unicode_score
-                evidence.append(f'Unicode fingerprint similarity: {unicode_score:.2f}')
+                signals["unicode_fingerprint"] = unicode_score
+                evidence.append(f"Unicode fingerprint similarity: {unicode_score:.2f}")
         return signals, evidence
 
     def _compute_style_signal(
@@ -1602,10 +1688,10 @@ class IdentityStitchingEngine:
         signals: dict[str, float] = {}
         evidence: list[str] = []
 
-        style_a = profile_a.attributes.get('style_similarity') if profile_a.attributes else None
-        style_b = profile_b.attributes.get('style_similarity') if profile_b.attributes else None
+        style_a = profile_a.attributes.get("style_similarity") if profile_a.attributes else None
+        style_b = profile_b.attributes.get("style_similarity") if profile_b.attributes else None
         if style_a is not None and style_b is not None:
-            signals['style_similarity'] = 1.0 - abs(float(style_a) - float(style_b))
+            signals["style_similarity"] = 1.0 - abs(float(style_a) - float(style_b))
         return signals, evidence
 
     def _compute_platform_signal(
@@ -1625,8 +1711,8 @@ class IdentityStitchingEngine:
                 u1 = profile_a.get_username(platform)
                 u2 = profile_b.get_username(platform)
                 if u1 and u2 and (u1.lower() != u2.lower()):
-                    signals['username_similarity'] = signals.get('username_similarity', 0) * 0.5
-                    evidence.append(f'Different usernames on {platform}: {u1} vs {u2}')
+                    signals["username_similarity"] = signals.get("username_similarity", 0) * 0.5
+                    evidence.append(f"Different usernames on {platform}: {u1} vs {u2}")
         return signals, evidence
 
     def _compute_face_signal(
@@ -1640,7 +1726,7 @@ class IdentityStitchingEngine:
         Compares face embeddings between two profiles using direct embedding
         comparison when profiles share face IDs, or via cross-modal LSH index
         for candidate retrieval.
-        
+
         FIX: Direct comparison when profiles share face_ids (same source),
         LSH lookup when comparing independent profiles.
         """
@@ -1667,7 +1753,7 @@ class IdentityStitchingEngine:
                     emb_a_list.append(profile_a.face_embeddings[idx_a])
                     emb_b_list.append(profile_b.face_embeddings[idx_b])
                     valid_face_ids.append(face_id)
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     continue
 
             if emb_a_list and emb_b_list:
@@ -1680,8 +1766,8 @@ class IdentityStitchingEngine:
                     max_row = max_idx // len(emb_b_list)
                     if max_sim >= 0.7:
                         matched_face = valid_face_ids[max_row] if max_row < len(valid_face_ids) else "unknown"
-                        signals['face_match'] = max_sim
-                        evidence.append(f'Face match (shared ID {matched_face[:8]}...): similarity={max_sim:.2f}')
+                        signals["face_match"] = max_sim
+                        evidence.append(f"Face match (shared ID {matched_face[:8]}...): similarity={max_sim:.2f}")
                         return signals, evidence
 
         # Method 2: LSH-based lookup for independent profiles
@@ -1690,31 +1776,30 @@ class IdentityStitchingEngine:
 
         try:
             from hledac.universal._core.rust_backend import rust
+
             ane = rust.ane
 
             # Find best face match between profiles via LSH
             best_similarity = 0.0
-            best_match = None
 
-            for i, emb_a in enumerate(profile_a.face_embeddings):
+            for _i, emb_a in enumerate(profile_a.face_embeddings):
                 # Query LSH index with broader search
                 matches = ane.crossmodal_query_face(
                     emb_a,
                     max_results=10,
                     min_similarity=0.5,
-    )
+                )
                 # Find matches belonging to profile_b
                 for node_id, similarity in matches:
                     if node_id in profile_b.face_ids:
                         if similarity > best_similarity:
                             best_similarity = similarity
-                            best_match = node_id
 
             if best_similarity >= 0.7:
-                signals['face_match'] = float(best_similarity)
-                evidence.append(f'Face match (via LSH): similarity={best_similarity:.2f}')
+                signals["face_match"] = float(best_similarity)
+                evidence.append(f"Face match (via LSH): similarity={best_similarity:.2f}")
         except Exception as e:
-            logger.debug(f'Face signal computation failed: {e}')
+            logger.debug(f"Face signal computation failed: {e}")
 
         return signals, evidence
 
@@ -1723,7 +1808,7 @@ class IdentityStitchingEngine:
         """Compute cosine similarity between two vectors."""
         if len(a) != len(b) or not a:
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
         if norm_a == 0 or norm_b == 0:
@@ -1762,17 +1847,17 @@ class IdentityStitchingEngine:
         num_queries, dim = q_matrix.shape
         num_candidates = c_matrix.shape[0]
 
-        # Check Rust availability via embeddings.reranker pattern
         try:
             from hledac.universal._core.rust_backend import rust
+
             _rust_mod = rust.raw.module
 
             _raw_npy = getattr(_rust_mod, "batch_cosine_scores_npy", None)
             if _raw_npy is not None:
                 # Zero-copy path: pass flattened arrays, receive zero-copy view back
                 result = _raw_npy(
-                    q_matrix.reshape(-1),   # PyReadonlyArray1<f32>, shape (Q*D,)
-                    c_matrix.reshape(-1),   # PyReadonlyArray1<f32>, shape (N*D,)
+                    q_matrix.reshape(-1),  # PyReadonlyArray1<f32>, shape (Q*D,)
+                    c_matrix.reshape(-1),  # PyReadonlyArray1<f32>, shape (N*D,)
                     num_queries,
                     num_candidates,
                     dim,
@@ -1802,7 +1887,7 @@ class IdentityStitchingEngine:
         Compares voiceprint embeddings between two profiles using direct embedding
         comparison when profiles share voice IDs, or via cross-modal LSH index
         for candidate retrieval.
-        
+
         FIX: Direct comparison when profiles share voice_ids (same source),
         LSH lookup when comparing independent profiles.
         """
@@ -1824,13 +1909,13 @@ class IdentityStitchingEngine:
                     idx_b = profile_b.voice_ids.index(voice_id)
                     emb_a = profile_a.voice_embeddings[idx_a]
                     emb_b = profile_b.voice_embeddings[idx_b]
-                    
+
                     similarity = self._cosine_similarity(emb_a, emb_b)
                     if similarity >= 0.7:
-                        signals['voice_match'] = float(similarity)
-                        evidence.append(f'Voice match (shared ID {voice_id[:8]}...): similarity={similarity:.2f}')
+                        signals["voice_match"] = float(similarity)
+                        evidence.append(f"Voice match (shared ID {voice_id[:8]}...): similarity={similarity:.2f}")
                         return signals, evidence
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     continue
 
         # Method 2: LSH-based lookup for independent profiles
@@ -1839,31 +1924,30 @@ class IdentityStitchingEngine:
 
         try:
             from hledac.universal._core.rust_backend import rust
+
             ane = rust.ane
 
             # Find best voice match between profiles via LSH
             best_similarity = 0.0
-            best_match = None
 
-            for i, emb_a in enumerate(profile_a.voice_embeddings):
+            for _i, emb_a in enumerate(profile_a.voice_embeddings):
                 # Query LSH index with broader search
                 matches = ane.crossmodal_query_voice(
                     emb_a,
                     max_results=10,
                     min_similarity=0.5,
-    )
+                )
                 # Find matches belonging to profile_b
                 for node_id, similarity in matches:
                     if node_id in profile_b.voice_ids:
                         if similarity > best_similarity:
                             best_similarity = similarity
-                            best_match = node_id
 
             if best_similarity >= 0.7:
-                signals['voice_match'] = float(best_similarity)
-                evidence.append(f'Voice match (via LSH): similarity={best_similarity:.2f}')
+                signals["voice_match"] = float(best_similarity)
+                evidence.append(f"Voice match (via LSH): similarity={best_similarity:.2f}")
         except Exception as e:
-            logger.debug(f'Voice signal computation failed: {e}')
+            logger.debug(f"Voice signal computation failed: {e}")
 
         return signals, evidence
 
@@ -1943,12 +2027,12 @@ class IdentityStitchingEngine:
             match_score=final_score,
             match_signals=signals,
             evidence=evidence,
-    )
+        )
         self._match_cache.put(cache_key, match)
-        self._stats['matches_computed'] += 1
+        self._stats["matches_computed"] += 1
         return match
 
-    def find_matches(self, profile_id: str, min_score: float | None=None) -> list[IdentityMatch]:
+    def find_matches(self, profile_id: str, min_score: float | None = None) -> list[IdentityMatch]:
         """
         Find potential matches for a profile.
 
@@ -1960,7 +2044,7 @@ class IdentityStitchingEngine:
             List of IdentityMatch objects sorted by score
         """
         if profile_id not in self._profiles:
-            logger.warning(f'Profile {profile_id} not found')
+            logger.warning(f"Profile {profile_id} not found")
             return []
         threshold = min_score if min_score is not None else self.similarity_threshold
         profile = self._profiles[profile_id]
@@ -1986,7 +2070,7 @@ class IdentityStitchingEngine:
         matches.sort(key=attrgetter("match_score"), reverse=True)
         return matches
 
-    async def find_all_matches_async(self, min_score: float | None=None) -> list[IdentityMatch]:
+    async def find_all_matches_async(self, min_score: float | None = None) -> list[IdentityMatch]:
         """
         Find all matches across all profiles — MUST be called from async context.
 
@@ -2006,10 +2090,11 @@ class IdentityStitchingEngine:
             matches = self._sync_match_pairs(pairs, threshold)
         else:
             matches = await _bounded_gather_pairs(
-                pairs, threshold,
+                pairs,
+                threshold,
                 lambda a, b: self.compute_match(self._profiles[a], self._profiles[b]),
                 concurrency=None,  # F1 FIX: dynamic UMA-aware limit
-    )
+            )
         matches.sort(key=attrgetter("match_score"), reverse=True)
         return matches
 
@@ -2039,9 +2124,19 @@ class IdentityStitchingEngine:
         pairs: set[tuple[str, str]] = set()
         for pid in profile_ids:
             profile = self._profiles[pid]
-            pairs.update(self._index_candidates_for_field(pid, profile.get_all_usernames(), self._username_index, self._normalize_username_translingual))
-            pairs.update(self._index_candidates_for_field(pid, profile.emails, self._email_index, self._normalize_email))
-            pairs.update(self._index_candidates_for_field(pid, profile.aliases + [profile.primary_name], self._alias_index, self._normalize_text_translingual))
+            pairs.update(
+                self._index_candidates_for_field(
+                    pid, profile.get_all_usernames(), self._username_index, self._normalize_username_translingual
+                )
+            )
+            pairs.update(
+                self._index_candidates_for_field(pid, profile.emails, self._email_index, self._normalize_email)
+            )
+            pairs.update(
+                self._index_candidates_for_field(
+                    pid, profile.aliases + [profile.primary_name], self._alias_index, self._normalize_text_translingual
+                )
+            )
         return pairs
 
     def _index_candidates_for_field(self, pid: str, values: list, index: dict, normalizer) -> set[tuple[str, str]]:
@@ -2063,7 +2158,7 @@ class IdentityStitchingEngine:
                 matches.append(match)
         return matches
 
-    def find_all_matches(self, min_score: float | None=None) -> list[IdentityMatch]:
+    def find_all_matches(self, min_score: float | None = None) -> list[IdentityMatch]:
         """
         Find all matches across all profiles — sync wrapper for CLI entry points.
 
@@ -2085,14 +2180,14 @@ class IdentityStitchingEngine:
                 "find_all_matches() called from running event loop with n>=20. "
                 "Use 'await engine.find_all_matches_async()' instead. "
                 f"Current profile count: {len(self._profiles)}"
-    )
+            )
 
         # No running loop — use run_until_complete (Python 3.14+ safe)
-        return asyncio.get_running_loop().run_until_complete(
-            self.find_all_matches_async(min_score)
-    )
+        return asyncio.get_running_loop().run_until_complete(self.find_all_matches_async(min_score))
 
-    def stitch_identities(self, match_threshold: float=0.8, transitive_threshold: float=0.6) -> list[StitchedIdentity]:
+    def stitch_identities(
+        self, match_threshold: float = 0.8, transitive_threshold: float = 0.6
+    ) -> list[StitchedIdentity]:
         """
         Stitch identities based on matches.
 
@@ -2115,10 +2210,9 @@ class IdentityStitchingEngine:
         for match in matches:
             uf.union(match.profile_a, match.profile_b)
 
-        # Build clusters from Union-Find groups
         groups = uf.groups()
         stitched: list[StitchedIdentity] = []
-        for root_id, comp_profile_ids in groups.items():
+        for _root_id, comp_profile_ids in groups.items():
             if len(comp_profile_ids) == 1:
                 continue
             primary_id = comp_profile_ids[0]
@@ -2136,7 +2230,7 @@ class IdentityStitchingEngine:
                 all_usernames.extend(profile.usernames)
             # Accumulate evidence from matches within this cluster
             for i, pid_a in enumerate(comp_profile_ids):
-                for pid_b in comp_profile_ids[i + 1:]:
+                for pid_b in comp_profile_ids[i + 1 :]:
                     cache_key = (pid_a, pid_b)
                     match = self._match_cache.get(cache_key)
                     if match is not None:
@@ -2145,7 +2239,7 @@ class IdentityStitchingEngine:
                         match_count += 1
             avg_confidence = total_confidence / match_count if match_count > 0 else 0.0
             stitched_identity = StitchedIdentity(
-                id=f'stitched_{primary_id}',
+                id=f"stitched_{primary_id}",
                 profile_ids=comp_profile_ids,
                 primary_profile=primary_id,
                 merged_names=list(all_names),
@@ -2153,10 +2247,10 @@ class IdentityStitchingEngine:
                 merged_usernames=all_usernames,
                 stitch_confidence=avg_confidence,
                 match_evidence=list(set(all_evidence)),
-    )
+            )
             stitched.append(stitched_identity)
-        self._stats['identities_stitched'] += len(stitched)
-        logger.info(f'Stitched {len(stitched)} identities in {time.time() - start_time:.3f}s')
+        self._stats["identities_stitched"] += len(stitched)
+        logger.info(f"Stitched {len(stitched)} identities in {time.time() - start_time:.3f}s")
         return stitched
 
     def get_identity_graph(self) -> Any:
@@ -2167,26 +2261,33 @@ class IdentityStitchingEngine:
             NetworkX Graph as primary (declared dep); igraph as enhancement when available.
         """
         if not NETWORKX_AVAILABLE:
-            raise ImportError('NetworkX is required for graph operations')
+            raise ImportError("NetworkX is required for graph operations")
         if self._identity_graph is not None:
             return self._identity_graph
         import networkx as nx
+
         graph = nx.Graph()
         profile_ids_list = list(self._profiles.keys())
         graph.add_nodes_from(profile_ids_list)
         for profile_id in profile_ids_list:
             profile = self._profiles[profile_id]
-            graph.nodes[profile_id]['primary_name'] = profile.primary_name
-            graph.nodes[profile_id]['aliases'] = profile.aliases
-            graph.nodes[profile_id]['emails'] = profile.emails
-            graph.nodes[profile_id]['platforms'] = list(profile.get_platforms())
-            graph.nodes[profile_id]['confidence'] = profile.confidence
+            graph.nodes[profile_id]["primary_name"] = profile.primary_name
+            graph.nodes[profile_id]["aliases"] = profile.aliases
+            graph.nodes[profile_id]["emails"] = profile.emails
+            graph.nodes[profile_id]["platforms"] = list(profile.get_platforms())
+            graph.nodes[profile_id]["confidence"] = profile.confidence
         matches = self.find_all_matches()
         for match in matches:
             if match.profile_a in profile_ids_list and match.profile_b in profile_ids_list:
-                graph.add_edge(match.profile_a, match.profile_b, weight=match.match_score, confidence=match.confidence, signals=match.match_signals)
+                graph.add_edge(
+                    match.profile_a,
+                    match.profile_b,
+                    weight=match.match_score,
+                    confidence=match.confidence,
+                    signals=match.match_signals,
+                )
         self._identity_graph = graph
-        self._stats['graphs_built'] += 1
+        self._stats["graphs_built"] += 1
         return graph
 
     def get_identity_communities(self) -> list[set[str]]:
@@ -2197,17 +2298,20 @@ class IdentityStitchingEngine:
             List of communities (sets of profile IDs) using NetworkX as primary.
         """
         if not NETWORKX_AVAILABLE:
-            raise ImportError('NetworkX is required for community detection')
+            raise ImportError("NetworkX is required for community detection")
         graph = self.get_identity_graph()
         if graph.number_of_nodes() == 0:
             return []
         import networkx as nx
+
         communities = []
         for component in nx.connected_components(graph):
             communities.append(set(component))
         return communities
 
-    def to_entities_and_relationships(self, stitched_identities: list[StitchedIdentity] | None=None) -> tuple[list[Any], list[Any]]:
+    def to_entities_and_relationships(
+        self, stitched_identities: list[StitchedIdentity] | None = None
+    ) -> tuple[list[Any], list[Any]]:
         """
         Convert stitched identities to Entity and Relationship objects.
 
@@ -2218,23 +2322,45 @@ class IdentityStitchingEngine:
             Tuple of (entities, relationships) for RelationshipDiscoveryEngine
         """
         if not RELATIONSHIP_AVAILABLE:
-            raise ImportError('relationship_discovery module not available')
+            raise ImportError("relationship_discovery module not available")
         if stitched_identities is None:
             stitched_identities = self.stitch_identities()
         entities: list[Entity] = []
         relationships: list[Relationship] = []
         for stitched in stitched_identities:
-            entity = Entity(id=stitched.id, type=EntityType.DIGITAL_IDENTITY, attributes={'merged_names': stitched.merged_names, 'merged_emails': stitched.merged_emails, 'profile_count': len(stitched.profile_ids), 'stitch_confidence': stitched.stitch_confidence}, sources=stitched.profile_ids)
+            entity = Entity(
+                id=stitched.id,
+                type=EntityType.DIGITAL_IDENTITY,
+                attributes={
+                    "merged_names": stitched.merged_names,
+                    "merged_emails": stitched.merged_emails,
+                    "profile_count": len(stitched.profile_ids),
+                    "stitch_confidence": stitched.stitch_confidence,
+                },
+                sources=stitched.profile_ids,
+            )
             entities.append(entity)
             for i, pid_a in enumerate(stitched.profile_ids):
-                for pid_b in stitched.profile_ids[i + 1:]:
-                    rel = Relationship(source=pid_a, target=pid_b, type=RelationshipType.RELATED_TO, strength=stitched.stitch_confidence, confidence=stitched.stitch_confidence, evidence=stitched.match_evidence)
+                for pid_b in stitched.profile_ids[i + 1 :]:
+                    rel = Relationship(
+                        source=pid_a,
+                        target=pid_b,
+                        type=RelationshipType.RELATED_TO,
+                        strength=stitched.stitch_confidence,
+                        confidence=stitched.stitch_confidence,
+                        evidence=stitched.match_evidence,
+                    )
                     relationships.append(rel)
         return (entities, relationships)
 
     def to_dict(self) -> dict[str, Any]:
         """Export engine state as dictionary."""
-        return {'profiles': {k: v.to_dict() for k, v in self._profiles.items()}, 'stats': self._stats, 'similarity_threshold': self.similarity_threshold, 'signal_weights': self.signal_weights}
+        return {
+            "profiles": {k: v.to_dict() for k, v in self._profiles.items()},
+            "stats": self._stats,
+            "similarity_threshold": self.similarity_threshold,
+            "signal_weights": self.signal_weights,
+        }
 
     def export_matches(self) -> list[dict[str, Any]]:
         """Export all matches as list of dictionaries."""
@@ -2250,7 +2376,7 @@ class IdentityStitchingEngine:
         """Get engine statistics."""
         return self._stats.copy()
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all data from the engine."""
         self._profiles.clear()
         self._username_index.clear()
@@ -2259,9 +2385,9 @@ class IdentityStitchingEngine:
         self._platform_index.clear()
         self._invalidate_caches()
         gc.collect()
-        logger.info('IdentityStitchingEngine cleared')
+        logger.info("IdentityStitchingEngine cleared")
 
-    def optimize_memory(self):
+    def optimize_memory(self) -> None:
         """Optimize memory usage by clearing caches and forcing GC."""
         self._identity_graph = None
         self._similarity_cache.clear()
@@ -2273,55 +2399,97 @@ class IdentityStitchingEngine:
             self._lsh_index.clear()
         self._lsh_fingerprint_cache.clear()
         gc.collect()
-        logger.debug('Memory optimization completed')
+        logger.debug("Memory optimization completed")
 
     def get_memory_usage(self) -> dict[str, int]:
         """Estimate memory usage of key data structures."""
         import sys
-        profile_size = sum((sys.getsizeof(p) for p in self._profiles.values()))
-        index_size = sum((sys.getsizeof(s) for s in self._username_index.values())) + sum((sys.getsizeof(s) for s in self._email_index.values())) + sum((sys.getsizeof(s) for s in self._alias_index.values()))
-        return {'profiles_bytes': profile_size, 'indexes_bytes': index_size, 'total_bytes': profile_size + index_size, 'profile_count': len(self._profiles), 'similarity_cache': self._similarity_cache.stats(), 'match_cache': self._match_cache.stats()}
 
-def create_identity_stitching_engine(similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True) -> IdentityStitchingEngine:
+        profile_size = sum(sys.getsizeof(p) for p in self._profiles.values())
+        index_size = (
+            sum(sys.getsizeof(s) for s in self._username_index.values())
+            + sum(sys.getsizeof(s) for s in self._email_index.values())
+            + sum(sys.getsizeof(s) for s in self._alias_index.values())
+        )
+        return {
+            "profiles_bytes": profile_size,
+            "indexes_bytes": index_size,
+            "total_bytes": profile_size + index_size,
+            "profile_count": len(self._profiles),
+            "similarity_cache": self._similarity_cache.stats(),
+            "match_cache": self._match_cache.stats(),
+        }
+
+
+def create_identity_stitching_engine(
+    similarity_threshold: float = 0.7,
+    signal_weights: dict[str, float] | None = None,
+    max_memory_mb: int = 512,
+    enable_fuzzy: bool = True,
+    enable_transliteration: bool = True,
+    enable_stylometry: bool = True,
+) -> IdentityStitchingEngine:
     """Factory function to create an IdentityStitchingEngine."""
-    return IdentityStitchingEngine(similarity_threshold=similarity_threshold, signal_weights=signal_weights, max_memory_mb=max_memory_mb, enable_fuzzy=enable_fuzzy, enable_transliteration=enable_transliteration, enable_stylometry=enable_stylometry)
+    return IdentityStitchingEngine(
+        similarity_threshold=similarity_threshold,
+        signal_weights=signal_weights,
+        max_memory_mb=max_memory_mb,
+        enable_fuzzy=enable_fuzzy,
+        enable_transliteration=enable_transliteration,
+        enable_stylometry=enable_stylometry,
+    )
 
-async def example_usage():
+
+async def example_usage() -> None:
     """Example usage of the IdentityStitchingEngine."""
     engine = create_identity_stitching_engine(similarity_threshold=0.6)
-    profiles = [IdentityProfile(id='alice_twitter', primary_name='Alice Smith', emails=['alice@example.com'], aliases=['alice_s']), IdentityProfile(id='alice_github', primary_name='Alice Smith', emails=['alice@example.com'], aliases=['alicecodes']), IdentityProfile(id='bob_twitter', primary_name='Bob Jones', emails=['bob@example.com']), IdentityProfile(id='alice_alt', primary_name='Alice S.', emails=['alice.smith@example.com'], aliases=['alice_smith'])]
-    profiles[0].add_username('twitter', 'alice_smith', verified=True)
-    profiles[1].add_username('github', 'alicecodes')
-    profiles[2].add_username('twitter', 'bobjones')
-    profiles[3].add_username('reddit', 'alice_s')
+    profiles = [
+        IdentityProfile(
+            id="alice_twitter", primary_name="Alice Smith", emails=["alice@example.com"], aliases=["alice_s"]
+        ),
+        IdentityProfile(
+            id="alice_github", primary_name="Alice Smith", emails=["alice@example.com"], aliases=["alicecodes"]
+        ),
+        IdentityProfile(id="bob_twitter", primary_name="Bob Jones", emails=["bob@example.com"]),
+        IdentityProfile(
+            id="alice_alt", primary_name="Alice S.", emails=["alice.smith@example.com"], aliases=["alice_smith"]
+        ),
+    ]
+    profiles[0].add_username("twitter", "alice_smith", verified=True)
+    profiles[1].add_username("github", "alicecodes")
+    profiles[2].add_username("twitter", "bobjones")
+    profiles[3].add_username("reddit", "alice_s")
     for profile in profiles:
         engine.add_profile(profile)
-    print('=== Finding Matches ===')
+    print("=== Finding Matches ===")
     for profile in profiles:
         matches = engine.find_matches(profile.id)
         if matches:
-            print(f'\n{profile.primary_name} ({profile.id}):')
+            print(f"\n{profile.primary_name} ({profile.id}):")
             for match in matches[:3]:
-                print(f'  -> {match.profile_b}: {match.match_score:.2f} ({match.confidence})')
-                print(f'     Signals: {match.match_signals}')
-    print('\n=== Stitching Identities ===')
+                print(f"  -> {match.profile_b}: {match.match_score:.2f} ({match.confidence})")
+                print(f"     Signals: {match.match_signals}")
+    print("\n=== Stitching Identities ===")
     stitched = engine.stitch_identities(match_threshold=0.7)
     for identity in stitched:
-        print(f'\nStitched Identity: {identity.id}')
-        print(f'  Profiles: {identity.profile_ids}')
-        print(f'  Names: {identity.merged_names}')
-        print(f'  Emails: {identity.merged_emails}')
-        print(f'  Confidence: {identity.stitch_confidence:.2f}')
-    print('\n=== Identity Graph Stats ===')
+        print(f"\nStitched Identity: {identity.id}")
+        print(f"  Profiles: {identity.profile_ids}")
+        print(f"  Names: {identity.merged_names}")
+        print(f"  Emails: {identity.merged_emails}")
+        print(f"  Confidence: {identity.stitch_confidence:.2f}")
+    print("\n=== Identity Graph Stats ===")
     graph = engine.get_identity_graph()
-    print(f'  Nodes: {graph.number_of_nodes()}')
-    print(f'  Edges: {graph.number_of_edges()}')
+    print(f"  Nodes: {graph.number_of_nodes()}")
+    print(f"  Edges: {graph.number_of_edges()}")
     if RELATIONSHIP_AVAILABLE:
-        print('\n=== Export for RelationshipDiscoveryEngine ===')
+        print("\n=== Export for RelationshipDiscoveryEngine ===")
         entities, relationships = engine.to_entities_and_relationships(stitched)
-        print(f'  Entities: {len(entities)}')
-        print(f'  Relationships: {len(relationships)}')
+        print(f"  Entities: {len(entities)}")
+        print(f"  Relationships: {len(relationships)}")
     engine.clear()
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     import asyncio
+
     asyncio.run(example_usage())

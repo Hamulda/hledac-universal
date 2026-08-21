@@ -32,12 +32,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random as _random
-from typing import TYPE_CHECKING, Any, TypeVar
 from collections.abc import Awaitable, Callable
-from _core import aclose
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ DEFAULT_RETRYABLE: tuple[type[Exception], ...] = (
     ConnectionError,
     OSError,
     asyncio.CancelledError,
-    )
+)
 
 
 def is_retryable(exc: Exception, retryable: type[Exception] | tuple[type[Exception], ...] | None = None) -> bool:
@@ -69,7 +68,7 @@ def is_retryable(exc: Exception, retryable: type[Exception] | tuple[type[Excepti
 # --- Async retry loop -------------------------------------------------------
 
 
-async def retry_async(
+async def retry_async[T](
     coro_fn: Callable[[], Awaitable[T]],
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
@@ -156,7 +155,7 @@ async def retry_async(
             max_attempts,
             delay,
             last_exception,
-    )
+        )
 
         try:
             await asyncio.sleep(delay)
@@ -185,7 +184,16 @@ class RetryLoop:
                 await asyncio.sleep(delay)  # sync context needs event loop
     """
 
-    __slots__ = ("_attempt", "_max_attempts", "_base_delay", "_max_delay", "_jitter", "_jitter_factor", "_backoff_factor", "_exhausted")
+    __slots__ = (
+        "_attempt",
+        "_max_attempts",
+        "_base_delay",
+        "_max_delay",
+        "_jitter",
+        "_jitter_factor",
+        "_backoff_factor",
+        "_exhausted",
+    )
 
     def __init__(
         self,
@@ -205,7 +213,7 @@ class RetryLoop:
         self._backoff_factor = backoff_factor
         self._exhausted = False
 
-    def __iter__(self) -> "RetryLoop":
+    def __iter__(self) -> RetryLoop:
         return self
 
     def __next__(self) -> tuple[int, float]:
@@ -248,5 +256,3 @@ def default_on_retry(attempt: int, delay: float, exc: Exception) -> None:
 
 
 # --- Backoff-only (no jitter) -- for testing determinism ----------------------
-
-

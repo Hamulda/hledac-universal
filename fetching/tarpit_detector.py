@@ -2,10 +2,6 @@
 Tarpit & Honeypot Detector for Fetch Pipeline
 ==============================================
 
-
-
-
-
 ISSUE [UNINDEXED]-014: Detect tarpits, link labyrinths, and honeypots in HTTP responses
 before HTML processing. Protects the fetch pipeline from wasting bandwidth and CPU on
 crawler-trapping pages.
@@ -32,25 +28,18 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import OrderedDict
 from typing import Final
 from urllib.parse import urljoin, urlparse
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.logging_config import get_logger
-from _core import aclose
 
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# msgspec types — frozen, gc=False for M1 memory efficiency
-# ---------------------------------------------------------------------------
-
 class TarpitResult(Struct, frozen=True):
     """Detection result for a single page."""
+
     is_tarpit: bool
     tarpit_score: float  # 0.0 (safe) — 1.0 (certain tarpit)
     reasons: tuple[str, ...]  # human-readable detection reasons
@@ -63,30 +52,27 @@ class TarpitResult(Struct, frozen=True):
     external_link_count: int = 0
     hidden_element_count: int = 0
     response_time_ms: float = 0.0
-    domain: str = ''
+    domain: str = ""
 
 
 class DomainTimingRecord(Struct):
     """Mutable per-domain timing record (not frozen — updated across requests)."""
+
     domain: str
     response_times: list[float]  # most recent N response times (ms)
     trend_score: float  # running exponential trend (0.0 — 1.0)
     last_seen: float  # monotonic timestamp
     # NEXTGEN-02: Abandoned state — if set, all future fetches to this domain are skipped
     abandoned: bool = False
-    abandon_reason: str = ''
+    abandon_reason: str = ""
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 # Tarpit score threshold: if composite score exceeds this, abort fetch
 TARPIT_ABORT_THRESHOLD: Final[float] = 0.7
 
 # Timing detection: if response time exceeds this, suspect tarpit
 _TIMING_SUSPECT_MS: Final[float] = 15_000.0  # 15 seconds
-_TIMING_TARPIT_MS: Final[float] = 25_000.0   # 25 seconds
+_TIMING_TARPIT_MS: Final[float] = 25_000.0  # 25 seconds
 
 # Progressive slowdown: ratio thresholds for exponential backoff detection
 _PROGRESSIVE_MIN_SAMPLES: Final[int] = 3
@@ -100,19 +86,19 @@ _MAX_LINKS_TO_ANALYZE: Final[int] = 1000  # bound RAM to ~5KB for link analysis
 # Honeypot detection patterns
 # Hidden/invisible elements
 _HIDDEN_CSS_RE: Final[re.Pattern] = re.compile(
-    r'(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|'
-    r'position\s*:\s*absolute\s*;\s*(?:left|top)\s*:\s*-9999px|'
-    r'width\s*:\s*0\s*;?\s*height\s*:\s*0|'
-    r'text-indent\s*:\s*-9999px|'
-    r'clip\s*:\s*rect\s*\(\s*0\s*,?\s*0\s*,?\s*0\s*,?\s*0\s*\))',
+    r"(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|"
+    r"position\s*:\s*absolute\s*;\s*(?:left|top)\s*:\s*-9999px|"
+    r"width\s*:\s*0\s*;?\s*height\s*:\s*0|"
+    r"text-indent\s*:\s*-9999px|"
+    r"clip\s*:\s*rect\s*\(\s*0\s*,?\s*0\s*,?\s*0\s*,?\s*0\s*\))",
     re.IGNORECASE,
-    )
+)
 
 # Hidden form fields (type=hidden)
 _HIDDEN_INPUT_RE: Final[re.Pattern] = re.compile(
     r'<input[^>]*type\s*=\s*["\']?hidden["\']?[^>]*/?>',
     re.IGNORECASE,
-    )
+)
 
 # Invisible links (links with no visible text, tiny dimensions, or off-screen)
 _INVISIBLE_LINK_RE: Final[re.Pattern] = re.compile(
@@ -120,33 +106,29 @@ _INVISIBLE_LINK_RE: Final[re.Pattern] = re.compile(
     r'(?:\s*<img[^>]*\b(?:width|height)\s*=\s*["\']?[01]["\']?[^>]*>|'
     r'\s*&nbsp;\s*|\s*<span[^>]*style\s*=\s*["\'][^"\']*'
     r'(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0)[^"\']*["\']|'
-    r'\s*)'
-    r'</a>',
+    r"\s*)"
+    r"</a>",
     re.IGNORECASE | re.DOTALL,
-    )
+)
 
 # JavaScript-based traps (eval, setTimeout with large delays, document.location redirects)
 _JS_TRAP_RE: Final[re.Pattern] = re.compile(
-    r'(?:eval\s*\(\s*(?:function|atob|String\.fromCharCode)|'
+    r"(?:eval\s*\(\s*(?:function|atob|String\.fromCharCode)|"
     r'setTimeout\s*\(\s*["\']?\s*(?:\d{5,}|function)|'
     r'document\.location\s*=\s*["\']|'
-    r'window\.location\.replace\s*\(|'
-    r'window\.top\.location|'
+    r"window\.location\.replace\s*\(|"
+    r"window\.top\.location|"
     r'<meta\s+http-equiv\s*=\s*["\']?refresh["\']?\s+content\s*=\s*["\']?\d)',
     re.IGNORECASE,
-    )
+)
 
 # Common tarpit/honeypot URL path patterns
 _TARPIT_URL_RE: Final[re.Pattern] = re.compile(
-    r'(?:/trap/|/honeypot/|/crawler/|/bot/|/spider/|/scraper/|'
-    r'tarpit|crawl.?trap|honey.?pot)',
+    r"(?:/trap/|/honeypot/|/crawler/|/bot/|/spider/|/scraper/|"
+    r"tarpit|crawl.?trap|honey.?pot)",
     re.IGNORECASE,
-    )
+)
 
-
-# ---------------------------------------------------------------------------
-# Timing tracker — bounded LRU per-domain
-# ---------------------------------------------------------------------------
 
 class _DomainTimingTracker:
     """Bounded LRU tracker for per-domain response times.
@@ -161,7 +143,7 @@ class _DomainTimingTracker:
     Thread-safe via explicit lock (not async — callers run in thread pool).
     """
 
-    __slots__ = ('_data', '_max_entries', '_max_samples')
+    __slots__ = ("_data", "_max_entries", "_max_samples")
 
     def __init__(self, max_entries: int = 512, max_samples: int = 8) -> None:
         self._max_entries = max_entries
@@ -178,7 +160,7 @@ class _DomainTimingTracker:
                     return
                 rec.response_times.append(response_time_ms)
                 if len(rec.response_times) > self._max_samples:
-                    rec.response_times = rec.response_times[-self._max_samples:]
+                    rec.response_times = rec.response_times[-self._max_samples :]
                 rec.last_seen = now
                 rec.trend_score = self._compute_trend(rec.response_times)
                 self._data.move_to_end(domain)
@@ -188,7 +170,7 @@ class _DomainTimingTracker:
                     response_times=[response_time_ms],
                     trend_score=0.0,
                     last_seen=now,
-    )
+                )
                 self._data[domain] = rec
                 if len(self._data) > self._max_entries:
                     self._data.popitem(last=False)  # LRU eviction
@@ -223,11 +205,11 @@ class _DomainTimingTracker:
                 rec.abandon_reason = reason
                 self._data.move_to_end(domain)
                 logger.info(
-                    '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
-                    domain, reason,
-    )
+                    "[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s",
+                    domain,
+                    reason,
+                )
             else:
-                # Create new abandoned record
                 rec = DomainTimingRecord(
                     domain=domain,
                     response_times=[],
@@ -235,14 +217,15 @@ class _DomainTimingTracker:
                     last_seen=now,
                     abandoned=True,
                     abandon_reason=reason,
-    )
+                )
                 self._data[domain] = rec
                 if len(self._data) > self._max_entries:
                     self._data.popitem(last=False)  # LRU eviction
                 logger.info(
-                    '[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s',
-                    domain, reason,
-    )
+                    "[TarpitDetector] NEXTGEN-02: Domain ABANDONED: %s reason=%s",
+                    domain,
+                    reason,
+                )
 
     def is_abandoned(self, domain: str) -> tuple[bool, str]:
         """Check if a domain is abandoned and get the reason.
@@ -257,7 +240,7 @@ class _DomainTimingTracker:
             if domain in self._data:
                 rec = self._data[domain]
                 return (rec.abandoned, rec.abandon_reason)
-        return (False, '')
+        return (False, "")
 
     def get_abandoned_count(self) -> int:
         """Get count of abandoned domains."""
@@ -274,18 +257,14 @@ class _DomainTimingTracker:
                     cleared += 1
             if cleared > 0:
                 logger.info(
-                    '[TarpitDetector] NEXTGEN-02: Cleared %d abandoned domains',
+                    "[TarpitDetector] NEXTGEN-02: Cleared %d abandoned domains",
                     cleared,
-    )
+                )
 
     def get_abandoned_domains(self) -> list[tuple[str, str]]:
         """Get list of all abandoned domains with reasons."""
         with self._lock:
-            return [
-                (domain, rec.abandon_reason)
-                for domain, rec in self._data.items()
-                if rec.abandoned
-            ]
+            return [(domain, rec.abandon_reason) for domain, rec in self._data.items() if rec.abandoned]
 
     @staticmethod
     def _compute_trend(times: list[float]) -> float:
@@ -315,10 +294,6 @@ class _DomainTimingTracker:
 _domain_timing_tracker = _DomainTimingTracker()
 
 
-# ---------------------------------------------------------------------------
-# Core: TarpitDetector
-# ---------------------------------------------------------------------------
-
 class TarpitDetector:
     """Static analysis + timing-based tarpit/honeypot/labyrinth detector.
 
@@ -345,7 +320,7 @@ class TarpitDetector:
 
     # Link extraction regex — matches href= attributes (single-pass, bounded)
     _HREF_RE: Final[re.Pattern] = re.compile(
-        r'''href\s*=\s*["']([^"']+)["']''',
+        r"""href\s*=\s*["']([^"']+)["']""",
         re.IGNORECASE,
     )
 
@@ -357,7 +332,7 @@ class TarpitDetector:
         url: str,
         response_time_ms: float,
         *,
-        domain: str = '',
+        domain: str = "",
     ) -> TarpitResult:
         """Run all detection methods and return composite result.
 
@@ -378,24 +353,19 @@ class TarpitDetector:
                 timing_score=0.0,
                 link_labyrinth_score=0.0,
                 honeypot_score=0.0,
-    )
+            )
 
         # Resolve domain
         if not domain:
             domain = self._extract_domain(url)
 
-        # Run detection methods
         timing_score = self._detect_timing_tarpit(response_time_ms, domain)
         link_score, internal_count, external_count = self._detect_link_labyrinth(html, url)
         honeypot_score, hidden_count = self._detect_honeypot(html)
 
         # Composite score: weighted average with anti-tarpit bias
         # Weights: timing=0.3, labyrinth=0.4, honeypot=0.3
-        composite = (
-            timing_score * 0.3 +
-            link_score * 0.4 +
-            honeypot_score * 0.3
-    )
+        composite = timing_score * 0.3 + link_score * 0.4 + honeypot_score * 0.3
 
         # Critical single-signal override: a strong single detection method
         # can independently trigger the tarpit abort.  Without this, even a
@@ -409,19 +379,21 @@ class TarpitDetector:
 
         reasons: list[str] = []
         if timing_score > 0.5:
-            reasons.append(f'timing_slowdown({timing_score:.2f})')
+            reasons.append(f"timing_slowdown({timing_score:.2f})")
         if link_score > 0.5:
-            reasons.append(f'link_labyrinth({link_score:.2f},internal={internal_count},external={external_count})')
+            reasons.append(f"link_labyrinth({link_score:.2f},internal={internal_count},external={external_count})")
         if honeypot_score > 0.5:
-            reasons.append(f'honeypot({honeypot_score:.2f},hidden={hidden_count})')
+            reasons.append(f"honeypot({honeypot_score:.2f},hidden={hidden_count})")
 
         is_tarpit = composite > TARPIT_ABORT_THRESHOLD
 
         if is_tarpit:
             logger.info(
-                '[TarpitDetector] TARPIT DETECTED: score=%.2f reasons=%s url=%s',
-                composite, ';'.join(reasons), url,
-    )
+                "[TarpitDetector] TARPIT DETECTED: score=%.2f reasons=%s url=%s",
+                composite,
+                ";".join(reasons),
+                url,
+            )
 
         return TarpitResult(
             is_tarpit=is_tarpit,
@@ -435,11 +407,7 @@ class TarpitDetector:
             hidden_element_count=hidden_count,
             response_time_ms=response_time_ms,
             domain=domain,
-    )
-
-    # ------------------------------------------------------------------
-    # Method 1: Timing Tarpit Detection
-    # ------------------------------------------------------------------
+        )
 
     def _detect_timing_tarpit(
         self,
@@ -456,7 +424,6 @@ class TarpitDetector:
         """
         score = 0.0
 
-        # Check 1: Single-request absolute timing
         if response_time_ms > _TIMING_TARPIT_MS:
             score = max(score, 0.9)
         elif response_time_ms > _TIMING_SUSPECT_MS:
@@ -464,7 +431,6 @@ class TarpitDetector:
         elif response_time_ms > 10_000:
             score = max(score, 0.3)
 
-        # Check 2: Multi-request progressive slowdown
         if domain:
             _domain_timing_tracker.record(domain, response_time_ms)
             trend = _domain_timing_tracker.get_trend_score(domain)
@@ -474,10 +440,6 @@ class TarpitDetector:
                 score = max(score, 0.5)
 
         return min(score, 1.0)
-
-    # ------------------------------------------------------------------
-    # Method 2: Link Labyrinth Detection
-    # ------------------------------------------------------------------
 
     def _detect_link_labyrinth(
         self,
@@ -556,22 +518,18 @@ class TarpitDetector:
             if len(links) >= _MAX_LINKS_TO_ANALYZE:
                 break
             href = match.group(1).strip()
-            if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:', 'data:')):
+            if not href or href.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
                 continue
             try:
                 resolved = urljoin(base_url, href)
             except ValueError:
                 continue
-            if resolved.startswith(('http://', 'https://')):
+            if resolved.startswith(("http://", "https://")):
                 if resolved not in seen:
                     seen.add(resolved)
                     links.append(resolved)
 
         return links
-
-    # ------------------------------------------------------------------
-    # Method 3: Honeypot Detection
-    # ------------------------------------------------------------------
 
     def _detect_honeypot(self, html: str) -> tuple[float, int]:
         """Detect honeypot patterns in HTML.
@@ -594,7 +552,6 @@ class TarpitDetector:
         score = 0.0
         hidden_count = 0
 
-        # Check 1: Hidden CSS elements
         hidden_matches = len(_HIDDEN_CSS_RE.findall(scan_html))
         if hidden_matches >= 20:
             score += 0.3
@@ -603,7 +560,6 @@ class TarpitDetector:
             score += 0.15
             hidden_count += hidden_matches
 
-        # Check 2: Hidden form inputs
         hidden_inputs = len(_HIDDEN_INPUT_RE.findall(scan_html))
         if hidden_inputs >= 10:
             score += 0.2
@@ -612,7 +568,6 @@ class TarpitDetector:
             score += 0.1
             hidden_count += hidden_inputs
 
-        # Check 3: Invisible links
         invisible_links = len(_INVISIBLE_LINK_RE.findall(scan_html))
         if invisible_links >= 5:
             score += 0.2
@@ -621,7 +576,6 @@ class TarpitDetector:
             score += 0.05
             hidden_count += invisible_links
 
-        # Check 4: JavaScript traps
         js_traps = len(_JS_TRAP_RE.findall(scan_html))
         if js_traps >= 5:
             score += 0.25
@@ -630,7 +584,6 @@ class TarpitDetector:
             score += 0.1
             hidden_count += js_traps
 
-        # Check 5: Suspicious URL path patterns in hrefs
         tarpit_urls = len(_TARPIT_URL_RE.findall(scan_html))
         if tarpit_urls >= 3:
             score += 0.15
@@ -641,25 +594,17 @@ class TarpitDetector:
 
         return (min(score, 1.0), hidden_count)
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _extract_domain(url: str) -> str:
         """Extract lowercased hostname from URL."""
         try:
             parsed = urlparse(url)
-            netloc = parsed.netloc or parsed.hostname or ''
+            netloc = parsed.netloc or parsed.hostname or ""
             # Strip www. prefix for canonical comparison
-            return netloc.lower().removeprefix('www.')
+            return netloc.lower().removeprefix("www.")
         except Exception:  # noqa: BLE001 — best-effort
-            return ''
+            return ""
 
-
-# ---------------------------------------------------------------------------
-# Module-level convenience
-# ---------------------------------------------------------------------------
 
 # Singleton detector for use throughout the fetch pipeline
 _tarpit_detector_singleton: TarpitDetector | None = None
@@ -682,7 +627,7 @@ def detect_tarpit(
     url: str,
     response_time_ms: float,
     *,
-    domain: str = '',
+    domain: str = "",
 ) -> TarpitResult:
     """Convenience wrapper: run tarpit detection on a single HTML response.
 
@@ -758,34 +703,34 @@ def sync_rust_abandoned() -> None:
     """
     try:
         from hledac.universal.hledac.rust import rust as _hledac_rust
-        if hasattr(_hledac_rust, 'anti_analysis') and _hledac_rust.anti_analysis is not None:
-            # Get Python abandoned domains
+
+        if hasattr(_hledac_rust, "anti_analysis") and _hledac_rust.anti_analysis is not None:
             python_abandoned = get_abandoned_domains()
             # Sync to Rust
             _hledac_rust.anti_analysis.sync_abandoned_from_python(python_abandoned)
             logger.debug(
-                '[NEXTGEN-02] Synced %d abandoned domains to Rust tracker',
+                "[NEXTGEN-02] Synced %d abandoned domains to Rust tracker",
                 len(python_abandoned),
-    )
+            )
     except ImportError:
         # Rust anti_analysis not available
         pass
     except Exception as e:  # noqa: BLE001
-        logger.debug('[NEXTGEN-02] Rust sync failed (continuing): %s', e)
+        logger.debug("[NEXTGEN-02] Rust sync failed (continuing): %s", e)
 
 
 __all__ = [
-    'TarpitDetector',
-    'TarpitResult',
-    'DomainTimingRecord',
-    'get_tarpit_detector',
-    'detect_tarpit',
-    'reset_timing_tracker',
-    'TARPIT_ABORT_THRESHOLD',
+    "TarpitDetector",
+    "TarpitResult",
+    "DomainTimingRecord",
+    "get_tarpit_detector",
+    "detect_tarpit",
+    "reset_timing_tracker",
+    "TARPIT_ABORT_THRESHOLD",
     # NEXTGEN-02: Domain abandonment API
-    'mark_domain_abandoned',
-    'is_domain_abandoned',
-    'get_abandoned_domains',
-    'clear_abandoned_domains',
-    'sync_rust_abandoned',
+    "mark_domain_abandoned",
+    "is_domain_abandoned",
+    "get_abandoned_domains",
+    "clear_abandoned_domains",
+    "sync_rust_abandoned",
 ]

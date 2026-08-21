@@ -25,9 +25,11 @@ Usage:
     normalized = normalizer.normalize("café")  # "café" (NFC)
     normalized_batch = normalizer.normalize_batch(["café", "žluťoučký"])
 """
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -49,10 +51,6 @@ def is_available() -> bool:
     return _get_rust_text_norm() is not None
 
 
-# =============================================================================
-# Constants
-# =============================================================================
-
 # Maximum batch size before chunking to avoid Rust's BATCH_HARD_CAP (50,000)
 _BATCH_SOFT_CAP: int = 40_000  # Leave headroom for Rust internal processing
 
@@ -60,17 +58,16 @@ _BATCH_SOFT_CAP: int = 40_000  # Leave headroom for Rust internal processing
 _BATCH_CHUNK_SIZE: int = 10_000
 
 
-# =============================================================================
-# Rust Fast-Path via Wiring Layer
-# =============================================================================
-
 # Module-level cache for Rust text normalization functions
 # Tuple: (nfc_normalize, batch_nfc_normalize, batch_nfc_normalize_fast)
-_RUST_TEXT_NORM: tuple[
-    "Callable[[str], str]",  # nfc_normalize
-    "Callable[[list[str]], list[str]] | None",  # batch_nfc_normalize
-    "Callable[[list[str]], list[str]] | None",  # batch_nfc_normalize_fast
-] | None = None
+_RUST_TEXT_NORM: (
+    tuple[
+        Callable[[str], str],  # nfc_normalize
+        Callable[[list[str]], list[str]] | None,  # batch_nfc_normalize
+        Callable[[list[str]], list[str]] | None,  # batch_nfc_normalize_fast
+    ]
+    | None
+) = None
 
 
 def _get_rust_text_norm() -> tuple[object, object, object] | None:
@@ -89,10 +86,16 @@ def _get_rust_text_norm() -> tuple[object, object, object] | None:
     try:
         # F1: Use centralized text_norm_wiring layer
         from rust_extensions.wiring.text_norm_wiring import (
-            nfc_normalize as _nfc,
             batch_nfc_normalize as _batch,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             batch_nfc_normalize_fast as _batch_fast,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             is_available as _available,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
+            nfc_normalize as _nfc,
         )
 
         # Verify at least nfc_normalize is available
@@ -104,11 +107,6 @@ def _get_rust_text_norm() -> tuple[object, object, object] | None:
 
     _RUST_TEXT_NORM = None
     return None
-
-
-# =============================================================================
-# Python Fallback
-# =============================================================================
 
 
 def _python_nfc_normalize(text: str) -> str:
@@ -150,11 +148,6 @@ def _python_batch_nfc_normalize(texts: list[str]) -> list[str]:
         List of NFC-normalized texts
     """
     return [_python_nfc_normalize(t) for t in texts]
-
-
-# =============================================================================
-# Text Normalizer Service
-# =============================================================================
 
 
 class TextNormalizerService:
@@ -285,10 +278,6 @@ class TextNormalizerService:
         """
         return self.normalize(text)
 
-
-# =============================================================================
-# Module-Level Singleton (Lazy Initialization)
-# =============================================================================
 
 _TEXT_NORMALIZER: TextNormalizerService | None = None
 

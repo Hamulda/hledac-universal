@@ -4,6 +4,7 @@ Role: Store stage přijímá CanonicalFinding z EnrichStage,
 odesílá je do DuckDB přes store.submit_findings() s bounded queue.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, StageContext
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -48,7 +48,7 @@ class StoreStage:
         store: Any | None = None,
         batch_size: int = 50,
         flush_interval_s: float = 2.0,
-    ):
+    ) -> None:
         self._store = store
         self._batch_size = batch_size
         self._flush_interval_s = flush_interval_s
@@ -84,7 +84,7 @@ class StoreStage:
                         break
                     async with asyncio.timeout(2.0):
                         finding = await input_queue.get()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Periodic flush
                     if self._batch:
                         flushed = await self._flush_batch()
@@ -103,7 +103,7 @@ class StoreStage:
                 should_flush = (
                     len(self._batch) >= self._batch_size
                     or (time.monotonic() - self._last_flush) >= self._flush_interval_s
-    )
+                )
                 if should_flush and self._batch:
                     flushed = await self._flush_batch()
                     stored_count += flushed

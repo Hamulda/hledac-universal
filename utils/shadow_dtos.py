@@ -16,21 +16,17 @@ Live DTO source: autonomous_orchestrator.py lines 285-306
 - AdmissionResult: lines 285-292
 - BacklogCandidate: lines 295-306
 """
+
 from __future__ import annotations
-
-
 
 import dataclasses
 import time
 from typing import Any, Literal
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
-# ---------------------------------------------------------------------------
-# Shadow twins
-# ---------------------------------------------------------------------------
+from compat.msgspec_gc_compat import Struct
+
 
 class AdmissionResultShadow(Struct, frozen=True):
     """
@@ -43,6 +39,7 @@ class AdmissionResultShadow(Struct, frozen=True):
       source_family: str
       reason       : str    (short, human-readable)
     """
+
     status: Literal["reject", "hold", "admit"]
     score: float
     content_hint: str
@@ -64,6 +61,7 @@ class BacklogCandidateShadow(Struct, frozen=True):
       enqueued_at_cycle: int
       lane_id          : str
     """
+
     url: str
     score: float
     source_family: str
@@ -74,14 +72,10 @@ class BacklogCandidateShadow(Struct, frozen=True):
     lane_id: str
 
 
-# ---------------------------------------------------------------------------
-# Baseline dataclass clones (mirroring live DTO shape exactly)
-# These are used ONLY inside this module for fair benchmark comparison
-# ---------------------------------------------------------------------------
-
 @dataclasses.dataclass(slots=True)
 class AdmissionResultBaseline:
     """Dataclass baseline clone of AdmissionResult for shadow benchmark."""
+
     status: Literal["reject", "hold", "admit"]
     score: float
     content_hint: str
@@ -92,6 +86,7 @@ class AdmissionResultBaseline:
 @dataclasses.dataclass(slots=True)
 class BacklogCandidateBaseline:
     """Dataclass baseline clone of BacklogCandidate for shadow benchmark."""
+
     url: str
     score: float
     source_family: str
@@ -101,10 +96,6 @@ class BacklogCandidateBaseline:
     enqueued_at_cycle: int
     lane_id: str
 
-
-# ---------------------------------------------------------------------------
-# Adapters (shadow <-> live)
-# ---------------------------------------------------------------------------
 
 def admission_from_live(live: Any) -> AdmissionResultShadow:
     """
@@ -159,10 +150,6 @@ def backlog_baseline_to_dict(baseline: BacklogCandidateBaseline) -> dict[str, An
     return dataclasses.asdict(baseline)
 
 
-# ---------------------------------------------------------------------------
-# Benchmark helpers
-# ---------------------------------------------------------------------------
-
 _N = 100_000
 
 
@@ -171,15 +158,22 @@ def bench_constructor_msgspec() -> dict[str, float]:
     t0 = time.perf_counter()
     for _ in range(_N):
         AdmissionResultShadow(
-            status="admit", score=0.75, content_hint="html",
-            source_family="web", reason="score=0.75,family=1,coverage=0.50",
-    )
+            status="admit",
+            score=0.75,
+            content_hint="html",
+            source_family="web",
+            reason="score=0.75,family=1,coverage=0.50",
+        )
         BacklogCandidateShadow(
             url="https://example.com/article",
-            score=0.75, source_family="web", content_hint="html",
+            score=0.75,
+            source_family="web",
+            content_hint="html",
             title_snippet="Example Article About Things",
-            contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
-    )
+            contradiction_value=0.1,
+            enqueued_at_cycle=5,
+            lane_id="expansion",
+        )
     elapsed = time.perf_counter() - t0
     total = 2 * _N  # two objects per iteration
     return {"total_s": elapsed, "ns_op": elapsed / total * 1e9, "ops": total}
@@ -190,15 +184,22 @@ def bench_constructor_baseline() -> dict[str, float]:
     t0 = time.perf_counter()
     for _ in range(_N):
         AdmissionResultBaseline(
-            status="admit", score=0.75, content_hint="html",
-            source_family="web", reason="score=0.75,family=1,coverage=0.50",
-    )
+            status="admit",
+            score=0.75,
+            content_hint="html",
+            source_family="web",
+            reason="score=0.75,family=1,coverage=0.50",
+        )
         BacklogCandidateBaseline(
             url="https://example.com/article",
-            score=0.75, source_family="web", content_hint="html",
+            score=0.75,
+            source_family="web",
+            content_hint="html",
             title_snippet="Example Article About Things",
-            contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
-    )
+            contradiction_value=0.1,
+            enqueued_at_cycle=5,
+            lane_id="expansion",
+        )
     elapsed = time.perf_counter() - t0
     total = 2 * _N
     return {"total_s": elapsed, "ns_op": elapsed / total * 1e9, "ops": total}
@@ -207,14 +208,21 @@ def bench_constructor_baseline() -> dict[str, float]:
 def bench_to_dict_msgspec() -> dict[str, float]:
     """to_dict cost: msgspec.Struct."""
     ar = AdmissionResultShadow(
-        status="admit", score=0.75, content_hint="html",
-        source_family="web", reason="score=0.75,family=1,coverage=0.50",
+        status="admit",
+        score=0.75,
+        content_hint="html",
+        source_family="web",
+        reason="score=0.75,family=1,coverage=0.50",
     )
     bc = BacklogCandidateShadow(
         url="https://example.com/article",
-        score=0.75, source_family="web", content_hint="html",
+        score=0.75,
+        source_family="web",
+        content_hint="html",
         title_snippet="Example Article About Things",
-        contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
+        contradiction_value=0.1,
+        enqueued_at_cycle=5,
+        lane_id="expansion",
     )
     t0 = time.perf_counter()
     for _ in range(_N):
@@ -228,14 +236,21 @@ def bench_to_dict_msgspec() -> dict[str, float]:
 def bench_to_dict_baseline() -> dict[str, float]:
     """to_dict cost: dataclass.asdict baseline."""
     ar = AdmissionResultBaseline(
-        status="admit", score=0.75, content_hint="html",
-        source_family="web", reason="score=0.75,family=1,coverage=0.50",
+        status="admit",
+        score=0.75,
+        content_hint="html",
+        source_family="web",
+        reason="score=0.75,family=1,coverage=0.50",
     )
     bc = BacklogCandidateBaseline(
         url="https://example.com/article",
-        score=0.75, source_family="web", content_hint="html",
+        score=0.75,
+        source_family="web",
+        content_hint="html",
         title_snippet="Example Article About Things",
-        contradiction_value=0.1, enqueued_at_cycle=5, lane_id="expansion",
+        contradiction_value=0.1,
+        enqueued_at_cycle=5,
+        lane_id="expansion",
     )
     t0 = time.perf_counter()
     for _ in range(_N):

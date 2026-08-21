@@ -37,10 +37,6 @@ use pyo3::prelude::*;
 use crate::gil::release_gil;
 use crate::pools::cpu_pool;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// WARC record types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -155,10 +151,6 @@ pub struct WarcExtractionStats {
     pub extraction_time_ms: u64,
 }
 
-// ============================================================================
-// WARC Parser
-// ============================================================================
-
 /// Memory-mapped WARC file parser
 struct WarcParser {
     /// Memory-mapped file
@@ -261,7 +253,6 @@ impl WarcParser {
         let mut ip_address: Option<String> = None;
         let content_offset: usize;
 
-        // Parse header lines
         let mut line_start = 0;
         let mut in_header = true;
         let mut header_end = 0usize;
@@ -302,7 +293,6 @@ impl WarcParser {
             content_offset = (offset as usize) + data);
         }
 
-        // Extract certificates from content
         let certificates = if record_type == "response" {
             self.extract_certificates(content_offset, end, offset)
         } else {
@@ -364,7 +354,6 @@ impl WarcParser {
         let pem_starts = find_all_bytes(data, b"-----BEGIN CERTIFICATE-----");
 
         for pem_start in pem_starts {
-            // Extract PEM block
             let pem_end = data[pem_start..]
                 .windows(27)
                 .position(|w| w == b"-----END CERTIFICATE-----")
@@ -376,7 +365,6 @@ impl WarcParser {
                 .unwrap_or("")
                 );
 
-            // Parse certificate
             if let Some(cert) = self.parse_pem_certificate(&pem_str, record_offset) {
                 certs.push(cert);
             }
@@ -409,7 +397,6 @@ impl WarcParser {
             return None;
         };
 
-        // Extract fields using simple string matching
         let mut subject_cn = String::new();
         let mut issuer_cn = String::new();
         let mut serial_number = String::new();
@@ -421,7 +408,6 @@ impl WarcParser {
         // In real implementation, would use x509-parser crate
         // For now, extract what's visible
 
-        // Get preview
         let pem_preview = pem.chars().take(2000).collect::<String>();
 
         Some(WarcCertificate {
@@ -534,10 +520,6 @@ fn base64_decode(data: &str) -> Option<Vec<u8>> {
 
     Some(result)
 }
-
-// ============================================================================
-// Python Interface
-// ============================================================================
 
 #[pyclass]
 pub struct WarcExtractor {

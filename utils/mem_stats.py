@@ -9,7 +9,6 @@ Bounded, always-on, no feature flags.
 """
 
 import psutil
-from _core import aclose
 
 
 def get_rss_mb() -> float:

@@ -3,7 +3,6 @@ security/clearance_cookie_jar.py
 
 Cloudflare / DataDome clearance cookie persistence layer.
 
-
 Stores cf_clearance and datadome cookies in LMDB with bounded TTL.
 On subsequent requests, cookies are injected into the curl_cffi session
 so protected endpoints are bypassed without solving the challenge again.
@@ -26,25 +25,21 @@ M1 8GB: 2 MB LMDB map (500 entries), FIFO eviction.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# --- Lazy imports (defer until first use) ---
-
 
 def _open_lmdb_env() -> Any | None:
     """Open LMDB env lazily. Returns None if unavailable."""
     try:
-        from hledac.universal.paths import LMDB_ROOT
         from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+        from hledac.universal.paths import LMDB_ROOT
 
         lmdb_path = str(LMDB_ROOT / "clearance.lmdb")
         # POTENTIAL-1 Fix: critical=True for auth cookies (session data)
@@ -55,7 +50,7 @@ def _open_lmdb_env() -> Any | None:
             map_size=2 * 1024 * 1024,  # 2 MB — 500 entries max
             readahead=False,
             critical=True,  # POTENTIAL-1 Fix: auth cookies need durability
-    )
+        )
         return env
     except Exception:  # noqa: BLE001 — fail-soft
         return None
@@ -79,9 +74,6 @@ def _dumps_cookie(data: dict[str, Any]) -> bytes | None:
         return orjson.dumps(data)
     except Exception:  # noqa: BLE001
         return None
-
-
-# --- Cookie Jar ---
 
 
 class ClearanceCookieJar:
@@ -153,7 +145,6 @@ class ClearanceCookieJar:
             if not isinstance(cookies, dict):
                 return {}
 
-            # Validate cookie values are non-empty
             return {k: v for k, v in cookies.items() if v}
 
         except Exception:  # noqa: BLE001 — fail-soft
@@ -198,7 +189,6 @@ class ClearanceCookieJar:
 
             # FIFO eviction if at capacity
             with self._env.begin(write=True) as txn:
-                # Check count using a cursor
                 cursor = txn.cursor()
                 count = 0
                 for _ in cursor.iternext(keys=False, values=False):
@@ -244,7 +234,7 @@ class ClearanceCookieJar:
                 len(cookies),
                 domain,
                 ttl,
-    )
+            )
             return True
 
         except Exception:  # noqa: BLE001 — fail-soft
@@ -260,7 +250,7 @@ class ClearanceCookieJar:
             domain,
             {"datadome": datadome_cookie},
             ttl_s=self.DATADOME_TTL_S,
-    )
+        )
 
     def delete(self, domain: str) -> bool:
         """Delete cookies for domain."""
@@ -324,9 +314,6 @@ class ClearanceCookieJar:
             }
         except Exception:  # noqa: BLE001 — fail-soft
             return {"available": False, "error": True}
-
-
-# --- Global singleton (lazy) ---
 
 
 _jar: ClearanceCookieJar | None = None

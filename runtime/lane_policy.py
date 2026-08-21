@@ -28,19 +28,21 @@ M1 8GB constraints:
 
 Invariant: Always-on, bounded, fail-safe — no feature flags.
 """
+
 from __future__ import annotations
 
-import msgspec
+from enum import Enum, auto
+from typing import Any, Protocol, runtime_checkable
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from enum import Enum, auto
-from typing import Protocol, runtime_checkable, Any
-
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 
+
 class LaneDecision(Enum):
     """Canonical lane admission/activation decision."""
+
     ALLOW = auto()
     DENY = auto()
     DEFER = auto()
@@ -49,6 +51,7 @@ class LaneDecision(Enum):
 
 class ResearchPhase(Enum):
     """Sprint research phase for context."""
+
     PRELUDE = auto()
     ACTIVE = auto()
     WINDUP = auto()
@@ -56,6 +59,7 @@ class ResearchPhase(Enum):
 
 
 # ── Frozen Domain Types ────────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class LanePolicy(Protocol):
@@ -65,6 +69,7 @@ class LanePolicy(Protocol):
     Implementace musí být fail-safe — vrací PolicyResult s DENY
     při jakékoliv chybě, nikdy nehazuje exception.
     """
+
     def evaluate(self, ctx: LaneContext) -> PolicyResult: ...
     def get_budget_fraction(self, total_budget: float) -> float: ...
 
@@ -82,8 +87,9 @@ class QualityScore(Struct, frozen=True):
         - confidence: 0.0-1.0
         - components: tuple pro audit trail (immutable)
     """
-    score: float          # 0.0-1.0
-    confidence: float    # 0.0-1.0
+
+    score: float  # 0.0-1.0
+    confidence: float  # 0.0-1.0
     components: tuple[str, ...] = ()  # pro audit trail
 
     @staticmethod
@@ -96,11 +102,7 @@ class QualityScore(Struct, frozen=True):
             return QualityScore(score=0.5, confidence=0.0)
         weighted = sum(s.score * s.confidence for s in scores) / total_confidence
         components = tuple(c for s in scores for c in s.components)
-        return QualityScore(
-            score=weighted,
-            confidence=min(total_confidence, 1.0),
-            components=components
-        )
+        return QualityScore(score=weighted, confidence=min(total_confidence, 1.0), components=components)
 
     def is_high_quality(self, threshold: float = 0.7) -> bool:
         """True pokud score >= threshold s dostatečnou confidence."""
@@ -115,9 +117,10 @@ class LaneContext(Struct, frozen=True):
     Všechny field jsou immutable (frozen=True) pro bezpečné sdílení
     mezi async tasky.
     """
+
     query: str
     phase: ResearchPhase
-    uma_state: str = 'unknown'
+    uma_state: str = "unknown"
     memory_pressure: float = 0.0  # 0.0-1.0
     active_lanes: frozenset[str] = frozenset()
     duration_s: float = 0.0
@@ -155,6 +158,7 @@ class PolicyResult(Struct, frozen=True):
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
     Sjednocuje různé policy decision typy do jednoho formátu.
     """
+
     decision: LaneDecision
     score: QualityScore
     budget_fraction: float  # 0.0-1.0 of lane budget
@@ -169,7 +173,7 @@ class PolicyResult(Struct, frozen=True):
             score=score,
             budget_fraction=budget_fraction,
             reason=reason,
-            metadata=tuple(kwargs.get('metadata', ()))
+            metadata=tuple(kwargs.get("metadata", ())),
         )
 
     @staticmethod
@@ -180,7 +184,7 @@ class PolicyResult(Struct, frozen=True):
             score=score,
             budget_fraction=0.0,
             reason=reason,
-            metadata=tuple(kwargs.get('metadata', ()))
+            metadata=tuple(kwargs.get("metadata", ())),
         )
 
     @staticmethod
@@ -191,7 +195,7 @@ class PolicyResult(Struct, frozen=True):
             score=score,
             budget_fraction=0.0,
             reason=reason,
-            metadata=tuple(kwargs.get('metadata', ()))
+            metadata=tuple(kwargs.get("metadata", ())),
         )
 
     @staticmethod
@@ -202,7 +206,7 @@ class PolicyResult(Struct, frozen=True):
             score=score,
             budget_fraction=budget_fraction,
             reason=reason,
-            metadata=tuple(kwargs.get('metadata', ()))
+            metadata=tuple(kwargs.get("metadata", ())),
         )
 
     @staticmethod
@@ -218,8 +222,10 @@ class PolicyResult(Struct, frozen=True):
 
 # ── Source Tier (moved from scheduler/core/types.py) ───────────────────────────
 
+
 class SourceTier(Enum):
     """Feed source priority tier."""
+
     SURFACE = auto()
     STRUCTURED_TI = auto()
     DEEP = auto()
@@ -236,11 +242,11 @@ _TIER_ORDER: list[SourceTier] = [
 ]
 
 _DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
-    'cisa_kev': SourceTier.STRUCTURED_TI,
-    'threatfox_ioc': SourceTier.STRUCTURED_TI,
-    'urlhaus_recent': SourceTier.STRUCTURED_TI,
-    'feodo_ip': SourceTier.STRUCTURED_TI,
-    'openphish_feed': SourceTier.STRUCTURED_TI,
+    "cisa_kev": SourceTier.STRUCTURED_TI,
+    "threatfox_ioc": SourceTier.STRUCTURED_TI,
+    "urlhaus_recent": SourceTier.STRUCTURED_TI,
+    "feodo_ip": SourceTier.STRUCTURED_TI,
+    "openphish_feed": SourceTier.STRUCTURED_TI,
 }
 
 
@@ -249,25 +255,22 @@ _DEFAULT_SOURCE_TIER_MAP: dict[str, SourceTier] = {
 # ── Re-export FeedDominanceBudget from canonical location ─────────────────────
 # Canonical definition lives in runtime/acquisition/budget.py (msgspec.Struct, fail-safe)
 # This re-export keeps lane_policy.py as the unified entry point for lane policies
-from hledac.universal.runtime.acquisition.budget import (
-    FeedDominanceBudget,
-)
 
 
 # ── Re-exports for convenience ────────────────────────────────────────────────
 
 __all__ = [
     # Protocol
-    'LanePolicy',
+    "LanePolicy",
     # Enums
-    'LaneDecision',
-    'ResearchPhase',
-    'SourceTier',
+    "LaneDecision",
+    "ResearchPhase",
+    "SourceTier",
     # Domain types
-    'QualityScore',
-    'LaneContext',
-    'PolicyResult',
+    "QualityScore",
+    "LaneContext",
+    "PolicyResult",
     # Constants (imported by scheduler/core/types.py for backwards compatibility)
-    '_TIER_ORDER',
-    '_DEFAULT_SOURCE_TIER_MAP',
+    "_TIER_ORDER",
+    "_DEFAULT_SOURCE_TIER_MAP",
 ]

@@ -30,22 +30,10 @@ Graceful degradation: falls back to no-op on Python < 3.14
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-
-# ---------------------------------------------------------------------------
-# sys.monitoring API (Python 3.14+) — zero-overhead async monitoring
-# ---------------------------------------------------------------------------
-# sys.monitoring provides native zero-overhead monitoring for:
-# - Memory allocation tracking (memory_allocation_mode)
-# - GIL monitoring (gil_mode)
-# - Function call counting (call_mode)
-#
-# Graceful degradation: falls back to no-op on Python < 3.14
-# ---------------------------------------------------------------------------
 
 _sys_monitoring_available: bool = False
 _monitoring = None

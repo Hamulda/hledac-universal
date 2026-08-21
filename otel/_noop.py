@@ -1,10 +1,8 @@
 """NoOp tracer/span fallback. Zero alloc, never raises. M1 8GB friendly."""
 
-
 import contextlib
 from collections.abc import Iterator
 from typing import Any
-from _core import aclose
 
 
 class _NoOpSpan:
@@ -52,9 +50,7 @@ class _NoOpTracer:
     __slots__ = ()
 
     @contextlib.contextmanager
-    def start_as_current_span(
-        self, name: str, *args: Any, **kw: Any
-    ) -> Iterator[_NoOpSpan]:
+    def start_as_current_span(self, name: str, *args: Any, **kw: Any) -> Iterator[_NoOpSpan]:
         yield _NoOpSpan()
 
     def start_span(self, name: str, *args: Any, **kw: Any) -> _NoOpSpan:

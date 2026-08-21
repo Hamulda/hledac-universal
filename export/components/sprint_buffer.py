@@ -2,7 +2,6 @@
 PHYSICS-08: SprintExportBuffer — Continuous Background Serialization
 ===================================================================
 
-
 Maintains a running in-memory buffer that accumulates findings as they're
 accepted during the sprint. At TEARDOWN, the pre-serialized data eliminates
 the triple-serialization bottleneck in the export phase.
@@ -29,10 +28,8 @@ import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
 
 # Lazy imports for compression.zstd (Python 3.14 stdlib)
 _zstd: object = None
@@ -43,7 +40,6 @@ def _get_zstd() -> object:
         import compression.zstd as _mod
         _zstd = _mod
     return _zstd
-
 
 class SprintExportBuffer:
     """PHYSICS-08: Accumulates serialized findings during sprint for zero-cost export.
@@ -251,7 +247,6 @@ class SprintExportBuffer:
             if self._buffer or self._compressor is not None:
                 try:
                     if self._compressor is not None:
-                        # Write remaining buffer
                         if self._buffer:
                             compressed = self._compressor.compress(bytes(self._buffer))
                             if compressed:
@@ -314,7 +309,6 @@ class SprintExportBuffer:
                 pass
             self._flush_task = None
 
-        # Clean up temp file
         try:
             if self._temp_file.exists():
                 self._temp_file.unlink()

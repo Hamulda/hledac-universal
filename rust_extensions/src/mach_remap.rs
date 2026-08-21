@@ -62,10 +62,6 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mach API FFI (no external dependencies — raw syscall bindings)
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// mach_vm_remap flags (Darwin/macOS)
 const VM_FLAGS_ANYWHERE: u64 = 0x0001;
 const VM_FLAGS_OVERWRITE: u64 = 0x0004;
@@ -138,10 +134,6 @@ unsafe fn vm_allocate_reserve(addr: *mut libc::c_void, size: size_t) -> i32 {
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Global State
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Global remap in-progress flag (prevents concurrent remaps → bounds RSS)
 static REMAP_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
@@ -162,10 +154,6 @@ fn mach_crate_available() -> bool {
         false
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Error Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 pub enum MachRemapErrno {
@@ -213,19 +201,11 @@ impl From<std::io::Error> for MachRemapErrno {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FFI Panic Guard (matches madvise.rs pattern)
-// ─────────────────────────────────────────────────────────────────────────────
-
 macro_rules! ffi_safe {
     ($body:block) => {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body))
     };
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page-Aligned Allocation Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Standard page size on Apple Silicon (4 KB).
 const PAGE_SIZE_USIZE: usize = 4096;
@@ -234,10 +214,6 @@ const PAGE_SIZE_USIZE: usize = 4096;
 fn page_align(size: usize) -> usize {
     (size + PAGE_SIZE_USIZE - 1) & !(PAGE_SIZE_USIZE - 1)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Core Remap Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Zero-copy remap via same-task mach_vm_remap (COW fork pattern).
 ///
@@ -384,12 +360,10 @@ fn remap_file_to_child(file_path: &str, file_size: usize) -> Result<(u32, usize)
     // ── Parent process ─────────────────────────────────────────────────────
     unsafe { libc::close(read_fd) }; // close read end
 
-    // Write size info to pipe so child knows
     let size_bytes = file_size);
     let _ = unsafe { libc::write(write_fd, size_bytes.as_ptr() as *const c_void, 8) };
     unsafe { libc::close(write_fd) };
 
-    // Write child PID
     let remapped_size = mapped_size;
     let child_pid = pid as u32;
 
@@ -457,10 +431,6 @@ impl<F: Fn()> Drop for ScopeGuard<F> {
         (self.0)();
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Python API (PyO3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Raised when Mach remap fails (parent falls back to tempfile).
 #[pyclass(frozen)]
@@ -739,7 +709,6 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         unsafe { libc::close(pipe_read) };
         unsafe { libc::munmap(src_ptr, mapped_size) };
 
-        // Write analysis result to temp file and exit
         let result_path = format!("{}/hledac_mach_result_{}", tmpdir, my_pid);
         let result_cstr = CString::new(result_path.as_str()));
         let fd = unsafe {
@@ -781,7 +750,6 @@ pub fn vm_remap_file(file_path: &str, file_size: usize) -> PyResult<(u32, usize,
         return Err(PyRuntimeError::new_err("pipe write failed (pipe_write_failed)"));
     }
 
-    // Update telemetry
     REMAP_BYTES_TOTAL.fetch_add(file_size as u64, Ordering::Relaxed);
 
     Ok((pid as u32, src_ptr as usize, mapped_size))
@@ -995,7 +963,6 @@ pub fn vm_remap_and_exec(
             let _ = unsafe { libc::unlink(script_cstr.as_ptr()) };
         }
 
-        // Write analysis result to temp file and exit
         let result_path = format!("{}/hledac_mach_result_{}", tmpdir, my_pid);
         let result_cstr = CString::new(result_path.as_str()));
         let fd = unsafe {
@@ -1033,7 +1000,6 @@ pub fn vm_remap_and_exec(
         return Err(PyRuntimeError::new_err("pipe write failed (pipe_write_failed)"));
     }
 
-    // Update telemetry
     REMAP_BYTES_TOTAL.fetch_add(file_size as u64, Ordering::Relaxed);
 
     Ok((pid as u32, src_ptr as usize, mapped_size))
@@ -1058,10 +1024,6 @@ pub fn release_remap() {
 pub fn remap_stats() -> MachRemapStats {
     MachRemapStats::default()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NEXTGEN-02: Arrow IPC Zero-Copy via mach_vm_remap
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// NEXTGEN-02: Map Arrow IPC file to shared memory via mach_vm_remap.
 ///
@@ -1098,7 +1060,6 @@ pub fn remap_arrow_ipc_to_shared(path: &str) -> PyResult<(usize, usize)> {
         )));
     }
 
-    // Get file size
     let file_size = std::fs::metadata(path)
         .map_err(|e| PyRuntimeError::new_err(format!("failed to stat file: {}", e)))?
         .len() as usize;
@@ -1202,7 +1163,6 @@ pub fn remap_arrow_ipc_to_shared(path: &str) -> PyResult<(usize, usize)> {
     // Unmap the original file mapping (we only need the shared copy)
     unsafe { libc::munmap(src_ptr, mapped_size) };
 
-    // Update telemetry
     REMAP_BYTES_TOTAL.fetch_add(file_size as u64, Ordering::Relaxed);
 
     Ok((target_ptr as usize, mapped_size))
@@ -1222,10 +1182,6 @@ pub fn unmap_shared_arrow_ipc(virtual_address: usize, size: usize) -> PyResult<(
     }
     Ok(())
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Python Module Definition
-// ─────────────────────────────────────────────────────────────────────────────
 
 pub fn add_module(module: &PyModule) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(vm_remap_file, module))?;

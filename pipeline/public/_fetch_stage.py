@@ -10,18 +10,17 @@ Responsibilities:
 Input: PageBatch (urls, titles, snippets, ranks, discovery_scores)
 Output: FetchedBatch (urls, texts, text_lens, fetch_errors, failure_stages, redirects, ...)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import msgspec
 
 from hledac.universal.pipeline._soa_types import FetchedBatch, PageBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,7 @@ class FetchStage:
     def name(self) -> str:
         return "fetch"
 
-    async def process(
-        self, input_batch: PageBatch | None
-    ) -> tuple[FetchedBatch, dict[str, Any]]:
+    async def process(self, input_batch: PageBatch | None) -> tuple[FetchedBatch, dict[str, Any]]:
         """Fetch URLs from a PageBatch.
 
         Args:
@@ -88,13 +85,11 @@ class FetchStage:
                     snippet=input_batch.snippets[idx] if idx < len(input_batch.snippets) else "",
                     rank=input_batch.ranks[idx] if idx < len(input_batch.ranks) else -1,
                     discovery_score=(
-                        input_batch.discovery_scores[idx]
-                        if idx < len(input_batch.discovery_scores)
-                        else None
+                        input_batch.discovery_scores[idx] if idx < len(input_batch.discovery_scores) else None
                     ),
                     fetch_timeout_s=self._fetch_timeout_s,
                     fetch_max_bytes=self._fetch_max_bytes,
-    )
+                )
 
         tasks = [fetch_one(i, url) for i, url in enumerate(urls)]
         # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order,
@@ -137,7 +132,7 @@ class FetchStage:
             redirects=redirects,
             js_renderer_skipped_reasons=js_skipped,
             fetch_blocked_reasons=fetch_blocked,
-    )
+        )
 
         return batch, telemetry
 
@@ -151,7 +146,7 @@ class FetchStage:
             redirects=[],
             js_renderer_skipped_reasons=[],
             fetch_blocked_reasons=[],
-    )
+        )
 
 
 async def _fetch_single_url(
@@ -187,9 +182,8 @@ async def _fetch_single_url(
             discovery_reason=None,
             vector_store=None,
             graph=None,
-    )
+        )
 
-        # Extract fields from PipelinePageResult
         text = getattr(result, "text", "") if hasattr(result, "text") else ""
         text_len = len(text) if text else 0
         error = getattr(result, "error", None)

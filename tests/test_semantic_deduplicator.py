@@ -6,7 +6,6 @@ Tests for embedding-based semantic duplicate detection.
 Verifies: low-memory fail-soft, persistence, cache hits.
 """
 
-
 import tempfile
 from unittest.mock import patch
 
@@ -26,6 +25,7 @@ from hledac.universal.semantic_deduplicator import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_texts(n: int) -> list[str]:
     """Generate n distinct test texts."""
     return [f"Unique finding text number {i} with specific content {i * 17}" for i in range(n)]
@@ -40,10 +40,11 @@ def _make_similar_texts(base: str, n: int) -> list[str]:
 # Test: Memory guard
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticDedupMemoryGuard:
     """Low-memory run disables deduplicator fail-soft."""
 
-    def test_memory_guard_triggers_above_threshold(self):
+    def test_memory_guard_triggers_above_threshold(self) -> None:
         """RSS > 6GB skips semantic dedup."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -54,7 +55,7 @@ class TestSemanticDedupMemoryGuard:
             result = cache._check_memory_guard()
             assert result is False
 
-    def test_memory_guard_allows_below_threshold(self):
+    def test_memory_guard_allows_below_threshold(self) -> None:
         """RSS < 6GB allows semantic dedup."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -64,7 +65,7 @@ class TestSemanticDedupMemoryGuard:
             result = cache._check_memory_guard()
             assert result is True
 
-    def test_memory_guard_failsoft_on_error(self):
+    def test_memory_guard_failsoft_on_error(self) -> None:
         """psutil error → returns True (allow dedup to proceed)."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -77,10 +78,11 @@ class TestSemanticDedupMemoryGuard:
 # Test: LRU cache
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticDedupCacheLRU:
     """Cache hit avoids recomputation."""
 
-    def test_cache_bounded_by_item_count(self):
+    def test_cache_bounded_by_item_count(self) -> None:
         """Cache respects MAX_CACHE_ITEMS limit."""
         cache = SemanticDedupCache(lmdb_path=None)
         texts = _make_texts(MAX_CACHE_ITEMS + 100)
@@ -90,7 +92,7 @@ class TestSemanticDedupCacheLRU:
 
         assert len(cache._cache) <= MAX_CACHE_ITEMS
 
-    def test_cache_bounded_by_memory(self):
+    def test_cache_bounded_by_memory(self) -> None:
         """Cache respects MAX_CACHE_MEMORY_MB limit."""
         cache = SemanticDedupCache(lmdb_path=None)
         # 256d float32 = 1KB per embedding
@@ -109,7 +111,7 @@ class TestSemanticDedupCacheLRU:
 
         assert cache._cache_memory_bytes <= MAX_CACHE_MEMORY_MB * 1024 * 1024
 
-    def test_cache_hit_updates_lru_order(self):
+    def test_cache_hit_updates_lru_order(self) -> None:
         """Cache hit moves item to end (most recently used)."""
         cache = SemanticDedupCache(lmdb_path=None)
         text = "test text"
@@ -121,7 +123,7 @@ class TestSemanticDedupCacheLRU:
         cache._get_from_cache(text)
         assert list(cache._cache.keys()).index(text) == len(cache._cache) - 1
 
-    def test_cache_miss_returns_none(self):
+    def test_cache_miss_returns_none(self) -> None:
         """Cache miss returns None, doesn't raise."""
         cache = SemanticDedupCache(lmdb_path=None)
         result = cache._get_from_cache("nonexistent text")
@@ -132,10 +134,11 @@ class TestSemanticDedupCacheLRU:
 # Test: Semantic dedup logic
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticDedupLogic:
     """Semantic duplicate detection via embeddings."""
 
-    def test_check_and_cache_returns_false_on_first_seen(self):
+    def test_check_and_cache_returns_false_on_first_seen(self) -> None:
         """First time seeing text → not a duplicate."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -144,7 +147,7 @@ class TestSemanticDedupLogic:
             result = cache.check_and_cache("first time seeing this text content")
             assert result is False
 
-    def test_check_and_cache_returns_true_on_duplicate(self):
+    def test_check_and_cache_returns_true_on_duplicate(self) -> None:
         """Same text checked twice → duplicate detected."""
         cache = SemanticDedupCache(lmdb_path=None)
         text = "duplicate detection test text"
@@ -157,7 +160,7 @@ class TestSemanticDedupLogic:
             result = cache.check_and_cache(text)
             assert result is True
 
-    def test_check_and_cache_memory_guard_skip(self):
+    def test_check_and_cache_memory_guard_skip(self) -> None:
         """Memory guard triggered → returns False (fail-soft)."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -166,7 +169,7 @@ class TestSemanticDedupLogic:
             result = cache.check_and_cache("any text")
             assert result is False
 
-    def test_stats_tracking(self):
+    def test_stats_tracking(self) -> None:
         """Stats (cache_hits, misses, duplicates) are tracked."""
         cache = SemanticDedupCache(lmdb_path=None)
         stats = cache.get_stats()
@@ -177,7 +180,7 @@ class TestSemanticDedupLogic:
         assert "skipped_count" in stats
         assert "lmdb_ready" in stats
 
-    def test_threshold_085_allows_similar_nonisint_texts(self):
+    def test_threshold_085_allows_similar_nonisint_texts(self) -> None:
         """Two similar but non-identical OSINT texts with cosine sim 0.83
         are NOT deduplicated when threshold is 0.85 (non-feed source).
 
@@ -223,7 +226,7 @@ class TestSemanticDedupLogic:
                 f"at threshold=0.85 — threshold too strict caused sprint 1780830658 zero findings"
             )
 
-    def test_threshold_080_feed_allows_more_diversity(self):
+    def test_threshold_080_feed_allows_more_diversity(self) -> None:
         """Feed sources use stricter threshold=0.80, allowing more variety."""
         cache = SemanticDedupCache(lmdb_path=None)
 
@@ -254,16 +257,17 @@ class TestSemanticDedupLogic:
 # Test: LMDB persistence
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticDedupLMDB:
     """Persistent LMDB store for cross-run embeddings."""
 
-    def test_lmdb_init_failsoft(self):
+    def test_lmdb_init_failsoft(self) -> None:
         """Invalid path → boot_error set, no crash."""
         store = _SemanticDedupLMDB(path_str=None)
         assert store._boot_error is not None
         assert store._env is None
 
-    def test_lmdb_put_get_roundtrip(self):
+    def test_lmdb_put_get_roundtrip(self) -> None:
         """LMDB put/get with float32 embedding roundtrip."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _SemanticDedupLMDB(path_str=f"{tmpdir}/test.lmdb")
@@ -278,14 +282,14 @@ class TestSemanticDedupLMDB:
             assert retrieved is not None
             np.testing.assert_array_almost_equal(retrieved, emb)
 
-    def test_lmdb_get_miss_returns_none(self):
+    def test_lmdb_get_miss_returns_none(self) -> None:
         """LMDB key not found → returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _SemanticDedupLMDB(path_str=f"{tmpdir}/test.lmdb")
             result = store.get("nonexistent_key")
             assert result is None
 
-    def test_lmdb_close_idempotent(self):
+    def test_lmdb_close_idempotent(self) -> None:
         """close() called twice → no error."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _SemanticDedupLMDB(path_str=f"{tmpdir}/test.lmdb")
@@ -297,24 +301,25 @@ class TestSemanticDedupLMDB:
 # Test: Cosine similarity helper
 # ---------------------------------------------------------------------------
 
+
 class TestCosineSimilarity:
     """Cosine similarity computation."""
 
-    def test_identical_vectors(self):
+    def test_identical_vectors(self) -> None:
         """Identical vectors → similarity = 1.0."""
         a = np.array([[1.0, 0.0]])
         b = np.array([[1.0, 0.0]])
         sim = _cosine_similarity(a, b)
         assert sim[0, 0] == pytest.approx(1.0, abs=1e-6)
 
-    def test_orthogonal_vectors(self):
+    def test_orthogonal_vectors(self) -> None:
         """Orthogonal vectors → similarity ≈ 0."""
         a = np.array([[1.0, 0.0]])
         b = np.array([[0.0, 1.0]])
         sim = _cosine_similarity(a, b)
         assert sim[0, 0] == pytest.approx(0.0, abs=1e-6)
 
-    def test_batch_similarity(self):
+    def test_batch_similarity(self) -> None:
         """Batch similarity across multiple vectors."""
         vectors = np.random.randn(5, _EMBEDDING_DIM).astype(np.float32)
         sims = _cosine_similarity(vectors, vectors)
@@ -334,4 +339,3 @@ class TestCosineSimilarity:
 #   1. _semantic_dedup_cache attribute exists after async_initialize()
 #   2. When cache is None, findings pass through (accepted=True)
 #   3. When cache returns True for is_dup, finding is rejected with reason="semantic_duplicate"
-

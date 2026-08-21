@@ -89,6 +89,7 @@ class MLModelAsset:
     def modelAssetWithURL_error_(cls, url: Any, error: Any) -> tuple[MLModelAsset, Any]: ...  # noqa: N802
 
 class MLFeatureProvider: ...
+
 class MLArrayBatchProvider:
     def __init__(self, array: list[MLFeatureProvider]) -> None: ...
     def featuresAtIndex_(self, idx: int) -> MLFeatureProvider: ...  # noqa: N802

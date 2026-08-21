@@ -23,10 +23,6 @@
 use libc::{c_int, pthread_self, thread_t};
 use std::mem::size_of;
 
-// ============================================================================
-// Mach API Constants (from mach/thread_policy.h)
-// ============================================================================
-
 /// Thread affinity policy flavor.
 const THREAD_AFFINITY_POLICY: i32 = 3;
 
@@ -53,10 +49,6 @@ const THREAD_PERFLEVEL_P_CORES: i32 = 0;
 /// Performance class: E-core (efficient cores).
 const THREAD_PERFLEVEL_E_CORES: i32 = 1;
 
-// ============================================================================
-// Mach API Declarations (raw FFI)
-// ============================================================================
-
 // Get current thread port (mach_port_t).
 // Equivalent to `pthread_mach_thread_np(pthread_self())`.
 #[cfg(target_os = "macos")]
@@ -75,10 +67,6 @@ extern "C" {
         count: i32,
     ) -> c_int;
 }
-
-// ============================================================================
-// Core Affinity Implementation
-// ============================================================================
 
 /// Apply CPU affinity hint on macOS using Mach APIs.
 ///
@@ -180,7 +168,6 @@ pub fn apply_specific_core_affinity(cores: &[usize]) {
         return;
     }
 
-    // Get topology to determine core types
     let topo = get_topology();
 
     // Determine if cores are P or E based on first core's type
@@ -244,10 +231,6 @@ pub fn apply_ecore_affinity() {
     apply_darwin_affinity_hint(false);
 }
 
-// ============================================================================
-// Stub implementations for non-Darwin platforms
-// ============================================================================
-
 /// Stub for non-macOS platforms (Linux, Windows, etc.).
 #[cfg(not(target_os = "macos"))]
 pub fn apply_darwin_affinity_hint(_prefer_pcore: bool) {
@@ -268,10 +251,6 @@ pub fn apply_pcore_affinity() {
 pub fn apply_ecore_affinity() {
     // No-op
 }
-
-// ============================================================================
-// High-Level API: Map P/E intent to Darwin affinity
-// ============================================================================
 
 /// Apply CPU affinity based on P/E intent.
 ///
@@ -306,10 +285,6 @@ pub fn apply_cpu_affinity(p_cores: usize) {
 pub fn apply_cpu_affinity(_p_cores: usize) {
     // No-op; Linux uses pthread_setaffinity_np directly.
 }
-
-// ============================================================================
-// PyO3 Python FFI
-// ============================================================================
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;

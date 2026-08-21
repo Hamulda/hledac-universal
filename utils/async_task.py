@@ -55,22 +55,27 @@ Example:
     # Or use the convenience spawn_task:
     t = await spawn_task(my_coro(), name="batch:item", maxsize=128)
 """
+
 import asyncio
 import logging
 import warnings
-from typing import Any
 from collections.abc import Awaitable
+from typing import Any
+
 from .async_helpers import safe_gather_fire_and_forget
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
-def safe_create_task(coro: Any, *, name: str | None=None, eager_start: bool=True) -> asyncio.Task:
+
+def safe_create_task(coro: Any, *, name: str | None = None, eager_start: bool = True) -> asyncio.Task:
     """Safe task creation wrapper — imports safe_create_task from async_helpers.
 
     F350M-R ISSUE #31: eager_start=True default matches async_helpers.safe_create_task.
     """
     from .async_helpers import safe_create_task as _impl
+
     return _impl(coro, name=name, eager_start=eager_start)
+
 
 class BoundedTaskSet:
     """
@@ -102,9 +107,10 @@ class BoundedTaskSet:
         t = await ts.spawn(my_coro(), name="fetch:example.com")
         await ts.cancel()  # drain all pending tasks
     """
-    __slots__ = tuple(('_cancel_requested', '_lock', '_maxsize', '_sem', '_tasks'))
 
-    def __init__(self, maxsize: int=256) -> None:
+    __slots__ = ("_cancel_requested", "_lock", "_maxsize", "_sem", "_tasks")
+
+    def __init__(self, maxsize: int = 256) -> None:
         """
         Initialize BoundedTaskSet.
 
@@ -123,7 +129,7 @@ class BoundedTaskSet:
         """Return number of active (incomplete) tasks."""
         return len(self._tasks)
 
-    async def spawn(self, coro: Awaitable[Any], name: str | None=None) -> asyncio.Task:
+    async def spawn(self, coro: Awaitable[Any], name: str | None = None) -> asyncio.Task:
         """
         Create and register a task, blocking if maxsize reached.
 
@@ -145,7 +151,7 @@ class BoundedTaskSet:
             t.cancel()
             return t
         await self._sem.acquire()
-        task = asyncio.create_task(coro, name=name or 'bounded_taskset:anon')
+        task = asyncio.create_task(coro, name=name or "bounded_taskset:anon")
         task_name = task.get_name()
         async with self._lock:
             self._tasks[task] = task_name
@@ -157,9 +163,10 @@ class BoundedTaskSet:
                 if not f.cancelled():
                     exc = f.exception()
                     if exc is not None:
-                        logger.warning('[BoundedTaskSet] Task %s failed: %r', f.get_name(), exc)
+                        logger.warning("[BoundedTaskSet] Task %s failed: %r", f.get_name(), exc)
             except asyncio.InvalidStateError:  # noqa: BLE001
                 pass
+
         task.add_done_callback(_done_callback)
         return task
 
@@ -174,14 +181,17 @@ class BoundedTaskSet:
             tasks = list(self._tasks.keys())
         if not tasks:
             return
-        logger.debug('[BoundedTaskSet] Cancelling %d tasks', len(tasks))
+        logger.debug("[BoundedTaskSet] Cancelling %d tasks", len(tasks))
         for t in tasks:
             t.cancel()
-        await safe_gather_fire_and_forget(*tasks, label='BoundedTaskSet:cancel', logger_instance=logger)
+        await safe_gather_fire_and_forget(*tasks, label="BoundedTaskSet:cancel", logger_instance=logger)
         async with self._lock:
             self._tasks.clear()
 
-async def spawn_task(coro: Awaitable[Any], *, name: str | None=None, maxsize: int=128, task_set: BoundedTaskSet | None=None) -> asyncio.Task:
+
+async def spawn_task(
+    coro: Awaitable[Any], *, name: str | None = None, maxsize: int = 128, task_set: BoundedTaskSet | None = None
+) -> asyncio.Task:
     """
     Convenience: spawn a task with optional BoundedTaskSet.
 
@@ -202,10 +212,17 @@ async def spawn_task(coro: Awaitable[Any], *, name: str | None=None, maxsize: in
     ts = BoundedTaskSet(maxsize=maxsize)
     return await ts.spawn(coro, name=name)
 
+
 def __getattr__(name: str):
     """DEPRECATED: BoundedTaskSet emit DeprecationWarning on import."""
-    if name == 'BoundedTaskSet':
-        warnings.warn('BoundedTaskSet is deprecated. Use Python 3.11+ asyncio.TaskGroup instead. For bounded gather patterns, use bounded_gather() in async_helpers. This module will be removed in a future sprint.', DeprecationWarning, stacklevel=2)
+    if name == "BoundedTaskSet":
+        warnings.warn(
+            "BoundedTaskSet is deprecated. Use Python 3.11+ asyncio.TaskGroup instead. For bounded gather patterns, use bounded_gather() in async_helpers. This module will be removed in a future sprint.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return BoundedTaskSet
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-__all__ = ['BoundedTaskSet', 'spawn_task', 'safe_create_task']
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["BoundedTaskSet", "spawn_task", "safe_create_task"]

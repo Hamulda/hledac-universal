@@ -11,26 +11,25 @@ Hermetic constraints:
 - NO heavy MLX operations
 """
 
-
 import asyncio
 import os
+from typing import Never
 
 import pytest
-from _core import aclose
 
 
 class TestHermesLazyGate:
     """F206AE: Hermes lazy advisory gate — gate logic only."""
 
     @pytest.fixture(autouse=True)
-    def _clear_env(self, monkeypatch):
+    def _clear_env(self, monkeypatch) -> None:
         """Clear HLEDAC_ENABLE_HERMES_SYNTHESIS before each test."""
         monkeypatch.delenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", raising=False)
 
     # ------------------------------------------------------------------
     # 1. default env unset → gate is False
     # ------------------------------------------------------------------
-    def test_default_env_gate_is_false(self):
+    def test_default_env_gate_is_false(self) -> None:
         """Default env (unset) → gate evaluates to False."""
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         assert enabled is False, "Gate should be False when env is unset"
@@ -39,21 +38,21 @@ class TestHermesLazyGate:
     # 2. default env unset → load_model("hermes") would be skipped
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_load_skipped_when_gate_false(self):
+    async def test_load_skipped_when_gate_false(self) -> None:
         """When gate is False, Hermes load is skipped."""
         load_called = []
 
-        async def fake_load_model(name):
+        async def fake_load_model(name) -> None:
             load_called.append(name)
 
         class FakeScheduler:
             _hermes_engine = None
             _memory_manager = None
 
-            def __init__(self):
+            def __init__(self) -> None:
                 pass
 
-            async def _load_hermes_for_sprint(self):
+            async def _load_hermes_for_sprint(self) -> None:
                 await fake_load_model("hermes")
 
         scheduler = FakeScheduler()
@@ -72,7 +71,7 @@ class TestHermesLazyGate:
     # ------------------------------------------------------------------
     # 3. HLEDAC_ENABLE_HERMES_SYNTHESIS=0 → Hermes skipped
     # ------------------------------------------------------------------
-    def test_env_zero_hermes_skipped(self, monkeypatch):
+    def test_env_zero_hermes_skipped(self, monkeypatch) -> None:
         """HLEDAC_ENABLE_HERMES_SYNTHESIS=0 → gate is False."""
         monkeypatch.setenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", "0")
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
@@ -82,7 +81,7 @@ class TestHermesLazyGate:
     # 4. HLEDAC_ENABLE_HERMES_SYNTHESIS=1 → load is allowed (mocked)
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_env_one_allows_load(self, monkeypatch):
+    async def test_env_one_allows_load(self, monkeypatch) -> None:
         """HLEDAC_ENABLE_HERMES_SYNTHESIS=1 → gate is True."""
         monkeypatch.setenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", "1")
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
@@ -92,7 +91,7 @@ class TestHermesLazyGate:
     # 5. skipped reason is disabled_env
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_skipped_reason_is_disabled_env(self, monkeypatch):
+    async def test_skipped_reason_is_disabled_env(self, monkeypatch) -> None:
         """When env is unset, reason is 'disabled_env'."""
         monkeypatch.delenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", raising=False)
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
@@ -104,7 +103,7 @@ class TestHermesLazyGate:
     # ------------------------------------------------------------------
     # 6. no model download on import (gate check itself)
     # ------------------------------------------------------------------
-    def test_gate_check_no_download(self):
+    def test_gate_check_no_download(self) -> None:
         """Gate check uses only os.environ — no model download involved."""
         # This is the gate check:
         hermes_synthesis_enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
@@ -115,7 +114,7 @@ class TestHermesLazyGate:
     # 7. ModelManager remains load authority when gate passes
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_model_manager_remains_authority_when_gate_passes(self, monkeypatch):
+    async def test_model_manager_remains_authority_when_gate_passes(self, monkeypatch) -> None:
         """When gate passes, load still goes through ModelManager."""
         monkeypatch.setenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", "1")
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
@@ -128,7 +127,7 @@ class TestHermesLazyGate:
     # 8. Hermes methods are not called in acquisition loop when gate off
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_hermes_methods_not_called_when_gate_off(self):
+    async def test_hermes_methods_not_called_when_gate_off(self) -> None:
         """Canonical acquisition flow with gate off → Hermes methods not called."""
         enabled = os.environ.get("HLEDAC_ENABLE_HERMES_SYNTHESIS") == "1"
         assert enabled is False, "Default env should have Hermes disabled"
@@ -137,9 +136,10 @@ class TestHermesLazyGate:
     # 9. CancelledError behavior unchanged
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_cancelled_error_propagates(self):
+    async def test_cancelled_error_propagates(self) -> None:
         """CancelledError during load must still be re-raised."""
-        async def mock_load_raises_cancelled():
+
+        async def mock_load_raises_cancelled() -> Never:
             raise asyncio.CancelledError("Hermes load cancelled")
 
         with pytest.raises(asyncio.CancelledError):
@@ -149,7 +149,7 @@ class TestHermesLazyGate:
     # 10. Gate logic is correct — integration check
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
-    async def test_gate_logic_correct(self, monkeypatch):
+    async def test_gate_logic_correct(self, monkeypatch) -> None:
         """Full gate logic: disabled_env, gate passes, etc."""
         # Case 1: env unset → skip
         monkeypatch.delenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", raising=False)
@@ -177,7 +177,7 @@ class TestHermesLazyGate:
 class TestHermesGateDiagnostics:
     """Diagnostic output for F206AE gate behavior."""
 
-    def test_diagnostic_artifact(self, monkeypatch, tmp_path):
+    def test_diagnostic_artifact(self, monkeypatch, tmp_path) -> None:
         """Generate diagnostic artifact with gate status."""
         monkeypatch.delenv("HLEDAC_ENABLE_HERMES_SYNTHESIS", raising=False)
 

@@ -23,33 +23,27 @@ Bounds (M1 8GB safe):
   - Input: 64 B <= section <= 1 MB
   - Fallback: plain zstd if Rust unavailable; plain text if zstd unavailable
 """
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 # Reserved dictionary ID for OSINT/STIX export dictionary
 _EXPORT_DICT_ID: int = 1
+
 
 # Dictionary file path
 def _get_dict_path() -> Path:
     """Canonical path: ~/.hledac/zstd_osint.dict"""
     return Path.home() / ".hledac" / "zstd_osint.dict"
 
-# ---------------------------------------------------------------------------
-# STIX/JSON export field names — used for dictionary bootstrap training
-# ---------------------------------------------------------------------------
 
 # These are the repeating keys in every STIX bundle. A zstd dictionary
 # trained on these patterns gives 4-5x compression (vs 3x without dict)
@@ -96,6 +90,7 @@ _STIX_JSON_SAMPLES: list[bytes] = [
     b'"## Appendix',
 ]
 
+
 def _bootstrap_dict(dict_path: Path) -> bool:
     """
     Bootstrap-train a zstd dictionary from STIX/JSON field name samples.
@@ -112,23 +107,17 @@ def _bootstrap_dict(dict_path: Path) -> bool:
         return False
 
     try:
-        logger.info("[zstd_dict_exporter] Bootstrapping zstd dictionary from %d samples...",
-                     len(_STIX_JSON_SAMPLES))
+        logger.info("[zstd_dict_exporter] Bootstrapping zstd dictionary from %d samples...", len(_STIX_JSON_SAMPLES))
         # Train with 1 MB dictionary size — matches tools/zstd_compressor.py
         dict_data = zstd.train_dictionary(1024 * 1024, _STIX_JSON_SAMPLES)
         dict_path.parent.mkdir(parents=True, exist_ok=True)
         dict_path.write_bytes(dict_data)
-        logger.info("[zstd_dict_exporter] Dictionary trained and saved: %s (%d bytes)",
-                     dict_path, len(dict_data))
+        logger.info("[zstd_dict_exporter] Dictionary trained and saved: %s (%d bytes)", dict_path, len(dict_data))
         return True
     except Exception as e:
         logger.warning("[zstd_dict_exporter] Bootstrap training failed: %s", e)
         return False
 
-
-# ---------------------------------------------------------------------------
-# Module-level init — load + register dict once
-# ---------------------------------------------------------------------------
 
 _dict_loaded: bool = False
 _dict_data: bytes | None = None
@@ -154,7 +143,6 @@ def ensure_dict_loaded() -> bool:
         if not _bootstrap_dict(dict_path):
             return False
 
-    # Load from disk
     try:
         _dict_data = dict_path.read_bytes()
     except Exception as e:
@@ -163,20 +151,20 @@ def ensure_dict_loaded() -> bool:
 
     # Register in Rust
     from hledac.universal.tools.zstd_compressor import register_rust_dict
+
     if not register_rust_dict(_EXPORT_DICT_ID, _dict_data):
         logger.warning("[zstd_dict_exporter] Failed to register dict in Rust registry")
         # Dict data is still loaded — Python fallback available
     else:
-        logger.debug("[zstd_dict_exporter] Dictionary registered in Rust DICT_REGISTRY (id=%d, %d bytes)",
-                     _EXPORT_DICT_ID, len(_dict_data))
+        logger.debug(
+            "[zstd_dict_exporter] Dictionary registered in Rust DICT_REGISTRY (id=%d, %d bytes)",
+            _EXPORT_DICT_ID,
+            len(_dict_data),
+        )
 
     _dict_loaded = True
     return True
 
-
-# ---------------------------------------------------------------------------
-# Compression API for export path
-# ---------------------------------------------------------------------------
 
 def compress_export_section(data: bytes) -> bytes:
     """
@@ -207,6 +195,7 @@ def compress_export_section(data: bytes) -> bytes:
 
     # Try Rust dict compression
     from hledac.universal.tools.zstd_compressor import compress_with_rust_dict
+
     result = compress_with_rust_dict(data, _EXPORT_DICT_ID)
     if result is not None:
         return result
@@ -214,6 +203,7 @@ def compress_export_section(data: bytes) -> bytes:
     # Fallback: plain zstd via Python zstandard
     try:
         import zstandard as zstd
+
         cctx = zstd.ZstdCompressor(level=3)
         compressed = cctx.compress(data)
         if len(compressed) < len(data):
@@ -251,6 +241,7 @@ def decompress_export_section(wire: bytes) -> bytes:
     # Try Rust decompress_page (handles all wire formats)
     try:
         from hledac.universal.rust_extensions import decompress_page
+
         result = decompress_page(wire)
         if result:
             return result
@@ -263,6 +254,7 @@ def decompress_export_section(wire: bytes) -> bytes:
     if marker == 0x02:
         try:
             import zstandard as zstd
+
             dctx = zstd.ZstdDecompressor()
             return dctx.decompress(wire[1:])
         except ImportError:  # noqa: BLE001

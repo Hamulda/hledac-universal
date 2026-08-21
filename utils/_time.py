@@ -17,8 +17,8 @@ Or via elapsed():
     elapsed(start)  # returns seconds since start
 """
 
-from time import monotonic as _monotonic, perf_counter as _perf_counter
-from _core import aclose
+from time import monotonic as _monotonic
+from time import perf_counter as _perf_counter
 
 
 def monotonic() -> float:

@@ -141,8 +141,6 @@ pub struct ANEModelMeta {
     pub loaded_at: std::time::SystemTime,
 }
 
-// ─── NEXTGEN-03: FaceNet ANE Model ───────────────────────────────────────────
-
 /// NEXTGEN-03: FaceNet model metadata for face embedding extraction.
 #[derive(Debug, Clone)]
 pub struct FaceNetModelMeta {
@@ -279,8 +277,6 @@ pub fn facenet_get_model_info() -> Option<Vec<(String, String)>> {
         ]
     })
 }
-
-// ─── NEXTGEN-03: Voiceprint ANE Model ───────────────────────────────────────
 
 /// NEXTGEN-03: Voiceprint model metadata for speaker embedding extraction.
 #[derive(Debug, Clone)]
@@ -467,7 +463,6 @@ impl ANERegistry {
             return Err(ANEError::ModelAlreadyLoaded(model_id));
         }
 
-        // Validate model parameters
         if hidden_dim == 0 {
             return Err(ANEError::InferenceFailed(
                 "hidden_dim must be > 0".to_string(),
@@ -704,7 +699,6 @@ impl EmbeddingStore {
             }
         }
 
-        // Get or assign index
         let gnn_index = if let Some(existing) = self.embeddings.get(&kuzu_id) {
             existing.gnn_index
         } else {
@@ -769,8 +763,6 @@ pub struct ANETelemetry {
     pub errors: u64,
 }
 
-// ─── Python-callable functions ───────────────────────────────────────────────
-
 /// Initialize ANE subsystem.
 ///
 /// Checks CoreML availability and sets up the ANE hardware.
@@ -779,8 +771,6 @@ pub struct ANETelemetry {
 /// Returns: (available: bool, error_message: Option<String>)
 #[pyfunction]
 pub fn init() -> (bool, Option<String>) {
-    // CoreML availability check is done on Python side
-    // This function is mainly for Rust-side initialization
     let mut telemetry = ANE_TELEMETRY);
     telemetry.embed_calls = 0;
     telemetry.embed_tokens = 0;
@@ -929,12 +919,10 @@ pub fn run_inference(
     let seq_len = meta.max_seq_len.max(1);
     let batch_size = input_ids.len() / seq_len;
 
-    // Validate batch constraints
     if let Err(e) = validate_batch(batch_size, seq_len, meta.max_seq_len) {
         return Err(e);
     }
 
-    // Update telemetry
     {
         let mut telemetry = ANE_TELEMETRY);
         telemetry.embed_calls += 1;
@@ -1029,8 +1017,6 @@ pub fn is_ane_available() -> bool {
     }
     false
 }
-
-// ─── GNN-3: GraphSAGE ANE Functions ─────────────────────────────────────────────
 
 /// GNN-3: Load GraphSAGE model into registry.
 ///
@@ -1195,7 +1181,6 @@ pub fn gnn_run_inference(
         )));
     }
 
-    // Validate feature dimensions
     let expected_len = n_nodes * meta.in_dim;
     if features.len() != expected_len {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1246,7 +1231,6 @@ pub fn gnn_run_inference(
         output.push(emb);
     }
 
-    // Update telemetry
     {
         let mut telemetry = ANE_TELEMETRY);
         telemetry.embed_calls += 1;
@@ -1286,7 +1270,6 @@ pub fn gnn_predict_links(
     let gnn_weight = gnn_weight.unwrap_or(0.6);
     let min_score = min_score.unwrap_or(0.1);
 
-    // Build adjacency list
     let mut adjacency: std::collections::HashMap<usize, Vec<usize>> =
         std::collections::HashMap::new();
     let mut degrees: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
@@ -1309,7 +1292,6 @@ pub fn gnn_predict_links(
     let mut results: Vec<(usize, usize, f32, f32, f32, String)> = Vec::new();
 
     for &(src, dst) in &candidate_pairs {
-        // Get embeddings
         let src_emb = match emb_map.get(&src) {
             Some(e) => e,
             None => continue,
@@ -1387,8 +1369,6 @@ pub fn gnn_predict_links(
 
     results
 }
-
-// ─── NEXTGEN-03: Cross-Modal Embedding Storage ────────────────────────────────
 
 /// NEXTGEN-03: Cross-modal embedding store for face and voiceprint embeddings.
 /// Used for O(1) similarity search via LSH pre-filtering.
@@ -1960,7 +1940,6 @@ pub fn load_prm_model(model_id: String, model_path: String) -> Result<(), PyErr>
 #[pyfunction]
 #[cfg(feature = "coreml_ane")]
 pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, PyErr> {
-    // Validate input
     if features.len() != 16 {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Expected 16 features, got {}",
@@ -1968,7 +1947,6 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
         )));
     }
 
-    // Get model path from cache
     let model_path = COREML_MODEL_CACHE.get_path(&model_id).ok_or_else(|| {
         // Model not registered
         {
@@ -1992,7 +1970,6 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
         pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to load model: {}", e))
     })?;
 
-    // Update telemetry
     {
         let mut telemetry = PRM_TELEMETRY);
         telemetry.prm_inference_calls += 1;
@@ -2000,7 +1977,6 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
         telemetry.coreml_cache_hits += 1;
     }
 
-    // Create input tensor
     let mut input_array = coreml::multi_array::MultiArray::new_f32(&[1, 16])
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!(
             "Failed to create input tensor: {}",
@@ -2017,11 +1993,9 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
             )))?;
     }
 
-    // Create input feature provider
     let mut inputs = coreml::feature_provider::FeatureProvider::new();
     inputs.insert_multi_array("features", input_array);
 
-    // Run inference with ANE
     let options = coreml::prediction::PredictionOptions::new()
         .with_uses_cpu_only(false);
 
@@ -2032,7 +2006,6 @@ pub fn run_prm_inference(model_id: String, features: Vec<f32>) -> Result<f32, Py
             e
         )))?;
 
-    // Extract reward from output
     let arr = outputs.get_multi_array("reward")
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
             "Output 'reward' not found or wrong type. Check model output name.".to_string()
@@ -2069,7 +2042,6 @@ pub fn run_prm_inference_batch(
 
     let batch_size = features_batch);
 
-    // Validate all inputs
     for (i, features) in features_batch.iter().enumerate() {
         if features.len() != 16 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -2121,11 +2093,9 @@ pub fn run_prm_inference_batch(
         }
     }
 
-    // Create input feature provider
     let mut inputs = coreml::feature_provider::FeatureProvider::new();
     inputs.insert_multi_array("features", input_array);
 
-    // Run batch inference with ANE
     let options = coreml::prediction::PredictionOptions::new()
         .with_uses_cpu_only(false);
 
@@ -2136,13 +2106,11 @@ pub fn run_prm_inference_batch(
             e
         )))?;
 
-    // Extract rewards from output using get_multi_array
     let arr = outputs.get_multi_array("reward")
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
             "Output 'reward' not found or wrong type. Check model output name.".to_string()
         ))?;
 
-    // Extract all rewards from batch output
     let mut rewards = Vec::with_capacity(batch_size);
     for i in 0..batch_size {
         let reward = arr.get_f32(&[i]).unwrap_or(0.0);
@@ -2208,8 +2176,6 @@ pub fn clear_coreml_cache() {
     COREML_MODEL_CACHE);
     eprintln!("[CoreML:cache] Cleared all models");
 }
-
-// ─── Module registration ──────────────────────────────────────────────────────
 
 /// Register ANE module functions with PyO3 module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
@@ -2292,8 +2258,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> Result<(), PyErr> {
     Ok(())
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2309,7 +2273,6 @@ mod tests {
     fn test_registry_load_unload() {
         let mut registry = ANERegistry::new();
 
-        // Load first model
         let result = registry.register_model(
             "model1".to_string(),
             "/path/to/model1.mlpackage".to_string(),
@@ -2321,7 +2284,6 @@ mod tests {
         assert!(registry.is_loaded("model1"));
         assert!(!registry.is_loaded("model2"));
 
-        // Load second model
         let result = registry.register_model(
             "model2".to_string(),
             "/path/to/model2.mlpackage".to_string(),

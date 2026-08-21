@@ -17,14 +17,14 @@ Test Categories:
 4. Runtime cleanup - verify proper shutdown
 5. asyncio compatibility - verify backwards compatibility
 """
+
 from __future__ import annotations
 
 import asyncio
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Never
 
 import pytest
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -77,7 +77,7 @@ class TestTokioRuntime:
             pytest.skip("tokio not installed")
 
         # Access current runtime (may be None if not running)
-        current = tokio.runtime.Runtime.current()
+        tokio.runtime.Runtime.current()
         # Current runtime is None when not in Tokio context
 
 
@@ -129,7 +129,8 @@ class TestAsyncTaskManagement:
 
     def test_task_spawn(self) -> None:
         """Should be able to spawn async tasks."""
-        async def sample_task():
+
+        async def sample_task() -> int:
             return 42
 
         async def main():
@@ -144,7 +145,7 @@ class TestAsyncTaskManagement:
         """Should be able to cancel tasks."""
         cancelled = False
 
-        async def long_task():
+        async def long_task() -> None:
             nonlocal cancelled
             try:
                 await asyncio.sleep(100)
@@ -152,7 +153,7 @@ class TestAsyncTaskManagement:
                 cancelled = True
                 raise
 
-        async def main():
+        async def main() -> None:
             task = asyncio.create_task(long_task())
             await asyncio.sleep(0.01)
             task.cancel()
@@ -166,7 +167,8 @@ class TestAsyncTaskManagement:
 
     def test_task_timeout(self) -> None:
         """Should support task timeouts."""
-        async def slow_task():
+
+        async def slow_task() -> str:
             await asyncio.sleep(10)
             return "done"
 
@@ -174,7 +176,7 @@ class TestAsyncTaskManagement:
             try:
                 result = await asyncio.wait_for(slow_task(), timeout=0.1)
                 return result
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return "timeout"
 
         result = asyncio.run(main())
@@ -188,12 +190,12 @@ class TestRuntimeShutdown:
         """Should shutdown gracefully."""
         shutdown_called = False
 
-        async def cleanup_task():
+        async def cleanup_task() -> None:
             nonlocal shutdown_called
             await asyncio.sleep(0.01)
             shutdown_called = True
 
-        async def main():
+        async def main() -> None:
             task = asyncio.create_task(cleanup_task())
             await task
 
@@ -204,14 +206,14 @@ class TestRuntimeShutdown:
         """Should handle shutdown even on exception."""
         cleanup_done = False
 
-        async def task_with_cleanup():
+        async def task_with_cleanup() -> None:
             nonlocal cleanup_done
             try:
                 raise ValueError("test error")
             finally:
                 cleanup_done = True
 
-        async def main():
+        async def main() -> None:
             try:
                 await task_with_cleanup()
             except ValueError:
@@ -226,7 +228,8 @@ class TestAsyncioCompatibility:
 
     def test_asyncio_run(self) -> None:
         """asyncio.run() should work."""
-        async def main():
+
+        async def main() -> str:
             return "hello"
 
         result = asyncio.run(main())
@@ -234,6 +237,7 @@ class TestAsyncioCompatibility:
 
     def test_asyncio_gather(self) -> None:
         """asyncio.gather() should work."""
+
         async def task(n):
             return n * 2
 
@@ -246,6 +250,7 @@ class TestAsyncioCompatibility:
 
     def test_asyncio_wait(self) -> None:
         """asyncio.wait() should work."""
+
         async def task(n):
             return n
 
@@ -260,14 +265,15 @@ class TestAsyncioCompatibility:
 
     def test_asyncio_timeout(self) -> None:
         """asyncio.timeout() should work (Python 3.11+)."""
-        async def slow():
+
+        async def slow() -> None:
             await asyncio.sleep(10)
 
-        async def main():
+        async def main() -> str:
             try:
                 async with asyncio.timeout(0.1):
                     await slow()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return "timeout"
             return "done"
 
@@ -292,7 +298,7 @@ class TestAsyncContextManagers:
                 nonlocal exited
                 exited = True
 
-        async def main():
+        async def main() -> None:
             async with AsyncContext():
                 pass
 
@@ -301,6 +307,7 @@ class TestAsyncContextManagers:
 
     def test_async_generator(self) -> None:
         """async generators should work."""
+
         async def async_gen():
             for i in range(3):
                 yield i
@@ -322,7 +329,7 @@ class TestConcurrencyPatterns:
         max_concurrent = 0
         lock = asyncio.Lock()
 
-        async def worker():
+        async def worker() -> None:
             nonlocal counter, max_concurrent
             async with lock:
                 counter += 1
@@ -331,12 +338,12 @@ class TestConcurrencyPatterns:
             async with lock:
                 counter -= 1
 
-        async def main():
-            sem = asyncio.Semaphore(2)
+        async def main() -> None:
+            asyncio.Semaphore(2)
             tasks = [asyncio.create_task(sem_wrapper(worker)) for _ in range(5)]
             await asyncio.gather(*tasks)
 
-        async def sem_wrapper(fn):
+        async def sem_wrapper(fn) -> None:
             async with sem:
                 await fn()
 
@@ -345,7 +352,8 @@ class TestConcurrencyPatterns:
 
     def test_queue(self) -> None:
         """AsyncQueue should work."""
-        async def producer(q):
+
+        async def producer(q) -> None:
             for i in range(3):
                 await q.put(i)
 
@@ -356,7 +364,7 @@ class TestConcurrencyPatterns:
                 q.task_done()
             return results
 
-        async def main():
+        async def main() -> None:
             q = asyncio.Queue()
             prod = asyncio.create_task(producer(q))
             cons = asyncio.create_task(consumer(q))
@@ -373,10 +381,10 @@ class TestErrorHandling:
         """Should handle exceptions in tasks."""
         error_raised = False
 
-        async def failing_task():
+        async def failing_task() -> Never:
             raise ValueError("task failed")
 
-        async def main():
+        async def main() -> None:
             nonlocal error_raised
             task = asyncio.create_task(failing_task())
             try:
@@ -389,10 +397,11 @@ class TestErrorHandling:
 
     def test_task_result_exception(self) -> None:
         """Task.result() should raise on exception."""
-        async def failing_task():
+
+        async def failing_task() -> Never:
             raise RuntimeError("error")
 
-        async def main():
+        async def main() -> None:
             task = asyncio.create_task(failing_task())
             await asyncio.sleep(0.01)
             assert task.done()
@@ -407,7 +416,8 @@ class TestPerformancePatterns:
 
     def test_ensure_future(self) -> None:
         """asyncio.ensure_future should work."""
-        async def coro():
+
+        async def coro() -> int:
             return 42
 
         async def main():
@@ -419,7 +429,8 @@ class TestPerformancePatterns:
 
     def test_wait_for(self) -> None:
         """asyncio.wait_for should work."""
-        async def slow():
+
+        async def slow() -> str:
             await asyncio.sleep(0.1)
             return "done"
 

@@ -17,25 +17,33 @@ Features:
 
 M1 8GB: async, bounded, fail-soft.
 """
-import asyncio
+
 import logging
 import time
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
+
 import orjson
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-OPENALEX_BASE = 'https://api.openalex.org'
+OPENALEX_BASE = "https://api.openalex.org"
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
-FIELD_CONCEPTS = {'cs': 'C164176025', 'ai': 'C39432361', 'ml': 'C185592260', 'security': 'C162324750', 'crypto': 'C2777199784'}
+FIELD_CONCEPTS = {
+    "cs": "C164176025",
+    "ai": "C39432361",
+    "ml": "C185592260",
+    "security": "C162324750",
+    "crypto": "C2777199784",
+}
+
 
 class OpenAlexWork(Struct):
     """OpenAlex academic work."""
+
     id: str
     title: str
     authors: list[str]
@@ -49,8 +57,10 @@ class OpenAlexWork(Struct):
     abstract: str
     publication_date: str | None
 
+
 class OpenAlexInstitution(Struct, frozen=True):
     """OpenAlex institution."""
+
     id: str
     display_name: str
     country_code: str | None
@@ -58,32 +68,41 @@ class OpenAlexInstitution(Struct, frozen=True):
     homepage: str | None
     works_count: int
 
+
 class OpenAlexAuthor(Struct, frozen=True):
     """OpenAlex author."""
+
     id: str
     display_name: str
     orcid: str | None
     institutions: list[str]
     works_count: int
 
+
 class InstitutionNetwork(Struct, frozen=True):
     """Collaboration network for an institution."""
+
     institution: OpenAlexInstitution
     collaborators: list[tuple[OpenAlexInstitution, int]]
     top_works: list[OpenAlexWork]
 
+
 class OpenAlexResult(NamedTuple):
     """Result of OpenAlex search."""
+
     works: list[OpenAlexWork]
     concepts: list[str]
     error: str | None
 
+
 class OpenAlexAdapter:
     """OpenAlex API adapter."""
-    __slots__ = tuple(('_cache', '_cache_ttl', '_semaphore'))
+
+    __slots__ = ("_cache", "_cache_ttl", "_semaphore")
 
     def __init__(self) -> None:
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[OpenAlexWork]]] = {}
         self._cache_ttl = 1800.0
@@ -91,27 +110,31 @@ class OpenAlexAdapter:
     def _mailto_param(self) -> str:
         """Get mailto param for polite pool."""
         import os
-        return os.environ.get('HLEDAC_CONTACT_EMAIL', 'research@hledac.ai')
+
+        return os.environ.get("HLEDAC_CONTACT_EMAIL", "research@hledac.ai")
 
     async def _fetch(self, endpoint: str) -> dict | None:
         """Fetch from OpenAlex API."""
         async with self._semaphore:
             try:
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-                url = f'{OPENALEX_BASE}{endpoint}'
-                if '?' in url:
-                    url += f'&mailto={self._mailto_param()}'
+
+                url = f"{OPENALEX_BASE}{endpoint}"
+                if "?" in url:
+                    url += f"&mailto={self._mailto_param()}"
                 else:
-                    url += f'?mailto={self._mailto_param()}'
+                    url += f"?mailto={self._mailto_param()}"
                 result = await async_fetch_public_text(url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
                 if not result or not result.text:
                     return None
                 return orjson.loads(result.text)
             except Exception as e:
-                logger.debug(f'OpenAlex fetch error: {e}')
+                logger.debug(f"OpenAlex fetch error: {e}")
                 return None
 
-    async def search_by_query(self, query: str, max_results: int=MAX_RESULTS, concepts_filter: list[str] | None=None) -> OpenAlexResult:
+    async def search_by_query(
+        self, query: str, max_results: int = MAX_RESULTS, concepts_filter: list[str] | None = None
+    ) -> OpenAlexResult:
         """
         Search works by query, optionally filtered by concepts.
 
@@ -124,53 +147,89 @@ class OpenAlexAdapter:
             OpenAlexResult with works
         """
         try:
-            params = [f"search={query.replace(' ', '+')}", f'per_page={max_results}']
+            params = [f"search={query.replace(' ', '+')}", f"per_page={max_results}"]
             if concepts_filter:
                 for cid in concepts_filter:
-                    params.append(f'filter=concepts.id:{cid}')
-            endpoint = '/works?' + '&'.join(params)
+                    params.append(f"filter=concepts.id:{cid}")
+            endpoint = "/works?" + "&".join(params)
             data = await self._fetch(endpoint)
             if not data:
-                return OpenAlexResult([], [], 'no data')
+                return OpenAlexResult([], [], "no data")
             works = []
             concepts = set()
-            for item in data.get('results', [])[:max_results]:
-                item_concepts = [c.get('display_name', '') for c in item.get('concepts', [])]
+            for item in data.get("results", [])[:max_results]:
+                item_concepts = [c.get("display_name", "") for c in item.get("concepts", [])]
                 concepts.update(item_concepts)
                 authors = []
-                for auth in item.get('authorships', [])[:10]:
-                    name = auth.get('author', {}).get('display_name', '')
+                for auth in item.get("authorships", [])[:10]:
+                    name = auth.get("author", {}).get("display_name", "")
                     if name:
                         authors.append(name)
-                works.append(OpenAlexWork(id=item.get('id', '').replace('https://openalex.org/', ''), title=item.get('title', '') or '', authors=authors, year=item.get('publication_year'), doi=item.get('doi'), concepts=item_concepts[:5], citation_count=item.get('citation_count', 0), cited_by_count=item.get('cited_by_count', 0), open_access=item.get('open_access', {}).get('is_oa', False) if isinstance(item.get('open_access'), dict) else False, related_works=[w.replace('https://openalex.org/', '') for w in item.get('related_works', [])], abstract='', publication_date=item.get('publication_date')))
+                works.append(
+                    OpenAlexWork(
+                        id=item.get("id", "").replace("https://openalex.org/", ""),
+                        title=item.get("title", "") or "",
+                        authors=authors,
+                        year=item.get("publication_year"),
+                        doi=item.get("doi"),
+                        concepts=item_concepts[:5],
+                        citation_count=item.get("citation_count", 0),
+                        cited_by_count=item.get("cited_by_count", 0),
+                        open_access=item.get("open_access", {}).get("is_oa", False)
+                        if isinstance(item.get("open_access"), dict)
+                        else False,
+                        related_works=[w.replace("https://openalex.org/", "") for w in item.get("related_works", [])],
+                        abstract="",
+                        publication_date=item.get("publication_date"),
+                    )
+                )
             return OpenAlexResult(works, list(concepts), None)
         except Exception as e:
-            logger.error(f'OpenAlex search error: {e}')
+            logger.error(f"OpenAlex search error: {e}")
             return OpenAlexResult([], [], str(e))
 
-    async def search_by_concepts(self, concept_ids: list[str], max_results: int=MAX_RESULTS) -> OpenAlexResult:
+    async def search_by_concepts(self, concept_ids: list[str], max_results: int = MAX_RESULTS) -> OpenAlexResult:
         """Search works by concept IDs (sub-field specific)."""
         try:
-            concept_filter = ','.join(concept_ids)
-            params = f'filter=concepts.id:{concept_filter}&per_page={max_results}'
-            endpoint = f'/works?{params}'
+            concept_filter = ",".join(concept_ids)
+            params = f"filter=concepts.id:{concept_filter}&per_page={max_results}"
+            endpoint = f"/works?{params}"
             data = await self._fetch(endpoint)
             if not data:
-                return OpenAlexResult([], [], 'no data')
+                return OpenAlexResult([], [], "no data")
             works = []
-            for item in data.get('results', [])[:max_results]:
+            for item in data.get("results", [])[:max_results]:
                 authors = []
-                for auth in item.get('authorships', [])[:10]:
-                    name = auth.get('author', {}).get('display_name', '')
+                for auth in item.get("authorships", [])[:10]:
+                    name = auth.get("author", {}).get("display_name", "")
                     if name:
                         authors.append(name)
-                works.append(OpenAlexWork(id=item.get('id', '').replace('https://openalex.org/', ''), title=item.get('title', '') or '', authors=authors, year=item.get('publication_year'), doi=item.get('doi'), concepts=[c.get('display_name', '') for c in item.get('concepts', [])[:5]], citation_count=item.get('citation_count', 0), cited_by_count=item.get('cited_by_count', 0), open_access=item.get('open_access', {}).get('is_oa', False) if isinstance(item.get('open_access'), dict) else False, related_works=[], abstract='', publication_date=item.get('publication_date')))
+                works.append(
+                    OpenAlexWork(
+                        id=item.get("id", "").replace("https://openalex.org/", ""),
+                        title=item.get("title", "") or "",
+                        authors=authors,
+                        year=item.get("publication_year"),
+                        doi=item.get("doi"),
+                        concepts=[c.get("display_name", "") for c in item.get("concepts", [])[:5]],
+                        citation_count=item.get("citation_count", 0),
+                        cited_by_count=item.get("cited_by_count", 0),
+                        open_access=item.get("open_access", {}).get("is_oa", False)
+                        if isinstance(item.get("open_access"), dict)
+                        else False,
+                        related_works=[],
+                        abstract="",
+                        publication_date=item.get("publication_date"),
+                    )
+                )
             return OpenAlexResult(works, concept_ids, None)
         except Exception as e:
-            logger.error(f'OpenAlex concept search error: {e}')
+            logger.error(f"OpenAlex concept search error: {e}")
             return OpenAlexResult([], [], str(e))
 
-    async def get_institution_network(self, institution_name: str | None=None, institution_id: str | None=None, max_works: int=30) -> InstitutionNetwork | None:
+    async def get_institution_network(
+        self, institution_name: str | None = None, institution_id: str | None = None, max_works: int = 30
+    ) -> InstitutionNetwork | None:
         """
         Get collaboration network for an institution.
 
@@ -183,35 +242,71 @@ class OpenAlexAdapter:
         """
         try:
             if institution_id:
-                inst_id = institution_id.replace('https://openalex.org/', '')
+                inst_id = institution_id.replace("https://openalex.org/", "")
             else:
-                inst_data = await self._fetch(f'/institutions?search={institution_name}')
-                if not inst_data or not inst_data.get('results'):
+                inst_data = await self._fetch(f"/institutions?search={institution_name}")
+                if not inst_data or not inst_data.get("results"):
                     return None
-                inst = inst_data['results'][0]
-                inst_id = inst['id'].replace('https://openalex.org/', '')
-            inst_data = await self._fetch(f'/institutions/{inst_id}')
+                inst = inst_data["results"][0]
+                inst_id = inst["id"].replace("https://openalex.org/", "")
+            inst_data = await self._fetch(f"/institutions/{inst_id}")
             if not inst_data:
                 return None
-            institution = OpenAlexInstitution(id=inst_id, display_name=inst_data.get('display_name', ''), country_code=inst_data.get('country_code'), type=inst_data.get('type'), homepage=inst_data.get('homepage'), works_count=inst_data.get('works_count', 0))
-            works_data = await self._fetch(f'/works?filter=institutions.id:{inst_id}&sort=citation_count:desc&per_page={max_works}')
+            institution = OpenAlexInstitution(
+                id=inst_id,
+                display_name=inst_data.get("display_name", ""),
+                country_code=inst_data.get("country_code"),
+                type=inst_data.get("type"),
+                homepage=inst_data.get("homepage"),
+                works_count=inst_data.get("works_count", 0),
+            )
+            works_data = await self._fetch(
+                f"/works?filter=institutions.id:{inst_id}&sort=citation_count:desc&per_page={max_works}"
+            )
             top_works = []
             if works_data:
-                for item in works_data.get('results', [])[:10]:
+                for item in works_data.get("results", [])[:10]:
                     authors = []
-                    for auth in item.get('authorships', [])[:5]:
-                        name = auth.get('author', {}).get('display_name', '')
+                    for auth in item.get("authorships", [])[:5]:
+                        name = auth.get("author", {}).get("display_name", "")
                         if name:
                             authors.append(name)
-                    top_works.append(OpenAlexWork(id=item.get('id', '').replace('https://openalex.org/', ''), title=item.get('title', '') or '', authors=authors, year=item.get('publication_year'), doi=item.get('doi'), concepts=[c.get('display_name', '') for c in item.get('concepts', [])[:3]], citation_count=item.get('citation_count', 0), cited_by_count=item.get('cited_by_count', 0), open_access=False, related_works=[], abstract='', publication_date=item.get('publication_date')))
+                    top_works.append(
+                        OpenAlexWork(
+                            id=item.get("id", "").replace("https://openalex.org/", ""),
+                            title=item.get("title", "") or "",
+                            authors=authors,
+                            year=item.get("publication_year"),
+                            doi=item.get("doi"),
+                            concepts=[c.get("display_name", "") for c in item.get("concepts", [])[:3]],
+                            citation_count=item.get("citation_count", 0),
+                            cited_by_count=item.get("cited_by_count", 0),
+                            open_access=False,
+                            related_works=[],
+                            abstract="",
+                            publication_date=item.get("publication_date"),
+                        )
+                    )
             collaborators: list[tuple[OpenAlexInstitution, int]] = []
-            collab_data = await self._fetch(f'/institutions/{inst_id}/co-institutions?per_page=10')
+            collab_data = await self._fetch(f"/institutions/{inst_id}/co-institutions?per_page=10")
             if collab_data:
-                for item in collab_data.get('results', [])[:10]:
-                    collaborators.append((OpenAlexInstitution(id=item.get('id', '').replace('https://openalex.org/', ''), display_name=item.get('display_name', ''), country_code=item.get('country_code'), type=item.get('type'), homepage=item.get('homepage'), works_count=item.get('works_count', 0)), item.get('works_count', 0)))
+                for item in collab_data.get("results", [])[:10]:
+                    collaborators.append(
+                        (
+                            OpenAlexInstitution(
+                                id=item.get("id", "").replace("https://openalex.org/", ""),
+                                display_name=item.get("display_name", ""),
+                                country_code=item.get("country_code"),
+                                type=item.get("type"),
+                                homepage=item.get("homepage"),
+                                works_count=item.get("works_count", 0),
+                            ),
+                            item.get("works_count", 0),
+                        )
+                    )
             return InstitutionNetwork(institution=institution, collaborators=collaborators, top_works=top_works)
         except Exception as e:
-            logger.error(f'OpenAlex institution network error: {e}')
+            logger.error(f"OpenAlex institution network error: {e}")
             return None
 
     def to_canonical_findings(self, works: list[OpenAlexWork], query: str) -> list[CanonicalFinding]:
@@ -219,13 +314,40 @@ class OpenAlexAdapter:
         findings = []
         for work in works:
             import hashlib
-            fid = hashlib.sha256(f'{query}\x00{work.id}\x00openalex'.encode()).hexdigest()[:16]
-            payload = '\n'.join([f'title: {work.title}', f"authors: {', '.join(work.authors[:5])}{('...' if len(work.authors) > 5 else '')}", f"year: {work.year or 'N/A'}", f"doi: {work.doi or 'N/A'}", f"concepts: {', '.join(work.concepts[:5])}", f'citations: {work.cited_by_count}', f"open_access: {('yes' if work.open_access else 'no')}", f"publication_date: {work.publication_date or 'N/A'}"])
-            findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='openalex', confidence=0.8, ts=time.time(), provenance=('openalex', work.id, work.title[:50]), payload_text=payload))
+
+            fid = hashlib.sha256(f"{query}\x00{work.id}\x00openalex".encode()).hexdigest()[:16]
+            payload = "\n".join(
+                [
+                    f"title: {work.title}",
+                    f"authors: {', '.join(work.authors[:5])}{('...' if len(work.authors) > 5 else '')}",
+                    f"year: {work.year or 'N/A'}",
+                    f"doi: {work.doi or 'N/A'}",
+                    f"concepts: {', '.join(work.concepts[:5])}",
+                    f"citations: {work.cited_by_count}",
+                    f"open_access: {('yes' if work.open_access else 'no')}",
+                    f"publication_date: {work.publication_date or 'N/A'}",
+                ]
+            )
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="openalex",
+                    confidence=0.8,
+                    ts=time.time(),
+                    provenance=("openalex", work.id, work.title[:50]),
+                    payload_text=payload,
+                )
+            )
         return findings
+
+
 _adapter: OpenAlexAdapter | None = None
 
-async def search_openalex(query: str, max_results: int=MAX_RESULTS, concept_ids: list[str] | None=None) -> list[CanonicalFinding]:
+
+async def search_openalex(
+    query: str, max_results: int = MAX_RESULTS, concept_ids: list[str] | None = None
+) -> list[CanonicalFinding]:
     """Search OpenAlex and return CanonicalFinding list."""
     global _adapter
     if _adapter is None:
@@ -235,9 +357,10 @@ async def search_openalex(query: str, max_results: int=MAX_RESULTS, concept_ids:
     else:
         result = await _adapter.search_by_query(query, max_results)
     if result.error:
-        logger.warning(f'OpenAlex search failed: {result.error}')
+        logger.warning(f"OpenAlex search failed: {result.error}")
         return []
     return _adapter.to_canonical_findings(result.works, query)
+
 
 async def get_institution_network(institution_name: str) -> InstitutionNetwork | None:
     """Get institution collaboration network."""
@@ -245,4 +368,16 @@ async def get_institution_network(institution_name: str) -> InstitutionNetwork |
     if _adapter is None:
         _adapter = OpenAlexAdapter()
     return await _adapter.get_institution_network(institution_name=institution_name)
-__all__ = ['OpenAlexAdapter', 'OpenAlexWork', 'OpenAlexInstitution', 'OpenAlexAuthor', 'OpenAlexResult', 'InstitutionNetwork', 'search_openalex', 'get_institution_network', 'FIELD_CONCEPTS']
+
+
+__all__ = [
+    "OpenAlexAdapter",
+    "OpenAlexWork",
+    "OpenAlexInstitution",
+    "OpenAlexAuthor",
+    "OpenAlexResult",
+    "InstitutionNetwork",
+    "search_openalex",
+    "get_institution_network",
+    "FIELD_CONCEPTS",
+]

@@ -22,21 +22,20 @@ Invariant table:
 | test_failsoft_on_exception | Exception in hypothesis block does not propagate |
 """
 
-
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _core import aclose
 
 
 class TestP12PostStoragePlacement:
     """Verify P12 hypothesis layer is placed AFTER storage, not before fetch."""
 
-    def test_no_tot_block_before_fetch_batch(self):
+    def test_no_tot_block_before_fetch_batch(self) -> None:
         """ToT/hypothesis block is NOT placed before the fetch batch."""
         # Read the source of async_run_live_public_pipeline
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         # Find the index of "# ---- Fetch batch -----" comment
@@ -50,11 +49,12 @@ class TestP12PostStoragePlacement:
             assert p12_pos > fetch_batch_pos, (
                 "P12 hypothesis block must be AFTER fetch batch, not before. "
                 f"P12 at {p12_pos}, fetch at {fetch_batch_pos}"
-    )
+            )
 
-    def test_hypothesis_layer_after_aggregate_section(self):
+    def test_hypothesis_layer_after_aggregate_section(self) -> None:
         """Hypothesis layer appears after the aggregate/compute block."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         # Find aggregate section marker
@@ -63,18 +63,16 @@ class TestP12PostStoragePlacement:
 
         # P12 should be after aggregate
         p12_pos = source.find("# P12: Hypothesis generation")
-        assert p12_pos > agg_pos, (
-            f"P12 should be after aggregate section (pos {agg_pos}), "
-            f"but found at pos {p12_pos}"
-    )
+        assert p12_pos > agg_pos, f"P12 should be after aggregate section (pos {agg_pos}), but found at pos {p12_pos}"
 
 
 class TestP12GateLogic:
     """Verify P12 gate uses store+hermes_engine+total_stored, not memory_manager."""
 
-    def test_gate_uses_store_and_engine(self):
+    def test_gate_uses_store_and_engine(self) -> None:
         """P12 gate condition: store is not None AND hermes_engine is not None."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         # Find P12 block
@@ -82,129 +80,130 @@ class TestP12GateLogic:
         assert p12_start != -1, "P12 block not found"
 
         # Extract the next ~30 lines after P12 start
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # Gate should check: store is not None and hermes_engine is not None
         assert "store is not None" in p12_block or "store is not None" in source, (
             "P12 gate must check 'store is not None'"
-    )
+        )
         assert "hermes_engine is not None" in p12_block or "hermes_engine is not None" in source, (
             "P12 gate must check 'hermes_engine is not None'"
-    )
+        )
 
-    def test_gate_conditional_on_total_stored(self):
+    def test_gate_conditional_on_total_stored(self) -> None:
         """P12 runs only when total_stored > 0 (real findings exist)."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
         assert p12_start != -1, "P12 block not found"
 
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # Must check total_stored > 0 before running hypothesis
-        assert "total_stored > 0" in p12_block, (
-            "P12 gate must check 'total_stored > 0' — no ToT on zero findings"
-    )
+        assert "total_stored > 0" in p12_block, "P12 gate must check 'total_stored > 0' — no ToT on zero findings"
 
-    def test_no_memory_manager_in_gate(self):
+    def test_no_memory_manager_in_gate(self) -> None:
         """P12 gate does NOT use memory_manager (that was the pre-storage gate)."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
         assert p12_start != -1, "P12 block not found"
 
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # The canonical gate should NOT be memory_manager-based
         # (old pre-storage gate was: memory_manager is not None and hermes_engine is not None)
         # New gate is: store is not None and hermes_engine is not None and total_stored > 0
         assert "memory_manager is not None" not in p12_block or "store is not None" in p12_block, (
             "P12 canonical gate must use 'store', not 'memory_manager' alone"
-    )
+        )
 
 
 class TestP12UsesRealFindings:
     """Verify P12 builds context from real stored findings, not placeholder RAG."""
 
-    def test_queries_store_for_findings(self):
+    def test_queries_store_for_findings(self) -> None:
         """P12 calls store.async_get_recent_findings() to get real persisted findings."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
         assert p12_start != -1, "P12 block not found"
 
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # Must query real findings from store
         assert "async_get_recent_findings" in p12_block, (
             "P12 must call store.async_get_recent_findings() — real findings, not placeholder"
-    )
+        )
 
-    def test_context_not_from_rag_alone(self):
+    def test_context_not_from_rag_alone(self) -> None:
         """P12 context uses stored findings count, not rag_context alone."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # The context should include stored_findings_count from real store query
         assert "stored_findings_count" in p12_block or "findings" in p12_block, (
             "P12 context must include real stored findings, not rag_context placeholder"
-    )
+        )
 
         # Should NOT use rag_context as primary input (that was the pre-storage approach)
         # The old block had: "rag_context": rag_context
         # The new block has stored findings from the store query
         assert "rag_context" not in p12_block or "async_get_recent_findings" in p12_block, (
             "P12 must use real findings from store, not rag_context placeholder"
-    )
+        )
 
 
 class TestP12BoundedBehavior:
     """Verify P12 respects M1 8GB constraints: bounded hypotheses, fail-soft."""
 
-    def test_max_five_hypotheses(self):
+    def test_max_five_hypotheses(self) -> None:
         """ToT evaluation bounded to 5 hypotheses: hypotheses[:5]."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
         # P12 block is large — use 3000 chars to capture full loop
-        p12_block = source[p12_start:p12_start + 3000]
+        p12_block = source[p12_start : p12_start + 3000]
 
         # Max 5 ToT evaluations
-        assert "hypotheses[:5]" in p12_block, (
-            "P12 must cap ToT evaluations at 5 hypotheses — M1 8GB safety"
-    )
+        assert "hypotheses[:5]" in p12_block, "P12 must cap ToT evaluations at 5 hypotheses — M1 8GB safety"
 
-    def test_failsoft_exception_handling(self):
+    def test_failsoft_exception_handling(self) -> None:
         """Exception in P12 block does not propagate — fail-soft."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
         # P12 block is large (~90 lines) — use 7000 chars to capture full scope including outer except
-        p12_block = source[p12_start:p12_start + 7000]
+        p12_block = source[p12_start : p12_start + 7000]
 
         # P12 wrapped in try/except with pass
-        assert "except Exception:" in p12_block, (
-            "P12 must catch exceptions — fail-soft, not crash pipeline"
-    )
+        assert "except Exception:" in p12_block, "P12 must catch exceptions — fail-soft, not crash pipeline"
         assert "pass  # P12" in p12_block or "pass  # P12: fail-soft" in p12_block, (
             "P12 must fail-soft with pass — hypothesis generation is optional"
-    )
+        )
 
 
 class TestP12NoPreFetchLatency:
     """Verify canonical sprint does not incur ToT latency before fetch batch."""
 
-    def test_tot_not_in_hot_path(self):
+    def test_tot_not_in_hot_path(self) -> None:
         """ToT runs after fetch+storage, not in the hot discovery-to-fetch path."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         # Hot path: discovery → fetch → store
@@ -219,142 +218,131 @@ class TestP12NoPreFetchLatency:
 
         # P12 must be after fetch batch (not in hot path)
         assert p12_pos > fetch_pos, (
-            f"ToT must not be in hot path before fetch (pos {fetch_pos}), "
-            f"but P12 found at pos {p12_pos}"
-    )
+            f"ToT must not be in hot path before fetch (pos {fetch_pos}), but P12 found at pos {p12_pos}"
+        )
 
 
 class TestP12HypothesisEngine:
     """Verify P12 correctly uses HypothesisEngine for generation."""
 
     @pytest.mark.asyncio
-    async def test_hypothesis_engine_initialized(self):
+    async def test_hypothesis_engine_initialized(self) -> None:
         """HypothesisEngine is instantiated inside P12 block."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
-        assert "HypothesisEngine()" in p12_block, (
-            "P12 must instantiate HypothesisEngine for hypothesis generation"
-    )
+        assert "HypothesisEngine()" in p12_block, "P12 must instantiate HypothesisEngine for hypothesis generation"
 
     @pytest.mark.asyncio
-    async def test_tot_integration_layer_initialized(self):
+    async def test_tot_integration_layer_initialized(self) -> None:
         """TotIntegrationLayer is instantiated inside P12 block."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
-        assert "TotIntegrationLayer()" in p12_block, (
-            "P12 must instantiate TotIntegrationLayer for ToT evaluation"
-    )
+        assert "TotIntegrationLayer()" in p12_block, "P12 must instantiate TotIntegrationLayer for ToT evaluation"
 
 
 class TestP12CanonicalBehavior:
     """Canonical sprint behavior: no ToT on empty runs."""
 
-    def test_no_tot_on_zero_findings(self):
+    def test_no_tot_on_zero_findings(self) -> None:
         """When total_stored == 0, P12 does not run ToT."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # Gate must include total_stored > 0 check
-        assert "total_stored > 0" in p12_block, (
-            "P12 must gate on total_stored > 0 — no ToT on zero findings"
-    )
+        assert "total_stored > 0" in p12_block, "P12 must gate on total_stored > 0 — no ToT on zero findings"
 
-    def test_tot_solution_count_tracked(self):
+    def test_tot_solution_count_tracked(self) -> None:
         """P12 tracks tot_solution_count for telemetry."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 1500]
+        p12_block = source[p12_start : p12_start + 1500]
 
         # Should track how many ToT solutions were found
-        assert "tot_solution_count" in p12_block, (
-            "P12 should track tot_solution_count for run telemetry"
-    )
+        assert "tot_solution_count" in p12_block, "P12 should track tot_solution_count for run telemetry"
 
 
 class TestP12DILoadWire:
     """P12 DI wire tests: gate opens only when store+hermes_engine+stored_findings>0."""
 
-    def test_gate_requires_store_and_hermes_and_stored(self):
+    def test_gate_requires_store_and_hermes_and_stored(self) -> None:
         """
         P12 gate requires ALL THREE: store is not None AND hermes_engine is not None AND total_stored > 0.
         Canonical sprint DI wire: hermes_engine travels with duckdb_store into pipeline.
         """
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 2000]
+        p12_block = source[p12_start : p12_start + 2000]
 
         # Gate must check all three conditions
-        assert "store is not None" in p12_block, (
-            "P12 gate must check 'store is not None'"
-    )
-        assert "hermes_engine is not None" in p12_block, (
-            "P12 gate must check 'hermes_engine is not None'"
-    )
-        assert "total_stored > 0" in p12_block, (
-            "P12 gate must check 'total_stored > 0'"
-    )
+        assert "store is not None" in p12_block, "P12 gate must check 'store is not None'"
+        assert "hermes_engine is not None" in p12_block, "P12 gate must check 'hermes_engine is not None'"
+        assert "total_stored > 0" in p12_block, "P12 gate must check 'total_stored > 0'"
 
         # Gate must be AND-chained (all three required)
-        assert "and" in p12_block.lower(), (
-            "P12 gate must use AND for all-three condition chain"
-    )
+        assert "and" in p12_block.lower(), "P12 gate must use AND for all-three condition chain"
 
-    def test_gate_blocks_when_hermes_none(self):
+    def test_gate_blocks_when_hermes_none(self) -> None:
         """P12 gate does NOT open when hermes_engine is None (even with store and findings)."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 2000]
+        p12_block = source[p12_start : p12_start + 2000]
 
         # Count occurrences of the gate condition pattern
         # Must be: if store is not None and hermes_engine is not None and total_stored > 0:
-        lines = p12_block.split('\n')
-        gate_lines = [l for l in lines if 'if ' in l and 'store' in l and 'hermes_engine' in l and 'total_stored' in l]  # noqa: E741
+        lines = p12_block.split("\n")
+        gate_lines = [l for l in lines if "if " in l and "store" in l and "hermes_engine" in l and "total_stored" in l]  # noqa: E741
         assert len(gate_lines) >= 1, "P12 must have a gate line checking store+hermes_engine+total_stored"
 
-    def test_no_tot_when_store_none(self):
+    def test_no_tot_when_store_none(self) -> None:
         """ToT does not run when store is None (hermes_engine is irrelevant without store)."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 2000]
+        p12_block = source[p12_start : p12_start + 2000]
 
         # The gate if-condition must include "store is not None"
-        assert "store is not None" in p12_block, (
-            "Canonical gate requires store for persistence, not just hermes alone"
-    )
+        assert "store is not None" in p12_block, "Canonical gate requires store for persistence, not just hermes alone"
 
-    def test_no_tot_when_no_stored_findings(self):
+    def test_no_tot_when_no_stored_findings(self) -> None:
         """ToT does not run when total_stored == 0 (no evidence to reason about)."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 2000]
+        p12_block = source[p12_start : p12_start + 2000]
 
         # Must check total_stored > 0 before running ToT
         assert "total_stored > 0" in p12_block, (
             "P12 requires stored findings before running ToT — no reasoning on empty store"
-    )
+        )
 
-    def test_scheduler_passes_hermes_to_pipeline(self):
+    def test_scheduler_passes_hermes_to_pipeline(self) -> None:
         """
         SprintScheduler passes hermes_engine into async_run_live_public_pipeline.
         Verifies DI wire: scheduler._hermes_engine → pipeline P12 gate.
@@ -367,9 +355,9 @@ class TestP12DILoadWire:
         source = inspect.getsource(SprintScheduler._run_public_discovery_in_cycle)
         assert "hermes_engine=hermes_engine" in source, (
             "Scheduler must pass hermes_engine into async_run_public — DI wire for P12"
-    )
+        )
 
-    def test_scheduler_loads_hermes_at_sprint_start(self):
+    def test_scheduler_loads_hermes_at_sprint_start(self) -> None:
         """
         SprintScheduler prewarms Hermes at sprint start (_prewarm_hermes_for_sprint).
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
@@ -382,9 +370,9 @@ class TestP12DILoadWire:
         source = inspect.getsource(SprintScheduler.run)
         assert "_prewarm_hermes_for_sprint" in source, (
             "Scheduler must call _prewarm_hermes_for_sprint at sprint start — bounded Hermes lifecycle"
-    )
+        )
 
-    def test_scheduler_releases_hermes_at_teardown(self):
+    def test_scheduler_releases_hermes_at_teardown(self) -> None:
         """
         SprintScheduler releases Hermes at teardown (in _close_dedup region).
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
@@ -396,9 +384,7 @@ class TestP12DILoadWire:
         source = inspect.getsource(SprintScheduler.run)
         # After _close_dedup, there should be Hermes unload
         # The unload call should be near the teardown section
-        assert "hermes_engine" in source, (
-            "Scheduler must handle hermes_engine teardown — bounded M1 8GB lifecycle"
-    )
+        assert "hermes_engine" in source, "Scheduler must handle hermes_engine teardown — bounded M1 8GB lifecycle"
 
 
 class TestP12HermesLifecycleUnderModelManager:
@@ -415,7 +401,7 @@ class TestP12HermesLifecycleUnderModelManager:
     | test_teardown_calls_unload_method | Teardown path calls _unload_hermes_at_teardown |
     """
 
-    def test_load_via_model_manager(self):
+    def test_load_via_model_manager(self) -> None:
         """
         _load_hermes_for_sprint uses ModelManager.load_model("hermes").
         Verifies canonical Hermes lifecycle owner is ModelManager.
@@ -427,16 +413,16 @@ class TestP12HermesLifecycleUnderModelManager:
         source = inspect.getsource(SprintScheduler._load_hermes_for_sprint)
         assert "get_model_manager()" in source, (
             "Scheduler must use get_model_manager() — canonical Hermes lifecycle owner"
-    )
+        )
         assert 'load_model("hermes")' in source or "load_model('hermes')" in source, (
             "Scheduler must use ModelManager.load_model('hermes') — not direct Hermes3Engine"
-    )
+        )
         # Must NOT directly instantiate Hermes3Engine
         assert "Hermes3Engine()" not in source, (
             "Scheduler must NOT directly instantiate Hermes3Engine — use ModelManager"
-    )
+        )
 
-    def test_unload_via_model_manager(self):
+    def test_unload_via_model_manager(self) -> None:
         """
         _unload_hermes_at_teardown uses ModelManager.release_model("hermes").
         Verifies canonical Hermes unload authority is ModelManager.
@@ -448,13 +434,13 @@ class TestP12HermesLifecycleUnderModelManager:
         source = inspect.getsource(SprintScheduler._unload_hermes_at_teardown)
         assert "get_model_manager()" in source, (
             "Teardown must use get_model_manager() — canonical Hermes lifecycle owner"
-    )
+        )
         assert 'release_model("hermes")' in source or "release_model('hermes')" in source, (
             "Teardown must use ModelManager.release_model('hermes')"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_safe_skip_on_memory_pressure(self):
+    async def test_safe_skip_on_memory_pressure(self) -> None:
         """
         When ModelManager raises RuntimeError (memory pressure), Hermes load is skipped.
         Verifies fail-soft skip — sprint continues, ToT is skipped.
@@ -467,15 +453,13 @@ class TestP12HermesLifecycleUnderModelManager:
         config = SprintSchedulerConfig(
             sprint_duration_s=30.0,
             export_enabled=False,
-    )
+        )
         scheduler = SprintScheduler(config)
 
         # Create a mock model_manager module to avoid real imports
         mock_mm_module = MagicMock()
         mock_mm_instance = MagicMock()
-        mock_mm_instance.load_model = AsyncMock(
-            side_effect=RuntimeError("[MEMORY ADMISSION] CRITICAL state")
-    )
+        mock_mm_instance.load_model = AsyncMock(side_effect=RuntimeError("[MEMORY ADMISSION] CRITICAL state"))
         mock_mm_module.get_model_manager = MagicMock(return_value=mock_mm_instance)
 
         # Temporarily replace the model_manager module
@@ -488,7 +472,7 @@ class TestP12HermesLifecycleUnderModelManager:
             # hermes_engine must be None (skipped due to memory pressure)
             assert scheduler._hermes_engine is None, (
                 "Hermes must be None when ModelManager blocks load — fail-soft skip"
-    )
+            )
         finally:
             if original_mm is not None:
                 sys.modules["hledac.universal.brain.model_manager"] = original_mm
@@ -496,7 +480,7 @@ class TestP12HermesLifecycleUnderModelManager:
                 del sys.modules["hledac.universal.brain.model_manager"]
 
     @pytest.mark.asyncio
-    async def test_successful_load_sets_hermes_engine(self):
+    async def test_successful_load_sets_hermes_engine(self) -> None:
         """
         When ModelManager.load_model succeeds, hermes_engine is set.
         Verifies DI wire to public pipeline.
@@ -508,7 +492,7 @@ class TestP12HermesLifecycleUnderModelManager:
         config = SprintSchedulerConfig(
             sprint_duration_s=30.0,
             export_enabled=False,
-    )
+        )
         scheduler = SprintScheduler(config)
 
         mock_hermes = MagicMock()
@@ -530,7 +514,7 @@ class TestP12HermesLifecycleUnderModelManager:
             # hermes_engine must be the loaded engine
             assert scheduler._hermes_engine is mock_hermes, (
                 "Hermes engine must be set when ModelManager.load_model succeeds"
-    )
+            )
         finally:
             if original_mm is not None:
                 sys.modules["hledac.universal.brain.model_manager"] = original_mm
@@ -538,7 +522,7 @@ class TestP12HermesLifecycleUnderModelManager:
                 del sys.modules["hledac.universal.brain.model_manager"]
 
     @pytest.mark.asyncio
-    async def test_teardown_calls_unload_method(self):
+    async def test_teardown_calls_unload_method(self) -> None:
         """
         Teardown path calls _unload_hermes_at_teardown.
         Verifies bounded M1 8GB lifecycle: load at BOOT, release at TEARDOWN.
@@ -550,10 +534,10 @@ class TestP12HermesLifecycleUnderModelManager:
         source = inspect.getsource(SprintScheduler.run)
         assert "_unload_hermes_at_teardown" in source, (
             "Teardown must call _unload_hermes_at_teardown — bounded Hermes lifecycle"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_unload_releases_via_model_manager(self):
+    async def test_unload_releases_via_model_manager(self) -> None:
         """
         _unload_hermes_at_teardown calls ModelManager.release_model.
         Verifies canonical unload authority.
@@ -565,7 +549,7 @@ class TestP12HermesLifecycleUnderModelManager:
         config = SprintSchedulerConfig(
             sprint_duration_s=30.0,
             export_enabled=False,
-    )
+        )
         scheduler = SprintScheduler(config)
         scheduler._hermes_engine = MagicMock()
 
@@ -584,25 +568,24 @@ class TestP12HermesLifecycleUnderModelManager:
 
             # release_model must be called with "hermes"
             mock_mm_instance.release_model.assert_called_once_with("hermes")
-            assert scheduler._hermes_engine is None, (
-                "hermes_engine must be None after unload"
-    )
+            assert scheduler._hermes_engine is None, "hermes_engine must be None after unload"
         finally:
             if original_mm is not None:
                 sys.modules["hledac.universal.brain.model_manager"] = original_mm
             elif "hledac.universal.brain.model_manager" in sys.modules:
                 del sys.modules["hledac.universal.brain.model_manager"]
 
-    def test_gate_open_with_store_and_hermes(self):
+    def test_gate_open_with_store_and_hermes(self) -> None:
         """
         P12 gate opens when store is not None AND hermes_engine is not None AND total_stored > 0.
         Verifies canonical DI wire: store+hermes+stored findings = gate open.
         """
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 2000]
+        p12_block = source[p12_start : p12_start + 2000]
 
         # Gate must check all three conditions
         assert "store is not None" in p12_block
@@ -613,73 +596,75 @@ class TestP12HermesLifecycleUnderModelManager:
 class TestP12ParallelHypothesisBurst:
     """Sprint P12: Parallel hypothesis burst — bounded concurrent ToT evaluation."""
 
-    def test_parallel_hypothesis_burst_keeps_max_five_cap(self):
+    def test_parallel_hypothesis_burst_keeps_max_five_cap(self) -> None:
         """Up to 5 hypotheses are evaluated concurrently — cap of 5 is preserved."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start : p12_start + 5000]
 
         # Must still cap at 5: hypotheses[:5]
         assert "hypotheses[:5]" in p12_block or "hypotheses_to_eval" in p12_block, (
             "P12 must still cap hypotheses at 5 in the concurrent burst path"
-    )
+        )
         # Concurrent tasks created from capped list
         assert "asyncio.as_completed" in p12_block or "tasks" in p12_block, (
             "P12 must use asyncio.as_completed for concurrent ToT evaluation"
-    )
+        )
 
-    def test_tot_burst_uses_per_hypothesis_timeout(self):
+    def test_tot_burst_uses_per_hypothesis_timeout(self) -> None:
         """Each ToT task has its own 15s timeout budget — no single task blocks the burst."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start : p12_start + 5000]
 
         # Per-hypothesis timeout of 15s
         assert "timeout_s: float = 15.0" in p12_block or "15.0" in p12_block, (
             "P12 burst must use 15s per-hypothesis timeout — no runaway ToT tasks"
-    )
+        )
         # Timeout applied via asyncio.wait_for inside the task
-        assert "asyncio.wait_for" in p12_block, (
-            "P12 must apply asyncio.wait_for with timeout inside each ToT task"
-    )
+        assert "asyncio.wait_for" in p12_block, "P12 must apply asyncio.wait_for with timeout inside each ToT task"
 
-    def test_first_three_completed_results_enqueue_pivots_immediately(self):
+    def test_first_three_completed_results_enqueue_pivots_immediately(self) -> None:
         """as_completed iterates in arrival order — first completed ToT results feed enqueue immediately."""
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start : p12_start + 5000]
 
         # as_completed ensures first finished results trigger pivot enqueue
         assert "asyncio.as_completed(tasks)" in p12_block, (
             "P12 must use asyncio.as_completed to process results in arrival order"
-    )
+        )
         # Pivot enqueue inside the as_completed loop
         assert "enqueue_hypothesis_pivot" in p12_block, (
             "P12 must enqueue pivots as results arrive — first 3 trigger scheduler work"
-    )
+        )
 
-    def test_failed_tot_tasks_do_not_block_other_hypotheses(self):
+    def test_failed_tot_tasks_do_not_block_other_hypotheses(self) -> None:
         """Fail-soft: one failed ToT task does not fail the others — asyncio.as_completed handles results independently."""  # noqa: E501
         from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
+
         source = inspect.getsource(async_run_live_public_pipeline)
 
         p12_start = source.find("# P12: Hypothesis generation")
-        p12_block = source[p12_start:p12_start + 5000]
+        p12_block = source[p12_start : p12_start + 5000]
 
         # except asyncio.TimeoutError with return "" — fail-soft per task
         assert "asyncio.TimeoutError" in p12_block and 'return ""' in p12_block, (
             "P12 must catch TimeoutError per-task and return empty string — fail-soft"
-    )
+        )
         # except Exception with return "" — broad fail-soft
         assert "except Exception as e:" in p12_block and 'return ""' in p12_block, (
             "P12 must catch all exceptions per-task and return empty string — fail-soft"
-    )
+        )
 
 
 class TestP12HermesPrewarmPolicy:
@@ -695,7 +680,7 @@ class TestP12HermesPrewarmPolicy:
     """
 
     @pytest.mark.asyncio
-    async def test_aggressive_mode_blocks_until_hermes_prewarm(self):
+    async def test_aggressive_mode_blocks_until_hermes_prewarm(self) -> None:
         """
         Aggressive mode: _prewarm_hermes_for_sprint blocks until Hermes is loaded.
         The prewarm call is synchronous from run() — no async fan-out until prewarm completes.
@@ -708,17 +693,17 @@ class TestP12HermesPrewarmPolicy:
         source = inspect.getsource(SprintScheduler._prewarm_hermes_for_sprint)
         assert "async def _prewarm_hermes_for_sprint" in source, (
             "_prewarm_hermes_for_sprint must be async — blocks caller until load completes"
-    )
+        )
 
         # run() awaits _prewarm_hermes_for_sprint before entering the main cycle loop
         run_source = inspect.getsource(SprintScheduler.run)
         # The prewarm call is awaited in run() before the while loop
         assert "await self._prewarm_hermes_for_sprint()" in run_source, (
             "Aggressive mode: prewarm must be awaited before main fan-out loop"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_skip_hermes_prewarm_when_rss_above_4gb(self):
+    async def test_skip_hermes_prewarm_when_rss_above_4gb(self) -> None:
         """
         Aggressive mode: when RSS > 4GB before prewarm, Hermes is skipped fail-soft.
         Hard headroom rule: RSS > 4GB means insufficient headroom for safe prewarm.
@@ -733,7 +718,7 @@ class TestP12HermesPrewarmPolicy:
             sprint_duration_s=30.0,
             export_enabled=False,
             aggressive_mode=True,  # Aggressive mode
-    )
+        )
         scheduler = SprintScheduler(config)
 
         # Mock load_model to track if it gets called
@@ -746,19 +731,19 @@ class TestP12HermesPrewarmPolicy:
 
         # Patch get_model_manager to return our mock, and _get_current_rss_gb to return 4.5
         # Both on the actual module (not sys.modules replacement) so the runtime import works
-        with patch.object(model_manager, "get_model_manager", MagicMock(return_value=mock_mm_instance)), \
-             patch.object(model_manager, "_get_current_rss_gb", rss_mock):
+        with (
+            patch.object(model_manager, "get_model_manager", MagicMock(return_value=mock_mm_instance)),
+            patch.object(model_manager, "_get_current_rss_gb", rss_mock),
+        ):
             await scheduler._prewarm_hermes_for_sprint()
 
         # Hermes must be None (skipped due to RSS > 4GB)
-        assert scheduler._hermes_engine is None, (
-            "Hermes must be None when RSS > 4GB before prewarm — skip fail-soft"
-    )
+        assert scheduler._hermes_engine is None, "Hermes must be None when RSS > 4GB before prewarm — skip fail-soft"
         # load_model must NOT have been called (skipped before even trying)
         mock_mm_instance.load_model.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_teardown_still_releases_hermes_after_prewarm(self):
+    async def test_teardown_still_releases_hermes_after_prewarm(self) -> None:
         """
         After successful prewarm+load, teardown still calls _unload_hermes_at_teardown.
         Verifies bounded lifecycle: load at BOOT, release at TEARDOWN.
@@ -771,13 +756,13 @@ class TestP12HermesPrewarmPolicy:
         source = inspect.getsource(SprintScheduler.run)
         assert "_unload_hermes_at_teardown" in source, (
             "Teardown must call _unload_hermes_at_teardown — bounded Hermes lifecycle"
-    )
+        )
 
         # _unload_hermes_at_teardown must call ModelManager.release_model
         unload_source = inspect.getsource(SprintScheduler._unload_hermes_at_teardown)
         assert 'release_model("hermes")' in unload_source or "release_model('hermes')" in unload_source, (
             "_unload_hermes_at_teardown must call ModelManager.release_model('hermes')"
-    )
+        )
 
 
 if __name__ == "__main__":

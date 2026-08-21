@@ -35,13 +35,11 @@ Migration (F272):
         HLEDAC_CC_UNIFIED=0
 """
 
-
-
 import logging
-import os
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.codec import decode as _msgspec_loads, encode as _msgspec_encode
-from _core import aclose
+
+from hledac.universal.utils.codec import decode as _msgspec_loads
+from hledac.universal.utils.codec import encode as _msgspec_encode
 
 if TYPE_CHECKING:
     pass
@@ -129,10 +127,11 @@ class UnifiedLMDBStore:
             return
         if self._closed:
             raise RuntimeError("Cannot initialize closed store")
-        from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
-
         # Ensure parent directory exists
         import pathlib
+
+        from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
         p = pathlib.Path(self._path)
         p.mkdir(parents=True, exist_ok=True)
 
@@ -144,11 +143,9 @@ class UnifiedLMDBStore:
             map_size=self._map_size,
             max_dbs=1,  # Single DB, prefixes isolate namespaces
             critical=True,  # P0-3 Fix: ensure WAL durability
-    )
+        )
         self._initialized = True
-        logger.debug(
-            f"[LMDB-UNIFIED] Opened at {self._path}, map_size={self._map_size / (1024*1024):.0f}MB"
-    )
+        logger.debug(f"[LMDB-UNIFIED] Opened at {self._path}, map_size={self._map_size / (1024 * 1024):.0f}MB")
 
     @property
     def env(self) -> Any:
@@ -248,9 +245,7 @@ class UnifiedLMDBStore:
         except Exception:
             return None
 
-    def putmany_str(
-        self, prefix: str, items: list[tuple[str, dict]]
-    ) -> list[bool]:
+    def putmany_str(self, prefix: str, items: list[tuple[str, dict]]) -> list[bool]:
         """Batch put with string keys. Returns per-item success list."""
         if self._closed or not items:
             return [False] * len(items) if items else []
@@ -258,6 +253,7 @@ class UnifiedLMDBStore:
             self._ensure_init()
             # M1-OPT: Single write transaction per chunk via putmulti_bounded_str
             from hledac.universal.utils.lmdb_bulk import putmulti_bounded_str
+
             return putmulti_bounded_str(self._env, items, key_prefix=prefix)
         except Exception as exc:
             logger.debug(f"[LMDB-UNIFIED] putmany_str failed: {exc}")
@@ -280,12 +276,16 @@ class UnifiedLMDBStore:
                 if cursor.set_range(prefixed_key):
                     for key_bytes, value_bytes in cursor.iternext():
                         # buffers=True returns memoryview; handle both bytes and memoryview
-                        key = key_bytes.decode("utf-8") if isinstance(key_bytes, bytes) else bytes(key_bytes).decode("utf-8")
+                        key = (
+                            key_bytes.decode("utf-8")
+                            if isinstance(key_bytes, bytes)
+                            else bytes(key_bytes).decode("utf-8")
+                        )
                         if not key.startswith(prefix + ":"):
                             break
                         try:
                             value = _msgspec_loads(value_bytes)
-                            original_key = key[len(prefix) + 1:]
+                            original_key = key[len(prefix) + 1 :]
                             results.append((original_key, value))
                         except Exception:
                             continue
@@ -333,7 +333,7 @@ class UnifiedLMDBStore:
                 cursor = txn.cursor()
                 for key, value in cursor:
                     if key.startswith(prefixed_key):
-                        original_key = key[len(prefixed_key):]
+                        original_key = key[len(prefixed_key) :]
                         results.append((original_key, value))
         except Exception as exc:
             logger.debug(f"[LMDB-UNIFIED] iter_prefix failed: {exc}")
@@ -385,6 +385,7 @@ class UnifiedLMDBStore:
         try:
             self._ensure_init()
             from hledac.universal.utils.lmdb_bulk import putmulti_bounded
+
             prefixed = [(prefix.encode() + b":" + k, v) for k, v in items]
             putmulti_bounded(self._env, prefixed, overwrite=True)
             return True
@@ -482,7 +483,6 @@ class UnifiedLMDBStore:
                 logger.debug("[LMDB-UNIFIED] compact_database: empty, skipping")
                 return True
 
-            # Phase 1: Create temp LMDB and copy all live data
             temp_dir = tempfile.TemporaryDirectory(prefix="lmdb_compact_unified_")
             temp_path = pathlib.Path(temp_dir.name)
 
@@ -494,7 +494,7 @@ class UnifiedLMDBStore:
                 max_dbs=1,
                 writemap=False,
                 metasync=False,
-    )
+            )
             new_db = new_env.open_db()
 
             # Copy all live data via cursor iteration
@@ -509,13 +509,11 @@ class UnifiedLMDBStore:
                     logger.debug(
                         "[LMDB-UNIFIED] compact_database: copied %d entries",
                         copied,
-    )
+                    )
 
-            # Phase 2: Sync and close temp env (durable write)
             new_env.sync(force=True)
             new_env.close()
 
-            # Phase 3: Atomic swap
             old_path = pathlib.Path(self._path)
             backup_path = old_path.with_suffix(".bak")
             data_mdb = old_path / "data.mdb"
@@ -546,10 +544,9 @@ class UnifiedLMDBStore:
                 writemap=False,
                 metasync=False,
                 mode=0o600,
-    )
+            )
             self._initialized = True
 
-            # Cleanup backup
             shutil.rmtree(str(backup_path), ignore_errors=True)
             temp_dir.cleanup()
 
@@ -562,6 +559,7 @@ class UnifiedLMDBStore:
             if not self._initialized:
                 try:
                     import lmdb
+
                     self._env = lmdb.open(
                         str(self._path),
                         map_size=self._map_size,
@@ -569,7 +567,7 @@ class UnifiedLMDBStore:
                         writemap=False,
                         metasync=False,
                         mode=0o600,  # FIX: maintain SEC-02 security on restore
-    )
+                    )
                     self._initialized = True
                 except Exception:
                     self._closed = True
@@ -600,4 +598,3 @@ def open_unified_lmdb(
         UnifiedLMDBStore instance (caller must close).
     """
     return UnifiedLMDBStore(path, map_size=map_size, lazy=lazy)
-

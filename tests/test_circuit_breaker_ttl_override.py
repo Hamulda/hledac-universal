@@ -27,7 +27,6 @@ Invariant table:
 Always-on, bounded, fail-safe.
 """
 
-
 import tempfile
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -51,6 +50,7 @@ class TestCircuitBreakerTTLOverride:
         # F275: Reset _boot_started_at so each test starts with clean boot-phase
         # state. Tests that need boot-phase behavior set it explicitly.
         import transport.circuit_breaker as cb_module
+
         cb_module._boot_started_at = 0.0
         cb_module._BREAKERS.clear()
 
@@ -125,8 +125,12 @@ class TestCertspotterFallbackOnCrtshOpen:
         mock_session = MagicMock()
 
         crtsh_entries = [
-            {"name_value": "sub.example.com", "issuer_name": "CN=Test CA",
-             "not_before": "2024-01-01 00:00:00Z", "not_after": "2025-01-01 00:00:00Z"}
+            {
+                "name_value": "sub.example.com",
+                "issuer_name": "CN=Test CA",
+                "not_before": "2024-01-01 00:00:00Z",
+                "not_after": "2025-01-01 00:00:00Z",
+            }
         ]
         with patch(
             "hledac.universal.transport.circuit_breaker.checked_aiohttp_get",
@@ -155,21 +159,29 @@ class TestCertspotterFallbackOnCrtshOpen:
         mock_session = MagicMock()
 
         certstream_entries = [
-            {"dns_names": ["sub.example.com"], "serial_number": "1234",
-             "not_before": "2024-01-01T00:00:00Z", "not_after": "2025-01-01T00:00:00Z",
-             "issuer": {"Name": "Test CA"}}
+            {
+                "dns_names": ["sub.example.com"],
+                "serial_number": "1234",
+                "not_before": "2024-01-01T00:00:00Z",
+                "not_after": "2025-01-01T00:00:00Z",
+                "issuer": {"Name": "Test CA"},
+            }
         ]
-        with patch(
-            "hledac.universal.transport.circuit_breaker.checked_aiohttp_get",
-            new_callable=AsyncMock,
-            side_effect=[
-                (None, 0, "circuit_breaker_open"),
-                (None, 0, "network_error"),
-            ],
-        ), patch.object(
-            CTLogClient, "_fetch_certspotter",
-            new_callable=AsyncMock,
-            return_value=certstream_entries,
+        with (
+            patch(
+                "hledac.universal.transport.circuit_breaker.checked_aiohttp_get",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (None, 0, "circuit_breaker_open"),
+                    (None, 0, "network_error"),
+                ],
+            ),
+            patch.object(
+                CTLogClient,
+                "_fetch_certspotter",
+                new_callable=AsyncMock,
+                return_value=certstream_entries,
+            ),
         ):
             raw, provider = await client._fetch_ct_with_fallback("example.com", mock_session)
 
@@ -239,7 +251,8 @@ class TestCircuitBreakersInAcquisitionReport:
                 "failure_count": s["failure_count"],
                 "resets_at_s": (
                     round(s["opened_at_monotonic"] + s["recovery_timeout_s"], 1)
-                    if s["opened_at_monotonic"] > 0 else None
+                    if s["opened_at_monotonic"] > 0
+                    else None
                 ),
             }
 

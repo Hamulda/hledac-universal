@@ -7,6 +7,7 @@ instead of json.dumps().encode() (str → bytes double-pass).
 Run:
     uv run pytest tests/test_lmdb_writer_zero_str_alloc.py -v
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -14,13 +15,12 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from _core import aclose
 
 
 class TestOrjsonDirectBytes:
     """Verify orjson.dumps returns bytes directly (no str intermediate)."""
 
-    def test_orjson_dumps_returns_bytes(self):
+    def test_orjson_dumps_returns_bytes(self) -> None:
         """orjson.dumps() returns bytes — the zero-allocation path."""
         try:
             import orjson
@@ -31,7 +31,7 @@ class TestOrjsonDirectBytes:
         except ImportError:
             pytest.skip("orjson not available")
 
-    def test_stdlib_json_dumps_returns_str(self):
+    def test_stdlib_json_dumps_returns_str(self) -> None:
         """stdlib json.dumps() returns str — the double-pass path."""
         import json
 
@@ -43,7 +43,7 @@ class TestOrjsonDirectBytes:
 class TestSourceBanditSerializer:
     """Verify source_bandit uses direct bytes serialization."""
 
-    def test_source_bandit_uses_orjson(self):
+    def test_source_bandit_uses_orjson(self) -> None:
         """source_bandit._save() should use _json.dumps (orjson) directly."""
         try:
             from hledac.universal.tools.source_bandit import SourceBandit
@@ -57,7 +57,7 @@ class TestSourceBanditSerializer:
             bandit._stats["test_source"] = {"pulls": 1, "rewards": 0.5}
 
             # Mock the env to avoid actual LMDB writes
-            with mock.patch.object(bandit, '_env') as mock_env:
+            with mock.patch.object(bandit, "_env") as mock_env:
                 mock_txn = mock.MagicMock()
                 # Make begin() return a context manager that yields mock_txn
                 mock_ctx = mock.MagicMock()
@@ -80,7 +80,7 @@ class TestSourceBanditSerializer:
 class TestExposureClientsSerializer:
     """Verify exposure_clients uses direct bytes serialization."""
 
-    def test_default_serializer_returns_bytes(self):
+    def test_default_serializer_returns_bytes(self) -> None:
         """_default_serializer() should return bytes directly."""
         try:
             from hledac.universal.recon.exposure_clients import _default_serializer
@@ -95,7 +95,7 @@ class TestExposureClientsSerializer:
 class TestVaultSerializer:
     """Verify vault uses direct bytes serialization."""
 
-    def test_vault_serialize_returns_bytes(self):
+    def test_vault_serialize_returns_bytes(self) -> None:
         """SecretVault._serialize() should return bytes."""
         try:
             from hledac.universal.secrets_vault.vault import SecretVault
@@ -114,7 +114,7 @@ class TestVaultSerializer:
 class TestFederatedBridgeSerializer:
     """Verify federated bridge uses direct bytes serialization."""
 
-    def test_federated_bridge_payload_is_bytes(self):
+    def test_federated_bridge_payload_is_bytes(self) -> None:
         """FederatedBridge._persist_to_lmdb() should produce bytes payload."""
         try:
             from hledac.universal.federated.bridge import FederatedBridge

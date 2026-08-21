@@ -29,7 +29,7 @@ from hledac.universal.knowledge.graph_service import (
 class TestGraphServiceInstanceIsolation:
     """Two GraphService instances must have isolated state."""
 
-    def test_two_instances_have_separate_seen_iocs(self):
+    def test_two_instances_have_separate_seen_iocs(self) -> None:
         """Fresh instances start with empty, independent _seen_iocs."""
         gs1_fresh = GraphService()
         gs2_fresh = GraphService()
@@ -37,7 +37,7 @@ class TestGraphServiceInstanceIsolation:
         assert ("good.com", "domain") not in gs2_fresh._seen_iocs
         assert gs1_fresh._seen_iocs is not gs2_fresh._seen_iocs
 
-    def test_two_instances_have_separate_seen_rels(self):
+    def test_two_instances_have_separate_seen_rels(self) -> None:
         """Fresh instances start with empty, independent _seen_rels."""
         gs1_fresh = GraphService()
         gs2_fresh = GraphService()
@@ -45,22 +45,22 @@ class TestGraphServiceInstanceIsolation:
         assert ("c.com", "d.com", "links_to") not in gs2_fresh._seen_rels
         assert gs1_fresh._seen_rels is not gs2_fresh._seen_rels
 
-    def test_duplicate_upsert_in_same_instance_blocked(self):
+    def test_duplicate_upsert_in_same_instance_blocked(self) -> None:
         """Duplicate upsert in same instance is idempotent (blocked by _seen_iocs)."""
         gs = GraphService()
 
-        with patch.object(graph_service, '_get_graph', return_value=MagicMock()):
+        with patch.object(graph_service, "_get_graph", return_value=MagicMock()):
             r1 = gs.upsert_ioc("1.2.3.4", "ip", 0.9, "test")
             r2 = gs.upsert_ioc("1.2.3.4", "ip", 0.9, "test")
             assert r1 is True
             assert r2 is False  # already in _seen_iocs
 
-    def test_duplicate_upsert_cross_instance_not_blocked(self):
+    def test_duplicate_upsert_cross_instance_not_blocked(self) -> None:
         """Upsert blocked in instance A does NOT block upsert in instance B."""
         gs1 = GraphService()
         gs2 = GraphService()
 
-        with patch.object(graph_service, '_get_graph', return_value=MagicMock()):
+        with patch.object(graph_service, "_get_graph", return_value=MagicMock()):
             r1 = gs1.upsert_ioc("1.2.3.4", "ip", 0.9, "test")
             assert r1 is True
 
@@ -72,27 +72,27 @@ class TestGraphServiceInstanceIsolation:
 class TestGraphServiceFacadeBackwardCompat:
     """Module-level functions delegate to _DEFAULT_GRAPH_SERVICE."""
 
-    def test_module_upsert_ioc_delegates_to_default_instance(self):
+    def test_module_upsert_ioc_delegates_to_default_instance(self) -> None:
         """Module-level upsert_ioc works against _DEFAULT_GRAPH_SERVICE."""
         _DEFAULT_GRAPH_SERVICE._seen_iocs.clear()
 
-        with patch.object(graph_service, '_get_graph', return_value=MagicMock()):
+        with patch.object(graph_service, "_get_graph", return_value=MagicMock()):
             r1 = upsert_ioc("1.2.3.4", "ip", 0.9, "test")
             assert r1 is True
             r2 = upsert_ioc("1.2.3.4", "ip", 0.9, "test")
             assert r2 is False  # idempotent in same facade
 
-    def test_module_upsert_relation_delegates_to_default_instance(self):
+    def test_module_upsert_relation_delegates_to_default_instance(self) -> None:
         """Module-level upsert_relation works against _DEFAULT_GRAPH_SERVICE."""
         _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
 
-        with patch.object(graph_service, '_get_graph', return_value=MagicMock()):
+        with patch.object(graph_service, "_get_graph", return_value=MagicMock()):
             r1 = upsert_relation("a.com", "b.com", "links_to", 0.8)
             assert r1 is True
             r2 = upsert_relation("a.com", "b.com", "links_to", 0.8)
             assert r2 is False
 
-    def test_module_reset_session_clears_default_facade(self):
+    def test_module_reset_session_clears_default_facade(self) -> None:
         """reset_session() clears _DEFAULT_GRAPH_SERVICE state."""
         _DEFAULT_GRAPH_SERVICE._seen_iocs.add(("test.com", "domain"))
         _DEFAULT_GRAPH_SERVICE._seen_rels.add(("a.com", "b.com", "links_to"))
@@ -102,11 +102,11 @@ class TestGraphServiceFacadeBackwardCompat:
         assert not _DEFAULT_GRAPH_SERVICE._seen_iocs
         assert not _DEFAULT_GRAPH_SERVICE._seen_rels
 
-    def test_module_upsert_identity_edge_works(self):
+    def test_module_upsert_identity_edge_works(self) -> None:
         """upsert_identity_edge module function delegates correctly."""
         _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
 
-        with patch.object(graph_service, '_get_graph', return_value=MagicMock()):
+        with patch.object(graph_service, "_get_graph", return_value=MagicMock()):
             r = upsert_identity_edge("profile:A", "profile:B", 0.7, "same person")
             assert r is True
 
@@ -114,57 +114,57 @@ class TestGraphServiceFacadeBackwardCompat:
 class TestGraphServiceFailSafe:
     """fail-soft semantics preserved for instance methods."""
 
-    def test_upsert_ioc_returns_false_when_graph_none(self):
+    def test_upsert_ioc_returns_false_when_graph_none(self) -> None:
         """upsert_ioc returns False when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             result = gs.upsert_ioc("1.2.3.4", "ip")
             assert result is False
 
-    def test_upsert_relation_returns_false_when_graph_none(self):
+    def test_upsert_relation_returns_false_when_graph_none(self) -> None:
         """upsert_relation returns False when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             result = gs.upsert_relation("a.com", "b.com", "links_to")
             assert result is False
 
-    def test_find_entity_history_returns_empty_when_graph_none(self):
+    def test_find_entity_history_returns_empty_when_graph_none(self) -> None:
         """find_entity_history returns [] when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             result = gs.find_entity_history("1.2.3.4")
             assert result == []
 
-    def test_graph_stats_returns_empty_dict_when_graph_none(self):
+    def test_graph_stats_returns_empty_dict_when_graph_none(self) -> None:
         """graph_stats returns {} when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             result = gs.graph_stats()
             assert result == {}
 
-    def test_checkpoint_noop_when_graph_none(self):
+    def test_checkpoint_noop_when_graph_none(self) -> None:
         """checkpoint is a no-op when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             gs.checkpoint()  # Should not raise
 
-    def test_upsert_ioc_swallows_exception(self):
+    def test_upsert_ioc_swallows_exception(self) -> None:
         """upsert_ioc returns False when graph.add_ioc raises."""
         gs = GraphService()
         mock_graph = MagicMock()
         mock_graph.add_ioc = MagicMock(side_effect=RuntimeError("DB err"))
 
-        with patch.object(graph_service, '_get_graph', return_value=mock_graph):
+        with patch.object(graph_service, "_get_graph", return_value=mock_graph):
             result = gs.upsert_ioc("1.2.3.4", "ip")
             assert result is False
 
-    def test_upsert_identity_edge_delegates_to_upsert_relation(self):
+    def test_upsert_identity_edge_delegates_to_upsert_relation(self) -> None:
         """upsert_identity_edge wraps upsert_relation with rel_type='same_identity'."""
         gs = GraphService()
         mock_graph = MagicMock()
         _DEFAULT_GRAPH_SERVICE._seen_rels.clear()
 
-        with patch.object(graph_service, '_get_graph', return_value=mock_graph):
+        with patch.object(graph_service, "_get_graph", return_value=mock_graph):
             r = gs.upsert_identity_edge("profile:A", "profile:B", 0.7, "same person")
 
             assert r is True
@@ -172,10 +172,10 @@ class TestGraphServiceFailSafe:
                 "profile:A", "profile:B", "same_identity", 0.7, "same person"
             )
 
-    def test_graph_analytics_summary_returns_empty_when_graph_none(self):
+    def test_graph_analytics_summary_returns_empty_when_graph_none(self) -> None:
         """graph_analytics_summary returns fail-safe dict when graph unavailable."""
         gs = GraphService()
-        with patch.object(graph_service, '_get_graph', return_value=None):
+        with patch.object(graph_service, "_get_graph", return_value=None):
             result = gs.graph_analytics_summary()
             assert result["analytics_available"] is False
             assert result["skipped_reason"] == "graph_unavailable"

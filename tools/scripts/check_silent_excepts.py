@@ -15,18 +15,26 @@ Usage:
     python scripts/check_silent_excepts.py --stats    # show counts, never fail
 """
 
-
 import argparse
 import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 ROOT = Path(__file__).resolve().parent.parent  # hledac/universal/
 SKIP_PARTS = {
-    "tests", "legacy", "archive", "_shims", "_deprecated",
-    "build", "benchmark_results", ".venv", ".venv-test",
-    "__pycache__", ".git", "graphify-out", "node_modules",
+    "tests",
+    "legacy",
+    "archive",
+    "_shims",
+    "_deprecated",
+    "build",
+    "benchmark_results",
+    ".venv",
+    ".venv-test",
+    "__pycache__",
+    ".git",
+    "graphify-out",
+    "node_modules",
     "probe_",  # probe test fixtures
 }
 
@@ -46,7 +54,7 @@ def find_unmarked_sites(path: Path) -> list[tuple[int, str, str]]:
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
         tree = ast.parse(text)
-    except (SyntaxError, UnicodeDecodeError):
+    except SyntaxError, UnicodeDecodeError:
         return []
 
     lines = text.splitlines(keepends=True)
@@ -84,8 +92,7 @@ def find_unmarked_sites(path: Path) -> list[tuple[int, str, str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stats", action="store_true",
-                        help="print counts only, do not fail")
+    parser.add_argument("--stats", action="store_true", help="print counts only, do not fail")
     args = parser.parse_args()
 
     files = iter_production_files()

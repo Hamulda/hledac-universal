@@ -19,6 +19,7 @@ Usage:
     pipeline = InferencePipeline()
     hypothesis = await pipeline.infer(evidence)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,11 +32,10 @@ import numpy as np
 
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel
-from hledac.universal.utils.asyncx._parallel import ParallelResult
 from hledac.universal.utils.cpu_affinity import set_ane_affinity, set_mlx_affinity
 
 if TYPE_CHECKING:
-    from brain.inference_engine import InferenceEvidence, InferenceStep
+    from brain.inference_engine import InferenceEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,6 @@ MAX_PARALLEL_TASKS = 8  # Prevent memory pressure
 MAX_ANE_BATCH = 16  # ANE optimal batch size
 MAX_GPU_BATCH = 128  # MLX GPU batch limit for 8GB
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Accelerator Types
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -60,6 +59,7 @@ MAX_GPU_BATCH = 128  # MLX GPU batch limit for 8GB
 
 class AcceleratorType(Enum):
     """Available inference accelerators on M1."""
+
     ANE = "ane"  # Apple Neural Engine - small batches, 11 TOPS
     GPU = "gpu"  # MLX Metal GPU - large batches
     CPU = "cpu"  # NumPy fallback - minimal inference
@@ -73,6 +73,7 @@ class AcceleratorType(Enum):
 @dataclass(frozen=True, slots=True)
 class InferenceTask:
     """Single inference task that can run on any accelerator."""
+
     task_id: str
     evidence_id: str
     evidence_data: dict[str, Any]
@@ -86,6 +87,7 @@ class InferenceTask:
 @dataclass(frozen=True, slots=True)
 class InferenceResult:
     """Result from an inference task."""
+
     task_id: str
     evidence_id: str
     result_data: dict[str, Any]
@@ -103,6 +105,7 @@ class InferenceResult:
 
 class EvidenceType(Enum):
     """Classification of evidence for routing decisions."""
+
     SIMPLE = "simple"  # Text similarity, basic matching
     COMPLEX = "complex"  # Multi-hop reasoning, graph operations
     NUMERICAL = "numerical"  # Statistical computations
@@ -141,11 +144,11 @@ class InferencePipeline:
     """
 
     __slots__ = (
-        '_mlx_available',
-        '_ane_available',
-        '_max_parallel',
-        '_ane_threshold',
-        '_initialized',
+        "_mlx_available",
+        "_ane_available",
+        "_max_parallel",
+        "_ane_threshold",
+        "_initialized",
     )
 
     def __init__(
@@ -165,7 +168,6 @@ class InferencePipeline:
         self._ane_threshold = ane_threshold
         self._initialized = False
 
-        # Check accelerator availability
         self._mlx_available = self._check_mlx()
         self._ane_available = self._check_ane()
 
@@ -183,8 +185,8 @@ class InferencePipeline:
 
     async def infer(
         self,
-        evidence: list["InferenceEvidence"],
-    ) -> "InferenceHypothesis":
+        evidence: list[InferenceEvidence],
+    ) -> InferenceHypothesis:
         """
         Perform parallel inference on evidence.
 
@@ -266,21 +268,16 @@ class InferencePipeline:
 
         # ANE task (if available and small batch exists)
         if self._ane_available and small_batch:
-            coros.append(
-                asyncio.create_task(self._execute_ane_batch(small_batch))
-            )
+            coros.append(asyncio.create_task(self._execute_ane_batch(small_batch)))
 
         # GPU task (if available and large batch exists)
         if self._mlx_available and large_batch:
-            coros.append(
-                asyncio.create_task(self._execute_gpu_batch(large_batch))
-            )
+            coros.append(asyncio.create_task(self._execute_gpu_batch(large_batch)))
 
         # CPU fallback if no accelerators
         if not coros:
             return await self._execute_cpu_batch(texts)
 
-        # Execute all in parallel
         batch_results = await parallel(coros, policy="collect")
 
         # Combine results
@@ -300,7 +297,7 @@ class InferencePipeline:
 
     def _extract_independent_tasks(
         self,
-        evidence: list["InferenceEvidence"],
+        evidence: list[InferenceEvidence],
     ) -> list[InferenceTask]:
         """
         Extract independent inference tasks from evidence.
@@ -317,20 +314,19 @@ class InferencePipeline:
         tasks: list[InferenceTask] = []
 
         for ev in evidence:
-            ev_dict = ev.to_dict() if hasattr(ev, 'to_dict') else {}
+            ev_dict = ev.to_dict() if hasattr(ev, "to_dict") else {}
             if isinstance(ev, dict):
                 ev_dict = ev
 
             # Classify evidence type for routing
             ev_type = self._classify_evidence(ev_dict)
 
-            # Create task based on evidence type
             task_type = self._determine_task_type(ev_dict)
             priority = self._calculate_priority(ev_dict, ev_type)
 
             task = InferenceTask(
                 task_id=f"task_{ev.get('evidence_id', id(ev))}",
-                evidence_id=ev.get('evidence_id', str(id(ev))),
+                evidence_id=ev.get("evidence_id", str(id(ev))),
                 evidence_data=ev_dict,
                 task_type=task_type,
                 priority=priority,
@@ -344,33 +340,30 @@ class InferencePipeline:
 
     def _classify_evidence(self, evidence: dict[str, Any]) -> EvidenceType:
         """Classify evidence type for accelerator routing."""
-        fact = evidence.get('fact', '')
-        metadata = evidence.get('metadata', {})
+        fact = evidence.get("fact", "")
+        metadata = evidence.get("metadata", {})
 
-        # Check for embedding-related evidence
-        if 'embedding' in metadata or 'vector' in metadata:
+        if "embedding" in metadata or "vector" in metadata:
             return EvidenceType.EMBEDDING
 
-        # Check for numerical/statistical evidence
-        if any(key in metadata for key in ['count', 'probability', 'score']):
+        if any(key in metadata for key in ["count", "probability", "score"]):
             return EvidenceType.NUMERICAL
 
-        # Check complexity of fact
-        if len(fact) > 200 or 'relationship' in fact.lower():
+        if len(fact) > 200 or "relationship" in fact.lower():
             return EvidenceType.COMPLEX
 
         return EvidenceType.SIMPLE
 
     def _determine_task_type(self, evidence: dict[str, Any]) -> str:
         """Determine the type of inference task needed."""
-        fact = evidence.get('fact', '').lower()
-        metadata = evidence.get('metadata', {})
+        fact = evidence.get("fact", "").lower()
+        evidence.get("metadata", {})
 
-        if 'similar' in fact or 'match' in fact:
+        if "similar" in fact or "match" in fact:
             return "similarity"
-        if 'connect' in fact or 'chain' in fact:
+        if "connect" in fact or "chain" in fact:
             return "chaining"
-        if 'explain' in fact or 'because' in fact:
+        if "explain" in fact or "because" in fact:
             return "abduction"
 
         return "abduction"  # Default
@@ -384,7 +377,7 @@ class InferencePipeline:
         priority = 0
 
         # Confidence-based priority
-        confidence = evidence.get('confidence', 0.5)
+        confidence = evidence.get("confidence", 0.5)
         priority += int(confidence * 10)
 
         # Type-based priority
@@ -397,10 +390,10 @@ class InferencePipeline:
                 priority += 2
 
         # Metadata hints
-        metadata = evidence.get('metadata', {})
-        if metadata.get('verified', False):
+        metadata = evidence.get("metadata", {})
+        if metadata.get("verified", False):
             priority += 4
-        if metadata.get('source') == 'primary':
+        if metadata.get("source") == "primary":
             priority += 2
 
         return priority
@@ -450,12 +443,11 @@ class InferencePipeline:
         Returns:
             AcceleratorType for this task
         """
-        # Check evidence type for routing
         evidence = task.evidence_data
-        metadata = evidence.get('metadata', {})
+        metadata = evidence.get("metadata", {})
 
         # Embedding tasks → ANE if available
-        if task.task_type == "similarity" or metadata.get('embedding'):
+        if task.task_type == "similarity" or metadata.get("embedding"):
             if self._ane_available:
                 return AcceleratorType.ANE
             if self._mlx_available:
@@ -496,7 +488,6 @@ class InferencePipeline:
         """
         coros: list[asyncio.Task[list[InferenceResult]]] = []
 
-        # Create parallel execution tasks for each accelerator batch
         for accelerator, tasks in batches.items():
             if not tasks:
                 continue
@@ -515,7 +506,6 @@ class InferencePipeline:
         if not coros:
             return []
 
-        # Execute all batches in parallel
         logger.debug("[InferencePipeline] Executing %d parallel batches", len(coros))
         result = await parallel(coros, policy="collect")
 
@@ -586,7 +576,7 @@ class InferencePipeline:
                         task_id=task.task_id,
                         evidence_id=task.evidence_id,
                         result_data=result_data,
-                        confidence=result_data.get('confidence', 0.5),
+                        confidence=result_data.get("confidence", 0.5),
                         accelerator_used=AcceleratorType.ANE,
                         execution_time_ms=execution_time,
                         success=True,
@@ -646,7 +636,7 @@ class InferencePipeline:
                         task_id=task.task_id,
                         evidence_id=task.evidence_id,
                         result_data=result_data,
-                        confidence=result_data.get('confidence', 0.5),
+                        confidence=result_data.get("confidence", 0.5),
                         accelerator_used=AcceleratorType.GPU,
                         execution_time_ms=execution_time,
                         success=True,
@@ -700,7 +690,7 @@ class InferencePipeline:
                         task_id=task.task_id,
                         evidence_id=task.evidence_id,
                         result_data=result_data,
-                        confidence=result_data.get('confidence', 0.5),
+                        confidence=result_data.get("confidence", 0.5),
                         accelerator_used=AcceleratorType.CPU,
                         execution_time_ms=execution_time,
                         success=True,
@@ -744,9 +734,8 @@ class InferencePipeline:
         from hledac.universal.utils.coreml.inference import run_coreml_inference
 
         evidence = task.evidence_data
-        fact = evidence.get('fact', '')
+        fact = evidence.get("fact", "")
 
-        # Run ANE inference
         result = await run_coreml_inference(
             model_name="prm_step",  # PRM model for step scoring
             inputs={"text": fact},
@@ -773,14 +762,13 @@ class InferencePipeline:
         import mlx.core as mx
 
         evidence = task.evidence_data
-        fact = evidence.get('fact', '')
-        confidence = evidence.get('confidence', 0.5)
+        fact = evidence.get("fact", "")
+        confidence = evidence.get("confidence", 0.5)
 
         # Simple embedding-based inference on GPU
         # Convert fact to tokens
         tokens = self._tokenize_for_mlx(fact)
 
-        # Create MLX array
         arr = mx.array(tokens, dtype=mx.float32)
 
         # Normalize
@@ -808,8 +796,8 @@ class InferencePipeline:
             Result dictionary with confidence score
         """
         evidence = task.evidence_data
-        fact = evidence.get('fact', '')
-        confidence = evidence.get('confidence', 0.5)
+        fact = evidence.get("fact", "")
+        confidence = evidence.get("confidence", 0.5)
 
         # Simple NumPy-based inference
         tokens = np.array([ord(c) for c in fact[:100]], dtype=np.float32)
@@ -831,7 +819,7 @@ class InferencePipeline:
     async def _execute_ane_batch(self, texts: list[str]) -> np.ndarray:
         """Execute text batch on ANE."""
         embeddings = []
-        for text in texts:
+        for _text in texts:
             # Simple embedding simulation for ANE
             embedding = np.random.randn(384).astype(np.float32)
             embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
@@ -871,7 +859,7 @@ class InferencePipeline:
     # Result Synthesis
     # ═══════════════════════════════════════════════════════════════════════
 
-    def _synthesize(self, results: list[InferenceResult]) -> "InferenceHypothesis":
+    def _synthesize(self, results: list[InferenceResult]) -> InferenceHypothesis:
         """
         Synthesize parallel results into final hypothesis.
 
@@ -906,7 +894,6 @@ class InferencePipeline:
         # Collect supporting evidence
         supporting_evidence = [r.evidence_id for r in successful]
 
-        # Create inference steps
         steps = self._create_inference_steps(successful)
 
         # Generate statement from results
@@ -980,6 +967,7 @@ class InferencePipeline:
         """Check if MLX is available."""
         try:
             import mlx.core  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -988,6 +976,7 @@ class InferencePipeline:
         """Check if ANE/CoreML is available."""
         try:
             import coremltools  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -998,7 +987,7 @@ class InferencePipeline:
         chunk_size: int,
     ) -> list[list[InferenceTask]]:
         """Split tasks into chunks for parallel execution."""
-        return [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
+        return [tasks[i : i + chunk_size] for i in range(0, len(tasks), chunk_size)]
 
     def _tokenize_for_mlx(self, text: str) -> list[float]:
         """Simple tokenization for MLX."""

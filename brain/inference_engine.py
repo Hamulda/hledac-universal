@@ -2,18 +2,6 @@
 InferenceEngine - Advanced Inference and Reasoning for OSINT
 ===========================================================
 
-
-
-
-
-
-
-
-
-
-
-
-
 M1 8GB Optimized inference engine providing:
 - Abductive reasoning (finding best explanations for observations)
 - InferenceEvidence chaining (connecting facts through inference chains)
@@ -34,10 +22,10 @@ Memory Optimizations:
 - Rule-based + lightweight probabilistic (no heavy ML models)
 - MLX-accelerated similarity computations
 """
+
 from __future__ import annotations
+
 import asyncio
-import concurrent.futures
-import hashlib
 import heapq
 import logging
 import time
@@ -50,71 +38,91 @@ if TYPE_CHECKING:
     # Type aliases for evidence and hypothesis structures
     BeliefDict = dict[str, Any]  # Belief dictionary for hypothesis tracking
     # ISSUE-005 FIX: Forward reference for circular import protection
-    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+
+from operator import attrgetter
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 
-from operator import attrgetter, itemgetter
+from compat.msgspec_gc_compat import Struct
 
 # ISSUE-005 FIX: Lazy import to prevent circular dependency
 # _get_xxh3_hex is only used for hashing operations; load only when needed
 _xxh3_hex_fn: Any = None  # Module-level cache for imported function
 
+
 def _get_xxh3_hex_lazy(text: str) -> str:
     """Lazy wrapper for _get_xxh3_hex from deephermes3_engine.
-    
+
     ISSUE-005 FIX: Uses module-level cache to avoid repeated import overhead.
     """
     global _xxh3_hex_fn
     if _xxh3_hex_fn is None:
         from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
+
         _xxh3_hex_fn = _get_xxh3_hex
     return _xxh3_hex_fn(text)
 
-from hledac.universal.utils.lru_cache import LRUCache
-from hledac.universal.utils.exceptions import InferenceLoopExceeded
-from hledac.universal.utils._patterns import compound_confidence_from_objects  # F320: DRY compound confidence
+
 import numpy as np
-from _core import aclose
+
+from hledac.universal.utils._patterns import compound_confidence_from_objects
+from hledac.universal.utils.exceptions import InferenceLoopExceeded
+from hledac.universal.utils.lru_cache import LRUCache
+
 try:
     from hledac.universal.utils.eig import EIGCalculator
+
     EIG_AVAILABLE = True
 except ImportError:
     EIGCalculator = None
     EIG_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
+
 def _is_mlx_available() -> bool:
     try:
         import mlx.core
+
         return True
     except ImportError:
         return False
+
+
 MLX_AVAILABLE = _is_mlx_available()
+
 
 class InferenceEvidence(Struct, frozen=False):
     """Single piece of evidence with metadata."""
+
     fact: str
     confidence: float
     source: str
     timestamp: float
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
-    evidence_id: str = ''
+    evidence_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.evidence_id:
-            content = ''.join([self.fact, ':', self.source, ':', str(self.timestamp)])
+            content = "".join([self.fact, ":", self.source, ":", str(self.timestamp)])
             # ISSUE-005 FIX: Use lazy import wrapper
             self.evidence_id = _get_xxh3_hex_lazy(content)[:12]
         self.confidence = max(0.0, min(1.0, self.confidence))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        return {'evidence_id': self.evidence_id, 'fact': self.fact, 'confidence': self.confidence, 'source': self.source, 'timestamp': self.timestamp, 'metadata': self.metadata}
+        return {
+            "evidence_id": self.evidence_id,
+            "fact": self.fact,
+            "confidence": self.confidence,
+            "source": self.source,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata,
+        }
+
 
 class InferenceStep(Struct, frozen=True):
     """Single step in an inference chain."""
+
     from_statement: str
     to_statement: str
     rule: str
@@ -123,23 +131,32 @@ class InferenceStep(Struct, frozen=True):
     evidence_ids: list[str] = msgspec.field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {'step_number': self.step_number, 'from': self.from_statement, 'to': self.to_statement, 'rule': self.rule, 'confidence': self.confidence, 'evidence_ids': self.evidence_ids}
+        return {
+            "step_number": self.step_number,
+            "from": self.from_statement,
+            "to": self.to_statement,
+            "rule": self.rule,
+            "confidence": self.confidence,
+            "evidence_ids": self.evidence_ids,
+        }
+
 
 class Hypothesis(Struct, frozen=False):
     """Generated hypothesis with probabilistic assessment."""
+
     statement: str
     prior_probability: float
     posterior_probability: float = 0.0
     supporting_evidence: list[str] = msgspec.field(default_factory=list)
     conflicting_evidence: list[str] = msgspec.field(default_factory=list)
     inference_chain: list[InferenceStep] = msgspec.field(default_factory=list)
-    hypothesis_id: str = ''
+    hypothesis_id: str = ""
     created_at: float = msgspec.field(default_factory=time.time)
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.hypothesis_id:
-            content = ''.join([self.statement, ':', str(self.created_at)])
+            content = "".join([self.statement, ":", str(self.created_at)])
             self.hypothesis_id = _get_xxh3_hex_lazy(content)[:12]
         if self.posterior_probability == 0.0:
             self.posterior_probability = self.prior_probability
@@ -151,24 +168,47 @@ class Hypothesis(Struct, frozen=False):
         return self.posterior_probability
 
     def to_dict(self) -> dict[str, Any]:
-        return {'hypothesis_id': self.hypothesis_id, 'statement': self.statement, 'prior_probability': self.prior_probability, 'posterior_probability': self.posterior_probability, 'supporting_evidence': self.supporting_evidence, 'conflicting_evidence': self.conflicting_evidence, 'inference_chain': [step.to_dict() for step in self.inference_chain], 'created_at': self.created_at, 'metadata': self.metadata}
+        return {
+            "hypothesis_id": self.hypothesis_id,
+            "statement": self.statement,
+            "prior_probability": self.prior_probability,
+            "posterior_probability": self.posterior_probability,
+            "supporting_evidence": self.supporting_evidence,
+            "conflicting_evidence": self.conflicting_evidence,
+            "inference_chain": [step.to_dict() for step in self.inference_chain],
+            "created_at": self.created_at,
+            "metadata": self.metadata,
+        }
+
 
 class ResolvedEntity(Struct, frozen=True):
     """Result of probabilistic entity resolution."""
+
     entity_id: str
     canonical_name: str
     aliases: list[str] = msgspec.field(default_factory=list)
     fragments: list[dict[str, Any]] = msgspec.field(default_factory=list)
     confidence: float = 0.0
-    resolution_method: str = ''
+    resolution_method: str = ""
     attributes: dict[str, Any] = msgspec.field(default_factory=dict)
     source_evidence: list[str] = msgspec.field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {'entity_id': self.entity_id, 'canonical_name': self.canonical_name, 'aliases': self.aliases, 'fragment_count': len(self.fragments), 'confidence': self.confidence, 'resolution_method': self.resolution_method, 'attributes': self.attributes, 'source_evidence': self.source_evidence}
+        return {
+            "entity_id": self.entity_id,
+            "canonical_name": self.canonical_name,
+            "aliases": self.aliases,
+            "fragment_count": len(self.fragments),
+            "confidence": self.confidence,
+            "resolution_method": self.resolution_method,
+            "attributes": self.attributes,
+            "source_evidence": self.source_evidence,
+        }
+
 
 class InferenceRule(Struct, frozen=False):
     """Definition of an inference rule."""
+
     name: str
     description: str
     condition: Callable[[dict[str, Any], dict[str, Any]], bool]
@@ -179,17 +219,20 @@ class InferenceRule(Struct, frozen=False):
         try:
             return self.condition(evidence_a, evidence_b)
         except Exception as e:
-            logger.debug(f'Rule {self.name} evaluation failed: {e}')
+            logger.debug(f"Rule {self.name} evaluation failed: {e}")
             return False
+
 
 class InferenceType(Enum):
     """Types of inference operations."""
-    ABDUCTIVE = 'abductive'
-    DEDUCTIVE = 'deductive'
-    INDUCTIVE = 'inductive'
-    ANALOGICAL = 'analogical'
-    CAUSAL = 'causal'
-    MULTI_HOP = 'multi_hop'
+
+    ABDUCTIVE = "abductive"
+    DEDUCTIVE = "deductive"
+    INDUCTIVE = "inductive"
+    ANALOGICAL = "analogical"
+    CAUSAL = "causal"
+    MULTI_HOP = "multi_hop"
+
 
 class HopStep(Struct, frozen=False):
     """Single step in a multi-hop reasoning chain.
@@ -205,6 +248,7 @@ class HopStep(Struct, frozen=False):
         confidence: Confidence score for this hop (0-1)
         evidence: Supporting evidence for this relationship
     """
+
     step_number: int
     from_entity: str
     to_entity: str
@@ -217,7 +261,15 @@ class HopStep(Struct, frozen=False):
         self.step_number = max(1, self.step_number)
 
     def to_dict(self) -> dict[str, Any]:
-        return {'step_number': self.step_number, 'from_entity': self.from_entity, 'to_entity': self.to_entity, 'relation': self.relation, 'confidence': self.confidence, 'evidence': self.evidence}
+        return {
+            "step_number": self.step_number,
+            "from_entity": self.from_entity,
+            "to_entity": self.to_entity,
+            "relation": self.relation,
+            "confidence": self.confidence,
+            "evidence": self.evidence,
+        }
+
 
 class MultiHopPath(Struct, frozen=False):
     """Complete multi-hop reasoning path between entities.
@@ -233,6 +285,7 @@ class MultiHopPath(Struct, frozen=False):
         path_length: Number of hops in the path
         is_cyclic: Whether the path contains cycles
     """
+
     start_entity: str
     end_entity: str
     hops: list[HopStep] = msgspec.field(default_factory=list)
@@ -282,7 +335,14 @@ class MultiHopPath(Struct, frozen=False):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        return {'start_entity': self.start_entity, 'end_entity': self.end_entity, 'hops': [hop.to_dict() for hop in self.hops], 'total_confidence': self.total_confidence, 'path_length': self.path_length, 'is_cyclic': self.is_cyclic}
+        return {
+            "start_entity": self.start_entity,
+            "end_entity": self.end_entity,
+            "hops": [hop.to_dict() for hop in self.hops],
+            "total_confidence": self.total_confidence,
+            "path_length": self.path_length,
+            "is_cyclic": self.is_cyclic,
+        }
 
     def get_entities(self) -> list[str]:
         """Get all entities in the path in order."""
@@ -294,15 +354,22 @@ class MultiHopPath(Struct, frozen=False):
     def explain(self) -> str:
         """Generate human-readable explanation of the path."""
         if not self.hops:
-            return f'Direct connection: {self.start_entity} -> {self.end_entity}'
-        lines = [f"Multi-hop path from '{self.start_entity}' to '{self.end_entity}':", f'  Total confidence: {self.total_confidence:.3f}', f'  Path length: {self.path_length} hops']
+            return f"Direct connection: {self.start_entity} -> {self.end_entity}"
+        lines = [
+            f"Multi-hop path from '{self.start_entity}' to '{self.end_entity}':",
+            f"  Total confidence: {self.total_confidence:.3f}",
+            f"  Path length: {self.path_length} hops",
+        ]
         if self.is_cyclic:
-            lines.append('  WARNING: Path contains cycles')
-        lines.append('')
-        lines.append('  Inference chain:')
+            lines.append("  WARNING: Path contains cycles")
+        lines.append("")
+        lines.append("  Inference chain:")
         for hop in self.hops:
-            lines.append(f'    {hop.step_number}. {hop.from_entity} --[{hop.relation}]-> {hop.to_entity} (confidence: {hop.confidence:.3f})')
-        return '\n'.join(lines)
+            lines.append(
+                f"    {hop.step_number}. {hop.from_entity} --[{hop.relation}]-> {hop.to_entity} (confidence: {hop.confidence:.3f})"
+            )
+        return "\n".join(lines)
+
 
 class _BFSNode(Struct, frozen=False):
     """SOVEREIGN-006: Node for cost-weighted BFS with information gain tracking.
@@ -317,6 +384,7 @@ class _BFSNode(Struct, frozen=False):
         iocs_found: Set of IOC evidence IDs discovered along path
         priority: Heap priority (f = cost - gain_weight * gain)
     """
+
     evidence_id: str
     path: list[str]
     depth: int
@@ -326,7 +394,7 @@ class _BFSNode(Struct, frozen=False):
     iocs_found: set[str] = msgspec.field(default_factory=set)
     priority: float = 0.0
 
-    def __lt__(self, other: '_BFSNode') -> bool:
+    def __lt__(self, other: _BFSNode) -> bool:
         """Heap ordering: lower priority = higher precedence."""
         return self.priority < other.priority
 
@@ -361,13 +429,34 @@ class InferenceEngine:
     - Stylometry: Writing style similarity → identity linking
     - Behavioral fingerprinting: Pattern matching → entity resolution
     """
+
     MAX_GRAPH_NODES = 10000
     MAX_EVIDENCE_ITEMS = 10000
     MAX_BFS_QUEUE = 1000
     MAX_BFS_DEPTH = 10
-    __slots__ = tuple(('_evidence', '_evidence_graph', '_evidence_pruned_count', '_graph_pruned_count', '_hypothesis_set', '_inference_rules', 'max_chain_depth', 'max_total_iterations', 'min_confidence_threshold', 'streaming_batch_size', 'use_mlx', '_total_iterations'))
+    __slots__ = (
+        "_evidence",
+        "_evidence_graph",
+        "_evidence_pruned_count",
+        "_graph_pruned_count",
+        "_hypothesis_set",
+        "_inference_rules",
+        "max_chain_depth",
+        "max_total_iterations",
+        "min_confidence_threshold",
+        "streaming_batch_size",
+        "use_mlx",
+        "_total_iterations",
+    )
 
-    def __init__(self, max_chain_depth: int=5, min_confidence_threshold: float=0.3, use_mlx: bool=True, streaming_batch_size: int=1000, max_total_iterations: int=100):
+    def __init__(
+        self,
+        max_chain_depth: int = 5,
+        min_confidence_threshold: float = 0.3,
+        use_mlx: bool = True,
+        streaming_batch_size: int = 1000,
+        max_total_iterations: int = 100,
+    ) -> None:
         """
         Initialize InferenceEngine.
 
@@ -393,7 +482,9 @@ class InferenceEngine:
         self._hypothesis_set: list[BeliefDict] = []
         self._total_iterations = 0
         self._init_inference_rules()
-        logger.info(f'InferenceEngine initialized (MLX: {self.use_mlx}, max_depth: {max_chain_depth}, max_iter: {max_total_iterations})')
+        logger.info(
+            f"InferenceEngine initialized (MLX: {self.use_mlx}, max_depth: {max_chain_depth}, max_iter: {max_total_iterations})"
+        )
 
     def _run_coro_sync_safe(self, coro) -> Any:
         """Run coroutine safely in a thread pool.
@@ -424,7 +515,7 @@ class InferenceEngine:
         InferenceEngine does not use a dedicated thread pool —
         _run_coro_sync_safe uses asyncio.new_event_loop() directly.
         """
-        if hasattr(self, '_thread_pool') and self._thread_pool is not None:
+        if hasattr(self, "_thread_pool") and self._thread_pool is not None:
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:  # noqa: BLE001
@@ -432,37 +523,67 @@ class InferenceEngine:
 
     def _init_inference_rules(self) -> None:
         """Initialize OSINT-specific inference rules."""
-        colocation_rule = InferenceRule(name='co_location', description='Same IP address or network indicates same actor', condition=self._colocation_condition, confidence_multiplier=0.75, applies_to=['ip_address', 'network', 'location'])
-        temporal_rule = InferenceRule(name='temporal_proximity', description='Events occurring close in time are likely related', condition=self._temporal_proximity_condition, confidence_multiplier=0.6, applies_to=['timestamp', 'event'])
-        communication_rule = InferenceRule(name='communication_pattern', description='Frequent communication indicates relationship', condition=self._communication_pattern_condition, confidence_multiplier=0.8, applies_to=['communication', 'message', 'contact'])
-        stylometry_rule = InferenceRule(name='writing_style_similarity', description='Similar writing style suggests same author', condition=self._stylometry_condition, confidence_multiplier=0.7, applies_to=['text', 'writing', 'content'])
-        behavioral_rule = InferenceRule(name='behavioral_fingerprinting', description='Similar behavioral patterns suggest same entity', condition=self._behavioral_condition, confidence_multiplier=0.65, applies_to=['behavior', 'action', 'pattern'])
+        colocation_rule = InferenceRule(
+            name="co_location",
+            description="Same IP address or network indicates same actor",
+            condition=self._colocation_condition,
+            confidence_multiplier=0.75,
+            applies_to=["ip_address", "network", "location"],
+        )
+        temporal_rule = InferenceRule(
+            name="temporal_proximity",
+            description="Events occurring close in time are likely related",
+            condition=self._temporal_proximity_condition,
+            confidence_multiplier=0.6,
+            applies_to=["timestamp", "event"],
+        )
+        communication_rule = InferenceRule(
+            name="communication_pattern",
+            description="Frequent communication indicates relationship",
+            condition=self._communication_pattern_condition,
+            confidence_multiplier=0.8,
+            applies_to=["communication", "message", "contact"],
+        )
+        stylometry_rule = InferenceRule(
+            name="writing_style_similarity",
+            description="Similar writing style suggests same author",
+            condition=self._stylometry_condition,
+            confidence_multiplier=0.7,
+            applies_to=["text", "writing", "content"],
+        )
+        behavioral_rule = InferenceRule(
+            name="behavioral_fingerprinting",
+            description="Similar behavioral patterns suggest same entity",
+            condition=self._behavioral_condition,
+            confidence_multiplier=0.65,
+            applies_to=["behavior", "action", "pattern"],
+        )
         self._inference_rules = [colocation_rule, temporal_rule, communication_rule, stylometry_rule, behavioral_rule]
 
     def _colocation_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if two evidence pieces share IP/network location."""
-        ip_a = a.get('ip_address') or a.get('metadata', {}).get('ip')
-        ip_b = b.get('ip_address') or b.get('metadata', {}).get('ip')
+        ip_a = a.get("ip_address") or a.get("metadata", {}).get("ip")
+        ip_b = b.get("ip_address") or b.get("metadata", {}).get("ip")
         if ip_a and ip_b and (ip_a == ip_b):
             return True
         if ip_a and ip_b:
             try:
-                net_a = '.'.join(ip_a.split('.')[:3])
-                net_b = '.'.join(ip_b.split('.')[:3])
+                net_a = ".".join(ip_a.split(".")[:3])
+                net_b = ".".join(ip_b.split(".")[:3])
                 if net_a == net_b:
                     return True
-            except (AttributeError, IndexError):  # noqa: BLE001
+            except AttributeError, IndexError:  # noqa: BLE001
                 pass
-        loc_a = a.get('location') or a.get('metadata', {}).get('location')
-        loc_b = b.get('location') or b.get('metadata', {}).get('location')
+        loc_a = a.get("location") or a.get("metadata", {}).get("location")
+        loc_b = b.get("location") or b.get("metadata", {}).get("location")
         if loc_a and loc_b and (loc_a == loc_b):
             return True
         return False
 
     def _temporal_proximity_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if two events are temporally close."""
-        ts_a = a.get('timestamp') or a.get('metadata', {}).get('timestamp')
-        ts_b = b.get('timestamp') or b.get('metadata', {}).get('timestamp')
+        ts_a = a.get("timestamp") or a.get("metadata", {}).get("timestamp")
+        ts_b = b.get("timestamp") or b.get("metadata", {}).get("timestamp")
         if ts_a is None or ts_b is None:
             return False
         time_diff = abs(float(ts_a) - float(ts_b))
@@ -470,19 +591,19 @@ class InferenceEngine:
 
     def _communication_pattern_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if evidence indicates frequent communication."""
-        comm_a = a.get('metadata', {}).get('communication_count', 0)
-        comm_b = b.get('metadata', {}).get('communication_count', 0)
+        comm_a = a.get("metadata", {}).get("communication_count", 0)
+        comm_b = b.get("metadata", {}).get("communication_count", 0)
         if comm_a >= 3 or comm_b >= 3:
             return True
-        if a.get('metadata', {}).get('recipient') == b.get('metadata', {}).get('sender'):
-            if b.get('metadata', {}).get('recipient') == a.get('metadata', {}).get('sender'):
+        if a.get("metadata", {}).get("recipient") == b.get("metadata", {}).get("sender"):
+            if b.get("metadata", {}).get("recipient") == a.get("metadata", {}).get("sender"):
                 return True
         return False
 
     def _stylometry_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if writing styles are similar."""
-        text_a = a.get('text') or a.get('fact', '')
-        text_b = b.get('text') or b.get('fact', '')
+        text_a = a.get("text") or a.get("fact", "")
+        text_b = b.get("text") or b.get("fact", "")
         if not text_a or not text_b or len(text_a) < 50 or (len(text_b) < 50):
             return False
         similarity = self._calculate_text_similarity(text_a, text_b)
@@ -490,12 +611,12 @@ class InferenceEngine:
 
     def _behavioral_condition(self, a: dict[str, Any], b: dict[str, Any]) -> bool:
         """Check if behavioral patterns match."""
-        behavior_a = a.get('metadata', {}).get('behavior_pattern', '')
-        behavior_b = b.get('metadata', {}).get('behavior_pattern', '')
+        behavior_a = a.get("metadata", {}).get("behavior_pattern", "")
+        behavior_b = b.get("metadata", {}).get("behavior_pattern", "")
         if behavior_a and behavior_b and (behavior_a == behavior_b):
             return True
-        actions_a = a.get('metadata', {}).get('actions', [])
-        actions_b = b.get('metadata', {}).get('actions', [])
+        actions_a = a.get("metadata", {}).get("actions", [])
+        actions_b = b.get("metadata", {}).get("actions", [])
         if actions_a and actions_b:
             set_a = set(actions_a)
             set_b = set(actions_b)
@@ -508,6 +629,7 @@ class InferenceEngine:
         """GPU-accelerated cosine similarity using MLX with safe zero-check."""
         try:
             import mlx.core as mx
+
             a_mx = mx.array(vec_a)
             b_mx = mx.array(vec_b)
             dot = mx.sum(a_mx * b_mx)
@@ -517,7 +639,7 @@ class InferenceEngine:
                 return 0.0
             return (dot / (norm_a * norm_b)).item()
         except Exception as e:
-            logger.debug(f'MLX similarity failed: {e}')
+            logger.debug(f"MLX similarity failed: {e}")
             return 0.0
 
     def _calculate_text_similarity(self, text_a: str, text_b: str) -> float:
@@ -528,9 +650,10 @@ class InferenceEngine:
             total = max(len(text), 1)
             dist = defaultdict(int)
             for char in text:
-                if char.isalnum() or char in '.,!?;:':
+                if char.isalnum() or char in ".,!?;:":
                     dist[char] += 1
             return {k: v / total for k, v in dist.items()}
+
         dist_a = get_char_dist(text_a)
         dist_b = get_char_dist(text_b)
         all_chars = set(dist_a.keys()) | set(dist_b.keys())
@@ -622,10 +745,10 @@ class InferenceEngine:
                     if existing_id not in self._evidence_graph:
                         self._evidence_graph[existing_id] = set()
                     self._evidence_graph[existing_id].add(new_evidence.evidence_id)
-                    logger.debug(f'Graph connection: {rule.name} between {new_evidence.evidence_id} and {existing_id}')
+                    logger.debug(f"Graph connection: {rule.name} between {new_evidence.evidence_id} and {existing_id}")
         self._evict_graph_node_if_needed()
 
-    def abductive_reasoning(self, observations: list[InferenceEvidence], max_hypotheses: int=10) -> list[Hypothesis]:
+    def abductive_reasoning(self, observations: list[InferenceEvidence], max_hypotheses: int = 10) -> list[Hypothesis]:
         """
         Perform abductive reasoning to find best explanations for observations.
 
@@ -655,23 +778,30 @@ class InferenceEngine:
                     supporting.append(obs.evidence_id)
                 else:
                     conflicting.append(obs.evidence_id)
-            hypothesis = Hypothesis(statement=explanation, prior_probability=prior, posterior_probability=posterior, supporting_evidence=supporting, conflicting_evidence=conflicting, inference_chain=chain)
+            hypothesis = Hypothesis(
+                statement=explanation,
+                prior_probability=prior,
+                posterior_probability=posterior,
+                supporting_evidence=supporting,
+                conflicting_evidence=conflicting,
+                inference_chain=chain,
+            )
             if posterior >= self.min_confidence_threshold:
                 hypotheses.append(hypothesis)
         hypotheses.sort(key=attrgetter("posterior_probability"), reverse=True)
-        logger.info(f'Abductive reasoning: {len(observations)} observations → {len(hypotheses)} hypotheses')
+        logger.info(f"Abductive reasoning: {len(observations)} observations → {len(hypotheses)} hypotheses")
         return hypotheses[:max_hypotheses]
 
     def _collect_entities_from_observations(self, observations: list[InferenceEvidence]) -> dict[str, list[str]]:
         """Extract named entities from observation metadata and facts."""
         entities = defaultdict(list)
         for obs in observations:
-            for key in ('actor', 'entity', 'user', 'author', 'source'):
+            for key in ("actor", "entity", "user", "author", "source"):
                 if key in obs.metadata:
                     entities[key].append(obs.metadata[key])
             for word in obs.fact.split():
                 if word[0].isupper() and len(word) > 3:
-                    entities['extracted'].append(word)
+                    entities["extracted"].append(word)
         return dict(entities)
 
     def _generate_entity_pair_explanations(self, entities: dict[str, list[str]]) -> set[str]:
@@ -682,9 +812,9 @@ class InferenceEngine:
                 continue
             unique_entities = list(set(entity_list))
             for i, entity_a in enumerate(unique_entities):
-                for entity_b in unique_entities[i + 1:]:
-                    explanations.add(f'{entity_a} and {entity_b} are the same actor')
-                    explanations.add(f'{entity_a} and {entity_b} are collaborating')
+                for entity_b in unique_entities[i + 1 :]:
+                    explanations.add(f"{entity_a} and {entity_b} are the same actor")
+                    explanations.add(f"{entity_a} and {entity_b} are collaborating")
         return explanations
 
     def _generate_temporal_explanation(self, timestamps: list[float]) -> str | None:
@@ -693,24 +823,24 @@ class InferenceEngine:
             return None
         time_range = max(timestamps) - min(timestamps)
         if time_range < 86400:
-            return 'Events are part of a coordinated campaign'
+            return "Events are part of a coordinated campaign"
         if time_range < 604800:
-            return 'Events are part of a sustained operation'
+            return "Events are part of a sustained operation"
         return None
 
     def _generate_location_explanation(self, locations: set[str]) -> str | None:
         """Generate location-based explanation from unique locations."""
         if len(locations) == 1:
-            return f'Activity originates from {list(locations)[0]}'
+            return f"Activity originates from {list(locations)[0]}"
         if len(locations) > 1:
-            return 'Distributed operation across multiple locations'
+            return "Distributed operation across multiple locations"
         return None
 
     def _collect_locations(self, observations: list[InferenceEvidence]) -> set[str]:
         """Extract unique locations from observation metadata."""
         locations = set()
         for obs in observations:
-            loc = obs.metadata.get('location') or obs.metadata.get('country')
+            loc = obs.metadata.get("location") or obs.metadata.get("country")
             if loc:
                 locations.add(loc)
         return locations
@@ -744,14 +874,14 @@ class InferenceEngine:
             if self._evidence_supports(obs, explanation):
                 consistent_count += 1
         likelihood = consistent_count / len(observations)
-        avg_confidence = sum((obs.confidence for obs in observations)) / len(observations)
+        avg_confidence = sum(obs.confidence for obs in observations) / len(observations)
         return likelihood * avg_confidence
 
     def _evidence_supports(self, evidence: InferenceEvidence, explanation: str) -> bool:
         """Check if evidence supports an explanation."""
         explanation_lower = explanation.lower()
         fact_lower = evidence.fact.lower()
-        if any((word in fact_lower for word in explanation_lower.split())):
+        if any(word in fact_lower for word in explanation_lower.split()):
             return True
         for value in evidence.metadata.values():
             if isinstance(value, str) and value.lower() in explanation_lower:
@@ -762,11 +892,18 @@ class InferenceEngine:
         """Build inference chain from observations to explanation."""
         chain = []
         for i, obs in enumerate(observations):
-            step = InferenceStep(from_statement=obs.fact, to_statement=explanation if i == len(observations) - 1 else f'Intermediate inference {i + 1}', rule='abductive_inference', confidence=obs.confidence, step_number=i + 1, evidence_ids=[obs.evidence_id])
+            step = InferenceStep(
+                from_statement=obs.fact,
+                to_statement=explanation if i == len(observations) - 1 else f"Intermediate inference {i + 1}",
+                rule="abductive_inference",
+                confidence=obs.confidence,
+                step_number=i + 1,
+                evidence_ids=[obs.evidence_id],
+            )
             chain.append(step)
         return chain
 
-    def evidence_chaining(self, start: str, target: str, max_depth: int=5) -> list[InferenceStep] | None:
+    def evidence_chaining(self, start: str, target: str, max_depth: int = 5) -> list[InferenceStep] | None:
         """
         Find inference chain connecting start to target through evidence.
 
@@ -783,11 +920,11 @@ class InferenceEngine:
         """
         start_ids = self._find_evidence_by_content(start)
         if not start_ids:
-            logger.warning(f'No evidence found for start: {start}')
+            logger.warning(f"No evidence found for start: {start}")
             return None
         target_ids = self._find_evidence_by_content(target)
         if not target_ids:
-            logger.warning(f'No evidence found for target: {target}')
+            logger.warning(f"No evidence found for target: {target}")
             return None
         for start_id in start_ids:
             for target_id in target_ids:
@@ -831,7 +968,6 @@ class InferenceEngine:
         self._total_iterations = 0
         start_time = time.monotonic()
 
-        # Initialize priority queue with start node
         start_node = _BFSNode(
             evidence_id=start_id,
             path=[start_id],
@@ -840,7 +976,7 @@ class InferenceEngine:
             gain=0.0,
             last_ioc_time=start_time,
             iocs_found=set(),
-    )
+        )
         start_node._calculate_priority(gain_weight=2.0)
 
         # Priority queue: (priority, node)
@@ -853,7 +989,7 @@ class InferenceEngine:
             evidence = self._evidence.get(evidence_id)
             if not evidence:
                 return False
-            ioc_keys = {'ip_address', 'domain', 'hash', 'url', 'email', 'file_hash'}
+            ioc_keys = {"ip_address", "domain", "hash", "url", "email", "file_hash"}
             return any(key in evidence.metadata for key in ioc_keys)
 
         # Track best path found so far
@@ -867,7 +1003,7 @@ class InferenceEngine:
                 logger.warning(
                     f"BFS exceeded max_total_iterations={self.max_total_iterations}, "
                     f"returning best path found (gain={best_gain:.2f})"
-    )
+                )
                 break
 
             # Pop node with lowest priority (highest potential)
@@ -879,15 +1015,14 @@ class InferenceEngine:
                 logger.debug(
                     f"BFS timeout: no IOC for {elapsed_since_ioc:.1f}s at depth {current_node.depth}, "
                     f"pruning path (gain={current_node.gain:.2f})"
-    )
+                )
                 continue
 
             # SOVEREIGN-006: Dead-end pruning - prune if gain < 0.1
             if current_node.gain < 0.1 and current_node.depth > 2:
                 logger.debug(
-                    f"BFS dead-end: gain={current_node.gain:.2f} < 0.1 at depth {current_node.depth}, "
-                    f"pruning path"
-    )
+                    f"BFS dead-end: gain={current_node.gain:.2f} < 0.1 at depth {current_node.depth}, pruning path"
+                )
                 continue
 
             # Check if we reached target
@@ -930,7 +1065,6 @@ class InferenceEngine:
                     new_iocs.add(neighbor_id)
                 new_gain = current_node.gain + (len(new_iocs) / max(actions_taken, 1))
 
-                # Create new node
                 new_path = current_node.path + [neighbor_id]
                 new_iocs_found = current_node.iocs_found | new_iocs
                 new_last_ioc_time = time.monotonic() if new_iocs else current_node.last_ioc_time
@@ -943,14 +1077,13 @@ class InferenceEngine:
                     gain=new_gain,
                     last_ioc_time=new_last_ioc_time,
                     iocs_found=new_iocs_found,
-    )
+                )
                 new_node._calculate_priority(gain_weight=2.0)
 
                 # Add to priority queue
                 heapq.heappush(heap, (new_node.priority, new_node))
                 visited.add(neighbor_id)
 
-        # Return best path found
         if best_path:
             return self._path_to_chain(best_path)
         return None
@@ -961,17 +1094,26 @@ class InferenceEngine:
         if len(path) < 2:
             return []
         chain = []
-        for from_id, to_id in zip(path, path[1:]):
+        for from_id, to_id in zip(path, path[1:], strict=False):
             from_ev = self._evidence.get(from_id)
             to_ev = self._evidence.get(to_id)
             if from_ev and to_ev:
-                rule_name = 'evidence_connection'
+                rule_name = "evidence_connection"
                 confidence = min(from_ev.confidence, to_ev.confidence) * 0.9
-                step = InferenceStep(from_statement=from_ev.fact, to_statement=to_ev.fact, rule=rule_name, confidence=confidence, step_number=len(chain) + 1, evidence_ids=[from_id, to_id])
+                step = InferenceStep(
+                    from_statement=from_ev.fact,
+                    to_statement=to_ev.fact,
+                    rule=rule_name,
+                    confidence=confidence,
+                    step_number=len(chain) + 1,
+                    evidence_ids=[from_id, to_id],
+                )
                 chain.append(step)
         return chain
 
-    def probabilistic_entity_resolution(self, fragments: list[dict[str, Any]], similarity_threshold: float=0.7) -> list[ResolvedEntity]:
+    def probabilistic_entity_resolution(
+        self, fragments: list[dict[str, Any]], similarity_threshold: float = 0.7
+    ) -> list[ResolvedEntity]:
         """
         Merge fragmented entity identities using probabilistic matching.
 
@@ -1001,14 +1143,14 @@ class InferenceEngine:
             if not cluster:
                 continue
             cluster_fragments = [fragments[i] for i in cluster]
-            names = [f.get('name', '') for f in cluster_fragments if f.get('name')]
-            canonical_name = self._select_canonical_name(names) if names else f'Entity_{cluster_idx}'
+            names = [f.get("name", "") for f in cluster_fragments if f.get("name")]
+            canonical_name = self._select_canonical_name(names) if names else f"Entity_{cluster_idx}"
             all_names = set(names)
             all_names.discard(canonical_name)
             merged_attributes = {}
             for fragment in cluster_fragments:
                 for key, value in fragment.items():
-                    if key not in ['name', 'source', 'timestamp']:
+                    if key not in ["name", "source", "timestamp"]:
                         if key not in merged_attributes:
                             merged_attributes[key] = set()
                         if isinstance(value, (list, set)):
@@ -1016,33 +1158,46 @@ class InferenceEngine:
                         else:
                             merged_attributes[key].add(value)
             merged_attributes = {k: list(v) if len(v) > 1 else list(v)[0] for k, v in merged_attributes.items()}
-            avg_similarity = np.mean([similarity_matrix[i, j] for i in cluster for j in cluster if i < j]) if len(cluster) > 1 else 1.0
-            evidence_ids = [f.get('evidence_id', '') for f in cluster_fragments if f.get('evidence_id')]
-            entity = ResolvedEntity(entity_id=''.join(['entity_', str(cluster_idx), '_', _get_xxh3_hex_lazy(canonical_name)[:8]]), canonical_name=canonical_name, aliases=list(all_names), fragments=cluster_fragments, confidence=avg_similarity, resolution_method='probabilistic_clustering', attributes=merged_attributes, source_evidence=evidence_ids)
+            avg_similarity = (
+                np.mean([similarity_matrix[i, j] for i in cluster for j in cluster if i < j])
+                if len(cluster) > 1
+                else 1.0
+            )
+            evidence_ids = [f.get("evidence_id", "") for f in cluster_fragments if f.get("evidence_id")]
+            entity = ResolvedEntity(
+                entity_id="".join(["entity_", str(cluster_idx), "_", _get_xxh3_hex_lazy(canonical_name)[:8]]),
+                canonical_name=canonical_name,
+                aliases=list(all_names),
+                fragments=cluster_fragments,
+                confidence=avg_similarity,
+                resolution_method="probabilistic_clustering",
+                attributes=merged_attributes,
+                source_evidence=evidence_ids,
+            )
             resolved_entities.append(entity)
-        logger.info(f'Entity resolution: {len(fragments)} fragments → {len(resolved_entities)} entities')
+        logger.info(f"Entity resolution: {len(fragments)} fragments → {len(resolved_entities)} entities")
         return resolved_entities
 
     def _compute_fragment_similarity(self, frag_a: dict[str, Any], frag_b: dict[str, Any]) -> float:
         """Compute similarity score between two entity fragments."""
         scores = []
         weights = []
-        name_a = frag_a.get('name', '')
-        name_b = frag_b.get('name', '')
+        name_a = frag_a.get("name", "")
+        name_b = frag_b.get("name", "")
         if name_a and name_b:
             name_sim = self._string_similarity(name_a, name_b)
             scores.append(name_sim)
             weights.append(0.4)
-        attrs_a = {k: v for k, v in frag_a.items() if k not in ['name', 'source']}
-        attrs_b = {k: v for k, v in frag_b.items() if k not in ['name', 'source']}
+        attrs_a = {k: v for k, v in frag_a.items() if k not in ["name", "source"]}
+        attrs_b = {k: v for k, v in frag_b.items() if k not in ["name", "source"]}
         common_keys = set(attrs_a.keys()) & set(attrs_b.keys())
         if common_keys:
-            matches = sum((1 for k in common_keys if attrs_a[k] == attrs_b[k]))
+            matches = sum(1 for k in common_keys if attrs_a[k] == attrs_b[k])
             attr_sim = matches / len(common_keys)
             scores.append(attr_sim)
             weights.append(0.35)
-        behavior_a = frag_a.get('behavior_pattern', '')
-        behavior_b = frag_b.get('behavior_pattern', '')
+        behavior_a = frag_a.get("behavior_pattern", "")
+        behavior_b = frag_b.get("behavior_pattern", "")
         if behavior_a and behavior_b:
             behavior_sim = 1.0 if behavior_a == behavior_b else 0.0
             scores.append(behavior_sim)
@@ -1060,7 +1215,7 @@ class InferenceEngine:
             try:
                 return self._mlx_string_similarity(a, b)
             except Exception as e:
-                logger.debug(f'MLX string similarity failed: {e}')
+                logger.debug(f"MLX string similarity failed: {e}")
         m, n = (len(a), len(b))
         if m == 0 or n == 0:
             return 0.0
@@ -1081,12 +1236,13 @@ class InferenceEngine:
         max_len = max(len(a), len(b))
         if max_len == 0:
             return 0.0
-        a_padded = a.ljust(max_len, '\x00')
-        b_padded = b.ljust(max_len, '\x00')
+        a_padded = a.ljust(max_len, "\x00")
+        b_padded = b.ljust(max_len, "\x00")
         try:
             import mlx.core as _mx
-            a_bytes = a_padded.encode('latin-1')
-            b_bytes = b_padded.encode('latin-1')
+
+            a_bytes = a_padded.encode("latin-1")
+            b_bytes = b_padded.encode("latin-1")
             a_np = np.frombuffer(a_bytes, dtype=np.uint8).astype(np.float32)
             b_np = np.frombuffer(b_bytes, dtype=np.uint8).astype(np.float32)
             mx_a = _mx.array(a_np)
@@ -1132,8 +1288,8 @@ class InferenceEngine:
     def _select_canonical_name(self, names: list[str]) -> str:
         """Select the most canonical name from a list."""
         if not names:
-            return ''
-        scored_names = [(name, len(name) + name.count(' ') * 2) for name in names]
+            return ""
+        scored_names = [(name, len(name) + name.count(" ") * 2) for name in names]
         scored_names.sort(key=lambda x: x[1], reverse=True)
         return scored_names[0][0]
 
@@ -1182,7 +1338,7 @@ class InferenceEngine:
             joint_prob *= hypothesis.posterior_probability
         return joint_prob
 
-    def indirect_evidence_inference(self, target_statement: str, max_hops: int=3) -> list[InferenceStep]:
+    def indirect_evidence_inference(self, target_statement: str, max_hops: int = 3) -> list[InferenceStep]:
         """
         Infer indirect evidence supporting a target statement.
 
@@ -1223,10 +1379,13 @@ class InferenceEngine:
                     new_path = path + [neighbor]
                     paths.append(new_path)
                     dfs(neighbor, new_path, depth + 1)
+
         dfs(start_id, [start_id], 0)
         return paths
 
-    def streaming_inference(self, evidence_iterator: Iterator[InferenceEvidence], callback: Callable[[Hypothesis], None] | None=None) -> list[Hypothesis]:
+    def streaming_inference(
+        self, evidence_iterator: Iterator[InferenceEvidence], callback: Callable[[Hypothesis], None] | None = None
+    ) -> list[Hypothesis]:
         """
         Process evidence in streaming fashion for large datasets.
 
@@ -1269,26 +1428,47 @@ class InferenceEngine:
 
     def get_evidence_stats(self) -> dict[str, Any]:
         """Get statistics about stored evidence."""
-        return {'total_evidence': len(self._evidence), 'graph_edges': sum((len(neighbors) for neighbors in self._evidence_graph.values())) // 2, 'avg_confidence': sum((e.confidence for e in self._evidence.values())) / len(self._evidence) if self._evidence else 0.0, 'inference_rules': len(self._inference_rules), 'mlx_enabled': self.use_mlx}
+        return {
+            "total_evidence": len(self._evidence),
+            "graph_edges": sum(len(neighbors) for neighbors in self._evidence_graph.values()) // 2,
+            "avg_confidence": sum(e.confidence for e in self._evidence.values()) / len(self._evidence)
+            if self._evidence
+            else 0.0,
+            "inference_rules": len(self._inference_rules),
+            "mlx_enabled": self.use_mlx,
+        }
 
     def clear(self) -> None:
         """Clear all evidence and reset state."""
         self._evidence.clear()
         self._evidence_graph.clear()
         self._hypothesis_set.clear()
-        logger.info('InferenceEngine state cleared')
+        logger.info("InferenceEngine state cleared")
 
     async def cleanup(self) -> None:
         """Clean up resources including thread pool executor."""
         self._shutdown_executor()
         self.clear()
-        logger.info('InferenceEngine cleanup completed')
+        logger.info("InferenceEngine cleanup completed")
 
     def export_inference_graph(self) -> dict[str, Any]:
         """Export evidence graph for visualization."""
-        return {'nodes': [{'id': eid, 'fact': ev.fact[:100], 'confidence': ev.confidence, 'source': ev.source} for eid, ev in self._evidence.items()], 'edges': [{'source': src, 'target': tgt} for src, tgts in self._evidence_graph.items() for tgt in tgts if src < tgt]}
+        return {
+            "nodes": [
+                {"id": eid, "fact": ev.fact[:100], "confidence": ev.confidence, "source": ev.source}
+                for eid, ev in self._evidence.items()
+            ],
+            "edges": [
+                {"source": src, "target": tgt}
+                for src, tgts in self._evidence_graph.items()
+                for tgt in tgts
+                if src < tgt
+            ],
+        }
 
-    async def multi_hop_inference(self, start: str, end: str, max_hops: int=6, min_confidence: float=0.3, max_paths: int=100) -> list[MultiHopPath]:
+    async def multi_hop_inference(
+        self, start: str, end: str, max_hops: int = 6, min_confidence: float = 0.3, max_paths: int = 100
+    ) -> list[MultiHopPath]:
         """
         Perform multi-hop reasoning between entities.
 
@@ -1323,10 +1503,14 @@ class InferenceEngine:
             >>> for path in paths[:3]:  # Top 3 paths
             ...     print(path.explain())
         """
-        reasoner = MultiHopReasoner(inference_engine=self, max_hops=max_hops, max_paths=max_paths, min_confidence=min_confidence)
+        reasoner = MultiHopReasoner(
+            inference_engine=self, max_hops=max_hops, max_paths=max_paths, min_confidence=min_confidence
+        )
         return await reasoner.reason(start=start, end=end, min_confidence=min_confidence, max_hops=max_hops)
 
-    def multi_hop_reasoning(self, start: str, end: str, max_hops: int=6, min_confidence: float=0.3) -> MultiHopPath | None:
+    def multi_hop_reasoning(
+        self, start: str, end: str, max_hops: int = 6, min_confidence: float = 0.3
+    ) -> MultiHopPath | None:
         """
         Synchronous wrapper for finding the strongest multi-hop path.
 
@@ -1349,10 +1533,12 @@ class InferenceEngine:
                 return reasoner.rank_paths(paths)[0]
             return None
         except Exception as e:
-            logger.error(f'Multi-hop reasoning failed: {e}')
+            logger.error(f"Multi-hop reasoning failed: {e}")
             return None
 
-    def find_indirect_connections(self, entity: str, max_hops: int=3, min_confidence: float=0.3) -> dict[str, list[MultiHopPath]]:
+    def find_indirect_connections(
+        self, entity: str, max_hops: int = 3, min_confidence: float = 0.3
+    ) -> dict[str, list[MultiHopPath]]:
         """
         Find all indirect connections from an entity.
 
@@ -1378,7 +1564,7 @@ class InferenceEngine:
                 if paths:
                     connections[target] = paths
             except Exception as e:
-                logger.debug(f'Failed to find path to {target}: {e}')
+                logger.debug(f"Failed to find path to {target}: {e}")
         return connections
 
     def _get_reachable_entities(self, start: str, max_hops: int) -> set[str]:
@@ -1409,17 +1595,17 @@ class InferenceEngine:
 
     def _extract_entity_from_evidence_sync(self, evidence: InferenceEvidence) -> str | None:
         """Extract primary entity identifier from evidence (sync version)."""
-        for key in ['entity', 'actor', 'subject', 'name', 'id']:
+        for key in ["entity", "actor", "subject", "name", "id"]:
             if key in evidence.metadata:
                 return str(evidence.metadata[key])
         words = evidence.fact.split()
         for word in words:
-            clean_word = word.strip('.,;:!?()[]{}"\'')
+            clean_word = word.strip(".,;:!?()[]{}\"'")
             if clean_word and clean_word[0].isupper() and (len(clean_word) > 2):
                 return clean_word
         return None
 
-    def extended_evidence_chaining(self, start: str, target: str, max_depth: int=5) -> list[InferenceStep] | None:
+    def extended_evidence_chaining(self, start: str, target: str, max_depth: int = 5) -> list[InferenceStep] | None:
         """
         Extended evidence chaining with variable depth.
 
@@ -1446,11 +1632,18 @@ class InferenceEngine:
         """Convert a MultiHopPath to list of InferenceStep objects."""
         steps = []
         for hop in path.hops:
-            step = InferenceStep(from_statement=hop.from_entity, to_statement=hop.to_entity, rule=f'multi_hop_{hop.relation}', confidence=hop.confidence, step_number=hop.step_number, evidence_ids=[hop.evidence[:50]])
+            step = InferenceStep(
+                from_statement=hop.from_entity,
+                to_statement=hop.to_entity,
+                rule=f"multi_hop_{hop.relation}",
+                confidence=hop.confidence,
+                step_number=hop.step_number,
+                evidence_ids=[hop.evidence[:50]],
+            )
             steps.append(step)
         return steps
 
-    def calculate_path_confidence(self, hops: list[HopStep], apply_length_penalty: bool=True) -> float:
+    def calculate_path_confidence(self, hops: list[HopStep], apply_length_penalty: bool = True) -> float:
         """
         Calculate compounded confidence for a hop sequence.
 
@@ -1471,7 +1664,10 @@ class InferenceEngine:
             return product_confidence * length_penalty
         return product_confidence
 
-def create_inference_engine(max_chain_depth: int=5, min_confidence: float=0.3, use_mlx: bool=True) -> InferenceEngine:
+
+def create_inference_engine(
+    max_chain_depth: int = 5, min_confidence: float = 0.3, use_mlx: bool = True
+) -> InferenceEngine:
     """
     Factory function to create InferenceEngine with standard configuration.
 
@@ -1484,6 +1680,7 @@ def create_inference_engine(max_chain_depth: int=5, min_confidence: float=0.3, u
         Configured InferenceEngine instance
     """
     return InferenceEngine(max_chain_depth=max_chain_depth, min_confidence_threshold=min_confidence, use_mlx=use_mlx)
+
 
 class MultiHopReasoner:
     """Multi-hop reasoning system for n-degree inference chains.
@@ -1506,9 +1703,12 @@ class MultiHopReasoner:
         max_paths: Maximum number of paths to return (prevents combinatorial explosion)
         min_confidence: Minimum confidence threshold for path inclusion
     """
-    __slots__ = tuple(('inference_engine', 'max_hops', 'max_paths', 'min_confidence', '_total_iterations'))
 
-    def __init__(self, inference_engine: InferenceEngine, max_hops: int=6, max_paths: int=100, min_confidence: float=0.3):
+    __slots__ = ("inference_engine", "max_hops", "max_paths", "min_confidence", "_total_iterations")
+
+    def __init__(
+        self, inference_engine: InferenceEngine, max_hops: int = 6, max_paths: int = 100, min_confidence: float = 0.3
+    ) -> None:
         """
         Initialize MultiHopReasoner.
 
@@ -1523,9 +1723,13 @@ class MultiHopReasoner:
         self.max_paths = max_paths
         self.min_confidence = min_confidence
         self._total_iterations = 0
-        logger.info(f'MultiHopReasoner initialized (max_hops: {max_hops}, max_paths: {max_paths}, min_confidence: {min_confidence})')
+        logger.info(
+            f"MultiHopReasoner initialized (max_hops: {max_hops}, max_paths: {max_paths}, min_confidence: {min_confidence})"
+        )
 
-    async def reason(self, start: str, end: str, min_confidence: float | None=None, max_hops: int | None=None) -> list[MultiHopPath]:
+    async def reason(
+        self, start: str, end: str, min_confidence: float | None = None, max_hops: int | None = None
+    ) -> list[MultiHopPath]:
         """
         Find all multi-hop paths from start to end entity.
 
@@ -1545,7 +1749,9 @@ class MultiHopReasoner:
         max_depth = max_hops if max_hops is not None else self.max_hops
         paths = self._bfs_with_depth(start, end, max_depth, min_conf)
         ranked_paths = self.rank_paths(paths)
-        logger.info(f"Multi-hop reasoning: '{start}' -> '{end}' found {len(ranked_paths)} paths (max_depth: {max_depth}, min_confidence: {min_conf})")
+        logger.info(
+            f"Multi-hop reasoning: '{start}' -> '{end}' found {len(ranked_paths)} paths (max_depth: {max_depth}, min_confidence: {min_conf})"
+        )
         return ranked_paths
 
     def _bfs_with_depth(self, start: str, end: str, max_depth: int, min_confidence: float) -> list[MultiHopPath]:
@@ -1580,10 +1786,10 @@ class MultiHopReasoner:
         start_evidence = self._find_evidence_for_entity(start)
         end_evidence = self._find_evidence_for_entity(end)
         if not start_evidence:
-            logger.warning(f'No evidence found for start entity: {start}')
+            logger.warning(f"No evidence found for start entity: {start}")
             return False
         if not end_evidence:
-            logger.warning(f'No evidence found for end entity: {end}')
+            logger.warning(f"No evidence found for end entity: {end}")
             return False
         return True
 
@@ -1608,10 +1814,17 @@ class MultiHopReasoner:
 
             for neighbor_entity, relation, hop_confidence in neighbors:
                 result = self._process_neighbor(
-                    neighbor_entity, relation, hop_confidence,
-                    hops, visited, current_confidence, min_confidence,
-                    start, end, paths_found,
-    )
+                    neighbor_entity,
+                    relation,
+                    hop_confidence,
+                    hops,
+                    visited,
+                    current_confidence,
+                    min_confidence,
+                    start,
+                    end,
+                    paths_found,
+                )
                 if result == "break":
                     break
                 if result is not None:
@@ -1627,27 +1840,24 @@ class MultiHopReasoner:
             raise InferenceLoopExceeded(
                 f"MultiHopReasoner BFS exceeded max_total_iterations={self.inference_engine.max_total_iterations} "
                 f"(loop would burn CPU indefinitely with malformed evidence)"
-    )
+            )
 
     def _rank_neighbors_with_eig(self, neighbors: list, hops: list) -> list:
         """Rank neighbors using EIG calculator if available."""
         if not neighbors:
             return neighbors
         try:
-            hypothesis_set = [
-                {'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence}
-                for h in hops
-            ]
+            hypothesis_set = [{"entity": h.from_entity, "relation": h.relation, "belief": h.confidence} for h in hops]
             candidates = [
-                {'entity': n[0], 'relation': n[1], 'confidence': n[2], 'expected_reduction': 0.2}
+                {"entity": n[0], "relation": n[1], "confidence": n[2], "expected_reduction": 0.2}
                 for n in neighbors[:50]
             ]
             eig_calculator = EIGCalculator()
             ranked = eig_calculator.rank_actions(hypothesis_set, candidates)
-            ranked_dict = {r[0]['entity']: r[1] for r in ranked}
+            ranked_dict = {r[0]["entity"]: r[1] for r in ranked}
             return sorted(neighbors, key=lambda n: ranked_dict.get(n[0], 0), reverse=True)
         except Exception as e:
-            logger.debug(f'[EIG] Neighbor ranking failed: {e}')
+            logger.debug(f"[EIG] Neighbor ranking failed: {e}")
             return neighbors
 
     def _process_neighbor(
@@ -1677,8 +1887,10 @@ class MultiHopReasoner:
             to_entity=neighbor_entity,
             relation=relation,
             confidence=hop_confidence,
-            evidence=self._get_evidence_for_relation(hops[-1].to_entity if hops else start, neighbor_entity, relation) if hops else "",
-    )
+            evidence=self._get_evidence_for_relation(hops[-1].to_entity if hops else start, neighbor_entity, relation)
+            if hops
+            else "",
+        )
         new_hops = hops + [hop]
 
         if neighbor_entity == end:
@@ -1696,8 +1908,7 @@ class MultiHopReasoner:
             if ranked:
                 best_path = ranked[0]
                 beliefs = [
-                    {'entity': h.from_entity, 'relation': h.relation, 'belief': h.confidence}
-                    for h in best_path.hops
+                    {"entity": h.from_entity, "relation": h.relation, "belief": h.confidence} for h in best_path.hops
                 ]
                 self.inference_engine.update_hypothesis_set(beliefs)
 
@@ -1708,7 +1919,7 @@ class MultiHopReasoner:
         for evidence_id, evidence in self.inference_engine._evidence.items():
             if entity_lower in evidence.fact.lower():
                 matching.append(evidence_id)
-            elif any((isinstance(v, str) and entity_lower in v.lower() for v in evidence.metadata.values())):
+            elif any(isinstance(v, str) and entity_lower in v.lower() for v in evidence.metadata.values()):
                 matching.append(evidence_id)
         return matching
 
@@ -1744,37 +1955,37 @@ class MultiHopReasoner:
 
     def _extract_entity_from_evidence(self, evidence: InferenceEvidence) -> str | None:
         """Extract primary entity identifier from evidence."""
-        for key in ['entity', 'actor', 'subject', 'name', 'id']:
+        for key in ["entity", "actor", "subject", "name", "id"]:
             if key in evidence.metadata:
                 return str(evidence.metadata[key])
         words = evidence.fact.split()
         for word in words:
-            clean_word = word.strip('.,;:!?()[]{}"\'')
+            clean_word = word.strip(".,;:!?()[]{}\"'")
             if clean_word and clean_word[0].isupper() and (len(clean_word) > 2):
                 return clean_word
         return evidence.evidence_id
 
     def _determine_relation_type(self, evidence_a: InferenceEvidence, evidence_b: InferenceEvidence) -> str:
         """Determine the type of relationship between two evidence items."""
-        if 'relation' in evidence_a.metadata:
-            return str(evidence_a.metadata['relation'])
-        if 'relation' in evidence_b.metadata:
-            return str(evidence_b.metadata['relation'])
+        if "relation" in evidence_a.metadata:
+            return str(evidence_a.metadata["relation"])
+        if "relation" in evidence_b.metadata:
+            return str(evidence_b.metadata["relation"])
         fact_a = evidence_a.fact.lower()
         fact_b = evidence_b.fact.lower()
-        if any((word in fact_a + fact_b for word in ['owns', 'owns', 'owner'])):
-            return 'ownership'
-        if any((word in fact_a + fact_b for word in ['contact', 'communicate', 'message'])):
-            return 'communication'
-        if any((word in fact_a + fact_b for word in ['work', 'employ', 'colleague'])):
-            return 'employment'
-        if any((word in fact_a + fact_b for word in ['family', 'relative', 'parent', 'child'])):
-            return 'family'
-        if any((word in fact_a + fact_b for word in ['location', 'located', 'address'])):
-            return 'location'
-        if any((word in fact_a + fact_b for word in ['transaction', 'payment', 'transfer'])):
-            return 'financial'
-        return 'association'
+        if any(word in fact_a + fact_b for word in ["owns", "owns", "owner"]):
+            return "ownership"
+        if any(word in fact_a + fact_b for word in ["contact", "communicate", "message"]):
+            return "communication"
+        if any(word in fact_a + fact_b for word in ["work", "employ", "colleague"]):
+            return "employment"
+        if any(word in fact_a + fact_b for word in ["family", "relative", "parent", "child"]):
+            return "family"
+        if any(word in fact_a + fact_b for word in ["location", "located", "address"]):
+            return "location"
+        if any(word in fact_a + fact_b for word in ["transaction", "payment", "transfer"]):
+            return "financial"
+        return "association"
 
     def _get_evidence_for_relation(self, entity_a: str, entity_b: str, relation: str) -> str:
         """Get supporting evidence description for a relation."""
@@ -1786,7 +1997,7 @@ class MultiHopReasoner:
                     ev_a = self.inference_engine._evidence.get(ev_id_a)
                     if ev_a:
                         return ev_a.fact[:200]
-        return f'{relation} relationship inferred from evidence graph'
+        return f"{relation} relationship inferred from evidence graph"
 
     def _calculate_compound_confidence(self, hops: list[HopStep]) -> float:
         """
@@ -1840,6 +2051,7 @@ class MultiHopReasoner:
 
         def path_score(path: MultiHopPath) -> tuple[float, int, bool]:
             return (path.total_confidence, -path.path_length, not path.is_cyclic)
+
         return sorted(paths, key=path_score, reverse=True)
 
     def get_hypothesis_set(self) -> list[BeliefDict]:
@@ -1877,7 +2089,7 @@ class MultiHopReasoner:
         """
         return path.explain()
 
-    def find_strongest_path(self, start: str, end: str, min_confidence: float | None=None) -> MultiHopPath | None:
+    def find_strongest_path(self, start: str, end: str, min_confidence: float | None = None) -> MultiHopPath | None:
         """
         Find the single strongest path between entities.
 
@@ -1891,7 +2103,9 @@ class MultiHopReasoner:
         Returns:
             Strongest MultiHopPath or None if no path found
         """
-        paths = self._bfs_with_depth(start, end, self.max_hops, min_confidence if min_confidence is not None else self.min_confidence)
+        paths = self._bfs_with_depth(
+            start, end, self.max_hops, min_confidence if min_confidence is not None else self.min_confidence
+        )
         if not paths:
             return None
         ranked = self.rank_paths(paths)
@@ -1908,11 +2122,24 @@ class MultiHopReasoner:
             Dictionary with path statistics
         """
         if not paths:
-            return {'total_paths': 0, 'avg_confidence': 0.0, 'avg_path_length': 0.0, 'cyclic_paths': 0, 'confidence_range': (0.0, 0.0)}
+            return {
+                "total_paths": 0,
+                "avg_confidence": 0.0,
+                "avg_path_length": 0.0,
+                "cyclic_paths": 0,
+                "confidence_range": (0.0, 0.0),
+            }
         confidences = [p.total_confidence for p in paths]
         lengths = [p.path_length for p in paths]
-        cyclic_count = sum((1 for p in paths if p.is_cyclic))
-        return {'total_paths': len(paths), 'avg_confidence': sum(confidences) / len(confidences), 'avg_path_length': sum(lengths) / len(lengths), 'cyclic_paths': cyclic_count, 'confidence_range': (min(confidences), max(confidences)), 'path_length_range': (min(lengths), max(lengths))}
+        cyclic_count = sum(1 for p in paths if p.is_cyclic)
+        return {
+            "total_paths": len(paths),
+            "avg_confidence": sum(confidences) / len(confidences),
+            "avg_path_length": sum(lengths) / len(lengths),
+            "cyclic_paths": cyclic_count,
+            "confidence_range": (min(confidences), max(confidences)),
+            "path_length_range": (min(lengths), max(lengths)),
+        }
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ISSUE-005: Parallel Inference Pipeline Integration
@@ -1941,14 +2168,11 @@ class MultiHopReasoner:
         """
         try:
             from hledac.universal.brain.inference_pipeline import (
-                InferencePipeline,
                 create_inference_pipeline,
             )
 
-            # Create parallel pipeline
             pipeline = create_inference_pipeline()
 
-            # Run parallel inference
             result = await pipeline.infer(observations)
 
             # Convert to Hypothesis objects
@@ -2015,7 +2239,6 @@ class MultiHopReasoner:
         Returns:
             List of inference steps or None if no chain found
         """
-        # Extract evidence for chaining
         start_ids = self._find_evidence_by_content(start)
         target_ids = self._find_evidence_by_content(target)
 
@@ -2069,19 +2292,30 @@ class MultiHopReasoner:
 def create_inference_tool(engine: InferenceEngine, execute_fn=None):
     """Create a ToolRegistry-compatible Tool from InferenceEngine."""
     import msgspec
+
     from ..tool_registry import Tool
 
     class InferenceArgs(Struct, kw_only=True):
         """Inference arguments for the tool."""
-        mode: str = ''
-        query: str = ''
+
+        mode: str = ""
+        query: str = ""
         entities: list[str] = msgspec.field(default_factory=list)
         observations: list[str] = msgspec.field(default_factory=list)
-        hypothesis: str = ''
+        hypothesis: str = ""
         max_hops: int = 3
 
     class InferenceResult(Struct, kw_only=True):
         """Inference result."""
+
         result: dict[str, Any] = msgspec.field(default_factory=dict)
 
-    return Tool(name='infer', description='Logical inference: abduction, evidence chaining, multi-hop reasoning, entity resolution', args_schema=InferenceArgs, returns_schema=InferenceResult, memory_mb=50, is_network=False, handler=execute_fn)
+    return Tool(
+        name="infer",
+        description="Logical inference: abduction, evidence chaining, multi-hop reasoning, entity resolution",
+        args_schema=InferenceArgs,
+        returns_schema=InferenceResult,
+        memory_mb=50,
+        is_network=False,
+        handler=execute_fn,
+    )

@@ -2,9 +2,6 @@
 Quantum-Inspired Pathfinder Module
 ===================================
 
-
-
-
 GRAPH ANALYTICS PROVIDER / DONOR BACKEND (Sprint F700D)
 ========================================================
 DuckPGQGraph is the GraphAnalyticsProvider — the analytics/donor backend.
@@ -24,30 +21,32 @@ Features:
 This module is designed for OSINT research to discover non-obvious connections
 in knowledge graphs through quantum-inspired algorithms.
 """
+
 import gc
 import logging
 import math
 import os as _os
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING, Any
 from collections.abc import Iterator
+from operator import itemgetter
+from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-from hledac.universal.utils.asyncx import _check_gathered
+from compat.msgspec_gc_compat import Struct
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
 # DuckPGQGraph: rss_mb=200, peak_mb=400 (DuckDB + PGQ graph analytics)
 from hledac.universal._core.capability_cost import register_capability_cost
+from hledac.universal.utils.asyncx import _check_gathered
+
 register_capability_cost("duckpgqgraph", rss_mb=200, peak_mb=400, tier="heavy", tags=("graph", "sql"))
 
 logger = logging.getLogger(__name__)
 
-MAX_QUANTUM_NODES: int = int(_os.environ.get('QUANTUM_MAX_NODES', '4096'))
-MAX_QUANTUM_EDGES: int = int(_os.environ.get('QUANTUM_MAX_EDGES', '50000'))
+MAX_QUANTUM_NODES: int = int(_os.environ.get("QUANTUM_MAX_NODES", "4096"))
+MAX_QUANTUM_EDGES: int = int(_os.environ.get("QUANTUM_MAX_EDGES", "50000"))
 _NP_CACHE: Any | None = None
 
-def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None=None) -> list[dict[str, Any]]:
+
+def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
     """DuckDB → list[dict] via pyarrow zero-copy Arrow path (F5.4).
 
     Zero-copy Arrow path via fetch_arrow_table().to_pylist() is primary;
@@ -64,7 +63,8 @@ def _duckdb_to_dicts(con: Any, sql: str, params: list[Any] | None=None) -> list[
         except Exception:
             return []
 
-def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, batch_size: int=2048):
+
+def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None = None, batch_size: int = 2048):
     """Streaming bounded fetch — never materialises the full result set in RAM.
 
     DuckDB `.fetchall()` materialises the entire result set as a Python list.
@@ -91,7 +91,7 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
         result = con.execute(sql, params or [])
     except Exception:
         return
-    if hasattr(result, 'fetch_record_batch'):
+    if hasattr(result, "fetch_record_batch"):
         try:
             # DuckDB 1.5+: fetch_record_batch is deprecated, use to_arrow_reader()
             try:
@@ -108,6 +108,7 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
                 try:
                     try:
                         import polars as _pl
+
                         pdf = _pl.from_arrow(batch)
                         yield list(pdf.iter_rows(named=False))  # tuple rows, not dicts
                     except ImportError:
@@ -118,10 +119,10 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
                     try:
                         cols = batch.columns
                         nrows, ncols = batch.num_rows, len(cols)
-                        yield [[
-                            cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i]
-                            for j in range(ncols)
-                        ] for i in range(nrows)]
+                        yield [
+                            [cols[j][i].as_py() if hasattr(cols[j][i], "as_py") else cols[j][i] for j in range(ncols)]
+                            for i in range(nrows)
+                        ]
                     except Exception:  # noqa: BLE001
                         pass  # malformed batch — skip, keep streaming
             return
@@ -135,7 +136,10 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
             yield list(rows)
     except Exception:
         return
+
+
 _NP_CACHE: Any | None = None
+
 
 def _get_numpy() -> Any:
     """Lazy numpy loader with module-level cache.
@@ -148,9 +152,13 @@ def _get_numpy() -> Any:
     global _NP_CACHE
     if _NP_CACHE is None:
         import numpy as np
+
         _NP_CACHE = np
     return _NP_CACHE
+
+
 _MLX_CACHE: Any | None = None
+
 
 def _get_mlx() -> Any:
     """Lazy MLX loader — returns module or None if unavailable.
@@ -161,12 +169,16 @@ def _get_mlx() -> Any:
     if _MLX_CACHE is None:
         try:
             import mlx.core as mx
+
             _MLX_CACHE = mx
         except ImportError:
             _MLX_CACHE = None
     return _MLX_CACHE
+
+
 _SPARSE_CACHE: Any | None = None
 _SPARSE_LOGGED: bool = False
+
 
 def _get_scipy_sparse() -> Any:
     """Lazy scipy.sparse loader — returns module or None if unavailable.
@@ -181,45 +193,52 @@ def _get_scipy_sparse() -> Any:
     if _SPARSE_CACHE is None:
         try:
             from scipy import sparse
+
             _SPARSE_CACHE = sparse
         except ImportError:
             if not _SPARSE_LOGGED:
                 import logging
+
                 logging.getLogger(__name__).debug(
                     "scipy.sparse unavailable: sparse matrix operations disabled. "
                     "Install with: pip install hledac-universal[ml]"
-    )
+                )
                 _SPARSE_LOGGED = True
             _SPARSE_CACHE = None
     return _SPARSE_CACHE
+
+
 if TYPE_CHECKING:
-    import mlx.core as mx
     import numpy as np
     from scipy import sparse
 
+
 def _is_mlx_available() -> bool:
     # C1-X FIX: Use SSOT MLX_AVAILABLE instead of local detection
-    from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
     return MLX_AVAILABLE
+
 
 def _is_scipy_available() -> bool:
     return _get_scipy_sparse() is not None
+
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
 
 SCIPY_AVAILABLE = None
 
+
 def _get_MLX_AVAILABLE():
     # C1-X FIX: Use SSOT MLX_AVAILABLE
-    from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
     return MLX_AVAILABLE
+
 
 def _get_SCIPY_AVAILABLE():
     global SCIPY_AVAILABLE
     if SCIPY_AVAILABLE is None:
         SCIPY_AVAILABLE = _is_scipy_available()
     return SCIPY_AVAILABLE
+
 
 class QuantumPathConfig(Struct):
     """Configuration for quantum-inspired pathfinding.
@@ -233,13 +252,15 @@ class QuantumPathConfig(Struct):
         use_mlx: Whether to use MLX acceleration if available.
         memory_threshold_gb: Memory threshold for aggressive cleanup.
     """
+
     max_steps: int = 50
     amplification_strength: float = 1.5
     top_k_paths: int = 5
     max_nodes: int = 5000
-    coin_type: str = 'hadamard'
+    coin_type: str = "hadamard"
     use_mlx: bool = True
     memory_threshold_gb: float = 5.5
+
 
 class QuantumInspiredPathFinder:
     """
@@ -266,9 +287,19 @@ class QuantumInspiredPathFinder:
         n_nodes: Number of nodes in the graph.
         initialized: Whether the pathfinder has been initialized.
     """
-    __slots__ = tuple(('_mlx_available', 'adjacency_matrix', 'config', 'graph', 'idx_to_node', 'initialized', 'n_nodes', 'node_to_idx'))
 
-    def __init__(self, config: QuantumPathConfig | None=None) -> None:
+    __slots__ = (
+        "_mlx_available",
+        "adjacency_matrix",
+        "config",
+        "graph",
+        "idx_to_node",
+        "initialized",
+        "n_nodes",
+        "node_to_idx",
+    )
+
+    def __init__(self, config: QuantumPathConfig | None = None) -> None:
         """Initialize the quantum-inspired pathfinder.
 
         Args:
@@ -283,11 +314,11 @@ class QuantumInspiredPathFinder:
         self.initialized: bool = False
         self._mlx_available: bool = _get_mlx() is not None and self.config.use_mlx
         if self._mlx_available:
-            logger.info('QuantumPathFinder: Using MLX acceleration')
+            logger.info("QuantumPathFinder: Using MLX acceleration")
         else:
-            logger.info('QuantumPathFinder: Using NumPy fallback')
+            logger.info("QuantumPathFinder: Using NumPy fallback")
 
-    async def initialize(self, graph: dict[str, list[str]] | np.ndarray, max_nodes: int | None=None) -> bool:
+    async def initialize(self, graph: dict[str, list[str]] | np.ndarray, max_nodes: int | None = None) -> bool:
         """Initialize the pathfinder with a knowledge graph.
 
         Args:
@@ -311,19 +342,23 @@ class QuantumInspiredPathFinder:
         try:
             max_nodes = max_nodes or self.config.max_nodes
             if max_nodes > MAX_QUANTUM_NODES:
-                logger.warning(f'QuantumPathFinder: max_nodes={max_nodes} exceeds MAX_QUANTUM_NODES={MAX_QUANTUM_NODES}, clamping down.')
+                logger.warning(
+                    f"QuantumPathFinder: max_nodes={max_nodes} exceeds MAX_QUANTUM_NODES={MAX_QUANTUM_NODES}, clamping down."
+                )
                 max_nodes = MAX_QUANTUM_NODES
             if isinstance(graph, dict):
                 await self._initialize_from_adjacency_list(graph, max_nodes)
             elif isinstance(graph, np.ndarray):
                 await self._initialize_from_matrix(graph, max_nodes)
             else:
-                raise ValueError(f'Unsupported graph type: {type(graph)}')
+                raise ValueError(f"Unsupported graph type: {type(graph)}")
             self.initialized = True
-            logger.info(f"QuantumPathFinder initialized with {self.n_nodes} nodes, {('MLX' if self._mlx_available else 'NumPy')} backend")
+            logger.info(
+                f"QuantumPathFinder initialized with {self.n_nodes} nodes, {('MLX' if self._mlx_available else 'NumPy')} backend"
+            )
             return True
         except Exception as e:
-            logger.error(f'Failed to initialize QuantumPathFinder: {e}')
+            logger.error(f"Failed to initialize QuantumPathFinder: {e}")
             self.initialized = False
             return False
 
@@ -336,7 +371,7 @@ class QuantumInspiredPathFinder:
         """
         nodes = list(graph.keys())
         if len(nodes) > max_nodes:
-            logger.warning(f'Graph has {len(nodes)} nodes, limiting to {max_nodes}')
+            logger.warning(f"Graph has {len(nodes)} nodes, limiting to {max_nodes}")
             nodes = nodes[:max_nodes]
         self.n_nodes = len(nodes)
         self.node_to_idx = {node: i for i, node in enumerate(nodes)}
@@ -363,8 +398,8 @@ class QuantumInspiredPathFinder:
         """
         n = min(matrix.shape[0], max_nodes)
         self.n_nodes = n
-        self.node_to_idx = {f'node_{i}': i for i in range(n)}
-        self.idx_to_node = {i: f'node_{i}' for i in range(n)}
+        self.node_to_idx = {f"node_{i}": i for i in range(n)}
+        self.idx_to_node = {i: f"node_{i}" for i in range(n)}
         sparse_mod = _get_scipy_sparse()
         if sparse_mod is not None:
             if sparse_mod.issparse(matrix):
@@ -394,13 +429,20 @@ class QuantumInspiredPathFinder:
             self.adjacency_matrix = None
             return
         if len(rows) > MAX_QUANTUM_EDGES:
-            logger.warning(f'QuantumPathFinder: edge count {len(rows)} exceeds MAX_QUANTUM_EDGES={MAX_QUANTUM_EDGES}, truncating.')
+            logger.warning(
+                f"QuantumPathFinder: edge count {len(rows)} exceeds MAX_QUANTUM_EDGES={MAX_QUANTUM_EDGES}, truncating."
+            )
             rows = rows[:MAX_QUANTUM_EDGES]
             cols = cols[:MAX_QUANTUM_EDGES]
             data = data[:MAX_QUANTUM_EDGES]
         mx_mod = _get_mlx()
         if self._mlx_available and mx_mod is not None:
-            self.adjacency_matrix = {'rows': mx_mod.array(rows, dtype=mx_mod.int32), 'cols': mx_mod.array(cols, dtype=mx_mod.int32), 'data': mx_mod.array(data, dtype=mx_mod.float32), 'shape': (self.n_nodes, self.n_nodes)}
+            self.adjacency_matrix = {
+                "rows": mx_mod.array(rows, dtype=mx_mod.int32),
+                "cols": mx_mod.array(cols, dtype=mx_mod.int32),
+                "data": mx_mod.array(data, dtype=mx_mod.float32),
+                "shape": (self.n_nodes, self.n_nodes),
+            }
         else:
             np_mod = _get_numpy()
             sparse_mod = _get_scipy_sparse()
@@ -429,7 +471,7 @@ class QuantumInspiredPathFinder:
             ValueError: If start nodes are not in the graph.
         """
         if not self.initialized:
-            raise RuntimeError('PathFinder not initialized. Call initialize() first.')
+            raise RuntimeError("PathFinder not initialized. Call initialize() first.")
         start_indices = []
         for node in start_nodes:
             if node in self.node_to_idx:
@@ -437,7 +479,7 @@ class QuantumInspiredPathFinder:
             else:
                 logger.warning(f"Start node '{node}' not in graph, skipping")
         if not start_indices:
-            raise ValueError('No valid start nodes found in graph')
+            raise ValueError("No valid start nodes found in graph")
         n = self.n_nodes
         amplitude = 1.0 / math.sqrt(len(start_indices))
         if self._mlx_available and _get_mlx() is not None:
@@ -452,7 +494,7 @@ class QuantumInspiredPathFinder:
                 state[idx] = amplitude
         return state
 
-    def step(self, state: Any, steps: int=1) -> Any:
+    def step(self, state: Any, steps: int = 1) -> Any:
         """Perform quantum random walk steps using MLX.
 
         Implements a quantum walk with coin and shift operators.
@@ -467,9 +509,9 @@ class QuantumInspiredPathFinder:
             New quantum state after the walk steps.
         """
         if not self.initialized:
-            raise RuntimeError('PathFinder not initialized')
+            raise RuntimeError("PathFinder not initialized")
         if self.adjacency_matrix is None:
-            logger.warning('Empty graph, returning unchanged state')
+            logger.warning("Empty graph, returning unchanged state")
             return state
         current_state = state
         for _ in range(steps):
@@ -500,7 +542,7 @@ class QuantumInspiredPathFinder:
         Returns:
             State after coin operation.
         """
-        if self.config.coin_type == 'hadamard':
+        if self.config.coin_type == "hadamard":
             return self._apply_hadamard_coin(state)
         else:
             return self._apply_grover_coin(state)
@@ -579,9 +621,9 @@ class QuantumInspiredPathFinder:
         """
         if not isinstance(self.adjacency_matrix, dict):
             return state
-        rows = self.adjacency_matrix['rows']
-        cols = self.adjacency_matrix['cols']
-        data = self.adjacency_matrix['data']
+        rows = self.adjacency_matrix["rows"]
+        cols = self.adjacency_matrix["cols"]
+        data = self.adjacency_matrix["data"]
         n = self.n_nodes
         mx_mod = _get_mlx()
         # Vectorized scatter: degrees[rows]++ v jednom GPU kernelu
@@ -654,13 +696,13 @@ class QuantumInspiredPathFinder:
             State with amplified target amplitudes.
         """
         if not self.initialized:
-            raise RuntimeError('PathFinder not initialized')
+            raise RuntimeError("PathFinder not initialized")
         target_indices = []
         for node in target_nodes:
             if node in self.node_to_idx:
                 target_indices.append(self.node_to_idx[node])
         if not target_indices:
-            logger.warning('No valid target nodes found')
+            logger.warning("No valid target nodes found")
             return state
         amplified_state = self._grover_diffusion(state, target_indices)
         return amplified_state
@@ -700,7 +742,9 @@ class QuantumInspiredPathFinder:
             diffusion = 2 * mean - state
             return diffusion * strength
 
-    async def find_paths(self, start_nodes: list[str], target_nodes: list[str], max_steps: int | None=None) -> list[list[str]]:
+    async def find_paths(
+        self, start_nodes: list[str], target_nodes: list[str], max_steps: int | None = None
+    ) -> list[list[str]]:
         """Find paths from start nodes to target nodes using quantum walk.
 
         This is the main pathfinding method that combines quantum random walks
@@ -718,7 +762,7 @@ class QuantumInspiredPathFinder:
             RuntimeError: If pathfinder is not initialized.
         """
         if not self.initialized:
-            raise RuntimeError('PathFinder not initialized. Call initialize() first.')
+            raise RuntimeError("PathFinder not initialized. Call initialize() first.")
         max_steps = max_steps or self.config.max_steps
         try:
             state = self.initialize_state(start_nodes)
@@ -741,7 +785,7 @@ class QuantumInspiredPathFinder:
             paths = self._extract_paths(state, start_nodes, target_nodes)
             return paths
         except Exception as e:
-            logger.error(f'Error in find_paths: {e}')
+            logger.error(f"Error in find_paths: {e}")
             return []
         finally:
             gc.collect()
@@ -753,9 +797,9 @@ class QuantumInspiredPathFinder:
                     except Exception:  # noqa: BLE001
                         pass
                     try:
-                        if hasattr(mx_mod, 'clear_cache'):
+                        if hasattr(mx_mod, "clear_cache"):
                             mx_mod.clear_cache()
-                        elif hasattr(mx_mod.metal, 'clear_cache'):
+                        elif hasattr(mx_mod.metal, "clear_cache"):
                             mx_mod.metal.clear_cache()
                     except Exception:  # noqa: BLE001
                         pass
@@ -845,8 +889,8 @@ class QuantumInspiredPathFinder:
         predecessors = []
         if self._mlx_available and _get_mlx() is not None:
             if isinstance(self.adjacency_matrix, dict):
-                rows = self.adjacency_matrix['rows']
-                cols = self.adjacency_matrix['cols']
+                rows = self.adjacency_matrix["rows"]
+                cols = self.adjacency_matrix["cols"]
                 # Small arrays: convert to list once, then plain Python loop
                 # (O(E) ale E je malý pro targeted predecessor lookup)
                 cols_list = cols.tolist()
@@ -891,9 +935,9 @@ class QuantumInspiredPathFinder:
                         pass
             gc.collect()
             self.initialized = False
-            logger.info('QuantumPathFinder resources cleaned up')
+            logger.info("QuantumPathFinder resources cleaned up")
         except Exception as e:
-            logger.error(f'Error during cleanup: {e}')
+            logger.error(f"Error during cleanup: {e}")
 
     def get_state_statistics(self, state: Any) -> dict[str, float]:
         """Get statistics about a quantum state.
@@ -911,15 +955,18 @@ class QuantumInspiredPathFinder:
             entropy = float(-mx_mod.sum(state * state * mx_mod.log(state * state + 1e-10)).item())
         else:
             np_mod = _get_numpy()
-            prob_sum = float(np_mod.sum(state ** 2))
-            max_prob = float(np_mod.max(state ** 2))
-            probs = state ** 2
+            prob_sum = float(np_mod.sum(state**2))
+            max_prob = float(np_mod.max(state**2))
+            probs = state**2
             entropy = float(-np_mod.sum(probs * np_mod.log(probs + 1e-10)))
-        return {'total_probability': prob_sum, 'max_probability': max_prob, 'entropy': entropy, 'n_nodes': self.n_nodes}
+        return {"total_probability": prob_sum, "max_probability": max_prob, "entropy": entropy, "n_nodes": self.n_nodes}
+
+
 import hashlib as _hashlib
-from _core import aclose
+
 _DUCKPGQ_AVAILABLE = False
 _duckpgq_checked = False
+
 
 def _ensure_duckpgq(con) -> bool:
     """
@@ -932,12 +979,13 @@ def _ensure_duckpgq(con) -> bool:
         return _DUCKPGQ_AVAILABLE
     _duckpgq_checked = True
     try:
-        con.execute('INSTALL duckpgq FROM community; LOAD duckpgq;')
+        con.execute("INSTALL duckpgq FROM community; LOAD duckpgq;")
         _DUCKPGQ_AVAILABLE = True
     except Exception as e:
-        logger.debug(f'[GRAPH] duckpgq unavailable, using CTE fallback: {e}')
+        logger.debug(f"[GRAPH] duckpgq unavailable, using CTE fallback: {e}")
         _DUCKPGQ_AVAILABLE = False
     return _DUCKPGQ_AVAILABLE
+
 
 def _stable_node_id(value: str) -> int:
     """
@@ -945,8 +993,9 @@ def _stable_node_id(value: str) -> int:
     NEPOUŽÍVEJ hash() — není deterministický mezi procesy (PYTHONHASHSEED).
     SHA1 prvních 8 bytů = 64bit, oríznutý na 63bit (positive BIGINT).
     """
-    node_64bit = int.from_bytes(_hashlib.sha256(value.encode('utf-8')).digest()[:8], 'little')
+    node_64bit = int.from_bytes(_hashlib.sha256(value.encode("utf-8")).digest()[:8], "little")
     return node_64bit & 9223372036854775807
+
 
 class DuckPGQGraph:
     """
@@ -965,9 +1014,20 @@ class DuckPGQGraph:
     Fallback: recursive CTE pokud duckpgq extension nedostupná.
     Výhody: vectorized Arrow IPC, zero-copy, zvládne 10M+ hran.
     """
-    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_duckdb', '_ioc_buffer', '_lock_acquired', '_lock_mgr', '_obs_buffer', 'con', 'db_path'))
 
-    def __init__(self, db_path: str | None=None, temp_dir: str | None=None):
+    __slots__ = (
+        "_BUFFER_FLUSH_SIZE",
+        "_closed",
+        "_duckdb",
+        "_ioc_buffer",
+        "_lock_acquired",
+        "_lock_mgr",
+        "_obs_buffer",
+        "con",
+        "db_path",
+    )
+
+    def __init__(self, db_path: str | None = None, temp_dir: str | None = None) -> None:
         """Initialize DuckPGQGraph.
 
         Args:
@@ -977,19 +1037,22 @@ class DuckPGQGraph:
                      to keep all I/O in RAM and off SSD.
         """
         import duckdb
+
         if db_path is None:
             from hledac.universal.paths import get_ioc_db_path
+
             db_path = str(get_ioc_db_path())
         self.db_path = db_path
         self._duckdb = duckdb
         from hledac.universal.graph.lock_manager import GraphLockManager, cleanup_stale_graph_lock
+
         removed, reason = cleanup_stale_graph_lock(db_path)
         if removed:
-            logger.debug(f'[GRAPH] Cleaned stale lock: {reason}')
+            logger.debug(f"[GRAPH] Cleaned stale lock: {reason}")
         self._lock_mgr = GraphLockManager(db_path)
         self._lock_acquired = self._lock_mgr.acquire()
         if not self._lock_acquired:
-            logger.warning(f'[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY')
+            logger.warning(f"[GRAPH] Lock denied ({self._lock_mgr.denial_reason}), opening READ-ONLY")
         self._cleanup_stale_wal_files()
         try:
             read_only = not self._lock_acquired
@@ -997,35 +1060,37 @@ class DuckPGQGraph:
             if temp_dir:
                 try:
                     from pathlib import Path
+
                     validated = Path(temp_dir)
                     validated.mkdir(parents=True, exist_ok=True)
                     self.con.execute(f"PRAGMA temp_directory='{validated}';")
                 except Exception as e:
-                    logger.debug(f'[GRAPH] temp_directory pragma failed: {e}')
+                    logger.debug(f"[GRAPH] temp_directory pragma failed: {e}")
             if read_only:
-                logger.warning('[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)')
+                logger.warning("[GRAPH] DuckDB operating in READ-ONLY mode (lock unavailable)")
         except Exception as e:
-            lock_path = db_path + '.lock'
+            lock_path = db_path + ".lock"
             try:
                 import os as _os
+
                 if _os.path.exists(lock_path):
                     _os.unlink(lock_path)
             except Exception:  # noqa: BLE001
                 pass
-            logger.error(f'[GRAPH] DuckDB connection failed: {e}')
+            logger.error(f"[GRAPH] DuckDB connection failed: {e}")
             raise
         _ensure_duckpgq(self.con)
         try:
-            self.con.execute('PRAGMA journal_mode=WAL')
-            self.con.execute('PRAGMA busy_timeout=5000')
-            self.con.execute('PRAGMA synchronous=NORMAL')
-            self.con.execute('PRAGMA wal_autocheckpoint=262144')
+            self.con.execute("PRAGMA journal_mode=WAL")
+            self.con.execute("PRAGMA busy_timeout=5000")
+            self.con.execute("PRAGMA synchronous=NORMAL")
+            self.con.execute("PRAGMA wal_autocheckpoint=262144")
             # M1 8GB: memory_limit + threads + preserve_insertion_order
             self.con.execute("SET memory_limit = '1GB'")
-            self.con.execute('PRAGMA threads = 2')
-            self.con.execute('SET preserve_insertion_order = false')
+            self.con.execute("PRAGMA threads = 2")
+            self.con.execute("SET preserve_insertion_order = false")
         except Exception as e:
-            logger.debug(f'[GRAPH] WAL pragma init failed: {e}')
+            logger.debug(f"[GRAPH] WAL pragma init failed: {e}")
         self._init_schema()
         self._ioc_buffer: list[tuple[str, str, float, float | None]] = []
         self._closed = False  # ISSUE-5.1: close guard — also in __slots__
@@ -1038,10 +1103,10 @@ class DuckPGQGraph:
         Volat po každém WINDUP aby data přežila restart.
         """
         try:
-            self.con.execute('CHECKPOINT;')
-            logger.info(f'[GRAPH] DuckDB checkpoint → {self.db_path}')
+            self.con.execute("CHECKPOINT;")
+            logger.info(f"[GRAPH] DuckDB checkpoint → {self.db_path}")
         except Exception as e:
-            logger.warning(f'[GRAPH] Checkpoint failed: {e}')
+            logger.warning(f"[GRAPH] Checkpoint failed: {e}")
 
     def close(self) -> None:
         """
@@ -1055,29 +1120,30 @@ class DuckPGQGraph:
         try:
             self.flush_buffers()
         except Exception as e:
-            logger.debug(f'[GRAPH] close: flush_buffers failed: {e}')
+            logger.debug(f"[GRAPH] close: flush_buffers failed: {e}")
         try:
-            self.con.execute('CHECKPOINT;')
+            self.con.execute("CHECKPOINT;")
         except Exception:  # noqa: BLE001
             pass
         try:
             self.con.close()
         except Exception as e:
-            logger.debug(f'[GRAPH] close: con.close() failed: {e}')
+            logger.debug(f"[GRAPH] close: con.close() failed: {e}")
         # R12: Flush LRU cache and drop thread-local DuckDB connections in Rust
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _rust_drop_connections = rust.raw.drop_connections
             _rust_drop_connections()
         except Exception:  # noqa: BLE001
             pass  # fail-soft: Rust layer unavailable
         # Release graph lock so other processes can acquire it
-        if hasattr(self, '_lock_mgr') and self._lock_mgr is not None:
+        if hasattr(self, "_lock_mgr") and self._lock_mgr is not None:
             try:
                 self._lock_mgr.release()
             except Exception as e:
-                logger.debug(f'[GRAPH] close: lock release failed: {e}')
+                logger.debug(f"[GRAPH] close: lock release failed: {e}")
         self._closed = True
 
     def stats(self) -> dict:
@@ -1107,7 +1173,7 @@ class DuckPGQGraph:
         No auto-flush here — explicit flush_buffers() called in winddown.
         Thread-safe via GIL (called from async context on main thread).
         """
-        if getattr(self, '_closed', False):
+        if getattr(self, "_closed", False):
             return
         self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
 
@@ -1117,7 +1183,7 @@ class DuckPGQGraph:
 
         Thread-safe via GIL (called from async context on main thread).
         """
-        if getattr(self, '_closed', False):
+        if getattr(self, "_closed", False):
             return
         self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
 
@@ -1132,7 +1198,7 @@ class DuckPGQGraph:
             obs_flushed: count of observation edges written to the graph.
         """
         if not self._ioc_buffer and (not self._obs_buffer):
-            return {'ioc_flushed': 0, 'obs_flushed': 0}
+            return {"ioc_flushed": 0, "obs_flushed": 0}
         ioc_copy = self._ioc_buffer[:]
         obs_copy = self._obs_buffer[:]
         self._ioc_buffer.clear()
@@ -1140,6 +1206,7 @@ class DuckPGQGraph:
 
         # [META]-006: Resolve observed_at (None → time.time())
         import time as _time
+
         now = _time.time()
         resolved_ioc_copy = [
             (ioc_type, value, conf, (obs_at if obs_at is not None else now))
@@ -1151,21 +1218,21 @@ class DuckPGQGraph:
         try:
             if resolved_ioc_copy:
                 rows = [
-                    (value, ioc_type, confidence, '', obs_at)
+                    (value, ioc_type, confidence, "", obs_at)
                     for ioc_type, value, confidence, obs_at in resolved_ioc_copy
                 ]
                 ioc_flushed = self.upsert_ioc_batch(rows)
             if obs_copy:
                 for id_a, id_b, fid, _ts_val, _src in obs_copy:
                     try:
-                        self.add_relation(id_a, id_b, 'observed', 1.0, fid)
+                        self.add_relation(id_a, id_b, "observed", 1.0, fid)
                         obs_flushed += 1
                     except Exception:  # noqa: BLE001
                         pass
-            logger.info(f'[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations')
+            logger.info(f"[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations")
         except Exception as e:
-            logger.warning(f'[GRAPH] flush_buffers failed: {e}')
-        return {'ioc_flushed': ioc_flushed, 'obs_flushed': obs_flushed}
+            logger.warning(f"[GRAPH] flush_buffers failed: {e}")
+        return {"ioc_flushed": ioc_flushed, "obs_flushed": obs_flushed}
 
     def merge_from_parquet(self, parquet_glob: str) -> int:
         """
@@ -1175,15 +1242,18 @@ class DuckPGQGraph:
         """
         try:
             import os
+
             safe_glob = os.path.normpath(parquet_glob)
-            if safe_glob.startswith('..') or os.path.isabs(safe_glob):
-                raise ValueError(f'unsafe parquet path: {parquet_glob}')
-            result = self.con.execute(f"\n                INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)\n                SELECT\n                    hash(ioc),\n                    ioc,\n                    ioc_type,\n                    MAX(confidence),\n                    MAX(source)\n                FROM read_parquet('{safe_glob}')\n                WHERE ioc IS NOT NULL AND length(ioc) > 3\n                GROUP BY ioc, ioc_type\n            ").fetchone()
+            if safe_glob.startswith("..") or os.path.isabs(safe_glob):
+                raise ValueError(f"unsafe parquet path: {parquet_glob}")
+            result = self.con.execute(
+                f"\n                INSERT OR IGNORE INTO ioc_nodes (id, value, ioc_type, confidence, source)\n                SELECT\n                    hash(ioc),\n                    ioc,\n                    ioc_type,\n                    MAX(confidence),\n                    MAX(source)\n                FROM read_parquet('{safe_glob}')\n                WHERE ioc IS NOT NULL AND length(ioc) > 3\n                GROUP BY ioc, ioc_type\n            "
+            ).fetchone()
             count = result[0] if result else 0
-            logger.info(f'[GRAPH] Merged {count} IOC nodes from {parquet_glob}')
+            logger.info(f"[GRAPH] Merged {count} IOC nodes from {parquet_glob}")
             return count
         except Exception as e:
-            logger.warning(f'[GRAPH] merge_from_parquet failed: {e}')
+            logger.warning(f"[GRAPH] merge_from_parquet failed: {e}")
             return 0
 
     def export_edge_list(self) -> Iterator[tuple[str, str, str, float]]:
@@ -1196,23 +1266,31 @@ class DuckPGQGraph:
         Peak memory ≈ batch_size × row_size (~16 MB) instead of ~400 MB.
         """
         try:
-            for batch in _duckdb_fetch_bounded(self.con, '''
+            for batch in _duckdb_fetch_bounded(
+                self.con,
+                """
                 SELECT s.value AS src_value, d.value AS dst_value, e.rel_type, e.weight
                 FROM ioc_edges e
                 JOIN ioc_nodes s ON s.id = e.src_id
                 JOIN ioc_nodes d ON d.id = e.dst_id
                 ORDER BY e.weight DESC
                 LIMIT 50000
-                '''):
+                """,
+            ):
                 yield from batch
         except Exception as e:
-            logger.warning(f'[GRAPH] export_edge_list failed: {e}')
+            logger.warning(f"[GRAPH] export_edge_list failed: {e}")
 
-    def get_top_nodes_by_degree(self, n: int=20) -> list[dict]:
+    def get_top_nodes_by_degree(self, n: int = 20) -> list[dict]:
         """Top N IOC nodes seřazených podle out-degree (nejpropojeno)."""
         import duckdb
+
         try:
-            rows_gen = _duckdb_fetch_bounded(self.con, '\n                SELECT n.value, n.ioc_type, n.confidence,\n                       COUNT(e.dst_id) as degree\n                FROM ioc_nodes n\n                LEFT JOIN ioc_edges e ON e.src_id = n.id\n                GROUP BY n.id, n.value, n.ioc_type, n.confidence\n                ORDER BY degree DESC\n                LIMIT ?\n                ', [n])
+            rows_gen = _duckdb_fetch_bounded(
+                self.con,
+                "\n                SELECT n.value, n.ioc_type, n.confidence,\n                       COUNT(e.dst_id) as degree\n                FROM ioc_nodes n\n                LEFT JOIN ioc_edges e ON e.src_id = n.id\n                GROUP BY n.id, n.value, n.ioc_type, n.confidence\n                ORDER BY degree DESC\n                LIMIT ?\n                ",
+                [n],
+            )
             result: list[dict] = []
             for batch in rows_gen:
                 for row in batch:
@@ -1220,12 +1298,8 @@ class DuckPGQGraph:
                         result.append(row)
             return result
         except (duckdb.Error, ImportError) as e:
-            logger.warning(f'[GRAPH] get_top_nodes_by_degree failed: {e}')
+            logger.warning(f"[GRAPH] get_top_nodes_by_degree failed: {e}")
             return []
-
-    # ---------------------------------------------------------------------------
-    # ISSUE #14: GraphAnalyticsBackend — PageRank, community detection, shortest path
-    # ---------------------------------------------------------------------------
 
     def shortest_path(self, src: str, dst: str, max_hops: int = 10) -> list[str] | None:
         """
@@ -1286,7 +1360,7 @@ class DuckPGQGraph:
                 return None
             return path_list
         except Exception as e:
-            logger.debug(f'[GRAPH] shortest_path({src}, {dst}) failed: {e}')
+            logger.debug(f"[GRAPH] shortest_path({src}, {dst}) failed: {e}")
             return None
 
     def pagerank(self, max_iter: int = 100, damping: float = 0.85) -> dict[str, float]:
@@ -1307,15 +1381,12 @@ class DuckPGQGraph:
         early exit on convergence (eps=1e-6).
         """
         try:
-            # Check node count first
-            count_row = self.con.execute(
-                "SELECT COUNT(*) FROM ioc_nodes WHERE ioc_type IS NOT NULL"
-            ).fetchone()
+            count_row = self.con.execute("SELECT COUNT(*) FROM ioc_nodes WHERE ioc_type IS NOT NULL").fetchone()
             if not count_row or count_row[0] == 0:
                 return {}
             node_count = count_row[0]
             if node_count > 50_000:
-                logger.warning(f'[GRAPH] PageRank: {node_count} nodes exceeds 50k limit, skipping')
+                logger.warning(f"[GRAPH] PageRank: {node_count} nodes exceeds 50k limit, skipping")
                 return {}
 
             query = f"""
@@ -1361,11 +1432,11 @@ class DuckPGQGraph:
             pagerank_scores: dict[str, float] = {}
             for batch in _duckdb_fetch_bounded(self.con, query, batch_size=1024):
                 for row in batch:
-                    if row.get('node_id') is not None:
-                        pagerank_scores[str(row['node_id'])] = float(row['pagerank'])
+                    if row.get("node_id") is not None:
+                        pagerank_scores[str(row["node_id"])] = float(row["pagerank"])
             return pagerank_scores
         except Exception as e:
-            logger.warning(f'[GRAPH] pagerank failed: {e}')
+            logger.warning(f"[GRAPH] pagerank failed: {e}")
             return {}
 
     def community_detection(self, method: str = "louvain") -> dict[int, list[str]]:
@@ -1392,15 +1463,12 @@ class DuckPGQGraph:
         # Only label propagation implemented (method param kept for API compat)
         assert method == "louvain", "Only 'louvain' (label propagation) is supported"
         try:
-            # Check node count
-            count_row = self.con.execute(
-                "SELECT COUNT(*) FROM ioc_nodes WHERE ioc_type IS NOT NULL"
-            ).fetchone()
+            count_row = self.con.execute("SELECT COUNT(*) FROM ioc_nodes WHERE ioc_type IS NOT NULL").fetchone()
             if not count_row or count_row[0] == 0:
                 return {}
             node_count = count_row[0]
             if node_count > 50_000:
-                logger.warning(f'[GRAPH] community_detection: {node_count} nodes exceeds 50k limit')
+                logger.warning(f"[GRAPH] community_detection: {node_count} nodes exceeds 50k limit")
                 return {}
 
             max_iterations = 50
@@ -1462,23 +1530,19 @@ class DuckPGQGraph:
             communities: dict[int, list[str]] = {}
             for batch in _duckdb_fetch_bounded(self.con, query, batch_size=2048):
                 for row in batch:
-                    label = int(row.get('label', 0)) if row.get('label') is not None else 0
-                    value = str(row.get('node_value', '')) if row.get('node_value') is not None else ""
+                    label = int(row.get("label", 0)) if row.get("label") is not None else 0
+                    value = str(row.get("node_value", "")) if row.get("node_value") is not None else ""
                     if value:
                         communities.setdefault(label, []).append(value)
 
-            # Clean up: compact labels to 0..N-1
             if communities:
                 unique_labels = sorted(communities.keys())
                 label_map = {old: new for new, old in enumerate(unique_labels)}
-                communities = {
-                    label_map[old]: vals
-                    for old, vals in communities.items()
-                }
+                communities = {label_map[old]: vals for old, vals in communities.items()}
 
             return communities
         except Exception as e:
-            logger.warning(f'[GRAPH] community_detection failed: {e}')
+            logger.warning(f"[GRAPH] community_detection failed: {e}")
             return {}
 
     def predict_edges(self, min_confidence: float = 0.3, max_candidates: int = 10000) -> list[dict]:
@@ -1502,26 +1566,31 @@ class DuckPGQGraph:
             # Try Rust implementation first
             try:
                 from hledac.universal._core.rust_backend import rust as _rust
+
                 if _rust is not None and _rust.is_available and _rust.link_predictor is not None:
                     result = _rust.link_predictor.predict_links(
                         self.db_path,
                         min_adamic_adar=0.01,
                         min_jaccard=min_confidence,
                         max_candidates=max_candidates,
-    )
-                    if result and hasattr(result, 'edges'):
+                    )
+                    if result and hasattr(result, "edges"):
                         edges = []
                         for e in result.edges:
-                            edges.append({
-                                'src_id': e.src_id,
-                                'dst_id': e.dst_id,
-                                'adamic_adar': e.adamic_adar,
-                                'jaccard': e.jaccard,
-                                'pref_attach': e.preferential_attachment,
-                                'common_neighbors': e.common_neighbors,
-                                'method': e.method,
-                                'confidence': self._compute_confidence(e.adamic_adar, e.jaccard, e.preferential_attachment),
-                            })
+                            edges.append(
+                                {
+                                    "src_id": e.src_id,
+                                    "dst_id": e.dst_id,
+                                    "adamic_adar": e.adamic_adar,
+                                    "jaccard": e.jaccard,
+                                    "pref_attach": e.preferential_attachment,
+                                    "common_neighbors": e.common_neighbors,
+                                    "method": e.method,
+                                    "confidence": self._compute_confidence(
+                                        e.adamic_adar, e.jaccard, e.preferential_attachment
+                                    ),
+                                }
+                            )
                         return edges
             except ImportError:  # noqa: BLE001
                 pass
@@ -1530,7 +1599,7 @@ class DuckPGQGraph:
             return self._predict_edges_python(min_confidence, max_candidates)
 
         except Exception as e:
-            logger.warning(f'[GRAPH] predict_edges failed: {e}')
+            logger.warning(f"[GRAPH] predict_edges failed: {e}")
             return []
 
     def _predict_edges_python(self, min_confidence: float, max_candidates: int) -> list[dict]:
@@ -1539,7 +1608,6 @@ class DuckPGQGraph:
         from collections import defaultdict
 
         try:
-            # Build adjacency list
             adjacency: dict[int, list[int]] = defaultdict(list)
             degrees: dict[int, int] = defaultdict(int)
 
@@ -1595,23 +1663,25 @@ class DuckPGQGraph:
                 confidence = self._compute_confidence(adamic_adar, jaccard, float(pref_attach))
 
                 if confidence >= min_confidence:
-                    edges.append({
-                        'src_id': src,
-                        'dst_id': dst,
-                        'adamic_adar': adamic_adar,
-                        'jaccard': jaccard,
-                        'pref_attach': float(pref_attach),
-                        'common_neighbors': len(common),
-                        'method': 'adamic_adar' if adamic_adar > 0.3 else 'jaccard',
-                        'confidence': confidence,
-                    })
+                    edges.append(
+                        {
+                            "src_id": src,
+                            "dst_id": dst,
+                            "adamic_adar": adamic_adar,
+                            "jaccard": jaccard,
+                            "pref_attach": float(pref_attach),
+                            "common_neighbors": len(common),
+                            "method": "adamic_adar" if adamic_adar > 0.3 else "jaccard",
+                            "confidence": confidence,
+                        }
+                    )
 
             # Sort by confidence
             edges.sort(key=itemgetter("confidence"), reverse=True)
             return edges
 
         except Exception as e:
-            logger.warning(f'[GRAPH] _predict_edges_python failed: {e}')
+            logger.warning(f"[GRAPH] _predict_edges_python failed: {e}")
             return []
 
     def _compute_confidence(self, adamic_adar: float, jaccard: float, pref_attach: float) -> float:
@@ -1656,44 +1726,38 @@ class DuckPGQGraph:
             try:
                 # BUG-F FIX: Use hasattr pattern (matches graph_rag.py:945) instead of _rust.graph_centrality is not None
                 from hledac.universal._core.rust_backend import rust as _rust
+
                 _rust_ext = _rust.raw.module
-                if _rust is not None and _rust.is_available and hasattr(_rust_ext, 'batch_centrality_all'):
+                if _rust is not None and _rust.is_available and hasattr(_rust_ext, "batch_centrality_all"):
                     raw = _rust_ext.batch_centrality_all(adjacency)
                     # raw: {node_id: {"degree": float, "betweenness": float, ...}}
                     # Sort by degree desc, return top_k
-                    sorted_nodes = sorted(
-                        raw.items(),
-                        key=lambda x: x[1].get('degree', 0.0),
-                        reverse=True
-                    )[:top_k]
-                    return [
-                        {'node_id': node_id, **metrics}
-                        for node_id, metrics in sorted_nodes
-                    ]
+                    sorted_nodes = sorted(raw.items(), key=lambda x: x[1].get("degree", 0.0), reverse=True)[:top_k]
+                    return [{"node_id": node_id, **metrics} for node_id, metrics in sorted_nodes]
             except Exception as e:
-                logger.debug(f'[GRAPH] Rust centrality unavailable, falling back: {e}')
+                logger.debug(f"[GRAPH] Rust centrality unavailable, falling back: {e}")
 
             # Fallback: DuckDB SQL degree + DuckDB pagerank
             top_nodes = self.get_top_nodes_by_degree(top_k * 2)
             if not top_nodes:
                 return []
-            node_ids = [n['value'] for n in top_nodes if n.get('value')]
+            node_ids = [n["value"] for n in top_nodes if n.get("value")]
             if not node_ids:
                 return []
             # Betweenness approximation via DuckDB recursive CTE (simplified)
             pr_scores = self.pagerank(max_iter=30)
             result = []
             for node_id in node_ids[:top_k]:
-                entry = {'node_id': node_id, 'degree': 0.0, 'pagerank': 0.0}
+                entry = {"node_id": node_id, "degree": 0.0, "pagerank": 0.0}
                 for n in top_nodes:
-                    if n.get('value') == node_id:
-                        entry['degree'] = float(n.get('degree', 0))
+                    if n.get("value") == node_id:
+                        entry["degree"] = float(n.get("degree", 0))
                         break
-                entry['pagerank'] = pr_scores.get(node_id, 0.0)
+                entry["pagerank"] = pr_scores.get(node_id, 0.0)
                 result.append(entry)
             return result
         except Exception as e:
-            logger.warning(f'[GRAPH] batch_centrality_all failed: {e}')
+            logger.warning(f"[GRAPH] batch_centrality_all failed: {e}")
             return []
 
     def _cleanup_stale_wal_files(self) -> None:
@@ -1710,54 +1774,59 @@ class DuckPGQGraph:
         to avoid blocking the event loop with time.sleep() in async context.
         """
         import os
-        if not getattr(self, '_lock_acquired', True):
-            logger.debug('[GRAPH] WAL cleanup skipped: lock not held (DB in use by another process)')
+
+        if not getattr(self, "_lock_acquired", True):
+            logger.debug("[GRAPH] WAL cleanup skipped: lock not held (DB in use by another process)")
             return
-        wal_path = self.db_path + '.wal'
-        shm_path = self.db_path + '.shm'
-        lock_path = self.db_path + '.lock'
+        wal_path = self.db_path + ".wal"
+        shm_path = self.db_path + ".shm"
+        lock_path = self.db_path + ".lock"
         if os.path.exists(wal_path):
             # R-1 FIX: Check DB aliveness via .lock file presence instead of
             # creating a new DuckDB connection on every startup (30-50ms overhead).
             # If .lock exists, another process has the DB open → WAL is live.
             # Only truncate if no lock file (orphan WAL from crashed process).
-            lock_file = self.db_path + '.lock'
+            lock_file = self.db_path + ".lock"
             if os.path.exists(lock_file):
-                logger.debug('[GRAPH] WAL cleanup skipped: DB locked by another process')
+                logger.debug("[GRAPH] WAL cleanup skipped: DB locked by another process")
                 return
             try:
                 if os.path.exists(wal_path):
                     os.truncate(wal_path, 0)
-                    logger.warning(f'[GRAPH] Truncated stale WAL: {wal_path}')
+                    logger.warning(f"[GRAPH] Truncated stale WAL: {wal_path}")
             except Exception as e:
-                logger.debug(f'[GRAPH] WAL truncate failed: {e}')
+                logger.debug(f"[GRAPH] WAL truncate failed: {e}")
         if os.path.exists(shm_path):
             try:
                 os.truncate(shm_path, 0)
-                logger.warning(f'[GRAPH] Cleared stale SHM: {shm_path}')
+                logger.warning(f"[GRAPH] Cleared stale SHM: {shm_path}")
             except Exception as e:
-                logger.debug(f'[GRAPH] SHM clear failed: {e}')
+                logger.debug(f"[GRAPH] SHM clear failed: {e}")
         if os.path.exists(lock_path):
             try:
                 os.unlink(lock_path)
-                logger.warning(f'[GRAPH] Removed stale DuckDB lock: {lock_path}')
+                logger.warning(f"[GRAPH] Removed stale DuckDB lock: {lock_path}")
             except Exception as e:
-                logger.debug(f'[GRAPH] DuckDB lock file removal failed: {e}')
+                logger.debug(f"[GRAPH] DuckDB lock file removal failed: {e}")
 
-    def _init_schema(self):
+    def _init_schema(self) -> None:
         # [META]-006: Schema includes earliest_observed, latest_observed, observation_count
         # MODERN-25: Added classification_status and provenance columns for full traceability
-        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id               BIGINT PRIMARY KEY,\n                value            VARCHAR NOT NULL UNIQUE,\n                ioc_type         VARCHAR,\n                confidence       FLOAT,\n                source           VARCHAR,\n                first_seen       TIMESTAMP DEFAULT now(),\n                observed_at      DOUBLE,\n                earliest_observed DOUBLE,\n                latest_observed  DOUBLE,\n                observation_count INTEGER DEFAULT 1,\n                classification_status VARCHAR DEFAULT \'classified\',\n                provenance       TEXT\n            )\n        ')
-        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_edges (\n                src_id   BIGINT REFERENCES ioc_nodes(id),\n                dst_id   BIGINT REFERENCES ioc_nodes(id),\n                rel_type VARCHAR,\n                weight   FLOAT DEFAULT 1.0,\n                evidence VARCHAR\n            )\n        ')
-        self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)')
-        self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)')
+        self.con.execute(
+            "\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id               BIGINT PRIMARY KEY,\n                value            VARCHAR NOT NULL UNIQUE,\n                ioc_type         VARCHAR,\n                confidence       FLOAT,\n                source           VARCHAR,\n                first_seen       TIMESTAMP DEFAULT now(),\n                observed_at      DOUBLE,\n                earliest_observed DOUBLE,\n                latest_observed  DOUBLE,\n                observation_count INTEGER DEFAULT 1,\n                classification_status VARCHAR DEFAULT 'classified',\n                provenance       TEXT\n            )\n        "
+        )
+        self.con.execute(
+            "\n            CREATE TABLE IF NOT EXISTS ioc_edges (\n                src_id   BIGINT REFERENCES ioc_nodes(id),\n                dst_id   BIGINT REFERENCES ioc_nodes(id),\n                rel_type VARCHAR,\n                weight   FLOAT DEFAULT 1.0,\n                evidence VARCHAR\n            )\n        "
+        )
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)")
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)")
 
     def add_ioc(
         self,
         value: str,
-        ioc_type: str = 'unknown',
+        ioc_type: str = "unknown",
         confidence: float = 0.5,
-        source: str = '',
+        source: str = "",
         observed_at: float | None = None,
         *,
         provenance: dict | None = None,
@@ -1782,10 +1851,11 @@ class DuckPGQGraph:
         Returns:
             Stable node id (xxhash64-based).
         """
-        if getattr(self, '_lock_acquired', True) is False:
-            logger.warning(f'[GRAPH] READ-ONLY — add_ioc({value!r}) ignored')
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — add_ioc({value!r}) ignored")
             return _stable_node_id(value)
         import time as _time
+
         row_id = _stable_node_id(value)
         ts = observed_at if observed_at is not None else _time.time()
 
@@ -1794,29 +1864,30 @@ class DuckPGQGraph:
         if provenance is not None:
             try:
                 import orjson
-                provenance_json = orjson.dumps(provenance).decode('utf-8')
+
+                provenance_json = orjson.dumps(provenance).decode("utf-8")
             except Exception:
                 provenance_json = None
 
         self.con.execute(
-            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, earliest_observed, latest_observed, observation_count, classification_status, provenance)\n'
-            '               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)\n'
-            '               ON CONFLICT (id) DO UPDATE SET\n'
-            '               latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n'
-            '                                      THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n'
-            '               observation_count = ioc_nodes.observation_count + 1,\n'
-            '               classification_status = excluded.classification_status,\n'
-            '               provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
-            [row_id, value, ioc_type, confidence, source, ts, ts, ts, classification_status, provenance_json]
-    )
+            "INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, earliest_observed, latest_observed, observation_count, classification_status, provenance)\n"
+            "               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)\n"
+            "               ON CONFLICT (id) DO UPDATE SET\n"
+            "               latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n"
+            "                                      THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n"
+            "               observation_count = ioc_nodes.observation_count + 1,\n"
+            "               classification_status = excluded.classification_status,\n"
+            "               provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)",
+            [row_id, value, ioc_type, confidence, source, ts, ts, ts, classification_status, provenance_json],
+        )
         return row_id
 
     def upsert_ioc(
         self,
         ioc_value: str,
-        ioc_type: str = 'unknown',
+        ioc_type: str = "unknown",
         confidence: float = 0.5,
-        source: str = '',
+        source: str = "",
         observed_at: float | None = None,
         *,
         provenance: dict | None = None,
@@ -1842,9 +1913,14 @@ class DuckPGQGraph:
             Stable node id (xxhash64-based).
         """
         return self.add_ioc(
-            ioc_value, ioc_type, confidence, source, observed_at=observed_at,
-            provenance=provenance, classification_status=classification_status
-    )
+            ioc_value,
+            ioc_type,
+            confidence,
+            source,
+            observed_at=observed_at,
+            provenance=provenance,
+            classification_status=classification_status,
+        )
 
     def upsert_ioc_batch(
         self,
@@ -1871,11 +1947,12 @@ class DuckPGQGraph:
         """
         if not rows:
             return 0
-        if getattr(self, '_lock_acquired', True) is False:
-            logger.warning(f'[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored')
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored")
             return 0
         # [META]-012: Use provided default or current time
         import time as _time
+
         _now = observed_at if observed_at is not None else _time.time()
         normalized_rows: list[tuple[int, str, str, float, str, float]] = []
         for row in rows:
@@ -1892,38 +1969,42 @@ class DuckPGQGraph:
         if provenance is not None:
             try:
                 import orjson
-                provenance_json = orjson.dumps(provenance).decode('utf-8')
+
+                provenance_json = orjson.dumps(provenance).decode("utf-8")
             except Exception:
                 provenance_json = None
 
         # Use INSERT with ON CONFLICT DO UPDATE for upsert
         # MODERN-25: Add provenance and classification_status columns
         self.con.executemany(
-            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, classification_status, provenance)\n'
-            '             VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n'
-            '             ON CONFLICT (id) DO UPDATE SET\n'
-            '             observed_at = CASE WHEN excluded.observed_at > ioc_nodes.observed_at OR ioc_nodes.observed_at IS NULL\n'
-            '                               THEN excluded.observed_at ELSE ioc_nodes.observed_at END,\n'
-            '             earliest_observed = CASE WHEN ioc_nodes.earliest_observed IS NULL OR excluded.observed_at < ioc_nodes.earliest_observed\n'
-            '                                     THEN excluded.observed_at ELSE ioc_nodes.earliest_observed END,\n'
-            '             latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n'
-            '                                    THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n'
-            '             observation_count = ioc_nodes.observation_count + 1,\n'
-            '             classification_status = CASE WHEN ioc_nodes.classification_status = \'classified\' THEN ioc_nodes.classification_status ELSE excluded.classification_status END,\n'
-            '             provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)',
-            [(row[0], row[1], row[2], row[3], row[4], row[5], classification_status, provenance_json) for row in normalized_rows]
-    )
+            "INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, classification_status, provenance)\n"
+            "             VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n"
+            "             ON CONFLICT (id) DO UPDATE SET\n"
+            "             observed_at = CASE WHEN excluded.observed_at > ioc_nodes.observed_at OR ioc_nodes.observed_at IS NULL\n"
+            "                               THEN excluded.observed_at ELSE ioc_nodes.observed_at END,\n"
+            "             earliest_observed = CASE WHEN ioc_nodes.earliest_observed IS NULL OR excluded.observed_at < ioc_nodes.earliest_observed\n"
+            "                                     THEN excluded.observed_at ELSE ioc_nodes.earliest_observed END,\n"
+            "             latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n"
+            "                                    THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n"
+            "             observation_count = ioc_nodes.observation_count + 1,\n"
+            "             classification_status = CASE WHEN ioc_nodes.classification_status = 'classified' THEN ioc_nodes.classification_status ELSE excluded.classification_status END,\n"
+            "             provenance = COALESCE(excluded.provenance, ioc_nodes.provenance)",
+            [
+                (row[0], row[1], row[2], row[3], row[4], row[5], classification_status, provenance_json)
+                for row in normalized_rows
+            ],
+        )
         return len(normalized_rows)
 
-    def add_relation(self, src: str, dst: str, rel_type: str, weight: float=1.0, evidence: str=''):
-        if getattr(self, '_lock_acquired', True) is False:
-            logger.warning(f'[GRAPH] READ-ONLY — add_relation({src!r}→{dst!r}) ignored')
+    def add_relation(self, src: str, dst: str, rel_type: str, weight: float = 1.0, evidence: str = "") -> None:
+        if getattr(self, "_lock_acquired", True) is False:
+            logger.warning(f"[GRAPH] READ-ONLY — add_relation({src!r}→{dst!r}) ignored")
             return
         src_id = self.add_ioc(src)
         dst_id = self.add_ioc(dst)
-        self.con.execute('INSERT INTO ioc_edges VALUES (?, ?, ?, ?, ?)', [src_id, dst_id, rel_type, weight, evidence])
+        self.con.execute("INSERT INTO ioc_edges VALUES (?, ?, ?, ?, ?)", [src_id, dst_id, rel_type, weight, evidence])
 
-    def find_connected(self, value: str, max_hops: int=2) -> list[dict]:
+    def find_connected(self, value: str, max_hops: int = 2) -> list[dict]:
         """SQL/PGQ MATCH s recursive CTE fallback. max_hops je vzdy respektován."""
         return self._find_connected_base(value, max_hops)
 
@@ -1977,20 +2058,14 @@ class DuckPGQGraph:
             loop = asyncio.get_running_loop()
 
             # Submit all calls to duckdb_pool executor in one gather — workers actually work
-            futures = [
-                loop.run_in_executor(executor, self._find_connected_base, value, max_hops)
-                for value in values
-            ]
+            futures = [loop.run_in_executor(executor, self._find_connected_base, value, max_hops) for value in values]
 
             gathered = loop.run_until_complete(asyncio.gather(*futures, return_exceptions=True))
             _, errors = _check_gathered(gathered)
             if errors:
-                logger.debug('[QPF] find_connected_with_similarity batch: %d task failures', len(errors))
+                logger.debug("[QPF] find_connected_with_similarity batch: %d task failures", len(errors))
 
-            return {
-                v: r if not isinstance(r, Exception) else []
-                for v, r in zip(values, gathered)
-            }
+            return {v: r if not isinstance(r, Exception) else [] for v, r in zip(values, gathered, strict=False)}
         except Exception:  # noqa: BLE001
             # Fallback to sequential on any error
             out = {}
@@ -2011,6 +2086,7 @@ class DuckPGQGraph:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             _rust_traverse = rust.raw.graph_traverse_single
             result = _rust_traverse(self.db_path, value, max_hops)
             if result is not None and len(result) > 0:
@@ -2019,19 +2095,26 @@ class DuckPGQGraph:
             pass  # fail-soft: fall through to DuckPGQ
         if _DUCKPGQ_AVAILABLE:
             try:
-                sql = f'\n                    FROM GRAPH_TABLE(ioc_graph\n                        MATCH (a:ioc_nodes)\n                              -[e:ioc_edges*1..{max_hops}]->\n                              (b:ioc_nodes)\n                        WHERE a.value = ?\n                        COLUMNS (b.value, b.ioc_type, b.confidence, b.source)\n                    ) LIMIT 100\n                '
+                sql = f"\n                    FROM GRAPH_TABLE(ioc_graph\n                        MATCH (a:ioc_nodes)\n                              -[e:ioc_edges*1..{max_hops}]->\n                              (b:ioc_nodes)\n                        WHERE a.value = ?\n                        COLUMNS (b.value, b.ioc_type, b.confidence, b.source)\n                    ) LIMIT 100\n                "
                 return _duckdb_to_dicts(self.con, sql, [value])
             except Exception as e:
-                logger.debug(f'[GRAPH] PGQ path failed, falling back to CTE: {e}')
-        sql = '\n            WITH RECURSIVE paths(dst_id, depth) AS (\n                SELECT e.dst_id, 1\n                FROM ioc_edges e\n                JOIN ioc_nodes n ON n.id = e.src_id\n                WHERE n.value = ?\n                UNION ALL\n                SELECT e.dst_id, p.depth + 1\n                FROM ioc_edges e\n                JOIN paths p ON p.dst_id = e.src_id\n                WHERE p.depth < ?\n            )\n            SELECT n.value, n.ioc_type, n.confidence, n.source\n            FROM paths p\n            JOIN ioc_nodes n ON n.id = p.dst_id\n            LIMIT 100\n        '
+                logger.debug(f"[GRAPH] PGQ path failed, falling back to CTE: {e}")
+        sql = "\n            WITH RECURSIVE paths(dst_id, depth) AS (\n                SELECT e.dst_id, 1\n                FROM ioc_edges e\n                JOIN ioc_nodes n ON n.id = e.src_id\n                WHERE n.value = ?\n                UNION ALL\n                SELECT e.dst_id, p.depth + 1\n                FROM ioc_edges e\n                JOIN paths p ON p.dst_id = e.src_id\n                WHERE p.depth < ?\n            )\n            SELECT n.value, n.ioc_type, n.confidence, n.source\n            FROM paths p\n            JOIN ioc_nodes n ON n.id = p.dst_id\n            LIMIT 100\n        "
         params = [value, max_hops]
         try:
             return _duckdb_to_dicts(self.con, sql, params)
         except Exception as e:
-            logger.warning(f'[GRAPH] find_connected failed: {e}')
+            logger.warning(f"[GRAPH] find_connected failed: {e}")
             return []
 
-    def find_connected_with_similarity(self, value: str, max_hops: int=2, query_embedding: Any | None=None, top_k: int=10, similarity_threshold: float=0.0) -> list[dict]:
+    def find_connected_with_similarity(
+        self,
+        value: str,
+        max_hops: int = 2,
+        query_embedding: Any | None = None,
+        top_k: int = 10,
+        similarity_threshold: float = 0.0,
+    ) -> list[dict]:
         """
         Hybrid graph traversal + vector similarity reranking.
 
@@ -2052,25 +2135,28 @@ class DuckPGQGraph:
         if query_embedding is None:
             return connected[:top_k]
         if not self._check_memory_available():
-            logger.debug('[GRAPH] RAM guard: skipping vector similarity, using graph order')
+            logger.debug("[GRAPH] RAM guard: skipping vector similarity, using graph order")
             return connected[:top_k]
         try:
             reranked = self._rerank_by_similarity(connected, query_embedding, top_k, similarity_threshold)
             return reranked
         except Exception as e:
-            logger.debug(f'[GRAPH] vector similarity failed, using graph order: {e}')
+            logger.debug(f"[GRAPH] vector similarity failed, using graph order: {e}")
             return connected[:top_k]
 
-    def _check_memory_available(self, min_gb: float=4.0) -> bool:
+    def _check_memory_available(self, min_gb: float = 4.0) -> bool:
         """Check if >=min_gb RAM available. M1 8GB safety guard."""
         try:
             import psutil
-            available = psutil.virtual_memory().available / 1024 ** 3
+
+            available = psutil.virtual_memory().available / 1024**3
             return available >= min_gb
         except Exception:
             return True
 
-    def _rerank_by_similarity(self, connected: list[dict], query_embedding: Any, top_k: int, similarity_threshold: float) -> list[dict]:
+    def _rerank_by_similarity(
+        self, connected: list[dict], query_embedding: Any, top_k: int, similarity_threshold: float
+    ) -> list[dict]:
         """Rerank connected IOCs by cosine similarity to query embedding.
 
         M1 8GB safe: uses MLX for vector similarity when available.
@@ -2079,12 +2165,12 @@ class DuckPGQGraph:
         try:
             import mlx.core as mx
         except ImportError:
-            logger.debug('[GRAPH] MLX not available for similarity')
+            logger.debug("[GRAPH] MLX not available for similarity")
             return connected[:top_k]
         try:
-            embeddings = self._fetch_ioc_embeddings_from_lancedb([c['value'] for c in connected])
+            embeddings = self._fetch_ioc_embeddings_from_lancedb([c["value"] for c in connected])
             if not embeddings:
-                logger.debug('[GRAPH] no IOC embeddings found in LanceDB, using graph order')
+                logger.debug("[GRAPH] no IOC embeddings found in LanceDB, using graph order")
                 return connected[:top_k]
             q_emb = mx.array(query_embedding)
             c_embs = mx.array(embeddings)
@@ -2103,11 +2189,11 @@ class DuckPGQGraph:
             for i, item in enumerate(connected):
                 score = float(sim_list[i]) if i < len(sim_list) else 0.0
                 if score >= similarity_threshold:
-                    scored.append({**item, 'similarity': score})
-            scored.sort(key=lambda x: (x.get('similarity', 0.0), x.get('confidence', 0.0)), reverse=True)
+                    scored.append({**item, "similarity": score})
+            scored.sort(key=lambda x: (x.get("similarity", 0.0), x.get("confidence", 0.0)), reverse=True)
             return scored[:top_k]
         except Exception as e:
-            logger.debug(f'[GRAPH] vector similarity failed: {e}, using graph order')
+            logger.debug(f"[GRAPH] vector similarity failed: {e}, using graph order")
             return connected[:top_k]
 
     def _fetch_ioc_embeddings_from_lancedb(self, values: list[str]) -> list[list[float]] | None:
@@ -2123,21 +2209,21 @@ class DuckPGQGraph:
             return None
         try:
             import lancedb
+
             ldb = lancedb.connect("~/.hledac/lancedb")
             if ldb is None:
-                logger.debug('[GRAPH] LanceDB unavailable for embedding fetch')
+                logger.debug("[GRAPH] LanceDB unavailable for embedding fetch")
                 return None
             table = ldb.open_table("semantic_dedup_v1")
             keys_to_fetch = values[:100]
-            all_data = table.to_table(
-                columns=["finding_key", "vector"]
-            ).to_pydict()
+            all_data = table.to_table(columns=["finding_key", "vector"]).to_pydict()
             key_to_vec = {
                 finding_key: vector
                 for finding_key, vector in zip(
                     all_data.get("finding_key", []),
                     all_data.get("vector", []),
-    )
+                    strict=False,
+                )
                 if finding_key and vector
             }
             result = []
@@ -2148,35 +2234,36 @@ class DuckPGQGraph:
                 result.append(vec)
             if not result:
                 return None
-            logger.debug(f'[GRAPH] fetched {len(result)} embeddings from LanceDB')
+            logger.debug(f"[GRAPH] fetched {len(result)} embeddings from LanceDB")
             return result
         except ImportError:
-            logger.debug('[GRAPH] LanceDB not available for embedding fetch')
+            logger.debug("[GRAPH] LanceDB not available for embedding fetch")
             return None
         except Exception as e:
-            logger.debug(f'[GRAPH] could not fetch LanceDB embeddings: {e}')
+            logger.debug(f"[GRAPH] could not fetch LanceDB embeddings: {e}")
             return None
 
 
-
-def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hops: int=4) -> list[list[str]]:
+def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hops: int = 4) -> list[list[str]]:
     """Sync BFS implementation (module-level for to_thread)."""
     try:
-        sql = '\n            SELECT e.src_id, e.dst_id, n_src.value as src_val, n_dst.value as dst_val\n            FROM ioc_edges e\n            JOIN ioc_nodes n_src ON n_src.id = e.src_id\n            JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id\n            LIMIT 5000\n        '
+        sql = "\n            SELECT e.src_id, e.dst_id, n_src.value as src_val, n_dst.value as dst_val\n            FROM ioc_edges e\n            JOIN ioc_nodes n_src ON n_src.id = e.src_id\n            JOIN ioc_nodes n_dst ON n_dst.id = e.dst_id\n            LIMIT 5000\n        "
         rows = con.execute(sql).fetch_arrow_table()
         if rows.num_rows == 0:
             return []
         try:
-            import polars as pl
             from typing import cast
+
+            import polars as pl
+
             pdf: pl.DataFrame = cast(pl.DataFrame, pl.from_arrow(rows))
             rows_iter = pdf.iter_rows(named=True)
         except ImportError:
             rows_iter = (dict(zip(rows.column_names, vals, strict=False)) for vals in rows.to_pylist())
         adj: dict[str, list[str]] = {}
         for row in rows_iter:
-            src_val = str(row['src_val'])
-            dst_val = str(row['dst_val'])
+            src_val = str(row["src_val"])
+            dst_val = str(row["dst_val"])
             if src_val not in adj:
                 adj[src_val] = []
             if dst_val not in adj[src_val]:
@@ -2198,8 +2285,9 @@ def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hop
                     stack.append((neighbor, path + [neighbor]))
         return paths
     except Exception as e:
-        logger.warning(f'[GRAPH] _find_paths_between_iocs_sync failed: {e}')
+        logger.warning(f"[GRAPH] _find_paths_between_iocs_sync failed: {e}")
         return []
+
 
 def _graph_stats(db_path: str, con) -> dict:
     """Module-level stats helper (called by DuckPGQGraph.stats wrapper).
@@ -2211,29 +2299,33 @@ def _graph_stats(db_path: str, con) -> dict:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _rust_stats = rust.raw.graph_stats
 
         result = _rust_stats(db_path, 20)
         if result is not None and isinstance(result, dict):
-            nodes = result.get('total_nodes', 0)
-            edges = result.get('total_edges', 0)
+            nodes = result.get("total_nodes", 0)
+            edges = result.get("total_edges", 0)
             if nodes > 0 or edges > 0:
-                return {'nodes': nodes, 'edges': edges, 'pgq_available': _DUCKPGQ_AVAILABLE}
+                return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
     except Exception:  # noqa: BLE001
         pass  # fail-soft: fall through to Python fallback
     # Python fallback: direct DuckDB queries
     try:
-        nodes_row = con.execute('SELECT COUNT(*) FROM ioc_nodes').fetchone()
-        edges_row = con.execute('SELECT COUNT(*) FROM ioc_edges').fetchone()
+        nodes_row = con.execute("SELECT COUNT(*) FROM ioc_nodes").fetchone()
+        edges_row = con.execute("SELECT COUNT(*) FROM ioc_edges").fetchone()
         nodes = nodes_row[0] if nodes_row is not None else 0
         edges = edges_row[0] if edges_row is not None else 0
-        return {'nodes': nodes, 'edges': edges, 'pgq_available': _DUCKPGQ_AVAILABLE}
+        return {"nodes": nodes, "edges": edges, "pgq_available": _DUCKPGQ_AVAILABLE}
     except Exception as e:
-        logger.warning(f'[GRAPH] _graph_stats failed: {e}')
-        return {'nodes': 0, 'edges': 0, 'pgq_available': _DUCKPGQ_AVAILABLE}
+        logger.warning(f"[GRAPH] _graph_stats failed: {e}")
+        return {"nodes": 0, "edges": 0, "pgq_available": _DUCKPGQ_AVAILABLE}
+
+
 QUANTUM_PATHFINDER_AVAILABLE = True
 
-def create_quantum_pathfinder(config: QuantumPathConfig | None=None) -> QuantumInspiredPathFinder | None:
+
+def create_quantum_pathfinder(config: QuantumPathConfig | None = None) -> QuantumInspiredPathFinder | None:
     """Factory function to create a quantum pathfinder instance.
 
     This factory function provides a consistent API for creating
@@ -2248,8 +2340,9 @@ def create_quantum_pathfinder(config: QuantumPathConfig | None=None) -> QuantumI
     try:
         return QuantumInspiredPathFinder(config)
     except Exception as e:
-        logger.error(f'Failed to create quantum pathfinder: {e}')
+        logger.error(f"Failed to create quantum pathfinder: {e}")
         return None
+
 
 async def find_best_path(graph: Any, start: str, end: str) -> list[str]:
     """
@@ -2269,13 +2362,13 @@ async def find_best_path(graph: Any, start: str, end: str) -> list[str]:
         return []
     try:
         pathfinder = QuantumInspiredPathFinder()
-        if hasattr(graph, 'adjacency'):
+        if hasattr(graph, "adjacency"):
             adj_dict = {str(n): [str(nb) for nb in graph.neighbors(n)] for n in graph.nodes()}
             await pathfinder.initialize(adj_dict)
         elif isinstance(graph, dict):
             await pathfinder.initialize(graph)
         else:
-            logger.warning('[QuantumPathfinder] Unsupported graph type')
+            logger.warning("[QuantumPathfinder] Unsupported graph type")
             return []
         paths = await pathfinder.find_paths(start_nodes=[start], target_nodes=[end], max_steps=50)
         if paths:
@@ -2283,8 +2376,17 @@ async def find_best_path(graph: Any, start: str, end: str) -> list[str]:
             return paths[0]
         return []
     except Exception as e:
-        logger.warning(f'[QuantumPathfinder] find_best_path failed: {e}')
+        logger.warning(f"[QuantumPathfinder] find_best_path failed: {e}")
         return []
     finally:
         await pathfinder.cleanup()
-__all__ = ['QuantumInspiredPathFinder', 'QuantumPathConfig', 'create_quantum_pathfinder', 'QUANTUM_PATHFINDER_AVAILABLE', 'DuckPGQGraph', 'find_best_path']
+
+
+__all__ = [
+    "QuantumInspiredPathFinder",
+    "QuantumPathConfig",
+    "create_quantum_pathfinder",
+    "QUANTUM_PATHFINDER_AVAILABLE",
+    "DuckPGQGraph",
+    "find_best_path",
+]

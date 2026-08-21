@@ -48,20 +48,14 @@ M1 8GB SAFETY
 - Always fail-soft (return [] on any error).
 """
 
-
-
 import asyncio
 import logging
 import time
 from typing import Any
 
 from .protocol import NodeTransportFactory, set_sprint_id_attr
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-
-# --- M1 BOUNDS --------------------------------------------------------------
 
 INMEMORY_PEER_MAX_PEERS: int = 4
 """Hard cap on paired in-memory peers."""
@@ -145,8 +139,9 @@ class InMemoryPeerNodeTransport:
         if len(self._peers) >= INMEMORY_PEER_MAX_PEERS:
             logger.debug(
                 "[FED-IMM] max peers reached (%d), cannot add %s",
-                INMEMORY_PEER_MAX_PEERS, peer.node_id,
-    )
+                INMEMORY_PEER_MAX_PEERS,
+                peer.node_id,
+            )
             return
         if peer is self:
             return  # no self-pair
@@ -215,8 +210,12 @@ class InMemoryPeerNodeTransport:
             elapsed = time.monotonic() - started
             logger.debug(
                 "[FED-IMM] node=%s lane=%r peer=%s findings=%d dur=%.4fs",
-                self.node_id, lane, peer_id, len(out2), elapsed,
-    )
+                self.node_id,
+                lane,
+                peer_id,
+                len(out2),
+                elapsed,
+            )
             return out2
         except asyncio.CancelledError:
             raise
@@ -224,8 +223,11 @@ class InMemoryPeerNodeTransport:
             elapsed = time.monotonic() - started
             logger.warning(
                 "[FED-IMM] run fail-soft lane=%r %s: %s dur=%.4fs",
-                lane, type(e).__name__, e, elapsed,
-    )
+                lane,
+                type(e).__name__,
+                e,
+                elapsed,
+            )
             return []
 
     async def _serve(self, lane: str, query: str) -> list[dict[str, Any]]:
@@ -237,7 +239,6 @@ class InMemoryPeerNodeTransport:
         seed = self._seeds.get(str(lane)[:32])
         if not seed:
             return []
-        # Return a defensive copy so the caller can't mutate our seed.
         return [dict(f) for f in seed[:INMEMORY_PEER_MAX_SEEDS_PER_LANE] if isinstance(f, dict)]
 
     async def close(self) -> None:
@@ -262,7 +263,7 @@ def _normalize_inmem_finding(
         return None
     try:
         confidence = float(raw.get("confidence", 0.5) or 0.5)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
     finding: dict[str, Any] = {

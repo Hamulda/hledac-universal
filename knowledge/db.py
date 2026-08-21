@@ -35,45 +35,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import weakref
-from dataclasses import dataclass, field
-import msgspec
+from functools import cached_property
+from typing import TYPE_CHECKING, Any
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from functools import cached_property
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass  # DuckDBShadowStore loaded lazily to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Phase 1: DuckDB consolidation — LanceDB removal
-# ============================================================================
-#
-# MIGRATION STATUS (F350M-R, 2026-07):
-# Migration complete: DuckDBRAGStore + DuckDBEntityStore (duckdb_rag_store.py)
-#   fully replace LanceDBIdentityStore, LanceDBRAGEngine, SemanticStore.
-#   Exported via knowledge/__init__.py as DuckDBRAGStore, DuckDBEntityStore,
-#   get_identity_store(), get_rag_store().
-#
-# ⚠️  INCOMPLETE: knowledge/vector_index.py still contains LanceDbIndex
-#   backend (get_vector_index factory). Phase 1 cleanup blocked by
-#   sqlite-vec IVF-PQ limitations (M1 8GB). When sqlite-vec gains
-#   IVF-PQ support OR HNSW is implemented in DuckDB, remove LanceDbIndex.
-#
-# DuckDB 1.4+ provides:
-# - Native HNSW index (CREATE INDEX ... USING HNSW)
-# - FTS5 extension (full-text search)
-# - Arrow integration (zero-copy)
-
-
-# ============================================================================
-# Phase 2: SQLite3 → DuckDB migration
-# ============================================================================
 
 # SQLite3 was used for:
 # 1. Audit trail (security/audit.py)
@@ -91,17 +63,9 @@ logger = logging.getLogger(__name__)
 # - Evidence log → Keep as-is (append-only ledger, separate concern)
 
 
-# ============================================================================
-# Phase 3: Centralized DuckDB import
-# ============================================================================
-
 # DuckDB imports were scattered across 21+ files
 # Solution: Single module-level lazy import via this facade
 
-
-# -----------------------------------------------------------------------------
-# DuckDB lazy import helpers
-# -----------------------------------------------------------------------------
 
 _DUCKDB_STORE: Any | None = None
 _DUCKDB_POOL_READY: bool = False
@@ -112,13 +76,10 @@ def _get_duckdb_store() -> Any:
     global _DUCKDB_STORE
     if _DUCKDB_STORE is None:
         from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
         _DUCKDB_STORE = DuckDBShadowStore()
     return _DUCKDB_STORE
 
-
-# -----------------------------------------------------------------------------
-# LMDB lazy import helpers
-# -----------------------------------------------------------------------------
 
 _LMDB_ENV: Any | None = None
 
@@ -127,15 +88,12 @@ def _get_lmdb_env() -> Any:
     """Lazy LMDB environment — single canonical LMDB env for cache/dedup."""
     global _LMDB_ENV
     if _LMDB_ENV is None:
-        from paths import open_lmdb, LMDB_ROOT
+        from paths import LMDB_ROOT, open_lmdb
+
         LMDB_ROOT.mkdir(parents=True, exist_ok=True)
         _LMDB_ENV = open_lmdb(LMDB_ROOT / "unified_cache.lmdb")
     return _LMDB_ENV
 
-
-# -----------------------------------------------------------------------------
-# Rust connection pool
-# -----------------------------------------------------------------------------
 
 _RUST_POOL: bool | None = None
 
@@ -157,13 +115,9 @@ def _get_rust_pool() -> bool | None:
     return _RUST_POOL
 
 
-# ============================================================================
-# Dataclasses for unified interface
-# ============================================================================
-
-
 class DBCoordinates(Struct, frozen=True):
     """Coordinates for a database operation."""
+
     db: str  # "duckdb" | "lmdb"
     table: str | None = None
     schema: str | None = None
@@ -171,15 +125,11 @@ class DBCoordinates(Struct, frozen=True):
 
 class QueryResult(Struct):
     """Generic query result."""
+
     rows: list[dict[str, Any]]
     columns: list[str]
     row_count: int
     duration_ms: float
-
-
-# ============================================================================
-# Unified Database Facade
-# ============================================================================
 
 
 class UnifiedDatabaseFacade:
@@ -199,11 +149,11 @@ class UnifiedDatabaseFacade:
     - Phase 3: Centralized import consolidation
     """
 
-    __slots__ = tuple('_duckdb_store _lmdb_env _rust_pool _initialized _init_lock'.split())
+    __slots__ = tuple("_duckdb_store _lmdb_env _rust_pool _initialized _init_lock".split())
 
-    _instance: "UnifiedDatabaseFacade | None" = None
+    _instance: UnifiedDatabaseFacade | None = None
 
-    def __new__(cls) -> "UnifiedDatabaseFacade":
+    def __new__(cls) -> UnifiedDatabaseFacade:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -219,10 +169,6 @@ class UnifiedDatabaseFacade:
         self._initialized = True
         logger.info("[DB] UnifiedDatabaseFacade initialized")
 
-    # --------------------------------------------------------------------------
-    # DuckDB canonical store
-    # --------------------------------------------------------------------------
-
     @cached_property
     def duckdb(self) -> Any:
         """DuckDBShadowStore singleton — canonical store for structured data."""
@@ -230,20 +176,12 @@ class UnifiedDatabaseFacade:
             self._duckdb_store = _get_duckdb_store()
         return self._duckdb_store
 
-    # --------------------------------------------------------------------------
-    # LMDB environment
-    # --------------------------------------------------------------------------
-
     @cached_property
     def lmdb(self) -> Any:
         """LMDB environment for cache/dedup/KV operations."""
         if self._lmdb_env is None:
             self._lmdb_env = _get_lmdb_env()
         return self._lmdb_env
-
-    # --------------------------------------------------------------------------
-    # Rust async pool
-    # --------------------------------------------------------------------------
 
     @property
     def rust_pool_ready(self) -> bool:
@@ -274,10 +212,6 @@ class UnifiedDatabaseFacade:
             cursor.execute(sql)
         rows = cursor.fetchall()
         return [list(row) for row in rows]
-
-    # --------------------------------------------------------------------------
-    # DuckDB schema extensions (for migrated SQLite3 tables)
-    # --------------------------------------------------------------------------
 
     def init_audit_schema(self) -> None:
         """Initialize audit events table in DuckDB."""
@@ -354,10 +288,6 @@ class UnifiedDatabaseFacade:
         """)
         logger.info("[DB] forensics_metadata table initialized")
 
-    # --------------------------------------------------------------------------
-    # Unified query interface
-    # --------------------------------------------------------------------------
-
     async def query_duckdb(
         self,
         sql: str,
@@ -370,6 +300,7 @@ class UnifiedDatabaseFacade:
         Falls back to DuckDBShadowStore direct connection.
         """
         import time
+
         start = time.monotonic()
 
         if self.rust_pool_ready:
@@ -380,7 +311,7 @@ class UnifiedDatabaseFacade:
                 # (Rust pool returns strings for simplicity)
                 if raw_rows:
                     columns = [f"col_{i}" for i in range(len(raw_rows[0]))]
-                    converted_rows = [dict(zip(columns, r)) for r in raw_rows]
+                    converted_rows = [dict(zip(columns, r, strict=False)) for r in raw_rows]
                 else:
                     columns = []
                     converted_rows = []
@@ -389,7 +320,7 @@ class UnifiedDatabaseFacade:
                     columns=columns,
                     row_count=len(raw_rows),
                     duration_ms=(time.monotonic() - start) * 1000,
-    )
+                )
             except Exception as e:
                 logger.warning(f"[DB] Rust query failed, falling back: {e}")
 
@@ -401,18 +332,14 @@ class UnifiedDatabaseFacade:
             result = conn.execute(sql).fetchall()
 
         columns = [desc[0] for desc in conn.description] if conn.description else []
-        rows = [dict(zip(columns, row)) for row in result]
+        rows = [dict(zip(columns, row, strict=False)) for row in result]
 
         return QueryResult(
             rows=rows,
             columns=columns,
             row_count=len(rows),
             duration_ms=(time.monotonic() - start) * 1000,
-    )
-
-    # --------------------------------------------------------------------------
-    # LMDB operations
-    # --------------------------------------------------------------------------
+        )
 
     def lmdb_get(self, key: bytes) -> bytes | None:
         """Get value from LMDB cache."""
@@ -443,10 +370,6 @@ class UnifiedDatabaseFacade:
             logger.debug(f"[DB] LMDB delete error: {e}")
             return False
 
-    # --------------------------------------------------------------------------
-    # Arrow zero-copy bulk insert
-    # --------------------------------------------------------------------------
-
     async def bulk_insert_arrow(
         self,
         table: str,
@@ -466,6 +389,7 @@ class UnifiedDatabaseFacade:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             validate_batch = rust.raw.validate_batch
             validate_batch(arrow_batch, schema)
         except ImportError:
@@ -475,16 +399,13 @@ class UnifiedDatabaseFacade:
         conn = self.duckdb._get_connection()
         try:
             import pyarrow as pa
+
             reader = pa.ipc.open_record_batch_reader(arrow_batch)
             conn.execute(f"INSERT INTO {table} SELECT * FROM reader")
             return reader.num_record_batches
         except Exception as e:
             logger.error(f"[DB] Arrow bulk insert failed: {e}")
             return 0
-
-    # --------------------------------------------------------------------------
-    # Deprecation helpers
-    # --------------------------------------------------------------------------
 
     @property
     def lancedb_available(self) -> bool:
@@ -497,10 +418,6 @@ class UnifiedDatabaseFacade:
         return False
 
 
-# ============================================================================
-# Singleton accessor
-# ============================================================================
-
 _db_facade: UnifiedDatabaseFacade | None = None
 
 
@@ -511,10 +428,6 @@ def get_db() -> UnifiedDatabaseFacade:
         _db_facade = UnifiedDatabaseFacade()
     return _db_facade
 
-
-# ============================================================================
-# Module-level convenience functions
-# ============================================================================
 
 # For backwards compatibility during migration
 def duckdb_store() -> Any:

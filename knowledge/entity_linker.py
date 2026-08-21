@@ -32,55 +32,63 @@ Example:
     for entity in entities:
         print(f"{entity.original_text} -> {entity.canonical_label} ({entity.canonical_id})")
 """
+
 import asyncio
 import hashlib
 import importlib.util
 import logging
 import re
 from collections import deque
-from dataclasses import dataclass, field
-import msgspec
-from hledac.universal.compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from datetime import UTC, datetime, timedelta
+from operator import attrgetter
 from typing import Any
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok
-from operator import attrgetter, itemgetter
+
 logger = logging.getLogger(__name__)
+
 
 def _ensure_utc_aware(value: datetime) -> datetime:
     """Normalize datetime to UTC-aware (required for TTL comparisons in Python 3.14+)."""
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
 from hledac.universal.network.session_runtime import async_get_httpx_session
-from _core import aclose
+
 rapidfuzz = None
 try:
     from rapidfuzz import fuzz, process
+
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
     try:
         from hledac.universal.utils._warnings import warn_once_log
     except (ImportError, ModuleNotFoundError) as exc:
-        if exc.name == 'hledac':
+        if exc.name == "hledac":
             from hledac.universal.utils._warnings import warn_once_log
         else:
             raise
-    warn_once_log('rapidfuzz-missing', 'rapidfuzz not available. Install with: pip install rapidfuzz')
+    warn_once_log("rapidfuzz-missing", "rapidfuzz not available. Install with: pip install rapidfuzz")
 GLINER_AVAILABLE = False
 GLiNER = None
 try:
     import importlib
-    spec = importlib.util.find_spec('gliner')
+
+    spec = importlib.util.find_spec("gliner")
     if spec is not None:
         GLINER_AVAILABLE = True
     else:
         GLINER_AVAILABLE = False
-        logger.debug('GLiNER not found')
+        logger.debug("GLiNER not found")
 except Exception:
     GLINER_AVAILABLE = False
-    logger.debug('GLiNER check failed, using fallback NER')
+    logger.debug("GLiNER check failed, using fallback NER")
+
 
 class EntityCandidate(Struct):
     """
@@ -96,6 +104,7 @@ class EntityCandidate(Struct):
         popularity_score: Popularity based on sitelinks (0-1)
         final_score: Combined ranking score (0-1)
     """
+
     entity_text: str
     wikidata_id: str
     label: str
@@ -107,12 +116,31 @@ class EntityCandidate(Struct):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {'entity_text': self.entity_text, 'wikidata_id': self.wikidata_id, 'label': self.label, 'description': self.description, 'types': self.types, 'context_score': self.context_score, 'popularity_score': self.popularity_score, 'final_score': self.final_score}
+        return {
+            "entity_text": self.entity_text,
+            "wikidata_id": self.wikidata_id,
+            "label": self.label,
+            "description": self.description,
+            "types": self.types,
+            "context_score": self.context_score,
+            "popularity_score": self.popularity_score,
+            "final_score": self.final_score,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EntityCandidate:
         """Create from dictionary."""
-        return cls(entity_text=data['entity_text'], wikidata_id=data['wikidata_id'], label=data['label'], description=data['description'], types=data.get('types', []), context_score=data.get('context_score', 0.0), popularity_score=data.get('popularity_score', 0.0), final_score=data.get('final_score', 0.0))
+        return cls(
+            entity_text=data["entity_text"],
+            wikidata_id=data["wikidata_id"],
+            label=data["label"],
+            description=data["description"],
+            types=data.get("types", []),
+            context_score=data.get("context_score", 0.0),
+            popularity_score=data.get("popularity_score", 0.0),
+            final_score=data.get("final_score", 0.0),
+        )
+
 
 class LinkedEntity(Struct):
     """
@@ -128,6 +156,7 @@ class LinkedEntity(Struct):
         confidence: Linking confidence score (0-1)
         candidates_considered: Number of candidates evaluated
     """
+
     original_text: str
     start_pos: int
     end_pos: int
@@ -139,21 +168,41 @@ class LinkedEntity(Struct):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {'original_text': self.original_text, 'start_pos': self.start_pos, 'end_pos': self.end_pos, 'canonical_id': self.canonical_id, 'canonical_label': self.canonical_label, 'entity_type': self.entity_type, 'confidence': self.confidence, 'candidates_considered': self.candidates_considered}
+        return {
+            "original_text": self.original_text,
+            "start_pos": self.start_pos,
+            "end_pos": self.end_pos,
+            "canonical_id": self.canonical_id,
+            "canonical_label": self.canonical_label,
+            "entity_type": self.entity_type,
+            "confidence": self.confidence,
+            "candidates_considered": self.candidates_considered,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LinkedEntity:
         """Create from dictionary."""
-        return cls(original_text=data['original_text'], start_pos=data['start_pos'], end_pos=data['end_pos'], canonical_id=data['canonical_id'], canonical_label=data['canonical_label'], entity_type=data['entity_type'], confidence=data['confidence'], candidates_considered=data['candidates_considered'])
+        return cls(
+            original_text=data["original_text"],
+            start_pos=data["start_pos"],
+            end_pos=data["end_pos"],
+            canonical_id=data["canonical_id"],
+            canonical_label=data["canonical_label"],
+            entity_type=data["entity_type"],
+            confidence=data["confidence"],
+            candidates_considered=data["candidates_considered"],
+        )
+
 
 class SimpleCache:
     """
     Simple in-memory cache with TTL for Wikidata responses.
     M1 8GB optimized - limited size with LRU eviction.
     """
-    __slots__ = ('max_size', 'ttl', '_cache', '_access_order')
 
-    def __init__(self, max_size: int=1000, ttl_seconds: int=3600):
+    __slots__ = ("max_size", "ttl", "_cache", "_access_order")
+
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600) -> None:
         """
         Initialize cache.
 
@@ -168,7 +217,7 @@ class SimpleCache:
 
     def _generate_key(self, query: str) -> str:
         """Generate cache key from query."""
-        return hashlib.sha256(query.encode('utf-8')).hexdigest()[:16]
+        return hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
 
     def get(self, query: str) -> Any | None:
         """Get cached value if not expired."""
@@ -186,7 +235,7 @@ class SimpleCache:
         self._access_order.append(key)
         return value
 
-    def set(self, query: str, value: Any):
+    def set(self, query: str, value: Any) -> None:
         """Cache value with timestamp."""
         key = self._generate_key(query)
         if len(self._cache) >= self.max_size and key not in self._cache:
@@ -198,14 +247,15 @@ class SimpleCache:
             self._access_order.remove(key)
         self._access_order.append(key)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all cached entries."""
         self._cache.clear()
         self._access_order.clear()
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        return {'size': len(self._cache), 'max_size': self.max_size, 'ttl_seconds': self.ttl.total_seconds()}
+        return {"size": len(self._cache), "max_size": self.max_size, "ttl_seconds": self.ttl.total_seconds()}
+
 
 class EntityLinker:
     """
@@ -221,12 +271,49 @@ class EntityLinker:
         linker = EntityLinker()
         entities = await linker.link_entities("Apple was founded by Steve Jobs")
     """
-    DEFAULT_WIKIDATA_ENDPOINT = 'https://query.wikidata.org/sparql'
-    DEFAULT_USER_AGENT = 'HledacEntityLinker/1.0 (M1-Optimized; research tool)'
-    TYPE_MAPPING = {'Q5': 'PERSON', 'Q43229': 'ORGANIZATION', 'Q4830453': 'BUSINESS', 'Q515': 'CITY', 'Q6256': 'COUNTRY', 'Q1656682': 'EVENT', 'Q571': 'BOOK', 'Q11424': 'FILM', 'Q7397': 'SOFTWARE', 'Q811165': 'PRODUCT', 'Q95074': 'CHARACTER', 'Q488383': 'LOCATION', 'Q618123': 'LOCATION', 'Q15401930': 'PRODUCT', 'Q12737077': 'OCCUPATION', 'Q4164871': 'POSITION', 'Q18616576': 'AWARD'}
-    __slots__ = tuple(('_cache', '_gliner_model', '_session', 'confidence_threshold', 'max_candidates', 'request_timeout', 'use_gliner', 'wikidata_endpoint'))
 
-    def __init__(self, wikidata_endpoint: str=DEFAULT_WIKIDATA_ENDPOINT, cache_size: int=1000, cache_ttl: int=3600, max_candidates: int=10, confidence_threshold: float=0.5, request_timeout: int=30, use_gliner: bool=True):
+    DEFAULT_WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
+    DEFAULT_USER_AGENT = "HledacEntityLinker/1.0 (M1-Optimized; research tool)"
+    TYPE_MAPPING = {
+        "Q5": "PERSON",
+        "Q43229": "ORGANIZATION",
+        "Q4830453": "BUSINESS",
+        "Q515": "CITY",
+        "Q6256": "COUNTRY",
+        "Q1656682": "EVENT",
+        "Q571": "BOOK",
+        "Q11424": "FILM",
+        "Q7397": "SOFTWARE",
+        "Q811165": "PRODUCT",
+        "Q95074": "CHARACTER",
+        "Q488383": "LOCATION",
+        "Q618123": "LOCATION",
+        "Q15401930": "PRODUCT",
+        "Q12737077": "OCCUPATION",
+        "Q4164871": "POSITION",
+        "Q18616576": "AWARD",
+    }
+    __slots__ = (
+        "_cache",
+        "_gliner_model",
+        "_session",
+        "confidence_threshold",
+        "max_candidates",
+        "request_timeout",
+        "use_gliner",
+        "wikidata_endpoint",
+    )
+
+    def __init__(
+        self,
+        wikidata_endpoint: str = DEFAULT_WIKIDATA_ENDPOINT,
+        cache_size: int = 1000,
+        cache_ttl: int = 3600,
+        max_candidates: int = 10,
+        confidence_threshold: float = 0.5,
+        request_timeout: int = 30,
+        use_gliner: bool = True,
+    ) -> None:
         """
         Initialize EntityLinker.
 
@@ -248,11 +335,21 @@ class EntityLinker:
         self._session: Any | None = None
         self._gliner_model: Any | None = None
         self._init_ner_patterns()
-        logger.info(f'EntityLinker initialized (GLiNER: {self.use_gliner})')
+        logger.info(f"EntityLinker initialized (GLiNER: {self.use_gliner})")
 
-    def _init_ner_patterns(self):
+    def _init_ner_patterns(self) -> None:
         """Initialize regex patterns for fallback NER."""
-        self._ner_patterns = {'PERSON': [re.compile('\\b[A-Z][a-z]+\\s+[A-Z][a-z]+\\b'), re.compile('\\b(?:Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?)\\s+[A-Z][a-z]+\\b', re.IGNORECASE)], 'ORGANIZATION': [re.compile('\\b[A-Z][a-z]*\\s+(?:Inc\\.?|Corp\\.?|Ltd\\.?|LLC|Company|Co\\.)\\b'), re.compile('\\b(?:Apple|Google|Microsoft|Amazon|Facebook|Meta|Twitter|X)\\b')], 'LOCATION': [re.compile('\\b(?:in|at|from)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b')]}
+        self._ner_patterns = {
+            "PERSON": [
+                re.compile("\\b[A-Z][a-z]+\\s+[A-Z][a-z]+\\b"),
+                re.compile("\\b(?:Mr\\.?|Mrs\\.?|Ms\\.?|Dr\\.?)\\s+[A-Z][a-z]+\\b", re.IGNORECASE),
+            ],
+            "ORGANIZATION": [
+                re.compile("\\b[A-Z][a-z]*\\s+(?:Inc\\.?|Corp\\.?|Ltd\\.?|LLC|Company|Co\\.)\\b"),
+                re.compile("\\b(?:Apple|Google|Microsoft|Amazon|Facebook|Meta|Twitter|X)\\b"),
+            ],
+            "LOCATION": [re.compile("\\b(?:in|at|from)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)\\b")],
+        }
 
     async def _get_session(self) -> Any | None:
         """Get or create httpx.AsyncClient session (F4XX)."""
@@ -260,15 +357,16 @@ class EntityLinker:
             self._session = await async_get_httpx_session()
         return self._session
 
-    def _load_gliner(self):
+    def _load_gliner(self) -> None:
         """Lazy load GLiNER model."""
         if self.use_gliner and self._gliner_model is None:
             try:
                 from gliner import GLiNER as GLiNERClass
-                self._gliner_model = GLiNERClass.from_pretrained('urchade/gliner_medium-v2.1')
-                logger.info('GLiNER model loaded')
+
+                self._gliner_model = GLiNERClass.from_pretrained("urchade/gliner_medium-v2.1")
+                logger.info("GLiNER model loaded")
             except Exception as e:
-                logger.warning(f'Failed to load GLiNER: {e}')
+                logger.warning(f"Failed to load GLiNER: {e}")
                 self.use_gliner = False
 
     def _extract_entities_fallback(self, text: str) -> list[tuple[str, int, int, str]]:
@@ -303,14 +401,14 @@ class EntityLinker:
         if self._gliner_model is None:
             return self._extract_entities_fallback(text)
         try:
-            labels = ['PERSON', 'ORGANIZATION', 'LOCATION', 'EVENT', 'PRODUCT']
+            labels = ["PERSON", "ORGANIZATION", "LOCATION", "EVENT", "PRODUCT"]
             entities = self._gliner_model.predict_entities(text, labels, threshold=0.5)
-            return [(e['text'], e['start'], e['end'], e['label']) for e in entities]
+            return [(e["text"], e["start"], e["end"], e["label"]) for e in entities]
         except Exception as e:
-            logger.warning(f'GLiNER extraction failed: {e}')
+            logger.warning(f"GLiNER extraction failed: {e}")
             return self._extract_entities_fallback(text)
 
-    def _build_sparql_query(self, entity_text: str, limit: int=10) -> str:
+    def _build_sparql_query(self, entity_text: str, limit: int = 10) -> str:
         """
         Build SPARQL query for entity search.
 
@@ -337,7 +435,7 @@ class EntityLinker:
         """
         cached = self._cache.get(entity_text)
         if cached is not None:
-            logger.debug(f'Cache hit for: {entity_text}')
+            logger.debug(f"Cache hit for: {entity_text}")
             return [EntityCandidate.from_dict(c) for c in cached]
         session = await self._get_session()
         if session is None:
@@ -345,20 +443,20 @@ class EntityLinker:
         query = self._build_sparql_query(entity_text, self.max_candidates)
         try:
             async with asyncio.timeout(self.request_timeout):
-                params = {'query': query, 'format': 'json'}
+                params = {"query": query, "format": "json"}
                 resp = await session.get(self.wikidata_endpoint, params=params)
                 if resp.status_code != 200:
-                    logger.warning(f'Wikidata query failed: {resp.status_code}')
+                    logger.warning(f"Wikidata query failed: {resp.status_code}")
                     return []
                 data = resp.json()
                 candidates = self._parse_sparql_results(entity_text, data)
                 self._cache.set(entity_text, [c.to_dict() for c in candidates])
                 return candidates
         except TimeoutError:
-            logger.warning(f'Timeout querying Wikidata for: {entity_text}')
+            logger.warning(f"Timeout querying Wikidata for: {entity_text}")
             return []
         except Exception as e:
-            logger.warning(f'Error querying Wikidata: {e}')
+            logger.warning(f"Error querying Wikidata: {e}")
             return []
 
     def _parse_sparql_results(self, entity_text: str, data: dict[str, Any]) -> list[EntityCandidate]:
@@ -373,33 +471,40 @@ class EntityLinker:
             List of EntityCandidate objects
         """
         candidates = []
-        bindings = data.get('results', {}).get('bindings', [])
+        bindings = data.get("results", {}).get("bindings", [])
         max_sitelinks = 1
         for binding in bindings:
-            sitelinks_str = binding.get('sitelinks', {}).get('value', '0')
+            sitelinks_str = binding.get("sitelinks", {}).get("value", "0")
             try:
                 sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 max_sitelinks = max(max_sitelinks, sitelinks)
             except ValueError as _e:
-                logger.debug('fail-soft suppression: _parse_sparql_results (sitelinks): %s', _e, exc_info=True)
+                logger.debug("fail-soft suppression: _parse_sparql_results (sitelinks): %s", _e, exc_info=True)
         for binding in bindings:
             try:
-                item_uri = binding.get('item', {}).get('value', '')
-                wikidata_id = item_uri.split('/')[-1] if item_uri else ''
-                label = binding.get('itemLabel', {}).get('value', '')
-                description = binding.get('itemDescription', {}).get('value', '')
-                types_str = binding.get('types', {}).get('value', '')
-                types = [t.strip() for t in types_str.split(',') if t.strip()]
-                sitelinks_str = binding.get('sitelinks', {}).get('value', '0')
+                item_uri = binding.get("item", {}).get("value", "")
+                wikidata_id = item_uri.split("/")[-1] if item_uri else ""
+                label = binding.get("itemLabel", {}).get("value", "")
+                description = binding.get("itemDescription", {}).get("value", "")
+                types_str = binding.get("types", {}).get("value", "")
+                types = [t.strip() for t in types_str.split(",") if t.strip()]
+                sitelinks_str = binding.get("sitelinks", {}).get("value", "0")
                 try:
                     sitelinks = int(sitelinks_str) if sitelinks_str else 0
                 except ValueError:
                     sitelinks = 0
                 popularity_score = min(1.0, sitelinks / max_sitelinks) if max_sitelinks > 0 else 0.0
-                candidate = EntityCandidate(entity_text=entity_text, wikidata_id=wikidata_id, label=label, description=description, types=types, popularity_score=popularity_score)
+                candidate = EntityCandidate(
+                    entity_text=entity_text,
+                    wikidata_id=wikidata_id,
+                    label=label,
+                    description=description,
+                    types=types,
+                    popularity_score=popularity_score,
+                )
                 candidates.append(candidate)
             except Exception as e:
-                logger.debug(f'Error parsing candidate: {e}')
+                logger.debug(f"Error parsing candidate: {e}")
                 continue
         return candidates
 
@@ -429,7 +534,9 @@ class EntityLinker:
             overlap = len(desc_words & context_words)
             return overlap / len(desc_words)
 
-    async def disambiguate(self, entity_text: str, candidates: list[EntityCandidate], context: str) -> EntityCandidate | None:
+    async def disambiguate(
+        self, entity_text: str, candidates: list[EntityCandidate], context: str
+    ) -> EntityCandidate | None:
         """
         Disambiguate entity candidates using context.
 
@@ -462,7 +569,7 @@ class EntityLinker:
         scored_candidates.sort(key=attrgetter("popularity_score"), reverse=True)
         return scored_candidates[0]
 
-    async def link_entities(self, text: str, context: str='') -> list[LinkedEntity]:
+    async def link_entities(self, text: str, context: str = "") -> list[LinkedEntity]:
         """
         Link entities in text to Wikidata.
 
@@ -488,18 +595,28 @@ class EntityLinker:
                 candidates = await self.query_wikidata(entity_text)
                 if not candidates:
                     return None
-                use_context = context or text[max(0, start - 100):min(len(text), end + 100)]
+                use_context = context or text[max(0, start - 100) : min(len(text), end + 100)]
                 best_candidate = await self.disambiguate(entity_text, candidates, use_context)
                 if best_candidate is None:
                     return None
-                return LinkedEntity(original_text=entity_text, start_pos=start, end_pos=end, canonical_id=best_candidate.wikidata_id, canonical_label=best_candidate.label, entity_type=entity_type, confidence=best_candidate.final_score, candidates_considered=len(candidates))
+                return LinkedEntity(
+                    original_text=entity_text,
+                    start_pos=start,
+                    end_pos=end,
+                    canonical_id=best_candidate.wikidata_id,
+                    canonical_label=best_candidate.label,
+                    entity_type=entity_type,
+                    confidence=best_candidate.final_score,
+                    candidates_considered=len(candidates),
+                )
+
         tasks = [process_entity(e) for e in extracted]
-        results = await parallel_ok(*tasks, label='entity_linker:743')
+        results = await parallel_ok(*tasks, label="entity_linker:743")
         for result in results:
             if isinstance(result, LinkedEntity):
                 linked_entities.append(result)
             elif isinstance(result, Exception):
-                logger.debug(f'Entity linking failed: {result}')
+                logger.debug(f"Entity linking failed: {result}")
         return linked_entities
 
     async def resolve_aliases(self, entities: list[str]) -> dict[str, str]:
@@ -522,8 +639,9 @@ class EntityLinker:
                     best = max(candidates, key=attrgetter("popularity_score"))
                     return (entity, best.label)
                 return (entity, None)
+
         tasks = [resolve_one(e) for e in entities]
-        results = await parallel_ok(*tasks, label='entity_linker:776')
+        results = await parallel_ok(*tasks, label="entity_linker:776")
         for result in results:
             if isinstance(result, tuple):
                 entity, canonical = result
@@ -543,19 +661,19 @@ class EntityLinker:
             Canonicalized entity text
         """
         canonical = entity_text.strip()
-        if entity_type == 'PERSON':
+        if entity_type == "PERSON":
             parts = canonical.split()
             if len(parts) == 2:
-                canonical = f'{parts[1]}, {parts[0]}'
-        elif entity_type in ('ORGANIZATION', 'BUSINESS'):
-            suffixes = [' Inc.', ' Corp.', ' Ltd.', ' LLC', ' Company', ' Co.']
+                canonical = f"{parts[1]}, {parts[0]}"
+        elif entity_type in ("ORGANIZATION", "BUSINESS"):
+            suffixes = [" Inc.", " Corp.", " Ltd.", " LLC", " Company", " Co."]
             for suffix in suffixes:
                 if canonical.endswith(suffix):
-                    canonical = canonical[:-len(suffix)].strip()
+                    canonical = canonical[: -len(suffix)].strip()
                     break
         return canonical.lower()
 
-    async def batch_link(self, texts: list[str], contexts: list[str] | None=None) -> list[list[LinkedEntity]]:
+    async def batch_link(self, texts: list[str], contexts: list[str] | None = None) -> list[list[LinkedEntity]]:
         """
         Link entities in multiple texts (batch processing).
 
@@ -567,22 +685,22 @@ class EntityLinker:
             List of LinkedEntity lists (one per input text)
         """
         if contexts is None:
-            contexts = [''] * len(texts)
+            contexts = [""] * len(texts)
         if len(texts) != len(contexts):
-            raise ValueError('texts and contexts must have same length')
+            raise ValueError("texts and contexts must have same length")
         tasks = [self.link_entities(text, context) for text, context in zip(texts, contexts, strict=False)]
-        return await parallel_ok(*tasks, label='entity_linker:842')
+        return await parallel_ok(*tasks, label="entity_linker:842")
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         return self._cache.get_stats()
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear the query cache."""
         self._cache.clear()
-        logger.info('EntityLinker cache cleared')
+        logger.info("EntityLinker cache cleared")
 
-    async def close(self):
+    async def close(self) -> None:
         """Close HTTP session and cleanup resources."""
         if self._session and (not self._session.closed):
             await self._session.close()
@@ -590,8 +708,9 @@ class EntityLinker:
         if self._gliner_model is not None:
             self._gliner_model = None
             import gc
+
             gc.collect()
-        logger.info('EntityLinker closed')
+        logger.info("EntityLinker closed")
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -600,7 +719,10 @@ class EntityLinker:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
+
+
 _linker: EntityLinker | None = None
+
 
 def get_linker() -> EntityLinker:
     """Get singleton EntityLinker instance."""
@@ -609,7 +731,8 @@ def get_linker() -> EntityLinker:
         _linker = EntityLinker()
     return _linker
 
-async def link_entities(text: str, context: str='') -> list[LinkedEntity]:
+
+async def link_entities(text: str, context: str = "") -> list[LinkedEntity]:
     """
     Link entities in text (convenience function).
 
@@ -622,6 +745,7 @@ async def link_entities(text: str, context: str='') -> list[LinkedEntity]:
     """
     linker = get_linker()
     return await linker.link_entities(text, context)
+
 
 async def resolve_entity(entity_text: str) -> EntityCandidate | None:
     """
@@ -637,18 +761,27 @@ async def resolve_entity(entity_text: str) -> EntityCandidate | None:
     candidates = await linker.query_wikidata(entity_text)
     if not candidates:
         return None
-    return await linker.disambiguate(entity_text, candidates, '')
-if __name__ == '__main__':
+    return await linker.disambiguate(entity_text, candidates, "")
+
+
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    async def test():
+    async def test() -> None:
         linker = EntityLinker()
-        test_texts = ['Apple was founded by Steve Jobs in California.', 'The Eiffel Tower is located in Paris, France.', 'Python is a programming language created by Guido van Rossum.']
+        test_texts = [
+            "Apple was founded by Steve Jobs in California.",
+            "The Eiffel Tower is located in Paris, France.",
+            "Python is a programming language created by Guido van Rossum.",
+        ]
         for text in test_texts:
-            print(f'\nText: {text}')
+            print(f"\nText: {text}")
             entities = await linker.link_entities(text)
             for entity in entities:
-                print(f"  '{entity.original_text}' -> {entity.canonical_label} ({entity.canonical_id}, confidence: {entity.confidence:.2f})")
-        print(f'\nCache stats: {linker.get_cache_stats()}')
+                print(
+                    f"  '{entity.original_text}' -> {entity.canonical_label} ({entity.canonical_id}, confidence: {entity.confidence:.2f})"
+                )
+        print(f"\nCache stats: {linker.get_cache_stats()}")
         await linker.close()
+
     asyncio.run(test())

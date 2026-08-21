@@ -12,7 +12,6 @@ Output: actionable diagnosis string + per-phase timing breakdown.
 """
 
 from typing import Any
-from _core import aclose
 
 
 def _compute_runtime_diagnosis(signals: Any) -> dict:
@@ -64,60 +63,39 @@ def _compute_runtime_diagnosis(signals: Any) -> dict:
                     "dedup rejected everything or feed lanes returned empty"
                 ),
                 "severity": "high",
-                "recommended_action": (
-                    "raise dedup threshold 0.90 -> 0.95; "
-                    "verify feed lane connectivity"
-                ),
+                "recommended_action": ("raise dedup threshold 0.90 -> 0.95; verify feed lane connectivity"),
                 "confidence": 0.85,
             }
         return {
             "diagnosis": "no_active_work",
-            "root_cause": (
-                f"ACTIVE phase was only {active:.1f}s — "
-                "sprint aborted early (F221-ABORT or args bug)"
-            ),
+            "root_cause": (f"ACTIVE phase was only {active:.1f}s — sprint aborted early (F221-ABORT or args bug)"),
             "severity": "high",
-            "recommended_action": (
-                "use --duration 240+; verify preflight F221 guard"
-            ),
+            "recommended_action": ("use --duration 240+; verify preflight F221 guard"),
             "confidence": 0.9,
         }
 
     if accepted == 0 and deduped > 0:
         return {
             "diagnosis": "all_deduped",
-            "root_cause": (
-                f"{deduped} findings generated, all rejected as duplicates "
-                f"(synthesis={synth})"
-            ),
+            "root_cause": (f"{deduped} findings generated, all rejected as duplicates (synthesis={synth})"),
             "severity": "medium",
-            "recommended_action": (
-                "lower dedup aggressiveness; check LanceDB ANN threshold"
-            ),
+            "recommended_action": ("lower dedup aggressiveness; check LanceDB ANN threshold"),
             "confidence": 0.75,
         }
 
     if windup > 60 and accepted < 5:
         return {
             "diagnosis": "windup_overspend",
-            "root_cause": (
-                f"WINDUP took {windup:.1f}s for only {accepted} findings — "
-                "no early-exit on low yield"
-            ),
+            "root_cause": (f"WINDUP took {windup:.1f}s for only {accepted} findings — no early-exit on low yield"),
             "severity": "low",
-            "recommended_action": (
-                "add early-exit: skip GNN/synth/hypothesis when accepted < N"
-            ),
+            "recommended_action": ("add early-exit: skip GNN/synth/hypothesis when accepted < N"),
             "confidence": 0.7,
         }
 
     if cb_open:
         return {
             "diagnosis": "circuit_breakers_open",
-            "root_cause": (
-                f"{len(cb_open)} domains blocked by circuit breaker: "
-                f"{cb_open[:3]}"
-            ),
+            "root_cause": (f"{len(cb_open)} domains blocked by circuit breaker: {cb_open[:3]}"),
             "severity": "medium",
             "recommended_action": "wait for breaker cooldown or clear manually",
             "confidence": 0.95,
@@ -159,9 +137,12 @@ def _extract_runtime_timing(signals: Any) -> dict:
         },
         "total_s": round(total, 2),
         "bottleneck": (
-            "windup" if windup > active and windup > warmup
-            else "active" if active > warmup
-            else "warmup" if warmup > 0
+            "windup"
+            if windup > active and windup > warmup
+            else "active"
+            if active > warmup
+            else "warmup"
+            if warmup > 0
             else "none"
         ),
     }

@@ -44,21 +44,16 @@ M1 8GB notes:
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 import sys
 import time
-import weakref
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import ParamSpec, TypeVar
 
 from hledac.universal.utils.exception_severity import (
-    Severity,
     ExceptionEvent,
-    exc_event,
+    Severity,
 )
 
 __all__ = [
@@ -70,7 +65,6 @@ __all__ = [
     "Severity",
     "TokenBucket",
 ]
-
 
 # ── Backward Compatibility Layer ────────────────────────────────────────────
 
@@ -133,13 +127,14 @@ def _parse_severity_from_comment(comment: str | None) -> Severity | None:
 # ── Module-level logger cache ──────────────────────────────────────────────
 
 _LOGGER_CACHE: dict[str, logging.Logger] = {}
-_BUCKETS: dict[str, "TokenBucket"] = {}
-_BUCKETS_LOCK = __import__('threading').Lock()
+_BUCKETS: dict[str, TokenBucket] = {}
+_BUCKETS_LOCK = __import__("threading").Lock()
 
 
 @dataclass(slots=True)
 class TokenBucket:
     """Minimal token bucket for rate-limiting."""
+
     tokens: float = 10.0
     max_tokens: float = 10.0
     refill_rate: float = 5.0
@@ -167,7 +162,6 @@ def _get_bucket(scope: str, severity: Severity) -> TokenBucket:
     key = f"{scope}:{severity.name}"
     with _BUCKETS_LOCK:
         if key not in _BUCKETS:
-            # Configure bucket based on severity
             if severity == Severity.P0_CRITICAL:
                 bucket = TokenBucket(max_tokens=999, refill_rate=999)
             elif severity == Severity.P1_ERROR:
@@ -238,9 +232,7 @@ def silenced(
         if severity == Severity.P0_CRITICAL:
             raise
 
-        # Check rate-limit
         if bucket.try_acquire():
-            # Log with structured format
             log.log(
                 effective_level,
                 f"{severity.tag} silenced: {name} | {type(exc).__name__}: {exc}",
@@ -250,7 +242,7 @@ def silenced(
                     "severity": severity.name,
                     "exc_type": type(exc).__name__,
                     "cascade_id": cascade_id,
-                }
+                },
             )
 
 
@@ -280,6 +272,7 @@ def silence_with_severity(
     Returns:
         Decorator that wraps the function.
     """
+
     def decorator(fn: Callable[_P, _R]) -> Callable[_P, _R | None]:
         _name = name or fn.__qualname__
         _logger = logger or _get_logger(_name)
@@ -303,6 +296,7 @@ def silence_with_severity(
                 return None
 
         return wrapper
+
     return decorator
 
 
@@ -352,11 +346,12 @@ def severity_swallow(
                 "severity": severity.name,
                 "exc_type": type(exc).__name__,
                 "cascade_id": cascade_id,
-            }
+            },
         )
 
 
 # ── Backward Compatibility ─────────────────────────────────────────────────
+
 
 def safe_swallow(
     site_name: str,
@@ -404,6 +399,7 @@ def safe_swallow(
 
 # ── Structured Event Helpers ───────────────────────────────────────────────
 
+
 def create_exception_event(
     exc: BaseException,
     scope: str,
@@ -443,7 +439,7 @@ def create_exception_event(
         cascade_id=cascade_id,
         severity=severity,
         scope=scope,
-        category=scope.split('.')[0] if '.' in scope else scope,
+        category=scope.split(".")[0] if "." in scope else scope,
         exc_type=type(exc).__name__,
         exc_message=str(exc)[:200],
         exc_hash=exc_hash,
@@ -453,6 +449,6 @@ def create_exception_event(
         suppressed_count=0,
         re_raised=False,
         outcome="swallowed",
-        file=sys._getframe(1).f_code.co_filename if hasattr(sys, '_getframe') else "",
-        line=sys._getframe(1).f_lineno if hasattr(sys, '_getframe') else 0,
+        file=sys._getframe(1).f_code.co_filename if hasattr(sys, "_getframe") else "",
+        line=sys._getframe(1).f_lineno if hasattr(sys, "_getframe") else 0,
     )

@@ -39,21 +39,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import threading
 from collections.abc import Callable
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from hledac.universal._core.locks import LockCategory, make_lock
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-# =============================================================================
-# Feature gate: Subinterpreters (Python 3.14+, experimental)
-# =============================================================================
 
 _SUBINTERPRETER_ENABLED: bool | None = None  # None = unprobed
 _SUBINTERPRETER_PROBE_LOCK = make_lock(LockCategory.CONFIG, "execution_gateway._SUBINTERPRETER_PROBE_LOCK")
@@ -93,7 +87,7 @@ def _probe_subinterpreter_support() -> bool:
 
         # Gate 2: Import check
         try:
-            from concurrent.futures import InterpreterPoolExecutor  # noqa: F401
+            from concurrent.futures import InterpreterPoolExecutor
         except ImportError:
             logger.debug("[gateway] InterpreterPoolExecutor not available (Python < 3.14)")
             _SUBINTERPRETER_ENABLED = False
@@ -124,7 +118,7 @@ def _probe_subinterpreter_support() -> bool:
                 "[gateway] Subinterpreter roundtrip failed: %s — "
                 "likely missing --with-experimental-isolated-subinterpreters build flag",
                 exc,
-    )
+            )
             _SUBINTERPRETER_ENABLED = False
             return False
 
@@ -132,11 +126,6 @@ def _probe_subinterpreter_support() -> bool:
 def subinterpreter_available() -> bool:
     """Public check: are subinterpreters truly available?"""
     return _probe_subinterpreter_support()
-
-
-# =============================================================================
-# Workload hints — help the gateway pick the right backend
-# =============================================================================
 
 
 class WorkloadHint:
@@ -149,11 +138,7 @@ class WorkloadHint:
     AUTO = "auto"  # Let the gateway decide
 
 
-# =============================================================================
-# Execution Gateway — singleton
-# =============================================================================
-
-_gateway_instance: "ExecutionGateway | None" = None
+_gateway_instance: ExecutionGateway | None = None
 _gateway_lock = make_lock(LockCategory.CONFIG, "execution_gateway._gateway_lock")
 
 
@@ -188,21 +173,15 @@ class ExecutionGateway:
         self._rust_available: bool | None = None
         self._initialized = False
 
-    # ------------------------------------------------------------------
-    # Lazy init
-    # ------------------------------------------------------------------
-
     def _ensure_initialized(self) -> None:
         """Lazy-init all backends on first use (idempotent)."""
         if self._initialized:
             return
         # Import here to avoid circular imports at module load
         from hledac.universal.runtime.worker_pool import (
-            RustWorkerPool,
-            SharedWorkerPool,
             get_rust_pool,
             get_shared_pool,
-    )
+        )
 
         self._shared_pool = get_shared_pool()
         self._rust_available = False
@@ -217,10 +196,6 @@ class ExecutionGateway:
             self._rust_io_pool = None
 
         self._initialized = True
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     async def cpu_bound(
         self,
@@ -298,9 +273,7 @@ class ExecutionGateway:
         Returns:
             Inference result.
         """
-        return await self.cpu_bound(
-            fn, *args, timeout=timeout, hint=WorkloadHint.MLX_INFERENCE, **kwargs
-    )
+        return await self.cpu_bound(fn, *args, timeout=timeout, hint=WorkloadHint.MLX_INFERENCE, **kwargs)
 
     async def pure_python_cpu(
         self,
@@ -320,13 +293,7 @@ class ExecutionGateway:
             fn: Synchronous pure-Python callable.
             timeout: Optional timeout in seconds.
         """
-        return await self.cpu_bound(
-            fn, *args, timeout=timeout, hint=WorkloadHint.PURE_PYTHON_CPU, **kwargs
-    )
-
-    # ------------------------------------------------------------------
-    # Internal routing
-    # ------------------------------------------------------------------
+        return await self.cpu_bound(fn, *args, timeout=timeout, hint=WorkloadHint.PURE_PYTHON_CPU, **kwargs)
 
     async def _via_rust_cpu(
         self,
@@ -339,14 +306,12 @@ class ExecutionGateway:
         """Route via Rust rayon cpu_pool, falling back to SharedWorkerPool."""
         if self._rust_available and self._rust_cpu_pool is not None:
             try:
-                return await self._rust_cpu_pool.submit(
-                    fn, *args, timeout=timeout, **kwargs
-    )
+                return await self._rust_cpu_pool.submit(fn, *args, timeout=timeout, **kwargs)
             except Exception as exc:
                 logger.debug(
                     "[gateway] Rust cpu_pool failed: %s — falling back to SharedWorkerPool",
                     exc,
-    )
+                )
         # Fallback
         return await self._shared_pool.run(fn, *args, timeout=timeout, **kwargs)
 
@@ -366,7 +331,7 @@ class ExecutionGateway:
                 logger.debug(
                     "[gateway] Subinterpreter pool failed: %s — falling back to SharedWorkerPool",
                     exc,
-    )
+                )
         return await self._shared_pool.run(fn, *args, timeout=timeout, **kwargs)
 
     async def _via_subinterpreter(
@@ -396,12 +361,8 @@ class ExecutionGateway:
                 loop.run_in_executor(None, _run_in_subinterpreter),
                 timeout=timeout,
                 label="gateway_subinterpreter",
-    )
+            )
         return await loop.run_in_executor(None, _run_in_subinterpreter)
-
-    # ------------------------------------------------------------------
-    # Telemetry
-    # ------------------------------------------------------------------
 
     @property
     def active_count(self) -> int:

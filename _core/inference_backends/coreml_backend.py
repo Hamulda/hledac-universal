@@ -12,12 +12,13 @@ passed in InferenceRequest(backend=InferenceBackend.COREML).
 CoreML service is primarily for embeddings/lightweight inference,
 not full LLM generation. Some generation semantics may not be supported.
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal._core.inference_coordinator import InferenceRequest, InferenceResponse, Token
@@ -29,7 +30,6 @@ else:
         InferenceRequest = Any  # type: ignore[assignment,misc]
         InferenceResponse = Any  # type: ignore[assignment,misc]
         Token = Any  # type: ignore[assignment,misc]
-from _core._util import aclose
 
 from hledac.universal._core.inference_coordinator import InferenceBackend, InferenceError
 
@@ -80,14 +80,14 @@ class CoreMLBackend:
                 prompt=request.prompt,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-    )
+            )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.COREML,
-    )
+            )
         except InferenceError:
             raise
         except Exception as exc:

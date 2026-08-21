@@ -11,6 +11,7 @@ Moduly:
 Pro backwards compatibility lze importovat přímo z recon.stealth:
     from hledac.universal.recon.stealth import StealthCrawler, StealthWebScraper, StreamingMonitor
 """
+
 from __future__ import annotations
 
 # Re-export all public symbols for backwards compatibility
@@ -33,18 +34,15 @@ from ._models import (
     StreamEvent,
     TorProxyManager,
     get_stealth_headers,
-    )
-
+)
+from .monitor import StreamingMonitor
 from .scraper import (
     StealthCrawler,
     StealthWebScraper,
     create_stealth_crawler,
     get_stealth_web_scraper,
     quick_scrape,
-    )
-
-from .monitor import StreamingMonitor
-from _core import aclose
+)
 
 __all__ = [
     # Models

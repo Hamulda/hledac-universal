@@ -8,18 +8,16 @@ Tests for Issue #2 fix:
 - execute_top produces non-zero findings
 """
 
-import asyncio
-import pytest
 from typing import Any
 
+import pytest
+
 from runtime.pivot_executor import (
-    AutonomousPivotExecutor,
-    PivotExecutionResult,
-    PivotExecutionRequest,
     MAX_ACTIVE_PIVOTS,
+    MAX_PIVOT_FINDINGS,
     MAX_PIVOTS_PER_SPRINT,
     PIVOT_TIMEOUT_S,
-    MAX_PIVOT_FINDINGS,
+    AutonomousPivotExecutor,
 )
 
 
@@ -34,7 +32,7 @@ class FakePivot:
         ioc_value: str = "evil.com",
         confidence: float = 0.9,
         priority: int = 1,
-    ):
+    ) -> None:
         self.pivot_id = pivot_id
         self.pivot_type = pivot_type
         self.ioc_type = ioc_type
@@ -46,7 +44,7 @@ class FakePivot:
 class FakeGov:
     """Fake resource governor for testing."""
 
-    def __init__(self, critical: bool = False, emergency: bool = False):
+    def __init__(self, critical: bool = False, emergency: bool = False) -> None:
         self._critical = critical
         self._emergency = emergency
 
@@ -67,16 +65,14 @@ class FakeGov:
 class FakeStore:
     """Fake duckdb_store for testing."""
 
-    def __init__(self, findings: list[dict[str, Any]] | None = None):
+    def __init__(self, findings: list[dict[str, Any]] | None = None) -> None:
         self._findings = findings or []
         self.ingested: list[dict[str, Any]] = []
 
     async def async_query_recent_findings(self, limit: int) -> list[dict[str, Any]]:
         return self._findings[:limit]
 
-    async def async_ingest_findings_batch(
-        self, findings: list[dict[str, Any]]
-    ) -> tuple[int, int]:
+    async def async_ingest_findings_batch(self, findings: list[dict[str, Any]]) -> tuple[int, int]:
         self.ingested.extend(findings)
         return (len(findings), 0)
 
@@ -84,7 +80,7 @@ class FakeStore:
 class FakeFeedback:
     """Fake hypothesis feedback adapter for testing."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.records: list[dict[str, Any]] = []
 
     async def async_record(
@@ -110,7 +106,7 @@ class FakeFeedback:
 
 
 @pytest.mark.asyncio
-async def test_default_pivot_search_returns_correlated_findings():
+async def test_default_pivot_search_returns_correlated_findings() -> None:
     """_default_pivot_search filters findings by ioc_value match."""
     store = FakeStore(
         findings=[
@@ -142,7 +138,7 @@ async def test_default_pivot_search_returns_correlated_findings():
 
 
 @pytest.mark.asyncio
-async def test_default_pivot_search_empty_when_no_match():
+async def test_default_pivot_search_empty_when_no_match() -> None:
     """_default_pivot_search returns empty list when no correlation found."""
     store = FakeStore(
         findings=[
@@ -158,7 +154,7 @@ async def test_default_pivot_search_empty_when_no_match():
 
 
 @pytest.mark.asyncio
-async def test_run_pivot_search_uses_injected_fn():
+async def test_run_pivot_search_uses_injected_fn() -> None:
     """_run_pivot_search delegates to injected pivot_search_fn when provided."""
     store = FakeStore()
     executor = AutonomousPivotExecutor(duckdb_store=store)
@@ -176,7 +172,7 @@ async def test_run_pivot_search_uses_injected_fn():
 
 
 @pytest.mark.asyncio
-async def test_run_pivot_search_falls_back_to_default():
+async def test_run_pivot_search_falls_back_to_default() -> None:
     """_run_pivot_search falls back to _default_pivot_search when no fn injected."""
     store = FakeStore(
         findings=[
@@ -193,7 +189,7 @@ async def test_run_pivot_search_falls_back_to_default():
 
 
 @pytest.mark.asyncio
-async def test_execute_top_with_duckdb_store_pivot_search():
+async def test_execute_top_with_duckdb_store_pivot_search() -> None:
     """execute_top produces non-zero findings via duckdb_store lookup."""
     store = FakeStore(
         findings=[
@@ -222,7 +218,7 @@ async def test_execute_top_with_duckdb_store_pivot_search():
 
 
 @pytest.mark.asyncio
-async def test_execute_top_with_custom_pivot_search_fn():
+async def test_execute_top_with_custom_pivot_search_fn() -> None:
     """execute_top uses injected pivot_search_fn for actual pivot execution."""
     store = FakeStore()
 
@@ -245,7 +241,7 @@ async def test_execute_top_with_custom_pivot_search_fn():
 
 
 @pytest.mark.asyncio
-async def test_feedback_adapter_receives_non_empty_results():
+async def test_feedback_adapter_receives_non_empty_results() -> None:
     """feedback_adapter.async_record called with non-zero produced/accepted counts."""
     store = FakeStore(
         findings=[
@@ -273,7 +269,7 @@ async def test_feedback_adapter_receives_non_empty_results():
 
 
 @pytest.mark.asyncio
-async def test_execute_top_returns_empty_when_pivots_empty():
+async def test_execute_top_returns_empty_when_pivots_empty() -> None:
     """execute_top returns [] when pivots list is empty (no RAM check, no side effects)."""
     store = FakeStore()
     executor = AutonomousPivotExecutor(duckdb_store=store)
@@ -284,7 +280,7 @@ async def test_execute_top_returns_empty_when_pivots_empty():
 
 
 @pytest.mark.asyncio
-async def test_execute_top_skips_when_ram_critical():
+async def test_execute_top_skips_when_ram_critical() -> None:
     """execute_top returns [] immediately when governor reports RAM critical."""
     store = FakeStore()
 
@@ -293,6 +289,7 @@ async def test_execute_top_skips_when_ram_critical():
             class S:
                 is_critical = True
                 is_emergency = False
+
             return S()
 
     executor = AutonomousPivotExecutor(
@@ -307,7 +304,7 @@ async def test_execute_top_skips_when_ram_critical():
 
 
 @pytest.mark.asyncio
-async def test_execute_top_respects_max_per_sprint():
+async def test_execute_top_respects_max_per_sprint() -> None:
     """execute_top caps at max_per_sprint pivots."""
     store = FakeStore()
 
@@ -327,7 +324,7 @@ async def test_execute_top_respects_max_per_sprint():
 
 
 @pytest.mark.asyncio
-async def test_init_with_pivot_search_fn_parameter():
+async def test_init_with_pivot_search_fn_parameter() -> None:
     """__init__ accepts pivot_search_fn parameter and stores it."""
     store = FakeStore()
 
@@ -342,7 +339,7 @@ async def test_init_with_pivot_search_fn_parameter():
     assert executor._pivot_search_fn is custom_fn
 
 
-def test_executor_constants_are_bounded():
+def test_executor_constants_are_bounded() -> None:
     """Constants respect M1 8GB bounds."""
     assert 1 <= MAX_ACTIVE_PIVOTS <= 5
     assert 1 <= MAX_PIVOTS_PER_SPRINT <= 20

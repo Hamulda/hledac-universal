@@ -28,19 +28,22 @@ NOT telemetry authority:
   - System memory/RSS metrics (metrics_registry.py owns those)
   - MLX/cache metrics (metrics_registry.py owns those)
 """
+
 import logging
-import msgspec
-from compat.msgspec_gc_compat import Struct
-import msgspec.json as _json
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import UTC, datetime
 from typing import Any
-from hledac.universal.utils._patterns import elapsed_ms  # F320: DRY elapsed_ms helper
-from _core import aclose
+
+import msgspec.json as _json
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils._patterns import elapsed_ms
+
 _OTEL_AVAILABLE: bool | None = None
-TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
+TELEMETRY_EVENT_FIELDS = frozenset(["session_id", "phase", "component", "event", "elapsed_ms"])
+
 
 class SprintEvent(Struct):
     """
@@ -50,19 +53,28 @@ class SprintEvent(Struct):
     JSON-serializable for persistence safety.
     Uses __slots__ (Python 3.14+) for M1 8GB RAM efficiency.
     """
+
     session_id: str
     phase: str
     component: str
     event: str
     elapsed_ms: float
-    ts: str = field(default='')
+    ts: str = field(default="")
 
     def __post_init__(self) -> None:
         if not self.ts:
             self.ts = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict:
-        return {'session_id': self.session_id, 'phase': self.phase, 'component': self.component, 'event': self.event, 'elapsed_ms': self.elapsed_ms, 'ts': self.ts}
+        return {
+            "session_id": self.session_id,
+            "phase": self.phase,
+            "component": self.component,
+            "event": self.event,
+            "elapsed_ms": self.elapsed_ms,
+            "ts": self.ts,
+        }
+
 
 class JsonFormatter(logging.Formatter):
     """
@@ -74,14 +86,29 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         try:
-            obj = {'ts': datetime.now(UTC).isoformat(), 'level': record.levelname, 'logger': record.name, 'message': record.getMessage()}
-            for attr in ('session_id', 'phase', 'component', 'event', 'elapsed_ms'):
+            obj = {
+                "ts": datetime.now(UTC).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+            for attr in ("session_id", "phase", "component", "event", "elapsed_ms"):
                 if hasattr(record, attr):
                     obj[attr] = getattr(record, attr)
-            return _json.encode(obj).decode('utf-8')
+            return _json.encode(obj).decode("utf-8")
         except Exception:
-            return _json.encode({'ts': datetime.now(UTC).isoformat(), 'level': 'ERROR', 'logger': record.name, 'message': 'TelemetryFormatter: format error'})
+            return _json.encode(
+                {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "level": "ERROR",
+                    "logger": record.name,
+                    "message": "TelemetryFormatter: format error",
+                }
+            )
+
+
 _OTEL_TRACER: Any = None
+
 
 def _get_otel_tracer() -> Any:
     """Lazily get OTel tracer (lazy import for M1 8GB RAM budget)."""
@@ -89,10 +116,12 @@ def _get_otel_tracer() -> Any:
     if _OTEL_TRACER is None:
         try:
             from otel._instrumentation import get_tracer
+
             _OTEL_TRACER = get_tracer()
         except Exception:
             _OTEL_TRACER = False
     return _OTEL_TRACER if _OTEL_TRACER else None
+
 
 class TelemetryLogger:
     """
@@ -110,10 +139,11 @@ class TelemetryLogger:
       logger.log_event("ACTIVE", "fetch", "url_discovered", 1500.0)
       logger.log_sprint_finalize("TEARDOWN", "sprint_lifecycle", 1800000.0)
     """
-    MAX_EVENT_HISTORY = 100
-    __slots__ = tuple(('_component', '_events', '_logger', '_session_id'))
 
-    def __init__(self, session_id: str, component: str='runtime', logger_name: str='hledac.telemetry') -> None:
+    MAX_EVENT_HISTORY = 100
+    __slots__ = ("_component", "_events", "_logger", "_session_id")
+
+    def __init__(self, session_id: str, component: str = "runtime", logger_name: str = "hledac.telemetry") -> None:
         self._session_id = session_id
         self._component = component
         self._logger = logging.getLogger(logger_name)
@@ -132,32 +162,50 @@ class TelemetryLogger:
         except Exception:  # noqa: BLE001
             pass
 
-    def log_phase_transition(self, from_phase: str, to_phase: str, component: str | None=None, elapsed_ms: float=0.0) -> None:
+    def log_phase_transition(
+        self, from_phase: str, to_phase: str, component: str | None = None, elapsed_ms: float = 0.0
+    ) -> None:
         """Record a sprint phase transition."""
         try:
             comp = component or self._component
-            evt = SprintEvent(session_id=self._session_id, phase=to_phase, component=comp, event=f'phase:{from_phase}->{to_phase}', elapsed_ms=elapsed_ms)
+            evt = SprintEvent(
+                session_id=self._session_id,
+                phase=to_phase,
+                component=comp,
+                event=f"phase:{from_phase}->{to_phase}",
+                elapsed_ms=elapsed_ms,
+            )
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
         except Exception:  # noqa: BLE001
             pass
 
-    def log_event(self, phase: str, component: str, event: str, elapsed_ms: float=0.0) -> None:
+    def log_event(self, phase: str, component: str, event: str, elapsed_ms: float = 0.0) -> None:
         """Record a named sprint event within a phase."""
         try:
-            evt = SprintEvent(session_id=self._session_id, phase=phase, component=component, event=event, elapsed_ms=elapsed_ms)
+            evt = SprintEvent(
+                session_id=self._session_id, phase=phase, component=component, event=event, elapsed_ms=elapsed_ms
+            )
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
         except Exception:  # noqa: BLE001
             pass
 
-    def log_sprint_finalize(self, final_phase: str, component: str | None=None, total_elapsed_ms: float=0.0) -> None:
+    def log_sprint_finalize(
+        self, final_phase: str, component: str | None = None, total_elapsed_ms: float = 0.0
+    ) -> None:
         """Record sprint finalization event."""
         try:
             comp = component or self._component
-            evt = SprintEvent(session_id=self._session_id, phase=final_phase, component=comp, event='sprint_finalize', elapsed_ms=total_elapsed_ms)
+            evt = SprintEvent(
+                session_id=self._session_id,
+                phase=final_phase,
+                component=comp,
+                event="sprint_finalize",
+                elapsed_ms=total_elapsed_ms,
+            )
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
@@ -174,7 +222,9 @@ class TelemetryLogger:
     def _emit_log_record(self, evt: SprintEvent) -> None:
         """Emit a structured log record with sprint context."""
         try:
-            record = logging.LogRecord(name=self._logger.name, level=logging.INFO, pathname='', lineno=0, msg=evt.event, args=(), exc_info=None)
+            record = logging.LogRecord(
+                name=self._logger.name, level=logging.INFO, pathname="", lineno=0, msg=evt.event, args=(), exc_info=None
+            )
             record.session_id = evt.session_id
             record.phase = evt.phase
             record.component = evt.component
@@ -191,12 +241,22 @@ class TelemetryLogger:
             if tracer is None:
                 return
             from opentelemetry import trace as otel_trace
+
             span = otel_trace.get_current_span()
-            if span is None or not hasattr(span, 'add_event'):
+            if span is None or not hasattr(span, "add_event"):
                 return
-            span.add_event(evt.event, attributes={'session_id': evt.session_id, 'phase': evt.phase, 'component': evt.component, 'elapsed_ms': evt.elapsed_ms})
+            span.add_event(
+                evt.event,
+                attributes={
+                    "session_id": evt.session_id,
+                    "phase": evt.phase,
+                    "component": evt.component,
+                    "elapsed_ms": evt.elapsed_ms,
+                },
+            )
         except Exception:  # noqa: BLE001
             pass
+
 
 class SprintMetrics:
     """
@@ -211,29 +271,32 @@ class SprintMetrics:
 
     Fail-soft: all methods are void.
     """
-    __slots__ = tuple(('_component', '_session_id', '_started_at', '_telemetry'))
 
-    def __init__(self, session_id: str, component: str='sprint') -> None:
+    __slots__ = ("_component", "_session_id", "_started_at", "_telemetry")
+
+    def __init__(self, session_id: str, component: str = "sprint") -> None:
         self._session_id = session_id
         self._component = component
         self._started_at: float | None = None
         self._telemetry = TelemetryLogger(session_id=session_id, component=component)
 
-    def record_phase(self, phase: str, component: str | None=None) -> None:
+    def record_phase(self, phase: str, component: str | None = None) -> None:
         """Record entering a phase."""
         try:
             elapsed = self._elapsed_ms()
             comp = component or self._component
-            self._telemetry.log_event(phase=phase, component=comp, event='phase_entered', elapsed_ms=elapsed)
+            self._telemetry.log_event(phase=phase, component=comp, event="phase_entered", elapsed_ms=elapsed)
         except Exception:  # noqa: BLE001
             pass
 
-    def record_transition(self, from_phase: str, to_phase: str, component: str | None=None) -> None:
+    def record_transition(self, from_phase: str, to_phase: str, component: str | None = None) -> None:
         """Record a phase transition."""
         try:
             elapsed = self._elapsed_ms()
             comp = component or self._component
-            self._telemetry.log_phase_transition(from_phase=from_phase, to_phase=to_phase, component=comp, elapsed_ms=elapsed)
+            self._telemetry.log_phase_transition(
+                from_phase=from_phase, to_phase=to_phase, component=comp, elapsed_ms=elapsed
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -249,15 +312,17 @@ class SprintMetrics:
         """Mark sprint start time."""
         try:
             self._started_at = time.monotonic()
-            self._telemetry.log_event(phase='BOOT', component=self._component, event='sprint_started', elapsed_ms=0.0)
+            self._telemetry.log_event(phase="BOOT", component=self._component, event="sprint_started", elapsed_ms=0.0)
         except Exception:  # noqa: BLE001
             pass
 
-    def finalize(self, final_phase: str='TEARDOWN') -> None:
+    def finalize(self, final_phase: str = "TEARDOWN") -> None:
         """Record sprint finalization."""
         try:
             elapsed = self._elapsed_ms()
-            self._telemetry.log_sprint_finalize(final_phase=final_phase, component=self._component, total_elapsed_ms=elapsed)
+            self._telemetry.log_sprint_finalize(
+                final_phase=final_phase, component=self._component, total_elapsed_ms=elapsed
+            )
         except Exception:  # noqa: BLE001
             pass
 

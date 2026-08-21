@@ -11,7 +11,6 @@ import asyncio
 import threading
 
 import pytest
-from _core import aclose
 
 
 class TestLmdbPool:
@@ -107,6 +106,7 @@ class TestLmdbPool:
 
         def slow() -> int:
             import time
+
             time.sleep(0.5)
             return 1
 

@@ -28,10 +28,6 @@ use rayon::prelude::*;
 static DICT_REGISTRY: LazyLock<Mutex<HashMap<u32, Vec<u8>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Minimum page size to attempt compression.
 const MIN_PAGE_SIZE: usize = 64;
 
@@ -46,10 +42,6 @@ const HDR_ZSTD_DICT: u8 = 0x03;
 
 /// Size of the dictionary ID field after HDR_ZSTD_DICT marker (little-endian u32).
 const DICT_ID_SIZE: usize = 4;
-
-// ---------------------------------------------------------------------------
-// Core compression — lz4 first, zstd fallback
-// ---------------------------------------------------------------------------
 
 /// Compress a page using lz4 (fast) or zstd (high ratio).
 ///
@@ -224,10 +216,6 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Python bindings
-// ---------------------------------------------------------------------------
-
 /// Compress a page for LMDB storage.
 ///
 /// Args:
@@ -351,10 +339,6 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Dictionary-aware compression — HEIST-07
-// ---------------------------------------------------------------------------
-
 /// Register a zstd dictionary for use with compress_page_dict.
 ///
 /// Dictionaries are trained offline (e.g., via zstd_compressor.py) and loaded
@@ -419,10 +403,6 @@ pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
         })
     })
 }
-
-// ---------------------------------------------------------------------------
-// Raw LZ4 for JSONL streaming — lz4_flex frame format (no wire header)
-// ---------------------------------------------------------------------------
 
 /// Compress bytes using lz4 frame format (raw, no size prefix).
 ///
@@ -575,11 +555,6 @@ pub fn lz4_decompress_jsonl_batch(compressed: &[u8]) -> PyResult<Vec<Vec<u8>>> {
         })
     })
 }
-
-/// Register compression functions with a Python module.
-// ---------------------------------------------------------------------------
-// Pure zstd compression (E3 hot path)
-// ---------------------------------------------------------------------------
 
 /// Pure zstd compression — no header, no auto-codec selection.
 ///

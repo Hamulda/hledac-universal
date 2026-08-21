@@ -3,10 +3,9 @@ from unittest.mock import patch
 import pytest
 
 from hledac.universal.network.ipfs_client import extract_cids_from_text
-from _core import aclose
 
 
-def test_extract_ipfs_cid_from_finding_content():
+def test_extract_ipfs_cid_from_finding_content() -> None:
     """IPFSClient extrahuje CID z finding content."""
     test_content = "Found reference to ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
     matches = extract_cids_from_text(test_content)
@@ -14,7 +13,7 @@ def test_extract_ipfs_cid_from_finding_content():
     assert matches[0] == "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
 
 
-def test_bafy_cid_extracted():
+def test_bafy_cid_extracted() -> None:
     """bafy CID variant is extracted correctly."""
     test_content = "IPFS path: ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
     matches = extract_cids_from_text(test_content)
@@ -22,21 +21,21 @@ def test_bafy_cid_extracted():
     assert matches[0] == "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
 
 
-def test_no_false_positive_cid():
+def test_no_false_positive_cid() -> None:
     """Krátké hash strings nejsou detekovány jako CID."""
     test_content = "SHA256: abc123def456 — not a CID"
     matches = extract_cids_from_text(test_content)
     assert not matches
 
 
-def test_no_false_positive_short_qm():
+def test_no_false_positive_short_qm() -> None:
     """Qm hash len < 44 not matched."""
     test_content = "QmABC not a real cid"
     matches = extract_cids_from_text(test_content)
     assert len(matches) == 0
 
 
-def test_multiple_cids_extracted():
+def test_multiple_cids_extracted() -> None:
     """Multiple CIDs in content are all extracted."""
     test_content = (
         "First: QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG "
@@ -47,7 +46,7 @@ def test_multiple_cids_extracted():
 
 
 @pytest.mark.asyncio
-async def test_fetch_findings_from_cids_empty_input():
+async def test_fetch_findings_from_cids_empty_input() -> None:
     """Prázdný CID list vrací [] bez I/O."""
     import os
 
@@ -59,7 +58,7 @@ async def test_fetch_findings_from_cids_empty_input():
 
 
 @pytest.mark.asyncio
-async def test_fetch_findings_from_cids_deduplication():
+async def test_fetch_findings_from_cids_deduplication() -> None:
     """Duplicitní CID se fetchne pouze jednou."""
     import os
     from unittest.mock import AsyncMock, MagicMock, patch
@@ -75,15 +74,13 @@ async def test_fetch_findings_from_cids_deduplication():
             "hledac.universal.runtime.resource_governor.get_governor",
             return_value=mock_governor,
         ):
-            with patch.object(
-                ipfs_client, "ipfs_fetch_as_findings", new_callable=AsyncMock
-            ) as mock_fetch:
+            with patch.object(ipfs_client, "ipfs_fetch_as_findings", new_callable=AsyncMock) as mock_fetch:
                 mock_fetch.return_value = []
                 await ipfs_client.fetch_findings_from_cids([cid, cid, cid], query="test")
                 assert mock_fetch.call_count == 1  # dedup funguje
 
 
-def test_canonical_finding_payload_text_has_cid():
+def test_canonical_finding_payload_text_has_cid() -> None:
     """CanonicalFinding.payload_text can contain IPFS CID."""
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 

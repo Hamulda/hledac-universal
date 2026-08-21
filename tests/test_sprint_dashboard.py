@@ -4,45 +4,44 @@ Tests for monitoring/sprint_dashboard.py.
 Sprint F195C: Rich terminal dashboard for live sprint monitoring.
 """
 
-
 import sys
 from unittest.mock import MagicMock, patch
-from _core import aclose
 
 # ── Rich stub ─────────────────────────────────────────────────────────────────
 
+
 class _FakeLive:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self._started = False
 
-    def start(self):
+    def start(self) -> None:
         self._started = True
 
-    def update(self, *args, **kwargs):
+    def update(self, *args, **kwargs) -> None:
         pass
 
-    def stop(self):
+    def stop(self) -> None:
         pass
 
 
 class _FakeConsole:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         pass
 
 
 class _FakeTable:
-    def __init__(self, **kw):
+    def __init__(self, **kw) -> None:
         self._rows = []
 
-    def add_column(self, *args, **kw):
+    def add_column(self, *args, **kw) -> None:
         pass
 
-    def add_row(self, *args, **kw):
+    def add_row(self, *args, **kw) -> None:
         self._rows.append(args)
 
 
 class _FakeText:
-    def __init__(self, *args, **kw):
+    def __init__(self, *args, **kw) -> None:
         self._parts = args
 
     @classmethod
@@ -51,6 +50,7 @@ class _FakeText:
 
 
 # ── Patch helpers ─────────────────────────────────────────────────────────────
+
 
 def _patch_rich():
     return patch.dict(
@@ -69,6 +69,7 @@ def _patch_rich():
 
 class _FakeResult:
     """Minimal fake SprintSchedulerResult for testing."""
+
     cycles_started: int = 0
     cycles_completed: int = 0
     consecutive_empty_cycles: int = 0
@@ -100,12 +101,13 @@ class _FakeResult:
 class TestSprintDashboardInit:
     """Dashboard initialization."""
 
-    def test_init(self):
+    def test_init(self) -> None:
         """Dashboard initializes with sprint metadata."""
         with _patch_rich():
             # Force reimport by removing cached module
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             dash = SprintDashboard("S195C-001", "ransomware", 1800.0)
             assert dash.sprint_id == "S195C-001"
             assert dash.query == "ransomware"
@@ -121,16 +123,17 @@ class TestSprintDashboardTable:
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             return SprintDashboard("S195C-001", "ransomware", 1800.0)
 
-    def test_build_table_no_result(self):
+    def test_build_table_no_result(self) -> None:
         """Renders cleanly before any cycle runs."""
         dash = self._make_dash()
         table = dash._build_table(result=None, elapsed_s=0.0)
         # Should not raise — just render the "Initializing" row
         assert table is not None
 
-    def test_build_table_with_result(self):
+    def test_build_table_with_result(self) -> None:
         """Renders correctly with a populated result."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -143,7 +146,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=60.0)
         assert table is not None
 
-    def test_build_table_public_findings(self):
+    def test_build_table_public_findings(self) -> None:
         """Shows public findings when present."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -152,7 +155,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=30.0)
         assert table is not None
 
-    def test_build_table_ct_findings(self):
+    def test_build_table_ct_findings(self) -> None:
         """Shows CT log findings when present."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -161,7 +164,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=45.0)
         assert table is not None
 
-    def test_build_table_branch_timeout(self):
+    def test_build_table_branch_timeout(self) -> None:
         """Shows branch timeout status correctly."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -172,7 +175,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=120.0)
         assert table is not None
 
-    def test_build_table_aborted(self):
+    def test_build_table_aborted(self) -> None:
         """Shows abort reason when sprint is aborted."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -182,7 +185,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=90.0)
         assert table is not None
 
-    def test_build_table_stop_requested(self):
+    def test_build_table_stop_requested(self) -> None:
         """Shows stop_requested indicator."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -191,7 +194,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=30.0)
         assert table is not None
 
-    def test_build_table_feed_zero_yield(self):
+    def test_build_table_feed_zero_yield(self) -> None:
         """Shows feed_zero_yield_detected warning."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -200,7 +203,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=200.0)
         assert table is not None
 
-    def test_build_table_windup_phase(self):
+    def test_build_table_windup_phase(self) -> None:
         """Renders correctly in WINDUP phase."""
         dash = self._make_dash()
         dash._last_phase = "WINDUP"
@@ -209,7 +212,7 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=1700.0)
         assert table is not None
 
-    def test_build_table_teardown_phase(self):
+    def test_build_table_teardown_phase(self) -> None:
         """Renders correctly in TEARDOWN phase."""
         dash = self._make_dash()
         dash._last_phase = "TEARDOWN"
@@ -218,11 +221,12 @@ class TestSprintDashboardTable:
         table = dash._build_table(result=result, elapsed_s=1810.0)
         assert table is not None
 
-    def test_phase_style(self):
+    def test_phase_style(self) -> None:
         """Phase style maps correctly."""
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import _phase_style
+
             assert _phase_style("BOOT") == "dim"
             assert _phase_style("WARMUP") == "yellow"
             assert _phase_style("ACTIVE") == "green"
@@ -232,11 +236,12 @@ class TestSprintDashboardTable:
             assert _phase_style("ABORTED") == "red"
             assert _phase_style("UNKNOWN") == "white"
 
-    def test_phase_emoji(self):
+    def test_phase_emoji(self) -> None:
         """Phase emoji maps correctly."""
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import _phase_emoji
+
             assert _phase_emoji("BOOT") == "⚙️"
             assert _phase_emoji("WARMUP") == "⚡"
             assert _phase_emoji("ACTIVE") == "🔨"
@@ -255,20 +260,23 @@ class TestSprintDashboardLifecycle:
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             dash = SprintDashboard("S195C-001", "ransomware", 1800.0)
             fake_live = _FakeLive()
             # Inject the fake live so we can assert on it
             dash._live = fake_live
             return dash, fake_live
 
-    def test_start_calls_live_start(self):
+    def test_start_calls_live_start(self) -> None:
         """start() calls Live.start() on the instance it creates."""
         sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
         with _patch_rich():
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             fake_live = _FakeLive()
             # Patch Live class so Live(...) returns our fake_live
             import hledac.universal.monitoring.sprint_dashboard as sd
+
             original_live = sd.Live
             sd.Live = lambda *args, **kwargs: fake_live
             try:
@@ -279,53 +287,60 @@ class TestSprintDashboardLifecycle:
             finally:
                 sd.Live = original_live
 
-    def test_update_calls_live_update(self):
+    def test_update_calls_live_update(self) -> None:
         """update() calls Live.update()."""
         dash, fake_live = self._make_dash_and_fake_live()
         result = _FakeResult()
         calls = []
         original_update = fake_live.update
+
         def tracking_update(*args, **kwargs):
             calls.append((args, kwargs))
             return original_update(*args, **kwargs)
+
         fake_live.update = tracking_update
         dash.update(result, "ACTIVE", 60.0)
         assert len(calls) == 1
 
-    def test_finish_calls_live_stop_and_final_update(self):
+    def test_finish_calls_live_stop_and_final_update(self) -> None:
         """finish() calls Live.update() then Live.stop()."""
         dash, fake_live = self._make_dash_and_fake_live()
         result = _FakeResult()
         update_calls = []
         stop_called = []
         orig_update = fake_live.update
+
         def tracking_update(*args, **kwargs):
             update_calls.append(1)
             return orig_update(*args, **kwargs)
-        def tracking_stop():
+
+        def tracking_stop() -> None:
             stop_called.append(1)
+
         fake_live.update = tracking_update
         fake_live.stop = tracking_stop
         dash.finish(result, 120.0)
         assert len(update_calls) >= 1
         assert len(stop_called) == 1
 
-    def test_update_without_start_is_safe(self):
+    def test_update_without_start_is_safe(self) -> None:
         """update() before start() is a no-op (no Live instance)."""
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             dash = SprintDashboard("S195C-001", "ransomware", 1800.0)
             # _live is None — no crash
             result = _FakeResult()
             dash.update(result, "ACTIVE", 60.0)  # should not raise
             dash.finish(result, 120.0)  # should not raise
 
-    def test_update_after_finish_is_noop(self):
+    def test_update_after_finish_is_noop(self) -> None:
         """update() after finish() is a no-op."""
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             dash = SprintDashboard("S195C-001", "ransomware", 1800.0)
             fake_live = _FakeLive()
             dash._live = fake_live
@@ -333,13 +348,15 @@ class TestSprintDashboardLifecycle:
             dash.finish(result, 120.0)
             # After finish, _live is None
             update_calls = []
-            def tracking_update(*args, **kwargs):
+
+            def tracking_update(*args, **kwargs) -> None:
                 update_calls.append(1)
+
             fake_live.update = tracking_update
             dash.update(result, "WINDUP", 150.0)
             assert not update_calls
 
-    def test_elapsed_time_shown_correctly(self):
+    def test_elapsed_time_shown_correctly(self) -> None:
         """Elapsed time is reflected in the progress percentage."""
         dash, _ = self._make_dash_and_fake_live()
         # 1800s duration, 900s elapsed = 50%
@@ -363,9 +380,10 @@ class TestSprintDashboardSurvivesBranchTimeout:
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             return SprintDashboard("S195C-TO", "leaked_db", 1800.0)
 
-    def test_survives_aborted_with_timeout(self):
+    def test_survives_aborted_with_timeout(self) -> None:
         """Dashboard renders when aborted AND has timeouts."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -381,7 +399,7 @@ class TestSprintDashboardSurvivesBranchTimeout:
         dash.update(result, "TEARDOWN", 800.0)
         dash.finish(result, 800.0)
 
-    def test_survives_feed_zero_yield_with_early_windup(self):
+    def test_survives_feed_zero_yield_with_early_windup(self) -> None:
         """Dashboard renders when feed_zero_yield detected in early windup."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -394,7 +412,7 @@ class TestSprintDashboardSurvivesBranchTimeout:
         dash.update(result, "WINDUP", 1700.0)
         dash.finish(result, 1700.0)
 
-    def test_survives_public_branch_timeout_only(self):
+    def test_survives_public_branch_timeout_only(self) -> None:
         """Dashboard renders when only public branch times out."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -404,7 +422,7 @@ class TestSprintDashboardSurvivesBranchTimeout:
         # Must not raise
         dash.finish(result, 100.0)
 
-    def test_survives_ct_branch_timeout_only(self):
+    def test_survives_ct_branch_timeout_only(self) -> None:
         """Dashboard renders when only CT branch times out."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -422,9 +440,10 @@ class TestSprintDashboardEnrichmentFields:
         with _patch_rich():
             sys.modules.pop("hledac.universal.monitoring.sprint_dashboard", None)
             from hledac.universal.monitoring.sprint_dashboard import SprintDashboard
+
             return SprintDashboard("S195C-ENRICH", "config_leak", 1800.0)
 
-    def test_multimodal_enriched_findings_shown(self):
+    def test_multimodal_enriched_findings_shown(self) -> None:
         """Shows multimodal_enriched_findings when > 0."""
         dash = self._make_dash()
         result = _FakeResult()
@@ -433,7 +452,7 @@ class TestSprintDashboardEnrichmentFields:
         table = dash._build_table(result=result, elapsed_s=100.0)
         assert table is not None
 
-    def test_forensics_enriched_ct_findings_shown(self):
+    def test_forensics_enriched_ct_findings_shown(self) -> None:
         """Shows forensics_enriched_ct_findings when > 0."""
         dash = self._make_dash()
         result = _FakeResult()

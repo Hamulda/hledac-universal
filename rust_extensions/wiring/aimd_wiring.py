@@ -19,7 +19,6 @@ C13: AIMD adaptive concurrency controller for HTTP fetches.
 Usage:
     from rust_extensions.wiring.aimd_wiring import aimd_wired, get_aimd_window
 
-    # Get singleton controller
     aimd = aimd_wired()
 
     # Acquire slot before fetch
@@ -43,7 +42,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_aimd
 
 # Create singleton instance with M1 8GB safe defaults

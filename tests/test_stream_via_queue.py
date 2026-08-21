@@ -24,15 +24,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
 import pytest
 
 from hledac.universal._core.sync_bridge import stream_via_queue
-from _core import aclose
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _checksum(tokens: list[str]) -> str:
     return hashlib.sha256("".join(tokens).encode()).hexdigest()[:16]
@@ -41,6 +41,7 @@ def _checksum(tokens: list[str]) -> str:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def event_loop():
@@ -54,14 +55,14 @@ def event_loop():
 # Tests — all use fresh event loop to avoid shared-state leakage
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_basic_tokens():
+async def test_basic_tokens() -> None:
     """5 tokens yielded sequentially, correct order, checksum verified."""
     tokens = ["Der", " Geist", " ist", " ein", " Wind"]
 
     def gen():
-        for t in tokens:
-            yield t
+        yield from tokens
 
     result = []
     async for tok in stream_via_queue(gen):
@@ -72,8 +73,9 @@ async def test_basic_tokens():
 
 
 @pytest.mark.asyncio
-async def test_empty_generator():
+async def test_empty_generator() -> None:
     """Zero-token generator exits cleanly without hanging."""
+
     def gen():
         yield from ()  # must yield to return a generator object, not None
 
@@ -85,8 +87,9 @@ async def test_empty_generator():
 
 
 @pytest.mark.asyncio
-async def test_error_in_generator_propagates_nothing():
+async def test_error_in_generator_propagates_nothing() -> None:
     """Exception raised inside the sync generator is swallowed; consumer gets nothing."""
+
     def gen():
         yield "a"
         raise RuntimeError("synthetic error from producer")
@@ -106,7 +109,7 @@ async def test_error_in_generator_propagates_nothing():
 
 
 @pytest.mark.asyncio
-async def test_cancellation():
+async def test_cancellation() -> None:
     """
     asyncio.timeout cancels the consumer — verifies CancelledError propagates
     through stream_via_queue and executor future is cancelled cleanly.
@@ -121,7 +124,7 @@ async def test_cancellation():
 
     results: list[str] = []
 
-    async def consumer_inner():
+    async def consumer_inner() -> None:
         async for tok in stream_via_queue(gen):
             results.append(tok)
 
@@ -145,13 +148,12 @@ async def test_cancellation():
 
 
 @pytest.mark.asyncio
-async def test_queue_backpressure():
+async def test_queue_backpressure() -> None:
     """queue_max=1 still produces all tokens correctly (backpressure handled)."""
     tokens = [f"token_{i}" for i in range(20)]
 
     def gen():
-        for t in tokens:
-            yield t
+        yield from tokens
 
     result = []
     async for tok in stream_via_queue(gen):
@@ -165,12 +167,14 @@ async def test_queue_backpressure():
 # Diagnostic: confirm the buggy pattern is NOT in deephermes3_engine.py
 # ---------------------------------------------------------------------------
 
-def test_buggy_pattern_removed():
+
+def test_buggy_pattern_removed() -> None:
     """
     CONFIRM: The buggy `async for token in asyncio.to_thread(...)` pattern
     is no longer present in deephermes3_engine.py streaming path.
     """
     import re
+
     path = "brain/deephermes3_engine.py"
     with open(path) as f:
         content = f.read()

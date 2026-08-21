@@ -16,18 +16,18 @@ Methods:
 - add_relation(source, target, relation_type): add edge
 - export_html(path): render to interactive HTML via pyvis
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    import rustworkx as rx
+    pass
 
 logger = logging.getLogger(__name__)
-__all__ = ['GraphManager', 'GRAPH_AVAILABLE']
+__all__ = ["GraphManager", "GRAPH_AVAILABLE"]
 GRAPH_AVAILABLE = True
 _PYVIS_AVAILABLE = True
 
@@ -49,7 +49,8 @@ class GraphManager:
     - add_relation(source, target, relation_type): add edge
     - export_html(path): render to interactive HTML via pyvis
     """
-    __slots__ = ('_graph', '_rx', '_node_index', '_node_attrs')
+
+    __slots__ = ("_graph", "_rx", "_node_index", "_node_attrs")
 
     def __init__(self) -> None:
         self._rx = self._get_rustworkx()
@@ -62,6 +63,7 @@ class GraphManager:
     @staticmethod
     def _get_rustworkx() -> Any:
         import rustworkx as rx
+
         return rx
 
     def add_entity(self, entity_type: str, value: str) -> None:
@@ -73,24 +75,24 @@ class GraphManager:
         """
         if not value or not value.strip():
             return
-        node_id = f'{entity_type}:{value}'
+        node_id = f"{entity_type}:{value}"
         if node_id in self._node_index:
             return
         # rustworkx add_node returns the node index
         node_idx = self._graph.add_node(node_id)
         self._node_index[node_id] = node_idx
         self._node_attrs[node_idx] = {
-            'entity_type': entity_type,
-            'value': value,
-            'label': self._short_label(entity_type, value),
-            'name': node_id,
+            "entity_type": entity_type,
+            "value": value,
+            "label": self._short_label(entity_type, value),
+            "name": node_id,
         }
 
     @staticmethod
     def _short_label(entity_type: str, value: str) -> str:
         """Krátký label pro vizualizaci — max 40 znaků."""
-        short = f'{entity_type}:{value}'
-        return short[:40] + '…' if len(short) > 40 else short
+        short = f"{entity_type}:{value}"
+        return short[:40] + "…" if len(short) > 40 else short
 
     def add_relation(self, source: str, target: str, relation_type: str) -> None:
         """
@@ -102,18 +104,18 @@ class GraphManager:
         src_type, src_value = self._parse_entity(source)
         dst_type, dst_value = self._parse_entity(target)
         # Build node_ids from parsed components (consistent with add_entity)
-        src_id = f'{src_type}:{src_value}'
-        dst_id = f'{dst_type}:{dst_value}'
+        src_id = f"{src_type}:{src_value}"
+        dst_id = f"{dst_type}:{dst_value}"
         # Ensure both nodes exist
         for node_id, etype, evalue in [(src_id, src_type, src_value), (dst_id, dst_type, dst_value)]:
             if node_id not in self._node_index:
                 node_idx = self._graph.add_node(node_id)
                 self._node_index[node_id] = node_idx
                 self._node_attrs[node_idx] = {
-                    'entity_type': etype,
-                    'value': evalue,
-                    'label': self._short_label(etype, evalue),
-                    'name': node_id,
+                    "entity_type": etype,
+                    "value": evalue,
+                    "label": self._short_label(etype, evalue),
+                    "name": node_id,
                 }
         src_idx = self._node_index[src_id]
         dst_idx = self._node_index[dst_id]
@@ -130,12 +132,12 @@ class GraphManager:
     @staticmethod
     def _parse_entity(entity: str) -> tuple[str, str]:
         """Parse entity string into (entity_type, value)."""
-        if ':' in entity:
-            parts = entity.split(':', 1)
+        if ":" in entity:
+            parts = entity.split(":", 1)
             return (parts[0], parts[1])
-        if '.' in entity and (not entity.startswith(('0x', 'CVE', 'GHSA'))):
-            return ('domain', entity)
-        return ('entity', entity)
+        if "." in entity and (not entity.startswith(("0x", "CVE", "GHSA"))):
+            return ("domain", entity)
+        return ("entity", entity)
 
     def node_count(self) -> int:
         """Return current node count."""
@@ -177,26 +179,26 @@ class GraphManager:
             List of node IDs forming the path, or empty list if no path found.
         """
         from hledac.universal.graph.quantum_pathfinder import find_best_path
+
         try:
-            start_id = start_entity if start_entity in self._node_index else f'domain:{start_entity}'
-            end_id = end_entity if end_entity in self._node_index else f'domain:{end_entity}'
-            # Build adjacency dict for rustworkx graph
+            start_id = start_entity if start_entity in self._node_index else f"domain:{start_entity}"
+            end_id = end_entity if end_entity in self._node_index else f"domain:{end_entity}"
             node_ids_by_idx: dict[int, str] = {}
             for nid, nidx in self._node_index.items():
                 node_ids_by_idx[nidx] = nid
             adj_dict: dict[str, list[str]] = {}
             for node_idx in self._graph.node_indices():
-                node_id = node_ids_by_idx.get(node_idx, '')
+                node_id = node_ids_by_idx.get(node_idx, "")
                 neighbors = []
                 for neighbor_idx in self._graph.neighbors(node_idx):
-                    neighbor_id = node_ids_by_idx.get(neighbor_idx, '')
+                    neighbor_id = node_ids_by_idx.get(neighbor_idx, "")
                     if neighbor_id:
                         neighbors.append(neighbor_id)
                 adj_dict[node_id] = neighbors
             path = await find_best_path(adj_dict, start_id, end_id)
             return path
         except Exception as e:
-            logger.warning(f'[GraphManager] find_path failed: {e}')
+            logger.warning(f"[GraphManager] find_path failed: {e}")
             return []
 
     def export_html(self, path: str) -> None:
@@ -205,64 +207,71 @@ class GraphManager:
 
         Falls back to simple edge-list text export if pyvis unavailable.
         """
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         try:
             from pyvis.network import Network
         except ImportError:
-            logger.warning('[GraphManager] pyvis not available, falling back to text export')
+            logger.warning("[GraphManager] pyvis not available, falling back to text export")
             self._export_text(path)
             return
         try:
-            net = Network(height='750px', width='100%', bgcolor='#1a1a2e', font_color='white', directed=False)
+            net = Network(height="750px", width="100%", bgcolor="#1a1a2e", font_color="white", directed=False)
             net.barnes_hut(gravity=-5000, central_gravity=0.01, spring_length=150, spring_strength=0.02)
             # Build reverse index: idx -> node_id
             node_ids_by_idx: dict[int, str] = {}
             for nid, nidx in self._node_index.items():
                 node_ids_by_idx[nidx] = nid
-            color_map = {'domain': '#00ff88', 'ipv4': '#ff6b6b', 'ipv6': '#ff8787', 'url': '#ffd93d', 'cve': '#ff4757', 'hash': '#a55eea', 'email': '#26de81'}
+            color_map = {
+                "domain": "#00ff88",
+                "ipv4": "#ff6b6b",
+                "ipv6": "#ff8787",
+                "url": "#ffd93d",
+                "cve": "#ff4757",
+                "hash": "#a55eea",
+                "email": "#26de81",
+            }
             for node_idx in self._graph.node_indices():
-                node_id = node_ids_by_idx.get(node_idx, '')
+                node_id = node_ids_by_idx.get(node_idx, "")
                 attrs = self._node_attrs.get(node_idx, {})
-                entity_type = attrs.get('entity_type', 'unknown')
-                color = color_map.get(entity_type.lower(), '#70a1ff')
-                label = attrs.get('label', node_id)
-                value = attrs.get('value', '')
+                entity_type = attrs.get("entity_type", "unknown")
+                color = color_map.get(entity_type.lower(), "#70a1ff")
+                label = attrs.get("label", node_id)
+                value = attrs.get("value", "")
                 net.add_node(node_id, label=label, title=f"{entity_type}\n{value}", color=color, size=20)
             for edge in self._graph.edge_indices():
                 src_idx, dst_idx = self._graph.endpoints(edge)
-                src = node_ids_by_idx.get(src_idx, '')
-                dst = node_ids_by_idx.get(dst_idx, '')
-                edge_data = self._graph.get_edge_data(src_idx, dst_idx) or 'related'
-                rel = edge_data if isinstance(edge_data, str) else 'related'
+                src = node_ids_by_idx.get(src_idx, "")
+                dst = node_ids_by_idx.get(dst_idx, "")
+                edge_data = self._graph.get_edge_data(src_idx, dst_idx) or "related"
+                rel = edge_data if isinstance(edge_data, str) else "related"
                 net.add_edge(src, dst, title=rel, label=rel[:20])
             net.save_graph(path)
-            logger.info(f'[GraphManager] Exported HTML graph to {path}')
+            logger.info(f"[GraphManager] Exported HTML graph to {path}")
         except Exception as e:
-            logger.warning(f'[GraphManager] HTML export failed: {e}, falling back to text')
+            logger.warning(f"[GraphManager] HTML export failed: {e}, falling back to text")
             self._export_text(path)
 
     def _export_text(self, path: str) -> None:
         """Fallback: plain text edge-list export."""
-        # Build reverse index
         node_ids_by_idx: dict[int, str] = {}
         for nid, nidx in self._node_index.items():
             node_ids_by_idx[nidx] = nid
         edge_cnt = 0
-        with open(path, 'w') as f:
-            f.write('# Hledac Entity Graph\n\n')
-            f.write(f'# Nodes: {len(self._node_index)}, Edges: (see below)\n\n')
-            f.write('## Nodes\n')
+        with open(path, "w") as f:
+            f.write("# Hledac Entity Graph\n\n")
+            f.write(f"# Nodes: {len(self._node_index)}, Edges: (see below)\n\n")
+            f.write("## Nodes\n")
             for node_idx in self._graph.node_indices():
-                node_id = node_ids_by_idx.get(node_idx, '')
+                node_id = node_ids_by_idx.get(node_idx, "")
                 attrs = self._node_attrs.get(node_idx, {})
-                f.write(f'  {attrs.get("name", node_id)}\n')
-            f.write('\n## Edges\n')
+                f.write(f"  {attrs.get('name', node_id)}\n")
+            f.write("\n## Edges\n")
             for edge in self._graph.edge_indices():
                 src_idx, dst_idx = self._graph.endpoints(edge)
-                src = node_ids_by_idx.get(src_idx, '')
-                dst = node_ids_by_idx.get(dst_idx, '')
-                edge_data = self._graph.get_edge_data(src_idx, dst_idx) or 'related'
-                rel = edge_data if isinstance(edge_data, str) else 'related'
-                f.write(f'  {src} --[{rel}]--> {dst}\n')
+                src = node_ids_by_idx.get(src_idx, "")
+                dst = node_ids_by_idx.get(dst_idx, "")
+                edge_data = self._graph.get_edge_data(src_idx, dst_idx) or "related"
+                rel = edge_data if isinstance(edge_data, str) else "related"
+                f.write(f"  {src} --[{rel}]--> {dst}\n")
                 edge_cnt += 1
-        logger.info(f'[GraphManager] Exported text graph to {path}')
+        logger.info(f"[GraphManager] Exported text graph to {path}")

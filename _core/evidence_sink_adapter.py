@@ -8,10 +8,10 @@ A5-02: Adapter který obalí EvidenceLog a implementuje EvidenceSink Protocol.
 Tento adapter žije v injection layer — spojuje Protocol s implementací.
 FetchCoordinator nikdy neimportuje EvidenceLog přímo.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.evidence_log import EvidenceLog

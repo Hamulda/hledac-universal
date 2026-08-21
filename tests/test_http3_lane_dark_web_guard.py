@@ -9,7 +9,6 @@ Probe tests for:
 from unittest import mock
 
 import pytest
-from _core import aclose
 
 
 class TestIsDarkWebUrl:
@@ -71,7 +70,6 @@ class TestFetchHttp3AioquicSkipsDarkWeb:
             result = await fetch_http3_aioquic(url)
             assert result is None
             mock_probe.assert_not_called()
-
 
 
 class TestTransportRouterDarkWebRouting:

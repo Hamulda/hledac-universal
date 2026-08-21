@@ -9,25 +9,34 @@ Uses multiple public instances to avoid rate limits.
 
 M1 constraint: Max 2 concurrent instances at once, 10s timeout per request.
 """
+
 import asyncio
 import logging
 import os
 import time
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
+
 import httpx
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+from hledac.universal.utils._patterns import lazy_resource_property
 from hledac.universal.utils.asyncx import parallel_ok
-from hledac.universal.utils._patterns import lazy_resource_property  # F320: Clone elimination
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 FEDIVERSE_TIMEOUT = 10.0
 MAX_RESULTS_PER_INSTANCE = 50
 MAX_CONCURRENT_INSTANCES = 2
 RATE_LIMIT_DELAY = 5.0
-OSINT_INSTANCES = ['https://infosec.exchange', 'https://mastodon.social', 'https://scholar.social', 'https://fosstodon.org', 'https://hachyderm.io']
+OSINT_INSTANCES = [
+    "https://infosec.exchange",
+    "https://mastodon.social",
+    "https://scholar.social",
+    "https://fosstodon.org",
+    "https://hachyderm.io",
+]
 DEFAULT_INSTANCES = OSINT_INSTANCES[:2]
+
 
 class FediversePost(Struct):
     """Single Mastodon/Fediverse status, normalised to OSINT-friendly fields.
@@ -36,11 +45,12 @@ class FediversePost(Struct):
     `sidecar_protocol_adapters.FediverseSidecarAdapter._make_finding`,
     so existing call-sites keep working after the dataclass migration.
     """
+
     url: str
     content: str
-    author: str = ''
-    instance: str = ''
-    created_at: str = ''
+    author: str = ""
+    instance: str = ""
+    created_at: str = ""
 
     def to_dict(self) -> dict:
         """Reconstruct the legacy Mastodon-status dict shape.
@@ -50,14 +60,21 @@ class FediversePost(Struct):
         `id` is derived from the trailing path segment of `url` (matches
         the canonical numeric status ID used in Mastodon permalinks).
         """
-        post_id: str = ''
+        post_id: str = ""
         if self.url:
             try:
-                post_id = self.url.rstrip('/').rsplit('/', 1)[-1]
+                post_id = self.url.rstrip("/").rsplit("/", 1)[-1]
             except Exception:
-                post_id = ''
-        author_handle = self.author or ''
-        return {'url': self.url, 'id': post_id, 'content': self.content, 'created_at': self.created_at, 'account': {'username': author_handle, 'display_name': author_handle}}
+                post_id = ""
+        author_handle = self.author or ""
+        return {
+            "url": self.url,
+            "id": post_id,
+            "content": self.content,
+            "created_at": self.created_at,
+            "account": {"username": author_handle, "display_name": author_handle},
+        }
+
 
 class FediverseResult(Struct, frozen=True):
     """Result envelope for a single (instance, query) cell.
@@ -66,10 +83,12 @@ class FediverseResult(Struct, frozen=True):
     success and a short string on per-cell failure — the sidecar can
     log this without re-running the cell.
     """
+
     instance_url: str
     query: str
     posts: list[FediversePost] = field(default_factory=list)
     error: str | None = None
+
 
 class FediverseAdapter(Struct, frozen=True):
     """Search public Mastodon/Fediverse for OSINT signals.
@@ -77,6 +96,7 @@ class FediverseAdapter(Struct, frozen=True):
     Strategy: Use multiple public instances to avoid rate limits.
     No authentication required for public posts.
     """
+
     _semaphore: asyncio.Semaphore = field(default_factory=lambda: get_semaphore(ConcurrencyCategory.SOCIAL_MINE))
     _instance_timestamps: dict = field(default_factory=dict)
     _session: httpx.AsyncClient | None = None
@@ -106,7 +126,9 @@ class FediverseAdapter(Struct, frozen=True):
                 await asyncio.sleep(RATE_LIMIT_DELAY - elapsed)
         self._instance_timestamps[instance] = time.monotonic()
 
-    async def search_public_timeline(self, query: str, max_results: int=MAX_RESULTS_PER_INSTANCE, instances: list[str] | None=None) -> list[dict]:
+    async def search_public_timeline(
+        self, query: str, max_results: int = MAX_RESULTS_PER_INSTANCE, instances: list[str] | None = None
+    ) -> list[dict]:
         """Search public timeline across Fediverse instances.
 
         Args:
@@ -125,7 +147,7 @@ class FediverseAdapter(Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._search_instance(instance, query, max_results))
-        results = await parallel_ok(*tasks, label='fediverse_adapter:104')
+        results = await parallel_ok(*tasks, label="fediverse_adapter:104")
         all_statuses = []
         for result in results:
             if isinstance(result, list):
@@ -136,32 +158,38 @@ class FediverseAdapter(Struct, frozen=True):
         """Search a single instance."""
         await self._rate_limit(instance)
         try:
-            api_url = f'{instance}/api/v2/search'
-            params = {'q': query, 'type': 'statuses', 'resolve': 'false', 'limit': min(max_results, 40)}
+            api_url = f"{instance}/api/v2/search"
+            params = {"q": query, "type": "statuses", "resolve": "false", "limit": min(max_results, 40)}
             async with self._session.get(api_url, params=params, timeout=FEDIVERSE_TIMEOUT) as resp:
                 if resp.status_code == 200:
                     data = await resp.json()
                     from hledac.universal.transport.circuit_breaker import get_breaker
+
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         get_breaker(_urlparse(api_url).netloc).record_success()
                     except Exception:  # noqa: BLE001
                         pass
-                    return data.get('statuses', [])
+                    return data.get("statuses", [])
                 elif resp.status_code == 429:
-                    logger.debug(f'Rate limited: {instance}')
+                    logger.debug(f"Rate limited: {instance}")
                     from hledac.universal.transport.circuit_breaker import get_breaker
+
                     try:
                         from urllib.parse import urlparse as _urlparse
-                        get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind='fediverse_search:429')
+
+                        get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind="fediverse_search:429")
                     except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:
-            logger.debug(f'Fediverse search failed for {instance}: {e}')
+            logger.debug(f"Fediverse search failed for {instance}: {e}")
             return []
 
-    async def search_hashtags(self, hashtag: str, max_results: int=40, instances: list[str] | None=None) -> list[dict]:
+    async def search_hashtags(
+        self, hashtag: str, max_results: int = 40, instances: list[str] | None = None
+    ) -> list[dict]:
         """Search hashtag timeline.
 
         Args:
@@ -180,7 +208,7 @@ class FediverseAdapter(Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._fetch_hashtag(instance, hashtag, max_results))
-        results = await parallel_ok(*tasks, label='fediverse_adapter:187')
+        results = await parallel_ok(*tasks, label="fediverse_adapter:187")
         all_statuses = []
         for result in results:
             if isinstance(result, list):
@@ -192,16 +220,16 @@ class FediverseAdapter(Struct, frozen=True):
         await self._rate_limit(instance)
         try:
             api_url = f"{instance}/api/v1/timelines/tag/{hashtag.lstrip('#')}"
-            params = {'limit': min(max_results, 40)}
+            params = {"limit": min(max_results, 40)}
             async with self._session.get(api_url, params=params, timeout=FEDIVERSE_TIMEOUT) as resp:
                 if resp.status_code == 200:
                     return await resp.json()
                 return []
         except Exception as e:
-            logger.debug(f'Hashtag fetch failed for {instance}: {e}')
+            logger.debug(f"Hashtag fetch failed for {instance}: {e}")
             return []
 
-    async def get_account_posts(self, account: str, limit: int=40, instances: list[str] | None=None) -> list[dict]:
+    async def get_account_posts(self, account: str, limit: int = 40, instances: list[str] | None = None) -> list[dict]:
         """Resolve account cross-instance and fetch recent public posts.
 
         Args:
@@ -214,8 +242,8 @@ class FediverseAdapter(Struct, frozen=True):
         """
         if not account:
             return []
-        account = account.lstrip('@')
-        if '@' not in account:
+        account = account.lstrip("@")
+        if "@" not in account:
             account = f"{account}@{DEFAULT_INSTANCES[0].replace('https://', '')}"
         instances = instances or DEFAULT_INSTANCES
         tasks = []
@@ -223,7 +251,7 @@ class FediverseAdapter(Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._fetch_account(instance, account, limit))
-        results = await parallel_ok(*tasks, label='fediverse_adapter:254')
+        results = await parallel_ok(*tasks, label="fediverse_adapter:254")
         for result in results:
             if isinstance(result, list) and result:
                 return result[:limit]
@@ -233,29 +261,33 @@ class FediverseAdapter(Struct, frozen=True):
         """Fetch account posts from a single instance."""
         await self._rate_limit(instance)
         try:
-            api_url = f'{instance}/api/v2/search'
-            params = {'q': account, 'type': 'accounts', 'resolve': 'true'}
+            api_url = f"{instance}/api/v2/search"
+            params = {"q": account, "type": "accounts", "resolve": "true"}
             async with self._session.get(api_url, params=params, timeout=FEDIVERSE_TIMEOUT) as resp:
                 if resp.status_code != 200:
                     return []
                 data = await resp.json()
-                accounts = data.get('accounts', [])
+                accounts = data.get("accounts", [])
                 if not accounts:
                     return []
-                account_id = accounts[0].get('id')
+                account_id = accounts[0].get("id")
                 if not account_id:
                     return []
-            timeline_url = f'{instance}/api/v1/accounts/{account_id}/statuses'
-            timeline_params = {'limit': min(limit, 40)}
-            async with self._session.get(timeline_url, params=timeline_params, timeout=FEDIVERSE_TIMEOUT) as timeline_resp:
+            timeline_url = f"{instance}/api/v1/accounts/{account_id}/statuses"
+            timeline_params = {"limit": min(limit, 40)}
+            async with self._session.get(
+                timeline_url, params=timeline_params, timeout=FEDIVERSE_TIMEOUT
+            ) as timeline_resp:
                 if timeline_resp.status_code == 200:
                     return await timeline_resp.json()
                 return []
         except Exception as e:
-            logger.debug(f'Account fetch failed for {instance}: {e}')
+            logger.debug(f"Account fetch failed for {instance}: {e}")
             return []
 
-    async def search_multiple_instances(self, terms: list[str], max_results: int=MAX_RESULTS_PER_INSTANCE, instances: list[str] | None=None) -> list[FediverseResult]:
+    async def search_multiple_instances(
+        self, terms: list[str], max_results: int = MAX_RESULTS_PER_INSTANCE, instances: list[str] | None = None
+    ) -> list[FediverseResult]:
         """Search multiple terms across Fediverse instances in parallel.
 
         Produces one `FediverseResult` per (instance, query) cell. Per-cell
@@ -280,18 +312,30 @@ class FediverseAdapter(Struct, frozen=True):
         clean_terms: list[str] = [t for t in terms if isinstance(t, str) and len(t) >= 2][:5]
         if not clean_terms:
             return []
-        chosen_instances: list[str] = list(instances if instances is not None else DEFAULT_INSTANCES)[:MAX_CONCURRENT_INSTANCES]
+        chosen_instances: list[str] = list(instances if instances is not None else DEFAULT_INSTANCES)[
+            :MAX_CONCURRENT_INSTANCES
+        ]
         if not chosen_instances:
             return []
         cells: list[tuple[str, str]] = [(inst, term) for inst in chosen_instances for term in clean_terms]
         tasks = [self._search_cell(inst, term, max_results) for inst, term in cells]
-        raw_results: list[list[dict]] = await parallel_ok(*tasks, label='fediverse_adapter:search_multiple_instances')
+        raw_results: list[list[dict]] = await parallel_ok(*tasks, label="fediverse_adapter:search_multiple_instances")
         out: list[FediverseResult] = []
         for (inst, term), raw in zip(cells, raw_results, strict=True):
             if not isinstance(raw, list):
-                out.append(FediverseResult(instance_url=inst, query=term, posts=[], error=f'unexpected_result_type: {type(raw).__name__}'))
+                out.append(
+                    FediverseResult(
+                        instance_url=inst, query=term, posts=[], error=f"unexpected_result_type: {type(raw).__name__}"
+                    )
+                )
                 continue
-            out.append(FediverseResult(instance_url=inst, query=term, posts=[self._status_to_post(s, inst) for s in raw if isinstance(s, dict)]))
+            out.append(
+                FediverseResult(
+                    instance_url=inst,
+                    query=term,
+                    posts=[self._status_to_post(s, inst) for s in raw if isinstance(s, dict)],
+                )
+            )
         return out
 
     async def _search_cell(self, instance: str, query: str, max_results: int) -> list[dict]:
@@ -303,29 +347,33 @@ class FediverseAdapter(Struct, frozen=True):
         """
         await self._rate_limit(instance)
         try:
-            api_url = f'{instance}/api/v2/search'
-            params = {'q': query, 'type': 'statuses', 'resolve': 'false', 'limit': min(max_results, 40)}
+            api_url = f"{instance}/api/v2/search"
+            params = {"q": query, "type": "statuses", "resolve": "false", "limit": min(max_results, 40)}
             async with self._session.get(api_url, params=params, timeout=FEDIVERSE_TIMEOUT) as resp:
                 if resp.status_code == 200:
                     data = await resp.json()
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         from hledac.universal.transport.circuit_breaker import get_breaker as _get_breaker
+
                         _get_breaker(_urlparse(api_url).netloc).record_success()
                     except Exception:  # noqa: BLE001
                         pass
-                    return data.get('statuses', [])
+                    return data.get("statuses", [])
                 if resp.status_code == 429:
-                    logger.debug(f'Fediverse rate-limited: {instance} (query={query!r})')
+                    logger.debug(f"Fediverse rate-limited: {instance} (query={query!r})")
                     try:
                         from urllib.parse import urlparse as _urlparse
+
                         from hledac.universal.transport.circuit_breaker import get_breaker as _get_breaker
-                        _get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind='fediverse_search:429')
+
+                        _get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind="fediverse_search:429")
                     except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:
-            logger.debug(f'Fediverse cell search failed for {instance} (query={query!r}): {e}')
+            logger.debug(f"Fediverse cell search failed for {instance} (query={query!r}): {e}")
             return []
 
     @staticmethod
@@ -340,20 +388,26 @@ class FediverseAdapter(Struct, frozen=True):
         the canonical place to defensively coerce.
         """
         if not isinstance(status, dict):
-            return FediversePost(url='', content='', author='', instance=instance, created_at='')
-        account = status.get('account') or {}
+            return FediversePost(url="", content="", author="", instance=instance, created_at="")
+        account = status.get("account") or {}
         if not isinstance(account, dict):
             account = {}
-        author: str = ''
-        display = account.get('display_name')
+        author: str = ""
+        display = account.get("display_name")
         if isinstance(display, str) and display.strip():
             author = display.strip()
         else:
-            username = account.get('username')
+            username = account.get("username")
             if isinstance(username, str) and username.strip():
                 author = username.strip()
-        return FediversePost(url=str(status.get('url') or status.get('uri') or ''), content=str(status.get('content') or ''), author=author, instance=instance, created_at=str(status.get('created_at') or ''))
+        return FediversePost(
+            url=str(status.get("url") or status.get("uri") or ""),
+            content=str(status.get("content") or ""),
+            author=author,
+            instance=instance,
+            created_at=str(status.get("created_at") or ""),
+        )
 
     def is_enabled(self) -> bool:
         """Check if Fediverse adapter is enabled."""
-        return os.getenv('HLEDAC_ENABLE_SOCIAL', '').strip() == '1'
+        return os.getenv("HLEDAC_ENABLE_SOCIAL", "").strip() == "1"

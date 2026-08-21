@@ -11,15 +11,12 @@ MODERNIZATION (Issue #18):
   - _build_nonfeed_lane_eligibility() isolated here
 """
 
-
 import re
 from typing import Any
 
 from hledac.universal.runtime.acquisition.lane_constants import (
-    NON_TERMINAL_STATES,
     TERMINAL_STATES,
 )
-
 
 # ── MandatoryLaneTerminality (imported from nonfeed_outcomes) ──────────────────────
 
@@ -305,7 +302,11 @@ def terminality_report(
     for required in required_lanes:
         lane_name = getattr(required, "lane", "") if hasattr(required, "lane") else required.get("lane", "")
         outcome = lane_outcomes.get(lane_name, {})
-        ts = outcome.get("terminal_state", "PENDING") if isinstance(outcome, dict) else getattr(outcome, "terminal_state", "PENDING")
+        ts = (
+            outcome.get("terminal_state", "PENDING")
+            if isinstance(outcome, dict)
+            else getattr(outcome, "terminal_state", "PENDING")
+        )
         is_t = lane_is_terminal(outcome) if isinstance(outcome, dict) else lane_is_terminal(outcome)
 
         if is_t:
@@ -313,10 +314,12 @@ def terminality_report(
         else:
             report["non_terminal_count"] += 1
 
-        report["lanes"].append({
-            "lane": lane_name,
-            "terminal_state": ts,
-            "is_terminal": is_t,
-        })
+        report["lanes"].append(
+            {
+                "lane": lane_name,
+                "terminal_state": ts,
+                "is_terminal": is_t,
+            }
+        )
 
     return report

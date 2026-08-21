@@ -1,18 +1,18 @@
 """Helper script to refactor _generate_and_store_report function."""
-import re
-from _core import aclose
 
-with open('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py', 'r') as f:
+import re
+
+with open("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py") as f:
     content = f.read()
 
-start = content.find('async def _generate_and_store_report(')
+start = content.find("async def _generate_and_store_report(")
 if start == -1:
     print("Function not found!")
     exit(1)
 
 # Find the next function at column 0 (not indented)
 rest = content[start:]
-next_func_match = re.search(r'\n(?:async )?def [a-zA-Z_]', rest[50:])
+next_func_match = re.search(r"\n(?:async )?def [a-zA-Z_]", rest[50:])
 if next_func_match:
     end = start + 50 + next_func_match.start()
 else:
@@ -178,7 +178,7 @@ async def _extract_iocs_from_report(report_text: str) -> tuple[list[str], list[s
 
 new_content = content[:start] + new_functions + content[end:]
 
-with open('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py', 'w') as f:
+with open("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/pipeline/live_public_pipeline.py", "w") as f:
     f.write(new_content)
 
 print("File updated successfully")

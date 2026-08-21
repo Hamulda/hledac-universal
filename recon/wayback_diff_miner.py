@@ -30,18 +30,25 @@ Definition:
     "disappeared = previously seen digest no longer present in recent CDX window
     "unchanged"  = digest same as previous (skipped by default)
 """
+
 import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
 import httpx
-from hledac.universal.transport.circuit_breaker import domain_breaker_check, domain_breaker_record_failure, domain_breaker_record_success
-from hledac.universal.utils.asyncx import safe_create_task, parallel
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.transport.circuit_breaker import (
+    domain_breaker_check,
+    domain_breaker_record_failure,
+    domain_breaker_record_success,
+)
+from hledac.universal.utils.asyncx import parallel, safe_create_task
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 else:
@@ -49,7 +56,6 @@ else:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     except ImportError:
         CanonicalFinding = None
-from _core import aclose
 logger = logging.getLogger(__name__)
 MAX_CDX_SNAPSHOTS_PER_DOMAIN: int = 50
 MAX_DOMAINS_PER_SPRINT: int = 100
@@ -57,8 +63,9 @@ MAX_CHANGE_EVENTS: int = 500
 MAX_CONSECUTIVE_FAILURES: int = 3
 REQUEST_RATE_LIMIT: float = 0.5
 TIMEOUT_PER_REQUEST: float = 30.0
-WAYBACK_CDX_API: str = 'https://web.archive.org/cdx/search/cdx'
-WAYBACK_BASE_URL: str = 'https://web.archive.org'
+WAYBACK_CDX_API: str = "https://web.archive.org/cdx/search/cdx"
+WAYBACK_BASE_URL: str = "https://web.archive.org"
+
 
 class CDXDiffEvent(Struct, frozen=True):
     """
@@ -72,6 +79,7 @@ class CDXDiffEvent(Struct, frozen=True):
         change_type:   "added" | "changed" | "disappeared" | "unchanged"
         evidence_url:  Wayback Machine replay URL for this snapshot
     """
+
     url: str
     timestamp: str
     digest: str
@@ -79,12 +87,14 @@ class CDXDiffEvent(Struct, frozen=True):
     change_type: str
     evidence_url: str
 
+
 class WaybackDiffResult(Struct):
     """Result of a WaybackDiffMiner.mine() call."""
+
     input_count: int
     change_events: list[CDXDiffEvent] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=dict)
-    transport_policy: str = 'native_httpx'
+    transport_policy: str = "native_httpx"
     circuit_breaker_used: bool = False
     injected_fetch_used: bool = False
     fallback_reason: str | None = None
@@ -98,7 +108,7 @@ class WaybackDiffResult(Struct):
     duration_s: float = 0.0
     skip_reason: str | None = None
 
-    def to_findings(self, query: str, sprint_id: str | None=None) -> list[Any]:
+    def to_findings(self, query: str, sprint_id: str | None = None) -> list[Any]:
         """Convert change events to CanonicalFinding list."""
         if CanonicalFinding is None:
             return []
@@ -106,30 +116,48 @@ class WaybackDiffResult(Struct):
         for event in self.change_events:
             try:
                 payload = _build_payload(event)
-                finding = CanonicalFinding(finding_id=f'wdiff-{event.digest[:16]}-{event.timestamp}', source_type='wayback_diff', confidence=0.75, query=query[:128], ts=_timestamp_to_unix(event.timestamp), payload_text=payload, provenance=(f'wayback:{event.url}', f'digest:{event.digest}', f'changed:{event.change_type}', f'ts:{event.timestamp}'))
+                finding = CanonicalFinding(
+                    finding_id=f"wdiff-{event.digest[:16]}-{event.timestamp}",
+                    source_type="wayback_diff",
+                    confidence=0.75,
+                    query=query[:128],
+                    ts=_timestamp_to_unix(event.timestamp),
+                    payload_text=payload,
+                    provenance=(
+                        f"wayback:{event.url}",
+                        f"digest:{event.digest}",
+                        f"changed:{event.change_type}",
+                        f"ts:{event.timestamp}",
+                    ),
+                )
                 findings.append(finding)
             except Exception:
                 continue
         return findings
 
+
 def _timestamp_to_unix(ts: str) -> float:
     """Convert CDX timestamp string (YYYYMMDDHHMMSS) to Unix float."""
     try:
-        return datetime.strptime(ts, '%Y%m%d%H%M%S').timestamp()
+        return datetime.strptime(ts, "%Y%m%d%H%M%S").timestamp()
     except Exception:
         return 0.0
 
+
 def _build_payload(event: CDXDiffEvent) -> str:
     """Build evidence envelope payload_text for CanonicalFinding."""
-    return f'[Wayback Diff] {event.change_type.upper()}: {event.url}\nSnapshot: {event.timestamp} | Status: {event.status_code}\nDigest: {event.digest}\nReplay: {event.evidence_url}'
+    return f"[Wayback Diff] {event.change_type.upper()}: {event.url}\nSnapshot: {event.timestamp} | Status: {event.status_code}\nDigest: {event.digest}\nReplay: {event.evidence_url}"
 
-def _extract_archive_domain(url: str=WAYBACK_CDX_API) -> str:
+
+def _extract_archive_domain(url: str = WAYBACK_CDX_API) -> str:
     """Extract netloc from a URL for circuit breaker lookup."""
     try:
         from urllib.parse import urlparse
+
         return urlparse(url).netloc
     except Exception:
-        return 'archive.org'
+        return "archive.org"
+
 
 class WaybackDiffMiner:
     """
@@ -150,9 +178,15 @@ class WaybackDiffMiner:
       - Optional injected fetch provider for test seam (F206AX)
       - Canonical transport circuit breaker preflight (F206AX)
     """
-    __slots__ = tuple(('_fetch_provider', '_last_request_at', '_semaphore', '_session', '_session_provider', '_stats'))
 
-    def __init__(self, *, fetch_provider: Callable[..., Awaitable[Any]] | None=None, session_provider: Callable[[], Awaitable[httpx.AsyncClient]] | None=None) -> None:
+    __slots__ = ("_fetch_provider", "_last_request_at", "_semaphore", "_session", "_session_provider", "_stats")
+
+    def __init__(
+        self,
+        *,
+        fetch_provider: Callable[..., Awaitable[Any]] | None = None,
+        session_provider: Callable[[], Awaitable[httpx.AsyncClient]] | None = None,
+    ) -> None:
         """
         Initialize WaybackDiffMiner.
 
@@ -169,7 +203,16 @@ class WaybackDiffMiner:
         self._last_request_at = 0.0
         self._fetch_provider = fetch_provider
         self._session_provider = session_provider
-        self._stats: dict[str, int] = {'domains_processed': 0, 'cdx_snapshots_collected': 0, 'changes_detected': 0, 'circuit_open': 0, 'rate_limited': 0, 'errors': 0, 'cb_preflight_skipped': 0, 'cb_preflight_blocked': 0}
+        self._stats: dict[str, int] = {
+            "domains_processed": 0,
+            "cdx_snapshots_collected": 0,
+            "changes_detected": 0,
+            "circuit_open": 0,
+            "rate_limited": 0,
+            "errors": 0,
+            "cb_preflight_skipped": 0,
+            "cb_preflight_blocked": 0,
+        }
 
     def _check_circuit_breaker(self, domain: str) -> bool:
         """
@@ -182,12 +225,12 @@ class WaybackDiffMiner:
         try:
             decision = domain_breaker_check(domain)
             if not decision.allowed:
-                self._stats['cb_preflight_blocked'] += 1
-                logger.debug(f'Circuit breaker blocked {domain}: {decision.reason}')
+                self._stats["cb_preflight_blocked"] += 1
+                logger.debug(f"Circuit breaker blocked {domain}: {decision.reason}")
                 return False
             return True
         except Exception:
-            self._stats['cb_preflight_skipped'] += 1
+            self._stats["cb_preflight_skipped"] += 1
             return True
 
     async def mine(self, domains_or_urls: list[str]) -> WaybackDiffResult:
@@ -211,8 +254,8 @@ class WaybackDiffMiner:
         all_events, gathered_errors = await self._execute_pipeline(targets)
 
         if gathered_errors:
-            logger.warning(f'WaybackDiffMiner: {len(gathered_errors)} gather errors')
-            self._stats['errors'] += len(gathered_errors)
+            logger.warning(f"WaybackDiffMiner: {len(gathered_errors)} gather errors")
+            self._stats["errors"] += len(gathered_errors)
 
         self._update_stats(targets, all_events)
         return self._build_result(start, targets, all_events, gathered_errors)
@@ -220,15 +263,27 @@ class WaybackDiffMiner:
     def _make_empty_result(self, start: float) -> WaybackDiffResult:
         """Build empty result for no input."""
         elapsed = time.monotonic() - start
-        return WaybackDiffResult(input_count=0, change_events=[], stats=self._stats.copy(),
-                               transport_policy=self._transport_policy_label(), injected_fetch_used=self._fetch_provider is not None,
-                               archive_domain=_extract_archive_domain(), attempted=True, raw_count=0, built_count=0,
-                               error=None, timeout=False, duration_s=elapsed, skip_reason='empty_input')
+        return WaybackDiffResult(
+            input_count=0,
+            change_events=[],
+            stats=self._stats.copy(),
+            transport_policy=self._transport_policy_label(),
+            injected_fetch_used=self._fetch_provider is not None,
+            archive_domain=_extract_archive_domain(),
+            attempted=True,
+            raw_count=0,
+            built_count=0,
+            error=None,
+            timeout=False,
+            duration_s=elapsed,
+            skip_reason="empty_input",
+        )
 
     async def _ensure_semaphore(self) -> None:
         """Ensure semaphore is initialized."""
         if self._semaphore is None:
             from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
             self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _execute_pipeline(self, targets: list[str]) -> tuple[list[CDXDiffEvent], list[BaseException]]:
@@ -240,8 +295,11 @@ class WaybackDiffMiner:
             snapshots_map = await self._fetch_snapshots(targets)
             gathered_errors.extend(self._extract_fetch_errors(snapshots_map))
 
-            diff_tasks = [safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps))
-                         for t, snaps in snapshots_map.items() if snaps]
+            diff_tasks = [
+                safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps))
+                for t, snaps in snapshots_map.items()
+                if snaps
+            ]
             if diff_tasks:
                 diff_events, diff_errors = await self._run_diff_tasks(diff_tasks)
                 all_events.extend(diff_events)
@@ -254,7 +312,9 @@ class WaybackDiffMiner:
     async def _fetch_snapshots(self, targets: list[str]) -> dict[str, list[dict[str, str]]]:
         """Fetch CDX snapshots for all targets."""
         fetch_tasks = [safe_create_task(self._rate_limited_fetch(t)) for t in targets]
-        gathered = await parallel(fetch_tasks, taskgroup=True, policy='collect', ctx='wayback_fetch', logger_instance=logger)
+        gathered = await parallel(
+            fetch_tasks, taskgroup=True, policy="collect", ctx="wayback_fetch", logger_instance=logger
+        )
 
         snapshots_map: dict[str, list[dict[str, str]]] = {}
         for res in gathered.ok:
@@ -271,13 +331,13 @@ class WaybackDiffMiner:
         """Fetch CDX with circuit breaker and rate limiting."""
         archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
         if not self._check_circuit_breaker(archive_domain):
-            self._stats['circuit_open'] += 1
+            self._stats["circuit_open"] += 1
             return (target, [])
         elapsed = time.monotonic() - self._last_request_at
         if elapsed < REQUEST_RATE_LIMIT:
             await asyncio.sleep(REQUEST_RATE_LIMIT - elapsed)
         self._last_request_at = time.monotonic()
-        assert self._semaphore is not None, 'semaphore must be initialized before fetch'
+        assert self._semaphore is not None, "semaphore must be initialized before fetch"
         async with self._semaphore:
             return await self._fetch_cdx(target)
 
@@ -287,7 +347,9 @@ class WaybackDiffMiner:
 
     async def _run_diff_tasks(self, diff_tasks: list) -> tuple[list, list[BaseException]]:
         """Run diff tasks and collect results."""
-        gathered = await parallel(diff_tasks, taskgroup=True, policy='collect', ctx='wayback_diff', logger_instance=logger)
+        gathered = await parallel(
+            diff_tasks, taskgroup=True, policy="collect", ctx="wayback_diff", logger_instance=logger
+        )
         all_events = [res for res in gathered.ok if isinstance(res, list)]
 
         if gathered.re_raised is not None:
@@ -304,27 +366,40 @@ class WaybackDiffMiner:
 
     def _handle_pipeline_error(self, e: BaseException, gathered_errors: list) -> None:
         """Handle pipeline-level errors."""
-        error_msg = str(e) if not isinstance(e, BaseExceptionGroup) else f'BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}'
-        logger.error(f'WaybackDiffMiner pipeline error: {error_msg}')
-        self._stats['errors'] += 1
+        error_msg = (
+            str(e)
+            if not isinstance(e, BaseExceptionGroup)
+            else f"BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}"
+        )
+        logger.error(f"WaybackDiffMiner pipeline error: {error_msg}")
+        self._stats["errors"] += 1
 
     def _update_stats(self, targets: list, all_events: list) -> None:
         """Update statistics after processing."""
-        self._stats['domains_processed'] = len(targets)
-        self._stats['changes_detected'] = len(all_events)
+        self._stats["domains_processed"] = len(targets)
+        self._stats["changes_detected"] = len(all_events)
 
     def _build_result(self, start: float, targets: list, all_events: list, gathered_errors: list) -> WaybackDiffResult:
         """Build final WaybackDiffResult."""
         elapsed = time.monotonic() - start
         error, timeout = self._extract_error_info(gathered_errors)
         return WaybackDiffResult(
-            input_count=len(targets), change_events=all_events, stats=self._stats.copy(),
-            transport_policy=self._transport_policy_label(), circuit_breaker_used=True,
-            injected_fetch_used=self._fetch_provider is not None, fallback_reason=self._fallback_reason(),
-            archive_domain=_extract_archive_domain(WAYBACK_CDX_API), attempted=True,
-            raw_count=self._stats.get('cdx_snapshots_collected', 0), built_count=len(all_events),
-            accepted_count=None, error=error, timeout=timeout, duration_s=elapsed
-    )
+            input_count=len(targets),
+            change_events=all_events,
+            stats=self._stats.copy(),
+            transport_policy=self._transport_policy_label(),
+            circuit_breaker_used=True,
+            injected_fetch_used=self._fetch_provider is not None,
+            fallback_reason=self._fallback_reason(),
+            archive_domain=_extract_archive_domain(WAYBACK_CDX_API),
+            attempted=True,
+            raw_count=self._stats.get("cdx_snapshots_collected", 0),
+            built_count=len(all_events),
+            accepted_count=None,
+            error=error,
+            timeout=timeout,
+            duration_s=elapsed,
+        )
 
     def _extract_error_info(self, gathered_errors: list) -> tuple[str | None, bool]:
         """Extract error and timeout info from gathered errors."""
@@ -332,8 +407,8 @@ class WaybackDiffMiner:
             return None, False
         first = gathered_errors[0]
         if isinstance(first, (asyncio.TimeoutError, asyncio.CancelledError, TimeoutError)):
-            return 'timeout', True
-        return f'gather_error:{type(first).__name__}', False
+            return "timeout", True
+        return f"gather_error:{type(first).__name__}", False
 
     async def close(self) -> None:
         """Close the httpx session."""
@@ -351,10 +426,10 @@ class WaybackDiffMiner:
     def _transport_policy_label(self) -> str:
         """F206AX telemetry: describe active transport policy."""
         if self._fetch_provider is not None:
-            return 'injected_fetch'
+            return "injected_fetch"
         if self._session_provider is not None:
-            return 'injected_session'
-        return 'native_httpx'
+            return "injected_session"
+        return "native_httpx"
 
     def _fallback_reason(self) -> str | None:
         """F206AX telemetry: reason for fallback path if any."""
@@ -365,8 +440,8 @@ class WaybackDiffMiner:
 
         Rate-limited and semaphore-bounded. Returns empty list on error.
         """
-        if not target.startswith(('http://', 'https://')):
-            query_url = f'*.{target}/*'
+        if not target.startswith(("http://", "https://")):
+            query_url = f"*.{target}/*"
         else:
             query_url = target
         try:
@@ -376,11 +451,11 @@ class WaybackDiffMiner:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f'CDX query failed for {target}: {e}')
-            self._stats['errors'] += 1
+            logger.debug(f"CDX query failed for {target}: {e}")
+            self._stats["errors"] += 1
             return (target, [])
         if snapshots:
-            self._stats['cdx_snapshots_collected'] += len(snapshots)
+            self._stats["cdx_snapshots_collected"] += len(snapshots)
         return (target, snapshots)
 
     def _diff_snapshots(self, target: str, snapshots: list[dict[str, str]]) -> list[CDXDiffEvent]:
@@ -391,21 +466,28 @@ class WaybackDiffMiner:
         events: list[CDXDiffEvent] = []
         prev_digest: str | None = None
         for snap in snapshots:
-            digest = snap.get('digest', '')
-            ts = snap.get('timestamp', '')
-            status_str = snap.get('status_code', '')
+            digest = snap.get("digest", "")
+            ts = snap.get("timestamp", "")
+            status_str = snap.get("status_code", "")
             status: int | None = int(status_str) if status_str else None
             if not digest or not ts:
                 continue
-            evidence_url = f'{WAYBACK_BASE_URL}/web/{ts}/{target}'
+            evidence_url = f"{WAYBACK_BASE_URL}/web/{ts}/{target}"
             if prev_digest is None:
-                change_type = 'added'
+                change_type = "added"
             elif digest != prev_digest:
-                change_type = 'changed'
+                change_type = "changed"
             else:
-                change_type = 'unchanged'
-            if change_type in ('added', 'changed'):
-                event = CDXDiffEvent(url=target, timestamp=ts, digest=digest, status_code=status, change_type=change_type, evidence_url=evidence_url)
+                change_type = "unchanged"
+            if change_type in ("added", "changed"):
+                event = CDXDiffEvent(
+                    url=target,
+                    timestamp=ts,
+                    digest=digest,
+                    status_code=status,
+                    change_type=change_type,
+                    evidence_url=evidence_url,
+                )
                 events.append(event)
             prev_digest = digest
         return events
@@ -419,7 +501,7 @@ class WaybackDiffMiner:
         """
         try:
             _target, snapshots = await self._fetch_cdx(target)
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError, asyncio.CancelledError:
             raise
         except Exception:
             return []
@@ -429,7 +511,13 @@ class WaybackDiffMiner:
 
     async def _query_cdx(self, url: str) -> list[dict[str, str]]:
         """Query Wayback CDX API for a URL pattern."""
-        params = {'url': url, 'output': 'json', 'fl': 'timestamp,original,statuscode,digest,length', 'collapse': 'digest', 'limit': str(MAX_CDX_SNAPSHOTS_PER_DOMAIN)}
+        params = {
+            "url": url,
+            "output": "json",
+            "fl": "timestamp,original,statuscode,digest,length",
+            "collapse": "digest",
+            "limit": str(MAX_CDX_SNAPSHOTS_PER_DOMAIN),
+        }
         try:
             session = self._session
             if session is None:
@@ -442,15 +530,17 @@ class WaybackDiffMiner:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f'CDX query error for {url}: {e}')
-            self._stats['errors'] += 1
+            logger.debug(f"CDX query error for {url}: {e}")
+            self._stats["errors"] += 1
             return []
 
     async def _fetch_via_injected(self, params: dict[str, Any]) -> list[dict[str, str]]:
         """F206AX: Use injected fetch provider for testing seam."""
         try:
-            assert self._fetch_provider is not None, 'fetch_provider must be set for injected path'
-            resp = await self._fetch_provider(WAYBACK_CDX_API, params=params, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST))
+            assert self._fetch_provider is not None, "fetch_provider must be set for injected path"
+            resp = await self._fetch_provider(
+                WAYBACK_CDX_API, params=params, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)
+            )
             domain_breaker_record_success(_extract_archive_domain(WAYBACK_CDX_API))
             return await self._parse_cdx_response(resp)
         except TimeoutError:
@@ -458,8 +548,8 @@ class WaybackDiffMiner:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.debug(f'Injected fetch error: {e}')
-            self._stats['errors'] += 1
+            logger.debug(f"Injected fetch error: {e}")
+            self._stats["errors"] += 1
             return []
 
     async def _fetch_via_native(self, params: dict[str, Any]) -> list[dict[str, str]]:
@@ -471,7 +561,9 @@ class WaybackDiffMiner:
             async with session.get(WAYBACK_CDX_API, params=params, timeout=httpx.Timeout(TIMEOUT_PER_REQUEST)) as resp:
                 archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
                 if resp.status_code in (429, 503):
-                    domain_breaker_record_failure(archive_domain, is_timeout=False, failure_kind=f'http_{resp.status_code}')
+                    domain_breaker_record_failure(
+                        archive_domain, is_timeout=False, failure_kind=f"http_{resp.status_code}"
+                    )
                     logger.warning(f"Wayback CDX {resp.status_code} for {params.get('url', '?')}")
                     return []
                 if resp.status_code != 200:
@@ -479,8 +571,8 @@ class WaybackDiffMiner:
                 domain_breaker_record_success(archive_domain)
                 return await self._parse_cdx_response(resp)
         except Exception as e:
-            logger.debug(f'CDX query error: {e}')
-            self._stats['errors'] += 1
+            logger.debug(f"CDX query error: {e}")
+            self._stats["errors"] += 1
             return []
 
     async def _parse_cdx_response(self, resp: httpx.Response) -> list[dict[str, str]]:
@@ -495,7 +587,15 @@ class WaybackDiffMiner:
             snapshots = []
             for row in rows:
                 if len(row) >= 4:
-                    snapshots.append({'timestamp': row[0], 'original': row[1], 'status_code': row[2] if len(row) > 2 else '', 'digest': row[3] if len(row) > 3 else '', 'length': row[4] if len(row) > 4 else '0'})
+                    snapshots.append(
+                        {
+                            "timestamp": row[0],
+                            "original": row[1],
+                            "status_code": row[2] if len(row) > 2 else "",
+                            "digest": row[3] if len(row) > 3 else "",
+                            "length": row[4] if len(row) > 4 else "0",
+                        }
+                    )
             return snapshots
         except Exception:
             return []

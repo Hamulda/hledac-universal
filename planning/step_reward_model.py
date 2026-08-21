@@ -41,7 +41,6 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import numpy as np
-from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.coordinators.meta_reasoning_coordinator import ThoughtNode
 logger = logging.getLogger(__name__)
@@ -84,13 +83,11 @@ def _check_coreml_available() -> bool:
         return False
     if sys.version_info >= (3, 14):
         try:
-            import coremltools as _ct
         except ImportError:
             logger.warning('[PRM] Python 3.14 — coremltools not installed.\n  Install from Apple channel:\n    pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools\n  Or run once: python -m planning.prm_model_export')
             return False
     else:
         try:
-            import coremltools as _ct
         except ImportError:
             logger.warning('[PRM] coremltools not installed')
             return False

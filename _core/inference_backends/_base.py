@@ -16,14 +16,15 @@ Common patterns extracted:
   4. AsyncIterator streaming protocol (yield Token with done flag)
   5. Health check pattern
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal._core.inference_coordinator import (
@@ -41,14 +42,13 @@ else:
             InferenceRequest,
             InferenceResponse,
             Token,
-    )
+        )
     except ImportError:  # pragma: no cover
         InferenceBackend = Any  # type: ignore[assignment,misc]
         InferenceError = Any  # type: ignore[assignment,misc]
         InferenceRequest = Any  # type: ignore[assignment,misc]
         InferenceResponse = Any  # type: ignore[assignment,misc]
         Token = Any  # type: ignore[assignment,misc]
-from _core._util import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -74,21 +74,17 @@ class BaseInferenceBackend(ABC):
     """
 
     # Subclasses set this to their InferenceBackend enum value
-    _backend: "InferenceBackend | None" = None
+    _backend: InferenceBackend | None = None
 
     def __init__(self) -> None:
         # ISSUE-014 pattern: Lazy asyncio.Lock (created in _get_lock(), not __init__)
         self._client_lock: asyncio.Lock | None = None
-
-    # ─── Lazy Lock (ISSUE-014) ─────────────────────────────────────────────────
 
     def _get_lock(self) -> asyncio.Lock:
         """Lazy asyncio.Lock — created on first access, not at import time."""
         if self._client_lock is None:
             self._client_lock = asyncio.Lock()
         return self._client_lock
-
-    # ─── Time Measurement ──────────────────────────────────────────────────────
 
     @staticmethod
     def _measure_latency() -> tuple[float, Callable[[], float]]:
@@ -100,23 +96,19 @@ class BaseInferenceBackend(ABC):
 
         return t0, latency_ms
 
-    # ─── Error Wrapping ─────────────────────────────────────────────────────────
-
     def _wrap_error(
         self,
         exc: Exception,
         operation: str,
         cause: Exception | None = None,
-    ) -> "InferenceError":
+    ) -> InferenceError:
         """Wrap exception with InferenceError and backend context."""
         backend = self._backend or InferenceBackend.MLXCEL
         return InferenceError(
             f"{backend.name.lower()} {operation} failed: {exc}",
             backend=backend,
             cause=cause or exc,
-    )
-
-    # ─── generate() — Template Method ─────────────────────────────────────────
+        )
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
         """
@@ -133,7 +125,7 @@ class BaseInferenceBackend(ABC):
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=self._backend or InferenceBackend.MLXCEL,
-    )
+            )
         except InferenceError:
             raise
         except Exception as exc:
@@ -143,8 +135,6 @@ class BaseInferenceBackend(ABC):
     async def _generate_impl(self, request: InferenceRequest) -> Any:
         """Backend-specific generate implementation. Return result with .text and .tokens_generated."""
         ...
-
-    # ─── stream() — Template Method ────────────────────────────────────────────
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[Token]:
         """
@@ -166,8 +156,6 @@ class BaseInferenceBackend(ABC):
     async def _stream_impl(self, request: InferenceRequest) -> AsyncIterator[str]:
         """Backend-specific streaming implementation. Yield text chunks."""
         ...
-
-    # ─── health_check() ────────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
         """Default health check — verify client/engine is accessible."""

@@ -40,9 +40,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from collections.abc import Callable
-from _core._util import aclose
+from typing import TYPE_CHECKING, Any, TypeVar
+
 from _core.lock_registry import LockCategory, register_lock
 
 if TYPE_CHECKING:

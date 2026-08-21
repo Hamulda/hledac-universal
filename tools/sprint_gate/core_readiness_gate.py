@@ -14,7 +14,6 @@ Usage:
     python -m tools.core_readiness_gate --strict         # warnings → BLOCKED
 """
 
-
 import ast
 import json
 import sys
@@ -23,7 +22,6 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
 
 # ------------------------------------------------------------------ #
 # Self-configure Python path so hledac.universal imports resolve.
@@ -100,14 +98,8 @@ class GateReport(NamedTuple):
         return {
             "timestamp": self.timestamp,
             "verdict": self.verdict.value,
-            "compile_errors": [
-                {"path": r.path, "ok": r.ok, "errors": r.errors}
-                for r in self.compile_errors
-            ],
-            "import_errors": [
-                {"module": r.module, "ok": r.ok, "error": r.error}
-                for r in self.import_errors
-            ],
+            "compile_errors": [{"path": r.path, "ok": r.ok, "errors": r.errors} for r in self.compile_errors],
+            "import_errors": [{"module": r.module, "ok": r.ok, "error": r.error} for r in self.import_errors],
             "warnings": self.warnings,
             "compile_count": self.compile_count,
             "import_count": self.import_count,
@@ -146,19 +138,22 @@ class GateReport(NamedTuple):
             for w in self.warnings:
                 lines.append(f"- ⚠️ {w}")
 
-        lines.extend([
-            "",
-            "## Summary",
-            f"- Compile targets checked: {self.compile_count}",
-            f"- Import targets checked: {self.import_count}",
-            f"- MLX load attempted: {self.mlx_load_attempted}",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Summary",
+                f"- Compile targets checked: {self.compile_count}",
+                f"- Import targets checked: {self.import_count}",
+                f"- MLX load attempted: {self.mlx_load_attempted}",
+            ]
+        )
         return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ #
 # Core logic
 # ------------------------------------------------------------------ #
+
 
 def _compile_file(path: Path) -> CompileResult:
     """Compile a single Python file and return errors."""
@@ -169,16 +164,10 @@ def _compile_file(path: Path) -> CompileResult:
         return CompileResult(path=str(path), ok=True, errors=[])
     except SyntaxError as e:
         return CompileResult(
-            path=str(path),
-            ok=False,
-            errors=[f"SyntaxError: {e.msg} at line {e.lineno}, offset {e.offset}"]
-    )
+            path=str(path), ok=False, errors=[f"SyntaxError: {e.msg} at line {e.lineno}, offset {e.offset}"]
+        )
     except Exception as e:
-        return CompileResult(
-            path=str(path),
-            ok=False,
-            errors=[f"{type(e).__name__}: {e}"]
-    )
+        return CompileResult(path=str(path), ok=False, errors=[f"{type(e).__name__}: {e}"])
 
 
 def _compile_directory(root: Path) -> tuple[list[CompileResult], list[str]]:
@@ -203,16 +192,14 @@ def _compile_directory(root: Path) -> tuple[list[CompileResult], list[str]]:
 def _smoke_import(module_name: str) -> ImportResult:
     """Attempt a lazy import of a module (no MLX)."""
     import importlib
+
     try:
         importlib.import_module(module_name)  # noqa: S322  # module_name from filesystem scan, not user input
         return ImportResult(module=module_name, ok=True, error=None)
     except Exception as e:
         tb = traceback.format_exc()
         # Strip any internal import machinery lines to keep error clean
-        error_lines = [
-            line for line in tb.splitlines()
-            if "importlib" not in line and "importlib_metadata" not in line
-        ]
+        error_lines = [line for line in tb.splitlines() if "importlib" not in line and "importlib_metadata" not in line]
         clean_error = "; ".join(error_lines[-3:]) if error_lines else str(e)
         return ImportResult(module=module_name, ok=False, error=clean_error)
 
@@ -230,13 +217,11 @@ def run_gate(strict: bool = False) -> GateReport:
     all_warnings: list[str] = []
     mlx_load_attempted = False
 
-    # --- Compile check ---
     for target in COMPILE_TARGETS:
         results, warnings = _compile_directory(target)
         compile_errors.extend(results)
         all_warnings.extend(warnings)
 
-    # --- Import smoke ---
     import_errors: list[ImportResult] = []
     for target in IMPORT_SMOKE_TARGETS:
         result = _smoke_import(target)
@@ -247,7 +232,6 @@ def run_gate(strict: bool = False) -> GateReport:
             if "mlx" in err_str.lower() or "mlx_lm" in err_str.lower():
                 mlx_load_attempted = True
 
-    # --- Verdict ---
     has_errors = any(not r.ok for r in compile_errors) or bool(import_errors)
     has_warnings = bool(all_warnings)
 
@@ -274,27 +258,14 @@ def run_gate(strict: bool = False) -> GateReport:
 # CLI
 # ------------------------------------------------------------------ #
 
+
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Core Compile and Import Readiness Gate"
-    )
-    parser.add_argument(
-        "--output-json",
-        action="store_true",
-        help="Machine-readable JSON output"
-    )
-    parser.add_argument(
-        "--output-md",
-        action="store_true",
-        help="Markdown report output"
-    )
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Treat warnings as BLOCKED"
-    )
+    parser = argparse.ArgumentParser(description="Core Compile and Import Readiness Gate")
+    parser.add_argument("--output-json", action="store_true", help="Machine-readable JSON output")
+    parser.add_argument("--output-md", action="store_true", help="Markdown report output")
+    parser.add_argument("--strict", action="store_true", help="Treat warnings as BLOCKED")
     args = parser.parse_args()
 
     report = run_gate(strict=args.strict)

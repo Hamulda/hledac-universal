@@ -1,25 +1,36 @@
 """Ring buffer exporter: store spans in BoundedRing for inspection/tests."""
+
 import threading
 from collections.abc import Sequence
 from typing import Any
-from _core import aclose
 
 try:
     from opentelemetry.sdk.trace.export import SpanExportResult
 except ImportError:
     SpanExportResult = None
 
+
 def _to_record(span: Any, max_attrs: int) -> dict[str, Any]:
     """Compress ReadableSpan -> bounded dict (M1 8GB friendly)."""
-    ctx = span.get_span_context() if hasattr(span, 'get_span_context') else None
-    trace_id = format(ctx.trace_id, '032x') if ctx is not None and ctx.trace_id else '0' * 32
-    span_id = format(ctx.span_id, '016x') if ctx is not None and ctx.span_id else '0' * 16
-    start = int(getattr(span, 'start_time', 0) or 0)
-    end = int(getattr(span, 'end_time', 0) or 0)
-    raw_attrs = dict(getattr(span, 'attributes', None) or {})
+    ctx = span.get_span_context() if hasattr(span, "get_span_context") else None
+    trace_id = format(ctx.trace_id, "032x") if ctx is not None and ctx.trace_id else "0" * 32
+    span_id = format(ctx.span_id, "016x") if ctx is not None and ctx.span_id else "0" * 16
+    start = int(getattr(span, "start_time", 0) or 0)
+    end = int(getattr(span, "end_time", 0) or 0)
+    raw_attrs = dict(getattr(span, "attributes", None) or {})
     attrs = {k: raw_attrs[k] for k in list(raw_attrs.keys())[:max_attrs]}
-    status = getattr(span, 'status', None)
-    return {'name': str(getattr(span, 'name', ''))[:256], 'trace_id': trace_id, 'span_id': span_id, 'start_time': start, 'end_time': end, 'duration_ns': max(0, end - start), 'attributes': attrs, 'status': str(getattr(status, 'status_code', 'UNSET')) if status is not None else 'UNSET'}
+    status = getattr(span, "status", None)
+    return {
+        "name": str(getattr(span, "name", ""))[:256],
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "start_time": start,
+        "end_time": end,
+        "duration_ns": max(0, end - start),
+        "attributes": attrs,
+        "status": str(getattr(status, "status_code", "UNSET")) if status is not None else "UNSET",
+    }
+
 
 class RingBufferExporter:
     """Stores span summaries in a BoundedRing.
@@ -27,9 +38,10 @@ class RingBufferExporter:
     Test-friendly: every span ends up addressable in the ring by (trace_id, span_id).
     Bounded: ring evicts oldest when full.
     """
-    __slots__ = tuple(('_exported', '_failed', '_lock', '_max_attrs', '_ring'))
 
-    def __init__(self, ring: Any, max_attrs: int=32) -> None:
+    __slots__ = ("_exported", "_failed", "_lock", "_max_attrs", "_ring")
+
+    def __init__(self, ring: Any, max_attrs: int = 32) -> None:
         self._ring = ring
         self._max_attrs = max(1, min(128, int(max_attrs)))
         self._lock = threading.Lock()
@@ -43,7 +55,7 @@ class RingBufferExporter:
             for sp in spans:
                 try:
                     rec = _to_record(sp, self._max_attrs)
-                    self._ring.put((rec['trace_id'], rec['span_id']), rec)
+                    self._ring.put((rec["trace_id"], rec["span_id"]), rec)
                     self._exported += 1
                 except Exception:
                     self._failed += 1
@@ -52,9 +64,9 @@ class RingBufferExporter:
     def shutdown(self) -> None:
         return None
 
-    def force_flush(self, timeout_millis: int=30000) -> bool:
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
         return True
 
     def stats(self) -> dict[str, int]:
         with self._lock:
-            return {'exported': self._exported, 'failed': self._failed}
+            return {"exported": self._exported, "failed": self._failed}

@@ -1,8 +1,5 @@
-
-
 # Sprint F232A: Pivot builder stubs — TEMPORARY until component is restored
 from typing import Any
-from _core import aclose
 
 
 def _derive_branch_seeds(branch: Any) -> list:

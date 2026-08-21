@@ -41,20 +41,18 @@ USAGE:
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import asyncio
+import lmdb  # required project dependency — no lazy import needed here
 
 from hledac.universal._core.locks import LockCategory, make_lock
-from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
-
-import lmdb  # required project dependency — no lazy import needed here
-from _core import aclose
+from hledac.universal.utils.asyncx import safe_wait_for
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +79,11 @@ __all__ = [
 T = TypeVar("T")
 
 
-# ---------------------------------------------------------------------------
-# Module-level singleton — lazy-initialized on first use
-# ---------------------------------------------------------------------------
-
 _pool_lock = make_lock(LockCategory.CACHE, "lmdb_pool._pool_lock")
-_pool: "LmdbPool | None" = None
+_pool: LmdbPool | None = None
 
 
-def get_lmdb_pool() -> "LmdbPool":
+def get_lmdb_pool() -> LmdbPool:
     """Return the LMDB pool singleton, creating on first call."""
     global _pool
     if _pool is not None:
@@ -102,7 +96,7 @@ def get_lmdb_pool() -> "LmdbPool":
 
 
 async def run_lmdb[T](
-    fn: "Callable[..., T]",
+    fn: Callable[..., T],
     /,
     *args: Any,
     timeout: float | None = None,
@@ -124,7 +118,7 @@ async def run_lmdb[T](
 
 
 def run_lmdb_sync[T](
-    fn: "Callable[..., T]",
+    fn: Callable[..., T],
     /,
     *args: Any,
     **kwargs: Any,
@@ -137,11 +131,6 @@ def run_lmdb_sync[T](
     owns the thread. Full exception shielding.
     """
     return get_lmdb_pool().run_lmdb_sync(fn, *args, **kwargs)
-
-
-# ---------------------------------------------------------------------------
-# LmdbPool — dedicated 2-worker pool for LMDB operations
-# ---------------------------------------------------------------------------
 
 
 class LmdbPool:
@@ -191,7 +180,7 @@ class LmdbPool:
             self._executor = ThreadPoolExecutor(
                 max_workers=_LMDB_WORKERS,
                 thread_name_prefix="hledac-lmdb",
-    )
+            )
             self._semaphore = asyncio.Semaphore(_LMDB_WORKERS)
             # Register atexit cleanup — must be done in async context would be
             # too late, so register at init time; cleanup function is idempotent.
@@ -201,7 +190,7 @@ class LmdbPool:
 
     async def run_lmdb[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         timeout: float | None = None,
@@ -226,15 +215,9 @@ class LmdbPool:
             loop = asyncio.get_running_loop()
             try:
                 if timeout is not None:
-                    coro = loop.run_in_executor(
-                        self._executor, lambda: fn(*args, **kwargs)
-    )
-                    return await safe_wait_for(
-                        coro, timeout=timeout, label="lmdb_pool:run"
-    )
-                return await loop.run_in_executor(
-                    self._executor, lambda: fn(*args, **kwargs)
-    )
+                    coro = loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
+                    return await safe_wait_for(coro, timeout=timeout, label="lmdb_pool:run")
+                return await loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
             except lmdb.MapFullError:
                 # RES-01: map_size exhausted. Do NOT return None (generic error).
                 # Return LMDB_MAP_FULL sentinel so caller can distinguish this
@@ -248,15 +231,17 @@ class LmdbPool:
                     fn.__name__ if hasattr(fn, "__name__") else str(fn),
                     _map_full_count,
                     "MDB_MAP_FULL",
-    )
+                )
                 return LMDB_MAP_FULL
             except Exception as e:
-                logger.debug("[LMDB_POOL] Operation failed in %s: %s", fn.__name__ if hasattr(fn, "__name__") else str(fn), e)
+                logger.debug(
+                    "[LMDB_POOL] Operation failed in %s: %s", fn.__name__ if hasattr(fn, "__name__") else str(fn), e
+                )
                 return None
 
     def run_lmdb_sync[T](
         self,
-        fn: "Callable[..., T]",
+        fn: Callable[..., T],
         /,
         *args: Any,
         **kwargs: Any,
@@ -281,7 +266,7 @@ class LmdbPool:
                 fn.__name__ if hasattr(fn, "__name__") else str(fn),
                 _map_full_count,
                 "MDB_MAP_FULL",
-    )
+            )
             return LMDB_MAP_FULL
         except Exception:
             return None

@@ -16,10 +16,8 @@ import io
 import json as _stdlib_json
 import sys
 import tarfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 
 def _decompress_bundle(bundle_path: Path) -> bytes:
@@ -29,6 +27,7 @@ def _decompress_bundle(bundle_path: Path) -> bytes:
     # Try zstd decompression
     try:
         import compression.zstd
+
         return compression.zstd.decompress(bundle_bytes)
     except ImportError:
         # Fallback: assume uncompressed tar
@@ -172,13 +171,11 @@ def view_bundle(bundle_path: Path, extract_dir: Path | None = None) -> dict[str,
     # Decompress bundle
     tar_bytes = _decompress_bundle(bundle_path)
 
-    # Extract to temp dir or specified dir
     if extract_dir is None:
         extract_dir = Path(tempfile.mkdtemp(prefix="hledac-sprint-"))
     else:
         extract_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract tar
     result["files"] = _extract_tar(tar_bytes, extract_dir)
 
     # Read metadata
@@ -193,7 +190,6 @@ def view_bundle(bundle_path: Path, extract_dir: Path | None = None) -> dict[str,
             report_data = _stdlib_json.loads(report_path.read_text())
             result["markdown_report"] = _render_markdown_report(report_data)
 
-            # Write markdown report
             md_path = extract_dir / "report.md"
             md_path.write_text(result["markdown_report"])
             result["files"]["report.md"] = {
@@ -213,7 +209,7 @@ def view_bundle(bundle_path: Path, extract_dir: Path | None = None) -> dict[str,
     return result
 
 
-def main():
+def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         description="View .hledac-sprint bundle contents",
@@ -272,6 +268,5 @@ Examples:
 
 if __name__ == "__main__":
     main()
-
 
 __all__ = ["view_bundle"]

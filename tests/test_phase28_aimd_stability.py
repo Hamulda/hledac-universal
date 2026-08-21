@@ -11,16 +11,14 @@ Test Categories:
 4. Race condition tests - verify thread-safety under concurrent access
 5. Memory leak tests - verify no memory leaks in AIMD state
 """
+
 from __future__ import annotations
 
 import asyncio
 import gc
-import sys
-import weakref
 from typing import TYPE_CHECKING
 
 import pytest
-from _core import aclose
 
 if TYPE_CHECKING:
     from coordinators.aimd_controllers import AIMDController
@@ -49,7 +47,7 @@ class TestAIMDBoundsEnforcement:
             decrease_factor=0.75,
             success_threshold=2,
             name="test_fetch",
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_initial_window_within_bounds(self, aimd: AIMDController) -> None:
@@ -57,7 +55,7 @@ class TestAIMDBoundsEnforcement:
         window = aimd.window
         assert aimd.min_value <= window <= aimd.max_value, (
             f"Initial window {window} outside bounds [{aimd.min_value}, {aimd.max_value}]"
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_on_success_never_exceeds_max(self, aimd: AIMDController) -> None:
@@ -66,36 +64,28 @@ class TestAIMDBoundsEnforcement:
         for _ in range(100):
             window = await aimd.on_success()
             max_window = max(max_window, window)
-        assert max_window <= aimd.max_value, (
-            f"on_success() returned {max_window} > max_value {aimd.max_value}"
-    )
+        assert max_window <= aimd.max_value, f"on_success() returned {max_window} > max_value {aimd.max_value}"
 
     @pytest.mark.asyncio
     async def test_on_failure_never_below_min(self, aimd: AIMDController) -> None:
         """on_failure should never allow window to drop below min_value."""
-        min_window = float('inf')
+        min_window = float("inf")
         for _ in range(100):
             window = await aimd.on_failure()
             min_window = min(min_window, window)
-        assert min_window >= aimd.min_value, (
-            f"on_failure() returned {min_window} < min_value {aimd.min_value}"
-    )
+        assert min_window >= aimd.min_value, f"on_failure() returned {min_window} < min_value {aimd.min_value}"
 
     @pytest.mark.asyncio
     async def test_mixed_operations_maintain_bounds(self, aimd: AIMDController) -> None:
         """Mixed success/failure operations should maintain bounds."""
-        min_w, max_w = float('inf'), 0
+        min_w, max_w = float("inf"), 0
         for i in range(200):
             op = aimd.on_success if i % 2 == 0 else aimd.on_failure
             window = await op()
             min_w = min(min_w, window)
             max_w = max(max_w, window)
-        assert aimd.min_value <= min_w, (
-            f"Window {min_w} below min {aimd.min_value} after mixed operations"
-    )
-        assert max_w <= aimd.max_value, (
-            f"Window {max_w} above max {aimd.max_value} after mixed operations"
-    )
+        assert aimd.min_value <= min_w, f"Window {min_w} below min {aimd.min_value} after mixed operations"
+        assert max_w <= aimd.max_value, f"Window {max_w} above max {aimd.max_value} after mixed operations"
 
 
 class TestAIMDConvergence:
@@ -112,7 +102,7 @@ class TestAIMDConvergence:
             decrease_factor=0.75,
             success_threshold=2,
             name="convergence_test",
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_consecutive_failures_converge_to_min(self, aimd: AIMDController) -> None:
@@ -121,9 +111,7 @@ class TestAIMDConvergence:
             await aimd.on_failure()
 
         # After many failures, should be at or near minimum
-        assert aimd.window <= aimd.min_value * 2, (
-            f"Window {aimd.window} not converging toward min {aimd.min_value}"
-    )
+        assert aimd.window <= aimd.min_value * 2, f"Window {aimd.window} not converging toward min {aimd.min_value}"
 
     @pytest.mark.asyncio
     async def test_consecutive_successes_converge_to_max(self, aimd: AIMDController) -> None:
@@ -132,9 +120,7 @@ class TestAIMDConvergence:
             await aimd.on_success()
 
         # After many successes, should be at or near maximum
-        assert aimd.window >= aimd.max_value * 0.9, (
-            f"Window {aimd.window} not converging toward max {aimd.max_value}"
-    )
+        assert aimd.window >= aimd.max_value * 0.9, f"Window {aimd.window} not converging toward max {aimd.max_value}"
 
     @pytest.mark.asyncio
     async def test_convergence_speed_matches_decrease_factor(self, aimd: AIMDController) -> None:
@@ -147,7 +133,7 @@ class TestAIMDConvergence:
         expected_min = max(aimd.min_value, initial_window * aimd.decrease_factor)
         assert new_window <= expected_min * 1.1, (
             f"Window {new_window} not decreasing correctly (expected ~{expected_min})"
-    )
+        )
 
 
 class TestAIMDThreadSafety:
@@ -164,7 +150,7 @@ class TestAIMDThreadSafety:
             decrease_factor=0.75,
             success_threshold=2,
             name="thread_safety_test",
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_success_calls(self, aimd: AIMDController) -> None:
@@ -227,7 +213,7 @@ class TestAIMDStatsTracking:
             decrease_factor=0.75,
             success_threshold=2,
             name="stats_test",
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_stats_initialized_correctly(self, aimd: AIMDController) -> None:
@@ -283,7 +269,7 @@ class TestAIMDReset:
             decrease_factor=0.75,
             success_threshold=2,
             name="reset_test",
-    )
+        )
 
     @pytest.mark.asyncio
     async def test_reset_restores_initial_state(self, aimd: AIMDController) -> None:
@@ -293,9 +279,6 @@ class TestAIMDReset:
             await aimd.on_success()
         for _ in range(5):
             await aimd.on_failure()
-
-        initial_window = aimd._window
-        initial_successes = aimd._successes
 
         # Reset
         await aimd.reset()
@@ -327,7 +310,7 @@ class TestAIMDMemoryLeaks:
             decrease_factor=0.75,
             success_threshold=2,
             name="leak_test",
-    )
+        )
 
         # Perform many operations
         for _ in range(1000):
@@ -356,7 +339,7 @@ class TestAIMDMemoryLeaks:
             decrease_factor=0.75,
             success_threshold=2,
             name="stats_dict_test",
-    )
+        )
 
         initial_stats_len = len(aimd._stats)
 
@@ -367,9 +350,7 @@ class TestAIMDMemoryLeaks:
 
         # Stats dict should not grow
         final_stats_len = len(aimd._stats)
-        assert final_stats_len == initial_stats_len, (
-            f"Stats dict grew from {initial_stats_len} to {final_stats_len}"
-    )
+        assert final_stats_len == initial_stats_len, f"Stats dict grew from {initial_stats_len} to {final_stats_len}"
 
 
 class TestAIMDM1Bounds:
@@ -384,9 +365,7 @@ class TestAIMDM1Bounds:
         ],
     )
     @pytest.mark.asyncio
-    async def test_m1_bounds_enforced(
-        self, controller_type: str, bounds: dict[str, int]
-    ) -> None:
+    async def test_m1_bounds_enforced(self, controller_type: str, bounds: dict[str, int]) -> None:
         """M1 8GB bounds should be enforced for each controller type."""
         from coordinators.aimd_controllers import AIMDController
 
@@ -397,7 +376,7 @@ class TestAIMDM1Bounds:
             decrease_factor=bounds["factor"],
             success_threshold=bounds["threshold"],
             name=controller_type,
-    )
+        )
 
         # Verify initial bounds
         assert aimd.min_value == bounds["min"]

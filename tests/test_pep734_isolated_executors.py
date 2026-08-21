@@ -38,7 +38,7 @@ from _core.isolated_executors import (
     close_all_pools,
     get_interpreter_stats,
     is_pep734_available,
-    )
+)
 
 _cleanup_done: bool = False
 _cleanup_lock: threading.Lock = threading.Lock()
@@ -78,8 +78,7 @@ class TestPEP734Availability:
         """is_pep734_available() returns True on Python 3.14+."""
         result = is_pep734_available()
         assert isinstance(result, bool)
-        if sys.version_info >= (3, 14):
-            assert result is True, "PEP 734 should be available on Python 3.14+"
+        assert result is True, "PEP 734 should be available on Python 3.14+"
 
     def test_interpreter_stats(self) -> None:
         """get_interpreter_stats() returns valid structure."""
@@ -95,7 +94,7 @@ class TestPEP734Availability:
     def test_atexit_cleanup_registered(self) -> None:
         """AtExit cleanup is registered for interpreter teardown."""
         # Verify atexit handler is registered
-        handlers = getattr(atexit, "_exithandlers", [])
+        getattr(atexit, "_exithandlers", [])
         # At least our cleanup handler should be registered
         assert callable(_cleanup_interpreters_atexit)
 
@@ -163,7 +162,7 @@ from _core.isolated_executors import IsolatedInterpreter, close_all_pools
 from _core import aclose
 result = None
 with IsolatedInterpreter() as interp:
-    result = interp.eval("42 * 42")
+    result = interp.eval_code("42 * 42")
 close_all_pools()
 sys.exit(0 if result == 1764 else 1)
 """
@@ -171,7 +170,7 @@ sys.exit(0 if result == 1764 else 1)
             [sys.executable, "-c", code],
             capture_output=True,
             timeout=30,
-    )
+        )
         assert proc.returncode == 0, f"Subprocess isolation failed: {proc.stderr.decode()}"
 
 
@@ -242,8 +241,7 @@ class TestInvariants:
 
     def test_always_on_no_feature_flags(self) -> None:
         """No feature flags - PEP 734 is always available on Python 3.14+."""
-        if sys.version_info >= (3, 14):
-            assert is_pep734_available() is True
+        assert is_pep734_available() is True
 
     def test_bounded_max_interpreters(self) -> None:
         """MAX_INTERPRETERS is bounded (M1 8GB safe)."""

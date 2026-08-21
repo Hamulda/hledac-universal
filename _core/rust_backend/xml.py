@@ -10,15 +10,9 @@ from __future__ import annotations
 import html
 import re
 from typing import TYPE_CHECKING
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-
-
-# =============================================================================
-# XML Domain
-# =============================================================================
 
 
 class _RustXmlDomain:

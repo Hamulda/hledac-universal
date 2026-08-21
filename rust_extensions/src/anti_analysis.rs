@@ -109,10 +109,6 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::sync::Semaphore;
 
-// ============================================================================
-// Error Types
-// ============================================================================
-
 /// Anti-analysis detection error kinds.
 #[derive(Debug, Clone)]
 pub enum AntiAnalysisError {
@@ -149,10 +145,6 @@ impl AntiAnalysisError {
         }
     }
 }
-
-// ============================================================================
-// Challenge Detection Results
-// ============================================================================
 
 /// Result of TLS fingerprint challenge detection.
 #[derive(Debug, Clone)]
@@ -372,10 +364,6 @@ impl AbandonCheckResult {
     }
 }
 
-// ============================================================================
-// Domain Abandonment Tracker
-// ============================================================================
-
 struct AbandonEntry {
     reason: String,
     timestamp: f64,
@@ -448,10 +436,6 @@ lazy_static::lazy_static! {
     static ref ABANDONED_DOMAINS: Arc<DomainAbandonTracker> = Arc::new(DomainAbandonTracker::new());
 }
 
-// ============================================================================
-// Telemetry
-// ============================================================================
-
 #[derive(Default)]
 struct EvasionTelemetry {
     probes_total: usize,
@@ -487,10 +471,6 @@ fn record_tls_timeout() {
     // Track TLS timeouts for telemetry
     TLS_TIMEOUTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
-
-// ============================================================================
-// TLS Fingerprint Challenge Detection
-// ============================================================================
 
 // Known bot-detection JA4 fingerprints (actual hash patterns from fingerprintfox.com / SSL BLITZ)
 // These are prefix matches on the full JA4 hash format: t13d1617h2_7b4f96d0e2_ae2769c01f
@@ -619,7 +599,6 @@ async fn tls_fingerprint_detect_internal(
     let mut handshake_complete = false;
 
     while !handshake_complete {
-        // Write TLS data to stream
         match session.write_tls(&mut stream) {
             Ok(n) => {
                 if n > 0 {
@@ -651,7 +630,6 @@ async fn tls_fingerprint_detect_internal(
         }
     }
 
-    // Extract JA4 from ClientHello
     let ja4 = extract_ja4_from_session(&session).unwrap_or_else(|_| "unknown".to_string());
 
     // Analyze JA4 for bot-detection patterns
@@ -677,7 +655,6 @@ fn analyze_ja4_for_challenges(ja4: &str) -> (String, f32, Vec<String>, Vec<Strin
     let mut best_confidence = 0.0f32;
     let mut best_type = "none";
 
-    // Check for known bot patterns
     for (challenge_type, pattern, confidence) in KNOWN_BOT_JA4_PATTERNS {
         if ja4.starts_with(pattern) {
             if *confidence > best_confidence {
@@ -689,7 +666,6 @@ fn analyze_ja4_for_challenges(ja4: &str) -> (String, f32, Vec<String>, Vec<Strin
         }
     }
 
-    // Check for missing browser prefixes
     let has_browser_prefix = KNOWN_BROWSER_JA4_PREFIXES
         .iter()
         .any(|prefix| ja4.starts_with(prefix));
@@ -743,7 +719,6 @@ fn extract_ja4_from_session(
     let sni_present = session.server_name().map(|s| !s.is_empty()).unwrap_or(false);
     let sni_char = if sni_present { "d" } else { "i" }; // d=demonstratable (SNI present), i=invalid (no SNI)
 
-    // Get cipher suites and compute hash
     let client_ciphers = session.peer_certificates();
     let cipher_count = client_ciphers.len();
     let cipher_hex = format!("{:04x}", cipher_count * 2); // Byte count of all cipher suite IDs
@@ -821,10 +796,6 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
         ]
     }
 }
-
-// ============================================================================
-// HTTP/2 SETTINGS Anomaly Detection
-// ============================================================================
 
 // Known browser HTTP/2 INITIAL_WINDOW_SIZE values
 const SAFARI_WEBKIT_WINDOW_SIZE: u32 = 4_194_304; // 4 MiB (Safari 17+)
@@ -1034,10 +1005,6 @@ fn analyze_h2_response_heuristics(response: &[u8], elapsed_ms: f32) -> (bool, St
     (anomaly_detected, anomaly_type, bot_score, details)
 }
 
-// ============================================================================
-// Early Honeypot Micro-Probe
-// ============================================================================
-
 // Maximum concurrent probes per probe session (3 paths)
 const MAX_CONCURRENT_PROBES: usize = 3;
 
@@ -1103,7 +1070,6 @@ async fn early_honeypot_probe_internal(
     let start = Instant::now();
     let mut response_times = Vec::new();
 
-    // Extract host from URL
     let parsed = url::Url::parse(url)
         .map_err(|e| AntiAnalysisError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
@@ -1117,7 +1083,6 @@ async fn early_honeypot_probe_internal(
     // Semaphore to limit concurrent probes within this session
     let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_PROBES));
 
-    // Execute probes in parallel with bounded concurrency
     let mut handles = Vec::new();
 
     for path in &paths {
@@ -1218,10 +1183,6 @@ async fn probe_url(
     Ok(String::from_utf8_lossy(&response).to_string())
 }
 
-// ============================================================================
-// Quick Probe (Combined Fast Check)
-// ============================================================================
-
 // Default budget: 50ms max for quick probe (fast pre-fetch gate)
 // This balances detection accuracy with latency overhead
 const QUICK_PROBE_TIMEOUT_MS: u64 = 50;
@@ -1276,7 +1237,6 @@ async fn quick_probe_internal(
     let start = Instant::now();
     let deadline = start + timeout;
 
-    // Extract domain from URL
     let parsed = url::Url::parse(url)
         .map_err(|e| AntiAnalysisError::InvalidInput(format!("Invalid URL: {}", e)))?;
 
@@ -1300,7 +1260,6 @@ async fn quick_probe_internal(
         }
     }
 
-    // Check remaining time budget
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining.as_millis() < (QUICK_PROBE_MIN_REMAINING_MS as u128) {
         // Not enough time for TLS probe — safe to proceed
@@ -1358,10 +1317,6 @@ async fn quick_probe_internal(
     // Safe to proceed
     Ok(QuickProbeResult::safe(elapsed))
 }
-
-// ============================================================================
-// Domain Abandonment
-// ============================================================================
 
 /// Mark a domain as abandoned (skip all future fetches).
 ///
@@ -1442,10 +1397,6 @@ pub fn sync_abandoned_from_python(python_abandoned_domains: Vec<(String, String)
     }
 }
 
-// ============================================================================
-// Telemetry Export
-// ============================================================================
-
 /// Get evasion telemetry snapshot.
 ///
 /// # Returns
@@ -1468,10 +1419,6 @@ pub fn get_evasion_telemetry() -> Py<pyo3::types::PyDict> {
         dict.into()
     })
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 /// Register anti_analysis functions with the Python module.
 #[cfg(feature = "anti_analysis")]
@@ -1502,10 +1449,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Stub implementations (when anti_analysis feature NOT enabled)
-// ============================================================================
 
 #[cfg(not(feature = "anti_analysis"))]
 #[pyfunction]

@@ -33,18 +33,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import random as _random
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 from collections.abc import Awaitable, Callable
-from _core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-# --- Constants ---------------------------------------------------------------
 
 DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BASE_DELAY = 0.5  # seconds
@@ -66,8 +62,6 @@ def is_retryable(exc: Exception, retryable: type[Exception] | tuple[type[Excepti
         return isinstance(exc, DEFAULT_RETRYABLE)
     return isinstance(exc, retryable)
 
-
-# --- Async retry loop -------------------------------------------------------
 
 
 async def retry_async(
@@ -167,8 +161,6 @@ async def retry_async(
             raise
 
 
-# --- Sync retry loop (for iterators) ---------------------------------------
-
 
 class RetryLoop:
     """Sync iterator for retry loops -- use with `for attempt in RetryLoop():`.
@@ -240,15 +232,11 @@ class RetryLoop:
         return self._exhausted or self._attempt >= self._max_attempts
 
 
-# --- Telemetry helpers -------------------------------------------------------
-
 
 def default_on_retry(attempt: int, delay: float, exc: Exception) -> None:
     """Default retry callback -- emit structured log + telemetry counter."""
     logger.debug("[RETRY] attempt=%d/%d delay=%.2fs exc=%r", attempt, "?", delay, exc)
 
-
-# --- Backoff-only (no jitter) -- for testing determinism ----------------------
 
 
 async def retry_backoff_linear_async(

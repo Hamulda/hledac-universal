@@ -1,21 +1,23 @@
 """Wayback Machine adapter pro archivní data."""
+
 import logging
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
 
 class WaybackAdapter:
     """Wayback Machine CDX API adapter."""
-    __slots__ = tuple(('_stealth',))
 
-    def __init__(self, stealth):
+    __slots__ = ("_stealth",)
+
+    def __init__(self, stealth) -> None:
         """
         Args:
             stealth: StealthManager instance for HTTP requests
         """
         self._stealth = stealth
 
-    async def fetch_domain_history(self, domain: str, max_results: int=100) -> list[dict]:
+    async def fetch_domain_history(self, domain: str, max_results: int = 100) -> list[dict]:
         """
         Fetch archivní snapshoty pro domain.
 
@@ -24,16 +26,25 @@ class WaybackAdapter:
             max_results: Maximální počet výsledků
 
         Returns:
-            list[dict]: Archivní snapshoty        """
-        url = f'https://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&limit={max_results}&filter=statuscode:200&collapse=urlkey'
+            list[dict]: Archivní snapshoty"""
+        url = f"https://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&limit={max_results}&filter=statuscode:200&collapse=urlkey"
         findings = []
         try:
             text = await self._stealth.get(url)
             import orjson
+
             data = orjson.loads(text)
             for row in data[1:]:
                 if len(row) >= 3:
-                    findings.append({'text': f'Snapshot {row[1]}', 'source': 'wayback', 'url': f'https://web.archive.org/web/{row[1]}/{row[2]}', 'timestamp': row[1], 'original_url': row[2]})
+                    findings.append(
+                        {
+                            "text": f"Snapshot {row[1]}",
+                            "source": "wayback",
+                            "url": f"https://web.archive.org/web/{row[1]}/{row[2]}",
+                            "timestamp": row[1],
+                            "original_url": row[2],
+                        }
+                    )
         except Exception as e:
-            logger.warning(f'Wayback fetch failed: {e}')
+            logger.warning(f"Wayback fetch failed: {e}")
         return findings

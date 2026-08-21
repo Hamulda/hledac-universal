@@ -2,9 +2,6 @@
 tools/migrate_dataclass_to_msgspec.py — AST codemod: @dataclass → msgspec.Struct
 ===============================================================================
 
-
-
-
 Usage:
     # Dry-run (analyze, show diffs):
     python -m tools.migrate_dataclass_to_msgspec --dry-run
@@ -42,25 +39,17 @@ M1 8GB: msgspec.Struct is 2-3× faster init, zero GC pressure.
 """
 
 from __future__ import annotations
-import msgspec
 
-import ast
 import argparse
+import ast
 import re
 import sys
-from collections.abc import Iterable
-from dataclasses import dataclass as _dc, field as _field
+from dataclasses import dataclass as _dc
 from pathlib import Path
-from typing import Any, TypeVar
-from _core import aclose
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-
-# ---------------------------------------------------------------------------
-# Migration result types
-# ---------------------------------------------------------------------------
 
 @_dc
 class FieldTransform:
@@ -87,10 +76,6 @@ class MigrationResult:
     classes: list[ClassMigration]
     errors: list[str]
 
-
-# ---------------------------------------------------------------------------
-# AST utilities
-# ---------------------------------------------------------------------------
 
 def get_decorator_name(dec: ast.AST) -> str | None:
     """Return the decorator name for ast.Name, ast.Call(@dataclass(...)), or ast.Attribute."""
@@ -140,7 +125,6 @@ def has_complex_post_init(node: ast.ClassDef) -> bool:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if item.name == "__post_init__":
                 for stmt in item.body:
-                    # Loops are complex
                     if isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
                         return True
                     # __import__ calls are complex
@@ -168,16 +152,11 @@ def count_fields(node: ast.ClassDef) -> int:
     return sum(1 for n in node.body if isinstance(n, ast.AnnAssign))
 
 
-# ---------------------------------------------------------------------------
-# Core analysis
-# ---------------------------------------------------------------------------
-
 def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
     """Analyze a @dataclass class and determine migration eligibility."""
     has_frozen = False
     has_slots = False
 
-    # Extract decorator keywords
     for dec in node.decorator_list:
         dec_name = get_decorator_name(dec)
         if dec_name == "dataclass":
@@ -207,38 +186,48 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
     if not force:
         if has_super_call_in_post_init(node):
             return ClassMigration(
-                node.name, node.lineno, False,
+                node.name,
+                node.lineno,
+                False,
                 "post_init calls super() — external library compatibility",
                 new_decorator=new_decorator,
-    )
+            )
 
         if has_own_init(node):
             return ClassMigration(
-                node.name, node.lineno, False,
+                node.name,
+                node.lineno,
+                False,
                 "has custom __init__ — keep as dataclass",
                 new_decorator=new_decorator,
-    )
+            )
 
         if node.bases:
             bases_str = [get_base_name(b) for b in node.bases]
             if any("msgspec" in b for b in bases_str):
                 return ClassMigration(
-                    node.name, node.lineno, False,
+                    node.name,
+                    node.lineno,
+                    False,
                     "inherits from msgspec.Struct — already migrated",
                     new_decorator=new_decorator,
-    )
+                )
             return ClassMigration(
-                node.name, node.lineno, False,
+                node.name,
+                node.lineno,
+                False,
                 f"inherits from {bases_str} — external API compatibility",
                 new_decorator=new_decorator,
-    )
+            )
 
         if has_complex_post_init(node):
             return ClassMigration(
-                node.name, node.lineno, False,
+                node.name,
+                node.lineno,
+                False,
                 "complex post_init logic (loops/imports/calls) — keep as dataclass",
                 new_decorator=new_decorator,
-    )
+            )
 
     # Field transforms
     field_transforms: list[FieldTransform] = []
@@ -252,16 +241,20 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
                                 lambda_body = ast.unparse(kw.value.body)
                                 field_name = ast.unparse(item.target)
                                 # msgspec uses msgspec.field() with same semantics
-                                field_transforms.append(FieldTransform(
-                                    field_name=field_name,
-                                    old_expr=f"field(default_factory=lambda: {lambda_body})",
-                                    new_expr=f"msgspec.field(default_factory=lambda: {lambda_body})",
-                                ))
+                                field_transforms.append(
+                                    FieldTransform(
+                                        field_name=field_name,
+                                        old_expr=f"field(default_factory=lambda: {lambda_body})",
+                                        new_expr=f"msgspec.field(default_factory=lambda: {lambda_body})",
+                                    )
+                                )
                             except Exception:  # noqa: BLE001
                                 pass
 
     return ClassMigration(
-        node.name, node.lineno, True,
+        node.name,
+        node.lineno,
+        True,
         "leaf DTO — safe to migrate to msgspec.Struct",
         new_decorator=new_decorator,
         new_bases=["msgspec.Struct"],
@@ -290,10 +283,6 @@ def analyze_file(file_path: Path, force: bool = False) -> MigrationResult:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Migration application
-# ---------------------------------------------------------------------------
-
 def apply_migration(file_path: Path, result: MigrationResult) -> bool:
     """Apply migration to file. Returns True if changes were made."""
     src = file_path.read_text(errors="ignore")
@@ -309,12 +298,11 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
         return False
 
     # Check if msgspec import exists
-    has_msgspec = 'import msgspec' in src or 'from msgspec' in src
+    has_msgspec = "import msgspec" in src or "from msgspec" in src
 
     changes_made = False
 
     for cls in migratable:
-        # Step 1: Find @dataclass decorator — look backwards from class line
         cls_line_idx = cls.line - 1  # 0-indexed
         decorator_line_idx = None
         for i in range(cls_line_idx, max(-1, cls_line_idx - 3), -1):
@@ -324,21 +312,16 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
                 decorator_line_idx = i
                 break
 
-        # Step 1: Remove @dataclass decorator line entirely (msgspec.Struct is inheritance, not a decorator)
         if decorator_line_idx is not None:
             lines[decorator_line_idx] = ""  # Remove the @dataclass line
             changes_made = True
 
-        # Step 2: Update base class list — find the class def and add/replace bases
-        # Match both "class Foo:" (no parens) and "class Foo(Base):" (with parens)
-        # When no parens exist, we need to add them
         no_parens_pattern = rf"class {cls.name}\s*:"
         with_parens_pattern = rf"class {cls.name}\s*\((.*?)\)\s*:"
         deco_match = re.search(r"msgspec\.Struct\((.*?)\)", cls.new_decorator)
         kwargs = deco_match.group(1) if deco_match else ""
         deco_suffix = f", {kwargs}" if kwargs else ""
 
-        class_updated = False
         for i in range(cls_line_idx, len(lines)):
             line = lines[i]
             # Try with-parens match first
@@ -351,7 +334,6 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
                 else:
                     new = f"class {cls.name}(msgspec.Struct{deco_suffix}, {bases_content}):"
                 lines[i] = line.replace(old, new, 1)
-                class_updated = True
                 changes_made = True
                 break
             # Try no-parens match
@@ -360,11 +342,9 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
                 old = m2.group(0)
                 new = f"class {cls.name}(msgspec.Struct{deco_suffix}):"
                 lines[i] = line.replace(old, new, 1)
-                class_updated = True
                 changes_made = True
                 break
 
-        # Step 3: Add msgspec import if missing
         if not has_msgspec:
             for i, l in enumerate(lines):
                 if "from dataclasses import" in l and "dataclass" in l:
@@ -386,17 +366,13 @@ def apply_migration(file_path: Path, result: MigrationResult) -> bool:
     return True
 
 
-# ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
-
 def format_report(result: MigrationResult) -> str:
     lines = [f"\n{'=' * 70}"]
     lines.append(f"FILE: {result.file_path}")
     lines.append(f"{'=' * 70}")
 
     if result.errors:
-        lines.append(f"\nERRORS:")
+        lines.append("\nERRORS:")
         for err in result.errors:
             lines.append(f"  ! {err}")
 
@@ -421,44 +397,35 @@ def format_report(result: MigrationResult) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="AST codemod: migrate @dataclass → msgspec.Struct",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    parser.add_argument("files", nargs="*", default=[], help="Files to migrate (default: analyze all)")
+    parser.add_argument("--dry-run", action="store_true", help="Analyze and show what would be migrated, don't write")
+    parser.add_argument("--all", action="store_true", help="Apply to all files with migratable classes")
+    parser.add_argument("--force", action="store_true", help="Force migration skipping safety checks")
     parser.add_argument(
-        "files", nargs="*", default=[],
-        help="Files to migrate (default: analyze all)"
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Analyze and show what would be migrated, don't write"
-    )
-    parser.add_argument(
-        "--all", action="store_true",
-        help="Apply to all files with migratable classes"
-    )
-    parser.add_argument(
-        "--force", action="store_true",
-        help="Force migration skipping safety checks"
-    )
-    parser.add_argument(
-        "--min-fields", type=int, default=0,
-        help="Minimum field count to consider migration (default: 0)"
+        "--min-fields", type=int, default=0, help="Minimum field count to consider migration (default: 0)"
     )
     return parser.parse_args()
 
 
 def find_all_dataclass_files() -> list[Path]:
     skip = {
-        ".venv", ".git", ".pytest_cache", "__pycache__",
-        "probe_", "tests/", ".claude/", "build/", "dist/",
-        ".venv", ".mypy_cache", "node_modules",
+        ".venv",
+        ".git",
+        ".pytest_cache",
+        "__pycache__",
+        "probe_",
+        "tests/",
+        ".claude/",
+        "build/",
+        "dist/",
+        ".mypy_cache",
+        "node_modules",
     }
     files = []
     for py_file in ROOT.rglob("*.py"):

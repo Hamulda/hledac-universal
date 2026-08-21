@@ -20,13 +20,12 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from _core import aclose
 
 
 class TestEvidenceLogCorrelation:
     """Test EvidenceLog.create_event correlation support."""
 
-    def test_create_event_without_correlation_backward_compat(self):
+    def test_create_event_without_correlation_backward_compat(self) -> None:
         """Old call sites without correlation still work."""
         from hledac.universal.evidence_log import EvidenceLog
 
@@ -38,13 +37,13 @@ class TestEvidenceLogCorrelation:
                 event_type="observation",
                 payload={"data": "test"},
                 confidence=0.9,
-    )
+            )
 
             assert event.event_id is not None
             assert event.run_id == run_id
             assert "_correlation" not in event.payload
 
-    def test_create_event_with_correlation_flat(self):
+    def test_create_event_with_correlation_flat(self) -> None:
         """create_event accepts correlation dict and stores in payload._correlation."""
         from hledac.universal.evidence_log import EvidenceLog
 
@@ -64,7 +63,7 @@ class TestEvidenceLogCorrelation:
                 payload={"data": "test"},
                 confidence=0.9,
                 correlation=correlation,
-    )
+            )
 
             assert "_correlation" in event.payload
             assert event.payload["_correlation"]["run_id"] == "run_123"
@@ -72,7 +71,7 @@ class TestEvidenceLogCorrelation:
             assert event.payload["_correlation"]["provider_id"] == "mlx"
             assert event.payload["_correlation"]["action_id"] == "action_456"
 
-    def test_create_event_correlation_partial(self):
+    def test_create_event_correlation_partial(self) -> None:
         """Correlation can be partial - only some keys present."""
         from hledac.universal.evidence_log import EvidenceLog
 
@@ -91,14 +90,14 @@ class TestEvidenceLogCorrelation:
                 event_type="decision",
                 payload={"kind": "test"},
                 correlation=correlation,
-    )
+            )
 
             assert event.payload["_correlation"]["run_id"] == "run_789"
             assert event.payload["_correlation"]["branch_id"] is None
             assert event.payload["_correlation"]["provider_id"] == "openai"
             assert event.payload["_correlation"]["action_id"] is None
 
-    def test_evidence_event_serialization_stable(self):
+    def test_evidence_event_serialization_stable(self) -> None:
         """EvidenceEvent.to_dict() serialization includes correlation when present."""
         from hledac.universal.evidence_log import EvidenceLog
 
@@ -117,7 +116,7 @@ class TestEvidenceLogCorrelation:
                 event_type="evidence_packet",
                 payload={"url": "https://example.com"},
                 correlation=correlation,
-    )
+            )
 
             d = event.to_dict()
             serialized = json.dumps(d, sort_keys=True)
@@ -127,7 +126,7 @@ class TestEvidenceLogCorrelation:
             assert '"run_id": "run_abc"' in serialized
             assert '"branch_id": "branch_b"' in serialized
 
-    def test_evidence_event_queryable(self):
+    def test_evidence_event_queryable(self) -> None:
         """Correlation in payload is queryable via payload access."""
         from hledac.universal.evidence_log import EvidenceLog
 
@@ -146,7 +145,7 @@ class TestEvidenceLogCorrelation:
                 event_type="observation",
                 payload={"key": "value1"},
                 correlation=correlation,
-    )
+            )
             log.create_event(
                 event_type="observation",
                 payload={"key": "value2"},
@@ -169,7 +168,7 @@ class TestEvidenceLogCorrelation:
 class TestToolExecLogCorrelation:
     """Test ToolExecLog.log() correlation support."""
 
-    def test_log_without_correlation_backward_compat(self):
+    def test_log_without_correlation_backward_compat(self) -> None:
         """Old call sites without correlation still work."""
         from hledac.universal.tool_exec_log import ToolExecLog
 
@@ -182,12 +181,12 @@ class TestToolExecLogCorrelation:
                 input_data=b"input",
                 output_data=b"output",
                 status="success",
-    )
+            )
 
             assert event.event_id is not None
             assert event.correlation is None
 
-    def test_log_with_correlation(self):
+    def test_log_with_correlation(self) -> None:
         """log() accepts correlation and stores in ToolExecEvent.correlation."""
         from hledac.universal.tool_exec_log import ToolExecLog
 
@@ -208,7 +207,7 @@ class TestToolExecLogCorrelation:
                 output_data=b"results",
                 status="success",
                 correlation=correlation,
-    )
+            )
 
             assert event.correlation is not None
             assert event.correlation["run_id"] == "run_tool"
@@ -216,7 +215,7 @@ class TestToolExecLogCorrelation:
             assert event.correlation["provider_id"] == "mlx"
             assert event.correlation["action_id"] == "tool_action_123"
 
-    def test_tool_exec_event_serialization(self):
+    def test_tool_exec_event_serialization(self) -> None:
         """ToolExecEvent.to_dict() includes correlation when present."""
         from hledac.universal.tool_exec_log import ToolExecLog
 
@@ -237,7 +236,7 @@ class TestToolExecLogCorrelation:
                 output_data=b"html",
                 status="success",
                 correlation=correlation,
-    )
+            )
 
             d = event.to_dict()
             assert "correlation" in d
@@ -247,7 +246,7 @@ class TestToolExecLogCorrelation:
             serialized = json.dumps(d, sort_keys=True)
             assert '"correlation"' in serialized
 
-    def test_tool_exec_event_from_dict_with_correlation(self):
+    def test_tool_exec_event_from_dict_with_correlation(self) -> None:
         """ToolExecEvent.from_dict() correctly deserializes correlation."""
         from hledac.universal.tool_exec_log import ToolExecEvent
 
@@ -280,7 +279,7 @@ class TestToolExecLogCorrelation:
 class TestMetricsRegistryCorrelation:
     """Test MetricsRegistry correlation support."""
 
-    def test_init_without_correlation_backward_compat(self):
+    def test_init_without_correlation_backward_compat(self) -> None:
         """Old call sites without correlation still work."""
         from hledac.universal.metrics_registry import MetricsRegistry
 
@@ -293,7 +292,7 @@ class TestMetricsRegistryCorrelation:
             summary = registry.get_summary()
             assert summary["run_id"] == "test"
 
-    def test_init_with_correlation(self):
+    def test_init_with_correlation(self) -> None:
         """MetricsRegistry.__init__ accepts correlation and stores it."""
         from hledac.universal.metrics_registry import MetricsRegistry
 
@@ -307,12 +306,12 @@ class TestMetricsRegistryCorrelation:
                 run_dir=Path(tmpdir),
                 run_id="test_corr",
                 correlation=correlation,
-    )
+            )
 
             # Verify correlation is stored
             assert registry._correlation == correlation
 
-    def test_flush_includes_correlation(self):
+    def test_flush_includes_correlation(self) -> None:
         """flush() serializes correlation into metrics JSONL."""
         from hledac.universal.metrics_registry import MetricsRegistry
 
@@ -326,7 +325,7 @@ class TestMetricsRegistryCorrelation:
                 run_dir=Path(tmpdir),
                 run_id="test_flush",
                 correlation=correlation,
-    )
+            )
 
             # Use valid metric name from METRIC_NAMES
             registry.inc("orchestrator_frontier_size")
@@ -355,7 +354,7 @@ class TestMetricsRegistryCorrelation:
 class TestAnalyticsHookCorrelation:
     """Test analytics_hook.shadow_record_finding correlation support."""
 
-    def test_analytics_hook_signature_extended(self):
+    def test_analytics_hook_signature_extended(self) -> None:
         """shadow_record_finding accepts branch_id, provider_id, action_id."""
         import inspect
 
@@ -369,13 +368,13 @@ class TestAnalyticsHookCorrelation:
         assert "provider_id" in params, "provider_id not in shadow_record_finding params"
         assert "action_id" in params, "action_id not in shadow_record_finding params"
 
-    def test_analytics_hook_fail_open_without_shadow(self):
+    def test_analytics_hook_fail_open_without_shadow(self) -> None:
         """shadow_record_finding is fail-open when shadow disabled."""
         from hledac.universal.knowledge.analytics_hook import (
             shadow_ingest_failures,
             shadow_record_finding,
             shadow_reset_failures,
-    )
+        )
 
         # Ensure shadow is disabled
         shadow_reset_failures()
@@ -391,12 +390,12 @@ class TestAnalyticsHookCorrelation:
             branch_id="branch1",
             provider_id="mlx",
             action_id="action1",
-    )
+        )
 
         # Should still be fail-open
         assert shadow_ingest_failures() == initial_failures
 
-    def test_evidence_log_append_propagates_correlation_to_shadow(self):
+    def test_evidence_log_append_propagates_correlation_to_shadow(self) -> None:
         """EvidenceLog.append() extracts _correlation from payload and passes to shadow_record_finding.
 
         Verifies cross-ledger propagation: EvidenceLog → analytics_hook (DuckDB shadow).
@@ -406,7 +405,7 @@ class TestAnalyticsHookCorrelation:
         os.environ["GHOST_DUCKDB_SHADOW"] = "0"
         from hledac.universal.knowledge.analytics_hook import (
             shadow_reset_failures,
-    )
+        )
 
         shadow_reset_failures()
 
@@ -435,7 +434,7 @@ class TestAnalyticsHookCorrelation:
                 },
                 confidence=0.95,
                 correlation=correlation,
-    )
+            )
 
             # Verify _correlation was stored in payload
             assert "_correlation" in event.payload
@@ -453,7 +452,7 @@ class TestAnalyticsHookCorrelation:
 class TestCorrelationSchema:
     """Test RunCorrelation canonical schema in types.py."""
 
-    def test_run_correlation_exists(self):
+    def test_run_correlation_exists(self) -> None:
         """RunCorrelation dataclass exists in types.py."""
         from hledac.universal.project_types import RunCorrelation
 
@@ -462,13 +461,13 @@ class TestCorrelationSchema:
             branch_id="b1",
             provider_id="mlx",
             action_id="a1",
-    )
+        )
         assert corr.run_id == "r1"
         assert corr.branch_id == "b1"
         assert corr.provider_id == "mlx"
         assert corr.action_id == "a1"
 
-    def test_run_correlation_to_dict(self):
+    def test_run_correlation_to_dict(self) -> None:
         """RunCorrelation.to_dict() returns serializable dict."""
         from hledac.universal.project_types import RunCorrelation
 
@@ -477,7 +476,7 @@ class TestCorrelationSchema:
             branch_id="branch_y",
             provider_id="openai",
             action_id="action_z",
-    )
+        )
         d = corr.to_dict()
 
         assert d["run_id"] == "run_x"
@@ -489,7 +488,7 @@ class TestCorrelationSchema:
         serialized = json.dumps(d)
         assert "run_x" in serialized
 
-    def test_run_correlation_partial(self):
+    def test_run_correlation_partial(self) -> None:
         """RunCorrelation supports partial fields."""
         from hledac.universal.project_types import RunCorrelation
 
@@ -501,7 +500,7 @@ class TestCorrelationSchema:
         assert d["provider_id"] is None
         assert d["action_id"] is None
 
-    def test_run_correlation_with_provider(self):
+    def test_run_correlation_with_provider(self) -> None:
         """RunCorrelation.with_provider() returns new instance."""
         from hledac.universal.project_types import RunCorrelation
 
@@ -513,7 +512,7 @@ class TestCorrelationSchema:
         assert corr2.provider_id == "anthropic"
         assert corr2.action_id is None
 
-    def test_run_correlation_with_action(self):
+    def test_run_correlation_with_action(self) -> None:
         """RunCorrelation.with_action() returns new instance."""
         from hledac.universal.project_types import RunCorrelation
 

@@ -122,7 +122,6 @@ impl Finding {
             .or(self.entity_value.clone())
             .or_else(|| {
                 let t = self.text.clone();
-                // Extract first token that looks like an IOC
                 extract_first_ioc(&t).map(|s| s.to_string())
             })
             .unwrap_or_else(|| self.text.clone().unwrap_or_default())
@@ -423,10 +422,6 @@ fn render_collapsed_markdown(
     out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PyO3 bindings
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Process-wide singleton — guards against concurrent collapse calls.
 static _COLLAPSE_GLOBAL_LOCK: RwLock<()> = RwLock::new(());
 
@@ -489,7 +484,6 @@ pub fn collapse_findings(
     let (groups, original_entity_count) =
         collapse_findings_safe(&findings, max_groups, max_chars_per_group)?;
 
-    // Render
     let markdown = render_collapsed_markdown(
         &groups,
         total_findings,
@@ -498,7 +492,6 @@ pub fn collapse_findings(
         max_sources_per_group,
     );
 
-    // Return as UTF-8 bytes
     Ok(markdown.into_bytes())
 }
 
@@ -507,10 +500,6 @@ pub fn collapse_findings(
 pub fn collapser_is_deterministic() -> bool {
     is_deterministic_enforced()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// [SWARM]-004: SemanticPromptCompressor — Entropy + TF-IDF pre-filter
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for prompt compression.
 #[derive(Clone)]
@@ -744,7 +733,6 @@ fn should_keep_word(
         return false;
     }
 
-    // Stop word check
     if STOP_WORDS.contains(word_lower.as_str()) {
         return false;
     }
@@ -793,7 +781,6 @@ pub fn compress_prompt_core(text: &str, config: &CompressionConfig) -> String {
         return String::new();
     }
 
-    // Extract and protect all IOCs first
     let protected_iocs = extract_all_iocs(text);
     if protected_iocs.is_empty() && text.len() < 200 {
         // Very short text without IOCs — skip compression
@@ -810,17 +797,14 @@ pub fn compress_prompt_core(text: &str, config: &CompressionConfig) -> String {
     // Compute boilerplate words (TF-IDF)
     let boilerplate = compute_tfidf_boilerplate(&groups, config.tfidf_threshold);
 
-    // Build result string
     let mut result = String::with_capacity(text.len());
 
-    // Process word by word, preserving structure
     let markdown_chars: HashSet<char> = "#*_-`[]()!|".chars().collect();
 
     let mut i = text.chars();
     let mut word_buf = String::new();
 
     while let Some(c) = i.next() {
-        // Handle bold markers ** specially - skip the second *
         if c == '*' && config.strip_markdown {
             if let Some(&next) = i.peek() {
                 if next == '*' {
@@ -939,7 +923,6 @@ pub fn compress_prompt(
     min_entropy_bits: f64,
     strip_markdown: bool,
 ) -> PyResult<String> {
-    // Check feature flag — default ON
     let enabled = std::env::var("HLEDAC_ENABLE_PROMPT_COMPRESSION")
         .map(|v| v != "0")
         .unwrap_or(true);
@@ -961,7 +944,6 @@ pub fn compress_prompt(
 
     let compressed = compress_prompt_core(text, &config);
 
-    // Return compressed text
     Ok(compressed)
 }
 

@@ -10,9 +10,6 @@ Tests:
 - Health check
 """
 
-
-import asyncio
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,10 +21,10 @@ from hledac.universal.discovery.duckdb_fts_store import (
     FTSSearchResult,
 )
 
-
 # --------------------------------------------------------------------------- #
 # Fixtures
 # --------------------------------------------------------------------------- #
+
 
 @pytest.fixture
 def fts_store(tmp_path: Path) -> DuckDBFTSStore:
@@ -46,6 +43,7 @@ async def initialized_fts(fts_store: DuckDBFTSStore) -> DuckDBFTSStore:
 # --------------------------------------------------------------------------- #
 # Schema tests
 # --------------------------------------------------------------------------- #
+
 
 class TestFTSStoreSchema:
     """FTS schema creation and extension loading."""
@@ -82,6 +80,7 @@ class TestFTSStoreSchema:
 # --------------------------------------------------------------------------- #
 # Ingest tests — Arrow zero-copy
 # --------------------------------------------------------------------------- #
+
 
 class TestFTSIngest:
     """Arrow zero-copy ingest pres DuckDB register() + INSERT...SELECT."""
@@ -156,6 +155,7 @@ class TestFTSIngest:
 # --------------------------------------------------------------------------- #
 # FTS5 search + BM25
 # --------------------------------------------------------------------------- #
+
 
 class TestFTSSearch:
     """FTS5 search s BM25 ranking."""
@@ -249,9 +249,7 @@ class TestFTSSearch:
     @pytest.mark.asyncio
     async def test_search_no_results(self, initialized_fts: DuckDBFTSStore) -> None:
         """Hledani neexistujiciho terminu vraci prazdny seznam."""
-        await initialized_fts.upsert(
-            [FTSDocument(doc_id="d1", title="Foo", body="Bar")]
-        )
+        await initialized_fts.upsert([FTSDocument(doc_id="d1", title="Foo", body="Bar")])
         results = await initialized_fts.search("nonexistent_term_xyz")
         assert results == []
 
@@ -259,6 +257,7 @@ class TestFTSSearch:
 # --------------------------------------------------------------------------- #
 # RRF Fusion
 # --------------------------------------------------------------------------- #
+
 
 class TestRRFFusion:
     """Reciprocal Rank Fusion — FTS + ANN hybrid scoring."""
@@ -272,12 +271,22 @@ class TestRRFFusion:
         """FTS-only vstup vraci FTS results s match_type=fts."""
         fts = [
             FTSSearchResult(
-                doc_id="d1", title="T1", body_snippet="S1",
-                url=None, source="c", rank=1.0, fetched_at=0.0,
+                doc_id="d1",
+                title="T1",
+                body_snippet="S1",
+                url=None,
+                source="c",
+                rank=1.0,
+                fetched_at=0.0,
             ),
             FTSSearchResult(
-                doc_id="d2", title="T2", body_snippet="S2",
-                url=None, source="c", rank=0.8, fetched_at=0.0,
+                doc_id="d2",
+                title="T2",
+                body_snippet="S2",
+                url=None,
+                source="c",
+                rank=0.8,
+                fetched_at=0.0,
             ),
         ]
         result = DuckDBFTSStore.rrf_fuse(fts, [], top_k=5)
@@ -299,8 +308,13 @@ class TestRRFFusion:
         """RRF kombinuje FTS (0.7) + ANN (0.3) s k=60."""
         fts = [
             FTSSearchResult(
-                doc_id="d1", title="T1", body_snippet="S1",
-                url=None, source="c", rank=1.0, fetched_at=0.0,
+                doc_id="d1",
+                title="T1",
+                body_snippet="S1",
+                url=None,
+                source="c",
+                rank=1.0,
+                fetched_at=0.0,
             ),
         ]
         ann = [
@@ -317,8 +331,13 @@ class TestRRFFusion:
         """top_k omeji vystup."""
         fts = [
             FTSSearchResult(
-                doc_id=f"d{i}", title=f"T{i}", body_snippet=f"S{i}",
-                url=None, source="c", rank=1.0 - i * 0.1, fetched_at=0.0,
+                doc_id=f"d{i}",
+                title=f"T{i}",
+                body_snippet=f"S{i}",
+                url=None,
+                source="c",
+                rank=1.0 - i * 0.1,
+                fetched_at=0.0,
             )
             for i in range(10)
         ]
@@ -329,6 +348,7 @@ class TestRRFFusion:
 # --------------------------------------------------------------------------- #
 # Health check + count
 # --------------------------------------------------------------------------- #
+
 
 class TestFTSHealth:
     """Health check a utility methods."""
@@ -341,19 +361,14 @@ class TestFTSHealth:
     @pytest.mark.asyncio
     async def test_count_after_upsert(self, initialized_fts: DuckDBFTSStore) -> None:
         """count() vraci spravny pocet."""
-        docs = [
-            FTSDocument(doc_id=f"d{i}", title=f"T{i}", body="B")
-            for i in range(7)
-        ]
+        docs = [FTSDocument(doc_id=f"d{i}", title=f"T{i}", body="B") for i in range(7)]
         await initialized_fts.upsert(docs)
         assert await initialized_fts.count() == 7
 
     @pytest.mark.asyncio
     async def test_health_check_healthy(self, initialized_fts: DuckDBFTSStore) -> None:
         """health_check() vraci healthy stav."""
-        await initialized_fts.upsert(
-            [FTSDocument(doc_id="d1", title="T", body="B")]
-        )
+        await initialized_fts.upsert([FTSDocument(doc_id="d1", title="T", body="B")])
         health = await initialized_fts.health_check()
         assert health["status"] == "healthy"
         assert health["doc_count"] == 1
@@ -362,9 +377,7 @@ class TestFTSHealth:
     @pytest.mark.asyncio
     async def test_delete(self, initialized_fts: DuckDBFTSStore) -> None:
         """delete() odstrani dokumenty z FTS indexu."""
-        await initialized_fts.upsert(
-            [FTSDocument(doc_id="d1", title="T1", body="B1")]
-        )
+        await initialized_fts.upsert([FTSDocument(doc_id="d1", title="T1", body="B1")])
         deleted = await initialized_fts.delete(["d1"])
         assert deleted == 1
         assert await initialized_fts.count() == 0
@@ -373,6 +386,7 @@ class TestFTSHealth:
 # --------------------------------------------------------------------------- #
 # Async iterator
 # --------------------------------------------------------------------------- #
+
 
 class TestFTSIterator:
     """aiter_all() async iterator pres vsechny dokumenty."""
@@ -386,10 +400,7 @@ class TestFTSIterator:
     @pytest.mark.asyncio
     async def test_aiter_all_docs(self, initialized_fts: DuckDBFTSStore) -> None:
         """Vsechny dokumenty jsou vraceny pres iterator."""
-        docs = [
-            FTSDocument(doc_id=f"d{i}", title=f"T{i}", body=f"B{i}", source="test")
-            for i in range(25)
-        ]
+        docs = [FTSDocument(doc_id=f"d{i}", title=f"T{i}", body=f"B{i}", source="test") for i in range(25)]
         await initialized_fts.upsert(docs)
         recovered = [d async for d in initialized_fts.aiter_all()]
         assert len(recovered) == 25

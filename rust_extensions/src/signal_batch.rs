@@ -86,10 +86,6 @@ use rayon::prelude::*;
 
 use crate::gil::release_gil;
 
-// ---------------------------------------------------------------------------
-// NEON detection + scalar fallback
-// ---------------------------------------------------------------------------
-
 /// Detect whether the Accelerate framework vDSP is available.
 ///
 /// Returns `true` if running on macOS with Accelerate framework linked.
@@ -179,14 +175,12 @@ unsafe fn compute_scores_neon_inner(
         for chunk in 0..chunks {
             let base = chunk * 4;
 
-            // Load 4 fetched counts.
             let f0 = *fetched.get(base).unwrap_or(&1_u32);
             let f1 = *fetched.get(base + 1).unwrap_or(&1_u32);
             let f2 = *fetched.get(base + 2).unwrap_or(&1_u32);
             let f3 = *fetched.get(base + 3).unwrap_or(&1_u32);
             let fetched_vec = core::arch::aarch64::vld1q_u32([f0, f1, f2, f3].as_ptr());
 
-            // Load 4 accepted counts.
             let a0 = *accepted.get(base).unwrap_or(&0_u32);
             let a1 = *accepted.get(base + 1).unwrap_or(&0_u32);
             let a2 = *accepted.get(base + 2).unwrap_or(&0_u32);
@@ -202,7 +196,6 @@ unsafe fn compute_scores_neon_inner(
             let accepted_f = vcvtq_f32_u32(accepted_vec);
             let ratio = vdivq_f32(accepted_f, fetched_f);
 
-            // Load current weights.
             let w0 = *current_weights.get(base).unwrap_or(&1.0_f32);
             let w1 = *current_weights.get(base + 1).unwrap_or(&1.0_f32);
             let w2 = *current_weights.get(base + 2).unwrap_or(&1.0_f32);
@@ -297,10 +290,6 @@ unsafe fn compute_scores_neon_inner(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scalar fallback
-// ---------------------------------------------------------------------------
-
 #[allow(dead_code)]
 fn compute_scores_scalar(
     fetched: &[u32],
@@ -332,10 +321,6 @@ fn compute_scores_scalar(
         })
         .collect()
 }
-
-// ---------------------------------------------------------------------------
-// Signal aggregation — weighted average of signal vectors
-// ---------------------------------------------------------------------------
 
 /// Aggregate signal vectors using per-source weights.
 ///
@@ -403,10 +388,6 @@ fn aggregate_signals_inner(signals: &[Vec<f32>], weights: &[f32], normalize: boo
 
     result
 }
-
-// ---------------------------------------------------------------------------
-// NEON-Accelerated batch signal aggregation
-// ---------------------------------------------------------------------------
 
 /// Aggregate signal vectors using ARM NEON SIMD.
 ///
@@ -508,10 +489,6 @@ fn aggregate_signals_neon(signals: &[Vec<f32>], weights: &[f32], normalize: bool
     // Fallback to scalar implementation on non-NEON platforms
     aggregate_signals_inner(signals, weights, normalize)
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 public API
-// ---------------------------------------------------------------------------
 
 /// Compute batch source quality scores using ARM NEON SIMD.
 ///
@@ -669,10 +646,6 @@ pub fn batch_aggregate_signals(
 
     Ok(result)
 }
-
-// ---------------------------------------------------------------------------
-// Page quality scoring — rayon parallel MAP
-// ---------------------------------------------------------------------------
 
 /// Compute page quality scores for a batch of pages in parallel via rayon.
 ///
@@ -877,10 +850,6 @@ fn _compute_quality_signal(text: &str, text_len: usize) -> f32 {
     (entropy_score * 0.4_f32) + (length_score * 0.6_f32)
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 /// Register all signal_batch functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_compute_scores))?;
@@ -889,10 +858,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_fallback_decide))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1013,10 +978,6 @@ mod tests {
     }
 }
 
-// ============================================================================
-// G6: Feed Decision Batch — Sprint integration
-// ============================================================================
-
 /// Minimum chars threshold for article fallback (mirrors feed_decision.rs).
 const MIN_ARTICLE_FALLBACK_CHARS: i32 = 150;
 
@@ -1049,7 +1010,6 @@ pub fn batch_fallback_decide(
         return Ok(Vec::new());
     }
 
-    // Extract all params into owned Vec for rayon
     let params: Vec<(i32, i32, String, bool, bool, bool, bool, i32, f64, String)> = decisions
         .iter()
         .map(|item| {

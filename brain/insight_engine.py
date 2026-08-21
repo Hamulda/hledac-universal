@@ -2,16 +2,6 @@
 Insight Generation Engine
 ==========================
 
-
-
-
-
-
-
-
-
-
-
 From deep_research/insight_generator.py comments:
 - Pattern recognition insights
 - Anomaly detection insights
@@ -22,26 +12,25 @@ From deep_research/insight_generator.py comments:
 
 Advanced insight discovery for research synthesis.
 """
+
 from __future__ import annotations
-
-
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import field
+from operator import attrgetter
 from typing import Any
 
-from operator import attrgetter, itemgetter
-import msgspec
-from compat.msgspec_gc_compat import Struct
 import numpy as np
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 
 class Insight(Struct):
     """Generated insight."""
+
     insight_id: str
     type: str
     content: str
@@ -55,6 +44,7 @@ class Insight(Struct):
 
 class Pattern(Struct):
     """Discovered pattern."""
+
     pattern_type: str
     description: str
     occurrences: int
@@ -64,6 +54,7 @@ class Pattern(Struct):
 
 class Anomaly(Struct):
     """Detected anomaly."""
+
     anomaly_type: str
     description: str
     severity: float
@@ -74,6 +65,7 @@ class Anomaly(Struct):
 
 class Contradiction(Struct):
     """Identified contradiction."""
+
     contradiction_id: str
     statement_a: str
     statement_b: str
@@ -83,6 +75,7 @@ class Contradiction(Struct):
 
 class Gap(Struct):
     """Identified knowledge gap."""
+
     area: str
     description: str
     importance: float
@@ -91,6 +84,7 @@ class Gap(Struct):
 
 class Hypothesis(Struct):
     """Generated hypothesis."""
+
     # Intentionally NOT brain.hypothesis._types.Hypothesis —
     # simpler shape (insight string only, no statement/evidence/tests).
     hypothesis: str
@@ -108,6 +102,7 @@ class CausalRelationship(Struct):
     "Step 3: Build causal models"
     "Extract causal model components"
     """
+
     cause: str
     effect: str
     strength: float  # 0-1
@@ -128,6 +123,7 @@ class SynthesisLevel(Struct):
     "Level 4: Conceptual Synthesis Processor"
     "Level 5: Paradigm Synthesis Processor"
     """
+
     level: int  # 1-5
     level_name: str
     synthesis: str
@@ -142,6 +138,7 @@ class InsightAnalysisResult(Struct):
     Sprint F300: Migrated from dataclass(slots=True) to msgspec.Struct.
     Computed properties replace __post_init__ derived fields.
     """
+
     query: str
     insights: list[Insight] = field(default_factory=list)
     patterns: list[Pattern] = field(default_factory=list)
@@ -158,9 +155,13 @@ class InsightAnalysisResult(Struct):
     def total_discovered(self) -> int:
         """Compute total discovered items from component lists."""
         return (
-            len(self.insights) + len(self.patterns) + len(self.anomalies) +
-            len(self.contradictions) + len(self.gaps) + len(self.hypotheses)
-    )
+            len(self.insights)
+            + len(self.patterns)
+            + len(self.anomalies)
+            + len(self.contradictions)
+            + len(self.gaps)
+            + len(self.hypotheses)
+        )
 
     @property
     def high_confidence_count(self) -> int:
@@ -182,9 +183,9 @@ class InsightEngine:
     "- Serendipity engineering insights"
     """
 
-    __slots__ = ('min_confidence', 'insight_counter')
+    __slots__ = ("min_confidence", "insight_counter")
 
-    def __init__(self, min_confidence: float = 0.6):
+    def __init__(self, min_confidence: float = 0.6) -> None:
         """
         Initialize insight engine.
 
@@ -195,10 +196,7 @@ class InsightEngine:
         self.insight_counter = 0
 
     def analyze(
-        self,
-        query: str,
-        data: list[dict[str, Any]],
-        analysis_types: list[str] | None = None
+        self, query: str, data: list[dict[str, Any]], analysis_types: list[str] | None = None
     ) -> InsightAnalysisResult:
         """
         Perform comprehensive insight analysis.
@@ -217,46 +215,50 @@ class InsightEngine:
             return result
 
         analysis_types = analysis_types or [
-            'patterns', 'anomalies', 'contradictions', 'gaps',
-            'hypotheses', 'serendipity'
+            "patterns",
+            "anomalies",
+            "contradictions",
+            "gaps",
+            "hypotheses",
+            "serendipity",
         ]
 
         # Pattern recognition
-        if 'patterns' in analysis_types:
+        if "patterns" in analysis_types:
             result.patterns = self._recognize_patterns(data)
             result.insights.extend(self._patterns_to_insights(result.patterns))
 
         # Anomaly detection
-        if 'anomalies' in analysis_types:
+        if "anomalies" in analysis_types:
             result.anomalies = self._detect_anomalies(data)
             result.insights.extend(self._anomalies_to_insights(result.anomalies))
 
         # Contradiction detection
-        if 'contradictions' in analysis_types:
+        if "contradictions" in analysis_types:
             result.contradictions = self._find_contradictions(data)
             result.insights.extend(self._contradictions_to_insights(result.contradictions))
 
         # Gap identification
-        if 'gaps' in analysis_types:
+        if "gaps" in analysis_types:
             result.gaps = self._identify_gaps(data, query)
             result.insights.extend(self._gaps_to_insights(result.gaps))
 
         # Hypothesis generation
-        if 'hypotheses' in analysis_types:
+        if "hypotheses" in analysis_types:
             result.hypotheses = self._generate_hypotheses(data, query)
             result.insights.extend(self._hypotheses_to_insights(result.hypotheses))
 
         # Serendipity engineering
-        if 'serendipity' in analysis_types:
+        if "serendipity" in analysis_types:
             result.serendipity_opportunities = self._engineer_serendipity(data, query)
 
         # Causal modeling (from predictive_modeler.py comments)
-        if 'causal' in analysis_types:
+        if "causal" in analysis_types:
             causal_relationships = self._build_causal_model(data, query)
             result.insights.extend(self._causal_to_insights(causal_relationships))
 
         # Multi-level synthesis (from multi_level_synthesis.py comments)
-        if 'synthesis' in analysis_types:
+        if "synthesis" in analysis_types:
             synthesis_levels = self._perform_multi_level_synthesis(data, query)
             result.insights.extend(self._synthesis_to_insights(synthesis_levels))
 
@@ -276,7 +278,6 @@ class InsightEngine:
         if not data:
             return patterns
 
-        # Extract all string values
         texts = []
         for item in data:
             for _key, value in item.items():
@@ -292,24 +293,28 @@ class InsightEngine:
         phrases = self._extract_common_phrases(texts)
         for phrase, count in phrases.items():
             if count >= 2:
-                patterns.append(Pattern(
-                    pattern_type="semantic",
-                    description=f"Recurring phrase: '{phrase}'",
-                    occurrences=count,
-                    confidence=min(1.0, count / len(texts) + 0.5),
-                    examples=[t for t in texts if phrase in t][:3]
-                ))
+                patterns.append(
+                    Pattern(
+                        pattern_type="semantic",
+                        description=f"Recurring phrase: '{phrase}'",
+                        occurrences=count,
+                        confidence=min(1.0, count / len(texts) + 0.5),
+                        examples=[t for t in texts if phrase in t][:3],
+                    )
+                )
 
         # Keyword co-occurrence patterns
         keywords = self._extract_keywords(texts)
         if len(keywords) >= 2:
-            patterns.append(Pattern(
-                pattern_type="co_occurrence",
-                description=f"Keywords often appear together: {', '.join(keywords[:5])}",
-                occurrences=len(texts),
-                confidence=0.7,
-                examples=[]
-            ))
+            patterns.append(
+                Pattern(
+                    pattern_type="co_occurrence",
+                    description=f"Keywords often appear together: {', '.join(keywords[:5])}",
+                    occurrences=len(texts),
+                    confidence=0.7,
+                    examples=[],
+                )
+            )
 
         return patterns
 
@@ -324,7 +329,6 @@ class InsightEngine:
         if len(data) < 3:
             return anomalies
 
-        # Check for outliers in numeric fields
         numeric_fields = {}
         for item in data:
             for key, value in item.items():
@@ -340,14 +344,16 @@ class InsightEngine:
 
                 for _i, val in enumerate(values):
                     if std > 0 and abs(val - mean) > 2 * std:
-                        anomalies.append(Anomaly(
-                            anomaly_type="statistical_outlier",
-                            description=f"Unusual value in '{field}': {val}",
-                            severity=min(1.0, abs(val - mean) / (3 * std)),
-                            expected_behavior=f"Typical range: {mean-std:.2f} to {mean+std:.2f}",
-                            actual_behavior=f"Observed: {val}",
-                            implications="May indicate special case or data error"
-                        ))
+                        anomalies.append(
+                            Anomaly(
+                                anomaly_type="statistical_outlier",
+                                description=f"Unusual value in '{field}': {val}",
+                                severity=min(1.0, abs(val - mean) / (3 * std)),
+                                expected_behavior=f"Typical range: {mean - std:.2f} to {mean + std:.2f}",
+                                actual_behavior=f"Observed: {val}",
+                                implications="May indicate special case or data error",
+                            )
+                        )
 
         # Check for missing fields (structural anomalies)
         all_keys = set()
@@ -357,14 +363,16 @@ class InsightEngine:
         for item in data:
             missing = all_keys - set(item.keys())
             if missing and len(missing) > len(all_keys) * 0.3:
-                anomalies.append(Anomaly(
-                    anomaly_type="incomplete_data",
-                    description=f"Item missing {len(missing)} expected fields",
-                    severity=len(missing) / len(all_keys),
-                    expected_behavior=f"All items should have: {', '.join(all_keys)}",
-                    actual_behavior=f"Missing: {', '.join(missing)}",
-                    implications="Data collection may be incomplete"
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type="incomplete_data",
+                        description=f"Item missing {len(missing)} expected fields",
+                        severity=len(missing) / len(all_keys),
+                        expected_behavior=f"All items should have: {', '.join(all_keys)}",
+                        actual_behavior=f"Missing: {', '.join(missing)}",
+                        implications="Data collection may be incomplete",
+                    )
+                )
 
         return anomalies
 
@@ -378,38 +386,35 @@ class InsightEngine:
 
         # Simple contradiction: same field with different values in related items
         for i, item1 in enumerate(data):
-            for j, item2 in enumerate(data[i+1:], i+1):
+            for j, item2 in enumerate(data[i + 1 :], i + 1):
                 for key in set(item1.keys()) & set(item2.keys()):
                     val1 = item1[key]
                     val2 = item2[key]
 
-                    # Check for direct contradiction in strings
                     if isinstance(val1, str) and isinstance(val2, str):
                         # Simple negation detection
-                        negators = ['not ', 'no ', 'never ', "doesn't ", "isn't "]
+                        negators = ["not ", "no ", "never ", "doesn't ", "isn't "]
                         val1_neg = any(val1.lower().startswith(n) for n in negators)
                         val2_neg = any(val2.lower().startswith(n) for n in negators)
 
                         if val1_neg != val2_neg and len(val1) > 10 and len(val2) > 10:
-                            contradictions.append(Contradiction(
-                                contradiction_id=f"cont_{i}_{j}_{key}",
-                                statement_a=f"{key}: {val1}",
-                                statement_b=f"{key}: {val2}",
-                                severity=0.7,
-                                resolution_options=[
-                                    "Verify source reliability",
-                                    "Check temporal context",
-                                    "Consider different interpretations"
-                                ]
-                            ))
+                            contradictions.append(
+                                Contradiction(
+                                    contradiction_id=f"cont_{i}_{j}_{key}",
+                                    statement_a=f"{key}: {val1}",
+                                    statement_b=f"{key}: {val2}",
+                                    severity=0.7,
+                                    resolution_options=[
+                                        "Verify source reliability",
+                                        "Check temporal context",
+                                        "Consider different interpretations",
+                                    ],
+                                )
+                            )
 
         return contradictions
 
-    def _identify_gaps(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> list[Gap]:
+    def _identify_gaps(self, data: list[dict[str, Any]], query: str) -> list[Gap]:
         """
         Identify knowledge gaps.
 
@@ -420,66 +425,65 @@ class InsightEngine:
         # Common research gap patterns
         query.lower()
 
-        # Check for temporal gaps
         dates = []
         for item in data:
-            for key in ['date', 'timestamp', 'year', 'created']:
+            for key in ["date", "timestamp", "year", "created"]:
                 if key in item:
                     dates.append(item[key])
 
         if len(dates) >= 2:
-            gaps.append(Gap(
-                area="temporal_coverage",
-                description="Limited temporal range in available data",
-                importance=0.6,
-                research_opportunities=[
-                    "Extend data collection to earlier periods",
-                    "Include more recent data points"
-                ]
-            ))
+            gaps.append(
+                Gap(
+                    area="temporal_coverage",
+                    description="Limited temporal range in available data",
+                    importance=0.6,
+                    research_opportunities=[
+                        "Extend data collection to earlier periods",
+                        "Include more recent data points",
+                    ],
+                )
+            )
 
-        # Check for geographic gaps
         locations = []
         for item in data:
-            for key in ['location', 'country', 'region', 'place']:
+            for key in ["location", "country", "region", "place"]:
                 if key in item:
                     locations.append(item[key])
 
         if len(set(locations)) < 3 and len(data) > 5:
-            gaps.append(Gap(
-                area="geographic_coverage",
-                description="Limited geographic diversity in data",
-                importance=0.7,
-                research_opportunities=[
-                    "Collect data from additional regions",
-                    "Compare findings across different locations"
-                ]
-            ))
+            gaps.append(
+                Gap(
+                    area="geographic_coverage",
+                    description="Limited geographic diversity in data",
+                    importance=0.7,
+                    research_opportunities=[
+                        "Collect data from additional regions",
+                        "Compare findings across different locations",
+                    ],
+                )
+            )
 
-        # Check for source diversity
         sources = set()
         for item in data:
-            if 'source' in item:
-                sources.add(item['source'])
+            if "source" in item:
+                sources.add(item["source"])
 
         if len(sources) < 2 and len(data) > 5:
-            gaps.append(Gap(
-                area="source_diversity",
-                description="Limited source diversity may bias results",
-                importance=0.8,
-                research_opportunities=[
-                    "Incorporate additional data sources",
-                    "Cross-validate with independent datasets"
-                ]
-            ))
+            gaps.append(
+                Gap(
+                    area="source_diversity",
+                    description="Limited source diversity may bias results",
+                    importance=0.8,
+                    research_opportunities=[
+                        "Incorporate additional data sources",
+                        "Cross-validate with independent datasets",
+                    ],
+                )
+            )
 
         return gaps
 
-    def _generate_hypotheses(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> list[Hypothesis]:
+    def _generate_hypotheses(self, data: list[dict[str, Any]], query: str) -> list[Hypothesis]:
         """
         Generate hypotheses from data.
 
@@ -490,37 +494,36 @@ class InsightEngine:
         if not data:
             return hypotheses
 
-        # Extract key themes
         themes = self._extract_themes(data)
 
         if len(themes) >= 2:
-            hypotheses.append(Hypothesis(
-                hypothesis=f"There is a causal relationship between {themes[0]} and {themes[1]}",
-                confidence=0.6,
-                supporting_evidence=["Co-occurrence in data"],
-                counter_evidence=["Correlation does not imply causation"],
-                test_methods=["Controlled experiment", "Longitudinal study"]
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis=f"There is a causal relationship between {themes[0]} and {themes[1]}",
+                    confidence=0.6,
+                    supporting_evidence=["Co-occurrence in data"],
+                    counter_evidence=["Correlation does not imply causation"],
+                    test_methods=["Controlled experiment", "Longitudinal study"],
+                )
+            )
 
         # Pattern-based hypothesis
         patterns = self._recognize_patterns(data)
         if patterns:
             top_pattern = max(patterns, key=attrgetter("confidence"))
-            hypotheses.append(Hypothesis(
-                hypothesis=f"The observed pattern '{top_pattern.description}' will continue in future data",
-                confidence=top_pattern.confidence * 0.8,
-                supporting_evidence=[f"Observed {top_pattern.occurrences} times"],
-                counter_evidence=["Past patterns may not predict future behavior"],
-                test_methods=["Predictive validation", "Out-of-sample testing"]
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis=f"The observed pattern '{top_pattern.description}' will continue in future data",
+                    confidence=top_pattern.confidence * 0.8,
+                    supporting_evidence=[f"Observed {top_pattern.occurrences} times"],
+                    counter_evidence=["Past patterns may not predict future behavior"],
+                    test_methods=["Predictive validation", "Out-of-sample testing"],
+                )
+            )
 
         return hypotheses
 
-    def _engineer_serendipity(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> list[str]:
+    def _engineer_serendipity(self, data: list[dict[str, Any]], query: str) -> list[str]:
         """
         Engineer serendipitous discoveries.
 
@@ -529,10 +532,7 @@ class InsightEngine:
         opportunities = []
 
         # Look for unexpected connections
-        ' '.join([
-            str(v) for item in data for v in item.values()
-            if isinstance(v, str)
-        ]).lower()
+        " ".join([str(v) for item in data for v in item.values() if isinstance(v, str)]).lower()
 
         # Suggest related but unexpected areas
         serendipity_triggers = [
@@ -541,19 +541,19 @@ class InsightEngine:
             "Check for inverse relationships",
             "Explore edge cases and outliers",
             "Look for seasonal or cyclic variations",
-            "Examine the absence of expected patterns"
+            "Examine the absence of expected patterns",
         ]
 
         # Select based on query characteristics
-        if 'technology' in query.lower():
+        if "technology" in query.lower():
             opportunities.append(serendipity_triggers[0])
             opportunities.append("Research how other industries solved similar problems")
 
-        if 'social' in query.lower() or 'human' in query.lower():
+        if "social" in query.lower() or "human" in query.lower():
             opportunities.append(serendipity_triggers[1])
             opportunities.append("Study animal behavior analogs")
 
-        if 'economic' in query.lower() or 'market' in query.lower():
+        if "economic" in query.lower() or "market" in query.lower():
             opportunities.append(serendipity_triggers[2])
             opportunities.append("Look for contrarian indicators")
 
@@ -562,13 +562,6 @@ class InsightEngine:
 
         return opportunities
 
-    # ------------------------------------------------------------------
-    # S6-REFACTOR: Generic converter — eliminates 6× duplicate boilerplate.
-    # Each converter returns (content, novelty, importance, tags, extra_kwargs)
-    # where extra_kwargs may include 'evidence'.
-    # Filter semantics: return True to include item.
-    # confidence_fn: if provided, overrides item.confidence (callable or constant float).
-    # ------------------------------------------------------------------
     def _items_to_insights(
         self,
         items: list[Any],
@@ -578,8 +571,11 @@ class InsightEngine:
         importance_fn: Callable[[Any], float],  # callable[item] -> float
         tags_fn: Callable[[Any], list[str]],  # callable[item] -> list[str]
         filter_fn: Callable[[Any], bool] | None = None,  # callable[item] -> bool (None = include all)
-        confidence_fn: Callable[[Any], float] | float | None = None,  # callable[item] -> float OR constant float (None = item.confidence)
-        extra_kwargs_fn: Callable[[Any], dict[str, Any]] | None = None,  # callable[item] -> dict (merged into Insight kwargs)
+        confidence_fn: Callable[[Any], float]
+        | float
+        | None = None,  # callable[item] -> float OR constant float (None = item.confidence)
+        extra_kwargs_fn: Callable[[Any], dict[str, Any]]
+        | None = None,  # callable[item] -> dict (merged into Insight kwargs)
     ) -> list[Insight]:
         """
         Generic list-to-insights converter.
@@ -589,9 +585,14 @@ class InsightEngine:
         _hypotheses_to_insights, and _causal_to_insights.
         """
         if filter_fn is None:
-            filter_fn = lambda _: True
+
+            def filter_fn(_) -> bool:
+                return True
+
         if extra_kwargs_fn is None:
-            extra_kwargs_fn = lambda _: {}
+
+            def extra_kwargs_fn(_):
+                return {}
 
         results: list[Insight] = []
         for item in items:
@@ -612,7 +613,7 @@ class InsightEngine:
                     importance_score=importance_fn(item),
                     tags=tags_fn(item),
                     **extra_kwargs_fn(item),
-    )
+                )
             )
         return results
 
@@ -626,7 +627,7 @@ class InsightEngine:
             importance_fn=lambda _: 0.6,
             tags_fn=lambda p: ["pattern", p.pattern_type],
             filter_fn=lambda p: p.confidence >= self.min_confidence,
-    )
+        )
 
     def _anomalies_to_insights(self, anomalies: list[Anomaly]) -> list[Insight]:
         """Convert anomalies to insights."""
@@ -639,7 +640,7 @@ class InsightEngine:
             tags_fn=lambda a: ["anomaly", a.anomaly_type],
             filter_fn=lambda a: a.severity > 0.5,
             confidence_fn=0.7,
-    )
+        )
 
     def _contradictions_to_insights(self, contradictions: list[Contradiction]) -> list[Insight]:
         """Convert contradictions to insights."""
@@ -652,7 +653,7 @@ class InsightEngine:
             tags_fn=lambda _: ["contradiction"],
             filter_fn=None,
             confidence_fn=lambda c: c.severity,
-    )
+        )
 
     def _gaps_to_insights(self, gaps: list[Gap]) -> list[Insight]:
         """Convert gaps to insights."""
@@ -665,7 +666,7 @@ class InsightEngine:
             tags_fn=lambda g: ["gap", g.area],
             filter_fn=None,
             confidence_fn=0.75,
-    )
+        )
 
     def _hypotheses_to_insights(self, hypotheses: list[Hypothesis]) -> list[Insight]:
         """Convert hypotheses to insights."""
@@ -678,17 +679,15 @@ class InsightEngine:
             tags_fn=lambda _: ["hypothesis"],
             filter_fn=None,
             extra_kwargs_fn=lambda h: {"evidence": h.supporting_evidence},
-    )
+        )
 
     def _rank_insights(self, insights: list[Insight]) -> list[Insight]:
         """Rank insights by composite score."""
         for insight in insights:
             # Composite score combining multiple factors
             insight.importance_score = (
-                insight.confidence * 0.4 +
-                insight.novelty_score * 0.35 +
-                (1.0 if insight.evidence else 0.5) * 0.25
-    )
+                insight.confidence * 0.4 + insight.novelty_score * 0.35 + (1.0 if insight.evidence else 0.5) * 0.25
+            )
 
         # Sort by importance
         return sorted(insights, key=attrgetter("importance_score"), reverse=True)
@@ -703,8 +702,8 @@ class InsightEngine:
         phrases = {}
         for text in texts:
             words = text.lower().split()
-            for w0, w1, w2 in zip(words, words[1:], words[2:]):
-                phrase = ' '.join([w0, w1, w2])
+            for w0, w1, w2 in zip(words, words[1:], words[2:], strict=False):
+                phrase = " ".join([w0, w1, w2])
                 phrases[phrase] = phrases.get(phrase, 0) + 1
         return {p: c for p, c in phrases.items() if c >= 2}
 
@@ -712,15 +711,14 @@ class InsightEngine:
         """Extract keywords from texts."""
         # Simple keyword extraction
         word_freq = {}
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with'}
+        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with"}
 
         for text in texts:
-            words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+            words = re.findall(r"\b[a-zA-Z]{4,}\b", text.lower())
             for word in words:
                 if word not in stop_words:
                     word_freq[word] = word_freq.get(word, 0) + 1
 
-        # Return most frequent
         sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
         return [w for w, _ in sorted_words[:10]]
 
@@ -728,7 +726,7 @@ class InsightEngine:
         """Extract main themes from data."""
         texts = []
         for item in data:
-            for key in ['topic', 'category', 'theme', 'subject']:
+            for key in ["topic", "category", "theme", "subject"]:
                 if key in item:
                     texts.append(str(item[key]))
 
@@ -736,15 +734,7 @@ class InsightEngine:
             return self._extract_keywords(texts)[:3]
         return []
 
-    # =============================================================================
-    # CAUSAL MODELING (from predictive_modeler.py comments)
-    # =============================================================================
-
-    def _build_causal_model(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> list[CausalRelationship]:
+    def _build_causal_model(self, data: list[dict[str, Any]], query: str) -> list[CausalRelationship]:
         """
         Build causal model from data.
 
@@ -758,11 +748,10 @@ class InsightEngine:
         if len(data) < 3:
             return causal_relationships
 
-        # Extract numeric variables
         variables = {}
         for item in data:
             for key, value in item.items():
-                if isinstance(value, (int, float)) and key not in ['id', 'timestamp']:
+                if isinstance(value, (int, float)) and key not in ["id", "timestamp"]:
                     if key not in variables:
                         variables[key] = []
                     variables[key].append(float(value))
@@ -773,7 +762,7 @@ class InsightEngine:
         # Look for potential causal relationships using simple correlation
         var_names = list(variables.keys())
         for i, var1 in enumerate(var_names):
-            for var2 in var_names[i+1:]:
+            for var2 in var_names[i + 1 :]:
                 values1 = variables[var1]
                 values2 = variables[var2]
 
@@ -788,27 +777,21 @@ class InsightEngine:
                         # Check for lag (simplified)
                         lag = self._estimate_lag(values1, values2)
 
-                        causal_relationships.append(CausalRelationship(
-                            cause=cause,
-                            effect=effect,
-                            strength=abs(corr),
-                            confidence=min(1.0, abs(corr) + 0.1),
-                            lag=lag,
-                            evidence=[f"Correlation coefficient: {corr:.3f}"],
-                            alternative_explanations=[
-                                "Third variable influence",
-                                "Coincidental correlation"
-                            ]
-                        ))
+                        causal_relationships.append(
+                            CausalRelationship(
+                                cause=cause,
+                                effect=effect,
+                                strength=abs(corr),
+                                confidence=min(1.0, abs(corr) + 0.1),
+                                lag=lag,
+                                evidence=[f"Correlation coefficient: {corr:.3f}"],
+                                alternative_explanations=["Third variable influence", "Coincidental correlation"],
+                            )
+                        )
 
         return causal_relationships
 
-    def _estimate_lag(
-        self,
-        values1: list[float],
-        values2: list[float],
-        max_lag: int = 3
-    ) -> int | None:
+    def _estimate_lag(self, values1: list[float], values2: list[float], max_lag: int = 3) -> int | None:
         """Estimate time lag between two variables."""
         if len(values1) < max_lag + 2:
             return None
@@ -825,10 +808,7 @@ class InsightEngine:
 
         return best_lag if best_lag > 0 else None
 
-    def _causal_to_insights(
-        self,
-        causal_relationships: list[CausalRelationship]
-    ) -> list[Insight]:
+    def _causal_to_insights(self, causal_relationships: list[CausalRelationship]) -> list[Insight]:
         """Convert causal relationships to insights."""
         return self._items_to_insights(
             causal_relationships,
@@ -839,17 +819,9 @@ class InsightEngine:
             tags_fn=lambda _: ["causal", "relationship"],
             filter_fn=lambda c: c.confidence >= self.min_confidence,
             extra_kwargs_fn=lambda c: {"evidence": c.evidence},
-    )
+        )
 
-    # =============================================================================
-    # MULTI-LEVEL SYNTHESIS (from multi_level_synthesis.py comments)
-    # =============================================================================
-
-    def _perform_multi_level_synthesis(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> list[SynthesisLevel]:
+    def _perform_multi_level_synthesis(self, data: list[dict[str, Any]], query: str) -> list[SynthesisLevel]:
         """
         Perform multi-level synthesis.
 
@@ -887,19 +859,15 @@ class InsightEngine:
 
         return levels
 
-    def _synthesis_level_1(
-        self,
-        data: list[dict[str, Any]],
-        query: str
-    ) -> SynthesisLevel:
+    def _synthesis_level_1(self, data: list[dict[str, Any]], query: str) -> SynthesisLevel:
         """Level 1: Surface Synthesis - Basic aggregation."""
         # Count and summarize basic facts
         facts = []
         for item in data:
-            if 'fact' in item:
-                facts.append(item['fact'])
-            elif 'content' in item:
-                facts.append(item['content'])
+            if "fact" in item:
+                facts.append(item["fact"])
+            elif "content" in item:
+                facts.append(item["content"])
 
         summary = f"Surface analysis: {len(data)} data points, {len(facts)} explicit facts."
 
@@ -909,15 +877,10 @@ class InsightEngine:
             synthesis=summary,
             confidence=0.9,
             quality_score=0.7,
-            key_insights=[f"Found {len(facts)} facts"] if facts else []
-    )
+            key_insights=[f"Found {len(facts)} facts"] if facts else [],
+        )
 
-    def _synthesis_level_2(
-        self,
-        data: list[dict[str, Any]],
-        query: str,
-        prev_level: SynthesisLevel
-    ) -> SynthesisLevel:
+    def _synthesis_level_2(self, data: list[dict[str, Any]], query: str, prev_level: SynthesisLevel) -> SynthesisLevel:
         """Level 2: Deep Synthesis - Pattern extraction."""
         patterns = self._recognize_patterns(data)
 
@@ -932,15 +895,10 @@ class InsightEngine:
             synthesis=synthesis,
             confidence=0.8,
             quality_score=0.75,
-            key_insights=[p.description for p in patterns[:3]]
-    )
+            key_insights=[p.description for p in patterns[:3]],
+        )
 
-    def _synthesis_level_3(
-        self,
-        data: list[dict[str, Any]],
-        query: str,
-        prev_level: SynthesisLevel
-    ) -> SynthesisLevel:
+    def _synthesis_level_3(self, data: list[dict[str, Any]], query: str, prev_level: SynthesisLevel) -> SynthesisLevel:
         """Level 3: Meta Synthesis - Cross-pattern analysis."""
         # Analyze relationships between patterns
         contradictions = self._find_contradictions(data)
@@ -960,15 +918,10 @@ class InsightEngine:
             synthesis=synthesis,
             confidence=0.75,
             quality_score=0.8,
-            key_insights=insights
-    )
+            key_insights=insights,
+        )
 
-    def _synthesis_level_4(
-        self,
-        data: list[dict[str, Any]],
-        query: str,
-        prev_level: SynthesisLevel
-    ) -> SynthesisLevel:
+    def _synthesis_level_4(self, data: list[dict[str, Any]], query: str, prev_level: SynthesisLevel) -> SynthesisLevel:
         """Level 4: Conceptual Synthesis - Theory building."""
         hypotheses = self._generate_hypotheses(data, query)
         causal = self._build_causal_model(data, query)
@@ -987,15 +940,10 @@ class InsightEngine:
             synthesis=synthesis,
             confidence=0.7,
             quality_score=0.85,
-            key_insights=insights
-    )
+            key_insights=insights,
+        )
 
-    def _synthesis_level_5(
-        self,
-        data: list[dict[str, Any]],
-        query: str,
-        prev_level: SynthesisLevel
-    ) -> SynthesisLevel:
+    def _synthesis_level_5(self, data: list[dict[str, Any]], query: str, prev_level: SynthesisLevel) -> SynthesisLevel:
         """Level 5: Paradigm Synthesis - Paradigm shifts."""
         # Look for paradigm-shifting insights
         anomalies = self._detect_anomalies(data)
@@ -1008,9 +956,8 @@ class InsightEngine:
             if severe_anomalies:
                 paradigm_insights.append(
                     f"Severe anomaly suggests paradigm shift: {severe_anomalies[0].description[:50]}..."
-    )
+                )
 
-        # Check for serendipitous discoveries
         serendipity = self._engineer_serendipity(data, query)
         if serendipity:
             paradigm_insights.append(f"Unexpected opportunity: {serendipity[0]}")
@@ -1024,27 +971,26 @@ class InsightEngine:
             synthesis=synthesis,
             confidence=0.6,
             quality_score=0.9,
-            key_insights=paradigm_insights
-    )
+            key_insights=paradigm_insights,
+        )
 
-    def _synthesis_to_insights(
-        self,
-        synthesis_levels: list[SynthesisLevel]
-    ) -> list[Insight]:
+    def _synthesis_to_insights(self, synthesis_levels: list[SynthesisLevel]) -> list[Insight]:
         """Convert synthesis levels to insights."""
         insights = []
 
         for level in synthesis_levels:
-            insights.append(Insight(
-                insight_id=self._next_insight_id(),
-                type=f"synthesis_level_{level.level}",
-                content=f"{level.level_name}: {level.synthesis}",
-                confidence=level.confidence,
-                novelty_score=0.5 + (level.level * 0.1),
-                importance_score=level.quality_score,
-                evidence=level.key_insights,
-                tags=["synthesis", level.level_name.lower().replace(" ", "_")]
-            ))
+            insights.append(
+                Insight(
+                    insight_id=self._next_insight_id(),
+                    type=f"synthesis_level_{level.level}",
+                    content=f"{level.level_name}: {level.synthesis}",
+                    confidence=level.confidence,
+                    novelty_score=0.5 + (level.level * 0.1),
+                    importance_score=level.quality_score,
+                    evidence=level.key_insights,
+                    tags=["synthesis", level.level_name.lower().replace(" ", "_")],
+                )
+            )
 
         return insights
 

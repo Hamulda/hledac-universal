@@ -8,10 +8,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-// ---------------------------------------------------------------------------
-// FeedDominanceGuard — F214 feed dominance policy
-// ---------------------------------------------------------------------------
-
 /// compute_feed_dominance — pure function, no state.
 #[pyfunction]
 pub fn compute_feed_dominance(
@@ -109,10 +105,6 @@ pub fn compute_feed_dominance_simple(
     )
 }
 
-// ---------------------------------------------------------------------------
-// LaneBudgetPool — Pure-return API (no mutation)
-// ---------------------------------------------------------------------------
-
 /// create_lane_budget_pool() -> Bound<'p, PyDict>
 #[pyfunction]
 pub fn create_lane_budget_pool(py: Python<'_>) -> Bound<'_, PyDict> {
@@ -160,7 +152,6 @@ pub fn lane_pool_allocate<'p>(
         }
     }
 
-    // Get or create lane data
     let mut arr = [0.0f64; 4];
     if let Some(data) = lane_pool_get(py, pool, &lane_name) {
         if data.len() >= 4 {
@@ -287,10 +278,6 @@ pub fn lane_pool_get_stats<'p>(
 pub fn lane_pool_lane_count(pool: &Bound<'_, PyDict>) -> usize {
     pool.len()
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_feed_dominance))?;

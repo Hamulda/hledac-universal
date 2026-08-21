@@ -21,11 +21,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_in_subprocess(code: str, env: dict | None = None) -> tuple[str, str, int]:
     """Run code in a fresh Python subprocess, return stdout, stderr, returncode."""
@@ -55,29 +55,30 @@ def _run_in_subprocess(code: str, env: dict | None = None) -> tuple[str, str, in
 # Test 2: Feature flag OFF = no-op
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXFlagOff:
-    def test_shadow_flag_off_is_noop(self):
+    def test_shadow_flag_off_is_noop(self) -> None:
         """
         With GHOST_DUCKDB_SHADOW=0, no shadow records are written.
         """
         code = (
-            'import os\n'
+            "import os\n"
             'os.environ["GHOST_DUCKDB_SHADOW"] = "0"\n'
-            'import sys\n'
+            "import sys\n"
             'sys.path.insert(0, ".")\n'
-            'from hledac.universal.knowledge.analytics_hook import (\n'
-            '    shadow_record_finding, shadow_ingest_failures, _is_shadow_enabled,\n'
-            '    _SHADOW_ENABLED\n'
-            ')\n'
-            '_SHADOW_ENABLED = None  # reset cache\n'
-            'enabled = _is_shadow_enabled()\n'
-            'failures_before = shadow_ingest_failures()\n'
+            "from hledac.universal.knowledge.analytics_hook import (\n"
+            "    shadow_record_finding, shadow_ingest_failures, _is_shadow_enabled,\n"
+            "    _SHADOW_ENABLED\n"
+            ")\n"
+            "_SHADOW_ENABLED = None  # reset cache\n"
+            "enabled = _is_shadow_enabled()\n"
+            "failures_before = shadow_ingest_failures()\n"
             'shadow_record_finding("fid1", "query", "web", 0.9)\n'
-            'failures_after = shadow_ingest_failures()\n'
+            "failures_after = shadow_ingest_failures()\n"
             'print(f"enabled={enabled}")\n'
             'print(f"failures_before={failures_before}")\n'
             'print(f"failures_after={failures_after}")\n'
-    )
+        )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("enabled=False" in l for l in lines), f"Flag should be False: {lines}"  # noqa: E741
@@ -89,28 +90,29 @@ class TestSprint8AXFlagOff:
 # Test 3: Feature flag ON = records batch
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXFlagOn:
-    def test_shadow_flag_on_records_batch(self):
+    def test_shadow_flag_on_records_batch(self) -> None:
         """
         With GHOST_DUCKDB_SHADOW=1, evidence_packet events are shadow-recorded.
         Uses :memory: mode (DB_ROOT unavailable in test env).
         """
         code = (
-            'import os\n'
+            "import os\n"
             'os.environ["GHOST_DUCKDB_SHADOW"] = "1"\n'
-            'import sys, asyncio\n'
+            "import sys, asyncio\n"
             'sys.path.insert(0, ".")\n'
-            'from hledac.universal.knowledge.analytics_hook import (\n'
-            '    shadow_record_finding, shadow_ingest_failures, _get_recorder,\n'
-            '    shadow_reset_failures, _SHADOW_ENABLED, _is_shadow_enabled\n'
-            ')\n'
-            'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
-            '_SHADOW_ENABLED = None  # reset cached flag\n'
+            "from hledac.universal.knowledge.analytics_hook import (\n"
+            "    shadow_record_finding, shadow_ingest_failures, _get_recorder,\n"
+            "    shadow_reset_failures, _SHADOW_ENABLED, _is_shadow_enabled\n"
+            ")\n"
+            "from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n"
+            "_SHADOW_ENABLED = None  # reset cached flag\n"
             'assert _is_shadow_enabled() == True, "Flag should be True"\n'
-            'shadow_reset_failures()\n'
-            'store = DuckDBShadowStore()\n'
-            'store._db_path = None\n'
-            'store._lazy = False\n'
+            "shadow_reset_failures()\n"
+            "store = DuckDBShadowStore()\n"
+            "store._db_path = None\n"
+            "store._lazy = False\n"
             "import duckdb\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -119,48 +121,47 @@ class TestSprint8AXFlagOn:
             "        confidence DOUBLE, ts DOUBLE, provenance_json TEXT\n"
             "    )\n"
             "''')\n"
-            'store._persistent_conn = conn\n'
-            'store._initialized = True\n'
-            'rec = _get_recorder()\n'
-            'rec._store = store\n'
-            'rec._worker_started = True\n'
+            "store._persistent_conn = conn\n"
+            "store._initialized = True\n"
+            "rec = _get_recorder()\n"
+            "rec._store = store\n"
+            "rec._worker_started = True\n"
             'shadow_record_finding("f1", "test query", "web", 0.9, run_id="run1", url="https://example.com", title="Example")\n'  # noqa: E501
             'shadow_record_finding("f2", "test query 2", "web", 0.8, run_id="run1", url="https://example2.com", title="Example 2")\n'  # noqa: E501
-            '# Drain the queue by calling _flush_batch directly\n'
-            'batch = []\n'
-            'while not rec._queue.empty():\n'
-            '    try:\n'
-            '        batch.append(rec._queue.get_nowait())\n'
-            '    except Exception:\n'
-            '        break\n'
-            'if batch:\n'
-            '    _loop = asyncio.new_event_loop()\n'
-            '    _loop.run_until_complete(rec._flush_batch(batch))\n'
-            '    _loop.close()\n'
-            'failures = shadow_ingest_failures()\n'
+            "# Drain the queue by calling _flush_batch directly\n"
+            "batch = []\n"
+            "while not rec._queue.empty():\n"
+            "    try:\n"
+            "        batch.append(rec._queue.get_nowait())\n"
+            "    except Exception:\n"
+            "        break\n"
+            "if batch:\n"
+            "    _loop = asyncio.new_event_loop()\n"
+            "    _loop.run_until_complete(rec._flush_batch(batch))\n"
+            "    _loop.close()\n"
+            "failures = shadow_ingest_failures()\n"
             'print(f"failures={failures}")\n'
             'rows = conn.execute("SELECT id, query, source_type FROM canonical_findings ORDER BY ts").fetchall()\n'
             'print(f"rows_in_db={len(rows)}")\n'
-            'for row in rows:\n'
+            "for row in rows:\n"
             '    print(f"  row={row}")\n'
-            'conn.close()\n'
-    )
+            "conn.close()\n"
+        )
         stdout, stderr, _rc = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l and not l.startswith("Warning")]  # noqa: E741
         failures_lines = [l for l in lines if "failures=" in l]  # noqa: E741
         rows_lines = [l for l in lines if "rows_in_db=" in l]  # noqa: E741
-        assert failures_lines and "failures=0" in failures_lines[0], \
-            f"No failures expected: {lines}\nstderr={stderr}"
-        assert rows_lines and "rows_in_db=2" in rows_lines[0], \
-            f"Expected 2 rows in DB: {lines}"
+        assert failures_lines and "failures=0" in failures_lines[0], f"No failures expected: {lines}\nstderr={stderr}"
+        assert rows_lines and "rows_in_db=2" in rows_lines[0], f"Expected 2 rows in DB: {lines}"
 
 
 # ---------------------------------------------------------------------------
 # Test 4: Hook location is NOT autonomous_orchestrator.py
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXHookLocation:
-    def test_shadow_hook_location_is_not_ao(self):
+    def test_shadow_hook_location_is_not_ao(self) -> None:
         """
         The shadow hook must NOT be added to autonomous_orchestrator.py.
         autonomous_orchestrator.py was merged into core/ in F314.
@@ -171,69 +172,66 @@ class TestSprint8AXHookLocation:
         core_dir = Path("core")
         for py_file in core_dir.glob("*.py"):
             content = py_file.read_text()
-            assert "shadow_record_finding" not in content, \
-                f"shadow_record_finding must NOT be in {py_file}"
-            assert "analytics_hook" not in content, \
-                f"analytics_hook must NOT be imported in {py_file}"
+            assert "shadow_record_finding" not in content, f"shadow_record_finding must NOT be in {py_file}"
+            assert "analytics_hook" not in content, f"analytics_hook must NOT be imported in {py_file}"
 
         el_path = Path("evidence_log.py")
         el_content = el_path.read_text()
-        assert "shadow_record_finding" in el_content, \
-            "shadow_record_finding must be in evidence_log.py"
-        assert "analytics_hook" in el_content, \
-            "analytics_hook import must be in evidence_log.py"
+        assert "shadow_record_finding" in el_content, "shadow_record_finding must be in evidence_log.py"
+        assert "analytics_hook" in el_content, "analytics_hook import must be in evidence_log.py"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: Production DB path is DB_ROOT / "analytics.duckdb"
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXProductionPath:
-    def test_production_db_path_is_analytics_duckdb(self):
+    def test_production_db_path_is_analytics_duckdb(self) -> None:
         """
         When RAMDISK is inactive and DB_ROOT is available,
         the DuckDB store should use DB_ROOT / "analytics.duckdb" as the path.
         """
         code = (
-            'import os, sys\n'
+            "import os, sys\n"
             'sys.path.insert(0, ".")\n'
             'os.environ.pop("GHOST_RAMDISK", None)\n'
-            'from hledac.universal.paths import DB_ROOT\n'
+            "from hledac.universal.paths import DB_ROOT\n"
             'print(f"db_root={DB_ROOT}")\n'
-            'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
-            'store = DuckDBShadowStore()\n'
-            'store._resolve_path()\n'
+            "from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n"
+            "store = DuckDBShadowStore()\n"
+            "store._resolve_path()\n"
             'print(f"db_path={store._db_path}")\n'
             'has_mem_mode = hasattr(store, "_using_memory_mode")\n'
             'print(f"has_memory_mode={has_mem_mode}")\n'
-    )
+        )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("db_root=" in l for l in lines), f"DB_ROOT should resolve: {lines}"  # noqa: E741
         db_path_lines = [l for l in lines if "db_path=" in l]  # noqa: E741
         assert db_path_lines, f"db_path should be set: {lines}"
-        assert "analytics.duckdb" in db_path_lines[0], \
-            f"Should be analytics.duckdb, got: {db_path_lines[0]}"
+        assert "analytics.duckdb" in db_path_lines[0], f"Should be analytics.duckdb, got: {db_path_lines[0]}"
 
 
 # ---------------------------------------------------------------------------
 # Test 6: :memory: used when DB_ROOT unavailable
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXMemoryMode:
-    def test_memory_mode_persists_across_multiple_async_calls(self):
+    def test_memory_mode_persists_across_multiple_async_calls(self) -> None:
         """
         In :memory: mode, repeated async writes should all go to the same
         persistent connection and be queryable across calls.
         """
         code = (
-            'import os, sys, asyncio\n'
+            "import os, sys, asyncio\n"
             'sys.path.insert(0, ".")\n'
             'os.environ["GHOST_DUCKDB_SHADOW"] = "1"\n'
-            'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
-            'store = DuckDBShadowStore()\n'
-            'store._db_path = None\n'
-            'store._lazy = False\n'
+            "from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n"
+            "store = DuckDBShadowStore()\n"
+            "store._db_path = None\n"
+            "store._lazy = False\n"
             "import duckdb, time\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -242,49 +240,49 @@ class TestSprint8AXMemoryMode:
             "        confidence DOUBLE, ts DOUBLE, provenance_json TEXT\n"
             "    )\n"
             "''')\n"
-            'store._persistent_conn = conn\n'
-            'store._initialized = True\n'
-            'async def run_test():\n'
-            '    t = time.time()\n'
+            "store._persistent_conn = conn\n"
+            "store._initialized = True\n"
+            "async def run_test():\n"
+            "    t = time.time()\n"
             '    batch1 = [{"id": f"f{i}", "query": f"q{i}", "source_type": "web",\n'
             '               "confidence": 0.9, "ts": t, "provenance_json": None}\n'
-            '              for i in range(10)]\n'
+            "              for i in range(10)]\n"
             '    batch2 = [{"id": f"g{i}", "query": f"r{i}", "source_type": "web",\n'
             '               "confidence": 0.8, "ts": t, "provenance_json": None}\n'
-            '              for i in range(10)]\n'
-            '    inserted1 = await store.async_record_shadow_findings_batch(batch1)\n'
-            '    inserted2 = await store.async_record_shadow_findings_batch(batch2)\n'
-            '    rows = await store.async_query_recent_findings(limit=25)\n'
-            '    return inserted1, inserted2, len(rows)\n'
-            '_loop = asyncio.new_event_loop()\n'
-            'inserted1, inserted2, total = _loop.run_until_complete(run_test())\n'
-            '_loop.close()\n'
+            "              for i in range(10)]\n"
+            "    inserted1 = await store.async_record_shadow_findings_batch(batch1)\n"
+            "    inserted2 = await store.async_record_shadow_findings_batch(batch2)\n"
+            "    rows = await store.async_query_recent_findings(limit=25)\n"
+            "    return inserted1, inserted2, len(rows)\n"
+            "_loop = asyncio.new_event_loop()\n"
+            "inserted1, inserted2, total = _loop.run_until_complete(run_test())\n"
+            "_loop.close()\n"
             'print(f"inserted1={inserted1}")\n'
             'print(f"inserted2={inserted2}")\n'
             'print(f"total={total}")\n'
             'assert inserted1 == 10, f"Expected 10, got {inserted1}"\n'
             'assert inserted2 == 10, f"Expected 10, got {inserted2}"\n'
             'assert total == 20, f"Expected 20 rows, got {total}"\n'
-            'conn.close()\n'
-    )
+            "conn.close()\n"
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("inserted1=10" in l for l in lines), f"Expected 10 inserts: {lines}"  # noqa: E741
         assert any("inserted2=10" in l for l in lines), f"Expected 10 inserts: {lines}"  # noqa: E741
         assert any("total=20" in l for l in lines), f"Expected 20 total: {lines}"  # noqa: E741
 
-    def test_memory_mode_uses_same_worker_thread_name(self):
+    def test_memory_mode_uses_same_worker_thread_name(self) -> None:
         """
         In :memory: mode, the duckdb_worker thread name should be stable
         across multiple async batch calls.
         """
         code = (
-            'import os, sys, asyncio, threading, time\n'
+            "import os, sys, asyncio, threading, time\n"
             'sys.path.insert(0, ".")\n'
-            'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
-            'store = DuckDBShadowStore()\n'
-            'store._db_path = None\n'
-            'store._lazy = False\n'
+            "from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n"
+            "store = DuckDBShadowStore()\n"
+            "store._db_path = None\n"
+            "store._lazy = False\n"
             "import duckdb\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -293,27 +291,27 @@ class TestSprint8AXMemoryMode:
             "        confidence DOUBLE, ts DOUBLE, provenance_json TEXT\n"
             "    )\n"
             "''')\n"
-            'store._persistent_conn = conn\n'
-            'store._initialized = True\n'
-            'thread_names = []\n'
-            'async def write_and_capture(n):\n'
-            '    t = time.time()\n'
+            "store._persistent_conn = conn\n"
+            "store._initialized = True\n"
+            "thread_names = []\n"
+            "async def write_and_capture(n):\n"
+            "    t = time.time()\n"
             '    batch = [{"id": f"t{n}_{i}", "query": f"q{i}", "source_type": "web",\n'
             '              "confidence": 0.9, "ts": t, "provenance_json": None}\n'
-            '             for i in range(3)]\n'
-            '    await store.async_record_shadow_findings_batch(batch)\n'
-            '    thread_names.append(threading.current_thread().name)\n'
-            '    return len(batch)\n'
-            'async def run_test():\n'
-            '    await asyncio.gather(write_and_capture(1), write_and_capture(2), write_and_capture(3))\n'
-            '_loop = asyncio.new_event_loop()\n'
-            '_loop.run_until_complete(run_test())\n'
-            '_loop.close()\n'
+            "             for i in range(3)]\n"
+            "    await store.async_record_shadow_findings_batch(batch)\n"
+            "    thread_names.append(threading.current_thread().name)\n"
+            "    return len(batch)\n"
+            "async def run_test():\n"
+            "    await asyncio.gather(write_and_capture(1), write_and_capture(2), write_and_capture(3))\n"
+            "_loop = asyncio.new_event_loop()\n"
+            "_loop.run_until_complete(run_test())\n"
+            "_loop.close()\n"
             'print(f"thread_names={thread_names}")\n'
             'assert len(set(thread_names)) == 1, f"Expected 1 unique thread, got: {set(thread_names)}"\n'
             'assert "duckdb_worker" in thread_names[0], f"Expected duckdb_worker, got: {thread_names[0]}"\n'
-            'conn.close()\n'
-    )
+            "conn.close()\n"
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("thread_names=" in l for l in lines), f"Thread names missing: {lines}"  # noqa: E741
@@ -323,19 +321,20 @@ class TestSprint8AXMemoryMode:
 # Test 7: Batch chunking — 1001 records -> exactly 3 batches
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXBatchChunking:
-    def test_batch_chunking_1001_records_produces_3_batches(self):
+    def test_batch_chunking_1001_records_produces_3_batches(self) -> None:
         """
         Inserting 1001 records with max_batch_size=500 must produce
         exactly 3 batch executions: 500 + 500 + 1.
         """
         code = (
-            'import os, sys, asyncio\n'
+            "import os, sys, asyncio\n"
             'sys.path.insert(0, ".")\n'
-            'from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n'
-            'store = DuckDBShadowStore()\n'
-            'store._db_path = None\n'
-            'store._lazy = False\n'
+            "from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore\n"
+            "store = DuckDBShadowStore()\n"
+            "store._db_path = None\n"
+            "store._lazy = False\n"
             "import duckdb, time\n"
             'conn = duckdb.connect(":memory:")\n'
             "conn.execute('''\n"
@@ -344,21 +343,21 @@ class TestSprint8AXBatchChunking:
             "        confidence DOUBLE, ts DOUBLE, provenance_json TEXT\n"
             "    )\n"
             "''')\n"
-            'store._persistent_conn = conn\n'
-            'store._initialized = True\n'
-            'async def run_test():\n'
-            '    t = time.time()\n'
+            "store._persistent_conn = conn\n"
+            "store._initialized = True\n"
+            "async def run_test():\n"
+            "    t = time.time()\n"
             '    batch = [{"id": f"f{i}", "query": f"q{i}", "source_type": "web",\n'
             '               "confidence": 0.9, "ts": t, "provenance_json": None}\n'
-            '             for i in range(1001)]\n'
-            '    inserted = await store.async_record_shadow_findings_batch(batch, max_batch_size=500)\n'
-            '    return inserted\n'
-            '_loop = asyncio.new_event_loop()\n'
-            'inserted = _loop.run_until_complete(run_test())\n'
-            '_loop.close()\n'
+            "             for i in range(1001)]\n"
+            "    inserted = await store.async_record_shadow_findings_batch(batch, max_batch_size=500)\n"
+            "    return inserted\n"
+            "_loop = asyncio.new_event_loop()\n"
+            "inserted = _loop.run_until_complete(run_test())\n"
+            "_loop.close()\n"
             'print(f"inserted={inserted}")\n'
-            'conn.close()\n'
-    )
+            "conn.close()\n"
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("inserted=1001" in l for l in lines), f"Expected 1001: {lines}"  # noqa: E741
@@ -368,32 +367,33 @@ class TestSprint8AXBatchChunking:
 # Test 8: Queue full -> drop + counter increment
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXQueueFull:
-    def test_shadow_fail_open_queue_drop_when_full(self):
+    def test_shadow_fail_open_queue_drop_when_full(self) -> None:
         """
         When the queue is full, records are dropped and _SHADOW_INGEST_FAILURES is incremented.
         """
         code = (
-            'import os, sys, asyncio\n'
+            "import os, sys, asyncio\n"
             'sys.path.insert(0, ".")\n'
             'os.environ["GHOST_DUCKDB_SHADOW"] = "1"\n'
-            'from hledac.universal.knowledge.analytics_hook import (\n'
-            '    shadow_record_finding, shadow_ingest_failures, shadow_reset_failures,\n'
-            '    _get_recorder, _MAX_QUEUE_SIZE\n'
-            ')\n'
-            'shadow_reset_failures()\n'
-            'rec = _get_recorder()\n'
-            'rec._worker_started = True\n'
-            'for i in range(_MAX_QUEUE_SIZE):\n'
+            "from hledac.universal.knowledge.analytics_hook import (\n"
+            "    shadow_record_finding, shadow_ingest_failures, shadow_reset_failures,\n"
+            "    _get_recorder, _MAX_QUEUE_SIZE\n"
+            ")\n"
+            "shadow_reset_failures()\n"
+            "rec = _get_recorder()\n"
+            "rec._worker_started = True\n"
+            "for i in range(_MAX_QUEUE_SIZE):\n"
             '    rec._queue.put_nowait({"id": f"q{i}", "query": "q", "source_type": "w",\n'
             '                            "confidence": 0.9, "run_id": "r1"})\n'
             'shadow_record_finding("drop1", "q", "web", 0.9, run_id="r1")\n'
             'shadow_record_finding("drop2", "q", "web", 0.9, run_id="r1")\n'
-            'failures = shadow_ingest_failures()\n'
+            "failures = shadow_ingest_failures()\n"
             'print(f"failures={failures}")\n'
             'print(f"queue_size={rec._queue.qsize()}")\n'
             'assert failures >= 2, f"Expected >=2 failures, got {failures}"\n'
-    )
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("failures=" in l for l in lines), f"Failure count missing: {lines}"  # noqa: E741
@@ -403,67 +403,71 @@ class TestSprint8AXQueueFull:
 # Test 9: Shadow failure increments warning counter (fail-open)
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXFailOpen:
-    def test_shadow_failure_increments_warning_counter(self):
+    def test_shadow_failure_increments_warning_counter(self) -> None:
         """
         Shadow failures are fail-open: they increment the counter but never raise.
         """
         code = (
-            'import os, sys\n'
+            "import os, sys\n"
             'sys.path.insert(0, ".")\n'
             'os.environ["GHOST_DUCKDB_SHADOW"] = "1"\n'
-            'from hledac.universal.knowledge.analytics_hook import (\n'
-            '    shadow_record_finding, shadow_ingest_failures, shadow_reset_failures\n'
-            ')\n'
-            'shadow_reset_failures()\n'
-            'raised = False\n'
-            'try:\n'
-            '    shadow_record_finding(None, None, None, None)\n'
+            "from hledac.universal.knowledge.analytics_hook import (\n"
+            "    shadow_record_finding, shadow_ingest_failures, shadow_reset_failures\n"
+            ")\n"
+            "shadow_reset_failures()\n"
+            "raised = False\n"
+            "try:\n"
+            "    shadow_record_finding(None, None, None, None)\n"
             '    shadow_record_finding("", "", "", None)\n'
-            'except Exception as e:\n'
-            '    raised = True\n'
+            "except Exception as e:\n"
+            "    raised = True\n"
             '    print(f"RAISED={e}")\n'
-            'failures = shadow_ingest_failures()\n'
+            "failures = shadow_ingest_failures()\n"
             'print(f"failures_after_bad_calls={failures}")\n'
             'print(f"raised={raised}")\n'
-    )
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
-        assert not any("RAISED=" in l and "RAISED=" + "True" not in l for l in lines), "shadow_record_finding should not raise"  # noqa: E741
+        assert not any("RAISED=" in l and "RAISED=" + "True" not in l for l in lines), (
+            "shadow_record_finding should not raise"
+        )  # noqa: E741
 
 
 # ---------------------------------------------------------------------------
 # Test 10: aclose timeout does not block forever
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXAclclose:
-    def test_aclose_timeout_does_not_block_forever(self):
+    def test_aclose_timeout_does_not_block_forever(self) -> None:
         """
         aclose() with a stuck store should not block longer than its timeout.
         """
         code = (
-            'import os, sys, asyncio, time\n'
+            "import os, sys, asyncio, time\n"
             'sys.path.insert(0, ".")\n'
             'os.environ["GHOST_DUCKDB_SHADOW"] = "1"\n'
-            'from hledac.universal.knowledge.analytics_hook import shadow_aclose, _get_recorder\n'
-            'rec = _get_recorder()\n'
-            'class SlowStore:\n'
-            '    async def aclose(self):\n'
-            '        await asyncio.sleep(10)\n'
-            '    async def async_record_shadow_findings_batch(self, batch, max_batch_size=500):\n'
-            '        return len(batch)\n'
-            'rec._store = SlowStore()\n'
-            'rec._closed = False\n'
-            'async def run_test():\n'
-            '    start = time.monotonic()\n'
-            '    await shadow_aclose()\n'
-            '    elapsed = time.monotonic() - start\n'
+            "from hledac.universal.knowledge.analytics_hook import shadow_aclose, _get_recorder\n"
+            "rec = _get_recorder()\n"
+            "class SlowStore:\n"
+            "    async def aclose(self):\n"
+            "        await asyncio.sleep(10)\n"
+            "    async def async_record_shadow_findings_batch(self, batch, max_batch_size=500):\n"
+            "        return len(batch)\n"
+            "rec._store = SlowStore()\n"
+            "rec._closed = False\n"
+            "async def run_test():\n"
+            "    start = time.monotonic()\n"
+            "    await shadow_aclose()\n"
+            "    elapsed = time.monotonic() - start\n"
             '    print(f"elapsed={elapsed:.2f}")\n'
             '    assert elapsed < 5.0, f"aclose should not block: {elapsed:.2f}s"\n'
-            '_loop = asyncio.new_event_loop()\n'
-            '_loop.run_until_complete(run_test())\n'
-            '_loop.close()\n'
-    )
+            "_loop = asyncio.new_event_loop()\n"
+            "_loop.run_until_complete(run_test())\n"
+            "_loop.close()\n"
+        )
         stdout, _, _ = _run_in_subprocess(code, env={"GHOST_DUCKDB_SHADOW": "1"})
         lines = stdout.strip().splitlines()
         elapsed_lines = [l for l in lines if "elapsed=" in l]
@@ -476,38 +480,39 @@ class TestSprint8AXAclclose:
 # Test 11: Narrow regression — evidence_log append still works
 # ---------------------------------------------------------------------------
 
+
 class TestSprint8AXRegression:
-    def test_evidence_log_append_still_works(self):
+    def test_evidence_log_append_still_works(self) -> None:
         """
         Adding the shadow hook must not break EvidenceLog.append().
         """
         code = (
-            'import sys, os, tempfile\n'
+            "import sys, os, tempfile\n"
             'sys.path.insert(0, ".")\n'
             'os.environ.pop("ENCRYPT_AT_REST", None)\n'
-            'from hledac.universal.evidence_log import EvidenceLog\n'
-            'with tempfile.TemporaryDirectory() as tmpdir:\n'
-            '    log = EvidenceLog(\n'
+            "from hledac.universal.evidence_log import EvidenceLog\n"
+            "with tempfile.TemporaryDirectory() as tmpdir:\n"
+            "    log = EvidenceLog(\n"
             '        run_id="test_sprint8ax",\n'
-            '        persist_path=tmpdir,\n'
-            '        enable_persist=False,\n'
-            '    )\n'
+            "        persist_path=tmpdir,\n"
+            "        enable_persist=False,\n"
+            "    )\n"
             '    ev = log.create_event("tool_call", {"query": "test"}, confidence=0.9)\n'
-            '    assert ev.event_id is not None\n'
+            "    assert ev.event_id is not None\n"
             '    assert ev.event_type == "tool_call"\n'
-            '    assert ev.confidence == 0.9\n'
-            '    ev2 = log.create_event(\n'
+            "    assert ev.confidence == 0.9\n"
+            "    ev2 = log.create_event(\n"
             '        "evidence_packet",\n'
             '        {"query": "https://example.com", "url": "https://example.com",\n'
             '         "title": "Example", "source": "web", "relevance_score": 0.85},\n'
-            '        confidence=0.95,\n'
-            '    )\n'
-            '    assert ev2.event_id is not None\n'
+            "        confidence=0.95,\n"
+            "    )\n"
+            "    assert ev2.event_id is not None\n"
             '    assert ev2.event_type == "evidence_packet"\n'
             '    assert ev2.payload_dict.get("url") == "https://example.com"\n'
             '    assert len(log._log) == 2, f"Expected 2 events, got {len(log._log)}"\n'
             '    print("all_ok=True")\n'
-    )
+        )
         stdout, _, _ = _run_in_subprocess(code)
         lines = [l for l in stdout.strip().splitlines() if l]  # noqa: E741
         assert any("all_ok=True" in l for l in lines), f"EvidenceLog append should still work: {lines}"  # noqa: E741

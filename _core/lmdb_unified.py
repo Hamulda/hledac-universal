@@ -57,19 +57,19 @@ import logging
 import math
 import os
 import pathlib
-import weakref
 import threading
 import time
+import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import lmdb
+    pass
 
 logger = logging.getLogger(__name__)
 
 # F320: DRY LMDB cleanup helpers
-from hledac.universal.utils._patterns import safe_lmdb_close  # noqa: E402
-from _core._util import aclose
+from hledac.universal.utils._patterns import safe_lmdb_close
+
 
 # --------------------------------------------------------------------------- #
 # Sub-DB index constants
@@ -77,22 +77,22 @@ from _core._util import aclose
 class SubDB:
     """Sub-DB index allocation. max_dbs=16, indices 0-15."""
 
-    SESSION_META = 0      # MemoryManager
-    EXPOSURE_DATA = 1    # ExposureClient
+    SESSION_META = 0  # MemoryManager
+    EXPOSURE_DATA = 1  # ExposureClient
     SOURCE_REGISTRY = 2  # DeepSourceRegistry
-    BANDIT_STATS = 3     # SourceBandit
-    FEDERATED_DHT = 4    # FederatedBridge
-    HOT_EDGES = 5        # HotEdgesCache
-    SPRINT_SEEDS = 6     # SprintSeedsStore
-    SKETCHES = 7         # Sketches
-    QUERY_CACHE = 8      # QueryCache
-    IOC_DEDUP = 9        # IocDedupAdapter
-    DOMAIN_RL = 10       # DomainRateLimiter
-    PERSISTENT_KV = 11   # PersistentKVCache
-    TASK_CACHE = 12      # TaskCache
-    PREFETCH_CACHE = 13   # PrefetchCache
-    SECRETS_VAULT = 14   # SecretsVault
-    RESERVED = 15        # Future use
+    BANDIT_STATS = 3  # SourceBandit
+    FEDERATED_DHT = 4  # FederatedBridge
+    HOT_EDGES = 5  # HotEdgesCache
+    SPRINT_SEEDS = 6  # SprintSeedsStore
+    SKETCHES = 7  # Sketches
+    QUERY_CACHE = 8  # QueryCache
+    IOC_DEDUP = 9  # IocDedupAdapter
+    DOMAIN_RL = 10  # DomainRateLimiter
+    PERSISTENT_KV = 11  # PersistentKVCache
+    TASK_CACHE = 12  # TaskCache
+    PREFETCH_CACHE = 13  # PrefetchCache
+    SECRETS_VAULT = 14  # SecretsVault
+    RESERVED = 15  # Future use
 
     _NAMES: tuple[str, ...] = (
         "session_meta",
@@ -126,7 +126,7 @@ class SubDB:
 # Wired limit for M1 8GB is ~1.5 GiB (CLAUDE.md); per-env ceiling = 256 MB.
 _UNIFIED_MAP_SIZE_CEILING = 256 * 1024 * 1024  # 256 MB hard ceiling for M1 8GB
 _UNIFIED_MAP_SIZE_DEFAULT = 512 * 1024 * 1024  # 512 MB (used only when StorageConfig unavailable)
-_UNIFIED_MAP_SIZE_LOW = 128 * 1024 * 1024     # 128 MB under CRITICAL pressure
+_UNIFIED_MAP_SIZE_LOW = 128 * 1024 * 1024  # 128 MB under CRITICAL pressure
 
 
 def _get_default_map_size() -> int:
@@ -147,10 +147,11 @@ def _get_default_map_size() -> int:
     except Exception:
         return _UNIFIED_MAP_SIZE_CEILING
 
+
 # --------------------------------------------------------------------------- #
 # Singleton state
 # --------------------------------------------------------------------------- #
-_instance: "UnifiedLMDB | None" = None
+_instance: UnifiedLMDB | None = None
 _instance_lock = threading.RLock()
 
 
@@ -261,7 +262,7 @@ class UnifiedLMDB:
 
             from hledac.universal.knowledge.lmdb_boot_guard import (
                 open_lmdb_with_guard,
-    )
+            )
 
             self._env = open_lmdb_with_guard(
                 self._path,
@@ -269,7 +270,7 @@ class UnifiedLMDB:
                 max_dbs=self._max_dbs,
                 writemap=False,
                 metasync=True,
-    )
+            )
 
             # Pre-open all sub-DBs to validate max_dbs
             for idx in range(self._max_dbs):
@@ -281,7 +282,7 @@ class UnifiedLMDB:
                         idx,
                         SubDB.name(idx),
                         exc,
-    )
+                    )
 
             self._initialized = True
             logger.info(
@@ -289,7 +290,7 @@ class UnifiedLMDB:
                 self._path,
                 self._map_size_current // (1024 * 1024),
                 self._max_dbs,
-    )
+            )
 
     def is_initialized(self) -> bool:
         return self._initialized
@@ -360,7 +361,7 @@ class UnifiedLMDB:
             db=sub,
             write=write,
             buffers=buffers,
-    )
+        )
 
     # ------------------------------------------------------------------ #
     # put / get (single key-value on a sub-DB)
@@ -389,7 +390,7 @@ class UnifiedLMDB:
                     self.map_size_current_mb,
                     sub_idx,
                     self._map_full_count,
-    )
+                )
             else:
                 logger.debug("[LMDB-UNIFIED] put failed sub=%s key=%s: %s", sub_idx, key[:20], exc)
             return False
@@ -448,7 +449,7 @@ class UnifiedLMDB:
                     self.map_size_current_mb,
                     sub_idx,
                     self._map_full_count,
-    )
+                )
             else:
                 logger.debug("[LMDB-UNIFIED] put_batch failed sub=%s: %s", sub_idx, exc)
             return False
@@ -529,20 +530,19 @@ class UnifiedLMDB:
                     target_size // (1024 * 1024),
                     old_state,
                     state,
-    )
+                )
             except Exception as exc:
                 logger.warning("[LMDB-UNIFIED] set_mapsize grow failed: %s", exc)
         else:
             # Shrink: requires close + reopen (only on CRITICAL)
             if state == "CRITICAL":
                 logger.warning(
-                    "[LMDB-UNIFIED] shrinking mapsize %dMB → %dMB (pressure: %s → %s). "
-                    "Will reopen env.",
+                    "[LMDB-UNIFIED] shrinking mapsize %dMB → %dMB (pressure: %s → %s). Will reopen env.",
                     self._map_size_current // (1024 * 1024),
                     target_size // (1024 * 1024),
                     old_state,
                     state,
-    )
+                )
                 self._emergency_shrink(target_size)
 
     def _is_env_alive(self) -> bool:
@@ -586,7 +586,7 @@ class UnifiedLMDB:
                     idx,
                     SubDB.name(idx),
                     exc,
-    )
+                )
 
     def _emergency_shrink(self, target_size: int) -> None:
         """
@@ -630,7 +630,6 @@ class UnifiedLMDB:
             self._reopen_in_progress = True
 
         try:
-            # Phase 1: Sync — ensure all data is on disk before touching the env
             try:
                 self._flush_all_sub_dbs()
             except Exception as exc:
@@ -640,19 +639,14 @@ class UnifiedLMDB:
             old_map_size = self._map_size_current
             old_env = self._env
 
-            # Phase 2: Close old env FIRST, THEN clear self._env after close
-            # This ensures env() either sees old_env (valid) or None (after clear),
-            # never a dangling reference
             try:
                 old_env.close()
             except Exception as exc:
                 logger.debug("[LMDB-UNIFIED] env.close() warning: %s", exc)
 
-            # Phase 3: NOW clear self._env and sub_dbs — old_env is closed
             self._env = None
             self._sub_dbs.clear()
 
-            # Phase 4: Reopen with smaller mapsize
             import lmdb
 
             try:
@@ -663,16 +657,15 @@ class UnifiedLMDB:
                     writemap=False,
                     metasync=True,
                     mode=0o600,
-    )
+                )
             except Exception as exc:
                 # RES-02 graceful degradation: reopen failed
                 self._shrink_failures += 1
                 logger.error(
-                    "[LMDB-UNIFIED] emergency shrink reopen failed ( failures=%d ): %s. "
-                    "Attempting backup restore.",
+                    "[LMDB-UNIFIED] emergency shrink reopen failed ( failures=%d ): %s. Attempting backup restore.",
                     self._shrink_failures,
                     exc,
-    )
+                )
                 # Try to restore from old size if space freed up
                 try:
                     self._env = lmdb.open(
@@ -682,33 +675,30 @@ class UnifiedLMDB:
                         writemap=False,
                         metasync=True,
                         mode=0o600,
-    )
+                    )
                     self._reopen_sub_dbs()
                     logger.info(
                         "[LMDB-UNIFIED] backup restore succeeded — mapsize=%dMB",
                         old_map_size // (1024 * 1024),
-    )
+                    )
                 except Exception as restore_exc:
                     logger.error(
-                        "[LMDB-UNIFIED] backup restore also failed: %s. "
-                        "LMDB is closed for this instance.",
+                        "[LMDB-UNIFIED] backup restore also failed: %s. LMDB is closed for this instance.",
                         restore_exc,
-    )
+                    )
                     self._closed = True
                     return
             else:
-                # Phase 5: Restore sub-DBs in the new env
                 self._map_size_current = target_size
                 self._shrink_count += 1
                 self._reopen_sub_dbs()
                 logger.info(
-                    "[LMDB-UNIFIED] shrunk mapsize %dMB → %dMB ( shrink_count=%d ), "
-                    "env reopened with %d sub-DBs",
+                    "[LMDB-UNIFIED] shrunk mapsize %dMB → %dMB ( shrink_count=%d ), env reopened with %d sub-DBs",
                     old_map_size // (1024 * 1024),
                     target_size // (1024 * 1024),
                     self._shrink_count,
                     len(self._sub_dbs),
-    )
+                )
         finally:
             self._reopen_in_progress = False
 
@@ -718,7 +708,7 @@ class UnifiedLMDB:
     def close(self) -> None:
         """Close the LMDB environment."""
         # F264: Detach finalizer when explicitly closed
-        if hasattr(self, '_finalizer'):
+        if hasattr(self, "_finalizer"):
             self._finalizer.detach()
         with self._lock:
             if self._closed:
@@ -732,7 +722,7 @@ class UnifiedLMDB:
             self._initialized = False
             logger.info("[LMDB-UNIFIED] closed")
 
-    def __enter__(self) -> "UnifiedLMDB":
+    def __enter__(self) -> UnifiedLMDB:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -778,9 +768,9 @@ class UnifiedLMDB:
             if self._closed or not self._initialized:
                 return False
 
-            import lmdb
-            import shutil
             import tempfile
+
+            import lmdb
 
             sub = self.open_db(sub_idx)
             sub_name = SubDB.name(sub_idx)
@@ -793,12 +783,11 @@ class UnifiedLMDB:
                         logger.debug(
                             "[LMDB-UNIFIED] compact_subdb(%s): empty, skipping",
                             sub_name,
-    )
+                        )
                         return True
             except Exception as exc:
                 logger.debug("[LMDB-UNIFIED] compact_subdb stat failed: %s", exc)
 
-            # Phase 1: Open cursor and copy live data to temp LMDB
             temp_dir: tempfile.TemporaryDirectory | None = None
             temp_path: pathlib.Path | None = None
             new_env: Any = None
@@ -815,7 +804,7 @@ class UnifiedLMDB:
                     max_dbs=self._max_dbs,
                     writemap=False,
                     metasync=False,  # We'll sync manually
-    )
+                )
                 new_sub = new_env.open_db(str(sub_name).encode())
 
                 # Copy all live key-value pairs
@@ -831,14 +820,12 @@ class UnifiedLMDB:
                             "[LMDB-UNIFIED] compact_subdb(%s): copied %d entries",
                             sub_name,
                             copied,
-    )
+                        )
 
-                # Phase 2: Sync and close temp env (durable write)
                 new_env.sync(force=True)
                 new_env.close()
                 new_env = None
 
-                # Phase 3: Atomic swap — close source, replace files, reopen
                 self._compact_atomic_swap(sub_idx, temp_path, sub_name)
 
                 logger.info("[LMDB-UNIFIED] compact_subdb(%s): done", sub_name)
@@ -881,8 +868,9 @@ class UnifiedLMDB:
         Failure recovery: if lmdb.open() fails, attempts to restore from
         the original env (backup restore pattern, matching _emergency_shrink).
         """
-        import lmdb
         import shutil
+
+        import lmdb
 
         # Capture old state for potential backup restore
         old_env = self._env
@@ -920,14 +908,13 @@ class UnifiedLMDB:
                 writemap=False,
                 metasync=True,
                 mode=0o600,
-    )
+            )
         except Exception as exc:
             # Backup restore: reopen with original data
             logger.error(
-                "[LMDB-UNIFIED] atomic_swap: env reopen failed: %s. "
-                "Attempting backup restore.",
+                "[LMDB-UNIFIED] atomic_swap: env reopen failed: %s. Attempting backup restore.",
                 exc,
-    )
+            )
             try:
                 self._env = lmdb.open(
                     str(self._path),
@@ -936,15 +923,14 @@ class UnifiedLMDB:
                     writemap=False,
                     metasync=True,
                     mode=0o600,
-    )
+                )
                 self._reopen_sub_dbs()
                 logger.info("[LMDB-UNIFIED] atomic_swap: backup restore succeeded")
             except Exception as restore_exc:
                 logger.error(
-                    "[LMDB-UNIFIED] atomic_swap: backup restore failed: %s. "
-                    "LMDB instance is closed.",
+                    "[LMDB-UNIFIED] atomic_swap: backup restore failed: %s. LMDB instance is closed.",
                     restore_exc,
-    )
+                )
                 self._closed = True
                 return
 

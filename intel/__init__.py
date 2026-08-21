@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import warnings
 from importlib import import_module
-from _core import aclose
-
 
 # Canonical redirect map — all physical stubs removed (F350M-R A4-5)
 _RECON_MAP: dict[str, str] = {
@@ -112,9 +110,9 @@ def __getattr__(name: str):
     if name in _RECON_MAP:
         canonical = _RECON_MAP[name]
         warnings.warn(
-            f"intel.{name} is deprecated — import from \"{canonical}\" directly instead.",
+            f'intel.{name} is deprecated — import from "{canonical}" directly instead.',
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         return import_module(canonical)
     raise AttributeError(f"module 'intel' has no attribute {name!r}")

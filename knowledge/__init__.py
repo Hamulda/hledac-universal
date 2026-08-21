@@ -17,11 +17,9 @@ module is loaded on demand. This dramatically reduces `import knowledge`
 first-access cost.
 """
 
-
 from importlib import import_module
 from typing import Any
 
-# Maps public export name → module path (used by __getattr__)
 _LAZY_EXPORT_MAP: dict[str, str] = {
     # duckdb_store — heavy: duckdb, psutil, msgspec
     "DuckDBShadowStore": "knowledge.duckdb_store",
@@ -46,7 +44,6 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "from_timestamp_ns": "knowledge.time_series_splicer",
     # graph_attachment — lightweight (no heavy deps)
     "GraphAttachmentStore": "knowledge.graph_attachment",
-
     # rag_engine — heavy: numpy (3x), hledac.universal._core.mlx_embeddings, duckdb
     "RAGEngine": "knowledge.rag_engine",
     "RAGConfig": "knowledge.rag_engine",
@@ -86,7 +83,6 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "update_cve_matrix": "knowledge.cve_data_loader",
 }
 
-# Legacy compat — same names used by _LazyLegacyCompatModule
 _LEGACY_NAMES: frozenset[str] = frozenset(
     (
         "AtomicJSONKnowledgeGraph",
@@ -103,7 +99,6 @@ _LEGACY_NAMES: frozenset[str] = frozenset(
 )
 
 import warnings as _warnings  # noqa: E402
-from _core import aclose
 
 # Sprint 8VC: atomic_storage and persistent_layer moved to legacy/
 # Legacy imports are LAZY (deferred) to prevent import-time coupling.
@@ -139,6 +134,7 @@ def _lazy_legacycompat():
         NodeType,
         PersistentKnowledgeLayer,
     )
+
     return (
         AtomicJSONKnowledgeGraph,
         KnowledgeEntry,
@@ -158,27 +154,30 @@ class _LegacyCompatModule:
 
     __slots__ = ("_loaded", "_cache")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._loaded = False
         self._cache: dict[str, Any] = {}
 
-    def _ensure_loaded(self):
+    def _ensure_loaded(self) -> None:
         if not self._loaded:
-            self._cache = dict(zip(
-                (
-                    "AtomicJSONKnowledgeGraph",
-                    "KnowledgeEntry",
-                    "get_atomic_storage",
-                    "PersistentKnowledgeLayer",
-                    "KnowledgeNode",
-                    "KnowledgeEdge",
-                    "NodeType",
-                    "EdgeType",
-                    "KuzuDBBackend",
-                    "JSONBackend",
-                ),
-                _lazy_legacycompat(), strict=False,
-            ))
+            self._cache = dict(
+                zip(
+                    (
+                        "AtomicJSONKnowledgeGraph",
+                        "KnowledgeEntry",
+                        "get_atomic_storage",
+                        "PersistentKnowledgeLayer",
+                        "KnowledgeNode",
+                        "KnowledgeEdge",
+                        "NodeType",
+                        "EdgeType",
+                        "KuzuDBBackend",
+                        "JSONBackend",
+                    ),
+                    _lazy_legacycompat(),
+                    strict=False,
+                )
+            )
             self._loaded = True
 
     def __getattr__(self, name: str) -> Any:
@@ -195,10 +194,8 @@ class _LegacyCompatModule:
 
 _legacy_compat = _LegacyCompatModule()
 
-# MODERN-36 PERFORMANCE FIX: Module-level cache tracking for memory leak prevention.
-# Tracks which modules have been loaded via __getattr__ so they can be
-# cleaned up when the module is unloaded or the process exits.
 _LOADED_MODULES: dict[str, frozenset[str]] = {}  # module_path -> set of exported names
+
 
 def _track_module_load(module_path: str, name: str) -> None:
     """Track a loaded module for cleanup."""
@@ -206,39 +203,42 @@ def _track_module_load(module_path: str, name: str) -> None:
         _LOADED_MODULES[module_path] = frozenset()
     _LOADED_MODULES[module_path] = _LOADED_MODULES[module_path] | {name}
 
+
 def _get_loaded_modules() -> dict[str, frozenset[str]]:
     """Return copy of loaded modules registry."""
     return dict(_LOADED_MODULES)
 
+
 def _clear_knowledge_cache(clear_sys_modules: bool = True) -> int:
     """
     Clear all loaded module symbols from globals() and optionally from sys.modules.
-    
+
     Args:
         clear_sys_modules: If True (default), also remove loaded modules from
             sys.modules to fully unload them and free their memory.
-    
+
     Returns:
         Number of module symbols cleared from globals().
-    
+
     MODERN-36 PERFORMANCE FIX: Call this from shutdown hooks to prevent
     memory leaks from accumulated globals() entries and sys.modules references.
     Typically called when the process is exiting or when memory pressure is high.
-    
+
     Note: Setting clear_sys_modules=True fully unloads the modules, which may
     break existing references. Only use when the application is shutting down.
     """
     import sys
+
     cleared = 0
     g = globals()
     unloaded_modules: list[str] = []
-    
+
     for module_path, names in list(_LOADED_MODULES.items()):
         for name in names:
             if name in g:
                 g[name] = None
                 cleared += 1
-        
+
         # MODERN-36 FIX: Also clear from sys.modules for full module unload
         if clear_sys_modules:
             # Module names are prefixed with package path
@@ -250,9 +250,10 @@ def _clear_knowledge_cache(clear_sys_modules: bool = True) -> int:
                 if mod_name in sys.modules:
                     sys.modules.pop(mod_name, None)
                     unloaded_modules.append(mod_name)
-    
+
     _LOADED_MODULES.clear()
     return cleared
+
 
 # Canonical exports — no heavy modules loaded at import time
 __all__ = sorted(_LAZY_EXPORT_MAP.keys()) + sorted(_LEGACY_NAMES)
@@ -264,7 +265,11 @@ def __getattr__(name: str) -> Any:
         # SECURITY: module_path comes from _LAZY_EXPORT_MAP which is a
         # hardcoded dict — no user input reaches here directly. Defense-in-depth:
         # validate it doesn't contain path traversal or shell chars.
-        if ".." in module_path or module_path.startswith("/") or not module_path.replace(".", "").replace("_", "").isalnum():
+        if (
+            ".." in module_path
+            or module_path.startswith("/")
+            or not module_path.replace(".", "").replace("_", "").isalnum()
+        ):
             raise AttributeError(f"unsafe module path: {module_path!r}")
         try:
             module = import_module(module_path)
@@ -272,7 +277,7 @@ def __getattr__(name: str) -> Any:
             missing_name = exc.name or ""
             if missing_name == "hledac" and module_path.startswith("hledac.universal."):
                 # hledac package not on path — resolve to relative import
-                local_path = module_path[len("hledac.universal."):]
+                local_path = module_path[len("hledac.universal.") :]
                 module = import_module(local_path)
             elif missing_name.startswith("knowledge.") or missing_name == "knowledge":
                 # knowledge subpackage on path but module not found —
@@ -288,32 +293,63 @@ def __getattr__(name: str) -> Any:
     if name in _LEGACY_NAMES:
         try:
             return _legacy_compat.__getattr__(name)
-        except (ModuleNotFoundError, ImportError):  # ModuleNotFoundError for bare not-found; ImportError for relative-import failure in local mode  # noqa: E501
+        except (
+            ModuleNotFoundError,
+            ImportError,
+        ):  # ModuleNotFoundError for bare not-found; ImportError for relative-import failure in local mode  # noqa: E501
             if name in (
-                "AtomicJSONKnowledgeGraph", "KnowledgeEntry", "get_atomic_storage",
-                "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
-                "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
+                "AtomicJSONKnowledgeGraph",
+                "KnowledgeEntry",
+                "get_atomic_storage",
+                "PersistentKnowledgeLayer",
+                "KnowledgeNode",
+                "KnowledgeEdge",
+                "NodeType",
+                "EdgeType",
+                "KuzuDBBackend",
+                "JSONBackend",
             ):
                 import importlib
+
                 # SECURITY: whitelist-based path construction — only known-safe
                 # module names are resolved. No arbitrary module loading.
-                _KNOWN_LEGACY_MODULES = frozenset([
-                    "legacy.atomic_storage", "legacy.persistent_layer",
-                    "persistent_layer", "atomic_storage",
-                ])
-                rel_path = "legacy.atomic_storage" if name not in (
-                    "PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
-                    "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend",
-                ) else "legacy.persistent_layer"
-                # Validate rel_path is in whitelist before import
+                _KNOWN_LEGACY_MODULES = frozenset(
+                    [
+                        "legacy.atomic_storage",
+                        "legacy.persistent_layer",
+                        "persistent_layer",
+                        "atomic_storage",
+                    ]
+                )
+                rel_path = (
+                    "legacy.atomic_storage"
+                    if name
+                    not in (
+                        "PersistentKnowledgeLayer",
+                        "KnowledgeNode",
+                        "KnowledgeEdge",
+                        "NodeType",
+                        "EdgeType",
+                        "KuzuDBBackend",
+                        "JSONBackend",
+                    )
+                    else "legacy.persistent_layer"
+                )
                 if rel_path not in _KNOWN_LEGACY_MODULES:
                     raise AttributeError(f"unknown legacy module: {rel_path!r}") from err
                 try:
                     mod = importlib.import_module(rel_path)
                 except ModuleNotFoundError:
                     # Local mode: try without legacy prefix
-                    if name in ("PersistentKnowledgeLayer", "KnowledgeNode", "KnowledgeEdge",
-                                "NodeType", "EdgeType", "KuzuDBBackend", "JSONBackend"):
+                    if name in (
+                        "PersistentKnowledgeLayer",
+                        "KnowledgeNode",
+                        "KnowledgeEdge",
+                        "NodeType",
+                        "EdgeType",
+                        "KuzuDBBackend",
+                        "JSONBackend",
+                    ):
                         mod = importlib.import_module("persistent_layer")
                     else:
                         mod = importlib.import_module("atomic_storage")

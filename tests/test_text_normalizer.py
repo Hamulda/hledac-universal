@@ -2,17 +2,17 @@
 """Tests for coordinators.fetch.services.text_normalizer"""
 
 import sys
+
 sys.path.insert(0, ".")
 
 import pytest
 
 
 # Import the test utilities from conftest
-def test_text_normalizer_basic():
+def test_text_normalizer_basic() -> None:
     """Test basic NFC normalization."""
     from coordinators.fetch.services.text_normalizer import (
         TextNormalizerService,
-        get_text_normalizer,
     )
 
     normalizer = TextNormalizerService()
@@ -22,7 +22,7 @@ def test_text_normalizer_basic():
     assert hasattr(normalizer, "normalize_batch")
 
 
-def test_text_normalizer_singleton():
+def test_text_normalizer_singleton() -> None:
     """Test singleton pattern."""
     from coordinators.fetch.services.text_normalizer import get_text_normalizer
 
@@ -31,7 +31,7 @@ def test_text_normalizer_singleton():
     assert s1 is s2
 
 
-def test_text_normalizer_nfc_composed():
+def test_text_normalizer_nfc_composed() -> None:
     """Test NFC normalization of already composed text."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -40,7 +40,7 @@ def test_text_normalizer_nfc_composed():
     assert result == "café"
 
 
-def test_text_normalizer_nfc_decomposed():
+def test_text_normalizer_nfc_decomposed() -> None:
     """Test NFC normalization of decomposed text."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -52,7 +52,7 @@ def test_text_normalizer_nfc_decomposed():
     assert result == "café"
 
 
-def test_text_normalizer_batch():
+def test_text_normalizer_batch() -> None:
     """Test batch normalization."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -65,7 +65,7 @@ def test_text_normalizer_batch():
     assert results[2] == "Brno"
 
 
-def test_text_normalizer_batch_empty():
+def test_text_normalizer_batch_empty() -> None:
     """Test batch normalization with empty list."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -74,7 +74,7 @@ def test_text_normalizer_batch_empty():
     assert results == []
 
 
-def test_text_normalizer_czech():
+def test_text_normalizer_czech() -> None:
     """Test Czech characters."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -83,7 +83,7 @@ def test_text_normalizer_czech():
     assert result == "řřž"
 
 
-def test_text_normalizer_ascii_unchanged():
+def test_text_normalizer_ascii_unchanged() -> None:
     """Test that ASCII text is unchanged."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -92,7 +92,7 @@ def test_text_normalizer_ascii_unchanged():
     assert result == "Hello World"
 
 
-def test_text_normalizer_empty():
+def test_text_normalizer_empty() -> None:
     """Test that empty string returns empty string."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 
@@ -101,7 +101,7 @@ def test_text_normalizer_empty():
     assert normalizer.normalize_batch(["", "test", ""]) == ["", "test", ""]
 
 
-def test_text_normalizer_mixed():
+def test_text_normalizer_mixed() -> None:
     """Test mixed ASCII and Unicode."""
     from coordinators.fetch.services.text_normalizer import TextNormalizerService
 

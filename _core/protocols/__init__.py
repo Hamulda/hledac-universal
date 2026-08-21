@@ -19,21 +19,21 @@ Import hierarchy:
     runtime/protocols → core/protocols ✓ (no cycles)
 """
 
+from _core.protocols.cleanup_protocol import (
+    DEFAULT_ACLOSE_TIMEOUT_S,
+    shutdown_aclose,
+)
+from _core.protocols.sprint_protocol import (
+    _get_cancel_all_tasks_impl,
+    cancel_all_tasks,
+)
 from _core.protocols.worker_pool_protocol import (
+    PoolType,
     RustWorkerPoolProtocol,
     WorkerPoolStats,
     get_rust_pool,
     get_shared_pool,
-    PoolType,
-    )
-from _core.protocols.cleanup_protocol import (
-    shutdown_aclose,
-    DEFAULT_ACLOSE_TIMEOUT_S,
-    )
-from _core.protocols.sprint_protocol import (
-    cancel_all_tasks,
-    _get_cancel_all_tasks_impl,
-    )
+)
 
 __all__ = [
     # Worker pool protocols
@@ -42,7 +42,6 @@ __all__ = [
     "get_rust_pool",
     "get_shared_pool",
     "PoolType",
-    # Cleanup protocols
     "shutdown_aclose",
     "DEFAULT_ACLOSE_TIMEOUT_S",
     # Sprint protocols

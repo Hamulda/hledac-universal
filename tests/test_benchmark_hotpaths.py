@@ -9,11 +9,9 @@ import shutil
 import tempfile
 import time
 
-import pytest
-
 # Lazy import: lmdb loaded only when benchmark tests that need it actually run
 import lmdb  # noqa: E402 — required at module level for lmdb.open() at line 94
-from _core import aclose
+import pytest
 
 # Baseline thresholds (M1 MacBook Air 8GB, measured 2026-07-02)
 # If hardware differs, set env vars to override.
@@ -35,7 +33,7 @@ def _check_regression(name: str, measured_ms: float) -> None:
         pytest.fail(
             f"BENCHMARK REGRESSION: {name} took {measured_ms:.2f}ms "
             f"(baseline {baseline:.2f}ms, +{((measured_ms / baseline) - 1) * 100:.1f}%)"
-    )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +41,7 @@ def _check_regression(name: str, measured_ms: float) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
+def test_benchmark_duckdb_ingest_batch(session_duckdb_store) -> None:
     """Time: DuckDBShadowStore.async_ingest_findings_batch (100 findings).
 
     Note: Arrow path has Python 3.14+ compatibility issue with generators
@@ -66,7 +64,7 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
             confidence=0.9,
             ts=time.time(),
             provenance=("benchmark",),
-    )
+        )
         for i in range(100)
     ]
 
@@ -90,7 +88,7 @@ def test_benchmark_duckdb_ingest_batch(session_duckdb_store):
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_lmdb_put_many():
+def test_benchmark_lmdb_put_many() -> None:
     """Time: LMDB cursor.putmany() for 500 key-value pairs."""
     tmp = tempfile.mkdtemp(prefix="bench_lmdb_")
     env = lmdb.open(tmp, map_size=10 * 1024 * 1024, subdir=True)
@@ -111,7 +109,7 @@ def test_benchmark_lmdb_put_many():
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_rotating_bloom_add():
+def test_benchmark_rotating_bloom_add() -> None:
     """Time: RotatingBloomFilter.add() x100. Primary: Rust BloomFilter (hledac_rust_extensions)."""
     try:
         from hledac_rust_extensions import BloomFilter
@@ -140,7 +138,7 @@ def test_benchmark_rotating_bloom_add():
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_mx_eval_barrier():
+def test_benchmark_mx_eval_barrier() -> None:
     """Time: mx.eval([]) + metal.clear_cache() barrier.
 
     Note: First MLX call compiles Metal kernels (~80ms). Warm up first,

@@ -18,34 +18,38 @@ from PIL import Image
     facets = await coordinator.extract_triage_facets(file_path, source_type)
     await coordinator.close()
 """
+
 import asyncio
 import logging
-from hledac.universal.utils.asyncx import safe_create_task
 import re
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from pathlib import Path
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+from hledac.universal.utils.asyncx import parallel_ok, safe_create_task
+
 logger = logging.getLogger(__name__)
 MAX_URL_HITS: int = 20
-'Max embedded URLs/domains extracted from OCR text.'
+"Max embedded URLs/domains extracted from OCR text."
 MAX_OCR_SNIPPETS: int = 10
-'Max OCR text snippets stored in facets.'
+"Max OCR text snippets stored in facets."
 MAX_OCR_CHARS: int = 5000
-'Max total OCR characters per file.'
+"Max total OCR characters per file."
 METADATA_TIMEOUT_S: float = 30.0
-'Timeout for metadata extraction per file.'
+"Timeout for metadata extraction per file."
 OCR_TIMEOUT_S: float = 30.0
-'Timeout for OCR per file.'
+"Timeout for OCR per file."
 MAX_FILE_SIZE_FOR_TRIAGE: int = 100 * 1024 * 1024
-'Max file size (100MB) for triage processing.'
+"Max file size (100MB) for triage processing."
 _URL_RE = re.compile('https?://[^\\s<>\\"]+', re.IGNORECASE)
-_DOMAIN_RE = re.compile('\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+(?:com|org|net|io|co|gov|edu|mil|int|app|dev|xyz|info|biz|[a-zA-Z]{2,})\\b', re.IGNORECASE)
-'Matches URLs and domain names in OCR text.'
+_DOMAIN_RE = re.compile(
+    "\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+(?:com|org|net|io|co|gov|edu|mil|int|app|dev|xyz|info|biz|[a-zA-Z]{2,})\\b",
+    re.IGNORECASE,
+)
+"Matches URLs and domain names in OCR text."
+
 
 def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     """
@@ -61,6 +65,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     for u in urls:
         try:
             from urllib.parse import urlparse
+
             url_domains.add(urlparse(u).netloc.lower())
         except Exception:  # noqa: BLE001
             pass
@@ -68,6 +73,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     unique_domains = [d.lower() for d in set(all_domains) if d.lower() not in url_domains]
     domains = unique_domains[:MAX_URL_HITS]
     return (urls, domains)
+
 
 class TriageFacets(Struct):
     """
@@ -88,6 +94,7 @@ class TriageFacets(Struct):
     Fail-safe: all fields have safe defaults. Never raises.
     Bounded: collections capped at defined limits.
     """
+
     title: str | None = None
     author: str | None = None
     exif: dict[str, Any] = field(default_factory=dict)
@@ -101,7 +108,19 @@ class TriageFacets(Struct):
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for evidence envelope."""
-        return {'title': self.title, 'author': self.author, 'exif': self.exif, 'gps': self.gps, 'ocr_snippets': self.ocr_snippets, 'file_hashes': self.file_hashes, 'embedded_urls': self.embedded_urls, 'embedded_domains': self.embedded_domains, 'metadata': self.metadata, 'triage_complete': self.triage_complete}
+        return {
+            "title": self.title,
+            "author": self.author,
+            "exif": self.exif,
+            "gps": self.gps,
+            "ocr_snippets": self.ocr_snippets,
+            "file_hashes": self.file_hashes,
+            "embedded_urls": self.embedded_urls,
+            "embedded_domains": self.embedded_domains,
+            "metadata": self.metadata,
+            "triage_complete": self.triage_complete,
+        }
+
 
 class EvidenceTriageCoordinator:
     """
@@ -121,9 +140,10 @@ class EvidenceTriageCoordinator:
         facets = await coordinator.extract_triage_facets(file_path, source_type)
         await coordinator.close()
     """
-    __slots__ = tuple(('_governor', '_initialized', '_lock', '_metadata_extractor', '_ocr'))
 
-    def __init__(self, governor: Any | None=None):
+    __slots__ = ("_governor", "_initialized", "_lock", "_metadata_extractor", "_ocr")
+
+    def __init__(self, governor: Any | None = None) -> None:
         """
         Initialize coordinator.
 
@@ -149,10 +169,11 @@ class EvidenceTriageCoordinator:
                 return
             try:
                 from hledac.universal.forensics.metadata_extractor import create_metadata_extractor
+
                 self._metadata_extractor = create_metadata_extractor()
                 await self._metadata_extractor.initialize()
             except Exception as e:
-                logger.debug('[EvidenceTriage] Metadata extractor unavailable: %s', e)
+                logger.debug("[EvidenceTriage] Metadata extractor unavailable: %s", e)
                 self._metadata_extractor = None
             self._initialized = True
 
@@ -170,6 +191,7 @@ class EvidenceTriageCoordinator:
     def _check_ram_guard(self) -> bool:
         """Check if RAM permits triage processing."""
         from hledac.universal.multimodal import check_ram_guard
+
         return check_ram_guard(self._governor)
 
     async def extract_triage_facets(self, file_path: str, source_type: str) -> TriageFacets:
@@ -192,19 +214,19 @@ class EvidenceTriageCoordinator:
         try:
             file_size = path.stat().st_size
             if file_size > MAX_FILE_SIZE_FOR_TRIAGE:
-                logger.debug('[EvidenceTriage] File too large for triage: %s (%d bytes)', file_path, file_size)
+                logger.debug("[EvidenceTriage] File too large for triage: %s (%d bytes)", file_path, file_size)
                 return TriageFacets()
         except Exception:
             return TriageFacets()
         if not self._check_ram_guard():
-            logger.debug('[EvidenceTriage] RAM guard denied for: %s', file_path)
+            logger.debug("[EvidenceTriage] RAM guard denied for: %s", file_path)
             return TriageFacets()
         facets = TriageFacets()
         try:
             metadata_task = safe_create_task(self._extract_metadata(path))
             ocr_task = safe_create_task(self._extract_ocr_with_timeout(path))
             async with asyncio.timeout(METADATA_TIMEOUT_S + OCR_TIMEOUT_S):
-                results = await parallel_ok(metadata_task, ocr_task, label='evidence_triage:269')
+                results = await parallel_ok(metadata_task, ocr_task, label="evidence_triage:269")
                 md_result, ocr_text = results
                 if md_result and (not isinstance(md_result, BaseException)):
                     self._apply_metadata_to_facets(md_result, path, facets)
@@ -212,9 +234,9 @@ class EvidenceTriageCoordinator:
                     self._apply_ocr_to_facets(ocr_text, facets)
                 facets.triage_complete = True
         except asyncio.CancelledError:
-            logger.debug('[EvidenceTriage] Triage cancelled for: %s', file_path)
+            logger.debug("[EvidenceTriage] Triage cancelled for: %s", file_path)
         except Exception as e:
-            logger.debug('[EvidenceTriage] Triage failed for %s: %s', file_path, e)
+            logger.debug("[EvidenceTriage] Triage failed for %s: %s", file_path, e)
         return facets
 
     async def _extract_metadata(self, path: Path) -> Any | None:
@@ -225,10 +247,10 @@ class EvidenceTriageCoordinator:
             async with asyncio.timeout(5.0):
                 return await self._metadata_extractor.extract(str(path))
         except TimeoutError:
-            logger.debug('[EvidenceTriage] Metadata extraction timeout: %s', path)
+            logger.debug("[EvidenceTriage] Metadata extraction timeout: %s", path)
             return None
         except Exception as e:
-            logger.debug('[EvidenceTriage] Metadata extraction error: %s', e)
+            logger.debug("[EvidenceTriage] Metadata extraction error: %s", e)
             return None
 
     async def _extract_ocr_with_timeout(self, path: Path) -> str:
@@ -238,60 +260,61 @@ class EvidenceTriageCoordinator:
                 text = await self._run_ocr(path)
             return text
         except TimeoutError:
-            logger.debug('[EvidenceTriage] OCR timeout: %s', path)
-            return ''
+            logger.debug("[EvidenceTriage] OCR timeout: %s", path)
+            return ""
         except Exception as e:
-            logger.debug('[EvidenceTriage] OCR error: %s', e)
-            return ''
+            logger.debug("[EvidenceTriage] OCR error: %s", e)
+            return ""
 
     async def _run_ocr(self, path: Path) -> str:
         """Run OCR on an image file or page."""
         ext = path.suffix.lower()
-        if ext == '.pdf':
+        if ext == ".pdf":
             return await self._ocr_pdf_page(path)
-        elif ext in {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp'}:
+        elif ext in {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif", ".webp"}:
             return await self._ocr_image(path)
-        return ''
+        return ""
 
     async def _ocr_image(self, path: Path) -> str:
         """Run OCR on an image file."""
         try:
             snippets = await recognize_async(str(path))
-            return '\n'.join(snippets[:MAX_OCR_SNIPPETS])
+            return "\n".join(snippets[:MAX_OCR_SNIPPETS])
         except Exception as e:
-            logger.debug('[EvidenceTriage] Image OCR failed: %s', e)
-            return ''
+            logger.debug("[EvidenceTriage] Image OCR failed: %s", e)
+            return ""
 
     async def _ocr_pdf_page(self, path: Path) -> str:
         """Extract text from first PDF page via pypdf for OCR."""
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(str(path))
             if not reader.pages:
-                return ''
+                return ""
             first_page = reader.pages[0]
-            text = first_page.extract_text() or ''
+            text = first_page.extract_text() or ""
             if text.strip():
                 return text[:MAX_OCR_CHARS]
             return text[:MAX_OCR_CHARS]
         except ImportError:
-            logger.debug('[EvidenceTriage] pypdf not available for PDF OCR')
-            return ''
+            logger.debug("[EvidenceTriage] pypdf not available for PDF OCR")
+            return ""
         except Exception as e:
-            logger.debug('[EvidenceTriage] PDF OCR failed: %s', e)
-            return ''
+            logger.debug("[EvidenceTriage] PDF OCR failed: %s", e)
+            return ""
         except Exception as e:
-            logger.debug('[EvidenceTriage] Failed to apply OCR: %s', e)
+            logger.debug("[EvidenceTriage] Failed to apply OCR: %s", e)
 
     def _apply_generic_metadata(self, facets: TriageFacets, gm) -> None:
         """Apply generic file metadata (hashes)."""
         hashes = {}
         if gm.md5_hash:
-            hashes['md5'] = gm.md5_hash
+            hashes["md5"] = gm.md5_hash
         if gm.sha256_hash:
-            hashes['sha256'] = gm.sha256_hash
+            hashes["sha256"] = gm.sha256_hash
         if gm.sha1_hash:
-            hashes['sha1'] = gm.sha1_hash
+            hashes["sha1"] = gm.sha1_hash
         facets.file_hashes = hashes
 
     def _apply_pdf_metadata(self, facets: TriageFacets, pm) -> None:
@@ -304,59 +327,59 @@ class EvidenceTriageCoordinator:
         exif_dict = {}
         # EXIF fields
         if im.camera_make:
-            exif_dict['camera_make'] = im.camera_make
+            exif_dict["camera_make"] = im.camera_make
         if im.camera_model:
-            exif_dict['camera_model'] = im.camera_model
+            exif_dict["camera_model"] = im.camera_model
         if im.lens:
-            exif_dict['lens'] = im.lens
+            exif_dict["lens"] = im.lens
         if im.focal_length:
-            exif_dict['focal_length'] = im.focal_length
+            exif_dict["focal_length"] = im.focal_length
         if im.f_number:
-            exif_dict['f_number'] = im.f_number
+            exif_dict["f_number"] = im.f_number
         if im.iso:
-            exif_dict['iso'] = im.iso
+            exif_dict["iso"] = im.iso
         if im.exposure_time:
-            exif_dict['exposure_time'] = im.exposure_time
+            exif_dict["exposure_time"] = im.exposure_time
         facets.exif = exif_dict
 
         # GPS coordinates
         if im.gps:
-            lat = getattr(im.gps, 'latitude', None)
-            lon = getattr(im.gps, 'longitude', None)
-            alt = getattr(im.gps, 'altitude', None)
-            facets.gps = {'latitude': lat, 'longitude': lon, 'altitude': alt}
+            lat = getattr(im.gps, "latitude", None)
+            lon = getattr(im.gps, "longitude", None)
+            alt = getattr(im.gps, "altitude", None)
+            facets.gps = {"latitude": lat, "longitude": lon, "altitude": alt}
 
     def _apply_pptx_metadata(self, facets: TriageFacets, pm) -> None:
         """Apply PowerPoint metadata."""
         if pm.author and (not facets.author):
             facets.author = pm.author
         if pm.company:
-            facets.metadata['company'] = pm.company
+            facets.metadata["company"] = pm.company
         if pm.template_path:
-            facets.metadata['template_path'] = pm.template_path
+            facets.metadata["template_path"] = pm.template_path
         if pm.slide_count is not None:
-            facets.metadata['slide_count'] = pm.slide_count
+            facets.metadata["slide_count"] = pm.slide_count
         if pm.speaker_notes:
-            facets.metadata['speaker_notes'] = pm.speaker_notes[:3]
+            facets.metadata["speaker_notes"] = pm.speaker_notes[:3]
         if pm.hidden_slides:
-            facets.metadata['hidden_slides_count'] = len(pm.hidden_slides)
+            facets.metadata["hidden_slides_count"] = len(pm.hidden_slides)
         if pm.has_macros is not None:
-            facets.metadata['has_macros'] = pm.has_macros
+            facets.metadata["has_macros"] = pm.has_macros
 
     def _apply_email_metadata(self, facets: TriageFacets, em) -> None:
         """Apply email metadata."""
         if em.from_addr:
-            facets.metadata['from_addr'] = em.from_addr
+            facets.metadata["from_addr"] = em.from_addr
         if em.reply_to:
-            facets.metadata['reply_to'] = em.reply_to
+            facets.metadata["reply_to"] = em.reply_to
         if em.message_id_domain:
-            facets.metadata['message_id_domain'] = em.message_id_domain
+            facets.metadata["message_id_domain"] = em.message_id_domain
         if em.originating_ip:
-            facets.metadata['originating_ip'] = em.originating_ip
+            facets.metadata["originating_ip"] = em.originating_ip
         if em.received_chain:
-            facets.metadata['received_chain'] = em.received_chain[:3]
+            facets.metadata["received_chain"] = em.received_chain[:3]
         if em.has_attachments:
-            facets.metadata['attachment_count'] = em.attachment_count
+            facets.metadata["attachment_count"] = em.attachment_count
 
     def _apply_cad_metadata(self, facets: TriageFacets, cm) -> None:
         """Apply CAD metadata."""
@@ -365,11 +388,11 @@ class EvidenceTriageCoordinator:
         if cm.title:
             facets.title = cm.title
         if cm.autocad_version:
-            facets.metadata['cad_version'] = cm.autocad_version
+            facets.metadata["cad_version"] = cm.autocad_version
         if cm.viewBox:
-            facets.metadata['viewbox'] = cm.viewBox
+            facets.metadata["viewbox"] = cm.viewBox
         if cm.width and cm.height:
-            facets.metadata['dimensions'] = f'{cm.width}x{cm.height}'
+            facets.metadata["dimensions"] = f"{cm.width}x{cm.height}"
 
     def _apply_metadata_to_facets(self, metadata_result: Any, path: Path, facets: TriageFacets) -> None:
         """Apply metadata extraction results to facets."""
@@ -389,21 +412,24 @@ class EvidenceTriageCoordinator:
             if facets.title is None:
                 facets.title = path.name
         except Exception as e:
-            logger.debug('[EvidenceTriage] Failed to apply metadata: %s', e)
+            logger.debug("[EvidenceTriage] Failed to apply metadata: %s", e)
 
     def _apply_ocr_to_facets(self, ocr_text: str, facets: TriageFacets) -> None:
         """Apply OCR text results to facets (URLs, domains, snippets)."""
         try:
             text = ocr_text[:MAX_OCR_CHARS]
-            lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
             facets.ocr_snippets = lines[:MAX_OCR_SNIPPETS]
             urls, domains = _extract_urls_and_domains(text)
             facets.embedded_urls = urls
             facets.embedded_domains = domains
         except Exception as e:
-            logger.debug('[EvidenceTriage] Failed to apply OCR: %s', e)
+            logger.debug("[EvidenceTriage] Failed to apply OCR: %s", e)
 
-async def extract_triage_facets(file_path: str, source_type: str='document', governor: Any | None=None) -> TriageFacets:
+
+async def extract_triage_facets(
+    file_path: str, source_type: str = "document", governor: Any | None = None
+) -> TriageFacets:
     """
     Top-level facade for triage facet extraction.
 

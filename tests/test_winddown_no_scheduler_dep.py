@@ -5,13 +5,12 @@ Test verifies that WinddownOrchestrator has no coupling to SprintSchedulerV2
 
 Run: pytest tests/test_winddown_no_scheduler_dep.py -v
 """
+
 from __future__ import annotations
 
 import asyncio
-import pytest
 
 from runtime.scheduler_v2.winddown import WinddownOrchestrator
-from _core import aclose
 
 
 class TestSC07WinddownNoSchedulerDep:
@@ -63,13 +62,13 @@ class TestSC07WinddownNoSchedulerDep:
 
         # run() must be callable with explicit ctx — no scheduler required
         import inspect
+
         sig = inspect.signature(WinddownOrchestrator.run)
         params = list(sig.parameters.keys())
         # Expected: self, ctx, lifecycle, query
         assert params == ["self", "ctx", "lifecycle", "query"], (
-            f"run() signature changed: {params}. "
-            "Must be (ctx, lifecycle, query) — no implicit scheduler coupling."
-    )
+            f"run() signature changed: {params}. Must be (ctx, lifecycle, query) — no implicit scheduler coupling."
+        )
 
     def test_winddown_orchestrator_no_scheduler_coupling(self) -> None:
         """WinddownOrchestrator must not store or reference scheduler (SC-07).
@@ -83,7 +82,7 @@ class TestSC07WinddownNoSchedulerDep:
             assert attr != "_scheduler", (
                 f"Found _scheduler in __slots__: {WinddownOrchestrator.__slots__}. "
                 "SC-07 fix requires complete removal of scheduler coupling."
-    )
+            )
 
         # WinddownOrchestrator should be instantiable with no args
         orch = WinddownOrchestrator()

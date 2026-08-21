@@ -20,9 +20,8 @@ warnings.warn(
     "or utils.rayon_pool (run_in_cpu_pool, run_in_io_pool) instead.",
     DeprecationWarning,
     stacklevel=2,
-    )
+)
 
-from hledac.universal.utils.domain_executors import get_legacy_cpu_executor, get_legacy_io_executor, shutdown_all  # noqa: F401
-from _core import aclose
+from hledac.universal.utils.domain_executors import get_legacy_cpu_executor, get_legacy_io_executor, shutdown_all
 
 __all__ = ["get_legacy_cpu_executor", "get_legacy_io_executor", "shutdown_all"]

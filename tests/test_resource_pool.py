@@ -3,6 +3,7 @@ tests/test_resource_pool.py — R-1: Centralized Resource Pool Tests
 
 Sprint R-1 (2026-07-18)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,15 +17,13 @@ import pytest
 from hledac.universal._core.resource_pool import (
     PoolKind,
     _DuckDBPool,
-    _CPUPool,
     get_pool_stats,
-    run_in_io_pool,
+    resize_cpu_pools,
     run_in_blocking_pool,
+    run_in_io_pool,
     with_resource,
     with_resource_async,
-    resize_cpu_pools,
 )
-
 
 # =============================================================================
 # DuckDB Pool Tests
@@ -38,6 +37,7 @@ class TestDuckDBPool:
     def temp_db(self):
         """Create a temporary DuckDB database."""
         import duckdb
+
         with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as f:
             db_path = f.name
         conn = duckdb.connect(db_path)
@@ -46,6 +46,7 @@ class TestDuckDBPool:
         conn.close()
         yield db_path
         import os
+
         try:
             os.unlink(db_path)
         except Exception:
@@ -142,6 +143,7 @@ class TestCPUPool:
 
     def test_run_in_io_pool(self) -> None:
         """Test run_in_io_pool helper."""
+
         def heavy_computation() -> int:
             return sum(range(1000))
 
@@ -150,6 +152,7 @@ class TestCPUPool:
 
     def test_run_in_blocking_pool(self) -> None:
         """Test run_in_blocking_pool helper."""
+
         def blocking_io() -> str:
             time.sleep(0.01)
             return "done"
@@ -165,8 +168,7 @@ class TestCPUPool:
         class MockPreset:
             max_workers: int = 2
 
-        initial_stats = get_pool_stats()
-        initial_io_max = initial_stats.cpu_io_max
+        get_pool_stats()
 
         resize_cpu_pools(MockPreset(max_workers=2))
         stats = get_pool_stats()
@@ -186,6 +188,7 @@ class TestResourcePoolIntegration:
     def temp_db(self):
         """Create a temporary DuckDB database."""
         import duckdb
+
         with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as f:
             db_path = f.name
         conn = duckdb.connect(db_path)
@@ -194,6 +197,7 @@ class TestResourcePoolIntegration:
         conn.close()
         yield db_path
         import os
+
         try:
             os.unlink(db_path)
         except Exception:
@@ -215,11 +219,10 @@ class TestResourcePoolIntegration:
 
     def test_async_context_manager(self, temp_db: str) -> None:
         """Test async context manager for CPU pools."""
+
         async def use_pool() -> int:
             async with with_resource_async(PoolKind.CPU_IO) as executor:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    executor, lambda: 123
-                )
+                result = await asyncio.get_event_loop().run_in_executor(executor, lambda: 123)
                 return result
             return 0
 
@@ -247,6 +250,7 @@ class TestResourcePoolStress:
     def temp_db(self):
         """Create a temporary DuckDB database."""
         import duckdb
+
         with tempfile.NamedTemporaryFile(suffix=".duckdb", delete=False) as f:
             db_path = f.name
         conn = duckdb.connect(db_path)
@@ -255,6 +259,7 @@ class TestResourcePoolStress:
         conn.close()
         yield db_path
         import os
+
         try:
             os.unlink(db_path)
         except Exception:

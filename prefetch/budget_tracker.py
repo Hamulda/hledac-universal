@@ -1,15 +1,15 @@
 """
 BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý okna).
 """
-import time
 
+import time
 from collections import deque
-from _core import aclose
+
 
 class BudgetTracker:
-    __slots__ = tuple(('cpu_budget', 'cpu_usage', 'network_budget', 'network_usage'))
+    __slots__ = ("cpu_budget", "cpu_usage", "network_budget", "network_usage")
 
-    def __init__(self, network_mb_per_hour: float=10.0, cpu_ms_per_min: float=100.0):
+    def __init__(self, network_mb_per_hour: float = 10.0, cpu_ms_per_min: float = 100.0) -> None:
         self.network_budget = network_mb_per_hour
         self.cpu_budget = cpu_ms_per_min
         self.network_usage = deque(maxlen=1000)
@@ -29,7 +29,7 @@ class BudgetTracker:
             return False
         return True
 
-    def record(self, network_mb: float, cpu_ms: float):
+    def record(self, network_mb: float, cpu_ms: float) -> None:
         now = time.time()
         self.network_usage.append((now, network_mb))
         self.cpu_usage.append((now, cpu_ms))

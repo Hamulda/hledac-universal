@@ -22,18 +22,20 @@ GHOST_INVARIANTS:
   - M1ResourceGovernor.sidecar_admission() before heavy ops
   - Fail-soft throughout
 """
+
 import asyncio
 import logging
-from hledac.universal.utils.asyncx import safe_create_task  # ISSUE-15: asyncio.gather used directly for ALL_COMPLETED
 import time
 from collections import deque
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+from hledac.universal.utils.asyncx import safe_create_task
+
 logger = logging.getLogger(__name__)
 MAX_NETWORKINTEL_TARGETS: int = 20
 NETWORKINTEL_TIMEOUT_S: float = 30.0
 MAX_FINDINGS_PER_TARGET: int = 100
+
 
 class NetworkIntelResult(Struct):
     target: str
@@ -42,6 +44,7 @@ class NetworkIntelResult(Struct):
     bgp_events: list[dict]
     errors: list[str]
     elapsed_ms: float
+
 
 class NetworkIntelAdapter:
     """
@@ -55,9 +58,10 @@ class NetworkIntelAdapter:
         result = await adapter.async_query("1.1.1.1")
         await adapter.close()
     """
-    __slots__ = ('_dns', '_fp', '_targets')
 
-    def __init__(self):
+    __slots__ = ("_dns", "_fp", "_targets")
+
+    def __init__(self) -> None:
         self._dns = _PassiveDNSAdapter()
         self._fp = _PassiveFingerprintAdapter()
         self._targets: deque = deque(maxlen=MAX_NETWORKINTEL_TARGETS)
@@ -80,77 +84,89 @@ class NetworkIntelAdapter:
         self._targets.append(target)
         try:
             async with asyncio.timeout(NETWORKINTEL_TIMEOUT_S):
-                dns_task = safe_create_task(self._query_dns(target), name='network_intel:dns_query')
-                fp_task = safe_create_task(self._query_fp(target), name='network_intel:fp_query')
-                bgp_task = safe_create_task(self._query_bgp(target), name='network_intel:bgp_query')
+                dns_task = safe_create_task(self._query_dns(target), name="network_intel:dns_query")
+                fp_task = safe_create_task(self._query_fp(target), name="network_intel:fp_query")
+                bgp_task = safe_create_task(self._query_bgp(target), name="network_intel:bgp_query")
                 # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.gather (return_exceptions preserves all results)
                 results: list[Exception | list[dict]] = await asyncio.gather(
                     dns_task, fp_task, bgp_task, return_exceptions=True
-    )
+                )
                 dns_result, fp_result, bgp_result = results
                 if isinstance(dns_result, Exception):
-                    errors.append(f'dns:{dns_result}')
+                    errors.append(f"dns:{dns_result}")
                 else:
                     passive_dns = dns_result
                 if isinstance(fp_result, Exception):
-                    errors.append(f'fp:{fp_result}')
+                    errors.append(f"fp:{fp_result}")
                 else:
                     passive_fingerprint = fp_result
                 if isinstance(bgp_result, Exception):
-                    errors.append(f'bgp:{bgp_result}')
+                    errors.append(f"bgp:{bgp_result}")
                 else:
                     bgp_events = bgp_result
         except TimeoutError:
-            errors.append('timeout')
+            errors.append("timeout")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            errors.append(f'query:{e}')
+            errors.append(f"query:{e}")
         elapsed_ms = (time.monotonic() - t0) * 1000
-        return NetworkIntelResult(target=target, passive_dns=passive_dns[:MAX_FINDINGS_PER_TARGET], passive_fingerprint=passive_fingerprint[:MAX_FINDINGS_PER_TARGET], bgp_events=bgp_events[:MAX_FINDINGS_PER_TARGET], errors=errors, elapsed_ms=elapsed_ms)
+        return NetworkIntelResult(
+            target=target,
+            passive_dns=passive_dns[:MAX_FINDINGS_PER_TARGET],
+            passive_fingerprint=passive_fingerprint[:MAX_FINDINGS_PER_TARGET],
+            bgp_events=bgp_events[:MAX_FINDINGS_PER_TARGET],
+            errors=errors,
+            elapsed_ms=elapsed_ms,
+        )
 
     async def _query_dns(self, target: str) -> list[dict]:
         try:
             return await self._dns.query(target)
         except Exception as e:
-            logger.debug(f'[NetIntel] DNS query error: {e}')
+            logger.debug(f"[NetIntel] DNS query error: {e}")
             return []
 
     async def _query_fp(self, target: str) -> list[dict]:
         try:
             return await self._fp.query(target)
         except Exception as e:
-            logger.debug(f'[NetIntel] FP query error: {e}')
+            logger.debug(f"[NetIntel] FP query error: {e}")
             return []
 
     async def _query_bgp(self, target: str) -> list[dict]:
         """Query BGP for the target (IP only)."""
         from hledac.universal.network.bgp_monitor import BGP_AVAILABLE, monitor_bgp
+
         if not BGP_AVAILABLE:
             return []
         if not _is_ip(target):
             return []
         results: list[dict] = []
 
-        def _callback(timestamp: float, prefix: str, as_path: str, event_type: str):
-            results.append({'timestamp': timestamp, 'prefix': prefix, 'as_path': as_path, 'event_type': event_type})
+        def _callback(timestamp: float, prefix: str, as_path: str, event_type: str) -> None:
+            results.append({"timestamp": timestamp, "prefix": prefix, "as_path": as_path, "event_type": event_type})
+
         try:
             async with asyncio.timeout(10.0):
-                await monitor_bgp([f'{target}/32'], _callback, 5)
+                await monitor_bgp([f"{target}/32"], _callback, 5)
         except Exception as e:
-            logger.debug(f'[NetIntel] BGP query error: {e}')
+            logger.debug(f"[NetIntel] BGP query error: {e}")
         return results
 
     async def close(self) -> None:
         await self._dns.close()
         await self._fp.close()
 
+
 class _PassiveDNSAdapter:
     """Wrapper that avoids importing passive_dns at module level."""
-    __slots__ = tuple(('_inner',))
 
-    def __init__(self):
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
         from hledac.universal.recon.dns.passive_dns import PassiveDNSAdapter as _cls
+
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:
@@ -158,14 +174,17 @@ class _PassiveDNSAdapter:
 
     async def close(self) -> None:
         await self._inner.close()
+
 
 class _PassiveFingerprintAdapter:
     """Wrapper that avoids importing passive_fingerprint at module level."""
-    __slots__ = tuple(('_inner',))
 
-    def __init__(self):
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
         # F350M-R: Direct import from canonical recon.passive_fingerprint
         from hledac.universal.recon.passive_fingerprint import PassiveFingerprintAdapter as _cls
+
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:
@@ -174,12 +193,15 @@ class _PassiveFingerprintAdapter:
     async def close(self) -> None:
         await self._inner.close()
 
+
 def _is_ip(value: str) -> bool:
-    parts = value.split('.')
+    parts = value.split(".")
     if len(parts) == 4:
         try:
-            return all((0 <= int(p) <= 255 for p in parts))
+            return all(0 <= int(p) <= 255 for p in parts)
         except ValueError:  # noqa: BLE001
             pass
     return False
-__all__ = ['NetworkIntelAdapter', 'NetworkIntelResult', 'MAX_NETWORKINTEL_TARGETS']
+
+
+__all__ = ["NetworkIntelAdapter", "NetworkIntelResult", "MAX_NETWORKINTEL_TARGETS"]

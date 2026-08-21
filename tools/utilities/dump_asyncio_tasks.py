@@ -12,14 +12,12 @@ Run manually when a sprint is stuck and you need to inspect asyncio task state.
 Requires: Python 3.14+ for `python -m asyncio ps/pstree` commands.
 """
 
-
 import argparse
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from _core import aclose
 
 
 def _run_asyncio_command(pid: int, subcommand: str, timeout: float = 10.0) -> tuple[str, str, int]:
@@ -32,7 +30,7 @@ def _run_asyncio_command(pid: int, subcommand: str, timeout: float = 10.0) -> tu
             text=True,
             timeout=timeout,
             env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
-    )
+        )
         return proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
         return "", f"Timeout after {timeout}s", -1
@@ -53,7 +51,7 @@ def dump_asyncio_tasks(pid: int, output_dir: str | None = None) -> list[str]:
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "reports",
             "runtime_dumps",
-    )
+        )
 
     dump_dir = Path(output_dir)
     dump_dir.mkdir(parents=True, exist_ok=True)
@@ -111,18 +109,20 @@ Examples:
     )
     parser.add_argument("pid", type=int, help="Process ID to inspect")
     parser.add_argument(
-        "--output-dir", "-o",
+        "--output-dir",
+        "-o",
         help="Output directory (default: reports/runtime_dumps/)",
     )
     parser.add_argument(
-        "--timeout", "-t",
-        type=float, default=10.0,
+        "--timeout",
+        "-t",
+        type=float,
+        default=10.0,
         help="Timeout for each asyncio command (default: 10.0s)",
     )
 
     args = parser.parse_args()
 
-    # Validate PID exists
     try:
         os.kill(args.pid, 0)  # Signal 0 just checks existence
     except OSError as e:

@@ -3,11 +3,9 @@
 import asyncio
 import logging  # noqa: E402
 
-
 import msgspec.json as _json  # noqa: E402
 
-from hledac.universal.network.session_runtime import async_get_httpx_session  # noqa: E402
-from _core import aclose
+from hledac.universal.network.session_runtime import async_get_httpx_session
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +46,7 @@ class _JSSourceMapExtractor:
                 # Filter and truncate
                 paths = [s for s in sources if isinstance(s, str) and len(s) < 500][: self.MAX_PATHS]
                 return paths
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug(f"Source map timeout for {bundle_url}")
             return []
         except asyncio.CancelledError:

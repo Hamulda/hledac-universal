@@ -69,37 +69,6 @@ pub use pyo3_async_runtimes::tokio::future_into_py;
 // Also re-export into_future for calling Python async from Rust
 pub use pyo3_async_runtimes::tokio::into_future;
 
-// ============================================================================
-// Async Python Functions (using future_into_py)
-// ============================================================================
-//
-// These functions demonstrate how to expose async Rust functions as Python
-// awaitables. Instead of blocking the event loop with block_on(), we use
-// future_into_py() to return a native Python awaitable.
-//
-// USAGE EXAMPLE:
-// ```rust
-// #[pyfunction]
-// pub fn resolve_async_py(
-//     py: Python<'_>,
-//     hostname: String,
-//     qtype: Option<String>,
-// ) -> PyResult<Bound<'_, PyAny>> {
-//     future_into_py(py, async move {
-//         // Your async code here
-//         let result = resolve_host_async(hostname, qtype.unwrap_or_else(|| "A".to_string())).await;
-//         result
-//     })
-// }
-// ```
-//
-// Then in Python:
-// ```python
-// async def main():
-//     ips = await rust.dns.resolve_async("example.com")
-//     print(ips)
-// ```
-
 /// Async DNS resolution — returns awaitable to Python.
 ///
 /// This wraps the sync DNS resolver in a blocking thread, returning
@@ -299,10 +268,6 @@ pub fn async_fetch_onion_py<'py>(
         });
     })
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 #[cfg(feature = "shared_tokio")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

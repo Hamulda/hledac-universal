@@ -23,33 +23,24 @@ Usage:
     # Inside DeepHermes3Engine:
     observer.notify(ModelState(...))
 """
+
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Protocol
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
-from _core import aclose
-
-
-# ---------------------------------------------------------------------------
-# Model State Enum
-# ---------------------------------------------------------------------------
+from typing import Protocol
 
 
 class ModelLoadState(Enum):
     """Possible model load states."""
+
     UNLOADED = "unloaded"
     LOADING = "loading"
     LOADED = "loaded"
     IDLE = "idle"  # loaded but inactive
     BUSY = "busy"  # actively inferring
-
-
-# ---------------------------------------------------------------------------
-# Model State Dataclass
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +56,7 @@ class ModelState:
 
     Used by ModelManager for informed unload decisions.
     """
+
     model_id: str = "hermes"
     load_state: ModelLoadState = ModelLoadState.UNLOADED
     is_model_loaded: bool = False
@@ -84,23 +76,14 @@ class ModelState:
     @property
     def can_unload(self) -> bool:
         """True if unload would be safe (no active inference, queue empty)."""
-        return (
-            not self.inference_active
-            and self.batch_queue_depth == 0
-            and self.pending_futures == 0
-    )
+        return not self.inference_active and self.batch_queue_depth == 0 and self.pending_futures == 0
 
     def __repr__(self) -> str:
         return (
             f"ModelState(id={self.model_id!r}, state={self.load_state.value}, "
             f"idle={self.idle_seconds:.1f}s, kv_mb={self.kv_cache_memory_mb:.1f}, "
             f"queue={self.batch_queue_depth}, pending={self.pending_futures})"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Observer Protocol
-# ---------------------------------------------------------------------------
+        )
 
 
 class ModelStateObserver(Protocol):
@@ -119,11 +102,6 @@ class ModelStateObserver(Protocol):
             state: Current model state snapshot
         """
         ...
-
-
-# ---------------------------------------------------------------------------
-# State Observer Implementation
-# ---------------------------------------------------------------------------
 
 
 class StateObserver:
@@ -174,10 +152,6 @@ class StateObserver:
         """Get the most recent state, or None if never updated."""
         return self._last_state
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
 
 _state_observer: StateObserver | None = None
 

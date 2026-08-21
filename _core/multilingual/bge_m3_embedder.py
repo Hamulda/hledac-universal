@@ -18,33 +18,38 @@ On MacBook Air M1 8GB:
 Author: Hledac Team
 Issue: [SWARM]-002
 """
+
 from __future__ import annotations
+
 import logging
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
-from typing import Optional
+
 import numpy as np
-from _core._util import aclose
+
 logger = logging.getLogger(__name__)
-MODEL_ID = 'BAAI/bge-m3'
+MODEL_ID = "BAAI/bge-m3"
 NATIVE_DIM = 1024
 MRL_TARGET_DIM = 256
 MAX_BATCH_SIZE = 32
 MAX_BATCH_SIZE_LOW = 8
 MAX_SEQ_LEN = 512
-MODEL_CACHE_DIR = Path.home() / '.cache' / 'hledac' / 'models'
+MODEL_CACHE_DIR = Path.home() / ".cache" / "hledac" / "models"
+
 
 class BGEBackend(Enum):
     """Available backends for BGE-M3 inference."""
+
     MLX = auto()
     ONNX_CPU = auto()
     TRANSFORMERS = auto()
 
+
 @dataclass(frozen=True, slots=True)
 class BGEConfig:
     """Configuration for BGE-M3 embedder."""
+
     model_id: str = MODEL_ID
     native_dim: int = NATIVE_DIM
     mrl_target_dim: int = MRL_TARGET_DIM
@@ -52,34 +57,37 @@ class BGEConfig:
     batch_size: int = MAX_BATCH_SIZE
     batch_size_low: int = MAX_BATCH_SIZE_LOW
     normalize: bool = True
-    pooling_strategy: str = 'mean'
+    pooling_strategy: str = "mean"
+
 
 @dataclass(slots=True)
 class BGEInferenceResult:
     """Result from BGE-M3 inference."""
+
     embeddings: np.ndarray
     model_dim: int
-    truncated_dim: Optional[int]
-    language: Optional[str]
+    truncated_dim: int | None
+    language: str | None
     inference_ms: float
+
 
 class BGEM3Embedder:
     """
     BGE-M3 Multilingual Embedding Model.
-    
+
     Supports:
     - MLX backend (Apple Silicon GPU, unified memory)
     - ONNX Runtime CPU fallback
     - HuggingFace transformers CPU fallback
     - MRL truncation to 256d for index compatibility
-    
+
     Usage:
         embedder = BGEM3Embedder()
         await embedder.load()
-        
+
         # Single text
         emb = await embedder.embed("вредоносное ПО для кражи данных")
-        
+
         # Batch (multilingual)
         texts = [
             "APT29 threat actor analysis",
@@ -87,16 +95,34 @@ class BGEM3Embedder:
             "APT29 威胁行为者分析"
         ]
         embeddings = await embedder.embed_batch(texts)
-        
+
         # With MRL truncation to 256d
         embeddings_256d = await embedder.embed_batch(texts, truncate_to=256)
     """
-    __slots__ = tuple(('_config', '_model', '_processor', '_tokenizer', '_backend', '_is_loaded', '_mrl_truncator', '_hf_model'))
 
-    def __init__(self, model_id: str=MODEL_ID, mrl_target_dim: int=MRL_TARGET_DIM, backend: Optional[BGEBackend]=None, lazy_load: bool=True, batch_size: int=MAX_BATCH_SIZE, batch_size_low: int=MAX_BATCH_SIZE_LOW):
+    __slots__ = (
+        "_config",
+        "_model",
+        "_processor",
+        "_tokenizer",
+        "_backend",
+        "_is_loaded",
+        "_mrl_truncator",
+        "_hf_model",
+    )
+
+    def __init__(
+        self,
+        model_id: str = MODEL_ID,
+        mrl_target_dim: int = MRL_TARGET_DIM,
+        backend: BGEBackend | None = None,
+        lazy_load: bool = True,
+        batch_size: int = MAX_BATCH_SIZE,
+        batch_size_low: int = MAX_BATCH_SIZE_LOW,
+    ) -> None:
         """
         Initialize BGE-M3 embedder.
-        
+
         Args:
             model_id: HuggingFace model ID for BGE-M3.
             mrl_target_dim: Target dimension for MRL truncation (256 for USEARCH).
@@ -106,7 +132,9 @@ class BGEM3Embedder:
             batch_size: Default batch size for inference.
             batch_size_low: Batch size when memory is constrained.
         """
-        self._config = BGEConfig(model_id=model_id, mrl_target_dim=mrl_target_dim, batch_size=batch_size, batch_size_low=batch_size_low)
+        self._config = BGEConfig(
+            model_id=model_id, mrl_target_dim=mrl_target_dim, batch_size=batch_size, batch_size_low=batch_size_low
+        )
         self._model = None
         self._processor = None
         self._tokenizer = None
@@ -119,19 +147,20 @@ class BGEM3Embedder:
     def _detect_backend(self) -> BGEBackend:
         """Auto-detect best available backend."""
         if self._check_mlx_available():
-            logger.info('[BGE-M3] Using MLX backend (Apple Silicon GPU)')
+            logger.info("[BGE-M3] Using MLX backend (Apple Silicon GPU)")
             return BGEBackend.MLX
         if self._check_onnx_available():
-            logger.info('[BGE-M3] Using ONNX Runtime backend (CPU)')
+            logger.info("[BGE-M3] Using ONNX Runtime backend (CPU)")
             return BGEBackend.ONNX_CPU
-        logger.info('[BGE-M3] Using transformers backend (CPU)')
+        logger.info("[BGE-M3] Using transformers backend (CPU)")
         return BGEBackend.TRANSFORMERS
 
     def _check_mlx_available(self) -> bool:
         """Check if MLX backend is available."""
         try:
             import mlx.core as mx
-            if hasattr(mx, 'metal'):
+
+            if hasattr(mx, "metal"):
                 return mx.metal.is_available()
         except ImportError:
             pass
@@ -140,7 +169,6 @@ class BGEM3Embedder:
     def _check_onnx_available(self) -> bool:
         """Check if ONNX Runtime is available."""
         try:
-            import onnxruntime
             return True
         except ImportError:
             return False
@@ -168,7 +196,7 @@ class BGEM3Embedder:
     def load(self) -> bool:
         """
         Load BGE-M3 model with detected or specified backend.
-        
+
         Returns:
             True if load successful.
         """
@@ -186,113 +214,126 @@ class BGEM3Embedder:
         try:
             import mlx.core as mx
             from mlx_embedding_models.embedding import EmbeddingModel
-            logger.info(f'[BGE-M3] Loading via MLX: {self._config.model_id}')
+
+            logger.info(f"[BGE-M3] Loading via MLX: {self._config.model_id}")
             try:
                 self._model = EmbeddingModel.from_registry(self._config.model_id)
             except ValueError:
-                logger.info('[BGE-M3] Model not in registry, using custom loader')
+                logger.info("[BGE-M3] Model not in registry, using custom loader")
                 self._model = self._create_mlx_model()
             from .mrl import MRLTruncator
-            self._mrl_truncator = MRLTruncator(source_dim=NATIVE_DIM, target_dim=self._config.mrl_target_dim, normalize=self._config.normalize)
+
+            self._mrl_truncator = MRLTruncator(
+                source_dim=NATIVE_DIM, target_dim=self._config.mrl_target_dim, normalize=self._config.normalize
+            )
             self._is_loaded = True
-            logger.info('[BGE-M3] MLX load successful')
+            logger.info("[BGE-M3] MLX load successful")
             return True
         except ImportError as e:
-            logger.warning(f'[BGE-M3] MLX dependencies not available: {e}')
+            logger.warning(f"[BGE-M3] MLX dependencies not available: {e}")
             self._backend = BGEBackend.ONNX_CPU
             return self._load_onnx()
         except Exception as e:
-            logger.error(f'[BGE-M3] MLX load failed: {e}')
+            logger.error(f"[BGE-M3] MLX load failed: {e}")
             return False
 
-    def _create_mlx_model(self):
+    def _create_mlx_model(self) -> None:
         """
         Create MLX model for BGE-M3 from transformers.
-        
+
         This is a placeholder for custom MLX model loading.
         In production, this would load a quantized BGE-M3 MLX model.
         """
         try:
             from transformers import AutoModel, AutoTokenizer
-            import mlx.core as mx
-            logger.info(f'[BGE-M3] Loading transformers model: {self._config.model_id}')
+
+            logger.info(f"[BGE-M3] Loading transformers model: {self._config.model_id}")
             model_path = self._config.model_id
-            cache_dir = MODEL_CACHE_DIR / 'bge-m3'
+            cache_dir = MODEL_CACHE_DIR / "bge-m3"
             if cache_dir.exists():
                 model_path = str(cache_dir)
             self._tokenizer = AutoTokenizer.from_pretrained(model_path, cache_dir=str(MODEL_CACHE_DIR))
             self._hf_model = AutoModel.from_pretrained(model_path, cache_dir=str(MODEL_CACHE_DIR))
-            logger.warning('[BGE-M3] Using transformers backend. For full MLX support, convert model with: mlx-transformers')
+            logger.warning(
+                "[BGE-M3] Using transformers backend. For full MLX support, convert model with: mlx-transformers"
+            )
             return None
         except Exception as e:
-            logger.error(f'[BGE-M3] Custom model creation failed: {e}')
+            logger.error(f"[BGE-M3] Custom model creation failed: {e}")
             raise
 
     def _load_onnx(self) -> bool:
         """Load BGE-M3 via ONNX Runtime (CPU fallback)."""
         try:
             from optimum.onnxruntime import ORTModelForFeatureExtraction
-            logger.info(f'[BGE-M3] Loading via ONNX Runtime: {self._config.model_id}')
-            self._model = ORTModelForFeatureExtraction.from_pretrained(self._config.model_id, export=True, cache_dir=str(MODEL_CACHE_DIR))
+
+            logger.info(f"[BGE-M3] Loading via ONNX Runtime: {self._config.model_id}")
+            self._model = ORTModelForFeatureExtraction.from_pretrained(
+                self._config.model_id, export=True, cache_dir=str(MODEL_CACHE_DIR)
+            )
             self._is_loaded = True
-            logger.info('[BGE-M3] ONNX load successful')
+            logger.info("[BGE-M3] ONNX load successful")
             return True
         except ImportError:
-            logger.warning('[BGE-M3] ONNX Runtime not available')
+            logger.warning("[BGE-M3] ONNX Runtime not available")
             self._backend = BGEBackend.TRANSFORMERS
             return self._load_transformers()
         except Exception as e:
-            logger.error(f'[BGE-M3] ONNX load failed: {e}')
+            logger.error(f"[BGE-M3] ONNX load failed: {e}")
             return False
 
     def _load_transformers(self) -> bool:
         """Load BGE-M3 via HuggingFace transformers (CPU fallback)."""
         try:
             from transformers import AutoModel, AutoTokenizer
-            logger.info(f'[BGE-M3] Loading via transformers (CPU): {self._config.model_id}')
+
+            logger.info(f"[BGE-M3] Loading via transformers (CPU): {self._config.model_id}")
             self._tokenizer = AutoTokenizer.from_pretrained(self._config.model_id, cache_dir=str(MODEL_CACHE_DIR))
             self._model = AutoModel.from_pretrained(self._config.model_id, cache_dir=str(MODEL_CACHE_DIR))
             self._model.eval()
             from .mrl import MRLTruncator
-            self._mrl_truncator = MRLTruncator(source_dim=NATIVE_DIM, target_dim=self._config.mrl_target_dim, normalize=self._config.normalize)
+
+            self._mrl_truncator = MRLTruncator(
+                source_dim=NATIVE_DIM, target_dim=self._config.mrl_target_dim, normalize=self._config.normalize
+            )
             self._is_loaded = True
-            logger.info('[BGE-M3] Transformers load successful')
+            logger.info("[BGE-M3] Transformers load successful")
             return True
         except Exception as e:
-            logger.error(f'[BGE-M3] Transformers load failed: {e}')
+            logger.error(f"[BGE-M3] Transformers load failed: {e}")
             return False
 
-    async def embed(self, text: str, truncate_to: Optional[int]=None, normalize: bool=True) -> np.ndarray:
+    async def embed(self, text: str, truncate_to: int | None = None, normalize: bool = True) -> np.ndarray:
         """
         Embed single text to multilingual vector.
-        
+
         Args:
             text: Input text (any language).
             truncate_to: Target dimension for MRL truncation.
                         If None, uses config.mrl_target_dim.
             normalize: L2-normalize output vector.
-            
+
         Returns:
             Embedding vector (native_dim or truncate_to dim).
         """
         result = await self.embed_batch([text], truncate_to=truncate_to, normalize=normalize)
         return result[0]
 
-    async def embed_batch(self, texts: list[str], truncate_to: Optional[int]=None, normalize: bool=True) -> np.ndarray:
+    async def embed_batch(self, texts: list[str], truncate_to: int | None = None, normalize: bool = True) -> np.ndarray:
         """
         Embed batch of texts to multilingual vectors.
-        
+
         Args:
             texts: List of input texts (can be mixed languages).
             truncate_to: Target dimension for MRL truncation.
             normalize: L2-normalize output vectors.
-            
+
         Returns:
             Embedding matrix (batch, native_dim) or (batch, truncate_to).
         """
         if not self._is_loaded:
             if not self.load():
-                raise RuntimeError('[BGE-M3] Failed to load model')
+                raise RuntimeError("[BGE-M3] Failed to load model")
         target_dim = truncate_to or self._config.mrl_target_dim
         if self._backend == BGEBackend.MLX:
             embeddings = await self._embed_mlx(texts)
@@ -302,6 +343,7 @@ class BGEM3Embedder:
             embeddings = self._embed_transformers(texts)
         if target_dim != NATIVE_DIM:
             from .mrl import truncate_batch
+
             embeddings = truncate_batch(embeddings, target_dim, normalize=normalize)
         elif normalize:
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -311,28 +353,38 @@ class BGEM3Embedder:
     async def _embed_mlx(self, texts: list[str]) -> np.ndarray:
         """Embed via MLX backend."""
         import asyncio
+
         loop = asyncio.get_running_loop()
 
         def _encode():
             import mlx.core as mx
-            inputs = self._tokenizer(texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors='mlx')
+
+            inputs = self._tokenizer(
+                texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors="mlx"
+            )
             outputs = self._model(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask)
             attention_mask = mx.expand_dims(inputs.attention_mask, axis=-1)
             hidden = outputs.last_hidden_state
             pooled = (hidden * attention_mask).sum(axis=1) / attention_mask.sum(axis=1)
             return np.array(pooled, dtype=np.float32)
+
         return await loop.run_in_executor(None, _encode)
 
     def _embed_onnx(self, texts: list[str]) -> np.ndarray:
         """Embed via ONNX Runtime."""
-        inputs = self._processor(texts=texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors='np')
+        inputs = self._processor(
+            texts=texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors="np"
+        )
         outputs = self._model(**inputs)
         return outputs.last_hidden_state.mean(axis=1).astype(np.float32)
 
     def _embed_transformers(self, texts: list[str]) -> np.ndarray:
         """Embed via HuggingFace transformers."""
         import torch
-        inputs = self._tokenizer(texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors='pt')
+
+        inputs = self._tokenizer(
+            texts, padding=True, truncation=True, max_length=self._config.max_seq_len, return_tensors="pt"
+        )
         with torch.no_grad():
             outputs = self._model(**inputs)
         attention_mask = inputs.attention_mask.unsqueeze(-1)
@@ -349,20 +401,24 @@ class BGEM3Embedder:
         self._is_loaded = False
         try:
             import mlx.core as mx
-            mx.metal.clear_cache()
-        except (ImportError, AttributeError):
-            pass
-        logger.info('[BGE-M3] Model unloaded, memory freed')
-_bge_m3_instance: Optional[BGEM3Embedder] = None
 
-def get_bge_m3_embedder(mrl_target_dim: int=MRL_TARGET_DIM, lazy_load: bool=True) -> BGEM3Embedder:
+            mx.metal.clear_cache()
+        except ImportError, AttributeError:
+            pass
+        logger.info("[BGE-M3] Model unloaded, memory freed")
+
+
+_bge_m3_instance: BGEM3Embedder | None = None
+
+
+def get_bge_m3_embedder(mrl_target_dim: int = MRL_TARGET_DIM, lazy_load: bool = True) -> BGEM3Embedder:
     """
     Get singleton BGE-M3 embedder instance.
-    
+
     Args:
         mrl_target_dim: Target dimension for MRL truncation.
         lazy_load: Defer model loading until first use.
-        
+
     Returns:
         Shared BGEM3Embedder instance.
     """

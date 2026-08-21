@@ -28,7 +28,6 @@ import time
 import pytest
 
 from utils.lazy_singleton import AsyncLazySingleton, LazySingleton
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Sync LazySingleton tests
@@ -95,7 +94,7 @@ def test_sync_concurrent() -> None:
         t.join()
 
     assert factory_calls == 1, f"expected 1 factory call, got {factory_calls}"
-    assert len(set(id(r) for r in results)) == 1, "all threads got same instance"
+    assert len({id(r) for r in results}) == 1, "all threads got same instance"
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +234,7 @@ async def test_async_nested_tasks_share_context() -> None:
     # Same loop + create_task = same ContextVar context → same lock instance
     assert len(set(outer_ids)) == 1
     assert len(set(inner_ids)) == 1
-    assert outer_ids[0] == inner_ids[0], f"create_task inherits ContextVar — outer and inner must share the lock"
+    assert outer_ids[0] == inner_ids[0], "create_task inherits ContextVar — outer and inner must share the lock"
 
 
 def test_async_runs_isolation(session_event_loop: asyncio.AbstractEventLoop) -> None:

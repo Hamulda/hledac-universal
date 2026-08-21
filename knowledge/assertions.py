@@ -16,9 +16,7 @@ POUŽITÍ:
 VŠECHNY FUNKCE VRACEJÍ None — raise AssertionError pokud selžou.
 """
 
-
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
@@ -41,12 +39,10 @@ def assert_rag_engine_is_not_identity_store(rag_engine: RAGEngine) -> None:
     """
     attrs = dir(rag_engine)
     assert "add_entity" not in attrs, (
-        "RAGEngine má add_entity() — NENÍ identity store! "
-        "add_entity() patří do LanceDBIdentityStore."
+        "RAGEngine má add_entity() — NENÍ identity store! add_entity() patří do LanceDBIdentityStore."
     )
     assert "search_similar" not in attrs, (
-        "RAGEngine má search_similar() — NENÍ identity store! "
-        "search_similar() patří do LanceDBIdentityStore."
+        "RAGEngine má search_similar() — NENÍ identity store! search_similar() patří do LanceDBIdentityStore."
     )
     # RAGEngine má hybrid_retrieve — to je v pořádku
     assert hasattr(rag_engine, "hybrid_retrieve"), (
@@ -69,12 +65,10 @@ def assert_lancedb_is_not_grounding_authority(store: LanceDBIdentityStore) -> No
     """
     attrs = dir(store)
     assert "hybrid_retrieve" not in attrs, (
-        "LanceDBIdentityStore má hybrid_retrieve() — NENÍ grounding authority! "
-        "hybrid_retrieve() patří do RAGEngine."
+        "LanceDBIdentityStore má hybrid_retrieve() — NENÍ grounding authority! hybrid_retrieve() patří do RAGEngine."
     )
     assert "build_hnsw_index" not in attrs, (
-        "LanceDBIdentityStore má build_hnsw_index() — NENÍ grounding authority! "
-        "HNSW patří do RAGEngine."
+        "LanceDBIdentityStore má build_hnsw_index() — NENÍ grounding authority! HNSW patří do RAGEngine."
     )
     # LanceDB má search_similar — to je v pořádku
     assert hasattr(store, "search_similar"), (
@@ -96,12 +90,8 @@ def assert_pq_index_is_compression_only(pq_index: PQIndex) -> None:
     """
     dir(pq_index)
     # PQIndex má search() — ale jen na trained indexu, ne na kolekci
-    assert hasattr(pq_index, "encode"), (
-        "PQIndex postrádá encode() — není compression layer!"
-    )
-    assert hasattr(pq_index, "train"), (
-        "PQIndex postrádá train() — musí být trained před použitím!"
-    )
+    assert hasattr(pq_index, "encode"), "PQIndex postrádá encode() — není compression layer!"
+    assert hasattr(pq_index, "train"), "PQIndex postrádá train() — musí být trained před použitím!"
 
 
 def assert_graph_rag_is_consumer_not_owner(orchestrator: GraphRAGOrchestrator) -> None:
@@ -117,16 +107,11 @@ def assert_graph_rag_is_consumer_not_owner(orchestrator: GraphRAGOrchestrator) -
     - NEvlastnit backend storage
     """
     import inspect
+
     sig = inspect.signature(orchestrator.__class__.__init__)
     params = list(sig.parameters.keys())
-    assert "knowledge_layer" in params, (
-        f"GraphRAGOrchestrator.__init__ postrádá knowledge_layer param: {params}"
-    )
+    assert "knowledge_layer" in params, f"GraphRAGOrchestrator.__init__ postrádá knowledge_layer param: {params}"
 
-
-# =============================================================================
-# Module-level convenience function
-# =============================================================================
 
 def assert_all_boundaries(
     rag_engine: RAGEngine,

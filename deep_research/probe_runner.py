@@ -5,12 +5,14 @@ import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
+
 from hledac.universal.utils.asyncx import parallel_ok
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.dht.local_graph import LocalGraphStore
 from hledac.universal.knowledge.search_index import LocalSearchSeam, SearchDocument
-from _core import aclose
+
 '\nDeep Research Probe Runner — Bounded Post-Sprint Deep Research\n==============================================================\n\nIntegrates DeepProbeScanner into sprint lifecycle as fail-soft\npost-sprint research that does NOT block sprint export.\n\nKEY INVARIANTS:\n- source_type="deep_probe" on all probe findings\n- Timeout/depth limits are test-locked (not configurable in production)\n- Sprint export completes BEFORE probe runs (no blocking)\n- Findings persisted via async_ingest_findings_batch() (canonical path)\n- DHT findings are NOT persisted (DHT is ephemeral)\n- All methods fail-safe: exceptions logged, never propagated\n- Cache-first: LocalSearchSeam checked before network fetch\n\nCANONICAL PATH:\n  python -m hledac.universal._core --sprint --query "..." --deep-probe\n    → run_sprint() completes\n    → run_deep_probe() runs post-sprint (fire-and-forget on export timeline)\n    → findings normalized to CanonicalFinding → async_ingest_findings_batch()\n\nInvariants table (for test_deep_probe_canonical_ingest.py):\n  invariant_1 | probe findings have source_type="deep_probe"\n  invariant_2 | timeout is bounded (MAX_PROBE_DURATION_S = 120)\n  invariant_3 | depth is bounded (MAX_CRAWL_DEPTH = 3)\n  invariant_4 | sprint export completes before probe starts\n  invariant_5 | all methods are fail-safe (try/except everywhere)\n  invariant_6 | findings persisted ONLY via async_ingest_findings_batch()\n  invariant_7 | DHT findings are NOT persisted\n  invariant_8 | LocalSearchSeam checked before network fetch (cache-first)\n  invariant_9 | Successful network results indexed to LocalSearchSeam\n'
 logger = logging.getLogger(__name__)
 LOCAL_SEARCH_CACHE_THRESHOLD: float = 0.7
@@ -18,81 +20,84 @@ _DHT_LGS_CACHE: dict[int, LocalGraphStore | None] = {}
 MAX_PROBE_DURATION_S: float = 120.0
 MAX_CRAWL_DEPTH: int = 3
 
+
 async def _try_cache_lookup(
     query: str,
     local_seam: LocalSearchSeam,
     store: Any,
 ) -> tuple[dict, bool]:
     """Try local search cache first. Returns (result, cache_hit)."""
-    result = {'cache_hit': False, 'findings_ingested': 0}
+    result = {"cache_hit": False, "findings_ingested": 0}
     try:
         local_results = local_seam.search(query, top_k=5)
         if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
             cache_findings = _convert_search_results_to_findings(local_results.results, query)
-            result['cache_hit'] = True
-            result['findings_ingested'] = len(cache_findings)
+            result["cache_hit"] = True
+            result["findings_ingested"] = len(cache_findings)
             if cache_findings and store is not None:
                 try:
                     ingest_results = await store.async_ingest_findings_batch(cache_findings)
                     accepted = sum(1 for r in ingest_results if r.accepted)
-                    result['findings_ingested'] = accepted
+                    result["findings_ingested"] = accepted
                 except Exception as e:
-                    logger.warning(f'[DEEP_PROBE] cache hit ingest failed: {e}')
+                    logger.warning(f"[DEEP_PROBE] cache hit ingest failed: {e}")
     except Exception as e:
-        logger.debug(f'[DEEP_PROBE] local search failed: {e}')
-    return result, result['cache_hit']
+        logger.debug(f"[DEEP_PROBE] local search failed: {e}")
+    return result, result["cache_hit"]
 
-async def _run_parallel_probes(scanner: Any, domain: str, store: Any, max_buckets: int, query: str, local_seam: Any) -> list:
+
+async def _run_parallel_probes(
+    scanner: Any, domain: str, store: Any, max_buckets: int, query: str, local_seam: Any
+) -> list:
     """Run all probe tasks in parallel."""
+
     async def _run_discovery():
         if scanner is None:
-            return ('discovery', 0, [], [])
+            return ("discovery", 0, [], [])
         try:
             urls = await scanner.scan(domain)
             discovery_findings = _make_discovery_findings(urls, query)
-            return ('discovery', len(urls), discovery_findings, urls)
+            return ("discovery", len(urls), discovery_findings, urls)
         except Exception as e:
-            logger.debug(f'Discovery scan failed: {e}')
-            return ('discovery', 0, [], [])
+            logger.debug(f"Discovery scan failed: {e}")
+            return ("discovery", 0, [], [])
 
     async def _run_bucket_scan():
         if scanner is None:
-            return ('bucket', 0, [])
+            return ("bucket", 0, [])
         try:
             _, bucket_findings = await scanner.scan_s3_buckets(domain, store=store, max_buckets=max_buckets)
             if bucket_findings:
                 _index_probe_results_to_seam(local_seam, bucket_findings, query)
-            return ('bucket', len(bucket_findings), bucket_findings)
+            return ("bucket", len(bucket_findings), bucket_findings)
         except Exception as e:
-            logger.debug(f'Bucket scan failed: {e}')
-            return ('bucket', 0, [])
+            logger.debug(f"Bucket scan failed: {e}")
+            return ("bucket", 0, [])
 
     async def _run_ipfs():
         if scan_ipfs is None:
-            return ('ipfs', 0, [])
+            return ("ipfs", 0, [])
         try:
             ipfs_findings = await scan_ipfs(query, store=store)
             if ipfs_findings:
                 _index_probe_results_to_seam(local_seam, ipfs_findings, query)
-            return ('ipfs', len(ipfs_findings), ipfs_findings)
+            return ("ipfs", len(ipfs_findings), ipfs_findings)
         except Exception as e:
-            logger.debug(f'IPFS scan failed: {e}')
-            return ('ipfs', 0, [])
+            logger.debug(f"IPFS scan failed: {e}")
+            return ("ipfs", 0, [])
 
     async def _run_dht():
         try:
             dht_findings = await _scan_dht(query)
             if dht_findings:
                 _index_probe_results_to_seam(local_seam, dht_findings, query)
-            return ('dht', len(dht_findings), dht_findings)
+            return ("dht", len(dht_findings), dht_findings)
         except Exception as e:
-            logger.debug(f'DHT scan failed: {e}')
-            return ('dht', 0, [])
+            logger.debug(f"DHT scan failed: {e}")
+            return ("dht", 0, [])
 
-    return await parallel_ok(
-        _run_discovery(), _run_bucket_scan(), _run_ipfs(), _run_dht(),
-        label='probe_runner:208'
-    )
+    return await parallel_ok(_run_discovery(), _run_bucket_scan(), _run_ipfs(), _run_dht(), label="probe_runner:208")
+
 
 def _merge_probe_results(
     all_results: list,
@@ -105,22 +110,25 @@ def _merge_probe_results(
     for res in all_results:
         if isinstance(res, tuple):
             tag, count, findings = res[0], res[1], res[2]
-            if tag == 'discovery':
-                result['urls_discovered'] = count
+            if tag == "discovery":
+                result["urls_discovered"] = count
                 all_findings.extend(findings)
                 if len(res) > 3 and res[3]:
                     _index_urls_to_seam(local_seam, res[3], query)
-            elif tag == 'bucket':
-                result['buckets_scanned'] = count
+            elif tag == "bucket":
+                result["buckets_scanned"] = count
                 all_findings.extend(findings)
-            elif tag == 'ipfs':
-                result['ipfs_results'] = count
+            elif tag == "ipfs":
+                result["ipfs_results"] = count
                 all_findings.extend(findings)
-            elif tag == 'dht':
-                result['dht_peers'] = count
+            elif tag == "dht":
+                result["dht_peers"] = count
     return result
+
+
 MAX_BUCKET_SCAN: int = 50
 IPFS_RESULT_CAP: int = 100
+
 
 def _try_local_search(local_seam: LocalSearchSeam, query: str) -> tuple | None:
     """Try local search cache first. Returns results or None."""
@@ -129,53 +137,64 @@ def _try_local_search(local_seam: LocalSearchSeam, query: str) -> tuple | None:
         if local_results.results and local_results.results[0].score > LOCAL_SEARCH_CACHE_THRESHOLD:
             return local_results
     except Exception as e:
-        logger.debug(f'[DEEP_PROBE] local search failed: {e}')
+        logger.debug(f"[DEEP_PROBE] local search failed: {e}")
     return None
+
 
 async def _handle_cache_hit(store, local_results, query, result, start_time):
     """Handle cache hit by ingesting findings."""
     logger.debug(f"[DEEP_PROBE] cache hit for query '{query[:50]}...' (score={local_results.results[0].score:.3f})")
     cache_findings = _convert_search_results_to_findings(local_results.results, query)
-    result['cache_hit'] = True
-    result['findings_ingested'] = len(cache_findings)
+    result["cache_hit"] = True
+    result["findings_ingested"] = len(cache_findings)
     if cache_findings and store is not None:
         try:
             ingest_results = await store.async_ingest_findings_batch(cache_findings)
-            accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
-            result['findings_ingested'] = accepted
+            accepted = sum(1 for r in ingest_results if not hasattr(r, "accepted") or r.accepted)
+            result["findings_ingested"] = accepted
         except Exception as e:
-            logger.warning(f'[DEEP_PROBE] cache hit ingest failed: {e}')
-            result['errors'].append(f'cache_ingest: {e}')
-    result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
+            logger.warning(f"[DEEP_PROBE] cache hit ingest failed: {e}")
+            result["errors"].append(f"cache_ingest: {e}")
+    result["probe_duration_s"] = round(time.monotonic() - start_time, 2)
     return result
 
-async def _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result):
+
+async def _handle_network_probe(
+    scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result
+) -> None:
     """Run network probes and ingest findings."""
     try:
         all_results = await _run_parallel_probes(scanner, domain, store, max_buckets, query, local_seam)
         elapsed = time.monotonic() - start_time
         if elapsed > timeout_s:
-            logger.debug(f'Probe exceeded timeout: {elapsed:.1f}s > {timeout_s}s')
+            logger.debug(f"Probe exceeded timeout: {elapsed:.1f}s > {timeout_s}s")
         result = _merge_probe_results(all_results, all_findings, result, local_seam, query)
         if all_findings and store is not None:
             try:
                 ingest_results = await store.async_ingest_findings_batch(all_findings)
-                accepted = sum((1 for r in ingest_results if not hasattr(r, 'accepted') or r.accepted))
-                result['findings_ingested'] = accepted
-                logger.debug(f'[DEEP_PROBE] ingested {accepted}/{len(all_findings)} findings')
+                accepted = sum(1 for r in ingest_results if not hasattr(r, "accepted") or r.accepted)
+                result["findings_ingested"] = accepted
+                logger.debug(f"[DEEP_PROBE] ingested {accepted}/{len(all_findings)} findings")
             except Exception as e:
-                logger.warning(f'[DEEP_PROBE] canonical ingest failed: {e}')
-                result['errors'].append(f'ingest: {e}')
+                logger.warning(f"[DEEP_PROBE] canonical ingest failed: {e}")
+                result["errors"].append(f"ingest: {e}")
     except Exception as e:
-        logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
-        result['errors'].append(str(e))
+        logger.warning(f"[DEEP_PROBE] Unexpected error: {e}")
+        result["errors"].append(str(e))
+
 
 def _create_initial_result() -> dict:
     """Create initial result dict."""
     return {
-        'urls_discovered': 0, 'buckets_scanned': 0, 'ipfs_results': 0,
-        'dht_peers': 0, 'probe_duration_s': 0.0, 'probe_source_type': 'deep_probe',
-        'findings_ingested': 0, 'cache_hit': False, 'errors': []
+        "urls_discovered": 0,
+        "buckets_scanned": 0,
+        "ipfs_results": 0,
+        "dht_peers": 0,
+        "probe_duration_s": 0.0,
+        "probe_source_type": "deep_probe",
+        "findings_ingested": 0,
+        "cache_hit": False,
+        "errors": [],
     }
 
 
@@ -183,26 +202,41 @@ async def _try_init_scanner() -> Any:
     """Try to initialize DeepProbeScanner."""
     try:
         from hledac.universal.deep_probe import DeepProbeScanner
+
         return DeepProbeScanner(max_memory_mb=100)
     except Exception:
-        logger.debug('[DEEP_PROBE] DeepProbeScanner init failed')
+        logger.debug("[DEEP_PROBE] DeepProbeScanner init failed")
         return None
 
 
 async def _execute_probe_path(
-    scanner: Any, query: str, store, max_buckets: int,
-    local_seam: Any, start_time: float, timeout_s: float, result: dict
+    scanner: Any,
+    query: str,
+    store,
+    max_buckets: int,
+    local_seam: Any,
+    start_time: float,
+    timeout_s: float,
+    result: dict,
 ) -> dict:
     """Execute the network probe path."""
     domain = _extract_domain(query)
     if not domain:
-        domain = query.strip().lower().replace(' ', '_')[:50]
+        domain = query.strip().lower().replace(" ", "_")[:50]
     all_findings: list[CanonicalFinding] = []
-    await _handle_network_probe(scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result)
+    await _handle_network_probe(
+        scanner, domain, store, max_buckets, query, local_seam, start_time, timeout_s, all_findings, result
+    )
     return result
 
 
-async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_S, max_depth: int=MAX_CRAWL_DEPTH, max_buckets: int=MAX_BUCKET_SCAN) -> dict:
+async def run_deep_probe(
+    query: str,
+    store,
+    timeout_s: float = MAX_PROBE_DURATION_S,
+    max_depth: int = MAX_CRAWL_DEPTH,
+    max_buckets: int = MAX_BUCKET_SCAN,
+) -> dict:
     """
     Run deep probe research as post-sprint bounded activity.
 
@@ -226,6 +260,7 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
       - DHT findings use source_type="dht_discovery" (NOT persisted — invariant_7)
     """
     from hledac.universal.knowledge.search_index import LocalSearchSeam
+
     _ = max_depth
     start_time = time.monotonic()
     result = _create_initial_result()
@@ -236,7 +271,7 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
     cache_result, cache_hit = await _try_cache_lookup(query, local_seam, store)
     if cache_hit:
         result.update(cache_result)
-        result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
+        result["probe_duration_s"] = round(time.monotonic() - start_time, 2)
         return result
 
     # Try local search
@@ -247,23 +282,28 @@ async def run_deep_probe(query: str, store, timeout_s: float=MAX_PROBE_DURATION_
     try:
         result = await _execute_probe_path(
             scanner, query, store, max_buckets, local_seam, start_time, timeout_s, result
-    )
+        )
     except Exception as e:
-        logger.warning(f'[DEEP_PROBE] Unexpected error: {e}')
-        result['errors'].append(str(e))
+        logger.warning(f"[DEEP_PROBE] Unexpected error: {e}")
+        result["errors"].append(str(e))
 
-    result['probe_duration_s'] = round(time.monotonic() - start_time, 2)
-    logger.info(f"[DEEP_PROBE] completed in {result['probe_duration_s']}s | urls={result['urls_discovered']} buckets={result['buckets_scanned']} ipfs={result['ipfs_results']} ingested={result['findings_ingested']}")
+    result["probe_duration_s"] = round(time.monotonic() - start_time, 2)
+    logger.info(
+        f"[DEEP_PROBE] completed in {result['probe_duration_s']}s | urls={result['urls_discovered']} buckets={result['buckets_scanned']} ipfs={result['ipfs_results']} ingested={result['findings_ingested']}"
+    )
     return result
+
 
 def _extract_domain(query: str) -> str | None:
     """Extract domain-like string from query for targeted scanning."""
     import re
-    domain_pattern = re.compile('(?:https?://)?(?:www\\.)?([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*\\.[a-zA-Z]{2,})')
+
+    domain_pattern = re.compile("(?:https?://)?(?:www\\.)?([a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)*\\.[a-zA-Z]{2,})")
     match = domain_pattern.search(query)
     if match:
         return match.group(1)
     return None
+
 
 def _make_discovery_findings(urls: list[str], query: str) -> list[CanonicalFinding]:
     """
@@ -277,16 +317,26 @@ def _make_discovery_findings(urls: list[str], query: str) -> list[CanonicalFindi
     """
     findings: list[CanonicalFinding] = []
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
     for url in urls[:100]:
         try:
-            dedup_key = f'discovery:{url}'
+            dedup_key = f"discovery:{url}"
             finding_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:16]
-            finding = CanonicalFinding(finding_id=finding_id, query=query, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 'discovery', url), payload_text=url)
+            finding = CanonicalFinding(
+                finding_id=finding_id,
+                query=query,
+                source_type="deep_probe",
+                confidence=0.5,
+                ts=time.time(),
+                provenance=("deep_probe", "discovery", url),
+                payload_text=url,
+            )
             findings.append(finding)
         except Exception as e:
-            logger.debug(f'Failed to build discovery finding for {url}: {e}')
+            logger.debug(f"Failed to build discovery finding for {url}: {e}")
             continue
     return findings
+
 
 def _convert_search_results_to_findings(documents: list[SearchDocument], query: str) -> list[CanonicalFinding]:
     """
@@ -306,17 +356,26 @@ def _convert_search_results_to_findings(documents: list[SearchDocument], query: 
     findings: list[CanonicalFinding] = []
     for doc in documents:
         try:
-            dedup_key = f'local_corpus:{doc.url}'
+            dedup_key = f"local_corpus:{doc.url}"
             finding_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:16]
             confidence = min(doc.score * 0.9, 1.0)
             metadata = doc.metadata.copy() if doc.metadata else {}
-            metadata['cache_hit'] = True
-            finding = CanonicalFinding(finding_id=finding_id, query=query, source_type='deep_probe', confidence=confidence, ts=time.time(), provenance=('deep_probe', 'local_corpus', doc.url), payload_text=f'{doc.title}\n{doc.content}'[:4096])
+            metadata["cache_hit"] = True
+            finding = CanonicalFinding(
+                finding_id=finding_id,
+                query=query,
+                source_type="deep_probe",
+                confidence=confidence,
+                ts=time.time(),
+                provenance=("deep_probe", "local_corpus", doc.url),
+                payload_text=f"{doc.title}\n{doc.content}"[:4096],
+            )
             findings.append(finding)
         except Exception as e:
-            logger.debug(f'Failed to convert search result to finding: {e}')
+            logger.debug(f"Failed to convert search result to finding: {e}")
             continue
     return findings
+
 
 def _index_probe_results_to_seam(seam: LocalSearchSeam, findings: list[CanonicalFinding], query: str) -> None:
     """
@@ -331,6 +390,7 @@ def _index_probe_results_to_seam(seam: LocalSearchSeam, findings: list[Canonical
         query: Original probe query (used for content context)
     """
     from hledac.universal.knowledge.search_index import SearchDocument
+
     documents: list[SearchDocument] = []
     for finding in findings:
         try:
@@ -338,18 +398,25 @@ def _index_probe_results_to_seam(seam: LocalSearchSeam, findings: list[Canonical
             if not url or not isinstance(url, str):
                 continue
             title = url[:100] if len(url) > 100 else url
-            content = finding.payload_text or ''
-            doc = SearchDocument(url=url, title=title, content=content[:2000], metadata={'query': query, 'source_type': finding.source_type}, score=0.0)
+            content = finding.payload_text or ""
+            doc = SearchDocument(
+                url=url,
+                title=title,
+                content=content[:2000],
+                metadata={"query": query, "source_type": finding.source_type},
+                score=0.0,
+            )
             documents.append(doc)
         except Exception as e:
-            logger.debug(f'Failed to index finding to seam: {e}')
+            logger.debug(f"Failed to index finding to seam: {e}")
             continue
     if documents:
         try:
             seam.index(documents)
-            logger.debug(f'[DEEP_PROBE] indexed {len(documents)} results to LocalSearchSeam')
+            logger.debug(f"[DEEP_PROBE] indexed {len(documents)} results to LocalSearchSeam")
         except Exception as e:
-            logger.debug(f'[DEEP_PROBE] seam index failed: {e}')
+            logger.debug(f"[DEEP_PROBE] seam index failed: {e}")
+
 
 def _index_urls_to_seam(seam: LocalSearchSeam, urls: list[str], query: str) -> None:
     """
@@ -361,20 +428,28 @@ def _index_urls_to_seam(seam: LocalSearchSeam, urls: list[str], query: str) -> N
         query: Original probe query (used for content context)
     """
     from hledac.universal.knowledge.search_index import SearchDocument
+
     documents: list[SearchDocument] = []
     for url in urls[:50]:
         try:
-            doc = SearchDocument(url=url, title=url[:100], content=f'discovered: {url} query: {query}', metadata={'query': query, 'source_type': 'deep_probe'}, score=0.0)
+            doc = SearchDocument(
+                url=url,
+                title=url[:100],
+                content=f"discovered: {url} query: {query}",
+                metadata={"query": query, "source_type": "deep_probe"},
+                score=0.0,
+            )
             documents.append(doc)
         except Exception as e:
-            logger.debug(f'Failed to index URL to seam: {e}')
+            logger.debug(f"Failed to index URL to seam: {e}")
             continue
     if documents:
         try:
             seam.index(documents)
-            logger.debug(f'[DEEP_PROBE] indexed {len(documents)} URLs to LocalSearchSeam')
+            logger.debug(f"[DEEP_PROBE] indexed {len(documents)} URLs to LocalSearchSeam")
         except Exception as e:
-            logger.debug(f'[DEEP_PROBE] seam index failed: {e}')
+            logger.debug(f"[DEEP_PROBE] seam index failed: {e}")
+
 
 async def _scan_dht(query: str) -> list[CanonicalFinding]:
     """
@@ -392,12 +467,13 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
     Returns:
         List of CanonicalFinding (one per discovered peer, max 50).
     """
-    if os.getenv('HLEDAC_ENABLE_DHT', '').lower() not in ('1', 'true', 'yes', 'on'):
+    if os.getenv("HLEDAC_ENABLE_DHT", "").lower() not in ("1", "true", "yes", "on"):
         return []
     from hledac.universal._core.resource_governor import ResourceGovernor
     from hledac.universal.dht.kademlia_node import KademliaNode
     from hledac.universal.dht.local_graph import LocalGraphStore
     from hledac.universal.security.key_manager import KeyManager
+
     try:
         cache_key = 0
         if cache_key not in _DHT_LGS_CACHE:
@@ -409,7 +485,9 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
         lgs = _DHT_LGS_CACHE[cache_key]
         query_bytes = query.encode()[:256]
         info_hash = hashlib.sha256(query_bytes).hexdigest()[:40]
-        node = KademliaNode(node_id=f'hledac-probe-{uuid.uuid7().hex[:8]}', governor=ResourceGovernor(), local_graph_store=lgs)
+        node = KademliaNode(
+            node_id=f"hledac-probe-{uuid.uuid7().hex[:8]}", governor=ResourceGovernor(), local_graph_store=lgs
+        )
         await node.start_udp()
         try:
             async with asyncio.timeout(120.0):
@@ -418,17 +496,28 @@ async def _scan_dht(query: str) -> list[CanonicalFinding]:
             await node.stop()
         findings = []
         for ip, port in peers[:50]:
-            fid = hashlib.sha256(f'{ip}:{port}:{info_hash}'.encode()).hexdigest()[:16]
-            findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='dht_discovery', confidence=0.6, ts=time.time(), provenance=('deep_probe', 'dht', f'{ip}:{port}'), payload_text=f'DHT peer {ip}:{port} for {info_hash}'))
+            fid = hashlib.sha256(f"{ip}:{port}:{info_hash}".encode()).hexdigest()[:16]
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="dht_discovery",
+                    confidence=0.6,
+                    ts=time.time(),
+                    provenance=("deep_probe", "dht", f"{ip}:{port}"),
+                    payload_text=f"DHT peer {ip}:{port} for {info_hash}",
+                )
+            )
         return findings
     except TimeoutError:
-        logger.debug(f'DHT scan_dht timeout for query={query}')
+        logger.debug(f"DHT scan_dht timeout for query={query}")
         return []
     except Exception as e:
-        logger.debug(f'DHT scan_dht failed: {e}')
+        logger.debug(f"DHT scan_dht failed: {e}")
         return []
 
-async def run_deep_probe_if_enabled(query: str, store, deep_probe_enabled: bool=False) -> dict | None:
+
+async def run_deep_probe_if_enabled(query: str, store, deep_probe_enabled: bool = False) -> dict | None:
     """
     Conditionally run deep probe — called ONLY when --deep-probe flag is set.
 
@@ -448,16 +537,18 @@ async def run_deep_probe_if_enabled(query: str, store, deep_probe_enabled: bool=
     try:
         return await run_deep_probe(query, store)
     except Exception as e:
-        logger.warning(f'[DEEP_PROBE] run failed: {e}')
+        logger.warning(f"[DEEP_PROBE] run failed: {e}")
         return None
 
-async def run_deep_probe_standalone(query: str, timeout_s: float=MAX_PROBE_DURATION_S) -> dict:
+
+async def run_deep_probe_standalone(query: str, timeout_s: float = MAX_PROBE_DURATION_S) -> dict:
     """
     Standalone deep probe run (no sprint, no DuckDB store).
 
     Used by: python -m hledac.universal.deep_research.probe_runner --query "..."
     """
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
     store = DuckDBShadowStore()
     await store.async_initialize()
     try:

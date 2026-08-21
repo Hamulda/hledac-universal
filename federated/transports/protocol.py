@@ -48,16 +48,10 @@ DESIGN NOTES
   leaking transport state across sprints.
 """
 
-
-
 import logging
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-
-# --- PROTOCOL CONTRACT -------------------------------------------------------
 
 
 @runtime_checkable
@@ -115,9 +109,6 @@ class NodeTransport(Protocol):
         ...
 
 
-# --- FACTORY REGISTRY --------------------------------------------------------
-
-
 class NodeTransportFactory:
     """
     Name → NodeTransport class registry.
@@ -160,9 +151,7 @@ class NodeTransportFactory:
             # Lightweight Protocol check (duck-typed) — does the class
             # at least define `run` as a coroutine function?
             if not hasattr(klass, "run"):
-                raise TypeError(
-                    f"NodeTransport {klass.__name__} missing required method 'run'"
-    )
+                raise TypeError(f"NodeTransport {klass.__name__} missing required method 'run'")
             cls._REGISTRY[name] = klass
             logger.debug("[FED-TRANS] registered transport name=%s class=%s", name, klass.__name__)
             return klass
@@ -189,8 +178,9 @@ class NodeTransportFactory:
         if klass is None:
             logger.debug(
                 "[FED-TRANS] unknown transport name=%r, falling back to default %r",
-                target, cls._DEFAULT,
-    )
+                target,
+                cls._DEFAULT,
+            )
             klass = cls._REGISTRY.get(cls._DEFAULT)
         if klass is None:
             # Defensive: if even the default is missing, return a
@@ -201,8 +191,10 @@ class NodeTransportFactory:
         except Exception as e:  # GHOST_INVARIANT: fail-soft everywhere
             logger.warning(
                 "[FED-TRANS] transport name=%r failed to construct: %s: %s — using stub",
-                target, type(e).__name__, e,
-    )
+                target,
+                type(e).__name__,
+                e,
+            )
             return _EmergencyLocalTransport()
 
     @classmethod
@@ -216,11 +208,7 @@ class NodeTransportFactory:
         if name in cls._REGISTRY:
             cls._DEFAULT = name
         else:
-            logger.debug("[FED-TRANS] set_default: name=%r not registered, keeping %r",
-                         name, cls._DEFAULT)
-
-
-# --- EMERGENCY FALLBACK ------------------------------------------------------
+            logger.debug("[FED-TRANS] set_default: name=%r not registered, keeping %r", name, cls._DEFAULT)
 
 
 class _EmergencyLocalTransport:

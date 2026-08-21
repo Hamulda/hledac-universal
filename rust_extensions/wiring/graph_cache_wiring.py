@@ -58,20 +58,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Centralized Rust Backend Access
-# =============================================================================
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
 
 def _rust_available() -> bool:
     """Check if Rust backend is available."""
     return _rust_backend is not None and _rust_backend.is_available
-
-
-# =============================================================================
-# Graph Cache (Rust-backed)
-# =============================================================================
 
 
 class GraphCache:
@@ -111,13 +103,8 @@ class GraphCache:
 
         if self._available:
             try:
-                self._cache = _rust_backend.graph_cache.PyGraphLRUCache(
-                    max_entries, max_bytes
-                )
-                logger.debug(
-                    f"[GraphCache] Rust cache initialized: "
-                    f"max_entries={max_entries}, max_bytes={max_bytes}"
-                )
+                self._cache = _rust_backend.graph_cache.PyGraphLRUCache(max_entries, max_bytes)
+                logger.debug(f"[GraphCache] Rust cache initialized: max_entries={max_entries}, max_bytes={max_bytes}")
             except Exception as e:
                 logger.warning(f"[GraphCache] Failed to create Rust cache: {e}")
                 self._available = False
@@ -283,10 +270,6 @@ class GraphCache:
             }
 
 
-# =============================================================================
-# Singleton Instance
-# =============================================================================
-
 # Global cache instance - lazily initialized
 _graph_cache: GraphCache | None = None
 
@@ -312,18 +295,11 @@ def reset_graph_cache() -> None:
     _graph_cache = None
 
 
-# =============================================================================
-# Availability Check at Import Time
-# =============================================================================
-
 if _rust_available():
     try:
         _ = _rust_backend.graph_cache
         logger.info("[GraphCache] Rust graph_cache.rs integration: ENABLED")
     except AttributeError:
-        logger.info(
-            "[GraphCache] Rust graph_cache.rs integration: DISABLED "
-            "(module not in rust_backend)"
-        )
+        logger.info("[GraphCache] Rust graph_cache.rs integration: DISABLED (module not in rust_backend)")
 else:
     logger.info("[GraphCache] Rust graph_cache.rs integration: DISABLED (backend unavailable)")

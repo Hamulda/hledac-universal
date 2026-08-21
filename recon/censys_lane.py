@@ -17,28 +17,24 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
-import asyncio
 import base64
 import logging
 import os
 import time
-from typing import Any
 
 import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.rate_limiters import get_limiter
-
-from hledac.universal.security.secrets_scrubber import redact_censys_credentials, safe_error_log
 
 # DRY: Shared search lane utilities (DRY-2026-08-07)
 from hledac.universal.recon.search_lane_utils import (
     apply_jitter,
     circuit_breaker_check,
-    http_status_to_failure_kind,
     record_failure,
     record_success,
 )
+from hledac.universal.security.secrets_scrubber import safe_error_log
+from hledac.universal.utils.rate_limiters import get_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +45,7 @@ RATE_LIMIT_KEY = "censys_api"
 # [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
 # Censys free tier is 0.4 req/s (2.5s between requests). Sigma = 0.6s
 # keeps well within rate limits while decorrelating bursts.
-_CENSYS_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_CENSYS_JITTER_SIGMA_S', '0.6'))
+_CENSYS_JITTER_SIGMA_S: float = float(os.environ.get("HLEDAC_CENSYS_JITTER_SIGMA_S", "0.6"))
 
 # F266: Circuit breaker — domain for Censys API
 _CB_DOMAIN = "search.censys.io"
@@ -61,7 +57,9 @@ def _get_credentials() -> tuple[str | None, str | None]:
     return api_id, api_secret
 
 
-def _build_findings(query: str, raw_results: list[dict], ts_now: float, api_id: str | None = None, api_secret: str | None = None) -> list[CanonicalFinding]:
+def _build_findings(
+    query: str, raw_results: list[dict], ts_now: float, api_id: str | None = None, api_secret: str | None = None
+) -> list[CanonicalFinding]:
     """Build CanonicalFinding list from normalized Censys results.
 
     Args:

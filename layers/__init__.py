@@ -27,12 +27,16 @@ Usage:
     # Legacy compatibility
     from layers import GhostLayer, SecurityLayer, StealthLayer  # Still works
 """
+
 from __future__ import annotations
 
 import functools
-from typing import TypeVar, Callable
+import logging
+import warnings
+from collections.abc import Callable
+from typing import TypeVar
 
-# ─── New Consolidated Modules ───────────────────────────────────────────────────
+from layers.communication import CleaningResult, CommunicationLayer, ContentCleaner, OutputFormat
 
 # Core architecture
 from layers.core import (
@@ -46,25 +50,22 @@ from layers.core import (
 
 # Consolidated layers
 from layers.ghost import GhostLayer
-from layers.security import SecurityLayer, MissionAudit, AuditEntry
-from layers.research import ResearchLayer, TemporalSignalLayer, TemporalEvent, TemporalScore
-from layers.communication import CommunicationLayer, ContentCleaner, OutputFormat, CleaningResult
+from layers.research import ResearchLayer, TemporalEvent, TemporalScore, TemporalSignalLayer
+from layers.security import AuditEntry, MissionAudit, SecurityLayer
 from layers.stealth import (
-    StealthLayer,
-    BehaviorSimulator,
     BehaviorPattern,
-    ProfileGenerator,
+    BehaviorSimulator,
     FingerprintProfile,
+    ProfileGenerator,
+    StealthLayer,
 )
-
-# ─── Legacy Re-exports (Backward Compatibility) ────────────────────────────────
-import warnings
-import logging
 
 _logger = logging.getLogger(__name__)
 
+
 def _create_deprecated_alias(new_module: str, old_class: str, new_class: str):
     """Create a deprecated alias with warning."""
+
     def _deprecated_alias(*args, **kwargs):
         warnings.warn(
             f"layers.{old_class} is deprecated. Import from {new_module}.{new_class} instead.",
@@ -72,46 +73,29 @@ def _create_deprecated_alias(new_module: str, old_class: str, new_class: str):
             stacklevel=3,
         )
         from importlib import import_module
+
         module = import_module(new_module)
         cls = getattr(module, new_class)
         return cls(*args, **kwargs)
+
     return _deprecated_alias
 
+
 # Legacy layer modules - deprecated but kept for backward compatibility
-from layers.ghost_layer import GhostLayer as LegacyGhostLayer
-from layers.security_layer import SecurityLayer as LegacySecurityLayer
-from layers.privacy_layer import PrivacyLayer as LegacyPrivacyLayer
-from layers.stealth_layer import StealthLayer as LegacyStealthLayer
-from layers.research_layer import ResearchLayer as LegacyResearchLayer
-from layers.memory_layer import MemoryLayer as LegacyMemoryLayer
 from layers.communication_layer import CommunicationLayer as LegacyCommunicationLayer
-from layers.content_layer import ContentCleaner as LegacyContentCleaner
-from layers.temporal_signal_layer import TemporalSignalLayer as LegacyTemporalSignalLayer
-
-# Keep original imports working
-from layers.layer_protocol import (
-    Layer as LayerProtocol,
-    LayerContext as LayerContextProtocol,
-    LayerEvent as LayerEventProtocol,
-    LayerStack as LayerStackProtocol,
-)
-
-from layers.layer_manager import (
-    LayerManager,
-    LayerStatus,
-    LayerHealth,
-    UnifiedCapabilitiesManager,
-    create_layer_manager,
-    get_layer_manager,
-    create_capabilities_manager,
-    get_capabilities_manager,
-)
 
 # Content layer utilities
 from layers.content_layer import (
     CleaningResult as LegacyCleaningResult,
+)
+from layers.content_layer import ContentCleaner as LegacyContentCleaner
+from layers.content_layer import (
     ContentCleaner as LegacyContentCleanerModule,
+)
+from layers.content_layer import (
     OutputFormat as LegacyOutputFormat,
+)
+from layers.content_layer import (
     ResiliparseCleaner,
     SearchResultItem,
     SimpleHTMLCleaner,
@@ -124,40 +108,28 @@ from layers.content_layer import (
     parse_google_results,
 )
 
-# Temporal signal utilities
-from layers.temporal_signal_layer import (
-    TemporalEvent as LegacyTemporalEvent,
-    TemporalScore as LegacyTemporalScore,
-    TemporalSignalLayer as LegacyTemporalSignalLayerModule,
-    TemporalEdgeCandidate,
-    _KeyState,
-    event_from_finding_like,
-)
-
-from layers.temporal_signal_runtime import (
-    build_temporal_priority_hints,
-    close_temporal_signal_store,
-    get_temporal_signal_layer,
-    get_temporal_signal_store,
-    get_temporal_signal_summary,
-    is_temporal_store_enabled,
-    load_temporal_signal_snapshot,
-    reset_temporal_signal_layer,
-    save_temporal_signal_snapshot,
-)
-
-from layers.temporal_signal_store import TemporalSignalStore
-
 # Evasion pipeline
 from layers.evasion_pipeline import (
     EvasionCategory,
     EvasionScript,
-    FingerprintProfile as LegacyFingerprintProfile,
-    ProfileGenerator as LegacyProfileGenerator,
     _EvasionScriptGenerator,
     compute_detection_score,
     generate_evasion_scripts,
 )
+from layers.evasion_pipeline import (
+    FingerprintProfile as LegacyFingerprintProfile,
+)
+from layers.evasion_pipeline import (
+    ProfileGenerator as LegacyProfileGenerator,
+)
+
+# Examples
+from layers.examples.demos import (
+    demo_connected_coordination,
+    demo_smart_spawned_integration,
+    run_all_demos,
+)
+from layers.ghost_layer import GhostLayer as LegacyGhostLayer
 
 # Hive coordination (deprecated)
 from layers.hive_coordination import (
@@ -165,30 +137,33 @@ from layers.hive_coordination import (
     CoordinationNode,
     CoordinationTask,
     TopologyType,
+)
+from layers.hive_coordination import (
     CoordinationLayer as HiveCoordinationLayer,
 )
-
-# Stealth layer components
-from layers.stealth_layer import (
-    BehaviorPattern as LegacyBehaviorPattern,
-    BehaviorSimulator as LegacyBehaviorSimulator,
-    BrowserProfile,
-    Chameleon,
-    FingerprintConfig,
-    FingerprintRandomizer,
-    MouseMovement as LegacyMouseMovement,
-    ScrollAction,
-    SimulationConfig as LegacySimulationConfig,
+from layers.layer_manager import (
+    LayerHealth,
+    LayerManager,
+    LayerStatus,
+    UnifiedCapabilitiesManager,
+    create_capabilities_manager,
+    create_layer_manager,
+    get_capabilities_manager,
+    get_layer_manager,
 )
 
-# UA Rotator
-from layers.ua_rotator import (
-    UARotator,
-    build_randomized_headers,
-    get_random_ua,
-    get_ua_for_profile,
-    get_random_accept_language,
-    get_random_accept_encoding,
+# Keep original imports working
+from layers.layer_protocol import (
+    Layer as LayerProtocol,
+)
+from layers.layer_protocol import (
+    LayerContext as LayerContextProtocol,
+)
+from layers.layer_protocol import (
+    LayerEvent as LayerEventProtocol,
+)
+from layers.layer_protocol import (
+    LayerStack as LayerStackProtocol,
 )
 
 # Memory layer components
@@ -200,16 +175,71 @@ from layers.memory_layer import (
     SharedMemoryBlock,
     SharedMemoryManager,
 )
+from layers.memory_layer import MemoryLayer as LegacyMemoryLayer
+from layers.privacy_layer import PrivacyLayer as LegacyPrivacyLayer
+from layers.research_layer import ResearchLayer as LegacyResearchLayer
+from layers.security_layer import SecurityLayer as LegacySecurityLayer
 
-# Examples
-from layers.examples.demos import (
-    demo_connected_coordination,
-    demo_smart_spawned_integration,
-    run_all_demos,
+# Stealth layer components
+from layers.stealth_layer import (
+    BehaviorPattern as LegacyBehaviorPattern,
+)
+from layers.stealth_layer import (
+    BehaviorSimulator as LegacyBehaviorSimulator,
+)
+from layers.stealth_layer import (
+    BrowserProfile,
+    Chameleon,
+    FingerprintConfig,
+    FingerprintRandomizer,
+    ScrollAction,
+)
+from layers.stealth_layer import (
+    MouseMovement as LegacyMouseMovement,
+)
+from layers.stealth_layer import (
+    SimulationConfig as LegacySimulationConfig,
+)
+from layers.stealth_layer import StealthLayer as LegacyStealthLayer
+from layers.temporal_signal_layer import (
+    TemporalEdgeCandidate,
+    _KeyState,
+    event_from_finding_like,
 )
 
+# Temporal signal utilities
+from layers.temporal_signal_layer import (
+    TemporalEvent as LegacyTemporalEvent,
+)
+from layers.temporal_signal_layer import (
+    TemporalScore as LegacyTemporalScore,
+)
+from layers.temporal_signal_layer import TemporalSignalLayer as LegacyTemporalSignalLayer
+from layers.temporal_signal_layer import (
+    TemporalSignalLayer as LegacyTemporalSignalLayerModule,
+)
+from layers.temporal_signal_runtime import (
+    build_temporal_priority_hints,
+    close_temporal_signal_store,
+    get_temporal_signal_layer,
+    get_temporal_signal_store,
+    get_temporal_signal_summary,
+    is_temporal_store_enabled,
+    load_temporal_signal_snapshot,
+    reset_temporal_signal_layer,
+    save_temporal_signal_snapshot,
+)
+from layers.temporal_signal_store import TemporalSignalStore
 
-# ─── Generic Layer Cached Factory ──────────────────────────────────────────────
+# UA Rotator
+from layers.ua_rotator import (
+    UARotator,
+    build_randomized_headers,
+    get_random_accept_encoding,
+    get_random_accept_language,
+    get_random_ua,
+    get_ua_for_profile,
+)
 
 _T = TypeVar("_T")
 
@@ -257,8 +287,6 @@ _ghost_layer_getter = _make_cached_layer_getter(
 )
 
 
-# ─── Lazy Singleton Getters ────────────────────────────────────────────────────
-
 def get_stealth_layer() -> LegacyStealthLayer | None:
     """Lazy singleton StealthLayer accessor."""
     return _stealth_layer_getter()
@@ -280,6 +308,7 @@ def _communication_layer_cached() -> LegacyCommunicationLayer | None:
     try:
         from hledac.universal.layers.communication_layer import CommunicationLayer as _CL
         from hledac.universal.project_types import CommunicationConfig
+
         return _CL(config=CommunicationConfig())
     except Exception:
         return None
@@ -289,8 +318,6 @@ def get_communication_layer() -> LegacyCommunicationLayer | None:
     """Lazy singleton CommunicationLayer accessor."""
     return _communication_layer_cached()
 
-
-# ─── Public API ────────────────────────────────────────────────────────────────
 
 __all__ = [
     # Core architecture (new)

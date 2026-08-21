@@ -2,10 +2,6 @@
 """
 [META]-002: Cross-Sprint Entity Delta Sync Engine + SprintDeltaIndex Compatibility.
 
-
-
-
-
 Architecture
 -------------
 Two-tier design (consistent with cross_sprint_gate.py [META-001]):
@@ -50,16 +46,12 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-_ENABLE_DELTA_INDEX: bool = (
-    os.environ.get("HLEDAC_ENABLE_CROSS_SPRINT_GATE", "1").lower()
-    in ("1", "true", "yes", "on")
-    )
+_ENABLE_DELTA_INDEX: bool = os.environ.get("HLEDAC_ENABLE_CROSS_SPRINT_GATE", "1").lower() in ("1", "true", "yes", "on")
 
 # Maximum entries in KnownGoodCache (M1 8GB bounded: ~200 KB peak)
 _KNOWN_GOOD_CACHE_MAX_SIZE: int = 4096
@@ -83,6 +75,7 @@ def _get_zstd():
     if _zstd_compression is None:
         try:
             import compression.zstd as _zstd
+
             _zstd_compression = _zstd
         except ImportError:
             _zstd_compression = False  # Mark as unavailable
@@ -91,9 +84,11 @@ def _get_zstd():
 
 # ── EntityRef (for SprintDeltaIndex compatibility) ───────────────────────────
 
+
 @dataclass(frozen=True, slots=True)
 class EntityRef:
     """Reference to a confirmed entity in SprintDeltaIndex."""
+
     entity_value: str
     ioc_type: str
     source_count: int = 1
@@ -104,6 +99,7 @@ class EntityRef:
 
 
 # ── KnownGoodCache ───────────────────────────────────────────────────────────
+
 
 class KnownGoodCache:
     """
@@ -176,8 +172,10 @@ class KnownGoodCache:
             loaded += 1
         logger.info(
             "[KnownGoodCache] Loaded %d (total=%d, evicted=%d)",
-            loaded, len(self._data), self._evictions,
-    )
+            loaded,
+            len(self._data),
+            self._evictions,
+        )
         return loaded
 
     def clear(self) -> None:
@@ -202,6 +200,7 @@ class KnownGoodCache:
 
 # ── DeltaSyncEngine ──────────────────────────────────────────────────────────
 
+
 class DeltaSyncEngine:
     """
     [META]-002: Cross-sprint entity delta synchronization engine.
@@ -218,8 +217,12 @@ class DeltaSyncEngine:
     """
 
     __slots__ = (
-        "_cache", "_duckdb_store", "_prior_sprint_ids",
-        "_sprint_id", "_initialized", "_sync_lock",
+        "_cache",
+        "_duckdb_store",
+        "_prior_sprint_ids",
+        "_sprint_id",
+        "_initialized",
+        "_sync_lock",
         "_stats",
     )
 
@@ -231,9 +234,12 @@ class DeltaSyncEngine:
         self._initialized: bool = False
         self._sync_lock: asyncio.Lock = asyncio.Lock()
         self._stats: dict[str, Any] = {
-            "sync_calls": 0, "cache_loads": 0,
-            "filter_hits": 0, "filter_misses": 0,
-            "entities_synced": 0, "entities_loaded": 0,
+            "sync_calls": 0,
+            "cache_loads": 0,
+            "filter_hits": 0,
+            "filter_misses": 0,
+            "entities_synced": 0,
+            "entities_loaded": 0,
         }
 
     # ── Public API ────────────────────────────────────────────────────────
@@ -280,8 +286,9 @@ class DeltaSyncEngine:
                 aggregated = self._aggregate_observations(observations)
                 logger.info(
                     "[DeltaSyncEngine] %d obs → %d unique entities",
-                    len(observations), len(aggregated),
-    )
+                    len(observations),
+                    len(aggregated),
+                )
 
                 # 3. Enrich with content hashes
                 enriched = self._enrich_with_hashes(aggregated)
@@ -319,8 +326,10 @@ class DeltaSyncEngine:
         try:
             loop = asyncio.get_running_loop()
             entities = await loop.run_in_executor(
-                None, store._sync_get_cross_sprint_entities, prior,
-    )
+                None,
+                store._sync_get_cross_sprint_entities,
+                prior,
+            )
             if not entities:
                 return 0
             loaded = self._cache.bulk_load(entities)
@@ -372,7 +381,7 @@ class DeltaSyncEngine:
 
     def clear(self) -> None:
         self._cache.clear()
-        self._stats = {k: 0 for k in self._stats}
+        self._stats = dict.fromkeys(self._stats, 0)
         self._stats["cache_loads"] = 0
         self._initialized = False
         self._duckdb_store = None
@@ -385,13 +394,15 @@ class DeltaSyncEngine:
         try:
             # [META-002]: Use indexed sprint_id column directly — O(log n) via idx_entity_observations_sprint
             return await store.async_get_entity_observations_by_sprint(
-                sprint_id=sprint_id, limit=100_000,
-    )
+                sprint_id=sprint_id,
+                limit=100_000,
+            )
         except Exception:
             return []
 
     def _aggregate_observations(
-        self, observations: list[dict[str, Any]],
+        self,
+        observations: list[dict[str, Any]],
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Aggregate observations by (entity_value, ioc_type)."""
         aggregated: dict[tuple[str, str], dict[str, Any]] = {}
@@ -403,9 +414,12 @@ class DeltaSyncEngine:
             key = (ev, et)
             if key not in aggregated:
                 aggregated[key] = {
-                    "entity_value": ev, "ioc_type": et,
-                    "confidence_sum": 0.0, "confidence_count": 0,
-                    "ts_sum": 0.0, "ts_count": 0,
+                    "entity_value": ev,
+                    "ioc_type": et,
+                    "confidence_sum": 0.0,
+                    "confidence_count": 0,
+                    "ts_sum": 0.0,
+                    "ts_count": 0,
                 }
             agg = aggregated[key]
             agg["confidence_sum"] += obs.get("confidence", 0.0)
@@ -419,23 +433,29 @@ class DeltaSyncEngine:
         return aggregated
 
     def _enrich_with_hashes(
-        self, aggregated: dict[tuple[str, str], dict[str, Any]],
+        self,
+        aggregated: dict[tuple[str, str], dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Compute SHA-256 content hashes for each aggregated entity."""
         enriched: list[dict[str, Any]] = []
         for (ev, ioc_type), agg in aggregated.items():
             content_hash = hashlib.sha256(ev.encode("utf-8")).hexdigest()
-            enriched.append({
-                "entity_value": ev,
-                "ioc_type": ioc_type,
-                "avg_confidence": agg["avg_confidence"],
-                "last_confirmed_ts": agg["avg_ts"],
-                "sha256_content_hash": content_hash,
-            })
+            enriched.append(
+                {
+                    "entity_value": ev,
+                    "ioc_type": ioc_type,
+                    "avg_confidence": agg["avg_confidence"],
+                    "last_confirmed_ts": agg["avg_ts"],
+                    "sha256_content_hash": content_hash,
+                }
+            )
         return enriched
 
     async def _batch_upsert_entities(
-        self, store: Any, entities: list[dict[str, Any]], sprint_id: str,
+        self,
+        store: Any,
+        entities: list[dict[str, Any]],
+        sprint_id: str,
     ) -> tuple[int, int]:
         """Batch upsert entities into cross_sprint_entity_index via DuckDB.
 
@@ -450,17 +470,20 @@ class DeltaSyncEngine:
             for entity in chunk:
                 try:
                     store._sync_upsert_cross_sprint_entity(
-                        entity["entity_value"], entity["ioc_type"],
-                        sprint_id, entity["last_confirmed_ts"],
-                        entity["avg_confidence"], entity["sha256_content_hash"],
-    )
+                        entity["entity_value"],
+                        entity["ioc_type"],
+                        sprint_id,
+                        entity["last_confirmed_ts"],
+                        entity["avg_confidence"],
+                        entity["sha256_content_hash"],
+                    )
                     s += 1
                 except Exception:
                     e += 1
             return s, e
 
         for chunk_start in range(0, len(entities), _AGGREGATION_BATCH_SIZE):
-            chunk = entities[chunk_start:chunk_start + _AGGREGATION_BATCH_SIZE]
+            chunk = entities[chunk_start : chunk_start + _AGGREGATION_BATCH_SIZE]
             try:
                 loop = asyncio.get_running_loop()
                 s, e = await loop.run_in_executor(None, _batch_upsert, chunk)
@@ -474,6 +497,7 @@ class DeltaSyncEngine:
         """Extract domain from URL."""
         try:
             from urllib.parse import urlparse
+
             parsed = urlparse(url)
             if parsed.netloc:
                 host = parsed.netloc.split(":")[0]
@@ -483,7 +507,10 @@ class DeltaSyncEngine:
         return None
 
     def _make_result(
-        self, entry: dict[str, Any], url: str, match_type: str,
+        self,
+        entry: dict[str, Any],
+        url: str,
+        match_type: str,
     ) -> dict[str, Any]:
         """Build filter result dict from cache entry."""
         return {
@@ -503,6 +530,7 @@ class DeltaSyncEngine:
 
 
 # ── SprintDeltaIndex (DuckDB-backed, cross_sprint_gate.py compatible) ────────
+
 
 class SprintDeltaIndex:
     """
@@ -536,7 +564,8 @@ class SprintDeltaIndex:
             return await self._do_batch_check(entity_tuples)
 
     async def _do_batch_check(
-        self, entity_tuples: list[tuple[str, str]],
+        self,
+        entity_tuples: list[tuple[str, str]],
     ) -> dict[str, tuple[bool, EntityRef | None]]:
         """DuckDB batch lookup via cross_sprint_entity_index."""
         results: dict[str, tuple[bool, EntityRef | None]] = {}
@@ -550,17 +579,23 @@ class SprintDeltaIndex:
                 None,
                 self._duckdb_store._sync_check_cross_sprint_batch,
                 entity_values,
-    )
+            )
 
             found: set[str] = set()
             for row in rows:
                 ev, ioc_type, conf_count, last_ts, sprint, content_hash = row
                 key = f"{ioc_type}:{ev}"
-                results[key] = (True, EntityRef(
-                    entity_value=ev, ioc_type=ioc_type,
-                    source_count=conf_count, last_confirmed_ts=last_ts,
-                    last_confirmed_sprint=sprint, content_hash=content_hash,
-                ))
+                results[key] = (
+                    True,
+                    EntityRef(
+                        entity_value=ev,
+                        ioc_type=ioc_type,
+                        source_count=conf_count,
+                        last_confirmed_ts=last_ts,
+                        last_confirmed_sprint=sprint,
+                        content_hash=content_hash,
+                    ),
+                )
                 found.add(ev)
 
             for ev, ioc_type in entity_tuples:
@@ -576,13 +611,16 @@ class SprintDeltaIndex:
         return results
 
     async def is_known_good(
-        self, entity_value: str, ioc_type: str = "domain",
+        self,
+        entity_value: str,
+        ioc_type: str = "domain",
         current_sprint_id: str = "current",
     ) -> tuple[bool, EntityRef | None]:
         """Single-entity check."""
         results = await self.is_known_good_batch(
-            [(entity_value, ioc_type)], current_sprint_id,
-    )
+            [(entity_value, ioc_type)],
+            current_sprint_id,
+        )
         return results.get(f"{ioc_type}:{entity_value}", (False, None))
 
     async def mmap_load_entity(self, ref: EntityRef) -> bytes | None:
@@ -596,21 +634,23 @@ class SprintDeltaIndex:
 
 # ── Bounded LRU Cache for MmapDeltaIndex ─────────────────────────────────────
 
+
 class BoundedLruCache:
     """
     Bounded LRU cache with explicit maxsize (bytes) for M1 8GB safety.
-    
+
     Evicts least-recently-used entries when total size exceeds max_bytes.
     Uses OrderedDict for O(1) move_to_end + popitem.
-    
+
     M1 8GB: default max_bytes=512MB (512 * 1024 * 1024 bytes)
     """
-    
+
     __slots__ = ("_data", "_sizes", "_total_bytes", "_max_bytes", "_evictions", "_hits", "_misses")
-    
+
     def __init__(self, max_bytes: int = 512 * 1024 * 1024) -> None:
         # Uses OrderedDict for LRU ordering (Python 3.7+ maintains insertion order)
         from collections import OrderedDict
+
         self._data: OrderedDict[str, bytes] = OrderedDict()
         self._sizes: dict[str, int] = {}  # key → size in bytes
         self._total_bytes: int = 0
@@ -618,7 +658,7 @@ class BoundedLruCache:
         self._evictions: int = 0
         self._hits: int = 0
         self._misses: int = 0
-    
+
     def get(self, key: str) -> bytes | None:
         """Get value, moving to end (most recently used). Returns None on miss."""
         if key not in self._data:
@@ -627,30 +667,32 @@ class BoundedLruCache:
         self._data.move_to_end(key)
         self._hits += 1
         return self._data[key]
-    
+
     def set(self, key: str, value: bytes) -> bool:
         """
         Set value. Evicts LRU entries if total size exceeds max_bytes.
-        
+
         Returns True if cached, False if skipped (value too large).
         """
         value_size = len(value)
-        
+
         # Skip if single entry exceeds max cache
         if value_size > self._max_bytes:
             logger.warning(
                 "[BoundedLruCache] Entry %s too large: %d bytes > %d max",
-                key[:64], value_size, self._max_bytes,
-    )
+                key[:64],
+                value_size,
+                self._max_bytes,
+            )
             return False
-        
+
         # Remove existing entry if updating
         if key in self._data:
             old_size = self._sizes[key]
             del self._data[key]
             del self._sizes[key]
             self._total_bytes -= old_size
-        
+
         # Evict LRU entries until we have room
         while self._total_bytes + value_size > self._max_bytes and self._data:
             evicted_key, evicted_value = self._data.popitem(last=False)
@@ -658,13 +700,13 @@ class BoundedLruCache:
             self._total_bytes -= evicted_size
             self._evictions += 1
             logger.debug("[BoundedLruCache] Evicted: %s (%d bytes)", evicted_key[:64], evicted_size)
-        
+
         # Add new entry
         self._data[key] = value
         self._sizes[key] = value_size
         self._total_bytes += value_size
         return True
-    
+
     def clear(self) -> None:
         """Clear all entries."""
         self._data.clear()
@@ -672,33 +714,33 @@ class BoundedLruCache:
         self._total_bytes = 0
         self._hits = 0
         self._misses = 0
-    
+
     @property
     def size_bytes(self) -> int:
         """Current total cache size in bytes."""
         return self._total_bytes
-    
+
     @property
     def count(self) -> int:
         """Number of entries in cache."""
         return len(self._data)
-    
+
     @property
     def evictions(self) -> int:
         """Total number of evictions since creation."""
         return self._evictions
-    
+
     @property
     def hit_rate(self) -> float:
         """Cache hit rate (0.0 - 1.0)."""
         total = self._hits + self._misses
         return self._hits / total if total > 0 else 0.0
-    
+
     @property
     def hits(self) -> int:
         """Total cache hits since creation."""
         return self._hits
-    
+
     @property
     def misses(self) -> int:
         """Total cache misses since creation."""
@@ -707,48 +749,49 @@ class BoundedLruCache:
 
 # ── MmapDeltaIndex (NEXTGEN-04: Zero-Latency Bundle Delta Index) ──────────────
 
+
 class MmapDeltaIndex:
     """
     [NEXTGEN-04]: Memory-mapped delta index for zero-latency sprint caching.
-    
+
     Loads entity_index from .hledac-sprint bundles and provides O(1) lookups
     without DuckDB I/O. Enables skipping redundant fetches for entities
     confirmed within the last 24 hours (configurable TTL).
-    
+
     Key benefits:
     - Zero network I/O for freshness checks (data from bundles in memory/disk cache)
     - O(1) lookup via dict hash table
     - True zero-copy read via mmap.mmap() for file-backed entity data
     - M1 8GB optimized: bounded LRU cache (~512 MB max), in-memory index ~2MB per 100K entities
-    
+
     Architecture (tiered lookup):
       1. MmapDeltaIndex (this class) — O(1) bundle index, zero-latency
       2. SprintDeltaIndex — DuckDB-backed fast path
       3. DuckDB deep query — full historical
-    
+
     Usage:
         index = MmapDeltaIndex()
         index.register_bundle(bundle_path, sprint_id)
-        
+
         if index.is_fresh(entity_value, ioc_type, max_age_hours=24):
             patch = index.get_delta_patch(entity_value, ioc_type)
             # Apply patch to IOCGraph.buffer_ioc()
-    
+
     Integration points:
     - CrossSprintGate.should_skip_batch() — tier 1 zero-latency check
     - IOCGraph.buffer_ioc() for delta patch application
     """
 
     __slots__ = (
-        "_index",           # dict[str, dict]: idx_key → entity data
-        "_bundle_map",      # dict[str, Path]: sprint_id → bundle_path
-        "_mmap_cache",      # BoundedLruCache: decompressed entity_index → bytes
+        "_index",  # dict[str, dict]: idx_key → entity data
+        "_bundle_map",  # dict[str, Path]: sprint_id → bundle_path
+        "_mmap_cache",  # BoundedLruCache: decompressed entity_index → bytes
         "_mmap_file_refs",  # dict[str, mmap.mmap]: active mmap references
-        "_enabled",         # bool: feature flag
-        "_max_age_hours",   # float: staleness TTL
-        "_max_cache_bytes", # int: max cache size in bytes (M1 8GB safe: 512MB)
-        "_stats",           # dict: telemetry counters
-        "_lock",            # asyncio.Lock: thread safety
+        "_enabled",  # bool: feature flag
+        "_max_age_hours",  # float: staleness TTL
+        "_max_cache_bytes",  # int: max cache size in bytes (M1 8GB safe: 512MB)
+        "_stats",  # dict: telemetry counters
+        "_lock",  # asyncio.Lock: thread safety
     )
 
     def __init__(
@@ -759,7 +802,7 @@ class MmapDeltaIndex:
     ) -> None:
         """
         Initialize MmapDeltaIndex.
-        
+
         Args:
             max_age_hours: Staleness threshold (default: 24 hours)
             enabled: Feature flag (default: True)
@@ -810,16 +853,16 @@ class MmapDeltaIndex:
     ) -> int:
         """
         Register a bundle and load its entity_index into memory.
-        
+
         [NEXTGEN-04]: Uses BoundedLruCache to avoid re-reading/decompressing
         previously loaded bundles. Cache key is bundle_path string.
-        
+
         Thread-safe: Uses asyncio.Lock to prevent concurrent registration issues.
-        
+
         Args:
             bundle_path: Path to .hledac-sprint bundle
             sprint_id: Sprint identifier
-            
+
         Returns:
             Number of entities loaded from bundle
         """
@@ -829,12 +872,11 @@ class MmapDeltaIndex:
         # [NEXTGEN-04] FIX: Thread-safety with lock
         # Note: asyncio.Lock is synchronous within event loop, acceptable for this use case
         if not self._lock.locked():
-            # Synchronous path - can be called from sync code
             return self._register_bundle_impl(bundle_path, sprint_id)
-        
+
         # If lock is held, try to proceed anyway (fail-soft)
         return self._register_bundle_impl(bundle_path, sprint_id)
-    
+
     def _register_bundle_impl(
         self,
         bundle_path: Path,
@@ -847,18 +889,17 @@ class MmapDeltaIndex:
             return 0
 
         bundle_key = str(bundle_path)
-        
+
         try:
             # [OPTIMIZATION]: Use cached entity_index bytes if available
             index_bytes = self._mmap_cache.get(bundle_key)
-            
+
             if index_bytes is None:
-                # Load bundle and extract entity_index
                 index_bytes = self._load_entity_index_with_mmap(bundle_path, bundle_key)
-                
+
                 if index_bytes is None:
                     return 0
-                
+
                 # [OPTIMIZATION]: Cache decompressed index bytes for reuse (bounded)
                 if not self._mmap_cache.set(bundle_key, index_bytes):
                     logger.warning("[MmapDeltaIndex] Failed to cache entity_index for %s", sprint_id)
@@ -873,8 +914,8 @@ class MmapDeltaIndex:
             else:
                 index_text = index_bytes.decode("utf-8")
 
-            # Parse JSON
             import orjson
+
             entity_data: dict[str, dict[str, Any]] = orjson.loads(index_text)
 
             # Index entities with sprint_id context
@@ -898,7 +939,7 @@ class MmapDeltaIndex:
                 loaded,
                 len(self._index),
                 self._mmap_cache.size_bytes,
-    )
+            )
             return loaded
 
         except Exception as e:
@@ -912,14 +953,14 @@ class MmapDeltaIndex:
     ) -> bytes | None:
         """
         Load entity_index from bundle.
-        
+
         [NEXTGEN-04]: Uses read_bytes() with BoundedLruCache for efficiency.
         The caching layer handles memory efficiency; direct read keeps code simple.
-        
+
         Note: True zero-copy mmap with zstd-compressed tar is complex (zstd doesn't
         support seeking), so we rely on BoundedLruCache for caching decompressed
         entity_index bytes.
-        
+
         Returns:
             entity_index bytes or None on failure
         """
@@ -931,13 +972,13 @@ class MmapDeltaIndex:
                 except Exception:
                     pass
                 del self._mmap_file_refs[bundle_key]
-            
+
             # Read bundle bytes (caching is handled by BoundedLruCache in register_bundle)
             bundle_bytes = bundle_path.read_bytes()
             self._stats["mmap_opens"] += 1  # Reuse stat for bundle reads
-            
+
             return self._extract_entity_index_from_bundle(bundle_bytes, bundle_path)
-            
+
         except Exception as e:
             logger.debug("[MmapDeltaIndex] Bundle read failed: %s", e)
             return None
@@ -949,7 +990,7 @@ class MmapDeltaIndex:
     ) -> bytes | None:
         """
         Extract entity_index from bundle tar archive.
-        
+
         [NEXTGEN-04] [FIX #5]: Uses _ENTITY_INDEX_FILENAME constant to ensure
         consistency with sprint_bundler._add_entity_index_to_bundle().
         """
@@ -1000,14 +1041,14 @@ class MmapDeltaIndex:
     def get_entry(self, entity_value: str, ioc_type: str = "domain") -> dict[str, Any] | None:
         """
         Get the full index entry for an entity.
-        
+
         [NEXTGEN-04]: Provides public access to index entries without
         exposing internal _index dict directly.
-        
+
         Args:
             entity_value: IOC value
             ioc_type: IOC type (default: domain)
-            
+
         Returns:
             Index entry dict or None if not found
         """
@@ -1015,21 +1056,19 @@ class MmapDeltaIndex:
         return self._index.get(idx_key)
 
     def get_entry_batch(
-        self, entities: list[tuple[str, str]],
+        self,
+        entities: list[tuple[str, str]],
     ) -> dict[str, dict[str, Any] | None]:
         """
         Batch get index entries for multiple entities.
-        
+
         Args:
             entities: List of (entity_value, ioc_type) tuples
-            
+
         Returns:
             Dict mapping idx_key → entry or None
         """
-        return {
-            self._make_key(ev, ioc_type): self.get_entry(ev, ioc_type)
-            for ev, ioc_type in entities
-        }
+        return {self._make_key(ev, ioc_type): self.get_entry(ev, ioc_type) for ev, ioc_type in entities}
 
     def is_fresh(
         self,
@@ -1039,12 +1078,12 @@ class MmapDeltaIndex:
     ) -> bool:
         """
         O(1) check if entity is fresh (confirmed within TTL).
-        
+
         Args:
             entity_value: IOC value to check
             ioc_type: IOC type (default: domain)
             max_age_hours: Override default TTL (default: 24 hours)
-            
+
         Returns:
             True if entity was confirmed within TTL, False otherwise
         """
@@ -1053,15 +1092,14 @@ class MmapDeltaIndex:
 
         self._stats["fresh_checks"] += 1
         idx_key = self._make_key(entity_value, ioc_type)
-        
+
         entry = self._index.get(idx_key)
         if entry is None:
             return False
 
-        # Check staleness
         max_age = max_age_hours if max_age_hours is not None else self._max_age_hours
         age_seconds = _time.time() - entry.get("last_confirmed_ts", 0.0)
-        
+
         if age_seconds > max_age * 3600.0:
             return False
 
@@ -1075,22 +1113,22 @@ class MmapDeltaIndex:
     ) -> dict[str, bool]:
         """
         Batch O(1) freshness check for multiple entities.
-        
+
         Args:
             entities: List of (entity_value, ioc_type) tuples
             max_age_hours: Override default TTL
-            
+
         Returns:
             Dict mapping idx_key → is_fresh bool
         """
         results: dict[str, bool] = {}
         max_age = max_age_hours if max_age_hours is not None else self._max_age_hours
         cutoff = _time.time() - max_age * 3600.0
-        
+
         for ev, ioc_type in entities:
             idx_key = self._make_key(ev, ioc_type)
             entry = self._index.get(idx_key)
-            
+
             if entry is not None:
                 last_ts = entry.get("last_confirmed_ts", 0.0)
                 results[idx_key] = last_ts > cutoff
@@ -1106,7 +1144,7 @@ class MmapDeltaIndex:
     ) -> dict[str, Any] | None:
         """
         Get delta patch for zero-copy entity application.
-        
+
         Returns metadata for applying the entity to IOCGraph without
         re-fetching from network. The patch contains:
         - bundle_path: Source bundle for reference
@@ -1115,11 +1153,11 @@ class MmapDeltaIndex:
         - last_confirmed_ts: Original confirmation timestamp
         - confidence: Entity confidence
         - sources: List of confirming sources
-        
+
         Args:
             entity_value: IOC value
             ioc_type: IOC type
-            
+
         Returns:
             Delta patch dict or None if entity not in index
         """
@@ -1129,7 +1167,7 @@ class MmapDeltaIndex:
         self._stats["delta_patches"] += 1
         idx_key = self._make_key(entity_value, ioc_type)
         entry = self._index.get(idx_key)
-        
+
         if entry is None:
             return None
 
@@ -1156,17 +1194,14 @@ class MmapDeltaIndex:
     ) -> dict[str, dict[str, Any] | None]:
         """
         Batch get delta patches for multiple entities.
-        
+
         Args:
             entities: List of (entity_value, ioc_type) tuples
-            
+
         Returns:
             Dict mapping idx_key → delta patch or None
         """
-        return {
-            self._make_key(ev, ioc_type): self.get_delta_patch(ev, ioc_type)
-            for ev, ioc_type in entities
-        }
+        return {self._make_key(ev, ioc_type): self.get_delta_patch(ev, ioc_type) for ev, ioc_type in entities}
 
     async def apply_delta_patch_to_graph(
         self,
@@ -1175,15 +1210,15 @@ class MmapDeltaIndex:
     ) -> bool:
         """
         Apply delta patch to IOCGraph.buffer_ioc().
-        
+
         [NEXTGEN-04]: Enables applying cached entity data directly
         without network fetch. The observed_at timestamp preserves
         the original confirmation time.
-        
+
         Args:
             patch: Delta patch from get_delta_patch()
             graph: IOCGraph instance with buffer_ioc method
-            
+
         Returns:
             True if patch applied successfully
         """
@@ -1191,7 +1226,6 @@ class MmapDeltaIndex:
             return False
 
         try:
-            # Extract patch data
             ioc_type = patch.get("ioc_type", "domain")
             entity_value = patch.get("entity_value", "")
             observed_at = patch.get("last_confirmed_ts", None)
@@ -1206,7 +1240,7 @@ class MmapDeltaIndex:
                 value=entity_value,
                 confidence=confidence,
                 observed_at=observed_at,
-    )
+            )
             return True
 
         except Exception as e:
@@ -1226,16 +1260,16 @@ class MmapDeltaIndex:
         self._index.clear()
         self._bundle_map.clear()
         self._mmap_cache.clear()
-        
+
         # Close any open mmap references
-        for key, mm in self._mmap_file_refs.items():
+        for _key, mm in self._mmap_file_refs.items():
             try:
                 mm.close()
             except Exception:
                 pass
         self._mmap_file_refs.clear()
-        
-        self._stats = {k: 0 for k in self._stats}
+
+        self._stats = dict.fromkeys(self._stats, 0)
         self._stats["cache_evictions"] = self._mmap_cache.evictions
 
     def memory_usage(self) -> dict[str, Any]:
@@ -1298,10 +1332,10 @@ _mmap_delta_index: MmapDeltaIndex | None = None
 def get_mmap_delta_index() -> MmapDeltaIndex:
     """
     Get the singleton MmapDeltaIndex instance.
-    
+
     [NEXTGEN-04]: Provides zero-latency delta index for sprint bundles.
     Load bundles via register_bundle() after initialization.
-    
+
     Returns:
         MmapDeltaIndex singleton
     """

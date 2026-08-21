@@ -14,14 +14,13 @@ Invariants:
 - Bounded chunks counter (CHUNKS_BUDGET=8192) defends against pathological
   sources that emit millions of tiny chunks.
 """
+
 from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +36,7 @@ class BodyReadResult(Struct, frozen=True):
 
     msgspec.Struct: ~3× faster instantiation, zero GC overhead on M1 UMA.
     """
+
     body: bytes
     total_read: int  # bytes after truncation (== len(body) when truncated)
     truncated: bool
@@ -65,7 +65,7 @@ async def _read_body_into(
                 logger.warning(
                     f"Body read hit CHUNKS_BUDGET={CHUNKS_BUDGET} without byte cap; "
                     f"truncating at {len(content_bytes)} bytes"
-    )
+                )
                 truncated = True
                 break
             content_bytes.extend(chunk)
@@ -75,13 +75,11 @@ async def _read_body_into(
             total_read=len(content_bytes),
             truncated=truncated,
             chunks_consumed=chunks_consumed,
-    )
+        )
 
     async for chunk in chunks:
         if chunks_consumed >= CHUNKS_BUDGET:
-            logger.warning(
-                f"Body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; truncating at {max_bytes} bytes"
-    )
+            logger.warning(f"Body read hit CHUNKS_BUDGET={CHUNKS_BUDGET}; truncating at {max_bytes} bytes")
             truncated = True
             break
         content_bytes.extend(chunk)

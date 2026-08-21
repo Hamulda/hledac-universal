@@ -194,8 +194,6 @@ pub fn cosine_scalar(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x * y).sum())
 }
 
-// ─── Public API (routing) ────────────────────────────────────────────────────
-
 /// Normalize using best available SIMD, with scalar fallback.
 /// ISSUE-007: Returns Result — zero/near-zero vector is Err(EmbeddingErrorKind::ZeroVector).
 ///

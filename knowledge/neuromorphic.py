@@ -3,8 +3,6 @@ Neuromorphic Memory Module — STDP-based episodic memory with zone transitions.
 
 Extracted from coordinators/memory_coordinator.py (F320 refactor).
 
-
-
 Neuromorphic subsystem is gated behind ``HLEDAC_ENABLE_NEURO=1`` (default OFF).
 Always-on, bounded, fail-safe — if scipy/numpy unavailable, falls back gracefully.
 
@@ -16,12 +14,12 @@ import hashlib
 import logging
 import time
 from collections import deque
-from collections.abc import Callable
-import msgspec
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-from _core import aclose
+from typing import Any
+
+import msgspec
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 # Deferred: loaded on first access via _get_scipy_sparse() / _get_np()
 _scipy_sparse_module: Any = None
@@ -70,11 +68,6 @@ MAX_SIMILARITIES = 1000
 MAX_PATTERNS = 2000
 
 
-# =======================================================================
-# Neuromorphic Enums & Dataclasses
-# =======================================================================
-
-
 class NeuromorphicMemoryZone(Enum):
     """Memory zones for neuromorphic memory with STDP transitions."""
 
@@ -120,11 +113,6 @@ class MemoryPattern(Struct):
     def reinforce(self, amount: float = 0.1) -> None:
         """Reinforce memory strength (capped at 1.0)."""
         self.strength = min(1.0, self.strength + amount)
-
-
-# =======================================================================
-# NeuromorphicMemoryManager
-# =======================================================================
 
 
 class NeuromorphicMemoryManager:
@@ -207,7 +195,7 @@ class NeuromorphicMemoryManager:
             "NeuromorphicMemoryManager initialized: %s neurons, %.1f%% connectivity",
             n_neurons,
             connectivity * 100,
-    )
+        )
 
     def _init_synaptic_weights(self, n_neurons: int, connectivity: float) -> Any:
         """Initialize sparse synaptic weight matrix."""
@@ -227,7 +215,7 @@ class NeuromorphicMemoryManager:
             weights = _sp.csr_matrix(
                 (data.astype(_np.float32), (rows, cols)),
                 shape=(n_neurons, n_neurons),
-    )
+            )
             # Symmetrize
             weights = (weights + weights.T) / 2
             # No self-connections
@@ -250,7 +238,6 @@ class NeuromorphicMemoryManager:
         else:
             raw = str(data).encode()
 
-        # Create fixed-size activation vector
         activations = _np.zeros(self.n_neurons, dtype=_np.float32)
         hash_bytes = hashlib.sha256(raw).digest()
         n_bytes = len(hash_bytes)
@@ -297,7 +284,7 @@ class NeuromorphicMemoryManager:
         try:
             active = _np.where(activations > 0.5)[0]
             for i, pre in enumerate(active):
-                for post in active[i + 1:]:
+                for post in active[i + 1 :]:
                     delta_t = 1.0  # Simplified
                     dw = self._stdp_update(pre, post, delta_t)
                     # Apply to weight matrix symmetrically
@@ -334,7 +321,7 @@ class NeuromorphicMemoryManager:
             timestamp=time.time(),
             strength=1.0,
             metadata={"zone": zone.value},
-    )
+        )
 
         self._patterns[pattern_id] = pattern
 
@@ -496,7 +483,7 @@ class NeuromorphicMemoryManager:
             "n_neurons": self.n_neurons,
         }
         if self.synaptic_weights is not None:
-            stats["synaptic_density"] = self.synaptic_weights.nnz / (self.n_neurons ** 2)
+            stats["synaptic_density"] = self.synaptic_weights.nnz / (self.n_neurons**2)
         else:
             stats["synaptic_density"] = 0.0
         return stats

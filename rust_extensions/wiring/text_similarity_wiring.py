@@ -29,21 +29,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_text_similarity
 
-# Create singleton instance
 _text_similarity = get_text_similarity()
-
 
 def text_similarity_wired():
     """Get the wired text similarity integration."""
     return _text_similarity
-
 
 def group_similar_texts(
     texts: list[str],
@@ -63,8 +58,6 @@ def group_similar_texts(
     """
     return _text_similarity.group_similar_texts(texts, threshold)
 
-
-# Check availability at import time for logging
 if _text_similarity.available:
     logger.info("[TextSimilarity] Rust text_similarity.rs integration: ENABLED")
 else:

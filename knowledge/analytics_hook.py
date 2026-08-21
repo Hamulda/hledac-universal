@@ -61,22 +61,26 @@ Used only when:
   2. Explicitly requested in tests
 Session-only persistence expected — not treated as a bug.
 """
+
 import asyncio
 import logging
 import os
 import threading
 import time
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 _SHADOW_ENABLED: bool | None = None
+
 
 def _is_shadow_enabled() -> bool:
     """Check GHOST_DUCKDB_SHADOW flag with cached result."""
     global _SHADOW_ENABLED
     if _SHADOW_ENABLED is None:
-        _SHADOW_ENABLED = os.environ.get('GHOST_DUCKDB_SHADOW', '0') == '1'
+        _SHADOW_ENABLED = os.environ.get("GHOST_DUCKDB_SHADOW", "0") == "1"
     return _SHADOW_ENABLED
+
+
 _MAX_QUEUE_SIZE: int = 200
 _SHADOW_BATCH_SIZE: int = 500
 _SHADOW_FLUSH_INTERVAL: float = 1.0
@@ -84,6 +88,7 @@ _SHADOW_INGEST_FAILURES: int = 0
 _QUEUE_FULL_WARNED: bool = False
 _SHADOW_FAILURES_AT_LAST_FLUSH: int = 0
 _SHADOW_ALERT_THRESHOLD: int = 10
+
 
 class _ShadowRecorder:
     """
@@ -94,7 +99,8 @@ class _ShadowRecorder:
     - DuckDB error → drop record, increment counter, WARN once
     - Not enabled → zero-op
     """
-    __slots__ = tuple(('_closed', '_flush_failures', '_queue', '_store', '_worker_lock', '_worker_started'))
+
+    __slots__ = ("_closed", "_flush_failures", "_queue", "_store", "_worker_lock", "_worker_started")
 
     def __init__(self) -> None:
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_MAX_QUEUE_SIZE)
@@ -118,13 +124,14 @@ class _ShadowRecorder:
             if self._worker_started:
                 return
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 return
             self._worker_started = True
             # F350M-R ISSUE #31: safe_create_task with eager_start=True (analytics worker is hot path)
             from hledac.universal.utils.asyncx import safe_create_task
-            safe_create_task(self._worker(), name='analytics_hook.worker', eager_start=True)
+
+            safe_create_task(self._worker(), name="analytics_hook.worker", eager_start=True)
 
     def enqueue(self, record: dict[str, Any]) -> None:
         """
@@ -148,7 +155,9 @@ class _ShadowRecorder:
         except asyncio.QueueFull:
             _SHADOW_INGEST_FAILURES += 1
             if not _QUEUE_FULL_WARNED:
-                logger.warning(f'[SHADOW] queue full ({_MAX_QUEUE_SIZE}), dropping record. Total drops: {_SHADOW_INGEST_FAILURES}')
+                logger.warning(
+                    f"[SHADOW] queue full ({_MAX_QUEUE_SIZE}), dropping record. Total drops: {_SHADOW_INGEST_FAILURES}"
+                )
                 _QUEUE_FULL_WARNED = True
         except RuntimeError:
             _SHADOW_INGEST_FAILURES += 1
@@ -164,14 +173,15 @@ class _ShadowRecorder:
         if self._store is None:
             try:
                 from .duckdb_store import DuckDBShadowStore
+
                 self._store = DuckDBShadowStore()
                 initialized = await self._store.async_initialize()
                 if not initialized:
-                    logger.warning('[SHADOW] DuckDBShadowStore async_initialize failed')
+                    logger.warning("[SHADOW] DuckDBShadowStore async_initialize failed")
                     self._store = None
                     return
             except Exception as e:
-                logger.warning(f'[SHADOW] failed to initialize store: {e}')
+                logger.warning(f"[SHADOW] failed to initialize store: {e}")
                 self._store = None
                 return
         batch: list[dict[str, Any]] = []
@@ -181,7 +191,9 @@ class _ShadowRecorder:
                 async with asyncio.timeout(_SHADOW_FLUSH_INTERVAL):
                     item = await self._queue.get()
                 batch.append(item)
-                if len(batch) >= _SHADOW_BATCH_SIZE or (batch and time.monotonic() - last_flush >= _SHADOW_FLUSH_INTERVAL):
+                if len(batch) >= _SHADOW_BATCH_SIZE or (
+                    batch and time.monotonic() - last_flush >= _SHADOW_FLUSH_INTERVAL
+                ):
                     await self._flush_batch(batch)
                     batch = []
                     last_flush = time.monotonic()
@@ -193,13 +205,13 @@ class _ShadowRecorder:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f'[SHADOW] worker error: {e}')
+                logger.warning(f"[SHADOW] worker error: {e}")
         if batch and self._store is not None:
             try:
                 async with asyncio.timeout(2.0):
                     await self._store.async_record_shadow_findings_batch(batch)
             except Exception as e:
-                logger.warning(f'[SHADOW] final flush failed: {e}')
+                logger.warning(f"[SHADOW] final flush failed: {e}")
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of records to DuckDB via the store."""
@@ -208,13 +220,13 @@ class _ShadowRecorder:
         try:
             inserted = await self._store.async_record_shadow_findings_batch(batch, max_batch_size=_SHADOW_BATCH_SIZE)
             if inserted < len(batch):
-                logger.warning(f'[SHADOW] partial insert: {inserted}/{len(batch)} records')
+                logger.warning(f"[SHADOW] partial insert: {inserted}/{len(batch)} records")
         except Exception as e:
             global _SHADOW_INGEST_FAILURES
             _SHADOW_INGEST_FAILURES += len(batch)
-            logger.warning(f'[SHADOW] batch insert failed ({len(batch)} records): {e}')
+            logger.warning(f"[SHADOW] batch insert failed ({len(batch)} records): {e}")
 
-    async def aclose(self, timeout: float=2.0) -> None:
+    async def aclose(self, timeout: float = 2.0) -> None:
         """
         Async shutdown — drains pending queue, attempts final flush, then gives up.
 
@@ -241,17 +253,20 @@ class _ShadowRecorder:
                         await self._store.async_record_shadow_findings_batch(drained)
                 except Exception as e:
                     _SHADOW_INGEST_FAILURES += len(drained)
-                    logger.warning(f'[SHADOW] final flush of {len(drained)} drained records failed: {e}')
+                    logger.warning(f"[SHADOW] final flush of {len(drained)} drained records failed: {e}")
             else:
                 _SHADOW_INGEST_FAILURES += len(drained)
-                logger.warning(f'[SHADOW] store was never initialized, {len(drained)} drained records lost')
+                logger.warning(f"[SHADOW] store was never initialized, {len(drained)} drained records lost")
         if self._store is not None:
             try:
                 async with asyncio.timeout(timeout):
                     await asyncio.shield(self._store.aclose())
             except Exception:  # noqa: BLE001
                 pass
+
+
 _shadow_recorder: _ShadowRecorder | None = None
+
 
 def _get_recorder() -> _ShadowRecorder:
     """Get or create the module-level shadow recorder."""
@@ -260,7 +275,21 @@ def _get_recorder() -> _ShadowRecorder:
         _shadow_recorder = _ShadowRecorder()
     return _shadow_recorder
 
-def shadow_record_finding(finding_id: str, query: str, source_type: str, confidence: float, run_id: str | None=None, url: str | None=None, title: str | None=None, source: str | None=None, relevance_score: float | None=None, branch_id: str | None=None, provider_id: str | None=None, action_id: str | None=None) -> None:
+
+def shadow_record_finding(
+    finding_id: str,
+    query: str,
+    source_type: str,
+    confidence: float,
+    run_id: str | None = None,
+    url: str | None = None,
+    title: str | None = None,
+    source: str | None = None,
+    relevance_score: float | None = None,
+    branch_id: str | None = None,
+    provider_id: str | None = None,
+    action_id: str | None = None,
+) -> None:
     """
     Non-blocking shadow record for a finding.
 
@@ -286,12 +315,26 @@ def shadow_record_finding(finding_id: str, query: str, source_type: str, confide
     """
     if not _is_shadow_enabled():
         return
-    record: dict[str, Any] = {'id': finding_id, 'run_id': run_id, 'query': query, 'url': url, 'title': title, 'source': source, 'source_type': source_type, 'relevance_score': relevance_score, 'confidence': confidence if confidence is not None else 0.0, 'branch_id': branch_id, 'provider_id': provider_id, 'action_id': action_id}
+    record: dict[str, Any] = {
+        "id": finding_id,
+        "run_id": run_id,
+        "query": query,
+        "url": url,
+        "title": title,
+        "source": source,
+        "source_type": source_type,
+        "relevance_score": relevance_score,
+        "confidence": confidence if confidence is not None else 0.0,
+        "branch_id": branch_id,
+        "provider_id": provider_id,
+        "action_id": action_id,
+    }
     try:
         _get_recorder().enqueue(record)
     except Exception:
         global _SHADOW_INGEST_FAILURES
         _SHADOW_INGEST_FAILURES += 1
+
 
 async def shadow_aclose() -> None:
     """Async shutdown of the shadow recorder with final flush."""
@@ -302,9 +345,11 @@ async def shadow_aclose() -> None:
         _shadow_recorder = None
     _SHADOW_FAILURES_AT_LAST_FLUSH = _SHADOW_INGEST_FAILURES
 
+
 def shadow_ingest_failures() -> int:
     """Return the count of dropped shadow records."""
     return _SHADOW_INGEST_FAILURES
+
 
 def shadow_reset_failures() -> None:
     """Reset the failure counter (for tests)."""
@@ -312,7 +357,8 @@ def shadow_reset_failures() -> None:
     _SHADOW_INGEST_FAILURES = 0
     _QUEUE_FULL_WARNED = False
 
-def _emit_shadow_telemetry(failure_count: int | None=None) -> None:
+
+def _emit_shadow_telemetry(failure_count: int | None = None) -> None:
     """Emit shadow analytics telemetry via OTel span attrs + gauge metric.
 
     LP-1 fix: _SHADOW_INGEST_FAILURES tracked but never surfaced to operators.
@@ -331,19 +377,23 @@ def _emit_shadow_telemetry(failure_count: int | None=None) -> None:
         failure_count = _SHADOW_INGEST_FAILURES
     try:
         from otel._instrumentation import set_attribute
-        set_attribute('shadow.ingest_failures', failure_count)
-        set_attribute('shadow.queue_full_warned', _QUEUE_FULL_WARNED)
+
+        set_attribute("shadow.ingest_failures", failure_count)
+        set_attribute("shadow.queue_full_warned", _QUEUE_FULL_WARNED)
     except Exception:  # noqa: BLE001
         pass
     try:
         from hledac.universal.metrics_registry import get_metrics_registry
-        get_metrics_registry().set_gauge('shadow_ingest_failures', float(failure_count))
+
+        get_metrics_registry().set_gauge("shadow_ingest_failures", float(failure_count))
     except Exception:  # noqa: BLE001
         pass
     try:
         global _SHADOW_FAILURES_AT_LAST_FLUSH
         _new_failures = failure_count - _SHADOW_FAILURES_AT_LAST_FLUSH
         if _new_failures > _SHADOW_ALERT_THRESHOLD:
-            logger.warning(f'[SHADOW ALERT] Queue saturating: {_new_failures} new failures since last flush (threshold={_SHADOW_ALERT_THRESHOLD}). Findings may be disappearing.')
+            logger.warning(
+                f"[SHADOW ALERT] Queue saturating: {_new_failures} new failures since last flush (threshold={_SHADOW_ALERT_THRESHOLD}). Findings may be disappearing."
+            )
     except Exception:  # noqa: BLE001
         pass

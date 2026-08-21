@@ -10,11 +10,8 @@ Wayback CDX analysis is non-blocking and fail-soft — errors never crash the sp
 M1 8GB: No model load, pure I/O with bounded results.
 """
 
-
-import asyncio
 import logging
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
@@ -57,11 +54,7 @@ class WaybackCDXDeepAdapter:
 
         try:
             findings: list = getattr(result, "accepted_findings", None) or []
-            domain_values = [
-                getattr(f, "ioc_value", "")
-                for f in findings
-                if getattr(f, "ioc_type", None) == "domain"
-            ]
+            domain_values = [getattr(f, "ioc_value", "") for f in findings if getattr(f, "ioc_type", None) == "domain"]
             if not domain_values:
                 return
 
@@ -75,13 +68,13 @@ class WaybackCDXDeepAdapter:
                     match_type="domain",
                     limit_per_domain=100,
                     concurrency=3,
-    )
+                )
                 findings_count = len(getattr(cdx_results, "findings", []) or [])
                 logger.debug(
                     "[WaybackCDXDeep] %d domains → %d archived results",
                     len(domains_to_query),
                     findings_count,
-    )
+                )
             finally:
                 await adapter.close()
         except Exception:  # noqa: BLE001

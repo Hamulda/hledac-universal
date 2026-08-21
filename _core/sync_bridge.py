@@ -42,15 +42,14 @@ import asyncio
 import logging
 import threading
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import TypeVar, cast
-from _core._util import aclose
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
 
-async def stream_via_queue(
+async def stream_via_queue[T](
     gen_fn: Callable[..., Iterator[_T]],
     *args: object,
 ) -> AsyncIterator[_T]:

@@ -17,22 +17,15 @@ Fixes under test:
 No live sprints. No network. No MLX. No file system mutations outside this dir.
 """
 
-
-import ast
 import json
 import sys
 from pathlib import Path
-from _core import aclose
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 for _p in [str(ROOT), str(ROOT / "hledac" / "universal")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 1: P2 — acquisition_profile truth in LiveMeasurementResult parser path
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_p2_acquisition_profile_from_parsed_not_overwritten() -> dict:
     """
@@ -51,7 +44,7 @@ def test_p2_acquisition_profile_from_parsed_not_overwritten() -> dict:
     if idx < 0:
         return {"test": "P2", "fix_present": False, "detail": "P2 FAIL: acquisition_report conditional not found"}
 
-    chunk = source[idx:idx + 800]
+    chunk = source[idx : idx + 800]
 
     has_ap_get = "_ap_from_report = result.acquisition_report.get('acquisition_profile')" in chunk
     has_guard = "if _ap_from_report:" in chunk
@@ -67,15 +60,11 @@ def test_p2_acquisition_profile_from_parsed_not_overwritten() -> dict:
         "detail": (
             "P2 VERIFIED: acquisition_profile only set when _ap_from_report is truthy. "
             "Canonical parsed value preserved when file re-read returns None/default."
-            if guard_prevents_overwrite else
-            f"P2 FAIL: ap_get={has_ap_get}, guard={has_guard}, cond_assign={has_conditional_assign}"
+            if guard_prevents_overwrite
+            else f"P2 FAIL: ap_get={has_ap_get}, guard={has_guard}, cond_assign={has_conditional_assign}"
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 2: P3 — prewindup_barrier_checked/satisfied propagation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_p3_prewindup_propagation() -> dict:
     """
@@ -91,12 +80,16 @@ def test_p3_prewindup_propagation() -> dict:
     source = report_path.read_text()
 
     found_checked = "result.prewindup_barrier_checked = bool(_as.get('prewindup_barrier_checked', False))" in source
-    found_satisfied = "result.prewindup_barrier_satisfied = bool(_as.get('prewindup_barrier_satisfied', False))" in source
+    found_satisfied = (
+        "result.prewindup_barrier_satisfied = bool(_as.get('prewindup_barrier_satisfied', False))" in source
+    )
 
     both_present = found_checked and found_satisfied
 
     parsed_call_idx = source.find("parsed = _parse_sprint_report(")
-    checked_in_context = found_checked and parsed_call_idx >= 0 and source.find("result.prewindup_barrier_checked") > parsed_call_idx
+    checked_in_context = (
+        found_checked and parsed_call_idx >= 0 and source.find("result.prewindup_barrier_checked") > parsed_call_idx
+    )
 
     return {
         "test": "P3",
@@ -108,15 +101,11 @@ def test_p3_prewindup_propagation() -> dict:
             "P3 VERIFIED: prewindup_barrier_checked and prewindup_barrier_satisfied "
             "are read from parsed acquisition_strategy and stamped onto LiveMeasurementResult. "
             "False/None cases remain truthful via bool() cast with False default."
-            if both_present and checked_in_context else
-            f"P3 FAIL: checked={found_checked}, satisfied={found_satisfied}, in_context={checked_in_context}"
+            if both_present and checked_in_context
+            else f"P3 FAIL: checked={found_checked}, satisfied={found_satisfied}, in_context={checked_in_context}"
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 3: P4 — async _record_scheduler_exit call contract
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_p4_async_record_scheduler_exit() -> dict:
     """
@@ -204,7 +193,9 @@ def test_p4_async_record_scheduler_exit() -> dict:
             if "asyncio.run" in lines[i]:
                 no_asyncio_in_fft = False
 
-    fix_present = async_def_found and finalize_await_found and not bare_call_lines and no_asyncio_in_rse and no_asyncio_in_fft
+    fix_present = (
+        async_def_found and finalize_await_found and not bare_call_lines and no_asyncio_in_rse and no_asyncio_in_fft
+    )
 
     return {
         "test": "P4",
@@ -217,17 +208,13 @@ def test_p4_async_record_scheduler_exit() -> dict:
         "detail": (
             "P4 VERIFIED: _record_scheduler_exit is async def, _finalize_result_truth "
             "awaits it, no bare unawaited call sites, no asyncio.run introduced."
-            if fix_present else
-            f"P4 FAIL: async={async_def_found}, await={finalize_await_found}, "
+            if fix_present
+            else f"P4 FAIL: async={async_def_found}, await={finalize_await_found}, "
             f"bare={bare_call_lines}, asyncio_rse={no_asyncio_in_rse}, "
             f"asyncio_fft={no_asyncio_in_fft}"
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 4: Exit guard semantics
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_exit_guard_semantics() -> dict:
     """
@@ -248,7 +235,7 @@ def test_exit_guard_semantics() -> dict:
     capture_block_idx = source.find(guard_capture_block)
     has_try_except = False
     if capture_block_idx >= 0:
-        chunk = source[capture_block_idx:capture_block_idx + 600]
+        chunk = source[capture_block_idx : capture_block_idx + 600]
         has_try_except = "try:" in chunk and "except" in chunk
 
     guard_satellite_pattern = "self._result.scheduler_exit_guard_checked = self._result.return_guard_checked"
@@ -268,17 +255,13 @@ def test_exit_guard_semantics() -> dict:
             "_record_scheduler_exit attempts _ensure_mandatory_nonfeed_before_return "
             "wrapped in try/except (fail-soft). When True, skips duplicate. "
             "scheduler_exit_guard_checked mirrors return_guard_checked post-attempt."
-            if fix_present else
-            f"EXIT GUARD FAIL: capture={guard_capture_present}, "
+            if fix_present
+            else f"EXIT GUARD FAIL: capture={guard_capture_present}, "
             f"sets_checked={sets_checked_true}, try_except={has_try_except}, "
             f"satellite={guard_satellite_present}"
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 5: Telemetry cannot lie
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_telemetry_cannot_lie() -> dict:
     """
@@ -293,15 +276,13 @@ def test_telemetry_cannot_lie() -> dict:
     sched_path = ROOT / "runtime" / "sprint_scheduler.py"
     source = sched_path.read_text()
 
-    guard_checked_satellite = (
-        "self._result.scheduler_exit_guard_checked = self._result.return_guard_checked" in source
-    )
+    guard_checked_satellite = "self._result.scheduler_exit_guard_checked = self._result.return_guard_checked" in source
     guard_satisfied_satellite = (
         "self._result.scheduler_exit_guard_satisfied = self._result.return_guard_satisfied" in source
     )
     prewindup_from_strategy = (
-        "result.prewindup_barrier_checked = bool(_as.get('prewindup_barrier_checked', False))" in
-        (ROOT / "benchmarks" / "live_sprint_measurement.py").read_text()
+        "result.prewindup_barrier_checked = bool(_as.get('prewindup_barrier_checked', False))"
+        in (ROOT / "benchmarks" / "live_sprint_measurement.py").read_text()
     )
 
     fix_present = guard_checked_satellite and guard_satisfied_satellite and prewindup_from_strategy
@@ -317,17 +298,13 @@ def test_telemetry_cannot_lie() -> dict:
             "(True only after guard attempt). scheduler_exit_guard_satisfied mirrors "
             "return_guard_satisfied (True only when lanes terminal). prewindup fields "
             "propagate from parsed acquisition_strategy, independent of exit guard."
-            if fix_present else
-            f"TELEMETRY FAIL: checked_sat={guard_checked_satellite}, "
+            if fix_present
+            else f"TELEMETRY FAIL: checked_sat={guard_checked_satellite}, "
             f"satisfied_sat={guard_satisfied_satellite}, "
             f"prewindup_indep={prewindup_from_strategy}"
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK 6: Regression
-# ─────────────────────────────────────────────────────────────────────────────
 
 def test_regression_other_lanes() -> dict:
     """Regression: F223D, F230A, F230D test dirs exist with test files."""
@@ -356,15 +333,11 @@ def test_regression_other_lanes() -> dict:
             f"REGRESSION: F223D={results['F223D']['test_files']} files, "
             f"F230A={results['F230A']['test_files']} files, "
             f"F230D={results['F230D']['test_files']} files — lanes present."
-            if all_exist else
-            "REGRESSION: Some reference lanes are missing."
+            if all_exist
+            else "REGRESSION: Some reference lanes are missing."
         ),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     p2 = test_p2_acquisition_profile_from_parsed_not_overwritten()

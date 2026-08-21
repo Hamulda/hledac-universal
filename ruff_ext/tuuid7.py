@@ -31,36 +31,39 @@ class Violation(NamedTuple):
 
 
 # Hot path patterns - files/functions that should use uuid7
-HOT_PATH_PATTERNS = frozenset({
-    # Write paths
-    "evidence",
-    "sink",
-    "store",
-    "write",
-    "insert",
-    "append",
-    # Async paths
-    "future",
-    "async",
-    "await",
-    # Session/correlation
-    "session",
-    "correlation",
-    "trace",
-    "pivot",
-    # Dedup/content addressing
-    "dedup",
-    "fingerprint",
-    "hash",
-})
+HOT_PATH_PATTERNS = frozenset(
+    {
+        "evidence",
+        "sink",
+        "store",
+        "write",
+        "insert",
+        "append",
+        # Async paths
+        "future",
+        "async",
+        "await",
+        # Session/correlation
+        "session",
+        "correlation",
+        "trace",
+        "pivot",
+        # Dedup/content addressing
+        "dedup",
+        "fingerprint",
+        "hash",
+    }
+)
 
 # Files/patterns that MUST use uuid.uuid4() (standard compliance)
 # WARC ISO 28500 requires <urn:uuid:UUID> format - random UUIDs required
-WARC_EXEMPT_PATTERNS = frozenset({
-    "evidence/_archiver",
-    "evidence_log",
-    "warc",
-})
+WARC_EXEMPT_PATTERNS = frozenset(
+    {
+        "evidence/_archiver",
+        "evidence_log",
+        "warc",
+    }
+)
 
 
 def _is_uuid4_call(node: ast.expr) -> bool:
@@ -106,14 +109,16 @@ def _check_node(node: ast.AST, file_path: Path, current_function: str | None) ->
     if _is_uuid4_call(node):
         # Check if it's in a hot path
         if _is_in_hot_path(current_function, file_path):
-            violations.append(Violation(
-                file=file_path,
-                line=node.lineno or 0,
-                col=node.col_offset or 0,
-                name="TUUID7",
-                message=f"TUUID7: Use uuid.uuid7() instead of uuid.uuid4() for time-ordered IDs in hot paths. "
-                        f"uuid.uuid7() is built-in in Python 3.14+, provides sortable IDs for log correlation.",
-            ))
+            violations.append(
+                Violation(
+                    file=file_path,
+                    line=node.lineno or 0,
+                    col=node.col_offset or 0,
+                    name="TUUID7",
+                    message="TUUID7: Use uuid.uuid7() instead of uuid.uuid4() for time-ordered IDs in hot paths. "
+                    "uuid.uuid7() is built-in in Python 3.14+, provides sortable IDs for log correlation.",
+                )
+            )
         return violations
 
     # Recurse into child nodes
@@ -131,7 +136,7 @@ def check_file(path: Path) -> list[Violation]:
     violations = []
     try:
         content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return violations
 
     try:
@@ -142,14 +147,16 @@ def check_file(path: Path) -> list[Violation]:
     for node in ast.walk(tree):
         if _is_uuid4_call(node):
             if _is_in_hot_path(None, path):
-                violations.append(Violation(
-                    file=path,
-                    line=node.lineno or 0,
-                    col=node.col_offset or 0,
-                    name="TUUID7",
-                    message=f"TUUID7: Use uuid.uuid7() instead of uuid.uuid4() for time-ordered IDs in hot paths. "
-                            f"uuid.uuid7() is built-in in Python 3.14+, provides sortable IDs for log correlation.",
-                ))
+                violations.append(
+                    Violation(
+                        file=path,
+                        line=node.lineno or 0,
+                        col=node.col_offset or 0,
+                        name="TUUID7",
+                        message="TUUID7: Use uuid.uuid7() instead of uuid.uuid4() for time-ordered IDs in hot paths. "
+                        "uuid.uuid7() is built-in in Python 3.14+, provides sortable IDs for log correlation.",
+                    )
+                )
 
     return violations
 
@@ -157,17 +164,31 @@ def check_file(path: Path) -> list[Violation]:
 def check_directory(root: Path, exclude_dirs: frozenset[str] | None = None) -> list[Violation]:
     """Recursively check a directory for uuid.uuid4() in hot paths."""
     if exclude_dirs is None:
-        exclude_dirs = frozenset({
-            "__pycache__", ".venv", ".venv-test", ".git", ".claude",
-            "archive", ".mypy_cache", ".pytest_cache", "stubs",
-            ".ruff_cache", "tools/audit",
-        })
+        exclude_dirs = frozenset(
+            {
+                "__pycache__",
+                ".venv",
+                ".venv-test",
+                ".git",
+                ".claude",
+                "archive",
+                ".mypy_cache",
+                ".pytest_cache",
+                "stubs",
+                ".ruff_cache",
+                "tools/audit",
+            }
+        )
 
     # Substring-based exclusions
-    EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset({
-        "tools/probe/", "tools/_archive/", "tools/probe_",
-        "probe/",  # probe/ subdirectories
-    })
+    EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset(
+        {
+            "tools/probe/",
+            "tools/_archive/",
+            "tools/probe_",
+            "probe/",  # probe/ subdirectories
+        }
+    )
 
     all_violations = []
     for py_file in root.rglob("*.py"):
@@ -187,7 +208,9 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="TUUID7: uuid.uuid4() in hot paths detector")
-    parser.add_argument("--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+    )
     parser.add_argument("--ci", action="store_true", help="CI mode: exit 1 on violations")
     args = parser.parse_args()
 

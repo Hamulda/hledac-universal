@@ -81,18 +81,14 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Self
-from collections.abc import AsyncIterator
-
-import msgspec
-from _core import aclose
 
 if TYPE_CHECKING:
-    import rust
+    pass
 
 logger = logging.getLogger(__name__)
 
 # Global singleton (lazily initialized)
-_swarm_fabric: "SwarmFabric | None" = None
+_swarm_fabric: SwarmFabric | None = None
 
 
 # ── Enums ────────────────────────────────────────────────────────────────────
@@ -170,7 +166,7 @@ class SwarmResponse:
 # ── Rust Bridge ──────────────────────────────────────────────────────────────
 
 
-def _get_rust_swarm_fabric() -> "Any | None":
+def _get_rust_swarm_fabric() -> Any | None:
     """
     Get the Rust SwarmFabric instance.
 
@@ -178,8 +174,9 @@ def _get_rust_swarm_fabric() -> "Any | None":
     """
     try:
         import rust
+
         return rust.swarm_fabric.SwarmFabric()
-    except (ImportError, AttributeError):
+    except ImportError, AttributeError:
         return None
 
 
@@ -232,7 +229,7 @@ class SwarmFabric:
             logger.warning(
                 "SwarmFabric: Rust native implementation unavailable "
                 "(p2p_harvest feature not compiled). Using Python fallback."
-    )
+            )
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -311,7 +308,7 @@ class SwarmFabric:
                     git_repo=git_repo,
                     ct_log_url=ct_log_url,
                     circuit_id=circuit_id,
-    )
+                )
                 return SwarmResponse(
                     status=resp.status,
                     headers=dict(resp.headers),
@@ -324,13 +321,12 @@ class SwarmFabric:
                     transport=resp.transport,
                     error=resp.error,
                     circuit_id=resp.circuit_id,
-    )
+                )
             else:
                 # Python fallback (not implemented)
                 raise NotImplementedError(
-                    "Python fallback not implemented. "
-                    "Build with --features p2p_harvest for native implementation."
-    )
+                    "Python fallback not implemented. Build with --features p2p_harvest for native implementation."
+                )
         except asyncio.CancelledError:
             logger.debug(f"SwarmFabric request cancelled: {url}")
             raise
@@ -360,7 +356,7 @@ class SwarmFabric:
             headers=headers,
             transport=TransportType.CLEARNET,
             timeout_secs=timeout_secs,
-    )
+        )
 
     async def post(
         self,
@@ -388,7 +384,7 @@ class SwarmFabric:
             body=body,
             transport=TransportType.CLEARNET,
             timeout_secs=timeout_secs,
-    )
+        )
 
     async def tor_get(
         self,
@@ -413,7 +409,7 @@ class SwarmFabric:
             headers=headers,
             transport=TransportType.TOR_ARTI,
             timeout_secs=timeout_secs,
-    )
+        )
 
     async def i2p_get(
         self,
@@ -438,7 +434,7 @@ class SwarmFabric:
             headers=headers,
             transport=TransportType.I2P_SAMV3,
             timeout_secs=timeout_secs,
-    )
+        )
 
     # ── Circuit Breaker Methods ──────────────────────────────────────────────
 

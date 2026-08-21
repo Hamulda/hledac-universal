@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import msgspec
-from _core import aclose
 
 from compat.msgspec_gc_compat import Struct
 
@@ -30,6 +29,7 @@ class Contradiction(Struct):
 
     Tracks the type of contradiction (temporal, factual, logical) and severity.
     """
+
     claim_a: str
     claim_b: str
     contradiction_type: str  # temporal, factual, logical, source_bias
@@ -42,6 +42,7 @@ class Contradiction(Struct):
 
 class CrossReferenceResult(Struct):
     """Result of cross-referencing a claim across databases."""
+
     database_id: str
     claim_found: bool
     confidence: float
@@ -58,6 +59,7 @@ class AdversarialReport(Struct):
     counter-evidence, contradictions, source credibility assessments,
     and overall confidence scoring.
     """
+
     hypothesis: str
     supporting_evidence: list[object]  # Evidence items
     contradicting_evidence: list[object]  # Evidence items

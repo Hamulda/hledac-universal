@@ -50,10 +50,6 @@
 
 use pyo3::prelude::*;
 
-// ============================================================================
-// Safari WebKit HTTP/2 SETTINGS Constants
-// ============================================================================
-
 /// HTTP/2 SETTINGS frame identifier types.
 pub const H2_SETTING_HEADER_TABLE_SIZE: u16 = 0x1; // SETTINGS_HEADER_TABLE_SIZE
 pub const H2_SETTING_ENABLE_PUSH: u16 = 0x2; // SETTINGS_ENABLE_PUSH
@@ -113,10 +109,6 @@ pub const SAFARI_18_NO_PRIORITY: bool = true;
 
 /// Safari 17.4 also suppresses PRIORITY frames.
 pub const SAFARI_17_NO_PRIORITY: bool = true;
-
-// ============================================================================
-// Python API
-// ============================================================================
 
 /// H2Settings tuple for Python consumption.
 #[derive(Debug, Clone)]
@@ -224,7 +216,6 @@ pub fn validate_safari_fingerprint(profile: &str) -> PyResult<Py<pyo3::types::Py
             dict.set_item("profile", p.profile_name)?;
             dict.set_item("settings_count", p.settings.len())?;
 
-            // Check key differentiators
             for (id, value) in &p.settings {
                 let name = match *id {
                     H2_SETTING_HEADER_TABLE_SIZE => "header_table_size",
@@ -259,10 +250,6 @@ pub fn get_webkit_profiles() -> Vec<String> {
         "safari16_0".to_string(),
     ]
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 /// Register h2_safari_preset functions on the parent Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

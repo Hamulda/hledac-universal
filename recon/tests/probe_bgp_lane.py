@@ -88,7 +88,7 @@ def run_tests():
     print("[PASS] BGPAdapter.stats()")
 
     # Test 6: ip_bulk_to_asn (mock-able structure test)
-    async def test_bulk():
+    async def test_bulk() -> None:
         async with aiohttp.ClientSession() as session:
             results = await ip_bulk_to_asn(
                 ["8.8.8.8", "1.1.1.1"],
@@ -104,7 +104,7 @@ def run_tests():
     asyncio.run(test_bulk())
 
     # Test 7: org_to_asns structure
-    async def test_org():
+    async def test_org() -> None:
         async with aiohttp.ClientSession() as session:
             results = await org_to_asns("Google", session, limit=5)
             assert isinstance(results, list), f"org result not list: {type(results)}"
@@ -115,7 +115,7 @@ def run_tests():
     asyncio.run(test_org())
 
     # Test 8: asn_to_prefixes
-    async def test_prefixes():
+    async def test_prefixes() -> None:
         async with aiohttp.ClientSession() as session:
             results = await asn_to_prefixes(15169, session)
             assert isinstance(results, list)

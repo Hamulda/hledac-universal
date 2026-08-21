@@ -82,10 +82,6 @@ use pyo3::prelude::*;
 #[cfg(feature = "p2p_harvest")]
 use crate::async_bridge::future_into_py;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Maximum concurrent connections per transport pool (M1 8GB safety).
 const MAX_POOL_CONNECTIONS: usize = 20;
 
@@ -100,10 +96,6 @@ const CIRCUIT_FAILURE_THRESHOLD: usize = 5;
 
 /// Circuit breaker recovery timeout in seconds.
 const CIRCUIT_RECOVERY_SECS: u64 = 30;
-
-// ============================================================================
-// Enums
-// ============================================================================
 
 /// Transport types supported by the swarm fabric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -191,10 +183,6 @@ pub enum CircuitState {
     /// Circuit is half-open, testing with reduced load.
     HalfOpen,
 }
-
-// ============================================================================
-// Request/Response Structures
-// ============================================================================
 
 /// Swarm request containing all parameters for a network fetch.
 #[derive(Debug, Clone)]
@@ -358,10 +346,6 @@ pub struct ResponseTiming {
     pub ttfb_ms: u64,
 }
 
-// ============================================================================
-// Circuit Breaker (Rust Implementation)
-// ============================================================================
-
 /// Domain-level circuit breaker state.
 #[derive(Debug)]
 struct DomainCircuitBreaker {
@@ -419,10 +403,6 @@ impl DomainCircuitBreaker {
     }
 }
 
-// ============================================================================
-// Connection Pool Management
-// ============================================================================
-
 /// Per-transport connection pool state.
 #[derive(Debug)]
 struct TransportPool {
@@ -448,10 +428,6 @@ impl TransportPool {
         self.sem.available_permits() > 0 && self.active < self.max_connections
     }
 }
-
-// ============================================================================
-// Swarm Fabric Core
-// ============================================================================
 
 /// Unified swarm fabric for all network transports.
 ///
@@ -516,10 +492,8 @@ impl SwarmFabric {
         let start = Instant::now();
         let url = request.url);
         
-        // Extract domain for circuit breaker
         let domain = extract_domain(&request.url);
         
-        // Check circuit breaker
         {
             let breakers = self.circuit_breakers);
             if let Some(cb) = breakers.get(&domain) {
@@ -545,7 +519,6 @@ impl SwarmFabric {
         
         let total_ms = start.elapsed().as_millis() as u64;
         
-        // Update circuit breaker based on result
         match &result {
             Ok(resp) if resp.status < 500 => {
                 // Success: record and reset failure count
@@ -616,7 +589,6 @@ impl SwarmFabric {
             req_builder = req_builder.body(body);
         }
         
-        // Execute request and measure TTFB
         let ttfb_start = Instant::now();
         let response = req_builder.send().await.map_err(|e| {
             format!("request failed: {}", e)
@@ -661,7 +633,6 @@ impl SwarmFabric {
             ttfb_ms,
         };
         
-        // Log body read time for monitoring
         if body_read_ms > 100 {
             tracing::debug!(
                 "swarm_fabric: body read took {}ms for {} bytes",
@@ -824,10 +795,6 @@ impl SwarmFabric {
     }
 }
 
-// ============================================================================
-// Python Module Registration
-// ============================================================================
-
 /// Register the SwarmFabric module with the Python interpreter.
 #[cfg(feature = "p2p_harvest")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -874,10 +841,6 @@ fn extract_domain(url: &str) -> String {
         .unwrap_or("unknown")
         .to_string()
 }
-
-// ============================================================================
-// Python FFI Interface
-// ============================================================================
 
 /// Python-compatible request struct.
 #[derive(Debug, Clone, FromPyObject)]
@@ -1135,5 +1098,3 @@ impl Default for PySwarmFabric {
         Self::new()
     }
 }
-
-

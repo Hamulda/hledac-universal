@@ -9,23 +9,20 @@ Tests DS second-opinion channel:
 """
 
 from brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
-from _core import aclose
 
 
 class TestDempsterShaferIntegration:
     """Test DS second-opinion channel integration."""
 
-    def test_ds_active_by_default(self):
+    def test_ds_active_by_default(self) -> None:
         """
         HypothesisEngine() without arguments → _ds_engine is not None.
         Verifies use_dempster_shafer=True is the new default.
         """
         engine = HypothesisEngine()
-        assert engine._ds_engine is not None, (
-            "DS engine should be active by default (use_dempster_shafer=True)"
-    )
+        assert engine._ds_engine is not None, "DS engine should be active by default (use_dempster_shafer=True)"
 
-    def test_ds_bug_fix_supporting_evidence_routes_correctly(self):
+    def test_ds_bug_fix_supporting_evidence_routes_correctly(self) -> None:
         """
         Supporting evidence should add mass to 'support' hypothesis in DS engine,
         not to 'conflict'.
@@ -40,7 +37,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         # Inject ds_engine reference (as HypothesisEngine does when tracking)
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-support"] = hyp
@@ -57,7 +54,7 @@ class TestDempsterShaferIntegration:
         hyp.add_supporting_evidence("e2", weight=0.3)
         assert ds.belief("support") > belief_before, "DS belief('support') should increase further"
 
-    def test_ds_contradiction_detected(self):
+    def test_ds_contradiction_detected(self) -> None:
         """
         When conflicting evidence exceeds supporting evidence,
         has_contradiction should be True.
@@ -72,7 +69,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test矛盾"] = hyp
 
@@ -87,7 +84,7 @@ class TestDempsterShaferIntegration:
         # Direct DS check
         assert engine._ds_engine.detect_contradiction(threshold=0.5) is True
 
-    def test_ds_backward_compat_no_ds_keys_when_disabled(self):
+    def test_ds_backward_compat_no_ds_keys_when_disabled(self) -> None:
         """
         When use_dempster_shafer=False, Hypothesis.to_dict() should NOT
         include ds_belief_support, ds_belief_conflict, ds_conflict_mass, ds_contradiction.
@@ -102,7 +99,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         engine._hypotheses["test-back compat"] = hyp
 
         # to_dict without ds_engine should not have ds_* keys
@@ -112,7 +109,7 @@ class TestDempsterShaferIntegration:
         assert "ds_conflict_mass" not in result
         assert "ds_contradiction" not in result
 
-    def test_ds_conflict_mass_is_bounded_float(self):
+    def test_ds_conflict_mass_is_bounded_float(self) -> None:
         """
         After mixed evidence, conflict_mass() should return float in [0.0, 1.0].
         """
@@ -126,7 +123,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-conflict-float"] = hyp
 
@@ -139,7 +136,7 @@ class TestDempsterShaferIntegration:
         assert isinstance(conflict, float), f"conflict_mass should be float, got {type(conflict)}"
         assert 0.0 <= conflict <= 1.0, f"conflict_mass should be in [0,1], got {conflict}"
 
-    def test_ds_to_dict_includes_fields_when_enabled(self):
+    def test_ds_to_dict_includes_fields_when_enabled(self) -> None:
         """
         When to_dict(ds_engine=...) is called with a DS engine,
         ds_* fields should be present in output.
@@ -154,7 +151,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-to-dict"] = hyp
 
@@ -169,7 +166,7 @@ class TestDempsterShaferIntegration:
         assert isinstance(result["ds_belief_support"], float)
         assert isinstance(result["ds_contradiction"], bool)
 
-    def test_ds_belief_no_contradiction_when_supportDominates(self):  # noqa: N802
+    def test_ds_belief_no_contradiction_when_supportDominates(self) -> None:  # noqa: N802
         """
         When supporting evidence dominates, has_contradiction should be False.
         """
@@ -183,7 +180,7 @@ class TestDempsterShaferIntegration:
             confidence=0.5,
             supporting_evidence=[],
             conflicting_evidence=[],
-    )
+        )
         hyp._ds_engine = engine._ds_engine
         engine._hypotheses["test-no矛盾"] = hyp
 

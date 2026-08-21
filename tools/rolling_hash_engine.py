@@ -10,35 +10,24 @@ Sprint F214Q: Rust extension candidate — Python fallback for M1 environments
 without Rust toolchain.
 """
 
-
 from typing import Any
 
-# -----------------------------------------------------------------------------
-# Rust extension import guard
-# -----------------------------------------------------------------------------
 _RUST_RH_AVAILABLE = False
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
-from _core import aclose
+
 if rust.is_available:
     _RustRhEngine = rust.raw.RollingHashEngine
     _RUST_RH_AVAILABLE = _RustRhEngine is not None
 else:
     _RustRhEngine = None
 
-# -----------------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------------
-# Default: 64-bit polynomial rolling hash with large prime modulus
 DEFAULT_BASE = 256
 DEFAULT_MODULUS = 2**61 - 1  # Mersenne prime — fast modular arithmetic
 
 # Bounded cache of per-window Rust engine instances (see hashes() override).
 MAX_RH_ENGINES = 16
 
-# -----------------------------------------------------------------------------
-# Python fallback implementation
-# -----------------------------------------------------------------------------
 
 class RollingHashPython:
     """
@@ -116,10 +105,6 @@ class RollingHashPython:
         return results
 
 
-# -----------------------------------------------------------------------------
-# Public API — uses Rust if available, Python fallback otherwise
-# -----------------------------------------------------------------------------
-
 class RollingHashEngine:
     """
     Unified rolling hash engine.
@@ -188,7 +173,7 @@ class RollingHashEngine:
                 base=DEFAULT_BASE,
                 modulus=DEFAULT_MODULUS,
                 window_size=window_size,
-    )
+            )
             cache[window_size] = engine
             if len(cache) > MAX_RH_ENGINES:
                 # FIFO eviction to keep cache bounded.
@@ -216,7 +201,7 @@ class RollingHashEngine:
 
         chunks = []
         for i in range(0, len(data), chunk_size):
-            chunks.append(data[i:i + chunk_size])
+            chunks.append(data[i : i + chunk_size])
 
         return chunks
 
@@ -265,9 +250,6 @@ def rolling_hash_bytes(data: bytes, base: int = DEFAULT_BASE, modulus: int = DEF
     return engine.hash(data)
 
 
-# -----------------------------------------------------------------------------
-# Exported symbols
-# -----------------------------------------------------------------------------
 __all__ = [
     "RollingHashEngine",
     "RollingHashPython",

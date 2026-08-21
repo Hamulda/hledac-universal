@@ -32,21 +32,21 @@ from hledac.universal._core.capabilities import CAPS, CURL_CFFI
 # Re-export all public symbols from canonical implementation
 # This maintains backward compatibility while adding CAPS enforcement
 from hledac.universal.transport.curl_cffi_fetch import (
-    fetch_via_curl_cffi_cached,
-    fetch_via_i2p_curl_cffi,
-    is_curl_cffi_available,
+    _JA3_ROTATION_POOL,
+    HLEDAC_DEBUG_JA3,
+    _blocking_altsvc_probe_for_url,
+    _reset_webkit_transport_telemetry,
     async_get_curl_cffi_session,
     async_get_curl_cffi_session_for_host,
     close_curl_cffi_sessions_async,
+    fetch_via_curl_cffi_cached,
+    fetch_via_i2p_curl_cffi,
     get_curl_cffi_runtime_status,
-    next_ja3_profile,
-    reset_ja3_cycle,
-    HLEDAC_DEBUG_JA3,
-    _JA3_ROTATION_POOL,
-    _blocking_altsvc_probe_for_url,
     # [NEXUS]-018-01: WebKit HTTP/2 telemetry
     get_webkit_transport_telemetry,
-    _reset_webkit_transport_telemetry,
+    is_curl_cffi_available,
+    next_ja3_profile,
+    reset_ja3_cycle,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ def is_curl_cffi_capable() -> tuple[bool, str]:
         if cap_result is not None:
             return (True, "ok")
         # CAPS returned None — capability resolved but import failed
-        return (False, f"cap_resolved_but_unavailable")
+        return (False, "cap_resolved_but_unavailable")
     except Exception as e:  # noqa: BLE001
         logger.debug(f"CAPS.require(CURL_CFFI) raised: {e}")
         return (False, f"cap_check_failed: {e}")

@@ -34,10 +34,6 @@ const MAX_COUNTERS_PER_LAYOUT: usize = 4096;
 /// on working memory.
 const MAX_BULK_LAYOUTS: usize = 1_000_000;
 
-// =====================================================================
-// IntCounterLayoutRust — drop-in replacement for Python IntCounterLayout
-// =====================================================================
-
 /// Structure-of-Arrays (SoA) integer counter layout.
 ///
 /// Backing: `Vec<i64>` with capacity fixed at construction (no append).
@@ -96,7 +92,6 @@ impl IntCounterLayoutRust {
             )));
         }
 
-        // Validate uniqueness and non-empty eagerly.
         let mut indices: HashMap<String, usize> = HashMap::with_capacity(field_names.len());
         for (i, name) in field_names.iter().enumerate() {
             if name.is_empty() {
@@ -224,10 +219,6 @@ impl IntCounterLayoutRust {
         )
     }
 }
-
-// =====================================================================
-// Bulk operations — sequential, GIL-bound by design (M1 8GB safe)
-// =====================================================================
 
 /// Aggregate `deltas` across a list of `IntCounterLayoutRust` instances.
 ///
@@ -378,18 +369,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-// =====================================================================
-// F3: chain_hash_snapshot — SoA-snapshot integrity hash
-// =====================================================================
-//
-// Lives in this module (not evidence_rs) because:
-// 1. The SoA snapshot is owned by IntCounterLayout; the hash is a
-//    cross-sprint integrity guarantee over that snapshot's bytes.
-// 2. evidence_rs.rs has pre-existing compile errors (Ipv6Addr::compressed
-//    not in this toolchain) that are out of scope for Sprint P1-5.
-// 3. We re-implement BLAKE3 + SHA-256 dual-emit here so the function is
-//    self-contained and doesn't depend on the (broken) evidence_rs module.
-
 use blake3::Hasher;
 use sha2::{Digest, Sha256};
 
@@ -491,10 +470,6 @@ fn chain_hash_snapshot<'py>(
 
     Ok((blake3_hex, sha256_hex))
 }
-
-// =====================================================================
-// Unit tests
-// =====================================================================
 
 #[cfg(test)]
 mod tests {

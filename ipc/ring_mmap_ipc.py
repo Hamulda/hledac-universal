@@ -3,8 +3,6 @@ RingMMap IPC — zero-copy msgspec.msgpack přes POSIX shared memory.
 
 Univerzální memory-mapped IPC vrstva pro M1 8GB (Darwin arm64).
 
-
-
 Lze použít pro jakýkoliv msgspec.Struct typ — žádný JSON, žádný pipe.
 
 ARCHITECTURA:
@@ -55,12 +53,11 @@ import uuid
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
-
 
 # Lazy import — posix_ipc is Darwin-only
 _POSIX_IPC_SPEC = importlib.util.find_spec("posix_ipc")
@@ -101,11 +98,6 @@ class RingMMapChannel(Struct, frozen=True):
     result_sem_name: str
     ready_sem_name: str
     max_message_size: int
-
-
-# ---------------------------------------------------------------------------
-# RingMMap — low-level ring buffer
-# ---------------------------------------------------------------------------
 
 
 class RingMMap:
@@ -151,7 +143,7 @@ class RingMMap:
                 shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=size,
-    )
+            )
 
         self._shm = shm
         self._buf = shm.buf  # memoryview
@@ -160,7 +152,6 @@ class RingMMap:
         self._attached = attached
 
         if not attached:
-            # Initialize header
             struct.pack_into("<I", self._buf, 0, _RING_HEADER)
             struct.pack_into("<I", self._buf, 4, _RING_HEADER)
 
@@ -224,7 +215,6 @@ class RingMMap:
         if record_len + 4 > available:
             write_pos = _RING_HEADER
 
-        # Write 4-byte length header
         struct.pack_into("<I", self._buf, write_pos, record_len)
 
         # Write data (handle ring wrap)
@@ -238,7 +228,6 @@ class RingMMap:
             if pos >= self._size:
                 pos = _RING_HEADER
 
-        # Update write position
         struct.pack_into("<I", self._buf, 0, pos)
         return True
 
@@ -292,11 +281,6 @@ class RingMMap:
                 shm.close_unlink()
             except Exception:  # noqa: BLE001
                 pass
-
-
-# ---------------------------------------------------------------------------
-# RingMMapIPC — high-level msgspec.msgpack + ring buffer
-# ---------------------------------------------------------------------------
 
 
 class RingMMapIPC:
@@ -382,7 +366,6 @@ class RingMMapIPC:
         ipc = cls(msg_type, result_type)
         ipc._pending_seq = 0
 
-        # Create shared memory objects
         shm_name = f"/hldx-{name_prefix}-{uuid.uuid7().hex[:8]}"
         result_shm_name = f"/hldx-{name_prefix}-{uuid.uuid7().hex[:8]}"
         sem_name = f"/hldx-{name_prefix}-sem"
@@ -400,12 +383,12 @@ class RingMMapIPC:
                 shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=ring_size,
-    )
+            )
             result_shm = posix_ipc.SharedMemory(
                 result_shm_name,
                 flags=posix_ipc.O_CREAT | posix_ipc.O_EXCL,
                 size=_RESULT_SIZE,
-    )
+            )
 
             ipc._ring = RingMMap(shm_name, ring_size)
             ipc._result_buf = result_shm.buf
@@ -419,7 +402,7 @@ class RingMMapIPC:
                 result_sem_name=result_sem_name,
                 ready_sem_name=ready_sem_name,
                 max_message_size=max_message_size,
-    )
+            )
 
         except Exception:
             if ring_shm is not None:
@@ -485,7 +468,7 @@ class RingMMapIPC:
             ready_sem = posix_ipc.Semaphore(
                 channel.ready_sem_name,
                 flags=posix_ipc.O_CREAT,
-    )
+            )
 
             kwargs = kwargs or {}
 
@@ -504,7 +487,7 @@ class RingMMapIPC:
                     kwargs,
                 ),
                 daemon=False,
-    )
+            )
             self._proc.start()
 
             # Wait for worker to be ready
@@ -537,7 +520,7 @@ class RingMMapIPC:
             sem = posix_ipc.Semaphore(
                 self._channel.sem_name,
                 flags=posix_ipc.O_CREAT,
-    )
+            )
             sem.release()
             sem.close()
         except Exception:  # noqa: BLE001
@@ -557,8 +540,6 @@ class RingMMapIPC:
         if not self._started or self._closed:
             return None
 
-        import posix_ipc
-
         # Ensure _pending_seq exists (set by factory create())
         if not hasattr(self, "_pending_seq"):
             self._pending_seq = 0
@@ -577,7 +558,7 @@ class RingMMapIPC:
             async with asyncio.timeout(timeout):
                 return await future
 
-        except (asyncio.TimeoutError, Exception):
+        except TimeoutError, Exception:
             self._pending.pop(seq, None)
             return None
 
@@ -633,11 +614,6 @@ class RingMMapIPC:
                         pass
 
         self._started = False
-
-
-# ---------------------------------------------------------------------------
-# Worker entry point (runs in subprocess)
-# ---------------------------------------------------------------------------
 
 
 def run_worker(
@@ -725,9 +701,9 @@ def run_worker(
                 if len(result_bytes) > _RESULT_SIZE - 4:
                     result_bytes = msgspec.msgpack.encode(
                         type("Result", (), {"error": "result too large", "success": False})()
-    )
+                    )
                 struct.pack_into("<I", result_buf, 0, len(result_bytes))
-                result_buf[:len(result_bytes)] = result_bytes
+                result_buf[: len(result_bytes)] = result_bytes
                 result_sem.release()
             except Exception:  # noqa: BLE001
                 pass

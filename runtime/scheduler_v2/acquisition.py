@@ -2,13 +2,10 @@
 
 F350M-R / Issue #P2.
 
-
-
 Extracts acquisition phase logic from runtime/sprint_scheduler.py:
     - _run_one_cycle (~110 lines, dispatcher stable/aggressive)
     - _run_one_cycle_stable (~830 lines, sequential feed → public)
     - _run_one_cycle_aggressive (~950 lines, concurrent feed/public/CT branches)
-
 
     - The while-not-terminal acquisition loop from _run_internal
 
@@ -24,25 +21,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import Any
 from collections.abc import Sequence
+from typing import Any
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.env_config import ENV
-from hledac.universal.utils.asyncx import (
-    safe_create_task,
-    parallel,
-    )
 from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
-    get_task_registry,
     safe_create_task_tracked,
-    )
+)
+from hledac.universal.utils.asyncx import (
+    parallel,
+)
 
 # ── Pipeline Phase Types ─────────────────────────────────────────────────────────
-
 
 log = logging.getLogger(__name__)
 
@@ -131,15 +125,13 @@ class AcquisitionOrchestrator:
         try:
             async with asyncio.TaskGroup() as _tg:
                 _tg.create_task(
-                    self._ensure_nonfeed_predispatch_before_finalization(
-                        ctx, ordered_sources, duckdb_store, reason
-                    ),
+                    self._ensure_nonfeed_predispatch_before_finalization(ctx, ordered_sources, duckdb_store, reason),
                     name="finalize:predispatch",
-    )
+                )
                 _tg.create_task(
                     self._finalize_result_truth(ctx, reason, message, phase),
                     name="finalize:truth",
-    )
+                )
         except ExceptionGroup:  # noqa: BLE001
             pass  # graceful degradation: at least one finalization path ran
         ctx.result.scheduler_exit_elapsed_s = _time.monotonic() - wall_clock_start
@@ -169,26 +161,25 @@ class AcquisitionOrchestrator:
             except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
-        # Fire-and-forget IOC co-occurrence
         safe_create_task_tracked(
             self._run_ioc_cooccurrence_sidecar(ctx, duckdb_store),
             name="sprint:ioc_cooccurrence",
             scope=TaskScope.WINDUP,
-    )
+        )
 
         # Synthesis sidecar
         _synth_task = safe_create_task_tracked(
             self._run_synthesis_sidecar(ctx, duckdb_store, ctx.runner),
             name="sprint:synthesis_windup",
             scope=TaskScope.WINDUP_SYNTHESIS,
-    )
+        )
         ctx.cycle.synth_windup_task = _synth_task
 
         # Await synthesis before returning (prevents runner.close() race on M1 8GB)
         try:
             async with asyncio.timeout(15.0):
                 await _synth_task
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _synth_task.cancel()
             log.debug("[F259] synthesis task timed out after 15s, cancelled")
         except Exception:  # noqa: BLE001
@@ -202,28 +193,28 @@ class AcquisitionOrchestrator:
         ctx.evaluate_advisory_gate()
         await self._maybe_export_partial(ctx, duckdb_store, ctx.runner)
 
-        if await self._ensure_mandatory_nonfeed_before_return(
-            ctx, ordered_sources, duckdb_store, "windup_barrier"
-        ):
+        if await self._ensure_mandatory_nonfeed_before_return(ctx, ordered_sources, duckdb_store, "windup_barrier"):
             await self._finalize_parallel(
-                ctx, ordered_sources, duckdb_store,
+                ctx,
+                ordered_sources,
+                duckdb_store,
                 "windup_barrier_passed",
                 "pre-windup barrier satisfied, entered windup",
                 "WINDUP",
                 wall_clock_start,
-    )
+            )
             return True
 
-        await self._ensure_mandatory_nonfeed_before_return(
-            ctx, ordered_sources, duckdb_store, "windup_barrier_forced"
-    )
+        await self._ensure_mandatory_nonfeed_before_return(ctx, ordered_sources, duckdb_store, "windup_barrier_forced")
         await self._finalize_parallel(
-            ctx, ordered_sources, duckdb_store,
+            ctx,
+            ordered_sources,
+            duckdb_store,
             "windup_barrier_break",
             "pre-windup barrier unsatisfied, forced terminalization",
             "WINDUP",
             wall_clock_start,
-    )
+        )
         return False
 
     # ── Main acquisition loop ───────────────────────────────────────────────
@@ -266,12 +257,14 @@ class AcquisitionOrchestrator:
                 # ── Hard deadline check ────────────────────────────────────────
                 if not self._check_hard_deadline(ctx):
                     await self._finalize_parallel(
-                        ctx, ordered_sources, duckdb_store,
+                        ctx,
+                        ordered_sources,
+                        duckdb_store,
                         "hard_deadline_exceeded",
                         f"hard deadline exceeded at cycle {cycles_started}",
                         "GATHER",
                         _wall_clock_start,
-    )
+                    )
                     return AcquisitionPhaseResult(
                         cycles_started=cycles_started,
                         cycles_completed=cycles_completed,
@@ -281,7 +274,7 @@ class AcquisitionOrchestrator:
                         exit_path="hard_deadline",
                         unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
                         windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+                    )
 
                 # ── Stop requested ──────────────────────────────────────────────
                 if getattr(ctx, "_stop_requested", False):
@@ -289,13 +282,15 @@ class AcquisitionOrchestrator:
                         ctx, ordered_sources, duckdb_store, "stop_requested"
                     ):
                         await self._finalize_parallel(
-                            ctx, ordered_sources, duckdb_store,
+                            ctx,
+                            ordered_sources,
+                            duckdb_store,
                             "stop_requested_break",
                             "stop_requested guard passed",
                             "GATHER",
                             _wall_clock_start,
                             request_windup=True,
-    )
+                        )
                         return AcquisitionPhaseResult(
                             cycles_started=cycles_started,
                             cycles_completed=cycles_completed,
@@ -305,7 +300,7 @@ class AcquisitionOrchestrator:
                             exit_path="stop_requested",
                             unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
                             windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+                        )
                     continue
 
                 # ── Abort requested ────────────────────────────────────────────
@@ -315,15 +310,17 @@ class AcquisitionOrchestrator:
                     await self._maybe_export_partial(ctx, duckdb_store, _runner)
                     await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "lifecycle_abort"
-    )
+                    )
                     await self._finalize_parallel(
-                        ctx, ordered_sources, duckdb_store,
+                        ctx,
+                        ordered_sources,
+                        duckdb_store,
                         "lifecycle_abort_break",
                         "abort_requested from lifecycle",
                         "GATHER",
                         _wall_clock_start,
                         request_windup=True,
-    )
+                    )
                     return AcquisitionPhaseResult(
                         cycles_started=cycles_started,
                         cycles_completed=cycles_completed,
@@ -333,7 +330,7 @@ class AcquisitionOrchestrator:
                         exit_path="abort",
                         unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
                         windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+                    )
 
                 # ── Periodic tick ───────────────────────────────────────────────
                 _runner.tick(now_monotonic)
@@ -346,7 +343,7 @@ class AcquisitionOrchestrator:
                 _result.windup_guard_call_count += 1
                 _barrier_result = await self._ensure_pre_windup_lane_terminal_states(
                     ctx, getattr(ctx, "_acquisition_plan", None), "ok"
-    )
+                )
                 _barrier_satisfied = getattr(_barrier_result, "satisfied", False)
                 _barrier_required = getattr(_barrier_result, "required_lanes", ())
                 _barrier_completed = getattr(_barrier_result, "completed_lanes", ())
@@ -359,7 +356,7 @@ class AcquisitionOrchestrator:
                         _barrier_required,
                         _barrier_completed,
                         _barrier_unimplemented,
-    )
+                    )
                     # Store in result for telemetry
                     _result.prewindup_unimplemented_lanes = _barrier_unimplemented
 
@@ -390,12 +387,12 @@ class AcquisitionOrchestrator:
                 _guard_result = _runner.windup_guard(
                     now_monotonic,
                     pre_windup_barrier=lambda: self._check_prewindup_barrier_sync(ctx, ordered_sources, duckdb_store),
-    )
+                )
 
                 if _guard_result:
                     barrier_passed = await self._run_windup_sequence(
                         ctx, ordered_sources, duckdb_store, _wall_clock_start, _rayon_manager
-    )
+                    )
                     return AcquisitionPhaseResult(
                         cycles_started=cycles_started,
                         cycles_completed=cycles_completed,
@@ -405,11 +402,12 @@ class AcquisitionOrchestrator:
                         exit_path="windup_barrier_passed" if barrier_passed else "windup_barrier_forced",
                         unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
                         windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+                    )
 
                 # ── Re-prioritize sources in ACTIVE phase ──────────────────────
                 # FIX: current_phase returns SprintPhase enum, not string
                 from hledac.universal.runtime.sprint_lifecycle import SprintPhase
+
                 if _runner.current_phase == SprintPhase.ACTIVE:
                     ordered_sources = self._prioritize_sources(ctx, ordered_sources)
 
@@ -421,13 +419,15 @@ class AcquisitionOrchestrator:
                         ctx, ordered_sources, duckdb_store, "max_cycles_reached"
                     ):
                         await self._finalize_parallel(
-                            ctx, ordered_sources, duckdb_store,
+                            ctx,
+                            ordered_sources,
+                            duckdb_store,
                             "max_cycles_reached",
                             f"max_cycles {effective_max_cycles} reached",
                             "ACTIVE",
                             _wall_clock_start,
                             request_windup=True,
-    )
+                        )
                         return AcquisitionPhaseResult(
                             cycles_started=cycles_started,
                             cycles_completed=cycles_completed,
@@ -437,7 +437,7 @@ class AcquisitionOrchestrator:
                             exit_path="max_cycles_reached",
                             unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
                             windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+                        )
                     continue
 
                 # ── Run one cycle ─────────────────────────────────────────────
@@ -475,7 +475,7 @@ class AcquisitionOrchestrator:
             exit_path="terminal",
             unimplemented_telemetry=getattr(_result, "unimplemented_telemetry", ()),
             windup_unimplemented_lanes=getattr(_result, "prewindup_unimplemented_lanes", ()),
-    )
+        )
 
     # ── _run_one_cycle dispatcher ─────────────────────────────────────────────
 
@@ -492,7 +492,6 @@ class AcquisitionOrchestrator:
         """
         await self._ensure_dedup_loaded(ctx)
 
-        # Build tiered work list
         work_items = self._build_work_items(ctx, sources)
         if not work_items:
             ctx.result.consecutive_empty_cycles += 1
@@ -561,7 +560,9 @@ class AcquisitionOrchestrator:
             """
             try:
                 _tasks = [fetch_one(w) for w in work_items]
-                _parallel_result = await parallel(_tasks, taskgroup=True, policy='collect', ctx='acquisition:feed_branch')
+                _parallel_result = await parallel(
+                    _tasks, taskgroup=True, policy="collect", ctx="acquisition:feed_branch"
+                )
                 _feed_results = _parallel_result.ok
                 _ok_count = 0
                 _total_findings = 0
@@ -593,7 +594,9 @@ class AcquisitionOrchestrator:
                 return {"ok": False, "count": 0, "timeout": True, "skipped": False}
 
         # Launch both branches concurrently — FEED || PUBLIC
-        _gather_result = await parallel([run_feed_branch(), run_public_branch()], taskgroup=True, policy='collect', ctx='acquisition:feed_vs_public')
+        _gather_result = await parallel(
+            [run_feed_branch(), run_public_branch()], taskgroup=True, policy="collect", ctx="acquisition:feed_vs_public"
+        )
         _all_results = _gather_result.ok
 
         # Unpack FEED results
@@ -617,7 +620,7 @@ class AcquisitionOrchestrator:
             feed_results=(_feed_ok, _feed_count),
             public_results=(_public_ok, _public_count, _public_timeout),
             unimplemented_telemetry=getattr(ctx.result, "unimplemented_telemetry", ()),
-    )
+        )
 
     # ── Aggressive cycle ──────────────────────────────────────────────────────
 
@@ -668,15 +671,15 @@ class AcquisitionOrchestrator:
                 _feed_tg = _tg.create_task(
                     self._run_feed_branch_aggressive(ctx, work_items, fetch_one, semaphore, duckdb_store),
                     name="cycle:feed",
-    )
+                )
                 _public_tg = _tg.create_task(
                     self._run_public_branch_aggressive(ctx, query, duckdb_store, _seed_ctx, _branch_timeout),
                     name="cycle:public",
-    )
+                )
                 _ct_tg = _tg.create_task(
                     self._run_ct_branch_aggressive(ctx, query, duckdb_store, _seed_ctx, _branch_timeout),
                     name="cycle:ct",
-    )
+                )
         except* BaseException as _eg:
             # TaskGroup caught uncaught exceptions from branch tasks.
             # Count partial failure and extract what we can from each task.
@@ -723,7 +726,7 @@ class AcquisitionOrchestrator:
             aimd_successes=_aimd_successes_val,
             aimd_failures=_aimd_failures_val,
             unimplemented_telemetry=getattr(ctx.result, "unimplemented_telemetry", ()),
-    )
+        )
 
     # ── Aggressive branch helpers ─────────────────────────────────────────────
 
@@ -736,7 +739,12 @@ class AcquisitionOrchestrator:
         _duckdb_store: Any,
     ) -> tuple[bool, int]:
         try:
-            _result = await parallel([fetch_one(w) for w in work_items], taskgroup=True, policy='collect', ctx='acquisition:feed_branch_aggressive')
+            _result = await parallel(
+                [fetch_one(w) for w in work_items],
+                taskgroup=True,
+                policy="collect",
+                ctx="acquisition:feed_branch_aggressive",
+            )
             feed_results = _result.ok
             _ok_count = 0
             _total_findings = 0
@@ -911,8 +919,7 @@ class AcquisitionOrchestrator:
         # Check if we have any probe lane results in ctx.result
         _probe_results = getattr(ctx.result, "nonfeed_probe_lanes_run", []) or []
 
-        # Build set of lanes that completed
-        _completed = set(r.get("lane", "") for r in _probe_results if r.get("count", 0) > 0)
+        _completed = {r.get("lane", "") for r in _probe_results if r.get("count", 0) > 0}
 
         # Determine required vs completed
         # For now, we mark all probe lanes as "required" but track what completed
@@ -927,21 +934,20 @@ class AcquisitionOrchestrator:
         _at_least_one_completed = len(_completed) > 0
         _all_unimplemented = len(_unimplemented_lanes) == len(_probe_lanes)
 
-        # Log for observability
         if _unimplemented_lanes:
             log.debug(
                 "[P4-1] Pre-windup barrier: lanes=%s completed=%s unimplemented=%s",
                 _required,
                 _completed_tuple,
                 _unimplemented_lanes,
-    )
+            )
 
         return BarrierResult(
             satisfied=_at_least_one_completed or _all_unimplemented,
             required_lanes=_required,
             completed_lanes=_completed_tuple,
             unimplemented=_unimplemented_lanes,
-    )
+        )
 
     async def _ensure_nonfeed_predispatch_before_finalization(
         self,
@@ -980,6 +986,7 @@ class AcquisitionOrchestrator:
             # P4-1: Get available sidecars
             try:
                 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+
                 ensure_adapters_registered()
                 _available = SidecarRegistry.get_available(memory_budget_mb=128)
             except Exception:
@@ -992,9 +999,7 @@ class AcquisitionOrchestrator:
             for adapter in _available:
                 _sid = getattr(adapter, "sidecar_id", "")
                 if _sid in _mandatory_lanes:
-                    _run_coros.append(
-                        self._run_one_sidecar_lane(_sid, adapter, sidecar_ctx, _time_budget)
-    )
+                    _run_coros.append(self._run_one_sidecar_lane(_sid, adapter, sidecar_ctx, _time_budget))
 
             if not _run_coros:
                 return
@@ -1003,7 +1008,9 @@ class AcquisitionOrchestrator:
             log.debug("[P4-1] Running nonfeed pre-dispatch: lanes=%s", _mandatory_lanes)
             try:
                 async with asyncio.timeout(_time_budget):
-                    results = await parallel(_run_coros, concurrency=2, policy='collect', taskgroup=True, ctx='predispatch')
+                    results = await parallel(
+                        _run_coros, concurrency=2, policy="collect", taskgroup=True, ctx="predispatch"
+                    )
                     _ok_results = results.ok
 
                     # P4-1: Track results
@@ -1013,7 +1020,7 @@ class AcquisitionOrchestrator:
                             if attempted and count > 0:
                                 log.debug("[P4-1] Pre-dispatch %s: %d findings", name, count)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.debug("[P4-1] Nonfeed pre-dispatch timed out")
             except Exception as e:
                 log.debug("[P4-1] Nonfeed pre-dispatch failed: %s", e)
@@ -1056,7 +1063,7 @@ class AcquisitionOrchestrator:
                     "[P4-1] Mandatory lanes incomplete: missing=%s reason=%s",
                     _missing,
                     reason,
-    )
+                )
 
             # P4-1: Check duckdb flush status
             _findings_count = getattr(ctx.result, "accepted_findings", 0) or 0
@@ -1067,7 +1074,7 @@ class AcquisitionOrchestrator:
                 log.debug(
                     "[P4-1] Terminal reason '%s' — bypass mandatory lane check",
                     reason,
-    )
+                )
                 return True
 
             # P4-1: Must have at least one finding OR all mandatory lanes completed
@@ -1079,7 +1086,7 @@ class AcquisitionOrchestrator:
                     "[P4-1] Mandatory lane check passed: findings=%d lanes_complete=%s",
                     _findings_count,
                     _all_lanes_complete,
-    )
+                )
                 return True
 
             # P4-1: Partial check — allow windup but log warning
@@ -1087,7 +1094,7 @@ class AcquisitionOrchestrator:
                 "[P4-1] Mandatory lane check partial: findings=%d missing=%s",
                 _findings_count,
                 _missing,
-    )
+            )
             return True  # Allow windup anyway (fail-open for sprint progress)
 
         except Exception as e:
@@ -1139,7 +1146,7 @@ class AcquisitionOrchestrator:
                     "[P4-1] Sync barrier: accepted=%d < min=%d",
                     _accepted,
                     _min_findings,
-    )
+                )
                 # Return True anyway to not block windup — findings may accumulate later
                 return True
 
@@ -1191,6 +1198,7 @@ class AcquisitionOrchestrator:
                 # P4-1: Check sidecar registry for pattern extractor
                 try:
                     from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+
                     ensure_adapters_registered()
                     _available = SidecarRegistry.get_available(memory_budget_mb=256)
                     for adapter in _available:
@@ -1215,7 +1223,7 @@ class AcquisitionOrchestrator:
 
             log.debug("[P4-1] Pattern extraction drain complete")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.debug("[P4-1] Pattern extraction drain timed out")
         except Exception as e:
             # P4-1: Fail-soft — drain is best-effort
@@ -1238,28 +1246,26 @@ class AcquisitionOrchestrator:
 
             # P4-1: Only call pressure relief if pressure is elevated
             _should_relieve = (
-                uma['uma_pressure_level'] in ('elevated', 'critical', 'emergency') or
-                uma['is_critical'] or
-                uma['is_emergency']
-    )
+                uma["uma_pressure_level"] in ("elevated", "critical", "emergency")
+                or uma["is_critical"]
+                or uma["is_emergency"]
+            )
 
             if not _should_relieve:
                 return
 
             # P4-1: Log pressure state
-            uma_used_gb = uma['uma_used_mb'] / 1024
+            uma_used_gb = uma["uma_used_mb"] / 1024
             log.debug(
                 "[P4-1] Memory pressure elevated: used=%.1fGB level=%s",
                 uma_used_gb,
-                uma['uma_pressure_level'],
-    )
+                uma["uma_pressure_level"],
+            )
 
             # P4-1: Call malloc_zone_pressure_relief via ctypes
             try:
                 import ctypes
-                import Foundation  # pyobjc for macOS
 
-                # Get malloc default zone
                 _libc = ctypes.cdll.LoadLibrary(None)
                 _malloc_zone = _libc.malloc_default_zone
                 _malloc_zone.restype = ctypes.c_void_p
@@ -1343,7 +1349,6 @@ class AcquisitionOrchestrator:
             }
 
             # P4-1: Export to JSON for recovery
-            import os
             from pathlib import Path
 
             _export_path = Path(_export_dir)
@@ -1360,7 +1365,7 @@ class AcquisitionOrchestrator:
                     log.debug("[P4-1] Partial export skipped -- would exceed 10MB limit")
                     return
 
-                with open(_full_path, 'wb') as f:
+                with open(_full_path, "wb") as f:
                     f.write(_json_bytes)
 
                 log.debug("[P4-1] Partial export saved: %s", _full_path)
@@ -1406,9 +1411,9 @@ class AcquisitionOrchestrator:
 
             # P4-1: Import and run IOC co-occurrence miner
             from hledac.universal.pipeline.ioc_cooccurrence_miner import (
-                IOCooccurrenceMiner,
                 IOCooccurrenceEngineUnavailable,
-    )
+                IOCooccurrenceMiner,
+            )
 
             # P4-1: Create miner with duckdb_store
             miner = IOCooccurrenceMiner(duckdb_store)
@@ -1446,7 +1451,7 @@ class AcquisitionOrchestrator:
                 stats.findings_analyzed,
                 stats.pairs_mined,
                 stats.speculative_edges,
-    )
+            )
 
         except IOCooccurrenceEngineUnavailable as e:
             # P4-1: Rust engine unavailable — this is expected if not built
@@ -1496,15 +1501,14 @@ class AcquisitionOrchestrator:
         ctx.result.synthesis_success = report is not None
         ctx.result.synthesis_engine = (
             getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
-    )
+        )
         if report is not None:
             try:
                 ctx.result.synthesis_text = msgspec.json.encode(
                     {
                         "query": ctx.query,
                         "ioc_entities": [
-                            {"type": e.ioc_type, "value": e.value}
-                            for e in getattr(report, "ioc_entities", None) or []
+                            {"type": e.ioc_type, "value": e.value} for e in getattr(report, "ioc_entities", None) or []
                         ],
                         "threat_summary": getattr(report, "threat_summary", ""),
                         "threat_actors": list(getattr(report, "threat_actors", None) or []),
@@ -1533,7 +1537,7 @@ class AcquisitionOrchestrator:
                 "[F259] Synthesis complete: success=%s, findings=%d",
                 ctx.result.synthesis_success,
                 ctx.result.synthesis_findings_count,
-    )
+            )
             await self._synthesis_collect_batcher_stats(runner, ctx)
         else:
             ctx.result.synthesis_text = ""
@@ -1555,9 +1559,11 @@ class AcquisitionOrchestrator:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
 
             uma = get_uma_snapshot()
-            uma_used_gib = uma['uma_used_mb'] / 1024
-            if uma_used_gib >= 5.5 or uma['is_critical'] or uma['is_emergency']:
-                log.debug("[F259] Synthesis skipped -- UMA used=%.1fGB, pressure=%s", uma_used_gib, uma['uma_pressure_level'])
+            uma_used_gib = uma["uma_used_mb"] / 1024
+            if uma_used_gib >= 5.5 or uma["is_critical"] or uma["is_emergency"]:
+                log.debug(
+                    "[F259] Synthesis skipped -- UMA used=%.1fGB, pressure=%s", uma_used_gib, uma["uma_pressure_level"]
+                )
                 ctx.result.synthesis_success = False
                 ctx.result.synthesis_engine = "uma_guard"
                 return
@@ -1572,7 +1578,6 @@ class AcquisitionOrchestrator:
             log.debug("[F259] Synthesis skipped -- no duckdb_store")
             return
 
-        # Fetch findings
         findings: list[dict] = []
         try:
             if hasattr(duckdb_store, "get_top_findings"):
@@ -1586,7 +1591,6 @@ class AcquisitionOrchestrator:
             log.debug("[F259] Synthesis skipped -- no findings")
             return
 
-        # Import SynthesisRunner
         try:
             from hledac.universal._core.model_runtime import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
@@ -1667,7 +1671,6 @@ class AcquisitionOrchestrator:
             # P4-1: Convert findings to text strings for DSPy
             finding_texts = []
             for f in findings[:30]:
-                # Handle different finding formats
                 if isinstance(f, dict):
                     text = f.get("raw", "") or f.get("value", "") or str(f)
                 else:
@@ -1685,7 +1688,7 @@ class AcquisitionOrchestrator:
                     findings=finding_texts,
                     known_gaps=getattr(ctx, "_known_gaps", None),
                     query=ctx.query,
-    )
+                )
 
                 # P4-1: Store results
                 ctx.result.epistemic_gap_advisory = {
@@ -1698,7 +1701,7 @@ class AcquisitionOrchestrator:
                     "[P4-1] Epistemic gap advisory: confidence=%.2f gaps=%d",
                     prediction.confidence,
                     len(prediction.gaps) if prediction.gaps else 0,
-    )
+                )
 
             except (ImportError, RuntimeError) as e:
                 # RuntimeError: DSPy not available/enabled (raised by __init__)
@@ -1753,7 +1756,7 @@ class AcquisitionOrchestrator:
         try:
             from hledac.universal.pipeline.live_public_pipeline import (
                 async_run_live_public_pipeline,
-    )
+            )
 
             _result = await async_run_live_public_pipeline(
                 query=query,
@@ -1766,7 +1769,7 @@ class AcquisitionOrchestrator:
                 memory_manager=None,
                 enqueue_hypothesis_pivot=None,
                 seed_context=seed_ctx,
-    )
+            )
             _count = getattr(_result, "accepted_findings", 0) or 0
             _ok = _count > 0
             return {"ok": _ok, "count": _count}
@@ -1813,7 +1816,7 @@ class AcquisitionOrchestrator:
                 query_context=ctx.query,
                 max_entries=getattr(work, "max_results", 10),
                 timeout_s=work.timeout_s or 30.0,
-    )
+            )
         except Exception:
             from hledac.universal.pipeline.live_feed_pipeline import FeedPipelineRunResult
 
@@ -1826,28 +1829,26 @@ class AcquisitionOrchestrator:
         nonfeed_terminal: bool,
     ) -> tuple[bool, str]:
         """Check feed dominance budget before fetching.
-        
+
         R13: Uses LaneBalancer to detect feed monopolization and prevent
         feed-only sprints. If feed dominance is detected and nonfeed is
         not yet terminal, returns (False, reason) to skip feed fetching.
         """
         try:
-            # Get lane_balancer from SprintContext
-            lane_balancer = getattr(ctx, 'lane_balancer', None)
+            lane_balancer = getattr(ctx, "lane_balancer", None)
             if lane_balancer is None:
                 return (True, "ok")
-            
+
             # Check if nonfeed lanes are terminal
             if nonfeed_terminal:
                 return (True, "ok")
-            
-            # Check dominance using internal tracking
+
             result = lane_balancer.check_dominance()
-            
+
             if result.guard_triggered:
                 # Feed dominance detected - skip feed to allow nonfeed recovery
                 return (False, f"feed_dominance:{result.feed_dominance_class}:{result.reason}")
-            
+
             return (True, "ok")
         except Exception:
             # Fail-open: allow fetch on errors
@@ -1859,41 +1860,39 @@ class AcquisitionOrchestrator:
         cycle_result: CycleResult,
     ) -> None:
         """R13: Update lane_balancer with cycle finding counts.
-        
+
         Extracts feed/nonfeed counts from CycleResult and records them
         in the LaneBalancer for dominance tracking.
         """
         try:
-            lane_balancer = getattr(ctx, 'lane_balancer', None)
+            lane_balancer = getattr(ctx, "lane_balancer", None)
             if lane_balancer is None:
                 return
-            
+
             # Extract counts from cycle result
             # feed_results = (ok, count)
             feed_count = 0
             if cycle_result.feed_results and len(cycle_result.feed_results) >= 2:
                 feed_count = cycle_result.feed_results[1] or 0
-            
+
             # nonfeed = public + ct
             public_count = 0
             if cycle_result.public_results and len(cycle_result.public_results) >= 2:
                 public_count = cycle_result.public_results[1] or 0
-            
+
             ct_count = 0
             if cycle_result.ct_results and len(cycle_result.ct_results) >= 2:
                 ct_count = cycle_result.ct_results[1] or 0
-            
+
             nonfeed_count = public_count + ct_count
-            
+
             # Record in lane_balancer
             if feed_count > 0 or nonfeed_count > 0:
                 lane_balancer.record_findings(feed_count=feed_count, nonfeed_count=nonfeed_count)
-                
-                # Log dominance status at debug level
+
                 if log.isEnabledFor(logging.DEBUG):
                     log.debug(
-                        "[R13] Cycle dominance: feed=%d nonfeed=%d (public=%d ct=%d) "
-                        "total=%d ratio=%.2f",
+                        "[R13] Cycle dominance: feed=%d nonfeed=%d (public=%d ct=%d) total=%d ratio=%.2f",
                         feed_count,
                         nonfeed_count,
                         public_count,
@@ -1928,7 +1927,7 @@ class AcquisitionOrchestrator:
     def _build_sidecar_context(self, ctx: Any) -> Any | None:
         """Build SidecarContext from ctx. Returns None on import failure."""
         try:
-            from hledac.universal.runtime.sidecar_protocol import SidecarContext, ensure_adapters_registered
+            from hledac.universal.runtime.sidecar_protocol import SidecarContext
         except Exception:
             return None
 
@@ -1944,7 +1943,7 @@ class AcquisitionOrchestrator:
             findings=[],
             sprint_mode=_mode,
             memory_pressure=_pressure,
-    )
+        )
 
     def _get_adaptive_concurrency(self) -> int:
         """
@@ -2019,8 +2018,9 @@ class AcquisitionOrchestrator:
         # FIX: Make memory_budget_mb configurable via config (default 512 for M1 8GB)
         try:
             from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+
             ensure_adapters_registered()
-            _memory_budget = getattr(ctx.config, 'sidecar_memory_budget_mb', 512)
+            _memory_budget = getattr(ctx.config, "sidecar_memory_budget_mb", 512)
             _available = SidecarRegistry.get_available(memory_budget_mb=_memory_budget)
         except Exception:
             _available = []
@@ -2034,7 +2034,9 @@ class AcquisitionOrchestrator:
             from hledac.universal.utils.asyncx import parallel
 
             _inner_coros = [coro for _, coro in _coros]
-            _build = await parallel(_inner_coros, concurrency=_concurrency, policy="collect", taskgroup=True, ctx="probe_lanes")
+            _build = await parallel(
+                _inner_coros, concurrency=_concurrency, policy="collect", taskgroup=True, ctx="probe_lanes"
+            )
             _ok_results: list = _build.ok
             for _r in _ok_results:
                 if isinstance(_r, tuple) and len(_r) == 3:
@@ -2056,15 +2058,14 @@ class AcquisitionOrchestrator:
                 elapsed_s=_elapsed,
                 consecutive_empty_cycles=ctx.result.consecutive_empty_cycles,
                 total_findings=ctx.result.accepted_findings,
-    )
+            )
         except Exception:  # noqa: BLE001
             pass
 
 
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
-from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
-from _core import aclose
+from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult
 
 __all__ = [
     "AcquisitionOrchestrator",

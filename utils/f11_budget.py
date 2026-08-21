@@ -8,10 +8,7 @@ calls ``resolve_deep_research_budget_s(extreme_mode=...)``.
 GHOST_INVARIANTS: pure function, named except, fail-safe default 60 s.
 """
 
-
-
 from typing import Final
-from _core import aclose
 
 # Seconds per ResearchMode tier (M1 8GB UMA ceiling).
 # Mapped 1:1 with project_types.ResearchMode strings.
@@ -42,7 +39,7 @@ def resolve_deep_research_budget_s(extreme_mode: bool) -> float:
         if extreme_mode:
             return _BUDGET_BY_MODE["extreme"]
         return _BUDGET_BY_MODE["deep"]
-    except (KeyError, TypeError):
+    except KeyError, TypeError:
         # Fail-safe: any unexpected input returns DEEP-equivalent (60 s)
         return 60.0
 

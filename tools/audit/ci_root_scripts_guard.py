@@ -19,24 +19,23 @@ Allowed locations:
 
 import sys
 from pathlib import Path
-from _core import aclose
 
 ROOT = Path(__file__).parent.parent
 
 # Patterns that are forbidden in the project root
 FORBIDDEN_PATTERNS = (
-    "_test_",      # debug test scripts
-    "analyze_",    # debug analysis scripts
-    "autonomous_", # debug autonomous scripts
+    "_test_",  # debug test scripts
+    "analyze_",  # debug analysis scripts
+    "autonomous_",  # debug autonomous scripts
     "_analyze_deep",  # specific debug script
-    "_debug_",     # debug scripts
-    "_floor_check", # debug scripts
-    "_aclose",      # debug aclose scripts
-    )
+    "_debug_",  # debug scripts
+    "_floor_check",  # debug scripts
+    "_aclose",  # debug aclose scripts
+)
 
 ALLOWED_DIRS = {
-    "tests/manual",   # debug test scripts go here
-    "tools/analyze", # debug analysis scripts go here
+    "tests/manual",  # debug test scripts go here
+    "tools/analyze",  # debug analysis scripts go here
 }
 
 

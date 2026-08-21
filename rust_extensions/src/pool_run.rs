@@ -109,7 +109,6 @@ unsafe extern "C" fn rayon_handle_destructor(capsule: *mut pyo3::ffi::PyObject) 
         return;
     }
 
-    // Get pointer from capsule using stable Python 3.14+ C API
     let ptr = PyCapsule_GetPointer(capsule, RAYON_HANDLE_CAPSULE_NAME.as_ptr() as *const _);
     if ptr.is_null() {
         return;
@@ -122,10 +121,6 @@ unsafe extern "C" fn rayon_handle_destructor(capsule: *mut pyo3::ffi::PyObject) 
 const STATE_PENDING: u8 = 0;
 const STATE_READY: u8 = 1;
 const STATE_ABORTED: u8 = 2;
-
-// ---------------------------------------------------------------------------
-// Work item — submitted to rayon pool dispatcher via channel
-// ---------------------------------------------------------------------------
 
 /// Optional trace context for cross-language trace propagation (TEL-02).
 /// Carries W3C Trace Context trace_id and span_id from Python OTel
@@ -168,10 +163,6 @@ struct SharedTask {
     /// parking_lot::Condvar paired with parking_lot::Mutex (compatible, both from parking_lot).
     condvar: parking_lot::Condvar,
 }
-
-// ---------------------------------------------------------------------------
-// Global channel senders — one per pool type, one dispatcher thread each
-// ---------------------------------------------------------------------------
 
 static RAYON_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
@@ -284,10 +275,6 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TEL-02: Trace context propagation — optional tracing span wrapper
-// ---------------------------------------------------------------------------
-
 // Stub when otel is disabled — just execute the closure directly.
 #[cfg(not(feature = "otel"))]
 fn execute_with_optional_span<R>(_trace_context: Option<TraceContext>, f: impl FnOnce() -> R) -> R {
@@ -372,7 +359,6 @@ pub(crate) fn execute_work_item(work: WorkItem) {
     // TEL-02: Execute Python function, optionally wrapped in a tracing span
     // for cross-language trace context propagation.
     let py_result = execute_with_optional_span(work.trace_context.clone(), || {
-        // Execute Python function with GIL
         Python::attach(|py| {
             let result = work
                 .func
@@ -395,10 +381,6 @@ pub(crate) fn execute_work_item(work: WorkItem) {
 
     shared.condvar.notify_all();
 }
-
-// ---------------------------------------------------------------------------
-// Simple sync pool runners — GIL wrapper, no thread spawn (fast path for small work)
-// ---------------------------------------------------------------------------
 
 #[pyfunction]
 #[pyo3(name = "cpu_pool_run")]
@@ -431,10 +413,6 @@ pub fn mixed_pool_run_(
         Ok(result.unbind())
     })
 }
-
-// ---------------------------------------------------------------------------
-// rayon_submit_channel — channel-based dispatch, returns handle for join/abort
-// ---------------------------------------------------------------------------
 
 /// Submit a Python function to the rayon pool via channel dispatch.
 /// Returns immediately (does NOT block on the result).
@@ -549,10 +527,6 @@ pub fn rayon_submit_channel_(
     // SAFETY: capsule is a valid PyObject* from PyCapsule_New
     Ok(unsafe { Py::from_owned_ptr(py, capsule) })
 }
-
-// ---------------------------------------------------------------------------
-// rayon_join_channel — wait for rayon_submit_channel task to complete
-// ---------------------------------------------------------------------------
 
 /// Wait for a rayon_submit_channel task to complete.
 ///
@@ -678,10 +652,6 @@ pub fn rayon_join_channel_(
     inner_result
 }
 
-// ---------------------------------------------------------------------------
-// rayon_abort_channel — signal cancellation and wait for worker acknowledgment
-// ---------------------------------------------------------------------------
-
 /// Abort a rayon dispatch task.
 /// Sets cancel flag and waits up to 5s for worker acknowledgment.
 #[pyfunction]
@@ -722,10 +692,6 @@ pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// rayon_shutdown_channel — graceful shutdown of all dispatcher threads
-// ---------------------------------------------------------------------------
-
 /// Graceful shutdown — sets shutdown flag, closes all senders,
 /// and waits for dispatcher threads to exit (via channel close).
 /// Safe to call multiple times.
@@ -751,10 +717,6 @@ pub fn rayon_shutdown_channel_() -> PyResult<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// rayon_drop_channel — explicitly drop a rayon handle (Arc ownership release)
-// ---------------------------------------------------------------------------
 
 /// NEW-M1 FIX: Explicitly drop a rayon handle's Arc ownership.
 ///
@@ -798,13 +760,6 @@ pub fn rayon_drop_channel_(py: Python<'_>, handle: &Bound<'_, PyAny>) -> PyResul
         "Invalid handle type: expected usize or PyCapsule",
     ))
 }
-
-// ---------------------------------------------------------------------------
-// Deprecated aliases — removed in R2 (were exact duplicates of channel versions)
-// ---------------------------------------------------------------------------
-// NOTE: rayon_submit / rayon_join / rayon_abort / rayon_shutdown were removed.
-// They were identical to the _channel versions and no Python code used them.
-// If you need these names, use the _channel variants instead.
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // GIL wrappers — sync fast path for tiny workloads (no pool used)

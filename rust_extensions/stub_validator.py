@@ -20,13 +20,15 @@ Usage:
     python rust_extensions/stub_validator.py [--module hledac_rust_extensions]
     python rust_extensions/stub_validator.py --check-abi  # strict validation
     pytest tests/test_ffi_contract.py  # Full test suite
-    
+
 Exit codes:
     0 = validation passed
     1 = validation failed
     2 = module not loaded (skip validation)
 """
+
 from __future__ import annotations
+
 import ast
 import json
 import os
@@ -34,40 +36,45 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-from _core import aclose
+from typing import Any
+
 _REPO_ROOT = Path(__file__).resolve().parent
-MANIFEST_PATH = _REPO_ROOT / '_ffi_type_manifest.json'
-PYI_PATH = _REPO_ROOT / 'hledac_rust_extensions.pyi'
+MANIFEST_PATH = _REPO_ROOT / "_ffi_type_manifest.json"
+PYI_PATH = _REPO_ROOT / "hledac_rust_extensions.pyi"
+
 
 @dataclass(slots=True)
 class ValidationError:
     """Represents a single validation failure."""
+
     error_type: str
     class_name: str
-    field_name: Optional[str] = None
-    expected: Optional[str] = None
-    actual: Optional[str] = None
-    message: str = ''
+    field_name: str | None = None
+    expected: str | None = None
+    actual: str | None = None
+    message: str = ""
+
 
 @dataclass(slots=True)
 class ValidationResult:
     """Aggregated validation result."""
+
     passed: bool = True
     errors: list[ValidationError] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    def add_error(self, error: ValidationError):
+    def add_error(self, error: ValidationError) -> None:
         self.passed = False
         self.errors.append(error)
 
-    def add_warning(self, message: str):
+    def add_warning(self, message: str) -> None:
         self.warnings.append(message)
+
 
 def extract_python_slots(wrapper_file: Path) -> dict[str, dict[str, Any]]:
     """
     Extract slots from Python wrapper classes.
-    
+
     Looks for patterns like:
         class MyWrapper:
             __slots__ = ("field1", "field2", ...)
@@ -89,7 +96,7 @@ def extract_python_slots(wrapper_file: Path) -> dict[str, dict[str, Any]]:
             for item in node.body:
                 if isinstance(item, ast.Assign):
                     for target in item.targets:
-                        if isinstance(target, ast.Name) and target.id == '__slots__':
+                        if isinstance(target, ast.Name) and target.id == "__slots__":
                             if isinstance(item.value, (ast.List, ast.Tuple, ast.Set)):
                                 for elt in item.value.elts:
                                     if isinstance(elt, ast.Constant):
@@ -98,22 +105,23 @@ def extract_python_slots(wrapper_file: Path) -> dict[str, dict[str, Any]]:
                                 pass
             for item in node.body:
                 if isinstance(item, ast.FunctionDef):
-                    if item.name == '__init__':
+                    if item.name == "__init__":
                         for stmt in ast.walk(item):
                             if isinstance(stmt, ast.Assign):
                                 for target in stmt.targets:
                                     if isinstance(target, ast.Attribute):
                                         if isinstance(target.value, ast.Name):
-                                            if target.value.id == 'self':
+                                            if target.value.id == "self":
                                                 class_fields.add(target.attr)
             if class_slots or class_fields:
-                slots[node.name] = {'slots': class_slots, 'fields': class_fields, 'all': class_slots | class_fields}
+                slots[node.name] = {"slots": class_slots, "fields": class_fields, "all": class_slots | class_fields}
     return slots
+
 
 def extract_pyi_slots(pyi_path: Path) -> dict[str, dict[str, Any]]:
     """
     Extract slot information from generated .pyi stub.
-    
+
     Looks for patterns like:
         class MyClass:
             field1: int
@@ -126,7 +134,7 @@ def extract_pyi_slots(pyi_path: Path) -> dict[str, dict[str, Any]]:
     current_class = None
     class_fields = {}
     for line in source.splitlines():
-        class_match = re.match('^class (\\w+):', line)
+        class_match = re.match("^class (\\w+):", line)
         if class_match:
             if current_class and class_fields:
                 slots[current_class] = class_fields
@@ -134,18 +142,19 @@ def extract_pyi_slots(pyi_path: Path) -> dict[str, dict[str, Any]]:
             class_fields = {}
             continue
         if current_class:
-            if re.match('^\\s+def ', line):
+            if re.match("^\\s+def ", line):
                 continue
-            if re.match('^\\s+async def ', line):
+            if re.match("^\\s+async def ", line):
                 continue
-            field_match = re.match('^\\s+(\\w+)\\s*:\\s*([\\w\\[\\]|\\s,<>]+)', line)
+            field_match = re.match("^\\s+(\\w+)\\s*:\\s*([\\w\\[\\]|\\s,<>]+)", line)
             if field_match:
                 field_name = field_match.group(1)
                 field_type = field_match.group(2).strip()
-                class_fields[field_name] = {'type': field_type, 'has_get': True}
+                class_fields[field_name] = {"type": field_type, "has_get": True}
     if current_class and class_fields:
         slots[current_class] = class_fields
     return slots
+
 
 def load_manifest() -> dict:
     """Load the FFI type manifest."""
@@ -154,79 +163,103 @@ def load_manifest() -> dict:
     with MANIFEST_PATH.open() as f:
         return json.load(f)
 
+
 def validate_class_slots(manifest: dict, pyi_slots: dict[str, dict[str, Any]]) -> ValidationResult:
     """
     Validate that Python slots match Rust #[pyclass] fields.
-    
+
     For each class in the manifest:
     1. Get Rust struct fields (from manifest)
     2. Get Python class fields (from .pyi)
     3. Compare — mismatch = BUILD FAILURE
     """
     result = ValidationResult()
-    manifest_classes = manifest.get('classes', {})
-    for full_name, class_data in manifest_classes.items():
-        class_name = class_data['name']
-        rust_fields = {f['name']: f for f in class_data.get('fields', [])}
+    manifest_classes = manifest.get("classes", {})
+    for _full_name, class_data in manifest_classes.items():
+        class_name = class_data["name"]
+        rust_fields = {f["name"]: f for f in class_data.get("fields", [])}
         rust_slots = set(rust_fields.keys())
         pyi_fields = pyi_slots.get(class_name, {})
         pyi_slots_set = set(pyi_fields.keys())
         missing_in_pyi = rust_slots - pyi_slots_set
         extra_in_pyi = pyi_slots_set - rust_slots
         for field_name in missing_in_pyi:
-            result.add_error(ValidationError(error_type='slot_missing_in_pyi', class_name=class_name, field_name=field_name, expected=rust_fields[field_name]['python_type'], actual=None, message=f"Field '{field_name}' in Rust #[pyclass] {class_name} is missing from .pyi stub"))
+            result.add_error(
+                ValidationError(
+                    error_type="slot_missing_in_pyi",
+                    class_name=class_name,
+                    field_name=field_name,
+                    expected=rust_fields[field_name]["python_type"],
+                    actual=None,
+                    message=f"Field '{field_name}' in Rust #[pyclass] {class_name} is missing from .pyi stub",
+                )
+            )
         for field_name in extra_in_pyi:
             result.add_warning(f"Field '{field_name}' in .pyi for {class_name} not found in Rust #[pyclass]")
         for field_name in rust_slots & pyi_slots_set:
-            rust_type = rust_fields[field_name]['python_type']
-            pyi_type = pyi_fields[field_name].get('type', '')
+            rust_type = rust_fields[field_name]["python_type"]
+            pyi_type = pyi_fields[field_name].get("type", "")
             if not _types_compatible(rust_type, pyi_type):
-                result.add_error(ValidationError(error_type='type_mismatch', class_name=class_name, field_name=field_name, expected=rust_type, actual=pyi_type, message=f"Type mismatch for field '{field_name}' in {class_name}: expected {rust_type}, got {pyi_type}"))
+                result.add_error(
+                    ValidationError(
+                        error_type="type_mismatch",
+                        class_name=class_name,
+                        field_name=field_name,
+                        expected=rust_type,
+                        actual=pyi_type,
+                        message=f"Type mismatch for field '{field_name}' in {class_name}: expected {rust_type}, got {pyi_type}",
+                    )
+                )
     return result
+
 
 def validate_function_signatures(manifest: dict, pyi_path: Path) -> ValidationResult:
     """Validate that function signatures match across the FFI boundary."""
     result = ValidationResult()
-    manifest_functions = manifest.get('functions', {})
-    pyi_content = pyi_path.read_text() if pyi_path.exists() else ''
-    for full_name, func_data in manifest_functions.items():
-        func_name = func_data['name']
-        manifest_sig = func_data.get('signature', '()')
-        pattern = f'(?:async\\s+)?def\\s+{re.escape(func_name)}\\s*\\(([^)]*)\\)'
+    manifest_functions = manifest.get("functions", {})
+    pyi_content = pyi_path.read_text() if pyi_path.exists() else ""
+    for _full_name, func_data in manifest_functions.items():
+        func_name = func_data["name"]
+        manifest_sig = func_data.get("signature", "()")
+        pattern = f"(?:async\\s+)?def\\s+{re.escape(func_name)}\\s*\\(([^)]*)\\)"
         match = re.search(pattern, pyi_content)
         if not match:
             result.add_warning(f"Function '{func_name}' not found in .pyi")
             continue
         pyi_params = match.group(1).strip()
-        manifest_param_count = manifest_sig.count(',') + 1 if manifest_sig.strip() != '()' else 0
-        pyi_param_count = pyi_params.count(',') + 1 if pyi_params else 0
+        manifest_param_count = manifest_sig.count(",") + 1 if manifest_sig.strip() != "()" else 0
+        pyi_param_count = pyi_params.count(",") + 1 if pyi_params else 0
         if manifest_param_count != pyi_param_count:
-            result.add_warning(f'Parameter count mismatch for {func_name}: manifest={manifest_param_count}, pyi={pyi_param_count}')
+            result.add_warning(
+                f"Parameter count mismatch for {func_name}: manifest={manifest_param_count}, pyi={pyi_param_count}"
+            )
     return result
+
 
 def _types_compatible(rust_type: str, pyi_type: str) -> bool:
     """
     Check if Rust-derived Python type is compatible with .pyi type hint.
-    
+
     Uses structural compatibility, not exact string matching.
     """
     rust_type = rust_type.strip()
     pyi_type = pyi_type.strip()
     if rust_type == pyi_type:
         return True
-    if rust_type.startswith('list[') and pyi_type.startswith('list['):
+    if rust_type.startswith("list[") and pyi_type.startswith("list["):
         rust_inner = rust_type[5:-1]
         pyi_inner = pyi_type[5:-1]
         return _types_compatible(rust_inner, pyi_inner)
-    if ' | None' in rust_type or rust_type.endswith('| None'):
-        rust_inner = rust_type.replace(' | None', '').replace('| None', '').strip()
-        pyi_inner = pyi_type.replace(' | None', '').replace('| None', '').strip()
+    if " | None" in rust_type or rust_type.endswith("| None"):
+        rust_inner = rust_type.replace(" | None", "").replace("| None", "").strip()
+        pyi_inner = pyi_type.replace(" | None", "").replace("| None", "").strip()
         return _types_compatible(rust_inner, pyi_inner)
-    if pyi_type in ('Any', 'any'):
+    if pyi_type in ("Any", "any"):
         return True
     return rust_type in pyi_type or pyi_type in rust_type
 
-def validate_module_loaded(module_name: str='hledac_rust_extensions') -> bool:
+
+def validate_module_loaded(module_name: str = "hledac_rust_extensions") -> bool:
     """Check if the extension module is loaded."""
     try:
         __import__(module_name)
@@ -234,20 +267,21 @@ def validate_module_loaded(module_name: str='hledac_rust_extensions') -> bool:
     except ImportError:
         return False
 
-def validate_ffi_contract(module_name: str='hledac_rust_extensions', strict: bool=False) -> ValidationResult:
+
+def validate_ffi_contract(module_name: str = "hledac_rust_extensions", strict: bool = False) -> ValidationResult:
     """
     Run full FFI contract validation.
-    
+
     Args:
         module_name: Name of the PyO3 extension module
         strict: If True, warnings become errors
-    
+
     Returns:
         ValidationResult with pass/fail and error details
     """
     result = ValidationResult()
     if not MANIFEST_PATH.exists():
-        result.add_warning(f'FFI manifest not found at {MANIFEST_PATH}. Run ffi_type_manifest.py first.')
+        result.add_warning(f"FFI manifest not found at {MANIFEST_PATH}. Run ffi_type_manifest.py first.")
         if strict:
             result.passed = False
         return result
@@ -263,85 +297,95 @@ def validate_ffi_contract(module_name: str='hledac_rust_extensions', strict: boo
     result.warnings.extend(func_result.warnings)
     if strict:
         for warning in result.warnings:
-            result.errors.append(ValidationError(error_type='warning_as_error', class_name='', message=f'[STRICT] {warning}'))
+            result.errors.append(
+                ValidationError(error_type="warning_as_error", class_name="", message=f"[STRICT] {warning}")
+            )
         result.warnings.clear()
         result.passed = len(result.errors) == 0
     return result
 
-def run_validation_gate(module_name: str='hledac_rust_extensions') -> int:
+
+def run_validation_gate(module_name: str = "hledac_rust_extensions") -> int:
     """
     Run validation as a CI gate.
-    
+
     This is called by maturin develop hook before completing installation.
-    
+
     Exit codes:
         0 = validation passed, proceed with installation
         1 = validation failed, abort installation
     """
-    print('[stub_validator] Running FFI contract validation...')
-    print(f'[stub_validator] Manifest: {MANIFEST_PATH}')
-    print(f'[stub_validator] PYI stub: {PYI_PATH}')
+    print("[stub_validator] Running FFI contract validation...")
+    print(f"[stub_validator] Manifest: {MANIFEST_PATH}")
+    print(f"[stub_validator] PYI stub: {PYI_PATH}")
     result = validate_ffi_contract(module_name=module_name, strict=True)
     if result.warnings:
-        print('[stub_validator] Warnings:')
+        print("[stub_validator] Warnings:")
         for warning in result.warnings:
-            print(f'  - {warning}')
+            print(f"  - {warning}")
     if result.errors:
-        print('[stub_validator] ERRORS (BUILD-TIME FAILURE):')
+        print("[stub_validator] ERRORS (BUILD-TIME FAILURE):")
         for error in result.errors:
-            print(f'  [{error.error_type}] {error.class_name}.{error.field_name}')
-            print(f'    Expected: {error.expected}')
-            print(f'    Actual: {error.actual}')
-            print(f'    Message: {error.message}')
+            print(f"  [{error.error_type}] {error.class_name}.{error.field_name}")
+            print(f"    Expected: {error.expected}")
+            print(f"    Actual: {error.actual}")
+            print(f"    Message: {error.message}")
     if result.passed:
-        print('[stub_validator] ✓ FFI contract validation PASSED')
-        print('[stub_validator] Build can proceed safely.')
+        print("[stub_validator] ✓ FFI contract validation PASSED")
+        print("[stub_validator] Build can proceed safely.")
         return 0
     else:
-        print('[stub_validator] ✗ FFI contract validation FAILED')
-        print('[stub_validator] Build ABORTED — fix errors before continuing.')
+        print("[stub_validator] ✗ FFI contract validation FAILED")
+        print("[stub_validator] Build ABORTED — fix errors before continuing.")
         return 1
+
 
 def maturin_develop_hook() -> int:
     """
     FFI validation entry point for CI/testing.
-    
+
     NOTE: Maturin does NOT have a develop hooks feature.
     This function exists for backward compatibility and can be called:
       1. Directly: python rust_extensions/stub_validator.py
       2. Via pytest: pytest tests/test_ffi_contract.py
       3. In CI scripts before/after maturin develop
-    
+
     To skip validation:
       PYO3_NO_VALIDATION=1 python rust_extensions/stub_validator.py
     """
-    if os.environ.get('PYO3_NO_VALIDATION', '').lower() in ('1', 'true', 'yes'):
-        print('[stub_validator] SKIPPING validation (PYO3_NO_VALIDATION=1)')
+    if os.environ.get("PYO3_NO_VALIDATION", "").lower() in ("1", "true", "yes"):
+        print("[stub_validator] SKIPPING validation (PYO3_NO_VALIDATION=1)")
         return 0
     return run_validation_gate()
 
-def main():
+
+def main() -> int:
     """CLI interface for stub_validator."""
     import argparse
-    parser = argparse.ArgumentParser(description='FFI contract validator for PyO3 bindings')
-    parser.add_argument('--module', default='hledac_rust_extensions', help='Extension module name (default: hledac_rust_extensions)')
-    parser.add_argument('--check-abi', action='store_true', help='Strict validation mode (warnings as errors)')
-    parser.add_argument('--ci', action='store_true', help='CI mode: exit 1 on any warning')
+
+    parser = argparse.ArgumentParser(description="FFI contract validator for PyO3 bindings")
+    parser.add_argument(
+        "--module", default="hledac_rust_extensions", help="Extension module name (default: hledac_rust_extensions)"
+    )
+    parser.add_argument("--check-abi", action="store_true", help="Strict validation mode (warnings as errors)")
+    parser.add_argument("--ci", action="store_true", help="CI mode: exit 1 on any warning")
     args = parser.parse_args()
     result = validate_ffi_contract(module_name=args.module, strict=args.ci)
     if result.warnings:
-        print('[stub_validator] Warnings:')
+        print("[stub_validator] Warnings:")
         for warning in result.warnings:
-            print(f'  - {warning}')
+            print(f"  - {warning}")
     if result.errors:
-        print('[stub_validator] Errors:')
+        print("[stub_validator] Errors:")
         for error in result.errors:
-            print(f'  [{error.error_type}] {error.class_name}.{error.field_name}: {error.message}')
+            print(f"  [{error.error_type}] {error.class_name}.{error.field_name}: {error.message}")
     if result.passed:
-        print('[stub_validator] ✓ Validation PASSED')
+        print("[stub_validator] ✓ Validation PASSED")
         return 0
     else:
-        print('[stub_validator] ✗ Validation FAILED')
+        print("[stub_validator] ✗ Validation FAILED")
         return 1
-if __name__ == '__main__':
+
+
+if __name__ == "__main__":
     sys.exit(main())

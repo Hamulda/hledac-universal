@@ -12,35 +12,35 @@ Canonical path referenced by:
 - runtime/sprint_entrypoint.py (canonical_sprint_owner documentation)
 - Various probe/audit reports
 """
+
 from __future__ import annotations
 
-import asyncio
-import time
-from pathlib import Path
-from typing import Any
-
 # F350M-R: Lazy imports to break core ↔ runtime cycle
-from _core._util import aclose
 
 # Lazy runtime access
 _runtime_run_sprint_impl = None
 _SprintFlags_impl = None
+
 
 def _get_runtime_run_sprint():
     """Lazy getter for run_sprint from runtime.sprint_entrypoint."""
     global _runtime_run_sprint_impl
     if _runtime_run_sprint_impl is None:
         from hledac.universal.runtime.sprint_entrypoint import run_sprint as _impl
+
         _runtime_run_sprint_impl = _impl
     return _runtime_run_sprint_impl
+
 
 def _get_SprintFlags():
     """Lazy getter for SprintFlags from runtime.sprint_entrypoint."""
     global _SprintFlags_impl
     if _SprintFlags_impl is None:
         from hledac.universal.runtime.sprint_entrypoint import SprintFlags as _impl
+
         _SprintFlags_impl = _impl
     return _SprintFlags_impl
+
 
 # Re-export for backward compatibility (canonical path)
 run_sprint = _get_runtime_run_sprint()

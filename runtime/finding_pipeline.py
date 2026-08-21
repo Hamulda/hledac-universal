@@ -43,11 +43,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time as _time
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import safe_create_task
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -120,6 +118,7 @@ class FindingPipeline:
         try:
             # R6: Centralized Rust access via core.rust_backend
             from hledac.universal._core.rust_backend import rust
+
             MPSCPool = rust.raw.MPSCPool  # type: ignore[assignment]
 
             pool = MPSCPool(capacity=capacity)  # type: ignore[attr-defined]
@@ -132,12 +131,12 @@ class FindingPipeline:
                 "[ISSUE-024] Rust MPSCPool initialized: capacity=%d, wake_fd=%d",
                 capacity,
                 wake_fd,
-    )
+            )
         except Exception as _exc:
             logger.debug(
                 "[ISSUE-024] Rust MPSCPool unavailable, using no-op mode: %s",
                 _exc,
-    )
+            )
             self._mpsc = None
             self._sender_ptr = 0
 
@@ -156,7 +155,7 @@ class FindingPipeline:
         self._consumer_task = safe_create_task(
             self._drain_loop(),
             name="finding_pipeline:drain",
-    )
+        )
         logger.debug("[ISSUE-024] FindingPipeline consumer started")
 
     async def stop(self) -> None:
@@ -182,7 +181,7 @@ class FindingPipeline:
             "[ISSUE-024] FindingPipeline stopped: enqueued=%d, dropped=%d",
             self._enqueued_count,
             self._dropped_count,
-    )
+        )
 
     async def enqueue_batch(
         self,
@@ -233,7 +232,7 @@ class FindingPipeline:
                     logger.warning(
                         "[ISSUE-024] MPSCPool still full after eviction, dropping %d items",
                         len(findings),
-    )
+                    )
                     return False
 
         return True
@@ -267,7 +266,7 @@ class FindingPipeline:
                     None,
                     self._sync_ingest_wrapper,
                     findings,
-    )
+                )
             except Exception:  # noqa: BLE001
                 pass  # fail-soft
             finally:
@@ -301,7 +300,7 @@ class FindingPipeline:
                 logger.warning(
                     "[ISSUE-024] [sync] MPSCPool still full after eviction, dropping %d items",
                     len(findings),
-    )
+                )
                 return False
 
         return True
@@ -319,12 +318,12 @@ class FindingPipeline:
                 reader_handle = loop.add_reader(
                     wake_fd,
                     self._on_wake_fd,
-    )
+                )
             except Exception as _exc:
                 logger.debug(
                     "[ISSUE-024] Failed to register wake fd reader: %s",
                     _exc,
-    )
+                )
 
         IDLE_TIMEOUT_S = 0.5  # Drain every 500ms even without wake
 
@@ -340,14 +339,12 @@ class FindingPipeline:
                     logger.debug(
                         "[ISSUE-024] Drain loop error: %s",
                         _exc,
-    )
+                    )
         finally:
             if reader_handle is not None:
                 self._unregister_wake_fd(wake_fd, loop)
 
-    def _unregister_wake_fd(
-        self, wake_fd: int, loop: asyncio.AbstractEventLoop
-    ) -> None:
+    def _unregister_wake_fd(self, wake_fd: int, loop: asyncio.AbstractEventLoop) -> None:
         """Unregister wake fd reader, silently ignoring errors."""
         try:
             loop.remove_reader(wake_fd)
@@ -358,7 +355,6 @@ class FindingPipeline:
         """Called when wake fd fires — wake the drain loop."""
         # The sleep() in _drain_loop will wake naturally;
         # this is just a hint that items are available.
-        pass
 
     async def _drain_batch_to_duckdb(self) -> None:
         """Drain all available items from MPSCPool and ingest to DuckDB."""
@@ -373,7 +369,7 @@ class FindingPipeline:
             logger.debug(
                 "[ISSUE-024] recv_batch error: %s",
                 _exc,
-    )
+            )
             return
 
         if not raw_items:
@@ -401,7 +397,7 @@ class FindingPipeline:
                         "[ISSUE-024] Failed to deserialize finding batch: orjson=%s msgspec=%s",
                         _json_err,
                         _msg_err,
-    )
+                    )
                     continue
 
         if not all_findings:
@@ -419,7 +415,7 @@ class FindingPipeline:
                 "[ISSUE-024] DuckDB ingest failed for %d findings: %s",
                 len(all_findings),
                 _exc,
-    )
+            )
 
     async def _direct_ingest(
         self,
@@ -436,11 +432,11 @@ class FindingPipeline:
             logger.debug(
                 "[ISSUE-024] Direct ingest failed: %s",
                 _exc,
-    )
+            )
 
     def _sync_ingest_wrapper(self, findings: list[CanonicalFinding]) -> None:
         """Sync wrapper to run async ingest in executor.
-        
+
         MODERN-06 FIX: Ensure event loop is always closed to prevent leaks.
         """
         loop: asyncio.AbstractEventLoop | None = None
@@ -502,7 +498,7 @@ class FindingPipeline:
                 "[ISSUE-024] Final drain ingest failed for %d findings: %s",
                 len(all_findings),
                 _exc,
-    )
+            )
 
     # ── Telemetry ────────────────────────────────────────────────────────────
 

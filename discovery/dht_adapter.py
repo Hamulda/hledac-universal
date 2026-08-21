@@ -9,19 +9,16 @@ Timeout: 30s max (DHT is slow)
 Tier: 3 (experimental)
 """
 
-
-
 import asyncio
 import hashlib
 import logging
-
-from hledac.universal.utils.locks import LazyAsyncioLock
 import os
 import time
 from typing import TYPE_CHECKING
 
+from hledac.universal.utils.locks import LazyAsyncioLock
+
 from .base import DiscoveryBatchResult, DiscoveryHit
-from _core import aclose
 
 if TYPE_CHECKING:
     from dht.kademlia_node import KademliaNode
@@ -45,9 +42,6 @@ def _make_node_id() -> str:
     return hashlib.sha256(os.urandom(32)).hexdigest()[:20]
 
 
-# ---------------------------------------------------------------------------
-# KademliaNode lifecycle (process-global singleton)
-# ---------------------------------------------------------------------------
 _node_instance: KademliaNode | None = None
 _node_lock = LazyAsyncioLock()
 
@@ -66,9 +60,9 @@ async def _get_dht_node() -> KademliaNode | None:
             return _node_instance
 
         try:
-            from hledac.universal._core.resource_governor import ResourceGovernor
             from dht.kademlia_node import KademliaNode
             from dht.local_graph import LocalGraphStore
+            from hledac.universal._core.resource_governor import ResourceGovernor
 
             lgs = LocalGraphStore()
             governor = ResourceGovernor()  # type: ignore[unused-assignment]
@@ -78,7 +72,7 @@ async def _get_dht_node() -> KademliaNode | None:
                 governor=governor,
                 bootstrap_nodes=_DHT_BOOTSTRAP_NODES,
                 local_graph_store=lgs,
-    )
+            )
             await node.start()
             _node_instance = node
             logger.debug("[DHT] KademliaNode started (shared singleton)")
@@ -100,10 +94,6 @@ async def _stop_dht_node() -> None:
             _node_instance = None
             logger.debug("[DHT] KademliaNode stopped")
 
-
-# ---------------------------------------------------------------------------
-# Query-to-infohash conversion (BEP-05 keyword search simulation)
-# ---------------------------------------------------------------------------
 
 def _query_to_infohash_candidates(query: str, max_candidates: int = 20) -> list[str]:
     """
@@ -134,10 +124,6 @@ def _query_to_infohash_candidates(query: str, max_candidates: int = 20) -> list[
 
     return candidates[:max_candidates]
 
-
-# ---------------------------------------------------------------------------
-# Main adapter
-# ---------------------------------------------------------------------------
 
 async def async_search_dht(
     query: str,
@@ -173,7 +159,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=time.monotonic() - start,
             error_type=None,
-    )
+        )
 
     node = await _get_dht_node()
     if node is None:
@@ -186,7 +172,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=time.monotonic() - start,
             error_type="node_start_failed",
-    )
+        )
 
     try:
         candidates = _query_to_infohash_candidates(query, max_candidates=max_results)
@@ -204,7 +190,7 @@ async def async_search_dht(
                     async with asyncio.timeout(5.0):
                         peers = await node.get_peers(info_hash)
                     return [(peer_ip, peer_port, info_hash) for peer_ip, peer_port in peers[:20]]
-                except (TimeoutError, asyncio.CancelledError, Exception):
+                except TimeoutError, asyncio.CancelledError, Exception:
                     return []
 
             # P1-02: Parallel fetch — concurrency=10 pro M1 safety
@@ -212,8 +198,8 @@ async def async_search_dht(
                 [_get_peers_for_candidate(c) for c in candidates[:max_results]],
                 policy="collect",
                 concurrency=10,
-                ctx="dht:get_peers"
-    )
+                ctx="dht:get_peers",
+            )
 
             # Flatten and deduplicate — result.ok is list of lists
             all_peers: list[tuple[str, int, str]] = []
@@ -226,15 +212,17 @@ async def async_search_dht(
                     continue
                 seen_peers.add((peer_ip, peer_port))
                 hit_url = f"bt://{peer_ip}:{peer_port}/{info_hash[:16]}"
-                hits.append(DiscoveryHit(
-                    url=hit_url,
-                    title=f"BT peer {peer_ip}:{peer_port}",
-                    snippet=f"infohash={info_hash[:16]}… via DHT",
-                    src="dht",
-                    retrieved_ts=time.time(),
-                    score=0.5,
-                    reason="dht_peer_match",
-                ))
+                hits.append(
+                    DiscoveryHit(
+                        url=hit_url,
+                        title=f"BT peer {peer_ip}:{peer_port}",
+                        snippet=f"infohash={info_hash[:16]}… via DHT",
+                        src="dht",
+                        retrieved_ts=time.time(),
+                        score=0.5,
+                        reason="dht_peer_match",
+                    )
+                )
 
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(
@@ -246,7 +234,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type=None,
-    )
+        )
 
     except TimeoutError:
         elapsed = time.monotonic() - start
@@ -259,7 +247,7 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type="timeout",
-    )
+        )
     except Exception as e:
         elapsed = time.monotonic() - start
         logger.debug(f"[DHT] async_search_dht error (non-fatal): {e}")
@@ -272,12 +260,8 @@ async def async_search_dht(
             source_family="dht_discovery",
             elapsed_s=elapsed,
             error_type="exception",
-    )
+        )
 
-
-# ---------------------------------------------------------------------------
-# BEP-9 Metadata Fetcher (Sprint F229)
-# ---------------------------------------------------------------------------
 
 _METADATA_FETCHER: TorrentMetadataFetcher | None = None
 
@@ -287,6 +271,7 @@ async def _get_metadata_fetcher() -> TorrentMetadataFetcher:
     global _METADATA_FETCHER
     if _METADATA_FETCHER is None:
         from dht.metadata_fetcher import TorrentMetadataFetcher
+
         _METADATA_FETCHER = TorrentMetadataFetcher()
     return _METADATA_FETCHER
 
@@ -316,7 +301,7 @@ async def async_fetch_dht_metadata(
             "success": False,
             "error": "dht_disabled",
             "elapsed_s": time.monotonic() - start,
-            "findings": []
+            "findings": [],
         }
 
     # Normalize infohash
@@ -328,7 +313,7 @@ async def async_fetch_dht_metadata(
             "success": False,
             "error": "invalid_infohash",
             "elapsed_s": time.monotonic() - start,
-            "findings": []
+            "findings": [],
         }
 
     node = await _get_dht_node()
@@ -339,11 +324,10 @@ async def async_fetch_dht_metadata(
             "success": False,
             "error": "dht_node_unavailable",
             "elapsed_s": time.monotonic() - start,
-            "findings": []
+            "findings": [],
         }
 
     try:
-        # Get peers from BEP-5
         ih_bytes = bytes.fromhex(ih_hex)
         async with asyncio.timeout(min(10.0, timeout_s)):
             peers = await node.get_peers(ih_hex)
@@ -355,10 +339,9 @@ async def async_fetch_dht_metadata(
                 "success": False,
                 "error": "no_peers_found",
                 "elapsed_s": time.monotonic() - start,
-                "findings": []
+                "findings": [],
             }
 
-        # Fetch metadata via BEP-9
         fetcher = await _get_metadata_fetcher()
         async with asyncio.timeout(timeout_s):
             info = await fetcher.fetch_metadata(ih_bytes, peers[:max_results], timeout=timeout_s)
@@ -370,10 +353,9 @@ async def async_fetch_dht_metadata(
                 "success": False,
                 "error": "metadata_fetch_failed",
                 "elapsed_s": time.monotonic() - start,
-                "findings": []
+                "findings": [],
             }
 
-        # Extract OSINT findings
         findings = fetcher.extract_intel_from_torrent(info, ih_hex)
 
         return {
@@ -385,7 +367,7 @@ async def async_fetch_dht_metadata(
             "file_count": len(info.files),
             "trackers": info.trackers,
             "elapsed_s": time.monotonic() - start,
-            "findings": findings
+            "findings": findings,
         }
 
     except TimeoutError:
@@ -395,7 +377,7 @@ async def async_fetch_dht_metadata(
             "success": False,
             "error": "timeout",
             "elapsed_s": time.monotonic() - start,
-            "findings": []
+            "findings": [],
         }
     except Exception as e:
         logger.debug(f"[DHT] async_fetch_dht_metadata error (non-fatal): {e}")
@@ -405,6 +387,5 @@ async def async_fetch_dht_metadata(
             "success": False,
             "error": str(e),
             "elapsed_s": time.monotonic() - start,
-            "findings": []
+            "findings": [],
         }
-

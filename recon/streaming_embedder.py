@@ -3,7 +3,6 @@ Sprint F203I — Streaming Embedder for M1 8GB Memory Safety
 ISSUE #022: Pipeline parallelization — concurrent batch embedding.
 ISSUE #016: Replace raw asyncio.create_task + asyncio.wait with safe_create_task
 
-
             + asyncio.wait_for timeout for OTel trace propagation.
 
 ROLE: Chunked async embedding pipeline that yields batches incrementally,
@@ -58,27 +57,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.runtime.worker_pool import run_in_pool
-from hledac.universal.utils.asyncx import first_completed  # ISSUE-15
-from _core import aclose
+from hledac.universal.utils.asyncx import first_completed
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 MAX_EMBEDDING_BATCH: int = 16
 MAX_TEXT_BYTES_PER_FINDING: int = 4096
@@ -88,10 +79,6 @@ _SAMPLE_INTERVAL: int = 3  # sample memory every N batches (natural yield points
 CONCURRENT_BATCHES: int = 2
 # Text extraction executor — separate from embed executor to allow overlap
 _TEXT_EXTRACT_WORKERS: int = 2
-
-# ---------------------------------------------------------------------------
-# Text extraction helpers
-# ---------------------------------------------------------------------------
 
 
 def _sync_extract_texts(
@@ -127,8 +114,11 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
     try:
         from rust_extensions.wiring.text_norm_wiring import (
             batch_nfc_normalize as _batch_nfc,
+        )
+        from rust_extensions.wiring.text_norm_wiring import (
             is_available as _available,
         )
+
         if not _available():
             return texts  # No Rust available, return as-is
         result = _batch_nfc(texts)
@@ -139,20 +129,12 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Batch result dataclass
-# ---------------------------------------------------------------------------
-
-
 class _BatchResult(Struct):
     """Result of a single batch embed operation."""
+
     ids: list[str]
     embeddings: np.ndarray | None
 
-
-# ---------------------------------------------------------------------------
-# StreamingEmbedder
-# ---------------------------------------------------------------------------
 
 class StreamingEmbedder:
     """
@@ -186,10 +168,6 @@ class StreamingEmbedder:
     def aborted(self) -> bool:
         """True if embedding was aborted due to memory pressure."""
         return self._abort
-
-    # -------------------------------------------------------------------------
-    # Model lifecycle helpers
-    # -------------------------------------------------------------------------
 
     def _is_model_loaded(self) -> bool:
         """Check if embedding model is currently loaded via canonical lifecycle API."""
@@ -267,10 +245,6 @@ class StreamingEmbedder:
         except Exception:
             return True
 
-    # -------------------------------------------------------------------------
-    # Core API
-    # -------------------------------------------------------------------------
-
     async def embed_findings(
         self,
         findings: list[CanonicalFinding],
@@ -346,37 +320,24 @@ class StreamingEmbedder:
         GPU batches × 16 items × 512 tokens × 4B ≈ 65 KB per batch — well
         within the 1.5 GiB Metal cache limit.
         """
-        # Phase 1: Pre-extract ALL texts upfront (off critical path)
         all_ids: list[str]
         all_texts: list[str]
         all_ids, all_texts = await run_in_pool(
             "cpu",
             _sync_extract_texts,
             findings,
-    )
+        )
 
-        # Phase 2: Apply Rust text normalization if available
         norm_texts = _try_rust_text_norm(all_texts)
         if norm_texts is None:
             norm_texts = all_texts
         else:
-            logger.debug(
-                f"[StreamingEmbed] Rust text norm applied: {len(norm_texts)} texts"
-    )
+            logger.debug(f"[StreamingEmbed] Rust text norm applied: {len(norm_texts)} texts")
 
-        # Phase 3: Partition into chunks
         chunks: list[tuple[int, int]] = []  # (start_idx, end_idx)
         for i in range(0, len(norm_texts), batch_size):
             chunks.append((i, min(i + batch_size, len(norm_texts))))
 
-        # Phase 4: Concurrent batch execution with sliding window via TaskGroup
-        # PEP 654 asyncio.TaskGroup gives structured concurrency: when the scope
-        # exits (abort/timeout/error), ALL pending child tasks are cancelled
-        # automatically — no more manual drain loops, no more orphan task leaks.
-        #
-        # Sliding window: external pending set tracks live child tasks.
-        # asyncio.wait(FIRST_COMPLETED) handles the completion detection.
-        # TaskGroup scope handles automatic cancellation of all pending on exit.
         pending: set[asyncio.Task[tuple[list[str], np.ndarray]]] = set()
         chunk_idx: int = 0
 
@@ -392,15 +353,12 @@ class StreamingEmbedder:
                         break
 
                     # Fill pipeline up to CONCURRENT_BATCHES
-                    while (
-                        len(pending) < CONCURRENT_BATCHES
-                        and chunk_idx < len(chunks)
-                    ):
+                    while len(pending) < CONCURRENT_BATCHES and chunk_idx < len(chunks):
                         batch_task = tg.create_task(
                             launch_batch(chunk_idx),
                             name=f"streaming_embed.batch_{chunk_idx}",
                             eager_start=True,
-    )
+                        )
                         pending.add(batch_task)
                         chunk_idx += 1
 
@@ -416,11 +374,10 @@ class StreamingEmbedder:
                         async with asyncio.timeout(300.0):  # 5 min hard cap per batch
                             # first_completed returns (result, winner_task)
                             _result, _winner = await first_completed(*pending)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         # TaskGroup scope will cancel all remaining children automatically
                         raise
 
-                    # Remove winner from pending set
                     pending.discard(_winner)
 
                     # Yield completed batch(es) — only the winner in this iteration
@@ -441,10 +398,10 @@ class StreamingEmbedder:
                             self._abort = True
                             logger.warning(
                                 "[StreamingEmbed] memory pressure detected, aborting after remaining batches"
-    )
+                            )
                             # TaskGroup will cancel remaining children on scope exit
                             break
-        except* asyncio.TimeoutError:  # noqa: BLE001
+        except* TimeoutError:  # noqa: BLE001
             # Structured cancellation already applied by TaskGroup
             pass
         except* asyncio.CancelledError:
@@ -471,7 +428,7 @@ class StreamingEmbedder:
             _sync_embed_batch,
             texts,
             len(texts),
-    )
+        )
         return (ids, embeddings)
 
     async def _embed_fallback(
@@ -490,7 +447,7 @@ class StreamingEmbedder:
             "cpu",
             _sync_extract_texts,
             findings,
-    )
+        )
 
         norm_texts = _try_rust_text_norm(all_texts)
         if norm_texts is None:
@@ -503,7 +460,6 @@ class StreamingEmbedder:
         for i in range(0, len(norm_texts), batch_size):
             chunks.append((i, min(i + batch_size, len(norm_texts))))
 
-        # Phase 4: TaskGroup with structured concurrency — same pattern as _embed_concurrent
         pending: set[asyncio.Task[tuple[list[str], np.ndarray]]] = set()
         chunk_idx: int = 0
 
@@ -523,7 +479,7 @@ class StreamingEmbedder:
                             launch_batch(chunk_idx),
                             name=f"streaming_embed.fallback_batch_{chunk_idx}",
                             eager_start=True,
-    )
+                        )
                         pending.add(batch_task)
                         chunk_idx += 1
 
@@ -535,7 +491,7 @@ class StreamingEmbedder:
                             # ISSUE-15: Replaced asyncio.wait(FIRST_COMPLETED) with first_completed helper
                             _winner_task: asyncio.Task[tuple[list[str], np.ndarray]]
                             _, _winner_task = await first_completed(*pending)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         raise
 
                     for completed in [_winner_task]:
@@ -545,14 +501,10 @@ class StreamingEmbedder:
                                 yield (ids, embs)
                         except Exception as e:
                             logger.debug(f"[StreamingEmbed] fallback batch error: {e}")
-        except* asyncio.TimeoutError:  # noqa: BLE001
+        except* TimeoutError:  # noqa: BLE001
             pass
         except* asyncio.CancelledError:
             raise
-
-    # -------------------------------------------------------------------------
-    # Backward-compat: serial path (used by _embed_fallback above)
-    # -------------------------------------------------------------------------
 
     async def _embed_chunked(
         self,
@@ -565,19 +517,15 @@ class StreamingEmbedder:
         Kept for backward compatibility only.
         """
         import warnings
+
         warnings.warn(
-            "_embed_chunked is deprecated and will be removed. "
-            "Use _embed_concurrent instead.",
+            "_embed_chunked is deprecated and will be removed. Use _embed_concurrent instead.",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         # Delegate to the current implementation
         async for batch in self._embed_concurrent(findings, batch_size):
             yield batch
-
-    # -------------------------------------------------------------------------
-    # Text extraction
-    # -------------------------------------------------------------------------
 
     def _extract_text(self, finding: CanonicalFinding) -> str:
         """Extract embeddable text from CanonicalFinding."""
@@ -585,11 +533,6 @@ class StreamingEmbedder:
         if len(text) > MAX_TEXT_BYTES_PER_FINDING:
             text = text[:MAX_TEXT_BYTES_PER_FINDING]
         return text
-
-
-# ---------------------------------------------------------------------------
-# Sync batch helper (runs in executor)
-# ---------------------------------------------------------------------------
 
 
 def _sync_embed_batch(texts: list[str], batch_size: int = 16) -> np.ndarray:

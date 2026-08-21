@@ -10,6 +10,7 @@ ISSUE-037 решения:
 2. Proper mx.eval() před mx.metal.clear_cache() pro M1 Metal cache management
 3. mx.eval() po optimizer.update() pro správné vyhodnocení gradientů
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,6 @@ logger = logging.getLogger(__name__)
 # Uses importlib.metadata.version("mlx") — no mlx.core import at module load
 # --------------------------------------------------------------------------- #
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
@@ -40,12 +40,13 @@ _mx_module: Any = None
 _nn_module: Any = None
 
 
-def _get_mx() -> "_mlx_module":
+def _get_mx() -> _mlx_module:
     """Lazily import mlx.core — only call when MLX_AVAILABLE is True."""
     global _mx_module
     if MLX_AVAILABLE and _mx_module is None:
         try:
             import mlx.core as _mx
+
             _mx_module = _mx
         except ImportError:
             raise RuntimeError("MLX not available — cannot call _get_mx()")
@@ -54,12 +55,13 @@ def _get_mx() -> "_mlx_module":
     return _mx_module
 
 
-def _get_nn() -> "_nn_module":
+def _get_nn() -> _nn_module:
     """Lazily import mlx.nn — only call when MLX_AVAILABLE is True."""
     global _nn_module
     if MLX_AVAILABLE and _nn_module is None:
         try:
             import mlx.nn as _nn
+
             _nn_module = _nn
         except ImportError:
             raise RuntimeError("MLX.nn not available — cannot call _get_nn()")
@@ -81,14 +83,14 @@ class TaskPrioritizer:
     Call _ensure_mlx() or _create_mlx_instance() before using MLX features.
     """
 
-    __slots__ = tuple(("fc1", "fc2", "_mlx_initialized"))
+    __slots__ = ("fc1", "fc2", "_mlx_initialized")
 
     def __init__(self, input_dim: int = 10, hidden_dim: int = 32) -> None:
         # ISSUE-08 FIX: Lazy initialization of MLX components
         if MLX_AVAILABLE:
             try:
                 nn = _get_nn()
-                mx = _get_mx()
+                _get_mx()
                 self.fc1 = nn.Linear(input_dim, hidden_dim)
                 self.fc2 = nn.Linear(hidden_dim, 2)
                 self._mlx_initialized = True
@@ -98,7 +100,7 @@ class TaskPrioritizer:
             raise ImportError("TaskPrioritizer requires MLX (not available)")
 
     def __call__(self, x: Any) -> Any:
-        if not getattr(self, '_mlx_initialized', False):
+        if not getattr(self, "_mlx_initialized", False):
             raise ImportError("TaskPrioritizer requires MLX (not available)")
         nn = _get_nn()
         x = nn.relu(self.fc1(x))
@@ -130,13 +132,11 @@ def cpu_heuristic_predict(task_metadata: dict) -> tuple[float, float]:
     }
     source_type = task_metadata.get("source_type", "feed")
     if isinstance(source_type, str):
-        base_gain, base_duration = source_type_map.get(
-            source_type.lower(), (0.5, 1.0)
-    )
+        base_gain, base_duration = source_type_map.get(source_type.lower(), (0.5, 1.0))
     else:
         base_gain, base_duration = (0.5, 1.0)
 
-    entity_count = task_metadata.get("entity_count", 0)
+    task_metadata.get("entity_count", 0)
     novelty = max(0.0, min(1.0, task_metadata.get("novelty", 0.5)))
 
     predicted_gain = base_gain * (0.7 + 0.3 * priority) * (0.8 + 0.2 * novelty)
@@ -159,27 +159,23 @@ class TaskPrioritizerWrapper:
     pro správné M1 Metal cache management.
     """
 
-    __slots__ = tuple(
-        (
-            "model",
-            "model_path",
-            "optimizer",
-            "trained",
-            "update_counter",
-    )
+    __slots__ = (
+        "model",
+        "model_path",
+        "optimizer",
+        "trained",
+        "update_counter",
     )
 
     def __init__(self, model_path: Path) -> None:
         self.model_path = model_path
-        self.model: TaskPrioritizer | None = (
-            TaskPrioritizer() if MLX_AVAILABLE else None
-    )
+        self.model: TaskPrioritizer | None = TaskPrioritizer() if MLX_AVAILABLE else None
         if MLX_AVAILABLE:
             try:
                 import mlx.optimizers as optim
 
                 self.optimizer = optim.Adam(learning_rate=0.001)
-            except (ImportError, AttributeError):
+            except ImportError, AttributeError:
                 self.optimizer = None
         else:
             self.optimizer = None
@@ -224,9 +220,7 @@ class TaskPrioritizerWrapper:
                 nested = self._unflatten_params(flat)
                 self.model.update(nested)
                 self.trained = True
-                logger.info(
-                    "Loaded TaskPrioritizer from %s", self.model_path
-    )
+                logger.info("Loaded TaskPrioritizer from %s", self.model_path)
         except Exception as e:
             logger.warning("Failed to load TaskPrioritizer: %s", e)
 
@@ -253,9 +247,7 @@ class TaskPrioritizerWrapper:
             return None
         priority = max(0.0, min(1.0, task_metadata.get("priority", 0.5)))
         estimated_duration_raw = task_metadata.get("estimated_duration", 1.0)
-        estimated_duration = max(
-            0.0, min(1.0, (estimated_duration_raw - 0.1) / 119.9)
-    )
+        estimated_duration = max(0.0, min(1.0, (estimated_duration_raw - 0.1) / 119.9))
         complexity = max(0.0, min(1.0, task_metadata.get("complexity", 0.5)))
         source_type_map = {
             "feed": 0.1,
@@ -273,23 +265,15 @@ class TaskPrioritizerWrapper:
         if isinstance(source_type_raw, str):
             source_type = source_type_map.get(source_type_raw.lower(), 0.5)
         else:
-            source_type = (
-                float(source_type_raw) if source_type_raw else 0.5
-    )
+            source_type = float(source_type_raw) if source_type_raw else 0.5
         entity_count_raw = task_metadata.get("entity_count", 0)
         entity_count = max(0.0, min(1.0, entity_count_raw / 1000.0))
         novelty = max(0.0, min(1.0, task_metadata.get("novelty", 0.5)))
-        contradiction_score = max(
-            0.0, min(1.0, task_metadata.get("contradiction_score", 0.0))
-    )
+        contradiction_score = max(0.0, min(1.0, task_metadata.get("contradiction_score", 0.0)))
         centrality = max(0.0, min(1.0, task_metadata.get("centrality", 0.0)))
-        historical_gain = max(
-            0.0, min(1.0, task_metadata.get("historical_gain", 0.5))
-    )
+        historical_gain = max(0.0, min(1.0, task_metadata.get("historical_gain", 0.5)))
         historical_duration_raw = task_metadata.get("historical_duration", 1.0)
-        historical_duration = max(
-            0.0, min(1.0, (historical_duration_raw - 0.1) / 119.9)
-    )
+        historical_duration = max(0.0, min(1.0, (historical_duration_raw - 0.1) / 119.9))
         features = [
             priority,
             estimated_duration,
@@ -332,11 +316,7 @@ class TaskPrioritizerWrapper:
 
         ISSUE-037: Přidán mx.eval() pro správné M1 Metal cache management.
         """
-        if (
-            not MLX_AVAILABLE
-            or self.model is None
-            or self.optimizer is None
-        ):
+        if not MLX_AVAILABLE or self.model is None or self.optimizer is None:
             return
         features = self.extract_features(task_metadata)
         if features is None:
@@ -344,9 +324,7 @@ class TaskPrioritizerWrapper:
         # ISSUE-08 FIX: Use lazy _get_mx() and _get_nn() instead of _mx() and _nn()
         _mlx = _get_mx()
         _nn_mod = _get_nn()
-        target = _mlx.array(
-            [actual_gain, actual_duration], dtype=_mlx.float32
-    )
+        target = _mlx.array([actual_gain, actual_duration], dtype=_mlx.float32)
 
         def loss_fn(m: Any) -> Any:
             return _nn_mod.losses.mse_loss(m(features), target)
@@ -389,15 +367,13 @@ class TaskPrioritizationRouter:
         # nebo "cpu" pro CPU heuristic, "random" pro 50/50 split
     """
 
-    __slots__ = tuple(
-        (
-            "_ab_mode",
-            "_cpu_counter",
-            "_mlx_counter",
-            "_mlx_wrapper",
-            "_random_counter",
-            "_switch_count",
-    )
+    __slots__ = (
+        "_ab_mode",
+        "_cpu_counter",
+        "_mlx_counter",
+        "_mlx_wrapper",
+        "_random_counter",
+        "_switch_count",
     )
 
     def __init__(
@@ -459,9 +435,7 @@ class TaskPrioritizationRouter:
         actual_duration: float,
     ) -> None:
         """Online update MLX modelu."""
-        await self._mlx_wrapper.update(
-            task_metadata, actual_gain, actual_duration
-    )
+        await self._mlx_wrapper.update(task_metadata, actual_gain, actual_duration)
 
     @property
     def ab_stats(self) -> dict:
@@ -475,29 +449,20 @@ class TaskPrioritizationRouter:
             "mlx_predictions": self._mlx_counter,
             "cpu_predictions": self._cpu_counter,
             "random_predictions": self._random_counter,
-            "total": (
-                self._mlx_counter
-                + self._cpu_counter
-                + self._random_counter
-            ),
+            "total": (self._mlx_counter + self._cpu_counter + self._random_counter),
             "mlx_ratio": (
                 self._mlx_counter
                 / max(
                     1,
-                    self._mlx_counter
-                    + self._cpu_counter
-                    + self._random_counter,
-    )
+                    self._mlx_counter + self._cpu_counter + self._random_counter,
+                )
             ),
         }
 
     def set_strategy(self, strategy: str) -> None:
         """Nastaví defaultní strategii pro A/B routing."""
         if strategy not in ("mlx", "cpu", "random"):
-            raise ValueError(
-                f"Unknown strategy: {strategy!r}. "
-                "Must be 'mlx', 'cpu', or 'random'."
-    )
+            raise ValueError(f"Unknown strategy: {strategy!r}. Must be 'mlx', 'cpu', or 'random'.")
         self._ab_mode = strategy
 
     @property

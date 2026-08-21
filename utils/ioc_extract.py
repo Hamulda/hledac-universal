@@ -55,13 +55,8 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 MAX_BATCH_SIZE = 4096  # F266-U5 calibrated for M1 8GB
 TEXT_MAX_BYTES = 65536  # Rust-side cap (ioc_extract_fast.rs)
@@ -136,14 +131,11 @@ def _deobfuscate_texts(texts: list[str]) -> list[str]:
             else:
                 augmented.append("")
         # Merge augmented candidates into original texts
-        return [f"{text} {suffix}".strip() if suffix else text for text, suffix in zip(texts, augmented)]
+        return [f"{text} {suffix}".strip() if suffix else text for text, suffix in zip(texts, augmented, strict=False)]
     except Exception:
         logger.debug("ioc_extract: deobfuscation failed, proceeding without it", exc_info=True)
         return texts
 
-# ---------------------------------------------------------------------------
-# Lazy Rust backend resolution — cached after first call
-# ---------------------------------------------------------------------------
 
 _tier1_func: Any = None
 _tier2_func: Any = None
@@ -158,33 +150,26 @@ def _resolve_backends() -> None:
     _resolved = True
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     _tier1_func = rust.raw.batch_ioc_extract_unified_python
     _tier2_func = rust.raw.batch_ioc_extract_unified
     if _tier1_func is not None or _tier2_func is not None:
-        logger.debug("ioc_extract: Rust backends resolved (tier1=%s, tier2=%s)",
-                     _tier1_func is not None, _tier2_func is not None)
+        logger.debug(
+            "ioc_extract: Rust backends resolved (tier1=%s, tier2=%s)", _tier1_func is not None, _tier2_func is not None
+        )
     else:
         logger.debug("ioc_extract: hledac_rust_extensions not available, using pure Python fallback")
-
-
-# ---------------------------------------------------------------------------
-# Pure Python fallback
-# ---------------------------------------------------------------------------
 
 
 def _extract_iocs_python(texts: list[str]) -> list[list[tuple[str, str]]]:
     """Pure Python per-text IOC extraction — Tier 3 fallback."""
     try:
         from hledac.universal.pipeline.public_patterns import extract_iocs_from_text
+
         return [extract_iocs_from_text(t) for t in texts]
     except Exception:
         logger.debug("ioc_extract: pure Python fallback failed", exc_info=True)
         return [[] for _ in texts]
-
-
-# ---------------------------------------------------------------------------
-# Sync batch extraction (dispatched via rayon channel)
-# ---------------------------------------------------------------------------
 
 
 def _extract_iocs_sync(texts: list[str]) -> list[list[tuple[str, str]]]:
@@ -223,11 +208,6 @@ def _extract_iocs_sync(texts: list[str]) -> list[list[tuple[str, str]]]:
     return _extract_iocs_python(texts)
 
 
-# ---------------------------------------------------------------------------
-# Public async API
-# ---------------------------------------------------------------------------
-
-
 async def extract_iocs_batch(
     texts: list[str],
     *,
@@ -260,15 +240,15 @@ async def extract_iocs_batch(
     if not texts:
         return []
 
-    # Dispatch to rayon mixed_pool via channel
     try:
         from hledac.universal.utils.rayon_channel import dispatch_mixed
+
         result = await dispatch_mixed(
             len(texts),
             _extract_iocs_sync,
             texts,
             timeout=timeout,
-    )
+        )
         if result is None:
             return [[] for _ in texts]
         return result

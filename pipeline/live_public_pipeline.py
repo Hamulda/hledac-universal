@@ -7,6 +7,7 @@ F360-REFACTOR: This file is now a thin adapter (≤200 LOC) that:
 
 All internal logic has been extracted to pipeline/public/_phases.py.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,11 +21,6 @@ if TYPE_CHECKING:
 
 # Import from phases module (re-exports everything needed)
 from hledac.universal.pipeline.public._phases import (
-    PipelineContext,
-    PipelinePageResult,
-    PipelineRunResult,
-    DiscoveryPhaseResult,
-    DiscoveryEngine,
     Phase1_Initialization,
     Phase2_ResourceGovernance,
     Phase3_DiscoveryRunner,
@@ -34,28 +30,13 @@ from hledac.universal.pipeline.public._phases import (
     Phase7_SynthesisRunner,
     Phase8_ExportManager,
     Phase9_TemporalPersistence,
+    PipelineContext,
+    PipelineRunResult,
     _build_emergency_result,
     _build_pipeline_run_result,
-    _ensure_discovery_patched,
     _ensure_ct_scanner_patched,
-    _ASYNC_DISCOVERY_SEARCH,
-    _CT_SCANNER_GET_SUBDOMAINS,
+    _ensure_discovery_patched,
 )
-
-# Import generators from public module
-from hledac.universal.pipeline.public._generators import (
-    generate_bootstrap_urls,
-    generate_rescue_urls,
-    generate_seed_context_bootstrap_urls,
-    generate_keyword_bootstrap_urls,
-    _is_threat_query,
-    _filter_public_noise,
-)
-
-
-# ----------------------------------------------------------------------
-# Legacy Compatibility Functions
-# ----------------------------------------------------------------------
 
 
 def _patch_fetcher_and_matcher(fetch_fn: Any, match_fn: Any) -> None:
@@ -78,14 +59,9 @@ def _make_finding_id(query: str, url: str, label: str, pattern: str, value: str)
     return _id(query, url, label, pattern, value)
 
 
-# ----------------------------------------------------------------------
-# Main Pipeline Entry Point
-# ----------------------------------------------------------------------
-
-
 async def async_run_live_public_pipeline(
     query: str,
-    store: "DuckDBShadowStore | None" = None,
+    store: DuckDBShadowStore | None = None,
     *,
     max_results: int = 10,
     fetch_timeout_s: float = 35.0,
@@ -121,7 +97,6 @@ async def async_run_live_public_pipeline(
     """
     global _ASYNC_DISCOVERY_SEARCH, _CT_SCANNER_GET_SUBDOMAINS
 
-    # Handle legacy parameter overrides
     if fetch_fn is not None:
         from . import public_fetch as _pf
 
@@ -136,7 +111,6 @@ async def async_run_live_public_pipeline(
         _CT_SCANNER_GET_SUBDOMAINS = ct_subdomains_fn
     _ensure_patched()
 
-    # Build context
     ctx = PipelineContext(
         query=query,
         store=store,
@@ -160,40 +134,30 @@ async def async_run_live_public_pipeline(
     )
 
     try:
-        # Phase 1: Initialization
         ctx = await Phase1_Initialization().run(ctx)
 
-        # Phase 2: Resource Governance
         ctx = await Phase2_ResourceGovernance().run(ctx)
         if ctx._is_emergency:
             return _build_emergency_result(ctx)
 
-        # Phase 3: Discovery
         ctx, discovery = await Phase3_DiscoveryRunner().run(ctx)
         public_stage_failure = discovery.discovery_telemetry.get("public_stage_failure")
         public_stage_failure_reason = discovery.discovery_telemetry.get("public_stage_failure_reason")
 
-        # Phase 4: Fetch Orchestrator
         ctx, all_page_results = await Phase4_FetchOrchestrator().run(ctx, discovery)
 
-        # Phase 5: Telemetry Aggregation
         telemetry = Phase5_TelemetryAggregator().run(ctx, discovery)
 
-        # Phase 6: Report Generator
         ctx, generated_report, tot_solution_count = await Phase6_ReportGenerator().run(ctx, all_page_results)
 
-        # Phase 7: Synthesis (memory-bounded)
         await Phase7_SynthesisRunner().run(ctx, telemetry["total_stored"])
 
-        # Phase 8: Export
         if ctx.error is None:
             await Phase8_ExportManager().run(ctx, generated_report, all_page_results)
 
-        # Phase 9: Temporal Persistence
         temporal_status = Phase9_TemporalPersistence().run()
         ctx = PipelineContext(**{**ctx.__dict__, **temporal_status})
 
-        # Build final result
         return _build_pipeline_run_result(
             ctx=ctx,
             telemetry=telemetry,

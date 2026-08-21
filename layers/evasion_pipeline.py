@@ -2,10 +2,6 @@
 Unified FingerprintProfile → EvasionScript Pipeline
 ===================================================
 
-
-
-
-
 Resolves APEX-1005, APEX-1006, APEX-1007: JavaScriptEvasion and
 FingerprintRandomizer were parallel systems producing overlapping,
 inconsistent evasion scripts. This module unifies them into a single
@@ -99,22 +95,23 @@ from enum import IntEnum
 from typing import Any
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 import orjson
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 # ── Crypto-safe RNG (F350M-R) ───────────────────────────────────────────────
 _RNG = secrets.SystemRandom()
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Structured EvasionScript
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class EvasionCategory(IntEnum):
     """Ordered categories — lower = earlier injection (sensitive first)."""
+
     CANVAS = 10
     WEBGL = 20
     AUDIO = 30
@@ -142,12 +139,12 @@ class EvasionScript(Struct):  # type: ignore[misc]
     source ready for ``page.add_init_script()``.
     """
 
-    script_id: str          # stable identifier, e.g. "canvas_csprng_gauss"
+    script_id: str  # stable identifier, e.g. "canvas_csprng_gauss"
     category: EvasionCategory
-    priority: int           # within-category sort (lower = first)
-    script: str             # JavaScript source
-    fingerprint_hash: str   # sha256[:16] of profile → detect profile rotation
-    version: int = 1        # increment when JS logic changes
+    priority: int  # within-category sort (lower = first)
+    script: str  # JavaScript source
+    fingerprint_hash: str  # sha256[:16] of profile → detect profile rotation
+    version: int = 1  # increment when JS logic changes
 
     def __lt__(self, other: EvasionScript) -> bool:
         if self.category != other.category:
@@ -158,6 +155,7 @@ class EvasionScript(Struct):  # type: ignore[misc]
 # ═══════════════════════════════════════════════════════════════════════════
 # FingerprintProfile — single source of truth
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class FingerprintProfile(Struct):  # type: ignore[misc]
     """Complete browser fingerprint profile.
@@ -241,6 +239,7 @@ class FingerprintProfile(Struct):  # type: ignore[misc]
 # ProfileGenerator — what was FingerprintRandomizer (profile-only, no JS)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class ProfileGenerator:
     """Generate randomized BrowserProfile / FingerprintProfile instances.
 
@@ -257,15 +256,26 @@ class ProfileGenerator:
     """
 
     SCREEN_RESOLUTIONS: tuple[tuple[int, int], ...] = (
-        (1920, 1080), (2560, 1440), (1366, 768),
-        (1440, 900), (1680, 1050), (1280, 720), (3840, 2160),
+        (1920, 1080),
+        (2560, 1440),
+        (1366, 768),
+        (1440, 900),
+        (1680, 1050),
+        (1280, 720),
+        (3840, 2160),
     )
 
     TIMEZONES: tuple[tuple[str, int], ...] = (
-        ("America/New_York", -5), ("America/Chicago", -6),
-        ("America/Denver", -7), ("America/Los_Angeles", -8),
-        ("Europe/London", 0), ("Europe/Paris", 1), ("Europe/Berlin", 1),
-        ("Asia/Tokyo", 9), ("Asia/Shanghai", 8), ("Australia/Sydney", 10),
+        ("America/New_York", -5),
+        ("America/Chicago", -6),
+        ("America/Denver", -7),
+        ("America/Los_Angeles", -8),
+        ("Europe/London", 0),
+        ("Europe/Paris", 1),
+        ("Europe/Berlin", 1),
+        ("Asia/Tokyo", 9),
+        ("Asia/Shanghai", 8),
+        ("Australia/Sydney", 10),
     )
 
     WEBGL_PROFILES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -290,28 +300,59 @@ class ProfileGenerator:
     }
 
     COMMON_FONTS: tuple[str, ...] = (
-        "Arial", "Arial Black", "Arial Narrow", "Arial Rounded MT Bold",
-        "Courier", "Courier New", "Georgia", "Helvetica", "Helvetica Neue",
-        "Times", "Times New Roman", "Verdana", "Tahoma", "Trebuchet MS",
-        "Palatino", "Garamond", "Bookman", "Comic Sans MS", "Impact",
-        "Segoe UI", "Calibri", "Cambria", "Geneva", "Lucida Grande",
-        "Lucida Sans Unicode", "Menlo", "Monaco", "Consolas",
+        "Arial",
+        "Arial Black",
+        "Arial Narrow",
+        "Arial Rounded MT Bold",
+        "Courier",
+        "Courier New",
+        "Georgia",
+        "Helvetica",
+        "Helvetica Neue",
+        "Times",
+        "Times New Roman",
+        "Verdana",
+        "Tahoma",
+        "Trebuchet MS",
+        "Palatino",
+        "Garamond",
+        "Bookman",
+        "Comic Sans MS",
+        "Impact",
+        "Segoe UI",
+        "Calibri",
+        "Cambria",
+        "Geneva",
+        "Lucida Grande",
+        "Lucida Sans Unicode",
+        "Menlo",
+        "Monaco",
+        "Consolas",
     )
 
     COMMON_PLUGINS: tuple[dict[str, str], ...] = (
-        {"name": "Chrome PDF Plugin", "filename": "internal-pdf-viewer",
-         "description": "Portable Document Format"},
-        {"name": "Chrome PDF Viewer", "filename": "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-         "description": "Portable Document Format"},
-        {"name": "Native Client", "filename": "internal-nacl-plugin",
-         "description": "Native Client module"},
+        {"name": "Chrome PDF Plugin", "filename": "internal-pdf-viewer", "description": "Portable Document Format"},
+        {
+            "name": "Chrome PDF Viewer",
+            "filename": "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+            "description": "Portable Document Format",
+        },
+        {"name": "Native Client", "filename": "internal-nacl-plugin", "description": "Native Client module"},
     )
 
     __slots__ = (
-        "_current_profile", "_profile_timestamp", "_rotation_count",
-        "platform", "session_duration", "consistent_per_session",
-        "randomize_canvas", "randomize_webgl", "randomize_fonts",
-        "randomize_screen", "randomize_timezone", "randomize_plugins",
+        "_current_profile",
+        "_profile_timestamp",
+        "_rotation_count",
+        "platform",
+        "session_duration",
+        "consistent_per_session",
+        "randomize_canvas",
+        "randomize_webgl",
+        "randomize_fonts",
+        "randomize_screen",
+        "randomize_timezone",
+        "randomize_plugins",
     )
 
     def __init__(
@@ -326,7 +367,7 @@ class ProfileGenerator:
         randomize_screen: bool = True,
         randomize_timezone: bool = True,
         randomize_plugins: bool = True,
-    ):
+    ) -> None:
         self.platform = platform
         self.session_duration = session_duration
         self.consistent_per_session = consistent_per_session
@@ -411,11 +452,7 @@ class ProfileGenerator:
         Returns:
             A complete FingerprintProfile.
         """
-        if (
-            not force_new
-            and self.consistent_per_session
-            and self._current_profile is not None
-        ):
+        if not force_new and self.consistent_per_session and self._current_profile is not None:
             elapsed = time.time() - self._profile_timestamp
             if elapsed < self.session_duration:
                 return self._current_profile
@@ -444,12 +481,12 @@ class ProfileGenerator:
             platform=platform,
             profile_id="",
             generated_at=0.0,
-    )
+        )
         profile = msgspec.structs.replace(
             profile,
             profile_id=profile.fingerprint_hash(),
             generated_at=time.time(),
-    )
+        )
 
         self._current_profile = profile
         self._profile_timestamp = time.time()
@@ -479,6 +516,7 @@ class ProfileGenerator:
 # ═══════════════════════════════════════════════════════════════════════════
 # EvasionScriptGenerator — unified JS generation from ONE profile
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class _EvasionScriptGenerator:
     """Generate ALL evasion scripts from a single FingerprintProfile.
@@ -523,7 +561,6 @@ class _EvasionScriptGenerator:
         """
         scripts: list[EvasionScript] = []
 
-        # Build in priority order — each method is self-contained
         for method in self._GENERATORS:
             cat = method.__name__  # e.g. "_canvas_override"
             if categories is not None:
@@ -588,8 +625,12 @@ class _EvasionScriptGenerator:
     # ── Helper: build EvasionScript ─────────────────────────────────────
 
     def _make(
-        self, script_id: str, category: EvasionCategory, priority: int,
-        script: str, version: int = 1,
+        self,
+        script_id: str,
+        category: EvasionCategory,
+        priority: int,
+        script: str,
+        version: int = 1,
     ) -> EvasionScript:
         return EvasionScript(
             script_id=script_id,
@@ -598,7 +639,7 @@ class _EvasionScriptGenerator:
             script=script,
             fingerprint_hash=self._fp_hash,
             version=version,
-    )
+        )
 
     # ═══════════════════════════════════════════════════════════════════
     # APEX-1005: Canvas — CSPRNG + Box-Muller Gaussian noise
@@ -1215,6 +1256,7 @@ class _EvasionScriptGenerator:
 # Public convenience: one-call pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def generate_evasion_scripts(
     platform: str | None = None,
     *,
@@ -1238,6 +1280,7 @@ def generate_evasion_scripts(
 # ═══════════════════════════════════════════════════════════════════════════
 # Detection score helper (replaces JavaScriptEvasion.get_detection_score)
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def compute_detection_score(scripts: list[EvasionScript]) -> dict[str, Any]:
     """Compute evasion coverage score from a list of scripts.

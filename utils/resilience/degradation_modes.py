@@ -22,14 +22,15 @@ Degradation Actions:
     IO_ONLY: Skip MLX inference, skip non-critical sidecars, log ERROR
     EMERGENCY: Propagate all errors, halt acquisition, log CRITICAL
 """
+
 from __future__ import annotations
+
 import asyncio
 import time
-from dataclasses import dataclass, field
-from enum import IntEnum
-from typing import Optional
 from collections.abc import Callable
-from _core import aclose
+from dataclasses import dataclass
+from enum import IntEnum
+
 
 class DegradedMode(IntEnum):
     """
@@ -44,6 +45,7 @@ class DegradedMode(IntEnum):
         IO_ONLY: Skip MLX inference, skip non-critical sidecars, ERROR logs
         EMERGENCY: Propagate all errors, halt acquisition, CRITICAL logs
     """
+
     HEALTHY = 0
     DEGRADED = 1
     IO_ONLY = 2
@@ -51,7 +53,7 @@ class DegradedMode(IntEnum):
 
     @property
     def label(self) -> str:
-        return ['✅ HEALTHY', '⚠️ DEGRADED', '🔶 IO_ONLY', '🔴 EMERGENCY'][self.value]
+        return ["✅ HEALTHY", "⚠️ DEGRADED", "🔶 IO_ONLY", "🔴 EMERGENCY"][self.value]
 
     def should_skip_sidecars(self) -> bool:
         """Sidecars should be skipped in IO_ONLY and EMERGENCY modes."""
@@ -70,6 +72,7 @@ class DegradedMode(IntEnum):
         levels = [10, 30, 40, 50]
         return levels[self.value]
 
+
 @dataclass(frozen=True, slots=True)
 class DegradationThresholds:
     """
@@ -78,13 +81,17 @@ class DegradationThresholds:
     Defaults are tuned for 30min sprints on M1 8GB.
     Adjust based on sprint duration and hardware constraints.
     """
+
     high_severity_to_degraded: int = 3
     high_severity_to_io_only: int = 5
     critical_to_degraded: int = 1
     critical_to_io_only: int = 2
     critical_to_emergency: int = 2
     recovery_timeout: float = 60.0
+
+
 _DEFAULT_THRESHOLDS = DegradationThresholds()
+
 
 class DegradationState:
     """
@@ -92,12 +99,15 @@ class DegradationState:
 
     Thread-safe for async access via asyncio.Lock.
     """
-    __slots__ = ('_failure_counts', '_last_failure_ts', '_lock', '_mode', '_thresholds', '_transition_callbacks')
 
-    def __init__(self, mode: DegradedMode=DegradedMode.HEALTHY, thresholds: Optional[DegradationThresholds]=None) -> None:
+    __slots__ = ("_failure_counts", "_last_failure_ts", "_lock", "_mode", "_thresholds", "_transition_callbacks")
+
+    def __init__(
+        self, mode: DegradedMode = DegradedMode.HEALTHY, thresholds: DegradationThresholds | None = None
+    ) -> None:
         self._mode = mode
         self._thresholds = thresholds or _DEFAULT_THRESHOLDS
-        self._failure_counts: dict[str, int] = {'low': 0, 'medium': 0, 'high': 0, 'critical': 0}
+        self._failure_counts: dict[str, int] = {"low": 0, "medium": 0, "high": 0, "critical": 0}
         self._last_failure_ts: float = 0.0
         self._transition_callbacks: list[Callable[[DegradedMode, DegradedMode], None]] = []
         self._lock = asyncio.Lock()
@@ -138,8 +148,8 @@ class DegradationState:
     async def _check_escalation(self) -> DegradedMode:
         """Check if we need to escalate degradation mode."""
         current = self._mode
-        high = self._failure_counts.get('high', 0)
-        critical = self._failure_counts.get('critical', 0)
+        high = self._failure_counts.get("high", 0)
+        critical = self._failure_counts.get("critical", 0)
         t = self._thresholds
         if current == DegradedMode.HEALTHY:
             if high >= t.high_severity_to_degraded or critical >= t.critical_to_degraded:
@@ -157,7 +167,7 @@ class DegradationState:
         if self._mode == new_mode:
             return new_mode
         old_mode = self._mode
-        object.__setattr__(self, '_mode', new_mode)
+        object.__setattr__(self, "_mode", new_mode)
         for cb in self._transition_callbacks:
             try:
                 cb(old_mode, new_mode)
@@ -168,21 +178,30 @@ class DegradationState:
     async def reset(self) -> None:
         """Reset to HEALTHY state."""
         async with self._lock:
-            self._failure_counts = {'low': 0, 'medium': 0, 'high': 0, 'critical': 0}
+            self._failure_counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
             self._last_failure_ts = 0.0
-            object.__setattr__(self, '_mode', DegradedMode.HEALTHY)
+            object.__setattr__(self, "_mode", DegradedMode.HEALTHY)
 
     def to_dict(self) -> dict:
         """Serialize state for reporting."""
-        return {'mode': self._mode.name, 'mode_label': self._mode.label, 'failure_counts': dict(self._failure_counts), 'last_failure_ts': self._last_failure_ts, 'recovery_available': self._should_recover()}
+        return {
+            "mode": self._mode.name,
+            "mode_label": self._mode.label,
+            "failure_counts": dict(self._failure_counts),
+            "last_failure_ts": self._last_failure_ts,
+            "recovery_available": self._should_recover(),
+        }
+
 
 @dataclass(slots=True)
 class ModeTransition:
     """Record of a mode transition event."""
+
     timestamp: float
     old_mode: DegradedMode
     new_mode: DegradedMode
     trigger_counts: dict[str, int]
+
 
 def get_degradation_action(mode: DegradedMode, operation: str) -> str:
     """
@@ -196,29 +215,39 @@ def get_degradation_action(mode: DegradedMode, operation: str) -> str:
         Action recommendation: "proceed", "skip", "degraded", "propagate"
     """
     is_critical = SeverityMapper.is_critical_path(operation)
-    sidecar_patterns = ('sidecar.', 'sidecar_', 'enrichment.', 'enrichment_', 'fetch.', 'fetch_', 'live_feed.', 'live_feed_')
-    is_sidecar = any((operation.startswith(p) for p in sidecar_patterns))
-    mlx_patterns = ('mlx_', 'llm_', 'synthesis_', 'inference_')
-    is_mlx = any((operation.startswith(p) for p in mlx_patterns))
+    sidecar_patterns = (
+        "sidecar.",
+        "sidecar_",
+        "enrichment.",
+        "enrichment_",
+        "fetch.",
+        "fetch_",
+        "live_feed.",
+        "live_feed_",
+    )
+    is_sidecar = any(operation.startswith(p) for p in sidecar_patterns)
+    mlx_patterns = ("mlx_", "llm_", "synthesis_", "inference_")
+    is_mlx = any(operation.startswith(p) for p in mlx_patterns)
     if mode == DegradedMode.HEALTHY:
-        return 'proceed'
+        return "proceed"
     elif mode == DegradedMode.DEGRADED:
         if is_critical:
-            return 'proceed'
+            return "proceed"
         elif is_sidecar:
-            return 'degraded'
-        return 'proceed'
+            return "degraded"
+        return "proceed"
     elif mode == DegradedMode.IO_ONLY:
         if is_critical:
-            return 'proceed'
+            return "proceed"
         elif is_mlx or is_sidecar:
-            return 'skip'
-        return 'skip'
+            return "skip"
+        return "skip"
     elif mode == DegradedMode.EMERGENCY:
         if is_critical:
-            return 'propagate'
-        return 'skip'
-    return 'proceed'
+            return "propagate"
+        return "skip"
+    return "proceed"
+
 
 class FailureSeverity(IntEnum):
     """
@@ -229,6 +258,7 @@ class FailureSeverity(IntEnum):
     HIGH: Significant component failure or multiple medium failures
     CRITICAL: Core component failure (DuckDB, Graph, Export, Lifecycle)
     """
+
     LOW = 0
     MEDIUM = 1
     HIGH = 2
@@ -236,12 +266,13 @@ class FailureSeverity(IntEnum):
 
     @property
     def label(self) -> str:
-        labels = {0: '🔵 LOW', 1: '🟡 MEDIUM', 2: '🟠 HIGH', 3: '🔴 CRITICAL'}
+        labels = {0: "🔵 LOW", 1: "🟡 MEDIUM", 2: "🟠 HIGH", 3: "🔴 CRITICAL"}
         return labels[self.value]
 
     def is_critical(self) -> bool:
         """Check if this severity requires immediate action."""
         return self.value >= FailureSeverity.HIGH.value
+
 
 class SeverityMapper:
     """
@@ -253,15 +284,36 @@ class SeverityMapper:
 
     This ensures critical paths always get appropriate severity even when
     decorators are used without explicit severity parameter.
-    
+
     Supports both dot notation ("duckdb.ingest") and underscore notation ("duckdb_ingest").
     """
-    CRITICAL_SCOPES: set[str] = {'duckdb.ingest', 'duckdb.export', 'duckdb.query', 'duckdb_ingest', 'duckdb_export', 'duckdb_query', 'export', 'lifecycle_transition', 'lifecycle_transition.shutdown', 'lifecycle_transition.abort'}
-    HIGH_SCOPES: set[str] = {'graph', 'graph.operations', 'graph_service', 'llm_synthesis', 'mlx_inference'}
-    SIDEKAR_PATTERNS: tuple[str, ...] = ('sidecar.', 'sidecar_', 'enrichment.', 'enrichment_', 'fetch.', 'fetch_', 'live_feed.', 'live_feed_')
+
+    CRITICAL_SCOPES: set[str] = {
+        "duckdb.ingest",
+        "duckdb.export",
+        "duckdb.query",
+        "duckdb_ingest",
+        "duckdb_export",
+        "duckdb_query",
+        "export",
+        "lifecycle_transition",
+        "lifecycle_transition.shutdown",
+        "lifecycle_transition.abort",
+    }
+    HIGH_SCOPES: set[str] = {"graph", "graph.operations", "graph_service", "llm_synthesis", "mlx_inference"}
+    SIDEKAR_PATTERNS: tuple[str, ...] = (
+        "sidecar.",
+        "sidecar_",
+        "enrichment.",
+        "enrichment_",
+        "fetch.",
+        "fetch_",
+        "live_feed.",
+        "live_feed_",
+    )
 
     @classmethod
-    def get_severity(cls, scope: str, explicit_severity: int | None=None) -> FailureSeverity:
+    def get_severity(cls, scope: str, explicit_severity: int | None = None) -> FailureSeverity:
         """
         Get severity for a scope, with explicit override taking precedence.
 

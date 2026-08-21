@@ -21,12 +21,10 @@ Usage:
     python -m tools.runtime_authority_probe --output-json
 """
 
-
 import json
 import sys
 from enum import Enum, StrEnum
 from pathlib import Path
-from _core import aclose
 
 # ------------------------------------------------------------------ #
 # Self-configure Python path
@@ -39,6 +37,7 @@ if str(_project_root) not in sys.path:
 
 class RuntimeAuthorityError(StrEnum):
     """String-based error codes for runtime authority probing."""
+
     FAILED_TO_PARSE_REPORT = "Failed to parse report JSON: {reason}"
     PATH_IS_CANONICAL_BUT_FLAG_FALSE = (
         "runtime_authority_path='canonical_core_run_sprint' but runtime_authority_is_canonical=False"
@@ -85,7 +84,7 @@ class ProbeResult:
         report_path: str | None = None,
         errors: list[str] | None = None,
         evidence: dict | None = None,
-    ):
+    ) -> None:
         self.verdict = verdict
         self.runtime_authority_path = runtime_authority_path
         self.runtime_authority_is_canonical = runtime_authority_is_canonical
@@ -152,14 +151,13 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
     errors: list[str] = []
     evidence: dict = {}
 
-    # Load benchmark JSON
     benchmark_path = Path(benchmark_json_path)
     if not benchmark_path.exists():
         return ProbeResult(
             verdict=AuthorityVerdict.AUTHORITY_INCONCLUSIVE,
             benchmark_path=str(benchmark_path),
             errors=[f"Benchmark JSON not found: {benchmark_json_path}"],
-    )
+        )
 
     try:
         with open(benchmark_path) as f:
@@ -169,9 +167,8 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
             verdict=AuthorityVerdict.AUTHORITY_INCONCLUSIVE,
             benchmark_path=str(benchmark_path),
             errors=[f"Failed to parse benchmark JSON: {exc}"],
-    )
+        )
 
-    # Extract runtime authority fields from benchmark
     runtime_authority_path = benchmark.get("runtime_authority_path")
     runtime_authority_is_canonical = benchmark.get("runtime_authority_is_canonical")
     benchmark_sprint_id = benchmark.get("sprint_id")
@@ -198,17 +195,14 @@ def probe(benchmark_json_path: str, report_json_path: str | None = None) -> Prob
     # Determine sprint_id match
     sprint_id_match: bool | None = None
     if report_sprint_id and benchmark_sprint_id:
-        sprint_id_match = (report_sprint_id == benchmark_sprint_id)
+        sprint_id_match = report_sprint_id == benchmark_sprint_id
     elif report_sprint_id or benchmark_sprint_id:
         sprint_id_match = False
 
-    # Check runtime_truth presence
     runtime_truth_present = isinstance(runtime_truth, dict) and runtime_truth
 
-    # Check scheduler_exit presence
     scheduler_exit_present = isinstance(scheduler_exit, dict) and scheduler_exit
 
-    # Build evidence
     evidence = {
         "benchmark_mode": benchmark_mode,
         "benchmark_sprint_id": benchmark_sprint_id,

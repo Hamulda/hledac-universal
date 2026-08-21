@@ -10,8 +10,7 @@ Architecture:
 """
 
 # Use absolute imports within the hledac.universal package
-from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchItem
-from hledac.universal._core import aclose
+from hledac.universal.brain._batch.batch_processor import BatchItem, BatchProcessor
 
 __all__ = [
     "BatchProcessor",

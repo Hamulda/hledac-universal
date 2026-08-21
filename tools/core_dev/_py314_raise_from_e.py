@@ -18,7 +18,6 @@ Usage: python tools/_py314_raise_from_e.py <file> [file ...]
 import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_enclosing_except(node: ast.AST) -> ast.ExceptHandler | None:
@@ -55,7 +54,6 @@ def collect_except_handlers(tree: ast.AST) -> dict[int, ast.ExceptHandler]:
 
 def is_in_finally(node: ast.AST, tree: ast.AST) -> bool:
     """Check if node is inside a finally block of a try statement."""
-    # Build parent map
     parents: dict[int, ast.AST] = {}
 
     def build_parents(n: ast.AST) -> None:
@@ -160,7 +158,7 @@ def process_file(path: Path, verbose: bool = True) -> tuple[int, int]:
     return added, skipped
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python tools/_py314_raise_from_e.py <file> [file ...]")
         sys.exit(1)

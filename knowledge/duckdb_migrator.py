@@ -44,13 +44,8 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger("hledac.universal.knowledge.duckdb_migrator")
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 _MIGRATIONS_DIR: Path = Path(__file__).parent / "duckdb_migrations"
 _SCHEMA_VERSION_TABLE: str = "schema_version"
@@ -65,10 +60,6 @@ _CURRENT_SCHEMA_VERSION: int = 12  # highest migration number
 # for this to be safe. ALTER TABLE statements can NEVER be added to 0001.
 _BOOTSTRAP_VERSIONS: frozenset[int] = frozenset({1})
 
-# ---------------------------------------------------------------------------
-# Duplicate-column detection patterns (DuckDB-specific, case-insensitive)
-# ---------------------------------------------------------------------------
-
 # Patterns that identify "already exists" type errors.
 # Standalone "already exists" without an object-type signal (column/index)
 # is NOT included — it would be "table / schema already exists" which never
@@ -76,13 +67,13 @@ _BOOTSTRAP_VERSIONS: frozenset[int] = frozenset({1})
 _ALREADY_EXISTS_SIGNALS: tuple[str, ...] = (
     "already exists",
     "duplicate",
-    )
+)
 
 # Patterns that identify "column or index" objects in the error context.
 _OBJECT_TYPE_SIGNALS: tuple[str, ...] = (
     "column",
     "index",
-    )
+)
 
 
 def _is_column_already_exists_error(exc_msg: str) -> bool:
@@ -99,6 +90,7 @@ def _is_column_already_exists_error(exc_msg: str) -> bool:
     has_object = any(s in exc_msg for s in _OBJECT_TYPE_SIGNALS)
     return has_exists and has_object
 
+
 # SQL statements that are inherently idempotent — any error other than
 # catastrophic (connection loss, syntax) should not stop the migration.
 _INHERENTLY_IDEMPOTENT_PREFIXES: tuple[str, ...] = (
@@ -107,12 +99,8 @@ _INHERENTLY_IDEMPOTENT_PREFIXES: tuple[str, ...] = (
     "create view if not exists",
     "insert or ignore",
     "insert or replace",
-    )
+)
 
-
-# ---------------------------------------------------------------------------
-# SchemaMigrator
-# ---------------------------------------------------------------------------
 
 class SchemaMigrator:
     """
@@ -140,10 +128,6 @@ class SchemaMigrator:
         self._conn = conn
         self._migrations_dir = migrations_dir or _MIGRATIONS_DIR
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def migrate(self) -> int:
         """
         Run all un-applied migrations.
@@ -153,9 +137,8 @@ class SchemaMigrator:
         """
         if not self._migrations_dir.exists():
             logger.debug(
-                f"[duckdb_migrator] Migrations directory not found: "
-                f"{self._migrations_dir} — skipping migrations"
-    )
+                f"[duckdb_migrator] Migrations directory not found: {self._migrations_dir} — skipping migrations"
+            )
             return 0
 
         applied = self._get_applied_versions()
@@ -163,34 +146,21 @@ class SchemaMigrator:
         to_apply = self._pending_versions(applied)
 
         if not to_apply:
-            logger.debug(
-                f"[duckdb_migrator] Schema up-to-date "
-                f"(highest applied: {max(applied) if applied else 0})"
-    )
+            logger.debug(f"[duckdb_migrator] Schema up-to-date (highest applied: {max(applied) if applied else 0})")
             return 0
 
-        logger.info(
-            f"[duckdb_migrator] Applying {len(to_apply)} migration(s): "
-            f"{to_apply}"
-    )
+        logger.info(f"[duckdb_migrator] Applying {len(to_apply)} migration(s): {to_apply}")
 
         count = 0
         for version in to_apply:
             ok = self._apply_migration(version)
             if not ok:
-                logger.error(
-                    f"[duckdb_migrator] Migration {version} FAILED — "
-                    f"aborting further migrations"
-    )
+                logger.error(f"[duckdb_migrator] Migration {version} FAILED — aborting further migrations")
                 break
             count += 1
 
         logger.info(f"[duckdb_migrator] Applied {count} migration(s)")
         return count
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
     def _get_applied_versions(self) -> set[int]:
         """Return the set of already-applied schema version numbers.
@@ -220,8 +190,7 @@ class SchemaMigrator:
         # version 1 as already-applied (in-memory only).
         try:
             tables_exist = self._conn.execute(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_schema = 'main'"
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'main'"
             ).fetchone()
             if tables_exist and tables_exist[0] > 0:
                 logger.info(
@@ -229,14 +198,14 @@ class SchemaMigrator:
                     f"({tables_exist[0]} tables, no schema_version) — "
                     f"bootstrapping baseline {_BOOTSTRAP_VERSIONS} "
                     f"(tracked in-memory, NOT written to schema_version)"
-    )
+                )
                 # Create schema_version table so subsequent calls can read it.
                 # We deliberately do NOT insert a bootstrap row — the
                 # information_schema check is re-evaluated on every call.
                 self._conn.execute(
                     f"CREATE TABLE IF NOT EXISTS {_SCHEMA_VERSION_TABLE} ("
                     f"version INTEGER PRIMARY KEY, applied_at DOUBLE, description TEXT)"
-    )
+                )
                 return set(_BOOTSTRAP_VERSIONS)
         except Exception as exc:  # noqa: BLE001 — information_schema may not be available
             # Defensive: log the failure so silent fallback is observable.
@@ -246,7 +215,7 @@ class SchemaMigrator:
                 f"[duckdb_migrator] information_schema query failed "
                 f"({exc}); falling back to no applied versions — "
                 f"idempotent migrations will be re-checked on next startup"
-    )
+            )
 
         return set()
 
@@ -257,9 +226,7 @@ class SchemaMigrator:
         a broken versioning contract and are logged as an error so developers
         catch it immediately rather than silently skipping a migration.
         """
-        migration_files = sorted(
-            self._migrations_dir.glob("[0-9][0-9][0-9][0-9]_*.sql")
-    )
+        migration_files = sorted(self._migrations_dir.glob("[0-9][0-9][0-9][0-9]_*.sql"))
         all_versions: list[int] = []
         for path in migration_files:
             try:
@@ -277,7 +244,7 @@ class SchemaMigrator:
                 f"[duckdb_migrator] Migration versions do not start at 1 "
                 f"(found min={min(all_versions)}); gap from bootstrap "
                 f"may cause migrations to be skipped"
-    )
+            )
 
         # Warn if there are any gaps in the sequence.
         expected = set(range(1, max(all_versions) + 1))
@@ -288,7 +255,7 @@ class SchemaMigrator:
                 f"[duckdb_migrator] Gap in migration sequence: {missing} — "
                 f"these migrations will be skipped and may cause schema "
                 f"inconsistencies; fix the versioning before shipping"
-    )
+            )
 
     def _pending_versions(self, applied: set[int]) -> list[int]:
         """Return sorted list of version numbers that need applying."""
@@ -299,9 +266,7 @@ class SchemaMigrator:
                 ver = int(path.stem.split("_")[0])
                 all_versions.append(ver)
             except ValueError:
-                logger.warning(
-                    f"[duckdb_migrator] Skipping file with unexpected name: {path.name}"
-    )
+                logger.warning(f"[duckdb_migrator] Skipping file with unexpected name: {path.name}")
                 continue
 
         return [v for v in sorted(all_versions) if v not in applied]
@@ -323,13 +288,9 @@ class SchemaMigrator:
         syntax error, connection error).
         """
         # Find the file — glob is stable sort, use the first matching version
-        candidates = sorted(
-            self._migrations_dir.glob(f"{version:04d}_*.sql")
-    )
+        candidates = sorted(self._migrations_dir.glob(f"{version:04d}_*.sql"))
         if not candidates:
-            logger.error(
-                f"[duckdb_migrator] Migration file for version {version} not found"
-    )
+            logger.error(f"[duckdb_migrator] Migration file for version {version} not found")
             return False
 
         migration_path = candidates[0]
@@ -339,10 +300,7 @@ class SchemaMigrator:
         # we hand it to DuckDB's multi-statement executor.
         clean_sql = _strip_leading_comments(sql).strip()
         if not clean_sql:
-            logger.debug(
-                f"[duckdb_migrator] Migration {version} is empty after "
-                f"stripping comments — treating as no-op"
-    )
+            logger.debug(f"[duckdb_migrator] Migration {version} is empty after stripping comments — treating as no-op")
             # Still record the version so we don't re-scan
             return self._record_version(version, migration_path.name)
 
@@ -365,20 +323,19 @@ class SchemaMigrator:
                     logger.debug(
                         f"[duckdb_migrator] Migration {version} stmt {stmt_idx + 1}: "
                         f"idempotent statement got '{exc}' — treating as success"
-    )
+                    )
                     continue
                 # Duplicate-column / already-exists: benign in any statement.
                 if _is_column_already_exists_error(exc_msg):
                     logger.debug(
                         f"[duckdb_migrator] Migration {version} stmt {stmt_idx + 1}: "
                         f"column/index already exists — treating as success: {exc}"
-    )
+                    )
                     continue
                 # Non-critical: warn and continue rather than abort.
                 logger.warning(
                     f"[duckdb_migrator] Migration {version} stmt {stmt_idx + 1} "
-                    f"'{
-stmt[:80]}' raised non-critical error — continuing: {exc}"
+                    f"'{stmt[:80]}' raised non-critical error — continuing: {exc}"
                 )
                 errors.append(str(exc))
                 # Allow remaining statements to run.
@@ -394,28 +351,21 @@ stmt[:80]}' raised non-critical error — continuing: {exc}"
                 f"[duckdb_migrator] Migration {version} completed with "
                 f"{len(errors)} non-critical error(s); schema may be partially "
                 f"applied: {errors[:3]}"
-    )
+            )
         return True
 
     def _record_version(self, version: int, filename: str) -> bool:
         """Record a successfully-applied migration version."""
         try:
             self._conn.execute(
-                f"INSERT OR IGNORE INTO {_SCHEMA_VERSION_TABLE} "
-                f"(version, applied_at, description) VALUES (?, ?, ?)",
+                f"INSERT OR IGNORE INTO {_SCHEMA_VERSION_TABLE} (version, applied_at, description) VALUES (?, ?, ?)",
                 [version, time.time(), filename],
-    )
+            )
             return True
         except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.error(
-                f"[duckdb_migrator] Failed to record version {version}: {exc}"
-    )
+            logger.error(f"[duckdb_migrator] Failed to record version {version}: {exc}")
             return False
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _strip_leading_comments(sql: str) -> str:
     """

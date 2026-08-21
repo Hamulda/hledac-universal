@@ -22,10 +22,6 @@ use pyo3::types::PyDict;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const MAX_NODES: usize = 50_000;
 const MAX_EDGES_PER_NODE: usize = 10_000;
 const EIGENITOR_MAX_ITER: usize = 100;
@@ -41,10 +37,6 @@ struct NodeCentrality {
     eigenvector: f64,
     pagerank: f64,
 }
-
-// ---------------------------------------------------------------------------
-// Python-callable functions
-// ---------------------------------------------------------------------------
 
 /// Compute all centrality metrics for a graph in a single pass (B8 pattern).
 ///
@@ -80,7 +72,6 @@ pub fn batch_centrality_all<'py>(
         (idx_map, name_vec)
     };
 
-    // Build adjacency as indices for fast neighbor lookup
     let adj_idx: Vec<Vec<usize>> = adjacency
         .iter()
         .map(|(_, neighbors)| {
@@ -93,7 +84,6 @@ pub fn batch_centrality_all<'py>(
 
     let n_f = n as f64;
 
-    // --- Degree centrality (parallel, O(n)) ---
     let degree_scores: Vec<f64> = adj_idx
         .par_iter()
         .map(|neighbors| {
@@ -106,7 +96,6 @@ pub fn batch_centrality_all<'py>(
         })
         );
 
-    // --- Betweenness centrality (Brandes, parallel per source node, O(n*m)) ---
     let betweenness_scores: Vec<f64> = if n <= 2000 {
         // Full Brandes for small graphs
         let bet_scores: Vec<f64> = (0..n)
@@ -228,7 +217,6 @@ pub fn batch_centrality_all<'py>(
         betweenness.into_iter().map(|b| b * norm).collect()
     };
 
-    // --- Closeness centrality (parallel BFS-based, O(n*m)) ---
     let closeness_scores: Vec<f64> = (0..n)
         .into_par_iter()
         .map(|s| {
@@ -255,7 +243,6 @@ pub fn batch_centrality_all<'py>(
         })
         );
 
-    // --- Eigenvector centrality (power iteration, parallel per starting seed) ---
     let mut eigenvector_scores: Vec<f64> = vec![1.0 / n_f); n];
 
     for _iter in 0..EIGENITOR_MAX_ITER {
@@ -276,7 +263,6 @@ pub fn batch_centrality_all<'py>(
             *s /= norm;
         }
 
-        // Check convergence
         let diff: f64 = eigenvector_scores
             .iter()
             .zip(new_scores.iter())
@@ -298,7 +284,6 @@ pub fn batch_centrality_all<'py>(
         }
     }
 
-    // --- PageRank (power iteration, simple version) ---
     let damping: f64 = 0.85;
     let jump_prob: f64 = (1.0 - damping) / n_f;
     let mut pagerank_scores: Vec<f64> = vec![1.0 / n_f; n];
@@ -313,7 +298,6 @@ pub fn batch_centrality_all<'py>(
             }
         }
 
-        // Check convergence
         let diff: f64 = pagerank_scores
             .iter()
             .zip(new_pr.iter())
@@ -335,7 +319,6 @@ pub fn batch_centrality_all<'py>(
         }
     }
 
-    // --- Build result dict ---
     let dict = PyDict::new(py);
     for (i, node_id) in name_vec.iter().enumerate() {
         let inner = PyDict::new(py);
@@ -363,7 +346,6 @@ pub fn betweenness_single(
         return Ok(0.0);
     }
 
-    // Build index map
     let mut idx_map: HashMap<String, usize> = HashMap::with_capacity(n);
     for (i, (node_id, _)) in adjacency.iter().enumerate() {
         idx_map.insert(node_id.clone(), i);

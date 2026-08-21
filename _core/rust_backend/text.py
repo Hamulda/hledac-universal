@@ -8,16 +8,10 @@ Used for consistent text comparison across different Unicode representations.
 from __future__ import annotations
 
 import unicodedata
-from typing import TYPE_CHECKING, Any
-from _core._util import aclose
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-
-
-# =============================================================================
-# Text Domain
-# =============================================================================
 
 
 class _RustTextDomain:

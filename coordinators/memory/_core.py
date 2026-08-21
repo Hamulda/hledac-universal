@@ -13,17 +13,18 @@ Used by memory_coordinator.py, context_optimizer.py, and multi_level_cache.py.
 
 Extracted from memory_coordinator.py (F320 refactor) to eliminate duplicate class definitions.
 """
+
 from collections.abc import Callable
 from enum import Enum, IntEnum
 from typing import Any
 
-from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
 class ThermalState(IntEnum):
     """Thermal state levels for M1 optimization (Sprint 72/73)."""
+
     NORMAL = 0
     WARM = 1
     HOT = 2
@@ -40,14 +41,16 @@ class MemoryZone(Enum):
     - HIGH: Important, avoid eviction
     - CRITICAL: Cannot release
     """
-    CRITICAL = 'critical'
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 class MemoryAllocation(Struct):
     """Represents a memory allocation."""
+
     allocation_id: str
     zone: MemoryZone
     size_bytes: int
@@ -60,6 +63,7 @@ class MemoryAllocation(Struct):
 
 class MemoryStatistics(Struct):
     """Memory usage statistics."""
+
     total_memory_mb: float
     used_memory_mb: float
     available_memory_mb: float
@@ -72,6 +76,7 @@ class MemoryStatistics(Struct):
 
 class ZoneStatistics(Struct, frozen=True):
     """Statistics for a specific memory zone (immutable, msgspec zero-copy)."""
+
     zone: str
     allocation_count: int
     total_bytes: int
@@ -82,21 +87,24 @@ class ZoneStatistics(Struct, frozen=True):
 
 class ContextPriority(Enum):
     """Priority levels for context items."""
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 class ResearchPhase(Enum):
     """Research phases for context prioritization."""
-    DATA_COLLECTION = 'data_collection'
-    ANALYSIS = 'analysis'
-    SYNTHESIS = 'synthesis'
-    VALIDATION = 'validation'
+
+    DATA_COLLECTION = "data_collection"
+    ANALYSIS = "analysis"
+    SYNTHESIS = "synthesis"
+    VALIDATION = "validation"
 
 
 class ContextItem(Struct):
     """Individual context item with metadata for three-tier storage."""
+
     item_id: str
     content: str
     metadata: dict[str, Any]
@@ -105,12 +113,13 @@ class ContextItem(Struct):
     access_count: int
     last_accessed: float
     embedding: Any | None = None
-    content_type: str = 'general'
+    content_type: str = "general"
     confidence: float = 0.5
 
 
 class CompressedContext(Struct):
     """Compressed context container."""
+
     context_id: str
     original_size: int
     compressed_size: int
@@ -125,19 +134,22 @@ class CompressedContext(Struct):
 
 class CacheType(Enum):
     """Types of cache entries."""
-    SEMANTIC = 'semantic'
-    COMPUTATION = 'computation'
-    QUERY = 'query'
+
+    SEMANTIC = "semantic"
+    COMPUTATION = "computation"
+    QUERY = "query"
 
 
 class CacheLocation(Enum):
     """Cache location levels."""
-    L1_MEMORY = 'l1_memory'
-    L2_DISK = 'l2_disk'
+
+    L1_MEMORY = "l1_memory"
+    L2_DISK = "l2_disk"
 
 
 class CacheEntry(Struct):
     """Single cache entry with FAISS embedding support."""
+
     cache_id: str
     content: Any
     embedding: Any | None

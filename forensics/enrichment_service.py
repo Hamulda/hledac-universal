@@ -2,8 +2,6 @@
 Forensics Enrichment Service
 ============================
 
-
-
 Enriches accepted CanonicalFindings with forensics analysis.
 Wraps UniversalMetadataExtractor, steganography_detector, and digital_ghost_detector.
 
@@ -32,18 +30,19 @@ Integration:
 M1 8GB: All heavy dependencies (PIL, pypdf, docx, mutagen) are lazy-loaded
 inside enrichment methods. Max 500MB memory per extraction.
 """
+
 import asyncio
 import hashlib
 import logging
 import socket
 import ssl
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from pathlib import Path
-from utils._patterns import extract_file_path_from_payload as _extract_file_path_from_payload
 from typing import Any
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel
-from _core import aclose
+from utils._patterns import extract_file_path_from_payload as _extract_file_path_from_payload
+
 log = logging.getLogger(__name__)
 _EXTERNAL_LOOKUP_TIMEOUT: float = 5.0
 _MetadataExtractor: type | None = None
@@ -63,8 +62,7 @@ def _lazy_load_ioc_extractor() -> None:
     if _IOCExtractor is not None:
         return
     try:
-        from forensics.ioc_extractor import ioc_extract_to_canonical_findings
-        from forensics.ioc_extractor import ioc_extract_to_canonical_findings_bulk
+        from forensics.ioc_extractor import ioc_extract_to_canonical_findings, ioc_extract_to_canonical_findings_bulk
 
         _IOCExtractor = {
             "single": ioc_extract_to_canonical_findings,
@@ -75,6 +73,7 @@ def _lazy_load_ioc_extractor() -> None:
         _IOCExtractor = None
         _IOC_EXTRACTOR_AVAILABLE = False
 
+
 def _lazy_load_modules() -> None:
     """Load forensics modules lazily on first use."""
     global _MetadataExtractor, _METADATA_EXTRACTOR_AVAILABLE
@@ -84,6 +83,7 @@ def _lazy_load_modules() -> None:
         return
     try:
         from forensics.metadata_extractor import UniversalMetadataExtractor
+
         _MetadataExtractor = UniversalMetadataExtractor
         _METADATA_EXTRACTOR_AVAILABLE = True
     except ImportError:
@@ -91,6 +91,7 @@ def _lazy_load_modules() -> None:
         _METADATA_EXTRACTOR_AVAILABLE = False
     try:
         from forensics.stego_detector import StegoResult
+
         _StegoResult = StegoResult
         _STEGANOGRAPHY_AVAILABLE = True
     except ImportError:
@@ -98,28 +99,59 @@ def _lazy_load_modules() -> None:
         _STEGANOGRAPHY_AVAILABLE = False
     try:
         from forensics.digital_ghost_detector import DigitalGhostAnalysis
+
         _DigitalGhostResult = DigitalGhostAnalysis
         _DIGITAL_GHOST_AVAILABLE = True
     except ImportError:
         _DigitalGhostResult = None
         _DIGITAL_GHOST_AVAILABLE = False
 
+
 def _stego_result_to_dict(result: Any) -> dict[str, Any]:
     """Bridge security.stego_detector.StegoResult -> enrichment dict."""
     if result is None:
         return {}
-    return {'has_stego': result.has_stego, 'confidence': result.confidence, 'method_used': result.method_used, 'message_length_estimate': result.message_length_estimate, 'chi_square': {'p_value': result.chi_square.p_value, 'chi_square_stat': result.chi_square.chi_square_stat, 'embedded_bytes_estimate': result.chi_square.embedded_bytes_estimate, 'is_significant': result.chi_square.is_significant} if result.chi_square else None, 'rs_analysis': {'message_length': result.rs_analysis.message_length, 'confidence': result.rs_analysis.confidence} if result.rs_analysis else None, 'dct_analysis': {'anomaly_score': result.dct_analysis.anomaly_score, 'histogram_deviation': result.dct_analysis.histogram_deviation} if result.dct_analysis else None, 'details': result.details}
+    return {
+        "has_stego": result.has_stego,
+        "confidence": result.confidence,
+        "method_used": result.method_used,
+        "message_length_estimate": result.message_length_estimate,
+        "chi_square": {
+            "p_value": result.chi_square.p_value,
+            "chi_square_stat": result.chi_square.chi_square_stat,
+            "embedded_bytes_estimate": result.chi_square.embedded_bytes_estimate,
+            "is_significant": result.chi_square.is_significant,
+        }
+        if result.chi_square
+        else None,
+        "rs_analysis": {
+            "message_length": result.rs_analysis.message_length,
+            "confidence": result.rs_analysis.confidence,
+        }
+        if result.rs_analysis
+        else None,
+        "dct_analysis": {
+            "anomaly_score": result.dct_analysis.anomaly_score,
+            "histogram_deviation": result.dct_analysis.histogram_deviation,
+        }
+        if result.dct_analysis
+        else None,
+        "details": result.details,
+    }
+
 
 async def _run_stego_analysis(file_path: str) -> dict[str, Any]:
     """Async wrapper for async StatisticalStegoDetector.analyze_image()."""
     try:
         from forensics.stego_detector import StatisticalStegoDetector, StegoConfig
+
         detector = StatisticalStegoDetector(StegoConfig())
         result = await detector.analyze_image(file_path)
         return _stego_result_to_dict(result)
     except Exception as exc:
-        log.debug('Forensics stego analysis failed for %s: %s', file_path, exc)
+        log.debug("Forensics stego analysis failed for %s: %s", file_path, exc)
         return {}
+
 
 def _run_ghost_analysis(file_path: str) -> dict[str, Any]:
     """Bridge security.digital_ghost_detector.DigitalGhostAnalysis -> enrichment dict."""
@@ -130,20 +162,77 @@ def _run_ghost_analysis(file_path: str) -> dict[str, Any]:
         result = detector.analyze_file(file_path)
         if result is None:
             return {}
-        return {'target': result.target, 'ghost_signals': [{'signal_type': s.signal_type, 'location': s.location, 'confidence': s.confidence, 'content_snippet': s.content_snippet, 'indicators': s.indicators} for s in result.ghost_signals], 'recovered_content': [{'original_location': c.original_location, 'recovered_text': c.recovered_text, 'confidence': c.confidence, 'recovery_method': c.recovery_method} for c in result.recovered_content], 'overall_confidence': result.overall_confidence, 'recommendations': result.recommendations}
+        return {
+            "target": result.target,
+            "ghost_signals": [
+                {
+                    "signal_type": s.signal_type,
+                    "location": s.location,
+                    "confidence": s.confidence,
+                    "content_snippet": s.content_snippet,
+                    "indicators": s.indicators,
+                }
+                for s in result.ghost_signals
+            ],
+            "recovered_content": [
+                {
+                    "original_location": c.original_location,
+                    "recovered_text": c.recovered_text,
+                    "confidence": c.confidence,
+                    "recovery_method": c.recovery_method,
+                }
+                for c in result.recovered_content
+            ],
+            "overall_confidence": result.overall_confidence,
+            "recommendations": result.recommendations,
+        }
     except Exception as exc:
-        log.debug('Forensics ghost analysis failed for %s: %s', file_path, exc)
+        log.debug("Forensics ghost analysis failed for %s: %s", file_path, exc)
         return {}
-_SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp', '.pdf', '.docx', '.doc', '.mp3', '.flac', '.ogg', '.m4a', '.wav', '.wma', '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar'}
+
+
+_SUPPORTED_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".tiff",
+    ".tif",
+    ".bmp",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".wav",
+    ".wma",
+    ".mp4",
+    ".avi",
+    ".mkv",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".7z",
+    ".rar",
+}
+
+
 def _file_has_forensics_support(file_path: str) -> bool:
     """Check if file extension is supported by forensics enrichment."""
     ext = Path(file_path).suffix.lower()
     return ext in _SUPPORTED_EXTENSIONS
 
+
 def _extract_domain_from_url(url: str | None) -> str | None:
     """
     Extract domain from a URL string.
-
 
     Handles:
     - https://example.com/path
@@ -156,24 +245,24 @@ def _extract_domain_from_url(url: str | None) -> str | None:
         return None
     try:
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
         if parsed.netloc:
-            host = parsed.netloc.split(':')[0]
-            if host.startswith('www.'):
+            host = parsed.netloc.split(":")[0]
+            if host.startswith("www."):
                 host = host[4:]
             return host
     except Exception:  # noqa: BLE001
         pass
     return None
 
+
 class ForensicsResult(Struct):
     """
     Sprint F198B: Typed forensics enrichment result.
 
-
     Produced by ForensicsEnricher.enrich() and stored in
     finding.metadata["forensics"] on canonical findings.
-
 
     Fields:
         finding_id:          Finding identifier
@@ -187,6 +276,7 @@ class ForensicsResult(Struct):
     All lookup fields are None on failure (graceful fallback).
     Never raises — enrichment is best-effort.
     """
+
     finding_id: str
     file_path: str | None = None
     whois: dict[str, Any] | None = None
@@ -197,7 +287,16 @@ class ForensicsResult(Struct):
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for storage in finding.metadata."""
-        return {'finding_id': self.finding_id, 'file_path': self.file_path, 'whois': self.whois, 'ssl': self.ssl, 'dns': self.dns, 'rdns': self.rdns, 'enrichment_available': self.enrichment_available}
+        return {
+            "finding_id": self.finding_id,
+            "file_path": self.file_path,
+            "whois": self.whois,
+            "ssl": self.ssl,
+            "dns": self.dns,
+            "rdns": self.rdns,
+            "enrichment_available": self.enrichment_available,
+        }
+
 
 class ForensicsEnricher:
     """
@@ -213,9 +312,16 @@ class ForensicsEnricher:
 
     M1 8GB: Extractor uses streaming for large files, bounded memory.
     """
-    __slots__ = tuple(('_cache_path', '_enable_audio', '_enable_gps', '_enable_video', '_extractor', '_initialized', '_lock'))
 
-    def __init__(self, cache_path: str | None=None, enable_gps: bool=True, enable_audio: bool=True, enable_video: bool=False):
+    __slots__ = ("_cache_path", "_enable_audio", "_enable_gps", "_enable_video", "_extractor", "_initialized", "_lock")
+
+    def __init__(
+        self,
+        cache_path: str | None = None,
+        enable_gps: bool = True,
+        enable_audio: bool = True,
+        enable_video: bool = False,
+    ) -> None:
         """
         Initialize enricher.
 
@@ -243,7 +349,15 @@ class ForensicsEnricher:
             _lazy_load_modules()
             _lazy_load_ioc_extractor()  # ISSUE-045-A4: hoist IOC extractor to module level
             if _MetadataExtractor is not None:
-                self._extractor = _MetadataExtractor(cache_path=self._cache_path, enable_exif=True, enable_gps=self._enable_gps, enable_reverse_geocode=False, enable_audio=self._enable_audio, enable_video=self._enable_video, calculate_hashes=True)
+                self._extractor = _MetadataExtractor(
+                    cache_path=self._cache_path,
+                    enable_exif=True,
+                    enable_gps=self._enable_gps,
+                    enable_reverse_geocode=False,
+                    enable_audio=self._enable_audio,
+                    enable_video=self._enable_video,
+                    calculate_hashes=True,
+                )
                 await self._extractor.initialize()
             self._initialized = True
 
@@ -271,6 +385,7 @@ class ForensicsEnricher:
         """
         loop = asyncio.get_running_loop()
         from hledac.universal.utils.domain_executors import get_nlp_executor
+
         return await loop.run_in_executor(get_nlp_executor(), _run_ghost_analysis, file_path)
 
     async def enrich(self, finding: Any) -> dict[str, Any] | None:
@@ -298,13 +413,21 @@ class ForensicsEnricher:
         """
         if not self._initialized:
             await self._ensure_initialized()
-        payload_text = getattr(finding, 'payload_text', None)
+        payload_text = getattr(finding, "payload_text", None)
         file_path = _extract_file_path_from_payload(payload_text)
         domain: str | None = None
         if not file_path:
             domain = _extract_domain_from_url(payload_text)
-        finding_id = getattr(finding, 'finding_id', 'unknown')
-        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'metadata': None, 'steganography': None, 'ghosts': None, 'enrichment_available': False, '_payload_text': payload_text or ''}
+        finding_id = getattr(finding, "finding_id", "unknown")
+        enrichment: dict[str, Any] = {
+            "finding_id": finding_id,
+            "file_path": file_path,
+            "metadata": None,
+            "steganography": None,
+            "ghosts": None,
+            "enrichment_available": False,
+            "_payload_text": payload_text or "",
+        }
         forensics_result = ForensicsResult(finding_id=finding_id, file_path=file_path, enrichment_available=False)
 
         # File-based enrichments
@@ -320,21 +443,23 @@ class ForensicsEnricher:
         await self._enrich_ip_lookups(finding, forensics_result, enrichment)
 
         # Check if any enrichment succeeded
-        if any((v is not None for k, v in enrichment.items() if k not in ('finding_id', 'file_path', 'enrichment_available'))):
-            enrichment['enrichment_available'] = True
+        if any(
+            (
+                v is not None
+                for k, v in enrichment.items()
+                if k not in ("finding_id", "file_path", "enrichment_available")
+            )
+        ):
+            enrichment["enrichment_available"] = True
             forensics_result.enrichment_available = True
         if not forensics_result.enrichment_available:
             return None
         foca_modifier = self._score_foca_findings(enrichment)
-        enrichment['foca_confidence_modifier'] = foca_modifier
-        enrichment['forensics'] = forensics_result.to_dict()
-        if hasattr(finding, 'metadata') and isinstance(finding.metadata, dict):
-            finding.metadata['forensics'] = forensics_result.to_dict()
+        enrichment["foca_confidence_modifier"] = foca_modifier
+        enrichment["forensics"] = forensics_result.to_dict()
+        if hasattr(finding, "metadata") and isinstance(finding.metadata, dict):
+            finding.metadata["forensics"] = forensics_result.to_dict()
         return enrichment
-
-    # ------------------------------------------------------------------
-    # Complexity-reduced helpers for enrich (complexity: 27 → ~10)
-    # ------------------------------------------------------------------
 
     async def _enrich_file_metadata(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
         """Extract metadata from file if supported."""
@@ -343,23 +468,23 @@ class ForensicsEnricher:
         try:
             result = await self._extractor.extract(file_path)
             if result is not None:
-                enrichment['metadata'] = result.to_dict()
+                enrichment["metadata"] = result.to_dict()
         except Exception as exc:
-            log.debug('Forensics metadata extraction failed for %s: %s', finding_id, exc)
+            log.debug("Forensics metadata extraction failed for %s: %s", finding_id, exc)
 
     async def _enrich_steganography(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
         """Analyze steganography in image files if supported."""
         if not file_path or not _STEGANOGRAPHY_AVAILABLE:
             return
         ext = Path(file_path).suffix.lower()
-        if ext not in {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}:
+        if ext not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp"}:
             return
         try:
             stego_data = await _run_stego_analysis(file_path)
             if stego_data:
-                enrichment['steganography'] = stego_data
+                enrichment["steganography"] = stego_data
         except Exception as exc:
-            log.debug('Steganography analysis failed for %s: %s', finding_id, exc)
+            log.debug("Steganography analysis failed for %s: %s", finding_id, exc)
 
     async def _enrich_digital_ghosts(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
         """Run digital ghost detection on file if supported."""
@@ -368,28 +493,28 @@ class ForensicsEnricher:
         try:
             ghost_data = await self._run_ghost_analysis_async(file_path)
             if ghost_data:
-                enrichment['ghosts'] = ghost_data
+                enrichment["ghosts"] = ghost_data
         except Exception as exc:
-            log.debug('Digital ghost detection failed for %s: %s', finding_id, exc)
+            log.debug("Digital ghost detection failed for %s: %s", finding_id, exc)
 
     async def _enrich_domain_lookups(self, domain: str, forensics_result: ForensicsResult) -> None:
         """Run WHOIS/SSL/DNS/rDNS lookups in parallel."""
         try:
             async with asyncio.TaskGroup() as tg:
-                t_whois = tg.create_task(self._whois_lookup(domain), name='forensics:whois')
-                t_ssl = tg.create_task(self._ssl_lookup(domain, 443), name='forensics:ssl')
-                t_dns = tg.create_task(self._dns_lookup(domain), name='forensics:dns')
-                t_rdns = tg.create_task(self._rdns_lookup(domain), name='forensics:rdns')
+                t_whois = tg.create_task(self._whois_lookup(domain), name="forensics:whois")
+                t_ssl = tg.create_task(self._ssl_lookup(domain, 443), name="forensics:ssl")
+                t_dns = tg.create_task(self._dns_lookup(domain), name="forensics:dns")
+                t_rdns = tg.create_task(self._rdns_lookup(domain), name="forensics:rdns")
             whois_data = t_whois.result()
             ssl_data = t_ssl.result()
             dns_data = t_dns.result()
             rdns_data = t_rdns.result()
-        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
-            log.debug('[FORENSICS] parallel domain lookup timeout/DNS error: %s', eg)
+        except* (TimeoutError, OSError, socket.gaierror) as eg:
+            log.debug("[FORENSICS] parallel domain lookup timeout/DNS error: %s", eg)
             whois_data = ssl_data = dns_data = rdns_data = None
         except* Exception as eg:
             first_exc = eg.exceptions[0] if eg.exceptions else eg
-            log.debug('[FORENSICS] parallel domain lookup unexpected error: %s', first_exc)
+            log.debug("[FORENSICS] parallel domain lookup unexpected error: %s", first_exc)
             whois_data = ssl_data = dns_data = rdns_data = None
 
         if whois_data:
@@ -405,17 +530,20 @@ class ForensicsEnricher:
             forensics_result.rdns = rdns_data
             forensics_result.enrichment_available = True
 
-    async def _enrich_ip_lookups(self, finding: Any, forensics_result: ForensicsResult, enrichment: dict[str, Any]) -> None:
+    async def _enrich_ip_lookups(
+        self, finding: Any, forensics_result: ForensicsResult, enrichment: dict[str, Any]
+    ) -> None:
         """Enrich x_originating_ip from email payload with WHOIS/rDNS lookups."""
-        if not hasattr(finding, 'payload'):
+        if not hasattr(finding, "payload"):
             return
         payload = finding.payload or {}
-        email_meta = payload.get('email_metadata', {}) or payload.get('email', {})
-        x_originating_ip = email_meta.get('originating_ip') or email_meta.get('x_originating_ip')
+        email_meta = payload.get("email_metadata", {}) or payload.get("email", {})
+        x_originating_ip = email_meta.get("originating_ip") or email_meta.get("x_originating_ip")
         if not x_originating_ip:
             return
         try:
             import ipaddress
+
             ip = ipaddress.ip_address(x_originating_ip)
             if ip.is_private or ip.is_loopback or ip.is_reserved:
                 return
@@ -423,19 +551,23 @@ class ForensicsEnricher:
             return
         try:
             async with asyncio.TaskGroup() as tg:
-                t_whois_ip = tg.create_task(self._whois_lookup(x_originating_ip), name='forensics:xip_whois')
-                t_rdns_ip = tg.create_task(self._rdns_lookup(x_originating_ip), name='forensics:xip_rdns')
+                t_whois_ip = tg.create_task(self._whois_lookup(x_originating_ip), name="forensics:xip_whois")
+                t_rdns_ip = tg.create_task(self._rdns_lookup(x_originating_ip), name="forensics:xip_rdns")
             whois_ip_data = t_whois_ip.result()
             rdns_ip_data = t_rdns_ip.result()
-        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
-            log.debug('[FORENSICS] x_originating_ip lookup timeout/DNS error: %s', eg)
+        except* (TimeoutError, OSError, socket.gaierror) as eg:
+            log.debug("[FORENSICS] x_originating_ip lookup timeout/DNS error: %s", eg)
             whois_ip_data = rdns_ip_data = None
         except* Exception as eg:
             first_exc = eg.exceptions[0] if eg.exceptions else eg
-            log.debug('[FORENSICS] x_originating_ip lookup unexpected error: %s', first_exc)
+            log.debug("[FORENSICS] x_originating_ip lookup unexpected error: %s", first_exc)
             whois_ip_data = rdns_ip_data = None
         if whois_ip_data or rdns_ip_data:
-            enrichment['x_originating_ip_enrichment'] = {'ip': x_originating_ip, 'whois': whois_ip_data, 'rdns': rdns_ip_data}
+            enrichment["x_originating_ip_enrichment"] = {
+                "ip": x_originating_ip,
+                "whois": whois_ip_data,
+                "rdns": rdns_ip_data,
+            }
             forensics_result.enrichment_available = True
 
     async def enrich_batch(self, findings: list[Any]) -> dict[str, dict[str, Any]]:
@@ -456,17 +588,19 @@ class ForensicsEnricher:
         if not findings:
             return {}
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
-                finding_id = getattr(finding, 'finding_id', 'unknown')
+                finding_id = getattr(finding, "finding_id", "unknown")
                 try:
                     result = await self.enrich(finding)
                     return (finding_id, result)
                 except Exception as exc:
-                    log.debug('Batch enrichment failed for %s: %s', finding_id, exc)
+                    log.debug("Batch enrichment failed for %s: %s", finding_id, exc)
                     return (finding_id, None)
+
         tasks = [enrich_one(f) for f in findings]
         # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
         # Use results directly as they already contain only successes.
@@ -484,10 +618,6 @@ class ForensicsEnricher:
 
         return out
 
-    # ------------------------------------------------------------------
-    # Complexity-reduced helpers for enrich_batch (complexity: 25 → ~10)
-    # ------------------------------------------------------------------
-
     def _prepare_ioc_extraction_inputs(
         self, findings: list[Any], out: dict[str, dict[str, Any]]
     ) -> tuple[list[str], list[str], list[str], list[str]] | None:
@@ -499,29 +629,25 @@ class ForensicsEnricher:
         # Build a finding_id → query lookup map once (O(n), not O(n²))
         fid_to_query: dict[str, str] = {}
         for f in findings:
-            fid = getattr(f, 'finding_id', None)
+            fid = getattr(f, "finding_id", None)
             if fid:
-                fid_to_query[fid] = getattr(f, 'query', '') or ''
+                fid_to_query[fid] = getattr(f, "query", "") or ""
 
-        # Build bulk inputs from successful enrichments
         texts: list[str] = []
         source_finding_ids: list[str] = []
         queries: list[str] = []
         finding_ids_ordered: list[str] = []
         for fid, enrich_data in out.items():
-            payload_text = enrich_data.get('_payload_text', '')
-            x_originating_ip = (
-                enrich_data.get('x_originating_ip_enrichment', {})
-                .get('ip', '')
-    )
+            payload_text = enrich_data.get("_payload_text", "")
+            x_originating_ip = enrich_data.get("x_originating_ip_enrichment", {}).get("ip", "")
             ioc_text_parts: list[str] = []
             if payload_text:
                 ioc_text_parts.append(str(payload_text)[:8192])
             if x_originating_ip:
                 ioc_text_parts.append(str(x_originating_ip))
-            ioc_text = '\n'.join(ioc_text_parts) if ioc_text_parts else ''
+            ioc_text = "\n".join(ioc_text_parts) if ioc_text_parts else ""
             if ioc_text:
-                orig_query = fid_to_query.get(fid, '')
+                orig_query = fid_to_query.get(fid, "")
                 texts.append(ioc_text)
                 source_finding_ids.append(str(fid)[:128])
                 queries.append(str(orig_query)[:512])
@@ -535,16 +661,16 @@ class ForensicsEnricher:
         """Format IOC list into structured findings dict."""
         return [
             {
-                'finding_id': getattr(cf, 'finding_id', ''),
-                'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
-                'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
+                "finding_id": getattr(cf, "finding_id", ""),
+                "ioc_type": (getattr(cf, "payload_text", "") or "").split(";", 1)[0].replace("ioc_type=", "").strip(),
+                "value": (getattr(cf, "payload_text", "") or "").split(";", 1)[1].replace("value=", "").strip()
+                if ";" in (getattr(cf, "payload_text", "") or "")
+                else "",
             }
             for cf in ioc_list
         ]
 
-    async def _run_bulk_ioc_extraction(
-        self, findings: list[Any], out: dict[str, dict[str, Any]]
-    ) -> None:
+    async def _run_bulk_ioc_extraction(self, findings: list[Any], out: dict[str, dict[str, Any]]) -> None:
         """Run bulk IOC extraction on enriched findings using Rust arrow path."""
         if not _IOC_EXTRACTOR_AVAILABLE or _IOCExtractor is None or not out:
             return
@@ -554,10 +680,10 @@ class ForensicsEnricher:
                 return
             texts, source_finding_ids, queries, finding_ids_ordered = inputs
 
-            bulk_fn = _IOCExtractor.get('bulk')
+            bulk_fn = _IOCExtractor.get("bulk")
             if bulk_fn is None:
                 # Fallback: single function
-                single_fn = _IOCExtractor.get('single')
+                single_fn = _IOCExtractor.get("single")
                 if single_fn is None:
                     return
 
@@ -566,22 +692,17 @@ class ForensicsEnricher:
                     iocs = await asyncio.to_thread(single_fn, text=text, source_finding_id=sfid, query=q)
                     return (sfid, iocs)
 
-                ioc_tasks = [
-                    ioc_one(texts[i], source_finding_ids[i], queries[i])
-                    for i in range(len(texts))
-                ]
+                ioc_tasks = [ioc_one(texts[i], source_finding_ids[i], queries[i]) for i in range(len(texts))]
                 # P4-5 FIX: policy="log" returns list[T], not ParallelResult.
-                ioc_results = await parallel(
-                    ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
-    )
+                ioc_results = await parallel(ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk")
                 for item in ioc_results:
                     if isinstance(item, Exception):
                         continue
                     sfid, ioc_list = item
                     if sfid in out and ioc_list:
-                        out[sfid]['_ioc_canonical_findings'] = ioc_list
-                        out[sfid]['ioc_findings'] = self._format_ioc_findings(ioc_list)
-                        out[sfid]['enrichment_available'] = True
+                        out[sfid]["_ioc_canonical_findings"] = ioc_list
+                        out[sfid]["ioc_findings"] = self._format_ioc_findings(ioc_list)
+                        out[sfid]["enrichment_available"] = True
             else:
                 # Rust arrow_batch_builder path — single call for all texts
                 # ISSUE-045-A4: sync Rust FFI must run off event loop
@@ -590,14 +711,14 @@ class ForensicsEnricher:
                     texts=texts,
                     source_finding_ids=source_finding_ids,
                     queries=queries,
-    )
+                )
                 for i, sfid in enumerate(finding_ids_ordered):
                     if sfid in out and all_ioc_lists[i]:
-                        out[sfid]['_ioc_canonical_findings'] = all_ioc_lists[i]
-                        out[sfid]['ioc_findings'] = self._format_ioc_findings(all_ioc_lists[i])
-                        out[sfid]['enrichment_available'] = True
+                        out[sfid]["_ioc_canonical_findings"] = all_ioc_lists[i]
+                        out[sfid]["ioc_findings"] = self._format_ioc_findings(all_ioc_lists[i])
+                        out[sfid]["enrichment_available"] = True
         except Exception as exc:
-            log.debug('Batch IOC extraction failed: %s', exc)
+            log.debug("Batch IOC extraction failed: %s", exc)
 
     def _score_foca_findings(self, enrichment: dict[str, Any] | None) -> float:
         """
@@ -620,32 +741,32 @@ class ForensicsEnricher:
         if not enrichment:
             return 0.0
         score = 0.0
-        metadata = enrichment.get('metadata')
+        metadata = enrichment.get("metadata")
         if not metadata:
             return 0.0
-        pptx = metadata.get('pptx')
+        pptx = metadata.get("pptx")
         if pptx:
-            if pptx.get('macro_urls'):
+            if pptx.get("macro_urls"):
                 score += 0.1
-            if pptx.get('has_macros'):
+            if pptx.get("has_macros"):
                 score += 0.05
-            if pptx.get('hidden_slides'):
+            if pptx.get("hidden_slides"):
                 score += 0.05
-            if pptx.get('template_path'):
+            if pptx.get("template_path"):
                 score += 0.05
-        email = metadata.get('email')
+        email = metadata.get("email")
         if email:
-            if email.get('originating_ip'):
+            if email.get("originating_ip"):
                 score += 0.1
-            if email.get('dkim_domain') or email.get('spf_result'):
+            if email.get("dkim_domain") or email.get("spf_result"):
                 score += 0.05
-            if email.get('attachment_count', 0) > 0:
+            if email.get("attachment_count", 0) > 0:
                 score += 0.05
-        cad = metadata.get('cad')
+        cad = metadata.get("cad")
         if cad:
-            if cad.get('autocad_version'):
+            if cad.get("autocad_version"):
                 score += 0.1
-            if cad.get('coordinate_extents'):
+            if cad.get("coordinate_extents"):
                 score += 0.05
         return min(score, 0.3)
 
@@ -669,17 +790,30 @@ class ForensicsEnricher:
                     w = _whois_pkg.whois(domain)
                     if w is None:
                         return {}
-                    return {'registrar': getattr(w, 'registrar', None), 'creation_date': str(getattr(w, 'creation_date', None)) if hasattr(w, 'creation_date') else None, 'expiration_date': str(getattr(w, 'expiration_date', None)) if hasattr(w, 'expiration_date') else None, 'name_servers': list(getattr(w, 'name_servers', []) or []), 'status': getattr(w, 'status', None), 'dns_sec': getattr(w, 'dns_sec', None)}
+                    return {
+                        "registrar": getattr(w, "registrar", None),
+                        "creation_date": str(getattr(w, "creation_date", None))
+                        if hasattr(w, "creation_date")
+                        else None,
+                        "expiration_date": str(getattr(w, "expiration_date", None))
+                        if hasattr(w, "expiration_date")
+                        else None,
+                        "name_servers": list(getattr(w, "name_servers", []) or []),
+                        "status": getattr(w, "status", None),
+                        "dns_sec": getattr(w, "dns_sec", None),
+                    }
                 except Exception:
                     return {}
+
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
                 from hledac.universal.runtime.worker_pool import io_bound
+
                 result = await io_bound(_sync_whois)
             return result if result else None
-        except (TimeoutError, Exception):
+        except TimeoutError, Exception:
             return None
 
-    async def _ssl_lookup(self, hostname: str, port: int=443) -> dict[str, Any] | None:
+    async def _ssl_lookup(self, hostname: str, port: int = 443) -> dict[str, Any] | None:
         """
         Sprint F198B: SSL certificate info with timeout + graceful fallback.
 
@@ -704,14 +838,21 @@ class ForensicsEnricher:
                             cert = ssock.getpeercert(binary_form=True)
                             digest = hashlib.sha256(cert).hexdigest() if cert else None
                             cipher = ssock.cipher()
-                            return {'cipher': cipher[0] if cipher else None, 'protocol': cipher[2] if cipher else None, 'sha256_fingerprint': digest, 'cert_start': ssock.getpeercert() if ssock else None}
+                            return {
+                                "cipher": cipher[0] if cipher else None,
+                                "protocol": cipher[2] if cipher else None,
+                                "sha256_fingerprint": digest,
+                                "cert_start": ssock.getpeercert() if ssock else None,
+                            }
                 except Exception:
                     return {}
+
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
                 from hledac.universal.runtime.worker_pool import io_bound
+
                 result = await io_bound(_sync_ssl)
             return result if result else None
-        except (TimeoutError, Exception):
+        except TimeoutError, Exception:
             return None
 
     async def _dns_lookup(self, domain: str) -> dict[str, Any] | None:
@@ -733,47 +874,56 @@ class ForensicsEnricher:
                 # Use dns.resolver (async-aware in 3.x) with unified API
                 try:
                     import dns.resolver
+
                     resolver = dns.resolver.Resolver()
                     resolver.lifetime = _EXTERNAL_LOOKUP_TIMEOUT
                     resolver.timeout = _EXTERNAL_LOOKUP_TIMEOUT
-                    result: dict[str, Any] = {'a': [], 'aaaa': [], 'mx': [], 'ns': []}
+                    result: dict[str, Any] = {"a": [], "aaaa": [], "mx": [], "ns": []}
                     try:
-                        ans = await resolver.resolve(domain, 'A')
-                        result['a'] = [str(r) for r in ans]
+                        ans = await resolver.resolve(domain, "A")
+                        result["a"] = [str(r) for r in ans]
                     except Exception:  # noqa: BLE001
                         pass
                     try:
-                        ans = await resolver.resolve(domain, 'AAAA')
-                        result['aaaa'] = [str(r) for r in ans]
+                        ans = await resolver.resolve(domain, "AAAA")
+                        result["aaaa"] = [str(r) for r in ans]
                     except Exception:  # noqa: BLE001
                         pass
                     try:
-                        ans = await resolver.resolve(domain, 'MX')
-                        result['mx'] = [f'{r.preference} {r.exchange}' for r in ans]
+                        ans = await resolver.resolve(domain, "MX")
+                        result["mx"] = [f"{r.preference} {r.exchange}" for r in ans]
                     except Exception:  # noqa: BLE001
                         pass
                     try:
-                        ans = await resolver.resolve(domain, 'NS')
-                        result['ns'] = [str(r) for r in ans]
+                        ans = await resolver.resolve(domain, "NS")
+                        result["ns"] = [str(r) for r in ans]
                     except Exception:  # noqa: BLE001
                         pass
                     return result
                 except ImportError:
                     # Fallback: io_bound wrapper for sync dns.resolver (legacy/bare environments)
                     import dns.resolver
-                    res: dict[str, Any] = {'a': [], 'aaaa': [], 'mx': [], 'ns': []}
-                    for rtype, key, fmt in (('A', 'a', lambda r: str(r)), ('AAAA', 'aaaa', lambda r: str(r)), ('MX', 'mx', lambda r: f'{r.preference} {r.exchange}'), ('NS', 'ns', lambda r: str(r))):
+
+                    res: dict[str, Any] = {"a": [], "aaaa": [], "mx": [], "ns": []}
+                    for rtype, key, fmt in (
+                        ("A", "a", lambda r: str(r)),
+                        ("AAAA", "aaaa", lambda r: str(r)),
+                        ("MX", "mx", lambda r: f"{r.preference} {r.exchange}"),
+                        ("NS", "ns", lambda r: str(r)),
+                    ):
                         try:
                             from hledac.universal.runtime.worker_pool import io_bound
+
                             ans = await io_bound(dns.resolver.resolve, domain, rtype, lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
                             res[key] = [fmt(rec) for rec in ans]
                         except Exception:  # noqa: BLE001
                             pass
                     return res
+
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
                 result = await _async_dns()
             return result if result else None
-        except (TimeoutError, Exception):
+        except TimeoutError, Exception:
             return None
 
     async def _rdns_lookup(self, ip_address: str) -> dict[str, Any] | None:
@@ -796,13 +946,17 @@ class ForensicsEnricher:
                     return {ip_address: hostname}
                 except Exception:
                     return {}
+
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
                 from hledac.universal.runtime.worker_pool import io_bound
+
                 result = await io_bound(_sync_rdns)
             return result if result else None
-        except (TimeoutError, Exception):
+        except TimeoutError, Exception:
             return None
-FORENSIC_SOURCE_TYPE: str = 'forensic_analysis'
+
+
+FORENSIC_SOURCE_TYPE: str = "forensic_analysis"
 _FORENSIC_PAYLOAD_MAX_BYTES = 4096
 _FORENSIC_PAYLOAD_KEYS_MAX = 25
 _FORENSIC_PAYLOAD_STR_MAX = 512
@@ -810,7 +964,10 @@ _FORENSIC_PAYLOAD_LIST_MAX = 10
 _FORENSIC_PAYLOAD_LIST_ITEM_STR_MAX = 200
 _FORENSIC_FACET_STR_MAX = 128
 
-def _build_forensic_facet(enrichment: dict[str, Any], parent_source_type: str, finding_id_suffix: str) -> dict[str, Any]:
+
+def _build_forensic_facet(
+    enrichment: dict[str, Any], parent_source_type: str, finding_id_suffix: str
+) -> dict[str, Any]:
     """Build a bounded ``provenance_json``-style facet for a forensic finding.
 
     Sprint F264: returns a dict with a fixed key schema (5 keys, ≤128 chars
@@ -830,36 +987,43 @@ def _build_forensic_facet(enrichment: dict[str, Any], parent_source_type: str, f
     try:
         flags = 0
         capability_kinds: list[str] = []
-        if enrichment.get('whois') and isinstance(enrichment['whois'], dict):
+        if enrichment.get("whois") and isinstance(enrichment["whois"], dict):
             flags |= 1
-            capability_kinds.append('whois')
-        if enrichment.get('ssl') and isinstance(enrichment['ssl'], dict):
+            capability_kinds.append("whois")
+        if enrichment.get("ssl") and isinstance(enrichment["ssl"], dict):
             flags |= 2
-            capability_kinds.append('ssl')
-        if enrichment.get('dns') and isinstance(enrichment['dns'], dict):
+            capability_kinds.append("ssl")
+        if enrichment.get("dns") and isinstance(enrichment["dns"], dict):
             flags |= 4
-            capability_kinds.append('dns')
-        if enrichment.get('rdns') and isinstance(enrichment['rdns'], dict):
+            capability_kinds.append("dns")
+        if enrichment.get("rdns") and isinstance(enrichment["rdns"], dict):
             flags |= 8
-            capability_kinds.append('rdns')
-        if enrichment.get('steganography') and isinstance(enrichment['steganography'], dict):
+            capability_kinds.append("rdns")
+        if enrichment.get("steganography") and isinstance(enrichment["steganography"], dict):
             flags |= 16
-            capability_kinds.append('steg')
-        if enrichment.get('ghosts') and isinstance(enrichment['ghosts'], dict):
+            capability_kinds.append("steg")
+        if enrichment.get("ghosts") and isinstance(enrichment["ghosts"], dict):
             flags |= 32
-            capability_kinds.append('ghost')
-        if enrichment.get('metadata') and isinstance(enrichment['metadata'], dict):
+            capability_kinds.append("ghost")
+        if enrichment.get("metadata") and isinstance(enrichment["metadata"], dict):
             flags |= 64
-            capability_kinds.append('meta')
+            capability_kinds.append("meta")
         if not capability_kinds:
-            capability = 'mixed'
+            capability = "mixed"
         elif len(capability_kinds) == 1:
             capability = capability_kinds[0]
         else:
-            capability = 'network' if all((k in ('whois', 'ssl', 'dns', 'rdns') for k in capability_kinds)) else 'mixed'
-        return {'facet': FORENSIC_SOURCE_TYPE, 'capability': capability[:_FORENSIC_FACET_STR_MAX], 'parent_source': str(parent_source_type or '')[:_FORENSIC_FACET_STR_MAX], 'finding_id_suffix': str(finding_id_suffix or '_forensic')[:32], 'signal_flags': int(flags) & 127}
+            capability = "network" if all(k in ("whois", "ssl", "dns", "rdns") for k in capability_kinds) else "mixed"
+        return {
+            "facet": FORENSIC_SOURCE_TYPE,
+            "capability": capability[:_FORENSIC_FACET_STR_MAX],
+            "parent_source": str(parent_source_type or "")[:_FORENSIC_FACET_STR_MAX],
+            "finding_id_suffix": str(finding_id_suffix or "_forensic")[:32],
+            "signal_flags": int(flags) & 127,
+        }
     except Exception:
         return {}
+
 
 def _merge_facet_into_enrichment(enrichment: dict[str, Any], facet: dict[str, Any]) -> dict[str, Any]:
     """Merge bounded facet dict into enrichment so it lands in payload_text JSON.
@@ -873,10 +1037,11 @@ def _merge_facet_into_enrichment(enrichment: dict[str, Any], facet: dict[str, An
         return enrichment
     try:
         merged = dict(enrichment)
-        merged['_forensic_facet'] = dict(facet)
+        merged["_forensic_facet"] = dict(facet)
         return merged
     except Exception:
         return enrichment
+
 
 def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
     """Bound the enrichment dict to a JSON string for CanonicalFinding.payload_text.
@@ -886,16 +1051,17 @@ def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
     caps list/dict nesting depth. Returns "" on any serialization error.
     """
     if not isinstance(enrichment, dict):
-        return ''
+        return ""
     import orjson
 
     def _dumps(v):
-        return orjson.dumps(v).decode('utf-8', errors='replace')
+        return orjson.dumps(v).decode("utf-8", errors="replace")
+
     bounded: dict[str, Any] = {}
     keys = list(enrichment.keys())
     for i, k in enumerate(keys):
         if i >= _FORENSIC_PAYLOAD_KEYS_MAX:
-            bounded['_truncated_keys'] = keys[i:][:5]
+            bounded["_truncated_keys"] = keys[i:][:5]
             break
         v = enrichment[k]
         bk = str(k)[:64]
@@ -904,7 +1070,7 @@ def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
         elif isinstance(v, (list, tuple)):
             bounded[bk] = [str(x)[:_FORENSIC_PAYLOAD_LIST_ITEM_STR_MAX] for x in list(v)[:_FORENSIC_PAYLOAD_LIST_MAX]]
         elif isinstance(v, dict):
-            if len(v) <= 8 and all((isinstance(x, (str, int, float, bool, type(None))) for x in v.values())):
+            if len(v) <= 8 and all(isinstance(x, (str, int, float, bool, type(None))) for x in v.values()):
                 bounded[bk] = {str(kk)[:32]: vv for kk, vv in v.items()}
             else:
                 bounded[bk] = _dumps(v)[:_FORENSIC_PAYLOAD_STR_MAX]
@@ -914,7 +1080,14 @@ def _bound_enrichment_for_payload(enrichment: dict[str, Any]) -> str:
             bounded[bk] = str(v)[:_FORENSIC_PAYLOAD_STR_MAX]
     return _dumps(bounded)[:_FORENSIC_PAYLOAD_MAX_BYTES]
 
-def make_canonical_finding_from_enrichment(original_finding: Any, enrichment: dict[str, Any], *, source_type: str | None=None, finding_id_suffix: str='_forensic') -> Any:
+
+def make_canonical_finding_from_enrichment(
+    original_finding: Any,
+    enrichment: dict[str, Any],
+    *,
+    source_type: str | None = None,
+    finding_id_suffix: str = "_forensic",
+) -> Any:
     """
     Convert a ForensicsEnricher.enrich() result into a CanonicalFinding.
 
@@ -945,25 +1118,27 @@ def make_canonical_finding_from_enrichment(original_finding: Any, enrichment: di
         return None
     try:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-        parent_id = getattr(original_finding, 'finding_id', None)
+
+        parent_id = getattr(original_finding, "finding_id", None)
         if not parent_id:
             return None
         try:
             import time as _time
+
             ts = float(_time.time())
         except Exception:
             ts = 0.0
         try:
-            confidence = float(getattr(original_finding, 'confidence', 0.7) or 0.7)
-        except (TypeError, ValueError):
+            confidence = float(getattr(original_finding, "confidence", 0.7) or 0.7)
+        except TypeError, ValueError:
             confidence = 0.7
         confidence = max(0.0, min(1.0, confidence))
-        query_raw = getattr(original_finding, 'query', '') or ''
+        query_raw = getattr(original_finding, "query", "") or ""
         query = str(query_raw)[:512]
-        parent_source_type = str(getattr(original_finding, 'source_type', '') or '')[:64]
+        parent_source_type = str(getattr(original_finding, "source_type", "") or "")[:64]
         new_source_type = str(source_type or FORENSIC_SOURCE_TYPE)[:64]
         payload_text = _bound_enrichment_for_payload(enrichment)
-        finding_id = f'{parent_id}{finding_id_suffix}'[:128]
+        finding_id = f"{parent_id}{finding_id_suffix}"[:128]
         try:
             facet = _build_forensic_facet(enrichment, parent_source_type, finding_id_suffix)
             if facet:
@@ -971,7 +1146,19 @@ def make_canonical_finding_from_enrichment(original_finding: Any, enrichment: di
                 payload_text = _bound_enrichment_for_payload(enrichment_with_facet)
         except Exception:  # noqa: BLE001
             pass
-        return CanonicalFinding(finding_id=finding_id, query=query, source_type=new_source_type, confidence=confidence, ts=ts, provenance=('forensic_analysis', parent_source_type), payload_text=payload_text)
+        return CanonicalFinding(
+            finding_id=finding_id,
+            query=query,
+            source_type=new_source_type,
+            confidence=confidence,
+            ts=ts,
+            provenance=("forensic_analysis", parent_source_type),
+            payload_text=payload_text,
+        )
     except Exception as exc:
-        log.debug('make_canonical_finding_from_enrichment failed for parent=%s: %s', getattr(original_finding, 'finding_id', '?'), exc)
+        log.debug(
+            "make_canonical_finding_from_enrichment failed for parent=%s: %s",
+            getattr(original_finding, "finding_id", "?"),
+            exc,
+        )
         return None

@@ -17,85 +17,163 @@ allowed per sprint/cycle under M1 constraints. AcquisitionStrategy does NOT
 fetch network — it only emits a bounded plan dict per lane. See
 :ref:`acquisition-strategy` for lane definitions, strategy rules, and invariants.
 """
+
 import asyncio
 import logging
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.network.session_runtime import async_get_httpx_session
+
 logger = logging.getLogger(__name__)
 try:
     from hledac.universal.utils.source_types import SourceType as _SourceType
 except ImportError:
     _SourceType = None
 SourceType = _SourceType  # pyright: ignore[invalid-assignment]
-from hledac.universal.runtime.acquisition_telemetry_reconcile import complete_source_family_outcomes_from_lane_details, reconcile_lane_detail_fields
-from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_candidates_from_text
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane
+from hledac.universal.runtime.acquisition_telemetry_reconcile import (
+    complete_source_family_outcomes_from_lane_details,
+    reconcile_lane_detail_fields,
+)
+from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_candidates_from_text
 from utils._patterns import (
-    infer_mission_intent,
-    extract_domain_from_ct_finding as _extract_domain_from_ct_finding,
-    select_ct_domains_for_passivedns_pivot,
-    looks_like_domain as _looks_like_domain,
-    looks_like_ip as _looks_like_ip,
     NonfeedMissionExitReason,
     derive_exit_reason,
+    infer_mission_intent,
+    select_ct_domains_for_passivedns_pivot,
+)
+from utils._patterns import (
+    extract_domain_from_ct_finding as _extract_domain_from_ct_finding,
+)
+from utils._patterns import (
+    looks_like_domain as _looks_like_domain,
+)
+from utils._patterns import (
+    looks_like_ip as _looks_like_ip,
 )
 
-# Module-level constants — canonical source, used by all lane-runner functions above.
 _LANE_TO_FAMILY: dict[str, str] = {
-    AcquisitionLane.FEED: 'feed',
-    AcquisitionLane.PUBLIC: 'public',
-    AcquisitionLane.CT: 'ct',
-    AcquisitionLane.WAYBACK: 'archive',
-    AcquisitionLane.PASSIVE_DNS: 'passive_dns',
-    AcquisitionLane.BLOCKCHAIN: 'blockchain',
-    AcquisitionLane.STEALTH: 'stealth',
-    AcquisitionLane.PIVOT_EXECUTOR: 'pivot',
-    AcquisitionLane.ACADEMIC: 'academic',
-    AcquisitionLane.OPEN_SOURCE: 'public',
-    AcquisitionLane.DOH: 'doh',
+    AcquisitionLane.FEED: "feed",
+    AcquisitionLane.PUBLIC: "public",
+    AcquisitionLane.CT: "ct",
+    AcquisitionLane.WAYBACK: "archive",
+    AcquisitionLane.PASSIVE_DNS: "passive_dns",
+    AcquisitionLane.BLOCKCHAIN: "blockchain",
+    AcquisitionLane.STEALTH: "stealth",
+    AcquisitionLane.PIVOT_EXECUTOR: "pivot",
+    AcquisitionLane.ACADEMIC: "academic",
+    AcquisitionLane.OPEN_SOURCE: "public",
+    AcquisitionLane.DOH: "doh",
 }
 
 # F360M: Import directly from acquisition_strategy_planner (canonical source for these).
 # acquisition_strategy.py shim re-exports from planner so this import path is stable.
-from hledac.universal.utils._patterns import normalize_terminal_state, NON_TERMINAL_STATES
+from hledac.universal.runtime.acquisition.profile import (
+    AcquisitionProfile,
+    is_academic_profile,
+    is_deep_osint_m1_profile,
+    normalize_acquisition_profile,
+)
 from hledac.universal.runtime.acquisition_strategy_planner import (
-    _build_nonfeed_lane_eligibility,
-
+    LANE_RULES,
     AcquisitionContext,
     FeedDominanceBudget,
-    _feed_budget_to_dict,
-    _load_feed_budget_from_env,
-    _expand_keyword_query,
-    _has_threat_indicator,
-    _has_crypto_indicator,
-    build_acquisition_report,
+    _build_nonfeed_lane_eligibility,
     _disabled_reason,
+    _expand_keyword_query,
+    _feed_budget_to_dict,
+    _has_crypto_indicator,
+    _has_threat_indicator,
+    _load_feed_budget_from_env,
     _looks_like_domain,
     _looks_like_ip,
-    LANE_RULES,
+    build_acquisition_report,
 )
-from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
-from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
-from hledac.universal.utils.asyncx import parallel_ok, first_completed
+from hledac.universal.runtime.source_finding_bridge import (
+    MAX_SAMPLE_REJECTIONS,
+    ct_results_to_findings,
+    passive_dns_results_to_findings,
+    wayback_results_to_findings,
+)
+from hledac.universal.utils._patterns import NON_TERMINAL_STATES, normalize_terminal_state
 from hledac.universal.utils.async_task import safe_create_task
-__all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_ipfs_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
-ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
+from hledac.universal.utils.asyncx import first_completed, parallel_ok
+
+__all__ = [
+    "AcquisitionLane",
+    "AcquisitionProfile",
+    "AcquisitionLanePlan",
+    "AcquisitionStrategySnapshot",
+    "AcquisitionLaneOutcome",
+    "SourceFamilyOutcome",
+    "NonfeedPlanDebug",
+    "MandatoryLaneTerminality",
+    "FeedDominanceBudget",
+    "_load_feed_budget_from_env",
+    "required_terminal_lanes",
+    "lane_is_terminal",
+    "terminality_report",
+    "ACQUISITION_REPORT_SCHEMA_VERSION",
+    "build_acquisition_plan",
+    "build_acquisition_report",
+    "build_lane_query",
+    "is_lane_enabled",
+    "get_lane_plan",
+    "lane_skip_reason",
+    "normalize_source_family_outcome",
+    "normalize_source_family_name",
+    "canonicalize_source_family_outcomes",
+    "normalize_terminal_state",
+    "TERMINAL_STATES",
+    "NON_TERMINAL_STATES",
+    "NonfeedMissionController",
+    "NonfeedMissionSnapshot",
+    "MissionIntent",
+    "MissionTargetKind",
+    "infer_mission_intent",
+    "normalize_acquisition_profile",
+    "is_academic_profile",
+    "is_deep_osint_m1_profile",
+    "_has_explicit_ipfs_cid",
+    "_extract_cids_from_text",
+    "_CIDV0_RE",
+    "_CIDV1_BASE32_RE",
+    "reconcile_lane_detail_fields",
+    "complete_source_family_outcomes_from_lane_details",
+]
+ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
 
 # IPFS CID functions imported from canonical cid_detection module
 from hledac.universal.runtime.acquisition.cid_detection import (
-    _has_explicit_ipfs_cid,
     _extract_cids_from_text,
+    _has_explicit_ipfs_cid,
 )
 
-_MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
-_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
+_MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {
+    "cve_recon": 100,
+    "wallet_recon": 15,
+    "domain_recon": 20,
+    "infra_recon": 20,
+    "person_recon": 20,
+    "unknown": 0,
+    "org_recon": 0,
+}
+_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
+    "cve_recon": 100,
+    "wallet_recon": 15,
+    "domain_recon": 20,
+    "infra_recon": 20,
+    "person_recon": 20,
+    "unknown": 0,
+    "org_recon": 0,
+}
+
 
 class RiskLevel(StrEnum):
     """Risk levels for acquisition lane planning.
@@ -105,13 +183,16 @@ class RiskLevel(StrEnum):
     type without forcing all callers to migrate. Values match canonical
     `project_types.RiskLevel` (lowercase).
     """
-    LOW = 'low'
-    MEDIUM = 'medium'
-    HIGH = 'high'
-    CRITICAL = 'critical'
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
 
 class AcquisitionLanePlan(Struct, frozen=True):
     """Plan for one acquisition lane."""
+
     lane: str
     enabled: bool
     reason: str
@@ -120,14 +201,18 @@ class AcquisitionLanePlan(Struct, frozen=True):
     concurrency: int = 2
     risk_level: str = RiskLevel.MEDIUM
 
+
 # AcquisitionContext imported from acquisition_strategy_planner (canonical source)
 # RiskLevel imported from lane_constants (canonical source)
 
+
 class LaneSpec(Struct, frozen=True):
     """Static per-lane execution constants."""
+
     max_items: int
     timeout_s: int
     risk_level: str
+
 
 class LaneRule(Struct, frozen=True):
     """Table-driven lane planning rule.
@@ -136,11 +221,14 @@ class LaneRule(Struct, frozen=True):
     is expressed as pure functions of AcquisitionContext so the full
     decision table is visible and auditable in one place.
     """
+
     lane: str
     spec: LaneSpec
     enabled: Callable[[AcquisitionContext], bool]
     reason: Callable[[AcquisitionContext], str]
     concurrency: Callable[[AcquisitionContext], int]
+
+
 LaneSpecFeed = LaneSpec(max_items=50, timeout_s=30, risk_level=RiskLevel.LOW)
 LaneSpecFeedNFD = LaneSpec(max_items=25, timeout_s=30, risk_level=RiskLevel.LOW)
 LaneSpecPublic = LaneSpec(max_items=30, timeout_s=45, risk_level=RiskLevel.MEDIUM)
@@ -158,6 +246,7 @@ LaneSpecShodan = LaneSpec(max_items=20, timeout_s=30, risk_level=RiskLevel.MEDIU
 LaneSpecCensys = LaneSpec(max_items=20, timeout_s=45, risk_level=RiskLevel.MEDIUM)
 LaneSpecGreyNoise = LaneSpec(max_items=30, timeout_s=20, risk_level=RiskLevel.LOW)
 
+
 class NonfeedPlanDebug(Struct):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
 
@@ -165,6 +254,7 @@ class NonfeedPlanDebug(Struct):
     so live KPI can diagnose nonfeed_attempted=0 root cause.
     F227D: Mutable so scheduler can annotate cap reason during sprint execution.
     """
+
     domain_detected: bool = False
     wallet_detected: bool = False
     enabled_nonfeed_lanes: tuple[str, ...] = ()
@@ -174,7 +264,7 @@ class NonfeedPlanDebug(Struct):
     hardware_skipped_lanes: tuple[str, ...] = ()
     nonfeed_execution_scheduled: bool = False
     nonfeed_execution_skip_reason: str | None = None
-    acquisition_profile: str = 'default'
+    acquisition_profile: str = "default"
     feed_cap_reason: str | None = None
     nonfeed_priority_enabled: bool = False
     nonfeed_profile_expected_lanes: tuple[str, ...] = ()
@@ -184,11 +274,11 @@ class NonfeedPlanDebug(Struct):
     pivot_scheduled_lanes: tuple[str, ...] = ()
     pivot_skip_reason: str | None = None
     pivot_errors: tuple[str, ...] = ()
-    mission_intent: str = 'unknown'
-    mission_target_kind: str = 'unknown'
+    mission_intent: str = "unknown"
+    mission_target_kind: str = "unknown"
     mission_required_lanes: tuple[str, ...] = ()
     mission_optional_lanes: tuple[str, ...] = ()
-    mission_reason: str = ''
+    mission_reason: str = ""
     mission_runtime_applied: bool = False
     mission_lane_priority: tuple[str, ...] = ()
     mission_pivot_boost_applied: bool = False
@@ -201,6 +291,7 @@ class NonfeedPlanDebug(Struct):
     feed_lane_eligible_doh: bool = False
     feed_lane_eligible_wayback: bool = False
     feed_lane_eligible_passive_dns: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class NonfeedSeedContext:
@@ -224,6 +315,7 @@ class NonfeedSeedContext:
       PUBLIC:      unchanged (original text query)
       FEED:        unchanged
     """
+
     domains: tuple[str, ...] = ()
     ips: tuple[str, ...] = ()
     urls: tuple[str, ...] = ()
@@ -233,11 +325,11 @@ class NonfeedSeedContext:
 
     def __post_init__(self) -> None:
         if len(self.domains) > 10:
-            object.__setattr__(self, 'domains', self.domains[:10])
+            object.__setattr__(self, "domains", self.domains[:10])
         if len(self.ips) > 10:
-            object.__setattr__(self, 'ips', self.ips[:10])
+            object.__setattr__(self, "ips", self.ips[:10])
         if len(self.urls) > 10:
-            object.__setattr__(self, 'urls', self.urls[:10])
+            object.__setattr__(self, "urls", self.urls[:10])
 
     @property
     def has_domain(self) -> bool:
@@ -253,14 +345,26 @@ class NonfeedSeedContext:
 
     def kind_counts(self) -> dict[str, int]:
         """Return counts by non-empty seed kind."""
-        return {k: len(v) for k, v in [('domains', self.domains), ('ips', self.ips), ('urls', self.urls), ('hashes', self.hashes), ('cves', self.cves)] if v}
+        return {
+            k: len(v)
+            for k, v in [
+                ("domains", self.domains),
+                ("ips", self.ips),
+                ("urls", self.urls),
+                ("hashes", self.hashes),
+                ("cves", self.cves),
+            ]
+            if v
+        }
+
 
 class AcquisitionStrategySnapshot(Struct):
     """Full acquisition strategy snapshot for one sprint/cycle."""
-    query: str = ''
+
+    query: str = ""
     duration_s: float = 0.0
     aggressive_mode: bool = False
-    uma_state: str = 'ok'
+    uma_state: str = "ok"
     swap_detected: bool = False
     accepted_findings_so_far: int = 0
     branch_timeout_count: int = 0
@@ -272,12 +376,14 @@ class AcquisitionStrategySnapshot(Struct):
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
     has_domain: bool = False
 
+
 class MandatoryLaneTerminality(Struct):
     """[F208A] Canonical terminality contract for mandatory lanes.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
     before a sprint is considered complete. This dataclass defines the contract.
     """
+
     lane: str
     required: bool
     reason: str
@@ -285,7 +391,10 @@ class MandatoryLaneTerminality(Struct):
     max_attempts: int = 1
     timeout_s: int = 60
 
-def required_terminal_lanes(snapshot: AcquisitionStrategySnapshot, query: str, uma_state: str, _swap_detected: bool) -> tuple[MandatoryLaneTerminality, ...]:
+
+def required_terminal_lanes(
+    snapshot: AcquisitionStrategySnapshot, query: str, uma_state: str, _swap_detected: bool
+) -> tuple[MandatoryLaneTerminality, ...]:
     """[F208A] Determine which lanes are mandatory for terminality.
 
     Rules:
@@ -307,38 +416,148 @@ def required_terminal_lanes(snapshot: AcquisitionStrategySnapshot, query: str, u
         Tuple of MandatoryLaneTerminality, one per lane that has terminality requirements.
     """
     has_domain = _has_domain_or_ip(query)
-    is_emergency = uma_state == 'emergency'
-    is_critical = uma_state == 'critical'
-    _nd = getattr(snapshot, 'nonfeed_plan_debug', None) if snapshot else None
-    _is_nonfeed_diagnostic = getattr(_nd, 'acquisition_profile', '') == 'nonfeed_diagnostic' if _nd else False
+    is_emergency = uma_state == "emergency"
+    is_critical = uma_state == "critical"
+    _nd = getattr(snapshot, "nonfeed_plan_debug", None) if snapshot else None
+    _is_nonfeed_diagnostic = getattr(_nd, "acquisition_profile", "") == "nonfeed_diagnostic" if _nd else False
     lanes: list[MandatoryLaneTerminality] = []
     _is_threat_query = _has_threat_indicator(query)
-    if has_domain and uma_state in ('ok', 'warn'):
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=True, reason='domain_query_requires_public', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    elif _is_threat_query and uma_state in ('ok', 'warn'):
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=True, reason='threat_query_requires_public', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
+    if has_domain and uma_state in ("ok", "warn"):
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=True,
+                reason="domain_query_requires_public",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    elif _is_threat_query and uma_state in ("ok", "warn"):
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=True,
+                reason="threat_query_requires_public",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
     elif _is_threat_query and is_critical:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=False, reason='critical_allows_explicit_skip', allowed_terminal_states=('skipped',), max_attempts=0))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="critical_allows_explicit_skip",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
     elif has_domain and is_critical:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=False, reason='critical_allows_explicit_skip', allowed_terminal_states=('skipped',), max_attempts=0))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="critical_allows_explicit_skip",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
     elif is_emergency:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=False, reason='memory_emergency', allowed_terminal_states=('skipped',), max_attempts=0))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="memory_emergency",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
     else:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PUBLIC, required=False, reason='not_required_for_query_type', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.PUBLIC,
+                required=False,
+                reason="not_required_for_query_type",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
     if is_emergency:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.CT, required=False, reason='memory_emergency', allowed_terminal_states=('skipped',), max_attempts=0))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=False,
+                reason="memory_emergency",
+                allowed_terminal_states=("skipped",),
+                max_attempts=0,
+            )
+        )
     elif not has_domain:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.CT, required=False, reason='no_domain', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=False,
+                reason="no_domain",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
     elif is_critical:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.CT, required=True, reason='critical_requires_ct_terminal', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=True,
+                reason="critical_requires_ct_terminal",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
     else:
-        lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.CT, required=True, reason='domain_query_requires_ct', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.WAYBACK, required=False, reason='wayback_not_mandatory', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PASSIVE_DNS, required=False, reason='passive_dns_not_mandatory', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.BLOCKCHAIN, required=False, reason='blockchain_not_mandatory', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.STEALTH, required=False, reason='stealth_never_mandatory_by_default', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
-    lanes.append(MandatoryLaneTerminality(lane=AcquisitionLane.PIVOT_EXECUTOR, required=False, reason='pivot_not_mandatory', allowed_terminal_states=('attempted', 'skipped', 'error', 'timeout')))
+        lanes.append(
+            MandatoryLaneTerminality(
+                lane=AcquisitionLane.CT,
+                required=True,
+                reason="domain_query_requires_ct",
+                allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+            )
+        )
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.WAYBACK,
+            required=False,
+            reason="wayback_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.PASSIVE_DNS,
+            required=False,
+            reason="passive_dns_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.BLOCKCHAIN,
+            required=False,
+            reason="blockchain_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.STEALTH,
+            required=False,
+            reason="stealth_never_mandatory_by_default",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
+    lanes.append(
+        MandatoryLaneTerminality(
+            lane=AcquisitionLane.PIVOT_EXECUTOR,
+            required=False,
+            reason="pivot_not_mandatory",
+            allowed_terminal_states=("attempted", "skipped", "error", "timeout"),
+        )
+    )
     return tuple(lanes)
+
 
 def lane_is_terminal(outcome_or_dict) -> bool:
     """[F208A] Return True if the lane outcome is in a terminal state.
@@ -352,23 +571,29 @@ def lane_is_terminal(outcome_or_dict) -> bool:
     if outcome_or_dict is None:
         return False
     d: dict
-    if hasattr(outcome_or_dict, 'to_dict'):
+    if hasattr(outcome_or_dict, "to_dict"):
         d = outcome_or_dict.to_dict()
     elif isinstance(outcome_or_dict, dict):
         d = outcome_or_dict
     else:
         return False
-    if d.get('attempted'):
+    if d.get("attempted"):
         return True
-    if d.get('skipped'):
+    if d.get("skipped"):
         return True
-    if d.get('error') is not None:
+    if d.get("error") is not None:
         return True
-    if d.get('timeout'):
+    if d.get("timeout"):
         return True
     return False
-TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty', 'attempted', 'skipped', 'error', 'timeout'])
-def terminality_report(required_lanes: tuple[MandatoryLaneTerminality, ...], observed_outcomes: tuple[dict, ...]) -> dict:
+
+
+TERMINAL_STATES = frozenset(["success", "success_empty", "empty", "attempted", "skipped", "error", "timeout"])
+
+
+def terminality_report(
+    required_lanes: tuple[MandatoryLaneTerminality, ...], observed_outcomes: tuple[dict, ...]
+) -> dict:
     """[F208A] Produce a terminality report comparing required vs observed lane states.
 
     Args:
@@ -395,7 +620,7 @@ def terminality_report(required_lanes: tuple[MandatoryLaneTerminality, ...], obs
     reasons: dict[str, str] = {}
     outcomes_by_lane: dict[str, dict] = {}
     for outcome in observed_outcomes:
-        lane = outcome.get('lane', '')
+        lane = outcome.get("lane", "")
         if lane:
             outcomes_by_lane[lane] = outcome
     for mlt in required_lanes:
@@ -406,13 +631,22 @@ def terminality_report(required_lanes: tuple[MandatoryLaneTerminality, ...], obs
         if is_term:
             satisfied.append(mlt.lane)
             terminal_lanes.append(mlt.lane)
-            if outcome.get('skipped'):
+            if outcome.get("skipped"):
                 skipped_lanes.append(mlt.lane)
-            if outcome.get('error') is not None:
+            if outcome.get("error") is not None:
                 errors.append(mlt.lane)
         elif mlt.required:
             missing_lanes.append(mlt.lane)
-    return {'checked': checked, 'satisfied': satisfied, 'required_lanes': [mlt.lane for mlt in required_lanes if mlt.required], 'terminal_lanes': terminal_lanes, 'missing_lanes': missing_lanes, 'skipped_lanes': skipped_lanes, 'errors': errors, 'reasons': reasons}
+    return {
+        "checked": checked,
+        "satisfied": satisfied,
+        "required_lanes": [mlt.lane for mlt in required_lanes if mlt.required],
+        "terminal_lanes": terminal_lanes,
+        "missing_lanes": missing_lanes,
+        "skipped_lanes": skipped_lanes,
+        "errors": errors,
+        "reasons": reasons,
+    }
 
 
 def is_lane_enabled(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> bool:
@@ -428,6 +662,7 @@ def is_lane_enabled(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> bo
             return plan.enabled
     return False
 
+
 def get_lane_plan(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> AcquisitionLanePlan | None:
     """
     Return the AcquisitionLanePlan for the given lane, or None if not found.
@@ -440,6 +675,7 @@ def get_lane_plan(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> Acqu
         if plan.lane == lane_name:
             return plan
     return None
+
 
 def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> str | None:
     """
@@ -454,6 +690,7 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
             return None if plan.enabled else plan.reason
     return None
 
+
 class SourceFamilyOutcome(Struct, frozen=True):
     """Normalized outcome for one source family (lane) in the scheduler report.
 
@@ -461,6 +698,7 @@ class SourceFamilyOutcome(Struct, frozen=True):
     balance telemetry into one canonical shape so diagnostics have a single
     place to explain per-family zero-yield.
     """
+
     family: str
     attempted: bool
     skipped: bool
@@ -471,26 +709,52 @@ class SourceFamilyOutcome(Struct, frozen=True):
     error: str | None
     timeout: bool
     duration_s: float | None
-    terminal_state: str = 'UNKNOWN'
+    terminal_state: str = "UNKNOWN"
 
     def to_dict(self) -> dict:
-        return {'family': self.family, 'attempted': self.attempted, 'skipped': self.skipped, 'skip_reason': self.skip_reason, 'raw_count': self.raw_count, 'built_count': self.built_count, 'accepted_count': self.accepted_count, 'error': self.error, 'timeout': self.timeout, 'duration_s': round(self.duration_s, 3) if self.duration_s is not None else None, 'terminal_state': self.terminal_state}
+        return {
+            "family": self.family,
+            "attempted": self.attempted,
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "raw_count": self.raw_count,
+            "built_count": self.built_count,
+            "accepted_count": self.accepted_count,
+            "error": self.error,
+            "timeout": self.timeout,
+            "duration_s": round(self.duration_s, 3) if self.duration_s is not None else None,
+            "terminal_state": self.terminal_state,
+        }
+
 
 # normalize_source_family_name imported from utils._patterns
 from hledac.universal.utils._patterns import normalize_source_family_name
-_TERMINAL_PRIORITY = {'ATTEMPTED_ACCEPTED': 0, 'ATTEMPTED_TIMEOUT': 1, 'ATTEMPTED_ERROR': 2, 'ATTEMPTED_NO_RESULTS': 3, 'SKIPPED_BY_MEMORY': 4, 'SKIPPED_BY_POLICY': 5, 'SKIPPED': 6, 'NEVER_SCHEDULED': 7, 'UNKNOWN': 8}
+
+_TERMINAL_PRIORITY = {
+    "ATTEMPTED_ACCEPTED": 0,
+    "ATTEMPTED_TIMEOUT": 1,
+    "ATTEMPTED_ERROR": 2,
+    "ATTEMPTED_NO_RESULTS": 3,
+    "SKIPPED_BY_MEMORY": 4,
+    "SKIPPED_BY_POLICY": 5,
+    "SKIPPED": 6,
+    "NEVER_SCHEDULED": 7,
+    "UNKNOWN": 8,
+}
+
 
 def _pick_best_terminal(outcomes: list[dict]) -> str:
     """Pick the highest-priority terminal_state from a list of same-family outcomes."""
-    _best_ts = 'UNKNOWN'
+    _best_ts = "UNKNOWN"
     _best_prio = 99
     for o in outcomes:
-        ts = o.get('terminal_state', 'UNKNOWN')
+        ts = o.get("terminal_state", "UNKNOWN")
         prio = _TERMINAL_PRIORITY.get(ts, 99)
         if prio < _best_prio:
             _best_prio = prio
             _best_ts = ts
     return _best_ts
+
 
 def canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict]:
     """Deduplicate and merge source family outcomes that normalize to the same family.
@@ -511,34 +775,50 @@ def canonicalize_source_family_outcomes(outcomes: list[dict]) -> list[dict]:
     for o in outcomes:
         if not isinstance(o, dict):
             continue
-        fam_raw = o.get('family', '')
+        fam_raw = o.get("family", "")
         fam_norm = normalize_source_family_name(fam_raw)
         _groups.setdefault(fam_norm, []).append(o)
     _result: list[dict] = []
     for fam_norm, group in _groups.items():
         if len(group) == 1:
             merged = dict(group[0])
-            merged['family'] = fam_norm
+            merged["family"] = fam_norm
             _result.append(merged)
             continue
-        attempted = any((o.get('attempted', False) for o in group))
-        skipped = all((o.get('skipped', False) for o in group)) and (not attempted)
-        timeout = any((o.get('timeout', False) for o in group))
-        errors = [o.get('error') for o in group if o.get('error')]
-        _real_errors = [e for e in errors if e not in ('no_candidates', 'never_scheduled', 'no_outcome_recorded')]
+        attempted = any(o.get("attempted", False) for o in group)
+        skipped = all(o.get("skipped", False) for o in group) and (not attempted)
+        timeout = any(o.get("timeout", False) for o in group)
+        errors = [o.get("error") for o in group if o.get("error")]
+        _real_errors = [e for e in errors if e not in ("no_candidates", "never_scheduled", "no_outcome_recorded")]
         error = _real_errors[0] if _real_errors else errors[0] if errors else None
-        raw_count = max((o.get('raw_count', 0) or 0 for o in group))
-        built_count = max((o.get('built_count', 0) or 0 for o in group))
-        accepted_count = max((o.get('accepted_count', 0) or 0 for o in group))
-        durations = [o.get('duration_s') for o in group if o.get('duration_s') is not None]
+        raw_count = max(o.get("raw_count", 0) or 0 for o in group)
+        built_count = max(o.get("built_count", 0) or 0 for o in group)
+        accepted_count = max(o.get("accepted_count", 0) or 0 for o in group)
+        durations = [o.get("duration_s") for o in group if o.get("duration_s") is not None]
         duration_s = max(durations) if durations else None
         terminal_state = _pick_best_terminal(group)
-        skip_reasons = list({o.get('skip_reason') for o in group if o.get('skip_reason')})
+        skip_reasons = list({o.get("skip_reason") for o in group if o.get("skip_reason")})
         skip_reason = skip_reasons[0] if len(skip_reasons) == 1 else None
-        lane_candidates = [o.get('lane') for o in group if o.get('lane')]
+        lane_candidates = [o.get("lane") for o in group if o.get("lane")]
         lane = lane_candidates[0] if lane_candidates else fam_norm.upper()
-        _result.append({'family': fam_norm, 'attempted': attempted, 'skipped': skipped, 'skip_reason': skip_reason, 'raw_count': raw_count, 'built_count': built_count, 'accepted_count': accepted_count, 'error': error, 'timeout': timeout, 'duration_s': duration_s, 'terminal_state': terminal_state, 'lane': lane})
+        _result.append(
+            {
+                "family": fam_norm,
+                "attempted": attempted,
+                "skipped": skipped,
+                "skip_reason": skip_reason,
+                "raw_count": raw_count,
+                "built_count": built_count,
+                "accepted_count": accepted_count,
+                "error": error,
+                "timeout": timeout,
+                "duration_s": duration_s,
+                "terminal_state": terminal_state,
+                "lane": lane,
+            }
+        )
     return _result
+
 
 def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     """Normalize a raw lane or adapter outcome dict into SourceFamilyOutcome fields.
@@ -554,50 +834,102 @@ def normalize_source_family_outcome(family: str, raw: dict) -> dict:
     """
     _canonical_family = normalize_source_family_name(family)
 
-    def _derive_terminal(ts_raw: str | None, attempted: bool, skipped: bool, skip_reason: str | None, error: str | None, timeout: bool, accepted_count: int) -> str:
+    def _derive_terminal(
+        ts_raw: str | None,
+        attempted: bool,
+        skipped: bool,
+        skip_reason: str | None,
+        error: str | None,
+        timeout: bool,
+        accepted_count: int,
+    ) -> str:
         if ts_raw:
             return ts_raw
-        if skip_reason in ('never_scheduled', 'no_outcome_recorded'):
-            return 'NEVER_SCHEDULED'
+        if skip_reason in ("never_scheduled", "no_outcome_recorded"):
+            return "NEVER_SCHEDULED"
         if not attempted:
-            if skip_reason and ('memory' in skip_reason.lower() or 'hw_skip' in skip_reason.lower() or 'hardware' in skip_reason.lower()):
-                return 'SKIPPED_BY_MEMORY'
-            if skip_reason and ('policy' in skip_reason.lower() or 'disabled' in skip_reason.lower() or 'not_enabled' in skip_reason.lower()):
-                return 'SKIPPED_BY_POLICY'
-            return 'SKIPPED'
+            if skip_reason and (
+                "memory" in skip_reason.lower() or "hw_skip" in skip_reason.lower() or "hardware" in skip_reason.lower()
+            ):
+                return "SKIPPED_BY_MEMORY"
+            if skip_reason and (
+                "policy" in skip_reason.lower()
+                or "disabled" in skip_reason.lower()
+                or "not_enabled" in skip_reason.lower()
+            ):
+                return "SKIPPED_BY_POLICY"
+            return "SKIPPED"
         if timeout:
-            return 'ATTEMPTED_TIMEOUT'
-        if error == 'timeout':
-            return 'ATTEMPTED_TIMEOUT'
+            return "ATTEMPTED_TIMEOUT"
+        if error == "timeout":
+            return "ATTEMPTED_TIMEOUT"
         if error:
-            return 'ATTEMPTED_ERROR'
+            return "ATTEMPTED_ERROR"
         if accepted_count > 0:
-            return 'ATTEMPTED_ACCEPTED'
-        return 'ATTEMPTED_NO_RESULTS'
+            return "ATTEMPTED_ACCEPTED"
+        return "ATTEMPTED_NO_RESULTS"
+
     if raw is None:
-        _ts = _derive_terminal(None, False, True, 'no_outcome_recorded', None, False, 0)
-        return SourceFamilyOutcome(family=_canonical_family, attempted=False, skipped=True, skip_reason='no_outcome_recorded', raw_count=0, built_count=0, accepted_count=0, error=None, timeout=False, duration_s=None, terminal_state=_ts).to_dict()
-    if hasattr(raw, 'to_dict'):
+        _ts = _derive_terminal(None, False, True, "no_outcome_recorded", None, False, 0)
+        return SourceFamilyOutcome(
+            family=_canonical_family,
+            attempted=False,
+            skipped=True,
+            skip_reason="no_outcome_recorded",
+            raw_count=0,
+            built_count=0,
+            accepted_count=0,
+            error=None,
+            timeout=False,
+            duration_s=None,
+            terminal_state=_ts,
+        ).to_dict()
+    if hasattr(raw, "to_dict"):
         raw = raw.to_dict()
     if isinstance(raw, (list, tuple)) and (not isinstance(raw, dict)):
         _verdict = raw if isinstance(raw, tuple) else raw[0]
         if len(_verdict) >= 5 and isinstance(_verdict[1], int):
             _tag, _sig, _fb_use, _fb_waste, _qual = _verdict[:5]
             _ts = _derive_terminal(None, True, False, None, None, False, 0)
-            return SourceFamilyOutcome(family=_canonical_family, attempted=True, skipped=False, skip_reason=None, raw_count=_sig, built_count=0, accepted_count=0, error=None, timeout=False, duration_s=None, terminal_state=_ts).to_dict()
+            return SourceFamilyOutcome(
+                family=_canonical_family,
+                attempted=True,
+                skipped=False,
+                skip_reason=None,
+                raw_count=_sig,
+                built_count=0,
+                accepted_count=0,
+                error=None,
+                timeout=False,
+                duration_s=None,
+                terminal_state=_ts,
+            ).to_dict()
     _d: Any = raw
-    attempted = _d.get('attempted', False)
-    skip_reason = _d.get('skip_reason') if not attempted else None
-    skipped = _d.get('skipped', not attempted)
-    _error = _d.get('error')
-    _timeout = _d.get('timeout', False)
-    _accepted = _d.get('accepted_count', _d.get('accepted_findings', 0))
-    _ts_raw = _d.get('terminal_state')
-    built_count = _d.get('built_count', _d.get('produced_items', _d.get('ct_results_raw', 0)))
-    raw_count = _d.get('raw_count', _d.get('ct_results_raw', 0))
-    accepted_count = _d.get('accepted_count', _d.get('accepted_findings', 0))
+    attempted = _d.get("attempted", False)
+    skip_reason = _d.get("skip_reason") if not attempted else None
+    skipped = _d.get("skipped", not attempted)
+    _error = _d.get("error")
+    _timeout = _d.get("timeout", False)
+    _accepted = _d.get("accepted_count", _d.get("accepted_findings", 0))
+    _ts_raw = _d.get("terminal_state")
+    built_count = _d.get("built_count", _d.get("produced_items", _d.get("ct_results_raw", 0)))
+    raw_count = _d.get("raw_count", _d.get("ct_results_raw", 0))
+    accepted_count = _d.get("accepted_count", _d.get("accepted_findings", 0))
     _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
-    return SourceFamilyOutcome(family=_canonical_family, attempted=attempted, skipped=skipped, skip_reason=skip_reason, raw_count=raw_count, built_count=built_count, accepted_count=accepted_count, error=_error, timeout=_timeout, duration_s=_d.get('duration_s'), terminal_state=_ts).to_dict()
+    return SourceFamilyOutcome(
+        family=_canonical_family,
+        attempted=attempted,
+        skipped=skipped,
+        skip_reason=skip_reason,
+        raw_count=raw_count,
+        built_count=built_count,
+        accepted_count=accepted_count,
+        error=_error,
+        timeout=_timeout,
+        duration_s=_d.get("duration_s"),
+        terminal_state=_ts,
+    ).to_dict()
+
 
 class AcquisitionLaneOutcome(Struct, frozen=True):
     lane: str
@@ -608,8 +940,8 @@ class AcquisitionLaneOutcome(Struct, frozen=True):
     timeout: bool = False
     error: str | None = None
     duration_s: float = 0.0
-    source_family: str = 'unknown'
-    ct_query: str = ''
+    source_family: str = "unknown"
+    ct_query: str = ""
     ct_results_raw: int = 0
     candidate_findings: tuple = ()
     rejection_reasons: tuple = ()
@@ -617,16 +949,46 @@ class AcquisitionLaneOutcome(Struct, frozen=True):
     sample_rejections: tuple = ()
     wayback_raw_count: int = 0
     passive_dns_raw_count: int = 0
-    doh_query: str = ''
-    wayback_query: str = ''
-    passive_dns_query: str = ''
+    doh_query: str = ""
+    wayback_query: str = ""
+    passive_dns_query: str = ""
     ipfs_cid_count: int = 0
-    ipfs_terminal_state: str = 'none'
+    ipfs_terminal_state: str = "none"
 
     def to_dict(self) -> dict:
-        return {'lane': self.lane, 'enabled': self.enabled, 'attempted': self.attempted, 'accepted_findings': self.accepted_findings, 'produced_items': self.produced_items, 'timeout': self.timeout, 'error': self.error, 'duration_s': round(self.duration_s, 3), 'source_family': self.source_family, 'ct_query': self.ct_query, 'ct_results_raw': self.ct_results_raw, 'rejected_count': self.rejected_count, 'sample_rejections': list(self.sample_rejections), 'wayback_raw_count': self.wayback_raw_count, 'passive_dns_raw_count': self.passive_dns_raw_count, 'doh_query': self.doh_query, 'wayback_query': self.wayback_query, 'passive_dns_query': self.passive_dns_query, 'ipfs_cid_count': self.ipfs_cid_count, 'ipfs_terminal_state': self.ipfs_terminal_state}
-_NONFEED_LANE_FAMILY_MAP = {'PUBLIC': AcquisitionLane.PUBLIC, 'CT': AcquisitionLane.CT, 'PIVOT_EXECUTOR': AcquisitionLane.PIVOT_EXECUTOR, 'WAYBACK': AcquisitionLane.WAYBACK, 'PASSIVE_DNS': AcquisitionLane.PASSIVE_DNS}
-_ACCEPTED_TERMINAL_STATES = frozenset(['success', 'success_empty', 'empty'])
+        return {
+            "lane": self.lane,
+            "enabled": self.enabled,
+            "attempted": self.attempted,
+            "accepted_findings": self.accepted_findings,
+            "produced_items": self.produced_items,
+            "timeout": self.timeout,
+            "error": self.error,
+            "duration_s": round(self.duration_s, 3),
+            "source_family": self.source_family,
+            "ct_query": self.ct_query,
+            "ct_results_raw": self.ct_results_raw,
+            "rejected_count": self.rejected_count,
+            "sample_rejections": list(self.sample_rejections),
+            "wayback_raw_count": self.wayback_raw_count,
+            "passive_dns_raw_count": self.passive_dns_raw_count,
+            "doh_query": self.doh_query,
+            "wayback_query": self.wayback_query,
+            "passive_dns_query": self.passive_dns_query,
+            "ipfs_cid_count": self.ipfs_cid_count,
+            "ipfs_terminal_state": self.ipfs_terminal_state,
+        }
+
+
+_NONFEED_LANE_FAMILY_MAP = {
+    "PUBLIC": AcquisitionLane.PUBLIC,
+    "CT": AcquisitionLane.CT,
+    "PIVOT_EXECUTOR": AcquisitionLane.PIVOT_EXECUTOR,
+    "WAYBACK": AcquisitionLane.WAYBACK,
+    "PASSIVE_DNS": AcquisitionLane.PASSIVE_DNS,
+}
+_ACCEPTED_TERMINAL_STATES = frozenset(["success", "success_empty", "empty"])
+
 
 class NonfeedMissionSnapshot(Struct):
     """F217B: Snapshot of nonfeed mission controller state at a point in time.
@@ -634,8 +996,9 @@ class NonfeedMissionSnapshot(Struct):
     This is a plain dataclass (not frozen) so that the scheduler can
     accumulate state over the sprint lifetime.
     """
+
     mission_active: bool = False
-    acquisition_profile: str = 'default'
+    acquisition_profile: str = "default"
     required_families: tuple[str, ...] = ()
     optional_families: tuple[str, ...] = ()
     family_status: dict[str, str] = field(default_factory=dict)
@@ -643,10 +1006,22 @@ class NonfeedMissionSnapshot(Struct):
     any_accepted: bool = False
     provider_failures: tuple[str, ...] = ()
     memory_skips: tuple[str, ...] = ()
-    mission_exit_reason: str = ''
+    mission_exit_reason: str = ""
 
     def to_dict(self) -> dict:
-        return {'nonfeed_mission_active': self.mission_active, 'nonfeed_acquisition_profile': self.acquisition_profile, 'nonfeed_required_families': list(self.required_families), 'nonfeed_optional_families': list(self.optional_families), 'nonfeed_family_status': dict(self.family_status), 'nonfeed_all_required_terminal': self.all_required_terminal, 'nonfeed_any_accepted': self.any_accepted, 'nonfeed_provider_failures': list(self.provider_failures), 'nonfeed_memory_skips': list(self.memory_skips), 'nonfeed_mission_exit_reason': self.mission_exit_reason}
+        return {
+            "nonfeed_mission_active": self.mission_active,
+            "nonfeed_acquisition_profile": self.acquisition_profile,
+            "nonfeed_required_families": list(self.required_families),
+            "nonfeed_optional_families": list(self.optional_families),
+            "nonfeed_family_status": dict(self.family_status),
+            "nonfeed_all_required_terminal": self.all_required_terminal,
+            "nonfeed_any_accepted": self.any_accepted,
+            "nonfeed_provider_failures": list(self.provider_failures),
+            "nonfeed_memory_skips": list(self.memory_skips),
+            "nonfeed_mission_exit_reason": self.mission_exit_reason,
+        }
+
 
 class NonfeedMissionController:
     """F217B: Canonical nonfeed mission contract for nonfeed_diagnostic profile.
@@ -669,6 +1044,7 @@ class NonfeedMissionController:
         as terminal but NOT accepted
       - Feed findings do NOT satisfy nonfeed mission
     """
+
     __slots__ = ()
 
     @staticmethod
@@ -676,17 +1052,17 @@ class NonfeedMissionController:
         """Return True when the profile is any nonfeed_diagnostic variant."""
         if acquisition_profile is None:
             return False
-        return acquisition_profile.startswith('nonfeed_diagnostic')
+        return acquisition_profile.startswith("nonfeed_diagnostic")
 
     @staticmethod
     def get_required_families() -> tuple[str, ...]:
         """Required lane families for nonfeed_diagnostic mission."""
-        return ('PUBLIC', 'CT', 'PIVOT_EXECUTOR')
+        return ("PUBLIC", "CT", "PIVOT_EXECUTOR")
 
     @staticmethod
     def get_optional_families() -> tuple[str, ...]:
         """Optional lane families for nonfeed_diagnostic mission."""
-        return ('WAYBACK', 'PASSIVE_DNS')
+        return ("WAYBACK", "PASSIVE_DNS")
 
     @staticmethod
     def _family_to_lane(family: str) -> str:
@@ -694,7 +1070,13 @@ class NonfeedMissionController:
         return _NONFEED_LANE_FAMILY_MAP.get(family, family)
 
     @staticmethod
-    def _get_lane_outcome(family: str, acquisition_lane_outcomes: tuple, public_outcome: dict | None, ct_quarantine_count: int, quality_rejection_ledger: tuple) -> dict | None:
+    def _get_lane_outcome(
+        family: str,
+        acquisition_lane_outcomes: tuple,
+        public_outcome: dict | None,
+        ct_quarantine_count: int,
+        quality_rejection_ledger: tuple,
+    ) -> dict | None:
         """Get the outcome dict for a lane family.
 
         Returns a dict with keys: accepted_findings, terminal_state, error, skipped
@@ -707,68 +1089,106 @@ class NonfeedMissionController:
             ct_quarantine_count: ct_quarantine_count from SprintSchedulerResult
             quality_rejection_ledger: quality_rejection_ledger from SprintSchedulerResult
         """
-        if family == 'PUBLIC':
+        if family == "PUBLIC":
             if public_outcome is None:
                 return None
-            accepted = public_outcome.get('accepted_count', 0) or 0
+            accepted = public_outcome.get("accepted_count", 0) or 0
             terminal_state = normalize_terminal_state(public_outcome)
-            return {'accepted_findings': accepted, 'terminal_state': terminal_state, 'error': public_outcome.get('error'), 'skipped': public_outcome.get('skipped', False)}
-        elif family == 'CT':
+            return {
+                "accepted_findings": accepted,
+                "terminal_state": terminal_state,
+                "error": public_outcome.get("error"),
+                "skipped": public_outcome.get("skipped", False),
+            }
+        elif family == "CT":
             lane = AcquisitionLane.CT
             for outcome in acquisition_lane_outcomes:
-                if hasattr(outcome, 'lane') and outcome.lane == lane:
-                    return {'accepted_findings': outcome.accepted_findings, 'terminal_state': normalize_terminal_state(outcome.to_dict()), 'error': outcome.error, 'skipped': False}
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
             return None
-        elif family == 'PIVOT_EXECUTOR':
+        elif family == "PIVOT_EXECUTOR":
             lane = AcquisitionLane.PIVOT_EXECUTOR
             for outcome in acquisition_lane_outcomes:
-                if hasattr(outcome, 'lane') and outcome.lane == lane:
-                    return {'accepted_findings': outcome.accepted_findings, 'terminal_state': normalize_terminal_state(outcome.to_dict()), 'error': outcome.error, 'skipped': False}
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
             return None
-        elif family == 'WAYBACK':
+        elif family == "WAYBACK":
             lane = AcquisitionLane.WAYBACK
             for outcome in acquisition_lane_outcomes:
-                if hasattr(outcome, 'lane') and outcome.lane == lane:
-                    return {'accepted_findings': outcome.accepted_findings, 'terminal_state': normalize_terminal_state(outcome.to_dict()), 'error': outcome.error, 'skipped': False}
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
             return None
-        elif family == 'PASSIVE_DNS':
+        elif family == "PASSIVE_DNS":
             lane = AcquisitionLane.PASSIVE_DNS
             for outcome in acquisition_lane_outcomes:
-                if hasattr(outcome, 'lane') and outcome.lane == lane:
-                    return {'accepted_findings': outcome.accepted_findings, 'terminal_state': normalize_terminal_state(outcome.to_dict()), 'error': outcome.error, 'skipped': False}
+                if hasattr(outcome, "lane") and outcome.lane == lane:
+                    return {
+                        "accepted_findings": outcome.accepted_findings,
+                        "terminal_state": normalize_terminal_state(outcome.to_dict()),
+                        "error": outcome.error,
+                        "skipped": False,
+                    }
             return None
         return None
 
     @staticmethod
-    def _evaluate_family_status(outcome: dict | None, memory_skipped: bool=False) -> str:
+    def _evaluate_family_status(outcome: dict | None, memory_skipped: bool = False) -> str:
         """Evaluate the mission status of a single family.
 
         Returns one of: accepted, terminal, provider_failure, memory_skip, pending, missing
         """
         if memory_skipped:
-            return 'memory_skip'
+            return "memory_skip"
         if outcome is None:
-            return 'missing'
-        accepted = outcome.get('accepted_findings', 0) or 0
+            return "missing"
+        accepted = outcome.get("accepted_findings", 0) or 0
         if accepted > 0:
-            return 'accepted'
-        terminal_state = outcome.get('terminal_state', '')
-        error = outcome.get('error', '')
-        skipped = outcome.get('skipped', False)
-        if error and any((err in str(error).lower() for err in ['timeout', 'error', 'unavailable', 'connection', 'refused', 'dns'])):
-            if any((err in str(error).lower() for err in ['timeout', 'unavailable', 'connection', 'refused', 'dns', 'network'])):
-                return 'provider_failure'
-            return 'terminal'
+            return "accepted"
+        terminal_state = outcome.get("terminal_state", "")
+        error = outcome.get("error", "")
+        skipped = outcome.get("skipped", False)
+        if error and any(
+            err in str(error).lower() for err in ["timeout", "error", "unavailable", "connection", "refused", "dns"]
+        ):
+            if any(
+                err in str(error).lower()
+                for err in ["timeout", "unavailable", "connection", "refused", "dns", "network"]
+            ):
+                return "provider_failure"
+            return "terminal"
         if skipped:
-            return 'terminal'
+            return "terminal"
         if terminal_state in _ACCEPTED_TERMINAL_STATES:
-            return 'terminal'
+            return "terminal"
         if terminal_state:
-            return 'terminal'
-        return 'pending'
+            return "terminal"
+        return "pending"
 
     @classmethod
-    def build_snapshot(cls, acquisition_profile: str, acquisition_lane_outcomes: tuple, public_outcome: dict | None, ct_quarantine_count: int, quality_rejection_ledger: tuple, memory_skipped_families: tuple[str, ...]=()) -> NonfeedMissionSnapshot:
+    def build_snapshot(
+        cls,
+        acquisition_profile: str,
+        acquisition_lane_outcomes: tuple,
+        public_outcome: dict | None,
+        ct_quarantine_count: int,
+        quality_rejection_ledger: tuple,
+        memory_skipped_families: tuple[str, ...] = (),
+    ) -> NonfeedMissionSnapshot:
         """Build a NonfeedMissionSnapshot from current scheduler state.
 
         Args:
@@ -792,32 +1212,38 @@ class NonfeedMissionController:
         provider_failure_families: list[str] = []
         for family in snapshot.required_families:
             memory_skip = family in memory_skipped_families
-            outcome = cls._get_lane_outcome(family, acquisition_lane_outcomes, public_outcome, ct_quarantine_count, quality_rejection_ledger)
+            outcome = cls._get_lane_outcome(
+                family, acquisition_lane_outcomes, public_outcome, ct_quarantine_count, quality_rejection_ledger
+            )
             status = cls._evaluate_family_status(outcome, memory_skipped=memory_skip)
             snapshot.family_status[family] = status
             all_statuses.append(status)
-            if status == 'accepted':
+            if status == "accepted":
                 accepted_families.append(family)
-            elif status == 'provider_failure':
+            elif status == "provider_failure":
                 provider_failure_families.append(family)
-            elif status == 'memory_skip':
+            elif status == "memory_skip":
                 pass
-            elif status == 'missing':
+            elif status == "missing":
                 pass
         for family in snapshot.optional_families:
             memory_skip = family in memory_skipped_families
-            outcome = cls._get_lane_outcome(family, acquisition_lane_outcomes, public_outcome, ct_quarantine_count, quality_rejection_ledger)
+            outcome = cls._get_lane_outcome(
+                family, acquisition_lane_outcomes, public_outcome, ct_quarantine_count, quality_rejection_ledger
+            )
             status = cls._evaluate_family_status(outcome, memory_skipped=memory_skip)
             snapshot.family_status[family] = status
             all_statuses.append(status)
-            if status == 'accepted':
+            if status == "accepted":
                 accepted_families.append(family)
-            elif status == 'provider_failure':
+            elif status == "provider_failure":
                 provider_failure_families.append(family)
         snapshot.any_accepted = bool(accepted_families)
         snapshot.provider_failures = tuple(provider_failure_families)
-        terminal_statuses = {'accepted', 'terminal', 'provider_failure', 'memory_skip'}
-        snapshot.all_required_terminal = all((snapshot.family_status.get(f, 'missing') in terminal_statuses for f in snapshot.required_families))
+        terminal_statuses = {"accepted", "terminal", "provider_failure", "memory_skip"}
+        snapshot.all_required_terminal = all(
+            snapshot.family_status.get(f, "missing") in terminal_statuses for f in snapshot.required_families
+        )
         snapshot.mission_exit_reason = cls._derive_exit_reason(snapshot, memory_skipped_families)
         return snapshot
 
@@ -831,11 +1257,18 @@ class NonfeedMissionController:
             snapshot.required_families,
             snapshot.family_status,
         )
-_DOMAIN_OR_IP_RE = re.compile('(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}|\\d{1,3}(?:\\.\\d{1,3}){3}')
-_URL_RE = re.compile('(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)')
-_WALLET_RE = re.compile('(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}|')
-_CRYPTO_HASH_RE = re.compile('\\b[0-9a-fA-F]{64}\\b|\\b[0-9a-fA-F]{80}\\b|\\b[0-9a-fA-F]{16}\\b')
-_CVE_RE = re.compile('\\bCVE-\\d{4}-\\d{4,}\\b', re.IGNORECASE)
+
+
+_DOMAIN_OR_IP_RE = re.compile(
+    "(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}|\\d{1,3}(?:\\.\\d{1,3}){3}"
+)
+_URL_RE = re.compile("(?:https?://|[a-zA-Z][a-zA-Z0-9+.-]*://)")
+_WALLET_RE = re.compile(
+    "(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}|0x[a-fA-F0-9]{40}|L[a-zA-HJ-NP-Z0-9]{32,34}|4[0-9AB][1-9A-HJ-NP-Za-km-z]{92}|X[1-9A-HJ-NP-Za-km-z]{95}|ripple:rvr?[a-zA-HJ-NP-Z0-9]{24,}|dust:qty[0-9a-f]{40}|"
+)
+_CRYPTO_HASH_RE = re.compile("\\b[0-9a-fA-F]{64}\\b|\\b[0-9a-fA-F]{80}\\b|\\b[0-9a-fA-F]{16}\\b")
+_CVE_RE = re.compile("\\bCVE-\\d{4}-\\d{4,}\\b", re.IGNORECASE)
+
 
 class MissionIntent:
     """F225A: Lightweight mission intent classification.
@@ -844,32 +1277,46 @@ class MissionIntent:
     Does NOT bypass UMA/hardware safety, enable stealth/browser,
     or increase network aggressiveness.
     """
-    DOMAIN_RECON: str = 'domain_recon'
-    ORG_RECON: str = 'org_recon'
-    PERSON_RECON: str = 'person_recon'
-    WALLET_RECON: str = 'wallet_recon'
-    CVE_RECON: str = 'cve_recon'
-    INFRA_RECON: str = 'infra_recon'
-    UNKNOWN: str = 'unknown'
+
+    DOMAIN_RECON: str = "domain_recon"
+    ORG_RECON: str = "org_recon"
+    PERSON_RECON: str = "person_recon"
+    WALLET_RECON: str = "wallet_recon"
+    CVE_RECON: str = "cve_recon"
+    INFRA_RECON: str = "infra_recon"
+    UNKNOWN: str = "unknown"
+
 
 class MissionTargetKind:
     """F225A: Target kind derived from query analysis."""
-    DOMAIN: str = 'domain'
-    URL: str = 'url'
-    EMAIL: str = 'email'
-    WALLET: str = 'wallet'
-    CVE: str = 'cve'
-    IP: str = 'ip'
-    ORG: str = 'org'
-    UNKNOWN: str = 'unknown'
+
+    DOMAIN: str = "domain"
+    URL: str = "url"
+    EMAIL: str = "email"
+    WALLET: str = "wallet"
+    CVE: str = "cve"
+    IP: str = "ip"
+    ORG: str = "org"
+    UNKNOWN: str = "unknown"
+
+
 _SAFE_LANES: tuple[str, ...] = (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR)
 _SAFE_OPTIONAL: tuple[str, ...] = (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS)
 
-_MISSION_TARGET_KIND: dict[str, str] = {MissionIntent.DOMAIN_RECON: MissionTargetKind.DOMAIN, MissionIntent.ORG_RECON: MissionTargetKind.ORG, MissionIntent.PERSON_RECON: MissionTargetKind.EMAIL, MissionIntent.WALLET_RECON: MissionTargetKind.WALLET, MissionIntent.CVE_RECON: MissionTargetKind.CVE, MissionIntent.INFRA_RECON: MissionTargetKind.IP}
+_MISSION_TARGET_KIND: dict[str, str] = {
+    MissionIntent.DOMAIN_RECON: MissionTargetKind.DOMAIN,
+    MissionIntent.ORG_RECON: MissionTargetKind.ORG,
+    MissionIntent.PERSON_RECON: MissionTargetKind.EMAIL,
+    MissionIntent.WALLET_RECON: MissionTargetKind.WALLET,
+    MissionIntent.CVE_RECON: MissionTargetKind.CVE,
+    MissionIntent.INFRA_RECON: MissionTargetKind.IP,
+}
+
 
 def _mission_target_kind(intent: str) -> str:
     """F225A: Derive target kind from mission intent."""
     return _MISSION_TARGET_KIND.get(intent, MissionTargetKind.UNKNOWN)
+
 
 def _mission_lanes(intent: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """F225A: Derive required and optional lanes from mission intent.
@@ -878,33 +1325,59 @@ def _mission_lanes(intent: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     Lane priority/reason adjustments only — all safety gates preserved.
     """
     if intent == MissionIntent.WALLET_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.BLOCKCHAIN, AcquisitionLane.CT))
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.BLOCKCHAIN, AcquisitionLane.CT),
+        )
     if intent == MissionIntent.CVE_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS))
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS),
+        )
     if intent == MissionIntent.DOMAIN_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS))
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS),
+        )
     if intent == MissionIntent.INFRA_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK))
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK),
+        )
     if intent == MissionIntent.PERSON_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.CT, AcquisitionLane.PASSIVE_DNS))
+        return (
+            (AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR),
+            (AcquisitionLane.CT, AcquisitionLane.PASSIVE_DNS),
+        )
     return (_SAFE_LANES, _SAFE_OPTIONAL)
+
 
 def _has_domain_or_ip(query: str) -> bool:
     return bool(_DOMAIN_OR_IP_RE.search(query))
 
+
 def _has_url(query: str) -> bool:
     return bool(_URL_RE.search(query)) or _has_domain_or_ip(query)
+
 
 def _has_crypto_wallet(query: str) -> bool:
     m = _WALLET_RE.search(query)
     return bool(m) and len(m.group()) > 0
 
+
 def _has_crypto_hash(query: str) -> bool:
     return bool(_CRYPTO_HASH_RE.search(query))
 
+
 def _has_crypto_indicator(query: str) -> bool:
     return _has_crypto_wallet(query) or _has_crypto_hash(query)
-_THREAT_INDICATOR_RE = re.compile('(ransomware|malware|c2|command[- ]and[- ]control|botnet|trojan|keylogger|spyware|adware|loader|dropper|payload|c2[._-]?(?:server|panel|callback)|darkweb|tor-hidden|onion[-\\s]service|illicit[.]exchange|breach[- ]forum|stolen[- ]?credential|stolen credentials|leaked[- ]data|exploit[- ]kit|packer|obfuscator|infostealer|stealer|keylog|rootkit|backdoor|rat[- ](?:server|client)|apt\\d*[- ](?:group|team|campaign|actor)|apt29|nation[- ]state|advanced[- ]persistent)', re.IGNORECASE)
+
+
+_THREAT_INDICATOR_RE = re.compile(
+    "(ransomware|malware|c2|command[- ]and[- ]control|botnet|trojan|keylogger|spyware|adware|loader|dropper|payload|c2[._-]?(?:server|panel|callback)|darkweb|tor-hidden|onion[-\\s]service|illicit[.]exchange|breach[- ]forum|stolen[- ]?credential|stolen credentials|leaked[- ]data|exploit[- ]kit|packer|obfuscator|infostealer|stealer|keylog|rootkit|backdoor|rat[- ](?:server|client)|apt\\d*[- ](?:group|team|campaign|actor)|apt29|nation[- ]state|advanced[- ]persistent)",
+    re.IGNORECASE,
+)
+
 
 def _has_threat_indicator(query: str) -> bool:
     """Return True if query contains threat/crime indicators suggesting active investigation.
@@ -915,17 +1388,34 @@ def _has_threat_indicator(query: str) -> bool:
     """
     return bool(_THREAT_INDICATOR_RE.search(query))
 
+
 def _base_concurrency(uma_state: str, swap_detected: bool) -> int:
     """Return base concurrency based on hardware state."""
-    if swap_detected or uma_state == 'emergency':
+    if swap_detected or uma_state == "emergency":
         return 1
-    if uma_state == 'critical':
+    if uma_state == "critical":
         return 2
-    if uma_state == 'warn':
+    if uma_state == "warn":
         return 3
     return 5
 
-def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int=0, branch_timeout_count: int=0, transport_authority_status: dict | None=None, stealth_phase: dict | None=None, acquisition_profile: str='default', source_quality_weights: dict | None=None, rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=()) -> AcquisitionStrategySnapshot:
+
+def build_acquisition_plan(
+    query: str,
+    duration_s: float,
+    aggressive_mode: bool,
+    uma_state: str,
+    swap_detected: bool,
+    accepted_findings_so_far: int = 0,
+    branch_timeout_count: int = 0,
+    transport_authority_status: dict | None = None,
+    stealth_phase: dict | None = None,
+    acquisition_profile: str = "default",
+    source_quality_weights: dict | None = None,
+    rl_lane_combo: frozenset[str] | None = None,
+    feed_domain_seeds: tuple[str, ...] = (),
+    synthetic_domains: tuple[str, ...] = (),
+) -> AcquisitionStrategySnapshot:
     """
     Build an acquisition strategy snapshot for the given sprint context.
 
@@ -967,45 +1457,158 @@ def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool,
       - Fail-soft: on any error returns minimal snapshot with all lanes disabled
     """
     _input_profile = acquisition_profile
-    if acquisition_profile == 'nonfeed_diagnostic180':
-        acquisition_profile = 'nonfeed_diagnostic'
-    if acquisition_profile == 'default':
+    if acquisition_profile == "nonfeed_diagnostic180":
+        acquisition_profile = "nonfeed_diagnostic"
+    if acquisition_profile == "default":
         import os
-        _env_profile = os.environ.get('HLEDAC_ACQUISITION_PROFILE', None)
-        if _env_profile is not None:
-            logger.info("[F228B] acquisition_profile overridden by env var HLEDAC_ACQUISITION_PROFILE: 'default' → %r", _env_profile)
-            acquisition_profile = _env_profile
-    feed_budget = _load_feed_budget_from_env() if acquisition_profile != 'default' else FeedDominanceBudget()
-    try:
-        return _build_plan_impl(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, transport_authority_status=transport_authority_status, stealth_phase=stealth_phase, acquisition_profile=acquisition_profile, feed_budget=feed_budget, rl_lane_combo=rl_lane_combo, feed_domain_seeds=feed_domain_seeds, synthetic_domains=synthetic_domains)
-    except Exception:
-        return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, feed_dominance_budget=feed_budget, nonfeed_plan_debug=None, plans=())
 
-def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, branch_timeout_count: int, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str='default', feed_budget: FeedDominanceBudget=FeedDominanceBudget(), rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=()) -> AcquisitionStrategySnapshot:
+        _env_profile = os.environ.get("HLEDAC_ACQUISITION_PROFILE", None)
+        if _env_profile is not None:
+            logger.info(
+                "[F228B] acquisition_profile overridden by env var HLEDAC_ACQUISITION_PROFILE: 'default' → %r",
+                _env_profile,
+            )
+            acquisition_profile = _env_profile
+    feed_budget = _load_feed_budget_from_env() if acquisition_profile != "default" else FeedDominanceBudget()
+    try:
+        return _build_plan_impl(
+            query=query,
+            duration_s=duration_s,
+            aggressive_mode=aggressive_mode,
+            uma_state=uma_state,
+            swap_detected=swap_detected,
+            accepted_findings_so_far=accepted_findings_so_far,
+            branch_timeout_count=branch_timeout_count,
+            transport_authority_status=transport_authority_status,
+            stealth_phase=stealth_phase,
+            acquisition_profile=acquisition_profile,
+            feed_budget=feed_budget,
+            rl_lane_combo=rl_lane_combo,
+            feed_domain_seeds=feed_domain_seeds,
+            synthetic_domains=synthetic_domains,
+        )
+    except Exception:
+        return AcquisitionStrategySnapshot(
+            query=query,
+            duration_s=duration_s,
+            aggressive_mode=aggressive_mode,
+            uma_state=uma_state,
+            swap_detected=swap_detected,
+            accepted_findings_so_far=accepted_findings_so_far,
+            branch_timeout_count=branch_timeout_count,
+            feed_dominance_budget=feed_budget,
+            nonfeed_plan_debug=None,
+            plans=(),
+        )
+
+
+def _build_plan_impl(
+    query: str,
+    duration_s: float,
+    aggressive_mode: bool,
+    uma_state: str,
+    swap_detected: bool,
+    accepted_findings_so_far: int,
+    branch_timeout_count: int,
+    transport_authority_status: dict | None,
+    stealth_phase: dict | None,
+    acquisition_profile: str = "default",
+    feed_budget: FeedDominanceBudget = FeedDominanceBudget(),
+    rl_lane_combo: frozenset[str] | None = None,
+    feed_domain_seeds: tuple[str, ...] = (),
+    synthetic_domains: tuple[str, ...] = (),
+) -> AcquisitionStrategySnapshot:
     """Internal implementation — raises on error (caller catches)."""
-    ctx = _lanes_build_acquisition_context(query, duration_s, aggressive_mode, uma_state, swap_detected, accepted_findings_so_far, feed_domain_seeds, synthetic_domains, transport_authority_status, stealth_phase, acquisition_profile)
+    ctx = _lanes_build_acquisition_context(
+        query,
+        duration_s,
+        aggressive_mode,
+        uma_state,
+        swap_detected,
+        accepted_findings_so_far,
+        feed_domain_seeds,
+        synthetic_domains,
+        transport_authority_status,
+        stealth_phase,
+        acquisition_profile,
+    )
     plans = _lanes_build_lane_plans(ctx, rl_lane_combo)
     nonfeed_debug = _lanes_build_nonfeed_debug(ctx, plans, acquisition_profile)
-    return AcquisitionStrategySnapshot(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, accepted_findings_so_far=accepted_findings_so_far, branch_timeout_count=branch_timeout_count, stealth_ready=ctx.stealth_ready, transport_degraded=ctx.transport_degraded, plans=tuple(plans), nonfeed_plan_debug=nonfeed_debug, feed_dominance_budget=feed_budget, has_domain=ctx.has_domain)
+    return AcquisitionStrategySnapshot(
+        query=query,
+        duration_s=duration_s,
+        aggressive_mode=aggressive_mode,
+        uma_state=uma_state,
+        swap_detected=swap_detected,
+        accepted_findings_so_far=accepted_findings_so_far,
+        branch_timeout_count=branch_timeout_count,
+        stealth_ready=ctx.stealth_ready,
+        transport_degraded=ctx.transport_degraded,
+        plans=tuple(plans),
+        nonfeed_plan_debug=nonfeed_debug,
+        feed_dominance_budget=feed_budget,
+        has_domain=ctx.has_domain,
+    )
 
-def _lanes_build_acquisition_context(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple, transport_authority_status: dict | None, stealth_phase: dict | None, acquisition_profile: str) -> AcquisitionContext:
+
+def _lanes_build_acquisition_context(
+    query: str,
+    duration_s: float,
+    aggressive_mode: bool,
+    uma_state: str,
+    swap_detected: bool,
+    accepted_findings_so_far: int,
+    feed_domain_seeds: tuple,
+    synthetic_domains: tuple,
+    transport_authority_status: dict | None,
+    stealth_phase: dict | None,
+    acquisition_profile: str,
+) -> AcquisitionContext:
     """Build AcquisitionContext from query and parameters."""
-    hardware_critical = uma_state in ('critical', 'emergency')
+    hardware_critical = uma_state in ("critical", "emergency")
     has_domain = _has_domain_or_ip(query)
-    has_ip = bool(_DOMAIN_OR_IP_RE.search(query) and re.search('\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b', query))
+    has_ip = bool(
+        _DOMAIN_OR_IP_RE.search(query) and re.search("\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b", query)
+    )
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_long_duration = duration_s >= 300.0
     is_nonfeed_diagnostic = acquisition_profile == AcquisitionProfile.NONFEED_DIAGNOSTIC
     is_deep_osint_m1 = is_deep_osint_m1_profile(acquisition_profile)
-    has_domain = _lanes_resolve_domain_indicator(has_domain, query, accepted_findings_so_far, feed_domain_seeds, synthetic_domains)
+    has_domain = _lanes_resolve_domain_indicator(
+        has_domain, query, accepted_findings_so_far, feed_domain_seeds, synthetic_domains
+    )
     transport_degraded, stealth_ready = _lanes_parse_transport_and_stealth(transport_authority_status, stealth_phase)
     base_conc = _base_concurrency(uma_state, swap_detected)
     _feed_max = 25 if is_nonfeed_diagnostic else 50
-    _feed_cap_r = 'nonfeed_diagnostic_profile_capped_25' if is_nonfeed_diagnostic else None
-    return AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+    _feed_cap_r = "nonfeed_diagnostic_profile_capped_25" if is_nonfeed_diagnostic else None
+    return AcquisitionContext(
+        query=query,
+        duration_s=duration_s,
+        aggressive_mode=aggressive_mode,
+        uma_state=uma_state,
+        swap_detected=swap_detected,
+        hardware_critical=hardware_critical,
+        has_domain=has_domain,
+        has_url=has_url,
+        has_crypto=has_crypto,
+        has_long_duration=has_long_duration,
+        is_nonfeed_diagnostic=is_nonfeed_diagnostic,
+        transport_degraded=transport_degraded,
+        stealth_ready=stealth_ready,
+        base_concurrency=base_conc,
+        is_academic=is_academic_profile(acquisition_profile),
+        is_deep_osint_m1=is_deep_osint_m1,
+        has_ip=has_ip,
+        cid_present=_has_explicit_ipfs_cid(query.strip()),
+        _feed_max_items=_feed_max,
+        _feed_cap_reason=_feed_cap_r,
+    )
 
-def _lanes_resolve_domain_indicator(has_domain: bool, query: str, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple) -> bool:
+
+def _lanes_resolve_domain_indicator(
+    has_domain: bool, query: str, accepted_findings_so_far: int, feed_domain_seeds: tuple, synthetic_domains: tuple
+) -> bool:
     """Resolve domain indicator from various sources."""
     if has_domain:
         return True
@@ -1024,45 +1627,136 @@ def _lanes_resolve_domain_indicator(has_domain: bool, query: str, accepted_findi
                 return True
     return False
 
-def _lanes_parse_transport_and_stealth(transport_authority_status: dict | None, stealth_phase: dict | None) -> tuple[bool, bool]:
+
+def _lanes_parse_transport_and_stealth(
+    transport_authority_status: dict | None, stealth_phase: dict | None
+) -> tuple[bool, bool]:
     """Parse transport and stealth status."""
-    transport_degraded = bool(transport_authority_status.get('degraded', False)) if transport_authority_status else False
-    stealth_breaker_ready = bool(stealth_phase.get('breaker_seam_ready', False)) if stealth_phase else False
-    stealth_phase_num = int(stealth_phase.get('phase', 0)) if stealth_phase else 0
+    transport_degraded = (
+        bool(transport_authority_status.get("degraded", False)) if transport_authority_status else False
+    )
+    stealth_breaker_ready = bool(stealth_phase.get("breaker_seam_ready", False)) if stealth_phase else False
+    stealth_phase_num = int(stealth_phase.get("phase", 0)) if stealth_phase else 0
     stealth_ready = stealth_breaker_ready or stealth_phase_num >= 3
     return transport_degraded, stealth_ready
+
 
 def _lanes_build_lane_plans(ctx: AcquisitionContext, rl_lane_combo: frozenset | None) -> list[AcquisitionLanePlan]:
     """Build lane plans from context."""
     plans: list[AcquisitionLanePlan] = []
     for rule in LANE_RULES:
         enabled = rule.enabled(ctx)
-        plans.append(AcquisitionLanePlan(lane=rule.lane, enabled=enabled, reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx), max_items=rule.spec.max_items if not (rule.lane == AcquisitionLane.FEED and ctx.is_nonfeed_diagnostic) else 25, timeout_s=rule.spec.timeout_s, concurrency=rule.concurrency(ctx), risk_level=rule.spec.risk_level))
+        plans.append(
+            AcquisitionLanePlan(
+                lane=rule.lane,
+                enabled=enabled,
+                reason=rule.reason(ctx) if enabled else _disabled_reason(rule.lane, ctx),
+                max_items=rule.spec.max_items
+                if not (rule.lane == AcquisitionLane.FEED and ctx.is_nonfeed_diagnostic)
+                else 25,
+                timeout_s=rule.spec.timeout_s,
+                concurrency=rule.concurrency(ctx),
+                risk_level=rule.spec.risk_level,
+            )
+        )
     if rl_lane_combo is not None:
         plans = _lanes_apply_rl_override(plans, rl_lane_combo)
     return plans
 
+
 def _lanes_apply_rl_override(plans: list[AcquisitionLanePlan], rl_lane_combo: frozenset) -> list[AcquisitionLanePlan]:
     """Apply RL lane combo override."""
     _rl_lanes = frozenset(rl_lane_combo)
-    _protected = frozenset([AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC])
-    return [AcquisitionLanePlan(lane=p.lane, enabled=p.lane in _rl_lanes, reason=f'rl_override:{p.lane}' if p.lane in _rl_lanes else f'rl_disabled:{p.lane}', max_items=p.max_items, timeout_s=p.timeout_s, concurrency=p.concurrency, risk_level=p.risk_level) if p.lane not in _protected else p for p in plans]
+    _protected = frozenset(
+        [AcquisitionLane.FEED, AcquisitionLane.PUBLIC, AcquisitionLane.STEALTH, AcquisitionLane.ACADEMIC]
+    )
+    return [
+        AcquisitionLanePlan(
+            lane=p.lane,
+            enabled=p.lane in _rl_lanes,
+            reason=f"rl_override:{p.lane}" if p.lane in _rl_lanes else f"rl_disabled:{p.lane}",
+            max_items=p.max_items,
+            timeout_s=p.timeout_s,
+            concurrency=p.concurrency,
+            risk_level=p.risk_level,
+        )
+        if p.lane not in _protected
+        else p
+        for p in plans
+    ]
 
-def _lanes_build_nonfeed_debug(ctx: AcquisitionContext, plans: list[AcquisitionLanePlan], acquisition_profile: str) -> NonfeedPlanDebug:
+
+def _lanes_build_nonfeed_debug(
+    ctx: AcquisitionContext, plans: list[AcquisitionLanePlan], acquisition_profile: str
+) -> NonfeedPlanDebug:
     """Build NonfeedPlanDebug from plans and context."""
-    _NONFEED_LANES = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.DOH, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.IPFS, AcquisitionLane.OPEN_SOURCE)
+    _NONFEED_LANES = (
+        AcquisitionLane.CT,
+        AcquisitionLane.WAYBACK,
+        AcquisitionLane.PASSIVE_DNS,
+        AcquisitionLane.DOH,
+        AcquisitionLane.BLOCKCHAIN,
+        AcquisitionLane.IPFS,
+        AcquisitionLane.OPEN_SOURCE,
+    )
     _hardware_blocked = {AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN} if ctx.hardware_critical else set()
-    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = _lanes_categorize_nonfeed_lanes(plans, _NONFEED_LANES, _hardware_blocked)
+    enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = (
+        _lanes_categorize_nonfeed_lanes(plans, _NONFEED_LANES, _hardware_blocked)
+    )
     intent = infer_mission_intent(ctx.query)
     target_kind = _mission_target_kind(intent)
     required_lanes, optional_lanes = _mission_lanes(intent)
-    intent_reason = f'intent:{intent}'
+    intent_reason = f"intent:{intent}"
     is_nonfeed_diagnostic = ctx.is_nonfeed_diagnostic
     is_deep_osint_m1 = ctx.is_deep_osint_m1
-    expected = (AcquisitionLane.CT, AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS, AcquisitionLane.PIVOT_EXECUTOR, AcquisitionLane.DOH) if is_nonfeed_diagnostic or is_deep_osint_m1 else required_lanes if intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON) else ()
-    return NonfeedPlanDebug(domain_detected=ctx.has_domain, wallet_detected=ctx.has_crypto, enabled_nonfeed_lanes=tuple(enabled_nonfeed), disabled_nonfeed_lanes=tuple(disabled_nonfeed), disabled_reasons=tuple(disabled_reasons), scheduled_nonfeed_lanes=tuple(scheduled_nonfeed), hardware_skipped_lanes=tuple(hardware_skipped), nonfeed_execution_scheduled=bool(scheduled_nonfeed), nonfeed_execution_skip_reason='hardware_critical' if ctx.hardware_critical and hardware_skipped else None, acquisition_profile=acquisition_profile, feed_cap_reason=ctx._feed_cap_reason, nonfeed_priority_enabled=is_nonfeed_diagnostic, nonfeed_profile_expected_lanes=expected, pivot_executor_enabled=False, pivot_candidates_count=0, pivot_candidate_types=(), pivot_scheduled_lanes=(), pivot_skip_reason=None, pivot_errors=(), mission_intent=intent, mission_target_kind=target_kind, mission_required_lanes=required_lanes, mission_optional_lanes=optional_lanes, mission_reason=intent_reason, mission_runtime_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_lane_priority=required_lanes, mission_pivot_boost_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON), mission_feed_cap_reason=None)
+    expected = (
+        (
+            AcquisitionLane.CT,
+            AcquisitionLane.WAYBACK,
+            AcquisitionLane.PASSIVE_DNS,
+            AcquisitionLane.PIVOT_EXECUTOR,
+            AcquisitionLane.DOH,
+        )
+        if is_nonfeed_diagnostic or is_deep_osint_m1
+        else required_lanes
+        if intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON)
+        else ()
+    )
+    return NonfeedPlanDebug(
+        domain_detected=ctx.has_domain,
+        wallet_detected=ctx.has_crypto,
+        enabled_nonfeed_lanes=tuple(enabled_nonfeed),
+        disabled_nonfeed_lanes=tuple(disabled_nonfeed),
+        disabled_reasons=tuple(disabled_reasons),
+        scheduled_nonfeed_lanes=tuple(scheduled_nonfeed),
+        hardware_skipped_lanes=tuple(hardware_skipped),
+        nonfeed_execution_scheduled=bool(scheduled_nonfeed),
+        nonfeed_execution_skip_reason="hardware_critical" if ctx.hardware_critical and hardware_skipped else None,
+        acquisition_profile=acquisition_profile,
+        feed_cap_reason=ctx._feed_cap_reason,
+        nonfeed_priority_enabled=is_nonfeed_diagnostic,
+        nonfeed_profile_expected_lanes=expected,
+        pivot_executor_enabled=False,
+        pivot_candidates_count=0,
+        pivot_candidate_types=(),
+        pivot_scheduled_lanes=(),
+        pivot_skip_reason=None,
+        pivot_errors=(),
+        mission_intent=intent,
+        mission_target_kind=target_kind,
+        mission_required_lanes=required_lanes,
+        mission_optional_lanes=optional_lanes,
+        mission_reason=intent_reason,
+        mission_runtime_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON),
+        mission_lane_priority=required_lanes,
+        mission_pivot_boost_applied=intent not in (MissionIntent.UNKNOWN, MissionIntent.ORG_RECON),
+        mission_feed_cap_reason=None,
+    )
 
-def _lanes_categorize_nonfeed_lanes(plans: list[AcquisitionLanePlan], nonfeed_lanes: tuple, hardware_blocked: set) -> tuple[list, list, list, list, list]:
+
+def _lanes_categorize_nonfeed_lanes(
+    plans: list[AcquisitionLanePlan], nonfeed_lanes: tuple, hardware_blocked: set
+) -> tuple[list, list, list, list, list]:
     """Categorize nonfeed lanes into enabled/disabled/scheduled/hardware_skipped."""
     enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped = [], [], [], [], []
     for plan in plans:
@@ -1078,7 +1772,10 @@ def _lanes_categorize_nonfeed_lanes(plans: list[AcquisitionLanePlan], nonfeed_la
             disabled_nonfeed.append(plan.lane)
             disabled_reasons.append(plan.reason)
     return enabled_nonfeed, disabled_nonfeed, disabled_reasons, scheduled_nonfeed, hardware_skipped
+
+
 _ct_adapter: Any = None
+
 
 def _get_ct_adapter():
     """Return the CT adapter: real call_crtsh or the patched fake."""
@@ -1086,9 +1783,18 @@ def _get_ct_adapter():
     if _ct_adapter is not None:
         return _ct_adapter
     from hledac.universal.discovery.crtsh_adapter import call_crtsh
+
     return call_crtsh
 
-async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: str='ok', seed_context: NonfeedSeedContext | None=None, graph_accumulator=None) -> tuple:
+
+async def run_enabled_acquisition_lanes(
+    snapshot,
+    query: str,
+    store,
+    uma_state: str = "ok",
+    seed_context: NonfeedSeedContext | None = None,
+    graph_accumulator=None,
+) -> tuple:
     """
     Run all enabled optional acquisition lanes (CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN)
     bounded by their per-lane plans from the acquisition strategy snapshot.
@@ -1119,9 +1825,10 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
     """
     import asyncio
     import time
+
     outcomes: list = []
     tasks: list[asyncio.Task] = []
-    hardware_critical = uma_state in ('critical', 'emergency')
+    hardware_critical = uma_state in ("critical", "emergency")
 
     async def _run_ct_lane(plan) -> AcquisitionLaneOutcome:
         """Run CT/crt.sh lane — wired to call_crtsh() for measurable outcome.
@@ -1131,7 +1838,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         """
         start = time.monotonic()
         _raw = build_lane_query(query, AcquisitionLane.CT, seed_context)
-        shaped_query = _raw if isinstance(_raw, str) else ''
+        shaped_query = _raw if isinstance(_raw, str) else ""
         ct_error: str | None = None
         ct_results_raw = 0
         candidate_findings: tuple = ()
@@ -1141,36 +1848,90 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 _ct_call = _get_ct_adapter()
-                result, ct_outcome = await _ct_call(query=shaped_query, max_results=plan.max_items, timeout_s=plan.timeout_s)
+                result, ct_outcome = await _ct_call(
+                    query=shaped_query, max_results=plan.max_items, timeout_s=plan.timeout_s
+                )
                 ct_results_raw = ct_outcome.raw_count
-                candidates, rejections, _ct_telemetry = ct_results_to_findings(result, ct_outcome, query, sprint_id=f'ct-{int(time.time())}')
+                candidates, rejections, _ct_telemetry = ct_results_to_findings(
+                    result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}"
+                )
                 candidate_findings = tuple(candidates)
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                 accepted = 0
                 if candidate_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'ct-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=ct_results_raw, duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, error=ct_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=ct_results_raw,
+                    duration_s=time.monotonic() - start,
+                    source_family="ct",
+                    ct_query=shaped_query,
+                    ct_results_raw=ct_results_raw,
+                    error=ct_error,
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="ct",
+                ct_query=shaped_query,
+                ct_results_raw=ct_results_raw,
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CT,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="ct",
+                ct_query=shaped_query,
+                ct_results_raw=ct_results_raw,
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+            )
 
     async def _run_wayback_lane(plan) -> AcquisitionLaneOutcome:
         """Run Wayback diff mining lane — runtime safety check before network call.
@@ -1185,10 +1946,24 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         sample_rejections: tuple = ()
         try:
             from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner as _WDM
+
             if not callable(_WDM):
-                raise ImportError('WaybackDiffMiner not callable')
+                raise ImportError("WaybackDiffMiner not callable")
         except Exception as _exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=0, duration_s=time.monotonic() - start, source_family='archive', error=f'adapter_not_runtime_safe: {_exc}', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                accepted_findings=0,
+                produced_items=0,
+                duration_s=time.monotonic() - start,
+                source_family="archive",
+                error=f"adapter_not_runtime_safe: {_exc}",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+            )
         try:
             async with asyncio.timeout(plan.timeout_s):
                 shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
@@ -1198,32 +1973,83 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                     result = await miner.mine([shaped_query_str])
                 finally:
                     await miner.close()
-                candidates, rejections, _wb_telemetry = wayback_results_to_findings(result, query, sprint_id=f'wayback-{int(time.time())}')
+                candidates, rejections, _wb_telemetry = wayback_results_to_findings(
+                    result, query, sprint_id=f"wayback-{int(time.time())}"
+                )
                 candidate_findings = tuple(candidates)
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                 accepted = 0
                 if candidate_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'wayback-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.WAYBACK,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(result.change_events),
+                    duration_s=time.monotonic() - start,
+                    source_family="archive",
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
+                    wayback_raw_count=len(result.change_events),
+                    wayback_query=shaped_query_str,
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="archive",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+                wayback_raw_count=0,
+                wayback_query=shaped_query_str,
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.WAYBACK,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="archive",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+                wayback_raw_count=0,
+                wayback_query=shaped_query_str,
+            )
 
     async def _run_pdns_lane(plan) -> AcquisitionLaneOutcome:
         """Run passive DNS lookup lane — wired to call_lookup_passive_dns with domain/IP shaping.
@@ -1233,7 +2059,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         """
         start = time.monotonic()
         _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context)
-        shaped_query = _raw if isinstance(_raw, str) else ''
+        shaped_query = _raw if isinstance(_raw, str) else ""
         pdns_error: str | None = None
         produced = 0
         candidate_findings: tuple = ()
@@ -1243,40 +2069,93 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.security.passive_dns import call_lookup_passive_dns as _pdns_lookup
+
                 ips, pdns_outcome = await _pdns_lookup(shaped_query)
                 produced = pdns_outcome.result_count
                 if pdns_outcome.skip_reason:
                     pdns_error = pdns_outcome.skip_reason
                 elif pdns_outcome.error:
                     pdns_error = pdns_outcome.error
-                candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(ips, pdns_outcome, query, sprint_id=f'pdns-{int(time.time())}')
+                candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(
+                    ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}"
+                )
                 candidate_findings = tuple(candidates)
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                 accepted = 0
                 if candidate_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'pdns-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.PASSIVE_DNS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=produced,
+                    duration_s=time.monotonic() - start,
+                    source_family="passive_dns",
+                    error=pdns_error,
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
+                    passive_dns_raw_count=produced,
+                    passive_dns_query=shaped_query,
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='passive_dns', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.PASSIVE_DNS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="passive_dns",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+                passive_dns_raw_count=0,
+                passive_dns_query=shaped_query,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='passive_dns', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.PASSIVE_DNS,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="passive_dns",
+                candidate_findings=candidate_findings,
+                rejection_reasons=rejection_reasons,
+                rejected_count=rejected_count,
+                sample_rejections=sample_rejections,
+                passive_dns_raw_count=0,
+                passive_dns_query=shaped_query,
+            )
 
     async def _run_academic_lane(plan) -> AcquisitionLaneOutcome:
         """Run academic search lane — R9: bounded, research-profile-only, no query expansion."""
@@ -1285,39 +2164,77 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.intel.academic_search import AcademicSearchEngine, SearchResult
                 from hledac.universal.runtime.source_finding_bridge import academic_results_to_findings
+
                 engine = AcademicSearchEngine(enable_expansion=False)
                 try:
-                    result = await engine.search(query, max_results=plan.max_items, sources=['arxiv', 'crossref'])
+                    result = await engine.search(query, max_results=plan.max_items, sources=["arxiv", "crossref"])
                 finally:
                     await engine.cleanup()
                 search_results = [r for r in result.deduplicated_results if isinstance(r, SearchResult)]
-                candidates, rejections, _telemetry = academic_results_to_findings(search_results, query, sprint_id=f'academic-{int(time.time())}')
+                candidates, rejections, _telemetry = academic_results_to_findings(
+                    search_results, query, sprint_id=f"academic-{int(time.time())}"
+                )
                 candidate_findings = tuple(candidates)
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:5])
                 accepted = 0
                 if candidate_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'academic-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"academic-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.ACADEMIC, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(search_results), duration_s=time.monotonic() - start, source_family='academic', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.ACADEMIC,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(search_results),
+                    duration_s=time.monotonic() - start,
+                    source_family="academic",
+                    candidate_findings=candidate_findings,
+                    rejection_reasons=rejection_reasons,
+                    rejected_count=rejected_count,
+                    sample_rejections=sample_rejections,
+                )
         except asyncio.CancelledError:
             raise
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.ACADEMIC, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='academic')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.ACADEMIC,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="academic",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.ACADEMIC, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='academic')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.ACADEMIC,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="academic",
+            )
 
     async def _run_ipfs_lane(plan) -> AcquisitionLaneOutcome:
         """R10: CID-only IPFS evidence fetch — bounded gateway fetch, no search/DHT/recursive.
@@ -1333,17 +2250,22 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         accepted = 0
         produced = 0
         candidate_findings: tuple = ()
-        terminal_state = 'success'
+        terminal_state = "success"
         ipfs_cid_count = 0
         try:
             async with asyncio.timeout(plan.timeout_s):
                 import hashlib
+
                 from hledac.universal.network.ipfs_client import fetch_ipfs, ipfs_content_to_finding_dict
+
                 findings_list: list = []
                 for cid in cids_to_fetch:
                     content: bytes | None = None
-                    gateway_used = 'none'
-                    for gw_name, _gw_url in [('cloudflare', 'https://cloudflare-ipfs.com/ipfs/'), ('ipfs.io', 'https://ipfs.io/ipfs/')]:
+                    gateway_used = "none"
+                    for gw_name, _gw_url in [
+                        ("cloudflare", "https://cloudflare-ipfs.com/ipfs/"),
+                        ("ipfs.io", "https://ipfs.io/ipfs/"),
+                    ]:
                         try:
                             content = await fetch_ipfs(cid, timeout=25)
                             if content is not None:
@@ -1352,43 +2274,95 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         except Exception:
                             continue
                     if content is None:
-                        terminal_state = 'empty'
+                        terminal_state = "empty"
                         continue
-                    content_text = content.decode('utf-8', errors='replace')
+                    content_text = content.decode("utf-8", errors="replace")
                     content_hash = hashlib.sha256(content_text[:2000].encode()).hexdigest()[:16]
-                    f'ipfs_{cid}_{int(start * 1000)}_{content_hash}'
-                    finding_dict = ipfs_content_to_finding_dict(cid=cid, content=content, gateway=gateway_used, query=query_cid, ts=start, finding_id_prefix='ipfs')
+                    f"ipfs_{cid}_{int(start * 1000)}_{content_hash}"
+                    finding_dict = ipfs_content_to_finding_dict(
+                        cid=cid,
+                        content=content,
+                        gateway=gateway_used,
+                        query=query_cid,
+                        ts=start,
+                        finding_id_prefix="ipfs",
+                    )
                     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
                     try:
-                        finding = CanonicalFinding(finding_id=finding_dict['finding_id'], query=finding_dict['query'], source_type=finding_dict['source_type'], confidence=finding_dict['confidence'], ts=finding_dict['ts'], provenance=finding_dict['provenance'], payload_text=finding_dict.get('payload_text'))
+                        finding = CanonicalFinding(
+                            finding_id=finding_dict["finding_id"],
+                            query=finding_dict["query"],
+                            source_type=finding_dict["source_type"],
+                            confidence=finding_dict["confidence"],
+                            ts=finding_dict["ts"],
+                            provenance=finding_dict["provenance"],
+                            payload_text=finding_dict.get("payload_text"),
+                        )
                         findings_list.append(finding)
                         produced += 1
                         ipfs_cid_count += 1
                     except Exception:
-                        terminal_state = 'error'
+                        terminal_state = "error"
                         continue
                 candidate_findings = tuple(findings_list)
                 if candidate_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'ipfs-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ipfs-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.IPFS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='ipfs', candidate_findings=candidate_findings, ipfs_cid_count=ipfs_cid_count, ipfs_terminal_state=terminal_state)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.IPFS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=produced,
+                    duration_s=time.monotonic() - start,
+                    source_family="ipfs",
+                    candidate_findings=candidate_findings,
+                    ipfs_cid_count=ipfs_cid_count,
+                    ipfs_terminal_state=terminal_state,
+                )
         except asyncio.CancelledError:
             raise
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.IPFS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='ipfs', ipfs_terminal_state='timeout')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.IPFS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="ipfs",
+                ipfs_terminal_state="timeout",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.IPFS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='ipfs', ipfs_terminal_state='error')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.IPFS,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="ipfs",
+                ipfs_terminal_state="error",
+            )
 
     async def _run_open_source_lane(plan) -> AcquisitionLaneOutcome:
         """Run OpenSourceCollectors lane — pastebin, usenet, matrix, academic, sec_edgar, court records."""
@@ -1396,6 +2370,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.recon.open_source_collectors import get_open_source_collectors
+
                 collector = get_open_source_collectors()
                 results = await collector.gather_all(query)
                 accepted = 0
@@ -1403,24 +2378,57 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 for _source, findings in results.items():
                     all_findings.extend(findings)
                 if all_findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(all_findings)
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(all_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else all_findings
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(all_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else all_findings
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'open_source-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(
+                                _accepted, sprint_id=f"open_source-{int(time.time())}"
+                            )
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.OPEN_SOURCE, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(all_findings), duration_s=time.monotonic() - start, source_family='public')
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.OPEN_SOURCE,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(all_findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="public",
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.OPEN_SOURCE, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='public')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.OPEN_SOURCE,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="public",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.OPEN_SOURCE, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='public')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.OPEN_SOURCE,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="public",
+            )
 
     async def _run_doh_lane(plan) -> AcquisitionLaneOutcome:
         """Run DOH lane — DNS-over-HTTPS passive DNS recon via DOHAdapter.
@@ -1434,40 +2442,95 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         candidate_findings: tuple = ()
         accepted = 0
         shaped_query = build_lane_query(query, AcquisitionLane.DOH, seed_context)
-        if shaped_query is None or (isinstance(shaped_query, dict) and shaped_query.get('_disabled')):
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=False, source_family='doh', error=shaped_query.get('_disabled_reason', 'no_domain_seed') if isinstance(shaped_query, dict) else 'build_lane_query_returned_none', doh_query=shaped_query if isinstance(shaped_query, str) else '')
+        if shaped_query is None or (isinstance(shaped_query, dict) and shaped_query.get("_disabled")):
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=False,
+                source_family="doh",
+                error=shaped_query.get("_disabled_reason", "no_domain_seed")
+                if isinstance(shaped_query, dict)
+                else "build_lane_query_returned_none",
+                doh_query=shaped_query if isinstance(shaped_query, str) else "",
+            )
         domain = shaped_query if isinstance(shaped_query, str) else str(shaped_query)
         if not domain:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=False, source_family='doh', error='empty_domain', doh_query=domain)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=False,
+                source_family="doh",
+                error="empty_domain",
+                doh_query=domain,
+            )
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.intel.doh_lane import DOHAdapter
                 from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
+
                 adapter = DOHAdapter()
                 session = await async_get_httpx_session()
                 findings = await adapter.run(domain=domain, session=session)
                 doh_raw_count = len(findings)
                 if findings:
-                    candidates, _rejections, _tel = doh_results_to_findings(findings, None, query, sprint_id=f'doh-{int(time.time())}')
+                    candidates, _rejections, _tel = doh_results_to_findings(
+                        findings, None, query, sprint_id=f"doh-{int(time.time())}"
+                    )
                     candidate_findings = tuple(candidates)
-                    if candidate_findings and store is not None and hasattr(store, 'async_ingest_findings_batch'):
+                    if candidate_findings and store is not None and hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else list(candidate_findings)
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'doh-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"doh-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=doh_raw_count, duration_s=time.monotonic() - start, source_family='doh', doh_query=domain)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.DOH,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=doh_raw_count,
+                    duration_s=time.monotonic() - start,
+                    source_family="doh",
+                    doh_query=domain,
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='doh', produced_items=doh_raw_count, doh_query=domain)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="doh",
+                produced_items=doh_raw_count,
+                doh_query=domain,
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='doh', produced_items=doh_raw_count, doh_query=domain)
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.DOH,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="doh",
+                produced_items=doh_raw_count,
+                doh_query=domain,
+            )
 
     async def _run_blockchain_lane(plan) -> AcquisitionLaneOutcome:
         """Run blockchain forensics lane."""
@@ -1475,37 +2538,66 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.recon.blockchain_analyzer import BlockchainForensics
+
                 wallets = _extract_crypto_from_query(query)
                 accepted = 0
                 total_tx = 0
                 all_blockchain_findings: list = []
-                for address in wallets[:plan.max_items]:
+                for address in wallets[: plan.max_items]:
                     try:
                         bf = BlockchainForensics()
                         result = await bf.analyze_wallet(address)
                         await bf.close()
-                        if result and hasattr(store, 'async_ingest_findings_batch'):
+                        if result and hasattr(store, "async_ingest_findings_batch"):
                             findings = _wallet_to_findings(result, query)
                             if findings:
                                 all_blockchain_findings.extend(findings)
                                 try:
                                     ingest_results = await store.async_ingest_findings_batch(findings)
-                                    accepted += sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                                    total_tx += getattr(result, 'transaction_count', 0) or 0
+                                    accepted += sum(
+                                        1 for r in ingest_results if isinstance(r, dict) and r.get("accepted")
+                                    )
+                                    total_tx += getattr(result, "transaction_count", 0) or 0
                                 except Exception:  # noqa: BLE001
                                     pass
                     except Exception:
                         continue
                 if all_blockchain_findings and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f'blockchain-{int(time.time())}')
+                        graph_accumulator.accumulate_findings(
+                            all_blockchain_findings, sprint_id=f"blockchain-{int(time.time())}"
+                        )
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.BLOCKCHAIN, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=total_tx, duration_s=time.monotonic() - start, source_family='blockchain')
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.BLOCKCHAIN,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=total_tx,
+                    duration_s=time.monotonic() - start,
+                    source_family="blockchain",
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.BLOCKCHAIN, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='blockchain')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.BLOCKCHAIN,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="blockchain",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.BLOCKCHAIN, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='blockchain')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.BLOCKCHAIN,
+                enabled=plan.enabled,
+                attempted=True,
+                error=f"{type(exc).__name__}:{exc}",
+                duration_s=time.monotonic() - start,
+                source_family="blockchain",
+            )
+
     if snapshot is None:
         return ()
 
@@ -1515,28 +2607,60 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.recon.shodan_lane import ShodanLane
+
                 lane_obj = ShodanLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
                 if findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
-                        _accepted = [f for f, r in zip(findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else findings
+                        _accepted = (
+                            [
+                                f
+                                for f, r in zip(findings, ingest_results, strict=False)
+                                if isinstance(r, dict) and r.get("accepted")
+                            ]
+                            if isinstance(ingest_results, list)
+                            else findings
+                        )
                         if _accepted:
-                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f'shodan-{int(time.time())}')
+                            graph_accumulator.accumulate_findings(_accepted, sprint_id=f"shodan-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.SHODAN, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='shodan_intel')
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.SHODAN,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="shodan_intel",
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.SHODAN, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='shodan_intel')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.SHODAN,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="shodan_intel",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.SHODAN, enabled=plan.enabled, attempted=True, duration_s=time.monotonic() - start, error=f'{type(exc).__name__}:{exc}', source_family='shodan_intel')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.SHODAN,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="shodan_intel",
+            )
 
     async def _run_censys_lane(plan) -> AcquisitionLaneOutcome:
         """Run Censys intelligence lane — certificate transparency."""
@@ -1544,26 +2668,50 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.recon.censys_lane import CensysLane
+
                 lane_obj = CensysLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
                 if findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if findings and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(findings, sprint_id=f'censys-{int(time.time())}')
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"censys-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CENSYS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='censys_intel')
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CENSYS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="censys_intel",
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.CENSYS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='censys_intel')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CENSYS,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="censys_intel",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.CENSYS, enabled=plan.enabled, attempted=True, duration_s=time.monotonic() - start, error=f'{type(exc).__name__}:{exc}', source_family='censys_intel')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.CENSYS,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="censys_intel",
+            )
 
     async def _run_greynoise_lane(plan) -> AcquisitionLaneOutcome:
         """Run GreyNoise intelligence lane — mass scanner classification."""
@@ -1571,49 +2719,117 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.recon.greynoise_lane import GreyNoiseLane
+
                 lane_obj = GreyNoiseLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
                 if findings and store is not None:
-                    if hasattr(store, 'async_ingest_findings_batch'):
+                    if hasattr(store, "async_ingest_findings_batch"):
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
-                            accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                            accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                         except Exception:  # noqa: BLE001
                             pass
                 if findings and graph_accumulator is not None:
                     try:
-                        graph_accumulator.accumulate_findings(findings, sprint_id=f'greynoise-{int(time.time())}')
+                        graph_accumulator.accumulate_findings(findings, sprint_id=f"greynoise-{int(time.time())}")
                     except Exception:  # noqa: BLE001
                         pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='greynoise_intel')
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.GREYNOISE,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    accepted_findings=accepted,
+                    produced_items=len(findings),
+                    duration_s=time.monotonic() - start,
+                    source_family="greynoise_intel",
+                )
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='greynoise_intel')
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.GREYNOISE,
+                enabled=plan.enabled,
+                attempted=True,
+                timeout=True,
+                duration_s=time.monotonic() - start,
+                error="timeout",
+                source_family="greynoise_intel",
+            )
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, duration_s=time.monotonic() - start, error=f'{type(exc).__name__}:{exc}', source_family='greynoise_intel')
-    lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane, AcquisitionLane.ACADEMIC: _run_academic_lane, AcquisitionLane.IPFS: _run_ipfs_lane, AcquisitionLane.OPEN_SOURCE: _run_open_source_lane, AcquisitionLane.DOH: _run_doh_lane, AcquisitionLane.SHODAN: _run_shodan_lane, AcquisitionLane.CENSYS: _run_censys_lane, AcquisitionLane.GREYNOISE: _run_greynoise_lane}
+            return AcquisitionLaneOutcome(
+                lane=AcquisitionLane.GREYNOISE,
+                enabled=plan.enabled,
+                attempted=True,
+                duration_s=time.monotonic() - start,
+                error=f"{type(exc).__name__}:{exc}",
+                source_family="greynoise_intel",
+            )
+
+    lane_runners = {
+        AcquisitionLane.CT: _run_ct_lane,
+        AcquisitionLane.WAYBACK: _run_wayback_lane,
+        AcquisitionLane.PASSIVE_DNS: _run_pdns_lane,
+        AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane,
+        AcquisitionLane.ACADEMIC: _run_academic_lane,
+        AcquisitionLane.IPFS: _run_ipfs_lane,
+        AcquisitionLane.OPEN_SOURCE: _run_open_source_lane,
+        AcquisitionLane.DOH: _run_doh_lane,
+        AcquisitionLane.SHODAN: _run_shodan_lane,
+        AcquisitionLane.CENSYS: _run_censys_lane,
+        AcquisitionLane.GREYNOISE: _run_greynoise_lane,
+    }
     for plan in snapshot.plans:
         lane = plan.lane
         if lane not in lane_runners:
             continue
         if not plan.enabled:
-            outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, "unknown")
+                )
+            )
             continue
         if hardware_critical and lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-            outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, error='hardware_critical', source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane=lane,
+                    enabled=False,
+                    attempted=False,
+                    error="hardware_critical",
+                    source_family=_LANE_TO_FAMILY.get(lane, "unknown"),
+                )
+            )
             continue
-        tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
+        tasks.append(safe_create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
     if not tasks:
         return tuple(outcomes)
-    results = await parallel_ok(*tasks, label='acquisition_strategy:runner')
+    results = await parallel_ok(*tasks, label="acquisition_strategy:runner")
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):
             outcomes.append(result)
         elif isinstance(result, Exception):
-            outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
+            outcomes.append(
+                AcquisitionLaneOutcome(
+                    lane="UNKNOWN",
+                    enabled=True,
+                    attempted=True,
+                    error=f"gather_error:{result}",
+                    source_family="unknown",
+                )
+            )
     return tuple(outcomes)
 
-async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, uma_state: str='ok', clearnet_max: int=4, seed_context: NonfeedSeedContext | None=None, graph_accumulator=None, min_finished: int=0, on_lane_complete: Callable[[AcquisitionLaneOutcome], None] | None=None) -> AsyncGenerator[tuple[AcquisitionLaneOutcome, ...]]:
+
+async def run_enabled_acquisition_lanes_streaming(
+    snapshot,
+    query: str,
+    store,
+    uma_state: str = "ok",
+    clearnet_max: int = 4,
+    seed_context: NonfeedSeedContext | None = None,
+    graph_accumulator=None,
+    min_finished: int = 0,
+    on_lane_complete: Callable[[AcquisitionLaneOutcome], None] | None = None,
+) -> AsyncGenerator[tuple[AcquisitionLaneOutcome, ...]]:
     """
     P2-1: Streaming variant -- lanes run concurrently, yields per-lane as they complete.
 
@@ -1627,8 +2843,9 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
       - M1 8GB safe: Semaphore(clearnet_max), bounded [1, 4] for M1 8GB safety
     """
     import asyncio as _asyncio
+
     outcomes: list = []
-    hardware_critical = uma_state in ('critical', 'emergency')
+    hardware_critical = uma_state in ("critical", "emergency")
     _lane_sem_limit = max(1, min(clearnet_max, 4)) if not hardware_critical else 1
     _sem = _asyncio.Semaphore(_lane_sem_limit)
 
@@ -1638,36 +2855,91 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.discovery.crtsh_adapter import call_crtsh
+
                     _raw = build_lane_query(query, AcquisitionLane.CT, seed_context)
-                    shaped_query = _raw if isinstance(_raw, str) else ''
-                    result, ct_outcome = await call_crtsh(query=shaped_query, max_results=plan.max_items, timeout_s=plan.timeout_s)
+                    shaped_query = _raw if isinstance(_raw, str) else ""
+                    result, ct_outcome = await call_crtsh(
+                        query=shaped_query, max_results=plan.max_items, timeout_s=plan.timeout_s
+                    )
                     ct_results_raw = ct_outcome.raw_count
-                    candidates, rejections, _ct_telemetry = ct_results_to_findings(result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}")
+                    candidates, rejections, _ct_telemetry = ct_results_to_findings(
+                        result, ct_outcome, query, sprint_id=f"ct-{int(time.time())}"
+                    )
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                     accepted = 0
                     if candidate_findings and store is not None:
-                        if hasattr(store, 'async_ingest_findings_batch'):
+                        if hasattr(store, "async_ingest_findings_batch"):
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                             except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
-                            _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
+                            _accepted = (
+                                [
+                                    f
+                                    for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                    if isinstance(r, dict) and r.get("accepted")
+                                ]
+                                if ingest_results is not None and isinstance(ingest_results, list)
+                                else list(candidate_findings)
+                            )
                             if _accepted:
                                 graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(time.time())}")
                         except Exception:  # noqa: BLE001
                             pass
                     ct_error = ct_outcome.error if ct_outcome.error else None
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=ct_results_raw, duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, error=ct_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+                    return AcquisitionLaneOutcome(
+                        lane=AcquisitionLane.CT,
+                        enabled=plan.enabled,
+                        attempted=True,
+                        accepted_findings=accepted,
+                        produced_items=ct_results_raw,
+                        duration_s=time.monotonic() - start,
+                        source_family="ct",
+                        ct_query=shaped_query,
+                        ct_results_raw=ct_results_raw,
+                        error=ct_error,
+                        candidate_findings=candidate_findings,
+                        rejection_reasons=rejection_reasons,
+                        rejected_count=rejected_count,
+                        sample_rejections=sample_rejections,
+                    )
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    timeout=True,
+                    duration_s=time.monotonic() - start,
+                    error="timeout",
+                    source_family="ct",
+                    ct_query=shaped_query,
+                    ct_results_raw=0,
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                )
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=0, candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=())
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.CT,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    error=f"{type(exc).__name__}:{exc}",
+                    duration_s=time.monotonic() - start,
+                    source_family="ct",
+                    ct_query=shaped_query,
+                    ct_results_raw=0,
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                )
 
     async def _run_wayback_lane(plan) -> AcquisitionLaneOutcome:
         async with _sem:
@@ -1675,6 +2947,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.intel.wayback_diff_miner import WaybackDiffMiner
+
                     shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
                     shaped_query_str = shaped_query if isinstance(shaped_query, str) else query
                     miner = WaybackDiffMiner()
@@ -1682,31 +2955,84 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                         result = await miner.mine([shaped_query_str])
                     finally:
                         await miner.close()
-                    candidates, rejections, _wb_telemetry = wayback_results_to_findings(result, query, sprint_id=f"wayback-{int(time.time())}")
+                    candidates, rejections, _wb_telemetry = wayback_results_to_findings(
+                        result, query, sprint_id=f"wayback-{int(time.time())}"
+                    )
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                     accepted = 0
                     if candidate_findings and store is not None:
-                        if hasattr(store, 'async_ingest_findings_batch'):
+                        if hasattr(store, "async_ingest_findings_batch"):
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                             except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
-                            _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
+                            _accepted = (
+                                [
+                                    f
+                                    for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                    if isinstance(r, dict) and r.get("accepted")
+                                ]
+                                if ingest_results is not None and isinstance(ingest_results, list)
+                                else list(candidate_findings)
+                            )
                             if _accepted:
-                                graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(time.time())}")
+                                graph_accumulator.accumulate_findings(
+                                    _accepted, sprint_id=f"wayback-{int(time.time())}"
+                                )
                         except Exception:  # noqa: BLE001
                             pass
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
+                    return AcquisitionLaneOutcome(
+                        lane=AcquisitionLane.WAYBACK,
+                        enabled=plan.enabled,
+                        attempted=True,
+                        accepted_findings=accepted,
+                        produced_items=len(result.change_events),
+                        duration_s=time.monotonic() - start,
+                        source_family="archive",
+                        candidate_findings=candidate_findings,
+                        rejection_reasons=rejection_reasons,
+                        rejected_count=rejected_count,
+                        sample_rejections=sample_rejections,
+                        wayback_raw_count=len(result.change_events),
+                        wayback_query=shaped_query_str,
+                    )
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.WAYBACK,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    timeout=True,
+                    duration_s=time.monotonic() - start,
+                    error="timeout",
+                    source_family="archive",
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                    wayback_raw_count=0,
+                    wayback_query=shaped_query_str,
+                )
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='archive', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), wayback_raw_count=0, wayback_query=shaped_query_str)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.WAYBACK,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    error=f"{type(exc).__name__}:{exc}",
+                    duration_s=time.monotonic() - start,
+                    source_family="archive",
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                    wayback_raw_count=0,
+                    wayback_query=shaped_query_str,
+                )
 
     async def _run_pdns_lane(plan) -> AcquisitionLaneOutcome:
         async with _sem:
@@ -1714,42 +3040,115 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             try:
                 async with _asyncio.timeout(plan.timeout_s):
                     from hledac.universal.security.passive_dns import call_lookup_passive_dns as _pdns_lookup
+
                     _raw = build_lane_query(query, AcquisitionLane.PASSIVE_DNS, seed_context)
-                    shaped_query = _raw if isinstance(_raw, str) else ''
+                    shaped_query = _raw if isinstance(_raw, str) else ""
                     ips, pdns_outcome = await _pdns_lookup(shaped_query)
                     produced = pdns_outcome.result_count
                     pdns_error = pdns_outcome.skip_reason or (pdns_outcome.error if pdns_outcome.error else None)
-                    candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}")
+                    candidates, rejections, _pdns_telemetry = passive_dns_results_to_findings(
+                        ips, pdns_outcome, query, sprint_id=f"pdns-{int(time.time())}"
+                    )
                     candidate_findings = tuple(candidates)
                     rejection_reasons = tuple(rejections)
                     rejected_count = len(rejections)
                     sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
                     accepted = 0
                     if candidate_findings and store is not None:
-                        if hasattr(store, 'async_ingest_findings_batch'):
+                        if hasattr(store, "async_ingest_findings_batch"):
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
-                                accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
+                                accepted = sum(1 for r in ingest_results if isinstance(r, dict) and r.get("accepted"))
                             except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
-                            _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
+                            _accepted = (
+                                [
+                                    f
+                                    for f, r in zip(candidate_findings, ingest_results, strict=False)
+                                    if isinstance(r, dict) and r.get("accepted")
+                                ]
+                                if ingest_results is not None and isinstance(ingest_results, list)
+                                else list(candidate_findings)
+                            )
                             if _accepted:
                                 graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(time.time())}")
                         except Exception:  # noqa: BLE001
                             pass
-                    return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
+                    return AcquisitionLaneOutcome(
+                        lane=AcquisitionLane.PASSIVE_DNS,
+                        enabled=plan.enabled,
+                        attempted=True,
+                        accepted_findings=accepted,
+                        produced_items=produced,
+                        duration_s=time.monotonic() - start,
+                        source_family="passive_dns",
+                        error=pdns_error,
+                        candidate_findings=candidate_findings,
+                        rejection_reasons=rejection_reasons,
+                        rejected_count=rejected_count,
+                        sample_rejections=sample_rejections,
+                        passive_dns_raw_count=produced,
+                        passive_dns_query=shaped_query,
+                    )
             except TimeoutError:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.PASSIVE_DNS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    timeout=True,
+                    duration_s=time.monotonic() - start,
+                    error="timeout",
+                    source_family="passive_dns",
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                    passive_dns_raw_count=0,
+                    passive_dns_query=shaped_query,
+                )
             except _asyncio.CancelledError:
                 raise
             except Exception as exc:
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='passive_dns', candidate_findings=(), rejection_reasons=(), rejected_count=0, sample_rejections=(), passive_dns_raw_count=0, passive_dns_query=shaped_query)
+                return AcquisitionLaneOutcome(
+                    lane=AcquisitionLane.PASSIVE_DNS,
+                    enabled=plan.enabled,
+                    attempted=True,
+                    error=f"{type(exc).__name__}:{exc}",
+                    duration_s=time.monotonic() - start,
+                    source_family="passive_dns",
+                    candidate_findings=(),
+                    rejection_reasons=(),
+                    rejected_count=0,
+                    sample_rejections=(),
+                    passive_dns_raw_count=0,
+                    passive_dns_query=shaped_query,
+                )
 
     async def _stealth_never_run(plan) -> AcquisitionLaneOutcome:
-        return AcquisitionLaneOutcome(lane=AcquisitionLane.STEALTH, enabled=plan.enabled, attempted=False, source_family='stealth', error='stealth_never_auto_run')
-    lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.STEALTH: _stealth_never_run, AcquisitionLane.BLOCKCHAIN: _stealth_never_run, AcquisitionLane.ACADEMIC: _stealth_never_run, AcquisitionLane.IPFS: _stealth_never_run, AcquisitionLane.OPEN_SOURCE: _stealth_never_run, AcquisitionLane.DOH: _stealth_never_run, AcquisitionLane.SHODAN: _stealth_never_run, AcquisitionLane.CENSYS: _stealth_never_run, AcquisitionLane.GREYNOISE: _stealth_never_run}
+        return AcquisitionLaneOutcome(
+            lane=AcquisitionLane.STEALTH,
+            enabled=plan.enabled,
+            attempted=False,
+            source_family="stealth",
+            error="stealth_never_auto_run",
+        )
+
+    lane_runners = {
+        AcquisitionLane.CT: _run_ct_lane,
+        AcquisitionLane.WAYBACK: _run_wayback_lane,
+        AcquisitionLane.PASSIVE_DNS: _run_pdns_lane,
+        AcquisitionLane.STEALTH: _stealth_never_run,
+        AcquisitionLane.BLOCKCHAIN: _stealth_never_run,
+        AcquisitionLane.ACADEMIC: _stealth_never_run,
+        AcquisitionLane.IPFS: _stealth_never_run,
+        AcquisitionLane.OPEN_SOURCE: _stealth_never_run,
+        AcquisitionLane.DOH: _stealth_never_run,
+        AcquisitionLane.SHODAN: _stealth_never_run,
+        AcquisitionLane.CENSYS: _stealth_never_run,
+        AcquisitionLane.GREYNOISE: _stealth_never_run,
+    }
     tasks: list[_asyncio.Task] = []
     pending: set[_asyncio.Task] = set()
     try:
@@ -1761,12 +3160,24 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             if lane not in lane_runners:
                 continue
             if not plan.enabled:
-                outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+                outcomes.append(
+                    AcquisitionLaneOutcome(
+                        lane=lane, enabled=False, attempted=False, source_family=_LANE_TO_FAMILY.get(lane, "unknown")
+                    )
+                )
                 continue
             if hardware_critical and lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-                outcomes.append(AcquisitionLaneOutcome(lane=lane, enabled=False, attempted=False, error='hardware_critical', source_family=_LANE_TO_FAMILY.get(lane, 'unknown')))
+                outcomes.append(
+                    AcquisitionLaneOutcome(
+                        lane=lane,
+                        enabled=False,
+                        attempted=False,
+                        error="hardware_critical",
+                        source_family=_LANE_TO_FAMILY.get(lane, "unknown"),
+                    )
+                )
                 continue
-            tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
+            tasks.append(safe_create_task(lane_runners[lane](plan), name="acquisition:lane_runner"))
         if not tasks:
             yield tuple(outcomes)
             return
@@ -1786,7 +3197,15 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             if isinstance(result, AcquisitionLaneOutcome):
                 outcomes.append(result)
             elif isinstance(result, Exception):
-                outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
+                outcomes.append(
+                    AcquisitionLaneOutcome(
+                        lane="UNKNOWN",
+                        enabled=True,
+                        attempted=True,
+                        error=f"gather_error:{result}",
+                        source_family="unknown",
+                    )
+                )
             finished_count += 1
             if on_lane_complete is not None:
                 try:
@@ -1795,12 +3214,20 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                     pass
             yield tuple(outcomes)
         if pending:
-            remaining = await parallel_ok(*pending, label='acquisition_strategy:streaming_remainder')
+            remaining = await parallel_ok(*pending, label="acquisition_strategy:streaming_remainder")
             for result in remaining:
                 if isinstance(result, AcquisitionLaneOutcome):
                     outcomes.append(result)
                 elif isinstance(result, Exception):
-                    outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
+                    outcomes.append(
+                        AcquisitionLaneOutcome(
+                            lane="UNKNOWN",
+                            enabled=True,
+                            attempted=True,
+                            error=f"gather_error:{result}",
+                            source_family="unknown",
+                        )
+                    )
         yield tuple(outcomes)
     finally:
         # PEP 479: Cleanup when generator is abandoned mid-stream
@@ -1822,11 +3249,20 @@ def _hits_to_ct_findings(hits: tuple, query: str) -> list:
     findings = []
     for hit in hits:
         try:
-            finding = CanonicalFinding(finding_id=f'ct-{hit.url[:32]}-{hash(str(hit.rank)) % 10000:04d}', source_type=SourceType.CT_LOG, confidence=0.8, query=query[:128], ts=getattr(hit, 'retrieved_ts', 0.0) or 0.0, payload_text=f'{hit.title}\n{hit.url}\n{hit.snippet}', provenance=('source:crtsh', f'url:{hit.url}'))
+            finding = CanonicalFinding(
+                finding_id=f"ct-{hit.url[:32]}-{hash(str(hit.rank)) % 10000:04d}",
+                source_type=SourceType.CT_LOG,
+                confidence=0.8,
+                query=query[:128],
+                ts=getattr(hit, "retrieved_ts", 0.0) or 0.0,
+                payload_text=f"{hit.title}\n{hit.url}\n{hit.snippet}",
+                provenance=("source:crtsh", f"url:{hit.url}"),
+            )
             findings.append(finding)
         except Exception:
             continue
     return findings
+
 
 def _ips_to_pdns_findings(ips: list[str], query: str) -> list:
     """Convert passive DNS IP list to CanonicalFinding list."""
@@ -1837,11 +3273,20 @@ def _ips_to_pdns_findings(ips: list[str], query: str) -> list:
     findings = []
     for ip in ips[:100]:
         try:
-            finding = CanonicalFinding(finding_id=f'pdns-{ip}', source_type=SourceType.PASSIVE_DNS, confidence=0.7, query=query[:128], ts=0.0, payload_text=f'ip:{ip}', provenance=('source:circl_pdns', f'resolved_ip:{ip}'))
+            finding = CanonicalFinding(
+                finding_id=f"pdns-{ip}",
+                source_type=SourceType.PASSIVE_DNS,
+                confidence=0.7,
+                query=query[:128],
+                ts=0.0,
+                payload_text=f"ip:{ip}",
+                provenance=("source:circl_pdns", f"resolved_ip:{ip}"),
+            )
             findings.append(finding)
         except Exception:
             continue
     return findings
+
 
 def _wallet_to_findings(wallet_analysis, query: str) -> list:
     """Convert blockchain WalletAnalysis to CanonicalFinding list."""
@@ -1851,15 +3296,24 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
         return []
     findings = []
     try:
-        address = getattr(wallet_analysis, 'address', '') or ''
-        chain = getattr(wallet_analysis, 'chain', '') or 'unknown'
-        balance = getattr(wallet_analysis, 'balance', None)
-        risk = getattr(wallet_analysis, 'risk_score', None)
-        finding = CanonicalFinding(finding_id=f'bc-{address[:16]}', source_type=SourceType.BLOCKCHAIN_FORENSICS, confidence=0.75, query=query[:128], ts=0.0, payload_text=f'address:{address} chain:{chain} balance:{balance} risk_score:{risk}', provenance=('source:blockchain', f'address:{address}'))
+        address = getattr(wallet_analysis, "address", "") or ""
+        chain = getattr(wallet_analysis, "chain", "") or "unknown"
+        balance = getattr(wallet_analysis, "balance", None)
+        risk = getattr(wallet_analysis, "risk_score", None)
+        finding = CanonicalFinding(
+            finding_id=f"bc-{address[:16]}",
+            source_type=SourceType.BLOCKCHAIN_FORENSICS,
+            confidence=0.75,
+            query=query[:128],
+            ts=0.0,
+            payload_text=f"address:{address} chain:{chain} balance:{balance} risk_score:{risk}",
+            provenance=("source:blockchain", f"address:{address}"),
+        )
         findings.append(finding)
     except Exception:  # noqa: BLE001
         pass
     return findings
+
 
 def _extract_crypto_from_query(query: str) -> list[str]:
     """Extract crypto wallet addresses and hashes from query string."""
@@ -1870,6 +3324,8 @@ def _extract_crypto_from_query(query: str) -> list[str]:
             if g:
                 wallets.append(g)
     return wallets[:20]
+
+
 _NONFEED_SEED_EMPTY = NonfeedSeedContext()
 
 
@@ -1881,8 +3337,8 @@ def _handle_ct_lane(base_query: str, seed_context: NonfeedSeedContext | None) ->
     domains = _DOMAIN_OR_IP_RE.findall(base_query)
     if domains:
         unique = list(dict.fromkeys(domains))[:5]
-        return ' '.join(unique)
-    return ''
+        return " ".join(unique)
+    return ""
 
 
 def _handle_wayback_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
@@ -1894,7 +3350,7 @@ def _handle_wayback_lane(base_query: str, seed_context: NonfeedSeedContext | Non
     domains = _DOMAIN_OR_IP_RE.findall(base_query)
     if domains:
         return domains[0]
-    return ''
+    return ""
 
 
 def _handle_passive_dns_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
@@ -1907,7 +3363,7 @@ def _handle_blockchain_lane(base_query: str, seed_context: NonfeedSeedContext | 
     wallets = _extract_crypto_from_query(base_query)
     if wallets:
         return wallets[0]
-    return {'_disabled': True, 'reason': 'no_crypto_indicator'}
+    return {"_disabled": True, "reason": "no_crypto_indicator"}
 
 
 def _handle_doh_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> dict | str:
@@ -1919,14 +3375,15 @@ def _handle_doh_lane(base_query: str, seed_context: NonfeedSeedContext | None) -
     if domains:
         return domains[0]
     if ips:
-        return {'_disabled': True, 'reason': 'ip_seed_reverse_doh_deferred'}
-    return {'_disabled': True, 'reason': 'no_domain_seed'}
+        return {"_disabled": True, "reason": "ip_seed_reverse_doh_deferred"}
+    return {"_disabled": True, "reason": "no_domain_seed"}
 
 
 def _handle_public_lane(base_query: str, seed_context: NonfeedSeedContext | None) -> str:
     """Handle PUBLIC lane: expand query if possible."""
     try:
         from hledac.universal.runtime.osint_query_expander import expand_osint_query
+
         variants = expand_osint_query(base_query, max_variants=1)
         if variants:
             return variants[0][:200]
@@ -1946,7 +3403,7 @@ _LANE_HANDLERS: dict = {
 }
 
 
-def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None=None) -> str | dict:
+def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContext | None = None) -> str | dict:
     """
     Shape a source-specific query for an acquisition lane.
 
@@ -1979,9 +3436,10 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
         return handler(base_query, seed_context)
     return base_query
 
+
 def _extract_ips_from_query(query: str) -> list[str]:
     """Extract IP address strings from query."""
-    ip_pattern = re.compile('\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b')
+    ip_pattern = re.compile("\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b")
     return ip_pattern.findall(query)
 
 
@@ -2005,7 +3463,12 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     indicators = ips + domains
     if indicators:
         return indicators[0]
-    logger.warning('passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, extracted_ips=%r, extracted_domains=%r', len(seed_context.domains) if seed_context else 0, len(seed_context.ips) if seed_context else 0, base_query, ips, domains)
-    return ''
-
-
+    logger.warning(
+        "passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, extracted_ips=%r, extracted_domains=%r",
+        len(seed_context.domains) if seed_context else 0,
+        len(seed_context.ips) if seed_context else 0,
+        base_query,
+        ips,
+        domains,
+    )
+    return ""

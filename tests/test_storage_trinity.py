@@ -13,8 +13,7 @@ Tests verify:
     7. Fail-open: LanceDB/Graph failures never propagate to caller.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,10 +23,8 @@ from hledac.universal.knowledge.storage_trinity import (
     StorageTrinity,
     TrinityPhaseError,
     TrinityPhaseResult,
-    TrinityRollbackError,
     TrinityWriteResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -75,7 +72,7 @@ class TestTrinityPhaseOrder:
     """ARCH-STR-001: Phase ordering must be enforced."""
 
     @pytest.mark.asyncio
-    async def test_duckdb_first_lance_last(self, trinity, mock_duckdb_store, mock_semantic_store):
+    async def test_duckdb_first_lance_last(self, trinity, mock_duckdb_store, mock_semantic_store) -> None:
         """DuckDB must be called before LanceDB."""
         # Setup
         trinity.inject_semantic_store(mock_semantic_store)
@@ -86,32 +83,26 @@ class TestTrinityPhaseOrder:
         mock_duckdb_store.async_ingest_findings_batch = AsyncMock(
             side_effect=lambda _: (call_order.append("duckdb"), [])
         )
-        mock_semantic_store.add_text = MagicMock(
-            side_effect=lambda **_: call_order.append("lance")
-        )
+        mock_semantic_store.add_text = MagicMock(side_effect=lambda **_: call_order.append("lance"))
 
         # Run
         await trinity.upsert_findings_batch(findings)
 
         # Verify order: duckdb must come before lance
-        assert call_order == ["duckdb", "lance"], (
-            f"Phase order violated: {call_order}. Expected ['duckdb', 'lance']"
-        )
+        assert call_order == ["duckdb", "lance"], f"Phase order violated: {call_order}. Expected ['duckdb', 'lance']"
 
 
 class TestTrinityDuckDBFailure:
     """DuckDB failure must prevent LanceDB from running."""
 
     @pytest.mark.asyncio
-    async def test_duckdb_fail_keeps_lance_intact(self, mock_duckdb_store, mock_semantic_store):
+    async def test_duckdb_fail_keeps_lance_intact(self, mock_duckdb_store, mock_semantic_store) -> None:
         """When DuckDB fails, LanceDB must NOT be called."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(
-            side_effect=RuntimeError("DuckDB connection failed")
-        )
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(side_effect=RuntimeError("DuckDB connection failed"))
 
         # Run
         result = await trinity.upsert_findings_batch(findings)
@@ -126,18 +117,14 @@ class TestTrinityLanceFailure:
     """LanceDB failure must NOT affect DuckDB (canonical path intact)."""
 
     @pytest.mark.asyncio
-    async def test_lance_fail_preserves_duckdb(self, mock_duckdb_store, mock_semantic_store):
+    async def test_lance_fail_preserves_duckdb(self, mock_duckdb_store, mock_semantic_store) -> None:
         """LanceDB failure must not roll back DuckDB writes."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test", finding_id="f1")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
-        mock_semantic_store.add_text = MagicMock(
-            side_effect=RuntimeError("LanceDB write failed")
-        )
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
+        mock_semantic_store.add_text = MagicMock(side_effect=RuntimeError("LanceDB write failed"))
 
         # Run
         result = await trinity.upsert_findings_batch(findings)
@@ -153,15 +140,13 @@ class TestTrinityGhostEntityPrevention:
     """Ghost entities: DuckDB record exists without LanceDB embedding."""
 
     @pytest.mark.asyncio
-    async def test_no_ghost_without_lance(self, mock_duckdb_store):
+    async def test_no_ghost_without_lance(self, mock_duckdb_store) -> None:
         """When SemanticStore not injected, DuckDB must still succeed."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         # NOTE: SemanticStore NOT injected
 
         findings = [MagicMock(payload_text="test")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
 
         # Run
         result = await trinity.upsert_findings_batch(findings)
@@ -172,18 +157,14 @@ class TestTrinityGhostEntityPrevention:
         assert result.lance.error == "semantic_store_not_injected"
 
     @pytest.mark.asyncio
-    async def test_lance_fail_schedules_rebuild(self, mock_duckdb_store, mock_semantic_store):
+    async def test_lance_fail_schedules_rebuild(self, mock_duckdb_store, mock_semantic_store) -> None:
         """LanceDB failure must schedule entity for rebuild."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test", finding_id="entity-123")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
-        mock_semantic_store.add_text = MagicMock(
-            side_effect=RuntimeError("LanceDB error")
-        )
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
+        mock_semantic_store.add_text = MagicMock(side_effect=RuntimeError("LanceDB error"))
 
         # Run
         await trinity.upsert_findings_batch(findings)
@@ -195,35 +176,27 @@ class TestTrinityGhostEntityPrevention:
 class TestTrinityBoundedQueue:
     """M1 8GB: LanceDB queue must be bounded."""
 
-    def test_max_lance_queue_constant(self):
+    def test_max_lance_queue_constant(self) -> None:
         """MAX_LANCE_QUEUE must be bounded for M1 8GB safety."""
-        assert MAX_LANCE_QUEUE == 8192, (
-            f"MAX_LANCE_QUEUE={MAX_LANCE_QUEUE} too high for M1 8GB"
-        )
+        assert MAX_LANCE_QUEUE == 8192, f"MAX_LANCE_QUEUE={MAX_LANCE_QUEUE} too high for M1 8GB"
 
-    def test_lance_flush_interval_constant(self):
+    def test_lance_flush_interval_constant(self) -> None:
         """LANCE_FLUSH_INTERVAL_S must be reasonable."""
-        assert LANCE_FLUSH_INTERVAL_S == 5.0, (
-            f"LANCE_FLUSH_INTERVAL_S={LANCE_FLUSH_INTERVAL_S} too high"
-        )
+        assert LANCE_FLUSH_INTERVAL_S == 5.0, f"LANCE_FLUSH_INTERVAL_S={LANCE_FLUSH_INTERVAL_S} too high"
 
 
 class TestTrinityFailOpen:
     """LanceDB failures must be fail-open (never propagate)."""
 
     @pytest.mark.asyncio
-    async def test_lance_exception_not_propagated(self, mock_duckdb_store, mock_semantic_store):
+    async def test_lance_exception_not_propagated(self, mock_duckdb_store, mock_semantic_store) -> None:
         """LanceDB exceptions must not reach caller."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
-        mock_semantic_store.add_text = MagicMock(
-            side_effect=RuntimeError("LanceDB disaster")
-        )
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
+        mock_semantic_store.add_text = MagicMock(side_effect=RuntimeError("LanceDB disaster"))
 
         # Run — must NOT raise
         result = await trinity.upsert_findings_batch(findings)
@@ -236,7 +209,7 @@ class TestTrinityFailOpen:
 class TestTrinityDataClasses:
     """TrinityPhaseResult and TrinityWriteResult invariants."""
 
-    def test_trinity_phase_result_defaults(self):
+    def test_trinity_phase_result_defaults(self) -> None:
         """TrinityPhaseResult must have correct defaults."""
         result = TrinityPhaseResult(phase="duckdb", success=True)
 
@@ -246,23 +219,19 @@ class TestTrinityDataClasses:
         assert result.error is None
         assert result.duration_ms == 0.0
 
-    def test_trinity_write_result_accepted_property(self):
+    def test_trinity_write_result_accepted_property(self) -> None:
         """TrinityWriteResult.accepted must reflect DuckDB success."""
-        success_result = TrinityWriteResult(
-            duckdb=TrinityPhaseResult(phase="duckdb", success=True)
-        )
+        success_result = TrinityWriteResult(duckdb=TrinityPhaseResult(phase="duckdb", success=True))
         assert success_result.accepted is True
 
-        failure_result = TrinityWriteResult(
-            duckdb=TrinityPhaseResult(phase="duckdb", success=False)
-        )
+        failure_result = TrinityWriteResult(duckdb=TrinityPhaseResult(phase="duckdb", success=False))
         assert failure_result.accepted is False
 
 
 class TestTrinityExtractors:
     """Payload extraction helpers must handle various finding shapes."""
 
-    def test_extract_payload_text(self, trinity):
+    def test_extract_payload_text(self, trinity) -> None:
         """_extract_payload_text must join multiple findings."""
         f1 = MagicMock(payload_text="hello")
         f2 = MagicMock(payload_text="world")
@@ -271,7 +240,7 @@ class TestTrinityExtractors:
 
         assert result == "hello\nworld"
 
-    def test_extract_payload_text_empty(self, trinity):
+    def test_extract_payload_text_empty(self, trinity) -> None:
         """_extract_payload_text must handle empty payload."""
         f1 = MagicMock(payload_text="")
 
@@ -279,7 +248,7 @@ class TestTrinityExtractors:
 
         assert result == ""
 
-    def test_extract_ioc_types(self, trinity):
+    def test_extract_ioc_types(self, trinity) -> None:
         """_extract_ioc_types must extract from pattern_matches."""
         f = MagicMock()
         f.pattern_matches = [
@@ -291,7 +260,7 @@ class TestTrinityExtractors:
 
         assert set(result) == {"ip", "domain"}
 
-    def test_extract_source_type(self, trinity):
+    def test_extract_source_type(self, trinity) -> None:
         """_extract_source_type must return first non-empty."""
         f1 = MagicMock(source_type=None)
         f2 = MagicMock(source_type="osint")
@@ -300,7 +269,7 @@ class TestTrinityExtractors:
 
         assert result == "osint"
 
-    def test_extract_ts(self, trinity):
+    def test_extract_ts(self, trinity) -> None:
         """_extract_ts must handle float timestamps."""
         f = MagicMock(ts=1234567890.5)
 
@@ -313,16 +282,14 @@ class TestTrinityLifecycle:
     """StorageTrinity lifecycle management."""
 
     @pytest.mark.asyncio
-    async def test_close_flushes_lance(self, mock_duckdb_store, mock_semantic_store):
+    async def test_close_flushes_lance(self, mock_duckdb_store, mock_semantic_store) -> None:
         """close() must flush pending LanceDB writes."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         # Buffer something
         findings = [MagicMock(payload_text="test")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
         await trinity.upsert_findings_batch(findings)
 
         # Close
@@ -332,7 +299,7 @@ class TestTrinityLifecycle:
         mock_semantic_store.flush.assert_called()
 
     @pytest.mark.asyncio
-    async def test_double_close_idempotent(self, mock_duckdb_store, mock_semantic_store):
+    async def test_double_close_idempotent(self, mock_duckdb_store, mock_semantic_store) -> None:
         """close() must be idempotent."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
@@ -341,7 +308,7 @@ class TestTrinityLifecycle:
         await trinity.close()
         await trinity.close()  # Must not raise
 
-    def test_repr_includes_pending(self, trinity, mock_semantic_store):
+    def test_repr_includes_pending(self, trinity, mock_semantic_store) -> None:
         """repr must show pending counts."""
         trinity.inject_semantic_store(mock_semantic_store)
 
@@ -360,22 +327,20 @@ class TestTrinitySprint8:
     """Sprint 8W integration: StorageTrinity must wire into existing paths."""
 
     @pytest.mark.asyncio
-    async def test_inject_semantic_store(self, trinity, mock_semantic_store):
+    async def test_inject_semantic_store(self, trinity, mock_semantic_store) -> None:
         """inject_semantic_store must wire SemanticStore into Trinity."""
         trinity.inject_semantic_store(mock_semantic_store)
 
         assert trinity._semantic_store is mock_semantic_store
 
     @pytest.mark.asyncio
-    async def test_lance_flush_scheduled_on_write(self, mock_duckdb_store, mock_semantic_store):
+    async def test_lance_flush_scheduled_on_write(self, mock_duckdb_store, mock_semantic_store) -> None:
         """LanceDB flush must be scheduled after write."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
 
         await trinity.upsert_findings_batch(findings)
 
@@ -394,7 +359,7 @@ class TestTrinityEdgeCases:
     """Edge case handling."""
 
     @pytest.mark.asyncio
-    async def test_empty_findings_list(self, trinity):
+    async def test_empty_findings_list(self, trinity) -> None:
         """Empty findings list must return failure result, not raise."""
         result = await trinity.upsert_findings_batch([])
 
@@ -402,17 +367,13 @@ class TestTrinityEdgeCases:
         assert result.duckdb.records == 0
 
     @pytest.mark.asyncio
-    async def test_none_finding_id(self, trinity, mock_duckdb_store, mock_semantic_store):
+    async def test_none_finding_id(self, trinity, mock_duckdb_store, mock_semantic_store) -> None:
         """None finding_id must not crash rebuild tracking."""
         trinity.inject_semantic_store(mock_semantic_store)
 
         findings = [MagicMock(payload_text="test", finding_id=None)]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
-        mock_semantic_store.add_text = MagicMock(
-            side_effect=RuntimeError("fail")
-        )
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
+        mock_semantic_store.add_text = MagicMock(side_effect=RuntimeError("fail"))
 
         # Must not raise
         await trinity.upsert_findings_batch(findings)
@@ -420,7 +381,7 @@ class TestTrinityEdgeCases:
         # Rebuild count unchanged (None not added)
         assert trinity.rebuild_pending_count == 0
 
-    def test_trinity_phase_error_repr(self):
+    def test_trinity_phase_error_repr(self) -> None:
         """TrinityPhaseError must have useful repr."""
         err = TrinityPhaseError("duckdb", "Write failed", records=5)
 
@@ -434,7 +395,7 @@ class TestTrinityDuckPGQGraph:
     """DuckPGQGraph integration in StorageTrinity (Phase 4)."""
 
     @pytest.mark.asyncio
-    async def test_graph_injection(self, mock_duckdb_store, mock_graph_service):
+    async def test_graph_injection(self, mock_duckdb_store, mock_graph_service) -> None:
         """inject_graph_service must store the graph service."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_graph_service(mock_graph_service)
@@ -444,16 +405,14 @@ class TestTrinityDuckPGQGraph:
     @pytest.mark.asyncio
     async def test_graph_phase_runs_after_duckdb(
         self, mock_duckdb_store, mock_semantic_store, mock_graph_service
-    ):
+    ) -> None:
         """DuckPGQGraph upsert must run after DuckDB."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
         trinity.inject_graph_service(mock_graph_service)
 
         findings = [MagicMock(payload_text="test", finding_id="f1", source_type="osint")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
 
         await trinity.upsert_findings_batch(findings)
 
@@ -461,16 +420,14 @@ class TestTrinityDuckPGQGraph:
         assert mock_graph_service.upsert_ioc.called
 
     @pytest.mark.asyncio
-    async def test_graph_skip_when_not_injected(self, mock_duckdb_store, mock_semantic_store):
+    async def test_graph_skip_when_not_injected(self, mock_duckdb_store, mock_semantic_store) -> None:
         """Graph phase must skip when not injected."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
         # No graph_service injected
 
         findings = [MagicMock(payload_text="test", finding_id="f1")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
 
         result = await trinity.upsert_findings_batch(findings)
 
@@ -482,16 +439,14 @@ class TestTrinityDuckPGQGraph:
     @pytest.mark.asyncio
     async def test_graph_fail_preserves_canonical_path(
         self, mock_duckdb_store, mock_semantic_store, mock_graph_service
-    ):
+    ) -> None:
         """DuckPGQGraph failure must not affect DuckDB/LanceDB."""
         trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
         trinity.inject_semantic_store(mock_semantic_store)
         trinity.inject_graph_service(mock_graph_service)
 
         findings = [MagicMock(payload_text="test", finding_id="f1", source_type="osint")]
-        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
-            MagicMock(accepted=True)
-        ])
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[MagicMock(accepted=True)])
         mock_graph_service.upsert_ioc = MagicMock(side_effect=RuntimeError("Graph DB error"))
 
         # Must not raise
@@ -503,7 +458,7 @@ class TestTrinityDuckPGQGraph:
         assert result.graph.success is False
         assert "Graph DB error" in str(result.graph.error)
 
-    def test_extract_ioc_value(self, trinity):
+    def test_extract_ioc_value(self, trinity) -> None:
         """_extract_ioc_value must handle various field names."""
         # Test with value attribute
         f = MagicMock(value="192.168.1.1")
@@ -521,7 +476,7 @@ class TestTrinityDuckPGQGraph:
         f = MagicMock()
         assert trinity._extract_ioc_value(f) is None
 
-    def test_extract_ioc_type(self, trinity):
+    def test_extract_ioc_type(self, trinity) -> None:
         """_extract_ioc_type must handle various field names."""
         f = MagicMock(ioc_type="domain")
         assert trinity._extract_ioc_type(f) == "domain"
@@ -532,9 +487,9 @@ class TestTrinityDuckPGQGraph:
         f = MagicMock()
         assert trinity._extract_ioc_type(f) == "unknown"
 
-    def test_trinity_write_result_has_graph_phase(self, mock_duckdb_store):
+    def test_trinity_write_result_has_graph_phase(self, mock_duckdb_store) -> None:
         """TrinityWriteResult must include graph phase."""
-        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+        StorageTrinity(duckdb_store=mock_duckdb_store)
 
         result = TrinityWriteResult(
             duckdb=TrinityPhaseResult(phase="duckdb", success=True),
@@ -544,4 +499,3 @@ class TestTrinityDuckPGQGraph:
         assert result.graph is not None
         assert result.graph.phase == "graph"
         assert result.accepted is True
-

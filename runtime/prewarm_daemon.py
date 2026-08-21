@@ -20,7 +20,6 @@ Usage:
         pass
 """
 
-
 import asyncio
 import os
 import threading
@@ -28,7 +27,6 @@ import time as _time
 import typing
 
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 
@@ -112,7 +110,6 @@ class PrewarmDaemon:
 
     async def _prewarm_all(self) -> None:
         """Preload all MLX models in parallel via asyncio.gather."""
-        import mlx.core as mx
 
         prewarm_start = _time.monotonic()
         errors: list[str] = []
@@ -125,9 +122,8 @@ class PrewarmDaemon:
                 from hledac.universal.brain._hermes_cache import hermes_cache
 
                 model_path = os.environ.get(
-                    "HLEDAC_HERMES_MODEL_PATH",
-                    "/Users/vojtechhamada/.cache/hledac/hermes-3-llama-3.2-3b-4bit"
-    )
+                    "HLEDAC_HERMES_MODEL_PATH", "/Users/vojtechhamada/.cache/hledac/hermes-3-llama-3.2-3b-4bit"
+                )
 
                 # Check if already cached (idempotent via HermesModelCache)
                 cache = hermes_cache()
@@ -149,7 +145,7 @@ class PrewarmDaemon:
                     logger.info(
                         "[PREENABLE] Hermes local path missing — treating as HF repo: %s",
                         model_path,
-    )
+                    )
                     loaded = await asyncio.to_thread(mlx_lm.load, model_path)
                     model_obj, tokenizer_obj = loaded[0], loaded[1]
 
@@ -176,7 +172,7 @@ class PrewarmDaemon:
 
                 router = get_canonical_embedder()
                 embedder = await router.get_embedder()
-                if embedder is not None and hasattr(embedder, '_load_model'):
+                if embedder is not None and hasattr(embedder, "_load_model"):
                     embedder._load_model()
                 logger.info("[PREENABLE] MLXEmbeddings loaded via EmbeddingRouter")
             except Exception as exc:
@@ -195,8 +191,11 @@ class PrewarmDaemon:
                 from hledac.universal.planning import get_slm_decomposer
 
                 class _NoOpCache:
-                    async def get(self, _key: str, _version: int): return None
-                    async def put(self, _key: str, _value: object, _version: int): pass
+                    async def get(self, _key: str, _version: int) -> None:
+                        return None
+
+                    async def put(self, _key: str, _value: object, _version: int) -> None:
+                        pass
 
                 class _NoOpGovernor:
                     pass
@@ -206,10 +205,8 @@ class PrewarmDaemon:
                 decomposer = get_slm_decomposer(
                     governor=_NoOpGovernor(),
                     cache=_NoOpCache(),
-                    model_name=os.environ.get(
-                        "HLEDAC_SLM_MODEL_NAME", "mlx-community/Qwen2.5-0.5B-4bit"
-                    ),
-    )
+                    model_name=os.environ.get("HLEDAC_SLM_MODEL_NAME", "mlx-community/Qwen2.5-0.5B-4bit"),
+                )
                 # Trigger eager load by awaiting _load_model
                 if hasattr(decomposer, "_load_model"):
                     await decomposer._load_model()
@@ -226,12 +223,13 @@ class PrewarmDaemon:
             _prewarm_mlx_embed(),
             _prewarm_slm_decomposer(),
             label="prewarm_daemon:_prewarm_models",
-    )
+        )
 
         # P2-13: Prewarm curl_cffi session pool in parallel — ~100-300ms per slot
         # vs sequential fill ~= 400-1200ms total. Fills all 4 slots concurrently.
         try:
             from hledac.universal.transport.prewarm_pool import fill_all_slots
+
             await fill_all_slots()
             logger.info("[PREENABLE] curl_cffi session pool filled in parallel")
         except Exception as exc:
@@ -265,7 +263,7 @@ class PrewarmDaemon:
     @property
     def elapsed_s(self) -> float:
         """Elapsed seconds since prewarm start.
-        
+
         NOTE: Clone of transport/conditional_cache.CacheEntry.is_fresh() pattern
         (similarity: 94.3%) — ACCEPTED, different semantics:
         - This: elapsed time since start (monotonic clock)

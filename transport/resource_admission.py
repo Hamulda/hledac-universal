@@ -28,17 +28,22 @@ USAGE:
     # In transport.stop():
     await TransportAdmission.terminate_transport("tor")
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import signal
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-from hledac.universal._core.resource_ledger import ResourceLedger, ResourceType, get_resource_ledger
+from typing import TYPE_CHECKING
+
+from hledac.universal._core.resource_ledger import ResourceLedger, get_resource_ledger
+
 logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     pass
+
 
 @dataclass(frozen=True, slots=True)
 class TransportResourceProfile:
@@ -48,6 +53,7 @@ class TransportResourceProfile:
     Defines the resource requirements for starting and running a transport.
     These are conservative estimates that leave headroom.
     """
+
     name: str
     fds: int
     mach_ports: int
@@ -55,7 +61,29 @@ class TransportResourceProfile:
     mmap_regions: int
     threads: int
     tmp_volume_mb: int
-TRANSPORT_PROFILES: dict[str, TransportResourceProfile] = {'tor': TransportResourceProfile(name='tor', fds=10, mach_ports=20, child_processes=1, mmap_regions=2, threads=3, tmp_volume_mb=64), 'i2p': TransportResourceProfile(name='i2p', fds=8, mach_ports=15, child_processes=1, mmap_regions=1, threads=2, tmp_volume_mb=32), 'arti': TransportResourceProfile(name='arti', fds=10, mach_ports=20, child_processes=1, mmap_regions=2, threads=3, tmp_volume_mb=64), 'nym': TransportResourceProfile(name='nym', fds=12, mach_ports=25, child_processes=2, mmap_regions=2, threads=4, tmp_volume_mb=128), 'session_pool': TransportResourceProfile(name='session_pool', fds=50, mach_ports=30, child_processes=0, mmap_regions=0, threads=0, tmp_volume_mb=0), 'duckdb': TransportResourceProfile(name='duckdb', fds=5, mach_ports=5, child_processes=0, mmap_regions=3, threads=0, tmp_volume_mb=256)}
+
+
+TRANSPORT_PROFILES: dict[str, TransportResourceProfile] = {
+    "tor": TransportResourceProfile(
+        name="tor", fds=10, mach_ports=20, child_processes=1, mmap_regions=2, threads=3, tmp_volume_mb=64
+    ),
+    "i2p": TransportResourceProfile(
+        name="i2p", fds=8, mach_ports=15, child_processes=1, mmap_regions=1, threads=2, tmp_volume_mb=32
+    ),
+    "arti": TransportResourceProfile(
+        name="arti", fds=10, mach_ports=20, child_processes=1, mmap_regions=2, threads=3, tmp_volume_mb=64
+    ),
+    "nym": TransportResourceProfile(
+        name="nym", fds=12, mach_ports=25, child_processes=2, mmap_regions=2, threads=4, tmp_volume_mb=128
+    ),
+    "session_pool": TransportResourceProfile(
+        name="session_pool", fds=50, mach_ports=30, child_processes=0, mmap_regions=0, threads=0, tmp_volume_mb=0
+    ),
+    "duckdb": TransportResourceProfile(
+        name="duckdb", fds=5, mach_ports=5, child_processes=0, mmap_regions=3, threads=0, tmp_volume_mb=256
+    ),
+}
+
 
 class TransportAdmission:
     """
@@ -79,10 +107,21 @@ class TransportAdmission:
     @staticmethod
     def get_profile(transport_name: str) -> TransportResourceProfile:
         """Get the resource profile for a transport."""
-        return TRANSPORT_PROFILES.get(transport_name, TransportResourceProfile(name=transport_name, fds=5, mach_ports=10, child_processes=1, mmap_regions=1, threads=2, tmp_volume_mb=32))
+        return TRANSPORT_PROFILES.get(
+            transport_name,
+            TransportResourceProfile(
+                name=transport_name,
+                fds=5,
+                mach_ports=10,
+                child_processes=1,
+                mmap_regions=1,
+                threads=2,
+                tmp_volume_mb=32,
+            ),
+        )
 
     @classmethod
-    def for_transport(cls, transport_name: str, ledger: ResourceLedger | None=None):
+    def for_transport(cls, transport_name: str, ledger: ResourceLedger | None = None):
         """
         Create admission context manager for a transport.
 
@@ -95,10 +134,20 @@ class TransportAdmission:
         """
         ledger = ledger or get_resource_ledger()
         profile = cls.get_profile(transport_name)
-        return ledger.admission(owner=transport_name, fds=profile.fds, mach_ports=profile.mach_ports, child_processes=profile.child_processes, mmap_regions=profile.mmap_regions, threads=profile.threads, tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024)
+        return ledger.admission(
+            owner=transport_name,
+            fds=profile.fds,
+            mach_ports=profile.mach_ports,
+            child_processes=profile.child_processes,
+            mmap_regions=profile.mmap_regions,
+            threads=profile.threads,
+            tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024,
+        )
 
     @classmethod
-    async def terminate_transport(cls, transport_name: str, ledger: ResourceLedger | None=None, timeout_s: float=10.0) -> int:
+    async def terminate_transport(
+        cls, transport_name: str, ledger: ResourceLedger | None = None, timeout_s: float = 10.0
+    ) -> int:
         """
         Terminate all resources associated with a transport.
 
@@ -113,11 +162,13 @@ class TransportAdmission:
         ledger = ledger or get_resource_ledger()
         terminated = await ledger.terminate_child_processes(owner=transport_name, timeout_s=timeout_s, force=False)
         released = ledger.release_all(transport_name)
-        logger.info(f'[TransportAdmission] Cleaned up {transport_name}: {terminated} processes terminated, {released} resources released')
+        logger.info(
+            f"[TransportAdmission] Cleaned up {transport_name}: {terminated} processes terminated, {released} resources released"
+        )
         return terminated
 
     @classmethod
-    def can_start_transport(cls, transport_name: str, ledger: ResourceLedger | None=None) -> tuple[bool, str]:
+    def can_start_transport(cls, transport_name: str, ledger: ResourceLedger | None = None) -> tuple[bool, str]:
         """
         Check if a transport can be started.
 
@@ -130,9 +181,18 @@ class TransportAdmission:
         """
         ledger = ledger or get_resource_ledger()
         profile = cls.get_profile(transport_name)
-        return ledger.can_admit(owner=transport_name, fds=profile.fds, mach_ports=profile.mach_ports, child_processes=profile.child_processes, mmap_regions=profile.mmap_regions, threads=profile.threads, tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024)
+        return ledger.can_admit(
+            owner=transport_name,
+            fds=profile.fds,
+            mach_ports=profile.mach_ports,
+            child_processes=profile.child_processes,
+            mmap_regions=profile.mmap_regions,
+            threads=profile.threads,
+            tmp_volume_bytes=profile.tmp_volume_mb * 1024 * 1024,
+        )
 
-async def cleanup_child_process(pid: int, ledger: ResourceLedger | None=None, timeout_s: float=5.0) -> bool:
+
+async def cleanup_child_process(pid: int, ledger: ResourceLedger | None = None, timeout_s: float = 5.0) -> bool:
     """
     Clean up a single child process.
 
@@ -156,7 +216,7 @@ async def cleanup_child_process(pid: int, ledger: ResourceLedger | None=None, ti
         ledger.unregister_child_process(pid)
         return True
     except PermissionError:
-        logger.warning(f'[cleanup_child_process] Cannot kill PID {pid}: permission denied')
+        logger.warning(f"[cleanup_child_process] Cannot kill PID {pid}: permission denied")
         return False
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -171,10 +231,11 @@ async def cleanup_child_process(pid: int, ledger: ResourceLedger | None=None, ti
         await asyncio.sleep(0.1)
         ledger.unregister_child_process(pid)
         return True
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError, PermissionError:
         return False
 
-async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None=None, timeout_s: float=10.0) -> int:
+
+async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None = None, timeout_s: float = 10.0) -> int:
     """
     Clean up a process and all its children.
 
@@ -189,20 +250,18 @@ async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None=None, tim
     Returns:
         Number of processes terminated
     """
-    import time as time_module
     ledger = ledger or get_resource_ledger()
     terminated = 0
     try:
-        pgid = os.getpgid(pid)
-        in_pgroup = True
+        os.getpgid(pid)
     except OSError:
-        in_pgroup = False
+        pass
     pids_to_kill = [pid]
     for target_pid in pids_to_kill:
         try:
             os.kill(target_pid, signal.SIGTERM)
             terminated += 1
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError, PermissionError:
             continue
     deadline = time_module.monotonic() + timeout_s / 2
     remaining = list(pids_to_kill)
@@ -223,11 +282,12 @@ async def cleanup_process_tree(pid: int, ledger: ResourceLedger | None=None, tim
             try:
                 os.kill(target_pid, signal.SIGKILL)
                 terminated += 1
-            except (ProcessLookupError, PermissionError):
+            except ProcessLookupError, PermissionError:
                 continue
     for target_pid in pids_to_kill:
         ledger.unregister_child_process(target_pid)
     return terminated
+
 
 class TransportResourceMixin:
     """
@@ -241,14 +301,14 @@ class TransportResourceMixin:
 
             async def start(self) -> bool:
                 with self.admission_context():
-                    # Start Tor
                     pass
 
             async def stop(self) -> None:
                 await self.cleanup_resources()
                 # Transport cleanup
     """
-    _resource_owner: str = ''
+
+    _resource_owner: str = ""
     _ledger: ResourceLedger | None = None
     _child_pids: list[int] = []
     _admission_active: bool = False
@@ -323,5 +383,3 @@ class TransportResourceMixin:
         Override in subclass if transport has health checks.
         """
         return True
-import time as time_module
-from _core import aclose

@@ -5,18 +5,19 @@ Usage:
     python3 probe_f228a_probe_runner.py
 """
 
-
-
 import ast
 import json
 import subprocess
 import sys
 from pathlib import Path
-from _core import aclose
 
-TOOLS_INDEX = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/live_kpi_responsibility_index.py")
+TOOLS_INDEX = Path(
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/tools/live_kpi_responsibility_index.py"
+)
 SOURCE_FILE = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/benchmarks/live_sprint_measurement.py")
-PROBE_DIR = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f228a_live_kpi_responsibility_index")
+PROBE_DIR = Path(
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/probe_f228a_live_kpi_responsibility_index"
+)
 JSON_INDEX = PROBE_DIR / "live_kpi_responsibility_index.json"
 
 
@@ -31,12 +32,18 @@ def probe_detections(index: dict) -> list[str]:
         ("_derive_next_action in function_specs", lambda i: "_derive_next_action" in i["function_specs"]),
         ("NextActionInput in function_specs", lambda i: "NextActionInput" in i["function_specs"]),
         ("total_functions == 24", lambda i: i["total_functions"] == 24),
-        ("extraction_order correct", lambda i: i["extraction_order"] == [
-            "benchmarks/live_measurement_quality.py",
-            "benchmarks/live_measurement_terminality.py",
-            "benchmarks/live_measurement_next_action.py",
-            "benchmarks/live_measurement_kpi.py",
-        ]),
+        (
+            "extraction_order correct",
+            lambda i: (
+                i["extraction_order"]
+                == [
+                    "benchmarks/live_measurement_quality.py",
+                    "benchmarks/live_measurement_terminality.py",
+                    "benchmarks/live_measurement_next_action.py",
+                    "benchmarks/live_measurement_kpi.py",
+                ]
+            ),
+        ),
     ]
     for desc, fn in checks:
         try:
@@ -76,10 +83,16 @@ def probe_no_runtime_imports() -> list[str]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             call_names.add(node.func.id)
     runtime_funcs = {
-        "_derive_live_kpi", "_stamp_live_kpi", "_derive_next_action",
-        "_derive_run_quality_verdict", "_stamp_run_quality_verdict",
-        "_is_active_domain_query", "_has_terminal_source_outcomes",
-        "_has_scheduler_exit_path", "_was_family_attempted", "NextActionInput",
+        "_derive_live_kpi",
+        "_stamp_live_kpi",
+        "_derive_next_action",
+        "_derive_run_quality_verdict",
+        "_stamp_run_quality_verdict",
+        "_is_active_domain_query",
+        "_has_terminal_source_outcomes",
+        "_has_scheduler_exit_path",
+        "_was_family_attempted",
+        "NextActionInput",
     }
     illegal = call_names & runtime_funcs
     if illegal:
@@ -136,28 +149,17 @@ def probe_module_assignment(index: dict) -> list[str]:
     next_action_module = "benchmarks/live_measurement_next_action.py"
     kpi_module = "benchmarks/live_measurement_kpi.py"
     checks = [
-        ("_uma_state_is_critical_or_emergency → terminality",
-         ["_uma_state_is_critical_or_emergency"], term_module),
-        ("_is_active_domain_query → terminality",
-         ["_is_active_domain_query"], term_module),
-        ("_has_terminal_source_outcomes → terminality",
-         ["_has_terminal_source_outcomes"], term_module),
-        ("_has_scheduler_exit_path → terminality",
-         ["_has_scheduler_exit_path"], term_module),
-        ("_was_family_attempted → terminality",
-         ["_was_family_attempted"], term_module),
-        ("_derive_run_quality_verdict → quality",
-         ["_derive_run_quality_verdict"], quality_module),
-        ("_stamp_run_quality_verdict → quality",
-         ["_stamp_run_quality_verdict"], quality_module),
-        ("_derive_next_action → next_action",
-         ["_derive_next_action"], next_action_module),
-        ("NextActionInput → next_action",
-         ["NextActionInput"], next_action_module),
-        ("_derive_live_kpi → kpi",
-         ["_derive_live_kpi"], kpi_module),
-        ("_stamp_live_kpi → kpi",
-         ["_stamp_live_kpi"], kpi_module),
+        ("_uma_state_is_critical_or_emergency → terminality", ["_uma_state_is_critical_or_emergency"], term_module),
+        ("_is_active_domain_query → terminality", ["_is_active_domain_query"], term_module),
+        ("_has_terminal_source_outcomes → terminality", ["_has_terminal_source_outcomes"], term_module),
+        ("_has_scheduler_exit_path → terminality", ["_has_scheduler_exit_path"], term_module),
+        ("_was_family_attempted → terminality", ["_was_family_attempted"], term_module),
+        ("_derive_run_quality_verdict → quality", ["_derive_run_quality_verdict"], quality_module),
+        ("_stamp_run_quality_verdict → quality", ["_stamp_run_quality_verdict"], quality_module),
+        ("_derive_next_action → next_action", ["_derive_next_action"], next_action_module),
+        ("NextActionInput → next_action", ["NextActionInput"], next_action_module),
+        ("_derive_live_kpi → kpi", ["_derive_live_kpi"], kpi_module),
+        ("_stamp_live_kpi → kpi", ["_stamp_live_kpi"], kpi_module),
     ]
     specs = index.get("function_specs", {})
     for _desc, names, expected_mod in checks:
@@ -172,20 +174,21 @@ def probe_called_helpers(index: dict) -> list[str]:
     errors = []
     specs = index.get("function_specs", {})
     checks = [
-        ("_derive_live_kpi calls _derive_next_action",
-         "_derive_live_kpi", "_derive_next_action"),
-        ("_derive_live_kpi calls _is_active_domain_query",
-         "_derive_live_kpi", "_is_active_domain_query"),
-        ("_derive_live_kpi calls _has_terminal_source_outcomes",
-         "_derive_live_kpi", "_has_terminal_source_outcomes"),
-        ("_derive_live_kpi calls _has_scheduler_exit_path",
-         "_derive_live_kpi", "_has_scheduler_exit_path"),
-        ("_derive_next_action calls NextActionInput",
-         "_derive_next_action", "NextActionInput"),
-        ("_derive_run_quality_verdict calls _uma_state_is_critical_or_emergency",
-         "_derive_run_quality_verdict", "_uma_state_is_critical_or_emergency"),
-        ("_derive_run_quality_verdict calls _is_active_domain_query",
-         "_derive_run_quality_verdict", "_is_active_domain_query"),
+        ("_derive_live_kpi calls _derive_next_action", "_derive_live_kpi", "_derive_next_action"),
+        ("_derive_live_kpi calls _is_active_domain_query", "_derive_live_kpi", "_is_active_domain_query"),
+        ("_derive_live_kpi calls _has_terminal_source_outcomes", "_derive_live_kpi", "_has_terminal_source_outcomes"),
+        ("_derive_live_kpi calls _has_scheduler_exit_path", "_derive_live_kpi", "_has_scheduler_exit_path"),
+        ("_derive_next_action calls NextActionInput", "_derive_next_action", "NextActionInput"),
+        (
+            "_derive_run_quality_verdict calls _uma_state_is_critical_or_emergency",
+            "_derive_run_quality_verdict",
+            "_uma_state_is_critical_or_emergency",
+        ),
+        (
+            "_derive_run_quality_verdict calls _is_active_domain_query",
+            "_derive_run_quality_verdict",
+            "_is_active_domain_query",
+        ),
     ]
     for desc, caller, callee in checks:
         helpers = specs.get(caller, {}).get("called_helpers", [])
@@ -240,7 +243,9 @@ def main() -> int:
     print("\nScript sanity:")
     result = subprocess.run(
         [sys.executable, str(TOOLS_INDEX)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         cwd="/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
     )
     if result.returncode == 0:

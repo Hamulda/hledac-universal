@@ -14,9 +14,7 @@ References:
     Used in OSINT hypothesis confidence fusion (sprint-side uncertainty).
 """
 
-
 from dataclasses import dataclass, field
-from _core import aclose
 
 
 @dataclass(slots=True)

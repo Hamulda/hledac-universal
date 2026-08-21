@@ -34,7 +34,6 @@ FACT: Module was referenced but never existed → all 5 services silently None.
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -44,8 +43,8 @@ if TYPE_CHECKING:
     # not via these TYPE_CHECKING imports. This prevents ImportError at
     # runtime when optional dependencies are not installed.
     from brain.deephermes3_engine import DeepHermes3Engine as DeepHermes3EngineHint
-    from runtime.sidecar_orchestrator import SidecarOrchestrator as SidecarOrchestratorHint
     from runtime.resource_governor import M1ResourceGovernor as M1ResourceGovernorHint
+    from runtime.sidecar_orchestrator import SidecarOrchestrator as SidecarOrchestratorHint
 else:
     # Module-level None defaults - loaded on-demand via factory functions
     DeepHermes3EngineHint: Any = None
@@ -142,12 +141,8 @@ def _lazy_import_class(
             hint = f"\n  Install with: {install_hint}"
 
         raise ImportError(
-            f"Failed to lazy-load {class_name} from {module_path}. "
-            f"Original error: {error_msg}.{hint}"
+            f"Failed to lazy-load {class_name} from {module_path}. Original error: {error_msg}.{hint}"
         ) from exc
-
-
-# ─── Service Factory Functions ────────────────────────────────────────────────
 
 
 def get_DuckDBShadowStore() -> type:
@@ -269,9 +264,6 @@ def get_SidecarOrchestrator() -> type:
     )
 
 
-# ─── Diagnostic Helpers ──────────────────────────────────────────────────────
-
-
 def get_all_service_status() -> dict[str, LazyServiceInfo]:
     """
     Check availability of all 5 core services WITHOUT triggering full import.
@@ -301,7 +293,6 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
     for name, module_path, class_name in services:
         cache_key = f"{module_path}:{class_name}"
 
-        # Check cache first
         if cache_key in _CACHED_CLASSES:
             cls = _CACHED_CLASSES[cache_key]
             results[name] = LazyServiceInfo(
@@ -309,7 +300,7 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 available=cls is not None,
                 class_path=f"{module_path}.{class_name}",
                 error=_FAILED_IMPORTS.get(cache_key),
-    )
+            )
             continue
 
         # Check if module spec exists (fast, no import)
@@ -320,7 +311,7 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 available=False,
                 class_path=f"{module_path}.{class_name}",
                 error=f"Module {module_path!r} not found in sys.path",
-    )
+            )
             _CACHED_CLASSES[cache_key] = None
             _FAILED_IMPORTS[cache_key] = f"Module {module_path!r} not found"
             continue
@@ -332,21 +323,16 @@ def get_all_service_status() -> dict[str, LazyServiceInfo]:
                 name=name,
                 available=True,
                 class_path=f"{module_path}.{class_name}",
-    )
+            )
         except ImportError as exc:
             results[name] = LazyServiceInfo(
                 name=name,
                 available=False,
                 class_path=f"{module_path}.{class_name}",
                 error=str(exc),
-    )
+            )
 
     return results
-
-
-# ─── PEP 810 Module-Level __getattr__ ────────────────────────────────────────
-# Enables: from _lazy_imports import get_DuckDBShadowStore
-# without triggering import until the function is actually called.
 
 
 def __getattr__(name: str) -> Any:

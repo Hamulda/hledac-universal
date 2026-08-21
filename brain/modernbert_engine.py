@@ -20,30 +20,35 @@ ENVIRONMENT REQUIREMENT: Must run via `uv run python` to use the correct
 .venv interpreter with mlx-embeddings installed. Direct `python3` may use
 system interpreter lacking mlx-embeddings.
 """
+
 import asyncio
 import logging
 import sys
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
+
 import numpy as np
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
 MODERNBERT_AVAILABLE = False
 _mlx_embeddings_ok = False
 try:
     import mlx.core as mx
+
     _ = mx.metal.is_available()
     _mlx_embeddings_ok = True
 except Exception:
     _mlx_embeddings_ok = False
 
+
 class ModernBertConfig(Struct):
     """Configuration for ModernBertEngine."""
-    mlx_model: str = 'nomic-ai/modernbert-embed-base'
+
+    mlx_model: str = "nomic-ai/modernbert-embed-base"
     summary_top_k: int = 5
     summary_max_chars: int = 3000
     embed_batch_size: int = 8
+
 
 class ModernBertEngine:
     """
@@ -52,10 +57,11 @@ class ModernBertEngine:
     Replaces generate_report() for modernbert-routed P14 calls.
     Fail-soft: returns empty string if MLX backend is unavailable.
     """
-    __slots__ = ('config', '_manager', '_loaded')
+
+    __slots__ = ("config", "_manager", "_loaded")
     EMBEDDING_DIM = 768
 
-    def __init__(self, config: ModernBertConfig | None=None):
+    def __init__(self, config: ModernBertConfig | None = None) -> None:
         self.config = config or ModernBertConfig()
         self._manager = None
         self._loaded = False
@@ -71,20 +77,25 @@ class ModernBertEngine:
         if self._loaded:
             return True
         if not _mlx_embeddings_ok:
-            logger.error(f"[ModernBertEngine] MLX backend unavailable.\n  Likely cause: running via `python3` instead of `uv run python`.\n  sys.executable: {sys.executable!r}\n  Fix: use `uv run python -m hledac.universal ...`\n  Verify: `uv run python -c 'import mlx.core; print(mlx.core.__version__)'`")
+            logger.error(
+                f"[ModernBertEngine] MLX backend unavailable.\n  Likely cause: running via `python3` instead of `uv run python`.\n  sys.executable: {sys.executable!r}\n  Fix: use `uv run python -m hledac.universal ...`\n  Verify: `uv run python -c 'import mlx.core; print(mlx.core.__version__)'`"
+            )
             MODERNBERT_AVAILABLE = False
             return False
         try:
             from hledac.universal._core.mlx_embeddings import get_mlx_embedder
+
             self._manager = get_mlx_embedder()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)
             self._loaded = True
             MODERNBERT_AVAILABLE = True
-            logger.info('[ModernBertEngine] MLX backend loaded')
+            logger.info("[ModernBertEngine] MLX backend loaded")
             return True
         except Exception as e:
-            logger.error(f"""[ModernBertEngine] MLX load failed: {e}\n  sys.executable: {sys.executable!r}\n  Verify mlx-embeddings: `uv run python -c 'from mlx_embeddings import load; print("OK")'`""")
+            logger.error(
+                f"""[ModernBertEngine] MLX load failed: {e}\n  sys.executable: {sys.executable!r}\n  Verify mlx-embeddings: `uv run python -c 'from mlx_embeddings import load; print("OK")'`"""
+            )
             self._loaded = False
             return False
 
@@ -104,14 +115,14 @@ class ModernBertEngine:
         if not self._loaded:
             ok = await self.load()
             if not ok:
-                return ''
+                return ""
         if not context_items:
-            return ''
+            return ""
         try:
             return self._extractive_summary(context_items)
         except Exception as e:
-            logger.error(f'[ModernBertEngine] summarize failed: {e}')
-            return ''
+            logger.error(f"[ModernBertEngine] summarize failed: {e}")
+            return ""
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         """
@@ -126,7 +137,7 @@ class ModernBertEngine:
         if not self._loaded:
             ok = await self.load()
             if not ok:
-                raise RuntimeError('ModernBertEngine: MLX backend unavailable')
+                raise RuntimeError("ModernBertEngine: MLX backend unavailable")
         assert self._manager is not None
         return self._manager.encode(texts)
 
@@ -140,22 +151,26 @@ class ModernBertEngine:
         if _mlx_embeddings_ok:
             try:
                 import mlx.core as mx
+
                 mx.eval([])
                 import gc
+
                 gc.collect()
-                if hasattr(mx, 'clear_cache'):
+                if hasattr(mx, "clear_cache"):
                     mx.clear_cache()
-                elif hasattr(mx.metal, 'clear_cache'):
+                elif hasattr(mx.metal, "clear_cache"):
                     mx.metal.clear_cache()
             except Exception:  # noqa: BLE001
                 pass
-        logger.info('[ModernBertEngine] Unloaded')
+        logger.info("[ModernBertEngine] Unloaded")
 
     async def is_ready(self) -> bool:
         """True if a backend is loaded."""
         return self._loaded
 
-    async def score_pivots_by_similarity(self, pivot_candidates: list[dict], finding_texts: list[str], top_k: int=10) -> list[tuple[dict, float]]:
+    async def score_pivots_by_similarity(
+        self, pivot_candidates: list[dict], finding_texts: list[str], top_k: int = 10
+    ) -> list[tuple[dict, float]]:
         """
         Rank pivot candidates by cosine similarity to finding embeddings.
 
@@ -178,7 +193,7 @@ class ModernBertEngine:
             f_norm = finding_centroid / (np.linalg.norm(finding_centroid, axis=1, keepdims=True) + 1e-08)
             pivot_texts = []
             for p in pivot_candidates:
-                txt = p.get('query') or p.get('pivot_type') or p.get('reason') or str(p)
+                txt = p.get("query") or p.get("pivot_type") or p.get("reason") or str(p)
                 pivot_texts.append(str(txt)[:200])
             if not pivot_texts:
                 return []
@@ -190,7 +205,7 @@ class ModernBertEngine:
             scored = sorted(zip(pivot_candidates, sims, strict=True), key=lambda x: x[1], reverse=True)
             return scored[:top_k]
         except Exception as e:
-            logger.debug('[ModernBertEngine] score_pivots_by_similarity failed: %s', e)
+            logger.debug("[ModernBertEngine] score_pivots_by_similarity failed: %s", e)
             return []
 
     def _strip_html_for_embedding(self, text: str) -> str:
@@ -201,29 +216,31 @@ class ModernBertEngine:
         Control characters are also stripped to prevent poisoning.
         """
         import re
+
         try:
             from selectolax.parser import HTMLParser
+
             tree = HTMLParser(text)
-            for tag in ('script', 'style', 'noscript', 'embed', 'object', 'iframe', 'svg', 'math'):
+            for tag in ("script", "style", "noscript", "embed", "object", "iframe", "svg", "math"):
                 for node in tree.css(tag):
                     node.decompose()
             text = tree.text()
         except Exception:
-            text = re.sub(r'<[^>]+>', '', text)
+            text = re.sub(r"<[^>]+>", "", text)
         # Remove C0/C1 control chars (prompt injection vector)
-        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
+        text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text)
         # Normalize whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
+        text = re.sub(r"\s+", " ", text).strip()
         return text
 
     def _extractive_summary(self, items: list[str]) -> str:
         """
-        Select top-k centroid items and concatenate as summary.
+                Select top-k centroid items and concatenate as summary.
 
-        Uses cosine similarity: each item's score = mean similarity to all others.
-        Top-k by score are joined with "
----
-" separator.
+                Uses cosine similarity: each item's score = mean similarity to all others.
+                Top-k by score are joined with "
+        ---
+        " separator.
         """
         top_k = self.config.summary_top_k
         max_chars = self.config.summary_max_chars
@@ -237,7 +254,7 @@ class ModernBertEngine:
         else:
             embeddings = self._embed_sync(truncated)
             if embeddings.shape[0] == 0:
-                return '\n'.join(truncated[:top_k])
+                return "\n".join(truncated[:top_k])
             scores = embeddings @ embeddings.T
             n = scores.shape[0]
             mask = np.ones((n, n)) - np.eye(n)
@@ -254,10 +271,10 @@ class ModernBertEngine:
                 break
             summary_parts.append(part)
             total += len(part) + 5
-        return '\n---\n'.join(summary_parts)
+        return "\n---\n".join(summary_parts)
 
     def _embed_sync(self, texts: list[str]) -> np.ndarray:
         """Synchronous embed via MLX backend."""
         if self._manager is None:
-            raise RuntimeError('ModernBertEngine: MLX backend not loaded')
+            raise RuntimeError("ModernBertEngine: MLX backend not loaded")
         return self._manager.encode(texts)

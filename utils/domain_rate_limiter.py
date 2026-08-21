@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
+
 def _gauss(mu: float, sigma: float) -> float:
     """Box-Muller transform for Gaussian random numbers using crypto-safe RNG."""
     u1 = _RNG.random()
@@ -47,12 +48,10 @@ def _gauss(mu: float, sigma: float) -> float:
     z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
     return mu + sigma * z0
 
+
 # Default rates per domain category
 _DEFAULT_RPS: float = 5.0
 _DEFAULT_BURST: int = 10
-
-
-# --- TokenBucket (lock-free fast path) ---------------------------------------
 
 
 class _TokenBucket:
@@ -97,9 +96,6 @@ class _TokenBucket:
     def consume(self) -> None:
         """Consume one token (caller guarantees token was available)."""
         self.tokens -= 1.0
-
-
-# --- DomainRateLimiter --------------------------------------------------------
 
 
 class DomainRateLimiter:
@@ -151,8 +147,6 @@ class DomainRateLimiter:
         self._buckets: dict[str, _TokenBucket] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
-
-    # --- Public API ---
 
     def acquire(self, url: str) -> float:
         """
@@ -209,9 +203,6 @@ class DomainRateLimiter:
 
     def close(self) -> None:
         """No-op for base class. Subclass (LMDBDomainRateLimiter) overrides for persistence."""
-        pass
-
-    # --- Config helpers ---
 
     def set_rate(self, url: str, rps: float) -> None:
         """Dynamically change the rate for a specific domain."""
@@ -228,8 +219,6 @@ class DomainRateLimiter:
     @property
     def default_rps(self) -> float:
         return self._default_rps
-
-    # --- Internal ---
 
     def _parse_host(self, url: str) -> str:
         """Extract netloc from URL for bucketing."""
@@ -264,9 +253,6 @@ class DomainRateLimiter:
         return max(0.0, wait * (1.0 + jitter))
 
 
-# --- LMDB-backed variant (optional persistence) --------------------------------
-
-
 try:
     import lmdb
     import orjson
@@ -276,7 +262,7 @@ except ImportError:  # pragma: no cover
     _LMDB_AVAILABLE = False
 
 import typing  # noqa: E402
-from _core import aclose
+
 if typing.TYPE_CHECKING:
     import lmdb
     import orjson
@@ -306,7 +292,7 @@ class LMDBDomainRateLimiter(DomainRateLimiter):
         jitter_sigma: float = 0.15,
     ) -> None:
         super().__init__(default_rps=default_rps, default_burst=default_burst, jitter_sigma=jitter_sigma)
-        self._lmdb_env: "lmdb.Environment" | None = None
+        self._lmdb_env: lmdb.Environment | None = None
         self._lmdb_path = lmdb_path
         self._map_size = map_size
 
@@ -317,8 +303,6 @@ class LMDBDomainRateLimiter(DomainRateLimiter):
             except Exception as exc:  # noqa: BLE001
                 logger.debug("[DomainRateLimiter] LMDB open failed (non-fatal): %s", exc)
                 self._lmdb_env = None
-
-    # --- Persistence ---
 
     def _load_from_lmdb(self) -> None:
         """Load persisted bucket state from LMDB on startup."""
@@ -345,12 +329,14 @@ class LMDBDomainRateLimiter(DomainRateLimiter):
         if not self._lmdb_env:
             return
         try:
-            data = orjson.dumps({  # type: ignore[union-attr]
-                "rate": bucket.rate,
-                "capacity": bucket.capacity,
-                "tokens": bucket.tokens,
-                "last_refill": bucket.last_refill,
-            })
+            data = orjson.dumps(
+                {  # type: ignore[union-attr]
+                    "rate": bucket.rate,
+                    "capacity": bucket.capacity,
+                    "tokens": bucket.tokens,
+                    "last_refill": bucket.last_refill,
+                }
+            )
             with self._lmdb_env.begin(write=True) as txn:  # type: ignore[union-attr]
                 txn.put(host.encode("utf-8"), data)  # type: ignore[union-attr]
         except Exception:  # noqa: BLE001
@@ -363,17 +349,17 @@ class LMDBDomainRateLimiter(DomainRateLimiter):
         try:
             with self._lmdb_env.begin(write=True) as txn:  # type: ignore[union-attr]
                 for host, bucket in self._buckets.items():
-                    data = orjson.dumps({  # type: ignore[union-attr]
-                        "rate": bucket.rate,
-                        "capacity": bucket.capacity,
-                        "tokens": bucket.tokens,
-                        "last_refill": bucket.last_refill,
-                    })
+                    data = orjson.dumps(
+                        {  # type: ignore[union-attr]
+                            "rate": bucket.rate,
+                            "capacity": bucket.capacity,
+                            "tokens": bucket.tokens,
+                            "last_refill": bucket.last_refill,
+                        }
+                    )
                     txn.put(host.encode("utf-8"), data)  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001
             logger.debug("[DomainRateLimiter] LMDB persist failed (non-fatal): %s", exc)
-
-    # --- Override acquire_async to persist on state change ---
 
     async def acquire_async(self, url: str) -> None:
         """Async acquire with LMDB persistence."""

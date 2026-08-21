@@ -7,8 +7,6 @@ Advanced research capabilities including:
 - Content Extraction: Harvest structured data from HTML
 """
 
-
-
 from .path_discovery import (
     DatePathPattern,
     FilePathPattern,

@@ -3,7 +3,6 @@
 
 Canonical timestamp format: (entity_value, ioc_type, protocol, timestamp_ns: int64,
 
-
                              event_type, source_evidence_url).
 Stored in DuckDB time_series_spliced table with
 PRIMARY KEY(entity_value, ioc_type, protocol, timestamp_ns).
@@ -27,11 +26,10 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 from collections.abc import Iterable
-from _core import aclose
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..knowledge.duckdb_store import DuckDBShadowStore
@@ -65,6 +63,7 @@ class TimelineEvent:
         corroborating_sources: List of additional source URLs confirming this event
         raw_timestamp: Original timestamp string from the source (for debugging)
     """
+
     entity_value: str
     ioc_type: str
     protocol: str
@@ -79,9 +78,9 @@ class TimelineEvent:
         """Human-readable ISO 8601 timestamp."""
         ts_s = self.timestamp_ns / _NS_PER_SECOND
         try:
-            dt = datetime.fromtimestamp(ts_s, tz=timezone.utc)
+            dt = datetime.fromtimestamp(ts_s, tz=UTC)
             return dt.isoformat()
-        except (OSError, OverflowError, ValueError):
+        except OSError, OverflowError, ValueError:
             # Edge case: timestamps before 1970 or after 3001
             # Fall back to manual ISO formatting
             if ts_s < 0:
@@ -91,10 +90,11 @@ class TimelineEvent:
                 sign = ""
             # Use UTC epoch arithmetic
             import datetime as _dt
+
             whole_sec = int(ts_s)
             frac_ns = int((ts_s - whole_sec) * _NS_PER_SECOND)
             td = _dt.timedelta(seconds=whole_sec, microseconds=frac_ns // 1000)
-            dt = _dt.datetime(1970, 1, 1, tzinfo=timezone.utc) + td
+            dt = _dt.datetime(1970, 1, 1, tzinfo=_dt.UTC) + td
             # Adjust sign
             result = dt.isoformat()
             return f"-{result}" if sign else result
@@ -147,29 +147,33 @@ class CtLogAdapter:
         nb = ct_entry.get("not_before")
         if nb is not None:
             ns = self._to_ns(nb)
-            events.append(TimelineEvent(
-                entity_value=domain,
-                ioc_type="domain",
-                protocol="ct_log",
-                timestamp_ns=ns,
-                event_type="certificate_valid_from",
-                source_evidence_url=source_url,
-                raw_timestamp=str(nb),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=domain,
+                    ioc_type="domain",
+                    protocol="ct_log",
+                    timestamp_ns=ns,
+                    event_type="certificate_valid_from",
+                    source_evidence_url=source_url,
+                    raw_timestamp=str(nb),
+                )
+            )
 
         # not_after → certificate_expires
         na = ct_entry.get("not_after")
         if na is not None:
             ns = self._to_ns(na)
-            events.append(TimelineEvent(
-                entity_value=domain,
-                ioc_type="domain",
-                protocol="ct_log",
-                timestamp_ns=ns,
-                event_type="certificate_expires",
-                source_evidence_url=source_url,
-                raw_timestamp=str(na),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=domain,
+                    ioc_type="domain",
+                    protocol="ct_log",
+                    timestamp_ns=ns,
+                    event_type="certificate_expires",
+                    source_evidence_url=source_url,
+                    raw_timestamp=str(na),
+                )
+            )
 
         return events
 
@@ -218,28 +222,32 @@ class GitCommitAdapter:
         # author timestamp
         at = git_entry.get("author_time")
         if at is not None:
-            events.append(TimelineEvent(
-                entity_value=git_entry.get("author_email", repo_url),
-                ioc_type="email",
-                protocol="git",
-                timestamp_ns=self._to_ns(at),
-                event_type="commit_authored",
-                source_evidence_url=source_base,
-                raw_timestamp=str(at),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=git_entry.get("author_email", repo_url),
+                    ioc_type="email",
+                    protocol="git",
+                    timestamp_ns=self._to_ns(at),
+                    event_type="commit_authored",
+                    source_evidence_url=source_base,
+                    raw_timestamp=str(at),
+                )
+            )
 
         # committer timestamp
         ct = git_entry.get("committer_time")
         if ct is not None:
-            events.append(TimelineEvent(
-                entity_value=git_entry.get("committer_email", repo_url),
-                ioc_type="email",
-                protocol="git",
-                timestamp_ns=self._to_ns(ct),
-                event_type="commit_committed",
-                source_evidence_url=source_base,
-                raw_timestamp=str(ct),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=git_entry.get("committer_email", repo_url),
+                    ioc_type="email",
+                    protocol="git",
+                    timestamp_ns=self._to_ns(ct),
+                    event_type="commit_committed",
+                    source_evidence_url=source_base,
+                    raw_timestamp=str(ct),
+                )
+            )
 
         return events
 
@@ -275,15 +283,17 @@ class TelegramAdapter:
         if date_ts is None:
             return []
 
-        return [TimelineEvent(
-            entity_value=tg_entry.get("channel", "unknown"),
-            ioc_type="channel",
-            protocol="telegram",
-            timestamp_ns=self._to_ns(date_ts),
-            event_type="message_posted",
-            source_evidence_url=tg_entry.get("source_url", "telegram:unknown"),
-            raw_timestamp=str(date_ts),
-        )]
+        return [
+            TimelineEvent(
+                entity_value=tg_entry.get("channel", "unknown"),
+                ioc_type="channel",
+                protocol="telegram",
+                timestamp_ns=self._to_ns(date_ts),
+                event_type="message_posted",
+                source_evidence_url=tg_entry.get("source_url", "telegram:unknown"),
+                raw_timestamp=str(date_ts),
+            )
+        ]
 
     @staticmethod
     def _to_ns(ts: int | float | str) -> int:
@@ -320,27 +330,31 @@ class BlockchainAdapter:
         # block timestamp → tx_confirmed
         ts = bc_entry.get("block_timestamp")
         if ts is not None:
-            events.append(TimelineEvent(
-                entity_value=address,
-                ioc_type=bc_entry.get("ioc_type", "address"),
-                protocol="blockchain",
-                timestamp_ns=self._to_ns(ts),
-                event_type="tx_confirmed",
-                source_evidence_url=f"{source_url}#tx={bc_entry.get('tx_hash', '')}",
-                raw_timestamp=str(ts),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=address,
+                    ioc_type=bc_entry.get("ioc_type", "address"),
+                    protocol="blockchain",
+                    timestamp_ns=self._to_ns(ts),
+                    event_type="tx_confirmed",
+                    source_evidence_url=f"{source_url}#tx={bc_entry.get('tx_hash', '')}",
+                    raw_timestamp=str(ts),
+                )
+            )
 
         # first_seen flag
         if bc_entry.get("is_first_seen"):
-            events.append(TimelineEvent(
-                entity_value=address,
-                ioc_type=bc_entry.get("ioc_type", "address"),
-                protocol="blockchain",
-                timestamp_ns=self._to_ns(ts) if ts else int(time.time() * _NS_PER_SECOND),
-                event_type="address_first_seen",
-                source_evidence_url=source_url,
-                raw_timestamp=str(ts) if ts else None,
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=address,
+                    ioc_type=bc_entry.get("ioc_type", "address"),
+                    protocol="blockchain",
+                    timestamp_ns=self._to_ns(ts) if ts else int(time.time() * _NS_PER_SECOND),
+                    event_type="address_first_seen",
+                    source_evidence_url=source_url,
+                    raw_timestamp=str(ts) if ts else None,
+                )
+            )
 
         return events
 
@@ -357,10 +371,20 @@ class BlockchainAdapter:
 _HTTP_DATE_RE = re.compile(
     r"(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat),\s+(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\s*GMT",
     re.IGNORECASE,
-    )
+)
 _MONTH_MAP = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
 }
 
 
@@ -371,7 +395,7 @@ def _parse_http_date(date_str: str) -> datetime | None:
         return None
     day, month, year, h, mi, s = int(m[1]), _MONTH_MAP[m[2].lower()], int(m[3]), int(m[4]), int(m[5]), int(m[6])
     ms = int(m[7].ljust(3, "0")) if m[7] else 0
-    return datetime(year, month, day, h, mi, s, ms, tzinfo=timezone.utc)
+    return datetime(year, month, day, h, mi, s, ms, tzinfo=UTC)
 
 
 class HttpAdapter:
@@ -398,15 +422,17 @@ class HttpAdapter:
             return []
 
         ns = self._to_ns(lm)
-        return [TimelineEvent(
-            entity_value=http_entry.get("url", ""),
-            ioc_type="url",
-            protocol="http",
-            timestamp_ns=ns,
-            event_type="resource_modified",
-            source_evidence_url=http_entry.get("source_url", http_entry.get("url", "")),
-            raw_timestamp=str(lm),
-        )]
+        return [
+            TimelineEvent(
+                entity_value=http_entry.get("url", ""),
+                ioc_type="url",
+                protocol="http",
+                timestamp_ns=ns,
+                event_type="resource_modified",
+                source_evidence_url=http_entry.get("source_url", http_entry.get("url", "")),
+                raw_timestamp=str(lm),
+            )
+        ]
 
     @staticmethod
     def _to_ns(ts: int | float | str) -> int:
@@ -448,15 +474,17 @@ class WarcAdapter:
         if wd is None:
             return []
 
-        return [TimelineEvent(
-            entity_value=warc_entry.get("url", ""),
-            ioc_type="url",
-            protocol="warc",
-            timestamp_ns=self._to_ns(wd),
-            event_type="resource_archived",
-            source_evidence_url=warc_entry.get("source_url", "warc:unknown"),
-            raw_timestamp=str(wd),
-        )]
+        return [
+            TimelineEvent(
+                entity_value=warc_entry.get("url", ""),
+                ioc_type="url",
+                protocol="warc",
+                timestamp_ns=self._to_ns(wd),
+                event_type="resource_archived",
+                source_evidence_url=warc_entry.get("source_url", "warc:unknown"),
+                raw_timestamp=str(wd),
+            )
+        ]
 
     @staticmethod
     def _to_ns(ts: str | int | float) -> int:
@@ -495,27 +523,31 @@ class PassiveDnsAdapter:
 
         fs = pdns_entry.get("first_seen")
         if fs is not None:
-            events.append(TimelineEvent(
-                entity_value=domain,
-                ioc_type=ioc_type,
-                protocol="passive_dns",
-                timestamp_ns=self._to_ns(fs),
-                event_type="dns_first_seen",
-                source_evidence_url=source_url,
-                raw_timestamp=str(fs),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=domain,
+                    ioc_type=ioc_type,
+                    protocol="passive_dns",
+                    timestamp_ns=self._to_ns(fs),
+                    event_type="dns_first_seen",
+                    source_evidence_url=source_url,
+                    raw_timestamp=str(fs),
+                )
+            )
 
         ls = pdns_entry.get("last_seen")
         if ls is not None:
-            events.append(TimelineEvent(
-                entity_value=domain,
-                ioc_type=ioc_type,
-                protocol="passive_dns",
-                timestamp_ns=self._to_ns(ls),
-                event_type="dns_last_seen",
-                source_evidence_url=source_url,
-                raw_timestamp=str(ls),
-            ))
+            events.append(
+                TimelineEvent(
+                    entity_value=domain,
+                    ioc_type=ioc_type,
+                    protocol="passive_dns",
+                    timestamp_ns=self._to_ns(ls),
+                    event_type="dns_last_seen",
+                    source_evidence_url=source_url,
+                    raw_timestamp=str(ls),
+                )
+            )
 
         return events
 
@@ -562,7 +594,7 @@ def to_timestamp_ns(dt: datetime | int | float | str | None) -> int | None:
 
 def from_timestamp_ns(ns: int) -> datetime:
     """Convert int64 nanoseconds to UTC datetime."""
-    return datetime.fromtimestamp(ns / _NS_PER_SECOND, tz=timezone.utc)
+    return datetime.fromtimestamp(ns / _NS_PER_SECOND, tz=UTC)
 
 
 # ----------------------------------------------------------------------------- #
@@ -601,7 +633,7 @@ class TimeSeriesSplicer:
 
     def __init__(
         self,
-        duckdb_store: "DuckDBShadowStore | None" = None,
+        duckdb_store: DuckDBShadowStore | None = None,
         *,
         max_concurrent_ingests: int = 4,
     ) -> None:
@@ -612,7 +644,7 @@ class TimeSeriesSplicer:
                          If None, uses global duckdb store from db.py.
             max_concurrent_ingests: Max concurrent ingest operations (M1 8GB safe).
         """
-        self._duckdb_store: "DuckDBShadowStore | None" = duckdb_store
+        self._duckdb_store: DuckDBShadowStore | None = duckdb_store
         self._ingest_semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent_ingests)
         self._log: logging.Logger = logging.getLogger(f"{__name__}.TimeSeriesSplicer")
         self._initialized: bool = False
@@ -668,12 +700,13 @@ class TimeSeriesSplicer:
         except Exception as exc:
             self._log.warning("[TIMESERIES] Migration error: %s", exc)
 
-    def _get_store(self) -> "DuckDBShadowStore | None":
+    def _get_store(self) -> DuckDBShadowStore | None:
         """Get the DuckDB store, lazily importing if needed."""
         if self._duckdb_store is not None:
             return self._duckdb_store
         try:
             from ..knowledge.db import _get_duckdb_store
+
             store = _get_duckdb_store()
             self._duckdb_store = store
             return store
@@ -741,20 +774,21 @@ class TimeSeriesSplicer:
             self._log.debug("[TIMESERIES] No persistent DuckDB connection available")
             return 0
 
-        # Build row tuples for executemany
         rows: list[tuple] = []
         for ev in events:
-            rows.append((
-                ev.entity_value,
-                ev.ioc_type,
-                ev.protocol,
-                ev.timestamp_ns,
-                ev.event_type,
-                ev.source_evidence_url,
-                list(ev.corroborating_sources),
-                ev.raw_timestamp,
-                sprint_id,
-            ))
+            rows.append(
+                (
+                    ev.entity_value,
+                    ev.ioc_type,
+                    ev.protocol,
+                    ev.timestamp_ns,
+                    ev.event_type,
+                    ev.source_evidence_url,
+                    list(ev.corroborating_sources),
+                    ev.raw_timestamp,
+                    sprint_id,
+                )
+            )
 
         try:
             conn.executemany(
@@ -768,7 +802,7 @@ class TimeSeriesSplicer:
                 "COALESCE(time_series_spliced.corroborating_sources, []), "
                 "excluded.corroborating_sources)",
                 rows,
-    )
+            )
             return n
         except Exception as exc:
             self._log.debug("[TIMESERIES] Batch insert failed, falling back to per-row: %s", exc)
@@ -790,7 +824,7 @@ class TimeSeriesSplicer:
                         "NULLIF(time_series_spliced.source_evidence_url, ''), "
                         "excluded.source_evidence_url)",
                         row,
-    )
+                    )
                     inserted += 1
                 except Exception as perr:
                     self._log.debug("[TIMESERIES] Row insert failed: %s", perr)
@@ -868,7 +902,7 @@ class TimeSeriesSplicer:
                     source_evidence_url=r[5],
                     corroborating_sources=tuple(r[6]) if r[6] else (),
                     raw_timestamp=r[7],
-    )
+                )
                 for r in rows
             ]
         except Exception as exc:
@@ -950,6 +984,7 @@ class TimeSeriesSplicer:
 
         # Binary search for near-matches
         import bisect
+
         b_times = [ev.timestamp_ns for ev in tl_b]
 
         correlations: list[dict[str, Any]] = []
@@ -959,29 +994,28 @@ class TimeSeriesSplicer:
             for i in range(lo, hi):
                 ev_b = tl_b[i]
                 delta = abs(ev_a.timestamp_ns - ev_b.timestamp_ns)
-                correlations.append({
-                    "entity_a": entity_a,
-                    "entity_b": entity_b,
-                    "event_a": {
-                        "protocol": ev_a.protocol,
-                        "event_type": ev_a.event_type,
-                        "timestamp_ns": ev_a.timestamp_ns,
-                        "timestamp_iso": ev_a.timestamp_iso,
-                    },
-                    "event_b": {
-                        "protocol": ev_b.protocol,
-                        "event_type": ev_b.event_type,
-                        "timestamp_ns": ev_b.timestamp_ns,
-                        "timestamp_iso": ev_b.timestamp_iso,
-                    },
-                    "delta_ns": delta,
-                    "confidence": max(0.0, 1.0 - (delta / tolerance_ns)),
-                })
+                correlations.append(
+                    {
+                        "entity_a": entity_a,
+                        "entity_b": entity_b,
+                        "event_a": {
+                            "protocol": ev_a.protocol,
+                            "event_type": ev_a.event_type,
+                            "timestamp_ns": ev_a.timestamp_ns,
+                            "timestamp_iso": ev_a.timestamp_iso,
+                        },
+                        "event_b": {
+                            "protocol": ev_b.protocol,
+                            "event_type": ev_b.event_type,
+                            "timestamp_ns": ev_b.timestamp_ns,
+                            "timestamp_iso": ev_b.timestamp_iso,
+                        },
+                        "delta_ns": delta,
+                        "confidence": max(0.0, 1.0 - (delta / tolerance_ns)),
+                    }
+                )
         return correlations
 
-    # ----------------------------------------------------------------- #
-    # Batch ingest helpers (used by protocol lanes)
-    # ----------------------------------------------------------------- #
     async def ingest_ct(self, ct_entries: Iterable[dict[str, Any]]) -> int:
         """Ingest Certificate Transparency log entries.
 
@@ -1054,7 +1088,7 @@ _TSS_INSTANCE: TimeSeriesSplicer | None = None
 
 
 def get_time_series_splicer(
-    duckdb_store: "DuckDBShadowStore | None" = None,
+    duckdb_store: DuckDBShadowStore | None = None,
 ) -> TimeSeriesSplicer:
     """Get or create the global TimeSeriesSplicer singleton.
 
@@ -1084,19 +1118,49 @@ class _NoOpTimeSeriesSplicer:
 
     All methods return empty/zero results. Zero overhead. No DuckDB connection.
     """
+
     __slots__ = ()
 
-    async def ingest(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def export_timeline(self, *args: Any, **kwargs: Any) -> list: return []
-    async def get_entity_timeline_summary(self, *args: Any, **kwargs: Any) -> dict: return {"entity_value": "", "total_events": 0, "earliest_event": None, "latest_event": None, "protocol_counts": {}, "event_type_counts": {}, "lifespan_ns": None}
-    async def correlate_events(self, *args: Any, **kwargs: Any) -> list: return []
-    async def ingest_ct(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_git(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_telegram(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_blockchain(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_http(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_warc(self, *args: Any, **kwargs: Any) -> int: return 0
-    async def ingest_passive_dns(self, *args: Any, **kwargs: Any) -> int: return 0
+    async def ingest(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def export_timeline(self, *args: Any, **kwargs: Any) -> list:
+        return []
+
+    async def get_entity_timeline_summary(self, *args: Any, **kwargs: Any) -> dict:
+        return {
+            "entity_value": "",
+            "total_events": 0,
+            "earliest_event": None,
+            "latest_event": None,
+            "protocol_counts": {},
+            "event_type_counts": {},
+            "lifespan_ns": None,
+        }
+
+    async def correlate_events(self, *args: Any, **kwargs: Any) -> list:
+        return []
+
+    async def ingest_ct(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_git(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_telegram(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_blockchain(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_http(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_warc(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    async def ingest_passive_dns(self, *args: Any, **kwargs: Any) -> int:
+        return 0
 
 
 # ----------------------------------------------------------------------------- #

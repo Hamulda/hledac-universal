@@ -15,25 +15,20 @@ Rozděleno z původního stealth_crawler.py (ISSUE-028).
 
 
 """
+
 from __future__ import annotations
-
-from dataclasses import dataclass, field
-import msgspec
-from datetime import datetime, UTC
-
-from compat.msgspec_gc_compat import Struct
-from enum import Enum
-from typing import Any
 
 import logging
 import secrets
+from dataclasses import field
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Helper funkce (dříve na úrovni stealth_crawler.py)
-# ---------------------------------------------------------------------------
 
 _CRAWL_BLOOM_KEY = "stealth:crawled_domains"
 
@@ -44,7 +39,6 @@ _CRAWL_BLOOM: Any | None = None
 
 # Bloom filter paths (expanduser paths for portability)
 import os
-from _core import aclose
 
 _CRAWL_BLOOM_PATH_A = "~/.cache/hledac/stealth_crawl_a.mmap"
 _CRAWL_BLOOM_PATH_B = "~/.cache/hledac/stealth_crawl_b.mmap"
@@ -56,8 +50,9 @@ def _get_crawl_bloom():
     global _CRAWL_BLOOM
     if _CRAWL_BLOOM is None:
         try:
-            from rust_extensions import RotatingMmapBloomFilter
             import pathlib
+
+            from rust_extensions import RotatingMmapBloomFilter
 
             path_a = os.path.expanduser(_CRAWL_BLOOM_PATH_A)
             path_b = os.path.expanduser(_CRAWL_BLOOM_PATH_B)
@@ -131,11 +126,6 @@ def get_stealth_headers() -> dict[str, str]:
     }
 
 
-# ---------------------------------------------------------------------------
-# TorProxyManager
-# ---------------------------------------------------------------------------
-
-
 class TorProxyManager:
     """Check if Tor SOCKS proxy is running on port 9050."""
 
@@ -166,11 +156,6 @@ class TorProxyManager:
             cls._cache = False
             cls._cache_time = now
             return False
-
-
-# ---------------------------------------------------------------------------
-# Dataclass/Enum modely
-# ---------------------------------------------------------------------------
 
 
 class ChangeType(Enum):
@@ -361,7 +346,7 @@ class HeaderSpoofer:
         self,
         headers: list[HeaderConfig] | None = None,
         default_profile: str = "chrome120",
-    ):
+    ) -> None:
         self.headers = headers if headers is not None else []
         self.default_profile = default_profile
         self._random = secrets.SystemRandom()
@@ -409,7 +394,6 @@ class HeaderSpoofer:
 
     def rotate(self) -> None:
         """Re-randomize header values from pools (no-op in new model, kept for API compat)."""
-        pass
 
     def get_statistics(self) -> dict[str, Any]:
         """Return header spoofing statistics (API compat for StealthManager)."""

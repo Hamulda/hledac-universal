@@ -1,8 +1,5 @@
-# fetching/_session_mgr.py
 """
 Session Manager for public_fetcher.
-
-
 
 ISSUE-009: Replaces module-level singleton with factory pattern.
 
@@ -19,7 +16,6 @@ Usage:
     # Get default instance (backward compat)
     await session_mgr.get_tor_session()
 
-    # Get isolated instance per task
     mgr = get_session_manager("worker_1")
     await mgr.get_tor_session()
 
@@ -29,24 +25,21 @@ Usage:
 
 import asyncio
 import contextvars
-import httpx
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from _core.locks import LockCategory, register_lock
 
 if TYPE_CHECKING:
     pass
 
-# =============================================================================
-# CONTEXTVAR — Request-scoped telemetry
-# =============================================================================
-
 # F-GLOBAL: Request-scoped telemetry using ContextVar.
 # Each asyncio task gets isolated copy automatically.
 # B039 false positive — dict literal is immutable; ContextVar.get() returns a copy.
 _session_ctx_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(  # noqa: B039
     "_session_telemetry", default={"tor": "unavailable", "i2p": "unavailable"}
-    )
+)
 
 
 def get_telemetry() -> dict[str, str]:
@@ -62,11 +55,6 @@ def update_telemetry(**kwargs) -> None:
 
 # Backward compatibility alias
 set_telemetry = update_telemetry
-
-
-# =============================================================================
-# SESSION MANAGER
-# =============================================================================
 
 
 class _TorCurlCffiWrapper:
@@ -167,10 +155,6 @@ class SessionManager:
         self._locally_created: dict[str, bool] = {"tor": False, "i2p": False}
         self._injected_provider: tuple[httpx.AsyncClient | None, httpx.AsyncClient | None] | None = None
 
-    # ---------------------------------------------------------------------------
-    # Lazy lock helpers (ISSUE-014: asyncio.Lock() at __init__ time fails on macOS)
-    # ---------------------------------------------------------------------------
-
     def _get_tor_lock(self) -> asyncio.Lock:
         """Lazily create Tor session lock in the current event loop."""
         if self._tor_lock is None:
@@ -182,10 +166,6 @@ class SessionManager:
         if self._i2p_lock is None:
             self._i2p_lock = asyncio.Lock()
         return self._i2p_lock
-
-    # ---------------------------------------------------------------------------
-    # Provider injection
-    # ---------------------------------------------------------------------------
 
     def inject_provider(
         self,
@@ -206,20 +186,12 @@ class SessionManager:
     ) -> tuple[httpx.AsyncClient | None, httpx.AsyncClient | None] | None:
         return self._injected_provider
 
-    # ---------------------------------------------------------------------------
-    # Telemetry
-    # ---------------------------------------------------------------------------
-
     def get_telemetry(self) -> dict[str, str]:
         """Return session source telemetry snapshot."""
         return get_telemetry()
 
     def _update_telemetry(self, key: str, value: str) -> None:
         set_telemetry(**{key: value})
-
-    # ---------------------------------------------------------------------------
-    # Tor session
-    # ---------------------------------------------------------------------------
 
     async def get_tor_session(self) -> httpx.AsyncClient | _TorCurlCffiWrapper:
         """Get or create Tor session (lazy, thread-safe).
@@ -256,14 +228,12 @@ class SessionManager:
                 transport = AsyncProxyTransport.from_url("socks5h://127.0.0.1:9050", rdns=True)
                 limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
                 timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
-                self._tor_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)
+                self._tor_session = httpx.AsyncClient(
+                    transport=transport, limits=limits, timeout=timeout, trust_env=False
+                )
                 self._locally_created["tor"] = True
                 self._update_telemetry("tor", "local_tor")
         return self._tor_session
-
-    # ---------------------------------------------------------------------------
-    # I2P session
-    # ---------------------------------------------------------------------------
 
     async def get_i2p_session(self) -> httpx.AsyncClient | _I2pCurlCffiWrapper:
         """Get or create I2P session (lazy, thread-safe).
@@ -300,23 +270,17 @@ class SessionManager:
                 transport = AsyncProxyTransport.from_url("socks5h://127.0.0.1:4444", rdns=True)
                 limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
                 timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
-                self._i2p_session = httpx.AsyncClient(transport=transport, limits=limits, timeout=timeout, trust_env=False)
+                self._i2p_session = httpx.AsyncClient(
+                    transport=transport, limits=limits, timeout=timeout, trust_env=False
+                )
                 self._locally_created["i2p"] = True
                 self._update_telemetry("i2p", "local_i2p")
         return self._i2p_session
-
-    # ---------------------------------------------------------------------------
-    # Circuit management
-    # ---------------------------------------------------------------------------
 
     def increment_tor_request_count(self) -> int:
         """Increment and return Tor request count."""
         self._tor_request_count += 1
         return self._tor_request_count
-
-    # ---------------------------------------------------------------------------
-    # Cleanup
-    # ---------------------------------------------------------------------------
 
     async def close_all(self) -> dict[str, str]:
         """Close all locally-created sessions."""
@@ -356,16 +320,8 @@ class SessionManager:
         }
 
 
-# =============================================================================
-# SESSION MANAGER FACTORY — Per-Task Isolation
-# =============================================================================
-# ISSUE-009: Replaces module-level singleton with WeakValueDictionary cache.
-# Each task gets its own SessionManager instance via get_session_manager().
-# For testing: reset_all() clears the cache.
-
 import threading  # noqa: E402
 import weakref  # noqa: E402
-from _core import aclose
 
 _session_managers: weakref.WeakValueDictionary[str, SessionManager] = weakref.WeakValueDictionary()
 _session_managers_lock = threading.Lock()

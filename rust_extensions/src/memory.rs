@@ -208,8 +208,6 @@ pub fn set_uma_state_u8(state: u8) -> u8 {
     UMA_STATE_ATOMIC.swap(state, Ordering::Relaxed)
 }
 
-// ─── MODERN-43: Atomic MLX Ledger ───────────────────────────────────────────
-
 /// MODERN-43 Fix: Add bytes to MLX allocation ledger.
 ///
 /// Called on every mx.array() allocation to track total MLX memory usage.
@@ -344,10 +342,6 @@ pub fn get_available_memory_gib() -> f64 {
     0.0
 }
 
-// ---------------------------------------------------------------------------
-// M1-specific: precise RSS via proc_pidinfo + mach_vm_behavior_set
-// ---------------------------------------------------------------------------
-
 // proc_taskinfo structure size on macOS (fixed at compile-time).
 const PROC_TASKINFO_SIZE: usize = std::mem::size_of::<libc::proc_taskinfo>();
 
@@ -377,7 +371,6 @@ pub fn current_rss_bytes() -> u64 {
             return 0u64;
         }
         let rss = task_info.pti_resident_size;
-        // Update peak tracker.
         let mut current_max = PEAK_RSS_BYTES.load(Ordering::Relaxed);
         loop {
             if rss <= current_max {
@@ -528,10 +521,6 @@ pub fn get_metal_active_memory_bytes(py: Python<'_>) -> u64 {
 pub fn get_metal_active_memory_gib(py: Python<'_>) -> f64 {
     get_metal_active_memory_bytes(py) as f64 / (1024.0_f64.powi(3))
 }
-
-// ---------------------------------------------------------------------------
-// Canonical snapshot — single-call all-memory probe
-// ---------------------------------------------------------------------------
 
 /// Returns a combined memory snapshot for the M1 8GB SSOT surface.
 ///

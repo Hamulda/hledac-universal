@@ -53,10 +53,6 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-// ---------------------------------------------------------------------------
-// MODERN-CROSS-4: Threshold Switch Monitoring
-// ---------------------------------------------------------------------------
-
 /// Atomic counter for threshold switches (idle→normal→pressure).
 static THRESHOLD_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -111,11 +107,6 @@ pub fn get_threshold_stats() -> (usize, u8, f64) {
         LAST_THRESHOLD_SWITCH_TIME.lock().unwrap().elapsed().as_secs_f64(),
     )
 }
-
-// ---------------------------------------------------------------------------
-// MODERN-32: Global Thread Budget — unified thread accounting
-// MODERN-32 + THREAD-BUDGET-01: Consistent constants with Python isolated_executors.py
-// ---------------------------------------------------------------------------
 
 /// Maximum total OS threads across all pools + dispatchers.
 /// M1 Air: 4P + 4E = 8 logical cores.
@@ -325,10 +316,6 @@ pub fn set_mixed_threshold(n: usize) {
     MIXED_THRESHOLD_BUDGET.store(n, Ordering::Release);
 }
 
-// ---------------------------------------------------------------------------
-// Thread-local cache — avoids GIL on every mixed_threshold() call
-// ---------------------------------------------------------------------------
-
 /// TTL for the thread-local metal-level/limit cache.
 /// 100 ms strikes the balance: Metal memory pressure changes slowly
 /// (on MLX timescales), while the hot-path calls mixed_threshold()
@@ -354,20 +341,12 @@ static MEMORY_PRESSURE: AtomicU8 = AtomicU8::new(1);
 /// Sentinel value meaning "not explicitly set" — must match default of MEMORY_PRESSURE.
 const PRESSURE_UNSET: u8 = 1;
 
-// ---------------------------------------------------------------------------
-// Constants — match lib.rs MIXED_THRESHOLD
-// ---------------------------------------------------------------------------
-
 /// Threshold when MLX GPU is idle (fraction < 0.60) — eager parallelism.
 const IDLE_THRESHOLD: usize = 16;
 /// Threshold under normal MLX GPU load (fraction 0.60–0.85) — balanced.
 const NORMAL_THRESHOLD: usize = 32;
 /// Threshold under high MLX GPU pressure (fraction > 0.85) — conservative.
 const PRESSURE_THRESHOLD: usize = 64;
-
-// ---------------------------------------------------------------------------
-// MLX Metal helpers — defined first so available to all threshold fns
-// ---------------------------------------------------------------------------
 
 /// Cached module handle for `hledac.universal.utils.mlx_cache`.
 ///
@@ -428,10 +407,6 @@ fn fraction_to_level(limit_bytes: u64, active: u64) -> u8 {
         2 // pressure (> 0.85)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Core threshold logic — MLX Metal-aware + thread-local cached
-// ---------------------------------------------------------------------------
 
 /// Returns the cached metal level (0=idle, 1=normal, 2=pressure) or
 /// re-probes via GIL if the thread-local cache entry is stale.
@@ -580,10 +555,6 @@ pub fn recommended_io_threads() -> usize {
     base.min(available.max(1)).max(1) // At least 1 I/O thread
 }
 
-// ---------------------------------------------------------------------------
-// Legacy state helpers (CPU-based signal — deprecated for MLX paths)
-// ---------------------------------------------------------------------------
-
 /// No-op: CPU saturation is no longer tracked via atomic.
 ///
 /// MLX-aware paths use direct Metal probing via `fraction_to_level()`.
@@ -614,10 +585,6 @@ pub fn update_memory_pressure(pressure: u8) {
     let now = Instant::now();
     METAL_CACHE.with(|cell| cell.set((now, PRESSURE_UNSET, 0)));
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 bindings
-// ---------------------------------------------------------------------------
 
 #[pyfunction]
 pub fn get_adaptive_cpu_threads() -> usize {
@@ -699,10 +666,6 @@ pub fn check_budget_allows(extra: usize) -> bool {
     budget_allows(extra)
 }
 
-// ---------------------------------------------------------------------------
-// MODERN-CROSS-4: Threshold Switch Monitoring Bindings
-// ---------------------------------------------------------------------------
-
 /// MODERN-CROSS-4: Get the count of threshold switches since process start.
 #[pyfunction]
 pub fn get_threshold_switch_counter() -> usize {
@@ -774,10 +737,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

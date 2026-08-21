@@ -12,7 +12,6 @@ Architecture:
 
 from hledac.universal.brain._metal.metal_device import MetalDevice, get_metal_device
 from hledac.universal.brain._metal.model_loader import MetalModelLoader
-from _core import aclose
 
 __all__ = [
     "MetalDevice",

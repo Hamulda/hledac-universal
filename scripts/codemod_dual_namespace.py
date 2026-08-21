@@ -32,44 +32,125 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
-
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
 # Banned bare import roots (must use hledac.universal.<pkg>)
-BANNED: frozenset[str] = frozenset({
-    "runtime", "brain", "knowledge", "coordinators", "intel", "intelligence",
-    "transport", "network", "export", "report", "rendering", "layers",
-    "prefetch", "cli", "tools", "discovery", "federated", "security",
-    "infrastructure", "memory", "multimodal", "monitoring", "graph",
-    "prefilt", "hledac",
-    # Also add core/utils/recon/fetching/rl (create dual-load with hledac.universal.*)
-    "core", "utils", "recon", "fetching", "rl",
-})
+BANNED: frozenset[str] = frozenset(
+    {
+        "runtime",
+        "brain",
+        "knowledge",
+        "coordinators",
+        "intel",
+        "intelligence",
+        "transport",
+        "network",
+        "export",
+        "report",
+        "rendering",
+        "layers",
+        "prefetch",
+        "cli",
+        "tools",
+        "discovery",
+        "federated",
+        "security",
+        "infrastructure",
+        "memory",
+        "multimodal",
+        "monitoring",
+        "graph",
+        "prefilt",
+        "hledac",
+        # Also add core/utils/recon/fetching/rl (create dual-load with hledac.universal.*)
+        "core",
+        "utils",
+        "recon",
+        "fetching",
+        "rl",
+    }
+)
 
 # Stdlib / test packages allowed as bare imports
-ALLOWED: frozenset[str] = frozenset({
-    "asyncio", "typing", "pathlib", "os", "sys", "re", "json", "abc",
-    "argparse", "ast", "contextlib", "copy", "dataclasses", "enum",
-    "functools", "inspect", "io", "itertools", "logging", "math",
-    "pickle", "queue", "random", "struct", "tempfile", "threading",
-    "time", "traceback", "types", "unittest", "warnings", "weakref",
-    "collections", "operator", "signal", "socket", "statistics", "string",
-    "textwrap", "tokenize", "tracemalloc", "uuid", "zipfile",
-    "pytest", "coverage", "hypothesis",
-    "_asyncio", "_threading", "_io", "_collections",
-})
+ALLOWED: frozenset[str] = frozenset(
+    {
+        "asyncio",
+        "typing",
+        "pathlib",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "abc",
+        "argparse",
+        "ast",
+        "contextlib",
+        "copy",
+        "dataclasses",
+        "enum",
+        "functools",
+        "inspect",
+        "io",
+        "itertools",
+        "logging",
+        "math",
+        "pickle",
+        "queue",
+        "random",
+        "struct",
+        "tempfile",
+        "threading",
+        "time",
+        "traceback",
+        "types",
+        "unittest",
+        "warnings",
+        "weakref",
+        "collections",
+        "operator",
+        "signal",
+        "socket",
+        "statistics",
+        "string",
+        "textwrap",
+        "tokenize",
+        "tracemalloc",
+        "uuid",
+        "zipfile",
+        "pytest",
+        "coverage",
+        "hypothesis",
+        "_asyncio",
+        "_threading",
+        "_io",
+        "_collections",
+    }
+)
 
 # Excluded directories
-EXCLUDE_DIRS: frozenset[str] = frozenset({
-    "__pycache__", ".venv", ".venv-test", ".git", ".claude",
-    "archive", "tests", "benchmarks", ".mypy_cache",
-    ".pytest_cache", "stubs",
-})
-EXCLUDE_SUBPATHS: frozenset[str] = frozenset({
-    "probe_", "tools/_archive", "tools/audit",
-})
+EXCLUDE_DIRS: frozenset[str] = frozenset(
+    {
+        "__pycache__",
+        ".venv",
+        ".venv-test",
+        ".git",
+        ".claude",
+        "archive",
+        "tests",
+        "benchmarks",
+        ".mypy_cache",
+        ".pytest_cache",
+        "stubs",
+    }
+)
+EXCLUDE_SUBPATHS: frozenset[str] = frozenset(
+    {
+        "probe_",
+        "tools/_archive",
+        "tools/audit",
+    }
+)
 
 # Canonical prefix
 CANON = "hledac.universal."
@@ -104,12 +185,12 @@ def process_line(line: str) -> tuple[bool, str, str]:
 
     # Skip empty lines / comments
     stripped = line.lstrip()
-    if not stripped or stripped.startswith('#'):
+    if not stripped or stripped.startswith("#"):
         return False, orig, ""
 
     # Pattern: from <banned_pkg>. or from <banned_pkg> import
     # Must NOT already have hledac.universal prefix
-    m = re.match(r'^(\s*)from\s+([\w.]+)\s+import\s+(.*)$', line, re.DOTALL)
+    m = re.match(r"^(\s*)from\s+([\w.]+)\s+import\s+(.*)$", line, re.DOTALL)
     if m:
         indent, module, rest = m.group(1), m.group(2), m.group(3)
         root = module.split(".")[0]
@@ -118,7 +199,7 @@ def process_line(line: str) -> tuple[bool, str, str]:
                 new_line = f"{indent}from {CANON}{module} import {rest}"
                 return True, new_line, module
     # Alternative: from <banned_pkg> import (single line)
-    m2 = re.match(r'^(\s*)from\s+([\w.]+)\s+import\s+(.*)$', line)
+    m2 = re.match(r"^(\s*)from\s+([\w.]+)\s+import\s+(.*)$", line)
     if m2:
         indent, module, rest = m2.group(1), m2.group(2), m2.group(3)
         root = module.split(".")[0]
@@ -128,7 +209,7 @@ def process_line(line: str) -> tuple[bool, str, str]:
                 return True, new_line, module
 
     # Pattern: import <banned_pkg>. or import <banned_pkg>
-    m3 = re.match(r'^(\s*)import\s+([\w.]+)(.*)$', line)
+    m3 = re.match(r"^(\s*)import\s+([\w.]+)(.*)$", line)
     if m3:
         indent, module, rest = m3.group(1), m3.group(2), m3.group(3)
         root = module.split(".")[0]
@@ -144,17 +225,14 @@ def check_file(path: Path) -> list[Violation]:
     """Check file for bare imports. Returns list of violations."""
     violations = []
     try:
-        lines = path.read_text(encoding="utf-8").split('\n')
-    except (OSError, UnicodeDecodeError):
+        lines = path.read_text(encoding="utf-8").split("\n")
+    except OSError, UnicodeDecodeError:
         return violations
 
     for i, line in enumerate(lines, 1):
         fixed, new_line, matched = process_line(line)
         if fixed:
-            violations.append(Violation(
-                file=path, line_no=i, line=line,
-                matched_module=matched, replacement=new_line
-            ))
+            violations.append(Violation(file=path, line_no=i, line=line, matched_module=matched, replacement=new_line))
     return violations
 
 
@@ -169,10 +247,10 @@ def fix_file(path: Path, dry_run: bool = True) -> tuple[bool, int]:
 
     try:
         content = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return False, len(violations)
 
-    lines = content.split('\n')
+    lines = content.split("\n")
     # Build line-number → new_line map (reverse order to preserve line numbers)
     for v in reversed(violations):
         if 0 < v.line_no <= len(lines):
@@ -180,7 +258,7 @@ def fix_file(path: Path, dry_run: bool = True) -> tuple[bool, int]:
             if fixed:
                 lines[v.line_no - 1] = new_line
 
-    new_content = '\n'.join(lines)
+    new_content = "\n".join(lines)
     if new_content != content:
         path.write_text(new_content, encoding="utf-8")
         return True, len(violations)
@@ -199,6 +277,7 @@ def get_all_python_files() -> list[Path]:
 
 def main() -> None:
     import argparse
+
     parser = argparse.ArgumentParser(description="Codemod: bare → canonical imports")
     parser.add_argument("--check", action="store_true", help="Dry run")
     parser.add_argument("--fix", action="store_true", help="Apply fixes")
@@ -234,14 +313,14 @@ def main() -> None:
         if was_modified:
             files_fixed += 1
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"RESULT: {total_violations} violation(s) in {files_with_violations} file(s)")
     if args.fix:
         print(f"        {files_fixed} file(s) fixed")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     if args.check and total_violations > 0:
-        print(f"\nRun with --fix to apply these changes.")
+        print("\nRun with --fix to apply these changes.")
         sys.exit(1)
     elif total_violations == 0:
         print("\n✓ All imports are canonical — 0 violations")

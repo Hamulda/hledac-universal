@@ -45,10 +45,6 @@ use std::time::Duration;
 
 use pyo3::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Maximum response size (50 MB) — hard cap for BSON/JSON/RESP parsing.
 const MAX_RESPONSE_BYTES: usize = 50 * 1024 * 1024;
 
@@ -63,19 +59,6 @@ const CHANNEL_BOUND: usize = 1024;
 
 /// Default document limit per collection.
 const DEFAULT_DOC_LIMIT: u32 = 500;
-
-// ---------------------------------------------------------------------------
-// Minimal BSON encoder for MongoDB wire protocol
-// ---------------------------------------------------------------------------
-//
-// We only need to encode a handful of simple BSON documents:
-//   {isMaster: 1}
-//   {listDatabases: 1}
-//   {listCollections: 1, nameOnly: true}
-//   {find: "<collection>", limit: N, singleBatch: true}
-//
-// Full BSON spec: https://bsonspec.org/spec.html
-// We implement just enough for these commands — no general-purpose codec.
 
 /// Minimal BSON type tags we use.
 mod bson_type {
@@ -103,7 +86,6 @@ fn bson_encode_doc(pairs: &[(&str, BsonValue)]) -> Vec<u8> {
 
     buf.push(0x00); // document terminator
 
-    // Write total length at the start
     let total = buf.len() as i32;
     buf[0..4].copy_from_slice(&total.to_le_bytes());
 
@@ -170,10 +152,6 @@ macro_rules! bson_bool {
     };
 }
 
-// ---------------------------------------------------------------------------
-// Minimal BSON→JSON parser for response documents
-// ---------------------------------------------------------------------------
-
 /// Parse a BSON document from raw bytes and convert to a JSON string.
 /// Returns None on parse error (truncated, malformed, etc.).
 fn bson_to_json(bytes: &[u8]) -> Option<String> {
@@ -219,7 +197,6 @@ fn bson_to_json(bytes: &[u8]) -> Option<String> {
         json.push('"');
         json.push(':');
 
-        // Parse value based on type
         match element_type {
             bson_type::DOUBLE => {
                 if pos + 8 > bytes.len() {
@@ -367,10 +344,6 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-// ---------------------------------------------------------------------------
-// MongoDB OP_MSG Wire Protocol
-// ---------------------------------------------------------------------------
-
 /// MongoDB OP_MSG opcode (2013) — modern replacement for OP_QUERY (2004).
 const OP_MSG: i32 = 2013;
 
@@ -394,7 +367,6 @@ const OP_MSG: i32 = 2013;
 ///   uint8 kind;           // 0
 ///   document payload;     // single BSON document
 fn build_op_msg(database: &str, command: &[(&str, BsonValue)]) -> Vec<u8> {
-    // Build the command with $db attached
     let mut owned_pairs: Vec<(String, BsonValue)> = Vec::with_capacity(command.len() + 1);
     for (k, v) in command {
         owned_pairs.push(((*k).to_string(), v.clone()));
@@ -454,10 +426,6 @@ fn build_op_query(database: &str, collection: &str, query: &[(&str, BsonValue)])
 
     msg
 }
-
-// ---------------------------------------------------------------------------
-// Redis RESP Protocol
-// ---------------------------------------------------------------------------
 
 /// Redis RESP protocol constants.
 mod resp {
@@ -562,10 +530,6 @@ fn read_resp_value(reader: &mut BufReader<&mut TcpStream>) -> Result<RespValue, 
         _ => Err(format!("unknown RESP type byte: 0x{:02x}", type_buf[0])),
     }
 }
-
-// ---------------------------------------------------------------------------
-// PyClass: MongoDumper
-// ---------------------------------------------------------------------------
 
 /// MongoDB dump result entry.
 #[pyclass(from_py_object)]
@@ -751,7 +715,6 @@ impl MongoDumper {
         let limit = limit.unwrap_or(DEFAULT_DOC_LIMIT);
         let mut results = Vec::new();
 
-        // Phase 1: List databases
         let db_names = match self.list_databases(host, port, timeout_s) {
             Ok(dbs) => dbs,
             Err(e) => {
@@ -782,7 +745,6 @@ impl MongoDumper {
                 continue; // Skip system DBs for collection/document extraction
             }
 
-            // Phase 2: List collections
             let coll_names = match self.list_collections(host, port, db_name, timeout_s) {
                 Ok(colls) => colls,
                 Err(e) => {
@@ -798,7 +760,6 @@ impl MongoDumper {
             };
 
             for coll_name in &coll_names {
-                // Phase 3: Dump documents
                 match self.dump_documents(host, port, db_name, coll_name, Some(limit), timeout_s) {
                     Ok(docs) => {
                         results.push(MongoDumpEntry {
@@ -825,10 +786,6 @@ impl MongoDumper {
         Ok(results)
     }
 }
-
-// ---------------------------------------------------------------------------
-// MongoDB wire helpers
-// ---------------------------------------------------------------------------
 
 fn resolve_addr(host: &str, port: u16) -> PyResult<SocketAddr> {
     let addr_str = format!("{}:{}", host, port);
@@ -966,7 +923,6 @@ fn parse_list_databases(raw: &[u8]) -> Vec<String> {
                 }
             }
 
-            // Check for end of array
             while pos < chars.len() && chars[pos] != ',' && chars[pos] != ']' {
                 pos += 1;
             }
@@ -1130,10 +1086,6 @@ fn parse_find_response(raw: &[u8]) -> Vec<String> {
 
     docs
 }
-
-// ---------------------------------------------------------------------------
-// PyClass: RedisDumper
-// ---------------------------------------------------------------------------
 
 /// Redis dump result entry.
 #[pyclass(from_py_object)]
@@ -1505,7 +1457,6 @@ impl RedisDumper {
         let timeout = timeout_s.unwrap_or(READ_TIMEOUT_S);
         let mut results = Vec::with_capacity(max_keys as usize);
 
-        // Phase 1: Scan all keys
         let keys = match self.scan_keys(host, port, Some(max_keys), Some(timeout)) {
             Ok(k) => k,
             Err(e) => {
@@ -1520,7 +1471,6 @@ impl RedisDumper {
             }
         };
 
-        // Phase 2: Get type, TTL, and value for each key
         for key in keys {
             let key_type = match self.key_type(host, port, &key, Some(timeout)) {
                 Ok(t) => Some(t),
@@ -1538,7 +1488,6 @@ impl RedisDumper {
 
             let ttl = self.key_ttl(host, port, &key, Some(timeout)));
 
-            // Get value based on type
             let value: Option<Vec<u8>> = match key_type.as_deref() {
                 Some("string") => match self.get_value(host, port, &key, Some(timeout)) {
                     Ok(v) => v,
@@ -1601,10 +1550,6 @@ impl RedisDumper {
         Ok(results)
     }
 }
-
-// ---------------------------------------------------------------------------
-// PyClass: ElasticsearchDumper
-// ---------------------------------------------------------------------------
 
 /// Elasticsearch dump result entry.
 #[pyclass(from_py_object)]
@@ -1698,7 +1643,6 @@ impl ElasticsearchDumper {
             }
         }
 
-        // Parse status code
         let response_str = String::from_utf8_lossy(&buf);
         let status_code: u16 = if let Some(first_line) = response_str.lines().next() {
             first_line
@@ -1757,7 +1701,6 @@ impl ElasticsearchDumper {
             timeout,
         )?;
 
-        // Parse JSON array
         let body_str = String::from_utf8_lossy(&body);
         let mut indices = Vec::new();
 
@@ -1833,7 +1776,6 @@ impl ElasticsearchDumper {
         let (_status, resp_body) =
             Self::es_request(&mut stream, "POST", &path, Some(&body), timeout)?;
 
-        // Parse _search response to extract individual hit documents
         let resp_str = String::from_utf8_lossy(&resp_body);
         let mut docs = Vec::new();
 
@@ -1850,7 +1792,6 @@ impl ElasticsearchDumper {
                 while pos < chars.len() && (chars[pos] == ':' || chars[pos] == ' ') {
                     pos += 1;
                 }
-                // Extract the _source JSON object
                 if pos < chars.len() && chars[pos] == '{' {
                     let doc_start = pos;
                     let mut depth = 0;
@@ -1899,7 +1840,6 @@ impl ElasticsearchDumper {
         let timeout = timeout_s.unwrap_or(READ_TIMEOUT_S);
         let mut results = Vec::new();
 
-        // Phase 1: List indices
         let indices = match self.list_indices(host, port, Some(timeout)) {
             Ok(ix) => ix,
             Err(e) => {
@@ -1913,7 +1853,6 @@ impl ElasticsearchDumper {
             }
         };
 
-        // Phase 2: Search each index
         for index in &indices {
             match self.search_documents(host, port, index, None, Some(limit), Some(timeout)) {
                 Ok(docs) => {
@@ -1938,10 +1877,6 @@ impl ElasticsearchDumper {
         Ok(results)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 /// Register the native_db module functions and classes.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

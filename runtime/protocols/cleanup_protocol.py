@@ -28,7 +28,6 @@ from _core.protocols.cleanup_protocol import (
     )
 
 if TYPE_CHECKING:
-    from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +43,6 @@ __all__ = [
 # Alias for local use
 shutdown_aclose = _core_shutdown_aclose
 
-
-# ============================================================================
-# AsyncCleanable Protocol (unchanged from original)
-# ============================================================================
 
 
 @runtime_checkable
@@ -75,10 +70,6 @@ class AsyncCleanable(Protocol):
         """
         ...
 
-
-# ============================================================================
-# Composite cleanup context manager (unchanged from original)
-# ============================================================================
 
 
 class _ManagedResource:

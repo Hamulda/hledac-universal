@@ -13,13 +13,10 @@ If missing locally, prints clear missing model message.
 Does NOT download models.
 """
 
-
-
 import argparse
 import json
 import sys
 from pathlib import Path
-from _core import aclose
 
 # Add Hledac project root to sys.path so 'hledac' namespace package resolves.
 # universal/scripts/ → universal/ → hledac/ → Hledac/ (project root)
@@ -49,7 +46,7 @@ def tiny_generate(model_id: str) -> dict:
             "status": "missing_local_model",
             "model_id": model_id,
             "message": f"Model not cached locally at ~/.cache/mlx/ or ~/.cache/huggingface/. "
-                       f"Download to run generation: `mlx_lm.download('{model_id}')`",
+            f"Download to run generation: `mlx_lm.download('{model_id}')`",
         }
 
     try:
@@ -62,13 +59,13 @@ def tiny_generate(model_id: str) -> dict:
         }
 
     try:
-        prompt = "Return only valid JSON: {\"status\":\"ok\"}"
+        prompt = 'Return only valid JSON: {"status":"ok"}'
         response = mlx_lm.generate(
             model_id,
             prompt,
             max_tokens=32,
             temp=0.0,
-    )
+        )
         return {
             "status": "ok",
             "model_id": model_id,

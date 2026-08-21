@@ -3,8 +3,6 @@ SourceReliabilityTracker — META-008 cross-sprint source reliability scoring.
 
 Tracks source_contradiction_count / source_total_claims ratio per source
 
-
-
 across sprints. Sources with ratio > AUTO_RETRACT_RATIO are flagged for
 auto-retraction at SYNTHESIS phase.
 
@@ -44,24 +42,21 @@ import asyncio
 import logging
 import os
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Feature flag & bounds (M1 8GB safe)
-# ---------------------------------------------------------------------------
-
-_SOURCE_RELIABILITY_ENABLED: bool = (
-    os.environ.get("HLEDAC_ENABLE_SOURCE_RELIABILITY", "1").lower()
-    in ("1", "true", "yes", "on")
-    )
+_SOURCE_RELIABILITY_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_SOURCE_RELIABILITY", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 AUTO_RETRACT_RATIO: float = 0.3
 AUTO_RETRACT_MIN_CLAIMS: int = 3
@@ -91,13 +86,10 @@ CREATE INDEX IF NOT EXISTS idx_source_reliability_updated
 """
 
 
-# ---------------------------------------------------------------------------
-# DTO
-# ---------------------------------------------------------------------------
-
 @dataclass(slots=True, frozen=True)
 class SourceReliability:
     """Immutable snapshot of a source's reliability across sprints."""
+
     source_id: str
     total_claims: int = 0
     contradiction_count: int = 0
@@ -122,16 +114,13 @@ class SourceReliability:
 @dataclass(slots=True)
 class SourceStats:
     """Mutable per-source statistics (in-memory hot path)."""
+
     total_claims: int = 0
     contradiction_count: int = 0
     last_updated: float = 0.0
     auto_retracted: bool = False
     auto_retracted_at: float = 0.0
 
-
-# ---------------------------------------------------------------------------
-# SourceReliabilityTracker
-# ---------------------------------------------------------------------------
 
 class SourceReliabilityTracker:
     """Tracks source contradiction ratios across sprints.
@@ -178,10 +167,6 @@ class SourceReliabilityTracker:
         }
         self._last_lru_eviction: float = 0.0
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def record_claim(
         self,
         source_id: str,
@@ -205,7 +190,6 @@ class SourceReliabilityTracker:
                 if contradictory:
                     self._stats["contradictions_recorded"] += 1
 
-                # Get or create stats
                 stats = self._sources.get(source_id)
                 if stats is None:
                     # LRU eviction if at capacity
@@ -222,17 +206,16 @@ class SourceReliabilityTracker:
                 else:
                     # Slow decay: halve counts to keep recent data weight higher
                     stats.total_claims = stats.total_claims // 2 + 1
-                    stats.contradiction_count = stats.contradiction_count // 2 + (
-                        1 if contradictory else 0
-    )
+                    stats.contradiction_count = stats.contradiction_count // 2 + (1 if contradictory else 0)
 
                 stats.last_updated = _time.time()
 
         except Exception as e:
             logger.debug(
                 "[SourceReliability] record_claim(%s) failed (fail-soft): %s",
-                source_id, e,
-    )
+                source_id,
+                e,
+            )
 
     async def record_batch(
         self,
@@ -269,15 +252,14 @@ class SourceReliabilityTracker:
                             stats.contradiction_count += 1
                     else:
                         stats.total_claims = stats.total_claims // 2 + 1
-                        stats.contradiction_count = (
-                            stats.contradiction_count // 2 + (1 if contradictory else 0)
-    )
+                        stats.contradiction_count = stats.contradiction_count // 2 + (1 if contradictory else 0)
                     stats.last_updated = _time.time()
 
         except Exception as e:
             logger.debug(
-                "[SourceReliability] record_batch failed (fail-soft): %s", e,
-    )
+                "[SourceReliability] record_batch failed (fail-soft): %s",
+                e,
+            )
 
     def should_auto_retract(self, source_id: str) -> bool:
         """Check if a source meets auto-retraction criteria (synchronous).
@@ -310,11 +292,7 @@ class SourceReliabilityTracker:
         if stats is None:
             return SourceReliability(source_id=source_id)
 
-        ratio = (
-            stats.contradiction_count / stats.total_claims
-            if stats.total_claims > 0
-            else 0.0
-    )
+        ratio = stats.contradiction_count / stats.total_claims if stats.total_claims > 0 else 0.0
         return SourceReliability(
             source_id=source_id,
             total_claims=stats.total_claims,
@@ -323,7 +301,7 @@ class SourceReliabilityTracker:
             last_updated=stats.last_updated,
             auto_retracted=stats.auto_retracted,
             auto_retracted_at=stats.auto_retracted_at,
-    )
+        )
 
     def get_unreliable_sources(self) -> list[SourceReliability]:
         """Get all sources that meet auto-retract criteria (synchronous)."""
@@ -335,13 +313,15 @@ class SourceReliabilityTracker:
                 continue
             ratio = stats.contradiction_count / stats.total_claims
             if ratio > AUTO_RETRACT_RATIO:
-                results.append(SourceReliability(
-                    source_id=source_id,
-                    total_claims=stats.total_claims,
-                    contradiction_count=stats.contradiction_count,
-                    ratio=round(ratio, 4),
-                    last_updated=stats.last_updated,
-                ))
+                results.append(
+                    SourceReliability(
+                        source_id=source_id,
+                        total_claims=stats.total_claims,
+                        contradiction_count=stats.contradiction_count,
+                        ratio=round(ratio, 4),
+                        last_updated=stats.last_updated,
+                    )
+                )
         results.sort(key=attrgetter("ratio"), reverse=True)
         return results
 
@@ -367,8 +347,9 @@ class SourceReliabilityTracker:
         except Exception as e:
             logger.debug(
                 "[SourceReliability] mark_auto_retracted(%s) failed: %s",
-                source_id, e,
-    )
+                source_id,
+                e,
+            )
             return False
 
     async def record_decisions(
@@ -415,8 +396,9 @@ class SourceReliabilityTracker:
 
         except Exception as e:
             logger.debug(
-                "[SourceReliability] record_decisions failed (fail-soft): %s", e,
-    )
+                "[SourceReliability] record_decisions failed (fail-soft): %s",
+                e,
+            )
 
     def get_stats(self) -> dict[str, int]:
         """Return telemetry counter snapshot."""
@@ -438,18 +420,12 @@ class SourceReliabilityTracker:
             "db_reads": 0,
         }
 
-    # ------------------------------------------------------------------
-    # DuckDB persistence (optional, fail-soft)
-    # ------------------------------------------------------------------
-
     async def _ensure_duckdb_table(self) -> bool:
         """Create source_reliability table in DuckDB if not present."""
         if self._duckdb_initialized or self._store is None:
             return self._duckdb_initialized
 
         try:
-            # Access DuckDBShadowStore's _file_conn (the canonical pattern used by
-            # domain_reputation.py, proxy_routes.py, anti_bot_profiles.py)
             conn = self._store._file_conn if self._store._db_path else self._store._persistent_conn  # noqa: SLF001
             if conn is None:
                 return False
@@ -465,8 +441,9 @@ class SourceReliabilityTracker:
             return True
         except Exception as e:
             logger.debug(
-                "[SourceReliability] DuckDB table init failed (fail-soft): %s", e,
-    )
+                "[SourceReliability] DuckDB table init failed (fail-soft): %s",
+                e,
+            )
         return False
 
     async def sync_to_duckdb(
@@ -496,11 +473,7 @@ class SourceReliabilityTracker:
 
             # Snapshot stats under lock, then write on thread (duckdb conn is sync)
             async with self._lock:
-                snapshot = {
-                    sid: self._sources[sid]
-                    for sid in targets
-                    if sid in self._sources
-                }
+                snapshot = {sid: self._sources[sid] for sid in targets if sid in self._sources}
 
             if not snapshot:
                 return 0
@@ -518,11 +491,7 @@ class SourceReliabilityTracker:
 
                 written = 0
                 for source_id, stats in snapshot.items():
-                    ratio = (
-                        stats.contradiction_count / stats.total_claims
-                        if stats.total_claims > 0
-                        else 0.0
-    )
+                    ratio = stats.contradiction_count / stats.total_claims if stats.total_claims > 0 else 0.0
                     try:
                         conn.execute(
                             sql,
@@ -536,13 +505,14 @@ class SourceReliabilityTracker:
                                 stats.auto_retracted_at if stats.auto_retracted else None,
                                 sprint_id or None,
                             ],
-    )
+                        )
                         written += 1
                     except Exception as e:
                         logger.debug(
                             "[SourceReliability] DuckDB write for %s failed: %s",
-                            source_id, e,
-    )
+                            source_id,
+                            e,
+                        )
                 return written
 
             written = await asyncio.to_thread(_write_all)
@@ -551,13 +521,10 @@ class SourceReliabilityTracker:
 
         except Exception as e:
             logger.debug(
-                "[SourceReliability] sync_to_duckdb failed (fail-soft): %s", e,
-    )
+                "[SourceReliability] sync_to_duckdb failed (fail-soft): %s",
+                e,
+            )
             return 0
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _evict_lru(self) -> None:
         """Evict the least recently updated source (FIFO by last_updated)."""
@@ -569,10 +536,6 @@ class SourceReliabilityTracker:
         self._last_lru_eviction = _time.time()
         logger.debug("[SourceReliability] LRU evicted: %s", oldest)
 
-
-# ---------------------------------------------------------------------------
-# Global singleton
-# ---------------------------------------------------------------------------
 
 _SOURCE_TRACKER: SourceReliabilityTracker | None = None
 _TRACKER_LOCK = asyncio.Lock()

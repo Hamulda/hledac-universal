@@ -28,8 +28,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from typing import Generic, TypeVar
-from _core import aclose
+from typing import TypeVar
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)
@@ -37,6 +36,7 @@ V = TypeVar("V", default=object)
 # Lock-free Rust telemetry for zero-mutex hot-path monitoring
 try:
     from rust_extensions.integrations import TelemetryIntegration
+
     _TELEMETRY: TelemetryIntegration | None = TelemetryIntegration()
     _RING_PUT_COUNTER = _TELEMETRY.create_counter("otel_ring_put") if _TELEMETRY.available else None
     # A4 FIX: Use Gauge for ring_size (raw count, not latency)
@@ -53,7 +53,7 @@ except ImportError:
 
 def _telemetry_inc_put() -> None:
     """Lock-free counter increment via Rust MPSC.
-    
+
     A4: Sends to MPSC channel - lock-free on sender side.
     """
     if _RING_PUT_COUNTER is not None:
@@ -62,10 +62,10 @@ def _telemetry_inc_put() -> None:
 
 def _telemetry_record_size(size: int) -> None:
     """Lock-free gauge set via Rust MPSC.
-    
+
     A4 FIX: Ring size is a raw count (0 to capacity), not time.
     Gauge is correct here - it tracks "current value" not "distribution".
-    
+
     For percentile distribution of ring sizes, use _RING_SIZE_HISTOGRAM separately.
     """
     if _RING_SIZE_GAUGE is not None:
@@ -119,7 +119,7 @@ class BoundedRing[K, V]:
         # Zero-mutex telemetry: emit BEFORE lock acquisition
         # Rust MPSC channel is lock-free on the sender side
         _telemetry_inc_put()
-        
+
         with self._lock:
             if key in self._data:
                 self._data[key] = value

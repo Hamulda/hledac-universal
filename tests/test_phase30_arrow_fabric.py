@@ -11,6 +11,7 @@ Test Categories:
 4. Memory efficiency - verify Arrow format is memory-efficient
 5. M1 optimization - verify optimizations for Apple Silicon
 """
+
 from __future__ import annotations
 
 import sys
@@ -18,7 +19,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -46,6 +46,7 @@ class TestArrowIPCFormat:
                 # Direct path for Rust module testing
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
 
             # Build a minimal IPC stream
@@ -59,12 +60,11 @@ class TestArrowIPCFormat:
                 payload_texts=["text1", "text2"],
                 claims_jsons=["[]", "[]"],
                 batch_size=2,
-    )
+            )
 
             assert result.startswith(ARROW_MAGIC_BYTES), (
-                f"Arrow IPC stream should start with {ARROW_MAGIC_BYTES!r}, "
-                f"got {result[:10]!r}"
-    )
+                f"Arrow IPC stream should start with {ARROW_MAGIC_BYTES!r}, got {result[:10]!r}"
+            )
         except ImportError:
             pytest.skip("rust_extensions.arrow_batch_builder not available")
 
@@ -76,6 +76,7 @@ class TestArrowIPCFormat:
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
 
             result = build_ipc_bytes(
@@ -88,7 +89,7 @@ class TestArrowIPCFormat:
                 payload_texts=["text1", "text2"],
                 claims_jsons=["[]", "[]"],
                 batch_size=2,
-    )
+            )
 
             # IPC stream has magic bytes at start and end
             assert len(result) >= 20, "IPC stream should have header and footer"
@@ -114,11 +115,13 @@ class TestPyArrowIntegration:
         """PyArrow should be able to parse our IPC stream."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -134,7 +137,7 @@ class TestPyArrowIntegration:
             payload_texts=["text1", "text2"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-    )
+        )
 
         # Parse with PyArrow (same as pa.ipc.open_stream)
         reader = pa.ipc.open_stream(result)
@@ -155,6 +158,7 @@ class TestArrowBatchBuilder:
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("rust_extensions not available")
@@ -178,7 +182,7 @@ class TestArrowBatchBuilder:
             payload_texts=payload_texts,
             claims_jsons=claims_jsons,
             batch_size=10,
-    )
+        )
 
         assert len(result) > 0
 
@@ -190,6 +194,7 @@ class TestArrowBatchBuilder:
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("rust_extensions not available")
@@ -205,7 +210,7 @@ class TestArrowBatchBuilder:
             payload_texts=["text \u00e0", "text \u00e1"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-    )
+        )
 
         assert len(result) > 0
 
@@ -217,6 +222,7 @@ class TestArrowBatchBuilder:
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("rust_extensions not available")
@@ -231,7 +237,7 @@ class TestArrowBatchBuilder:
             payload_texts=["", "text2"],
             claims_jsons=["[]", "[]"],
             batch_size=2,
-    )
+        )
 
         assert len(result) > 0
 
@@ -243,11 +249,13 @@ class TestArrowMemoryEfficiency:
         """Arrow IPC format should have low overhead per record."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -264,7 +272,7 @@ class TestArrowMemoryEfficiency:
             payload_texts=[f"text_{i}" for i in range(n_records)],
             claims_jsons=["[]"] * n_records,
             batch_size=n_records,
-    )
+        )
 
         # Parse and verify
         reader = pa.ipc.open_stream(result)
@@ -273,9 +281,7 @@ class TestArrowMemoryEfficiency:
         assert table.num_rows == n_records
         # Arrow should be efficient - at least 10 bytes per record overhead
         overhead_per_record = len(result) / n_records
-        assert overhead_per_record < 100, (
-            f"Overhead per record too high: {overhead_per_record:.2f} bytes"
-    )
+        assert overhead_per_record < 100, f"Overhead per record too high: {overhead_per_record:.2f} bytes"
 
     @pytest.mark.skipif(
         sys.platform != "darwin",
@@ -285,11 +291,13 @@ class TestArrowMemoryEfficiency:
         """Arrow format should be memory-efficient on M1."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -306,7 +314,7 @@ class TestArrowMemoryEfficiency:
             payload_texts=[f"text_{i}" for i in range(n_records)],
             claims_jsons=["[]"] * n_records,
             batch_size=n_records,
-    )
+        )
 
         # Should use less than 10MB for 10k records
         size_mb = len(result) / (1024 * 1024)
@@ -320,11 +328,13 @@ class TestArrowDataIntegrity:
         """Data should survive roundtrip through Arrow IPC."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -345,7 +355,7 @@ class TestArrowDataIntegrity:
             payload_texts=["t1", "t2", "t3"],
             claims_jsons=["[]"] * 3,
             batch_size=3,
-    )
+        )
 
         # Parse
         reader = pa.ipc.open_stream(result)
@@ -369,11 +379,13 @@ class TestArrowNullHandling:
         """Batch builder should handle null strings."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -389,7 +401,7 @@ class TestArrowNullHandling:
             payload_texts=["text1", "text2", "text3"],
             claims_jsons=["[]", "[]", "[]"],
             batch_size=3,
-    )
+        )
 
         # Parse
         reader = pa.ipc.open_stream(result)
@@ -406,11 +418,13 @@ class TestArrowSchemaCompatibility:
         """Schema should have all required columns for analytics."""
         try:
             import pyarrow as pa
+
             try:
                 from rust_extensions.arrow_batch_builder import build_ipc_bytes
             except ImportError:
                 sys.path.insert(0, str(PROJECT_ROOT / "rust_extensions" / "src"))
                 from arrow_batch_builder import build_ipc_bytes
+
                 sys.path.pop(0)
         except ImportError:
             pytest.skip("PyArrow or rust_extensions not available")
@@ -425,11 +439,10 @@ class TestArrowSchemaCompatibility:
             payload_texts=["text1"],
             claims_jsons=["[]"],
             batch_size=1,
-    )
+        )
 
         reader = pa.ipc.open_stream(result)
         table = reader.read_all()
-        schema = table.schema
 
         # Required columns
         required = {"id", "query", "source_type", "confidence", "timestamp"}

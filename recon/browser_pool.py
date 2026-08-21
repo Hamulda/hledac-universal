@@ -15,19 +15,18 @@ M1 8GB invariants:
 - Hard cap of 3 browsers regardless of host diversity
 - mx.eval([]) barrier before any MLX calls
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import Any
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import BoundedPerHostGate
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +40,7 @@ DEFAULT_MAX_HOSTS = 512
 
 class BrowserPage(Struct):
     """Wrapper around a Playwright page with automatic cleanup tracking."""
+
     page: Any  # playwright.async_api.Page
     browser_instance: Any  # weakref to parent browser
     created_at: float = field(default_factory=time.monotonic)
@@ -115,11 +115,7 @@ class AsyncBrowserPool:
             self._init_lock = asyncio.Lock()
         return self._init_lock
 
-    # -------------------------------------------------------------------------
-    # Lifecycle
-    # -------------------------------------------------------------------------
-
-    async def __aenter__(self) -> "AsyncBrowserPool":
+    async def __aenter__(self) -> AsyncBrowserPool:
         """Context manager entry — launch all browser instances."""
         await self._launch()
         return self
@@ -141,7 +137,7 @@ class AsyncBrowserPool:
                 logger.warning(
                     "playwright not available — browser pool is a no-op. "
                     "Install with: uv add playwright && playwright install chromium"
-    )
+                )
                 self._launched = True  # mark as "launched" but with no browsers
                 return
 
@@ -158,15 +154,16 @@ class AsyncBrowserPool:
                             "--disable-web-security",
                             "--disable-features=IsolateOrigins,site-per-process",
                         ],
-    )
+                    )
                     self._browsers[idx] = browser
                     logger.debug("browser_pool: launched Chromium instance %d", idx)
                 except Exception as e:
                     logger.warning("browser_pool: failed to launch Chromium %d: %s", idx, e)
             logger.info(
                 "browser_pool: %d/%d Chromium instances active",
-                len(self._browsers), self._size,
-    )
+                len(self._browsers),
+                self._size,
+            )
             self._launched = True
 
     async def _shutdown(self) -> None:
@@ -189,11 +186,7 @@ class AsyncBrowserPool:
         logger.info(
             "browser_pool: shutdown complete (total_pages=%d)",
             self._total_pages,
-    )
-
-    # -------------------------------------------------------------------------
-    # Page acquisition (async context manager pattern)
-    # -------------------------------------------------------------------------
+        )
 
     @asynccontextmanager
     async def managed_page(self, host: str):
@@ -237,7 +230,10 @@ class AsyncBrowserPool:
             return _DummyPage(host)
 
         # Round-robin: pick browser with fewest active pages
-        browser_idx = min(self._browsers, key=lambda k: sum(1 for p in self._pages.values() if p.browser_instance == self._browsers[k]))
+        browser_idx = min(
+            self._browsers,
+            key=lambda k: sum(1 for p in self._pages.values() if p.browser_instance == self._browsers[k]),
+        )
         browser = self._browsers[browser_idx]
 
         try:
@@ -249,7 +245,7 @@ class AsyncBrowserPool:
                 ),
                 viewport={"width": 1920, "height": 1080},
                 ignore_https_errors=True,
-    )
+            )
             page = await context.new_page()
             bp = BrowserPage(page=page, browser_instance=browser, host=host)
             self._pages[id(page)] = bp
@@ -265,7 +261,7 @@ class AsyncBrowserPool:
         page_id = id(page)
         self._active_pages -= 1
         if page_id in self._pages:
-            bp = self._pages.pop(page_id)
+            self._pages.pop(page_id)
             try:
                 context = page.context
                 await page.close()
@@ -273,10 +269,6 @@ class AsyncBrowserPool:
             except Exception as e:
                 logger.debug("browser_pool: error releasing page: %s", e)
         logger.debug("browser_pool: released page for %s (active=%d)", host, self._active_pages)
-
-    # -------------------------------------------------------------------------
-    # Stats
-    # -------------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, Any]:
         """Return pool telemetry."""
@@ -304,7 +296,6 @@ class _DummyPage:
 
     async def goto(self, url: str, **kwargs: Any) -> None:
         """No-op."""
-        pass
 
     async def content(self) -> str:
         """Return empty content."""
@@ -320,7 +311,6 @@ class _DummyPage:
 
     async def close(self) -> None:
         """No-op."""
-        pass
 
     @property
     def context(self) -> Any:

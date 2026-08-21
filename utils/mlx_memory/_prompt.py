@@ -5,12 +5,14 @@ LRU cache for MLX prompt cache states with explicit size tracking.
 
 Bounded entries and total size. Async-safe with asyncio.Lock.
 """
+
 import asyncio
 import logging
 from collections import OrderedDict
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class MLXPromptCache:
     """
@@ -23,9 +25,10 @@ class MLXPromptCache:
         if state is not None:
             cache_key, (cache_state, size_bytes) = state
     """
-    __slots__ = tuple(('_cache', '_lock', '_max_entries', '_max_size_bytes'))
 
-    def __init__(self, max_entries: int=10, max_size_gb: float | None=None):
+    __slots__ = ("_cache", "_lock", "_max_entries", "_max_size_bytes")
+
+    def __init__(self, max_entries: int = 10, max_size_gb: float | None = None) -> None:
         self._cache: OrderedDict[str, tuple[Any, int]] = OrderedDict()
         self._max_entries = max_entries
         self._max_size_bytes = int(max_size_gb * 1024 * 1024 * 1024) if max_size_gb else None
@@ -35,7 +38,7 @@ class MLXPromptCache:
         """Store a (cache_state, size_bytes) tuple (async-safe)."""
         total_size = value[1]
         if self._max_size_bytes and total_size > self._max_size_bytes:
-            logger.debug(f'MLXPromptCache: entry {key} too large ({total_size} bytes), skipped')
+            logger.debug(f"MLXPromptCache: entry {key} too large ({total_size} bytes), skipped")
             return
         async with self._lock:
             if key in self._cache:
@@ -44,13 +47,13 @@ class MLXPromptCache:
             if len(self._cache) > self._max_entries:
                 oldest = next(iter(self._cache))
                 del self._cache[oldest]
-                logger.debug(f'MLXPromptCache: evicted {oldest}')
+                logger.debug(f"MLXPromptCache: evicted {oldest}")
 
     def set(self, key: str, value: tuple[Any, int]) -> None:
         """Store a (cache_state, size_bytes) tuple (sync, non-blocking)."""
         total_size = value[1]
         if self._max_size_bytes and total_size > self._max_size_bytes:
-            logger.debug(f'MLXPromptCache: entry {key} too large ({total_size} bytes), skipped')
+            logger.debug(f"MLXPromptCache: entry {key} too large ({total_size} bytes), skipped")
             return
         if key in self._cache:
             self._cache.move_to_end(key)
@@ -58,7 +61,7 @@ class MLXPromptCache:
         if len(self._cache) > self._max_entries:
             oldest = next(iter(self._cache))
             del self._cache[oldest]
-            logger.debug(f'MLXPromptCache: evicted {oldest}')
+            logger.debug(f"MLXPromptCache: evicted {oldest}")
 
     def get(self, key: str) -> tuple[str, tuple[Any, int]] | None:
         """Get a (key, (cache_state, size_bytes)) tuple or None."""

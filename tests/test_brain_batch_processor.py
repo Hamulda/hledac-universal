@@ -10,10 +10,9 @@ M1 8GB invariant: Adaptive batch sizing by memory pressure.
 
 from __future__ import annotations
 
-import asyncio
+from typing import Never
+
 import pytest
-import time
-from _core import aclose
 
 
 class TestBatchPriority:
@@ -73,7 +72,7 @@ class TestBatchItem:
             timeout=60.0,
             created_at=1234567890.0,
             future=None,
-    )
+        )
         assert item.id == "test-2"
         assert item.response_model is str
         assert item.priority == 1.0
@@ -115,7 +114,7 @@ class TestBatchConfig:
             default_flush_interval=1.0,
             high_pressure_max_size=5,
             medium_pressure_max_size=10,
-    )
+        )
         assert config.max_size == 20
         assert config.default_flush_interval == 1.0
         assert config.high_pressure_max_size == 5
@@ -145,7 +144,7 @@ class TestBatchStats:
             queue_depth=10,
             avg_latency_ms=150.5,
             last_flush_at=1234567890.0,
-    )
+        )
         assert stats.processed_count == 100
         assert stats.failed_count == 5
         assert stats.queue_depth == 10
@@ -166,7 +165,7 @@ class TestBatchProcessorInit:
 
     def test_init_custom_config(self) -> None:
         """Test BatchProcessor with custom config."""
-        from brain._batch.batch_processor import BatchProcessor, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchProcessor
 
         config = BatchConfig(max_size=5)
         processor = BatchProcessor(config)
@@ -179,7 +178,7 @@ class TestBatchProcessorQueue:
     @pytest.mark.asyncio
     async def test_submit_increases_queue_depth(self) -> None:
         """Test submit() adds item to queue."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem
+        from brain._batch.batch_processor import BatchItem, BatchProcessor
 
         processor = BatchProcessor()
         item = BatchItem(id="test-1", prompt="Hello")
@@ -192,7 +191,7 @@ class TestBatchProcessorQueue:
     @pytest.mark.asyncio
     async def test_submit_multiple_items(self) -> None:
         """Test multiple submit() calls."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem
+        from brain._batch.batch_processor import BatchItem, BatchProcessor
 
         processor = BatchProcessor()
         for i in range(5):
@@ -204,7 +203,7 @@ class TestBatchProcessorQueue:
     @pytest.mark.asyncio
     async def test_submit_adds_to_queue(self) -> None:
         """Test submit() adds item to queue (max_size enforced by worker, not submit)."""
-        from brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         config = BatchConfig(max_size=3)
         processor = BatchProcessor(config)
@@ -233,7 +232,7 @@ class TestBatchProcessorStats:
     @pytest.mark.asyncio
     async def test_stats_after_submit(self) -> None:
         """Test stats update after submit."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem
+        from brain._batch.batch_processor import BatchItem, BatchProcessor
 
         processor = BatchProcessor()
         item = BatchItem(id="test-1", prompt="Hello")
@@ -360,7 +359,7 @@ class TestShardRetryIntegration:
     @pytest.mark.asyncio
     async def test_successful_batch_no_retry(self) -> None:
         """F-05: Successful batch doesn't trigger shard retry."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         class TestProcessor(BatchProcessor):
             async def _process_batch(self, items):
@@ -382,10 +381,10 @@ class TestShardRetryIntegration:
     @pytest.mark.asyncio
     async def test_batch_exception_triggers_shard_retry(self) -> None:
         """F-05: Batch exception triggers shard retry."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         class FailingBatchProcessor(BatchProcessor):
-            async def _process_batch(self, items):
+            async def _process_batch(self, items) -> Never:
                 raise RuntimeError("Batch failure")
 
             async def _process_single(self, item):
@@ -407,13 +406,13 @@ class TestShardRetryIntegration:
     @pytest.mark.asyncio
     async def test_item_exhausted_retries(self) -> None:
         """F-05: Item exhausting retries sets failed_count."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         class AlwaysFailProcessor(BatchProcessor):
-            async def _process_batch(self, items):
+            async def _process_batch(self, items) -> Never:
                 raise RuntimeError("Batch failure")
 
-            async def _process_single(self, item):
+            async def _process_single(self, item) -> Never:
                 raise ValueError(f"Item {item.id} always fails")
 
         config = BatchConfig(max_item_retries=2)
@@ -435,10 +434,10 @@ class TestShardRetryIntegration:
     @pytest.mark.asyncio
     async def test_flush_uses_shard_retry(self) -> None:
         """F-05: flush() also uses shard retry."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         class FailingFlushProcessor(BatchProcessor):
-            async def _process_batch(self, items):
+            async def _process_batch(self, items) -> Never:
                 raise RuntimeError("Flush batch failure")
 
             async def _process_single(self, item):
@@ -459,12 +458,12 @@ class TestShardRetryIntegration:
     @pytest.mark.asyncio
     async def test_retry_count_increments_per_attempt(self) -> None:
         """F-05: retry_count increments on each retry attempt."""
-        from brain._batch.batch_processor import BatchProcessor, BatchItem, BatchConfig
+        from brain._batch.batch_processor import BatchConfig, BatchItem, BatchProcessor
 
         attempt_counts: dict[str, int] = {}
 
         class CountingRetryProcessor(BatchProcessor):
-            async def _process_batch(self, items):
+            async def _process_batch(self, items) -> Never:
                 raise RuntimeError("Batch failure")
 
             async def _process_single(self, item):

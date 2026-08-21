@@ -11,11 +11,13 @@ which uses the global DICT_REGISTRY in rust_extensions. Wire format:
 Call `register_rust_dict(dict_id, dict_data)` at startup to populate the
 registry from a pre-trained dictionary file (e.g., zstd_osint.dict).
 """
+
 from collections import deque
 from typing import Any
-from _core import aclose
+
 try:
     import zstandard as zstd
+
     ZSTD_AVAILABLE = True
 except ImportError:
     ZSTD_AVAILABLE = False
@@ -30,6 +32,7 @@ _rust_compress_dict: Any = None
 _rust_register_dict: Any = None
 _rust_unregister_dict: Any = None
 
+
 def _ensure_rust_dict_bindings() -> None:
     """Lazy-load Rust dictionary compression bindings (fail-soft)."""
     global _rust_compress_dict, _rust_register_dict, _rust_unregister_dict
@@ -40,7 +43,8 @@ def _ensure_rust_dict_bindings() -> None:
             compress_page_dict,
             register_zstd_dict,
             unregister_zstd_dict,
-    )
+        )
+
         _rust_compress_dict = compress_page_dict
         _rust_register_dict = register_zstd_dict
         _rust_unregister_dict = unregister_zstd_dict
@@ -104,21 +108,23 @@ def compress_with_rust_dict(data: bytes, dict_id: int) -> bytes | None:
     except Exception:
         return None
 
+
 class ZstdCompressor:
     """Compressor with content-aware levels and passive dictionary."""
-    __slots__ = tuple(('_dctx', '_dictionary_data', '_response_counter', '_response_samples'))
 
-    def __init__(self):
+    __slots__ = ("_dctx", "_dictionary_data", "_response_counter", "_response_samples")
+
+    def __init__(self) -> None:
         self._dctx = zstd.ZstdDecompressor() if ZSTD_AVAILABLE else None
         self._dictionary_data: _DictT | None = None
         self._response_counter = 0
         self._response_samples: deque[tuple[bytes, str]] = deque(maxlen=100)
 
-    def compress(self, data: bytes, content_type: str='text') -> bytes:
+    def compress(self, data: bytes, content_type: str = "text") -> bytes:
         """Compress with optional dictionary and content-aware level."""
         if not ZSTD_AVAILABLE or data is None:
             return data
-        level = 1 if content_type == 'json' else 3
+        level = 1 if content_type == "json" else 3
         try:
             if self._dictionary_data and self._response_counter > 100:
                 cctx = zstd.ZstdCompressor(level=level, dict_data=self._dictionary_data)

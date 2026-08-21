@@ -3,8 +3,6 @@ PatternMatcher singleton — Rust Aho-Corasick backend.
 
 Pattern intelligence baseline — §8 first sprint.
 
-
-
 Scope: ONLY this module and tests/probe_8x/.
 No AO imports, no transport imports, no network access.
 
@@ -20,10 +18,9 @@ import re
 import sys
 import threading
 import time
+from operator import attrgetter
 from typing import NamedTuple, cast
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -40,9 +37,6 @@ __all__ = [
     "extract_structured_entities",
 ]
 
-# -----------------------------------------------------------------------------
-# Rust extension import guard
-# -----------------------------------------------------------------------------
 _RUST_ACO_AVAILABLE = False
 _RUST_STRUCTURED_EXTRACTOR_AVAILABLE = False
 _RUST_IMPORT_ERROR: str | None = None
@@ -80,9 +74,6 @@ else:
     logger.debug("[OK] Rust Aho-Corasick available — primary hot-path enabled.")
 
 
-# -----------------------------------------------------------------------------
-# Backend truth — lazily resolved on first get_backend_info() call
-# -----------------------------------------------------------------------------
 def get_backend_info() -> dict:
     """Return backend info — Rust ACO primary, linear scan fallback."""
     if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
@@ -95,10 +86,6 @@ def get_backend_info() -> dict:
         "rust_available": _RUST_ACO_AVAILABLE,
     }
 
-
-# -----------------------------------------------------------------------------
-# Typed hit contract
-# -----------------------------------------------------------------------------
 
 class PatternHit(NamedTuple):
     """Single pattern match result.
@@ -119,18 +106,7 @@ class PatternHit(NamedTuple):
         return f"PatternHit({self.pattern!r}, {self.start}, {self.end}, {self.value!r}, {self.label!r})"
 
 
-# -----------------------------------------------------------------------------
-# Bootstrap OSINT literal pack — Sprint 8BO v3 IOC-First
-# High-signal, lowercase, exact-match literals only.
-# NO regex, NO case-sensitive variants, NO short ambiguous tokens.
-#
-# Layer 1 — Structured identifiers (highest precision)
-# Layer 2 — TTP / ATT&CK-like terminology
-# Layer 3 — Malware / offensive tooling taxonomy
-# Layer 4 — OSINT / leak vocabulary (precision-safe)
-# -----------------------------------------------------------------------------
 _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
-    # === Layer 1: Structured identifiers (highest precision) ===
     ("cve-", "vulnerability_id"),
     ("ghsa-", "vulnerability_id"),
     ("rhsa-", "vulnerability_id"),
@@ -138,7 +114,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("msrc-", "vulnerability_id"),
     ("edb-id", "exploit_db_id"),
     ("edb:", "exploit_db_id"),
-    # === Layer 2: TTP / ATT&CK-like ===
     ("lateral movement", "attack_technique"),
     ("credential dumping", "attack_technique"),
     ("command and control", "attack_technique"),
@@ -153,8 +128,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     (" spear phishing", "attack_technique"),
     ("data breach", "security_incident"),
     ("data dump", "security_incident"),
-    # === Layer 2b: Named APT / threat actor groups (Sprint F153) ===
-    # High-precision, low-FP: these identifiers are rarely used outside CTI context
     ("apt28", "threat_actor"),
     ("apt-28", "threat_actor"),  # hyphenated variant (Sprint F173B)
     ("apt29", "threat_actor"),
@@ -163,7 +136,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("sandworm", "threat_actor"),
     ("fancy bear", "threat_actor"),
     ("cozy bear", "threat_actor"),
-    # === Layer 3: Malware / offensive tooling ===
     ("infostealer", "malware_type"),
     ("wiper", "malware_type"),
     ("wiper attack", "malware_type"),
@@ -178,7 +150,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("ransomware-as-a-service", "malware_type"),
     ("raas", "malware_type"),
     ("ransomware", "malware_type"),
-    # === Layer 4: OSINT / leak vocabulary ===
     ("leaked database", "osint_source"),
     ("pastebin leak", "osint_source"),
     ("github dork", "osint_source"),
@@ -186,7 +157,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("censys", "osint_source"),
     ("greynoise", "osint_source"),
     ("darknet domain", "darknet_domain"),
-    # === Original v1/v2 core literals (preserved) ===
     (".onion", "darknet_domain"),
     ("phishing", "attack_vector"),
     ("malware", "threat_type"),
@@ -199,7 +169,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("credentials", "credential_type"),
     ("credential", "credential_type"),
     ("backdoor", "threat_type"),
-    # === Morphology variants from v2 ===
     ("vulnerabilities", "threat_type"),
     ("exploited", "attack_vector"),
     ("exploits", "attack_vector"),
@@ -209,8 +178,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("leaks", "security_incident"),
     ("infected", "malware_type"),
     ("infection", "malware_type"),
-    # === Sprint 8QB V4 OSINT Literals ===
-    # Layer 5: Cryptocurrency / blockchain indicators
     ("bitcoin:", "bitcoin_payment"),
     ("bitcoin address", "bitcoin_payment"),
     ("btc address", "bitcoin_payment"),
@@ -245,21 +212,18 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("bl00dy", "ransomware_group"),
     ("8base", "ransomware_group"),
     ("rhysida", "ransomware_group"),
-    # === P2.2: Akira Ransomware (active 2023+, targets Win+Linux) ===
     ("akira ransomware", "ransomware_group"),
     ("akira locker", "ransomware_group"),
     ("akira leak site", "dark_market"),
     ("akira victim", "ransomware_group"),
     ("akira-files", "ransomware_group"),
     ("akira data leak", "security_incident"),
-    # === P2.2: BlackSuits Ransomware (Conti rebrand, active 2022+) ===
     ("blacksuits ransomware", "ransomware_group"),
     ("blacksuits locker", "ransomware_group"),
     ("blacksuits leak site", "dark_market"),
     ("blacksuits victim", "ransomware_group"),
     ("blacksuits data leak", "security_incident"),
     ("blacksuits dark web", "dark_market"),
-    # === P2.2: C2 Frameworks (beyond cobalt strike / sliver) ===
     ("metasploit framework", "offensive_tool"),
     ("metasploit c2", "offensive_tool"),
     ("msfvenom", "offensive_tool"),
@@ -287,7 +251,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("smbexec", "offensive_tool"),
     ("bloodhound", "offensive_tool"),
     ("sharpbound", "offensive_tool"),
-    # === P2.2: VPN Services (legitimate) ===
     ("expressvpn", "vpn_service"),
     ("nordvpn", "vpn_service"),
     ("mullvad", "vpn_service"),
@@ -303,13 +266,11 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("vyprvpn", "vpn_service"),
     ("perfect privacy", "vpn_service"),
     ("airvpn", "vpn_service"),
-    # === P2.2: VPN Protocols ===
     ("wireguard vpn", "vpn_protocol"),
     ("openvpn config", "vpn_protocol"),
     ("openvpn profile", "vpn_protocol"),
     ("ikev2 vpn", "vpn_protocol"),
     ("vpn protocol", "vpn_protocol"),
-    # === P2.2: VPN Malware / Fake VPN (infostealer vector) ===
     ("free vpn malware", "vpn_malware"),
     ("fake vpn", "vpn_malware"),
     ("vpn stealer", "vpn_malware"),
@@ -317,8 +278,6 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("vpn dump", "vpn_malware"),
     ("hotspot shield malware", "vpn_malware"),
     ("psiphon malware", "vpn_malware"),
-    # === Sprint 8SC V5 DARK WEB + CRYPTO + PGP ===
-    # Dark protocols
     ("i2p", "dark_protocol"),
     ("yggdrasil", "dark_protocol"),
     ("zeronet", "dark_protocol"),
@@ -356,16 +315,11 @@ _BOOTSTRAP_PATTERNS_V3: tuple[tuple[str, str], ...] = (
     ("pgp required", "dark_market"),
     ("jabber xmpp", "dark_market"),
     ("hidden service marketplace", "dark_market"),
-    )
+)
 
 _BOOTSTRAP_PATTERNS = _BOOTSTRAP_PATTERNS_V3
 _BOOTSTRAP_PACK_VERSION = 3
 
-# -----------------------------------------------------------------------------
-# Pattern pack metadata — lightweight per-literal annotations
-# Each entry: (pattern, metadata_dict)
-# Keys: layer (1-4), source_vocab, mitre_tactic
-# -----------------------------------------------------------------------------
 _PATTERN_PACK_METADATA: dict[str, dict] = {
     # Layer 1: identifiers
     "cve-": {"layer": 1, "source_vocab": "identifier", "mitre_tactic": None},
@@ -450,7 +404,6 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "sandworm": {"layer": 2, "source_vocab": "threat_actor", "mitre_tactic": None},
     "fancy bear": {"layer": 2, "source_vocab": "threat_actor", "mitre_tactic": None},
     "cozy bear": {"layer": 2, "source_vocab": "threat_actor", "mitre_tactic": None},
-    # === Sprint 8QB V4: Ransomware groups + OSINT + crypto ===
     "lockbit": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "blackcat": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "alphv": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
@@ -460,21 +413,18 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "bl00dy": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "8base": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "rhysida": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
-    # === P2.2: Akira Ransomware ===
     "akira ransomware": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "akira locker": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "akira leak site": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
     "akira victim": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "akira-files": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "akira data leak": {"layer": 4, "source_vocab": "security_incident", "mitre_tactic": None},
-    # === P2.2: BlackSuits Ransomware ===
     "blacksuits ransomware": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "blacksuits locker": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "blacksuits leak site": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
     "blacksuits victim": {"layer": 3, "source_vocab": "ransomware_group", "mitre_tactic": None},
     "blacksuits data leak": {"layer": 4, "source_vocab": "security_incident", "mitre_tactic": None},
     "blacksuits dark web": {"layer": 4, "source_vocab": "dark_market", "mitre_tactic": None},
-    # === P2.2: C2 Frameworks ===
     "metasploit framework": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
     "metasploit c2": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
     "msfvenom": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
@@ -502,7 +452,6 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "smbexec": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
     "bloodhound": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
     "sharpbound": {"layer": 3, "source_vocab": "offensive_tool", "mitre_tactic": None},
-    # === P2.2: VPN Services ===
     "expressvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
     "nordvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
     "mullvad": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
@@ -518,13 +467,11 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "vyprvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
     "perfect privacy": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
     "airvpn": {"layer": 4, "source_vocab": "vpn_service", "mitre_tactic": None},
-    # === P2.2: VPN Protocols ===
     "wireguard vpn": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
     "openvpn config": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
     "openvpn profile": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
     "ikev2 vpn": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
     "vpn protocol": {"layer": 4, "source_vocab": "vpn_protocol", "mitre_tactic": None},
-    # === P2.2: VPN Malware ===
     "free vpn malware": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
     "fake vpn": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
     "vpn stealer": {"layer": 3, "source_vocab": "vpn_malware", "mitre_tactic": None},
@@ -553,7 +500,6 @@ _PATTERN_PACK_METADATA: dict[str, dict] = {
     "combolist": {"layer": 4, "source_vocab": "credential_leak", "mitre_tactic": None},
     "stealer log": {"layer": 4, "source_vocab": "credential_leak", "mitre_tactic": None},
     "database leak": {"layer": 4, "source_vocab": "security_incident", "mitre_tactic": None},
-    # === Sprint 8SC V5: Dark web + crypto + PGP ===
     "i2p": {"layer": 4, "source_vocab": "dark_protocol", "mitre_tactic": None},
     "yggdrasil": {"layer": 4, "source_vocab": "dark_protocol", "mitre_tactic": None},
     "zeronet": {"layer": 4, "source_vocab": "dark_protocol", "mitre_tactic": None},
@@ -596,21 +542,11 @@ def get_pattern_pack_metadata(pattern: str) -> dict | None:
     return _PATTERN_PACK_METADATA.get(pattern)
 
 
-# -----------------------------------------------------------------------------
-# High-precision regex extraction helper
-# Extends AC automaton with structured entity extraction
-# -----------------------------------------------------------------------------
 _RE_CVE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
 _RE_GHSA = re.compile(r"GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}", re.IGNORECASE)
-_RE_SHA256 = re.compile(
-    r"\b[a-f0-9]{64}\b", re.IGNORECASE
-    )
-_RE_MD5 = re.compile(
-    r"\b[a-f0-9]{32}\b", re.IGNORECASE
-    )
-_RE_SHA1 = re.compile(
-    r"\b[a-f0-9]{40}\b", re.IGNORECASE
-    )
+_RE_SHA256 = re.compile(r"\b[a-f0-9]{64}\b", re.IGNORECASE)
+_RE_MD5 = re.compile(r"\b[a-f0-9]{32}\b", re.IGNORECASE)
+_RE_SHA1 = re.compile(r"\b[a-f0-9]{40}\b", re.IGNORECASE)
 
 # Sprint 8QB V4 — precision regex patterns (compiled once at module level)
 # BTC legacy: case-insensitive (addresses may be mixed case)
@@ -625,14 +561,10 @@ _RE_ETH_ADDR = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 # Telegram t.me/ links — 3+ char slug
 _RE_TELEGRAM = re.compile(r"\bt\.me/[\w\-]{3,}\b")
 # MISP UUID: 8-4-4-4-12 hex format
-_RE_MISP_UUID = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
-    )
+_RE_MISP_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 # Onion v3: exactly 56 base32 chars before .onion (stricter than older patterns)
 _RE_ONION_V3 = re.compile(r"\b[a-z2-7]{56}\.onion\b", re.IGNORECASE)
 
-# === PATTERN V5 — DARK WEB + CRYPTO + PGP ===
-# Monero mainnet: 95 chars, starts with 4 (case-insensitive for lowercase text)
 _RE_XMR_ADDR = re.compile(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b", re.IGNORECASE)
 # I2P B32 address: 52 base32 chars + .b32.i2p
 _RE_I2P_ADDR = re.compile(r"\b[a-z2-7]{52}\.b32\.i2p\b", re.IGNORECASE)
@@ -641,23 +573,16 @@ _RE_PGP_FP = re.compile(r"\b(?:[0-9A-F]{4}\s?){10}\b", re.IGNORECASE)
 # IPFS CIDv0: Qm + 44 base58 chars
 _RE_IPFS_CID = re.compile(r"\bQm[1-9A-HJ-NP-Za-km-z]{44}\b", re.IGNORECASE)
 
-# === SPRINT F165A — STRUCTURED IOC COVERAGE GAPS ===
-# USDT TRC20 (Tron network): T prefix + 33 base58 chars = 34 total
 _RE_USDT_TRC20 = re.compile(r"\bT[A-HJ-NP-Za-km-z1-9]{33}\b", re.IGNORECASE)
 # Litecoin P2PKH: L prefix + 33 base58 chars = 34 total
 _RE_LTC_ADDR = re.compile(r"\bL[1-9A-HJ-NP-Za-km-z]{33}\b", re.IGNORECASE)
 # Dogecoin P2PKH: D prefix + 33 base58 chars = 34 total
 # Full base58 alphabet (no I, O, 0, l): 123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz
-_RE_DOGE_ADDR = re.compile(
-    r"\bD[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{33}\b",
-    re.IGNORECASE
-    )
+_RE_DOGE_ADDR = re.compile(r"\bD[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{33}\b", re.IGNORECASE)
 # Ethereum contract address: 0x prefix + 40 hex, commonly a contract (not just EOA)
 # Uses _RE_ETH_ADDR — same regex, different label distinguishes contract vs EOA
 # Note: removing duplicate regex saves memory; callers use _RE_ETH_ADDR with "eth_contract" label
 
-# === P20 — API KEY / SECRET PATTERNS ===
-# AWS Access Key ID: AKIA + 16 uppercase alphanumeric chars (20 total)
 _RE_AWS_KEY_ID = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 # Google API Key: AIza + 35 URL-safe base64 chars (39 total)
 _RE_GOOGLE_API_KEY = re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")
@@ -667,9 +592,9 @@ _RE_STRIPE_SK = re.compile(r"\bsk_live_[0-9a-zA-Z]{24}\b")
 _RE_SLACK_TOKEN = re.compile(r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,32}\b")
 
 
-
 class ExtractedEntity(NamedTuple):
     """High-precision entity extracted via regex post-processing."""
+
     entity_type: str
     value: str
     start: int
@@ -678,7 +603,7 @@ class ExtractedEntity(NamedTuple):
 
 def _looks_random(s: str) -> bool:
     """Return True if s looks like a real hash (high-entropy hex string)."""
-    return bool(re.fullmatch(r'[a-f0-9]{20,}', s))
+    return bool(re.fullmatch(r"[a-f0-9]{20,}", s))
 
 
 # Issue #20 — master regex: one-pass scan instead of 15 separate finditer() calls.
@@ -688,20 +613,20 @@ _MASTER_RE: re.Pattern[str] | None = None
 _MASTER_MAP: dict[str, tuple[str, int]] = {
     # Format: group_name: (entity_type, min_len)
     # min_len reflects actual regex minimum length for belt-and-suspenders validation
-    "cve": ("cve_identifier", 12),       # CVE-YYYY-NNNN = 12 chars (4+1+4+1+2)
-    "ghsa": ("ghsa_identifier", 17),    # GHSA-xxxx-xxxx-xxxx = 17
+    "cve": ("cve_identifier", 12),  # CVE-YYYY-NNNN = 12 chars (4+1+4+1+2)
+    "ghsa": ("ghsa_identifier", 17),  # GHSA-xxxx-xxxx-xxxx = 17
     "onion3": ("onion_v3_address", 62),  # [a-z2-7]{56}.onion = 62
-    "sha256": ("sha256_hash", 64),       # 64 hex
-    "md5": ("md5_hash", 32),            # 32 hex
-    "sha1": ("sha1_hash", 40),          # 40 hex
-    "eth": ("eth_address", 42),          # 0x + 40 hex
-    "usdt": ("usdt_trc20", 34),          # T + 33 base58
-    "ltc": ("ltc_address", 34),          # L + 33 base58
-    "doge": ("doge_address", 34),        # D + 33 base58
-    "aws": ("aws_access_key_id", 20),   # AKIA + 16
-    "gapi": ("google_api_key", 39),     # AIza + 35
-    "stripe": ("stripe_secret_key", 31), # sk_live_ + 24
-    "slack": ("slack_token", 51),       # xox[baprs]-10-10-24..32
+    "sha256": ("sha256_hash", 64),  # 64 hex
+    "md5": ("md5_hash", 32),  # 32 hex
+    "sha1": ("sha1_hash", 40),  # 40 hex
+    "eth": ("eth_address", 42),  # 0x + 40 hex
+    "usdt": ("usdt_trc20", 34),  # T + 33 base58
+    "ltc": ("ltc_address", 34),  # L + 33 base58
+    "doge": ("doge_address", 34),  # D + 33 base58
+    "aws": ("aws_access_key_id", 20),  # AKIA + 16
+    "gapi": ("google_api_key", 39),  # AIza + 35
+    "stripe": ("stripe_secret_key", 31),  # sk_live_ + 24
+    "slack": ("slack_token", 51),  # xox[baprs]-10-10-24..32
 }
 
 
@@ -764,22 +689,24 @@ def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
         matched = next(
             ((entity_type, min_len, m.group(g)) for g, (entity_type, min_len) in _MASTER_MAP.items() if m.group(g)),
             None,
-    )
+        )
         if matched is None:
             continue
         entity_type, min_len, _ = matched
         # Preserve original case via slice — m.group() returns lowercase from
         # case-insensitive regex, but text[start:end] gives us the real case.
-        value = text[m.start():m.end()]
+        value = text[m.start() : m.end()]
         # Belt-and-suspenders: verify minimum length
         if len(value) < min_len:
             continue
-        entities.append(ExtractedEntity(
-            entity_type=entity_type,
-            value=value,
-            start=m.start(),
-            end=m.end(),
-        ))
+        entities.append(
+            ExtractedEntity(
+                entity_type=entity_type,
+                value=value,
+                start=m.start(),
+                end=m.end(),
+            )
+        )
 
     # Hash validation: reject trivial/accidental hashes
     validated: list[ExtractedEntity] = []
@@ -815,10 +742,7 @@ def extract_structured_entities(text: str) -> list[dict]:
     matched_count = len(hits)
     if matched_count == 0:
         sample = text[:200] if len(text) > 200 else text
-        logger.debug(
-            f"[PATTERN_MATCHER] zero pattern matches for text sample: {sample!r} "
-            f"(len={len(text)})"
-    )
+        logger.debug(f"[PATTERN_MATCHER] zero pattern matches for text sample: {sample!r} (len={len(text)})")
         return []
 
     seen: set[tuple[str, str]] = set()
@@ -830,27 +754,23 @@ def extract_structured_entities(text: str) -> list[dict]:
         if key in seen or len(entities) >= max_entries:
             continue
         seen.add(key)
-        entities.append({
-            "entity_type": hit.label or "unknown",
-            "value": hit.value,
-            "label": hit.pattern,
-        })
+        entities.append(
+            {
+                "entity_type": hit.label or "unknown",
+                "value": hit.value,
+                "label": hit.pattern,
+            }
+        )
 
     return entities
 
 
-# -----------------------------------------------------------------------------
-# Seed registry — ONLY for infrastructure tests, not production OSINT
-# -----------------------------------------------------------------------------
 _SEED_REGISTRY: tuple[tuple[str, str], ...] = (
     ("@example.com", "email"),
     ("1BTC", "crypto_address"),
     (".onion", "domain"),
     ("+420", "phone"),
-    )
-
-
-# -----------------------------------------------------------------------------
+)
 
 
 class _PatternMatcherState:
@@ -913,11 +833,6 @@ class _PatternMatcherState:
 _matcher_state = _PatternMatcherState()
 
 
-# -----------------------------------------------------------------------------
-# Internal helpers
-# -----------------------------------------------------------------------------
-
-
 def _has_overlapping_patterns(patterns: list[str]) -> bool:
     """Detect overlapping patterns in O(n log n) worst-case.
 
@@ -967,11 +882,6 @@ def _is_word_boundary(text: str, start: int, end: int) -> bool:
     return before_ok and after_ok
 
 
-# -----------------------------------------------------------------------------
-# Public API
-# -----------------------------------------------------------------------------
-
-
 def get_pattern_matcher() -> _PatternMatcherState:
     """Return the singleton PatternMatcher state.
 
@@ -997,10 +907,7 @@ def configure_patterns(registry: tuple[tuple[str, str], ...], *, _from_prewarm: 
     # F3-OPT: if prewarm thread already completed the same build, skip lock entirely.
     # _prewarm_done is set True only when prewarm built _BOOTSTRAP_PATTERNS successfully.
     # This eliminates one redundant acquire→compare→release cycle per first match_text call.
-    if (
-        not _from_prewarm
-        and not _matcher_state._prewarm_done
-    ):
+    if not _from_prewarm and not _matcher_state._prewarm_done:
         acquired = _matcher_state._prewarm_lock.acquire(timeout=30.0)
         if not acquired:
             logger.warning("[PATTERNS] configure_patterns: lock timeout — skipping (prewarm may be stuck)")
@@ -1043,7 +950,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
     if old is not None:
         try:
             old.close()
-        except (AttributeError, TypeError):  # noqa: BLE001
+        except AttributeError, TypeError:  # noqa: BLE001
             pass  # fail-safe: close not available or already None — non-fatal
 
     # Build Rust ACO eagerly if available and patterns don't overlap
@@ -1069,9 +976,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
             _matcher_state._regex_alternation = None
         # Issue #35: build cached label_map for regex fallback path
         # Cached here (once per configure) instead of per match_text() call
-        _matcher_state._label_map_cache = {
-            p.lower(): (p, label) for p, label in registry
-        } if registry else None
+        _matcher_state._label_map_cache = {p.lower(): (p, label) for p, label in registry} if registry else None
         # Issue #17: warn when falling back from Rust ACO due to overlapping patterns
         if _RUST_ACO_AVAILABLE and has_overlapping:
             logger.warning(
@@ -1079,7 +984,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
                 "Using regex alternation fallback (O(n) single-pass). "
                 "Consider removing substring patterns to enable Rust ACO.",
                 len(registry),
-    )
+            )
 
 
 # ── Pattern scan helpers ─────────────────────────────────────────────────────────
@@ -1108,13 +1013,15 @@ def _scan_with_regex_alternation(
         start, end = m.start(), m.end()
         if boundary_policy == "word" and not _is_word_boundary(text, start, end):
             continue
-        hits.append(PatternHit(
-            pattern=sys.intern(pattern),
-            start=start,
-            end=end,
-            value=text[start:end],
-            label=sys.intern(label) if label else None,
-        ))
+        hits.append(
+            PatternHit(
+                pattern=sys.intern(pattern),
+                start=start,
+                end=end,
+                value=text[start:end],
+                label=sys.intern(label) if label else None,
+            )
+        )
     return hits
 
 
@@ -1135,13 +1042,15 @@ def _scan_with_str_find(
             if boundary_policy == "word" and not _is_word_boundary(text, idx, idx + len(pattern)):
                 pos = idx + 1
                 continue
-            hits.append(PatternHit(
-                pattern=sys.intern(pattern),
-                start=idx,
-                end=idx + len(pattern),
-                value=text[idx:idx + len(pattern)],
-                label=sys.intern(label) if label else None,
-            ))
+            hits.append(
+                PatternHit(
+                    pattern=sys.intern(pattern),
+                    start=idx,
+                    end=idx + len(pattern),
+                    value=text[idx : idx + len(pattern)],
+                    label=sys.intern(label) if label else None,
+                )
+            )
             pos = idx + 1
     return hits
 
@@ -1178,13 +1087,15 @@ def _extract_structured_entities_python(
         (_RE_SLACK_TOKEN, "slack_token"),
     ]:
         for m in _pattern.finditer(text_lower):
-            hits.append(PatternHit(
-                pattern=sys.intern(m.group()),
-                start=m.start(),
-                end=m.end(),
-                value=text[m.start():m.end()],
-                label=sys.intern(_label),
-            ))
+            hits.append(
+                PatternHit(
+                    pattern=sys.intern(m.group()),
+                    start=m.start(),
+                    end=m.end(),
+                    value=text[m.start() : m.end()],
+                    label=sys.intern(_label),
+                )
+            )
     return hits
 
 
@@ -1200,19 +1111,19 @@ def _extract_structured_rust(text: str, text_lower: str, boundary_policy: str) -
     for r_start, r_end, r_value, r_label in _rust_extract_structured(text_lower):
         if boundary_policy == "word" and not _is_word_boundary(text, r_start, r_end):
             continue
-        hits.append(PatternHit(
-            pattern=sys.intern(r_value),
-            start=r_start,
-            end=r_end,
-            value=text[r_start:r_end],
-            label=sys.intern(r_label),
-        ))
+        hits.append(
+            PatternHit(
+                pattern=sys.intern(r_value),
+                start=r_start,
+                end=r_end,
+                value=text[r_start:r_end],
+                label=sys.intern(r_label),
+            )
+        )
     return hits
 
 
-def match_text(
-    text: str, *, boundary_policy: str = "none"
-) -> list[PatternHit]:
+def match_text(text: str, *, boundary_policy: str = "none") -> list[PatternHit]:
     """Find all pattern occurrences in *text* using the active registry.
 
     Args:
@@ -1234,16 +1145,16 @@ def match_text(
 
     text_lower = text.lower()
 
-    # === Pattern scan: Rust ACO or Python fallback ===
     if _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None:
         hits = _scan_rust_aco(text_lower, boundary_policy)
     elif _matcher_state._regex_alternation is not None:
         label_map = cast(dict[str, tuple[str, str]], _matcher_state._label_map_cache)
-        hits = _scan_with_regex_alternation(text, text_lower, _matcher_state._regex_alternation, label_map, boundary_policy)
+        hits = _scan_with_regex_alternation(
+            text, text_lower, _matcher_state._regex_alternation, label_map, boundary_policy
+        )
     else:
         hits = _scan_with_str_find(text, text_lower, boundary_policy)
 
-    # === Structured entity extraction: Rust or Python fallback ===
     if _RUST_STRUCTURED_EXTRACTOR_AVAILABLE and _rust_extract_structured is not None:
         hits.extend(_extract_structured_rust(text, text_lower, boundary_policy))
     else:
@@ -1253,9 +1164,7 @@ def match_text(
     return hits
 
 
-def match_text_batch(
-    texts: list[str], *, boundary_policy: str = "none"
-) -> list[list[PatternHit]]:
+def match_text_batch(texts: list[str], *, boundary_policy: str = "none") -> list[list[PatternHit]]:
     """Batch pattern matching — rayon parallel across texts, single GIL acquisition.
 
     Issue #4: Replaces N serial match_text() calls with one batch call.
@@ -1284,11 +1193,7 @@ def match_text_batch(
     if not _matcher_state._bootstrap_applied:
         configure_default_bootstrap_patterns_if_empty()
 
-    # Check Rust batch path
-    rust_aco_enabled = (
-        _RUST_ACO_AVAILABLE
-        and _matcher_state._rust_aco is not None
-    )
+    rust_aco_enabled = _RUST_ACO_AVAILABLE and _matcher_state._rust_aco is not None
 
     if rust_aco_enabled and len(texts) >= 4:
         # Rust batch path — single GIL acquisition, rayon parallel scan
@@ -1310,7 +1215,9 @@ def match_text_batch(
             rust_structured_results = [[] for _ in texts]
 
         results: list[list[PatternHit]] = []
-        for _text_idx, (text, raw_hits, structured_hits) in enumerate(zip(texts, raw_results, rust_structured_results, strict=False)):
+        for _text_idx, (text, raw_hits, structured_hits) in enumerate(
+            zip(texts, raw_results, rust_structured_results, strict=False)
+        ):
             hits: list[PatternHit] = []
 
             # AC scan hits (Rust) — Issue #37-FIX: Rust PatternHit used directly.
@@ -1324,13 +1231,15 @@ def match_text_batch(
             for r_start, r_end, r_value, r_label in structured_hits:
                 if boundary_policy == "word" and not _is_word_boundary(text, r_start, r_end):
                     continue
-                hits.append(PatternHit(
-                    pattern=sys.intern(r_value),
-                    start=r_start,
-                    end=r_end,
-                    value=text[r_start:r_end],
-                    label=sys.intern(r_label),
-                ))
+                hits.append(
+                    PatternHit(
+                        pattern=sys.intern(r_value),
+                        start=r_start,
+                        end=r_end,
+                        value=text[r_start:r_end],
+                        label=sys.intern(r_label),
+                    )
+                )
 
             hits.sort(key=attrgetter("start"))
             results.append(hits)
@@ -1352,7 +1261,7 @@ def reset_pattern_matcher() -> None:
     if old is not None:
         try:
             old.close()
-        except (AttributeError, TypeError):  # noqa: BLE001
+        except AttributeError, TypeError:  # noqa: BLE001
             pass  # fail-safe: close not available or already None
     _matcher_state._rust_aco = None
     _matcher_state._pattern_version = 0
@@ -1451,14 +1360,6 @@ def prewarm() -> None:
     t = threading.Thread(target=_prewarm_thread, daemon=True, name="pattern-prewarm")
     t.start()
     logger.debug("[PATTERNS] prewarm thread started")
-
-
-
-
-
-# -----------------------------------------------------------------------------
-# Benchmark helpers (importable for offline measurement)
-# -----------------------------------------------------------------------------
 
 
 def benchmark_build(registry: tuple[tuple[str, str], ...]) -> dict:

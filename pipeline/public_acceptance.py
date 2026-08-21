@@ -9,23 +9,12 @@ Depends on:
 - public_constants: _SOURCE_TYPE, _PUBLIC_SOURCE_TYPE, _DEFAULT_CONFIDENCE
 """
 
-
 import time
-from typing import Any
-from _core import aclose
 
-# ----------------------------------------------------------------------
-# Constants (re-exported from public_constants for convenience)
-# ----------------------------------------------------------------------
 _SOURCE_TYPE: str = "live_public_pipeline"
 _PUBLIC_SOURCE_TYPE: str = "public"
 _DEFAULT_CONFIDENCE: float = 0.8
 MAX_EXTRACTED_TEXT_CHARS: int = 200_000
-
-
-# ----------------------------------------------------------------------
-# CanonicalFinding construction
-# ----------------------------------------------------------------------
 
 
 async def _build_public_finding(
@@ -55,6 +44,7 @@ async def _build_public_finding(
 
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+
     from .public_patterns import _make_finding_id
 
     # P0-FIX (F290): Accept title+snippet even without body text.
@@ -109,7 +99,7 @@ async def _build_public_finding(
             ts=time.time(),
             provenance=provenance,
             payload_text=payload_text,
-    )
+        )
         return (finding,)
     except Exception:
         return ()
@@ -133,13 +123,12 @@ async def _extract_live_public_findings_from_page(
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from hledac.universal.runtime.worker_pool import get_rust_pool
+
     from .public_patterns import _make_finding_id, _pattern_context
 
     # Extract context in rayon pool — ISSUE 3.1 FIX: was run_in_cpu_pool_async
     pool = get_rust_pool("cpu")
-    context: str = await pool.submit(
-        _pattern_context, page_text, hit_start, hit_end
-    )
+    context: str = await pool.submit(_pattern_context, page_text, hit_start, hit_end)
 
     # Truncate to hard cap
     if len(context) > MAX_EXTRACTED_TEXT_CHARS:

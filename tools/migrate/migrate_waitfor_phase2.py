@@ -18,7 +18,6 @@ Přístup:
 import re
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_call_extent(lines: list[str], start: int) -> tuple[int, int] | None:
@@ -80,7 +79,6 @@ def find_lhs_span(lines: list[str], call_start: int) -> tuple[int, int, int]:
     lhs_start = await_line
     for back in range(await_line - 1, max(-1, await_line - 10), -1):
         line = lines[back]
-        # Process line right-to-left
         for ch in reversed(line):
             if ch == "]":
                 depth += 1
@@ -135,7 +133,7 @@ def find_timeout_arg(lines: list[str], call_start: int, call_end: int) -> tuple[
             # Pokud je uvnitř jiného volání, přeskočíme
             last_result = (value, line_idx, m.start(), 0)
 
-    if 'last_result' not in dir() or last_result is None:
+    if "last_result" not in dir() or last_result is None:
         return None
 
     value, line_idx, arg_start_col, _ = last_result
@@ -198,15 +196,23 @@ def is_in_try_with_timeout(lines: list[str], call_start: int) -> bool:
     return False
 
 
-def transform_block(lines: list[str], lhs_start: int, call_start: int, call_end: int,
-                    timeout_str: str, t_line: int, t_col_start: int, t_col_end: int) -> list[str]:
+def transform_block(
+    lines: list[str],
+    lhs_start: int,
+    call_start: int,
+    call_end: int,
+    timeout_str: str,
+    t_line: int,
+    t_col_start: int,
+    t_col_end: int,
+) -> list[str]:
     """
     Sestaví nový blok řádků.
     Vstupní rozsah: [lhs_start, call_end].
     Výstup: seznam nových řádků.
     """
     # Zkopírujeme relevantní řádky
-    block = list(lines[lhs_start:call_end + 1])
+    block = list(lines[lhs_start : call_end + 1])
 
     # 1. Vyčistíme timeout= argument
     if t_line == call_start:
@@ -228,7 +234,7 @@ def transform_block(lines: list[str], lhs_start: int, call_start: int, call_end:
     pos = line.find("asyncio.wait_for(")
     if pos >= 0:
         # Pokud je '= await' před tím na stejném řádku, vše před necháme; wait_for prefix odstraníme
-        block[rel] = line[:pos] + line[pos + len("asyncio.wait_for("):]
+        block[rel] = line[:pos] + line[pos + len("asyncio.wait_for(") :]
         # Strip trailing comma (pokud je await na stejném řádku jako inner)
         # Např. "peers = await node.get_peers(ih_hex)," — odstraníme čárku
         stripped = block[rel].rstrip()
@@ -314,11 +320,12 @@ def migrate_file(filepath: Path) -> tuple[int, list[str]]:
 
         timeout_str, t_line, t_col_start, t_col_end = timeout_info
 
-        new_block = transform_block(line_only, lhs_start, call_start, call_end,
-                                     timeout_str, t_line, t_col_start, t_col_end)
+        new_block = transform_block(
+            line_only, lhs_start, call_start, call_end, timeout_str, t_line, t_col_start, t_col_end
+        )
 
         # Nahradíme starý blok novým
-        line_only[lhs_start:call_end + 1] = new_block
+        line_only[lhs_start : call_end + 1] = new_block
         migrations.append(f"{filepath.name}:{call_start + 1} → timeout({timeout_str})")
 
         i = lhs_start + len(new_block)
@@ -329,7 +336,7 @@ def migrate_file(filepath: Path) -> tuple[int, list[str]]:
     return len(migrations), warnings
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: migrate_waitfor_phase2.py <file1.py> [file2.py ...]")
         sys.exit(1)

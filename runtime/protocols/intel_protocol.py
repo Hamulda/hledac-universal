@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: feed cache TTL enforced
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -30,9 +27,7 @@ class IntelProtocol(Protocol):
         - check_policy: OPSEC policy validation
     """
 
-    async def query_ct_logs(
-        self, domain: str
-    ) -> list[dict[str, Any]]:
+    async def query_ct_logs(self, domain: str) -> list[dict[str, Any]]:
         """Query Certificate Transparency logs."""
         ...
 

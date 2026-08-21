@@ -17,8 +17,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from _core import aclose
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module-level helpers
@@ -32,7 +30,6 @@ def _make_engine():
     Uses object.__setattr__ to bypass __init__ (which requires a real model path
     and performs Metal/MLX initialisation not needed for throttling logic tests).
     """
-    import time as _time
 
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
@@ -54,17 +51,17 @@ def _make_engine():
 class TestGenerationCounter:
     """Verify _generation_since_clear increments and resets correctly."""
 
-    def test_init_resets_counter(self):
+    def test_init_resets_counter(self) -> None:
         """New engine starts with _generation_since_clear == 0."""
         engine = _make_engine()
         assert engine._generation_since_clear == 0, "Fresh engine must start with counter at 0"
 
-    def test_init_resets_last_clear_at(self):
+    def test_init_resets_last_clear_at(self) -> None:
         """New engine starts with _last_clear_at == None."""
         engine = _make_engine()
         assert engine._last_clear_at is None, "Fresh engine must start with _last_clear_at None"
 
-    def test_counter_incremented_on_success_path(self):
+    def test_counter_incremented_on_success_path(self) -> None:
         """
         _generation_since_clear increments BEFORE _mlx_clear_and_timestamp
         is called on the success path, so the counter reflects the inference
@@ -79,7 +76,7 @@ class TestGenerationCounter:
 
         assert engine._generation_since_clear == 5
 
-    def test_counter_reset_after_clear(self):
+    def test_counter_reset_after_clear(self) -> None:
         """_mlx_clear_and_timestamp resets _generation_since_clear to 0."""
         engine = _make_engine()
         engine._generation_since_clear = 19
@@ -99,14 +96,14 @@ class TestGenerationCounter:
 class TestClearInterval:
     """Verify CLEAR_INTERVAL constant exists and is used correctly."""
 
-    def test_clear_interval_is_20(self):
+    def test_clear_interval_is_20(self) -> None:
         """L-04 acceptance: CLEAR_INTERVAL = 20 generations."""
         from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
         assert hasattr(DeepHermes3Engine, "_CLEAR_INTERVAL")
         assert DeepHermes3Engine._CLEAR_INTERVAL == 20
 
-    def test_throttled_below_threshold(self):
+    def test_throttled_below_threshold(self) -> None:
         """
         Below _CLEAR_INTERVAL and NORMAL pressure: clear_cache() is NOT called.
 
@@ -118,13 +115,14 @@ class TestClearInterval:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state="ok")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -132,11 +130,9 @@ class TestClearInterval:
 
             engine._mlx_clear_and_timestamp()
 
-        assert not clear_called, (
-            "clear_cache() must NOT be called when below threshold and NORMAL pressure"
-    )
+        assert not clear_called, "clear_cache() must NOT be called when below threshold and NORMAL pressure"
 
-    def test_triggers_at_threshold(self):
+    def test_triggers_at_threshold(self) -> None:
         """
         At _CLEAR_INTERVAL (20) with NORMAL pressure: clear_cache() IS called.
 
@@ -147,13 +143,14 @@ class TestClearInterval:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state="ok")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -163,7 +160,7 @@ class TestClearInterval:
 
         assert clear_called, "clear_cache() must be called at threshold even with NORMAL pressure"
 
-    def test_100_generations_triggers_5_or_fewer_clears(self):
+    def test_100_generations_triggers_5_or_fewer_clears(self) -> None:
         """
         L-04 acceptance criteria: 100 sequential generate() calls → clear() ≤ 5×.
 
@@ -174,15 +171,16 @@ class TestClearInterval:
         engine = _make_engine()
         clear_count = 0
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_count
             clear_count += 1
 
         call_count = 0
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state="ok")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -195,20 +193,20 @@ class TestClearInterval:
                 engine._mlx_clear_and_timestamp()
 
         assert clear_count <= 5, (
-            f"100 generations triggered {clear_count} clears; "
-            f"acceptance threshold is ≤ 5 (at 20-gen intervals)"
-    )
+            f"100 generations triggered {clear_count} clears; acceptance threshold is ≤ 5 (at 20-gen intervals)"
+        )
 
-    def test_timestamp_recorded_after_clear(self):
+    def test_timestamp_recorded_after_clear(self) -> None:
         """_last_inference_at is updated after every _mlx_clear_and_timestamp call."""
         import time
 
         engine = _make_engine()
         before = time.monotonic()
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state="ok")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = MagicMock()
@@ -230,7 +228,7 @@ class TestPressureTriggers:
     """Verify HIGH/CRITICAL pressure forces immediate clear regardless of counter."""
 
     @pytest.mark.parametrize("pressure_state", ["high", "critical"])
-    def test_high_critical_pressure_clears_even_below_threshold(self, pressure_state: str):
+    def test_high_critical_pressure_clears_even_below_threshold(self, pressure_state: str) -> None:
         """
         When UMA pressure is HIGH or CRITICAL, clear_cache() fires immediately
         even if _generation_since_clear < _CLEAR_INTERVAL.
@@ -243,13 +241,14 @@ class TestPressureTriggers:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state=pressure_state)
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -258,12 +257,11 @@ class TestPressureTriggers:
             engine._mlx_clear_and_timestamp()
 
         assert clear_called, (
-            f"clear_cache() must fire immediately when pressure={pressure_state}, "
-            "regardless of generation counter"
-    )
+            f"clear_cache() must fire immediately when pressure={pressure_state}, regardless of generation counter"
+        )
 
     @pytest.mark.parametrize("pressure_state", ["normal", "elevated"])
-    def test_normal_elevated_pressure_respects_threshold(self, pressure_state: str):
+    def test_normal_elevated_pressure_respects_threshold(self, pressure_state: str) -> None:
         """
         NORMAL and ELEVATED pressure do NOT force early clear.
 
@@ -274,13 +272,14 @@ class TestPressureTriggers:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state=pressure_state)
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -288,11 +287,9 @@ class TestPressureTriggers:
 
             engine._mlx_clear_and_timestamp()
 
-        assert not clear_called, (
-            f"clear_cache() must NOT fire when pressure={pressure_state} and below threshold"
-    )
+        assert not clear_called, f"clear_cache() must NOT fire when pressure={pressure_state} and below threshold"
 
-    def test_uma_sampling_failure_fail_open(self):
+    def test_uma_sampling_failure_fail_open(self) -> None:
         """
         If sample_uma_status() raises, we do NOT force clear — fail open.
 
@@ -304,13 +301,14 @@ class TestPressureTriggers:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.side_effect = RuntimeError("UMA sampling unavailable")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -329,7 +327,7 @@ class TestPressureTriggers:
 class TestForceClear:
     """Verify force_clear=True bypasses all throttling."""
 
-    def test_force_clear_true_clears_below_threshold(self):
+    def test_force_clear_true_clears_below_threshold(self) -> None:
         """
         force_clear=True must clear regardless of generation counter.
 
@@ -340,13 +338,14 @@ class TestForceClear:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
-        with patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma, \
-             patch("mlx.core") as mock_mx:
-
+        with (
+            patch("hledac.universal._core.resource_governor.sample_uma_status") as mock_uma,
+            patch("mlx.core") as mock_mx,
+        ):
             mock_uma.return_value = MagicMock(state="ok")
             mock_mx.eval = MagicMock()
             mock_mx.clear_cache = fake_clear
@@ -357,7 +356,7 @@ class TestForceClear:
 
         assert clear_called, "force_clear=True must bypass throttle and clear immediately"
 
-    def test_force_clear_false_respects_threshold(self):
+    def test_force_clear_false_respects_threshold(self) -> None:
         """
         Explicit force_clear=False must respect normal throttling.
 
@@ -368,7 +367,7 @@ class TestForceClear:
 
         clear_called = False
 
-        def fake_clear():
+        def fake_clear() -> None:
             nonlocal clear_called
             clear_called = True
 
@@ -390,13 +389,13 @@ class TestForceClear:
 class TestSlots:
     """Verify new attributes are declared in __slots__."""
 
-    def test_generation_since_clear_in_slots(self):
+    def test_generation_since_clear_in_slots(self) -> None:
         """_generation_since_clear must be in __slots__ (Python 3.14 crash prevention)."""
         from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
         assert "_generation_since_clear" in DeepHermes3Engine.__slots__
 
-    def test_last_clear_at_in_slots(self):
+    def test_last_clear_at_in_slots(self) -> None:
         """_last_clear_at must be in __slots__ (Python 3.14 crash prevention)."""
         from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 

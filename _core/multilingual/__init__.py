@@ -10,47 +10,48 @@ This module provides:
 Author: Hledac Team
 Issue: [SWARM]-002
 """
+
 from __future__ import annotations
 
+from .bge_m3_embedder import (
+    MRL_TARGET_DIM,
+    NATIVE_DIM,
+    BGEBackend,
+    BGEConfig,
+    BGEM3Embedder,
+    get_bge_m3_embedder,
+)
 from .lang_detector import (
     LangDetector,
     LanguageDetectionResult,
     ScriptType,
     detect_language,
     get_lang_detector,
-    )
+)
 from .mrl import (
-    MRLTruncator,
     MRL_DIMENSIONS,
-    truncate_embedding,
+    MRLTruncator,
     truncate_batch,
-    )
-from .bge_m3_embedder import (
-    BGEM3Embedder,
-    BGEBackend,
-    BGEConfig,
-    get_bge_m3_embedder,
-    NATIVE_DIM,
-    MRL_TARGET_DIM,
-    )
+    truncate_embedding,
+)
 
 __all__ = [
     # Language detection
-    'LangDetector',
-    'LanguageDetectionResult',
-    'ScriptType',
-    'detect_language',
-    'get_lang_detector',
+    "LangDetector",
+    "LanguageDetectionResult",
+    "ScriptType",
+    "detect_language",
+    "get_lang_detector",
     # MRL truncation
-    'MRLTruncator',
-    'MRL_DIMENSIONS',
-    'truncate_embedding',
-    'truncate_batch',
+    "MRLTruncator",
+    "MRL_DIMENSIONS",
+    "truncate_embedding",
+    "truncate_batch",
     # BGE-M3
-    'BGEM3Embedder',
-    'BGEBackend',
-    'BGEConfig',
-    'get_bge_m3_embedder',
-    'NATIVE_DIM',
-    'MRL_TARGET_DIM',
+    "BGEM3Embedder",
+    "BGEBackend",
+    "BGEConfig",
+    "get_bge_m3_embedder",
+    "NATIVE_DIM",
+    "MRL_TARGET_DIM",
 ]

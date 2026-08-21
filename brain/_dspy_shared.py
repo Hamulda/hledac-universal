@@ -15,42 +15,30 @@ Single source of truth for:
 Usage:
     from hledac.universal.brain._dspy_shared import load_programs, ENABLED, CACHE_PATH
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# DSPy enablement (single source of truth)
-# ---------------------------------------------------------------------------
-ENABLED = os.getenv('HLEDAC_ENABLE_DSPY', '0') == '1'
+ENABLED = os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1"
 
-# ---------------------------------------------------------------------------
-# Cache path (single source of truth)
-# ---------------------------------------------------------------------------
-CACHE_PATH = Path.home() / '.hledac' / 'dspy_cache.json'
+CACHE_PATH = Path.home() / ".hledac" / "dspy_cache.json"
 
-# ---------------------------------------------------------------------------
-# Batch scoring concurrency (M1 8GB bounded — DSPy is CPU-light, memory-light)
-# ---------------------------------------------------------------------------
 _SCORING_CONCURRENCY = 5  # max concurrent DSPy scoring calls
-_SORING_BATCH_SIZE = 20   # findings per DSPy call (prompt token budget)
+_SORING_BATCH_SIZE = 20  # findings per DSPy call (prompt token budget)
 
 # Expose for external consumers
 SCORING_CONCURRENCY = _SCORING_CONCURRENCY
 SCORING_BATCH_SIZE = _SORING_BATCH_SIZE
 
-# ---------------------------------------------------------------------------
-# Program cache (lazy-loaded, process-global)
-# ---------------------------------------------------------------------------
 _programs: dict[str, str] = {}
 _programs_loaded: bool = False
 
@@ -71,24 +59,26 @@ def load_programs() -> dict[str, str]:
     _programs_loaded = True
 
     if not CACHE_PATH.exists():
-        logger.warning('dspy_shared: cache not found at %s', CACHE_PATH)
+        logger.warning("dspy_shared: cache not found at %s", CACHE_PATH)
         return {}
 
     try:
         try:
             import orjson
-            with open(CACHE_PATH, 'rb') as f:
+
+            with open(CACHE_PATH, "rb") as f:
                 data = orjson.loads(f.read())
         except Exception:
             import json as _stdlib_json
+
             with open(CACHE_PATH) as f:
                 data = _stdlib_json.load(f)
 
-        prompts = data.get('prompts', {})
+        prompts = data.get("prompts", {})
         _programs = {k: v for k, v in prompts.items() if v and isinstance(v, str)}
-        logger.info('dspy_shared: loaded %d compiled programs from cache', len(_programs))
+        logger.info("dspy_shared: loaded %d compiled programs from cache", len(_programs))
     except Exception as e:
-        logger.warning('dspy_shared: failed to load cache: %s', e)
+        logger.warning("dspy_shared: failed to load cache: %s", e)
         _programs = {}
 
     return _programs
@@ -100,23 +90,16 @@ def is_dspy_available() -> bool:
         return False
     try:
         import dspy as _dspy
+
         return _dspy is not None
     except ImportError:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Shared convenience: extract domain strings from SyntheticDomainCandidate list
-# Defined once here to eliminate clone between:
-#   - brain/concept_domain_expander.py::extract_domain_strings (≈line 555)
-#   - brain/insight_engine.py::extract_domain_strings        (≈line 552)
-# ---------------------------------------------------------------------------
-
-
 def extract_domain_strings(
-    candidates: "list[Any]",
+    candidates: list[Any],
     min_confidence: float = 0.25,
-) -> "list[str]":
+) -> list[str]:
     """
     Extract plain domain strings from SyntheticDomainCandidate list.
 

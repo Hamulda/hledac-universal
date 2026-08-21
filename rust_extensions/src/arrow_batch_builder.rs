@@ -56,16 +56,8 @@ use arrow::ipc::writer::StreamWriter;
 
 use crate::mixed_pool;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const PARALLEL_THRESHOLD: usize = 64;
 const MAX_FINDINGS_PER_CALL: usize = 50_000;
-
-// ---------------------------------------------------------------------------
-// Data structures
-// ---------------------------------------------------------------------------
 
 /// CanonicalFinding dict → Rust struct. Fields cloned into column vectors by
 /// build_columns / build_columns_parallel. GIL held only during this collect().
@@ -170,13 +162,6 @@ impl FindingsRow {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Arrow IPC RecordBatch encoding (proper Arrow IPC via arrow crate)
-// MODERN-17: Replaces hand-rolled ARROW1\xff framing with real Arrow IPC.
-// The arrow crate handles FlatBuffers schema/recordbath metadata correctly.
-// Python's pa.ipc.open_stream() now works — real zero-copy deserialization.
-// ---------------------------------------------------------------------------
-
 /// Build proper Arrow IPC RecordBatch bytes using StreamWriter.
 /// MODERN-17 FIX: Uses arrow::ipc::writer::StreamWriter instead of hand-rolled
 /// ARROW1\xff\xff\xff\xff magic. This produces valid Arrow IPC stream format
@@ -218,7 +203,6 @@ fn build_ipc_bytes(
         Field::new("warc_url", DataType::Utf8, true),
     ]);
 
-    // Build column arrays
     let ids_array: ArrayRef = std::sync::Arc::new(StringArray::from(ids));
     let queries_array: ArrayRef = std::sync::Arc::new(StringArray::from(queries));
     let source_types_array: ArrayRef = std::sync::Arc::new(StringArray::from(source_types));
@@ -272,10 +256,6 @@ fn build_ipc_bytes(
 
     Ok(buffer)
 }
-
-// ---------------------------------------------------------------------------
-// Column builders (serial + parallel) — ISSUE F5-FIX: 13 columns
-// ---------------------------------------------------------------------------
 
 fn build_columns(
     rows: &[FindingsRow],
@@ -462,10 +442,6 @@ fn build_columns_parallel(
         )
 }
 
-// ---------------------------------------------------------------------------
-// Public PyO3 API
-// ---------------------------------------------------------------------------
-
 /// Build Arrow IPC bytes from a list of CanonicalFinding dicts.
 ///
 /// Replaces 6× Python list-comprehension loops in
@@ -614,29 +590,6 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
 
     Ok(Some(PyBytes::new(py, &result)))
 }
-
-// ---------------------------------------------------------------------------
-// Column-path: columns-as-PyList (P4-7)
-//
-// build_record_batch_from_structs takes 7 PyList columns directly and builds
-// IPC bytes WITHOUT dict roundtrip. Uses single-pass iterators (ISSUE-007 fix).
-//
-// Python path (before):
-//   pa.array([f.finding_id for f in findings])  ← list comprehension = N× allocations
-//   _rust_arrow(findings_dicts)                 ← dict roundtrip = N× PyObject
-//
-// Rust path (after):
-//   _rust_record_batch_cols([ids_pylist, queries_pylist, ...])
-//     → iter() over each PyList (single Python C-API iteration per column)
-//     → extract fields from each row in one pass
-//     → build_ipc_bytes() once
-//     → return Py<PyBytes>
-//
-// ISSUE-007 fix summary:
-//   Before: 7× get_item(i) + 6× str() + 6× to_string_lossy() per row
-//   After:  1× iter() traversal + 7× str() + 6× to_string_lossy() per row
-//   Savings: ~7× fewer Python object lookups; str() chain unchanged
-// ---------------------------------------------------------------------------
 
 /// Build Arrow IPC RecordBatch bytes from 8 pre-separated PyList column slices.
 /// MODERN-20: Extended to 8 columns including claims_json.
@@ -808,30 +761,6 @@ pub fn build_record_batch_from_structs<'py>(
 
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
 }
-
-// ---------------------------------------------------------------------------
-// Struct-path: single list of CanonicalFinding structs (ISSUE-001 fix)
-//
-// build_record_batch_from_findings takes a list[CanonicalFinding] directly
-// and extracts fields via PyO3 Bound API — NO Python list comprehensions,
-// NO per-field Python list allocations.
-//
-// Python path (before, ISSUE-001):
-//   ids_list = [f.finding_id for f in findings]         ← N Python objects
-//   queries_list = [f.query for f in findings]            ← N Python objects
-//   src_types_list = [f.source_type for f in findings]    ← N Python objects
-//   conf_list = [f.confidence for f in findings]          ← N Python objects
-//   ts_list = [f.ts for f in findings]                    ← N Python objects
-//   prov_list = [_provenance_to_arrow_native(...) for f in findings]  ← N Python objects
-//   payload_list = [f.payload_text or "" for f in findings] ← N Python objects
-//   # 7 list comprehensions = 7N allocations before Rust is called
-//
-// Rust path (after): passes findings list directly; iterates msgspec.Struct
-// sequence via PyList::iter() in a single Rust loop — NO Python list copies.
-// ISSUE-007 fix applied: findings.get_item(i) replaced with findings.iter().next(),
-// provenance_jsons.get_item(i) + payload_texts.get_item(i) replaced with
-// parallel iter().next() — ~3× fewer Python C-API traversals.
-// ---------------------------------------------------------------------------
 
 /// Build Arrow IPC RecordBatch bytes from a list of CanonicalFinding structs.
 /// MODERN-20: Extended to 8 columns including claims_json.
@@ -1006,10 +935,6 @@ pub fn build_record_batch_from_findings<'py>(
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
 }
 
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_arrow_batch_from_findings))?;
     m.add_function(wrap_pyfunction!(
@@ -1023,10 +948,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_arrow_batch_to_mmap))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// IOC → CanonicalFinding Arrow builder (ISSUE-018 fix)
-// ---------------------------------------------------------------------------
 
 /// Confidence score based on IOC type.
 fn ioc_confidence(ioc_type: &str) -> f64 {
@@ -1164,28 +1085,6 @@ pub fn build_findings_from_iocs<'py>(
     Ok(Some(PyBytes::new(py, &ipc_bytes)))
 }
 
-// ---------------------------------------------------------------------------
-// NEXTGEN-02: Arrow IPC Zero-Copy Mmap Path
-//
-// build_arrow_batch_to_mmap writes Arrow IPC RecordBatch directly to a
-// memory-mapped file. No intermediate Vec<u8> allocation, no PyBytes copy.
-//
-// Python path (before):
-//   ipc_bytes = build_arrow_batch_from_findings(findings)  # Vec<u8> → PyBytes
-//   pa.ipc.open_stream(ipc_bytes)  # Copy to Arrow buffers
-//
-// Rust path (after):
-//   path, schema_json, num_rows = build_arrow_batch_to_mmap(findings, "/tmp/batch.arrow")
-//   # pa.ipc.open_stream(mmap.mmap(path)) reads directly from disk
-//
-// Benefits:
-//   - No Vec<u8> intermediate allocation in Rust
-//   - No PyBytes copy to Python heap
-//   - Python reads via mmap → OS page cache, zero-copy from Arrow perspective
-//   - DuckDB COPY FROM reads via mmap → zero serialization
-//   - MLX mx.core.mmap() reads directly → zero-copy tensor
-// ---------------------------------------------------------------------------
-
 /// Build Arrow IPC RecordBatch and write directly to mmap file.
 ///
 /// NEXTGEN-02: Zero-copy Arrow IPC via mmap
@@ -1212,7 +1111,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
     let n = findings);
 
     if n == 0 {
-        // Write empty batch to mmap
         let path_obj = std::path::Path::new(path);
         if let Err(e) = std::fs::write(path_obj, b"") {
             return Ok(None);
@@ -1260,7 +1158,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
         arrow::datatypes::Field::new("warc_url", arrow::datatypes::DataType::Utf8, true),
     ]);
 
-    // Build column arrays
     use arrow::array::{ArrayRef, Float64Array, Int64Array, RecordBatch, StringArray};
     let schema_ref = std::sync::Arc::new(schema);
 
@@ -1300,7 +1197,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
         Err(_) => return Ok(None),
     };
 
-    // Create mmap file
     let path_obj = std::path::Path::new(path);
     let file = match OpenOptions::new()
         .read(true)
@@ -1317,7 +1213,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
     let estimated_size = ((n as u64).saturating_mul(100).max(64 * 1024))
         .min(MAX_MMAP_POOL_BYTES / 2);
 
-    // Check budget BEFORE allocation
     if let Err(e) = check_mmap_budget(estimated_size) {
         eprintln!("[NEXTGEN-02] budget check failed: {}", e);
         return Ok(None);
@@ -1335,7 +1230,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
     // Account allocation BEFORE writing (budget reserved for this operation)
     account_mmap_alloc(estimated_size);
 
-    // Write Arrow IPC stream to mmap
     let mut cursor = std::io::Cursor::new(unsafe { mmap.as_mut_slice() });
     let mut writer = match arrow::ipc::writer::StreamWriter::try_new(
         &mut cursor,
@@ -1387,10 +1281,6 @@ pub fn build_arrow_batch_to_mmap<'py>(
     // Caller MUST call delete_arrow_ipc_mmap(path, bytes_written) to free budget
     Ok(Some((schema_json, batch.num_rows() as i64, bytes_written as i64)))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1539,7 +1429,6 @@ mod tests {
         )
         .expect("build_ipc_bytes should succeed");
 
-        // Parse and verify roundtrip
         let reader = StreamReader::try_new(std::io::Cursor::new(&result), None)
             .expect("Should parse as valid Arrow IPC");
         let batches: Vec<_> = reader.collect().expect("Should collect batches");

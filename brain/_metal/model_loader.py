@@ -2,8 +2,6 @@
 model_loader.py — Metal Model Loader
 ==================================
 
-
-
 PEP 698: Extracted from DeepHermes3Engine model lifecycle methods.
 Handles model loading, caching via hermes_cache, and memory-aware unloading.
 
@@ -15,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.brain._hermes_cache import HermesModelCache
@@ -28,7 +25,7 @@ def _get_mlx_loader() -> Any:
     """Lazy load mlx_lm."""
     global _MX_LOADER
     if _MX_LOADER is None:
-        _MX_LOADER = __import__('mlx_lm')
+        _MX_LOADER = __import__("mlx_lm")
     return _MX_LOADER
 
 
@@ -56,9 +53,9 @@ class MetalModelLoader:
     """
 
     __slots__ = (
-        '_model_path',
-        '_cache',
-        '_half_precision',
+        "_model_path",
+        "_cache",
+        "_half_precision",
     )
 
     def __init__(
@@ -89,7 +86,6 @@ class MetalModelLoader:
         if self._loaded and self._model is not None:
             return self._model, self._tokenizer
 
-        # Check cache first
         if self._cache is not None:
             result = self._cache.get_model(self.model_path)
             if result is not None:
@@ -97,22 +93,19 @@ class MetalModelLoader:
                 self._loaded = True
                 return self._model, self._tokenizer
 
-        # Load from disk
         mlx_lm = _get_mlx_loader()
-        self._model, self._tokenizer = await asyncio.to_thread(
-            mlx_lm.load, self.model_path
-    )
+        self._model, self._tokenizer = await asyncio.to_thread(mlx_lm.load, self.model_path)
 
         # Apply half precision if enabled
-        if self._half_precision and os.getenv('HLEDAC_HALF_PRECISION', '1') != '0':
+        if self._half_precision and os.getenv("HLEDAC_HALF_PRECISION", "1") != "0":
             try:
                 import mlx.core as mx
+
                 self._model.set_dtype(mx.float16)
             except Exception as e:
                 import logging
-                logging.getLogger(__name__).warning(
-                    '[MetalModelLoader] Could not set float16 dtype: %s', e
-    )
+
+                logging.getLogger(__name__).warning("[MetalModelLoader] Could not set float16 dtype: %s", e)
 
         # Cache the model
         if self._cache is not None:
@@ -155,9 +148,7 @@ class ModelSwapManager:
     Supports: hermes (primary), modernbert (embeddings), draft (speculative)
     """
 
-    __slots__ = (
-        '_hermes_cache',
-    )
+    __slots__ = ("_hermes_cache",)
 
     def __init__(self, hermes_cache: HermesModelCache | None = None) -> None:
         self._cache = hermes_cache
@@ -169,7 +160,7 @@ class ModelSwapManager:
         self._loaders[slot] = MetalModelLoader(
             model_path=model_path,
             cache=self._cache,
-    )
+        )
 
     async def load_slot(self, slot: str) -> tuple[Any, Any] | None:
         """

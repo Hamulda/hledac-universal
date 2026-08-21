@@ -13,8 +13,8 @@ Stages (in execution order):
 
 For backwards compatibility, live_feed_pipeline.py re-exports all symbols.
 """
+
 from __future__ import annotations
-from _core import aclose
 
 # Re-export lazily to avoid circular import
 # Use `from pipeline.feed import FeedPipelineEntryResult` instead of direct import
@@ -27,10 +27,12 @@ def __getattr__(name: str):
             FeedPipelineEntryResult,
             FeedPipelineRunResult,
             async_run_live_feed_pipeline,
-    )
+        )
+
         return locals()[name]
     if name == "FeedPipelineOrchestrator":
         from hledac.universal.pipeline._feed_orchestrator import FeedPipelineOrchestrator
+
         return FeedPipelineOrchestrator
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

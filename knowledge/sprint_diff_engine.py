@@ -3,7 +3,6 @@
 Boundaries:
     MAX_DIFF_FINDINGS=100   — cap new/disappeared lists
 
-
     MAX_PROFILE_ENTRIES=500 — cap entity summary
 
 Diff logic:
@@ -25,27 +24,23 @@ Performance (F350M-R):
     - M1 8GB safe: pure Python, no external native dependencies
 """
 
-
-
 import logging
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
+
+import orjson
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-import orjson
-from _core import aclose
-
 logger = logging.getLogger(__name__)
-
 
 # ── Bounds ────────────────────────────────────────────────────────────────────
 
 MAX_DIFF_FINDINGS: int = 100
 MAX_PROFILE_ENTRIES: int = 500
 
-
 # ── Dataclasses ────────────────────────────────────────────────────────────────
+
 
 class SprintDiffResult(Struct, frozen=True):
     target_id: str
@@ -68,6 +63,7 @@ class TargetProfileSummary(Struct):
 
 
 # ── SprintDiffEngine ───────────────────────────────────────────────────────────
+
 
 class SprintDiffEngine:
     """Pure-python cross-sprint diff and target profiling. No I/O dependencies.
@@ -106,7 +102,7 @@ class SprintDiffEngine:
                 new_findings=current_findings[:cap],
                 disappeared_findings=[],
                 changed_entities=[],
-    )
+            )
 
         # ── SINGLE-PASS index building (was 4 separate loops) ─────────────────
         # Build prev_by_key AND prev_by_val in ONE loop
@@ -123,7 +119,6 @@ class SprintDiffEngine:
             prev_by_key[key] = f
             prev_by_val[val] = f  # last-write-wins is fine: same val = same semantic
 
-        # Build curr_by_key AND curr_by_val in ONE loop
         curr_keys: set[str] = set()
         curr_by_key: dict[str, dict] = {}
         curr_by_val: dict[str, dict] = {}
@@ -182,7 +177,7 @@ class SprintDiffEngine:
             new_findings=new_findings,
             disappeared_findings=disappeared_findings,
             changed_entities=changed,
-    )
+        )
 
     def build_target_profile(
         self,
@@ -229,7 +224,7 @@ class SprintDiffEngine:
                 "fail-soft suppression: build_target_profile (entity_summary): %s",
                 _e,
                 exc_info=True,
-    )
+            )
 
         try:
             entity_summary_json = orjson.dumps(entity_summary).decode()
@@ -265,7 +260,7 @@ class SprintDiffEngine:
             entity_summary_json=entity_summary_json,
             finding_velocity=finding_velocity,
             entity_types=entity_types,
-    )
+        )
 
     # ── private helpers ────────────────────────────────────────────────────────
 

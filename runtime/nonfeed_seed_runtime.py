@@ -22,8 +22,6 @@ Safety invariants:
   - DuckDB only accessed when duckdb_store is available and initialized
 """
 
-
-
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -177,16 +175,60 @@ def _is_text_query_without_direct_seeds(query: str) -> bool:
 
 
 # P1-2: OSINT keywords for cross-sprint DuckDB search
-_OSINT_KEYWORDS: frozenset[str] = frozenset({
-    "ransomware", "ransom", "breach", "leak", "leaked", "exposed", "exposure",
-    "darkweb", "dark", "web", "tor", "onion", "threat", "intel", "intelligence",
-    "malware", "trojan", "virus", "infostealer", "stealer", "botnet", "apt",
-    "cve", "vulnerability", "exploit", "phishing", "spam", "scam", "fraud",
-    "credential", "password", "username", "db", "dump", "database",
-    "cybercrime", "hacker", "underground", "forum", "marketplace",
-    "osint", "recon", "scan", "fingerprint", "jarm", "tls",
-    "certificate", "cert", "ct", "transparency",
-})
+_OSINT_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "ransomware",
+        "ransom",
+        "breach",
+        "leak",
+        "leaked",
+        "exposed",
+        "exposure",
+        "darkweb",
+        "dark",
+        "web",
+        "tor",
+        "onion",
+        "threat",
+        "intel",
+        "intelligence",
+        "malware",
+        "trojan",
+        "virus",
+        "infostealer",
+        "stealer",
+        "botnet",
+        "apt",
+        "cve",
+        "vulnerability",
+        "exploit",
+        "phishing",
+        "spam",
+        "scam",
+        "fraud",
+        "credential",
+        "password",
+        "username",
+        "db",
+        "dump",
+        "database",
+        "cybercrime",
+        "hacker",
+        "underground",
+        "forum",
+        "marketplace",
+        "osint",
+        "recon",
+        "scan",
+        "fingerprint",
+        "jarm",
+        "tls",
+        "certificate",
+        "cert",
+        "ct",
+        "transparency",
+    }
+)
 
 
 def _extract_keywords_for_search(query: str) -> list[str]:
@@ -206,21 +248,95 @@ def _extract_keywords_for_search(query: str) -> list[str]:
     try:
         tokens = query.lower().split()
         keywords: list[str] = []
-        stopwords = frozenset({
-            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will", "would",
-            "could", "should", "may", "might", "can", "this", "that", "these",
-            "those", "i", "you", "he", "she", "it", "we", "they", "what", "which",
-            "who", "when", "where", "why", "how", "all", "each", "every", "both",
-            "few", "more", "most", "other", "some", "such", "no", "nor", "not",
-            "only", "own", "same", "so", "than", "too", "very", "just", "about",
-            "into", "over", "after", "before", "between", "under", "above",
-        })
+        stopwords = frozenset(
+            {
+                "a",
+                "an",
+                "the",
+                "and",
+                "or",
+                "but",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "of",
+                "with",
+                "by",
+                "from",
+                "is",
+                "are",
+                "was",
+                "were",
+                "be",
+                "been",
+                "being",
+                "have",
+                "has",
+                "had",
+                "do",
+                "does",
+                "did",
+                "will",
+                "would",
+                "could",
+                "should",
+                "may",
+                "might",
+                "can",
+                "this",
+                "that",
+                "these",
+                "those",
+                "i",
+                "you",
+                "he",
+                "she",
+                "it",
+                "we",
+                "they",
+                "what",
+                "which",
+                "who",
+                "when",
+                "where",
+                "why",
+                "how",
+                "all",
+                "each",
+                "every",
+                "both",
+                "few",
+                "more",
+                "most",
+                "other",
+                "some",
+                "such",
+                "no",
+                "nor",
+                "not",
+                "only",
+                "own",
+                "same",
+                "so",
+                "than",
+                "too",
+                "very",
+                "just",
+                "about",
+                "into",
+                "over",
+                "after",
+                "before",
+                "between",
+                "under",
+                "above",
+            }
+        )
         for token in tokens:
             cleaned = token.strip(".,!?;:()[]{}'\"")
-            if (len(cleaned) >= 3 and cleaned not in stopwords and
-                    cleaned not in _OSINT_KEYWORDS):
+            if len(cleaned) >= 3 and cleaned not in stopwords and cleaned not in _OSINT_KEYWORDS:
                 keywords.append(cleaned)
             elif cleaned in _OSINT_KEYWORDS:
                 keywords.append(cleaned)
@@ -242,9 +358,7 @@ def _extend_all_seeds_from_findings(
     cves: set[str],
 ) -> None:
     """Extract and accumulate seeds from existing findings."""
-    findings_seeds = extract_nonfeed_seeds_from_findings(
-        findings, max_seeds=_MAX_SEEDS_FROM_FINDINGS
-    )
+    findings_seeds = extract_nonfeed_seeds_from_findings(findings, max_seeds=_MAX_SEEDS_FROM_FINDINGS)
     all_seeds.extend(findings_seeds)
     _accumulate_seed_kinds_to_sets(
         findings_seeds,
@@ -257,7 +371,7 @@ def _extend_all_seeds_from_findings(
 
 
 async def _extract_seeds_from_duckdb(
-    duckdb_store: "DuckDBShadowStore",
+    duckdb_store: DuckDBShadowStore,
     query: str,
     all_seeds: list,
     domains: set[str],
@@ -328,60 +442,176 @@ def _compute_lanes_unlocked(
 # Examples:
 #   "APT nation-state ransomware" → ["ransomware.onion", "apt39.darkweb.ai", ...]
 #   "data breach leak exposure"  → ["breachforum.onion", "exposed.me", ...]
-_DEAD_SURFACE_DOMAINS: frozenset[str] = frozenset({
-    # Ransomware leak sites
-    "ransomware.onion", "lockbit3.onion", "contitour.onion", "alphv.onion",
-    "malwareclub.onion", "badblocks.onion", "hunters.onion", "bianlian.onion",
-    # Dark web forums / marketplaces (generic surface patterns)
-    "breachforum.onion", "exploit.onion", "ramp.onion", "befitter.onion",
-    "undersea.onion", "lanzas.onion", "anomalous.onion", "blackforums.onion",
-    # OSINT aggregators & radar
-    "ransomware.live", "ransomwatch.onion", "ransomlook.onion",
-    "darkwebdict.onion", "deepweb.onion", "darksearch.onion",
-    # Threat intel & feeds
-    "abuse.ch", "ransomwaretracker.nl", "threatfox.abuse.ch",
-    "urlhaus.abuse.ch", "bazaar.abuse.ch",
-    # IOC aggregation
-    "alienvault.com", "otx.alienvault.com", "threatconnect.com",
-    "misinfosec.ai", "misinformationtracker.ai",
-    # Dark web recon (surface .com sites, not actual .onion)
-    "intelbroker.onion", "breachinsider.onion", "泄漏.onion",
-})
+_DEAD_SURFACE_DOMAINS: frozenset[str] = frozenset(
+    {
+        # Ransomware leak sites
+        "ransomware.onion",
+        "lockbit3.onion",
+        "contitour.onion",
+        "alphv.onion",
+        "malwareclub.onion",
+        "badblocks.onion",
+        "hunters.onion",
+        "bianlian.onion",
+        # Dark web forums / marketplaces (generic surface patterns)
+        "breachforum.onion",
+        "exploit.onion",
+        "ramp.onion",
+        "befitter.onion",
+        "undersea.onion",
+        "lanzas.onion",
+        "anomalous.onion",
+        "blackforums.onion",
+        # OSINT aggregators & radar
+        "ransomware.live",
+        "ransomwatch.onion",
+        "ransomlook.onion",
+        "darkwebdict.onion",
+        "deepweb.onion",
+        "darksearch.onion",
+        # Threat intel & feeds
+        "abuse.ch",
+        "ransomwaretracker.nl",
+        "threatfox.abuse.ch",
+        "urlhaus.abuse.ch",
+        "bazaar.abuse.ch",
+        # IOC aggregation
+        "alienvault.com",
+        "otx.alienvault.com",
+        "threatconnect.com",
+        "misinfosec.ai",
+        "misinformationtracker.ai",
+        # Dark web recon (surface .com sites, not actual .onion)
+        "intelbroker.onion",
+        "breachinsider.onion",
+        "泄漏.onion",
+    }
+)
 
 # Keyword → surface domain mapping (most specific wins)
 _DECOMPOSE_RULES: tuple[tuple[frozenset[str], list[str]], ...] = (
     # Ransomware-specific
-    (frozenset({"ransomware", "ransom", "lockbit", "conti", "alphv", "royal",
-                "clop", "hive", "blackcat", "bellacat", "bianlian", "PLAY",
-                "7even", "Qilin", "Cactus", "DarkRace", "Eking", "icefire"}),
-     ["ransomware.live", "ransomlook.onion", "ransomwaretracker.nl",
-      "threatfox.abuse.ch", "ransomware.onion"]),
+    (
+        frozenset(
+            {
+                "ransomware",
+                "ransom",
+                "lockbit",
+                "conti",
+                "alphv",
+                "royal",
+                "clop",
+                "hive",
+                "blackcat",
+                "bellacat",
+                "bianlian",
+                "PLAY",
+                "7even",
+                "Qilin",
+                "Cactus",
+                "DarkRace",
+                "Eking",
+                "icefire",
+            }
+        ),
+        ["ransomware.live", "ransomlook.onion", "ransomwaretracker.nl", "threatfox.abuse.ch", "ransomware.onion"],
+    ),
     # Nation-state APT
-    (frozenset({"apt", "nation-state", "apt29", "apt41", "lazarus", "lazarusgroup",
-                "kimsuky", "group72", "darkhotel", "mudged", "platinum", "winnti",
-                "tick", "menuPass", "Tonto", "muddywater", "cobaltstrike"}),
-     ["threatconnect.com", "otx.alienvault.com", "abuse.ch",
-      "ransomware.live", "ransomlook.onion"]),
+    (
+        frozenset(
+            {
+                "apt",
+                "nation-state",
+                "apt29",
+                "apt41",
+                "lazarus",
+                "lazarusgroup",
+                "kimsuky",
+                "group72",
+                "darkhotel",
+                "mudged",
+                "platinum",
+                "winnti",
+                "tick",
+                "menuPass",
+                "Tonto",
+                "muddywater",
+                "cobaltstrike",
+            }
+        ),
+        ["threatconnect.com", "otx.alienvault.com", "abuse.ch", "ransomware.live", "ransomlook.onion"],
+    ),
     # Data breach / leak
-    (frozenset({"breach", "leak", "exposed", "exposure", "dump", "database",
-                "credential", "password", "combolist", "carding", "cvv"}),
-     ["breachforum.onion", "bazaar.abuse.ch", "urlhaus.abuse.ch",
-      "abuse.ch", "alienvault.com"]),
+    (
+        frozenset(
+            {
+                "breach",
+                "leak",
+                "exposed",
+                "exposure",
+                "dump",
+                "database",
+                "credential",
+                "password",
+                "combolist",
+                "carding",
+                "cvv",
+            }
+        ),
+        ["breachforum.onion", "bazaar.abuse.ch", "urlhaus.abuse.ch", "abuse.ch", "alienvault.com"],
+    ),
     # Dark web / TOR
-    (frozenset({"darkweb", "dark", "tor", "onion", "deepweb", "underground",
-                "hacker", "cybercrime", "blackhat", "exploit", "zeroday",
-                "vulnerability", "exploitdb", "cve"}),
-     ["exploit.onion", "ransomware.live", "abuse.ch",
-      "threatfox.abuse.ch", "ransomwaretracker.nl", "urlhaus.abuse.ch"]),
+    (
+        frozenset(
+            {
+                "darkweb",
+                "dark",
+                "tor",
+                "onion",
+                "deepweb",
+                "underground",
+                "hacker",
+                "cybercrime",
+                "blackhat",
+                "exploit",
+                "zeroday",
+                "vulnerability",
+                "exploitdb",
+                "cve",
+            }
+        ),
+        [
+            "exploit.onion",
+            "ransomware.live",
+            "abuse.ch",
+            "threatfox.abuse.ch",
+            "ransomwaretracker.nl",
+            "urlhaus.abuse.ch",
+        ],
+    ),
     # Malware / infostealer
-    (frozenset({"malware", "infostealer", "stealer", "botnet", "triton",
-                "emotet", "icedid", "qakbot", "raccoon", "mStealer"}),
-     ["urlhaus.abuse.ch", "threatfox.abuse.ch", "abuse.ch",
-      "ransomware.live", "bazaar.abuse.ch"]),
+    (
+        frozenset(
+            {
+                "malware",
+                "infostealer",
+                "stealer",
+                "botnet",
+                "triton",
+                "emotet",
+                "icedid",
+                "qakbot",
+                "raccoon",
+                "mStealer",
+            }
+        ),
+        ["urlhaus.abuse.ch", "threatfox.abuse.ch", "abuse.ch", "ransomware.live", "bazaar.abuse.ch"],
+    ),
     # Phishing / fraud
-    (frozenset({"phishing", "scam", "fraud", "phishingkit", "phish", "typosquat"}),
-     ["urlhaus.abuse.ch", "phishstats.info", "abuse.ch",
-      "threatfox.abuse.ch"]),
+    (
+        frozenset({"phishing", "scam", "fraud", "phishingkit", "phish", "typosquat"}),
+        ["urlhaus.abuse.ch", "phishstats.info", "abuse.ch", "threatfox.abuse.ch"],
+    ),
 )
 
 
@@ -389,16 +619,16 @@ _DECOMPOSE_RULES: tuple[tuple[frozenset[str], list[str]], ...] = (
 # These are ALL clearnet-compatible (no .onion) so CT/DOH lanes can query them.
 # .onion seeds are added ONLY for PUBLIC lane which can handle them.
 _DARK_WEB_CLEARNET_SEEDS: tuple[str, ...] = (
-    "ransomware.live",       # Ransomware leak sites aggregator
-    "ransomwatch.onion",     # TOR-hidden service, PUBLIC-only
-    "ransomlook.onion",      # TOR-hidden service, PUBLIC-only
+    "ransomware.live",  # Ransomware leak sites aggregator
+    "ransomwatch.onion",  # TOR-hidden service, PUBLIC-only
+    "ransomlook.onion",  # TOR-hidden service, PUBLIC-only
     "ransomwaretracker.nl",  # Abuse.ch ransomware tracker
-    "threatfox.abuse.ch",    # Abuse.ch threat fox
-    "urlhaus.abuse.ch",      # URLhaus malware URLs
-    "bazaar.abuse.ch",       # Bazaar malware repo
-    "abuse.ch",              # General abuse.ch
-    "alienvault.com",        # AlienVault OTX
-    "otx.alienvault.com",    # AlienVault OTX
+    "threatfox.abuse.ch",  # Abuse.ch threat fox
+    "urlhaus.abuse.ch",  # URLhaus malware URLs
+    "bazaar.abuse.ch",  # Bazaar malware repo
+    "abuse.ch",  # General abuse.ch
+    "alienvault.com",  # AlienVault OTX
+    "otx.alienvault.com",  # AlienVault OTX
 )
 
 
@@ -425,9 +655,7 @@ def _decompose_query_keywords_to_seeds(query: str) -> list[str]:
     """
     try:
         tokens = frozenset(
-            t.strip(".,!?;:()[]{}'\"-").lower()
-            for t in query.split()
-            if len(t.strip(".,!?;:()[]{}'\"")) >= 3
+            t.strip(".,!?;:()[]{}'\"-").lower() for t in query.split() if len(t.strip(".,!?;:()[]{}'\"")) >= 3
         )
         if not tokens:
             return []
@@ -534,8 +762,6 @@ async def run_runtime_pivot_prelude(
         "seed_quality_bypass_reason": "",
     }
 
-    # Step 1: direct extraction from query — runs for ALL profiles (P3-1: rule-based fallback)
-    # This is profile-independent: just regex extraction from the query string.
     _all_seeds: list = []
     _domains_q: set[str] = set()
     _ips_q: set[str] = set()
@@ -555,7 +781,6 @@ async def run_runtime_pivot_prelude(
         cves=_cves_q,
     )
 
-    # Step 2: for text queries, try existing_findings OR DuckDB
     if _is_text_query_without_direct_seeds(query):
         if existing_findings:
             _extend_all_seeds_from_findings(
@@ -569,8 +794,14 @@ async def run_runtime_pivot_prelude(
             )
         elif duckdb_store is not None:
             _skip_reason = await _extract_seeds_from_duckdb(
-                duckdb_store, query, _all_seeds,
-                _domains_q, _ips_q, _urls_q, _hashes_q, _cves_q,
+                duckdb_store,
+                query,
+                _all_seeds,
+                _domains_q,
+                _ips_q,
+                _urls_q,
+                _hashes_q,
+                _cves_q,
             )
             if _skip_reason:
                 result["seed_context_skip_reason"] = _skip_reason

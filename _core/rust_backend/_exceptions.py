@@ -8,13 +8,10 @@ security-critical tool.
 """
 
 from __future__ import annotations
-from _core._util import aclose
 
 
 class RustExtensionError(Exception):
     """Base exception for Rust extension errors."""
-
-    pass
 
 
 class RustExtensionStale(RustExtensionError):
@@ -45,7 +42,6 @@ class RustExtensionStale(RustExtensionError):
         self.rebuild_command = rebuild_command
         self.reason = reason or message or "Rust extension is stale"
 
-        # Build detailed error message
         detailed_msg = self._build_message()
         super().__init__(detailed_msg)
 
@@ -78,19 +74,21 @@ class RustExtensionStale(RustExtensionError):
             lines.append("  cargo build --release --manifest-path rust_extensions/Cargo.toml")
 
         lines.extend(["", "-" * 70, "WHAT HAPPENED:", "-" * 70, ""])
-        lines.extend([
-            "The Rust extension binary (.so) was compiled from an older version of",
-            "the source code. The source files have been modified since the build.",
-            "",
-            "This is DANGEROUS for a security tool because:",
-            "  1. Bug fixes in source are not present in the binary",
-            "  2. New security features are missing",
-            "  3. Potential ABI incompatibilities with other components",
-            "",
-            "FIX: Run the rebuild command above, then restart your application.",
-            "",
-            "=" * 70,
-        ])
+        lines.extend(
+            [
+                "The Rust extension binary (.so) was compiled from an older version of",
+                "the source code. The source files have been modified since the build.",
+                "",
+                "This is DANGEROUS for a security tool because:",
+                "  1. Bug fixes in source are not present in the binary",
+                "  2. New security features are missing",
+                "  3. Potential ABI incompatibilities with other components",
+                "",
+                "FIX: Run the rebuild command above, then restart your application.",
+                "",
+                "=" * 70,
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -99,7 +97,7 @@ class RustExtensionStale(RustExtensionError):
         return (
             self.__class__,
             (self.reason, self.source_hash, self.current_hash, self.rebuild_command, self.reason),
-    )
+        )
 
 
 class RustExtensionABIError(RustExtensionError):
@@ -127,13 +125,13 @@ class RustExtensionABIError(RustExtensionError):
                 f"Rust extension ABI version {actual_version} is newer than expected "
                 f"{expected_version}. Rebuild required with: "
                 f"cd rust_extensions && maturin develop --release"
-    )
+            )
         else:
             msg = (
                 f"Rust extension ABI version {actual_version} is older than required "
                 f"{expected_version}. Rebuild required with: "
                 f"cd rust_extensions && maturin develop --release"
-    )
+            )
 
         super().__init__(msg)
 
@@ -155,10 +153,7 @@ class RustExtensionArchitectureError(RustExtensionError):
         self.running_on = running_on
         self.rebuild_command = rebuild_command
 
-        msg = (
-            f"Rust extension architecture mismatch: built for {built_for}, "
-            f"running on {running_on}. "
-    )
+        msg = f"Rust extension architecture mismatch: built for {built_for}, running on {running_on}. "
         if rebuild_command:
             msg += f"Rebuild with: {rebuild_command}"
         else:

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 class DeobfuscateResult(NamedTuple):
     """Result of deobfuscation pass."""
+
     candidates: list[str]
     layers_stripped: int
     encodings_detected: list[str]
@@ -42,9 +43,7 @@ class _RustDeobfuscateDomain:
             bytes_decoded=result.bytes_decoded,
         )
 
-    def batch_decode(
-        self, texts: list[str], max_depth: int | None = None
-    ) -> list[DeobfuscateResult]:
+    def batch_decode(self, texts: list[str], max_depth: int | None = None) -> list[DeobfuscateResult]:
         raw = self._ext.batch_decode_ioc_candidates(texts, max_depth)
         return [
             DeobfuscateResult(
@@ -78,6 +77,7 @@ class _PythonDeobfuscateDomain:
 
     ponytail: global state-free, no caching, O(n) per call.
     """
+
     __slots__ = ()  # stateless — all methods are static/conventional
 
     def decode(self, text: str, max_depth: int | None = None) -> DeobfuscateResult:
@@ -101,25 +101,21 @@ class _PythonDeobfuscateDomain:
         # Stage 2: Try hex decode (IPv6-like, MAC, UUID patterns)
         try:
             clean = text.replace(" ", "").replace("-", "")
-            if len(clean) >= 8 and clean.isalnum() and all(
-                c in "0123456789abcdefABCDEF" for c in clean
-            ):
+            if len(clean) >= 8 and clean.isalnum() and all(c in "0123456789abcdefABCDEF" for c in clean):
                 decoded = bytes.fromhex(clean).decode("utf-8", errors="ignore")
                 if decoded and decoded.isprintable() and decoded != text:
                     candidates.append(decoded)
                     encodings.append("hex")
                     bytes_decoded += len(decoded.encode())
                     total_layers += 1
-        except (ValueError, UnicodeDecodeError):
+        except ValueError, UnicodeDecodeError:
             pass
 
         # Stage 3: Try base64 with recursive peeling
         try:
             clean64 = text.replace(" ", "")
             if len(clean64) >= 4:
-                decoded = _base64.b64decode(clean64, validate=True).decode(
-                    "utf-8", errors="ignore"
-                )
+                decoded = _base64.b64decode(clean64, validate=True).decode("utf-8", errors="ignore")
                 if decoded and decoded.isprintable() and decoded != text:
                     candidates.append(decoded)
                     encodings.append("base64")
@@ -153,25 +149,21 @@ class _PythonDeobfuscateDomain:
         # Try hex
         try:
             clean = text.replace(" ", "").replace("-", "")
-            if len(clean) >= 8 and clean.isalnum() and all(
-                c in "0123456789abcdefABCDEF" for c in clean
-            ):
+            if len(clean) >= 8 and clean.isalnum() and all(c in "0123456789abcdefABCDEF" for c in clean):
                 decoded = bytes.fromhex(clean).decode("utf-8", errors="ignore")
                 if decoded and decoded.isprintable() and decoded != text:
                     candidates.append(decoded)
                     encodings.append("hex")
                     bytes_decoded += len(decoded.encode())
                     total_layers += 1
-        except (ValueError, UnicodeDecodeError):
+        except ValueError, UnicodeDecodeError:
             pass
 
         # Try base64 (may nest)
         try:
             clean64 = text.replace(" ", "")
             if len(clean64) >= 4:
-                decoded = _base64.b64decode(clean64, validate=True).decode(
-                    "utf-8", errors="ignore"
-                )
+                decoded = _base64.b64decode(clean64, validate=True).decode("utf-8", errors="ignore")
                 if decoded and decoded.isprintable() and decoded != text:
                     candidates.append(decoded)
                     encodings.append("base64")
@@ -193,9 +185,7 @@ class _PythonDeobfuscateDomain:
             bytes_decoded=bytes_decoded,
         )
 
-    def batch_decode(
-        self, texts: list[str], max_depth: int | None = None
-    ) -> list[DeobfuscateResult]:
+    def batch_decode(self, texts: list[str], max_depth: int | None = None) -> list[DeobfuscateResult]:
         return [self.decode(t, max_depth) for t in texts]
 
     def telemetry(self) -> tuple[int, int, int]:

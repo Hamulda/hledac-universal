@@ -2,7 +2,6 @@
 Coordinators Domain Catalog
 ===========================
 
-
 Provides structured access to coordinators via domain grouping.
 Lazy loading ensures only needed coordinators are imported.
 
@@ -12,7 +11,6 @@ Usage:
     # List all domains
     catalog.domains
 
-    # Get coordinators by domain
     catalog.get('core')       # Core coordinators
     catalog.get('advanced')   # Advanced coordinators
     catalog.get('optimization')  # Optimization coordinators
@@ -29,83 +27,145 @@ Domain Groups:
     - resource: (F320) Unified GC, backpressure, AIMD, M1 capacity (from resource_allocator/gc_policy/backpressure)
     - memory: (F320) ContextOptimization, MultiLevelCache (extracted from memory_coordinator)
 """
+
 import importlib
 from typing import Any
-from _core import aclose
 
 _DOMAIN_MODULES: dict[str, dict[str, str]] = {
-    'core': {
-        'UniversalResearchCoordinator': '.research_coordinator',
-        'UniversalExecutionCoordinator': '.execution_coordinator',
-        'UniversalSecurityCoordinator': '.security_coordinator',
-        'UniversalMonitoringCoordinator': '.monitoring_coordinator',
-        'UniversalMemoryCoordinator': '.memory_coordinator',
-        'UniversalValidationCoordinator': '.validation_coordinator',
+    "core": {
+        "UniversalResearchCoordinator": ".research_coordinator",
+        "UniversalExecutionCoordinator": ".execution_coordinator",
+        "UniversalSecurityCoordinator": ".security_coordinator",
+        "UniversalMonitoringCoordinator": ".monitoring_coordinator",
+        "UniversalMemoryCoordinator": ".memory_coordinator",
+        "UniversalValidationCoordinator": ".validation_coordinator",
     },
-    'advanced': {
-        'UniversalSwarmCoordinator': '.swarm_coordinator',
-        'UniversalMetaReasoningCoordinator': '.meta_reasoning_coordinator',
-        'PrivacyEnhancedResearch': '.privacy_enhanced_research',
+    "advanced": {
+        "UniversalSwarmCoordinator": ".swarm_coordinator",
+        "UniversalMetaReasoningCoordinator": ".meta_reasoning_coordinator",
+        "PrivacyEnhancedResearch": ".privacy_enhanced_research",
     },
-    'optimization': {
-        'AgentPerformanceOptimizer': '.performance_coordinator',
-        'IntelligentResourceAllocator': '.resource_allocator',
-        'ResearchOptimizer': '.research_optimizer',
+    "optimization": {
+        "AgentPerformanceOptimizer": ".performance_coordinator",
+        "IntelligentResourceAllocator": ".resource_allocator",
+        "ResearchOptimizer": ".research_optimizer",
     },
-    'infrastructure': {
-        'UniversalCoordinator': '.base',
-        'OperationTrackingMixin': '.base',
-        'MemoryPressureLevel': '.enums',
+    "infrastructure": {
+        "UniversalCoordinator": ".base",
+        "OperationTrackingMixin": ".base",
+        "MemoryPressureLevel": ".enums",
     },
-    'specialized': {
-        'FetchCoordinator': '.fetch_coordinator',
-        'GraphCoordinator': '.graph_coordinator',
-        'ArchiveCoordinator': '.archive_coordinator',
-        'MultimodalCoordinator': '.multimodal_coordinator',
-        'RenderCoordinator': '.render_coordinator',
-        'AgentCoordinationEngine': '.agent_coordination_engine',
+    "specialized": {
+        "FetchCoordinator": ".fetch_coordinator",
+        "GraphCoordinator": ".graph_coordinator",
+        "ArchiveCoordinator": ".archive_coordinator",
+        "MultimodalCoordinator": ".multimodal_coordinator",
+        "RenderCoordinator": ".render_coordinator",
+        "AgentCoordinationEngine": ".agent_coordination_engine",
     },
     # F320: Consolidated resource management layer
-    'resource': {
-        'M1ResourceCoordinator': '.resource.resource_coordinator',
-        'BackpressureMonitor': '.resource.resource_coordinator',
-        'AIMDController': '.resource.resource_coordinator',
-        'gc_collect': '.resource.resource_coordinator',
-        'gc_collect_aggressive': '.resource.resource_coordinator',
-        'gc_collect_async': '.resource.resource_coordinator',
-        'get_gc_stats': '.resource.resource_coordinator',
+    "resource": {
+        "M1ResourceCoordinator": ".resource.resource_coordinator",
+        "BackpressureMonitor": ".resource.resource_coordinator",
+        "AIMDController": ".resource.resource_coordinator",
+        "gc_collect": ".resource.resource_coordinator",
+        "gc_collect_aggressive": ".resource.resource_coordinator",
+        "gc_collect_async": ".resource.resource_coordinator",
+        "get_gc_stats": ".resource.resource_coordinator",
     },
     # F320: Memory sub-package (extracted from memory_coordinator.py)
     # Types are now centralized in _core.py (single source of truth)
-    'memory': {
-        'ContextOptimizationManager': '.memory.context_optimizer',
-        'MultiLevelContextCache': '.memory.multi_level_cache',
+    "memory": {
+        "ContextOptimizationManager": ".memory.context_optimizer",
+        "MultiLevelContextCache": ".memory.multi_level_cache",
         # Types from _core.py
-        'ContextPriority': '.memory._core',
-        'ResearchPhase': '.memory._core',
-        'ContextItem': '.memory._core',
-        'CompressedContext': '.memory._core',
-        'CacheType': '.memory._core',
-        'CacheLocation': '.memory._core',
-        'CacheEntry': '.memory._core',
+        "ContextPriority": ".memory._core",
+        "ResearchPhase": ".memory._core",
+        "ContextItem": ".memory._core",
+        "CompressedContext": ".memory._core",
+        "CacheType": ".memory._core",
+        "CacheLocation": ".memory._core",
+        "CacheEntry": ".memory._core",
     },
 }
 _COORDINATOR_EXPORTS: dict[str, list[str]] = {
-    'UniversalMemoryCoordinator': ['MemoryAllocation', 'MemoryStatistics', 'MemoryZone'],
-    'UniversalValidationCoordinator': ['ValidationSeverity', 'OutputFormat', 'ValidationResult', 'CleaningResult'],
-    'UniversalResearchCoordinator': ['ExcavationConfig', 'ExcavationStrategy', 'ResearchPaper', 'ResearchThread', 'MetaPattern', 'ResearchTheory', 'ResearchDepth', 'HierarchicalPlan'],
-    'UniversalSwarmCoordinator': ['SwarmState', 'SwarmMetrics', 'AdaptiveStrategy', 'SwarmAgent'],
-    'UniversalMetaReasoningCoordinator': ['ReasoningStrategy', 'ReasoningStep', 'ReasoningChain', 'SprintClock', 'ThoughtNode'],
-    'AgentPerformanceOptimizer': ['AgentPool', 'IntelligentLoadBalancer', 'AsyncExecutionOptimizer', 'LoadBalancingConfig', 'OptimizationReport', 'AgentMetrics'],
-    'IntelligentResourceAllocator': ['ResourceRequest', 'ResourceAllocation', 'ResourceType', 'Priority'],
-    'AgentCoordinationEngine': ['AgentType', 'TaskPriority', 'AgentCapability', 'AgentPerformance', 'TaskRequest', 'TaskResult', 'CoordinationStrategy', 'coordinated_search'],
-    'PrivacyEnhancedResearch': ['PrivacyConfig', 'DataRetention', 'AuditRecord', 'AnonymizedRequest', 'SanitizedResult', 'private_research'],
-    'ResearchOptimizer': ['OptimizationConfig', 'OptimizationStrategy', 'CachePolicy', 'QueryMetrics', 'OptimizedResult', 'optimized_research', 'create_optimized_pipeline'],
+    "UniversalMemoryCoordinator": ["MemoryAllocation", "MemoryStatistics", "MemoryZone"],
+    "UniversalValidationCoordinator": ["ValidationSeverity", "OutputFormat", "ValidationResult", "CleaningResult"],
+    "UniversalResearchCoordinator": [
+        "ExcavationConfig",
+        "ExcavationStrategy",
+        "ResearchPaper",
+        "ResearchThread",
+        "MetaPattern",
+        "ResearchTheory",
+        "ResearchDepth",
+        "HierarchicalPlan",
+    ],
+    "UniversalSwarmCoordinator": ["SwarmState", "SwarmMetrics", "AdaptiveStrategy", "SwarmAgent"],
+    "UniversalMetaReasoningCoordinator": [
+        "ReasoningStrategy",
+        "ReasoningStep",
+        "ReasoningChain",
+        "SprintClock",
+        "ThoughtNode",
+    ],
+    "AgentPerformanceOptimizer": [
+        "AgentPool",
+        "IntelligentLoadBalancer",
+        "AsyncExecutionOptimizer",
+        "LoadBalancingConfig",
+        "OptimizationReport",
+        "AgentMetrics",
+    ],
+    "IntelligentResourceAllocator": ["ResourceRequest", "ResourceAllocation", "ResourceType", "Priority"],
+    "AgentCoordinationEngine": [
+        "AgentType",
+        "TaskPriority",
+        "AgentCapability",
+        "AgentPerformance",
+        "TaskRequest",
+        "TaskResult",
+        "CoordinationStrategy",
+        "coordinated_search",
+    ],
+    "PrivacyEnhancedResearch": [
+        "PrivacyConfig",
+        "DataRetention",
+        "AuditRecord",
+        "AnonymizedRequest",
+        "SanitizedResult",
+        "private_research",
+    ],
+    "ResearchOptimizer": [
+        "OptimizationConfig",
+        "OptimizationStrategy",
+        "CachePolicy",
+        "QueryMetrics",
+        "OptimizedResult",
+        "optimized_research",
+        "create_optimized_pipeline",
+    ],
     # F320: Resource layer exports
-    'M1ResourceCoordinator': ['CapacitySnapshot', 'M1ResourceCoordinator', 'gc_collect', 'gc_collect_aggressive', 'gc_collect_async', 'get_gc_stats'],
-    'BackpressureMonitor': ['BackpressureDecision', 'BackpressureMonitor'],
-    'AIMDController': ['AIMDController', 'AIMD_FETCH_ADDITIVE_INCREMENT', 'AIMD_FETCH_DECREASE_FACTOR', 'AIMD_FETCH_MIN', 'AIMD_FETCH_MAX', 'AIMD_ENRICHMENT_MAX', 'AIMD_EXTRACTION_MAX'],
+    "M1ResourceCoordinator": [
+        "CapacitySnapshot",
+        "M1ResourceCoordinator",
+        "gc_collect",
+        "gc_collect_aggressive",
+        "gc_collect_async",
+        "get_gc_stats",
+    ],
+    "BackpressureMonitor": ["BackpressureDecision", "BackpressureMonitor"],
+    "AIMDController": [
+        "AIMDController",
+        "AIMD_FETCH_ADDITIVE_INCREMENT",
+        "AIMD_FETCH_DECREASE_FACTOR",
+        "AIMD_FETCH_MIN",
+        "AIMD_FETCH_MAX",
+        "AIMD_ENRICHMENT_MAX",
+        "AIMD_EXTRACTION_MAX",
+    ],
 }
+
 
 class CoordinatorCatalog:
     """
@@ -115,7 +175,8 @@ class CoordinatorCatalog:
     all modules at startup. Each domain is a logical grouping of related
     coordinators.
     """
-    __slots__ = ('_cache', '_domains')
+
+    __slots__ = ("_cache", "_domains")
 
     def __init__(self) -> None:
         self._cache: dict[str, type] = {}
@@ -129,7 +190,7 @@ class CoordinatorCatalog:
     def get(self, domain: str) -> dict[str, str]:
         """Get coordinator name -> module mapping for a domain."""
         if domain not in _DOMAIN_MODULES:
-            available = ', '.join(self._domains)
+            available = ", ".join(self._domains)
             raise ValueError(f"Unknown domain '{domain}'. Available: {available}")
         return _DOMAIN_MODULES[domain].copy()
 
@@ -151,7 +212,7 @@ class CoordinatorCatalog:
         for _domain, mappings in _DOMAIN_MODULES.items():
             if name in mappings:
                 module_path = mappings[name]
-                full_module = f'coordinators{module_path}' if module_path.startswith('.') else module_path
+                full_module = f"coordinators{module_path}" if module_path.startswith(".") else module_path
                 mod = importlib.import_module(full_module)
                 result = getattr(mod, name)
                 self._cache[name] = result
@@ -162,7 +223,7 @@ class CoordinatorCatalog:
                 for _domain, mappings in _DOMAIN_MODULES.items():
                     if _coordinator_name in mappings:
                         module_path = mappings[_coordinator_name]
-                        full_module = f'coordinators{module_path}' if module_path.startswith('.') else module_path
+                        full_module = f"coordinators{module_path}" if module_path.startswith(".") else module_path
                         mod = importlib.import_module(full_module)
                         result = getattr(mod, name)
                         self._cache[name] = result
@@ -215,4 +276,6 @@ class CoordinatorCatalog:
             if query_lower in name.lower():
                 results.append(name)
         return results
+
+
 catalog = CoordinatorCatalog()

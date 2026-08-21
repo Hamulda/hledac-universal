@@ -6,7 +6,6 @@ not threading.RLock, and that all lock sites use async with.
 """
 
 import pytest
-from _core import aclose
 
 
 class TestSemanticCacheAsyncLock:
@@ -16,25 +15,28 @@ class TestSemanticCacheAsyncLock:
     def semantic_cache(self):
         """Create a MultiLevelContextCache instance for testing."""
         from coordinators.memory_coordinator import MultiLevelContextCache
+
         return MultiLevelContextCache()
 
-    def test_lock_is_asyncio_lock(self, semantic_cache):
+    def test_lock_is_asyncio_lock(self, semantic_cache) -> None:
         """MultiLevelContextCache._lock must be asyncio.Lock, not threading.RLock."""
         import asyncio
+
         assert isinstance(semantic_cache._lock, asyncio.Lock), (
             f"Expected asyncio.Lock, got {type(semantic_cache._lock).__name__}. "
             "All callers are async; threading.RLock would block the event loop."
-    )
+        )
 
-    def test_no_threading_lock_in_semantic_cache(self, semantic_cache):
+    def test_no_threading_lock_in_semantic_cache(self, semantic_cache) -> None:
         """Ensure no threading.Lock leaks into _lock."""
         import threading
+
         assert not isinstance(semantic_cache._lock, threading.Lock), (
             "threading.Lock found — would block event loop when held in async context"
-    )
+        )
 
     @pytest.mark.asyncio
-    async def test_get_stats_no_lock_contention(self, semantic_cache):
+    async def test_get_stats_no_lock_contention(self, semantic_cache) -> None:
         """
         async def get() increments total_requests without blocking.
         Lock scope is minimal — only hits/misses update.
@@ -47,7 +49,7 @@ class TestSemanticCacheAsyncLock:
         assert semantic_cache.stats["total_requests"] >= 1
 
     @pytest.mark.asyncio
-    async def test_set_then_get_round_trip(self, semantic_cache):
+    async def test_set_then_get_round_trip(self, semantic_cache) -> None:
         """set() then get() on identical key returns the value."""
         key = "round trip test"
         value = {"data": 42}
@@ -58,7 +60,7 @@ class TestSemanticCacheAsyncLock:
         assert result["data"] == 42
 
     @pytest.mark.asyncio
-    async def test_clear_uses_async_lock(self, semantic_cache):
+    async def test_clear_uses_async_lock(self, semantic_cache) -> None:
         """clear() uses async with self._lock — must not block."""
         await semantic_cache.set("key1", {"v": 1})
         # Should complete without blocking
@@ -67,7 +69,7 @@ class TestSemanticCacheAsyncLock:
         assert "hits" in semantic_cache.stats
 
     @pytest.mark.asyncio
-    async def test_lock_never_awaited_while_held(self, semantic_cache):
+    async def test_lock_never_awaited_while_held(self, semantic_cache) -> None:
         """
         CRITICAL: No await inside async with self._lock blocks.
         We verify the code structure — lock scope is only dict/list mutations.
@@ -81,6 +83,7 @@ class TestSemanticCacheAsyncLock:
         #   - list.append() calls
         # No await is called inside these critical sections.
         import inspect
+
         source = inspect.getsource(semantic_cache.get)
         # Verify lock pattern
         assert "async with self._lock:" in source, "get() should use async with self._lock"
@@ -110,29 +113,29 @@ class TestSyncBoundaryMethodsRetainThreadLock:
     def coordinator(self):
         """Create a UniversalMemoryCoordinator instance."""
         from coordinators.memory_coordinator import UniversalMemoryCoordinator
+
         return UniversalMemoryCoordinator(memory_limit_mb=1000, enable_neuromorphic=False)
 
-    def test_allocate_uses_threading_lock(self, coordinator):
+    def test_allocate_uses_threading_lock(self, coordinator) -> None:
         """allocate() uses self.lock (threading.Lock), not self._lock (asyncio)."""
         import inspect
-        source = inspect.getsource(coordinator.allocate)
-        assert "with self.lock:" in source, (
-            "allocate() should use self.lock (threading.Lock), not self._lock"
-    )
-        assert "with self._lock:" not in source, (
-            "allocate() must not use self._lock (asyncio.Lock)"
-    )
 
-    def test_free_uses_threading_lock(self, coordinator):
+        source = inspect.getsource(coordinator.allocate)
+        assert "with self.lock:" in source, "allocate() should use self.lock (threading.Lock), not self._lock"
+        assert "with self._lock:" not in source, "allocate() must not use self._lock (asyncio.Lock)"
+
+    def test_free_uses_threading_lock(self, coordinator) -> None:
         """free() uses self.lock (threading.Lock)."""
         import inspect
+
         source = inspect.getsource(coordinator.free)
         assert "with self.lock:" in source
         assert "with self._lock:" not in source
 
-    def test_touch_uses_threading_lock(self, coordinator):
+    def test_touch_uses_threading_lock(self, coordinator) -> None:
         """touch() uses self.lock (threading.Lock)."""
         import inspect
+
         source = inspect.getsource(coordinator.touch)
         assert "with self.lock:" in source
         assert "with self._lock:" not in source

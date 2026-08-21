@@ -1,20 +1,17 @@
-# fetching/memory_budget_gate.py
 """
 from __future__ import annotations
 Memory budget gate for M1 MacBook Air 8GB unified memory.
 
 Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import threading
 import time
 from typing import Literal
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal._core.psutil_shim import psutil
 
@@ -48,7 +45,6 @@ class BrowserDecision(Struct, frozen=True):
 # ISSUE-014 FIX: asyncio.Lock() removed — was unused, caused "no running event loop" on macOS import
 # ISSUE-018: RSS cache — 10s TTL for M1 battery optimization (updated from 5s)
 from hledac.universal._core.locks import LockCategory, make_lock
-from _core import aclose
 
 _RSS_CACHE_TTL_S: float = 10.0
 _RSS_CACHE: tuple[float, float] | None = None  # (timestamp, rss_gib)
@@ -125,31 +121,30 @@ def decide(
             rss_gib=rss,
             js_confidence=js_confidence,
             reason=f"hard limit {_HARD_GIB:.1f} GiB, RSS={rss:.2f}",
-    )
+        )
 
     if rss >= _SOFT_GIB:
         if priority <= 3 and js_confidence >= 0.75:
             logger.warning(
-                "memory_budget_gate: soft limit RSS=%.2f GiB, "
-                "overriding for priority=%d js_confidence=%.2f",
+                "memory_budget_gate: soft limit RSS=%.2f GiB, overriding for priority=%d js_confidence=%.2f",
                 rss,
                 priority,
                 js_confidence,
-    )
+            )
             return BrowserDecision(
                 tier="camoufox",
                 allowed=True,
                 rss_gib=rss,
                 js_confidence=js_confidence,
                 reason=f"soft override: priority={priority} confidence={js_confidence:.2f}",
-    )
+            )
         return BrowserDecision(
             tier="deferred",
             allowed=False,
             rss_gib=rss,
             js_confidence=js_confidence,
             reason=f"soft limit {_SOFT_GIB:.1f} GiB, priority={priority}",
-    )
+        )
 
     return BrowserDecision(
         tier="camoufox",

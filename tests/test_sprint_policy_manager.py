@@ -10,7 +10,6 @@ Tests the contract:
 Integration: runtime/sprint_scheduler.py
 """
 
-
 import json
 from pathlib import Path
 from typing import Any
@@ -26,6 +25,7 @@ from hledac.universal.rl.sprint_policy_manager import (
 )
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def tmp_policy_path(tmp_path: Path) -> Path:
@@ -67,6 +67,7 @@ def _make_result(
 
 # ── Test: disabled by default ───────────────────────────────────────────────
 
+
 class TestDisabledByDefault:
     """Policy must be disabled-by-default — no effect on sprint behavior."""
 
@@ -95,6 +96,7 @@ class TestDisabledByDefault:
 
 
 # ── Test: every 5th sprint is exploration ────────────────────────────────────
+
 
 class TestEveryFifthSprintExploration:
     """every 5th sprint is exploration (ACTION_DEEP_DIVE)."""
@@ -125,18 +127,14 @@ class TestEveryFifthSprintExploration:
         # (sprint #5 is the first exploration boundary per test_sprint_5_is_exploration)
         assert manager.should_explore() is False
 
-    def test_get_action_returns_deep_dive_on_explore(
-        self, enabled_manager: SprintPolicyManager
-    ) -> None:
+    def test_get_action_returns_deep_dive_on_explore(self, enabled_manager: SprintPolicyManager) -> None:
         """get_action() must return ACTION_DEEP_DIVE when should_explore() is True."""
         result = _make_result()
         for _i in range(4):
             enabled_manager.update(result)
         assert enabled_manager.get_action() == ACTION_DEEP_DIVE
 
-    def test_get_action_returns_continue_when_not_exploring(
-        self, tmp_policy_path: Path
-    ) -> None:
+    def test_get_action_returns_continue_when_not_exploring(self, tmp_policy_path: Path) -> None:
         """get_action() must return ACTION_CONTINUE when should_explore() is False."""
         # epsilon=0 to isolate from stochastic epsilon-greedy
         manager = SprintPolicyManager(enabled=True, epsilon=0.0)
@@ -147,21 +145,18 @@ class TestEveryFifthSprintExploration:
 
 # ── Test: policy persists between instances ──────────────────────────────────
 
+
 class TestPolicyPersistence:
     """Policy state survives instance restarts via JSON file."""
 
-    def test_state_saved_after_updates(
-        self, enabled_manager: SprintPolicyManager, tmp_policy_path: Path
-    ) -> None:
+    def test_state_saved_after_updates(self, enabled_manager: SprintPolicyManager, tmp_policy_path: Path) -> None:
         """State file must be written after update()."""
         result = _make_result(cycles_completed=3, accepted_findings=7)
         enabled_manager.update(result)
         enabled_manager.update(result)
         assert tmp_policy_path.exists()
 
-    def test_state_reloaded_on_new_instance(
-        self, enabled_manager: SprintPolicyManager, tmp_policy_path: Path
-    ) -> None:
+    def test_state_reloaded_on_new_instance(self, enabled_manager: SprintPolicyManager, tmp_policy_path: Path) -> None:
         """New instance must load state from file."""
         result = _make_result(cycles_completed=3, accepted_findings=7)
         enabled_manager.update(result)
@@ -212,6 +207,7 @@ class TestPolicyPersistence:
 
 
 # ── Test: reward from SprintSchedulerResult ──────────────────────────────────
+
 
 class TestRewardComputation:
     """Reward computed from real SprintSchedulerResult fields."""
@@ -277,6 +273,7 @@ class TestRewardComputation:
 
 # ── Test: integration with sprint_scheduler via update() ──────────────────────
 
+
 class TestSprintSchedulerIntegration:
     """update() called by SprintScheduler after run() — real result fields."""
 
@@ -316,6 +313,7 @@ class TestSprintSchedulerIntegration:
 
 # ── Test: invariants ──────────────────────────────────────────────────────────
 
+
 class TestInvariants:
     """SprintPolicyManager invariants from the audit."""
 
@@ -325,9 +323,7 @@ class TestInvariants:
         manager.update(_make_result())
         assert not tmp_policy_path.exists()
 
-    def test_disabled_manager_no_persistent_side_effects(
-        self, tmp_policy_path: Path
-    ) -> None:
+    def test_disabled_manager_no_persistent_side_effects(self, tmp_policy_path: Path) -> None:
         """Disabled manager must not create persistent state."""
         manager = SprintPolicyManager(enabled=False, policy_path=tmp_policy_path)
         manager.update(_make_result())

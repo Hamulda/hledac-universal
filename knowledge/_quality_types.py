@@ -18,10 +18,8 @@ MUST NOT IMPORT:
 
 from __future__ import annotations
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 
 class FindingQualityDecision(Struct, frozen=True):

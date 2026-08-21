@@ -22,19 +22,18 @@ from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator, Zs
 # Import the modules under test
 from hledac.universal.layers.communication_layer import CommunicationLayer, _BatchItem
 from hledac.universal.project_types import CommunicationConfig
-from _core import aclose
 
 
 class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for Dynamic Batching feature."""
 
-    async def test_batch_size_dynamic(self):
+    async def test_batch_size_dynamic(self) -> None:
         """Test max_batch = 8 if free RAM > 4 GB else 4."""
         config = CommunicationConfig()
         comm = CommunicationLayer(config)
 
         # Mock psutil for low RAM
-        with patch('psutil.virtual_memory') as mock_vm:
+        with patch("psutil.virtual_memory") as mock_vm:
             # Low RAM → max_batch = 4
             mock_vm.return_value.available = 3 * 1024**3
             comm._update_max_batch()
@@ -45,7 +44,7 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
             comm._update_max_batch()
             self.assertEqual(comm._max_batch, 8)
 
-    async def test_priority_queue(self):
+    async def test_priority_queue(self) -> None:
         """Test higher voi_score items are processed first."""
         config = CommunicationConfig()
         comm = CommunicationLayer(config)
@@ -54,15 +53,15 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
         item1 = _BatchItem(
             priority=-0.9,  # Higher voi_score
             timestamp=time.time(),
-            query={'prompt': 'p1'},
-            future=asyncio.Future()
-    )
+            query={"prompt": "p1"},
+            future=asyncio.Future(),
+        )
         item2 = _BatchItem(
             priority=-0.1,  # Lower voi_score
             timestamp=time.time(),
-            query={'prompt': 'p2'},
-            future=asyncio.Future()
-    )
+            query={"prompt": "p2"},
+            future=asyncio.Future(),
+        )
 
         async with comm._batch_heap_lock:
             heapq.heappush(comm._batch_heap, item1)
@@ -70,9 +69,9 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
             first = comm._batch_heap[0]
 
         self.assertEqual(first.priority, -0.9)
-        self.assertEqual(first.query['prompt'], 'p1')
+        self.assertEqual(first.query["prompt"], "p1")
 
-    async def test_partial_failure(self):
+    async def test_partial_failure(self) -> None:
         """Test one failed prompt in batch does not fail others."""
         config = CommunicationConfig()
         comm = CommunicationLayer(config)
@@ -80,31 +79,39 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
         # Mock _model_bridge.send_to_model (what _execute_query calls internally).
         # This avoids __slots__ issues with patching _execute_query directly.
         mock_bridge = MagicMock()
+
         async def mock_send_to_model(**kwargs):
-            prompt = kwargs.get('content', '')
+            prompt = kwargs.get("content", "")
             if prompt == "p1":
                 return {"success": True, "response": "ok"}
             raise ValueError("fail")
+
         mock_bridge.send_to_model = AsyncMock(side_effect=mock_send_to_model)
         comm._model_bridge = mock_bridge
 
         # Create batch queries
         queries = [
-            {'query': MagicMock(prompt="p1", complexity="medium", use_cache=True),
-             'max_tokens': 500, 'temperature': 0.7},
-            {'query': MagicMock(prompt="p2", complexity="medium", use_cache=True),
-             'max_tokens': 500, 'temperature': 0.7},
+            {
+                "query": MagicMock(prompt="p1", complexity="medium", use_cache=True),
+                "max_tokens": 500,
+                "temperature": 0.7,
+            },
+            {
+                "query": MagicMock(prompt="p2", complexity="medium", use_cache=True),
+                "max_tokens": 500,
+                "temperature": 0.7,
+            },
         ]
 
         results = await comm._process_batch_parallel(queries)
 
         # Both results returned - run_one catches exceptions and returns dict, not raises
         self.assertEqual(len(results), 2)
-        self.assertTrue(results[0]['success'])
-        self.assertEqual(results[0]['response'], "ok")
-        self.assertFalse(results[1]['success'])
+        self.assertTrue(results[0]["success"])
+        self.assertEqual(results[0]["response"], "ok")
+        self.assertFalse(results[1]["success"])
 
-    async def test_empty_queue_sleep(self):
+    async def test_empty_queue_sleep(self) -> None:
         """Test empty queue causes sleep (no busy loop)."""
         config = CommunicationConfig()
         comm = CommunicationLayer(config)
@@ -119,27 +126,27 @@ class TestSprint41A_DynamicBatching(unittest.IsolatedAsyncioTestCase):  # noqa: 
 class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):  # noqa: N801
     """Tests for zstd compression feature."""
 
-    async def test_compression_threshold(self):
+    async def test_compression_threshold(self) -> None:
         """Test response > 10 KB is compressed (smaller)."""
         comp = ZstdCompressor()
         data = b"x" * 20_000  # 20KB
 
-        compressed = comp.compress(data, 'text')
+        compressed = comp.compress(data, "text")
 
         # Compression should reduce size
         self.assertLess(len(compressed), len(data))
 
-    async def test_compression_roundtrip(self):
+    async def test_compression_roundtrip(self) -> None:
         """Test decompressed content equals original."""
         comp = ZstdCompressor()
         original = b"test content " * 1000
 
-        compressed = comp.compress(original, 'text')
+        compressed = comp.compress(original, "text")
         decompressed = comp.decompress(compressed)
 
         self.assertEqual(original, decompressed)
 
-    async def test_compression_async(self):
+    async def test_compression_async(self) -> None:
         """Test compression runs in asyncio.to_thread (non-blocking)."""
         fc = FetchCoordinator()
         fc._zstd = ZstdCompressor()
@@ -148,41 +155,39 @@ class TestSprint41B_ZstdCompression(unittest.IsolatedAsyncioTestCase):  # noqa: 
         data = b"x" * 50_000
 
         # Should run in executor without blocking
-        compressed = await loop.run_in_executor(
-            None, fc._zstd.compress, data, 'text'
-    )
+        compressed = await loop.run_in_executor(None, fc._zstd.compress, data, "text")
 
         self.assertIsInstance(compressed, bytes)
         # Verify decompression works
         decompressed = fc._zstd.decompress(compressed)
         self.assertEqual(data, decompressed)
 
-    async def test_content_aware_level(self):
+    async def test_content_aware_level(self) -> None:
         """Test JSON content uses level=1, text uses level=3."""
         comp = ZstdCompressor()
 
-        json_data = b'{"key": "' + b'x'*5000 + b'"}'
-        text_data = b'text ' * 5000
+        json_data = b'{"key": "' + b"x" * 5000 + b'"}'
+        text_data = b"text " * 5000
 
         # Both should compress
-        json_comp = comp.compress(json_data, 'json')
-        text_comp = comp.compress(text_data, 'text')
+        json_comp = comp.compress(json_data, "json")
+        text_comp = comp.compress(text_data, "text")
 
         self.assertLess(len(json_comp), len(json_data))
         self.assertLess(len(text_comp), len(text_data))
 
-    async def test_dictionary_building(self):
+    async def test_dictionary_building(self) -> None:
         """Test passive dictionary is built after 100 responses."""
         comp = ZstdCompressor()
 
         # Add 99 samples - no dict yet
         for i in range(99):
-            comp.add_sample(b"sample data " + str(i).encode(), 'text')
+            comp.add_sample(b"sample data " + str(i).encode(), "text")
 
         self.assertIsNone(comp._dictionary_data)
 
         # Add 100th sample → dict should be built
-        comp.add_sample(b"final sample", 'text')
+        comp.add_sample(b"final sample", "text")
 
         # Dictionary should now exist
         self.assertIsNotNone(comp._dictionary_data)
@@ -196,7 +201,7 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
     The remaining tests cover the functionality that can be tested without MLX.
     """
 
-    async def test_prefix_cache_custom_system_uses_prefix_cache(self):
+    async def test_prefix_cache_custom_system_uses_prefix_cache(self) -> None:
         """M-02: custom system_msg is correctly passed to _get_prefix_cache.
 
         Verifies that the system variable name bug (system vs system_msg)
@@ -206,14 +211,16 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
         which prevents full initialization without MLX model.
         """
         import ast
+        import inspect
 
         # Read the source of generate() method
         from brain.deephermes3_engine import DeepHermes3Engine
-        import inspect
+
         source = inspect.getsource(DeepHermes3Engine.generate)
 
         # Parse AST (dedent to remove decorator indentation)
         import textwrap
+
         source_dedented = textwrap.dedent(source)
         tree = ast.parse(source_dedented)
 
@@ -222,7 +229,7 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Attribute):
-                    if node.func.attr == '_get_prefix_cache':
+                    if node.func.attr == "_get_prefix_cache":
                         if node.args:
                             # Get the argument passed to _get_prefix_cache
                             arg = node.args[0]
@@ -232,16 +239,23 @@ class TestSprint41C_SharedPrefixCache(unittest.IsolatedAsyncioTestCase):  # noqa
         # The fix: _get_prefix_cache should be called with 'system_msg', NOT 'system'
         # Before the fix, it was called with undefined variable 'system' which would
         # raise NameError (swallowed by bare except Exception)
-        self.assertIn('system_msg', prefix_cache_calls,
-                      "_get_prefix_cache should be called with 'system_msg', not 'system'")
-        self.assertNotIn('system', prefix_cache_calls,
-                         "_get_prefix_cache should NOT be called with bare 'system' (undefined variable)")
+        self.assertIn(
+            "system_msg", prefix_cache_calls, "_get_prefix_cache should be called with 'system_msg', not 'system'"
+        )
+        self.assertNotIn(
+            "system",
+            prefix_cache_calls,
+            "_get_prefix_cache should NOT be called with bare 'system' (undefined variable)",
+        )
 
         # Additionally, verify the context manager is used properly
-        self.assertEqual(prefix_cache_calls.count('system_msg'), 1,
-                         "There should be exactly one _get_prefix_cache call with system_msg")
+        self.assertEqual(
+            prefix_cache_calls.count("system_msg"),
+            1,
+            "There should be exactly one _get_prefix_cache call with system_msg",
+        )
 
-    async def test_cache_invalidation(self):
+    async def test_cache_invalidation(self) -> None:
         """Test invalidate_prefix_cache() clears the prefix cache dict."""
         engine = DeepHermes3Engine()
         # Initialize prefix cache with a mock entry

@@ -62,37 +62,35 @@ M1 8GB constraints:
 
 Author: M-10 (F350M-R)
 """
+
 from __future__ import annotations
 
 import asyncio
-import gc
 import logging
 import os
 import threading
 import weakref
-from abc import abstractmethod
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
+from hledac.universal.utils._patterns import LazyLockDescriptor
 from hledac.universal.utils.memory_tier import get_adaptive_cache_size
-from hledac.universal.utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
-from _core._util import aclose
 
 logger = logging.getLogger(__name__)
 
-# ─── Environment ────────────────────────────────────────────────────────────────
 
-class InferenceBackend(str, Enum):
+class InferenceBackend(StrEnum):
     """Available inference backends."""
-    MLX_INPROC = "mlx_inproc"   # In-process mlx_lm via DeepHermes3Engine
-    MLXCEL = "mlxcel"            # Out-of-process mlxcel Rust server
-    COREML = "coreml"            # CoreML FastAPI microservice
+
+    MLX_INPROC = "mlx_inproc"  # In-process mlx_lm via DeepHermes3Engine
+    MLXCEL = "mlxcel"  # Out-of-process mlxcel Rust server
+    COREML = "coreml"  # CoreML FastAPI microservice
 
     @classmethod
     def from_env(cls) -> InferenceBackend:
@@ -106,15 +104,14 @@ class InferenceBackend(str, Enum):
             logger.warning(
                 "[IC] Unknown HLEDAC_INFERENCE_BACKEND=%r, defaulting to mlx_inproc",
                 raw,
-    )
+            )
             return cls.MLX_INPROC
 
-
-# ─── DTOs ─────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True, slots=True)
 class InferenceRequest:
     """Canonical inference request — backend-agnostic."""
+
     prompt: str
     temperature: float = 0.3
     max_tokens: int = 512
@@ -133,6 +130,7 @@ class InferenceRequest:
 @dataclass(frozen=True, slots=True)
 class InferenceResponse:
     """Canonical inference response — backend-agnostic."""
+
     text: str
     tokens_generated: int
     latency_ms: float
@@ -142,6 +140,7 @@ class InferenceResponse:
 @dataclass(frozen=True, slots=True)
 class Token:
     """Streaming token — backend-agnostic."""
+
     text: str
     done: bool = False
     backend: InferenceBackend = InferenceBackend.MLX_INPROC
@@ -156,8 +155,6 @@ class InferenceError(Exception):
         self.cause = cause
 
 
-# ─── Backend Interfaces ────────────────────────────────────────────────────────
-
 class IInferenceBackend:
     """
     Protocol: any inference backend must implement this interface.
@@ -171,8 +168,6 @@ class IInferenceBackend:
     stream: Any
     health_check: Any
 
-
-# ─── In-Process MLX Backend ─────────────────────────────────────────────────────
 
 class MLXInProcBackend(IInferenceBackend):
     """
@@ -213,14 +208,14 @@ class MLXInProcBackend(IInferenceBackend):
                 adapter_path=request.adapter_path,
                 logits_processors=request.logits_processors,
                 prompt_tokens=request.prompt_tokens,
-    )
+            )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=text,
                 tokens_generated=len(text.split()),  # rough estimate
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLX_INPROC,
-    )
+            )
         except Exception as exc:
             raise InferenceError(
                 f"mlx_inproc generate failed: {exc}",
@@ -254,8 +249,6 @@ class MLXInProcBackend(IInferenceBackend):
         except Exception:
             return False
 
-
-# ─── mlxcel Backend ────────────────────────────────────────────────────────────
 
 class MlxcelBackend(IInferenceBackend):
     """
@@ -298,14 +291,14 @@ class MlxcelBackend(IInferenceBackend):
                 system_msg=request.system_msg,
                 thinking=request.thinking,
                 adapter_path=request.adapter_path,
-    )
+            )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text,
                 tokens_generated=result.tokens_generated,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.MLXCEL,
-    )
+            )
         except Exception as exc:
             raise InferenceError(
                 f"mlxcel generate failed: {exc}",
@@ -341,8 +334,6 @@ class MlxcelBackend(IInferenceBackend):
         except Exception:
             return False
 
-
-# ─── CoreML Backend ─────────────────────────────────────────────────────────────
 
 class CoreMLBackend(IInferenceBackend):
     """
@@ -389,14 +380,14 @@ class CoreMLBackend(IInferenceBackend):
             result = await client.predict(
                 model="default",
                 inputs={"prompt": request.prompt},
-    )
+            )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(
                 text=result.text if hasattr(result, "text") else str(result),
                 tokens_generated=0,
                 latency_ms=latency_ms,
                 backend=InferenceBackend.COREML,
-    )
+            )
         except Exception as exc:
             raise InferenceError(
                 f"coreml generate failed: {exc}",
@@ -414,7 +405,7 @@ class CoreMLBackend(IInferenceBackend):
             result = await client.predict(
                 model="default",
                 inputs={"prompt": request.prompt},
-    )
+            )
             text = result.text if hasattr(result, "text") else str(result)
             yield Token(text=text, done=False, backend=InferenceBackend.COREML)
             yield Token(text="", done=True, backend=InferenceBackend.COREML)
@@ -433,8 +424,6 @@ class CoreMLBackend(IInferenceBackend):
         except Exception:
             return False
 
-
-# ─── InferenceCoordinator ───────────────────────────────────────────────────────
 
 # C3 Fix: Default is mlx_inproc (in-process). mlxcel requires cargo install.
 # _DEFAULT_BACKENDS is kept minimal — MLX_INPROC added dynamically in __init__
@@ -470,7 +459,7 @@ class InferenceCoordinator:
         - Fallback: mlxcel (when HLEDAC_INFERENCE_BACKEND=mlxcel and binary installed)
     """
 
-    __slots__ = ('_backends', '_default_backend', '_prompt_cache')
+    __slots__ = ("_backends", "_default_backend", "_prompt_cache")
 
     def __init__(
         self,
@@ -488,7 +477,7 @@ class InferenceCoordinator:
         logger.info(
             "[IC] InferenceCoordinator initialized — default_backend=%s",
             self._default_backend.value,
-    )
+        )
 
     def _resolve_backend(self, request: InferenceRequest) -> IInferenceBackend:
         """Resolve which backend to use for a request."""
@@ -499,13 +488,13 @@ class InferenceCoordinator:
             logger.warning(
                 "[IC] Backend %s not available, falling back to mlx_inproc",
                 backend.value,
-    )
+            )
             be = self._backends.get(InferenceBackend.MLX_INPROC)
             if be is None:
                 raise InferenceError(
-                    f"No fallback backend available",
+                    "No fallback backend available",
                     backend=InferenceBackend.MLXCEL,
-    )
+                )
         return be
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
@@ -537,8 +526,6 @@ class InferenceCoordinator:
                 backend=request.effective_backend(),
                 cause=exc,
             ) from exc
-
-    # ─── Prompt Cache (A4) ────────────────────────────────────────────────────
 
     def _make_cache_key(self, request: InferenceRequest) -> str:
         """
@@ -635,8 +622,6 @@ class InferenceCoordinator:
         return self._default_backend
 
 
-# ─── Module-level singleton ─────────────────────────────────────────────────────
-
 _COORDINATOR: InferenceCoordinator | None = None
 _COORDINATOR_LOCK: asyncio.Lock | None = None
 
@@ -658,17 +643,12 @@ def get_inference_coordinator() -> InferenceCoordinator:
     """
     global _COORDINATOR
     if _COORDINATOR is None:
-        import asyncio
-        # DCLP: lock only on the None→something transition
-        # In practice this is called from a single-threaded async context
-        # so the lock mainly documents the intent
         _COORDINATOR = InferenceCoordinator()
     return _COORDINATOR
 
 
-# ─── Model Pool (M-11 canonical LRU) ──────────────────────────────────────────────
-
 # Uses get_adaptive_cache_size from utils.memory_tier (canonical M1 memory tier detection)
+
 
 class ModelPool:
     """
@@ -805,7 +785,7 @@ class ModelPool:
     def _cleanup_model_pool(self) -> None:
         """
         Cleanup method for weakref.finalize.
-        
+
         Clears the model cache and forces MLX Metal cache cleanup.
         """
         try:
@@ -818,29 +798,30 @@ class ModelPool:
     def __del__(self) -> None:
         """
         F264: Fallback cleanup — weakref.finalize is primary, __del__ is last resort.
-        
+
         M7 FIX: When ModelPool is garbage collected (e.g. memory pressure,
         module reload), Python's refcount releases the model objects, but MLX
         GPU memory is NOT automatically returned to the Metal allocator without
         an explicit mx.eval([]) barrier + clear_cache() call.
-        
+
         Called only if:
         - Finalizer wasn't triggered (interpreter shutdown order)
         - Object was resurrected and then deleted
         """
-        if hasattr(self, '_finalizer') and self._finalizer.detach():
+        if hasattr(self, "_finalizer") and self._finalizer.detach():
             self._cleanup_model_pool()
 
 
 def _model_pool_cleanup() -> None:
     """
     Module-level cleanup function for weakref.finalize.
-    
+
     F264: Clear MLX Metal cache when ModelPool is garbage collected.
     Called automatically by weakref.finalize when the object is GC'd.
     """
     try:
         from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
+
         mlx_cleanup_sync()
     except Exception:  # noqa: BLE001
         pass
@@ -860,8 +841,6 @@ def get_model_pool() -> ModelPool:
                 _MODEL_POOL = ModelPool()
     return _MODEL_POOL
 
-
-# ─── Convenience wrappers ────────────────────────────────────────────────────────
 
 async def generate(
     prompt: str,

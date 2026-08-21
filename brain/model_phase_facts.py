@@ -59,35 +59,29 @@ USAGE:
     )
 """
 
+WORKFLOW_PHASES: frozenset[str] = frozenset(
+    {
+        "PLAN",
+        "DECIDE",
+        "GENERATE",
+        "EMBED",
+        "DEDUP",
+        "ROUTING",
+        "NER",
+        "ENTITY",
+    }
+)
+
+COARSE_GRAINED_PHASES: frozenset[str] = frozenset(
+    {
+        "BRAIN",
+        "TOOLS",
+        "SYNTHESIS",
+        "CLEANUP",
+    }
+)
 
 
-# =============================================================================
-# Layer 1 — Workflow-level phase strings
-# =============================================================================
-WORKFLOW_PHASES: frozenset[str] = frozenset({
-    "PLAN",
-    "DECIDE",
-    "GENERATE",
-    "EMBED",
-    "DEDUP",
-    "ROUTING",
-    "NER",
-    "ENTITY",
-})
-
-# =============================================================================
-# Layer 2 — Coarse-grained phase strings
-# =============================================================================
-COARSE_GRAINED_PHASES: frozenset[str] = frozenset({
-    "BRAIN",
-    "TOOLS",
-    "SYNTHESIS",
-    "CLEANUP",
-})
-
-# =============================================================================
-# Phase-layer classification
-# =============================================================================
 def get_phase_layer(phase: str) -> int:
     """
     Return which phase layer a string belongs to.
@@ -130,10 +124,6 @@ def is_same_layer(phase_a: str, phase_b: str) -> bool:
     return get_phase_layer(phase_a) == get_phase_layer(phase_b) != 0
 
 
-# =============================================================================
-# Sprint 8TF-R: Phase Drift Guard — Enforce/Assert helpers
-# =============================================================================
-
 def assert_no_cross_layer_mapping(phase: str, layer_hint: str = "") -> None:
     """
     Assert that a phase string is NOT being implicitly mapped across layers.
@@ -163,12 +153,13 @@ def assert_no_cross_layer_mapping(phase: str, layer_hint: str = "") -> None:
     # expects Layer 1, log a warning
     if layer == 2 and layer_hint.startswith("Layer 1"):
         import logging
+
         logging.getLogger(__name__).warning(
             f"[PHASE DRIFT GUARD] Cross-layer risk: '{phase}' is Layer 2 "
             f"(coarse-grained) but caller expects Layer 1 (workflow-level). "
             f"This may indicate implicit phase string mapping. "
             f"Use model_phase_facts.is_same_layer() to validate."
-    )
+        )
 
 
 def get_phase_layer_strict(phase: str) -> int:
@@ -199,10 +190,11 @@ def get_phase_layer_strict(phase: str) -> int:
     if in_layer1 and in_layer2:
         # Collision: phase exists in both layers — cannot determine uniquely
         import logging
+
         logging.getLogger(__name__).warning(
             f"[PHASE DRIFT GUARD] Phase '{phase}' exists in both Layer 1 and "
             f"Layer 2. This is a cross-layer collision. Treating as unknown."
-    )
+        )
         return 0
 
     if in_layer1:

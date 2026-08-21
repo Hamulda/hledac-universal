@@ -65,23 +65,16 @@ import contextlib
 import functools
 import platform
 import threading
-import weakref
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from operator import attrgetter, itemgetter
-from _core._util import aclose
+from operator import attrgetter
 if TYPE_CHECKING:
-    from collections.abc import ItemsView, KeysView, ValuesView
 
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
-
-# ==============================================================================
-# REGISTER_LOCK DECORATOR (from lock_registry.py pattern)
-# ==============================================================================
 
 
 def auto_register(category: LockCategory) -> Callable[[Callable[[], threading.Lock]], Callable[[], threading.Lock]]:
@@ -123,10 +116,6 @@ def auto_register(category: LockCategory) -> Callable[[Callable[[], threading.Lo
 
 # Alias for auto_register
 register_lock_decorator = auto_register
-
-# ==============================================================================
-# LOCK CATEGORY REGISTRY
-# ==============================================================================
 
 
 class LockCategory(IntEnum):
@@ -186,10 +175,6 @@ class LockInfo:
     def __repr__(self) -> str:
         return f"LockInfo({self.category.name}[{self.order}]: {self.name})"
 
-
-# ==============================================================================
-# LOCK REGISTRY STORAGE
-# ==============================================================================
 
 _LockRegistryKey = tuple[LockCategory, int]
 _LockRegistry: dict[str, LockInfo] = {}
@@ -434,10 +419,6 @@ def assert_lock_registered(name: str) -> None:
     )
 
 
-# ==============================================================================
-# ASYNC LOCK HELPERS (ISSUE-014 fix)
-# ==============================================================================
-
 
 class AsyncLockDCLP:
     """
@@ -490,7 +471,6 @@ class AsyncLockDCLP:
         try:
             return self._lock.locked()
         except RuntimeError:
-            # locked() called from wrong thread — asyncio lock is thread-safe
             return False
 
 
@@ -522,10 +502,6 @@ def make_async_lock_dclp() -> tuple[Callable[[], asyncio.Lock], threading.Lock]:
 
     return get_lock, thread_lock
 
-
-# ==============================================================================
-# LOCK-FREE COUNTER HELPERS
-# ==============================================================================
 
 # TODO: Rust AtomicCounter (issue #5) poskytne lock-free counter.
 # Prozatím: threading.Lock chrání increment operace.
@@ -564,10 +540,6 @@ def make_counter(initial: int = 0) -> _PythonCounter:
     """Vytvoř thread-safe counter (Python fallback, Rust AtomicCounter planned)."""
     return _PythonCounter(initial)
 
-
-# ==============================================================================
-# RUST-BACKED ATOMIC COUNTER (Lock-Free ~1ns)
-# ==============================================================================
 
 _counter_backend: Any = None
 
@@ -652,10 +624,6 @@ def make_atomic_counter(initial: int = 0) -> AtomicCounter:
     return AtomicCounter(initial)
 
 
-# ==============================================================================
-# MAKE_LOCK FACTORY — Darwin os_unfair_lock + Auto-Registration (ISSUE-008)
-# ==============================================================================
-
 # Lazy import pro os_unfair_lock — pouze na Darwinu
 _rust_unfair_lock: Any = None
 _IS_DARWIN: bool = platform.system() == "Darwin"
@@ -729,10 +697,6 @@ def make_lock(
     register_lock(category, lock, name)
     return lock
 
-
-# ==============================================================================
-# EXPORTS
-# ==============================================================================
 
 __all__ = [
     # Registry core

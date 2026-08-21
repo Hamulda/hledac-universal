@@ -29,7 +29,6 @@ Usage:
 -------
 from rust_extensions.wiring import extract_tls_metadata
 
-# Extract metadata from TLS cert
 sans, issuer, sha256 = extract_tls_metadata(
     san_entries=[(2, "example.com"), (2, "www.example.com")],
     issuer_org="Let's Encrypt",
@@ -45,25 +44,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
 
-# Check availability
 _tls_metadata_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "tls_metadata")
     and getattr(_rust_backend, "tls_metadata", None) is not None
 )
 
-# Get module reference
 _tls_metadata = getattr(_rust_backend, "tls_metadata", None) if _tls_metadata_available else None
-
-
-# =============================================================================
-# TLS Metadata Extraction
-# =============================================================================
-
 
 def extract_tls_metadata(
     san_entries: list[tuple[int, str]],
@@ -105,7 +95,6 @@ def extract_tls_metadata(
     # Python fallback
     return _python_extract_tls_metadata(san_entries, issuer_org, der_bytes)
 
-
 def _python_extract_tls_metadata(
     san_entries: list[tuple[int, str]],
     issuer_org: str | None = None,
@@ -127,7 +116,6 @@ def _python_extract_tls_metadata(
 
     return (sans, capped_issuer, sha256_hex)
 
-
 def extract_tls_metadata_from_ssl(ssl_socket) -> tuple[list[str], str | None, str | None]:
     """
     Extract TLS metadata directly from an SSL socket.
@@ -138,7 +126,6 @@ def extract_tls_metadata_from_ssl(ssl_socket) -> tuple[list[str], str | None, st
     Returns:
         Tuple of (sans, issuer_org, sha256_hex)
     """
-    # Get SANs from certificate
     san_entries = []
     try:
         cert = ssl_socket.getpeercert(binary_form=True)
@@ -161,15 +148,9 @@ def extract_tls_metadata_from_ssl(ssl_socket) -> tuple[list[str], str | None, st
 
     return extract_tls_metadata(san_entries, None, der_bytes if "der_bytes" in dir() else None)
 
-
 def tls_metadata_available() -> bool:
     """Check if Rust TLS metadata extractor is available."""
     return _tls_metadata_available
-
-
-# =============================================================================
-# Module Exports
-# =============================================================================
 
 __all__ = [
     "extract_tls_metadata",

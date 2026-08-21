@@ -8,6 +8,7 @@ This module is DEPRECATED. Import from `layers.research` instead:
 
 This file exists for backward compatibility only and will be removed in a future version.
 """
+
 import warnings
 
 # Deprecation warning for direct imports
@@ -20,20 +21,20 @@ warnings.warn(
 # Re-export from consolidated module
 from layers.research import (
     ResearchLayer,
-    TemporalSignalLayer,
+    TemporalEdgeCandidate,
     TemporalEvent,
     TemporalScore,
-    TemporalEdgeCandidate,
+    TemporalSignalLayer,
     _KeyState,
     event_from_finding_like,
 )
 
 __all__ = [
-    'ResearchLayer',
-    'TemporalSignalLayer',
-    'TemporalEvent',
-    'TemporalScore',
-    'TemporalEdgeCandidate',
-    '_KeyState',
-    'event_from_finding_like',
+    "ResearchLayer",
+    "TemporalSignalLayer",
+    "TemporalEvent",
+    "TemporalScore",
+    "TemporalEdgeCandidate",
+    "_KeyState",
+    "event_from_finding_like",
 ]

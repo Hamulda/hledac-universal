@@ -24,21 +24,16 @@ Invariants:
   - [DSPY-5] No bare except; always except Exception
 """
 
-
-
 import asyncio
 import logging
 import time
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger("hledac.universal.transport.darknet_session_provider")
 
-# --- Constants (must match FetchCoordinator legacy values) ---
 _TTL_SECONDS: int = 300  # 5 min — unchanged from FetchCoordinator L968/L1047
-_MAX_SESSIONS: int = 4   # CONCURRENCY_TOR — unchanged from L201
+_MAX_SESSIONS: int = 4  # CONCURRENCY_TOR — unchanged from L201
 
-# --- Singleton state ---
 _lock: asyncio.Lock | None = None
 
 
@@ -90,11 +85,7 @@ class SessionTracker:
         now = time.monotonic()
         async with self._get_lock():
             for transport in ("tor", "i2p", "arti"):
-                expired = [
-                    host
-                    for host, ts in self._last_used[transport].items()
-                    if now - ts > self._ttl_seconds
-                ]
+                expired = [host for host, ts in self._last_used[transport].items() if now - ts > self._ttl_seconds]
                 for host in expired:
                     self._last_used[transport].pop(host, None)
                     evicted += 1
@@ -172,9 +163,6 @@ def _get_lock() -> asyncio.Lock:
     return _lock
 
 
-# --- Public API ---
-
-
 async def get_session(
     transport: str,
     host: str,
@@ -237,7 +225,7 @@ async def _get_arti_session(_host: str) -> Any | None:
         from .arti_transport import (
             get_arti_transport_singleton,
             is_arti_enabled,
-    )
+        )
 
         if not is_arti_enabled():
             return None
@@ -304,7 +292,7 @@ async def close_all() -> None:
 def get_stats() -> dict[str, Any]:
     """
     Return lightweight stats for debugging.
-    
+
     MODERN-35: Now delegates to the SessionTracker if available,
     otherwise returns defaults for backward compatibility.
     """

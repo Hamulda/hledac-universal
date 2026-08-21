@@ -12,21 +12,15 @@ Reference:
 - Carbonell & Goldstein (1998): "The Use of MMR, Diversity-Based Reranking"
 """
 
-
-
 import logging
 
 import numpy as np
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 
 def maximal_marginal_relevance(
-    query_vector: np.ndarray,
-    candidate_vectors: list[np.ndarray],
-    top_k: int = 5,
-    lambda_param: float = 0.5
+    query_vector: np.ndarray, candidate_vectors: list[np.ndarray], top_k: int = 5, lambda_param: float = 0.5
 ) -> list[int]:
     """
     Select top-k diverse candidates using Maximal Marginal Relevance.
@@ -109,10 +103,7 @@ def maximal_marginal_relevance(
 
 
 def rerank_with_mmr(
-    query_vector: np.ndarray,
-    candidates: list[tuple[str, np.ndarray]],
-    top_k: int = 5,
-    lambda_param: float = 0.5
+    query_vector: np.ndarray, candidates: list[tuple[str, np.ndarray]], top_k: int = 5, lambda_param: float = 0.5
 ) -> list[tuple[str, float]]:
     """
     Rerank candidates using MMR and return with relevance scores.
@@ -132,9 +123,7 @@ def rerank_with_mmr(
     ids = [c[0] for c in candidates]
     vectors = [c[1] for c in candidates]
 
-    selected_indices = maximal_marginal_relevance(
-        query_vector, vectors, top_k=top_k, lambda_param=lambda_param
-    )
+    selected_indices = maximal_marginal_relevance(query_vector, vectors, top_k=top_k, lambda_param=lambda_param)
 
     # Compute relevance scores for selected candidates
     results = []

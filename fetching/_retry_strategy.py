@@ -8,6 +8,7 @@ Provides tenacity-based retry logic with:
 - Blitz mode optimization
 - M1 8GB optimized (minimal memory allocation)
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -15,21 +16,19 @@ import secrets
 from typing import TYPE_CHECKING, Final
 
 from tenacity import RetryCallState as _TenacityRetryCallState
-from tenacity import retry, retry_if_exception_type, stop_after_attempt
+from tenacity import retry, retry_if_exception_type
 
 if TYPE_CHECKING:
-    import httpx
+    pass
 
 # Context variable for passing circuit-breaker state into tenacity callbacks.
 # ISSUE-7: avoids closure capture of mutable objects across tenacity retry boundaries.
-_cb_domain_var: contextvars.ContextVar[str] = contextvars.ContextVar('_cb_domain', default='')
-_cb_breaker_var: contextvars.ContextVar["CircuitBreaker | None"] = contextvars.ContextVar('_cb_breaker', default=None)  # type: ignore[valid-type]
+_cb_domain_var: contextvars.ContextVar[str] = contextvars.ContextVar("_cb_domain", default="")
+_cb_breaker_var: contextvars.ContextVar[CircuitBreaker | None] = contextvars.ContextVar("_cb_breaker", default=None)  # type: ignore[valid-type]
 
 # CircuitBreaker type hint (forward reference to avoid circular import)
 CircuitBreaker = "httpx.CircuitBreaker"
 
-# --- Module-level state for decorrelated jitter chain across tenacity retries. ---
-# Reset before each top-level fetch call via reset_jitter_state().
 _tenacity_prev_sleep: float = 0.0
 
 # BLITZ-15: Blitz mode backoff cap — 1.0 s max (vs 8.0 s default).
@@ -41,27 +40,27 @@ RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 502, 503, 504, 5
 
 # Transient error patterns that warrant a retry (substring match on lowercased error string).
 RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
-    'timed out',
-    'timeout',
-    'ttfb_timeout',
-    'connection refused',
-    'connection reset',
-    'connection aborted',
-    'broken pipe',
-    'no route to host',
-    'host is unreachable',
-    'network is unreachable',
-    'temporary failure in name resolution',
-    'name or service not known',
-    'getaddrinfo failed',
-    'eof occurred',
-    'incomplete chunked read',
-    'peer closed connection',
-    'connection reset by peer',
-    'curl error',
-    'server disconnected',
-    'handshake failure',
-    )
+    "timed out",
+    "timeout",
+    "ttfb_timeout",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "broken pipe",
+    "no route to host",
+    "host is unreachable",
+    "network is unreachable",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "getaddrinfo failed",
+    "eof occurred",
+    "incomplete chunked read",
+    "peer closed connection",
+    "connection reset by peer",
+    "curl error",
+    "server disconnected",
+    "handshake failure",
+)
 
 # Crypto-safe jitter — reused across retries (F350M-R)
 _JITTER_RNG = secrets.SystemRandom()
@@ -113,13 +112,13 @@ def _tenacity_wait_jitter(retry_state: _TenacityRetryCallState) -> float:
 class _RetryableStatus(Exception):
     """Signals a retryable HTTP status that tenacity can retry via retry_if_exception_type."""
 
-    __slots__ = ('status_code', 'retry_after', 'circuit_breaker_domain', 'is_timeout')
+    __slots__ = ("status_code", "retry_after", "circuit_breaker_domain", "is_timeout")
 
     def __init__(
         self,
         status_code: int,
         retry_after: float | None = None,
-        circuit_breaker_domain: str = '',
+        circuit_breaker_domain: str = "",
         is_timeout: bool = False,
     ) -> None:
         super().__init__(status_code, retry_after, circuit_breaker_domain, is_timeout)
@@ -214,12 +213,12 @@ def is_retryable_status(status_code: int) -> bool:
 
 def extract_retry_after(headers) -> float | None:
     """Parse Retry-After header, return seconds or None."""
-    ra = headers.get('Retry-After') or headers.get('retry-after')
+    ra = headers.get("Retry-After") or headers.get("retry-after")
     if ra is None:
         return None
     try:
         return float(ra)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -237,9 +236,8 @@ def is_retryable_error(error_str: str) -> bool:
 TTFB_TIMEOUT_S: Final[float] = 1.5
 
 
-# --- Blitz mode dead host tracking ---
 import threading
-from _core import aclose
+
 from _core.lock_registry import LockCategory, register_lock
 
 _blitz_dead_hosts: set[str] = set()
@@ -270,7 +268,6 @@ def reset_blitz_dead_hosts() -> None:
         _blitz_dead_hosts.clear()
 
 
-# --- Max retries ---
 MAX_RETRIES: Final[int] = 2
 
 
@@ -289,14 +286,6 @@ def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
     return retry_state.attempt_number >= max_attempts
 
 
-# --- Retry decorator ---
-# ISSUE-7: tenacity decorator — replaces manual for/retry loop.
-# BLITZ-15: stop uses _blitz_aware_stop — 2 attempts in blitz mode, MAX_RETRIES+1 otherwise.
-# wait: _tenacity_wait_jitter — decorrelated jitter with Retry-After header priority
-# retry: only on _RetryableStatus (HTTP retryable status codes)
-# before_sleep: record circuit-breaker failure before waiting
-# after: record circuit-breaker success on final success
-# reraise: re-raise if all retries exhausted (tenacity returns last exception)
 retry_decorator = retry(
     stop=_blitz_aware_stop,
     wait=_tenacity_wait_jitter,
@@ -304,4 +293,4 @@ retry_decorator = retry(
     before_sleep=_tenacity_before_sleep,
     after=_tenacity_after,
     reraise=True,
-    )
+)

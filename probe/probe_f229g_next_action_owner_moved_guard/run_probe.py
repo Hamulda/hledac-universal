@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Standalone probe runner for F229G — avoids pytest.ini probe_* ignore."""
 
+import ast
 import sys
 import textwrap
-import ast
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -12,18 +12,14 @@ from tools.codehealth_guard import (
     GuardVerdict,
     _scan_imports_for_symbol,
     run_guard,
-    )
+)
 
 
 def _parse(source: str) -> ast.Module:
     return ast.parse(textwrap.dedent(source))
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-GOOD_FIXTURE = '''
+GOOD_FIXTURE = """
 from dataclasses import dataclass
 
 @dataclass
@@ -39,9 +35,9 @@ def _rule_callback_wiring(x): pass
 
 def _derive_next_action(input_data: NextActionInput) -> tuple[str, str | None]:
     return ("continue", None)
-'''
+"""
 
-TOO_MANY_ARGS_BAD_FIXTURE = '''
+TOO_MANY_ARGS_BAD_FIXTURE = """
 from dataclasses import dataclass
 
 @dataclass
@@ -62,9 +58,9 @@ def _derive_next_action(
     if a1 > 0:
         return ("a", None)
     return ("b", None)
-'''
+"""
 
-OWNER_IMPORTED_FIXTURE = '''
+OWNER_IMPORTED_FIXTURE = """
 from benchmarks.live_measurement_next_action import (
     NextActionInput,
     _derive_next_action,
@@ -72,18 +68,17 @@ from benchmarks.live_measurement_next_action import (
 
 def other_helper():
     pass
-'''
+"""
 
-SYMBOL_MISSING_FIXTURE = '''
+SYMBOL_MISSING_FIXTURE = """
 from dataclasses import dataclass
-from _core import aclose
 
 def some_other_function():
     pass
-'''
+"""
 
 
-def test_scan_imports_for_symbol():
+def test_scan_imports_for_symbol() -> None:
     source = "from benchmarks.live_measurement_next_action import _derive_next_action"
     owner, symbol = _scan_imports_for_symbol(source, "_derive_next_action")
     assert owner == "benchmarks.live_measurement_next_action", f"expected owner, got {owner}"
@@ -112,7 +107,7 @@ def test_scan_imports_for_symbol():
     print("  PASS: _scan_imports_for_symbol returns None for wrong module")
 
 
-def test_run_guard_owner_imported():
+def test_run_guard_owner_imported() -> None:
     tmp = Path("/tmp/probe_f229g_test")
     tmp.mkdir(exist_ok=True)
     src = tmp / "subject.py"
@@ -129,7 +124,7 @@ def test_run_guard_owner_imported():
     print("  PASS: run_guard returns PASS_OWNER_IMPORTED for import-only symbol")
 
 
-def test_run_guard_symbol_missing():
+def test_run_guard_symbol_missing() -> None:
     tmp = Path("/tmp/probe_f229g_test")
     tmp.mkdir(exist_ok=True)
     src = tmp / "subject.py"
@@ -141,19 +136,17 @@ def test_run_guard_symbol_missing():
     print("  PASS: run_guard returns FAIL_SYMBOL_MISSING for truly missing symbol")
 
 
-def test_run_guard_old_bad_fixture():
+def test_run_guard_old_bad_fixture() -> None:
     tmp = Path("/tmp/probe_f229g_test")
     tmp.mkdir(exist_ok=True)
     src = tmp / "subject.py"
     src.write_text(TOO_MANY_ARGS_BAD_FIXTURE)
     result = run_guard(str(src), "_derive_next_action")
-    assert result.verdict == GuardVerdict.FAIL_TOO_MANY_ARGS, (
-        f"expected FAIL_TOO_MANY_ARGS, got {result.verdict.value}"
-    )
+    assert result.verdict == GuardVerdict.FAIL_TOO_MANY_ARGS, f"expected FAIL_TOO_MANY_ARGS, got {result.verdict.value}"
     print("  PASS: old bad fixture still fails FAIL_TOO_MANY_ARGS")
 
 
-def test_live_sprint_measurement_owner_imported():
+def test_live_sprint_measurement_owner_imported() -> None:
     result = run_guard(
         "benchmarks/live_sprint_measurement.py",
         "_derive_next_action",
@@ -169,7 +162,7 @@ def test_live_sprint_measurement_owner_imported():
     print("  PASS: live_sprint_measurement._derive_next_action => PASS_OWNER_IMPORTED")
 
 
-def test_live_measurement_next_action_passes():
+def test_live_measurement_next_action_passes() -> None:
     result = run_guard(
         "benchmarks/live_measurement_next_action.py",
         "_derive_next_action",
@@ -181,7 +174,7 @@ def test_live_measurement_next_action_passes():
     print("  PASS: live_measurement_next_action._derive_next_action => PASS/COMPAT_WRAPPER")
 
 
-def test_no_live_execution():
+def test_no_live_execution() -> None:
     tmp = Path("/tmp/probe_f229g_test")
     tmp.mkdir(exist_ok=True)
     src = tmp / "subject.py"
@@ -189,6 +182,7 @@ def test_no_live_execution():
     executed = False
 
     import builtins
+
     original_print = builtins.print
 
     def tracking_print(*args, **kwargs):
@@ -205,7 +199,7 @@ def test_no_live_execution():
     print("  PASS: run_guard does not execute target function")
 
 
-def main():
+def main() -> int:
     print("\n=== F229G Probe Tests ===\n")
 
     tests = [
@@ -231,7 +225,7 @@ def main():
             print(f"  ERROR [{name}]: {e}")
             failed += 1
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Results: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
 

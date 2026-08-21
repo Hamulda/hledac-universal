@@ -34,19 +34,21 @@ if TYPE_CHECKING:
 
 # ── Metric Names ───────────────────────────────────────────────────────────────
 
-ML_METRIC_NAMES = frozenset([
-    'mlx_cache_hits',
-    'mlx_cache_misses',
-    'mlx_cache_size_bytes',
-    'mlx_active_memory_bytes',
-    'mlx_peak_memory_bytes',
-    'mlx_cache_fragmentation_ratio',
-    'mlx_kernel_compilation_time_ms',
-    'mlx_kernel_cache_hit_rate',
-    'model_load_duration_ms',
-    'model_unload_count',
-    'model_load_failures',
-])
+ML_METRIC_NAMES = frozenset(
+    [
+        "mlx_cache_hits",
+        "mlx_cache_misses",
+        "mlx_cache_size_bytes",
+        "mlx_active_memory_bytes",
+        "mlx_peak_memory_bytes",
+        "mlx_cache_fragmentation_ratio",
+        "mlx_kernel_compilation_time_ms",
+        "mlx_kernel_cache_hit_rate",
+        "model_load_duration_ms",
+        "model_unload_count",
+        "model_load_failures",
+    ]
+)
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -55,12 +57,12 @@ _registered: dict[int, bool] = {}  # registry id -> registered status
 _registered_lock = threading.Lock()
 
 
-def register_area(registry: "MetricsRegistry") -> None:
+def register_area(registry: MetricsRegistry) -> None:
     """
     Register ML area metrics with the registry.
 
     Called automatically by the lazy area registry on first use.
-    
+
     ISSUE-18 fix: Thread-safe per-registry tracking instead of global flag.
     """
     registry_id = id(registry)
@@ -71,7 +73,7 @@ def register_area(registry: "MetricsRegistry") -> None:
 
 
 def record_mlx_cache_stats(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     hits: int,
     misses: int,
     size_bytes: int,
@@ -85,13 +87,13 @@ def record_mlx_cache_stats(
         misses: Cache miss count
         size_bytes: Cache size in bytes
     """
-    registry.inc('mlx_cache_hits', hits)
-    registry.inc('mlx_cache_misses', misses)
-    registry.set_gauge('mlx_cache_size_bytes', float(size_bytes))
+    registry.inc("mlx_cache_hits", hits)
+    registry.inc("mlx_cache_misses", misses)
+    registry.set_gauge("mlx_cache_size_bytes", float(size_bytes))
 
 
 def record_mlx_memory(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     active_bytes: int,
     peak_bytes: int,
     fragmentation: float = 0.0,
@@ -105,13 +107,13 @@ def record_mlx_memory(
         peak_bytes: Peak memory in bytes
         fragmentation: Fragmentation ratio (0.0-1.0)
     """
-    registry.set_gauge('mlx_active_memory_bytes', float(active_bytes))
-    registry.set_gauge('mlx_peak_memory_bytes', float(peak_bytes))
-    registry.set_gauge('mlx_cache_fragmentation_ratio', fragmentation)
+    registry.set_gauge("mlx_active_memory_bytes", float(active_bytes))
+    registry.set_gauge("mlx_peak_memory_bytes", float(peak_bytes))
+    registry.set_gauge("mlx_cache_fragmentation_ratio", fragmentation)
 
 
 def record_mlx_kernel_stats(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     compilation_time_ms: float,
     cache_hit_rate: float,
 ) -> None:
@@ -123,12 +125,12 @@ def record_mlx_kernel_stats(
         compilation_time_ms: Kernel compilation time in milliseconds
         cache_hit_rate: Kernel cache hit rate (0.0-1.0)
     """
-    registry.set_gauge('mlx_kernel_compilation_time_ms', compilation_time_ms)
-    registry.set_gauge('mlx_kernel_cache_hit_rate', cache_hit_rate)
+    registry.set_gauge("mlx_kernel_compilation_time_ms", compilation_time_ms)
+    registry.set_gauge("mlx_kernel_cache_hit_rate", cache_hit_rate)
 
 
 def record_model_load(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     duration_ms: float,
     success: bool,
 ) -> None:
@@ -140,6 +142,6 @@ def record_model_load(
         duration_ms: Load duration in milliseconds
         success: Whether load succeeded
     """
-    registry.set_gauge('model_load_duration_ms', duration_ms)
+    registry.set_gauge("model_load_duration_ms", duration_ms)
     if not success:
-        registry.inc('model_load_failures')
+        registry.inc("model_load_failures")

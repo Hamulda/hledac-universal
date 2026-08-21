@@ -39,18 +39,21 @@ P4-2 changes vs P4-1:
 - Added _flush_store_batch_concurrent helper for parallel chunk dispatch
 - Added _STORE_FLUSH_CONCURRENCY=4 and _STORE_FLUSH_CHUNK_SIZE=256 constants
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
+
 if TYPE_CHECKING:
     pass
-from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for, parallel
-from _core import aclose
+from hledac.universal.utils.asyncx import parallel, parallel_ok, safe_wait_for
+
 logger = logging.getLogger(__name__)
 _PIPELINE_QUEUE_SIZE: int = 500
 _PIPELINE_CHUNK_SIZE: int = 1024
@@ -58,6 +61,7 @@ _PIPELINE_WORKERS_ENRICH: int = 2
 _PIPELINE_WORKERS_STORE: int = 2
 _STORE_FLUSH_CONCURRENCY: int = 4
 _STORE_FLUSH_CHUNK_SIZE: int = 256
+
 
 class PipelineStats(Struct):
     """Statistics for the finding pipeline.
@@ -76,6 +80,7 @@ class PipelineStats(Struct):
     enrich_time_ms: float = 0.0
     store_time_ms: float = 0.0
 
+
 class FindingPipeline:
     """Producer-consumer pipeline for findings: enrich → store.
 
@@ -89,9 +94,27 @@ class FindingPipeline:
     - All exceptions caught and logged (fail-safe)
     """
 
-    __slots__ = tuple(("_duckdb_store", "_enrich_fn", "_enrich_workers", "_graph_service", "_multimodal_fn", "_queue", "_running", "_shutdown", "_stats", "_stats_lock", "_store_workers"))
+    __slots__ = (
+        "_duckdb_store",
+        "_enrich_fn",
+        "_enrich_workers",
+        "_graph_service",
+        "_multimodal_fn",
+        "_queue",
+        "_running",
+        "_shutdown",
+        "_stats",
+        "_stats_lock",
+        "_store_workers",
+    )
 
-    def __init__(self, duckdb_store: Any, graph_service: Any, enrich_fn: Callable[[Any], Any] | None=None, multimodal_fn: Callable[[Any], Any] | None=None) -> None:
+    def __init__(
+        self,
+        duckdb_store: Any,
+        graph_service: Any,
+        enrich_fn: Callable[[Any], Any] | None = None,
+        multimodal_fn: Callable[[Any], Any] | None = None,
+    ) -> None:
         """Initialize the finding pipeline."""
         self._duckdb_store = duckdb_store
         self._graph_service = graph_service
@@ -160,9 +183,11 @@ class FindingPipeline:
         for i in range(_PIPELINE_WORKERS_STORE):
             task = safe_create_task(self._store_worker_main(worker_id=i), name=f"pipeline:store_worker_{i}")
             self._store_workers.append(task)
-        logger.info(f"FindingPipeline: started {_PIPELINE_WORKERS_ENRICH} enrich + {_PIPELINE_WORKERS_STORE} store workers")
+        logger.info(
+            f"FindingPipeline: started {_PIPELINE_WORKERS_ENRICH} enrich + {_PIPELINE_WORKERS_STORE} store workers"
+        )
 
-    async def stop(self, timeout: float=30.0) -> None:
+    async def stop(self, timeout: float = 30.0) -> None:
         """Stop all workers gracefully.
 
         Sends poison pills (workers) and waits for drain.
@@ -187,7 +212,11 @@ class FindingPipeline:
         for task in self._store_workers:
             all_tasks.append(task)
         try:
-            await safe_wait_for(parallel_ok(*all_tasks, label="finding_pipeline:shutdown"), timeout=timeout, label="finding_pipeline:shutdown")
+            await safe_wait_for(
+                parallel_ok(*all_tasks, label="finding_pipeline:shutdown"),
+                timeout=timeout,
+                label="finding_pipeline:shutdown",
+            )
         except TimeoutError:
             logger.warning("FindingPipeline: shutdown timeout, force-killing workers")
         self._enrich_workers.clear()
@@ -243,6 +272,7 @@ class FindingPipeline:
 
                 async def passthrough(x: Any) -> Any:
                     return x
+
                 enrich_coros.append(passthrough(f))
         multimodal_coros: list[Awaitable[Any]] = []
         for f in batch:
@@ -253,17 +283,20 @@ class FindingPipeline:
 
                 async def passthrough(x: Any) -> Any:
                     return x
+
                 multimodal_coros.append(passthrough(f))
         all_coros = enrich_coros + multimodal_coros
-        results = await parallel(all_coros, taskgroup=True, policy="collect", ctx="finding_pipeline:enrich", logger_instance=logger)
+        results = await parallel(
+            all_coros, taskgroup=True, policy="collect", ctx="finding_pipeline:enrich", logger_instance=logger
+        )
         enriched: list[Any] = []
-        for i, r in enumerate(results.ok[:len(batch)]):
+        for i, r in enumerate(results.ok[: len(batch)]):
             if isinstance(r, BaseException):
                 logger.warning(f"Enrich error: {r}")
                 enriched.append(batch[i])
             else:
                 enriched.append(r)
-        for r in results.ok[len(batch):]:
+        for r in results.ok[len(batch) :]:
             if isinstance(r, BaseException):
                 logger.warning(f"Multimodal enrich error: {r}")
         for f in enriched:
@@ -274,7 +307,7 @@ class FindingPipeline:
             self._stats.enrich_time_ms += dt
             self._stats.enriched += len(enriched)
 
-    async def _store_worker_main(self, worker_id: int=0) -> None:
+    async def _store_worker_main(self, worker_id: int = 0) -> None:
         """Store worker that batches findings and writes to DuckDB + LMDB.
 
         P4-2: Parallel chunk flush — drain queue into N chunks, flush all chunks
@@ -307,7 +340,9 @@ class FindingPipeline:
                             pending.append(item)
                 except TimeoutError:  # noqa: BLE001
                     pass
-                if pending and (len(pending) >= _PIPELINE_CHUNK_SIZE or time.monotonic() - last_flush >= flush_interval_s):
+                if pending and (
+                    len(pending) >= _PIPELINE_CHUNK_SIZE or time.monotonic() - last_flush >= flush_interval_s
+                ):
                     await self._flush_store_batch_concurrent(pending)
                     pending.clear()
                     last_flush = time.monotonic()
@@ -340,7 +375,7 @@ class FindingPipeline:
             return
         chunks: list[list[Any]] = []
         for i in range(0, len(batch), _STORE_FLUSH_CHUNK_SIZE):
-            chunk = batch[i:i + _STORE_FLUSH_CHUNK_SIZE]
+            chunk = batch[i : i + _STORE_FLUSH_CHUNK_SIZE]
             if chunk:
                 chunks.append(chunk)
         if not chunks:
@@ -350,9 +385,16 @@ class FindingPipeline:
         async def _flush_chunk(chunk: list[Any]) -> None:
             async with sem:
                 await self._flush_store_batch(chunk)
+
         flush_tasks = [_flush_chunk(chunk) for chunk in chunks]
-        _result = await parallel(flush_tasks, taskgroup=True, policy="collect", ctx="finding_pipeline:store_concurrent", logger_instance=logger)
-        total_stored = sum((len(chunk) for chunk in chunks))
+        _result = await parallel(
+            flush_tasks,
+            taskgroup=True,
+            policy="collect",
+            ctx="finding_pipeline:store_concurrent",
+            logger_instance=logger,
+        )
+        total_stored = sum(len(chunk) for chunk in chunks)
         dt = (time.monotonic() - t0) * 1000
         async with self._stats_lock:
             self._stats.store_time_ms += dt
@@ -376,7 +418,13 @@ class FindingPipeline:
             graph_coro = asyncio.to_thread(self._graph_upsert_batch, batch)
         else:
             graph_coro = asyncio.sleep(0)
-        _result = await parallel([duckdb_coro, graph_coro], taskgroup=True, policy="collect", ctx="finding_pipeline:store", logger_instance=logger)
+        _result = await parallel(
+            [duckdb_coro, graph_coro],
+            taskgroup=True,
+            policy="collect",
+            ctx="finding_pipeline:store",
+            logger_instance=logger,
+        )
         duckdb_ok = _result.ok[0] if len(_result.ok) > 0 else None
         graph_ok = _result.ok[1] if len(_result.ok) > 1 else None
         if duckdb_ok is None or isinstance(duckdb_ok, BaseException):
@@ -394,18 +442,16 @@ class FindingPipeline:
         for f in batch:
             try:
                 # [META]-012: Get observed_at from finding timestamp
-                observed_at = getattr(f, 'ts', None)
+                observed_at = getattr(f, "ts", None)
                 # DuckPGQGraph.upsert_ioc accepts (value, ioc_type, confidence, source, observed_at)
                 # But GraphService.upsert_ioc uses (value, ioc_type, confidence, source, observed_at)
                 # Extract IOC from finding
-                ioc_type = getattr(f, 'ioc_type', None) or getattr(f, 'source_type', 'unknown')
-                ioc_value = getattr(f, 'ioc_value', None) or getattr(f, 'value', None)
-                confidence = getattr(f, 'confidence', 0.5)
-                source = getattr(f, 'source_type', 'finding_pipeline')
+                ioc_type = getattr(f, "ioc_type", None) or getattr(f, "source_type", "unknown")
+                ioc_value = getattr(f, "ioc_value", None) or getattr(f, "value", None)
+                confidence = getattr(f, "confidence", 0.5)
+                source = getattr(f, "source_type", "finding_pipeline")
                 if ioc_value:
-                    self._graph_service.upsert_ioc(
-                        ioc_value, ioc_type, confidence, source, observed_at=observed_at
-    )
+                    self._graph_service.upsert_ioc(ioc_value, ioc_type, confidence, source, observed_at=observed_at)
             except Exception as e:
                 logger.warning(f"Graph upsert error: {e}")
 
@@ -426,6 +472,7 @@ class FindingPipeline:
     async def get_queue_size(self) -> int:
         """Return current queue size."""
         return self._queue.qsize()
+
 
 async def find_and_accumulate_pipeline(findings: list[Any], pipeline: FindingPipeline) -> int:
     """Replace the sequential enrich→ingest pattern with pipeline enqueue.

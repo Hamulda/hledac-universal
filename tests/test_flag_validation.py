@@ -14,7 +14,6 @@ All tests isolate process env via a pytest fixture that snapshots
 and restores the HLEDAC_ENABLE_* namespace around each test.
 """
 
-
 import os
 import subprocess
 import sys
@@ -22,7 +21,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from _core import aclose
 
 PROJECT_ROOT = Path(__file__).parent.parent
 ENTRYPOINT = PROJECT_ROOT / "__main__.py"
@@ -85,9 +83,7 @@ class TestConflicts:
         os.environ["HLEDAC_ENABLE_HEAVY_BROWSER"] = "1"
         os.environ["HLEDAC_ENABLE_NODRIVER"] = "1"
         errors, _ = validate_flag_combo()
-        assert any(
-            "HEAVY_BROWSER" in e and "NODRIVER" in e for e in errors
-        ), f"missing conflict error in: {errors}"
+        assert any("HEAVY_BROWSER" in e and "NODRIVER" in e for e in errors), f"missing conflict error in: {errors}"
 
     def test_conflict_curl_cffi_vs_httpx_h2(self) -> None:
         """CURL_CFFI and HTTPX_H2 are mutually exclusive HTTP backends."""
@@ -96,9 +92,7 @@ class TestConflicts:
         os.environ["HLEDAC_ENABLE_CURL_CFFI"] = "1"
         os.environ["HLEDAC_ENABLE_HTTPX_H2"] = "1"
         errors, _ = validate_flag_combo()
-        assert any(
-            "CURL_CFFI" in e and "HTTPX_H2" in e for e in errors
-        ), f"missing conflict error in: {errors}"
+        assert any("CURL_CFFI" in e and "HTTPX_H2" in e for e in errors), f"missing conflict error in: {errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +109,7 @@ class TestImplications:
         # Intentionally NOT enabling LLM.
         errors, warnings = validate_flag_combo()
         assert not any("HEAVY_BROWSER" in e for e in errors)
-        assert any(
-            "DSPY" in w and "LLM" in w for w in warnings
-        ), f"missing DSPY→LLM implication warning: {warnings}"
+        assert any("DSPY" in w and "LLM" in w for w in warnings), f"missing DSPY→LLM implication warning: {warnings}"
 
     def test_implication_graph_rag_requires_llm(self) -> None:
         """GRAPH_RAG implies LLM — soft warning if LLM is disabled."""
@@ -127,9 +119,7 @@ class TestImplications:
         # Intentionally NOT enabling LLM (also missing GRAPH_ANALYSIS).
         errors, warnings = validate_flag_combo()
         assert not any("FATAL" in e for e in errors)
-        assert any(
-            "GRAPH_RAG" in w and "LLM" in w for w in warnings
-        ), f"missing GRAPH_RAG→LLM warning: {warnings}"
+        assert any("GRAPH_RAG" in w and "LLM" in w for w in warnings), f"missing GRAPH_RAG→LLM warning: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -148,10 +138,7 @@ class TestRamBudget:
         # FULL is RAM-fatal (>7000MB) AND warning (>5500MB) — at minimum
         # one of them must fire.
         ram_problems = [m for m in (errors + warnings) if "RAM" in m.upper()]
-        assert ram_problems, (
-            f"FULL preset produced no RAM diagnostics; "
-            f"errors={errors}, warnings={warnings}"
-    )
+        assert ram_problems, f"FULL preset produced no RAM diagnostics; errors={errors}, warnings={warnings}"
 
     def test_ram_budget_minimal_safe(self) -> None:
         """MINIMAL preset is empty → no RAM diagnostics."""
@@ -161,9 +148,7 @@ class TestRamBudget:
         apply_preset("minimal", overwrite=True)
         errors, warnings = validate_flag_combo()
         assert errors == []
-        assert not any("RAM" in w.upper() for w in warnings), (
-            f"MINIMAL emitted RAM warnings: {warnings}"
-    )
+        assert not any("RAM" in w.upper() for w in warnings), f"MINIMAL emitted RAM warnings: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +164,7 @@ class TestPresetLoading:
         applied = apply_preset("osint", overwrite=True)
         # Every key the OSINT preset declares must be in os.environ.
         for flag in OSINT:
-            assert os.environ.get(flag) == "1", (
-                f"{flag} not set after apply_preset('osint')"
-    )
+            assert os.environ.get(flag) == "1", f"{flag} not set after apply_preset('osint')"
         # And the returned dict echoes what was actually written.
         assert set(applied.keys()) == set(OSINT.keys())
 
@@ -200,16 +183,11 @@ class TestCli:
             text=True,
             timeout=30,
             cwd=str(PROJECT_ROOT),
-    )
-        assert result.returncode == 0, (
-            f"--list-presets exited {result.returncode}; "
-            f"stderr={result.stderr!r}"
-    )
+        )
+        assert result.returncode == 0, f"--list-presets exited {result.returncode}; stderr={result.stderr!r}"
         # Table must mention all 5 preset names.
         for name in ("minimal", "osint", "recon", "research", "full"):
-            assert name in result.stdout, (
-                f"preset {name!r} missing from --list-presets output"
-    )
+            assert name in result.stdout, f"preset {name!r} missing from --list-presets output"
 
     def test_conflict_exits_with_code_2(self) -> None:
         """Process env with HEAVY_BROWSER=1 + NODRIVER=1 → exit 2."""
@@ -226,11 +204,8 @@ class TestCli:
             timeout=30,
             cwd=str(PROJECT_ROOT),
             env=env,
-    )
-        assert result.returncode == 2, (
-            f"expected exit 2 on conflict, got {result.returncode}; "
-            f"stderr={result.stderr!r}"
-    )
+        )
+        assert result.returncode == 2, f"expected exit 2 on conflict, got {result.returncode}; stderr={result.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +220,7 @@ class TestEmptyEnv:
 
         # Fixture already cleared HLEDAC_* — assert baseline.
         for k in list(os.environ):
-            assert not k.startswith(_PREFIX), (
-                f"fixture leak: {k} still set"
-    )
+            assert not k.startswith(_PREFIX), f"fixture leak: {k} still set"
         errors, warnings = validate_flag_combo()
         assert errors == [], f"empty env produced errors: {errors}"
         # No flags active → no RAM warnings either.

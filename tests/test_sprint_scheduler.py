@@ -24,6 +24,7 @@ PUBLIC behavior only — no private implementation detail assertions.
 
 import os
 import pathlib
+from typing import Never
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -144,7 +145,7 @@ async def _instantiate_scheduler(minimal_config, mock_lifecycle, mock_adapter):
 
 
 @pytest.mark.asyncio
-async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config, mock_store):
+async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config, mock_store) -> None:
     """
     L4954: record_hypothesis_feedback() exception handler.
     verify: exception in store does NOT propagate (fail-safe pattern).
@@ -163,7 +164,7 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config
     try:
         await sched.record_hypothesis_feedback(
             pivot_type="test_pivot", ioc_type="domain", produced_count=10, accepted_count=5, signal_value=0.8
-    )
+        )
     except RuntimeError:
         # Fail-soft pattern: the call should NOT raise if the scheduler is correct
         # But since we can't easily inject the failure into the internal call,
@@ -178,7 +179,9 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config
 
 
 @pytest.mark.asyncio
-async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(minimal_config, mock_lifecycle, mock_adapter):
+async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(
+    minimal_config, mock_lifecycle, mock_adapter
+) -> None:
     """
     L4786: prefetch_oracle.suggest_scores exception handler.
     verify: exception causes fallback to empty dict (default ordering preserved).
@@ -204,7 +207,9 @@ async def test_prefetch_oracle_suggest_scores_failsoft_returns_empty(minimal_con
 
 
 @pytest.mark.asyncio
-async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(minimal_config, mock_lifecycle, mock_adapter):
+async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(
+    minimal_config, mock_lifecycle, mock_adapter
+) -> None:
     """
     L4786: verify fallback produces empty oracle_scores dict.
     When suggest_scores fails, oracle_scores = {} and oracle_mult = 1.0 for all items.
@@ -233,7 +238,7 @@ async def test_prefetch_oracle_suggest_scores_fallback_preserves_ordering(minima
 
 
 @pytest.mark.asyncio
-async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock_lifecycle, mock_adapter):
+async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock_lifecycle, mock_adapter) -> None:
     """
     L5144 & L5199: privacy_context init exception handlers.
     verify: exception in create_privacy_context does NOT crash __init__.
@@ -261,7 +266,7 @@ async def test_privacy_context_init_failsoft_does_not_crash(minimal_config, mock
 # ── L5155: M1 resource governor init fail-soft ─────────────────────────────────
 
 
-def test_resource_governor_init_failsoft_sets_none(minimal_config):
+def test_resource_governor_init_failsoft_sets_none(minimal_config) -> None:
     """
     L5155: governor init exception handler.
     verify: exception results in self._governor = None (degraded but running).
@@ -280,7 +285,7 @@ def test_resource_governor_init_failsoft_sets_none(minimal_config):
 # ── L5202: LayerManager init fail-soft ───────────────────────────────────────
 
 
-def test_layer_manager_init_failsoft_does_not_crash(minimal_config):
+def test_layer_manager_init_failsoft_does_not_crash(minimal_config) -> None:
     """
     L5202: LayerManager init exception handler.
     verify: HLEDAC_ENABLE_LAYERS=1 but LayerManager fails → scheduler continues.
@@ -299,7 +304,7 @@ def test_layer_manager_init_failsoft_does_not_crash(minimal_config):
 # ── L5233: sprint_id getattr fail-soft ───────────────────────────────────────
 
 
-def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
+def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config) -> None:
     """
     L5233: sprint_id getattr exception handler.
     verify: getattr(lifecycle, "sprint_id", "") raises → sprint_id = "".
@@ -322,7 +327,7 @@ def test_sprint_id_getattr_failsoft_defaults_to_empty(minimal_config):
 # ── L5331: RelDiscovery init fail-soft ────────────────────────────────────────
 
 
-def test_rel_discovery_init_failsoft_sets_none(minimal_config):
+def test_rel_discovery_init_failsoft_sets_none(minimal_config) -> None:
     """
     L5331: RelDiscovery init exception handler.
     verify: init failure → _rel_discovery_engine = None (non-critical advisory).
@@ -343,7 +348,7 @@ def test_rel_discovery_init_failsoft_sets_none(minimal_config):
 # ── L5379: tracemalloc start fail-soft ───────────────────────────────────────
 
 
-def test_tracemalloc_start_failsoft_disables_tracing():
+def test_tracemalloc_start_failsoft_disables_tracing() -> None:
     """
     L5379: tracemalloc.start exception handler.
     verify: failure sets _trace_enabled = False (prevents finally crash).
@@ -369,7 +374,7 @@ def test_tracemalloc_start_failsoft_disables_tracing():
 
 
 @pytest.mark.asyncio
-async def test_evidence_chain_builder_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter):
+async def test_evidence_chain_builder_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter) -> None:
     """
     L5423: EvidenceChainBuilder init exception handler.
     verify: set_global_builder fails → chain tracking skipped (advisory only).
@@ -397,7 +402,7 @@ async def test_evidence_chain_builder_failsoft_continues(minimal_config, mock_li
 @pytest.mark.asyncio
 async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
     minimal_config, mock_lifecycle, mock_adapter
-):
+) -> None:
     """
     L5469: Hermes prewarm exception handler.
     verify: prewarm failure → _hermes_engine = None (ToT skipped, sprint continues).
@@ -407,7 +412,7 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
 
     # Simulate _prewarm_hermes failure using patch.object
     # (required because SprintScheduler uses __slots__ and doesn't allow attribute assignment)
-    async def broken_prewarm(self):
+    async def broken_prewarm(self) -> Never:
         raise RuntimeError("Hermes load failed")
 
     with patch.object(SprintScheduler, "_prewarm_hermes", broken_prewarm):
@@ -429,7 +434,7 @@ async def test_hermes_prewarm_failsoft_continues_without_ToT(  # noqa: N802
 
 
 @pytest.mark.asyncio
-async def test_governor_evaluate_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter):
+async def test_governor_evaluate_failsoft_continues(minimal_config, mock_lifecycle, mock_adapter) -> None:
     """
     L5529: governor.evaluate() exception handler.
     verify: evaluate failure → no concurrency change (advisory only).
@@ -456,7 +461,7 @@ async def test_governor_evaluate_failsoft_continues(minimal_config, mock_lifecyc
 # ── L4343 / L4351 / L4356: privacy_gate fail-soft ─────────────────────────────
 
 
-def test_privacy_gate_setattr_failsoft_appends_finding(minimal_config):
+def test_privacy_gate_setattr_failsoft_appends_finding(minimal_config) -> None:
     """
     L4343 & L4351 & L4356: privacy_gate exception handlers.
     verify: anonymize_text/setattr failure → finding still appended (not lost).
@@ -502,8 +507,8 @@ def test_privacy_gate_setattr_failsoft_appends_finding(minimal_config):
 # Finding count boundary test: [0, 10000]
 @pytest.mark.parametrize(
     "finding_count,cycle_count", [(n, c) for n in [0, 1, 100, 1000, 5000, 10000] for c in [1, 5, 10, 50, 100]]
-    )
-def test_finding_count_never_negative(finding_count, cycle_count):
+)
+def test_finding_count_never_negative(finding_count, cycle_count) -> None:
     """
     Property: finding_count is non-negative.
     Bounds: 0 <= finding_count <= 10000
@@ -517,7 +522,7 @@ def test_finding_count_never_negative(finding_count, cycle_count):
 
 # Lane count boundary: [1, 25]
 @pytest.mark.parametrize("lane_count", [1, 2, 10, 24, 25, 26, 30, 50])
-def test_lane_count_within_bounds(lane_count):
+def test_lane_count_within_bounds(lane_count) -> None:
     """
     Property: lane count is between 1 and 25 (not hardcoded).
     Bounds: 1 <= len(lanes) <= 25
@@ -528,7 +533,7 @@ def test_lane_count_within_bounds(lane_count):
 
 # Budget allocation boundary: (0, 10000]
 @pytest.mark.parametrize("budget", [0.001, 0.1, 1.0, 100.0, 5000.0, 9999.0, 10000.0, 15000.0, 100000.0])
-def test_budget_allocation_in_bounds(budget):
+def test_budget_allocation_in_bounds(budget) -> None:
     """
     Property: budget allocation respects MAX_SPRINT_BUDGET bounds.
     Bounds: 0 < budget <= 10000.0
@@ -540,7 +545,7 @@ def test_budget_allocation_in_bounds(budget):
 
 # Source economics count: >= 0
 @pytest.mark.parametrize("src_count", [0, 1, 100, 499, 500, 501, 1000])
-def test_source_economics_count_nonnegative(src_count):
+def test_source_economics_count_nonnegative(src_count) -> None:
     """
     Property: source economics entries are non-negative.
     Bounds: count >= 0
@@ -563,8 +568,8 @@ def test_source_economics_count_nonnegative(src_count):
         [0.5, 1.0, 5.0, 10.0, 50.0],
         [10.0, 20.0, 30.0, 100.0],
     ],
-    )
-def test_latency_ema_bounded(latency_samples):
+)
+def test_latency_ema_bounded(latency_samples) -> None:
     """
     Property: EMA latency never exceeds clamp bounds [5, 30]s.
     """
@@ -589,8 +594,8 @@ def test_latency_ema_bounded(latency_samples):
         "ok",
         "normal",
     ],
-    )
-def test_uma_threshold_state_valid(state_values):
+)
+def test_uma_threshold_state_valid(state_values) -> None:
     """
     Property: UMA state is one of known values.
     """
@@ -603,7 +608,7 @@ def test_uma_threshold_state_valid(state_values):
 
 @pytest.mark.slow
 @pytest.mark.asyncio
-async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock_store):
+async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock_store) -> None:
     """
     L4954: Real async test — verify record_hypothesis_feedback pattern
     (exception in store does not propagate).
@@ -615,7 +620,7 @@ async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock
     Injector.inject_duckdb_store(sched, mock_store)
 
     # Create actual async function that simulates failure
-    async def failing_store(*args, **kwargs):
+    async def failing_store(*args, **kwargs) -> Never:
         raise RuntimeError("real DB failure")
 
     mock_store.async_record_hypothesis_feedback = failing_store
@@ -632,7 +637,7 @@ async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock
 
 
 @pytest.mark.asyncio
-async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, mock_lifecycle, mock_adapter):
+async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, mock_lifecycle, mock_adapter) -> None:
     """
     Verify: after multiple fail-soft handlers, scheduler is still usable.
     This is the PRIMARY behavioral assertion — scheduler must not crash.
@@ -664,7 +669,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, m
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
+async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config) -> None:
     """
     F259: HLEDAC_ENABLE_HERMES_SYNTHESIS=0 (default) → synthesis skipped.
     verify: _result fields remain at defaults.
@@ -685,7 +690,7 @@ async def test_synthesis_sidecar_skipped_when_env_disabled(minimal_config):
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
+async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config) -> None:
     """
     F259: No findings → synthesis skipped.
     verify: _result fields updated, no crash.
@@ -704,7 +709,7 @@ async def test_synthesis_sidecar_skipped_when_no_findings(minimal_config):
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
+async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config) -> None:
     """
     F259: UMA emergency → synthesis skipped.
     verify: _result.synthesis_engine = "uma_guard".
@@ -734,7 +739,7 @@ async def test_synthesis_sidecar_skipped_when_uma_emergency(minimal_config):
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_graceful_on_error(minimal_config):
+async def test_synthesis_sidecar_graceful_on_error(minimal_config) -> None:
     """
     F259: Exception in synthesis → graceful degradation.
     verify: _result fields updated but no crash.
@@ -770,7 +775,7 @@ async def test_synthesis_sidecar_graceful_on_error(minimal_config):
     assert sched._result.synthesis_engine == "error"
 
 
-def test_sprint_scheduler_result_synthesis_fields_exist():
+def test_sprint_scheduler_result_synthesis_fields_exist() -> None:
     """
     F259: SprintSchedulerResult has all required synthesis fields.
     verify: fields exist with correct default values.
@@ -794,7 +799,7 @@ def test_sprint_scheduler_result_synthesis_fields_exist():
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_config):
+async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_config) -> None:
     """
     F259B CRITICAL #3: Synthesis sidecar MUST early-exit when this sprint
     produced 0 accepted findings, BEFORE touching duckdb_store I/O.
@@ -835,7 +840,7 @@ async def test_synthesis_sidecar_skipped_when_zero_accepted_findings(minimal_con
 
 
 @pytest.mark.asyncio
-async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_config):
+async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_config) -> None:
     """
     F259B: When accepted_findings > 0, synthesis must proceed normally
     (regression guard for the early-exit — must not block the happy path).
@@ -858,7 +863,7 @@ async def test_synthesis_sidecar_runs_when_accepted_findings_present(minimal_con
             confidence=0.0,
             sources_count=0,
             timestamp=0.0,
-    )
+        )
     )
     mock_runner.inject_lifecycle_adapter = MagicMock()
     mock_runner.inject_stix_graph = MagicMock()
@@ -899,7 +904,7 @@ class TestF11WindupFirstCycle:
     first_cycle_ran=True do underlying lifecycle na STEJNÉ instanci.
     """
 
-    def test_lifecycle_adapter_set_first_cycle_ran_propagates_to_same_instance(self):
+    def test_lifecycle_adapter_set_first_cycle_ran_propagates_to_same_instance(self) -> None:
         """
         F1-1: Ověřuje, že set_first_cycle_ran() na _LifecycleAdapter
         skutečně nastaví first_cycle_ran na STEJNÉ instanci SprintLifecycleManager,
@@ -912,7 +917,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-    )
+        )
         lifecycle.start()
 
         # Adapter wrapuje stejnou instanci
@@ -922,7 +927,7 @@ class TestF11WindupFirstCycle:
         assert adapter._lc is lifecycle, (
             f"_LifecycleAdapter._lc a původní lifecycle nejsou stejná instance: "
             f"adapter._lc id={id(adapter._lc)} vs lifecycle id={id(lifecycle)}"
-    )
+        )
 
         # Vstoupíme do ACTIVE fáze (jinak should_enter_windup může být ovlivněno fází)
         lifecycle.transition_to(lifecycle._current_phase.__class__.ACTIVE)
@@ -934,7 +939,7 @@ class TestF11WindupFirstCycle:
             # F290 by mělo blokovat windup (first_cycle_ran=False)
             assert lifecycle.should_enter_windup() is False, (
                 "should_enter_windup() má být False při first_cycle_ran=False"
-    )
+            )
 
         # Zavoláme set_first_cycle_ran() na adapter
         adapter.set_first_cycle_ran()
@@ -943,10 +948,10 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is True, (
             "first_cycle_ran zůstává False po set_first_cycle_ran() na adapteru. "
             "Adapter._lc a lifecycle nejsou stejná instance!"
-    )
+        )
         assert adapter._lc.first_cycle_ran is True
 
-    def test_lifecycle_adapter_should_enter_windup_uses_same_instance_as_setter(self):
+    def test_lifecycle_adapter_should_enter_windup_uses_same_instance_as_setter(self) -> None:
         """
         F1-1: should_enter_windup() volaný přes adapter musí vidět stejný
         first_cycle_ran stav jako set_first_cycle_ran() nastavil.
@@ -957,7 +962,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-    )
+        )
         lifecycle.start()
 
         adapter = _LifecycleAdapter(lifecycle)
@@ -969,7 +974,7 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is False
         assert adapter.should_enter_windup() is False, (
             "should_enter_windup má být False při first_cycle_ran=False (F290 block)"
-    )
+        )
 
         # Zavoláme set_first_cycle_ran()
         adapter.set_first_cycle_ran()
@@ -982,7 +987,7 @@ class TestF11WindupFirstCycle:
         # remaining=300s, windup_lead=180s → 300 > 180 → False
         assert adapter.should_enter_windup() is False
 
-    def test_f1_1_fallback_when_lc_adapter_is_none(self):
+    def test_f1_1_fallback_when_lc_adapter_is_none(self) -> None:
         """
         F1-1: Fallback logika — když _lc_adapter je None, kód správně
         přistoupí přímo k lifecycle.first_cycle_ran místo volání adapteru.
@@ -995,7 +1000,7 @@ class TestF11WindupFirstCycle:
         lifecycle = SprintLifecycleManager(
             sprint_duration_s=600.0,
             windup_lead_s=180.0,
-    )
+        )
         lifecycle.start()
         lifecycle._current_phase = lifecycle._current_phase.__class__.ACTIVE
 
@@ -1014,9 +1019,8 @@ class TestF11WindupFirstCycle:
 
         # Ověření: first_cycle_ran je nyní True (fallback funguje)
         assert lifecycle.first_cycle_ran is True, (
-            "F1-1-FIX: first_cycle_ran zůstává False po fallback nastavení. "
-            "Windup bude blokován F290 navždy!"
-    )
+            "F1-1-FIX: first_cycle_ran zůstává False po fallback nastavení. Windup bude blokován F290 navždy!"
+        )
 
         # Ověření: should_enter_windup() nyní vidí first_cycle_ran=True
         assert lifecycle.should_enter_windup() is False  # 300s > 180s, takže False
@@ -1028,7 +1032,7 @@ class TestF11WindupFirstCycle:
 class TestF289WindupBudget:
     """F288-WINDUP: effective_windup_lead_s uses 30% ratio / [30, 180] ceiling."""
 
-    def test_effective_windup_60s_15pct_no_floor(self):
+    def test_effective_windup_60s_15pct_no_floor(self) -> None:
         """Sprint 60s: 30% ratio = 18s, floored to 30s. Active = 30s.
 
         F290: sprint<=120 → ratio=0.20, raw=60*0.20=12s → floor max(15,12)=15.
@@ -1040,7 +1044,7 @@ class TestF289WindupBudget:
         assert cfg.effective_windup_lead_s == 15.0  # F290: 0.20*60=12 → floor [15,180]→15
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 45.0  # active window
 
-    def test_effective_windup_300s_25pct(self):
+    def test_effective_windup_300s_25pct(self) -> None:
         """Sprint 300s: F290 ratio=0.25, raw=75s → floor [15,180]→75. Active = 225s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
 
@@ -1048,7 +1052,7 @@ class TestF289WindupBudget:
         assert cfg.effective_windup_lead_s == 75.0  # F290: 0.25*300=75
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 225.0  # active OK
 
-    def test_effective_windup_600s_30pct(self):
+    def test_effective_windup_600s_30pct(self) -> None:
         """Sprint 600s: F290 ratio=0.30, raw=180s → floor [15,180]→180. Active = 420s."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
 
@@ -1056,14 +1060,14 @@ class TestF289WindupBudget:
         assert cfg.effective_windup_lead_s == 180.0  # F290: 0.30*600=180, at ceiling
         assert cfg.sprint_duration_s - cfg.effective_windup_lead_s == 420.0  # active OK
 
-    def test_effective_windup_explicit_override_respected(self):
+    def test_effective_windup_explicit_override_respected(self) -> None:
         """Explicit --windup-lead 50s is respected (above 30s floor)."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerConfig
 
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=50.0)
         assert cfg.effective_windup_lead_s == 50.0  # explicit override OK (above floor)
 
-    def test_windup_efficiency_field_present(self):
+    def test_windup_efficiency_field_present(self) -> None:
         """SprintSchedulerResult has windup_efficiency field (F289)."""
         from hledac.universal.runtime.sprint_scheduler import SprintSchedulerResult
 
@@ -1071,17 +1075,17 @@ class TestF289WindupBudget:
         assert hasattr(result, "windup_efficiency")
         assert result.windup_efficiency == 0.0  # default
 
-    def test_windup_efficiency_computed_correctly(self):
+    def test_windup_efficiency_computed_correctly(self) -> None:
         """windup_efficiency = windup / (windup + active)."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=300.0, windup_lead_s=180.0, aggressive_mode=False)
         # F290: effective_windup = 75s (0.25*300), active = 225s → efficiency = 75/300 = 0.25
         eff = cfg.effective_windup_lead_s / (
             cfg.effective_windup_lead_s + (cfg.sprint_duration_s - cfg.effective_windup_lead_s)
-    )
+        )
         assert abs(eff - 0.25) < 0.001  # ~75/300
 
 
@@ -1094,7 +1098,7 @@ class TestF270InitOrder:
     Protocol-based phase composition in _initialize_sprint_run().
     """
 
-    def test_v2_slots_initialized_on_construction(self):
+    def test_v2_slots_initialized_on_construction(self) -> None:
         """V2: construction initializes all slots via __post_init__.
 
         SprintSchedulerV2 uses @dataclass(slots=True) — all fields must be
@@ -1104,7 +1108,7 @@ class TestF270InitOrder:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1123,7 +1127,7 @@ class TestF270InitOrder:
         # _sidecar_tasks is v1-only; V2 uses _sidecar_orchestrator
         assert hasattr(scheduler, "_acquisition_plan"), "_acquisition_plan missing"
 
-    def test_v2_has_aclose_method(self):
+    def test_v2_has_aclose_method(self) -> None:
         """V2: aclose() method exists and is callable.
 
         F285 graceful shutdown protocol — aclose() must exist on the
@@ -1132,7 +1136,7 @@ class TestF270InitOrder:
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1148,12 +1152,12 @@ class TestF285Acllose:
     """
 
     @pytest.mark.asyncio
-    async def test_aclose_does_not_raise_on_clean_scheduler(self):
+    async def test_aclose_does_not_raise_on_clean_scheduler(self) -> None:
         """aclean() must not raise even when all resources are None/empty."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1161,12 +1165,12 @@ class TestF285Acllose:
         await scheduler.aclose()
 
     @pytest.mark.asyncio
-    async def test_aclose_is_idempotent(self):
+    async def test_aclose_is_idempotent(self) -> None:
         """Calling aclose() twice must not raise."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1174,12 +1178,12 @@ class TestF285Acllose:
         await scheduler.aclose()  # idempotent — must not raise
 
     @pytest.mark.asyncio
-    async def test_aclose_has_log_output(self):
+    async def test_aclose_has_log_output(self) -> None:
         """aclean() must log completion with sprint_id and elapsed time."""
         from hledac.universal.runtime.sprint_scheduler import (
             SprintScheduler,
             SprintSchedulerConfig,
-    )
+        )
 
         cfg = SprintSchedulerConfig(sprint_duration_s=60.0)
         scheduler = SprintScheduler(cfg)
@@ -1211,7 +1215,7 @@ class TestF285Acllose:
 # =============================================================================
 
 
-def test_sprint_scheduler_config_with_keyword_query(minimal_config):
+def test_sprint_scheduler_config_with_keyword_query(minimal_config) -> None:
     """
     Integration test 5.2: SprintSchedulerConfig accepts keyword query.
 
@@ -1227,7 +1231,6 @@ def test_sprint_scheduler_config_with_keyword_query(minimal_config):
     config = minimal_config
 
     # Non-domain keyword query
-    query = "cybersecurity threats banking sector"
 
     # Create scheduler and lifecycle with keyword query context
     scheduler = SprintScheduler(config)
@@ -1263,11 +1266,7 @@ def test_sprint_scheduler_config_with_keyword_query(minimal_config):
 
 # ── Issue B3: ObservedRunReport duplicate field detection ──────────────────────
 import ast
-
-
-import os
 from pathlib import Path
-from _core import aclose
 
 
 def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
@@ -1276,16 +1275,25 @@ def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
     Returns list of (file_rel, class_name, field_name, first_line, second_line).
     """
     if exclude_dirs is None:
-        exclude_dirs = {'__pycache__', '.pytest_cache', '.venv', '.git',
-                       'build', 'dist', '.mypy_cache', 'tests', 'tests/.archive'}
+        exclude_dirs = {
+            "__pycache__",
+            ".pytest_cache",
+            ".venv",
+            ".git",
+            "build",
+            "dist",
+            ".mypy_cache",
+            "tests",
+            "tests/.archive",
+        }
 
     issues = []
-    for py_file in root.rglob('*.py'):
+    for py_file in root.rglob("*.py"):
         if any(ex in py_file.parts for ex in exclude_dirs):
             continue
         try:
-            source = py_file.read_text(encoding='utf-8')
-        except (OSError, UnicodeDecodeError):
+            source = py_file.read_text(encoding="utf-8")
+        except OSError, UnicodeDecodeError:
             continue
         try:
             tree = ast.parse(source, filename=str(py_file))
@@ -1301,17 +1309,16 @@ def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
             if not isinstance(node, ast.ClassDef):
                 continue
             is_struct = any(
-                (isinstance(b, ast.Name) and b.id == 'Struct') or
-                (isinstance(b, ast.Attribute) and b.attr == 'Struct')
+                (isinstance(b, ast.Name) and b.id == "Struct") or (isinstance(b, ast.Attribute) and b.attr == "Struct")
                 for b in node.bases
-    )
+            )
             if not is_struct:
                 continue
 
             seen = {}
             for item in node.body:
                 if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    name, kind, line = item.target.id, 'AnnAssign', item.lineno
+                    name, kind, line = item.target.id, "AnnAssign", item.lineno
                 elif isinstance(item, ast.Assign):
                     name = None
                     for t in item.targets:
@@ -1320,13 +1327,12 @@ def _find_msgspec_struct_duplicates(root: Path, exclude_dirs=None):
                             break
                     if name is None:
                         continue
-                    kind, line = 'Assign', item.lineno
+                    kind, line = "Assign", item.lineno
                 else:
                     continue
 
                 if name in seen:
-                    issues.append((str(py_file.relative_to(root)), node.name,
-                                   name, seen[name][1], line))
+                    issues.append((str(py_file.relative_to(root)), node.name, name, seen[name][1], line))
                 else:
                     seen[name] = (kind, line)
 
@@ -1345,7 +1351,7 @@ class TestObservedRunReportSchema:
     """
 
     @pytest.mark.skip(reason="Test depends on __main__.py import graph that pollutes namespace")
-    def test_observed_run_report_no_duplicate_fields(self):
+    def test_observed_run_report_no_duplicate_fields(self) -> None:
         """Verify ObservedRunReport has no duplicate field names via AST analysis."""
         import pathlib
 
@@ -1357,7 +1363,7 @@ class TestObservedRunReportSchema:
         source_file = str(root_main)
         assert root_main.exists(), f"Source file not found: {root_main}"
 
-        with open(source_file, "r", encoding="utf-8") as f:
+        with open(source_file, encoding="utf-8") as f:
             tree = ast.parse(f.read(), filename=source_file)
 
         # Find ObservedRunReport class
@@ -1391,17 +1397,18 @@ class TestObservedRunReportSchema:
             f"Duplicate field names found in ObservedRunReport: {duplicates}. "
             f"msgspec.Struct uses last-value-wins semantics — Annotated validators "
             f"are silently overwritten by plain declarations, breaking strict validation."
-    )
+        )
 
     @pytest.mark.skip(reason="__main__.py has complex import graph causing Annotated namespace pollution")
-    def test_validate_observed_run_report_accepts_valid_data(self):
+    def test_validate_observed_run_report_accepts_valid_data(self) -> None:
         """Verify validate_observed_run_report accepts properly structured data."""
         import importlib.util
         import typing
+
         spec = importlib.util.spec_from_file_location(
             "hledac.__main__",
             str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
-    )
+        )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         # Inject typing.Annotated so type eval works during msgspec annotation processing
@@ -1414,9 +1421,7 @@ class TestObservedRunReportSchema:
         validate_observed_run_report = module.validate_observed_run_report
         import msgspec
 
-        uma = msgspec.convert(
-            {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
-    )
+        uma = msgspec.convert({"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot)
         fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
 
         valid_data = {
@@ -1465,28 +1470,26 @@ class TestObservedRunReportSchema:
         assert report.signal_stage == "live"
 
     @pytest.mark.skip(reason="__main__.py has complex import graph causing Annotated namespace pollution")
-    def test_validate_observed_run_report_meta_validators_rejected(self):
+    def test_validate_observed_run_report_meta_validators_rejected(self) -> None:
         """Verify that Annotated Meta validators reject invalid data via strict conversion."""
         import importlib.util
         import typing
+
         spec = importlib.util.spec_from_file_location(
             "hledac.__main__",
             str(pathlib.Path(__file__).resolve().parents[1] / "__main__.py"),
-    )
+        )
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         module.__dict__["Annotated"] = typing.Annotated
         module.__dict__["TYPE_CHECKING"] = False
         spec.loader.exec_module(module)
         FeedHealthBreakdown = module.FeedHealthBreakdown
-        ObservedRunReport = module.ObservedRunReport
         UmaSnapshot = module.UmaSnapshot
         validate_observed_run_report = module.validate_observed_run_report
         import msgspec
 
-        uma = msgspec.convert(
-            {"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot
-    )
+        uma = msgspec.convert({"rss_mb": 0, "metal_cache_mb": 0, "gc_pressure": 0.0}, UmaSnapshot)
         fb = msgspec.convert({"healthy": 0, "degraded": 0, "unhealthy": 0}, FeedHealthBreakdown)
 
         base = {
@@ -1557,7 +1560,7 @@ class TestObservedRunReportSchema:
         except msgspec.ValidationError:
             pass  # expected
 
-    def test_project_wide_msgspec_struct_no_duplicate_fields(self):
+    def test_project_wide_msgspec_struct_no_duplicate_fields(self) -> None:
         """Scan the entire hledac/ source tree for any msgspec.Struct with duplicate fields.
 
         ISSUE-B3: Duplicate field names cause silent last-value-wins semantics in
@@ -1570,8 +1573,6 @@ class TestObservedRunReportSchema:
 
         issues = _find_msgspec_struct_duplicates(root)
 
-        assert not issues, (
-            f"Duplicate field names found in msgspec.Struct classes across the project:\n" +
-            "\n".join(f"  {f}::{c}.{name} (lines {fl}, {sl})"
-                      for f, c, name, fl, sl in issues)
-    )
+        assert not issues, "Duplicate field names found in msgspec.Struct classes across the project:\n" + "\n".join(
+            f"  {f}::{c}.{name} (lines {fl}, {sl})" for f, c, name, fl, sl in issues
+        )

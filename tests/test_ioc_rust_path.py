@@ -12,15 +12,14 @@ Tests the Rust SIMD IOC extraction functions:
 Expected speedup: 8-15× vs Python regex (NEON SIMD + regex set optimization)
 """
 
-import pytest
-
 
 class TestRustIocSimdFunctions:
     """Direct Rust extension function tests."""
 
-    def test_extract_iocs_simd_basic(self):
+    def test_extract_iocs_simd_basic(self) -> None:
         """extract_iocs_simd extracts IOCs from text."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -41,9 +40,10 @@ class TestRustIocSimdFunctions:
         assert "evil.com" in values, f"Expected 'evil.com' in {values}"
         assert "cve-2024-1234" in values, f"Expected 'cve-2024-1234' in {values}"
 
-    def test_extract_iocs_simd_all_types(self):
+    def test_extract_iocs_simd_all_types(self) -> None:
         """extract_iocs_simd handles all IOC types."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -62,9 +62,10 @@ class TestRustIocSimdFunctions:
         assert "sha256" in types, f"Expected sha256 in {types}"
         assert "md5" in types, f"Expected md5 in {types}"
 
-    def test_fast_ioc_extract_equivalence(self):
+    def test_fast_ioc_extract_equivalence(self) -> None:
         """fast_ioc_extract returns same results as extract_iocs_simd."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -77,9 +78,10 @@ class TestRustIocSimdFunctions:
         assert len(simd_result) >= 2, f"SIMD returned: {simd_result}"
         assert len(fast_result) >= 2, f"Fast returned: {fast_result}"
 
-    def test_batch_extract_iocs_simd(self):
+    def test_batch_extract_iocs_simd(self) -> None:
         """batch_extract_iocs_simd processes multiple texts."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -101,9 +103,10 @@ class TestRustIocSimdFunctions:
         assert "cve" in types
         assert "email" in types
 
-    def test_batch_dedup_urls(self):
+    def test_batch_dedup_urls(self) -> None:
         """batch_dedup_urls deduplicates URLs."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -120,9 +123,10 @@ class TestRustIocSimdFunctions:
         # Should dedupe exact duplicates
         assert len(result) <= len(urls), f"Got more results than input: {len(result)} vs {len(urls)}"
 
-    def test_url_normalize(self):
+    def test_url_normalize(self) -> None:
         """url_normalize returns canonical URL form."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -130,18 +134,20 @@ class TestRustIocSimdFunctions:
         assert ext.url_normalize("http://example.com") == "http://example.com"
         assert ext.url_normalize("https://example.com/") == "https://example.com/"
 
-    def test_empty_text(self):
+    def test_empty_text(self) -> None:
         """extract_iocs_simd handles empty input."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
         result = ext.extract_iocs_simd("")
         assert result == [], f"Expected empty list for empty input, got {result}"
 
-    def test_ipv6_support(self):
+    def test_ipv6_support(self) -> None:
         """extract_iocs_simd handles IPv6 addresses."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -152,9 +158,10 @@ class TestRustIocSimdFunctions:
         # IPv6 may be detected as ipv6 or just skip if pattern doesn't match
         assert "ipv6" in types or len(result) >= 1, f"Expected IPv6 detection: {result}"
 
-    def test_no_false_positives_for_wrong_length_hashes(self):
+    def test_no_false_positives_for_wrong_length_hashes(self) -> None:
         """extract_iocs_simd doesn't misclassify wrong-length hex as hashes."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 
@@ -171,12 +178,14 @@ class TestRustIocSimdFunctions:
 class TestRustIocSimdPerformance:
     """Performance-oriented tests for SIMD path."""
 
-    def test_large_text_performance(self):
+    def test_large_text_performance(self) -> None:
         """SIMD path handles large texts efficiently."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
-        import hledac_rust_extensions as ext
         import time
+
+        import hledac_rust_extensions as ext
 
         # Create large text with many unique IOCs
         # Note: SIMD deduplicates within a single text, so we use unique values
@@ -195,9 +204,10 @@ class TestRustIocSimdPerformance:
         # Should complete quickly (SIMD acceleration)
         assert elapsed < 2.0, f"Took {elapsed:.3f}s, expected < 2s"
 
-    def test_batch_threshold(self):
+    def test_batch_threshold(self) -> None:
         """batch_extract_iocs_simd uses SIMD for batches >= 4 or total >= 16KB."""
         import sys
+
         sys.path.insert(0, "rust_extensions")
         import hledac_rust_extensions as ext
 

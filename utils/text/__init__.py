@@ -4,7 +4,6 @@ utils/text — Text Analysis Module (migrated from text/)
 High-speed text analysis utilities for security research.
 """
 
-
 # Lazy loading with availability flag
 UNICODE_ANALYZER_AVAILABLE = False
 try:
@@ -19,6 +18,7 @@ try:
         create_and_initialize_unicode_analyzer,
         create_unicode_analyzer,
     )
+
     UNICODE_ANALYZER_AVAILABLE = True
 except ImportError:
     UnicodeConfig = None  # type: ignore
@@ -31,7 +31,6 @@ except ImportError:
     create_unicode_analyzer = None  # type: ignore
     create_and_initialize_unicode_analyzer = None  # type: ignore
 
-# Phase 8: Encoding Detector
 ENCODING_DETECTOR_AVAILABLE = False
 try:
     from .encoding_detector import (
@@ -42,6 +41,7 @@ try:
         create_encoding_detector,
         detect_encodings,
     )
+
     ENCODING_DETECTOR_AVAILABLE = True
 except ImportError:
     BaseEncodingDetector = None  # type: ignore
@@ -51,7 +51,6 @@ except ImportError:
     create_encoding_detector = None  # type: ignore
     detect_encodings = None  # type: ignore
 
-# Phase 8: Hash Identifier
 HASH_IDENTIFIER_AVAILABLE = False
 try:
     from .hash_identifier import (
@@ -62,6 +61,7 @@ try:
         create_hash_identifier,
         identify_hash,
     )
+
     HASH_IDENTIFIER_AVAILABLE = True
 except ImportError:
     HashIdentifier = None  # type: ignore
@@ -78,34 +78,40 @@ __all__ = [
 ]
 
 if UNICODE_ANALYZER_AVAILABLE:
-    __all__.extend([
-        "UnicodeConfig",
-        "UnicodeAttackAnalyzer",
-        "UnicodeAnalysisResult",
-        "ZeroWidthFinding",
-        "HomoglyphFinding",
-        "BidiFinding",
-        "NormalizationFinding",
-        "create_unicode_analyzer",
-        "create_and_initialize_unicode_analyzer",
-    ])
+    __all__.extend(
+        [
+            "UnicodeConfig",
+            "UnicodeAttackAnalyzer",
+            "UnicodeAnalysisResult",
+            "ZeroWidthFinding",
+            "HomoglyphFinding",
+            "BidiFinding",
+            "NormalizationFinding",
+            "create_unicode_analyzer",
+            "create_and_initialize_unicode_analyzer",
+        ]
+    )
 
 if ENCODING_DETECTOR_AVAILABLE:
-    __all__.extend([
-        "BaseEncodingDetector",
-        "EncodingFinding",
-        "EncodingChain",
-        "EncodingConfig",
-        "create_encoding_detector",
-        "detect_encodings",
-    ])
+    __all__.extend(
+        [
+            "BaseEncodingDetector",
+            "EncodingFinding",
+            "EncodingChain",
+            "EncodingConfig",
+            "create_encoding_detector",
+            "detect_encodings",
+        ]
+    )
 
 if HASH_IDENTIFIER_AVAILABLE:
-    __all__.extend([
-        "HashIdentifier",
-        "HashMatch",
-        "HashFinding",
-        "HashConfig",
-        "create_hash_identifier",
-        "identify_hash",
-    ])
+    __all__.extend(
+        [
+            "HashIdentifier",
+            "HashMatch",
+            "HashFinding",
+            "HashConfig",
+            "create_hash_identifier",
+            "identify_hash",
+        ]
+    )

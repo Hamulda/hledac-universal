@@ -8,10 +8,7 @@ This module provides:
 - find_best_path: Convenience async wrapper for single-source/target pathfinding
 """
 
-
-
 from typing import Any
-from _core import aclose
 
 # Graph Manager (pyvis visualization layer)
 try:
@@ -47,6 +44,7 @@ except ImportError:
     async def find_best_path(graph: Any, start: str, end: str) -> list[str]:
         """Stub returning [] when quantum_pathfinder is unavailable."""
         return []
+
 
 __all__ = [
     # Graph Manager

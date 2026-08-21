@@ -14,26 +14,26 @@ Verifies the changes to ``FetchCoordinator`` actually work end-to-end:
 Hermetic: every external I/O surface is monkeypatched.
 """
 
+from typing import Never
 from unittest.mock import patch
 
 import pytest
 
 from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 from hledac.universal.tools.url_dedup import dedupe_url_list
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # _host_ips_cache attribute
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_coordinator_has_host_ips_cache():
+def test_fetch_coordinator_has_host_ips_cache() -> None:
     fc = FetchCoordinator()
     assert hasattr(fc, "_host_ips_cache")
     assert fc._host_ips_cache == {}
 
 
-def test_fetch_coordinator_host_ips_cache_is_per_instance():
+def test_fetch_coordinator_host_ips_cache_is_per_instance() -> None:
     fc1 = FetchCoordinator()
     fc2 = FetchCoordinator()
     fc1._host_ips_cache = {"x.example": ["1.2.3.4"]}
@@ -46,12 +46,12 @@ def test_fetch_coordinator_host_ips_cache_is_per_instance():
 
 
 @pytest.mark.asyncio
-async def test_validate_fetch_target_cache_hit_skips_getaddrinfo():
+async def test_validate_fetch_target_cache_hit_skips_getaddrinfo() -> None:
     """Cache hit must skip async_getaddrinfo and return cached IPs."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"cached.example": ["8.8.8.8", "1.1.1.1"]}
 
-    async def _fail(host, port, **kw):
+    async def _fail(host, port, **kw) -> Never:
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
     with patch(
@@ -64,12 +64,12 @@ async def test_validate_fetch_target_cache_hit_skips_getaddrinfo():
 
 
 @pytest.mark.asyncio
-async def test_validate_fetch_target_cache_hit_empty_blocked():
+async def test_validate_fetch_target_cache_hit_empty_blocked() -> None:
     """A cached empty IP list means DNS already failed for this host."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"dead.example": []}
 
-    async def _fail(host, port, **kw):
+    async def _fail(host, port, **kw) -> Never:
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
     with patch(
@@ -82,12 +82,12 @@ async def test_validate_fetch_target_cache_hit_empty_blocked():
 
 
 @pytest.mark.asyncio
-async def test_validate_fetch_target_cache_hit_private_blocked():
+async def test_validate_fetch_target_cache_hit_private_blocked() -> None:
     """Cached private IP must be blocked."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {"internal.example": ["192.168.1.1"]}
 
-    async def _fail(host, port, **kw):
+    async def _fail(host, port, **kw) -> Never:
         raise RuntimeError("getaddrinfo should not be called on cache hit")
 
     with patch(
@@ -101,7 +101,7 @@ async def test_validate_fetch_target_cache_hit_private_blocked():
 
 
 @pytest.mark.asyncio
-async def test_validate_fetch_target_cache_miss_falls_through():
+async def test_validate_fetch_target_cache_miss_falls_through() -> None:
     """Cache miss → real async_getaddrinfo runs and the result is returned."""
     fc = FetchCoordinator()
     fc._host_ips_cache = {}  # miss
@@ -119,7 +119,7 @@ async def test_validate_fetch_target_cache_miss_falls_through():
 
 
 @pytest.mark.asyncio
-async def test_validate_fetch_target_ip_literal_still_short_circuits():
+async def test_validate_fetch_target_ip_literal_still_short_circuits() -> None:
     """IP literal URLs skip the cache and go straight to the IP check."""
     fc = FetchCoordinator()
     # No cache populated, and a public IP literal should still pass.
@@ -133,7 +133,7 @@ async def test_validate_fetch_target_ip_literal_still_short_circuits():
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_url_list_uses_coordinator_filter():
+def test_dedupe_url_list_uses_coordinator_filter() -> None:
     """Calling dedupe_url_list with ``_processed_urls`` mutates the
     coordinator's state — the next dedup pass sees those URLs as seen."""
     fc = FetchCoordinator()
@@ -149,7 +149,7 @@ def test_dedupe_url_list_uses_coordinator_filter():
     assert dropped2 == 2
 
 
-def test_dedupe_url_list_with_realistic_3query_scenario():
+def test_dedupe_url_list_with_realistic_3query_scenario() -> None:
     """3 search queries × 20 pages across 30 hostnames.
 
     Realistic: each query returns the same 20 pages for each of 30
@@ -174,7 +174,7 @@ def test_dedupe_url_list_with_realistic_3query_scenario():
 # ---------------------------------------------------------------------------
 
 
-def test_run_step_batch_dns_excludes_onion_i2p():
+def test_run_step_batch_dns_excludes_onion_i2p() -> None:
     """The batch-DNS helper in run_step skips .onion / .i2p URLs.
 
     We replicate the URL→hostname extraction logic and verify the
@@ -214,7 +214,7 @@ def test_run_step_batch_dns_excludes_onion_i2p():
 # ---------------------------------------------------------------------------
 
 
-def test_dedup_then_dns_extraction_produces_correct_host_set():
+def test_dedup_then_dns_extraction_produces_correct_host_set() -> None:
     """The composition of the F-A5 dedup gate and the F-A4 host
     extractor should yield exactly the unique hostnames of the
     unique URLs — no overcounting (dups would inflate DNS load) and

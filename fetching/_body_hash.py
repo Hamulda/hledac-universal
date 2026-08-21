@@ -1,7 +1,5 @@
-# fetching/_body_hash.py
 """
 Body Hash Store for public_fetcher.
-
 
 Replaces module-level globals:
 - _body_hashes dict
@@ -11,13 +9,7 @@ Thread-safe bounded URL→hash store using FIFO eviction.
 Bounded: MAX_BODY_HASHES entries, FIFO eviction on overflow.
 """
 
-
 import threading
-from _core import aclose
-
-# =============================================================================
-# BODY HASH STORE
-# =============================================================================
 
 
 class BodyHashStore:
@@ -87,9 +79,5 @@ class BodyHashStore:
         """
         return self._hashes
 
-
-# =============================================================================
-# MODULE-LEVEL SINGLETON
-# =============================================================================
 
 body_hash_store = BodyHashStore(max_size=10_000)

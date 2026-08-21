@@ -20,26 +20,20 @@ Invariant table:
 from __future__ import annotations
 
 import asyncio
-import random
-import sys
-from unittest import mock
+from typing import Never
 
 import pytest
 
 from hledac.universal.utils.retry import (
-    DEFAULT_BASE_DELAY,
-    DEFAULT_JITTER_FACTOR,
-    DEFAULT_MAX_ATTEMPTS,
-    DEFAULT_MAX_DELAY,
     RetryLoop,
     is_retryable,
     retry_async,
 )
 
-
 # ==============================================================================
 # RetryLoop (sync iterator)
 # ==============================================================================
+
 
 class TestRetryLoop:
     def test_retry_loop_exhausted_after_max_attempts(self) -> None:
@@ -58,14 +52,14 @@ class TestRetryLoop:
     def test_retry_loop_deterministic_sequence(self) -> None:
         """jitter=False → deterministic geometric backoff sequence."""
         loop = RetryLoop(max_attempts=4, base_delay=0.5, max_delay=30.0, jitter=False)
-        _, delays = zip(*list(loop))
+        _, delays = zip(*list(loop), strict=False)
         # base_delay * 2^(attempt-1): 0.5, 1.0, 2.0, 4.0
         expected = [0.5, 1.0, 2.0, 4.0]
         assert delays == tuple(expected)
 
     def test_retry_loop_jitter_bounds(self) -> None:
         """jitter=True → delay stays within valid bounds."""
-        loop = RetryLoop(max_attempts=20, base_delay=1.0, max_delay=30.0, jitter=True)
+        RetryLoop(max_attempts=20, base_delay=1.0, max_delay=30.0, jitter=True)
         all_delays = []
         for _ in range(5):  # 5 full iterations
             results = list(RetryLoop(max_attempts=20, base_delay=1.0, max_delay=30.0, jitter=True))
@@ -91,6 +85,7 @@ class TestRetryLoop:
 # is_retryable
 # ==============================================================================
 
+
 class TestIsRetryable:
     def test_is_retryable_default(self) -> None:
         assert is_retryable(TimeoutError()) is True
@@ -110,13 +105,14 @@ class TestIsRetryable:
 # retry_async
 # ==============================================================================
 
+
 class TestRetryAsync:
     @pytest.mark.asyncio
     async def test_retry_async_success_first_try(self) -> None:
         """Success on first try → no sleep, return value."""
         call_count = 0
 
-        async def succeed():
+        async def succeed() -> str:
             nonlocal call_count
             call_count += 1
             return "ok"
@@ -130,7 +126,7 @@ class TestRetryAsync:
         """All attempts fail → raises last exception after max_attempts."""
         call_count = 0
 
-        async def always_fail():
+        async def always_fail() -> Never:
             nonlocal call_count
             call_count += 1
             raise ConnectionError("fail")
@@ -145,7 +141,7 @@ class TestRetryAsync:
         """cancel_is_retriable=False → CancelledError propagates immediately."""
         call_count = 0
 
-        async def cancel_me():
+        async def cancel_me() -> Never:
             nonlocal call_count
             call_count += 1
             raise asyncio.CancelledError()
@@ -161,7 +157,7 @@ class TestRetryAsync:
         """cancel_is_retriable=True → CancelledError treated as retriable."""
         call_count = 0
 
-        async def cancel_me():
+        async def cancel_me() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
@@ -177,7 +173,7 @@ class TestRetryAsync:
         """Retryable exception → retries; non-retryable → raises immediately."""
         call_count = 0
 
-        async def fail_then_succeed():
+        async def fail_then_succeed() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -192,7 +188,7 @@ class TestRetryAsync:
     async def test_non_retryable_raises_immediately(self) -> None:
         call_count = 0
 
-        async def raise_value_error():
+        async def raise_value_error() -> Never:
             nonlocal call_count
             call_count += 1
             raise ValueError("not retryable")
@@ -207,7 +203,7 @@ class TestRetryAsync:
         call_count = 0
         callbacks = []
 
-        async def fail_twice():
+        async def fail_twice() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
@@ -236,7 +232,7 @@ class TestRetryAsync:
         """delay is capped at max_delay."""
         call_count = 0
 
-        async def always_fail():
+        async def always_fail() -> Never:
             nonlocal call_count
             call_count += 1
             raise ConnectionError()
@@ -257,13 +253,14 @@ class TestRetryAsync:
 # Smoke — retry_backoff_linear_async (no jitter)
 # ==============================================================================
 
+
 class TestRetryBackoffLinearAsync:
     @pytest.mark.asyncio
     async def test_linear_no_jitter_deterministic(self) -> None:
         """Linear backoff without jitter is deterministic."""
         call_count = 0
 
-        async def fail_twice():
+        async def fail_twice() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 3:

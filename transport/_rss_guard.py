@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import time
 from typing import Final
-from _core import aclose
 
 # Default RSS ceiling for M1 8GB (5.5 GiB = matches sprint mission budget)
 DEFAULT_RSS_BLOCK_GIB: Final[float] = 5.5
@@ -37,6 +36,7 @@ def rss_over_budget(block_gib: float = DEFAULT_RSS_BLOCK_GIB) -> bool:
     """
     try:
         from hledac.universal._core.psutil_shim import process as _psutil_proc
+
         proc = _psutil_proc()
         if proc is None:
             return False

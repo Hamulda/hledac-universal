@@ -48,6 +48,7 @@ Invariants (P0-2):
 Always-on, no feature flag, no env var.
 M1 8GB safe: max batch size 4, single-threaded MLX, memory guard active.
 """
+
 import asyncio
 import atexit
 import logging
@@ -55,7 +56,7 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
@@ -64,8 +65,9 @@ logger = logging.getLogger(__name__)
 
 class _FreeTextSchema:
     """Lightweight schema for free-text batch responses (no pydantic dependency)."""
-    __name__ = 'FreeText'
-    __struct_fields__ = ('text',)
+
+    __name__ = "FreeText"
+    __struct_fields__ = ("text",)
 
 
 MAX_BATCH_SIZE_M1: int = 8
@@ -83,6 +85,7 @@ ADAPTIVE_CONTEXT_PREFLIGHT: bool = True
 # Matched to B.S6 batch queue bound (256) for consistency.
 MAX_SINGLE_FLIGHT: int = 256
 
+
 def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
     """Called by weakref.finalize at interpreter exit if explicit close() was not called.
 
@@ -98,6 +101,7 @@ def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
             instance._init_event.clear()
     except Exception:  # noqa: BLE001
         pass
+
 
 class MLXBatchedExecutor:
     """
@@ -126,9 +130,29 @@ class MLXBatchedExecutor:
         - PID adaptive batch sizing adjusts effective_batch_size based on
           memory EMA trend (Kp=0.5, Ki=0.05, Kd=0.1)
     """
-    __slots__ = tuple(('_batch_size_high', '_batch_size_low', '_batch_size_max', '_effective_batch_size', '_ema_alpha', '_engine', '_finalizer', '_init_event', '_init_guard', '_init_lock', '_memory_check_failures', '_memory_ema', '_memory_ema_alpha', '_scheduler', '_single_flight', '_single_flight_order', '_stats', '_worker_thread'))
 
-    def __init__(self, engine: DeepHermes3Engine, worker_thread: Any=None) -> None:
+    __slots__ = (
+        "_batch_size_high",
+        "_batch_size_low",
+        "_batch_size_max",
+        "_effective_batch_size",
+        "_ema_alpha",
+        "_engine",
+        "_finalizer",
+        "_init_event",
+        "_init_guard",
+        "_init_lock",
+        "_memory_check_failures",
+        "_memory_ema",
+        "_memory_ema_alpha",
+        "_scheduler",
+        "_single_flight",
+        "_single_flight_order",
+        "_stats",
+        "_worker_thread",
+    )
+
+    def __init__(self, engine: DeepHermes3Engine, worker_thread: Any = None) -> None:
         """
         Args:
             engine: DeepHermes3Engine instance (must be loaded; model state shared)
@@ -147,7 +171,23 @@ class MLXBatchedExecutor:
         self._init_event: asyncio.Event | None = None
         self._init_lock: asyncio.Lock | None = None
         self._init_guard: threading.Lock = threading.Lock()
-        self._stats: dict[str, Any] = {'submits': 0, 'empty_prompt_bypass': 0, 'long_output_bypass': 0, 'long_system_msg_bypass': 0, 'direct_fallback': 0, 'batch_executed': 0, 'batch_shattered': 0, 'fail_soft': 0, 'memory_guard_disabled': 0, 'urgent_bypass': 0, 'speculative_bypass': 0, 'single_flight_hit': 0, 'latency_ema_ms': 0.0, 'baseline_ema_ms': 0.0, 'overhead_ema_ms': 0.0}
+        self._stats: dict[str, Any] = {
+            "submits": 0,
+            "empty_prompt_bypass": 0,
+            "long_output_bypass": 0,
+            "long_system_msg_bypass": 0,
+            "direct_fallback": 0,
+            "batch_executed": 0,
+            "batch_shattered": 0,
+            "fail_soft": 0,
+            "memory_guard_disabled": 0,
+            "urgent_bypass": 0,
+            "speculative_bypass": 0,
+            "single_flight_hit": 0,
+            "latency_ema_ms": 0.0,
+            "baseline_ema_ms": 0.0,
+            "overhead_ema_ms": 0.0,
+        }
         self._ema_alpha: float = 0.3
         self._memory_check_failures: int = 0
         self._memory_ema: float = 0.0
@@ -169,6 +209,7 @@ class MLXBatchedExecutor:
     def _get_mlx_memory(self) -> Any:
         """Lazy-load mlx_memory module for adaptive batching (ISSUE-094)."""
         from hledac.universal.utils.mlx_memory import get_mlx_memory_module
+
         return get_mlx_memory_module()
 
     def _get_init_event(self) -> asyncio.Event:
@@ -209,20 +250,38 @@ class MLXBatchedExecutor:
                 return
             try:
                 from hledac.universal.brain.batch_scheduler import BatchScheduler
-                scheduler: BatchScheduler = BatchScheduler(execute_callback=self._execute_callback, max_size=self._effective_batch_size, max_queue=MAX_QUEUE_DEPTH, default_flush_interval=DEFAULT_FLUSH_INTERVAL_S, medium_pressure_depth=64, high_pressure_depth=192, age_bump_interval=3, ema_alpha=self._ema_alpha)
+
+                scheduler: BatchScheduler = BatchScheduler(
+                    execute_callback=self._execute_callback,
+                    max_size=self._effective_batch_size,
+                    max_queue=MAX_QUEUE_DEPTH,
+                    default_flush_interval=DEFAULT_FLUSH_INTERVAL_S,
+                    medium_pressure_depth=64,
+                    high_pressure_depth=192,
+                    age_bump_interval=3,
+                    ema_alpha=self._ema_alpha,
+                )
                 self._scheduler = scheduler
                 await scheduler.start()
                 self._get_init_event().set()
-                logger.debug('[MLXBatch] executor initialized (max_batch=%d)', MAX_BATCH_SIZE_M1)
+                logger.debug("[MLXBatch] executor initialized (max_batch=%d)", MAX_BATCH_SIZE_M1)
             except Exception as e:
-                logger.warning('[MLXBatch] lazy init failed, batching disabled: %s', e)
-                self._stats['fail_soft'] += 1
+                logger.warning("[MLXBatch] lazy init failed, batching disabled: %s", e)
+                self._stats["fail_soft"] += 1
 
     # ------------------------------------------------------------------ //
     # is_batch_safe — public gate + private helpers                       //
     # ------------------------------------------------------------------ //
 
-    def is_batch_safe(self, prompt: str, system_msg: str | None=None, priority: float=1.0, active_iteration_count: int=0, max_tokens: int | None=None, speculative: bool=False) -> bool:
+    def is_batch_safe(
+        self,
+        prompt: str,
+        system_msg: str | None = None,
+        priority: float = 1.0,
+        active_iteration_count: int = 0,
+        max_tokens: int | None = None,
+        speculative: bool = False,
+    ) -> bool:
         """
         Decide whether this request is eligible for batching.
 
@@ -250,22 +309,22 @@ class MLXBatchedExecutor:
 
         # ── Guard: urgency / emptiness ───────────────────────────────────
         if priority == URGENT_PRIORITY:
-            self._stats['urgent_bypass'] += 1
+            self._stats["urgent_bypass"] += 1
             return False
         if not prompt or not prompt.strip():
-            self._stats['empty_prompt_bypass'] += 1
+            self._stats["empty_prompt_bypass"] += 1
             return False
         if speculative:
-            self._stats['speculative_bypass'] += 1
+            self._stats["speculative_bypass"] += 1
             return False
         if len(prompt) > 12000:
-            self._stats['long_prompt_bypass'] += 1
+            self._stats["long_prompt_bypass"] += 1
             return False
         if max_tokens is not None and max_tokens > 2048:
-            self._stats['long_output_bypass'] += 1
+            self._stats["long_output_bypass"] += 1
             return False
         if system_msg is not None and len(system_msg) > 8192:
-            self._stats['long_system_msg_bypass'] += 1
+            self._stats["long_system_msg_bypass"] += 1
             return False
 
         # ── Guard: memory pressure ────────────────────────────────────────
@@ -289,13 +348,13 @@ class MLXBatchedExecutor:
         """
         # ── 1. Read psutil (fail-soft → allow batching) ─────────────────
         try:
-            from hledac.universal._core.resource_governor import _get_cached_psutil
-            from hledac.universal._core.resource_governor import _read_virtual_memory_sync
-            vm = _get_cached_psutil('virtual_memory', _read_virtual_memory_sync)
+            from hledac.universal._core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
+
+            vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
             if vm is None:
-                raise RuntimeError('psutil unavailable')
+                raise RuntimeError("psutil unavailable")
             pct = vm.percent
-            available_gb = vm.available / 1024 ** 3
+            available_gb = vm.available / 1024**3
         except Exception:
             self._memory_check_failures += 1
             return True
@@ -311,10 +370,10 @@ class MLXBatchedExecutor:
 
         # ── 4. Memory guard threshold check ──────────────────────────────
         if self._memory_ema > MEMORY_GUARD_PCT and not force_batching:
-            self._stats['memory_guard_disabled'] += 1
+            self._stats["memory_guard_disabled"] += 1
             return False
         if available_gb < MEMORY_GUARD_ABSOLUTE_GB and not force_batching:
-            self._stats['memory_guard_disabled'] += 1
+            self._stats["memory_guard_disabled"] += 1
             return False
         return True
 
@@ -326,15 +385,15 @@ class MLXBatchedExecutor:
         """
         try:
             usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
-            if pressure_level == 'NORMAL' and usage_pct < 50:
-                return self._batch_size_max, 'ABUNDANT'
-            if pressure_level == 'NORMAL':
-                return self._batch_size_high, 'NORMAL'
-            if pressure_level == 'WARNING':
-                return self._effective_batch_size, 'WARNING'
-            return self._batch_size_low, 'CRITICAL'
+            if pressure_level == "NORMAL" and usage_pct < 50:
+                return self._batch_size_max, "ABUNDANT"
+            if pressure_level == "NORMAL":
+                return self._batch_size_high, "NORMAL"
+            if pressure_level == "WARNING":
+                return self._effective_batch_size, "WARNING"
+            return self._batch_size_low, "CRITICAL"
         except Exception:
-            return self._effective_batch_size, 'NORMAL'
+            return self._effective_batch_size, "NORMAL"
 
     def _push_batch_size(self) -> None:
         """Query MLX memory tier and push adaptive batch size to scheduler if changed."""
@@ -348,11 +407,20 @@ class MLXBatchedExecutor:
         self._effective_batch_size = effective_size
         try:
             self._scheduler.set_max_size(effective_size)
-            logger.debug('[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)', tier, old_size, effective_size, self._memory_ema)
+            logger.debug(
+                "[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)", tier, old_size, effective_size, self._memory_ema
+            )
         except Exception:  # noqa: BLE001
             pass
 
-    async def execute(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, priority: float=1.0) -> str:
+    async def execute(
+        self,
+        prompt: str,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        system_msg: str | None = None,
+        priority: float = 1.0,
+    ) -> str:
         """
         Submit a request to the batch scheduler and await the result.
 
@@ -362,7 +430,7 @@ class MLXBatchedExecutor:
         """
         await self._ensure_initialized()
         if not self._get_init_event().is_set() or self._scheduler is None:
-            self._stats['direct_fallback'] += 1
+            self._stats["direct_fallback"] += 1
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
 
         # C3-06 FIX: prompt-level single-flight.
@@ -376,10 +444,12 @@ class MLXBatchedExecutor:
             if self._single_flight_order:
                 oldest_hash = self._single_flight_order.pop(0)
                 self._single_flight.pop(oldest_hash, None)
-                logger.debug('[MLXBatch] single-flight evicted hash=%d (LRU, size=%d)', oldest_hash, len(self._single_flight))
+                logger.debug(
+                    "[MLXBatch] single-flight evicted hash=%d (LRU, size=%d)", oldest_hash, len(self._single_flight)
+                )
         if in_flight is not None:
-            self._stats['single_flight_hit'] += 1
-            logger.debug('[MLXBatch] single-flight hit for prompt hash=%d', prompt_hash)
+            self._stats["single_flight_hit"] += 1
+            logger.debug("[MLXBatch] single-flight hit for prompt hash=%d", prompt_hash)
             # Another request for the same prompt is already in flight — await it.
             try:
                 result = await asyncio.wait_for(asyncio.shield(in_flight), timeout=FUTURE_TIMEOUT_S)
@@ -405,8 +475,8 @@ class MLXBatchedExecutor:
                 temperature=temperature if temperature is not None else 0.1,
                 max_tokens=max_tokens if max_tokens is not None else 512,
                 system_msg=system_msg,
-    )
-            self._stats['submits'] += 1
+            )
+            self._stats["submits"] += 1
             self._single_flight[prompt_hash] = scheduler_future
             # C3-08 FIX: maintain LRU order on insert
             if prompt_hash in self._single_flight_order:
@@ -419,23 +489,25 @@ class MLXBatchedExecutor:
                 if scheduler_future.done() and (not scheduler_future.cancelled()):
                     result = scheduler_future.result()
                 else:
-                    self._stats['fail_soft'] += 1
-                    self._stats['direct_fallback'] += 1
+                    self._stats["fail_soft"] += 1
+                    self._stats["direct_fallback"] += 1
                     return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
             except asyncio.CancelledError:
                 raise
             elapsed_ms = (time.monotonic() - submitted_at) * 1000.0
-            self._stats['latency_ema_ms'] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(self._stats['latency_ema_ms'])
+            self._stats["latency_ema_ms"] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(
+                self._stats["latency_ema_ms"]
+            )
             return str(result)
         except (TimeoutError, asyncio.CancelledError) as e:
-            logger.debug('[MLXBatch] submit timeout/cancel, falling back: %s', e)
-            self._stats['fail_soft'] += 1
-            self._stats['direct_fallback'] += 1
+            logger.debug("[MLXBatch] submit timeout/cancel, falling back: %s", e)
+            self._stats["fail_soft"] += 1
+            self._stats["direct_fallback"] += 1
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
         except Exception as e:
-            logger.debug('[MLXBatch] submit error, falling back: %s', e)
-            self._stats['fail_soft'] += 1
-            self._stats['direct_fallback'] += 1
+            logger.debug("[MLXBatch] submit error, falling back: %s", e)
+            self._stats["fail_soft"] += 1
+            self._stats["direct_fallback"] += 1
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
         finally:
             # C3-06: clean up single-flight entry on completion or cancellation.
@@ -457,17 +529,19 @@ class MLXBatchedExecutor:
         bounds actual MLX compute inside both _call_engine_direct paths
         (worker-thread and local). No external lock needed (B.M4).
         """
-        prompt = payload.get('prompt', '')
-        temperature = payload.get('temperature')
-        max_tokens = payload.get('max_tokens')
-        system_msg = payload.get('system_msg')
+        prompt = payload.get("prompt", "")
+        temperature = payload.get("temperature")
+        max_tokens = payload.get("max_tokens")
+        system_msg = payload.get("system_msg")
         try:
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
         except Exception as e:
-            logger.debug('[MLXBatch] callback error: %s', e)
+            logger.debug("[MLXBatch] callback error: %s", e)
             raise
 
-    async def _call_engine_direct(self, prompt: str, temperature: float | None, max_tokens: int | None, system_msg: str | None) -> str:
+    async def _call_engine_direct(
+        self, prompt: str, temperature: float | None, max_tokens: int | None, system_msg: str | None
+    ) -> str:
         """
         Direct call to DeepHermes3Engine.generate() — single MLX execution.
 
@@ -484,19 +558,25 @@ class MLXBatchedExecutor:
             try:
                 return await self._call_engine_via_worker(prompt, temperature, max_tokens, system_msg)
             except RuntimeError as _e:
-                logger.debug('[MLXBatch] worker submit failed, falling back to direct: %s', _e)
+                logger.debug("[MLXBatch] worker submit failed, falling back to direct: %s", _e)
             except TimeoutError:
                 raise
         t0 = time.monotonic()
         try:
-            result = await self._engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+            result = await self._engine.generate(
+                prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+            )
             elapsed_ms = (time.monotonic() - t0) * 1000.0
-            self._stats['baseline_ema_ms'] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(self._stats['baseline_ema_ms'])
+            self._stats["baseline_ema_ms"] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(
+                self._stats["baseline_ema_ms"]
+            )
             return result
         except Exception:
             raise
 
-    async def _call_engine_via_worker(self, prompt: str, temperature: float | None, max_tokens: int | None, system_msg: str | None) -> str:
+    async def _call_engine_via_worker(
+        self, prompt: str, temperature: float | None, max_tokens: int | None, system_msg: str | None
+    ) -> str:
         """
         P0-2 FIX: Dispatch MLX inference to worker thread via submit().
 
@@ -514,59 +594,64 @@ class MLXBatchedExecutor:
         P0-2 FIX: timeout must match hermes default (60s), not FUTURE_TIMEOUT_S (30s).
         """
         t0 = time.monotonic()
-        coro = self._engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+        coro = self._engine.generate(
+            prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+        )
         assert self._worker_thread is not None
         result = await self._worker_thread.submit(coro, timeout=60.0)
         try:
             import mlx.core as _mx_infer
+
             _mx_infer.eval([])
-            if hasattr(_mx_infer, 'clear_cache'):
+            if hasattr(_mx_infer, "clear_cache"):
                 _mx_infer.clear_cache()
         except Exception:  # noqa: BLE001
             pass
         elapsed_ms = (time.monotonic() - t0) * 1000.0
-        self._stats['baseline_ema_ms'] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(self._stats['baseline_ema_ms'])
+        self._stats["baseline_ema_ms"] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(
+            self._stats["baseline_ema_ms"]
+        )
         return result
 
     def get_stats(self) -> dict[str, Any]:
         """Return telemetry snapshot. Non-intrusive read (P1-1 profiling)."""
         stats = dict(self._stats)
-        stats['initialized'] = self._get_init_event().is_set()
-        stats['memory_check_failures'] = self._memory_check_failures
-        stats['memory_ema'] = round(self._memory_ema, 2)
-        stats['effective_batch_size'] = self._effective_batch_size
-        stats['batch_size_max'] = self._batch_size_max
-        stats['batch_size_high'] = self._batch_size_high
-        stats['batch_size_low'] = self._batch_size_low
+        stats["initialized"] = self._get_init_event().is_set()
+        stats["memory_check_failures"] = self._memory_check_failures
+        stats["memory_ema"] = round(self._memory_ema, 2)
+        stats["effective_batch_size"] = self._effective_batch_size
+        stats["batch_size_max"] = self._batch_size_max
+        stats["batch_size_high"] = self._batch_size_high
+        stats["batch_size_low"] = self._batch_size_low
         if self._scheduler is not None:
             try:
                 sched_t = self._scheduler.get_telemetry()
-                ema = sched_t.get('ema', {})
-                counters = sched_t.get('counters', {})
-                stats['scheduler_ema'] = ema
-                stats['scheduler_counters'] = counters
-                submits = float(stats['submits'])
-                batch_executed = float(counters.get('batch_executed', 0))
+                ema = sched_t.get("ema", {})
+                counters = sched_t.get("counters", {})
+                stats["scheduler_ema"] = ema
+                stats["scheduler_counters"] = counters
+                submits = float(stats["submits"])
+                batch_executed = float(counters.get("batch_executed", 0))
                 if submits > 0:
-                    stats['batch_utilization'] = round(batch_executed / submits, 4)
+                    stats["batch_utilization"] = round(batch_executed / submits, 4)
                 else:
-                    stats['batch_utilization'] = 0.0
-                stats['queue_depth'] = ema.get('queue_depth', 0)
-                stats['mlx_memory_bytes'] = 0  # placeholder — mlx.metal cache API varies by version
+                    stats["batch_utilization"] = 0.0
+                stats["queue_depth"] = ema.get("queue_depth", 0)
+                stats["mlx_memory_bytes"] = 0  # placeholder — mlx.metal cache API varies by version
             except Exception:
-                stats['scheduler_ema'] = {}
-                stats['scheduler_counters'] = {}
-                stats['batch_utilization'] = 0.0
-                stats['queue_depth'] = 0
-                stats['mlx_memory_bytes'] = 0
+                stats["scheduler_ema"] = {}
+                stats["scheduler_counters"] = {}
+                stats["batch_utilization"] = 0.0
+                stats["queue_depth"] = 0
+                stats["mlx_memory_bytes"] = 0
         else:
-            stats['batch_utilization'] = 0.0
-            stats['queue_depth'] = 0
-            stats['mlx_memory_bytes'] = 0
-        baseline = float(stats['baseline_ema_ms'])
-        batched = float(stats['latency_ema_ms'])
+            stats["batch_utilization"] = 0.0
+            stats["queue_depth"] = 0
+            stats["mlx_memory_bytes"] = 0
+        baseline = float(stats["baseline_ema_ms"])
+        batched = float(stats["latency_ema_ms"])
         if baseline > 0:
-            stats['overhead_ema_ms'] = max(0.0, batched - baseline)
+            stats["overhead_ema_ms"] = max(0.0, batched - baseline)
         return stats
 
     async def shutdown(self) -> None:
@@ -584,14 +669,16 @@ class MLXBatchedExecutor:
             if self._scheduler is not None:
                 await self._scheduler.shutdown(timeout=SHUTDOWN_TIMEOUT_S)
         except Exception as e:
-            logger.debug('[MLXBatch] scheduler shutdown error: %s', e)
+            logger.debug("[MLXBatch] scheduler shutdown error: %s", e)
         finally:
             self._scheduler = None
             if self._init_event is not None:
                 self._init_event.clear()
-            logger.debug('[MLXBatch] executor shut down')
+            logger.debug("[MLXBatch] executor shut down")
 
     def __repr__(self) -> str:
-        state = 'init' if self._init_event is not None and self._init_event.is_set() else 'lazy'
-        return f'MLXBatchedExecutor(state={state}, max_batch={MAX_BATCH_SIZE_M1})'
-__all__ = ['MLXBatchedExecutor', 'MAX_BATCH_SIZE_M1', 'MEMORY_GUARD_PCT']
+        state = "init" if self._init_event is not None and self._init_event.is_set() else "lazy"
+        return f"MLXBatchedExecutor(state={state}, max_batch={MAX_BATCH_SIZE_M1})"
+
+
+__all__ = ["MLXBatchedExecutor", "MAX_BATCH_SIZE_M1", "MEMORY_GUARD_PCT"]

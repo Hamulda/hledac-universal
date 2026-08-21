@@ -41,11 +41,11 @@ __all__ = [
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import Vision
-    import NaturalLanguage
-    import CoreML
-    import Quartz
     import Cocoa
+    import CoreML
+    import NaturalLanguage
+    import Quartz
+    import Vision
     import WebKit
 
 # ── availability flags (set on first access) ──────────────────────────────────
@@ -69,7 +69,6 @@ def is_framework_available(name: str) -> bool:
 # via globals() inside __getattr__.
 
 from typing import Any
-from _core._util import aclose
 
 # Framework metadata: (module_name, available_flag_name)
 _FRAMEWORK_DEFS: dict[str, tuple[str, str]] = {

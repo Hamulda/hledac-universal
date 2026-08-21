@@ -17,16 +17,19 @@ pressure response across all advisory layers.
 
 This module is stdlib-first with optional psutil support.
 """
+
 from dataclasses import dataclass
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+
 _MEMORY_THRESHOLD_REDUCED = 2048
 _MEMORY_THRESHOLD_MINIMAL = 1332
 _MEMORY_THRESHOLD_REJECT = 1024
 
+
 class ContextBudgetDecision(Struct, frozen=True):
     """Result of a context budget decision."""
+
     mode: str
     max_prompt_chars: int
     max_context_tokens_estimate: int
@@ -36,6 +39,7 @@ class ContextBudgetDecision(Struct, frozen=True):
     original_chars: int
     final_chars: int
     truncated: bool
+
 
 def estimate_tokens(text: str) -> int:
     """
@@ -47,6 +51,7 @@ def estimate_tokens(text: str) -> int:
     """
     return max(1, len(text) // 4)
 
+
 def _get_governor_uma_state() -> tuple[str | None, float | None]:
     """
     Probe M1ResourceGovernor for current UmaStatus.
@@ -57,15 +62,17 @@ def _get_governor_uma_state() -> tuple[str | None, float | None]:
     """
     try:
         from hledac.universal._core.protocols import get_governor
+
         gov = get_governor()
         snap = gov.snapshot()
-        free_miB = getattr(snap, 'free_uma_gib', None)
+        free_miB = getattr(snap, "free_uma_gib", None)
         if free_miB is not None:
             free_miB = free_miB * 1024
-        uma_state = getattr(snap, 'uma_state', None)
+        uma_state = getattr(snap, "uma_state", None)
         return (uma_state, free_miB)
     except Exception:
         return (None, None)
+
 
 def get_available_memory_mb() -> float | None:
     """
@@ -80,11 +87,19 @@ def get_available_memory_mb() -> float | None:
     """
     try:
         import psutil
-        return psutil.virtual_memory().available / 1024 ** 2
+
+        return psutil.virtual_memory().available / 1024**2
     except Exception:
         return None
 
-def decide_context_budget(prompt: str, *, requested_context_window: int=8192, available_memory_mb: float | None=None, uma_state: str | None=None) -> ContextBudgetDecision:
+
+def decide_context_budget(
+    prompt: str,
+    *,
+    requested_context_window: int = 8192,
+    available_memory_mb: float | None = None,
+    uma_state: str | None = None,
+) -> ContextBudgetDecision:
     """
     Decide how to budget the context window based on memory availability.
 
@@ -116,40 +131,51 @@ def decide_context_budget(prompt: str, *, requested_context_window: int=8192, av
         effective_state, effective_miB = _get_governor_uma_state()
     if effective_miB is None:
         effective_miB = get_available_memory_mb()
-    if effective_state in ('emergency',):
-        mode = 'reject'
+    if effective_state in ("emergency",):
+        mode = "reject"
         max_context_tokens = 0
-        reason = f'uma_emergency_free={effective_miB:.0f}mb' if effective_miB else 'uma_emergency'
+        reason = f"uma_emergency_free={effective_miB:.0f}mb" if effective_miB else "uma_emergency"
         max_prompt_chars = 0
         final_chars = 0
         truncated = False
-    elif effective_state == 'critical' or (effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_MINIMAL):
-        mode = 'minimal'
+    elif effective_state == "critical" or (effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_MINIMAL):
+        mode = "minimal"
         max_context_tokens = min(requested_context_window, 2048)
-        reason = f'uma_critical_free={effective_miB:.0f}mb' if effective_miB else 'uma_critical'
+        reason = f"uma_critical_free={effective_miB:.0f}mb" if effective_miB else "uma_critical"
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = original_chars > max_prompt_chars
-    elif effective_state == 'warn' or (effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_REDUCED):
-        mode = 'reduced'
+    elif effective_state == "warn" or (effective_miB is not None and effective_miB < _MEMORY_THRESHOLD_REDUCED):
+        mode = "reduced"
         max_context_tokens = min(requested_context_window, 4096)
-        reason = f'uma_warn_free={effective_miB:.0f}mb' if effective_miB else 'uma_warn'
+        reason = f"uma_warn_free={effective_miB:.0f}mb" if effective_miB else "uma_warn"
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = original_chars > max_prompt_chars
     else:
-        mode = 'normal'
+        mode = "normal"
         max_context_tokens = min(requested_context_window, 8192)
         if effective_state is not None:
-            reason = f'uma_{effective_state}_free={effective_miB:.0f}mb' if effective_miB else f'uma_{effective_state}'
+            reason = f"uma_{effective_state}_free={effective_miB:.0f}mb" if effective_miB else f"uma_{effective_state}"
         elif effective_miB is None:
-            reason = 'psutil_unavailable'
+            reason = "psutil_unavailable"
         else:
-            reason = f'normal_free={effective_miB:.0f}mb'
+            reason = f"normal_free={effective_miB:.0f}mb"
         max_prompt_chars = max_context_tokens * 4
         final_chars = min(original_chars, max_prompt_chars)
         truncated = False
-    return ContextBudgetDecision(mode=mode, max_prompt_chars=max_prompt_chars, max_context_tokens_estimate=max_context_tokens, reason=reason, memory_available_mb=effective_miB, uma_state=effective_state, original_chars=original_chars, final_chars=final_chars, truncated=truncated)
+    return ContextBudgetDecision(
+        mode=mode,
+        max_prompt_chars=max_prompt_chars,
+        max_context_tokens_estimate=max_context_tokens,
+        reason=reason,
+        memory_available_mb=effective_miB,
+        uma_state=effective_state,
+        original_chars=original_chars,
+        final_chars=final_chars,
+        truncated=truncated,
+    )
+
 
 def apply_context_budget(prompt: str, decision: ContextBudgetDecision) -> str:
     """
@@ -180,11 +206,12 @@ def apply_context_budget(prompt: str, decision: ContextBudgetDecision) -> str:
     if len(prompt) <= keep_front + keep_back:
         return prompt[:max_chars]
     front = prompt[:keep_front]
-    back = prompt[-keep_back:] if keep_back > 0 else ''
-    result = front + '\n\n[... context truncated due to memory pressure ...]\n\n' + back
+    back = prompt[-keep_back:] if keep_back > 0 else ""
+    result = front + "\n\n[... context truncated due to memory pressure ...]\n\n" + back
     return result
 
-def truncate_prompt_simple(prompt: str, max_chars: int, preserve_end_fraction: float=0.4) -> str:
+
+def truncate_prompt_simple(prompt: str, max_chars: int, preserve_end_fraction: float = 0.4) -> str:
     """
     Truncate prompt preserving beginning and recent end.
 
@@ -206,7 +233,8 @@ def truncate_prompt_simple(prompt: str, max_chars: int, preserve_end_fraction: f
     keep_back = int(max_chars * preserve_end_fraction)
     front = prompt[:keep_front]
     back = prompt[-keep_back:]
-    return front + '\n\n[... truncated ...]\n\n' + back
+    return front + "\n\n[... truncated ...]\n\n" + back
+
 
 @dataclass(slots=True)
 class ThermalGenerationParams:
@@ -216,8 +244,10 @@ class ThermalGenerationParams:
     Under thermal pressure, shorter generations (reduced max_tokens) complete faster
     and allow thermal recovery on fanless M1 devices.
     """
+
     max_tokens_override: int | None = None
     temperature_reduction: float = 0.0
+
 
 async def get_thermal_generation_params() -> ThermalGenerationParams:
     """
@@ -229,8 +259,11 @@ async def get_thermal_generation_params() -> ThermalGenerationParams:
     """
     try:
         from hledac.universal._core.protocols import get_governor
+
         gov = get_governor()
         decision = await gov.evaluate()
-        return ThermalGenerationParams(max_tokens_override=decision.max_tokens_override, temperature_reduction=decision.temperature_reduction)
+        return ThermalGenerationParams(
+            max_tokens_override=decision.max_tokens_override, temperature_reduction=decision.temperature_reduction
+        )
     except Exception:
         return ThermalGenerationParams()

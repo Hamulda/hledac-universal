@@ -31,10 +31,6 @@ const MAX_RESULTS_PER_ROOT: usize = 100;
 /// Maximum batch size to prevent OOM.
 const MAX_BATCH_SIZE: usize = 10_000;
 
-// ---------------------------------------------------------------------------
-// Result types
-// ---------------------------------------------------------------------------
-
 /// Result for a single traversal from one root IOC to its connected nodes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TraversalResult {
@@ -43,10 +39,6 @@ pub struct TraversalResult {
     pub confidence: f64,
     pub source: String,
 }
-
-// ---------------------------------------------------------------------------
-// Core traversal logic
-// ---------------------------------------------------------------------------
 
 /// Run a single traversal query for one root value.
 fn traverse_single(db_path: &Path, root_value: &str, max_hops: usize) -> Vec<TraversalResult> {
@@ -120,10 +112,6 @@ fn traverse_single(db_path: &Path, root_value: &str, max_hops: usize) -> Vec<Tra
 
     mapped
 }
-
-// ---------------------------------------------------------------------------
-// Python exports
-// ---------------------------------------------------------------------------
 
 /// Traverse graph from a list of root values and return connected IOCs.
 #[pyfunction]

@@ -58,18 +58,16 @@ INVARIANTS:
   - ResourceGovernor-aware: emergency pressure → HOT spills to WARM
   - No new public APIs outside this module
 """
+
 import asyncio
 import fnmatch
 import logging
-
-from hledac.universal.utils.locks import LazyAsyncioLock
-from hledac.universal.utils.executor_decorator import offload_to
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from _core._util import aclose
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.executor_decorator import offload_to
+from hledac.universal.utils.locks import LazyAsyncioLock
 
 if TYPE_CHECKING:
     from hledac.universal._core.resource_governor import M1ResourceGovernor
@@ -77,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Async Storage Backend Protocol ─────────────────────────────────────────────
+
 
 @runtime_checkable
 class AsyncStorageBackendProtocol(Protocol):
@@ -110,16 +109,20 @@ class AsyncStorageBackendProtocol(Protocol):
 
 # ── StorageKind & StoragePolicy ────────────────────────────────────────────────
 
-class StorageKind(str, Enum):
+
+class StorageKind(StrEnum):
     """5-layer storage taxonomy, hot→cold."""
-    HOT = 'hot'
-    WARM = 'warm'
-    COLD = 'cold'
-    KEYVALUE = 'kv'
-    STRING = 'string'
+
+    HOT = "hot"
+    WARM = "warm"
+    COLD = "cold"
+    KEYVALUE = "kv"
+    STRING = "string"
+
 
 class StoragePolicy(Struct, frozen=True):
     """Decision policy: which storage for which data type."""
+
     kind: StorageKind
     max_bytes: int
     ttl_seconds: float | None
@@ -129,37 +132,90 @@ class StoragePolicy(Struct, frozen=True):
     invalidates: tuple[StorageKind, ...] = ()
 
     def __repr__(self) -> str:
-        return f'StoragePolicy({self.kind.value}, max_bytes={self.max_bytes // 1024 // 1024}MB, ttl={self.ttl_seconds}s, persist={self.persist})'
+        return f"StoragePolicy({self.kind.value}, max_bytes={self.max_bytes // 1024 // 1024}MB, ttl={self.ttl_seconds}s, persist={self.persist})"
 
-_POLICY_HOT_EMBEDDING_256: StoragePolicy = StoragePolicy(kind=StorageKind.HOT, max_bytes=512 * 1024 * 1024, ttl_seconds=None, persist=False, spill_target=StorageKind.WARM, invalidates=(StorageKind.WARM,))
-_POLICY_WARM_EMBEDDING_768: StoragePolicy = StoragePolicy(kind=StorageKind.WARM, max_bytes=8 * 1024 ** 3, ttl_seconds=None, persist=True, invalidates=(StorageKind.COLD,))
-_POLICY_IOC_FINDINGS: StoragePolicy = StoragePolicy(kind=StorageKind.COLD, max_bytes=16 * 1024 ** 3, ttl_seconds=None, persist=True)
-_POLICY_GRAPH_IOC: StoragePolicy = StoragePolicy(kind=StorageKind.COLD, max_bytes=32 * 1024 ** 3, ttl_seconds=None, persist=True)
-_POLICY_QTABLE: StoragePolicy = StoragePolicy(kind=StorageKind.KEYVALUE, max_bytes=128 * 1024 * 1024, ttl_seconds=86400.0, persist=True)
-_POLICY_HOT_EDGES: StoragePolicy = StoragePolicy(kind=StorageKind.KEYVALUE, max_bytes=32 * 1024 * 1024, ttl_seconds=None, persist=True)
-_POLICY_KV_PERSISTENT: StoragePolicy = StoragePolicy(kind=StorageKind.KEYVALUE, max_bytes=64 * 1024 * 1024, ttl_seconds=3600.0, persist=True)
-_POLICY_URL_NORMALIZED: StoragePolicy = StoragePolicy(kind=StorageKind.STRING, max_bytes=256 * 1024 * 1024, ttl_seconds=3600.0, persist=False)
-_POLICY_SAFETENSORS: StoragePolicy = StoragePolicy(kind=StorageKind.STRING, max_bytes=1024 * 1024 * 1024, ttl_seconds=7 * 86400.0, persist=True)
-_POLICY_DEFAULT: StoragePolicy = StoragePolicy(kind=StorageKind.COLD, max_bytes=16 * 1024 ** 3, ttl_seconds=None, persist=True)
-_DECISION_MATRIX: dict[str, StoragePolicy] = {'embedding.float16[256]': _POLICY_HOT_EMBEDDING_256, 'embedding.float16[384]': _POLICY_HOT_EMBEDDING_256, 'embedding.float16[*': _POLICY_HOT_EMBEDDING_256, 'embedding.float32[768]': _POLICY_WARM_EMBEDDING_768, 'embedding.float32[1024]': _POLICY_WARM_EMBEDDING_768, 'embedding.float32[*': _POLICY_WARM_EMBEDDING_768, 'ioc.findings': _POLICY_IOC_FINDINGS, 'ioc.findings.bulk': _POLICY_IOC_FINDINGS, 'graph.ioc': _POLICY_GRAPH_IOC, 'graph.entities': _POLICY_GRAPH_IOC, 'qtable.federated': _POLICY_QTABLE, 'qtable.*': _POLICY_QTABLE, 'graph.edges_hot': _POLICY_HOT_EDGES, 'kv.persistent': _POLICY_KV_PERSISTENT, 'url.normalized': _POLICY_URL_NORMALIZED, 'url.*': _POLICY_URL_NORMALIZED, 'safetensors.kv_cache': _POLICY_SAFETENSORS}
+
+_POLICY_HOT_EMBEDDING_256: StoragePolicy = StoragePolicy(
+    kind=StorageKind.HOT,
+    max_bytes=512 * 1024 * 1024,
+    ttl_seconds=None,
+    persist=False,
+    spill_target=StorageKind.WARM,
+    invalidates=(StorageKind.WARM,),
+)
+_POLICY_WARM_EMBEDDING_768: StoragePolicy = StoragePolicy(
+    kind=StorageKind.WARM, max_bytes=8 * 1024**3, ttl_seconds=None, persist=True, invalidates=(StorageKind.COLD,)
+)
+_POLICY_IOC_FINDINGS: StoragePolicy = StoragePolicy(
+    kind=StorageKind.COLD, max_bytes=16 * 1024**3, ttl_seconds=None, persist=True
+)
+_POLICY_GRAPH_IOC: StoragePolicy = StoragePolicy(
+    kind=StorageKind.COLD, max_bytes=32 * 1024**3, ttl_seconds=None, persist=True
+)
+_POLICY_QTABLE: StoragePolicy = StoragePolicy(
+    kind=StorageKind.KEYVALUE, max_bytes=128 * 1024 * 1024, ttl_seconds=86400.0, persist=True
+)
+_POLICY_HOT_EDGES: StoragePolicy = StoragePolicy(
+    kind=StorageKind.KEYVALUE, max_bytes=32 * 1024 * 1024, ttl_seconds=None, persist=True
+)
+_POLICY_KV_PERSISTENT: StoragePolicy = StoragePolicy(
+    kind=StorageKind.KEYVALUE, max_bytes=64 * 1024 * 1024, ttl_seconds=3600.0, persist=True
+)
+_POLICY_URL_NORMALIZED: StoragePolicy = StoragePolicy(
+    kind=StorageKind.STRING, max_bytes=256 * 1024 * 1024, ttl_seconds=3600.0, persist=False
+)
+_POLICY_SAFETENSORS: StoragePolicy = StoragePolicy(
+    kind=StorageKind.STRING, max_bytes=1024 * 1024 * 1024, ttl_seconds=7 * 86400.0, persist=True
+)
+_POLICY_DEFAULT: StoragePolicy = StoragePolicy(
+    kind=StorageKind.COLD, max_bytes=16 * 1024**3, ttl_seconds=None, persist=True
+)
+_DECISION_MATRIX: dict[str, StoragePolicy] = {
+    "embedding.float16[256]": _POLICY_HOT_EMBEDDING_256,
+    "embedding.float16[384]": _POLICY_HOT_EMBEDDING_256,
+    "embedding.float16[*": _POLICY_HOT_EMBEDDING_256,
+    "embedding.float32[768]": _POLICY_WARM_EMBEDDING_768,
+    "embedding.float32[1024]": _POLICY_WARM_EMBEDDING_768,
+    "embedding.float32[*": _POLICY_WARM_EMBEDDING_768,
+    "ioc.findings": _POLICY_IOC_FINDINGS,
+    "ioc.findings.bulk": _POLICY_IOC_FINDINGS,
+    "graph.ioc": _POLICY_GRAPH_IOC,
+    "graph.entities": _POLICY_GRAPH_IOC,
+    "qtable.federated": _POLICY_QTABLE,
+    "qtable.*": _POLICY_QTABLE,
+    "graph.edges_hot": _POLICY_HOT_EDGES,
+    "kv.persistent": _POLICY_KV_PERSISTENT,
+    "url.normalized": _POLICY_URL_NORMALIZED,
+    "url.*": _POLICY_URL_NORMALIZED,
+    "safetensors.kv_cache": _POLICY_SAFETENSORS,
+}
+
 
 def _classify(data_kind: str) -> StoragePolicy:
     """Decision tree: data_kind string → StoragePolicy."""
     if data_kind in _DECISION_MATRIX:
         return _DECISION_MATRIX[data_kind]
     for key, policy in _DECISION_MATRIX.items():
-        if key.endswith('[*'):
+        if key.endswith("[*"):
             prefix = key[:-1]
             if data_kind.startswith(prefix):
                 return policy
-        elif '*' in key and fnmatch.fnmatch(data_kind, key):
+        elif "*" in key and fnmatch.fnmatch(data_kind, key):
             return policy
     return _POLICY_DEFAULT
 
-_INVALIDATION_CHAIN: dict[StorageKind, tuple[StorageKind, ...]] = {StorageKind.HOT: (StorageKind.WARM,), StorageKind.WARM: (StorageKind.COLD,), StorageKind.COLD: (StorageKind.KEYVALUE,), StorageKind.KEYVALUE: (), StorageKind.STRING: ()}
+
+_INVALIDATION_CHAIN: dict[StorageKind, tuple[StorageKind, ...]] = {
+    StorageKind.HOT: (StorageKind.WARM,),
+    StorageKind.WARM: (StorageKind.COLD,),
+    StorageKind.COLD: (StorageKind.KEYVALUE,),
+    StorageKind.KEYVALUE: (),
+    StorageKind.STRING: (),
+}
 
 
 # ── StorageRouter ─────────────────────────────────────────────────────────────
+
 
 class StorageRouter:
     """
@@ -189,18 +245,39 @@ class StorageRouter:
       On __aenter__: all backends that implement __aenter__ are entered.
       On __aexit__: all backends that implement __aexit__ are exited.
     """
-    __slots__ = tuple(('_backends', '_governor', '_invalidation_subscribers', '_routing_lock', '_stats'))
 
-    def __init__(self, governor: M1ResourceGovernor | None=None, hot_cache: Any | None=None, warm_store: Any | None=None, cold_store: Any | None=None, kv_store: Any | None=None, string_store: Any | None=None) -> None:
+    __slots__ = ("_backends", "_governor", "_invalidation_subscribers", "_routing_lock", "_stats")
+
+    def __init__(
+        self,
+        governor: M1ResourceGovernor | None = None,
+        hot_cache: Any | None = None,
+        warm_store: Any | None = None,
+        cold_store: Any | None = None,
+        kv_store: Any | None = None,
+        string_store: Any | None = None,
+    ) -> None:
         self._governor = governor
-        self._backends: dict[StorageKind, Any] = {StorageKind.HOT: hot_cache, StorageKind.WARM: warm_store, StorageKind.COLD: cold_store, StorageKind.KEYVALUE: kv_store, StorageKind.STRING: string_store}
+        self._backends: dict[StorageKind, Any] = {
+            StorageKind.HOT: hot_cache,
+            StorageKind.WARM: warm_store,
+            StorageKind.COLD: cold_store,
+            StorageKind.KEYVALUE: kv_store,
+            StorageKind.STRING: string_store,
+        }
         self._routing_lock: asyncio.Semaphore = asyncio.Semaphore(1)  # ISSUE #046
-        self._invalidation_subscribers: dict[StorageKind, list] = {StorageKind.HOT: [], StorageKind.WARM: [], StorageKind.COLD: [], StorageKind.KEYVALUE: [], StorageKind.STRING: []}
-        self._stats: dict[str, Any] = {'puts': 0, 'gets': 0, 'misses': 0, 'spills': 0, 'invalidations': 0}
+        self._invalidation_subscribers: dict[StorageKind, list] = {
+            StorageKind.HOT: [],
+            StorageKind.WARM: [],
+            StorageKind.COLD: [],
+            StorageKind.KEYVALUE: [],
+            StorageKind.STRING: [],
+        }
+        self._stats: dict[str, Any] = {"puts": 0, "gets": 0, "misses": 0, "spills": 0, "invalidations": 0}
 
     # ── Async Context Manager (ISSUE #046) ─────────────────────────────────────
 
-    async def __aenter__(self) -> 'StorageRouter':
+    async def __aenter__(self) -> StorageRouter:
         """
         Async context manager entry — ISSUE #046.
 
@@ -219,10 +296,10 @@ class StorageRouter:
             if backend is None:
                 continue
             try:
-                if isinstance(backend, AsyncStorageBackendProtocol) or hasattr(backend, '__aenter__'):
+                if isinstance(backend, AsyncStorageBackendProtocol) or hasattr(backend, "__aenter__"):
                     await backend.__aenter__()
             except Exception as e:
-                logger.debug('[StorageRouter] backend %s __aenter__ failed: %s', kind.value, e)
+                logger.debug("[StorageRouter] backend %s __aenter__ failed: %s", kind.value, e)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -241,10 +318,10 @@ class StorageRouter:
             if backend is None:
                 continue
             try:
-                if isinstance(backend, AsyncStorageBackendProtocol) or hasattr(backend, '__aexit__'):
+                if isinstance(backend, AsyncStorageBackendProtocol) or hasattr(backend, "__aexit__"):
                     await backend.__aexit__(exc_type, exc_val, exc_tb)
             except Exception as e:
-                logger.debug('[StorageRouter] backend %s __aexit__ failed: %s', kind.value, e)
+                logger.debug("[StorageRouter] backend %s __aexit__ failed: %s", kind.value, e)
 
     # ── Async acquire / release (ISSUE #046) ───────────────────────────────────
 
@@ -291,11 +368,15 @@ class StorageRouter:
             return policy
         try:
             uma_state = self._governor.sample_uma_status()
-            if uma_state.uma_state in ('emergency', 'critical'):
+            if uma_state.uma_state in ("emergency", "critical"):
                 if policy.kind == StorageKind.HOT and policy.spill_target:
-                    logger.warning('[StorageRouter] emergency pressure — spilling %s → %s', policy.kind.value, policy.spill_target.value)
-                    self._stats['spills'] += 1
-                    return _DECISION_MATRIX.get('embedding.float32[768]', _POLICY_WARM_EMBEDDING_768)
+                    logger.warning(
+                        "[StorageRouter] emergency pressure — spilling %s → %s",
+                        policy.kind.value,
+                        policy.spill_target.value,
+                    )
+                    self._stats["spills"] += 1
+                    return _DECISION_MATRIX.get("embedding.float32[768]", _POLICY_WARM_EMBEDDING_768)
         except Exception:  # noqa: BLE001
             pass
         return policy
@@ -314,7 +395,7 @@ class StorageRouter:
         Returns:
             True if stored, False on error/miss.
         """
-        self._stats['puts'] += 1
+        self._stats["puts"] += 1
         try:
             base_policy = self.classify(data_kind)
             policy = self._spill_policy(base_policy)
@@ -326,7 +407,7 @@ class StorageRouter:
             self._notify_invalidation(policy.kind, key)
             return stored
         except Exception as e:
-            logger.debug('[StorageRouter] put failed for %s: %s', key, e)
+            logger.debug("[StorageRouter] put failed for %s: %s", key, e)
             return False
 
     def get(self, key: str, *, data_kind: str) -> Any:
@@ -336,7 +417,7 @@ class StorageRouter:
         Returns:
             Stored value or None on miss.
         """
-        self._stats['gets'] += 1
+        self._stats["gets"] += 1
         base_policy = self.classify(data_kind)
         policy = self._spill_policy(base_policy)
         candidates = [policy.kind]
@@ -351,13 +432,13 @@ class StorageRouter:
             try:
                 value = self._backend_get(backend, key)
             except Exception as e:
-                logger.debug('[StorageRouter] get miss kind=%s key=%s: %s', kind.value, key, e)
+                logger.debug("[StorageRouter] get miss kind=%s key=%s: %s", kind.value, key, e)
                 continue
             if value is not None:
                 if kind != policy.kind:
                     self.put(key, value, data_kind=data_kind)
                 return value
-        self._stats['misses'] += 1
+        self._stats["misses"] += 1
         return None
 
     def delete(self, key: str, *, data_kind: str) -> bool:
@@ -374,7 +455,7 @@ class StorageRouter:
             try:
                 deleted = self._backend_delete(backend, key)
             except Exception as e:
-                logger.debug('[StorageRouter] delete failed %s: %s', key, e)
+                logger.debug("[StorageRouter] delete failed %s: %s", key, e)
         if deleted:
             self._notify_invalidation(policy.kind, key)
         return deleted
@@ -393,7 +474,7 @@ class StorageRouter:
         Returns:
             True if stored, False on error/miss.
         """
-        self._stats['puts'] += 1
+        self._stats["puts"] += 1
         async with self._routing_lock:
             try:
                 base_policy = self.classify(data_kind)
@@ -407,7 +488,7 @@ class StorageRouter:
                 self._notify_invalidation(policy.kind, key)
                 return stored
             except Exception as e:
-                logger.debug('[StorageRouter] aput failed for %s: %s', key, e)
+                logger.debug("[StorageRouter] aput failed for %s: %s", key, e)
                 return False
 
     async def aget(self, key: str, *, data_kind: str) -> Any:
@@ -421,7 +502,7 @@ class StorageRouter:
         Returns:
             Stored value or None on miss.
         """
-        self._stats['gets'] += 1
+        self._stats["gets"] += 1
         base_policy = self.classify(data_kind)
         policy = self._spill_policy(base_policy)
         candidates = [policy.kind]
@@ -436,13 +517,13 @@ class StorageRouter:
             try:
                 value = await offload_to("cpu_io_pool", self._backend_get, backend, key)
             except Exception as e:
-                logger.debug('[StorageRouter] aget miss kind=%s key=%s: %s', kind.value, key, e)
+                logger.debug("[StorageRouter] aget miss kind=%s key=%s: %s", kind.value, key, e)
                 continue
             if value is not None:
                 if kind != policy.kind:
                     await self.aput(key, value, data_kind=data_kind)
                 return value
-        self._stats['misses'] += 1
+        self._stats["misses"] += 1
         return None
 
     async def adelete(self, key: str, *, data_kind: str) -> bool:
@@ -464,60 +545,60 @@ class StorageRouter:
                 try:
                     deleted = await offload_to("cpu_io_pool", self._backend_delete, backend, key)
                 except Exception as e:
-                    logger.debug('[StorageRouter] adelete failed %s: %s', key, e)
+                    logger.debug("[StorageRouter] adelete failed %s: %s", key, e)
             if deleted:
                 self._notify_invalidation(policy.kind, key)
             return deleted
 
     # ── Backend delegation (duck-typed) ─────────────────────────────────────────
 
-    def _backend_put(self, backend: Any, key: str, value: Any, _policy: StoragePolicy | None=None) -> bool:
+    def _backend_put(self, backend: Any, key: str, value: Any, _policy: StoragePolicy | None = None) -> bool:
         """Call backend.put()/set()/upsert()/store(). Fail-safe."""
         try:
-            if hasattr(backend, 'put'):
+            if hasattr(backend, "put"):
                 result = backend.put(key, value)
                 return result is not False
-            if hasattr(backend, 'set'):
+            if hasattr(backend, "set"):
                 result = backend.set(key, value)
                 return result is not False
-            if hasattr(backend, 'upsert'):
+            if hasattr(backend, "upsert"):
                 backend.upsert(key, value)
                 return True
-            if hasattr(backend, 'store'):
+            if hasattr(backend, "store"):
                 backend.store(key, value)
                 return True
-            logger.warning('[StorageRouter] backend %s has no put/set/upsert/store', type(backend).__name__)
+            logger.warning("[StorageRouter] backend %s has no put/set/upsert/store", type(backend).__name__)
             return False
         except Exception as e:
-            logger.debug('[StorageRouter] backend put failed: %s', e)
+            logger.debug("[StorageRouter] backend put failed: %s", e)
             return False
 
     def _backend_get(self, backend: Any, key: str) -> Any:
         """Call backend.get()/lookup()/fetch(). Fail-safe."""
         try:
-            if hasattr(backend, 'get'):
+            if hasattr(backend, "get"):
                 return backend.get(key)
-            if hasattr(backend, 'lookup'):
+            if hasattr(backend, "lookup"):
                 return backend.lookup(key)
-            if hasattr(backend, 'fetch'):
+            if hasattr(backend, "fetch"):
                 return backend.fetch(key)
             return None
         except Exception as e:
-            logger.debug('[StorageRouter] backend get failed: %s', e)
+            logger.debug("[StorageRouter] backend get failed: %s", e)
             return None
 
     def _backend_delete(self, backend: Any, key: str) -> bool:
         """Call backend.delete()/remove(). Fail-safe."""
         try:
-            if hasattr(backend, 'delete'):
+            if hasattr(backend, "delete"):
                 result = backend.delete(key)
                 return result is True or result is None
-            if hasattr(backend, 'remove'):
+            if hasattr(backend, "remove"):
                 backend.remove(key)
                 return True
             return False
         except Exception as e:
-            logger.debug('[StorageRouter] backend delete failed: %s', e)
+            logger.debug("[StorageRouter] backend delete failed: %s", e)
             return False
 
     # ── Invalidation & Stats ───────────────────────────────────────────────────
@@ -529,17 +610,17 @@ class StorageRouter:
             for callback in self._invalidation_subscribers.get(kind, []):
                 try:
                     callback(key, source_kind=source_kind)
-                    self._stats['invalidations'] += 1
+                    self._stats["invalidations"] += 1
                 except Exception as e:
-                    logger.debug('[StorageRouter] invalidation callback failed %s.%s: %s', kind.value, key, e)
+                    logger.debug("[StorageRouter] invalidation callback failed %s.%s: %s", kind.value, key, e)
 
     def get_stats(self) -> dict[str, Any]:
         """Return router telemetry + per-backend stats."""
         stats = dict(self._stats)
         for kind, backend in self._backends.items():
-            if backend is not None and hasattr(backend, 'get_stats'):
+            if backend is not None and hasattr(backend, "get_stats"):
                 try:
-                    stats[f'backend.{kind.value}'] = backend.get_stats()
+                    stats[f"backend.{kind.value}"] = backend.get_stats()
                 except Exception:  # noqa: BLE001
                     pass
         return stats
@@ -550,13 +631,15 @@ class StorageRouter:
 _router: StorageRouter | None = None
 _router_lock = LazyAsyncioLock()
 
-async def get_storage_router(governor: M1ResourceGovernor | None=None) -> StorageRouter:
+
+async def get_storage_router(governor: M1ResourceGovernor | None = None) -> StorageRouter:
     """Get or create the global StorageRouter singleton."""
     global _router
     async with _router_lock:
         if _router is None:
             _router = StorageRouter(governor=governor)
         return _router
+
 
 def reset_storage_router() -> None:
     """Reset router singleton (for testing)."""

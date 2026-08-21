@@ -18,7 +18,6 @@ Why these tests exist:
 Hermetic: each test uses a tempfile-backed LMDB env, no shared state.
 """
 
-
 import os
 import tempfile
 import time
@@ -31,7 +30,7 @@ from hledac.universal.utils.lmdb_bulk import (  # noqa: E402
     DEFAULT_BULK_BATCH,
     putmulti_bounded,
     putmulti_safe,
-    )
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -63,27 +62,27 @@ def _make_pairs(n: int, prefix: bytes = b"k") -> list[tuple[bytes, bytes]]:
 class TestPutmultiBoundedCorrectness:
     """Round-trip: write N items, read them back, assert equal."""
 
-    def test_writes_all_items(self, lmdb_env):
+    def test_writes_all_items(self, lmdb_env) -> None:
         items = _make_pairs(10)
         written = putmulti_bounded(lmdb_env, items)
         assert written == 10
 
-    def test_round_trip_values(self, lmdb_env):
+    def test_round_trip_values(self, lmdb_env) -> None:
         items = _make_pairs(50)
         putmulti_bounded(lmdb_env, items)
         with lmdb_env.begin() as txn:
             for k, v in items:
                 assert txn.get(k) == v, f"key {k!r} missing or wrong value"
 
-    def test_empty_items_is_noop(self, lmdb_env):
+    def test_empty_items_is_noop(self, lmdb_env) -> None:
         assert putmulti_bounded(lmdb_env, []) == 0
         with lmdb_env.begin() as txn:
             assert txn.get(b"anything") is None
 
-    def test_none_env_is_noop(self):
+    def test_none_env_is_noop(self) -> None:
         assert putmulti_bounded(None, _make_pairs(5)) == 0
 
-    def test_accepts_mapping_pairs(self, lmdb_env):
+    def test_accepts_mapping_pairs(self, lmdb_env) -> None:
         # Each item is a 1-entry mapping {k: v}
         items = [{f"k{i}".encode(): f"v{i}".encode()} for i in range(7)]
         written = putmulti_bounded(lmdb_env, items)
@@ -92,7 +91,7 @@ class TestPutmultiBoundedCorrectness:
             for i in range(7):
                 assert txn.get(f"k{i}".encode()) == f"v{i}".encode()
 
-    def test_accepts_mixed_pairs(self, lmdb_env):
+    def test_accepts_mixed_pairs(self, lmdb_env) -> None:
         items: list = [
             (b"a", b"1"),
             {b"b": b"2"},
@@ -114,7 +113,7 @@ class TestPutmultiBoundedCorrectness:
 class TestPutmultiBoundedBatching:
     """Verify that large N gets chunked into max_batch-sized transactions."""
 
-    def test_max_batch_smaller_than_items_chunks(self, lmdb_env, monkeypatch):
+    def test_max_batch_smaller_than_items_chunks(self, lmdb_env, monkeypatch) -> None:
         items = _make_pairs(25)
         # Force tiny batch -> 5 commits of 5 items each
         written = putmulti_bounded(lmdb_env, items, max_batch=5)
@@ -123,19 +122,19 @@ class TestPutmultiBoundedBatching:
             for k, v in items:
                 assert txn.get(k) == v
 
-    def test_max_batch_clamped_to_min(self, lmdb_env):
+    def test_max_batch_clamped_to_min(self, lmdb_env) -> None:
         # max_batch=0 should clamp to 1, not infinite-loop or skip
         items = _make_pairs(3)
         written = putmulti_bounded(lmdb_env, items, max_batch=0)
         assert written == 3
 
-    def test_max_batch_clamped_to_max(self, lmdb_env):
+    def test_max_batch_clamped_to_max(self, lmdb_env) -> None:
         # Caller asking for 100_000 should clamp to 10_000 (defensive)
         items = _make_pairs(20)
         written = putmulti_bounded(lmdb_env, items, max_batch=100_000)
         assert written == 20
 
-    def test_default_max_batch_is_500(self):
+    def test_default_max_batch_is_500(self) -> None:
         assert DEFAULT_BULK_BATCH == 500
 
 
@@ -147,13 +146,13 @@ class TestPutmultiBoundedBatching:
 class TestPutmultiBoundedSemantics:
     """Verify overwrite and append flags match LMDB C-API behaviour."""
 
-    def test_overwrite_true_replaces_value(self, lmdb_env):
+    def test_overwrite_true_replaces_value(self, lmdb_env) -> None:
         putmulti_bounded(lmdb_env, [(b"k", b"old")])
         putmulti_bounded(lmdb_env, [(b"k", b"new")], overwrite=True)
         with lmdb_env.begin() as txn:
             assert txn.get(b"k") == b"new"
 
-    def test_overwrite_false_appends_duplicate(self, lmdb_env):
+    def test_overwrite_false_appends_duplicate(self, lmdb_env) -> None:
         # Default for non-multi-value DB: behaves like overwrite=False
         # would duplicate — we just verify our flag is forwarded to LMDB.
         putmulti_bounded(lmdb_env, [(b"k", b"first")], overwrite=True)
@@ -170,20 +169,20 @@ class TestPutmultiBoundedSemantics:
 class TestPutmultiBoundedFailsafe:
     """putmulti_safe must never raise, even on garbage input."""
 
-    def test_putmulti_safe_garbage_input_returns_zero(self):
+    def test_putmulti_safe_garbage_input_returns_zero(self) -> None:
         result = putmulti_safe(None, "not a list")
         assert result == 0
 
-    def test_putmulti_safe_bad_item_returns_zero(self, lmdb_env):
+    def test_putmulti_safe_bad_item_returns_zero(self, lmdb_env) -> None:
         result = putmulti_safe(lmdb_env, [(1, 2, 3)])  # wrong tuple length
         assert result == 0
 
-    def test_putmulti_safe_empty_mapping_raises_typeerror_caught(self, lmdb_env):
+    def test_putmulti_safe_empty_mapping_raises_typeerror_caught(self, lmdb_env) -> None:
         # {a:1, b:2} -> TypeError from normalise -> caught -> 0
         result = putmulti_safe(lmdb_env, [{b"a": b"1", b"b": b"2"}])
         assert result == 0
 
-    def test_putmulti_bounded_logs_on_error(self, lmdb_env, caplog):
+    def test_putmulti_bounded_logs_on_error(self, lmdb_env, caplog) -> None:
         # Pass an unhashable item that will fail in LMDB C-API
         with caplog.at_level("WARNING"):
             # Use a list as a key — LMDB requires bytes
@@ -191,7 +190,7 @@ class TestPutmultiBoundedFailsafe:
         # Should not raise; may return 0 or 1 depending on how LMDB rejects
         assert result in (0, 1)
 
-    def test_putmulti_safe_closed_env_returns_zero(self):
+    def test_putmulti_safe_closed_env_returns_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = lmdb.open(os.path.join(tmp, "db"), map_size=1024 * 1024)
             env.close()
@@ -215,7 +214,7 @@ class TestPutmultiBoundedPerformance:
     C-API putmulti). We assert >= 1.5× to detect gross regressions.
     """
 
-    def test_bulk_faster_than_peritem_transactions(self, lmdb_env):
+    def test_bulk_faster_than_peritem_transactions(self, lmdb_env) -> None:
         n = 500
         items = _make_pairs(n)
 
@@ -238,9 +237,8 @@ class TestPutmultiBoundedPerformance:
 
         # Direction: bulk should be >= 1.5× faster (M1: typically ~3×)
         assert bulk_elapsed * 1.5 < peritem_elapsed, (
-            f"bulk should be faster: per-item-txns={peritem_elapsed*1000:.1f}ms "
-            f"vs bulk={bulk_elapsed*1000:.1f}ms"
-    )
+            f"bulk should be faster: per-item-txns={peritem_elapsed * 1000:.1f}ms vs bulk={bulk_elapsed * 1000:.1f}ms"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +262,6 @@ class TestPutmultiBoundedPerformance:
 # ---------------------------------------------------------------------------
 import ast as _ast  # noqa: E402
 from pathlib import Path as _Path  # noqa: E402
-from _core import aclose
 
 _S3_AUDIT_FILES = [
     "tools/lmdb_kv.py",
@@ -320,10 +317,7 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
             ctx = item.context_expr
             # Walk Call nodes looking for .begin(write=True)
             for sub in _ast.walk(ctx):
-                if (
-                    isinstance(sub, _ast.Call)
-                    and getattr(sub, "keywords", None)
-                ):
+                if isinstance(sub, _ast.Call) and getattr(sub, "keywords", None):
                     is_begin = False
                     has_write_kw = False
                     # Check func is .begin
@@ -331,9 +325,7 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
                     if isinstance(func, _ast.Attribute) and func.attr == "begin":
                         is_begin = True
                     for kw in sub.keywords:
-                        if kw.arg == "write" and isinstance(
-                            kw.value, _ast.Constant
-                        ) and kw.value.value is True:
+                        if kw.arg == "write" and isinstance(kw.value, _ast.Constant) and kw.value.value is True:
                             has_write_kw = True
                     if is_begin and has_write_kw:
                         is_lmdb_write_txn = True
@@ -350,25 +342,17 @@ def _scan_peritem_in_loops(path: _Path) -> list[tuple[int, str]]:
                 lineno = getattr(node, "lineno", 0)
                 # Get the source line for the snippet
                 src_lines = source.splitlines()
-                snippet = (
-                    src_lines[lineno - 1].strip() if 0 < lineno <= len(src_lines) else "?"
-    )
+                snippet = src_lines[lineno - 1].strip() if 0 < lineno <= len(src_lines) else "?"
                 # Filter out obvious non-per-item patterns:
                 # - if there's a for loop INSIDE the same `with` block
                 #   (single-txn batch — correct)
                 # We detect by scanning children of the with's body
                 # for nested For/While.
                 body = getattr(node, "body", [])
-                has_inner_loop = any(
-                    isinstance(child, (_ast.For, _ast.While, _ast.AsyncFor))
-                    for child in body
-    )
+                has_inner_loop = any(isinstance(child, (_ast.For, _ast.While, _ast.AsyncFor)) for child in body)
                 # Also check if any enclosing ancestor is an AsyncFunctionDef
                 # (parallel gather pattern — correct)
-                in_async_fn = any(
-                    isinstance(anc, _ast.AsyncFunctionDef)
-                    for anc in ancestors
-    )
+                in_async_fn = any(isinstance(anc, _ast.AsyncFunctionDef) for anc in ancestors)
                 # GHOST_INVARIANT fix (Sprint 6.9): cursor.putmulti() inside
                 # the with-block is the CORRECT bulk-write pattern — even if the
                 # with is inside a for-loop (batching). The anti-pattern is
@@ -410,34 +394,31 @@ class TestS3BulkWriteAudit:
     = N transactions = N mmaps + N writer mutex acquires = ~10× slower.
     """
 
-    def test_no_peritem_in_loops_tools(self):
+    def test_no_peritem_in_loops_tools(self) -> None:
         for rel in ("tools/lmdb_kv.py", "tools/session_manager.py", "tools/source_bandit.py"):
             findings = _scan_peritem_in_loops(_Path(rel))
-            assert findings == [], (
-                f"{rel}: per-item env.begin(write=True) in loop:\n"
-                + "\n".join(f"  L{l}: {s}" for l, s in findings)
-    )
+            assert findings == [], f"{rel}: per-item env.begin(write=True) in loop:\n" + "\n".join(
+                f"  L{l}: {s}" for l, s in findings
+            )
 
-    def test_no_peritem_in_loops_memory(self):
+    def test_no_peritem_in_loops_memory(self) -> None:
         for rel in ("memory/memory_manager.py", "semantic_deduplicator.py", "dht/local_graph.py"):
             findings = _scan_peritem_in_loops(_Path(rel))
-            assert findings == [], (
-                f"{rel}: per-item env.begin(write=True) in loop:\n"
-                + "\n".join(f"  L{l}: {s}" for l, s in findings)
-    )
+            assert findings == [], f"{rel}: per-item env.begin(write=True) in loop:\n" + "\n".join(
+                f"  L{l}: {s}" for l, s in findings
+            )
 
-    def test_no_peritem_in_loops_runtime(self):
+    def test_no_peritem_in_loops_runtime(self) -> None:
         for rel in (
             "runtime/enrichment_services.py",
             "runtime/sprint_scheduler.py",
         ):
             findings = _scan_peritem_in_loops(_Path(rel))
-            assert findings == [], (
-                f"{rel}: per-item env.begin(write=True) in loop:\n"
-                + "\n".join(f"  L{l}: {s}" for l, s in findings)
-    )
+            assert findings == [], f"{rel}: per-item env.begin(write=True) in loop:\n" + "\n".join(
+                f"  L{l}: {s}" for l, s in findings
+            )
 
-    def test_canonical_write_uses_bulk_text(self):
+    def test_canonical_write_uses_bulk_text(self) -> None:
         """The canonical write path (DuckDBShadowStore) must use batch,
         not per-item. AST/text check avoids needing to import the module
         (which transitively pulls in tools.url_dedup and its pre-existing
@@ -458,11 +439,9 @@ class TestS3BulkWriteAudit:
             end = idx + 5000
         body = source[idx:end]
         assert "wal_put_many" in body, "canonical batch must use wal_put_many"
-        assert "env.begin(write=True)" not in body, (
-            "canonical batch must not open per-item write transactions"
-    )
+        assert "env.begin(write=True)" not in body, "canonical batch must not open per-item write transactions"
 
-    def test_putmulti_bounded_used_in_dedup_flush_text(self):
+    def test_putmulti_bounded_used_in_dedup_flush_text(self) -> None:
         """_flush_dedup must use putmulti_bounded for N-hash bulk write.
         Text-based check (no import) to avoid transitive pre-existing
         url_dedup NameError."""
@@ -483,7 +462,4 @@ class TestS3BulkWriteAudit:
             end = idx + 3000
         body = source[idx:end]
         assert "putmulti_bounded" in body, "_flush_dedup must use putmulti_bounded"
-        assert "env.begin(write=True)" not in body, (
-            "_flush_dedup must not use per-item env.begin(write=True)"
-    )
-
+        assert "env.begin(write=True)" not in body, "_flush_dedup must not use per-item env.begin(write=True)"

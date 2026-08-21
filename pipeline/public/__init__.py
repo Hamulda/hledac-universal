@@ -18,6 +18,7 @@ F360-REFACTOR: This module now serves as the stable public API contract surface.
 Note: This module uses deferred imports via __getattr__ to avoid circular
 dependency issues with the hledac.universal namespace.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
@@ -31,22 +32,19 @@ def __getattr__(name: str) -> Any:
     # Import types from _phases (stable contract surface)
     if name in ("PipelinePageResult", "PipelineRunResult", "DiscoveryPhaseResult", "PipelineContext"):
         from pipeline.public import _phases as _m
+
         return getattr(_m, name)
-    
-    # Import main entry point lazily
+
     if name == "async_run_live_public_pipeline":
         from pipeline.live_public_pipeline import async_run_live_public_pipeline as _fn
+
         return _fn
-    
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-
-
-# ----------------------------------------------------------------------
-# ContractSurface Protocol — stable public API contract
-# ----------------------------------------------------------------------
 
 
 class ContractSurface(Protocol):
@@ -62,7 +60,7 @@ class ContractSurface(Protocol):
     async def __call__(
         self,
         query: str,
-        store: "DuckDBShadowStore | None" = None,
+        store: DuckDBShadowStore | None = None,
         *,
         max_results: int = 10,
         fetch_timeout_s: float = 35.0,
@@ -85,7 +83,7 @@ class ContractSurface(Protocol):
         clear_query_cache_fn: Any | None = None,
         export_dir: str | None = None,
         _sprint_id: str = "",
-    ) -> "PipelineRunResult":
+    ) -> PipelineRunResult:
         """Run the live public OSINT pipeline.
 
         Args:

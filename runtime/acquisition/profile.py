@@ -14,13 +14,10 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # ── Lane membership per profile ─────────────────────────────────────────────────
 # Imported from lane_registry to avoid duplication.
 # Re-exported here for convenience (profile.lanes is the canonical access point).
-
 from hledac.universal.runtime.lane_registry import LaneRegistry as _LR
-from _core import aclose
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
 # F266-U1: threat_intel added to enable ACADEMIC lane for threat intelligence queries
@@ -92,10 +89,17 @@ def normalize_acquisition_profile(profile: str | None) -> dict[str, Any]:
       - Fail-safe: always returns a valid dict
       - Deterministic: same input always same output
     """
-    _CANONICAL = frozenset([
-        "default", "nonfeed_diagnostic", "deep_osint_m1",
-        "research", "academic", "geopolitical", "threat_intel",
-    ])
+    _CANONICAL = frozenset(
+        [
+            "default",
+            "nonfeed_diagnostic",
+            "deep_osint_m1",
+            "research",
+            "academic",
+            "geopolitical",
+            "threat_intel",
+        ]
+    )
     _input = profile
     _effective = profile
     _normalized = False

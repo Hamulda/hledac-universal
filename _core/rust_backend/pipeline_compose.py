@@ -29,10 +29,8 @@ Available named predicates for FILTER / FILTER_MAP:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 def get_domain() -> "PipelineComposeDomain":
@@ -144,10 +142,6 @@ class PipelineComposeDomain:
         """
         return self._ext.pipeline_batch_stats(items)
 
-
-# ---------------------------------------------------------------------------
-# Python fallback — used when Rust extension is unavailable
-# ---------------------------------------------------------------------------
 
 
 class PythonFallbackPipelineDomain:

@@ -10,19 +10,20 @@ These backends are available to InferenceCoordinator:
 MlxcelBackend: Out-of-process mlxcel via MlxcelIpcClient (JSON-RPC over UDS)
 CoreMLBackend: CoreML FastAPI microservice via CoreMLClient (http://127.0.0.1:8765)
 """
+
 from __future__ import annotations
 
 # CRITICAL: Import core.inference_coordinator FIRST to set TYPE_CHECKING=True.
 # This ensures TYPE_CHECKING=False when backend modules import it,
 # avoiding the "Any cannot be instantiated" bug.
 from hledac.universal._core.inference_coordinator import (
+    IInferenceBackend,
     InferenceBackend,
     InferenceError,
     InferenceRequest,
     InferenceResponse,
-    IInferenceBackend,
     Token,
-    )
+)
 
 # Now import backends (TYPE_CHECKING is now False in these modules,
 # but InferenceResponse is the real class from above)

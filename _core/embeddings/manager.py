@@ -9,21 +9,22 @@ Metal buffers pre-warmed on load; mx.eval([]) barrier before clear_cache().
 Streaming batcher: AdaptiveEmbeddingBatcher with per-batch memory pressure feedback
 reduces peak RSS by 30%+ on M1 8GB by dynamically adjusting batch size mid-stream.
 """
+
 import asyncio
 import logging
 import threading
-import msgspec
 import time
 import warnings
-from enum import Enum
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
-from collections.abc import AsyncIterator, Awaitable, Callable
+
 import numpy as np
 
 from _core.lock_registry import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
+
 
 class AdaptiveEmbeddingBatcher:
     """
@@ -48,9 +49,29 @@ class AdaptiveEmbeddingBatcher:
         - Batch size never exceeds max_batch_size
         - Zero texts returns empty immediately
     """
-    __slots__ = ('_initial_batch_size', '_min_batch_size', '_max_batch_size', '_pressure_high', '_pressure_low', '_scale_up_factor', '_scale_down_factor', '_stats')
 
-    def __init__(self, initial_batch_size: int=32, min_batch_size: int=4, max_batch_size: int=128, *, pressure_high: float=0.8, pressure_low: float=0.5, scale_up_factor: float=1.5, scale_down_factor: float=0.5) -> None:
+    __slots__ = (
+        "_initial_batch_size",
+        "_min_batch_size",
+        "_max_batch_size",
+        "_pressure_high",
+        "_pressure_low",
+        "_scale_up_factor",
+        "_scale_down_factor",
+        "_stats",
+    )
+
+    def __init__(
+        self,
+        initial_batch_size: int = 32,
+        min_batch_size: int = 4,
+        max_batch_size: int = 128,
+        *,
+        pressure_high: float = 0.8,
+        pressure_low: float = 0.5,
+        scale_up_factor: float = 1.5,
+        scale_down_factor: float = 0.5,
+    ) -> None:
         self._initial_batch_size = initial_batch_size
         self._min_batch_size = min_batch_size
         self._max_batch_size = max_batch_size
@@ -58,11 +79,17 @@ class AdaptiveEmbeddingBatcher:
         self._pressure_low = pressure_low
         self._scale_up_factor = scale_up_factor
         self._scale_down_factor = scale_down_factor
-        self._stats: dict[str, int | float] = {'batches_processed': 0, 'memory_pressure_events': 0, 'total_texts': 0, 'peak_batch_size': initial_batch_size, 'min_batch_size_used': initial_batch_size}
+        self._stats: dict[str, int | float] = {
+            "batches_processed": 0,
+            "memory_pressure_events": 0,
+            "total_texts": 0,
+            "peak_batch_size": initial_batch_size,
+            "min_batch_size_used": initial_batch_size,
+        }
 
     def _record_batch_size(self, batch_size: int) -> None:
-        self._stats['peak_batch_size'] = max(self._stats['peak_batch_size'], batch_size)
-        self._stats['min_batch_size_used'] = min(self._stats['min_batch_size_used'], batch_size)
+        self._stats["peak_batch_size"] = max(self._stats["peak_batch_size"], batch_size)
+        self._stats["min_batch_size_used"] = min(self._stats["min_batch_size_used"], batch_size)
 
     async def _get_pressure(self, memory_provider: Callable[[], float] | Callable[[], Awaitable[float]]) -> float:
         """Get current memory pressure as float (0.0-1.0)."""
@@ -80,9 +107,14 @@ class AdaptiveEmbeddingBatcher:
         arbiter = get_gpu_arbiter()
         if arbiter.should_defer():
             if not await arbiter.wait_until_free():
-                logger.debug('[AdaptiveBatcher] GPU arbiter timeout — proceeding anyway')
+                logger.debug("[AdaptiveBatcher] GPU arbiter timeout — proceeding anyway")
 
-    async def process(self, texts: list[str], embedder: 'MLXEmbeddingManager', memory_provider: Callable[[], float] | Callable[[], Awaitable[float]]) -> list[list[float]]:
+    async def process(
+        self,
+        texts: list[str],
+        embedder: MLXEmbeddingManager,
+        memory_provider: Callable[[], float] | Callable[[], Awaitable[float]],
+    ) -> list[list[float]]:
         """
         Process all texts with dynamic batch sizing.
 
@@ -102,7 +134,7 @@ class AdaptiveEmbeddingBatcher:
         """
         if not texts:
             return []
-        self._stats['total_texts'] = len(texts)
+        self._stats["total_texts"] = len(texts)
         results: list[list[float]] = []
         current_batch_size = self._initial_batch_size
         i = 0
@@ -112,31 +144,36 @@ class AdaptiveEmbeddingBatcher:
                 new_size = max(self._min_batch_size, int(current_batch_size * self._scale_down_factor))
                 if new_size < current_batch_size:
                     current_batch_size = new_size
-                    self._stats['memory_pressure_events'] += 1
-                    logger.debug(f'[AdaptiveBatcher] Pressure {pressure:.2f} → shrinking to {current_batch_size}')
+                    self._stats["memory_pressure_events"] += 1
+                    logger.debug(f"[AdaptiveBatcher] Pressure {pressure:.2f} → shrinking to {current_batch_size}")
             elif pressure <= self._pressure_low and current_batch_size < self._max_batch_size:
                 new_size = min(self._max_batch_size, int(current_batch_size * self._scale_up_factor))
                 if new_size > current_batch_size:
                     current_batch_size = new_size
-                    logger.debug(f'[AdaptiveBatcher] Pressure {pressure:.2f} → growing to {current_batch_size}')
+                    logger.debug(f"[AdaptiveBatcher] Pressure {pressure:.2f} → growing to {current_batch_size}")
             self._record_batch_size(current_batch_size)
-            batch = texts[i:i + current_batch_size]
+            batch = texts[i : i + current_batch_size]
             try:
                 await self._gpu_arbiter_defer()
                 batch_result = await embedder.encode_async(batch, batch_size=len(batch))
-                if hasattr(batch_result, 'tolist'):
+                if hasattr(batch_result, "tolist"):
                     results.extend(batch_result.tolist())
                 else:
                     results.extend(batch_result)
             except Exception as e:
-                logger.warning(f'[AdaptiveBatcher] Batch encode failed: {e}')
+                logger.warning(f"[AdaptiveBatcher] Batch encode failed: {e}")
                 zero_emb = [0.0] * embedder.EMBEDDING_DIM
                 results.extend([zero_emb] * len(batch))
             i += current_batch_size
-            self._stats['batches_processed'] += 1
+            self._stats["batches_processed"] += 1
         return results
 
-    async def process_streaming(self, texts: list[str], embedder: 'MLXEmbeddingManager', memory_provider: Callable[[], float] | Callable[[], Awaitable[float]]) -> AsyncIterator[tuple[list[int], np.ndarray]]:
+    async def process_streaming(
+        self,
+        texts: list[str],
+        embedder: MLXEmbeddingManager,
+        memory_provider: Callable[[], float] | Callable[[], Awaitable[float]],
+    ) -> AsyncIterator[tuple[list[int], np.ndarray]]:
         """
         Streaming variant — yields (indices, embeddings) per batch.
 
@@ -157,7 +194,7 @@ class AdaptiveEmbeddingBatcher:
         """
         if not texts:
             return
-        self._stats['total_texts'] = len(texts)
+        self._stats["total_texts"] = len(texts)
         current_batch_size = self._initial_batch_size
         i = 0
         while i < len(texts):
@@ -166,31 +203,32 @@ class AdaptiveEmbeddingBatcher:
                 new_size = max(self._min_batch_size, int(current_batch_size * self._scale_down_factor))
                 if new_size < current_batch_size:
                     current_batch_size = new_size
-                    self._stats['memory_pressure_events'] += 1
-                    logger.debug(f'[AdaptiveBatcher] Pressure {pressure:.2f} → shrinking to {current_batch_size}')
+                    self._stats["memory_pressure_events"] += 1
+                    logger.debug(f"[AdaptiveBatcher] Pressure {pressure:.2f} → shrinking to {current_batch_size}")
             elif pressure <= self._pressure_low and current_batch_size < self._max_batch_size:
                 new_size = min(self._max_batch_size, int(current_batch_size * self._scale_up_factor))
                 if new_size > current_batch_size:
                     current_batch_size = new_size
-                    logger.debug(f'[AdaptiveBatcher] Pressure {pressure:.2f} → growing to {current_batch_size}')
+                    logger.debug(f"[AdaptiveBatcher] Pressure {pressure:.2f} → growing to {current_batch_size}")
             self._record_batch_size(current_batch_size)
-            batch = texts[i:i + current_batch_size]
+            batch = texts[i : i + current_batch_size]
             batch_indices = list(range(i, i + len(batch)))
             try:
                 await self._gpu_arbiter_defer()
                 batch_result = await embedder.encode_async(batch, batch_size=len(batch))
                 yield (batch_indices, batch_result)
             except Exception as e:
-                logger.warning(f'[AdaptiveBatcher] Batch encode failed: {e}')
+                logger.warning(f"[AdaptiveBatcher] Batch encode failed: {e}")
                 zero_emb = np.zeros((len(batch), embedder.EMBEDDING_DIM), dtype=np.float32)
                 yield (batch_indices, zero_emb)
             i += current_batch_size
-            self._stats['batches_processed'] += 1
+            self._stats["batches_processed"] += 1
 
     @property
     def stats(self) -> dict[str, int | float]:
         """Return batching statistics for telemetry."""
         return dict(self._stats)
+
 
 # ── GPU Resource Arbitration (ISSUE #023) ────────────────────────────────────
 #
@@ -242,7 +280,7 @@ def _probe_gpu_fraction() -> float:
             return 0.0
         try:
             active = mx.get_active_memory()
-        except (AttributeError, NameError):
+        except AttributeError, NameError:
             try:
                 active = mx.metal.get_active_memory()
             except Exception:
@@ -267,11 +305,12 @@ class GPUArbiter:
 
     Always-on, fail-safe, bounded for M1 8GB UMA.
     """
+
     DEFER_THRESHOLD: float = 0.85
     POLL_INTERVAL: float = 0.1
     DEFAULT_TIMEOUT: float = 5.0
 
-    __slots__ = ('_defer_count', '_poll_count', '_last_fraction')
+    __slots__ = ("_defer_count", "_poll_count", "_last_fraction")
 
     def __init__(self) -> None:
         self._defer_count: int = 0
@@ -317,9 +356,9 @@ class GPUArbiter:
     @property
     def stats(self) -> dict[str, int | float]:
         return {
-            'defer_count': self._defer_count,
-            'poll_count': self._poll_count,
-            'last_gpu_fraction': self._last_fraction,
+            "defer_count": self._defer_count,
+            "poll_count": self._poll_count,
+            "last_gpu_fraction": self._last_fraction,
         }
 
 
@@ -341,6 +380,7 @@ def get_gpu_arbiter() -> GPUArbiter:
                 _arbiter = GPUArbiter()
     return _arbiter
 
+
 # ── MLX import — LAZY (ISSUE 3.2 + F350M-R A-07) ────────────────────────────
 # Top-level mlx.core / mlx_embeddings imports moved to lazy accessors.
 # Breaks the PLANNER: ZERO MLX invariant when imported by runtime planners.
@@ -356,6 +396,7 @@ def _get_mlx_core() -> Any | None:
     """Lazily cached mlx.core module reference. Returns None if unavailable."""
     # C1-X FIX: Use centralized get_mx() from mlx_memory SSOT
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
 
 
@@ -363,20 +404,23 @@ def _lazy_mlx_init() -> None:
     """Lazy MLX init — called on first use of MLXEmbeddingManager, not at module load."""
     global MLX_EMBEDDINGS_AVAILABLE
     if not MLX_AVAILABLE:
-        warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
+        warnings.warn("MLX not available. Install: pip install mlx>=0.15.0", stacklevel=2)
     try:
         from mlx_embeddings import load as _load
-        globals()['mlx_embeddings_load'] = _load
+
+        globals()["mlx_embeddings_load"] = _load
         MLX_EMBEDDINGS_AVAILABLE = True
     except ImportError:
         MLX_EMBEDDINGS_AVAILABLE = False
-        warnings.warn('mlx-embeddings not available. Install: pip install mlx-embeddings', stacklevel=2)
+        warnings.warn("mlx-embeddings not available. Install: pip install mlx-embeddings", stacklevel=2)
 
 
 def _check_mlx_available() -> None:
     """Call before using MLXEmbeddingManager — triggers lazy init."""
     _lazy_mlx_init()
-_EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
+
+
+_EMBED_CACHE_DIR = Path.home() / ".hledac" / "cache" / "mlx_embed"
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -385,26 +429,27 @@ def _PREWARM_LOCK() -> threading.Lock:
     """Module-level lock for embedding prewarm."""
     return threading.Lock()
 
+
 # A-07: Re-export canonical MLXEmbeddingManager from core/embeddings/legacy.py
 # Single Metal command queue = no double model loads on M1 8GB.
 # All embedding entry points now converge on one canonical source.
 
 from hledac.universal._core.embeddings.legacy import (  # noqa: F401 — re-export for compat
-    MLXEmbeddingManager,
-    get_mlx_embedder,
-    get_embedding_manager,  # deprecated alias
-    get_embedding_info,
-    encode_texts,
-    compute_similarity,
-    prewarm_embedding_model,
-    is_embedding_model_prewarmed,
-    EmbeddingDimensionError,
-    assert_embedding_dimension,
-    EmbeddingTask,
-    apply_task_prefix,
-    should_normalize,
-    _default_manager,
-    _init_lock,
     MLX_AVAILABLE,
     MLX_EMBEDDINGS_AVAILABLE,
-    )
+    EmbeddingDimensionError,
+    EmbeddingTask,
+    MLXEmbeddingManager,
+    _default_manager,
+    _init_lock,
+    apply_task_prefix,
+    assert_embedding_dimension,
+    compute_similarity,
+    encode_texts,
+    get_embedding_info,
+    get_embedding_manager,  # deprecated alias
+    get_mlx_embedder,
+    is_embedding_model_prewarmed,
+    prewarm_embedding_model,
+    should_normalize,
+)

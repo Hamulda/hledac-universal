@@ -1,8 +1,6 @@
 # Stub for mlx_vlm.generate
 # Real package has dispatch.py + common.py with GenerationResult classes.
 
-from typing import List, Optional, Union
-
 def generate(
     model,
     processor,
@@ -11,5 +9,5 @@ def generate(
     audio: str | list[str] | None = None,
     video: str | list[str] | None = None,
     verbose: bool = False,
-    **kwargs
+    **kwargs,
 ) -> str: ...

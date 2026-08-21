@@ -24,36 +24,39 @@ Migration:
          layer = CoordinationLayer()
          layer.enable_smart_mode()
 """
+
 import asyncio
-import msgspec
-from compat.msgspec_gc_compat import Struct
-import msgspec.json as _json
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 try:
-    from .hive_coordination import ConnectedCoordinationSystem, CoordinationTask
+    from .hive_coordination import ConnectedCoordinationSystem
 except ImportError:
     from hive_coordination import ConnectedCoordinationSystem
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    'SmartSpawnedRole',
-    'SmartSpawnedAgent',
-    'SmartSpawnedCoordinationIntegration',
+    "SmartSpawnedRole",
+    "SmartSpawnedAgent",
+    "SmartSpawnedCoordinationIntegration",
 ]
+
 
 class SmartSpawnedRole(Enum):
     """Roles for smart-spawned agents"""
-    COORDINATOR = 'coordinator'
-    CODER = 'coder'
-    TESTER = 'tester'
+
+    COORDINATOR = "coordinator"
+    CODER = "coder"
+    TESTER = "tester"
+
 
 class SmartSpawnedAgent(Struct):
     """Represents a smart-spawned agent"""
+
     agent_id: str
     name: str
     role: SmartSpawnedRole
@@ -62,34 +65,75 @@ class SmartSpawnedAgent(Struct):
     performance_metrics: dict[str, float]
     integration_status: str
 
+
 class SmartSpawnedCoordinationIntegration:
     """
     Integration layer for smart-spawned agents within the connected coordination system
     """
-    __slots__ = tuple(('connected_system', 'coordination_history', 'performance_cache', 'smart_spawned_agents'))
 
-    def __init__(self, connected_system: ConnectedCoordinationSystem):
+    __slots__ = ("connected_system", "coordination_history", "performance_cache", "smart_spawned_agents")
+
+    def __init__(self, connected_system: ConnectedCoordinationSystem) -> None:
         self.connected_system = connected_system
         self.smart_spawned_agents: dict[str, SmartSpawnedAgent] = {}
         self.coordination_history: list[dict[str, Any]] = []
         self.performance_cache: dict[str, float] = {}
         self._initialize_smart_spawned_agents()
 
-    def _initialize_smart_spawned_agents(self):
+    def _initialize_smart_spawned_agents(self) -> None:
         """Initialize smart-spawned agents based on workload analysis"""
-        self._add_smart_agent(agent_id='agent_1762976821473_w4tl18', name='smart_spawned_coordinator', role=SmartSpawnedRole.COORDINATOR, capabilities=['workload_analysis', 'task_orchestration', 'coordination_optimization', 'performance_monitoring'])
-        coder_configs = [('agent_1762976825857_hzivjs', 'smart_spawned_coder_1'), ('agent_1762976840060_7i8uyn', 'smart_spawned_coder_2'), ('agent_1762976845692_ec0ipk', 'smart_spawned_coder_3')]
+        self._add_smart_agent(
+            agent_id="agent_1762976821473_w4tl18",
+            name="smart_spawned_coordinator",
+            role=SmartSpawnedRole.COORDINATOR,
+            capabilities=[
+                "workload_analysis",
+                "task_orchestration",
+                "coordination_optimization",
+                "performance_monitoring",
+            ],
+        )
+        coder_configs = [
+            ("agent_1762976825857_hzivjs", "smart_spawned_coder_1"),
+            ("agent_1762976840060_7i8uyn", "smart_spawned_coder_2"),
+            ("agent_1762976845692_ec0ipk", "smart_spawned_coder_3"),
+        ]
         for agent_id, name in coder_configs:
-            self._add_smart_agent(agent_id=agent_id, name=name, role=SmartSpawnedRole.CODER, capabilities=['coordination_system_implementation', 'api_development', 'integration_logic'])
-        self._add_smart_agent(agent_id='agent_1762976849426_7aa7v5', name='smart_spawned_tester', role=SmartSpawnedRole.TESTER, capabilities=['coordination_system_testing', 'integration_validation', 'performance_testing'])
-        logger.info(f'Initialized {len(self.smart_spawned_agents)} smart-spawned agents')
+            self._add_smart_agent(
+                agent_id=agent_id,
+                name=name,
+                role=SmartSpawnedRole.CODER,
+                capabilities=["coordination_system_implementation", "api_development", "integration_logic"],
+            )
+        self._add_smart_agent(
+            agent_id="agent_1762976849426_7aa7v5",
+            name="smart_spawned_tester",
+            role=SmartSpawnedRole.TESTER,
+            capabilities=["coordination_system_testing", "integration_validation", "performance_testing"],
+        )
+        logger.info(f"Initialized {len(self.smart_spawned_agents)} smart-spawned agents")
 
-    def _add_smart_agent(self, agent_id: str, name: str, role: SmartSpawnedRole, capabilities: list[str]):
+    def _add_smart_agent(self, agent_id: str, name: str, role: SmartSpawnedRole, capabilities: list[str]) -> None:
         """Add a smart-spawned agent to the integration system"""
-        agent = SmartSpawnedAgent(agent_id=agent_id, name=name, role=role, capabilities=capabilities, current_task=None, performance_metrics={'response_time': 0.0, 'success_rate': 1.0, 'task_completion_time': 0.0, 'coordination_efficiency': 0.0}, integration_status='active')
+        agent = SmartSpawnedAgent(
+            agent_id=agent_id,
+            name=name,
+            role=role,
+            capabilities=capabilities,
+            current_task=None,
+            performance_metrics={
+                "response_time": 0.0,
+                "success_rate": 1.0,
+                "task_completion_time": 0.0,
+                "coordination_efficiency": 0.0,
+            },
+            integration_status="active",
+        )
         self.smart_spawned_agents[agent_id] = agent
 
-    async def process_task_with_smart_coordination(self, task_description: str, priority: str='medium') -> dict[str, Any]:
+    async def process_task_with_smart_coordination(
+        self, task_description: str, priority: str = "medium"
+    ) -> dict[str, Any]:
         """
         Process a task using smart-spawned agents integrated with the connected coordination system
         """
@@ -100,33 +144,59 @@ class SmartSpawnedCoordinationIntegration:
         implementation_results = await self._execute_with_smart_coders(connected_task_id, agent_assignments)
         validation_results = await self._validate_with_smart_tester(connected_task_id, implementation_results)
         performance_analysis = await self._analyze_performance(task_start_time, connected_task_id, validation_results)
-        return {'task_id': connected_task_id, 'coordination_result': coordinator_result, 'agent_assignments': agent_assignments, 'implementation_results': implementation_results, 'validation_results': validation_results, 'performance_analysis': performance_analysis, 'total_processing_time': (datetime.now(UTC) - task_start_time).total_seconds()}
+        return {
+            "task_id": connected_task_id,
+            "coordination_result": coordinator_result,
+            "agent_assignments": agent_assignments,
+            "implementation_results": implementation_results,
+            "validation_results": validation_results,
+            "performance_analysis": performance_analysis,
+            "total_processing_time": (datetime.now(UTC) - task_start_time).total_seconds(),
+        }
 
     async def _coordinate_task_analysis(self, task_description: str, priority: str) -> dict[str, Any]:
         """Use smart coordinator to analyze and optimize task execution"""
-        coordinator = self.smart_spawned_agents['agent_1762976821473_w4tl18']
-        analysis_result = {'complexity_score': self._calculate_smart_complexity(task_description), 'recommended_approach': self._recommend_smart_approach(task_description), 'resource_optimization': self._optimize_resource_allocation(task_description), 'integration_strategy': self._determine_integration_strategy(task_description), 'performance_targets': self._set_performance_targets(priority)}
+        coordinator = self.smart_spawned_agents["agent_1762976821473_w4tl18"]
+        analysis_result = {
+            "complexity_score": self._calculate_smart_complexity(task_description),
+            "recommended_approach": self._recommend_smart_approach(task_description),
+            "resource_optimization": self._optimize_resource_allocation(task_description),
+            "integration_strategy": self._determine_integration_strategy(task_description),
+            "performance_targets": self._set_performance_targets(priority),
+        }
         coordinator.current_task = f"analysis_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
-        coordinator.performance_metrics['coordination_efficiency'] = 0.92
-        self._store_coordination_event('smart_coordination_analysis', 'coordinator', 'system', analysis_result)
-        logger.info(f'Smart coordinator analysis completed for task: {task_description[:50]}...')
+        coordinator.performance_metrics["coordination_efficiency"] = 0.92
+        self._store_coordination_event("smart_coordination_analysis", "coordinator", "system", analysis_result)
+        logger.info(f"Smart coordinator analysis completed for task: {task_description[:50]}...")
         return analysis_result
 
     async def _distribute_to_smart_agents(self, task_id: str, coordination_result: dict[str, Any]) -> dict[str, Any]:
         """Distribute task to appropriate smart-spawned agents"""
         assignments = {}
         coder_agents = [agent for agent in self.smart_spawned_agents.values() if agent.role == SmartSpawnedRole.CODER]
-        complexity = coordination_result['complexity_score']
+        complexity = coordination_result["complexity_score"]
         if complexity > 0.7:
             for i, coder in enumerate(coder_agents):
-                assignments[coder.agent_id] = {'task_component': f'component_{i + 1}', 'complexity': complexity, 'estimated_time': complexity * 2.0, 'dependencies': [] if i == 0 else [f'component_{i}']}
-                coder.current_task = f'{task_id}_component_{i + 1}'
+                assignments[coder.agent_id] = {
+                    "task_component": f"component_{i + 1}",
+                    "complexity": complexity,
+                    "estimated_time": complexity * 2.0,
+                    "dependencies": [] if i == 0 else [f"component_{i}"],
+                }
+                coder.current_task = f"{task_id}_component_{i + 1}"
         else:
             for i, coder in enumerate(coder_agents[:2]):
-                assignments[coder.agent_id] = {'task_component': f'component_{i + 1}', 'complexity': complexity, 'estimated_time': complexity * 1.5, 'dependencies': [] if i == 0 else [f'component_{i}']}
-                coder.current_task = f'{task_id}_component_{i + 1}'
-        self._store_coordination_event('smart_agent_distribution', 'coordinator', 'coders', {'assignments': assignments, 'complexity': complexity})
-        logger.info(f'Distributed task {task_id} to {len(assignments)} smart coders')
+                assignments[coder.agent_id] = {
+                    "task_component": f"component_{i + 1}",
+                    "complexity": complexity,
+                    "estimated_time": complexity * 1.5,
+                    "dependencies": [] if i == 0 else [f"component_{i}"],
+                }
+                coder.current_task = f"{task_id}_component_{i + 1}"
+        self._store_coordination_event(
+            "smart_agent_distribution", "coordinator", "coders", {"assignments": assignments, "complexity": complexity}
+        )
+        logger.info(f"Distributed task {task_id} to {len(assignments)} smart coders")
         return assignments
 
     async def _execute_with_smart_coders(self, task_id: str, agent_assignments: dict[str, Any]) -> dict[str, Any]:
@@ -134,45 +204,115 @@ class SmartSpawnedCoordinationIntegration:
         implementation_results = {}
         parallel_tasks = []
         for agent_id, assignment in agent_assignments.items():
-            if not assignment.get('dependencies'):
+            if not assignment.get("dependencies"):
                 parallel_tasks.append((agent_id, assignment))
         for agent_id, assignment in parallel_tasks:
             coder = self.smart_spawned_agents[agent_id]
-            implementation_time = assignment['estimated_time']
+            implementation_time = assignment["estimated_time"]
             await asyncio.sleep(0.1)
-            implementation_results[agent_id] = {'component': assignment['task_component'], 'status': 'completed', 'implementation_time': implementation_time, 'quality_score': 0.95, 'integration_points': self._identify_integration_points(assignment), 'performance_metrics': {'code_quality': 0.92, 'efficiency': 0.88, 'maintainability': 0.9}}
-            coder.performance_metrics['task_completion_time'] = implementation_time
-            coder.performance_metrics['success_rate'] = 0.95
-        self._store_coordination_event('smart_coder_implementation', 'coders', 'tester', {'results': implementation_results, 'task_id': task_id})
-        logger.info(f'Smart coders completed {len(implementation_results)} components for task {task_id}')
+            implementation_results[agent_id] = {
+                "component": assignment["task_component"],
+                "status": "completed",
+                "implementation_time": implementation_time,
+                "quality_score": 0.95,
+                "integration_points": self._identify_integration_points(assignment),
+                "performance_metrics": {"code_quality": 0.92, "efficiency": 0.88, "maintainability": 0.9},
+            }
+            coder.performance_metrics["task_completion_time"] = implementation_time
+            coder.performance_metrics["success_rate"] = 0.95
+        self._store_coordination_event(
+            "smart_coder_implementation", "coders", "tester", {"results": implementation_results, "task_id": task_id}
+        )
+        logger.info(f"Smart coders completed {len(implementation_results)} components for task {task_id}")
         return implementation_results
 
     async def _validate_with_smart_tester(self, task_id: str, implementation_results: dict[str, Any]) -> dict[str, Any]:
         """Validate implementation using smart-spawned tester"""
-        tester = self.smart_spawned_agents['agent_1762976849426_7aa7v5']
-        tester.current_task = f'testing_{task_id}'
-        validation_results = {'integration_tests': {'total_tests': len(implementation_results) * 10, 'passed_tests': len(implementation_results) * 9, 'failed_tests': len(implementation_results), 'coverage_percentage': 92.5}, 'performance_tests': {'response_time_avg': 0.15, 'throughput': 1000, 'resource_utilization': 0.75, 'scalability_score': 0.88}, 'security_tests': {'vulnerabilities_found': 0, 'security_score': 0.95, 'compliance_status': 'compliant'}, 'overall_quality': {'code_quality_score': 0.91, 'test_coverage': 92.5, 'documentation_coverage': 85.0, 'performance_score': 0.88}}
-        tester.performance_metrics['success_rate'] = validation_results['overall_quality']['code_quality_score']
-        self._store_coordination_event('smart_testing_validation', 'tester', 'coordinator', {'validation': validation_results, 'task_id': task_id})
-        logger.info(f'Smart testing validation completed for task {task_id}')
+        tester = self.smart_spawned_agents["agent_1762976849426_7aa7v5"]
+        tester.current_task = f"testing_{task_id}"
+        validation_results = {
+            "integration_tests": {
+                "total_tests": len(implementation_results) * 10,
+                "passed_tests": len(implementation_results) * 9,
+                "failed_tests": len(implementation_results),
+                "coverage_percentage": 92.5,
+            },
+            "performance_tests": {
+                "response_time_avg": 0.15,
+                "throughput": 1000,
+                "resource_utilization": 0.75,
+                "scalability_score": 0.88,
+            },
+            "security_tests": {"vulnerabilities_found": 0, "security_score": 0.95, "compliance_status": "compliant"},
+            "overall_quality": {
+                "code_quality_score": 0.91,
+                "test_coverage": 92.5,
+                "documentation_coverage": 85.0,
+                "performance_score": 0.88,
+            },
+        }
+        tester.performance_metrics["success_rate"] = validation_results["overall_quality"]["code_quality_score"]
+        self._store_coordination_event(
+            "smart_testing_validation", "tester", "coordinator", {"validation": validation_results, "task_id": task_id}
+        )
+        logger.info(f"Smart testing validation completed for task {task_id}")
         return validation_results
 
-    async def _analyze_performance(self, task_start_time: datetime, task_id: str, validation_results: dict[str, Any]) -> dict[str, Any]:
+    async def _analyze_performance(
+        self, task_start_time: datetime, task_id: str, validation_results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze overall performance and provide optimization recommendations"""
         total_time = (datetime.now(UTC) - task_start_time).total_seconds()
-        performance_analysis = {'execution_metrics': {'total_processing_time': total_time, 'coordination_overhead': total_time * 0.1, 'implementation_time': total_time * 0.7, 'testing_time': total_time * 0.2}, 'agent_performance': {agent_id: agent.performance_metrics for agent_id, agent in self.smart_spawned_agents.items()}, 'quality_metrics': validation_results['overall_quality'], 'optimization_recommendations': self._generate_optimization_recommendations(validation_results), 'efficiency_score': self._calculate_efficiency_score(total_time, validation_results)}
-        self.performance_cache[task_id] = performance_analysis['efficiency_score']
-        self._store_coordination_event('performance_analysis', 'coordinator', 'system', {'analysis': performance_analysis, 'task_id': task_id})
-        logger.info(f"Performance analysis completed for task {task_id} - Efficiency: {performance_analysis['efficiency_score']:.2f}")
+        performance_analysis = {
+            "execution_metrics": {
+                "total_processing_time": total_time,
+                "coordination_overhead": total_time * 0.1,
+                "implementation_time": total_time * 0.7,
+                "testing_time": total_time * 0.2,
+            },
+            "agent_performance": {
+                agent_id: agent.performance_metrics for agent_id, agent in self.smart_spawned_agents.items()
+            },
+            "quality_metrics": validation_results["overall_quality"],
+            "optimization_recommendations": self._generate_optimization_recommendations(validation_results),
+            "efficiency_score": self._calculate_efficiency_score(total_time, validation_results),
+        }
+        self.performance_cache[task_id] = performance_analysis["efficiency_score"]
+        self._store_coordination_event(
+            "performance_analysis", "coordinator", "system", {"analysis": performance_analysis, "task_id": task_id}
+        )
+        logger.info(
+            f"Performance analysis completed for task {task_id} - Efficiency: {performance_analysis['efficiency_score']:.2f}"
+        )
         return performance_analysis
 
     def get_smart_coordination_status(self) -> dict[str, Any]:
         """Get comprehensive status of smart-spawned coordination integration"""
-        return {'smart_agents_count': len(self.smart_spawned_agents), 'agents_by_role': {role.value: len([a for a in self.smart_spawned_agents.values() if a.role == role]) for role in SmartSpawnedRole}, 'active_tasks': len([a for a in self.smart_spawned_agents.values() if a.current_task]), 'average_performance': self._calculate_average_smart_performance(), 'coordination_events': len(self.coordination_history), 'efficiency_trend': self._calculate_efficiency_trend(), 'recommendations': self._get_system_recommendations()}
+        return {
+            "smart_agents_count": len(self.smart_spawned_agents),
+            "agents_by_role": {
+                role.value: len([a for a in self.smart_spawned_agents.values() if a.role == role])
+                for role in SmartSpawnedRole
+            },
+            "active_tasks": len([a for a in self.smart_spawned_agents.values() if a.current_task]),
+            "average_performance": self._calculate_average_smart_performance(),
+            "coordination_events": len(self.coordination_history),
+            "efficiency_trend": self._calculate_efficiency_trend(),
+            "recommendations": self._get_system_recommendations(),
+        }
 
     def _calculate_smart_complexity(self, task_description: str) -> float | None:
         """Calculate complexity score using smart analysis"""
-        complexity_keywords = {'integrate': 0.8, 'implement': 0.7, 'optimize': 0.6, 'analyze': 0.5, 'design': 0.6, 'test': 0.4, 'review': 0.3, 'coordinate': 0.7}
+        complexity_keywords = {
+            "integrate": 0.8,
+            "implement": 0.7,
+            "optimize": 0.6,
+            "analyze": 0.5,
+            "design": 0.6,
+            "test": 0.4,
+            "review": 0.3,
+            "coordinate": 0.7,
+        }
         score = 0.1
         words = task_description.lower().split()
         for word in words:
@@ -182,108 +322,126 @@ class SmartSpawnedCoordinationIntegration:
 
     def _recommend_smart_approach(self, task_description: str) -> str:
         """Recommend optimal approach based on smart analysis"""
-        if 'integrate' in task_description.lower():
-            return 'parallel_integration_with_coordination'
-        elif 'implement' in task_description.lower():
-            return 'iterative_development_with_testing'
-        elif 'optimize' in task_description.lower():
-            return 'performance_focused_approach'
+        if "integrate" in task_description.lower():
+            return "parallel_integration_with_coordination"
+        elif "implement" in task_description.lower():
+            return "iterative_development_with_testing"
+        elif "optimize" in task_description.lower():
+            return "performance_focused_approach"
         else:
-            return 'standard_coordination_workflow'
+            return "standard_coordination_workflow"
 
     def _optimize_resource_allocation(self, task_description: str) -> dict[str, Any]:
         """Optimize resource allocation using smart algorithms"""
         complexity = self._calculate_smart_complexity(task_description)
-        return {'cpu_allocation': min(0.8, 0.3 + complexity * 0.5), 'memory_allocation': min(2048, 512 + complexity * 1536), 'network_bandwidth': min(1000, 100 + complexity * 900), 'agent_utilization': 'optimized'}
+        return {
+            "cpu_allocation": min(0.8, 0.3 + complexity * 0.5),
+            "memory_allocation": min(2048, 512 + complexity * 1536),
+            "network_bandwidth": min(1000, 100 + complexity * 900),
+            "agent_utilization": "optimized",
+        }
 
     def _determine_integration_strategy(self, task_description: str) -> str:
         """Determine optimal integration strategy"""
-        if 'coordination' in task_description.lower():
-            return 'deep_integration_with_existing_layers'
-        elif 'test' in task_description.lower():
-            return 'integration_with_comprehensive_testing'
+        if "coordination" in task_description.lower():
+            return "deep_integration_with_existing_layers"
+        elif "test" in task_description.lower():
+            return "integration_with_comprehensive_testing"
         else:
-            return 'standard_integration_approach'
+            return "standard_integration_approach"
 
     def _set_performance_targets(self, priority: str) -> dict[str, float]:
         """Set performance targets based on priority"""
-        base_targets = {'response_time': 0.5, 'success_rate': 0.9, 'quality_score': 0.85, 'efficiency_score': 0.8}
-        if priority == 'high':
+        base_targets = {"response_time": 0.5, "success_rate": 0.9, "quality_score": 0.85, "efficiency_score": 0.8}
+        if priority == "high":
             for key in base_targets:
                 base_targets[key] *= 1.2
-        elif priority == 'low':
+        elif priority == "low":
             for key in base_targets:
                 base_targets[key] *= 0.9
         return base_targets
 
     def _identify_integration_points(self, assignment: dict[str, Any]) -> list[str]:
         """Identify integration points for task components"""
-        return ['hive_mind_coordination_layer', 'auto_agent_analysis_interface', 'self_healing_monitoring_system', 'cognitive_pattern_mesh_network']
+        return [
+            "hive_mind_coordination_layer",
+            "auto_agent_analysis_interface",
+            "self_healing_monitoring_system",
+            "cognitive_pattern_mesh_network",
+        ]
 
     def _generate_optimization_recommendations(self, validation_results: dict[str, Any]) -> list[str] | None:
         """Generate optimization recommendations based on validation results"""
         recommendations = []
-        quality_score = validation_results['overall_quality']['code_quality_score']
+        quality_score = validation_results["overall_quality"]["code_quality_score"]
         if quality_score < 0.9:
-            recommendations.append('Increase code review frequency')
-        test_coverage = validation_results['overall_quality']['test_coverage']
+            recommendations.append("Increase code review frequency")
+        test_coverage = validation_results["overall_quality"]["test_coverage"]
         if test_coverage < 95:
-            recommendations.append('Expand test coverage to meet 95% target')
-        performance_score = validation_results['overall_quality']['performance_score']
+            recommendations.append("Expand test coverage to meet 95% target")
+        performance_score = validation_results["overall_quality"]["performance_score"]
         if performance_score < 0.9:
-            recommendations.append('Optimize performance bottlenecks')
+            recommendations.append("Optimize performance bottlenecks")
         if not recommendations:
-            recommendations.append('System performing optimally - maintain current standards')
+            recommendations.append("System performing optimally - maintain current standards")
             return recommendations
 
     def _calculate_efficiency_score(self, total_time: float, validation_results: dict[str, Any]) -> float:
         """Calculate overall efficiency score"""
         time_efficiency = max(0, 1.0 - total_time / 10.0)
-        quality_factor = validation_results['overall_quality']['code_quality_score']
+        quality_factor = validation_results["overall_quality"]["code_quality_score"]
         return time_efficiency * 0.4 + quality_factor * 0.6
 
     def _calculate_average_smart_performance(self) -> float:
         """Calculate average performance of smart-spawned agents"""
         if not self.smart_spawned_agents:
             return 0.0
-        total_performance = sum((agent.performance_metrics.get('success_rate', 0.0) for agent in self.smart_spawned_agents.values()))
+        total_performance = sum(
+            agent.performance_metrics.get("success_rate", 0.0) for agent in self.smart_spawned_agents.values()
+        )
         return total_performance / len(self.smart_spawned_agents)
 
     def _calculate_efficiency_trend(self) -> str:
         """Calculate efficiency trend based on recent performance cache"""
         if len(self.performance_cache) < 2:
-            return 'insufficient_data'
+            return "insufficient_data"
         recent_scores = list(self.performance_cache.values())[-5:]
         if len(recent_scores) < 2:
-            return 'stable'
+            return "stable"
         trend = recent_scores[-1] - recent_scores[0]
         if trend > 0.05:
-            return 'improving'
+            return "improving"
         elif trend < -0.05:
-            return 'declining'
+            return "declining"
         else:
-            return 'stable'
+            return "stable"
 
     def _get_system_recommendations(self) -> list[str] | None:
         """Get system-level recommendations"""
         recommendations = []
         active_agents = len([a for a in self.smart_spawned_agents.values() if a.current_task])
         if active_agents == len(self.smart_spawned_agents):
-            recommendations.append('Consider spawning additional agents for high workload')
+            recommendations.append("Consider spawning additional agents for high workload")
         elif active_agents < len(self.smart_spawned_agents) * 0.5:
-            recommendations.append('Agent utilization could be optimized')
+            recommendations.append("Agent utilization could be optimized")
         trend = self._calculate_efficiency_trend()
-        if trend == 'declining':
-            recommendations.append('Investigate performance degradation causes')
-        elif trend == 'stable':
-            recommendations.append('System performance is stable - maintain current configuration')
+        if trend == "declining":
+            recommendations.append("Investigate performance degradation causes")
+        elif trend == "stable":
+            recommendations.append("System performance is stable - maintain current configuration")
         if not recommendations:
-            recommendations.append('System operating optimally')
+            recommendations.append("System operating optimally")
             return recommendations
 
-    def _store_coordination_event(self, event_type: str, source: str, target: str, data: Any):
+    def _store_coordination_event(self, event_type: str, source: str, target: str, data: Any) -> None:
         """Store coordination events for tracking and analysis"""
-        event = {'timestamp': datetime.now(UTC).isoformat(), 'event_type': event_type, 'source': source, 'target': target, 'data': data}
+        event = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event_type": event_type,
+            "source": source,
+            "target": target,
+            "data": data,
+        }
         self.coordination_history.append(event)
         if len(self.coordination_history) > 100:
             self.coordination_history = self.coordination_history[-100:]

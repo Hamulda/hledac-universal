@@ -26,34 +26,33 @@ from .url_dedup import DeduplicationStrategy, PersistentSetAdapter, RotatingBloo
 
 # Sprint 45 refactor: Extracted from coordinators/fetch_coordinator.py
 from .zstd_compressor import ZstdCompressor
-from _core import aclose
 
 __all__ = [
     # Reranker
-    'LightweightReranker',
-    'RerankResult',
-    'RerankRequest',
-    'RerankerConfig',
-    'RerankerFactory',
-    'create_reranker',
+    "LightweightReranker",
+    "RerankResult",
+    "RerankRequest",
+    "RerankerConfig",
+    "RerankerFactory",
+    "create_reranker",
     # Miner
-    'RustMiner',
-    'MiningResult',
-    'create_rust_miner',
+    "RustMiner",
+    "MiningResult",
+    "create_rust_miner",
     # Sprint 80: OSINT adapters
-    'CommonCrawlAdapter',
-    'WaybackAdapter',
-    'RawFinding',
+    "CommonCrawlAdapter",
+    "WaybackAdapter",
+    "RawFinding",
     # Sprint 45 refactor: Browser pool and compression
-    'ZstdCompressor',
-    'LightpandaManager',
-    'LightpandaPool',
-    'apply_fcntl_nocache',
-    'apply_nocache_to_path',
-    'NOCACHE_THRESHOLD_BYTES',
-    'F_NOCACHE',
+    "ZstdCompressor",
+    "LightpandaManager",
+    "LightpandaPool",
+    "apply_fcntl_nocache",
+    "apply_nocache_to_path",
+    "NOCACHE_THRESHOLD_BYTES",
+    "F_NOCACHE",
     # Sprint F214AD: URL deduplication
-    'RotatingBloomFilterAdapter',
-    'PersistentSetAdapter',
-    'DeduplicationStrategy',
+    "RotatingBloomFilterAdapter",
+    "PersistentSetAdapter",
+    "DeduplicationStrategy",
 ]

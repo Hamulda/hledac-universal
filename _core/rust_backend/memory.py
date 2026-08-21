@@ -28,15 +28,10 @@ from __future__ import annotations
 import sys
 import warnings
 from typing import TYPE_CHECKING
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
-
-# =============================================================================
-# Deprecated aliases — point to core.memory (A5-04)
-# =============================================================================
 
 def get_process_rss_gib() -> float:
     """
@@ -44,12 +39,12 @@ def get_process_rss_gib() -> float:
     Kept for backward compatibility with callers of this module.
     """
     warnings.warn(
-        "core.rust_backend.memory.get_process_rss_gib() is deprecated. "
-        "Use core.memory.get_process_rss_gib() instead.",
+        "core.rust_backend.memory.get_process_rss_gib() is deprecated. Use core.memory.get_process_rss_gib() instead.",
         DeprecationWarning,
         stacklevel=2,
     )
     from hledac.universal._core.memory import get_process_rss_gib as _fn
+
     return _fn()
 
 
@@ -65,6 +60,7 @@ def get_available_memory_gib() -> float:
         stacklevel=2,
     )
     from hledac.universal._core.memory import get_available_memory_gib as _fn
+
     return _fn()
 
 
@@ -80,12 +76,8 @@ def get_metal_active_memory_bytes() -> int:
         stacklevel=2,
     )
     from hledac.universal._core.memory import get_metal_active_memory_bytes as _fn
+
     return _fn()
-
-
-# =============================================================================
-# Memory Domain (original implementation)
-# =============================================================================
 
 
 class _RustMemoryDomain:
@@ -117,6 +109,7 @@ class _PythonMemoryDomain:
     def advise_free(self, ptr: int, len: int) -> bool:
         """Python fallback: MADV_FREE_REUSABLE not available on non-macOS."""
         import sys
+
         if sys.platform != "darwin":
             return False
         # Fallback for non-macOS Unix — MADV_FREE_REUSABLE is macOS-specific
@@ -178,10 +171,11 @@ def _python_get_total_memory() -> int:
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True,
                 text=True,
-    )
+            )
             if result.returncode == 0:
                 return int(result.stdout.strip())
         elif sys.platform == "win32":
+
             class MemoryStatus(ctypes.Structure):
                 _fields_ = [
                     ("dwLength", ctypes.c_uint32),

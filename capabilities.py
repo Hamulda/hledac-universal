@@ -2,11 +2,6 @@
 F650H: ModelLifecycleManager facade truth + no third model truth
 ================================================================
 
-
-
-
-
-
 Sprint: F650H / F600K / F130S
 Target: capabilities.py
 Goal: bounded de-ownership + facade truth hardening
@@ -32,87 +27,95 @@ CHANGES:
 2. get_active_models(): add explicit local/compat labeling in docstring
 3. No new manager, no model rewrite, no broad call-site rewiring
 """
+
 import asyncio
 import gc
 import logging
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from .project_types import AnalyzerResult
+
     MLX_AVAILABLE: bool
     mx: Any
-from dataclasses import dataclass
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+
 _MLX_LOADED = False
+
 
 def _load_mlx() -> tuple[Any, bool]:
     """Load MLX core lazily. Returns (mx_module, success)."""
     try:
         import mlx.core as mx_module
-        globals()['mx'] = mx_module
+
+        globals()["mx"] = mx_module
         return mx_module, True
     except ImportError:
-        globals()['_MLX_LOADED'] = True  # Mark as attempted
+        globals()["_MLX_LOADED"] = True  # Mark as attempted
         return None, False
 
 
 def __getattr__(name: str) -> Any:
     global _MLX_LOADED
-    if name == 'MLX_AVAILABLE':
+    if name == "MLX_AVAILABLE":
         if not _MLX_LOADED:
             mx_module, success = _load_mlx()
             _MLX_LOADED = True
             return success
-        return _MLX_LOADED and 'mx' in globals()
-    if name == 'mx':
+        return _MLX_LOADED and "mx" in globals()
+    if name == "mx":
         if not _MLX_LOADED:
             mx_module, success = _load_mlx()
             _MLX_LOADED = True
             if not success:
-                raise AttributeError('mlx.core not available')
-        return globals().get('mx')
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+                raise AttributeError("mlx.core not available")
+        return globals().get("mx")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 logger = logging.getLogger(__name__)
+
 
 class Capability(Enum):
     """Research capabilities that can be dynamically loaded."""
-    GRAPH_RAG = 'graph_rag'
-    ENTITY_LINKING = 'entity_linking'
-    RERANKING = 'reranking'
-    CONTEXT_GRAPH = 'context_graph'
-    METADATA_EXTRACT = 'metadata_extract'
-    DOC_INTEL = 'doc_intel'
-    LONG_CONTEXT = 'long_context'
-    STEALTH = 'stealth'
-    DNS_TUNNEL = 'dns_tunnel'
-    NETWORK_RECON = 'network_recon'
-    DARK_WEB = 'dark_web'
-    BGP = 'bgp'
-    IPFS = 'ipfs'
-    BANNER_GRAB = 'banner_grab'
-    SHODAN = 'shodan'
-    CENSYS = 'censys'
-    GREYNOISE = 'greynoise'
-    DHT = 'dht'
-    GOPHER = 'gopher'
-    TEMPORAL = 'temporal'
-    PATTERN_MINING = 'pattern_mining'
-    INSIGHT = 'insight'
-    CRYPTO_INTEL = 'crypto_intel'
-    STEGO = 'stego'
-    BLOCKCHAIN = 'blockchain'
-    SNN = 'snn'
-    FEDERATED = 'federated'
-    QUANTUM_PATH = 'quantum_path'
-    QUANTUM_PQ = 'quantum_pq'
-    META_OPTIMIZER = 'meta_optimizer'
-    TOT = 'tot'
-    HERMES = 'hermes'
-    MODERNBERT = 'modernbert'
-    GLINER = 'gliner'
+
+    GRAPH_RAG = "graph_rag"
+    ENTITY_LINKING = "entity_linking"
+    RERANKING = "reranking"
+    CONTEXT_GRAPH = "context_graph"
+    METADATA_EXTRACT = "metadata_extract"
+    DOC_INTEL = "doc_intel"
+    LONG_CONTEXT = "long_context"
+    STEALTH = "stealth"
+    DNS_TUNNEL = "dns_tunnel"
+    NETWORK_RECON = "network_recon"
+    DARK_WEB = "dark_web"
+    BGP = "bgp"
+    IPFS = "ipfs"
+    BANNER_GRAB = "banner_grab"
+    SHODAN = "shodan"
+    CENSYS = "censys"
+    GREYNOISE = "greynoise"
+    DHT = "dht"
+    GOPHER = "gopher"
+    TEMPORAL = "temporal"
+    PATTERN_MINING = "pattern_mining"
+    INSIGHT = "insight"
+    CRYPTO_INTEL = "crypto_intel"
+    STEGO = "stego"
+    BLOCKCHAIN = "blockchain"
+    SNN = "snn"
+    FEDERATED = "federated"
+    QUANTUM_PATH = "quantum_path"
+    QUANTUM_PQ = "quantum_pq"
+    META_OPTIMIZER = "meta_optimizer"
+    TOT = "tot"
+    HERMES = "hermes"
+    MODERNBERT = "modernbert"
+    GLINER = "gliner"
+
 
 class CapabilityTruthLayer(Enum):
     """
@@ -121,10 +124,12 @@ class CapabilityTruthLayer(Enum):
     These layers form a partial order: declared <= available <= loaded <= effective.
     Not all capabilities reach effective status - this is normal for scaffold state.
     """
-    DECLARED_BY_TOOL_CONTRACT = 'declared'
-    REGISTRY_DECLARED_AVAILABLE = 'available'
-    RUNTIME_LOADED = 'loaded'
-    EFFECTIVE_FOR_TOOL_CONTRACT = 'effective'
+
+    DECLARED_BY_TOOL_CONTRACT = "declared"
+    REGISTRY_DECLARED_AVAILABLE = "available"
+    RUNTIME_LOADED = "loaded"
+    EFFECTIVE_FOR_TOOL_CONTRACT = "effective"
+
 
 class CapabilityTruthStatus(Struct):
     """
@@ -134,6 +139,7 @@ class CapabilityTruthStatus(Struct):
     with explicit per-layer booleans. Use probe_capability_truth() to
     populate this for a given capability.
     """
+
     capability: Capability
     declared_by_tool_contract: bool = False
     registry_declared_available: bool = False
@@ -166,9 +172,17 @@ class CapabilityTruthStatus(Struct):
 
     def layer_summary(self) -> dict[str, bool]:
         """Return all layers as dict for logging/inspection."""
-        return {'declared': self.declared_by_tool_contract, 'available': self.registry_declared_available, 'loaded': self.runtime_loaded, 'effective': self.effective_for_tool_contract}
+        return {
+            "declared": self.declared_by_tool_contract,
+            "available": self.registry_declared_available,
+            "loaded": self.runtime_loaded,
+            "effective": self.effective_for_tool_contract,
+        }
 
-def probe_capability_truth(capability: Capability, registry: CapabilityRegistry, tool_contract_declarations: dict[str, set[str]] | None=None) -> CapabilityTruthStatus:
+
+def probe_capability_truth(
+    capability: Capability, registry: CapabilityRegistry, tool_contract_declarations: dict[str, set[str]] | None = None
+) -> CapabilityTruthStatus:
     """
     F6: Probe all four truth layers for a capability.
 
@@ -198,6 +212,7 @@ def probe_capability_truth(capability: Capability, registry: CapabilityRegistry,
     status.runtime_loaded = capability in registry._loaded
     return status
 
+
 def _get_tool_capability_declarations() -> dict[str, set[str]]:
     """
     Read Tool.required_capabilities from tool_registry (read-only, bounded).
@@ -214,10 +229,18 @@ def _get_tool_capability_declarations() -> dict[str, set[str]]:
         Dict of tool_name -> set of required capability string names.
         Empty dict if tool_registry not available.
     """
-    _CURATED_TOOL_CAPS: dict[str, set[str]] = {'web_search': {'reranking'}, 'academic_search': {'reranking', 'entity_linking'}, 'entity_extraction': {'entity_linking'}, 'ipfs_discovery': set()}
+    _CURATED_TOOL_CAPS: dict[str, set[str]] = {
+        "web_search": {"reranking"},
+        "academic_search": {"reranking", "entity_linking"},
+        "entity_extraction": {"entity_linking"},
+        "ipfs_discovery": set(),
+    }
     return dict(_CURATED_TOOL_CAPS)
 
-def get_capability_truth_matrix(capabilities: list[Capability], registry: CapabilityRegistry) -> dict[Capability, CapabilityTruthStatus]:
+
+def get_capability_truth_matrix(
+    capabilities: list[Capability], registry: CapabilityRegistry
+) -> dict[Capability, CapabilityTruthStatus]:
     """
     F6: Get truth matrix for multiple capabilities.
 
@@ -233,25 +256,38 @@ def get_capability_truth_matrix(capabilities: list[Capability], registry: Capabi
     declarations = _get_tool_capability_declarations()
     return {cap: probe_capability_truth(cap, registry, declarations) for cap in capabilities}
 
+
 class CapabilityStatus(Struct, frozen=True):
     """Status of a capability."""
+
     available: bool
-    reason: str = ''
-    module_path: str = ''
+    reason: str = ""
+    module_path: str = ""
     loader: Callable[[], Awaitable[bool]] | None = None
+
 
 class CapabilityRegistry:
     """Registry tracking which capabilities are available and why."""
-    __slots__ = tuple(('_loaded', '_lock', '_status'))
 
-    def __init__(self):
+    __slots__ = ("_loaded", "_lock", "_status")
+
+    def __init__(self) -> None:
         self._status: dict[Capability, CapabilityStatus] = {}
         self._loaded: set[Capability] = set()
         self._lock = asyncio.Lock()
 
-    def register(self, capability: Capability, available: bool=False, reason: str='', module_path: str='', loader: Callable[[], Awaitable[bool]] | None=None) -> None:
+    def register(
+        self,
+        capability: Capability,
+        available: bool = False,
+        reason: str = "",
+        module_path: str = "",
+        loader: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
         """Register a capability."""
-        self._status[capability] = CapabilityStatus(available=available, reason=reason, module_path=module_path, loader=loader)
+        self._status[capability] = CapabilityStatus(
+            available=available, reason=reason, module_path=module_path, loader=loader
+        )
 
     def is_available(self, capability: Capability) -> bool:
         """
@@ -290,7 +326,7 @@ class CapabilityRegistry:
     def get_reason(self, capability: Capability) -> str:
         """Get reason for unavailability."""
         status = self._status.get(capability)
-        return status.reason if status else 'Not registered'
+        return status.reason if status else "Not registered"
 
     async def load(self, capability: Capability) -> bool:
         """Load a capability on demand."""
@@ -299,23 +335,23 @@ class CapabilityRegistry:
                 return True
             status = self._status.get(capability)
             if not status:
-                logger.warning(f'[CAPABILITY] {capability.value} not registered')
+                logger.warning(f"[CAPABILITY] {capability.value} not registered")
                 return False
             if not status.available:
-                logger.warning(f'[CAPABILITY] {capability.value} unavailable: {status.reason}')
+                logger.warning(f"[CAPABILITY] {capability.value} unavailable: {status.reason}")
                 return False
             if status.loader:
                 try:
                     success = await status.loader()
                     if success:
                         self._loaded.add(capability)
-                        logger.info(f'[CAPABILITY] {capability.value} loaded')
+                        logger.info(f"[CAPABILITY] {capability.value} loaded")
                         return True
                     else:
-                        logger.error(f'[CAPABILITY] {capability.value} loader failed')
+                        logger.error(f"[CAPABILITY] {capability.value} loader failed")
                         return False
                 except Exception as e:
-                    logger.error(f'[CAPABILITY] {capability.value} load error: {e}')
+                    logger.error(f"[CAPABILITY] {capability.value} load error: {e}")
                     return False
             else:
                 self._loaded.add(capability)
@@ -324,7 +360,7 @@ class CapabilityRegistry:
     def unload(self, capability: Capability) -> None:
         """Mark capability as unloaded."""
         self._loaded.discard(capability)
-        logger.info(f'[CAPABILITY] {capability.value} unloaded')
+        logger.info(f"[CAPABILITY] {capability.value} unloaded")
 
     def get_loaded(self) -> set[Capability]:
         """Get set of currently loaded capabilities."""
@@ -343,13 +379,14 @@ class CapabilityRegistry:
         available = self.get_all_available()
         unavailable = self.get_all_unavailable()
         loaded = self._loaded
-        logger.info(f'[CAPABILITIES] enabled={len(available)}, unavailable={len(unavailable)}, loaded={len(loaded)}')
+        logger.info(f"[CAPABILITIES] enabled={len(available)}, unavailable={len(unavailable)}, loaded={len(loaded)}")
         if available:
-            logger.info(f'[CAPABILITIES] available: {[c.value for c in available]}')
+            logger.info(f"[CAPABILITIES] available: {[c.value for c in available]}")
         if unavailable:
-            logger.info(f'[CAPABILITIES] unavailable: {[(c.value, r) for c, r in unavailable.items()]}')
+            logger.info(f"[CAPABILITIES] unavailable: {[(c.value, r) for c, r in unavailable.items()]}")
         if loaded:
-            logger.info(f'[CAPABILITIES] loaded: {[c.value for c in loaded]}')
+            logger.info(f"[CAPABILITIES] loaded: {[c.value for c in loaded]}")
+
 
 class CapabilityRouter:
     """
@@ -365,46 +402,81 @@ class CapabilityRouter:
 
     Canonical output: set[Capability] - passed to ToolRegistry for enforcement.
     """
-    SIGNAL_KEYS = frozenset(['tools', 'sources', 'privacy_level', 'use_tor', 'depth', 'use_tot', 'tot_mode', 'requires_embeddings', 'requires_ner', 'requires_temporal', 'requires_crypto'])
-    SOURCE_CAPABILITIES: dict[str, set[Capability]] = {'surface_web': {Capability.RERANKING}, 'academic': {Capability.RERANKING, Capability.ENTITY_LINKING}, 'archive': {Capability.TEMPORAL, Capability.METADATA_EXTRACT}, 'dark_web': {Capability.STEALTH, Capability.DARK_WEB}, 'osint': {Capability.NETWORK_RECON, Capability.ENTITY_LINKING}, 'crypto': {Capability.CRYPTO_INTEL}}
-    DEPTH_CAPABILITIES: dict[str, set[Capability]] = {'surface': set(), 'deep': {Capability.PATTERN_MINING, Capability.INSIGHT}, 'extreme': {Capability.GRAPH_RAG, Capability.TEMPORAL, Capability.SNN}, 'exhaustive': {Capability.GRAPH_RAG, Capability.TEMPORAL, Capability.SNN, Capability.QUANTUM_PATH, Capability.BLOCKCHAIN}}
+
+    SIGNAL_KEYS = frozenset(
+        [
+            "tools",
+            "sources",
+            "privacy_level",
+            "use_tor",
+            "depth",
+            "use_tot",
+            "tot_mode",
+            "requires_embeddings",
+            "requires_ner",
+            "requires_temporal",
+            "requires_crypto",
+        ]
+    )
+    SOURCE_CAPABILITIES: dict[str, set[Capability]] = {
+        "surface_web": {Capability.RERANKING},
+        "academic": {Capability.RERANKING, Capability.ENTITY_LINKING},
+        "archive": {Capability.TEMPORAL, Capability.METADATA_EXTRACT},
+        "dark_web": {Capability.STEALTH, Capability.DARK_WEB},
+        "osint": {Capability.NETWORK_RECON, Capability.ENTITY_LINKING},
+        "crypto": {Capability.CRYPTO_INTEL},
+    }
+    DEPTH_CAPABILITIES: dict[str, set[Capability]] = {
+        "surface": set(),
+        "deep": {Capability.PATTERN_MINING, Capability.INSIGHT},
+        "extreme": {Capability.GRAPH_RAG, Capability.TEMPORAL, Capability.SNN},
+        "exhaustive": {
+            Capability.GRAPH_RAG,
+            Capability.TEMPORAL,
+            Capability.SNN,
+            Capability.QUANTUM_PATH,
+            Capability.BLOCKCHAIN,
+        },
+    }
     # Data-driven mapping: signal flag -> capability (replaces 4 separate if statements)
     SIGNAL_FLAG_CAPABILITIES: tuple[tuple[str, Capability], ...] = (
-        ('requires_embeddings', Capability.MODERNBERT),
-        ('requires_ner', Capability.GLINER),
-        ('requires_temporal', Capability.TEMPORAL),
-        ('requires_crypto', Capability.CRYPTO_INTEL),
+        ("requires_embeddings", Capability.MODERNBERT),
+        ("requires_ner", Capability.GLINER),
+        ("requires_temporal", Capability.TEMPORAL),
+        ("requires_crypto", Capability.CRYPTO_INTEL),
     )
 
     # Data-driven mapping: profile -> capabilities (replaces if/elif chain)
     PROFILE_CAPABILITIES: dict[str, set[Capability]] = {
-        'stealth': {Capability.STEALTH},
-        'thorough': {Capability.GRAPH_RAG, Capability.ENTITY_LINKING, Capability.TOT},
+        "stealth": {Capability.STEALTH},
+        "thorough": {Capability.GRAPH_RAG, Capability.ENTITY_LINKING, Capability.TOT},
         # 'speed' and 'default' profiles add no extra capabilities
     }
 
     # Tool -> capabilities mapping
     TOOL_CAPABILITIES: dict[str, set[Capability]] = {
-        'stealth_crawler': {Capability.STEALTH, Capability.DARK_WEB},
-        'archive_discovery': {Capability.TEMPORAL, Capability.METADATA_EXTRACT},
-        'leak_hunter': {Capability.STEALTH},
-        'blockchain_analyzer': {Capability.CRYPTO_INTEL},
-        'academic_search': {Capability.RERANKING, Capability.ENTITY_LINKING},
-        'identity_stitching': {Capability.ENTITY_LINKING},
-        'relationship_discovery': {Capability.ENTITY_LINKING},
-        'pattern_mining': {Capability.PATTERN_MINING, Capability.INSIGHT},
-        'temporal_analyzer': {Capability.TEMPORAL},
-        'document_analyzer': {Capability.DOC_INTEL},
-        'web_intelligence': {Capability.RERANKING},
-        'news_analyzer': {Capability.INSIGHT},
-        'threat_assessor': {Capability.STEALTH},
-        'vulnerability_scanner': {Capability.NETWORK_RECON},
-        'reputation_analyzer': {Capability.INSIGHT},
-        'cross_reference_engine': {Capability.ENTITY_LINKING, Capability.RERANKING},
+        "stealth_crawler": {Capability.STEALTH, Capability.DARK_WEB},
+        "archive_discovery": {Capability.TEMPORAL, Capability.METADATA_EXTRACT},
+        "leak_hunter": {Capability.STEALTH},
+        "blockchain_analyzer": {Capability.CRYPTO_INTEL},
+        "academic_search": {Capability.RERANKING, Capability.ENTITY_LINKING},
+        "identity_stitching": {Capability.ENTITY_LINKING},
+        "relationship_discovery": {Capability.ENTITY_LINKING},
+        "pattern_mining": {Capability.PATTERN_MINING, Capability.INSIGHT},
+        "temporal_analyzer": {Capability.TEMPORAL},
+        "document_analyzer": {Capability.DOC_INTEL},
+        "web_intelligence": {Capability.RERANKING},
+        "news_analyzer": {Capability.INSIGHT},
+        "threat_assessor": {Capability.STEALTH},
+        "vulnerability_scanner": {Capability.NETWORK_RECON},
+        "reputation_analyzer": {Capability.INSIGHT},
+        "cross_reference_engine": {Capability.ENTITY_LINKING, Capability.RERANKING},
     }
 
     @classmethod
-    def _normalize_signal(cls, analysis: dict[str, Any] | 'AnalyzerResult', strategy: Any = None, depth: Any = None) -> tuple[dict[str, Any], set[Capability]]:
+    def _normalize_signal(
+        cls, analysis: dict[str, Any] | AnalyzerResult, strategy: Any = None, depth: Any = None
+    ) -> tuple[dict[str, Any], set[Capability]]:
         """
         Extract capability signal from various input types.
 
@@ -415,12 +487,12 @@ class CapabilityRouter:
         pre_routed: set[Capability] = set()
 
         # Path 1: Canonical AnalyzerResult with to_capability_signal()
-        if hasattr(analysis, 'to_capability_signal'):
+        if hasattr(analysis, "to_capability_signal"):
             signal = analysis.to_capability_signal()
             return signal, pre_routed
 
         # Path 2: Legacy dict with 'tools' key (already a signal)
-        if isinstance(analysis, dict) and 'tools' in analysis:
+        if isinstance(analysis, dict) and "tools" in analysis:
             signal = analysis
             return signal, pre_routed
 
@@ -435,13 +507,13 @@ class CapabilityRouter:
     @classmethod
     def _route_by_sources_legacy(cls, strategy: Any) -> set[Capability]:
         """Route capabilities based on selected sources (legacy path)."""
-        if strategy is None or not hasattr(strategy, 'selected_sources'):
+        if strategy is None or not hasattr(strategy, "selected_sources"):
             return set()
 
         caps: set[Capability] = set()
         for source in strategy.selected_sources:
             source_key = str(source).lower()
-            if hasattr(source, 'value'):
+            if hasattr(source, "value"):
                 source_key = str(source.value).lower()
 
             for key, source_caps in cls.SOURCE_CAPABILITIES.items():
@@ -456,7 +528,7 @@ class CapabilityRouter:
             return set()
 
         depth_key = str(depth).lower()
-        if hasattr(depth, 'value'):
+        if hasattr(depth, "value"):
             depth_key = str(depth.value).lower()
 
         for key, depth_caps in cls.DEPTH_CAPABILITIES.items():
@@ -467,16 +539,13 @@ class CapabilityRouter:
     @classmethod
     def _route_by_signal_flags(cls, signal: dict[str, Any]) -> set[Capability]:
         """Route capabilities based on requires_* signal flags (data-driven)."""
-        return {
-            cap for flag, cap in cls.SIGNAL_FLAG_CAPABILITIES
-            if signal.get(flag)
-        }
+        return {cap for flag, cap in cls.SIGNAL_FLAG_CAPABILITIES if signal.get(flag)}
 
     @classmethod
     def _route_by_tools(cls, signal: dict[str, Any]) -> set[Capability]:
         """Route capabilities based on tool list in signal."""
         caps: set[Capability] = set()
-        for tool in signal.get('tools', []):
+        for tool in signal.get("tools", []):
             if tool in cls.TOOL_CAPABILITIES:
                 caps.update(cls.TOOL_CAPABILITIES[tool])
         return caps
@@ -484,7 +553,7 @@ class CapabilityRouter:
     @classmethod
     def _route_by_privacy(cls, signal: dict[str, Any]) -> set[Capability]:
         """Route capabilities based on privacy/tor settings."""
-        if signal.get('privacy_level') == 'MAXIMUM' or signal.get('use_tor'):
+        if signal.get("privacy_level") == "MAXIMUM" or signal.get("use_tor"):
             return {Capability.STEALTH}
         return set()
 
@@ -494,7 +563,13 @@ class CapabilityRouter:
         return cls.PROFILE_CAPABILITIES.get(profile, set())
 
     @classmethod
-    def route(cls, analysis: dict[str, Any] | 'AnalyzerResult', strategy: Any = None, depth: Any = None, profile: str = 'default') -> set[Capability]:
+    def route(
+        cls,
+        analysis: dict[str, Any] | AnalyzerResult,
+        strategy: Any = None,
+        depth: Any = None,
+        profile: str = "default",
+    ) -> set[Capability]:
         """
         Determine required capabilities from research context.
 
@@ -527,8 +602,9 @@ class CapabilityRouter:
         required.update(cls._route_by_privacy(signal))
         required.update(cls._route_by_profile(profile))
 
-        logger.debug(f'[CAPABILITY ROUTER] required={[c.value for c in required]}')
+        logger.debug(f"[CAPABILITY ROUTER] required={[c.value for c in required]}")
         return required
+
 
 class ModelLifecycleManager:
     """
@@ -577,20 +653,21 @@ class ModelLifecycleManager:
     Future seam: This facade may delegate to ModelManager.with_phase()
     after seam extraction — eliminating the CapabilityRegistry round-trip.
     """
+
     # Data-driven phase configuration (replaces if/elif chain)
     # Each phase: (keep_loaded: set[Capability], release_all_first: bool)
     _PHASE_CONFIG: dict[str, tuple[set[Capability], bool]] = {
-        'BRAIN': ({Capability.HERMES}, True),
-        'TOOLS': (set(), False),  # Release hermes, load on-demand
-        'SYNTHESIS': ({Capability.HERMES}, True),
-        'CLEANUP': (set(), True),  # Release all
+        "BRAIN": ({Capability.HERMES}, True),
+        "TOOLS": (set(), False),  # Release hermes, load on-demand
+        "SYNTHESIS": ({Capability.HERMES}, True),
+        "CLEANUP": (set(), True),  # Release all
     }
 
-    __slots__ = tuple(('_active_models', '_current_phase', 'registry'))
+    __slots__ = ("_active_models", "_current_phase", "registry")
 
-    def __init__(self, registry: CapabilityRegistry):
+    def __init__(self, registry: CapabilityRegistry) -> None:
         self.registry = registry
-        self._current_phase: str = 'none'
+        self._current_phase: str = "none"
         self._active_models: set[Capability] = set()
 
     async def enforce_phase_models(self, phase_name: str) -> None:
@@ -603,14 +680,14 @@ class ModelLifecycleManager:
         - SYNTHESIS: Hermes loaded; others released
         - CLEANUP: All released
         """
-        logger.info(f'[PHASE START] {phase_name}')
-        logger.info(f'[MODEL] Before transition: active={[m.value for m in self._active_models]}')
+        logger.info(f"[PHASE START] {phase_name}")
+        logger.info(f"[MODEL] Before transition: active={[m.value for m in self._active_models]}")
         self._current_phase = phase_name
 
         # Data-driven phase handling
         config = self._PHASE_CONFIG.get(phase_name)
         if config is None:
-            logger.warning(f'[PHASE] Unknown phase: {phase_name}')
+            logger.warning(f"[PHASE] Unknown phase: {phase_name}")
             return
 
         keep_loaded, release_all_first = config
@@ -627,18 +704,17 @@ class ModelLifecycleManager:
         for cap in keep_loaded:
             await self.registry.load(cap)
 
-        # Update tracking state
         self._active_models = keep_loaded.copy()
 
-        logger.info(f'[MODEL] After transition: active={[m.value for m in self._active_models]}')
-        logger.info(f'[PHASE END] {phase_name}')
+        logger.info(f"[MODEL] After transition: active={[m.value for m in self._active_models]}")
+        logger.info(f"[PHASE END] {phase_name}")
 
     async def _release_model(self, capability: Capability) -> None:
         """Release a specific model."""
         if capability in self._active_models:
             self.registry.unload(capability)
             self._active_models.discard(capability)
-            logger.info(f'[MODEL RELEASE] {capability.value}')
+            logger.info(f"[MODEL RELEASE] {capability.value}")
 
     async def _release_all_models(self) -> None:
         """
@@ -656,7 +732,7 @@ class ModelLifecycleManager:
             self.registry.unload(cap)
         self._active_models.clear()
         gc.collect()
-        logger.info('[MODEL] All models released, GC completed')
+        logger.info("[MODEL] All models released, GC completed")
 
     def get_active_models(self) -> set[Capability]:
         """
@@ -680,5 +756,5 @@ class ModelLifecycleManager:
         success = await self.registry.load(capability)
         if success:
             self._active_models.add(capability)
-            logger.info(f'[MODEL LOAD] {capability.value}')
+            logger.info(f"[MODEL LOAD] {capability.value}")
         return success

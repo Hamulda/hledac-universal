@@ -3,10 +3,6 @@ StorageTrinity — Unified write boundary for DuckDB + LMDB + LanceDB + DuckPGQG
 
 ARCH-STR-001: Synchronized write pipeline eliminating ghost entities.
 
-
-
-
-
 Layer ordering (fail-safe, rebuildable-last):
     1. DuckDB     — Source of truth. All writes go here first.
     2. LMDB       — Metadata + dedup. After DuckDB confirmed.
@@ -50,9 +46,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,21 +57,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Module-level constants (M1 8GB bounded)
-# ---------------------------------------------------------------------------
-
 MAX_LANCE_QUEUE: int = 8192  # M1 8GB: bounded embedding queue
 LANCE_FLUSH_INTERVAL_S: float = 5.0  # Flush every 5s max
 
 
-# ---------------------------------------------------------------------------
-# Typedefs
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True, slots=True)
 class TrinityPhaseResult:
     """Result of a single phase in the Trinity pipeline."""
+
     phase: str  # "duckdb" | "lmdb" | "lance"
     success: bool
     records: int = 0
@@ -87,6 +75,7 @@ class TrinityPhaseResult:
 @dataclass(frozen=True, slots=True)
 class TrinityWriteResult:
     """Aggregate result of a full Trinity write."""
+
     duckdb: TrinityPhaseResult
     lmdb: TrinityPhaseResult | None = None
     lance: TrinityPhaseResult | None = None
@@ -98,15 +87,10 @@ class TrinityWriteResult:
         return self.duckdb.success
 
 
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
 class TrinityPhaseError(Exception):
     """Phase N failed — triggers rollback of phase N-1."""
 
-    def __init__(self, phase: str, message: str, records: int = 0):
+    def __init__(self, phase: str, message: str, records: int = 0) -> None:
         super().__init__(f"[TRINITY:{phase}] {message}")
         self.phase = phase
         self.records = records
@@ -114,12 +98,6 @@ class TrinityPhaseError(Exception):
 
 class TrinityRollbackError(TrinityPhaseError):
     """Rollback of a prior phase failed — requires manual repair."""
-    pass
-
-
-# ---------------------------------------------------------------------------
-# StorageTrinity
-# ---------------------------------------------------------------------------
 
 
 class StorageTrinity:
@@ -159,10 +137,6 @@ class StorageTrinity:
         self._closed = False
         self._initialized = True
 
-    # -----------------------------------------------------------------------
-    # Injection seams
-    # -----------------------------------------------------------------------
-
     def inject_semantic_store(self, store: SemanticStore) -> None:
         """
         Inject SemanticStore for LanceDB-backed embedding buffering.
@@ -189,10 +163,6 @@ class StorageTrinity:
         self._graph_service = graph_service
         logger.debug("[TRINITY] GraphService (DuckPGQGraph) injected")
 
-    # -----------------------------------------------------------------------
-    # Public write API — single finding
-    # -----------------------------------------------------------------------
-
     async def upsert_finding(self, finding: Any) -> TrinityWriteResult:
         """
         Upsert single CanonicalFinding through all 3 storage layers.
@@ -211,9 +181,7 @@ class StorageTrinity:
         """
         return await self.upsert_findings_batch([finding])
 
-    async def upsert_findings_batch(
-        self, findings: Sequence[Any]
-    ) -> TrinityWriteResult:
+    async def upsert_findings_batch(self, findings: Sequence[Any]) -> TrinityWriteResult:
         """
         Upsert batch of CanonicalFindings through the Trinity pipeline.
 
@@ -225,15 +193,10 @@ class StorageTrinity:
             TrinityWriteResult with per-phase results.
         """
         if not findings or self._closed:
-            return TrinityWriteResult(
-                duckdb=TrinityPhaseResult(phase="duckdb", success=False, records=0)
-    )
+            return TrinityWriteResult(duckdb=TrinityPhaseResult(phase="duckdb", success=False, records=0))
 
         t0 = _time.monotonic()
 
-        # ------------------------------------------------------------------
-        # Phase 1: DuckDB (source of truth)
-        # ------------------------------------------------------------------
         duckdb_result = await self._write_duckdb(findings)
         total_ms = (_time.monotonic() - t0) * 1000.0
 
@@ -242,29 +205,17 @@ class StorageTrinity:
             return TrinityWriteResult(
                 duckdb=duckdb_result,
                 total_duration_ms=total_ms,
-    )
+            )
 
-        # ------------------------------------------------------------------
-        # Phase 2: LMDB metadata (already done inside async_ingest_findings_batch)
-        # Called separately here for explicit phase tracking.
-        # ------------------------------------------------------------------
-        # Note: LMDB dedup is already committed inside async_ingest_findings_batch.
-        # We record it as a follow-on phase to DuckDB.
         lmdb_result = TrinityPhaseResult(
             phase="lmdb",
             success=True,  # Already committed inside DuckDB path
             records=duckdb_result.records,
             duration_ms=0.0,  # No separate timing
-    )
+        )
 
-        # ------------------------------------------------------------------
-        # Phase 3: LanceDB embeddings (async, fail-safe)
-        # ------------------------------------------------------------------
         lance_result = await self._write_lance_async(findings)
 
-        # ------------------------------------------------------------------
-        # Phase 4: DuckPGQGraph upsert (fail-safe, async)
-        # ------------------------------------------------------------------
         graph_result = await self._write_graph_async(findings)
 
         total_ms = (_time.monotonic() - t0) * 1000.0
@@ -274,11 +225,7 @@ class StorageTrinity:
             lance=lance_result,
             graph=graph_result,
             total_duration_ms=total_ms,
-    )
-
-    # -----------------------------------------------------------------------
-    # Phase 1: DuckDB write
-    # -----------------------------------------------------------------------
+        )
 
     async def _write_duckdb(self, findings: Sequence[Any]) -> TrinityPhaseResult:
         """Phase 1: Write to DuckDB (source of truth)."""
@@ -293,10 +240,10 @@ class StorageTrinity:
 
             # Count accepted records
             accepted = sum(
-                1 for r in results
-                if getattr(r, "accepted", False) is True
-                or (isinstance(r, dict) and r.get("accepted") is True)
-    )
+                1
+                for r in results
+                if getattr(r, "accepted", False) is True or (isinstance(r, dict) and r.get("accepted") is True)
+            )
             duration_ms = (_time.monotonic() - t0) * 1000.0
 
             if accepted == 0 and len(findings) > 0:
@@ -308,7 +255,7 @@ class StorageTrinity:
                 success=True,
                 records=accepted,
                 duration_ms=duration_ms,
-    )
+            )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -318,15 +265,9 @@ class StorageTrinity:
                 success=False,
                 error=str(exc),
                 duration_ms=duration_ms,
-    )
+            )
 
-    # -----------------------------------------------------------------------
-    # Phase 3: LanceDB write (async, fail-safe)
-    # -----------------------------------------------------------------------
-
-    async def _write_lance_async(
-        self, findings: Sequence[Any]
-    ) -> TrinityPhaseResult:
+    async def _write_lance_async(self, findings: Sequence[Any]) -> TrinityPhaseResult:
         """
         Phase 3: Buffer findings to SemanticStore for async LanceDB flush.
 
@@ -340,7 +281,7 @@ class StorageTrinity:
                 success=True,
                 records=0,
                 error="semantic_store_not_injected",
-    )
+            )
 
         t0 = _time.monotonic()
         try:
@@ -351,7 +292,7 @@ class StorageTrinity:
                 finding_id=self._extract_finding_id(findings),
                 ioc_types=self._extract_ioc_types(findings),
                 ts=self._extract_ts(findings),
-    )
+            )
 
             # Trigger async flush (non-blocking)
             self._schedule_lance_flush()
@@ -362,14 +303,14 @@ class StorageTrinity:
                 success=True,
                 records=len(findings),
                 duration_ms=duration_ms,
-    )
+            )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
             logger.warning(
                 "[TRINITY:LANCE] Buffer failed, scheduling rebuild: %s",
                 exc,
-    )
+            )
             # Schedule rebuild for failed entities
             for f in findings:
                 fid = getattr(f, "finding_id", None)
@@ -382,11 +323,7 @@ class StorageTrinity:
                 records=0,
                 error=str(exc),
                 duration_ms=duration_ms,
-    )
-
-    # -----------------------------------------------------------------------
-    # LanceDB async flush
-    # -----------------------------------------------------------------------
+            )
 
     def _schedule_lance_flush(self) -> None:
         """Schedule async LanceDB flush if not already scheduled."""
@@ -396,7 +333,7 @@ class StorageTrinity:
         self._lance_flush_task = asyncio.create_task(
             self._lance_flush_loop(),
             name="trinity:lance_flush",
-    )
+        )
 
     async def _lance_flush_loop(self) -> None:
         """
@@ -425,21 +362,21 @@ class StorageTrinity:
                 result = await self._semantic_store.flush()
                 # SAFE-4: flush() returns dict with detailed stats
                 if isinstance(result, dict):
-                    count = result.get('total', 0)
-                    errors = result.get('errors', {})
+                    count = result.get("total", 0)
+                    errors = result.get("errors", {})
                     if count > 0:
-                        logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB (english=%d, multilingual=%d)",
-                                    count, result.get('english', 0), result.get('multilingual', 0))
+                        logger.debug(
+                            "[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB (english=%d, multilingual=%d)",
+                            count,
+                            result.get("english", 0),
+                            result.get("multilingual", 0),
+                        )
                     if errors and any(errors.values()):
                         logger.warning("[TRINITY:LANCE:FLUSH] Flush had errors: %s", errors)
                 elif result > 0:
                     logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB", result)
             except Exception as exc:
                 logger.warning("[TRINITY:LANCE:FLUSH] Flush failed: %s", exc)
-
-    # -----------------------------------------------------------------------
-    # Phase 4: DuckPGQGraph write (fail-safe, sync)
-    # -----------------------------------------------------------------------
 
     async def _write_graph_async(self, findings: Sequence[Any]) -> TrinityPhaseResult:
         """
@@ -454,13 +391,12 @@ class StorageTrinity:
                 success=True,
                 records=0,
                 error="graph_service_not_injected",
-    )
+            )
 
         t0 = _time.monotonic()
         upserted = 0
         try:
             for finding in findings:
-                # Extract IOC value from finding
                 ioc_value = self._extract_ioc_value(finding)
                 if not ioc_value:
                     continue
@@ -476,7 +412,7 @@ class StorageTrinity:
                     confidence=0.8,  # Canonical write = high confidence
                     source=source,
                     observed_at=ts,
-    )
+                )
                 upserted += 1
 
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -485,7 +421,7 @@ class StorageTrinity:
                 success=True,
                 records=upserted,
                 duration_ms=duration_ms,
-    )
+            )
 
         except Exception as exc:
             duration_ms = (_time.monotonic() - t0) * 1000.0
@@ -496,7 +432,7 @@ class StorageTrinity:
                 records=0,
                 error=str(exc),
                 duration_ms=duration_ms,
-    )
+            )
 
     def _extract_ioc_value(self, finding: Any) -> str | None:
         """Extract IOC value from finding (domain, ip, hash, etc.)."""
@@ -521,10 +457,6 @@ class StorageTrinity:
             if val:
                 return str(val)
         return "unknown"
-
-    # -----------------------------------------------------------------------
-    # Rebuild mechanism
-    # -----------------------------------------------------------------------
 
     async def rebuild_lance_index(self, entity_ids: set[str] | None = None) -> int:
         """
@@ -563,10 +495,6 @@ class StorageTrinity:
     def rebuild_pending_count(self) -> int:
         """Number of entity_ids pending LanceDB rebuild."""
         return len(self._rebuild_pending)
-
-    # -----------------------------------------------------------------------
-    # Extractors — handle finding objects with various field shapes
-    # -----------------------------------------------------------------------
 
     def _extract_payload_text(self, findings: Sequence[Any]) -> str:
         texts = []
@@ -610,10 +538,6 @@ class StorageTrinity:
                 return float(ts)
         return None
 
-    # -----------------------------------------------------------------------
-    # Lifecycle
-    # -----------------------------------------------------------------------
-
     async def close(self) -> None:
         """Graceful shutdown: flush pending LanceDB writes."""
         self._closed = True
@@ -637,4 +561,4 @@ class StorageTrinity:
             f"StorageTrinity(duckdb={self._duckdb_store!r}, "
             f"semantic_store={'injected' if self._semantic_store else 'none'}, "
             f"rebuild_pending={len(self._rebuild_pending)})"
-    )
+        )

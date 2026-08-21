@@ -12,6 +12,7 @@ a pak teprve iterovala. Nyní běží každý zdroj jako samostatný async gener
 a merge_async_iterables() je mergeuje — první hit může přijít za ~0ms místo 2-10s.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,11 +20,10 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.config_introspection import safe_attr_get
 from hledac.universal.utils.async_generators import merge_async_iterables
+from hledac.universal.utils.config_introspection import safe_attr_get
 
 from ._stage_protocol import BoundedStageQueue, StageContext
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -64,7 +64,7 @@ class DiscoveryStage:
         max_results: int = 10,
         public_bootstrap_enabled: bool = False,
         seed_context: Any | None = None,
-    ):
+    ) -> None:
         self._query = query
         self._max_results = max_results
         self._public_bootstrap_enabled = public_bootstrap_enabled
@@ -164,9 +164,7 @@ class DiscoveryStage:
 
             try:
                 # generate_bootstrap_urls returns list[str], convert to hits
-                urls = await asyncio.to_thread(
-                    generate_bootstrap_urls, ctx.query, max_urls=self._max_results
-                )
+                urls = await asyncio.to_thread(generate_bootstrap_urls, ctx.query, max_urls=self._max_results)
                 for url in urls:
                     if not self._running:
                         break

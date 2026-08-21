@@ -33,13 +33,12 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 
-__all__ = ['StuckTaskDetector']
+__all__ = ["StuckTaskDetector"]
 
 
 class StuckTaskDetector:
@@ -54,7 +53,7 @@ class StuckTaskDetector:
     (typically 8–16 fire-and-forget tasks). Memory footprint is negligible.
     """
 
-    __slots__ = ('_running', '_task_started', '_timeout_s')
+    __slots__ = ("_running", "_task_started", "_timeout_s")
 
     def __init__(self, timeout_s: float = 60.0) -> None:
         if timeout_s < 1.0:
@@ -81,8 +80,7 @@ class StuckTaskDetector:
         """
         now = time.monotonic()
         timeout = self._timeout_s
-        return [tid for tid, started_at in list(self._task_started.items())
-                if now - started_at > timeout]
+        return [tid for tid, started_at in list(self._task_started.items()) if now - started_at > timeout]
 
     async def get_stuck_with_tasks(self) -> list[tuple[int, float]]:
         """
@@ -91,9 +89,11 @@ class StuckTaskDetector:
         """
         now = time.monotonic()
         timeout = self._timeout_s
-        return [(tid, now - started_at)
-                for tid, started_at in list(self._task_started.items())
-                if now - started_at > timeout]
+        return [
+            (tid, now - started_at)
+            for tid, started_at in list(self._task_started.items())
+            if now - started_at > timeout
+        ]
 
     @property
     def timeout_s(self) -> float:

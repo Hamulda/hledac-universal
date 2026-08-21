@@ -3,8 +3,6 @@ brain/continuous_batch_engine.py — Continuous Batching pro MLX Inference
 
 POSITIVE-NEGATIVE ZLEPŠENÍ:
 
-
-
 Na rozdíl od navrženého ContinuousBatchScheduler (který vyžaduje mlx_lm.generate_batch()
 API, které neexistuje), tento modul využívá EXISTUJÍCÍ infrastrukturu:
 
@@ -33,16 +31,19 @@ Trade-offs:
 - Co JDE: parallel prep (tokenization, ChatML formatting) + serial inference
 - Win: ~15-30% improvement v throughput pro batched non-streaming requests
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, cast
 from collections.abc import AsyncIterator, Awaitable
+from operator import attrgetter
+from typing import TYPE_CHECKING
+
+from hledac.universal.utils.asyncx import parallel
 from hledac.universal.utils.executor_decorator import offload_to
-from hledac.universal.utils.asyncx import parallel, parallel_ok
-from operator import attrgetter, itemgetter
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ NORMAL_PRIORITY: float = 1.0
 MIN_BATCH_SIZE: int = 2
 MAX_BATCH_SIZE: int = 8
 DEFAULT_BATCH_SIZE: int = 4
+
 
 class ContinuousBatchEngine:
     """
@@ -70,7 +72,8 @@ class ContinuousBatchEngine:
 
     This gives ~15-30% improvement in aggregate throughput.
     """
-    __slots__ = tuple(('_engine', '_lock', '_next_id', '_queue', '_running', '_semaphore', '_worker_task'))
+
+    __slots__ = ("_engine", "_lock", "_next_id", "_queue", "_running", "_semaphore", "_worker_task")
 
     def __init__(self, engine: DeepHermes3Engine) -> None:
         self._engine = engine
@@ -87,7 +90,8 @@ class ContinuousBatchEngine:
             return
         self._running = True
         from hledac.universal.utils.asyncx import safe_create_task
-        self._worker_task = safe_create_task(self._run_worker(), name='continuous_batch.worker', eager_start=True)
+
+        self._worker_task = safe_create_task(self._run_worker(), name="continuous_batch.worker", eager_start=True)
 
     async def stop(self) -> None:
         """Stop the continuous batch worker."""
@@ -99,7 +103,15 @@ class ContinuousBatchEngine:
             except asyncio.CancelledError:  # noqa: BLE001
                 pass
 
-    async def generate(self, prompt: str, *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None, priority: float=NORMAL_PRIORITY) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 512,
+        temperature: float = 0.1,
+        system_msg: str | None = None,
+        priority: float = NORMAL_PRIORITY,
+    ) -> str:
         """
         Submit a non-streaming request to the batch queue.
 
@@ -117,20 +129,30 @@ class ContinuousBatchEngine:
         self._next_id += 1
         # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
         fut: asyncio.Future = asyncio.get_running_loop().create_future(name=f"continuous_batch:request:{req_id}")
-        req = _BatchRequest(id=req_id, prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg, priority=priority, future=fut)
+        req = _BatchRequest(
+            id=req_id,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system_msg=system_msg,
+            priority=priority,
+            future=fut,
+        )
         # S1-12 FIX: put() can block indefinitely when queue is full (maxsize=128).
         # Wrap with wait_for so caller gets TimeoutError instead of deadlock.
         # 5s timeout means caller can fall back / retry rather than hang.
         try:
             async with asyncio.timeout(5.0):
                 await self._queue.put(req)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if not fut.done():
                 fut.cancel()
             raise
         return await fut
 
-    async def generate_stream(self, prompt: str, *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None) -> AsyncIterator[str]:
+    async def generate_stream(
+        self, prompt: str, *, max_tokens: int = 512, temperature: float = 0.1, system_msg: str | None = None
+    ) -> AsyncIterator[str]:
         """
         Streaming generator with cooperative scheduling.
 
@@ -156,10 +178,14 @@ class ContinuousBatchEngine:
         """
         try:
             if not self._engine._supports_stream_generate:
-                result = await self._engine.generate(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg)
+                result = await self._engine.generate(
+                    prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg
+                )
                 yield result
                 return
-            async for token in self._engine.generate_stream(prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg):
+            async for token in self._engine.generate_stream(
+                prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg
+            ):
                 yield token
                 await asyncio.sleep(0)
         finally:
@@ -167,7 +193,9 @@ class ContinuousBatchEngine:
             # This ensures other requests can proceed when this generator is abandoned
             pass
 
-    async def submit_batch(self, prompts: list[str], *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None) -> list[str]:
+    async def submit_batch(
+        self, prompts: list[str], *, max_tokens: int = 512, temperature: float = 0.1, system_msg: str | None = None
+    ) -> list[str]:
         """
         Submit multiple prompts as a batch.
 
@@ -189,7 +217,9 @@ class ContinuousBatchEngine:
         Returns:
             List of generated texts (same order as prompts)
         """
-        return await self._batch_generate(prompts, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg)
+        return await self._batch_generate(
+            prompts, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg
+        )
 
     # M1 8GB: Metal command queue is single-stream, so we bound concurrent
     # inference calls to avoid saturating the queue. 2 is a safe default —
@@ -197,7 +227,9 @@ class ContinuousBatchEngine:
     # while not overwhelming Metal.
     _INFERENCE_SEMAPHORE = asyncio.Semaphore(2)
 
-    async def _batch_generate(self, prompts: list[str], *, max_tokens: int, temperature: float, system_msg: str | None) -> list[str]:
+    async def _batch_generate(
+        self, prompts: list[str], *, max_tokens: int, temperature: float, system_msg: str | None
+    ) -> list[str]:
         """
         Batch generation: parallel prep (ChatML formatting) + concurrent inference.
 
@@ -209,7 +241,7 @@ class ContinuousBatchEngine:
         M1 8GB: _INFERENCE_SEMAPHORE bounds concurrency to 2 to avoid
         saturating the Metal command queue.
         """
-        system = system_msg or 'You are a helpful assistant.'
+        system = system_msg or "You are a helpful assistant."
 
         def prep_one(prompt: str) -> str:
             return self._engine._format_chatml(system_msg=system, user_msg=prompt)
@@ -217,13 +249,13 @@ class ContinuousBatchEngine:
         # Offload CPU-bound ChatML formatting to thread pool.
         # ISSUE-02 FIX: parallel_ok silently drops failures → index misalignment.
         # Use parallel(policy="collect") to track which prompts succeeded.
-        _format_tasks: list[Awaitable[str]] = [offload_to('cpu_blocking_pool', prep_one, p) for p in prompts]
+        _format_tasks: list[Awaitable[str]] = [offload_to("cpu_blocking_pool", prep_one, p) for p in prompts]
         format_result = await parallel(
             _format_tasks,
             policy="collect",
             concurrency=0,  # unbounded for CPU-bound prep
             ctx="continuous_batch.format_prompts",
-    )
+        )
 
         # Reconstruct (original_index, formatted_prompt) pairs, dropping failed formats.
         # A failed format means the prompt is unusable — include it in failed_indices.
@@ -256,8 +288,10 @@ class ContinuousBatchEngine:
                 system_for_gen = system
                 return await loop.run_in_executor(
                     None,  # Use default thread pool
-                    lambda fmt=formatted, sys_msg=system_for_gen: self._engine.generate(prompt=fmt, max_tokens=max_tokens, temperature=temperature, system_msg=sys_msg)
-    )
+                    lambda fmt=formatted, sys_msg=system_for_gen: self._engine.generate(
+                        prompt=fmt, max_tokens=max_tokens, temperature=temperature, system_msg=sys_msg
+                    ),
+                )
 
         # DLQ-01 FIX: Use parallel() with policy="collect" and wrap each item
         # to carry its index. This preserves failure indices so callers can
@@ -275,17 +309,15 @@ class ContinuousBatchEngine:
             policy="collect",
             concurrency=2,
             ctx="continuous_batch.generate_prompts",
-    )
+        )
 
         # Rebuild ordered results using original prompt indices.
         # formatted_prompts is list[tuple[original_idx, formatted_str]], missing failed formats.
         # result_struct.ok is list[tuple[original_idx, generated_str]].
         ok_gen_indices: set[int] = {idx for idx, _ in result_struct.ok}
-        # Start with all indices as potentially failed
         all_indices = set(range(len(prompts)))
         # Remove format failures (original indices that never made it to generation)
         all_indices -= failed_format_indices
-        # Remove generation successes
         all_indices -= ok_gen_indices
         failed_indices = all_indices
 
@@ -294,14 +326,17 @@ class ContinuousBatchEngine:
         for idx, result_str in result_struct.ok:
             final[idx] = result_str
 
-        # Log errors with indices
         for exc in result_struct.errors:
             logger.warning("[Batch] prompt generation failed: %s", exc)
 
         failed_count = len(failed_indices)
         if failed_count > 0:
-            logger.info("[Batch] %d/%d prompts failed, returning empty strings for indices: %s",
-                       failed_count, len(formatted_prompts), sorted(failed_indices))
+            logger.info(
+                "[Batch] %d/%d prompts failed, returning empty strings for indices: %s",
+                failed_count,
+                len(formatted_prompts),
+                sorted(failed_indices),
+            )
         return final
 
     async def _run_worker(self) -> None:
@@ -315,7 +350,7 @@ class ContinuousBatchEngine:
                         async with asyncio.timeout(0.05):
                             req = await self._queue.get()
                         batch.append(req)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         break
                 if not batch:
                     continue
@@ -324,7 +359,7 @@ class ContinuousBatchEngine:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning('[Batch] Worker error: %s', e)
+                logger.warning("[Batch] Worker error: %s", e)
 
     async def _execute_batch(self, batch: list[_BatchRequest]) -> None:
         """
@@ -348,7 +383,7 @@ class ContinuousBatchEngine:
                             temperature=req.temperature,
                             system_msg=req.system_msg,
                         ),
-    )
+                    )
                     if not req.future.done():
                         req.future.set_result(result)
                 except Exception as e:
@@ -365,13 +400,24 @@ class ContinuousBatchEngine:
             policy="log",
             concurrency=2,
             ctx="continuous_batch.execute_batch",
-    )
+        )
+
 
 class _BatchRequest:
     """Internal batch request."""
-    __slots__ = ('id', 'prompt', 'max_tokens', 'temperature', 'system_msg', 'priority', 'future')
 
-    def __init__(self, id: int, prompt: str, max_tokens: int, temperature: float, system_msg: str | None, priority: float, future: asyncio.Future) -> None:
+    __slots__ = ("id", "prompt", "max_tokens", "temperature", "system_msg", "priority", "future")
+
+    def __init__(
+        self,
+        id: int,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        system_msg: str | None,
+        priority: float,
+        future: asyncio.Future,
+    ) -> None:
         self.id = id
         self.prompt = prompt
         self.max_tokens = max_tokens
@@ -379,4 +425,13 @@ class _BatchRequest:
         self.system_msg = system_msg
         self.priority = priority
         self.future = future
-__all__ = ['ContinuousBatchEngine', 'STREAMING_PRIORITY', 'URGENT_PRIORITY', 'NORMAL_PRIORITY', 'MIN_BATCH_SIZE', 'MAX_BATCH_SIZE']
+
+
+__all__ = [
+    "ContinuousBatchEngine",
+    "STREAMING_PRIORITY",
+    "URGENT_PRIORITY",
+    "NORMAL_PRIORITY",
+    "MIN_BATCH_SIZE",
+    "MAX_BATCH_SIZE",
+]

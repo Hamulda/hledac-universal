@@ -26,19 +26,11 @@
 
 use pyo3::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Minimum input size to attempt simdjson parsing.
 const MIN_INPUT_SIZE: usize = 2; // "{}" is valid JSON
 
 /// Maximum input size — prevents OOM on malformed input.
 const MAX_INPUT_SIZE: usize = 16 * 1024 * 1024; // 16 MiB
-
-// ---------------------------------------------------------------------------
-// JSON Pointer (RFC 6901) resolution
-// ---------------------------------------------------------------------------
 
 /// Resolve a JSON Pointer path against a simd-json BorrowedValue.
 ///
@@ -85,10 +77,6 @@ fn resolve_pointer<'a>(
     Some(current)
 }
 
-// ---------------------------------------------------------------------------
-// Value → bytes conversion (zero-alloc where possible)
-// ---------------------------------------------------------------------------
-
 /// Serialize a BorrowedValue subtree back to JSON bytes.
 ///
 /// Uses simd_json::to_writer for objects/arrays, direct byte extraction
@@ -112,10 +100,6 @@ fn value_to_bytes(value: &simd_json::BorrowedValue<'_>) -> Option<Vec<u8>> {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Python binding
-// ---------------------------------------------------------------------------
 
 /// Extract a value at a JSON Pointer path from raw JSON bytes.
 ///
@@ -159,10 +143,6 @@ pub fn json_pointer_extract(json_bytes: &[u8], pointer: &str) -> PyResult<Option
     // Convert matched value to bytes
     Ok(value_to_bytes(target))
 }
-
-// ---------------------------------------------------------------------------
-// Batch extraction — parses once, extracts multiple pointers
-// ---------------------------------------------------------------------------
 
 /// Extract multiple JSON Pointer paths from a single JSON document.
 ///
@@ -208,20 +188,12 @@ pub fn json_pointer_extract_multi(
     Ok(results)
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 /// Register simdjson functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(json_pointer_extract))?;
     m.add_function(wrap_pyfunction!(json_pointer_extract_multi))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

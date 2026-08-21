@@ -8,18 +8,18 @@ Canonical home for Hermes3Engine inference results used by:
 - live_public_pipeline.py  (construction + to_dict persistence)
 """
 
-
 from __future__ import annotations
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
 MAX_INFERENCE_ITEMS: int = 50  # cap hermes_outputs list in advisory runner
+
 
 # --------------------------------------------------------------------------- #
 # Struct

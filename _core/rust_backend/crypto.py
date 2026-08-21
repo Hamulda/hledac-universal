@@ -89,9 +89,7 @@ class _RustCryptoDomain:
             # Graceful fallback on any Rust error
             return [hashlib.sha256(item.encode()).hexdigest() for item in items]
 
-    def batch_encrypt_aes_gcm(
-        self, password: str, salt: bytes, items: Sequence[str]
-    ) -> list[bytes]:
+    def batch_encrypt_aes_gcm(self, password: str, salt: bytes, items: Sequence[str]) -> list[bytes]:
         """
         Batch AES-256-GCM encryption.
 
@@ -114,9 +112,7 @@ class _RustCryptoDomain:
         except Exception:
             return []
 
-    def batch_decrypt_aes_gcm(
-        self, password: str, salt: bytes, items: Sequence[bytes]
-    ) -> list[str | None]:
+    def batch_decrypt_aes_gcm(self, password: str, salt: bytes, items: Sequence[bytes]) -> list[str | None]:
         """
         Batch AES-256-GCM decryption.
 
@@ -148,15 +144,11 @@ class _PythonCryptoDomain:
         """Batch SHA-256 via hashlib (pure Python fallback)."""
         return [hashlib.sha256(item.encode()).hexdigest() for item in items]
 
-    def batch_encrypt_aes_gcm(
-        self, password: str, salt: bytes, items: Sequence[str]
-    ) -> list[bytes]:
+    def batch_encrypt_aes_gcm(self, password: str, salt: bytes, items: Sequence[str]) -> list[bytes]:
         """AES-GCM not available in Python fallback."""
         return []
 
-    def batch_decrypt_aes_gcm(
-        self, password: str, salt: bytes, items: Sequence[bytes]
-    ) -> list[str | None]:
+    def batch_decrypt_aes_gcm(self, password: str, salt: bytes, items: Sequence[bytes]) -> list[str | None]:
         """AES-GCM not available in Python fallback."""
         return [None] * len(items)
 
@@ -184,11 +176,6 @@ def get_domain(ext: Any) -> _RustCryptoDomain | _PythonCryptoDomain:
 
     logger.debug("[crypto] Using pure Python SHA-256 fallback (hashlib)")
     return _PythonCryptoDomain()
-
-
-# =============================================================================
-# Top-level async wrappers (recommended for hot paths)
-# =============================================================================
 
 
 async def batch_sha256(items: Sequence[str]) -> list[str]:
@@ -221,28 +208,23 @@ async def batch_sha256_hw(items: Sequence[str]) -> list[str]:
     return await batch_sha256(items)
 
 
-# =============================================================================
-# Sync wrappers (for hot paths that can't use asyncio)
-# =============================================================================
-
-
 def batch_sha256_hw_sync(items: Sequence[str]) -> list[str]:
     """
     Synchronous batch SHA-256 with hardware acceleration.
-    
+
     This is the RECOMMENDED entry point for synchronous code paths
     (e.g., in non-async functions, __init__, or callbacks).
-    
+
     Args:
         items: List of strings to hash
-    
+
     Returns:
         List of 64-char hex SHA-256 digests
-    
+
     Performance:
         - < 128 items: serial (no thread pool overhead)
         - >= 128 items: rayon parallel (releases GIL)
-    
+
     Example:
         >>> hashes = batch_sha256_hw_sync(["hello", "world"])
         >>> len(hashes)
@@ -255,13 +237,13 @@ def batch_sha256_hw_sync(items: Sequence[str]) -> list[str]:
 def sha256_hex_sync(data: str | bytes, truncate: int | None = None) -> str:
     """
     Synchronous SHA-256 hex digest.
-    
+
     This is the RECOMMENDED entry point for single-item synchronous hashing.
-    
+
     Args:
         data: String or bytes to hash
         truncate: Optional truncation length (truncates from 64 to N chars)
-    
+
     Returns:
         SHA-256 hex digest (64 chars, or N if truncate is set)
     """

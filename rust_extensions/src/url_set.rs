@@ -31,10 +31,6 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-// ---------------------------------------------------------------------------
-// Global counters for health endpoint
-// ---------------------------------------------------------------------------
-
 static GLOBAL_URL_SET_INSTANCES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_URL_SET_ITEMS: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_URL_MMAP_INSTANCES: AtomicU64 = AtomicU64::new(0);
@@ -54,17 +50,9 @@ pub fn global_stats() -> ((u64, u64), (u64, u64)) {
     )
 }
 
-// ===========================================================================
-// Constants
-// ===========================================================================
-
 const MMAP_HEADER_SIZE: usize = 64;
 const MMAP_MAGIC: &[u8; 4] = b"URID";
 const MMAP_VERSION: u8 = 1;
-
-// ===========================================================================
-// FNV-1a Hash
-// ===========================================================================
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -78,10 +66,6 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     }
     hash
 }
-
-// ===========================================================================
-// MmapUrlSet — file-backed persistent URL dedup
-// ===========================================================================
 
 /// Thread-safe mmap-backed URL dedup using parking_lot::RwLock + HashSet + atomic counters.
 /// Issue #2 fix: Replaced DashMap with parking_lot::RwLock for Python async safety.
@@ -211,7 +195,6 @@ impl MmapUrlSet {
         let entries: Vec<u64> = self.hashes.read().iter().cloned());
         let num_entries = entries.len() as u32;
 
-        // Write header
         let mut header = [0u8; MMAP_HEADER_SIZE];
         header[0..4].copy_from_slice(MMAP_MAGIC);
         header[4] = MMAP_VERSION;
@@ -223,7 +206,6 @@ impl MmapUrlSet {
             pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e))
         })?;
 
-        // Write hash array
         let mut hash_bytes = Vec::with_capacity(entries.len() * 8);
         for &h in &entries {
             hash_bytes.extend_from_slice(&h.to_le_bytes());
@@ -282,9 +264,7 @@ impl MmapUrlSet {
         if urls.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel FNV-1a hash.
         let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())));
-        // Phase 2: sequential insert under write lock.
         let mut new_count = 0usize;
         let results: Vec<bool> = hashes
             .iter()
@@ -342,10 +322,6 @@ impl MmapUrlSet {
     }
 }
 
-// ===========================================================================
-// Legacy in-memory UrlSet (kept for compat + tests)
-// ===========================================================================
-
 #[pyclass]
 pub struct UrlSet {
     hashes: std::collections::HashSet<u64>,
@@ -386,9 +362,7 @@ impl UrlSet {
         if urls.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel FNV-1a hash.
         let hashes: Vec<u64> = urls.par_iter().map(|u| fnv1a_64(u.as_bytes())));
-        // Phase 2: sequential insert.
         let mut new_count = 0usize;
         let results: Vec<bool> = hashes
             .iter()

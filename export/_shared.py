@@ -11,17 +11,11 @@ Single-source-of-truth for these helpers:
 - _iso_timestamp()
 - normalize_export_input()
 """
-import msgspec
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
-from collections.abc import Mapping
-from _core import aclose
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Safe string conversion
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _safe_str(val: Any) -> str:
     """Safe str conversion — None becomes empty string, everything else str()."""
@@ -29,10 +23,6 @@ def _safe_str(val: Any) -> str:
         return ""
     return str(val)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Timestamp normalization
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _iso_timestamp(ts: Any, *, fmt: str = "iso") -> str:
     """
@@ -58,7 +48,7 @@ def _iso_timestamp(ts: Any, *, fmt: str = "iso") -> str:
             dt = ts
         else:
             dt = datetime.fromtimestamp(float(ts), tz=UTC)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return _utc_now() if fmt == "rfc3339" else "unknown"
 
     if fmt == "rfc3339":
@@ -70,10 +60,6 @@ def _utc_now() -> str:
     """Return current UTC time as RFC3339 string."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Input normalization
-# ─────────────────────────────────────────────────────────────────────────────
 
 def normalize_export_input(report) -> dict[str, Any]:
     """
@@ -89,6 +75,4 @@ def normalize_export_input(report) -> dict[str, Any]:
         return dict(report)
     if hasattr(report, "keys"):  # type: ignore[has-type]
         return dict(cast(Mapping, report))
-    raise TypeError(
-        f"report must be msgspec.Struct or Mapping, got {type(report).__name__}"
-    )
+    raise TypeError(f"report must be msgspec.Struct or Mapping, got {type(report).__name__}")

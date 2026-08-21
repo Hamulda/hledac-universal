@@ -32,29 +32,33 @@ Usage:
     )
     results = await pipeline.run()
 """
+
 import asyncio
 import logging
 import traceback
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
 
+
 class TwoPassPipelineConfig(Struct):
     """Configuration for a two-pass pipeline."""
+
     queue_size: int = 512
-    label: str = 'two_pass'
+    label: str = "two_pass"
     consumer_concurrency: int = 8
     timeout_s: float | None = None
 
+
 class PipelineStats(Struct):
     """Runtime statistics for a two-pass pipeline."""
+
     produced: int = 0
     consumed: int = 0
     producer_errors: int = 0
@@ -62,9 +66,18 @@ class PipelineStats(Struct):
     queue_high_water: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {'produced': self.produced, 'consumed': self.consumed, 'producer_errors': self.producer_errors, 'consumer_errors': self.consumer_errors, 'queue_high_water': self.queue_high_water}
+        return {
+            "produced": self.produced,
+            "consumed": self.consumed,
+            "producer_errors": self.producer_errors,
+            "consumer_errors": self.consumer_errors,
+            "queue_high_water": self.queue_high_water,
+        }
+
+
 _T = Any
 _R = Any
+
 
 class TwoPassPipeline:
     """
@@ -82,9 +95,16 @@ class TwoPassPipeline:
 
     M1 8GB: Queue bounded at 512, asyncio.to_thread for CPU-bound consumer work.
     """
-    __slots__ = tuple(('_config', '_consumer_fn', '_done', '_producer_coro', '_producer_exc', '_queue', '_results', '_stats'))
 
-    def __init__(self, producer_coro: Awaitable[list[_T]], consumer_fn: Callable[[_T], _R], *, config: TwoPassPipelineConfig | None=None) -> None:
+    __slots__ = ("_config", "_consumer_fn", "_done", "_producer_coro", "_producer_exc", "_queue", "_results", "_stats")
+
+    def __init__(
+        self,
+        producer_coro: Awaitable[list[_T]],
+        consumer_fn: Callable[[_T], _R],
+        *,
+        config: TwoPassPipelineConfig | None = None,
+    ) -> None:
         self._producer_coro = producer_coro
         self._consumer_fn = consumer_fn
         self._config = config or TwoPassPipelineConfig()
@@ -109,11 +129,11 @@ class TwoPassPipeline:
                     water = self._queue.qsize()
                     if water > self._stats.queue_high_water:
                         self._stats.queue_high_water = water
-                except asyncio.TimeoutError:
-                    logger.warning('[%s] Producer timed out waiting for queue space, dropping item', self._config.label)
+                except TimeoutError:
+                    logger.warning("[%s] Producer timed out waiting for queue space, dropping item", self._config.label)
                     break
         except Exception:
-            self._producer_exc = BaseException(f'[{self._config.label}] Producer error: {traceback.format_exc()}')
+            self._producer_exc = BaseException(f"[{self._config.label}] Producer error: {traceback.format_exc()}")
             self._stats.producer_errors += 1
         finally:
             self._done.set()
@@ -124,7 +144,7 @@ class TwoPassPipeline:
             try:
                 # D5 FIX: safe_wait_for for correct TaskGroup composition
                 item = await safe_wait_for(self._queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if self._done.is_set() and self._queue.empty():
                     break
                 continue
@@ -155,7 +175,7 @@ class TwoPassPipeline:
         try:
             producer_items = await self._producer_coro
         except Exception as exc:
-            logger.warning('[%s] Producer coroutine raised: %s', self._config.label, exc)
+            logger.warning("[%s] Producer coroutine raised: %s", self._config.label, exc)
             self._producer_exc = exc
             self._done.set()
         async with asyncio.TaskGroup() as tg:
@@ -183,21 +203,25 @@ class TwoPassPipeline:
                         water = self._queue.qsize()
                         if water > self._stats.queue_high_water:
                             self._stats.queue_high_water = water
-                    except asyncio.TimeoutError:
-                        logger.warning('[%s] Producer timed out waiting for queue space, dropping item', self._config.label)
+                    except TimeoutError:
+                        logger.warning(
+                            "[%s] Producer timed out waiting for queue space, dropping item", self._config.label
+                        )
                         break
             except Exception:
                 self._producer_exc = BaseException(traceback.format_exc())
                 self._stats.producer_errors += 1
             finally:
                 self._done.set()
+
         async with asyncio.TaskGroup() as tg:
             tg.create_task(feed_stream())
             for _ in range(self._config.consumer_concurrency):
                 tg.create_task(self._consumer_worker())
         return self._results
 
-async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batch_size: int=64) -> list[_R]:
+
+async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batch_size: int = 64) -> list[_R]:
     """
     Run a CPU-bound consumer function over items via the execution gateway.
 
@@ -214,7 +238,7 @@ async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batc
 
     Issue 8 fix: replaced bare asyncio.to_thread() with bounded gateway dispatch.
     """
-    from hledac.universal.runtime.execution_gateway import gateway, WorkloadHint
+    from hledac.universal.runtime.execution_gateway import WorkloadHint, gateway
     from hledac.universal.utils.asyncx import parallel_ok
 
     if not items:
@@ -222,15 +246,12 @@ async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batc
 
     async def _process_batch(batch: list[_T]) -> list[_R]:
         """Process a batch of items via gateway cpu_bound (Rust rayon preferred)."""
-        gathered = await parallel_ok(*[
-            gateway.cpu_bound(fn, item, hint=WorkloadHint.GIL_RELEASING)
-            for item in batch
-        ])
+        gathered = await parallel_ok(*[gateway.cpu_bound(fn, item, hint=WorkloadHint.GIL_RELEASING) for item in batch])
         return [r for r in gathered if not isinstance(r, Exception)]
 
     results: list[_R] = []
     for i in range(0, len(items), batch_size):
-        batch = items[i:i + batch_size]
+        batch = items[i : i + batch_size]
         batch_results = await _process_batch(batch)
         results.extend(batch_results)
     return results

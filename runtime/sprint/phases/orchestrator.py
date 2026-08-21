@@ -16,25 +16,26 @@ checkpoint_zero_category, observed_run_tuple) are derived here.
 Usage:
     await run_sprint(query="LockBit ransomware", duration_s=1800)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
 
-from ..types import SprintRunContext, SprintFlags
 from ..context import SprintContextManager, set_current_sprint_context
+from ..types import SprintFlags, SprintRunContext
 from .boot import _run_sprint_boot
 from .execute import _run_sprint_execute
-from .windup import _run_sprint_windup
 from .teardown import _run_sprint_teardown
+from .windup import _run_sprint_windup
 
 logger = logging.getLogger(__name__)
 
 # Try to setup telemetry
 try:
     from hledac.universal.runtime._telemetry_setup import configure
+
     configure()
 except Exception:
     pass
@@ -45,11 +46,11 @@ except ImportError:
     from hledac.universal.otel import instrumented as _otel_instrumented
 
 
-@_otel_instrumented('sprint.run', component='cli')
+@_otel_instrumented("sprint.run", component="cli")
 async def run_sprint(
     query: str,
     duration_s: float = 1800.0,
-    export_dir: str = str(Path.home() / '.hledac' / 'reports'),
+    export_dir: str = str(Path.home() / ".hledac" / "reports"),
     aggressive_mode: bool = False,
     deep_probe_enabled: bool = False,
     deep_research: bool = False,
@@ -69,17 +70,17 @@ async def run_sprint(
 ) -> None:
     """
     PHASE REFACTORING F350M-R: Thin orchestrator for run_sprint.
-    
+
     This function now delegates all work to extracted phase functions:
     - _run_sprint_boot: Pre-flight, init, lock acquisition
     - _run_sprint_execute: Scheduler setup, sprint race, execution
     - _run_sprint_windup: Result processing, report generation, export
     - _run_sprint_teardown: Resource cleanup
-    
+
     ROLE: CANONICAL SPRINT OWNER — SOLE production sprint authority.
     All report truth surfaces (canonical_run_summary, runtime_truth, timing_truth,
     checkpoint_zero_category, observed_run_tuple) are derived here.
-    
+
     Args:
         query: Sprint query string
         duration_s: Requested sprint duration (default 1800s = 30min)
@@ -104,18 +105,19 @@ async def run_sprint(
     ctx = SprintRunContext()
     sprint_ctx_manager = SprintContextManager()
     set_current_sprint_context(sprint_ctx_manager)
-    
+
     # Warning for replay mode without WARC dir
     if replay_seed is not None and warc_dir is None:
-        logger.warning('[ULTIMATE-001] Replay mode without --warc-dir: live HTTP fetching will be used instead of WARC responses')
-    
+        logger.warning(
+            "[ULTIMATE-001] Replay mode without --warc-dir: live HTTP fetching will be used instead of WARC responses"
+        )
+
     try:
-        # Start per-sprint resources
         await sprint_ctx_manager.start()
         ctx.denorm_buffer = sprint_ctx_manager.denorm_buffer
         ctx.session_tracker = sprint_ctx_manager.session_tracker
         ctx.duckpgq_graph = sprint_ctx_manager.duckpgq_graph
-        
+
         # BOOT: Pre-flight, init, lock acquisition
         await _run_sprint_boot(
             ctx=ctx,
@@ -129,8 +131,7 @@ async def run_sprint(
             prng_seed=prng_seed,
             replay_seed=replay_seed,
         )
-        
-        # EXECUTE: Scheduler setup, sprint race, execution
+
         await _run_sprint_execute(
             ctx=ctx,
             query=query,
@@ -144,7 +145,7 @@ async def run_sprint(
             ui_mode=ui_mode,
             export_dir=export_dir,
         )
-        
+
         # WINDUP: Result processing, report generation, export
         await _run_sprint_windup(
             ctx=ctx,
@@ -153,9 +154,9 @@ async def run_sprint(
             export_dir=export_dir,
             deep_probe_enabled=deep_probe_enabled,
         )
-        
+
     except asyncio.CancelledError:
-        logger.info('[run_sprint] Sprint cancelled — running teardown')
+        logger.info("[run_sprint] Sprint cancelled — running teardown")
         raise
     finally:
         # TEARDOWN: Resource cleanup (always runs, even on cancellation)

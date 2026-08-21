@@ -2,7 +2,6 @@
 
 F350M-R / Issue SC-06.
 
-
 SC-06 refactor: scheduler.py slimmed to ~320 LOC.
 Bootstrap  → runtime/scheduler_v2/_v2_init.py (V2Init.run() called in sprint_entrypoint.py)
 Inject shims → runtime/scheduler_v2/injector.py (Injector.apply() called at end of run())
@@ -29,11 +28,9 @@ import msgspec
 from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     safe_create_task_tracked,
-    )
-from hledac.universal.utils.asyncx import parallel
+)
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
-from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
+from hledac.universal.utils.asyncx import parallel, safe_wait_for
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
@@ -42,6 +39,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     All phase logic delegated to: SprintBootstrap, PreludeOrchestrator,
     AcquisitionOrchestrator, WinddownOrchestrator.
     """
+
     DEFAULT_TIMEOUT_S = 10.0
 
     # ── Constructor params ─────────────────────────────────────────────────
@@ -109,6 +107,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     def __post_init__(self) -> None:
         if self._result is None:
             from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
+
             object.__setattr__(self, "_result", SprintSchedulerResult())
 
     # ── Run ────────────────────────────────────────────────────────────────
@@ -140,7 +139,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     graph_service=self._ioc_graph,
                     cancel_event=self._cancel_event,
                 ),
-    )
+            )
 
         # [META]-004: Initialize elastic pool manager before any work
         self._init_rayon_pool_manager()
@@ -172,7 +171,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             run_pdns_prelude_lane,
             run_public_prelude_lane,
             run_wayback_prelude_lane,
-    )
+        )
 
         _t0 = _time.time()
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
@@ -182,42 +181,33 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         _seed_ctx: Any = None
         try:
             from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
+            from hledac.universal.runtime.acquisition.nonfeed_outcomes import NonfeedSeedContext
             from hledac.universal.runtime.pivot_planner import (
                 generate_pivot_candidates_from_query as _gen_pivots,
-    )
-            from hledac.universal.runtime.acquisition.nonfeed_outcomes import NonfeedSeedContext
+            )
 
             _pivot_seeds = _gen_pivots(query)
             if _pivot_seeds:
                 _seed_dicts = [
-                    {"value": p.ioc_value, "seed_type": p.ioc_type}
-                    for p in _pivot_seeds
-                    if p.ioc_value and p.ioc_type
+                    {"value": p.ioc_value, "seed_type": p.ioc_type} for p in _pivot_seeds if p.ioc_value and p.ioc_type
                 ]
                 if _seed_dicts:
                     _pivot_plan = plan_lanes_for_pivot_seeds(_seed_dicts)
                     _pivot_lanes = getattr(_pivot_plan, "items", None)
                     _ctx_domains = tuple(
-                        i.seed_value
-                        for i in (_pivot_lanes or [])
-                        if getattr(i, "seed_type", None) == "domain"
-    )
+                        i.seed_value for i in (_pivot_lanes or []) if getattr(i, "seed_type", None) == "domain"
+                    )
                     if _ctx_domains:
                         _seed_ctx = NonfeedSeedContext(domains=_ctx_domains)
         except Exception:
             _pivot_lanes = None
             _seed_ctx = None
 
-        # Run all prelude lanes concurrently
         _coros = [
             run_public_prelude_lane(query),
             run_ct_prelude_lane(query, self._result, seed_context=_seed_ctx),
-            run_wayback_prelude_lane(
-                query, self._result, _duckdb_raw, _time, seed_context=_seed_ctx
-            ),
-            run_pdns_prelude_lane(
-                query, self._result, _duckdb_raw, _time, seed_context=_seed_ctx
-            ),
+            run_wayback_prelude_lane(query, self._result, _duckdb_raw, _time, seed_context=_seed_ctx),
+            run_pdns_prelude_lane(query, self._result, _duckdb_raw, _time, seed_context=_seed_ctx),
             run_doh_prelude_lane(
                 query,
                 self._result,
@@ -228,9 +218,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             ),
         ]
 
-        _build = await parallel(
-            _coros, concurrency=5, policy="collect", taskgroup=True, ctx="prelude_v2"
-    )
+        _build = await parallel(_coros, concurrency=5, policy="collect", taskgroup=True, ctx="prelude_v2")
         _lane_results = _build.ok
         self._result.prelude_duration_s = _time.time() - _t0
         self._result.prelude_lanes_attempted = [r.lane for r in _lane_results if r.attempted]
@@ -246,7 +234,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             self._async_prewarm_temporal(),
             name="prelude:temporal_prewarm",
             scope=TaskScope.PRELUDE,
-    )
+        )
 
     async def _prewarm_hermes(self, _query: str = "") -> None:
         """No-op in V2 — Hermes prewarm is handled directly by V2Init._prewarm_hermes()
@@ -266,11 +254,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
 
         _orch = AcquisitionOrchestrator()
-        ordered_sources = (
-            getattr(self._acquisition_plan, "ordered_sources", [])
-            if self._acquisition_plan
-            else []
-    )
+        ordered_sources = getattr(self._acquisition_plan, "ordered_sources", []) if self._acquisition_plan else []
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
         _sidecar_raw = self._sidecar_orchestrator.value if self._sidecar_orchestrator else None
 
@@ -286,14 +270,14 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             effective_max_cycles=self._config.max_cycles,
             enrichment_services=None,
             sidecar_orchestrator=_sidecar_raw,
-    )
+        )
 
         _phase_result = await _orch.run(
             ctx=self._ctx,
             ordered_sources=ordered_sources,
             duckdb_store=_duckdb_raw,
             _rayon_manager=self._rayon_manager,
-    )
+        )
 
         self._result.cycles_started = _phase_result.cycles_started
         self._result.cycles_completed = _phase_result.cycles_completed
@@ -326,7 +310,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             sprint_id=getattr(self, "_sprint_id", "unknown"),
             int_counter_layout=getattr(self._result, "_int_counter_layout", None),
             rel_discovery_engine=getattr(self, "_rel_discovery_engine", None),
-    )
+        )
 
         _orch = WinddownOrchestrator()
         await _orch.run(ctx=self._ctx, lifecycle=self._lifecycle, query=query)
@@ -344,6 +328,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         """Initialize the RayonPoolManager singleton (called at sprint start)."""
         if self._rayon_manager is None:
             from hledac.universal._core.isolated_executors import get_rayon_pool_manager
+
             self._rayon_manager = get_rayon_pool_manager()
             self._set_pool_phase("BOOT")
 
@@ -406,16 +391,14 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 accepted_count=accepted_count,
                 signal_value=signal_value,
                 ts=_t.time(),
-    )
+            )
             await _duckdb.async_record_hypothesis_feedback(record)
         except Exception:  # noqa: BLE001
             pass
 
     # ── Synthesis ───────────────────────────────────────────────────────────
 
-    async def _run_synthesis_sidecar(
-        self, query: str, duckdb_store: Any, lifecycle: Any
-    ) -> None:
+    async def _run_synthesis_sidecar(self, query: str, duckdb_store: Any, lifecycle: Any) -> None:
         """F259: Run synthesis in windup phase.
 
         Calls AcquisitionOrchestrator._run_synthesis_sidecar() directly.
@@ -476,35 +459,39 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
             try:
                 from hledac.universal.knowledge.graph_service import shutdown_graph
+
                 shutdown_graph()
             except Exception:  # noqa: BLE001
                 pass
 
             # MODERN-35: Sprint reset calls to prevent cross-sprint contamination
             # Reset per-sprint state without full teardown, allowing reuse in next sprint
-            
+
             # Reset hot edges cache denorm buffer and L1 Rust counters
             try:
                 from hledac.universal.knowledge import hot_edges_cache
+
                 hot_edges_cache.reset_hot_edges_sprint()
             except Exception:  # noqa: BLE001
                 pass
-            
+
             # Reset darknet session tracking state
             try:
                 from hledac.universal.transport import darknet_session_provider
+
                 _t_sessions = safe_create_task_tracked(
                     darknet_session_provider.reset_sprint(),
                     name="teardown:darknet_reset_sprint",
-                    scope=TaskScope.TEARDOWN
-    )
+                    scope=TaskScope.TEARDOWN,
+                )
                 _bg_tasks.append(_t_sessions)
             except Exception:  # noqa: BLE001
                 pass
-            
+
             # Reset isolated executor pools (Python refs only, not Rust pools)
             try:
                 from hledac.universal._core import isolated_executors
+
                 isolated_executors.reset_pools_sprint()
             except Exception:  # noqa: BLE001
                 pass
@@ -513,7 +500,10 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             # await within the timeout so we get graceful completion, not just cancellation.
             try:
                 from hledac.universal.memory import close_memory_manager
-                _t = safe_create_task_tracked(close_memory_manager(), name="teardown:close_memory_manager", scope=TaskScope.TEARDOWN)
+
+                _t = safe_create_task_tracked(
+                    close_memory_manager(), name="teardown:close_memory_manager", scope=TaskScope.TEARDOWN
+                )
                 _bg_tasks.append(_t)
             except Exception:  # noqa: BLE001
                 pass
@@ -524,7 +514,10 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             # even if no sessions were opened.
             try:
                 from hledac.universal.transport.session_pool import session_pool
-                _t2 = safe_create_task_tracked(session_pool.close_all(), name="teardown:session_pool_close", scope=TaskScope.TEARDOWN)
+
+                _t2 = safe_create_task_tracked(
+                    session_pool.close_all(), name="teardown:session_pool_close", scope=TaskScope.TEARDOWN
+                )
                 _bg_tasks.append(_t2)
             except Exception:  # noqa: BLE001
                 pass
@@ -535,6 +528,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             # the singleton may still be registered. Best-effort stop either way.
             try:
                 from hledac.universal.transport.tor_transport import get_tor_transport_singleton
+
                 _tor = get_tor_transport_singleton()
                 if _tor is not None and hasattr(_tor, "stop"):
                     _t3 = safe_create_task_tracked(_tor.stop(), name="teardown:tor_stop", scope=TaskScope.TEARDOWN)
@@ -549,7 +543,9 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             try:
                 _planner = getattr(self, "_pivot_planner", None)
                 if _planner is not None and hasattr(_planner, "teardown"):
-                    _t4 = safe_create_task_tracked(_planner.teardown(), name="teardown:pivot_planner", scope=TaskScope.TEARDOWN)
+                    _t4 = safe_create_task_tracked(
+                        _planner.teardown(), name="teardown:pivot_planner", scope=TaskScope.TEARDOWN
+                    )
                     _bg_tasks.append(_t4)
             except Exception:  # noqa: BLE001
                 pass
@@ -598,7 +594,5 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             raise
         finally:
             elapsed_ms = (_time.monotonic() - start) * 1000
-            sys.stdout.write(
-                f"[aclean:{sprint_id}] reason={reason} duration_ms={elapsed_ms:.1f}\n"
-    )
+            sys.stdout.write(f"[aclean:{sprint_id}] reason={reason} duration_ms={elapsed_ms:.1f}\n")
             sys.stdout.flush()

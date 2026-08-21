@@ -21,8 +21,6 @@ Outputs JSON:
 ISSUE-04: Uses canonical duckdb_pool for connection management.
 """
 
-
-
 import argparse
 import json
 import sys
@@ -37,8 +35,7 @@ from hledac.universal.runtime.evidence_corroboration import (
     build_top_indicators,
     build_weak_unverified,
     score_indicators_by_corroboration,
-    )
-from _core import aclose
+)
 
 
 def load_report(path: str) -> list[dict]:
@@ -103,10 +100,12 @@ def main() -> None:
         seeds = load_seeds(args.seeds_json)
         # Score seeds as findings
         from hledac.universal.runtime.evidence_corroboration import score_seeds_by_corroboration as _score_seeds
+
         scores = _score_seeds(seeds)
     elif args.duckdb:
         # ISSUE-04: Use canonical duckdb_pool instead of raw duckdb.connect()
         from hledac.universal._core.duckdb_pool import duckdb_ro_connection
+
         if not args.query:
             print("ERROR: --query required with --duckdb", file=sys.stderr)
             sys.exit(1)

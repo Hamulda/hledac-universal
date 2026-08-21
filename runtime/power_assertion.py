@@ -34,7 +34,6 @@ import subprocess
 import sys
 import threading
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,8 @@ def _check_pyobjc_availability() -> bool:
         from IOKit.pwr_mgt import (
             IOPMAssertionCreateWithName,
             IOPMAssertionRelease,
-    )
+        )
+
         _IOKit_pwr_mgt = (IOPMAssertionCreateWithName, IOPMAssertionRelease)
         _pyobjc_available = True
         logger.debug("[PowerAssertion] PyObjC IOKit.pwr_mgt available")
@@ -131,12 +131,11 @@ class PowerAssertion:
                 if self._assertion_ids:
                     self._method = "iokit"
                     logger.info(
-                        "[PowerAssertion] IOPMAssertion acquired (%d assertions) — "
-                        "sleep prevented (pid=%d, reason=%s)",
+                        "[PowerAssertion] IOPMAssertion acquired (%d assertions) — sleep prevented (pid=%d, reason=%s)",
                         len(self._assertion_ids),
                         self._pid,
                         self._reason,
-    )
+                    )
                     return
             except Exception as exc:
                 logger.warning("[PowerAssertion] IOKit assertion failed: %s — trying caffeinate", exc)
@@ -151,7 +150,7 @@ class PowerAssertion:
                     self._pid,
                     self._caffeinate_proc.pid,
                     self._reason,
-    )
+                )
                 return
         except Exception as exc:
             logger.warning("[PowerAssertion] caffeinate fallback also failed: %s", exc)
@@ -162,7 +161,7 @@ class PowerAssertion:
             "[PowerAssertion] FAILED to acquire power assertion — sprint may be "
             "interrupted by macOS sleep on lid close. Install PyObjC for native support: "
             "pip install pyobjc-framework-IOKit"
-    )
+        )
 
     def _acquire_iokit_assertions(self) -> None:
         """Create IOPMAssertion assertions for NoIdleSleep + PreventUserSleep."""
@@ -201,7 +200,7 @@ class PowerAssertion:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-    )
+            )
         except Exception as exc:
             logger.debug("[PowerAssertion] caffeinate subprocess failed: %s", exc)
             self._caffeinate_proc = None

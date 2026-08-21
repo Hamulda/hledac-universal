@@ -8,9 +8,9 @@ Used for semantic similarity calculations in MLX inference pipeline.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-from utils._patterns import cosine_similarity, batch_cosine_similarity  # noqa: E402
+from typing import TYPE_CHECKING
+
+from utils._patterns import batch_cosine_similarity, cosine_similarity
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -21,15 +21,11 @@ try:
         FFI_MODULE_SIMD_SIMILARITY,
         get_ffi_circuit_breaker,
     )
+
     _FFI_CB_AVAILABLE = True
 except ImportError:
     _FFI_CB_AVAILABLE = False
     FFI_MODULE_SIMD_SIMILARITY = "simd_similarity"
-
-
-# =============================================================================
-# SIMD / Cosine Similarity Domain
-# =============================================================================
 
 
 class _RustSimdDomain:
@@ -39,6 +35,7 @@ class _RustSimdDomain:
     Properly delegates to simd_similarity.rs via batch_cosine_scores.
     Uses batch API for both single and batch operations to leverage NEON/SSE3 SIMD.
     """
+
     __slots__ = ("_ext", "_ffi_cb", "_batch_fn", "_batch_npy_fn")
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
@@ -49,9 +46,7 @@ class _RustSimdDomain:
         self._batch_fn = getattr(ext, "batch_cosine_scores", None)
         self._batch_npy_fn = getattr(ext, "batch_cosine_scores_npy", None)
 
-    def _rust_batch_scores(
-        self, vectors: list[list[float]], query: list[float]
-    ) -> list[float]:
+    def _rust_batch_scores(self, vectors: list[list[float]], query: list[float]) -> list[float]:
         """
         Call Rust batch_cosine_scores with proper marshaling.
 
@@ -75,13 +70,9 @@ class _RustSimdDomain:
         try:
             if self._batch_npy_fn is not None:
                 # Prefer zero-copy npy path
-                result: list[list[float]] = self._batch_npy_fn(
-                    all_flat, all_flat, num_vectors, num_vectors, dim
-                )
+                result: list[list[float]] = self._batch_npy_fn(all_flat, all_flat, num_vectors, num_vectors, dim)
             elif self._batch_fn is not None:
-                result = self._batch_fn(
-                    all_flat, all_flat, num_vectors, num_vectors, dim
-                )
+                result = self._batch_fn(all_flat, all_flat, num_vectors, num_vectors, dim)
             else:
                 return batch_cosine_similarity(vectors, query)
 
@@ -96,12 +87,12 @@ class _RustSimdDomain:
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors with circuit breaker."""
         if self._ffi_cb is not None:
+
             def rust_call() -> float:
                 scores = self._rust_batch_scores([b], a)
                 return scores[0] if scores else 0.0
-            result = self._ffi_cb.call_or_fallback(
-                FFI_MODULE_SIMD_SIMILARITY, rust_call, a, b
-            )
+
+            result = self._ffi_cb.call_or_fallback(FFI_MODULE_SIMD_SIMILARITY, rust_call, a, b)
             if result.success:
                 return float(result.value)  # type: ignore[return-value]
             return cosine_similarity(a, b)
@@ -111,11 +102,11 @@ class _RustSimdDomain:
     def batch_cosine_similarity(self, vectors: list[list[float]], query: list[float]) -> list[float]:
         """Compute cosine similarity between query and multiple vectors with circuit breaker."""
         if self._ffi_cb is not None:
+
             def rust_call() -> list[float]:
                 return self._rust_batch_scores(vectors, query)
-            result = self._ffi_cb.call_or_fallback(
-                FFI_MODULE_SIMD_SIMILARITY, rust_call, vectors, query
-            )
+
+            result = self._ffi_cb.call_or_fallback(FFI_MODULE_SIMD_SIMILARITY, rust_call, vectors, query)
             if result.success:
                 return list(result.value)  # type: ignore[return-value]
             return batch_cosine_similarity(vectors, query)
@@ -139,7 +130,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if len(a) != len(b) or len(a) == 0:
         return 0.0
 
-    dot_product = sum(x * y for x, y in zip(a, b))
+    dot_product = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
 

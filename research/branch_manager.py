@@ -2,7 +2,6 @@
 BranchManager – rozhodování o odbočkách s ANE a spiking prioritou.
 Rozhoduje o vytvoření nových větví (úloh) na základě nálezů.
 
-
 ISSUE-037 opravy:
 1. _boost_related_tasks/_boost_queue REMOVED — heappop na asyncio.PriorityQueue
    je CRITICAL bug (PriorityQueue nemá heap protocol). Nahrrazeno přímým
@@ -18,10 +17,8 @@ import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
-    from hledac.universal.research.parallel_scheduler import PrioritizedTask
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +30,6 @@ try:
 except ImportError:
     COREML_AVAILABLE = False
     ct = None  # type: ignore
-
 
 class BranchManager:
     """
@@ -93,7 +89,6 @@ class BranchManager:
         if self._spike_net is not None:
             return
         try:
-            # Import MLX-aware class
             from hledac.universal.research.spike_priority import MLXSpikeNetwork
 
             self._spike_net = MLXSpikeNetwork(

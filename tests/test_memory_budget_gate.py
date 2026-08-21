@@ -26,7 +26,7 @@ from fetching.memory_budget_gate import (
 class TestDecideWithMockedRss:
     """Testy rozhodovací logiky s mocknutou RSS."""
 
-    def test_decide_under_soft_limit_allows_camoufox(self):
+    def test_decide_under_soft_limit_allows_camoufox(self) -> None:
         """RSS=3.0 GiB pod soft limitem → camoufox, allowed=True."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=3.0):
             result = decide(js_confidence=0.5, priority=5)
@@ -34,35 +34,35 @@ class TestDecideWithMockedRss:
         assert result.allowed is True
         assert result.rss_gib == 3.0
 
-    def test_decide_at_soft_limit_deferred(self):
+    def test_decide_at_soft_limit_deferred(self) -> None:
         """RSS=3.5 GiB na soft limitu bez priority override → deferred."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.5, priority=5)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_at_soft_limit_with_high_priority_allows_camoufox(self):
+    def test_decide_at_soft_limit_with_high_priority_allows_camoufox(self) -> None:
         """RSS=3.5 GiB na soft limitu S priority<=3 AND confidence>=0.75 → camoufox."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.8, priority=2)
         assert result.tier == "camoufox"
         assert result.allowed is True
 
-    def test_decide_at_soft_limit_low_confidence_deferred(self):
+    def test_decide_at_soft_limit_low_confidence_deferred(self) -> None:
         """RSS=3.5 GiB na soft limitu S nízkou confidence → deferred."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.5, priority=2)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_at_soft_limit_low_priority_deferred(self):
+    def test_decide_at_soft_limit_low_priority_deferred(self) -> None:
         """RSS=3.5 GiB na soft limitu S priority>3 → deferred."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.9, priority=4)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_over_hard_limit_deferred(self):
+    def test_decide_over_hard_limit_deferred(self) -> None:
         """RSS=6.0 GiB nad hard limitem → deferred, allowed=False."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=6.0):
             result = decide(js_confidence=0.9, priority=1)
@@ -70,7 +70,7 @@ class TestDecideWithMockedRss:
         assert result.allowed is False
         assert "hard limit" in result.reason
 
-    def test_decide_high_memory_high_priority_overrides(self):
+    def test_decide_high_memory_high_priority_overrides(self) -> None:
         """RSS=4.0 GiB (mezi soft/hard) S priority<=3 AND confidence>=0.75 → camoufox."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=4.0):
             result = decide(js_confidence=0.9, priority=1)
@@ -81,17 +81,18 @@ class TestDecideWithMockedRss:
 class TestRssGibFallback:
     """Testy _rss_gib() — nesmí vyhodit výjimku, vrací float."""
 
-    def test_rss_gib_returns_float_no_exception(self):
+    def test_rss_gib_returns_float_no_exception(self) -> None:
         """_rss_gib() musí být fail-safe a vrátit float (psutil available in this env)."""
         val = _rss_gib()
         assert isinstance(val, float)
         assert val >= 0.0
 
-    def test_rss_backend_is_psutil_only(self):
+    def test_rss_backend_is_psutil_only(self) -> None:
         """Ensure no /proc or getrusage code path exists in the module."""
         import inspect
 
         import fetching.memory_budget_gate as m
+
         src = inspect.getsource(m)
         assert "/proc" not in src
         assert "getrusage" not in src
@@ -101,7 +102,7 @@ class TestRssGibFallback:
 class TestBrowserDecisionFrozen:
     """Testy že BrowserDecision je immutable (frozen=True)."""
 
-    def test_browser_decision_is_frozen(self):
+    def test_browser_decision_is_frozen(self) -> None:
         """BrowserDecision je frozen dataclass — nesmí jít měnit."""
         decision = BrowserDecision(
             tier="camoufox",
@@ -113,7 +114,7 @@ class TestBrowserDecisionFrozen:
         with pytest.raises(AttributeError):
             decision.tier = "nodriver"  # type: ignore
 
-    def test_browser_decision_fields_immutable(self):
+    def test_browser_decision_fields_immutable(self) -> None:
         """Všechny fields BrowserDecision jsou immutable."""
         decision = BrowserDecision(
             tier="camoufox",
@@ -131,7 +132,7 @@ class TestBrowserDecisionFrozen:
         with pytest.raises(AttributeError):
             decision.reason = "changed"  # type: ignore
 
-    def test_browser_decision_equality(self):
+    def test_browser_decision_equality(self) -> None:
         """Dva stejné BrowserDecision jsou si rovny."""
         d1 = BrowserDecision(
             tier="camoufox",
@@ -153,49 +154,49 @@ class TestBrowserDecisionFrozen:
 class TestDecideEdgeCases:
     """Edge case testy pro rozhodovací logiku."""
 
-    def test_decide_exactly_at_hard_limit(self):
+    def test_decide_exactly_at_hard_limit(self) -> None:
         """RSS=Přesně na hard limitu → deferred."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_HARD_GIB):
             result = decide(js_confidence=1.0, priority=1)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_just_above_soft_limit(self):
+    def test_decide_just_above_soft_limit(self) -> None:
         """RSS=3.51 GiB (těsně nad soft limitem) → deferred bez priority."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB + 0.01):
             result = decide(js_confidence=0.6, priority=5)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_zero_rss(self):
+    def test_decide_zero_rss(self) -> None:
         """RSS=0.0 GiB → camoufox."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=0.0):
             result = decide(js_confidence=0.5, priority=5)
         assert result.tier == "camoufox"
         assert result.allowed is True
 
-    def test_decide_priority_boundary(self):
+    def test_decide_priority_boundary(self) -> None:
         """Priority=3 je ještě povolena (priority <= 3)."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.8, priority=3)
         assert result.tier == "camoufox"
         assert result.allowed is True
 
-    def test_decide_priority_boundary_rejected(self):
+    def test_decide_priority_boundary_rejected(self) -> None:
         """Priority=4 už není povolena (priority > 3)."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.8, priority=4)
         assert result.tier == "deferred"
         assert result.allowed is False
 
-    def test_decide_confidence_boundary(self):
+    def test_decide_confidence_boundary(self) -> None:
         """Confidence=0.75 je ještě povolena (>= 0.75)."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.75, priority=3)
         assert result.tier == "camoufox"
         assert result.allowed is True
 
-    def test_decide_confidence_boundary_rejected(self):
+    def test_decide_confidence_boundary_rejected(self) -> None:
         """Confidence=0.74 už není povolena (< 0.75)."""
         with patch("fetching.memory_budget_gate._rss_gib", return_value=_SOFT_GIB):
             result = decide(js_confidence=0.74, priority=3)

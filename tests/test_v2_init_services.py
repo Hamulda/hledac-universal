@@ -13,19 +13,19 @@ For full runtime smoke tests, see test_a1_lazy_imports.py.
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from typing import Never
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 # Import the module under test
 from hledac.universal.runtime.scheduler_v2._v2_init import (
     V2Init,
-    _init_failure,
     _hasattr_safe,
-    )
+    _init_failure,
+)
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
-from _core import aclose
 
 
 class TestInitFailureHelper:
@@ -50,7 +50,7 @@ class TestInitFailureHelper:
         logger = MagicMock(spec=logging.Logger)
 
         exc = ValueError("nested cause")
-        result = _init_failure(exc, 5.0, logger, "DuckDB", reraise=False)
+        _init_failure(exc, 5.0, logger, "DuckDB", reraise=False)
 
         # Verify logger.error was called (not warning)
         assert logger.error.called
@@ -73,10 +73,10 @@ class TestInitFailureHelper:
         logger = MagicMock(spec=logging.Logger)
 
         # Create exception with traceback
-        def inner():
+        def inner() -> Never:
             raise RuntimeError("deep error")
 
-        def outer():
+        def outer() -> None:
             inner()
 
         try:
@@ -92,6 +92,7 @@ class TestHasattrSafeHelper:
 
     def test_hasattr_safe_normal_object(self) -> None:
         """Verify _hasattr_safe works with normal objects."""
+
         class Obj:
             x = 1
 
@@ -101,6 +102,7 @@ class TestHasattrSafeHelper:
 
     def test_hasattr_safe_with_getattr_exception(self) -> None:
         """Verify _hasattr_safe handles __getattr__ that raises."""
+
         class Problematic:
             def __getattr__(self, name):
                 raise RuntimeError("access denied")
@@ -110,6 +112,7 @@ class TestHasattrSafeHelper:
 
     def test_hasattr_safe_with_getattr_shadowing(self) -> None:
         """Verify _hasattr_safe handles objects that shadow hasattr."""
+
         class Shadowing:
             def __getattr__(self, name):
                 raise AttributeError(f"no {name}")
@@ -126,9 +129,17 @@ class TestV2InitExceptionPatterns:
         assert hasattr(V2Init, "__slots__")
         slots = V2Init.__slots__
         expected = {
-            "_scheduler", "_config", "_result", "_cancel_event",
-            "_ctx", "_governor", "_hermes_engine", "_evidence_log",
-            "_sidecar_orchestrator", "_lifecycle", "_acquisition_plan",
+            "_scheduler",
+            "_config",
+            "_result",
+            "_cancel_event",
+            "_ctx",
+            "_governor",
+            "_hermes_engine",
+            "_evidence_log",
+            "_sidecar_orchestrator",
+            "_lifecycle",
+            "_acquisition_plan",
         }
         assert set(slots) == expected
 
@@ -142,10 +153,11 @@ class TestV2InitExceptionPatterns:
 
     def test_v2init_accepts_schedulers_with_slots(self) -> None:
         """Verify V2Init accepts schedulers with __slots__."""
+
         class SchedulerWithSlots:
             __slots__ = ("_config", "_result")
 
-            def __init__(self):
+            def __init__(self) -> None:
                 self._config = None
                 self._result = None
 
@@ -159,6 +171,7 @@ class TestInitResultPatterns:
 
     def test_init_result_success_structure(self) -> None:
         """Verify success InitResult has correct structure."""
+
         class Dummy:
             pass
 
@@ -203,10 +216,7 @@ class TestCriticalServiceAssertions:
             "governor: Runtime error",
         ]
 
-        _critical_failed = [
-            s for s in failed_services
-            if "duckdb" in s.lower() or "governor" in s.lower()
-        ]
+        _critical_failed = [s for s in failed_services if "duckdb" in s.lower() or "governor" in s.lower()]
 
         assert len(_critical_failed) == 2
         assert "duckdb" in _critical_failed[0].lower()
@@ -218,7 +228,7 @@ class TestCriticalServiceAssertions:
                 f"[A1-CRITICAL] V2Init cannot start: critical services unavailable: "
                 f"{'; '.join(_critical_failed)}. "
                 f"This indicates _lazy_imports.py is missing or modules failed to import."
-    )
+            )
 
 
 class TestExceptionGroupCompatibility:
@@ -246,7 +256,7 @@ class TestExceptionGroupCompatibility:
         # This pattern should NOT catch ExceptionGroup
         try:
             raise ExceptionGroup("test", [ValueError("a"), TypeError("b")])
-        except (ImportError, OSError, RuntimeError):
+        except ImportError, OSError, RuntimeError:
             pytest.fail("Should not catch ExceptionGroup with narrow except")
         except ExceptionGroup:
             pass  # Expected: ExceptionGroup not caught by narrow except
@@ -258,10 +268,11 @@ class TestExceptionGroupCompatibility:
 @pytest.fixture
 def mock_scheduler():
     """Create a mock scheduler for testing V2Init."""
+
     class MockScheduler:
         __slots__ = ("_config", "_result", "_ctx")
 
-        def __init__(self):
+        def __init__(self) -> None:
             self._config = None
             self._result = None
             self._ctx = None
@@ -273,6 +284,7 @@ def mock_scheduler():
 def mock_logger():
     """Create a mock logger that captures all log calls."""
     import logging
+
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
     logger = logging.getLogger("test_v2_init")

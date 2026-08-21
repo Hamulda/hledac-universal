@@ -191,10 +191,6 @@ pub mod ffi {
 
 use ffi::*;
 
-// ---------------------------------------------------------------------------
-// Schema Definitions for IOC Scan Results
-// ---------------------------------------------------------------------------
-
 /// Schema for IOC stream scan results (pattern hits).
 ///
 /// This schema describes the `StreamPatternHit` struct:
@@ -276,7 +272,6 @@ impl IocScanSchema {
         let num_label_bytes = (num_hits + 7) / 8;
         let mut label_null_bitmap = vec![0u8; num_label_bytes];
         
-        // Build offsets and data
         pattern_offsets.push(0);
         value_offsets.push(0);
         label_offsets.push(0);
@@ -407,7 +402,6 @@ pub unsafe fn build_ioc_scan_batch(
     let array_layout = vec![0u8; total_array_size];
     let array_ptr = array_layout.as_ptr() as *mut ArrowArray;
     
-    // Set up the main array
     let array = &mut *array_ptr;
     array.length = schema.num_hits as Int64;
     array.null_count = 0;
@@ -453,17 +447,6 @@ pub unsafe fn free_ioc_scan_batch(schema_ptr: *mut ArrowSchema, array_ptr: *mut 
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Simplified IPC-based Return (Zero-Copy via Arrow IPC)
-// ---------------------------------------------------------------------------
-//
-// The FFI approach above is complex due to the C struct handling.
-// A simpler, more practical approach is to use Arrow IPC serialization
-// which pyarrow handles natively. The key optimization is to build
-// Arrow arrays directly from the mmap data without intermediate Python allocations.
-//
-// This section provides a practical implementation using Arrow IPC.
 
 #[cfg(feature = "data")]
 pub mod ipc {
@@ -535,13 +518,11 @@ pub mod ipc {
     ) -> Result<Vec<u8>, String> {
         let num_rows = patterns);
         
-        // Validate lengths
         if labels.len() != num_rows || values.len() != num_rows 
             || starts.len() != num_rows || ends.len() != num_rows {
             return Err("All input vectors must have the same length".to_string());
         }
         
-        // Build schema
         let schema = Schema::new(vec![
             Field::new("pattern", DataType::Utf8, false),
             Field::new("label", DataType::Utf8, true),
@@ -578,7 +559,6 @@ pub mod ipc {
             )
         );
         
-        // Create RecordBatch
         let schema_ref = std::sync::Arc::new(schema);
         let batch = RecordBatch::try_new(
             schema_ref.clone(),

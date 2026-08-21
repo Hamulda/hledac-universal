@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal._core.rust_backend import rust as _rust_backend
@@ -64,37 +64,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants (M1 8GB safe)
-# ---------------------------------------------------------------------------
-
 # Batch size for M1 8GB: 100 items per batch
 # This ensures zero-alloc pipeline composition with rayon
 BATCH_SIZE = 100
 
-# Check Rust availability
 _pipeline_compose_available = (
     _rust_backend.is_available
     and hasattr(_rust_backend, "pipeline_map")
     and getattr(_rust_backend, "pipeline_map", None) is not None
 )
 
-# Get module reference
 _pipeline_compose = getattr(_rust_backend, "pipeline_map", None) if _pipeline_compose_available else None
 
-# Get individual functions for to_thread calls
 _ext = _rust_backend if _pipeline_compose_available else None
-
-
-# ---------------------------------------------------------------------------
-# Named transforms and predicates (for Python fallback)
-# ---------------------------------------------------------------------------
 
 # xxhash availability check — graceful degradation if not installed
 _XXHASH_AVAILABLE = False
 _xxhash_module = None
 try:
     import xxhash as _xxhash_module
+
     _XXHASH_AVAILABLE = True
 except ImportError:
     pass
@@ -103,6 +92,7 @@ except ImportError:
 def _hash_xxh3_fallback(s: str) -> str:
     """Pure Python xxh3-64 fallback using stdlib hashlib (SHA-256 truncated)."""
     import hashlib
+
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
@@ -117,14 +107,14 @@ _PYTHON_TRANSFORMS: dict[str, callable] = {
     "upper": lambda s: s.upper(),
     "strip": lambda s: s.strip(),
     "hash_xxh3": (
-        lambda s: str(int.from_bytes(_xxhash_module.xxh64(s.encode()).digest()[:8], "little"))
-        if _XXHASH_AVAILABLE
-        else _hash_xxh3_fallback
+        lambda s: (
+            str(int.from_bytes(_xxhash_module.xxh64(s.encode()).digest()[:8], "little"))
+            if _XXHASH_AVAILABLE
+            else _hash_xxh3_fallback
+        )
     ),
     "hash_xxh3_hex": (
-        lambda s: _xxhash_module.xxh64(s.encode()).hexdigest()
-        if _XXHASH_AVAILABLE
-        else _hash_xxh3_hex_fallback
+        lambda s: _xxhash_module.xxh64(s.encode()).hexdigest() if _XXHASH_AVAILABLE else _hash_xxh3_hex_fallback
     ),
 }
 
@@ -136,11 +126,6 @@ _PYTHON_PREDICATES: dict[str, callable] = {
     "len_gt_0": lambda s: len(s) > 0,
     "len_lt_2048": lambda s: len(s) < 2048,
 }
-
-
-# ---------------------------------------------------------------------------
-# Batch Stats Result
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,11 +155,6 @@ class BatchStats:
     def is_empty(self) -> bool:
         """True if batch is empty."""
         return self.count == 0
-
-
-# ---------------------------------------------------------------------------
-# Async Wrappers — asyncio.to_thread bridge
-# ---------------------------------------------------------------------------
 
 
 async def pipeline_map_async(items: list[str], fn_name: str) -> list[Any]:
@@ -223,9 +203,7 @@ async def pipeline_filter_async(items: list[str], fn_name: str) -> list[str]:
     return [s for s in items if pred(s)]
 
 
-async def pipeline_filter_map_async(
-    items: list[str], filter_fn: str, map_fn: str
-) -> list[Any]:
+async def pipeline_filter_map_async(items: list[str], filter_fn: str, map_fn: str) -> list[Any]:
     """FILTER-MAP stage — filter then map in one rayon pass.
 
     Args:
@@ -250,9 +228,7 @@ async def pipeline_filter_map_async(
     return [fn(s) for s in items if pred(s)]
 
 
-async def pipeline_fold_async(
-    items: list[str], fn_name: str, initial: str = "0"
-) -> str:
+async def pipeline_fold_async(items: list[str], fn_name: str, initial: str = "0") -> str:
     """FOLD accumulator — reduce list to single value via asyncio.to_thread.
 
     Args:
@@ -304,9 +280,7 @@ async def pipeline_count_async(items: list[str], fn_name: str) -> int:
     return sum(1 for s in items if pred(s))
 
 
-async def pipeline_compose_two_async(
-    items: list[str], stage1: str, stage2: str
-) -> list[Any]:
+async def pipeline_compose_two_async(items: list[str], stage1: str, stage2: str) -> list[Any]:
     """Two MAP stages composed in one rayon pass.
 
     Args:
@@ -373,14 +347,7 @@ async def pipeline_batch_stats_async(items: list[str]) -> BatchStats:
     )
 
 
-# ---------------------------------------------------------------------------
-# Batch Processor — 100 items/batch bound for M1 8GB safety
-# ---------------------------------------------------------------------------
-
-
-async def batch_process_map(
-    items: list[str], fn_name: str, *, batch_size: int = BATCH_SIZE
-) -> list[Any]:
+async def batch_process_map(items: list[str], fn_name: str, *, batch_size: int = BATCH_SIZE) -> list[Any]:
     """Process items in bounded batches with pipeline_map_async.
 
     Args:
@@ -400,9 +367,7 @@ async def batch_process_map(
     return results
 
 
-async def batch_process_filter(
-    items: list[str], fn_name: str, *, batch_size: int = BATCH_SIZE
-) -> list[str]:
+async def batch_process_filter(items: list[str], fn_name: str, *, batch_size: int = BATCH_SIZE) -> list[str]:
     """Process items in bounded batches with pipeline_filter_async.
 
     Args:
@@ -443,11 +408,6 @@ async def batch_process_filter_map(
         batch_result = await pipeline_filter_map_async(batch, filter_fn, map_fn)
         results.extend(batch_result)
     return results
-
-
-# ---------------------------------------------------------------------------
-# Functor-style Pipeline Composer
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,7 +456,7 @@ class RustPipelineComposer:
         self._stages: list[PipelineStage] = []
         self._batch_size = batch_size
 
-    def add_map(self, fn_name: str) -> "RustPipelineComposer":
+    def add_map(self, fn_name: str) -> RustPipelineComposer:
         """Add MAP stage. Returns self for chaining.
 
         Args:
@@ -509,7 +469,7 @@ class RustPipelineComposer:
         self._stages.append(PipelineStage(op="map", fn_name=fn_name))
         return self
 
-    def add_filter(self, fn_name: str) -> "RustPipelineComposer":
+    def add_filter(self, fn_name: str) -> RustPipelineComposer:
         """Add FILTER stage. Returns self for chaining.
 
         Args:
@@ -522,7 +482,7 @@ class RustPipelineComposer:
         self._stages.append(PipelineStage(op="filter", fn_name=fn_name))
         return self
 
-    def add_filter_map(self, filter_fn: str, map_fn: str) -> "RustPipelineComposer":
+    def add_filter_map(self, filter_fn: str, map_fn: str) -> RustPipelineComposer:
         """Add FILTER-MAP stage. Returns self for chaining.
 
         Args:
@@ -533,9 +493,7 @@ class RustPipelineComposer:
             self for method chaining
 
         """
-        self._stages.append(
-            PipelineStage(op="filter_map", fn_name=filter_fn, fn_name2=map_fn)
-        )
+        self._stages.append(PipelineStage(op="filter_map", fn_name=filter_fn, fn_name2=map_fn))
         return self
 
     async def run(self, items: list[str]) -> list[Any]:
@@ -554,13 +512,11 @@ class RustPipelineComposer:
         if not items:
             return []
 
-        # Process in batches
         results: list[Any] = []
 
         for i in range(0, len(items), self._batch_size):
             batch = items[i : i + self._batch_size]
 
-            # Log batch stats before processing
             stats = await pipeline_batch_stats_async(batch)
             logger.debug(
                 "Batch[%d-%d]: count=%d, sum_len=%d, min=%d, max=%d, unique=%d",
@@ -573,22 +529,15 @@ class RustPipelineComposer:
                 stats.unique,
             )
 
-            # Execute stages sequentially on batch
             batch_results: list[Any] = batch
             for stage in self._stages:
                 if stage.op == "map":
-                    batch_results = await pipeline_map_async(
-                        batch_results, stage.fn_name
-                    )
+                    batch_results = await pipeline_map_async(batch_results, stage.fn_name)
                 elif stage.op == "filter":
-                    batch_results = await pipeline_filter_async(
-                        batch_results, stage.fn_name
-                    )
+                    batch_results = await pipeline_filter_async(batch_results, stage.fn_name)
                 elif stage.op == "filter_map":
                     assert stage.fn_name2 is not None
-                    batch_results = await pipeline_filter_map_async(
-                        batch_results, stage.fn_name, stage.fn_name2
-                    )
+                    batch_results = await pipeline_filter_map_async(batch_results, stage.fn_name, stage.fn_name2)
 
             results.extend(batch_results)
 
@@ -603,11 +552,6 @@ class RustPipelineComposer:
     def batch_size(self) -> int:
         """Return batch size."""
         return self._batch_size
-
-
-# ---------------------------------------------------------------------------
-# Convenience functions for pipeline orchestrator
-# ---------------------------------------------------------------------------
 
 
 async def prep_batch_stats(items: list[str]) -> BatchStats:

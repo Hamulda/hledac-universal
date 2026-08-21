@@ -57,63 +57,50 @@ import asyncio
 import logging
 import threading
 import time as _time_module
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from operator import attrgetter
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants — M1 8GB UMA calibrated thresholds
-# ---------------------------------------------------------------------------
-
 # Available RAM thresholds (GiB) for pressure level derivation
-_THRESHOLD_CRITICAL_GIB: float = 0.5   # < 0.5 GiB available → CRITICAL
-_THRESHOLD_HIGH_GIB: float = 1.0       # < 1.0 GiB available → HIGH
-_THRESHOLD_ELEVATED_GIB: float = 2.0   # < 2.0 GiB available → ELEVATED
+_THRESHOLD_CRITICAL_GIB: float = 0.5  # < 0.5 GiB available → CRITICAL
+_THRESHOLD_HIGH_GIB: float = 1.0  # < 1.0 GiB available → HIGH
+_THRESHOLD_ELEVATED_GIB: float = 2.0  # < 2.0 GiB available → ELEVATED
 
 # Sampling interval (seconds)
-_DEFAULT_POLL_INTERVAL_S: float = 1.0   # 1 Hz — fast enough for reactive eviction
-_SAMPLE_CACHE_TTL_S: float = 0.2        # 200ms — prevents double-sample in rapid succession
+_DEFAULT_POLL_INTERVAL_S: float = 1.0  # 1 Hz — fast enough for reactive eviction
+_SAMPLE_CACHE_TTL_S: float = 0.2  # 200ms — prevents double-sample in rapid succession
 
 # Hysteresis: debounce level transitions to avoid flip-flopping
 _HYSTERESIS_COUNT: int = 2  # Must see same level N times before notifying
 
-# ---------------------------------------------------------------------------
-# Pressure Level Enum (mirrors coordinators.enums.MemoryPressureLevel)
-# ---------------------------------------------------------------------------
-
 import enum
-from _core._util import aclose
 
 
 class MemoryPressureLevel(enum.IntEnum):
     """Memory pressure levels — numeric for ordering comparisons."""
+
     NORMAL = 0
     ELEVATED = 1
     HIGH = 2
     CRITICAL = 3
 
     @classmethod
-    def from_string(cls, s: str) -> "MemoryPressureLevel":
+    def from_string(cls, s: str) -> MemoryPressureLevel:
         """Parse from coordinator-style string (case-insensitive)."""
         mapping = {
             "normal": cls.NORMAL,
             "elevated": cls.ELEVATED,
             "high": cls.HIGH,
             "critical": cls.CRITICAL,
-            "warn": cls.ELEVATED,     # legacy resource_allocator compat
+            "warn": cls.ELEVATED,  # legacy resource_allocator compat
             "emergency": cls.CRITICAL,
         }
         return mapping.get(s.lower(), cls.NORMAL)
-
-
-# ---------------------------------------------------------------------------
-# Listener Protocol
-# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
@@ -169,14 +156,10 @@ class MemoryPressureListener(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Pressure Sampler — cutting-edge, zero-syscall-after-first
-# ---------------------------------------------------------------------------
-
-
 @dataclass(slots=True)
 class _PressureSample:
     """Immutable pressure sample from a single probe."""
+
     level: MemoryPressureLevel
     available_gib: float
     rss_gib: float
@@ -232,6 +215,7 @@ class PressureSampler:
         # Tier 1: Rust get_memory_snapshot (fastest, includes Metal)
         try:
             from hledac.universal._core.memory import get_memory_snapshot
+
             snap = get_memory_snapshot()
             if snap and "error" not in snap:
                 available = float(snap.get("available_memory_gib", 0))
@@ -246,13 +230,14 @@ class PressureSampler:
                     total_gib=total,
                     metal_active_gib=metal,
                     timestamp=now,
-    )
+                )
         except Exception:
             logger.debug("[MemoryPressure] Rust snapshot failed, trying mach")
 
         # Tier 2: system_metrics mach-based snapshot
         try:
             from hledac.universal._core.system_metrics import get_system_snapshot
+
             snap = get_system_snapshot()
             available = snap.memory_available_gb
             rss = snap.rss_mb / 1024.0
@@ -265,7 +250,7 @@ class PressureSampler:
                 total_gib=max(total, 8.0),
                 metal_active_gib=0.0,
                 timestamp=now,
-    )
+            )
         except Exception:
             logger.debug("[MemoryPressure] mach snapshot failed, trying psutil")
 
@@ -273,12 +258,17 @@ class PressureSampler:
         try:
             import os
             import resource
+
             import psutil
 
             vm = psutil.virtual_memory()
             available = vm.available / (1024**3)
             rss_kb = getattr(resource.getrusage(resource.RUSAGE_SELF), "ru_maxrss", 0)
-            rss = (rss_kb * 1024) / (1024**3) if hasattr(os, "uname") and os.uname().sysname == "Darwin" else rss_kb / (1024**2)
+            rss = (
+                (rss_kb * 1024) / (1024**3)
+                if hasattr(os, "uname") and os.uname().sysname == "Darwin"
+                else rss_kb / (1024**2)
+            )
             total = vm.total / (1024**3)
             level = self._derive_level(available)
             return _PressureSample(
@@ -288,7 +278,7 @@ class PressureSampler:
                 total_gib=total,
                 metal_active_gib=0.0,
                 timestamp=now,
-    )
+            )
         except Exception:
             logger.warning("[MemoryPressure] All sampling methods failed — returning NORMAL")
             return _PressureSample(
@@ -298,7 +288,7 @@ class PressureSampler:
                 total_gib=8.0,
                 metal_active_gib=0.0,
                 timestamp=now,
-    )
+            )
 
     @staticmethod
     def _derive_level(available_gib: float) -> MemoryPressureLevel:
@@ -312,14 +302,10 @@ class PressureSampler:
         return MemoryPressureLevel.NORMAL
 
 
-# ---------------------------------------------------------------------------
-# MemoryPressureBroadcaster — the central hub
-# ---------------------------------------------------------------------------
-
-
 @dataclass(slots=True)
 class _ListenerEntry:
     """Registered listener with metadata."""
+
     listener: MemoryPressureListener
     priority: int
     name: str
@@ -359,11 +345,11 @@ class MemoryPressureBroadcaster:
     )
 
     # Singleton
-    _instance: "MemoryPressureBroadcaster | None" = None
+    _instance: MemoryPressureBroadcaster | None = None
     _init_lock = threading.RLock()
 
     @classmethod
-    def get_instance(cls) -> "MemoryPressureBroadcaster":
+    def get_instance(cls) -> MemoryPressureBroadcaster:
         """Return the singleton instance (lazy, thread-safe, DCLP)."""
         if cls._instance is not None:
             return cls._instance
@@ -402,10 +388,6 @@ class MemoryPressureBroadcaster:
             "normals": 0,
         }
 
-    # -----------------------------------------------------------------------
-    # Registration
-    # -----------------------------------------------------------------------
-
     def register(self, listener: MemoryPressureListener) -> None:
         """
         Register a cache as a memory pressure listener.
@@ -427,13 +409,10 @@ class MemoryPressureBroadcaster:
                 listener=listener,
                 priority=listener.listener_priority,
                 name=name,
-    )
+            )
             self._listeners.append(entry)
             self._listeners.sort(key=attrgetter("priority"))
-            logger.info(
-                f"[MemoryPressure] registered listener: {name} "
-                f"(priority={listener.listener_priority})"
-    )
+            logger.info(f"[MemoryPressure] registered listener: {name} (priority={listener.listener_priority})")
 
     def unregister(self, listener: MemoryPressureListener) -> bool:
         """
@@ -458,10 +437,6 @@ class MemoryPressureBroadcaster:
         with self._lock:
             return len(self._listeners)
 
-    # -----------------------------------------------------------------------
-    # Lifecycle
-    # -----------------------------------------------------------------------
-
     async def start(self) -> None:
         """
         Start the background pressure monitoring loop.
@@ -472,9 +447,7 @@ class MemoryPressureBroadcaster:
         if self._running:
             return
         self._running = True
-        self._monitor_task = asyncio.create_task(
-            self._monitor_loop(), name="memory_pressure:monitor"
-    )
+        self._monitor_task = asyncio.create_task(self._monitor_loop(), name="memory_pressure:monitor")
         logger.info("[MemoryPressure] Broadcaster started (poll=%.1fs)", self._poll_interval_s)
 
     async def stop(self) -> None:
@@ -487,12 +460,11 @@ class MemoryPressureBroadcaster:
             except asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._monitor_task = None
-        logger.info("[MemoryPressure] Broadcaster stopped (samples=%d, transitions=%d)",
-                     self._stats["samples"], self._stats["transitions"])
-
-    # -----------------------------------------------------------------------
-    # Manual trigger (for testing / forced eviction)
-    # -----------------------------------------------------------------------
+        logger.info(
+            "[MemoryPressure] Broadcaster stopped (samples=%d, transitions=%d)",
+            self._stats["samples"],
+            self._stats["transitions"],
+        )
 
     async def force_check(self) -> MemoryPressureLevel:
         """
@@ -510,9 +482,11 @@ class MemoryPressureBroadcaster:
         if sample.level != old_level:
             logger.warning(
                 "[MemoryPressure] forced check: %s → %s (avail=%.2f GiB, rss=%.2f GiB)",
-                old_level.name, sample.level.name,
-                sample.available_gib, sample.rss_gib,
-    )
+                old_level.name,
+                sample.level.name,
+                sample.available_gib,
+                sample.rss_gib,
+            )
         return sample.level
 
     def get_current_level(self) -> MemoryPressureLevel:
@@ -523,10 +497,6 @@ class MemoryPressureBroadcaster:
         """Return monitoring statistics."""
         with self._lock:
             return dict(self._stats)
-
-    # -----------------------------------------------------------------------
-    # Internal: monitor loop
-    # -----------------------------------------------------------------------
 
     async def _monitor_loop(self) -> None:
         """
@@ -559,10 +529,12 @@ class MemoryPressureBroadcaster:
 
                     logger.warning(
                         "[MemoryPressure] %s → %s (avail=%.2f GiB, rss=%.2f GiB, metal=%.2f GiB)",
-                        old.name, new_level.name,
-                        sample.available_gib, sample.rss_gib,
+                        old.name,
+                        new_level.name,
+                        sample.available_gib,
+                        sample.rss_gib,
                         sample.metal_active_gib,
-    )
+                    )
 
                     await self._notify_listeners(new_level, sample)
 
@@ -573,7 +545,9 @@ class MemoryPressureBroadcaster:
                 logger.debug("[MemoryPressure] monitor iteration error", exc_info=True)
 
     async def _notify_listeners(
-        self, level: MemoryPressureLevel, sample: _PressureSample,
+        self,
+        level: MemoryPressureLevel,
+        sample: _PressureSample,
     ) -> None:
         """
         Notify all registered listeners in priority order.
@@ -607,15 +581,15 @@ class MemoryPressureBroadcaster:
                     # Run in thread pool to avoid blocking the monitor loop
                     # if a listener does synchronous work
                     await asyncio.to_thread(fn)
-                    logger.debug(
-                        "[MemoryPressure] notified %s: %s", entry.name, method
-    )
+                    logger.debug("[MemoryPressure] notified %s: %s", entry.name, method)
             except Exception:
                 # Fail-open: one bad listener must not affect others
                 logger.debug(
                     "[MemoryPressure] listener %s.%s() failed",
-                    entry.name, method, exc_info=True,
-    )
+                    entry.name,
+                    method,
+                    exc_info=True,
+                )
 
         # CRITICAL: after all listeners evicted, do madvise heap flush
         if level == MemoryPressureLevel.CRITICAL:
@@ -636,9 +610,11 @@ class MemoryPressureBroadcaster:
         Pattern from security/ephemeral_wipe.py:584-605.
         """
         import gc
+
         gc.collect()
         try:
             import mlx.core as mx
+
             mx.eval([])
             if hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
@@ -647,6 +623,7 @@ class MemoryPressureBroadcaster:
         # NEW-M12 FIX: Use ctypes directly - bypasses Rust guard that causes no-op
         try:
             import ctypes
+
             libc = ctypes.CDLL(None)
             # Set argtypes for type safety (prevents silent truncation on M1 64-bit)
             # Pattern: resource_governor.py:2274, composition_root.py:199
@@ -657,14 +634,9 @@ class MemoryPressureBroadcaster:
                 ctypes.c_void_p(0),  # addr=0: whole address space
                 ctypes.c_size_t(0),  # length=0: whole address space
                 4,  # MADV_DONTNEED
-    )
+            )
         except Exception:  # noqa: BLE001
             pass
-
-
-# ---------------------------------------------------------------------------
-# Convenience: auto-register decorator for cache classes
-# ---------------------------------------------------------------------------
 
 
 def register_as_listener(priority: int = 2):
@@ -679,10 +651,11 @@ def register_as_listener(priority: int = 2):
     The decorated class must implement MemoryPressureListener protocol.
     The __init__ is wrapped to call broadcaster.register(self) after init.
     """
+
     def decorator(cls):
         original_init = cls.__init__
 
-        def new_init(self, *args, _auto_register: bool = True, **kwargs):
+        def new_init(self, *args, _auto_register: bool = True, **kwargs) -> None:
             original_init(self, *args, **kwargs)
             if _auto_register:
                 try:
@@ -695,11 +668,6 @@ def register_as_listener(priority: int = 2):
         return cls
 
     return decorator
-
-
-# ---------------------------------------------------------------------------
-# Module-level convenience
-# ---------------------------------------------------------------------------
 
 
 def get_broadcaster() -> MemoryPressureBroadcaster:

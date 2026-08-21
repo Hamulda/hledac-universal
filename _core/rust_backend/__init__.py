@@ -37,7 +37,7 @@ Bloom Filter Architecture (ISSUE-06):
     # Via domain (recommended):
     from _core.rust_backend import rust
     bf = rust.bloom.BloomFilter(capacity=10000)
-    
+
     # Multi-tier rotating (per-host + global):
     mtbf = rust.bloom.MultiTierRotatingBloomFilter(
         per_host_capacity=10000,
@@ -131,9 +131,9 @@ import logging
 import os
 import threading
 import weakref
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
+
+from compat.msgspec_gc_compat import Struct
 
 __all__ = [
     "AccelBackend",
@@ -151,26 +151,47 @@ __all__ = [
 ]
 
 # Eager imports — used at module level, must be available immediately
-from ._prober import force_python as _force_python
-from ._prober import force_rust as _force_rust
-from ._prober import probe as _probe
-from ._prober import reset as _reset_probe
-from ._prober import ProbeResult
-
 # PEP 562: lazy submodule loading via __getattr__
 # Each submodule is imported on first attribute access, not at module load.
 # This avoids triggering #[pymodule] init in hledac_rust_extensions until needed.
 # ISSUE-4.1 fix: 150-300ms import overhead eliminated for submodules not used in a session.
 import importlib
-import sys
 from dataclasses import dataclass as _dataclass
 
+from ._prober import ProbeResult
+from ._prober import force_python as _force_python
+from ._prober import force_rust as _force_rust
+from ._prober import probe as _probe
+from ._prober import reset as _reset_probe
+
 _SUBMODULE_NAMES: tuple[str, ...] = (
-    "bloom", "hash", "ip", "ioc", "ioc_dedup", "quality",
-    "rolling_hash", "simhash", "url", "lsh",
-    "graph", "graph_cache", "hot_edges", "aho", "evidence", "madvise",
-    "memory", "json", "spsc", "query", "text", "xml",
-    "int_counter", "simd", "sprint_policies", "html", "metal",
+    "bloom",
+    "hash",
+    "ip",
+    "ioc",
+    "ioc_dedup",
+    "quality",
+    "rolling_hash",
+    "simhash",
+    "url",
+    "lsh",
+    "graph",
+    "graph_cache",
+    "hot_edges",
+    "aho",
+    "evidence",
+    "madvise",
+    "memory",
+    "json",
+    "spsc",
+    "query",
+    "text",
+    "xml",
+    "int_counter",
+    "simd",
+    "sprint_policies",
+    "html",
+    "metal",
     # TLS 1.3 JA4 fingerprinting (rustls-based)
     "tls",
     # HEIST-02: In-process Tor via Arti (embedded_tor feature)
@@ -191,12 +212,12 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "misc",
     # ISSUE-011: Tantivy fulltext search (mmap-backed BM25)
     "fulltext",
-    )
+)
 
 _lazy_mod_cache: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
 
 # F320: DCLP singleton lock — lazily initialized on first use
-_singleton_lock: "threading.Lock | None" = None
+_singleton_lock: threading.Lock | None = None
 _singleton_lock_sentinel: threading.Lock = threading.Lock()
 
 
@@ -222,60 +243,62 @@ def __getattr__(name: str) -> Any:
         return _get_submodule(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 if TYPE_CHECKING:
+    from .aho import _PythonAhoDomain, _RustAhoDomain
+    from .async_query import AsyncQueryDomain, PythonFallbackAsyncQueryDomain
+    from .async_query import get_domain as _async_query_get_domain
     from .bloom import _PythonBloomDomain, _RustBloomDomain
-    from .hash import _PythonHashDomain, _RustHashDomain
-    from .ip import _PythonIpDomain, _RustIpDomain
-    from .ioc import _PythonIocDomain, _RustIocDomain
-    from .ioc_dedup import _PythonIocDedupDomain, _RustIocDedupDomain
-    from .quality import _PythonQualityDomain, _RustQualityDomain
-    from .rolling_hash import _PythonRollingHashDomain, _RustRollingHashDomain
-    from .simhash import _PythonSimhashDomain, _RustSimhashDomain
-    from .url import _PythonUrlDomain, _RustUrlDomain
-    from .lsh import _PythonLshDomain, _RustLshDomain
+    from .compress import _PythonCompressDomain, _RustCompressDomain
+    from .compress import get_domain as _compress_get_domain
+    from .crypto import get_domain as _crypto_get_domain
+    from .deobfuscate import _PythonDeobfuscateDomain, _RustDeobfuscateDomain
+    from .deobfuscate import get_domain as _deobfuscate_get_domain
+    from .evidence import _PythonEvidenceDomain, _RustEvidenceDomain
+    from .federated_qtable import FederatedQTableDomain
+    from .federated_qtable import get_domain as _federated_qtable_get_domain
+    from .feed_decision import FeedDecisionDomain
+    from .feed_decision import get_domain as _feed_decision_get_domain
+    from .feed_pipeline import FeedPipelineDomain
+    from .feed_pipeline import get_domain as _feed_pipeline_get_domain
+    from .fulltext import _PythonFulltextDomain, _RustFulltextDomain
+    from .fulltext import get_domain as _fulltext_get_domain
+
     # Modular misc domains
     from .graph import _PythonGraphDomain, _RustGraphDomain
+    from .hash import _PythonHashDomain, _RustHashDomain
     from .hot_edges import _PythonHotEdgesDomain, _RustHotEdgesDomain
-    from .aho import _PythonAhoDomain, _RustAhoDomain
-    from .evidence import _PythonEvidenceDomain, _RustEvidenceDomain
+    from .int_counter import _PythonIntCounterDomain, _RustIntCounterDomain
+    from .ioc import _PythonIocDomain, _RustIocDomain
+    from .ioc_dedup import _PythonIocDedupDomain, _RustIocDedupDomain
+    from .ip import _PythonIpDomain, _RustIpDomain
+    from .json import _PythonJsonDomain, _RustJsonDomain
+    from .lsh import _PythonLshDomain, _RustLshDomain
     from .madvise import _PythonMadvisDomain, _RustMadvisDomain
     from .memory import _PythonMemoryDomain, _RustMemoryDomain
-    from .json import _PythonJsonDomain, _RustJsonDomain
-    from .spsc import _PythonSPSCDomain, _RustSPSCDomain
+    from .pipeline_compose import PipelineComposeDomain
+    from .pipeline_compose import get_domain as _pipeline_compose_get_domain
+    from .quality import _PythonQualityDomain, _RustQualityDomain
     from .query import _PythonQueryDomain, _RustQueryDomain
-    from .text import _PythonTextDomain, _RustTextDomain
-    from .xml import _PythonXmlDomain, _RustXmlDomain
-    from .int_counter import _PythonIntCounterDomain, _RustIntCounterDomain
+    from .rolling_hash import _PythonRollingHashDomain, _RustRollingHashDomain
+    from .signal_batch import SignalBatchDomain
+    from .signal_batch import get_domain as _signal_batch_get_domain
     from .simd import _PythonSimdDomain, _RustSimdDomain
+    from .simhash import _PythonSimhashDomain, _RustSimhashDomain
     from .sprint_policies import _PythonSprintPoliciesDomain, _RustSprintPoliciesDomain
-    from .deobfuscate import _RustDeobfuscateDomain, _PythonDeobfuscateDomain, get_domain as _deobfuscate_get_domain
-    from .pipeline_compose import PipelineComposeDomain, get_domain as _pipeline_compose_get_domain
-    from .signal_batch import SignalBatchDomain, get_domain as _signal_batch_get_domain
-    from .federated_qtable import FederatedQTableDomain, get_domain as _federated_qtable_get_domain
-    from .async_query import AsyncQueryDomain, PythonFallbackAsyncQueryDomain, get_domain as _async_query_get_domain
-    from .feed_decision import FeedDecisionDomain, get_domain as _feed_decision_get_domain
-    from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
-    from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
-    from .link_predictor import _LinkPredictorDomain
-    from .crypto import _RustCryptoDomain, _PythonCryptoDomain, get_domain as _crypto_get_domain
-    from .fulltext import _RustFulltextDomain, _PythonFulltextDomain, get_domain as _fulltext_get_domain
-    from .compress import _RustCompressDomain, _PythonCompressDomain, get_domain as _compress_get_domain
+    from .spsc import _PythonSPSCDomain, _RustSPSCDomain
+    from .swarm_dag import PythonFallbackSwarmDAG, SwarmDAG
+    from .swarm_dag import get_domain as _swarm_dag_get_domain
+    from .text import _PythonTextDomain, _RustTextDomain
+    from .url import _PythonUrlDomain, _RustUrlDomain
+    from .xml import _PythonXmlDomain, _RustXmlDomain
 
 from _core.feature_flags import FeatureFlag, FeatureFlags
-from _core._util import aclose
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Force flags (mirrors original HLEDAC_FORCE_PYTHON / HLEDAC_FORCE_RUST)
-# =============================================================================
-
 _FORCE_PYTHON: bool = FeatureFlags.get(FeatureFlag.FORCE_PYTHON, default=False)
 _FORCE_RUST: bool = FeatureFlags.get(FeatureFlag.FORCE_RUST, default=False)
-
-# =============================================================================
-# AccelBackend — public facade
-# =============================================================================
 
 
 class AccelInfo(Struct, frozen=True):
@@ -321,7 +344,7 @@ class RustForce:
     """
 
     python: bool = False  # True = force Python fallback
-    rust: bool = False   # True = force Rust (warn if unavailable)
+    rust: bool = False  # True = force Rust (warn if unavailable)
 
 
 class AccelBackend:
@@ -338,7 +361,7 @@ class AccelBackend:
 
     __slots__ = ("_probe_result", "_domains", "_container")
     # D1 fix: Class-level DCLP lock for thread-safe singleton
-    _lock: "threading.Lock | None" = None
+    _lock: threading.Lock | None = None
     _lock_sentinel: threading.Lock = threading.Lock()
 
     @classmethod
@@ -350,7 +373,7 @@ class AccelBackend:
                     cls._lock = threading.Lock()
         return cls._lock
 
-    def __new__(cls) -> "AccelBackend":
+    def __new__(cls) -> AccelBackend:
         # D1 fix: Thread-safe singleton using DCLP with class-level lock
         global _accel_instance
         if _accel_instance is None:
@@ -367,10 +390,6 @@ class AccelBackend:
         self._domains: dict[str, Any] = {}
         # Container reference for rust.force resolution (set by set_container)
         self._container: Any = None
-
-    # -------------------------------------------------------------------------
-    # Probe — one-time, cached
-    # -------------------------------------------------------------------------
 
     def _ensure_probe(self) -> ProbeResult:
         """Run the probe exactly once (on first domain access)."""
@@ -395,7 +414,7 @@ class AccelBackend:
             # C2 fix: Catch only container/configuration errors, not all exceptions
             try:
                 force = self._container.try_get("rust.force")
-            except (AttributeError, LookupError):
+            except AttributeError, LookupError:
                 pass  # container not available or rust.force not registered
 
         # 1-2. Env var override (backward compat — always-on, no toggles)
@@ -422,7 +441,7 @@ class AccelBackend:
             f"[AccelBackend] backend={self._probe_result.backend}, "
             f"available={self._probe_result.available}, "
             f"version={self._probe_result.version_str}"
-    )
+        )
         return self._probe_result
 
     @property
@@ -452,26 +471,22 @@ class AccelBackend:
             backend="rust" if p.available else "python",
             capability_score=p.capability_score,
             so_mtime=p.so_mtime,
-    )
-
-    # -------------------------------------------------------------------------
-    # Domain properties — lazy, cached after first access
-    # -------------------------------------------------------------------------
+        )
 
     @property
-    def bloom(self) -> "_RustBloomDomain | _PythonBloomDomain":
+    def bloom(self) -> _RustBloomDomain | _PythonBloomDomain:
         return self._get_domain("bloom", _get_submodule("bloom").get_domain)
 
     @property
-    def url(self) -> "_RustUrlDomain | _PythonUrlDomain":
+    def url(self) -> _RustUrlDomain | _PythonUrlDomain:
         return self._get_domain("url", _get_submodule("url").get_domain)
 
     @property
-    def hash(self) -> "_RustHashDomain | _PythonHashDomain":
+    def hash(self) -> _RustHashDomain | _PythonHashDomain:
         return self._get_domain("hash", _get_submodule("hash").get_domain)
 
     @property
-    def quality(self) -> "_RustQualityDomain | _PythonQualityDomain":
+    def quality(self) -> _RustQualityDomain | _PythonQualityDomain:
         return self._get_domain("quality", _get_submodule("quality").get_domain)
 
     @property
@@ -480,49 +495,47 @@ class AccelBackend:
         return _get_submodule("consistency").get_consistency_domain()
 
     @property
-    def ioc(self) -> "_RustIocDomain | _PythonIocDomain":
+    def ioc(self) -> _RustIocDomain | _PythonIocDomain:
         return self._get_domain("ioc", _get_submodule("ioc").get_domain)
 
     @property
-    def ioc_dedup(self) -> "_RustIocDedupDomain | _PythonIocDedupDomain":
+    def ioc_dedup(self) -> _RustIocDedupDomain | _PythonIocDedupDomain:
         return self._get_domain("ioc_dedup", _get_submodule("ioc_dedup").get_domain)
 
     @property
-    def ip(self) -> "_RustIpDomain | _PythonIpDomain":
+    def ip(self) -> _RustIpDomain | _PythonIpDomain:
         return self._get_domain("ip", _get_submodule("ip").get_domain)
 
-    # --- misc domains (now split into modular files) ---
-
     @property
-    def graph(self) -> "_RustGraphDomain | _PythonGraphDomain":
+    def graph(self) -> _RustGraphDomain | _PythonGraphDomain:
         return self._get_domain("graph", _get_submodule("graph").get_graph_domain)
 
     @property
-    def hot_edges(self) -> "_RustHotEdgesDomain | _PythonHotEdgesDomain":
+    def hot_edges(self) -> _RustHotEdgesDomain | _PythonHotEdgesDomain:
         return self._get_domain("hot_edges", _get_submodule("hot_edges").get_hot_edges_domain)
 
     @property
-    def aho(self) -> "_RustAhoDomain | _PythonAhoDomain":
+    def aho(self) -> _RustAhoDomain | _PythonAhoDomain:
         return self._get_domain("aho", _get_submodule("aho").get_aho_domain)
 
     @property
-    def evidence(self) -> "_RustEvidenceDomain | _PythonEvidenceDomain":
+    def evidence(self) -> _RustEvidenceDomain | _PythonEvidenceDomain:
         return self._get_domain("evidence", _get_submodule("evidence").get_evidence_domain)
 
     @property
-    def madvise(self) -> "_RustMadvisDomain | _PythonMadvisDomain":
+    def madvise(self) -> _RustMadvisDomain | _PythonMadvisDomain:
         return self._get_domain("madvise", _get_submodule("madvise").get_madvise_domain)
 
     @property
-    def memory(self) -> "_RustMemoryDomain | _PythonMemoryDomain":
+    def memory(self) -> _RustMemoryDomain | _PythonMemoryDomain:
         return self._get_domain("memory", _get_submodule("memory").get_memory_domain)
 
     @property
-    def json(self) -> "_RustJsonDomain | _PythonJsonDomain":
+    def json(self) -> _RustJsonDomain | _PythonJsonDomain:
         return self._get_domain("json", _get_submodule("json").get_json_domain)
 
     @property
-    def spsc(self) -> "_RustSPSCDomain | _PythonSPSCDomain":
+    def spsc(self) -> _RustSPSCDomain | _PythonSPSCDomain:
         return self._get_domain("spsc", _get_submodule("spsc").get_spsc_domain)
 
     @property
@@ -535,35 +548,35 @@ class AccelBackend:
         return self._get_domain("swarm_dag", _swarm_dag_get_domain)
 
     @property
-    def query(self) -> "_RustQueryDomain | _PythonQueryDomain":
+    def query(self) -> _RustQueryDomain | _PythonQueryDomain:
         return self._get_domain("query", _get_submodule("query").get_query_domain)
 
     @property
-    def text(self) -> "_RustTextDomain | _PythonTextDomain":
+    def text(self) -> _RustTextDomain | _PythonTextDomain:
         return self._get_domain("text", _get_submodule("text").get_text_domain)
 
     @property
-    def xml(self) -> "_RustXmlDomain | _PythonXmlDomain":
+    def xml(self) -> _RustXmlDomain | _PythonXmlDomain:
         return self._get_domain("xml", _get_submodule("xml").get_xml_domain)
 
     @property
-    def int_counter(self) -> "_RustIntCounterDomain | _PythonIntCounterDomain":
+    def int_counter(self) -> _RustIntCounterDomain | _PythonIntCounterDomain:
         return self._get_domain("int_counter", _get_submodule("int_counter").get_int_counter_domain)
 
     @property
-    def simd(self) -> "_RustSimdDomain | _PythonSimdDomain":
+    def simd(self) -> _RustSimdDomain | _PythonSimdDomain:
         return self._get_domain("simd", _get_submodule("simd").get_simd_domain)
 
     @property
-    def rolling_hash(self) -> "_RustRollingHashDomain | _PythonRollingHashDomain":
+    def rolling_hash(self) -> _RustRollingHashDomain | _PythonRollingHashDomain:
         return self._get_domain("rolling_hash", _get_submodule("rolling_hash").get_domain)
 
     @property
-    def simhash(self) -> "_RustSimhashDomain | _PythonSimhashDomain":
+    def simhash(self) -> _RustSimhashDomain | _PythonSimhashDomain:
         return self._get_domain("simhash", _get_submodule("simhash").get_domain)
 
     @property
-    def lsh(self) -> "_RustLshDomain | _PythonLshDomain":
+    def lsh(self) -> _RustLshDomain | _PythonLshDomain:
         return self._get_domain("lsh", _get_submodule("lsh").get_lsh_domain)
 
     # NEXTGEN-03: ANE submodule for face/voice embeddings and cross-modal LSH
@@ -582,11 +595,11 @@ class AccelBackend:
         return getattr(probe.ext, "ane", None)
 
     @property
-    def sprint_policies(self) -> "_RustSprintPoliciesDomain | _PythonSprintPoliciesDomain":
+    def sprint_policies(self) -> _RustSprintPoliciesDomain | _PythonSprintPoliciesDomain:
         return self._get_domain("sprint_policies", _get_submodule("sprint_policies").get_sprint_policies_domain)
 
     @property
-    def deobfuscate(self) -> "_RustDeobfuscateDomain | _PythonDeobfuscateDomain":
+    def deobfuscate(self) -> _RustDeobfuscateDomain | _PythonDeobfuscateDomain:
         return self._get_domain("deobfuscate", _deobfuscate_get_domain)
 
     @property
@@ -599,7 +612,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _pipeline_compose_get_domain()
-        except (AttributeError, ImportError):
+        except AttributeError, ImportError:
             return None
 
     @property
@@ -613,7 +626,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _signal_batch_get_domain()
-        except (AttributeError, ImportError):
+        except AttributeError, ImportError:
             return None
 
     @property
@@ -627,7 +640,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _federated_qtable_get_domain()
-        except (AttributeError, ImportError):
+        except AttributeError, ImportError:
             return None
 
     @property
@@ -654,7 +667,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_decision_get_domain()
-        except (AttributeError, ImportError):
+        except AttributeError, ImportError:
             return None
 
     @property
@@ -668,7 +681,7 @@ class AccelBackend:
         # C1 fix: Only catch module/attribute errors, not all exceptions
         try:
             return _feed_pipeline_get_domain()
-        except (AttributeError, ImportError):
+        except AttributeError, ImportError:
             return None
 
     @property
@@ -683,9 +696,7 @@ class AccelBackend:
         Uses hledac_rust_extensions.link_predictor module for edge prediction.
         Falls back to Python implementation if Rust is unavailable.
         """
-        return _get_submodule("link_predictor").get_link_predictor_domain(
-            self._ensure_probe().ext
-    )
+        return _get_submodule("link_predictor").get_link_predictor_domain(self._ensure_probe().ext)
 
     # E1: SHA-256 hardware acceleration domain (sha2 ARM NEON on Apple Silicon)
     @property
@@ -704,7 +715,7 @@ class AccelBackend:
 
     # E3: Rust zstd for L2 cache hot paths
     @property
-    def compress(self) -> "_RustCompressDomain | _PythonCompressDomain":
+    def compress(self) -> _RustCompressDomain | _PythonCompressDomain:
         """E3: Rust zstd compression domain.
 
         Provides:
@@ -718,17 +729,13 @@ class AccelBackend:
 
     # ISSUE-011: Tantivy fulltext search (mmap-backed BM25)
     @property
-    def fulltext(self) -> "_RustFulltextDomain | _PythonFulltextDomain":
+    def fulltext(self) -> _RustFulltextDomain | _PythonFulltextDomain:
         """ISSUE-011: Tantivy fulltext search domain.
 
         Provides mmap-backed BM25 with Arrow IPC zero-copy results.
         Falls back to pure Python rank_bm25 when Rust unavailable.
         """
         return self._get_domain("fulltext", _fulltext_get_domain)
-
-    # -------------------------------------------------------------------------
-    # Internal
-    # -------------------------------------------------------------------------
 
     def _get_domain(self, name: str, factory: Any) -> Any:
         """Lazily create and cache a domain using the given factory."""
@@ -756,10 +763,6 @@ class AccelBackend:
         """
         self._container = container
 
-
-# =============================================================================
-# Singleton instance
-# =============================================================================
 
 _accel_instance: AccelBackend | None = None
 
@@ -789,7 +792,7 @@ def set_container(container: Any) -> None:
 
 def reset_accel() -> None:
     """Reset the singleton and probe cache — for testing only.
-    
+
     B2 fix: Also resets DCLP lock state to ensure clean re-initialization
     on subsequent get_accel() calls.
     D1 fix: Resets AccelBackend class-level lock too.
@@ -803,25 +806,21 @@ def reset_accel() -> None:
     _reset_probe()
 
 
-# =============================================================================
-# C4 fix: TLS metadata wrapper — moved to module level for efficiency
-# =============================================================================
-
-
 class _TlsMetadataWrapper:
     """Wraps Rust extract_tls_metadata function with error handling.
-    
+
     C4 fix: Defined at module level instead of inside property to avoid
     class recreation on every tls property access.
-    
+
     A11: Also exposes connect_and_ja4 from tls13 module for TLS fingerprinting.
     """
+
     __slots__ = ("_fn", "_tls13")
-    
+
     def __init__(self, fn: object, tls13: object | None = None) -> None:
         self._fn = fn
         self._tls13 = tls13
-    
+
     def extract_tls_metadata(
         self,
         san_entries: list[tuple[int, str]],
@@ -830,9 +829,9 @@ class _TlsMetadataWrapper:
     ) -> tuple[list[str], str | None, str | None]:
         try:
             return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
-        except (OSError, RuntimeError):  # C1 fix: Only catch FFI errors
+        except OSError, RuntimeError:  # C1 fix: Only catch FFI errors
             return ([], None, None)
-    
+
     def connect_and_ja4(
         self,
         host: str,
@@ -842,29 +841,16 @@ class _TlsMetadataWrapper:
         timeout_ms: int = 5000,
     ) -> Any:
         """A11: TLS fingerprinting via Rust tls13 module.
-        
+
         Returns dict with keys: ja4, ech_detected, tls_version, server_ciphers,
         server_extensions, alpn, cert_verified, error
         """
         if self._tls13 is not None:
             try:
                 return self._tls13.connect_and_ja4(host, port, sni=sni, alpn=alpn, timeout_ms=timeout_ms)
-            except (OSError, RuntimeError):  # noqa: BLE001
+            except OSError, RuntimeError:  # noqa: BLE001
                 pass
         return None
-
-
-# =============================================================================
-# Backward-compatibility shim: `rust` module-level object
-# Exposes the same API as the old RustBackend singleton so existing
-# call sites (rust.bloom.BloomFilter(), rust.quality.batch_entropy(...), etc.)
-# continue to work without modification.
-# =============================================================================
-
-
-# =============================================================================
-# RustRawAccessor — safe wrapper for probe.ext
-# =============================================================================
 
 
 class RustRawAccessor:
@@ -908,7 +894,7 @@ class RustRawAccessor:
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Safely call a function from the Rust extension.
-        
+
         B3 fix: Narrow exception handling - only catch Rust extension errors,
         not Python programming errors (TypeError, etc.).
         """
@@ -917,7 +903,7 @@ class RustRawAccessor:
             return None
         try:
             return fn(*args, **kwargs)
-        except (SystemError, OSError, RuntimeError):  # noqa: BLE001
+        except SystemError, OSError, RuntimeError:  # noqa: BLE001
             # Rust FFI errors only - re-raise Python programming errors
             return None
 
@@ -945,9 +931,9 @@ class _RustCompatShim:
     """
 
     __slots__ = ("_accel", "_raw_accessor")
-    _singleton_instance: "_RustCompatShim | None" = None
+    _singleton_instance: _RustCompatShim | None = None
 
-    def __new__(cls) -> "_RustCompatShim":
+    def __new__(cls) -> _RustCompatShim:
         # F320: Thread-safe singleton using DCLP lazy lock
         with _get_singleton_lock():
             if cls._singleton_instance is None:
@@ -1152,16 +1138,16 @@ class _RustCompatShim:
     @property
     def batch_encrypt_aes_gcm(self) -> Any:
         """Batch AES-256-GCM encryption via Rust crypto_accelerate.
-        
+
         M1 8GB: Uses ARM AES-NI via aes-gcm crate.
         Bounded parallelism: >= 32 items → rayon parallel, < 32 → serial.
         PyO3 releases GIL during rayon parallel sections.
-        
+
         Args:
             password: Encryption password
             salt: 16-byte salt (prepended with zeros if shorter)
             items: List of plaintext strings
-        
+
         Returns:
             List of encrypted blobs: nonce(12) || tag(16) || ciphertext
         """
@@ -1170,16 +1156,16 @@ class _RustCompatShim:
     @property
     def batch_decrypt_aes_gcm(self) -> Any:
         """Batch AES-256-GCM decryption via Rust crypto_accelerate.
-        
+
         M1 8GB: Uses ARM AES-NI via aes-gcm crate.
         Bounded parallelism: >= 32 items → rayon parallel, < 32 → serial.
         PyO3 releases GIL during rayon parallel sections.
-        
+
         Args:
             password: Decryption password
             salt: 16-byte salt (same processing as encrypt)
             items: List of encrypted blobs
-        
+
         Returns:
             List of decrypted plaintext strings (None on decryption failure)
         """
@@ -1188,13 +1174,13 @@ class _RustCompatShim:
     @property
     def batch_sha256_hw(self) -> Any:
         """Batch SHA-256 hardware-accelerated via Rust crypto_accelerate.
-        
+
         M1 8GB: Uses ARM NEON crypto instructions (sha256g, sha256h).
         Bounded parallelism: >= 128 items → rayon parallel, < 128 → serial.
-        
+
         Args:
             items: List of strings to hash
-        
+
         Returns:
             List of SHA-256 hex strings (64 chars each)
         """
@@ -1273,12 +1259,12 @@ class _RustCompatShim:
     @property
     def crypto(self) -> Any:
         """E1: SHA-256 hardware acceleration domain.
-        
+
         Provides:
         - batch_sha256_hw: Hardware-accelerated batch SHA-256 (sync wrapper)
         - batch_encrypt_aes_gcm: Batch AES-256-GCM encryption
         - batch_decrypt_aes_gcm: Batch AES-256-GCM decryption
-        
+
         Uses hledac_rust_extensions.crypto_accelerate module with ARM NEON SHA-256.
         Falls back to Python hashlib when Rust is unavailable.
         """
@@ -1292,7 +1278,7 @@ class _RustCompatShim:
 
     # ISSUE-026: Text similarity trigram Jaccard clustering
     @property
-    def text_similarity(self) -> "_RustTextSimilarityDomain":
+    def text_similarity(self) -> _RustTextSimilarityDomain:
         """ISSUE-026: Trigram Jaccard text similarity clustering.
 
         Provides:
@@ -1334,12 +1320,6 @@ class _RustTextSimilarityDomain:
         - crossmodal_* functions for face/voice LSH indexing
         """
         return self._accel.ane
-
-    # =========================================================================
-    # ISSUE-02: capability() — typed accessor for common capabilities
-    # =========================================================================
-    # Use this instead of rust.raw.<symbol> for common capabilities.
-    # Each capability returns the Rust object if available, or None.
 
     def capability(self, name: str) -> Any:
         """ISSUE-02: Typed accessor for Rust capabilities.
@@ -1431,10 +1411,10 @@ class _RustTextSimilarityDomain:
     @property
     def tls(self) -> Any:
         """Issue B5: TLS cert metadata — wraps extract_tls_metadata as rust.tls.extract_tls_metadata(...).
-        
+
         C4 fix: Uses module-level _TlsMetadataWrapper class instead of inline definition.
         A11: Also exposes connect_and_ja4 from tls13 module for TLS fingerprinting.
-        
+
         FIX: Return wrapper when EITHER extract_tls_metadata OR tls13 is available,
         not just when both are present.
         """
@@ -1454,7 +1434,7 @@ class _RustTextSimilarityDomain:
     @property
     def TLS13_AVAILABLE(self) -> bool:
         """A11: Check if Rust TLS 1.3 module is available.
-        
+
         Returns True if the tls13 feature was compiled with TLS 1.3 support.
         """
         probe = self._accel._ensure_probe()
@@ -1464,12 +1444,7 @@ class _RustTextSimilarityDomain:
         return False
 
 
-_rust_compat_instance: "RustBackend | None" = None
-
-
-# -------------------------------------------------------------------------
-# Public names for backward compatibility
-# -------------------------------------------------------------------------
+_rust_compat_instance: RustBackend | None = None
 
 
 class RustBackend(_RustCompatShim):
@@ -1484,7 +1459,7 @@ class RustBackend(_RustCompatShim):
     # This is intentional — RustBackend is just a type alias for the singleton.
     __slots__ = ()
 
-    def __new__(cls) -> "RustBackend":  # type: ignore[override]
+    def __new__(cls) -> RustBackend:  # type: ignore[override]
         return _get_or_create_singleton()
 
     def __init__(self) -> None:
@@ -1494,9 +1469,9 @@ class RustBackend(_RustCompatShim):
         pass
 
 
-def _get_or_create_singleton() -> "RustBackend":
+def _get_or_create_singleton() -> RustBackend:
     """Thread-safe singleton factory using DCLP pattern.
-    
+
     B1 fix: Added DCLP lock to prevent race condition during parallel imports.
     Uses the same lock as _RustCompatShim to ensure consistent singleton state.
     """
@@ -1522,14 +1497,9 @@ def check_metal_availability() -> dict[str, Any]:
     return _get_submodule("metal").check_metal_availability()
 
 
-# =============================================================================
-# Module-level reset (for test isolation)
-# =============================================================================
-
-
 def _reset_rust_backend_for_tests() -> None:
     """Reset all singletons — for test isolation.
-    
+
     B2 fix: Also resets DCLP lock state for clean re-initialization.
     D1 fix: Resets AccelBackend class-level lock too.
     """

@@ -13,9 +13,7 @@ Pravidla:
 """
 
 import re
-import sys
 from pathlib import Path
-from _core import aclose
 
 SRC = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 
@@ -51,8 +49,10 @@ ALREADY_IMPORTED = {
     "brain/_cache/warmup.py",
 }
 
+
 def needs_shield(line: str) -> bool:
     return "asyncio.wait_for(asyncio.shield(" in line
+
 
 def replace_wait_for(content: str) -> tuple[str, int, int]:
     """Nahradí asyncio.wait_for → safe_wait_for, vrací (new_content, n_replaced, n_skipped_shield)."""
@@ -72,11 +72,7 @@ def replace_wait_for(content: str) -> tuple[str, int, int]:
         m = re.search(r"await asyncio\.wait_for\(", line)
         if m:
             # Single-line: await asyncio.wait_for(coro, timeout=X)
-            new_line = re.sub(
-                r"await asyncio\.wait_for\(",
-                "await safe_wait_for(",
-                line
-    )
+            new_line = re.sub(r"await asyncio\.wait_for\(", "await safe_wait_for(", line)
             # Also fix the timeout= -> timeout= (same arg name)
             new_lines.append(new_line)
             n_replaced += 1
@@ -85,6 +81,7 @@ def replace_wait_for(content: str) -> tuple[str, int, int]:
         new_lines.append(line)
         i += 1
     return "\n".join(new_lines), n_replaced, n_skipped_shield
+
 
 def add_import(content: str, filepath: str) -> str:
     """Přidá safe_wait_for import pokud chybí."""
@@ -109,11 +106,12 @@ def add_import(content: str, filepath: str) -> str:
         if line.startswith("from ") or line.startswith("import "):
             insert_after = j
     if insert_after >= 0:
-        insert_pos = content.find("\n".join(lines[:insert_after+1])) + len("\n".join(lines[:insert_after+1]))
+        insert_pos = content.find("\n".join(lines[: insert_after + 1])) + len("\n".join(lines[: insert_after + 1]))
         content = content[:insert_pos] + "\n" + IMPORT_LINE + content[insert_pos:]
     else:
         content = IMPORT_LINE + "\n" + content
     return content
+
 
 def migrate_file(filepath: Path) -> dict:
     rel = str(filepath.relative_to(SRC))
@@ -129,14 +127,10 @@ def migrate_file(filepath: Path) -> dict:
     new_content = add_import(new_content, str(filepath))
 
     filepath.write_text(new_content)
-    return {
-        "file": rel,
-        "replaced": n_replaced,
-        "skipped_shield": n_skipped,
-        "status": "ok"
-    }
+    return {"file": rel, "replaced": n_replaced, "skipped_shield": n_skipped, "status": "ok"}
 
-def main():
+
+def main() -> None:
     results = []
     for rel_path in WAIT_FOR_FILES:
         filepath = SRC / rel_path
@@ -155,6 +149,7 @@ def main():
     total_replaced = sum(r.get("replaced", 0) for r in results)
     total_skipped = sum(r.get("skipped_shield", 0) for r in results)
     print(f"\n=== DONE: {total_replaced} replaced, {total_skipped} shield kept, {len(results)} files processed ===")
+
 
 if __name__ == "__main__":
     main()

@@ -34,7 +34,7 @@ M1 Air 8GB optimized: minimal overhead, no unnecessary imports.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any
 
 __all__ = [
     "model_validate",
@@ -46,10 +46,6 @@ __all__ = [
     "is_msgspec_struct",
 ]
 
-
-# =============================================================================
-# Type detection helpers
-# =============================================================================
 
 def is_pydantic_model(cls: type) -> bool:
     """Check if a class is a Pydantic BaseModel (has v2 model_validate).
@@ -74,10 +70,6 @@ def is_msgspec_struct(cls: type) -> bool:
     """
     return hasattr(cls, "__struct_fields__")
 
-
-# =============================================================================
-# Model field extraction
-# =============================================================================
 
 def get_model_fields(cls: type) -> list[str]:
     """Extract field names from any supported model type.
@@ -109,10 +101,6 @@ def get_model_fields(cls: type) -> list[str]:
 
     return []
 
-
-# =============================================================================
-# Unified validation
-# =============================================================================
 
 def model_validate(cls: type, data: dict[str, Any]) -> Any:
     """Unified model validation across Pydantic v2 and msgspec.Struct.
@@ -160,15 +148,10 @@ def model_validate_json(cls: type, json_str: str) -> Any:
     """
     if not hasattr(cls, "model_validate_json"):
         raise AttributeError(
-            f"{cls.__name__} does not have model_validate_json. "
-            "This method is only available on Pydantic v2 models."
+            f"{cls.__name__} does not have model_validate_json. This method is only available on Pydantic v2 models."
         )
     return cls.model_validate_json(json_str)  # type: ignore[union-attr]
 
-
-# =============================================================================
-# Schema extraction
-# =============================================================================
 
 def get_schema(cls: type) -> str:
     """Get JSON schema string from a model.
@@ -188,6 +171,7 @@ def get_schema(cls: type) -> str:
         if hasattr(cls, "model_json_schema"):
             # Pydantic v2: Get JSON schema and encode to bytes, then decode to string
             import json
+
             schema = cls.model_json_schema()
             return json.dumps(schema)
     except Exception:
@@ -196,10 +180,6 @@ def get_schema(cls: type) -> str:
     # Fallback: use string representation
     return str(cls)
 
-
-# =============================================================================
-# Model construction (skip validation)
-# =============================================================================
 
 def model_construct(cls: type, **data: Any) -> Any:
     """Construct model instance without validation (Pydantic v2 only).
@@ -228,10 +208,6 @@ def model_construct(cls: type, **data: Any) -> Any:
     return cls(**data)  # type: ignore[operator]
 
 
-# =============================================================================
-# Fallback construction for parse errors
-# =============================================================================
-
 def construct_default(cls: type) -> Any:
     """Construct a model with default values after parse failure.
 
@@ -250,12 +226,12 @@ def construct_default(cls: type) -> Any:
     # For Pydantic, model_construct allows omitting fields
     if hasattr(cls, "model_construct"):
         # Pydantic: model_construct allows partial data
-        fields = {name: None for name in field_names}
+        fields = dict.fromkeys(field_names)
         return cls.model_construct(**fields)  # type: ignore[union-attr]
 
     # msgspec.Struct or other: try with None values
     try:
-        return cls(**{name: None for name in field_names})  # type: ignore[operator]
+        return cls(**dict.fromkeys(field_names))  # type: ignore[operator]
     except Exception:
         # Ultimate fallback: empty construction
         try:

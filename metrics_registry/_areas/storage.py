@@ -27,12 +27,14 @@ if TYPE_CHECKING:
 
 # ── Metric Names ───────────────────────────────────────────────────────────────
 
-STORAGE_METRIC_NAMES = frozenset([
-    'duckdb_ingest_latency_ms',
-    'duckdb_query_latency_ms',
-    'duckdb_connection_count',
-    'duckdb_active_queries',
-])
+STORAGE_METRIC_NAMES = frozenset(
+    [
+        "duckdb_ingest_latency_ms",
+        "duckdb_query_latency_ms",
+        "duckdb_connection_count",
+        "duckdb_active_queries",
+    ]
+)
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -41,12 +43,12 @@ _registered: dict[int, bool] = {}  # registry id -> registered status
 _registered_lock = threading.Lock()
 
 
-def register_area(registry: "MetricsRegistry") -> None:
+def register_area(registry: MetricsRegistry) -> None:
     """
     Register Storage area metrics with the registry.
 
     Called automatically by the lazy area registry on first use.
-    
+
     ISSUE-18 fix: Thread-safe per-registry tracking instead of global flag.
     """
     registry_id = id(registry)
@@ -57,7 +59,7 @@ def register_area(registry: "MetricsRegistry") -> None:
 
 
 def record_duckdb_ingest(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     latency_ms: float,
     row_count: int = 0,
 ) -> None:
@@ -69,11 +71,11 @@ def record_duckdb_ingest(
         latency_ms: Ingest latency in milliseconds
         row_count: Number of rows ingested
     """
-    registry.set_gauge('duckdb_ingest_latency_ms', latency_ms)
+    registry.set_gauge("duckdb_ingest_latency_ms", latency_ms)
 
 
 def record_duckdb_query(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     latency_ms: float,
 ) -> None:
     """
@@ -83,11 +85,11 @@ def record_duckdb_query(
         registry: MetricsRegistry instance
         latency_ms: Query latency in milliseconds
     """
-    registry.set_gauge('duckdb_query_latency_ms', latency_ms)
+    registry.set_gauge("duckdb_query_latency_ms", latency_ms)
 
 
 def record_duckdb_pool_stats(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     connection_count: int,
     active_queries: int,
 ) -> None:
@@ -99,5 +101,5 @@ def record_duckdb_pool_stats(
         connection_count: Number of active connections
         active_queries: Number of active queries
     """
-    registry.set_gauge('duckdb_connection_count', float(connection_count))
-    registry.set_gauge('duckdb_active_queries', float(active_queries))
+    registry.set_gauge("duckdb_connection_count", float(connection_count))
+    registry.set_gauge("duckdb_active_queries", float(active_queries))

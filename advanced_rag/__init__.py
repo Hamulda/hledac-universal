@@ -8,8 +8,6 @@ This file re-exports the bridge from hledac/advanced_rag/rag_orchestrator.py
 which wraps the implementation to provide research_and_answer() interface.
 """
 
-
 from .rag_orchestrator import RAGOrchestrator
-from _core import aclose
 
 __all__ = ["RAGOrchestrator"]

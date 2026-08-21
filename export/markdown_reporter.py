@@ -6,14 +6,15 @@ Deterministic, side-effect-free markdown diagnostic reporter for ObservedRunRepo
 Accepts msgspec.Struct or Mapping input. Produces stable markdown output
 ready for future MLX/Outlines synthesis layer.
 """
-import msgspec
 
 # G4 FIX: stdlib json replaced with orjson fallback (M1 optimized, 5-10× faster)
 try:
     import orjson
+
     _HAS_ORJSON = True
 except ImportError:
     import json
+
     _HAS_ORJSON = False
 import logging
 import os
@@ -23,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.safe_render import safe_markdown_link
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,12 @@ __all__ = [
     "render_forensic_findings_section",
 ]
 
-# ---------------------------------------------------------------------------
-# Sprint F263: Forensic findings constants — bounded, deterministic, fail-safe
-# ---------------------------------------------------------------------------
-# Canonical forensic source types in render order. Anything outside this
-# tuple is bucketed under "other_forensic" with the original string echoed.
 _FORENSIC_SOURCE_TYPES: tuple[str, ...] = (
     "forensic_analysis",
     "steganography_detection",
     "digital_ghost_detection",
     "blockchain_forensics",
-    )
+)
 
 _FORENSIC_LABELS: dict[str, str] = {
     "forensic_analysis": "Forensic Analysis (IOC extraction / enrichment)",
@@ -69,9 +64,6 @@ _FORENSIC_MAX_IOC_TYPE_LEN: int = 24
 _FORENSIC_MAX_VALUE_LEN: int = 96
 _FORENSIC_MAX_PAYLOAD_PARSE: int = 2048
 
-# ---------------------------------------------------------------------------
-# Root-cause → recommendation fallback map (stable, no new values invented)
-# ---------------------------------------------------------------------------
 _FALLBACK_RECOMMENDATION: dict[str, str] = {
     "network_variance": "repeat_live_run",
     "no_new_entries": "repeat_live_run",
@@ -103,12 +95,9 @@ _ROOT_CAUSE_LABELS: dict[str, str] = {
 _ENTROPY_FIELDS = (
     "entropy_threshold",
     "entropy_min_len",
-    )
+)
 
 
-# ---------------------------------------------------------------------------
-# Input normalisation
-# ---------------------------------------------------------------------------
 def normalize_report_input(report: object) -> dict[str, Any]:
     """
     Convert ObservedRunReport (msgspec.Struct) or Mapping → plain dict.
@@ -123,14 +112,9 @@ def normalize_report_input(report: object) -> dict[str, Any]:
         return dict(report)
     if hasattr(report, "keys"):
         return dict(report)
-    raise TypeError(
-        f"report must be msgspec.Struct or Mapping, got {type(report).__name__}"
-    )
+    raise TypeError(f"report must be msgspec.Struct or Mapping, got {type(report).__name__}")
 
 
-# ---------------------------------------------------------------------------
-# Markdown helpers
-# ---------------------------------------------------------------------------
 def _esc(text: object) -> str:
     """Escape raw string for inline markdown (code-span).
 
@@ -182,9 +166,6 @@ def _render_dict_ordered(data: dict, indent: int = 2) -> str:
     return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Sprint F263: Forensic findings aggregation (pure-Python, fail-safe, bounded)
-# ---------------------------------------------------------------------------
 def _parse_forensic_payload(payload: str | None) -> dict[str, str] | None:
     """
     Parse a forensic finding's payload_text into a small dict.
@@ -205,6 +186,7 @@ def _parse_forensic_payload(payload: str | None) -> dict[str, str] | None:
     if bounded.lstrip().startswith("{"):
         try:
             import json as _json
+
             obj = _json.loads(bounded)
         except Exception:
             return None
@@ -287,7 +269,7 @@ def aggregate_forensic_findings(
 
         try:
             c = float(f.get("confidence", 0.0) or 0.0)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             c = 0.0
         if 0.0 <= c <= 1.0:
             confs.append(c)
@@ -323,10 +305,6 @@ def aggregate_forensic_findings(
     }
 
 
-# ---------------------------------------------------------------------------
-# Section builders
-# ---------------------------------------------------------------------------
-
 def _render_run_metadata(report: dict[str, Any]) -> str:
     lines = []
     ts = report.get("started_ts") or report.get("finished_ts")
@@ -349,9 +327,7 @@ def _render_executive_summary(report: dict[str, Any]) -> str:
 
     status = "executed" if actual_run else "no-live-run"
     findings_blurb = (
-        f"{accepted} accepted finding{'s' if accepted != 1 else ''}"
-        if accepted > 0
-        else "no accepted findings"
+        f"{accepted} accepted finding{'s' if accepted != 1 else ''}" if accepted > 0 else "no accepted findings"
     )
 
     rec = report.get("recommendation")
@@ -460,7 +436,7 @@ def _render_per_source_health(report: dict[str, Any]) -> str:
         sorted_sources = sorted(
             per_source,
             key=lambda s: str(s.get("feed_url", "")),
-    )
+        )
         for src in sorted_sources:
             url = src.get("feed_url", "unknown")
             label = src.get("label", "")
@@ -519,9 +495,7 @@ def render_forensic_findings_section(report: dict[str, Any]) -> str:
     cmax = agg["confidence_max"]
     cavg = agg["confidence_avg"]
     if cmin is not None and cmax is not None and cavg is not None:
-        parts.append(
-            f"- **Confidence**: min={cmin:.2f} · max={cmax:.2f} · avg={cavg:.2f}"
-    )
+        parts.append(f"- **Confidence**: min={cmin:.2f} · max={cmax:.2f} · avg={cavg:.2f}")
 
     hist = agg["ioc_histogram"]
     if hist:
@@ -536,9 +510,7 @@ def render_forensic_findings_section(report: dict[str, Any]) -> str:
                     sample_str += f" … (+{len(samples) - _FORENSIC_MAX_IOC_SAMPLE} more)"
             else:
                 sample_str = "_(no sample)_"
-            parts.append(
-                f"| `{_esc(ioc_t)}` | {count} | {sample_str} |"
-    )
+            parts.append(f"| `{_esc(ioc_t)}` | {count} | {sample_str} |")
     return "\n".join(parts)
 
 
@@ -630,7 +602,6 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
         return val
 
     data = {k: _safe_val(k) for k in keys_ordered}
-    # Remove None values for cleaner output
     data = {k: v for k, v in data.items() if v is not None}
 
     # G4 FIX: Use orjson with fallback for JSON output
@@ -641,10 +612,6 @@ def _render_machine_readable_summary(report: dict[str, Any]) -> str:
         json_str = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
     return f"```json\n{json_str}\n```"
 
-
-# ---------------------------------------------------------------------------
-# Main renderer
-# ---------------------------------------------------------------------------
 
 def render_diagnostic_markdown(report: object) -> str:
     """
@@ -685,10 +652,6 @@ def render_diagnostic_markdown(report: object) -> str:
     return "".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# File-output helper
-# ---------------------------------------------------------------------------
-
 def render_diagnostic_markdown_to_path(
     report: object,
     path: str | Path | None = None,
@@ -711,6 +674,7 @@ def render_diagnostic_markdown_to_path(
             base = Path(export_dir_env)
         else:
             from hledac.universal.paths import RUNS_ROOT
+
             base = RUNS_ROOT
             base.mkdir(parents=True, exist_ok=True)
     else:

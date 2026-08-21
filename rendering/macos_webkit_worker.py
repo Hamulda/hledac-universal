@@ -20,12 +20,10 @@ The worker:
 Invariant: non-persistent, no shared cookies, no screenshots, no disk storage.
 """
 
-
-
-import msgspec.json as _json
 import sys
 import time
-from _core import aclose
+
+import msgspec.json as _json
 
 
 def _build_response(
@@ -66,6 +64,7 @@ def _do_capability_check() -> bytes:
 
         from Foundation import NSBundle
         from objc import nil
+
         bundle = NSBundle.bundleWithPath_(path)
         wk_class = bundle.classNamed_("WKWebView")
         if wk_class is None or wk_class == nil:
@@ -112,7 +111,7 @@ def _run_loop_until_condition(
         run_loop.runMode_beforeDate_(
             getattr(NSRunLoop, "NSDefaultRunLoopMode", "kCFRunLoopDefaultMode"),
             NSDate.dateWithTimeIntervalSinceNow_(poll_interval),
-    )
+        )
     return False
 
 
@@ -133,7 +132,7 @@ def _do_render(payload: dict) -> bytes:
             NSDate,
             NSRunLoop,
             NSURLRequest,
-    )
+        )
         from objc import dyld_framework, nil
         from WebKit import WKWebView, WKWebViewConfiguration
 
@@ -147,6 +146,7 @@ def _do_render(payload: dict) -> bytes:
         # Non-persistent data store: no cookies, no cache persisted to disk
         try:
             from WebKit import WKProcessPool, WKWebsiteDataStore
+
             config.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
             config.setProcessPool_(WKProcessPool.alloc().init())
         except Exception:  # noqa: BLE001
@@ -165,13 +165,12 @@ def _do_render(payload: dict) -> bytes:
         webview = WKWebView.alloc().initWithFrame_configuration_(
             ((0, 0), (800, 600)),
             config,
-    )
+        )
 
         # Set custom User-Agent if provided
         if user_agent:
             webview.setCustomUserAgent_(user_agent)
 
-        # Load URL
         nsurl = NSURL.URLWithString_(url)
         if nsurl is None or nsurl == nil:
             return _build_response(False, "macos_webkit_worker_error", elapsed_ms=0.0)
@@ -198,7 +197,7 @@ def _do_render(payload: dict) -> bytes:
         completion_received = [False]
 
         # Completion handler: called when JS evaluation completes
-        def completion_handler(result, error):
+        def completion_handler(result, error) -> None:
             if error is not None and error != nil:
                 error_result[0] = error
             elif result is not None and result != nil:
@@ -220,7 +219,7 @@ def _do_render(payload: dict) -> bytes:
             run_loop.runMode_beforeDate_(
                 getattr(NSRunLoop, "NSDefaultRunLoopMode", "kCFRunLoopDefaultMode"),
                 NSDate.dateWithTimeIntervalSinceNow_(0.05),
-    )
+            )
 
         html = html_result[0]
         error = error_result[0]
@@ -230,35 +229,39 @@ def _do_render(payload: dict) -> bytes:
         # Surface any JS evaluation error
         if error is not None and error != nil:
             return _build_response(
-                False, "macos_webkit_worker_error",
+                False,
+                "macos_webkit_worker_error",
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=0,
-    )
+            )
 
         if html is None or html == "":
             return _build_response(
-                False, "macos_webkit_empty",
+                False,
+                "macos_webkit_empty",
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=0,
-    )
+            )
 
         # Truncate if over max_bytes (fail-soft)
         html_str = str(html)
         rendered_bytes = len(html_str.encode("utf-8"))
         if rendered_bytes > max_bytes:
             return _build_response(
-                False, "macos_webkit_max_bytes_exceeded",
+                False,
+                "macos_webkit_max_bytes_exceeded",
                 html=None,
                 elapsed_ms=elapsed_ms,
                 rendered_bytes=rendered_bytes,
-    )
+            )
 
         return _build_response(
-            True, "macos_webkit_success",
+            True,
+            "macos_webkit_success",
             html=html_str[:max_bytes],
             elapsed_ms=elapsed_ms,
             rendered_bytes=min(rendered_bytes, max_bytes),
-    )
+        )
 
     except Exception as e:
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -266,13 +269,15 @@ def _do_render(payload: dict) -> bytes:
         exc_name = type(e).__name__
         if "ModuleNotFoundError" in exc_name or "ImportError" in exc_name:
             return _build_response(
-                False, "macos_webkit_pyobjc_missing",
+                False,
+                "macos_webkit_pyobjc_missing",
                 elapsed_ms=elapsed_ms,
-    )
+            )
         return _build_response(
-            False, "macos_webkit_worker_error",
+            False,
+            "macos_webkit_worker_error",
             elapsed_ms=elapsed_ms,
-    )
+        )
 
 
 def main() -> None:
@@ -292,7 +297,7 @@ def main() -> None:
 
     try:
         payload = json.loads(stdin_data.decode("utf-8", errors="replace"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         sys.stdout.buffer.write(_build_response(False, "macos_webkit_worker_error"))
         sys.stdout.buffer.flush()
         return

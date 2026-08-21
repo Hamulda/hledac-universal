@@ -47,10 +47,6 @@ pub const SPSC_QUEUE_DEPTH: usize = 16;
 /// Actual payloads are prompts (~500B) + model params (~100B).
 pub const SPSC_SLOT_BYTES: usize = 1024;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// Create a new SPSC queue pair.
 ///
 /// Returns two opaque token handles — one for the sender (Python/main thread),
@@ -232,10 +228,6 @@ impl SPSCQueuePair {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Blocking recv — called from the MLX worker thread only
-// ---------------------------------------------------------------------------
-
 /// Block indefinitely until an item is available on the queue.
 /// Returns a raw pointer to QueueItem (caller must free with spsc_item_free).
 ///
@@ -318,19 +310,11 @@ pub unsafe extern "C" fn spsc_item_free(ptr: usize) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SPSCQueuePair>()?;
     m.add_class::<SPSCQueueSender>()?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -370,7 +354,6 @@ mod tests {
         for _ in 0..SPSC_QUEUE_DEPTH {
             assert!(sender.send(b"x"));
         }
-        // Queue is full — send fails
         assert!(!sender.send(b"overflow"));
 
         // Check available slots — should be 0 when full

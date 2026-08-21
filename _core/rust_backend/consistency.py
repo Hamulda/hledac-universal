@@ -48,7 +48,6 @@ if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core._util import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -60,31 +59,44 @@ try:
     from hledac.universal._core.ffi_circuit_breaker import (
         FFI_MODULE_CONSISTENCY_VERIFIER,
         FFICallResult,
-        get_ffi_circuit_breaker,
         _noop_check_consistency,
         _python_check_consistency,  # Use the registered fallback from registry
+        get_ffi_circuit_breaker,
     )
+
     _FFI_CB_AVAILABLE = True
 except ImportError:
     _FFI_CB_AVAILABLE = False
     FFI_MODULE_CONSISTENCY_VERIFIER = "consistency_verifier"
+
     # Define fallback functions locally if FFI CB not available
     def _python_check_consistency(findings: list[dict[str, Any]]) -> dict[str, Any]:
         """Pure-Python fallback for consistency verification."""
         if not findings:
             return {
-                "clean": [], "contradictory": [], "disputed": [],
-                "contradictions": [], "suspect_sources": [],
-                "entity_scores": {}, "consistency_score": 1.0,
-                "facts_processed": 0, "contradictions_found": 0,
+                "clean": [],
+                "contradictory": [],
+                "disputed": [],
+                "contradictions": [],
+                "suspect_sources": [],
+                "entity_scores": {},
+                "consistency_score": 1.0,
+                "facts_processed": 0,
+                "contradictions_found": 0,
             }
         return {
-            "clean": findings, "contradictory": [], "disputed": [],
-            "contradictions": [], "suspect_sources": [],
-            "entity_scores": {}, "consistency_score": 1.0,
-            "facts_processed": len(findings), "contradictions_found": 0,
+            "clean": findings,
+            "contradictory": [],
+            "disputed": [],
+            "contradictions": [],
+            "suspect_sources": [],
+            "entity_scores": {},
+            "consistency_score": 1.0,
+            "facts_processed": len(findings),
+            "contradictions_found": 0,
         }
-    
+
+
 class _RustConsistencyDomain:
     """Rust-accelerated consistency verification domain with FFI circuit breaker."""
 
@@ -95,9 +107,7 @@ class _RustConsistencyDomain:
         # ISSUE [SWARM]-005: Initialize FFI circuit breaker
         self._ffi_cb = get_ffi_circuit_breaker() if _FFI_CB_AVAILABLE else None
 
-    def check_finding_consistency(
-        self, findings: list[dict[str, Any]], *, max_findings: int = 500
-    ) -> dict[str, Any]:
+    def check_finding_consistency(self, findings: list[dict[str, Any]], *, max_findings: int = 500) -> dict[str, Any]:
         """
         Check a batch of findings for propositional contradictions.
 
@@ -129,11 +139,9 @@ class _RustConsistencyDomain:
         # Fallback to direct call (for backward compatibility)
         return self._check_direct(findings, max_findings)
 
-    def _check_with_circuit_breaker(
-        self, findings: list[dict[str, Any]], max_findings: int
-    ) -> dict[str, Any]:
+    def _check_with_circuit_breaker(self, findings: list[dict[str, Any]], max_findings: int) -> dict[str, Any]:
         """Check consistency using FFI circuit breaker for Rust → Python cascade."""
-        # Create a closure that wraps the Rust call
+
         def rust_call() -> dict[str, Any]:
             findings_json = _json.dumps(findings).encode("utf-8")
             result_bytes = self._ext.check_finding_consistency(findings_json, max_findings)
@@ -145,36 +153,30 @@ class _RustConsistencyDomain:
             rust_fn=rust_call,
             findings=findings,
             max_findings=max_findings,
-    )
+        )
 
         # Circuit breaker returns the final result (Rust, Python fallback, or No-op)
         if result.success and result.value is not None:
             return result.value
-        
+
         # Edge case: result.value is None - use Python fallback directly
         logger.warning(
             f"[CONSISTENCY] FFI circuit breaker returned None "
             f"(path={result.path}, error={result.error}), using Python fallback"
-    )
+        )
         return _python_check_consistency(findings, max_findings)
 
-    def _check_direct(
-        self, findings: list[dict[str, Any]], max_findings: int
-    ) -> dict[str, Any]:
+    def _check_direct(self, findings: list[dict[str, Any]], max_findings: int) -> dict[str, Any]:
         """Direct Rust call without circuit breaker (backward compatible)."""
         try:
             findings_json = _json.dumps(findings).encode("utf-8")
-            result_bytes = self._ext.check_finding_consistency(
-                findings_json, max_findings
-    )
+            result_bytes = self._ext.check_finding_consistency(findings_json, max_findings)
             return _json.loads(result_bytes.decode("utf-8"))
         except Exception as e:
             logger.debug(f"[CONSISTENCY] Rust check_finding_consistency failed: {e}")
             return _python_fallback_check_consistency(findings)
 
-    def quick_consistency_check(
-        self, entity: str, attribute: str, values: list[dict[str, str]]
-    ) -> float:
+    def quick_consistency_check(self, entity: str, attribute: str, values: list[dict[str, str]]) -> float:
         """
         Quick consistency check for a single entity across sources.
 
@@ -199,27 +201,21 @@ class _PythonConsistencyDomain:
 
     __slots__ = ()
 
-    def check_finding_consistency(
-        self, findings: list[dict[str, Any]], *, max_findings: int = 500
-    ) -> dict[str, Any]:
+    def check_finding_consistency(self, findings: list[dict[str, Any]], *, max_findings: int = 500) -> dict[str, Any]:
         """Pure-Python fallback for consistency verification."""
         return _python_check_consistency(findings[:max_findings])
 
-    def quick_consistency_check(
-        self, entity: str, attribute: str, values: list[dict[str, str]]
-    ) -> float:
+    def quick_consistency_check(self, entity: str, attribute: str, values: list[dict[str, str]]) -> float:
         """Pure-Python fallback for quick consistency check."""
         return _python_fallback_quick_check(entity, attribute, values)
 
 
-def _python_fallback_quick_check(
-    entity: str, attribute: str, values: list[dict[str, str]]
-) -> float:
+def _python_fallback_quick_check(entity: str, attribute: str, values: list[dict[str, str]]) -> float:
     """Pure-Python fallback for quick consistency check."""
     if not values:
         return 1.0
 
-    unique_values = set(v.get("value") or "" for v in values)
+    unique_values = {v.get("value") or "" for v in values}
     if len(unique_values) == 1:
         return 1.0  # All sources agree
 
@@ -232,11 +228,12 @@ def _python_fallback_quick_check(
 
     return 1.0 - severity
 
+
 # Module-level singleton getter (matches pattern in other domains)
-_domain: "_RustConsistencyDomain | _PythonConsistencyDomain | None" = None
+_domain: _RustConsistencyDomain | _PythonConsistencyDomain | None = None
 
 
-def get_consistency_domain() -> "_RustConsistencyDomain | _PythonConsistencyDomain":
+def get_consistency_domain() -> _RustConsistencyDomain | _PythonConsistencyDomain:
     """
     Get the consistency domain singleton.
 
@@ -246,6 +243,7 @@ def get_consistency_domain() -> "_RustConsistencyDomain | _PythonConsistencyDoma
     if _domain is None:
         try:
             from hledac_rust_extensions import hledac_rust_extensions
+
             ext = hledac_rust_extensions()
             # Probe for the function
             if hasattr(ext, "check_finding_consistency"):

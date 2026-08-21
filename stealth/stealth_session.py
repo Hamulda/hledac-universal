@@ -11,21 +11,29 @@ Sprint F195C — Stealth layer unification:
 This is the canonical stealth surface used by fetching/public_fetcher.py.
 Always-on, bounded, fail-safe.
 """
+
 import asyncio
 import secrets
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 # Crypto-safe jitter + UA selection — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
-_STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')
+_STEALTH_UA_POOL: tuple[str, ...] = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+)
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
+
 class StealthResponse(Struct):
     """Response from stealth HTTP request."""
+
     status: int
     final_url: str
     body_bytes: bytes
@@ -36,6 +44,7 @@ class StealthResponse(Struct):
     @property
     def success(self) -> bool:
         return 200 <= self.status < 300
+
 
 class StealthSession:
     """
@@ -48,9 +57,16 @@ class StealthSession:
 
     Used by fetching/public_fetcher.py as the canonical stealth surface.
     """
-    __slots__ = tuple(('_closed', '_jitter_max', '_jitter_min', '_request_count', '_ua_index', '_ua_pool'))
 
-    def __init__(self, *, ua_pool: tuple[str, ...]=_STEALTH_UA_POOL, jitter_min: float=_JITTER_MIN_S, jitter_max: float=_JITTER_MAX_S) -> None:
+    __slots__ = ("_closed", "_jitter_max", "_jitter_min", "_request_count", "_ua_index", "_ua_pool")
+
+    def __init__(
+        self,
+        *,
+        ua_pool: tuple[str, ...] = _STEALTH_UA_POOL,
+        jitter_min: float = _JITTER_MIN_S,
+        jitter_max: float = _JITTER_MAX_S,
+    ) -> None:
         self._ua_pool = ua_pool
         self._ua_index: int = 0
         self._jitter_min = jitter_min
@@ -90,6 +106,7 @@ class StealthSession:
             Actual seconds slept (0.0 when blitz mode, for testing variance verification).
         """
         from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
+
         if _is_blitz():
             return 0.0
         delay = _JITTER_RNG.uniform(self._jitter_min, self._jitter_max)
@@ -114,5 +131,7 @@ class StealthSession:
         self._request_count = 0
 
     def __repr__(self) -> str:
-        return f'StealthSession(ua_pool_size={len(self._ua_pool)}, ua_index={self._ua_index}, jitter=({self._jitter_min}, {self._jitter_max}), closed={self._closed})'
-__all__ = ['StealthSession', 'StealthResponse']
+        return f"StealthSession(ua_pool_size={len(self._ua_pool)}, ua_index={self._ua_index}, jitter=({self._jitter_min}, {self._jitter_max}), closed={self._closed})"
+
+
+__all__ = ["StealthSession", "StealthResponse"]

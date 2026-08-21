@@ -20,13 +20,10 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
-import sys
 from dataclasses import dataclass
-from typing import ClassVar
 
 # Thread-safe singleton cache
-_cache: "TopologyInfo | None" = None
-
+_cache: TopologyInfo | None = None
 
 # ponytail: module-level libc handle cached once — avoid repeated dlopen
 _libc: ctypes.CDLL | None = None
@@ -54,9 +51,7 @@ def _sysctl_int(name: str) -> int | None:
         if result != 0 or size.value == 0:
             return None
         buf = ctypes.create_string_buffer(size.value)
-        result2 = libc.sysctlbyname(
-            name.encode(), buf, ctypes.byref(size), None, 0
-        )
+        result2 = libc.sysctlbyname(name.encode(), buf, ctypes.byref(size), None, 0)
         if result2 != 0:
             return None
         return int.from_bytes(buf.raw[: size.value], byteorder="little")
@@ -75,9 +70,7 @@ def _sysctl_str(name: str) -> str | None:
         if result != 0 or size.value == 0:
             return None
         buf = ctypes.create_string_buffer(size.value)
-        result2 = libc.sysctlbyname(
-            name.encode(), buf, ctypes.byref(size), None, 0
-        )
+        result2 = libc.sysctlbyname(name.encode(), buf, ctypes.byref(size), None, 0)
         if result2 != 0:
             return None
         return buf.raw[: size.value].rstrip(b"\x00").decode()
@@ -88,6 +81,7 @@ def _sysctl_str(name: str) -> str | None:
 @dataclass(frozen=True, slots=True)
 class TopologyInfo:
     """M1 topology info — immutable, cached at first access."""
+
     p_cores: int
     e_cores: int
     total_logical: int
@@ -97,7 +91,7 @@ class TopologyInfo:
     detected: bool
 
     @classmethod
-    def unknown(cls) -> "TopologyInfo":
+    def unknown(cls) -> TopologyInfo:
         """Safe fallback when detection fails."""
         return cls(
             p_cores=4,
@@ -130,7 +124,6 @@ def _detect_via_sysctl() -> TopologyInfo:
       perflevel0 = 2 E-cores → indices (0,1)
       perflevel1 = 8 P-cores → indices (2,3,4,5,6,7,8,9)
     """
-    # Check machine type - M1 reports "arm64"
     is_arm = os.uname().machine.lower() in ("arm64", "aarch64")
 
     if not is_arm:
@@ -233,21 +226,9 @@ def _try_wire_rust() -> None:
         if hasattr(ext, "p_core_count_py") and callable(ext.p_core_count_py):
             p_count = ext.p_core_count_py()
             e_count = ext.e_core_count_py()
-            p_indices = (
-                tuple(ext.get_p_core_indices_py())
-                if hasattr(ext, "get_p_core_indices_py")
-                else None
-            )
-            e_indices = (
-                tuple(ext.get_e_core_indices_py())
-                if hasattr(ext, "get_e_core_indices_py")
-                else None
-            )
-            total = (
-                ext.total_logical_cores_py()
-                if hasattr(ext, "total_logical_cores_py")
-                else p_count + e_count
-            )
+            p_indices = tuple(ext.get_p_core_indices_py()) if hasattr(ext, "get_p_core_indices_py") else None
+            e_indices = tuple(ext.get_e_core_indices_py()) if hasattr(ext, "get_e_core_indices_py") else None
+            total = ext.total_logical_cores_py() if hasattr(ext, "total_logical_cores_py") else p_count + e_count
             is_as = ext.is_m1_py() if hasattr(ext, "is_m1_py") else True
 
             global _cache
@@ -261,9 +242,7 @@ def _try_wire_rust() -> None:
                 detected=True,
             )
             _apply_affinity_fn = (
-                ext.apply_affinity_for_workload_py
-                if hasattr(ext, "apply_affinity_for_workload_py")
-                else None
+                ext.apply_affinity_for_workload_py if hasattr(ext, "apply_affinity_for_workload_py") else None
             )
             _RUST_WIRED = True
     except Exception:
@@ -291,20 +270,3 @@ def apply_affinity_for_workload(workload: str) -> None:
 
 # Auto-wire on import
 _try_wire_rust()
-
-
-# ============================================================================
-# RUST REBUILD NOTE
-# ============================================================================
-#
-# Once network is available, rebuild the Rust extension to enable native
-# P/E core detection with darwin_affinity thread pinning:
-#
-#   cd rust_extensions && maturin develop --release
-#
-# This will compile topology.rs with PyO3 exports and enable:
-#   - p_core_count_py() — actual P-core count via sysctl
-#   - e_core_count_py() — actual E-core count via sysctl
-#   - apply_affinity_for_workload_py() — thread_policy_set + QoS
-#
-# The Python fallback in this module will be bypassed when Rust is available.

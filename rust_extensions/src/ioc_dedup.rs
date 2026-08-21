@@ -412,7 +412,6 @@ impl MmapIocDedupStore {
                 pyo3::exceptions::PyIOError::new_err(format!("open temp file failed: {}", e))
             })?;
 
-        // Write header
         let mut header = [0u8; MMAP_HEADER_SIZE];
         header[0..4].copy_from_slice(MMAP_MAGIC);
         header[4] = MMAP_VERSION;
@@ -425,7 +424,6 @@ impl MmapIocDedupStore {
             pyo3::exceptions::PyIOError::new_err(format!("write header failed: {}", e))
         })?;
 
-        // Write entries
         tmp_file.write_all(&entries_bytes).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("write entries failed: {}", e))
         })?;
@@ -544,8 +542,6 @@ impl MmapIocDedupStore {
         if items.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
-        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
         let prepped: Vec<(usize, u64, String, IocType, f32)> =
             crate::gil::release_gil(py, move || {
                 items
@@ -559,7 +555,6 @@ impl MmapIocDedupStore {
                     .collect()
             });
 
-        // Phase 2: sequential insert under write lock.
         let mut results = Vec::with_capacity(prepped.len());
         let mut entries = self.entries);
         for (_, key, normalized, ioc_type, confidence) in prepped {
@@ -619,8 +614,6 @@ impl MmapIocDedupStore {
             return vec![];
         }
 
-        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
-        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
         let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
@@ -636,7 +629,6 @@ impl MmapIocDedupStore {
                 .collect()
         });
 
-        // Phase 2: Sequential RwLock read for contains_key lookup.
         let entries = self.entries);
         prepped
             .iter()
@@ -815,8 +807,6 @@ impl IocDedupStore {
         if items.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
-        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
         let prepped: Vec<(u64, IocType, String, f32)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
@@ -828,7 +818,6 @@ impl IocDedupStore {
                 })
                 .collect()
         });
-        // Phase 2: sequential insert.
         let mut results = Vec::with_capacity(prepped.len());
         for (key, ioc_type, normalized, confidence) in prepped {
             self.total_seen += 1;
@@ -884,8 +873,6 @@ impl IocDedupStore {
             return vec![];
         }
 
-        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
-        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
         let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
@@ -901,7 +888,6 @@ impl IocDedupStore {
                 .collect()
         });
 
-        // Phase 2: Sequential HashMap contains_key lookup (AHashMap is Sync).
         prepped
             .iter()
             .map(|(key, is_empty_sentinel)| {

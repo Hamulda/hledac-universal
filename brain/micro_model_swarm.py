@@ -17,39 +17,39 @@ Performance:
 - OLD cache-miss path: 1-20s (mlx_lm.load) ✗ ELIMINATED
 - NEW: ALL paths: <1ms (pointer swap) ✓ TRUE ZERO-COPY
 """
+
 from __future__ import annotations
-import re
+
 import threading
 import time
-import weakref
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Callable, Optional
-import mlx.core as mx
+from typing import Any
+
 import mlx_lm
-from .content_router import ContentRouter, classify_content, get_preferred_model, route_content
-from .micro_model_pool import MICRO_MODELS, IMicroModelPool, LoadedMicroModel, MicroModelPool, MicroModelSpec, TaskType
+
+from .content_router import ContentRouter, route_content
+from .micro_model_pool import MicroModelPool, TaskType
+
 ModelT = Any
 TokenizerT = Any
 EmbeddingT = list[float]
 
+
 class MicroModelSwarmRouter:
     """
     High-level router with TRUE ZERO-COPY micro-model pool.
-    
+
     TRUE ZERO-COPY ARCHITECTURE:
     1. ALL micro-models are preloaded at startup (not lazy)
     2. Weights are wired to UMA via mx.metal API
     3. swap_to() is ALWAYS a <1ms pointer swap
     4. No mlx_lm.load() during inference (only at startup)
-    
+
     This replaces the SWARM-001 fix with TRUE ZERO-COPY support.
-    
+
     Usage:
         router = MicroModelSwarmRouter()
         router.preload_priority_models()  # Loads ALL models to UMA
-        
+
         # Route a query - ALWAYS fast (<1ms pointer swap)
         model_id, task_type = router.route("Write a SQL query to...")
         if model_id:
@@ -57,25 +57,50 @@ class MicroModelSwarmRouter:
         else:
             # Fall back to main model
             main_model, main_tokenizer = router.get_main_model()
-    
+
     Integration with MoERouter:
         1. MoERouter.__init__() creates MicroModelSwarmRouter instance
         2. MoERouter._load_expert() calls router.swap_to() instead of mlx_lm.load()
         3. MoERouter.route() uses classify_content() for content-based routing
     """
-    __slots__ = ('_cache_lock', '_cache_ttl', '_content_router', '_enable_fallback', '_pool', '_preload_all', '_routing_cache', '_zero_copy_ready')
 
-    def __init__(self, memory_budget_mb: int | None=None, eviction_threshold: float=0.9, enable_fallback: bool=True, preload_all: bool=True, use_adaptive_budget: bool=True):
+    __slots__ = (
+        "_cache_lock",
+        "_cache_ttl",
+        "_content_router",
+        "_enable_fallback",
+        "_pool",
+        "_preload_all",
+        "_routing_cache",
+        "_zero_copy_ready",
+    )
+
+    def __init__(
+        self,
+        memory_budget_mb: int | None = None,
+        eviction_threshold: float = 0.9,
+        enable_fallback: bool = True,
+        preload_all: bool = True,
+        use_adaptive_budget: bool = True,
+    ) -> None:
         from .moe_swarm_integration import ResourceGovernor, SwappableMicroModelPool
+
         if memory_budget_mb is None or use_adaptive_budget:
             governor = ResourceGovernor()
             if memory_budget_mb is None:
                 memory_budget_mb = governor.calculate_micro_model_budget()
             eviction_threshold = governor.get_eviction_threshold(0.0)
         if use_adaptive_budget:
-            self._pool = SwappableMicroModelPool(memory_budget_mb=memory_budget_mb, eviction_threshold=eviction_threshold, preload_all=preload_all, use_adaptive_budget=True)
+            self._pool = SwappableMicroModelPool(
+                memory_budget_mb=memory_budget_mb,
+                eviction_threshold=eviction_threshold,
+                preload_all=preload_all,
+                use_adaptive_budget=True,
+            )
         else:
-            self._pool = MicroModelPool(memory_budget_mb=memory_budget_mb, eviction_threshold=eviction_threshold, preload_all=preload_all)
+            self._pool = MicroModelPool(
+                memory_budget_mb=memory_budget_mb, eviction_threshold=eviction_threshold, preload_all=preload_all
+            )
         self._content_router = ContentRouter()
         self._enable_fallback = enable_fallback
         self._preload_all = preload_all
@@ -104,16 +129,16 @@ class MicroModelSwarmRouter:
         """Classify text into task type using content analysis."""
         return self._content_router.classify(text)
 
-    def route(self, text: str, use_cache: bool=True) -> tuple[str | None, TaskType]:
+    def route(self, text: str, use_cache: bool = True) -> tuple[str | None, TaskType]:
         """
         Route a query to the best micro-model.
-        
+
         Uses pure function route_content() for stateless routing.
-        
+
         Args:
             text: Input query/text to route
             use_cache: Whether to use routing cache (default: True)
-        
+
         Returns:
             Tuple of (model_id, task_type)
             model_id is None if routing to main model is recommended
@@ -137,25 +162,27 @@ class MicroModelSwarmRouter:
     def swap_to(self, model_id: str) -> tuple[ModelT, TokenizerT, bool]:
         """
         TRUE ZERO-COPY hot-swap to the specified micro-model.
-        
+
         Performance: <1ms (pure pointer swap) when preloaded.
-        
+
         Returns:
             Tuple of (model, tokenizer, success)
         """
         return self._pool.swap_to(model_id)
 
-    def generate(self, text: str, max_tokens: int=256, temp: float=0.7, route_first: bool=True, **kwargs) -> tuple[str, str | None, TaskType]:
+    def generate(
+        self, text: str, max_tokens: int = 256, temp: float = 0.7, route_first: bool = True, **kwargs
+    ) -> tuple[str, str | None, TaskType]:
         """
         Generate response with automatic micro-model routing.
-        
+
         Args:
             text: Input prompt
             max_tokens: Max tokens to generate
             temp: Temperature for generation
             route_first: Whether to route to micro-model (True) or use main (False)
             **kwargs: Additional generation args
-        
+
         Returns:
             Tuple of (generated_text, model_id_used, task_type)
         """
@@ -165,10 +192,10 @@ class MicroModelSwarmRouter:
                 result = self._pool.generate(model_id, text, max_tokens=max_tokens, temp=temp, **kwargs)
                 return (result, model_id, task_type)
             except Exception as e:
-                print(f'[MicroModelSwarmRouter] Micro-model failed: {e}, falling back')
+                print(f"[MicroModelSwarmRouter] Micro-model failed: {e}, falling back")
         main = self._pool.get_main_model()
         if main is None:
-            raise RuntimeError('No main model registered')
+            raise RuntimeError("No main model registered")
         model, tokenizer = main
         result = mlx_lm.generate(model, tokenizer, prompt=text, max_tokens=max_tokens, temp=temp, **kwargs)
         return (result, None, task_type)
@@ -176,7 +203,14 @@ class MicroModelSwarmRouter:
     def get_stats(self) -> dict[str, Any]:
         """Get comprehensive router statistics."""
         pool_stats = self._pool.get_stats()
-        return {'pool': pool_stats, 'cache_size': len(self._routing_cache), 'enable_fallback': self._enable_fallback, 'zero_copy_ready': self._zero_copy_ready, 'swap_type': 'pointer_swap', 'memory_wiring': 'UMA_wired'}
+        return {
+            "pool": pool_stats,
+            "cache_size": len(self._routing_cache),
+            "enable_fallback": self._enable_fallback,
+            "zero_copy_ready": self._zero_copy_ready,
+            "swap_type": "pointer_swap",
+            "memory_wiring": "UMA_wired",
+        }
 
     @property
     def loaded_models(self) -> list[str]:
@@ -188,43 +222,61 @@ class MicroModelSwarmRouter:
         """Current memory pressure."""
         return self._pool.memory_pressure
 
-def create_swarm_router(memory_budget_mb: int | None=None, preload_models: bool=True, use_adaptive_budget: bool=True, eviction_threshold: float | None=None) -> MicroModelSwarmRouter:
+
+def create_swarm_router(
+    memory_budget_mb: int | None = None,
+    preload_models: bool = True,
+    use_adaptive_budget: bool = True,
+    eviction_threshold: float | None = None,
+) -> MicroModelSwarmRouter:
     """
     Factory function to create a configured MicroModelSwarmRouter.
-    
+
     TRUE ZERO-COPY: When preload_models=True (default), ALL micro-models
     are preloaded and wired to UMA at startup. This ensures <1ms swap_to()
     performance for ALL model switches, not just cache-hit paths.
-    
+
     Args:
         memory_budget_mb: Memory budget for micro-models (default: adaptive via ResourceGovernor)
         preload_models: Preload ALL micro-models at startup (default: True)
         use_adaptive_budget: Use ResourceGovernor for dynamic budget (default: True)
         eviction_threshold: Override eviction threshold (default: dynamic via ResourceGovernor)
-    
+
     Returns:
         MicroModelSwarmRouter configured for TRUE ZERO-COPY operation
     """
     from .moe_swarm_integration import ResourceGovernor
+
     governor = ResourceGovernor()
     if memory_budget_mb is None or use_adaptive_budget:
         memory_budget_mb = governor.calculate_micro_model_budget()
     if eviction_threshold is None:
         eviction_threshold = governor.get_eviction_threshold(0.0)
-    router = MicroModelSwarmRouter(memory_budget_mb=memory_budget_mb, eviction_threshold=eviction_threshold, enable_fallback=True, preload_all=preload_models, use_adaptive_budget=use_adaptive_budget)
+    router = MicroModelSwarmRouter(
+        memory_budget_mb=memory_budget_mb,
+        eviction_threshold=eviction_threshold,
+        enable_fallback=True,
+        preload_all=preload_models,
+        use_adaptive_budget=use_adaptive_budget,
+    )
     if preload_models:
         router.preload_priority_models()
     return router
 
-def create_micro_model_pool(memory_budget_mb: int | None=None, use_adaptive_budget: bool=True):
+
+def create_micro_model_pool(memory_budget_mb: int | None = None, use_adaptive_budget: bool = True):
     """
     Create a micro model pool (alias for backward compatibility).
-    
+
     Uses adaptive memory budget by default for M1 8GB optimization.
     """
     from .moe_swarm_integration import create_swappable_pool
+
     return create_swappable_pool(memory_budget_mb=memory_budget_mb, use_adaptive_budget=use_adaptive_budget)
+
+
 _global_router: MicroModelSwarmRouter | None = None
+
 
 def get_global_router() -> MicroModelSwarmRouter:
     """Get or create the global router singleton."""
@@ -232,6 +284,7 @@ def get_global_router() -> MicroModelSwarmRouter:
     if _global_router is None:
         _global_router = create_swarm_router()
     return _global_router
+
 
 def set_global_router(router: MicroModelSwarmRouter) -> None:
     """Set the global router singleton."""

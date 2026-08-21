@@ -27,19 +27,21 @@ Invariant table:
 
 Author: Issue 9
 """
+
 import asyncio
 import logging
-from dataclasses import dataclass
-import msgspec
-from typing import TypeVar, Generic, Any, cast
 from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
+
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
-T = TypeVar('T', default=object)
-E = TypeVar('E', bound=BaseException, default=Exception)
+
+T = TypeVar("T", default=object)
+E = TypeVar("E", bound=BaseException, default=Exception)
+
 
 class Ok[T]:
     """Success variant of Result[T, E]."""
+
     value: T
 
     def is_ok(self) -> bool:
@@ -55,7 +57,7 @@ class Ok[T]:
         return self.value
 
     def unwrap_err(self) -> E:
-        msg = 'Ok.unwrap_err() called on Ok variant'
+        msg = "Ok.unwrap_err() called on Ok variant"
         raise ValueError(msg)
 
     def map(self, fn: Callable[[T], Any]) -> Ok:
@@ -64,8 +66,10 @@ class Ok[T]:
     def match(self, ok: Callable[[T], Any], err: Callable[[E], Any]) -> Any:
         return ok(self.value)
 
+
 class Err[E: BaseException]:
     """Error variant of Result[T, E]."""
+
     error: E
 
     def is_ok(self) -> bool:
@@ -75,7 +79,7 @@ class Err[E: BaseException]:
         return True
 
     def unwrap(self) -> T:
-        msg = f'Err.unwrap() called with error: {self.error!r}'
+        msg = f"Err.unwrap() called with error: {self.error!r}"
         raise RuntimeError(msg)
 
     def unwrap_or(self, default: T) -> T:
@@ -89,7 +93,10 @@ class Err[E: BaseException]:
 
     def match(self, ok: Callable[[T], Any], err: Callable[[E], Any]) -> Any:
         return err(self.error)
+
+
 Result = Ok[T] | Err[E]
+
 
 def result_of[T](fn: Callable[[], T]) -> Result[T, Exception]:
     """Wrap a synchronous callable that may raise. Returns Result[T, Exception]."""
@@ -98,6 +105,7 @@ def result_of[T](fn: Callable[[], T]) -> Result[T, Exception]:
     except Exception as exc:
         return Err(exc)
 
+
 async def result_of_await[T](coro: Awaitable[T]) -> Result[T, Exception]:
     """Wrap an awaitable that may raise. Returns Result[T, Exception]."""
     try:
@@ -105,7 +113,10 @@ async def result_of_await[T](coro: Awaitable[T]) -> Result[T, Exception]:
         return Ok(value)
     except Exception as exc:
         return Err(exc)
+
+
 LaneError = ExceptionGroup | Exception
+
 
 def lane_result(lane_name: str, results: list[Result]) -> Result[list, ExceptionGroup]:
     """
@@ -134,6 +145,7 @@ def lane_result(lane_name: str, results: list[Result]) -> Result[list, Exception
     eg = ExceptionGroup(lane_name, errors)
     return Err(eg)
 
+
 def lane_result_from_exceptions(lane_name: str, exceptions: list[BaseException]) -> Result[list, ExceptionGroup]:
     """Convert a list of exceptions to a Result. Empty list = Ok([])."""
     if not exceptions:
@@ -153,6 +165,7 @@ def lane_result_from_exceptions(lane_name: str, exceptions: list[BaseException])
         return Ok([])
     return Err(ExceptionGroup(lane_name, error_members))
 
+
 def is_cancellation_tree(exc: BaseException) -> bool:
     """
     Walk an exception tree and return True if the root or any leaf is CancelledError.
@@ -164,10 +177,11 @@ def is_cancellation_tree(exc: BaseException) -> bool:
     if isinstance(exc, asyncio.CancelledError):
         return True
     if isinstance(exc, BaseExceptionGroup):
-        return any((is_cancellation_tree(sub) for sub in exc.exceptions))
+        return any(is_cancellation_tree(sub) for sub in exc.exceptions)
     return False
 
-async def cancel_scope_drain[T](coro: Awaitable[T], timeout_s: float, label: str='') -> T:
+
+async def cancel_scope_drain[T](coro: Awaitable[T], timeout_s: float, label: str = "") -> T:
     """
     Run coro inside asyncio.timeout() context manager (Python 3.11+).
 
@@ -190,10 +204,11 @@ async def cancel_scope_drain[T](coro: Awaitable[T], timeout_s: float, label: str
         async with asyncio.timeout(timeout_s):
             return await coro
     except TimeoutError:
-        logging.getLogger('error_policy').debug('[error_policy] timeout after %ss: %s', timeout_s, label)
+        logging.getLogger("error_policy").debug("[error_policy] timeout after %ss: %s", timeout_s, label)
         raise
 
-async def shield_cancel_scope[T](coro: Awaitable[T], label: str='') -> T:
+
+async def shield_cancel_scope[T](coro: Awaitable[T], label: str = "") -> T:
     """
     Run coro with asyncio.shield() — protects from outer cancellation.
 
@@ -213,12 +228,15 @@ async def shield_cancel_scope[T](coro: Awaitable[T], label: str='') -> T:
     try:
         return await asyncio.shield(coro)
     except asyncio.CancelledError:
-        logging.getLogger('error_policy').debug('[error_policy] shielded coroutine cancelled: %s', label)
+        logging.getLogger("error_policy").debug("[error_policy] shielded coroutine cancelled: %s", label)
         raise
-LaneRunner = Callable[[], Awaitable[Result]]
-'A lane runner that returns Result instead of raising.'
 
-async def run_bounded_lane(name: str, runner: LaneRunner, timeout_s: float | None=None) -> Result:
+
+LaneRunner = Callable[[], Awaitable[Result]]
+"A lane runner that returns Result instead of raising."
+
+
+async def run_bounded_lane(name: str, runner: LaneRunner, timeout_s: float | None = None) -> Result:
     """
     Run a lane runner with optional timeout and Result semantics.
 
@@ -238,6 +256,7 @@ async def run_bounded_lane(name: str, runner: LaneRunner, timeout_s: float | Non
             raise
         except Exception as exc:
             return Err(exc)
+
     if timeout_s is not None:
         try:
             async with asyncio.timeout(timeout_s):
@@ -247,7 +266,10 @@ async def run_bounded_lane(name: str, runner: LaneRunner, timeout_s: float | Non
     else:
         return await _run()
 
-async def run_lane_batch(lanes: list[tuple[str, LaneRunner, float | None]]) -> Result[list[tuple[str, Result]], ExceptionGroup]:
+
+async def run_lane_batch(
+    lanes: list[tuple[str, LaneRunner, float | None]],
+) -> Result[list[tuple[str, Result]], ExceptionGroup]:
     """
     Run multiple lanes concurrently, aggregate errors as ExceptionGroup.
 
@@ -273,8 +295,9 @@ async def run_lane_batch(lanes: list[tuple[str, LaneRunner, float | None]]) -> R
     async def _run_one(name: str, runner: LaneRunner, timeout_s: float | None) -> tuple[str, Result]:
         r = await run_bounded_lane(name, runner, timeout_s)
         return (name, r)
-    tasks = [safe_create_task(_run_one(n, r, t), name=f'lane_batch:{n}') for n, r, t in lanes]
-    results = await parallel_ok(*tasks, label='lane_batch')
+
+    tasks = [safe_create_task(_run_one(n, r, t), name=f"lane_batch:{n}") for n, r, t in lanes]
+    results = await parallel_ok(*tasks, label="lane_batch")
     errors: list[Exception] = []
     ok_results: list[tuple[str, Result]] = []
     for name, result in results:
@@ -283,6 +306,22 @@ async def run_lane_batch(lanes: list[tuple[str, LaneRunner, float | None]]) -> R
         else:
             ok_results.append((name, result))
     if errors:
-        return Err(ExceptionGroup('lane_batch', errors))
+        return Err(ExceptionGroup("lane_batch", errors))
     return Ok(ok_results)
-__all__ = ['Result', 'Ok', 'Err', 'result_of', 'result_of_await', 'lane_result', 'lane_result_from_exceptions', 'is_cancellation_tree', 'cancel_scope_drain', 'shield_cancel_scope', 'LaneRunner', 'run_bounded_lane', 'run_lane_batch']
+
+
+__all__ = [
+    "Result",
+    "Ok",
+    "Err",
+    "result_of",
+    "result_of_await",
+    "lane_result",
+    "lane_result_from_exceptions",
+    "is_cancellation_tree",
+    "cancel_scope_drain",
+    "shield_cancel_scope",
+    "LaneRunner",
+    "run_bounded_lane",
+    "run_lane_batch",
+]

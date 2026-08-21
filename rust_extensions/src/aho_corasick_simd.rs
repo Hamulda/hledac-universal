@@ -19,10 +19,6 @@
 //! - Streaming mode for large payloads
 //! - Word-boundary detection in Rust (no Python overhead)
 
-// ============================================================================
-// Imports
-// ============================================================================
-
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -33,10 +29,6 @@ use pyo3::prelude::*;
 use crate::gil::release_gil;
 use crate::pools::cpu_pool;
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Maximum patterns per automaton
 const MAX_PATTERNS: usize = 100_000;
 
@@ -45,10 +37,6 @@ const MAX_TEXT_LEN: usize = 10 * 1024 * 1024; // 10 MB
 
 /// Batch size for parallel processing
 const BATCH_SIZE: usize = 64 * 1024; // 64 KB
-
-// ============================================================================
-// Pattern Storage
-// ============================================================================
 
 /// Interned string storage (Box::leak for 'static lifetime)
 struct PatternStore {
@@ -75,10 +63,6 @@ impl PatternStore {
 
 /// Global pattern store (shared across all matchers)
 static GLOBAL_PATTERN_STORE: LazyLock<PatternStore> = LazyLock::new(|| PatternStore::new());
-
-// ============================================================================
-// Result Types
-// ============================================================================
 
 /// Single pattern match result
 #[derive(Debug, Clone)]
@@ -125,10 +109,6 @@ pub struct ScanStats {
     pub throughput_mbps: f64,
 }
 
-// ============================================================================
-// NEON SIMD Helpers
-// ============================================================================
-
 #[cfg(target_arch = "aarch64")]
 mod neon {
     use core::arch::aarch64::*;
@@ -140,7 +120,6 @@ mod neon {
         let chunks = len / 16;
         let remainder = len % 16;
 
-        // Process 16 bytes at a time
         for _ in 0..chunks {
             let va = vld1q_u8(a.add(i));
             let vb = vld1q_u8(b.add(i));
@@ -152,7 +131,6 @@ mod neon {
             i += 16;
         }
 
-        // Process remainder
         if remainder > 0 {
             let mask_vec: uint8x16_t = unsafe {
                 let mask_val: [u8; 16] = [
@@ -210,7 +188,6 @@ mod neon {
             i += 16;
         }
 
-        // Check remainder
         for j in 0..remainder {
             if *data.add(i + j) == byte {
                 return Some(i + j);
@@ -235,7 +212,6 @@ mod neon {
             i += 16;
         }
 
-        // Check remainder
         for j in 0..(len % 16) {
             if *data.add(i + j) == byte {
                 count += 1;
@@ -260,10 +236,6 @@ mod neon {
         0
     }
 }
-
-// ============================================================================
-// Aho-Corasick Matcher
-// ============================================================================
 
 /// NEON SIMD Accelerated Aho-Corasick Matcher
 #[pyclass]
@@ -335,7 +307,6 @@ impl SIMDAhoCorasick {
 
         let case_insensitive = case_insensitive.unwrap_or(false);
 
-        // Build automaton
         let automaton = if case_insensitive {
             let lower: Vec<String> = patterns.iter().map(|p| p.to_lowercase()).collect();
             AhoCorasick::new(&lower)
@@ -447,7 +418,6 @@ impl SIMDAhoCorasick {
             }
         }
 
-        // Update stats
         let elapsed = start_time.elapsed();
         let unique_patterns: std::collections::HashSet<_> =
             results.iter().map(|m| m.pattern.clone()).collect();
@@ -621,10 +591,6 @@ impl SIMDAhoCorasick {
     }
 }
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
 /// Count pattern occurrences in text
 #[pyfunction]
 fn count_patterns(text: &str, patterns: Vec<String>) -> PyResult<HashMap<String, usize>> {
@@ -653,10 +619,6 @@ fn extract_unique(values: Vec<SIMDMatch>) -> Vec<String> {
 
     result
 }
-
-// ============================================================================
-// Module Registration
-// ============================================================================
 
 pub fn register_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SIMDMatch>()?;

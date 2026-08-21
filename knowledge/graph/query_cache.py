@@ -2,7 +2,6 @@
 Query Cache - TTL-aware Graph Traversal Cache
 ============================================
 
-
 CACHE LAYER (B3): TTL-aware caching for graph traversal queries.
 
 Architecture:
@@ -49,10 +48,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# TTL Constants
-# =============================================================================
-
 # Default TTL: 5 minutes (matches requirement)
 DEFAULT_TTL_SECONDS: int = 300
 
@@ -79,11 +74,6 @@ class TTLEntry:
     def is_expired(self) -> bool:
         """Check if entry has expired."""
         return time.monotonic() > self.expires_at
-
-
-# =============================================================================
-# Query Cache
-# =============================================================================
 
 
 class QueryCache:
@@ -131,7 +121,6 @@ class QueryCache:
         max_entries: int = 50_000,
         max_bytes: int = 50 * 1024 * 1024,
     ) -> None:
-        # Import Rust cache
         try:
             from hledac.universal.rust_extensions.wiring.graph_cache_wiring import GraphCache
 
@@ -206,7 +195,7 @@ class QueryCache:
     def last_invalidation_age(self) -> float | None:
         """
         Get the age of the last invalidation in seconds.
-        
+
         Returns:
             Seconds since last invalidation, or None if never invalidated.
         """
@@ -245,9 +234,7 @@ class QueryCache:
         key = self._make_history_key(seed_value, max_hops)
         return self._get(key)
 
-    def put_history(
-        self, seed_value: str, max_hops: int, result: bytes
-    ) -> bool:
+    def put_history(self, seed_value: str, max_hops: int, result: bytes) -> bool:
         """
         Cache graph traversal result for find_entity_history.
 
@@ -303,12 +290,10 @@ class QueryCache:
             # Random cleanup: check up to 10 entries
             self._cleanup_expired()
 
-        # Check TTL
         if self._is_expired(key):
             self._misses += 1
             return None
 
-        # Get from Rust cache
         result = self._rust_cache.get(key)
         if result is None:
             self._misses += 1
@@ -390,10 +375,6 @@ class QueryCache:
         self._hits = 0
         self._misses = 0
 
-
-# =============================================================================
-# Singleton Instance
-# =============================================================================
 
 _query_cache: QueryCache | None = None
 

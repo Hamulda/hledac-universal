@@ -1,15 +1,14 @@
-import atexit
 import asyncio
+import atexit
 import json as _json
 import logging
-
 import os
 import re
 import signal
 import subprocess
 import threading
 import weakref
-from _core import aclose
+
 from _core.lock_registry import LockCategory, register_lock
 
 logger = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ def _setup_signal_handlers() -> None:
     signal.signal(signal.SIGINT, _sigterm_handler)
     try:
         signal.signal(signal.SIGHUP, _sigterm_handler)
-    except (OSError, AttributeError):  # noqa: BLE001
+    except OSError, AttributeError:  # noqa: BLE001
         pass  # SIGHUP not available on Windows
     _signal_handler_registered = True
 
@@ -117,7 +116,8 @@ def _check_and_warn_hibernation() -> None:
             "all RAM including RAM disk pages will be written to %s.  "
             "Consider running: sudo pmset standby 0  (requires sudo; restores on next boot)",
             "/var/vm/sleepimage",
-    )
+        )
+
 
 def _vault_atexit_cleanup() -> None:
     """
@@ -129,16 +129,19 @@ def _vault_atexit_cleanup() -> None:
     global _vault_registry
     for device_path in list(_vault_registry):
         try:
-            result = subprocess.run(['hdiutil', 'detach', device_path, '-force'], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ["hdiutil", "detach", device_path, "-force"], capture_output=True, text=True, timeout=10
+            )
             if result.returncode == 0:
-                logger.debug(f'atexit cleanup: detached {device_path}')
+                logger.debug(f"atexit cleanup: detached {device_path}")
             else:
                 err = result.stderr.lower()
-                if 'not found' not in err and 'no such' not in err:
-                    logger.warning(f'atexit cleanup warning: {result.stderr.strip()}')
+                if "not found" not in err and "no such" not in err:
+                    logger.warning(f"atexit cleanup warning: {result.stderr.strip()}")
         except Exception as e:
-            logger.debug(f'atexit cleanup error: {e}')
+            logger.debug(f"atexit cleanup error: {e}")
     _vault_registry.clear()
+
 
 def _register_vault(vault: RamDiskVault) -> None:
     """Register a vault for atexit + signal cleanup; registers handlers on first call."""
@@ -150,7 +153,10 @@ def _register_vault(vault: RamDiskVault) -> None:
             _atexit_registered = True
             _setup_signal_handlers()
             _check_and_warn_hibernation()
+
+
 _finalized_vaults: weakref.WeakSet = weakref.WeakSet()
+
 
 def _finalize_vault(weak_self: weakref.ref) -> None:
     """
@@ -174,30 +180,33 @@ def _finalize_vault(weak_self: weakref.ref) -> None:
     if vault.device_path is None and vault.mount_point is None:
         return
     try:
-        result = subprocess.run(['hdiutil', 'detach', vault.device_path, '-force'], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            ["hdiutil", "detach", vault.device_path, "-force"], capture_output=True, text=True, timeout=10
+        )
         if result.returncode == 0:
-            logger.debug(f'WeakRef finalizer: unmounted {vault.device_path}')
+            logger.debug(f"WeakRef finalizer: unmounted {vault.device_path}")
         else:
             err_lower = result.stderr.lower()
-            if 'not found' not in err_lower and 'no such' not in err_lower:
-                logger.warning(f'WeakRef finalizer: hdiutil warning: {result.stderr.strip()}')
+            if "not found" not in err_lower and "no such" not in err_lower:
+                logger.warning(f"WeakRef finalizer: hdiutil warning: {result.stderr.strip()}")
     except subprocess.TimeoutExpired:
-        logger.warning(f'WeakRef finalizer: timeout unmounting {vault.device_path}')
+        logger.warning(f"WeakRef finalizer: timeout unmounting {vault.device_path}")
     except Exception as e:
-        logger.debug(f'WeakRef finalizer: unmount error: {e}')
+        logger.debug(f"WeakRef finalizer: unmount error: {e}")
     finally:
         vault.device_path = None
         vault.mount_point = None
 
-class RamDiskVault:
-    _VALID_NAME_RE = re.compile('^[A-Za-z0-9 _-]+$')
-    __slots__ = tuple(('_block_size', '_finalizer', '_mounted', 'device_path', 'mount_point', 'name', 'size_mb'))
 
-    def __init__(self, size_mb: int=256, name: str='GhostVault'):
+class RamDiskVault:
+    _VALID_NAME_RE = re.compile("^[A-Za-z0-9 _-]+$")
+    __slots__ = ("_block_size", "_finalizer", "_mounted", "device_path", "mount_point", "name", "size_mb")
+
+    def __init__(self, size_mb: int = 256, name: str = "GhostVault") -> None:
         if not isinstance(size_mb, int) or size_mb <= 0 or size_mb > 4096:
-            raise ValueError('size_mb must be a positive integer <= 4096')
+            raise ValueError("size_mb must be a positive integer <= 4096")
         if not self._VALID_NAME_RE.match(name):
-            raise ValueError('name must contain only alphanumeric characters, spaces, underscores, and hyphens')
+            raise ValueError("name must contain only alphanumeric characters, spaces, underscores, and hyphens")
         self.size_mb = size_mb
         self.name = name
         self.device_path: str | None = None
@@ -208,50 +217,55 @@ class RamDiskVault:
         self._mounted: bool = False
 
     def mount(self) -> str | None:
-        # Check global RAM budget before allocating
         global _total_ramdisk_mb
         with _total_ramdisk_lock():
             if _total_ramdisk_mb + self.size_mb > MAX_TOTAL_RAMDISK_MB:
                 logger.error(
-                    f'RAM disk size limit exceeded: {self.size_mb}MB requested, '
-                    f'currently allocated: {_total_ramdisk_mb}MB, max: {MAX_TOTAL_RAMDISK_MB}MB'
-    )
+                    f"RAM disk size limit exceeded: {self.size_mb}MB requested, "
+                    f"currently allocated: {_total_ramdisk_mb}MB, max: {MAX_TOTAL_RAMDISK_MB}MB"
+                )
                 return None
         try:
             block_count = self.size_mb * 1024 * 1024 // self._block_size
-            logger.info(f'Creating RAM disk: {self.size_mb}MB ({block_count} blocks)')
-            create_result = subprocess.run(['hdiutil', 'attach', '-nomount', f'ram://{block_count}'], capture_output=True, text=True, timeout=30)
+            logger.info(f"Creating RAM disk: {self.size_mb}MB ({block_count} blocks)")
+            create_result = subprocess.run(
+                ["hdiutil", "attach", "-nomount", f"ram://{block_count}"], capture_output=True, text=True, timeout=30
+            )
             if create_result.returncode != 0:
-                logger.error(f'Failed to create RAM disk: {create_result.stderr}')
+                logger.error(f"Failed to create RAM disk: {create_result.stderr}")
                 return None
             self.device_path = create_result.stdout.strip()
-            logger.info(f'RAM disk device created: {self.device_path}')
-            logger.info(f'Formatting device with HFS+ filesystem: {self.name}')
-            format_result = subprocess.run(['diskutil', 'erasevolume', 'HFS+', self.name, self.device_path], capture_output=True, text=True, timeout=30)
+            logger.info(f"RAM disk device created: {self.device_path}")
+            logger.info(f"Formatting device with HFS+ filesystem: {self.name}")
+            format_result = subprocess.run(
+                ["diskutil", "erasevolume", "HFS+", self.name, self.device_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
             if format_result.returncode != 0:
-                logger.error(f'Failed to format RAM disk: {format_result.stderr}')
+                logger.error(f"Failed to format RAM disk: {format_result.stderr}")
                 self._cleanup_device()
                 return None
             mount_output = format_result.stdout
-            mount_match = re.search('/Volumes/([^\\s]+)', mount_output)
+            mount_match = re.search("/Volumes/([^\\s]+)", mount_output)
             if mount_match:
-                self.mount_point = f'/Volumes/{mount_match.group(1)}'
+                self.mount_point = f"/Volumes/{mount_match.group(1)}"
             else:
-                self.mount_point = f'/Volumes/{self.name}'
-            logger.info(f'RAM disk mounted at: {self.mount_point}')
+                self.mount_point = f"/Volumes/{self.name}"
+            logger.info(f"RAM disk mounted at: {self.mount_point}")
             self._mounted = True
             _register_vault(self)
-            # Update global RAM budget tracker
             with _total_ramdisk_lock():
                 _total_ramdisk_mb += self.size_mb
-                logger.debug(f'Global RAM disk budget: {_total_ramdisk_mb}/{MAX_TOTAL_RAMDISK_MB}MB')
+                logger.debug(f"Global RAM disk budget: {_total_ramdisk_mb}/{MAX_TOTAL_RAMDISK_MB}MB")
             return self.mount_point
         except subprocess.TimeoutExpired:
-            logger.error('Timeout while mounting RAM disk')
+            logger.error("Timeout while mounting RAM disk")
             self._cleanup_device()
             return None
         except Exception as e:
-            logger.error(f'Unexpected error mounting RAM disk: {e}')
+            logger.error(f"Unexpected error mounting RAM disk: {e}")
             self._cleanup_device()
             return None
 
@@ -259,22 +273,23 @@ class RamDiskVault:
         if self.device_path and self.device_path in _vault_registry:
             del _vault_registry[self.device_path]
         if not self.device_path:
-            logger.warning('No device to unmount')
+            logger.warning("No device to unmount")
             return True
         try:
-            logger.info(f'Unmounting RAM disk: {self.device_path}')
-            result = subprocess.run(['hdiutil', 'detach', self.device_path, '-force'], capture_output=True, text=True, timeout=15)
+            logger.info(f"Unmounting RAM disk: {self.device_path}")
+            result = subprocess.run(
+                ["hdiutil", "detach", self.device_path, "-force"], capture_output=True, text=True, timeout=15
+            )
             if result.returncode != 0:
-                if 'not found' in result.stderr.lower() or 'no such' in result.stderr.lower():
-                    logger.warning('Device already detached or not found')
+                if "not found" in result.stderr.lower() or "no such" in result.stderr.lower():
+                    logger.warning("Device already detached or not found")
                     self.device_path = None
                     self.mount_point = None
                     self._mounted = False
                     return True
-                logger.error(f'Failed to unmount RAM disk: {result.stderr}')
+                logger.error(f"Failed to unmount RAM disk: {result.stderr}")
                 return False
-            logger.info('RAM disk unmounted successfully')
-            # Decrement global RAM budget tracker
+            logger.info("RAM disk unmounted successfully")
             global _total_ramdisk_mb
             with _total_ramdisk_lock():
                 _total_ramdisk_mb -= self.size_mb
@@ -283,32 +298,31 @@ class RamDiskVault:
             self._mounted = False
             return True
         except subprocess.TimeoutExpired:
-            logger.error('Timeout while unmounting RAM disk')
+            logger.error("Timeout while unmounting RAM disk")
             return False
         except Exception as e:
-            logger.error(f'Unexpected error unmounting RAM disk: {e}')
+            logger.error(f"Unexpected error unmounting RAM disk: {e}")
             return False
 
     def is_mounted(self) -> bool:
         if not self.mount_point:
             return False
         try:
-            result = subprocess.run(['df', self.mount_point], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(["df", self.mount_point], capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except Exception:
             return False
 
-    def _cleanup_device(self):
-        # Decrement global RAM budget tracker before cleanup
+    def _cleanup_device(self) -> None:
         if self._mounted or self.device_path:
             global _total_ramdisk_mb
             with _total_ramdisk_lock():
                 _total_ramdisk_mb -= self.size_mb
         if self.device_path:
             try:
-                subprocess.run(['hdiutil', 'detach', self.device_path, '-force'], capture_output=True, timeout=10)
+                subprocess.run(["hdiutil", "detach", self.device_path, "-force"], capture_output=True, timeout=10)
             except subprocess.TimeoutExpired:
-                logger.warning(f'_cleanup_device: timeout unmounting {self.device_path}')
+                logger.warning(f"_cleanup_device: timeout unmounting {self.device_path}")
             except Exception:  # noqa: BLE001
                 pass
             self.device_path = None
@@ -355,8 +369,8 @@ class RamDiskVault:
         if not self.mount_point:
             return False
         try:
-            path = os.path.join(self.mount_point, f'{key}.json')
-            with open(path, 'w') as f:
+            path = os.path.join(self.mount_point, f"{key}.json")
+            with open(path, "w") as f:
                 _json.dump(data, f, default=str)
             return True
         except Exception:
@@ -368,7 +382,10 @@ class RamDiskVault:
             return []
         try:
             import glob as _glob
-            return [os.path.splitext(os.path.basename(p))[0] for p in _glob.glob(os.path.join(self.mount_point, '*.json'))]
+
+            return [
+                os.path.splitext(os.path.basename(p))[0] for p in _glob.glob(os.path.join(self.mount_point, "*.json"))
+            ]
         except Exception:
             return []
 

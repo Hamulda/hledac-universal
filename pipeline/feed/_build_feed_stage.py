@@ -9,15 +9,15 @@ Responsibilities:
 Input: FeedMatchedBatch
 Output: FindingBatch (finding_ids, urls, titles, snippets, timestamps, confidences, payloads, ...)
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedMatchedBatch, FindingBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,6 @@ class BuildFeedStage:
             Tuple of (FindingBatch, telemetry)
 
         """
-        # Handle both tuple and single batch input
         if isinstance(input_tuple, tuple):
             matched_batch = input_tuple[0]
             query_context = input_tuple[1] if len(input_tuple) > 1 else ""
@@ -79,20 +78,12 @@ class BuildFeedStage:
         for i in range(len(matched_batch.entry_urls)):
             entry_url = matched_batch.entry_urls[i] if i < len(matched_batch.entry_urls) else ""
             pattern_count = (
-                matched_batch.matched_pattern_counts[i]
-                if i < len(matched_batch.matched_pattern_counts)
-                else 0
+                matched_batch.matched_pattern_counts[i] if i < len(matched_batch.matched_pattern_counts) else 0
             )
             pattern_labels = (
-                matched_batch.matched_pattern_labels[i]
-                if i < len(matched_batch.matched_pattern_labels)
-                else []
+                matched_batch.matched_pattern_labels[i] if i < len(matched_batch.matched_pattern_labels) else []
             )
-            is_dup = (
-                matched_batch.entry_dedup_hits[i]
-                if i < len(matched_batch.entry_dedup_hits)
-                else False
-            )
+            is_dup = matched_batch.entry_dedup_hits[i] if i < len(matched_batch.entry_dedup_hits) else False
             error = matched_batch.errors[i] if i < len(matched_batch.errors) else None
 
             # Skip duplicates and pages with no matches or errors
@@ -115,7 +106,6 @@ class BuildFeedStage:
         else:
             finding_ids_list = []
 
-        # Build output batch
         finding_ids: list[str] = []
         urls: list[str] = []
         titles: list[str] = []
@@ -130,9 +120,12 @@ class BuildFeedStage:
 
         batch_timestamp = time.time()
         for idx, (i, entry_url, pattern_count, pattern_labels) in enumerate(valid_entries):
-            # Build finding
             try:
-                finding_id = finding_ids_list[idx] if idx < len(finding_ids_list) else _make_feed_finding_id(entry_url, str(query_context))
+                finding_id = (
+                    finding_ids_list[idx]
+                    if idx < len(finding_ids_list)
+                    else _make_feed_finding_id(entry_url, str(query_context))
+                )
                 confidence = min(self._default_confidence + (pattern_count * 0.01), 1.0)
                 payload = _encode_payload(entry_url, pattern_labels)
                 raw_payload = _encode_raw_payload(entry_url)
@@ -209,6 +202,7 @@ def _make_feed_finding_ids_batch(
     # Priority 1: content_hasher_wiring batch (rayon-parallel, GIL release)
     try:
         from rust_extensions.wiring.content_hasher_wiring import batch_sha256_hex
+
         hashes = batch_sha256_hex([s.encode() for s in data_strings])
         return [h[:32] for h in hashes]
     except Exception:
@@ -217,7 +211,8 @@ def _make_feed_finding_ids_batch(
     # Priority 2: Rust crypto batch (hardware-accelerated on M1)
     try:
         from _core.rust_backend import rust
-        if hasattr(rust.crypto, 'batch_sha256_hw'):
+
+        if hasattr(rust.crypto, "batch_sha256_hw"):
             hashes = rust.crypto.batch_sha256_hw(data_strings)
             return [h[:32] for h in hashes]
     except Exception:

@@ -2,8 +2,6 @@
 
 F350M-R / A2.
 
-
-
 Single home for all bootstrap + declarative injection logic previously
 duplicated across SprintBootstrap, Injector, and entrypoint_injections.
 
@@ -23,12 +21,11 @@ from __future__ import annotations
 import asyncio
 import logging as _logging
 import time as _t
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from operator import attrgetter
+from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 from hledac.universal.utils.asyncx import parallel, safe_create_task
 
@@ -36,16 +33,11 @@ if TYPE_CHECKING:
     pass
 
 
-# ─────────────────────────────────────────────────────────────────
-# INJECTION TABLE — declarative, ordered
-# ─────────────────────────────────────────────────────────────────
-
-
 class _Injection(Struct, frozen=True):
     """One declarative injection entry."""
 
     name: str
-    factory: "Callable[..., Any]"
+    factory: Callable[..., Any]
     gate_attr: str | None = None
     fail_soft: bool = True
     order: int = 10
@@ -59,6 +51,7 @@ from hledac.universal.runtime._shared.evidence_log_shared import (
 
 def _policy_manager_factory(*, rl_train_mode: bool) -> Any:
     from hledac.universal.rl.sprint_policy_manager import SprintPolicyManager
+
     return SprintPolicyManager(enabled=True, rl_train_mode=rl_train_mode)
 
 
@@ -68,16 +61,19 @@ def _duckdb_store_factory(*, duckdb_store: Any) -> Any:
 
 def _communication_layer_factory() -> Any:
     from hledac.universal.layers import get_communication_layer
+
     return get_communication_layer()
 
 
 def _stealth_layer_factory() -> Any:
     from hledac.universal.layers import get_stealth_layer
+
     return get_stealth_layer()
 
 
 def _ghost_layer_factory() -> Any:
     from hledac.universal.layers import get_ghost_layer
+
     return get_ghost_layer()
 
 
@@ -85,6 +81,7 @@ def _security_coordinator_factory() -> Any:
     from hledac.universal.coordinators.security_coordinator import (
         UniversalSecurityCoordinator,
     )
+
     return UniversalSecurityCoordinator(max_concurrent=3)
 
 
@@ -122,6 +119,7 @@ def _meta_reasoning_coordinator_factory(
     from hledac.universal.coordinators.meta_reasoning_coordinator import (
         UniversalMetaReasoningCoordinator,
     )
+
     return UniversalMetaReasoningCoordinator(
         max_concurrent=3,
         duckdb_store=duckdb_store,
@@ -170,9 +168,7 @@ def _lane_balancer_factory(
 
 INJECTIONS: tuple[_Injection, ...] = (
     _Injection(name="policy_manager", factory=_policy_manager_factory, fail_soft=False, order=1),
-    _Injection(
-        name="duckdb_store", factory=_duckdb_store_factory, fail_soft=False, order=1
-    ),
+    _Injection(name="duckdb_store", factory=_duckdb_store_factory, fail_soft=False, order=1),
     _Injection(
         name="communication_layer",
         factory=_communication_layer_factory,
@@ -221,11 +217,6 @@ INJECTIONS: tuple[_Injection, ...] = (
         order=8,
     ),
 )
-
-
-# ─────────────────────────────────────────────────────────────────
-# V2Init — unified bootstrap + injection
-# ─────────────────────────────────────────────────────────────────
 
 
 class V2Init:
@@ -277,8 +268,8 @@ class V2Init:
         rl_train_mode: bool,
         logger: _logging.Logger,
         resume_from: dict | None = None,  # UNIFIED-006: ToT checkpoint nodes
-        resume_step: int = 0,             # UNIFIED-006: step at resume point
-        query_hash: str = "",             # UNIFIED-006: BLAKE2b-16 of query
+        resume_step: int = 0,  # UNIFIED-006: step at resume point
+        query_hash: str = "",  # UNIFIED-006: BLAKE2b-16 of query
     ) -> Any:
         """Initialize all services + apply all injections.
 
@@ -300,20 +291,17 @@ class V2Init:
             logger=logger,
             resume_from=resume_from,  # UNIFIED-006
             resume_step=resume_step,  # UNIFIED-006
-            query_hash=query_hash,    # UNIFIED-006
+            query_hash=query_hash,  # UNIFIED-006
         )
 
         return self._ctx
 
     # ── Bootstrap ─────────────────────────────────────────────────────────────
 
-    async def _bootstrap(
-        self, query: str, wall_clock_start: float, ctx: Any, *, cancel_event: asyncio.Event
-    ) -> None:
+    async def _bootstrap(self, query: str, wall_clock_start: float, ctx: Any, *, cancel_event: asyncio.Event) -> None:
         """Bootstrap core services concurrently."""
         from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
-        # Store cancel_event on scheduler (used by scheduler.run() and aclose)
         object.__setattr__(self._scheduler, "_cancel_event", cancel_event)
 
         # Lifecycle manager
@@ -329,8 +317,8 @@ class V2Init:
         # discovery stops for configured persistence period (default: 3 min).
         _cs_detector = None
         try:
-            from hledac.universal.runtime.cognitive_saturation_detector import CognitiveSaturationDetector
             from hledac.universal.coordinators.fetch_coordinator import set_cognitive_saturation_detector
+            from hledac.universal.runtime.cognitive_saturation_detector import CognitiveSaturationDetector
 
             _cs_detector = CognitiveSaturationDetector()
             _lifecycle_mgr.set_cognitive_saturation_detector(_cs_detector)
@@ -351,8 +339,9 @@ class V2Init:
         # When the lifecycle enters DEGRADED, RayonPoolManager drops to (2, 2)
         # threads to reduce memory/thermal pressure. Callback fires even if
         # the rayon manager is not yet initialized (fail-soft).
-        def _on_degraded_enter(from_phase, to_phase):
+        def _on_degraded_enter(from_phase, to_phase) -> None:
             from hledac.universal._core.isolated_executors import get_rayon_pool_manager
+
             try:
                 rm = get_rayon_pool_manager()
                 rm.set_phase("DEGRADED")
@@ -393,14 +382,15 @@ class V2Init:
         object.__setattr__(self._scheduler, "_hermes_engine", _hermes_engine)
         object.__setattr__(self._scheduler, "_evidence_log", _evidence_log)
         # ISSUE-009: Inject DuckPGQGraph into scheduler (maps to _ioc_graph for backward-compat)
-        _duckpgq_raw = _duckpgq_graph.value if hasattr(_duckpgq_graph, 'value') else _duckpgq_graph
+        _duckpgq_raw = _duckpgq_graph.value if hasattr(_duckpgq_graph, "value") else _duckpgq_graph
         object.__setattr__(self._scheduler, "_ioc_graph", _duckpgq_raw)
 
         # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
         try:
             from hledac.universal.knowledge.cross_sprint_gate import get_cross_sprint_gate
+
             _gate = get_cross_sprint_gate()
-            _duckdb_raw = _duckdb_store.value if hasattr(_duckdb_store, 'value') else _duckdb_store
+            _duckdb_raw = _duckdb_store.value if hasattr(_duckdb_store, "value") else _duckdb_store
             _gate.inject_duckdb_store(_duckdb_raw)
         except Exception:  # noqa: BLE001 — fail-soft; gate injection is non-critical
             pass
@@ -409,7 +399,6 @@ class V2Init:
         _sidecar_orch = await self._init_sidecar_orchestrator(query)
         object.__setattr__(self._scheduler, "_sidecar_orchestrator", _sidecar_orch)
 
-        # Update ctx
         _updated_ctx = ctx.with_cycle(
             wall_clock_start=wall_clock_start,
             lifecycle=_lifecycle_mgr,
@@ -472,6 +461,7 @@ class V2Init:
         """Create and inject semantic gravity field into scheduler."""
         try:
             from hledac.universal.knowledge.semantic_gravity import SemanticGravityField
+
             _gravity_field = SemanticGravityField()
             gravity_inject = getattr(self._scheduler, "inject_gravity_field", None)
             if gravity_inject:
@@ -504,18 +494,13 @@ class V2Init:
         try:
             _ctx = getattr(self._scheduler, "_ctx", None)
             if _ctx is not None:
-                # Update ctx with lane_balancer
                 _updated_ctx = _ctx.with_services(lane_balancer=obj)
                 object.__setattr__(self._scheduler, "_ctx", _updated_ctx)
                 # Also store on scheduler for direct access
                 object.__setattr__(self._scheduler, "_lane_balancer", obj)
-                _logging.getLogger(__name__).debug(
-                    "[R13] LaneBalancer injected: lanes=%d", obj.lane_count
-                )
+                _logging.getLogger(__name__).debug("[R13] LaneBalancer injected: lanes=%d", obj.lane_count)
         except Exception as _e:
-            _logging.getLogger(__name__).warning(
-                "[R13] Failed to inject LaneBalancer: %s", _e
-            )
+            _logging.getLogger(__name__).warning("[R13] Failed to inject LaneBalancer: %s", _e)
 
     def _warmup_evidence_log(
         self,
@@ -548,8 +533,8 @@ class V2Init:
         rl_train_mode: bool,
         logger: _logging.Logger,
         resume_from: dict | None = None,  # UNIFIED-006
-        resume_step: int = 0,             # UNIFIED-006
-        query_hash: str = "",             # UNIFIED-006
+        resume_step: int = 0,  # UNIFIED-006
+        query_hash: str = "",  # UNIFIED-006
     ) -> None:
         """Apply all declarative injections to scheduler."""
         if flags is None:
@@ -640,6 +625,7 @@ class V2Init:
         _t0 = _t.monotonic()
         try:
             from hledac.universal._lazy_imports import get_M1ResourceGovernor
+
             M1ResourceGovernor = get_M1ResourceGovernor()
             governor = M1ResourceGovernor()
             return InitResult.success(governor, (_t.monotonic() - _t0) * 1000)
@@ -650,6 +636,7 @@ class V2Init:
         _t0 = _t.monotonic()
         try:
             from hledac.universal._lazy_imports import get_Hermes3Engine
+
             Hermes3Engine = get_Hermes3Engine()
             engine = Hermes3Engine()
             return InitResult.success(engine, (_t.monotonic() - _t0) * 1000)
@@ -660,6 +647,7 @@ class V2Init:
         _t0 = _t.monotonic()
         try:
             from hledac.universal._lazy_imports import get_EvidenceLog
+
             EvidenceLog = get_EvidenceLog()
             elog = EvidenceLog()
             return InitResult.success(elog, (_t.monotonic() - _t0) * 1000)
@@ -680,7 +668,7 @@ class V2Init:
             from hledac.universal.paths import RAMDISK_ACTIVE, RAMDISK_ROOT
 
             DuckPGQGraph = get_DuckPGQGraph()
-            _temp_dir = str(RAMDISK_ROOT / 'duckdb_tmp') if RAMDISK_ACTIVE else None
+            _temp_dir = str(RAMDISK_ROOT / "duckdb_tmp") if RAMDISK_ACTIVE else None
 
             # ISSUE-009: Run DuckDB connection init in thread to avoid blocking event loop
             def _create_graph() -> Any:
@@ -695,6 +683,7 @@ class V2Init:
         _t0 = _t.monotonic()
         try:
             from hledac.universal._lazy_imports import get_SidecarOrchestrator
+
             SidecarOrchestrator = get_SidecarOrchestrator()
             orch = SidecarOrchestrator(
                 result_sink=self._result,

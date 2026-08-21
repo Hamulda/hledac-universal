@@ -43,45 +43,22 @@ Environment override (Issue 2 fix):
 Always-on, no feature flag.
 M1 8GB safe: bounded by construction, no recursion, fail-soft throughout.
 """
-import msgspec
-from hledac.universal.compat.msgspec_gc_compat import Struct
-
 
 import array
 import logging
-import os
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
-# ─── Environment override for Rust backend ──────────────────────────────
-# HLEDAC_FORCE_PYTHON=1 → always use Python fallback (testing, debugging)
-# HLEDAC_FORCE_RUST=1   → always use Rust path (validate Rust in CI)
-# Default: auto-detect based on import success (legacy behavior)
 _FORCE_PYTHON = FeatureFlags.get(FeatureFlag.FORCE_PYTHON, default=False)
 _FORCE_RUST = FeatureFlags.get(FeatureFlag.FORCE_RUST, default=False)
 
-
-# ─── Rust backend probe (Sprint P1-5) ──────────────────────────────────
-# Drop-in acceleration: if `hledac_rust_extensions` is built (maturin
-# develop / installed wheel), expose the Rust class as a public symbol
-# `IntCounterLayoutRust` and bulk_* helpers. The Python `IntCounterLayout`
-# class is the canonical API — Rust is an optional accelerator for
-# cross-sprint bulk operations (bulk_bump_aggregate, bulk_snapshot_dict).
-#
-# Environment override (Issue 2 fix):
-#   HLEDAC_FORCE_PYTHON=1 → always use Python fallback
-#   HLEDAC_FORCE_RUST=1   → always use Rust path (validate Rust in CI)
-#   Default: auto-detect based on import success (legacy behavior)
-#
-# M1 8GB safe: bounded by construction in Rust (MAX_COUNTERS_PER_LAYOUT).
 
 _RUST_AVAILABLE: bool = False
 IntCounterLayoutRust: type | None = None  # type: ignore[assignment]
@@ -101,6 +78,7 @@ def _try_load_rust_extensions() -> bool:
 
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     raw = rust.raw
     IntCounterLayoutRust = raw.IntCounterLayoutRust
     bulk_bump_aggregate = raw.bulk_bump_aggregate
@@ -120,31 +98,21 @@ if _FORCE_RUST:
     # This is for CI validation of Rust path when extension might not be built
     if _try_load_rust_extensions():
         _RUST_AVAILABLE = True
-        logger.debug(
-            "[IntCounterLayout] Rust backend FORCED via HLEDAC_FORCE_RUST=1"
-    )
+        logger.debug("[IntCounterLayout] Rust backend FORCED via HLEDAC_FORCE_RUST=1")
     else:
-        logger.warning(
-            "[IntCounterLayout] HLEDAC_FORCE_RUST=1 but Rust extension unavailable"
-    )
+        logger.warning("[IntCounterLayout] HLEDAC_FORCE_RUST=1 but Rust extension unavailable")
         _RUST_AVAILABLE = False
 elif _FORCE_PYTHON:
     # Force Python fallback: skip Rust loading entirely
     _RUST_AVAILABLE = False
-    logger.debug(
-        "[IntCounterLayout] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1"
-    )
+    logger.debug("[IntCounterLayout] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1")
 else:
     # Default: auto-detect based on import success
     if _try_load_rust_extensions():
         _RUST_AVAILABLE = True
-        logger.debug(
-            "[IntCounterLayout] Rust backend available (hledac_rust_extensions)"
-    )
+        logger.debug("[IntCounterLayout] Rust backend available (hledac_rust_extensions)")
     else:
-        logger.debug(
-            "[IntCounterLayout] Rust backend unavailable; using Python fallback"
-    )
+        logger.debug("[IntCounterLayout] Rust backend unavailable; using Python fallback")
 
 
 class IntCounterLayout:
@@ -202,14 +170,9 @@ class IntCounterLayout:
         seen: set[str] = set()
         for n in field_names:
             if not isinstance(n, str) or not n:
-                raise ValueError(
-                    f"IntCounterLayout: counter names must be non-empty strings, "
-                    f"got {n!r}"
-    )
+                raise ValueError(f"IntCounterLayout: counter names must be non-empty strings, got {n!r}")
             if n in seen:
-                raise ValueError(
-                    f"IntCounterLayout: duplicate counter name {n!r}"
-    )
+                raise ValueError(f"IntCounterLayout: duplicate counter name {n!r}")
             seen.add(n)
 
         # Immutable index map: name -> slot.
@@ -228,7 +191,7 @@ class IntCounterLayout:
             logger.warning(
                 "[IntCounterLayout] array alloc failed (%s); bumps become no-ops",
                 e,
-    )
+            )
             buf = None
         object.__setattr__(self, "_array", buf)
         object.__setattr__(self, "_initialized", buf is not None)
@@ -240,8 +203,6 @@ class IntCounterLayout:
         except Exception:  # pragma: no cover — defensive
             zero_buf = None
         object.__setattr__(self, "_zero_buf", zero_buf)
-
-    # ─── Mutation API ──────────────────────────────────────────────────
 
     def bump(self, name: str, n: int = 1) -> int:
         """
@@ -319,8 +280,6 @@ class IntCounterLayout:
         except Exception as e:  # pragma: no cover — defensive
             logger.debug("[IntCounterLayout] reset error: %s", e)
 
-    # ─── Bulk read API ─────────────────────────────────────────────────
-
     def snapshot(self) -> dict[str, int]:
         """
         Return a fresh dict of all counters. O(N) but with C-level array
@@ -342,8 +301,6 @@ class IntCounterLayout:
         # Return the actual dict — callers must not mutate.
         return self._indices
 
-    # ─── Telemetry & introspection ─────────────────────────────────────
-
     def is_active(self) -> bool:
         """True if the underlying C buffer was allocated successfully."""
         return self._initialized
@@ -363,17 +320,11 @@ class IntCounterLayout:
     def __repr__(self) -> str:
         if not self._initialized:
             return "IntCounterLayout(<uninitialized>)"
-        return (
-            f"IntCounterLayout(count={len(self._names)}, "
-            f"buffer={len(self._names) * 8}B)"
-    )
+        return f"IntCounterLayout(count={len(self._names)}, buffer={len(self._names) * 8}B)"
 
     def __len__(self) -> int:
         """Number of counter slots. Convenience for `len(layout)`."""
         return len(self._names)
-
-
-# ─── Module-level helper ────────────────────────────────────────────────
 
 
 def build_layout_from_dataclass_int_fields(
@@ -421,12 +372,14 @@ def compute_updated_source_weights_from_feedback(
         source_type = feed_url  # caller maps feed_url→source_type before calling
         current = current_weights.get(source_type, default_weight)
         source_types.append(source_type)
-        stats_list.append({
-            "fetched": float(total),
-            "accepted": float(accepted),
-            "current_weight": current,
-            "novelty": False,
-        })
+        stats_list.append(
+            {
+                "fetched": float(total),
+                "accepted": float(accepted),
+                "current_weight": current,
+                "novelty": False,
+            }
+        )
 
     if not stats_list:
         return current_weights

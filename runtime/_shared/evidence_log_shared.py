@@ -7,11 +7,11 @@ previously duplicated across _v2_init.py and legacy entrypoint_injections.
 This module is purely procedural — no classes, no state.
 Safe to import from all locations without circular dependency risk.
 """
+
 from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 # ISSUE-016 FIX: Import safe_create_task for proper task lifecycle management
 try:
@@ -86,9 +86,7 @@ def evidence_log_init(
             else:
                 # Fallback: raw asyncio.create_task with done_callback for error handling
                 _task = asyncio.create_task(elog.initialize())
-                _task.add_done_callback(
-                    lambda t: t.exception() if not t.cancelled() and t.done() else None
-                )
+                _task.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.done() else None)
             # Keep strong reference so the task isn't GC'd before completion
             object.__setattr__(elog, "_init_task", _task)
         else:
@@ -114,6 +112,6 @@ def evidence_log_init(
                 "windup_lead_s": windup_lead_s,
             },
             confidence=1.0,
-    )
+        )
     except Exception:  # noqa: BLE001
         pass  # fail-soft: evidence events never block sprint

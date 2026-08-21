@@ -30,7 +30,6 @@ Usage:
 
 import re
 from typing import Final
-from _core._util import aclose
 
 __all__ = [
     "IPV4_RE",
@@ -45,63 +44,55 @@ __all__ = [
     "HASH_RE",  # kombinovaný
 ]
 
-# =============================================================================
-# Single source of truth — synchronní s rust_extensions/src/ioc_patterns.rs
-# =============================================================================
-
 # IPv4:全班 octet matching, bez word boundary (Prefix match nutný pro RegexSet)
-IPV4_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)"
-    )
+IPV4_RE: Final[re.Pattern[str]] = re.compile(r"(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)")
 
 # IPv6: full form only (:: compression nepokryta, dostatečná pro IoC)
 IPV6_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}",
     re.IGNORECASE,
-    )
+)
 
 # Domain: word boundary + multi-label, lowercase normalization required
 DOMAIN_RE: Final[re.Pattern[str]] = re.compile(
     r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
     re.IGNORECASE,
-    )
+)
 
 # MD5: 32 hex digits, word boundary nutný (prefix match)
 MD5_RE: Final[re.Pattern[str]] = re.compile(
     r"\b[a-fA-F0-9]{32}\b",
     re.IGNORECASE,
-    )
+)
 
 # SHA1: 40 hex digits, word boundary nutný
 SHA1_RE: Final[re.Pattern[str]] = re.compile(
     r"\b[a-fA-F0-9]{40}\b",
     re.IGNORECASE,
-    )
+)
 
 # SHA256: 64 hex digits, word boundary nutný
 SHA256_RE: Final[re.Pattern[str]] = re.compile(
     r"\b[a-fA-F0-9]{64}\b",
     re.IGNORECASE,
-    )
+)
 
 # Email: standard format, word boundary
 EMAIL_RE: Final[re.Pattern[str]] = re.compile(
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
-    )
+)
 
 # CVE: bez word boundary (prefix pattern, CVE-2023-12345 form)
-CVE_RE: Final[re.Pattern[str]] = re.compile(
-    r"CVE-\d{4}-\d{4,}"
-    )
+CVE_RE: Final[re.Pattern[str]] = re.compile(r"CVE-\d{4}-\d{4,}")
 
 # URL: http(s) scheme, without word boundary (inline match)
 URL_RE: Final[re.Pattern[str]] = re.compile(
     r"https?://[^\s<>\"']+",
     re.IGNORECASE,
-    )
+)
 
 # HASH_RE: kombinovaný MD5|SHA1|SHA256 pro workflow_orchestrator kompatibilitu
 HASH_RE: Final[re.Pattern[str]] = re.compile(
     r"\b(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})\b",
     re.IGNORECASE,
-    )
+)

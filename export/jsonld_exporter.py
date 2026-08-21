@@ -7,19 +7,16 @@ Accepts msgspec.Struct or Mapping input. Produces stable JSON-LD output
 with schema.org + ghost namespace context, ready for graph ingest and
 future MLX/Outlines synthesis.
 """
-import msgspec
 
-
-import asyncio
 import os
-from collections.abc import Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from hledac.universal.utils.asyncx import parallel
-from ._shared import _iso_timestamp, _safe_str, normalize_export_input  # noqa: E402  # F4.3 deduplication
+
+from ._shared import _iso_timestamp, _safe_str, normalize_export_input
 
 try:
     import orjson as _orjson
@@ -59,9 +56,6 @@ __all__ = [
     "build_forensic_analysis_jsonld",
 ]
 
-# ---------------------------------------------------------------------------
-# Ghost namespace URI (local, self-hosted)
-# ---------------------------------------------------------------------------
 _GHOST_NS = "https://ghost-prime.ai/ns/2024/jsonld"
 
 # Sprint F263: Bounded forensic-render budgets. Shared semantics with
@@ -185,9 +179,6 @@ _FALLBACK_RECOMMENDATION: dict[str, str] = {
 }
 
 
-# normalize_export_input — delegated to _shared (F4.3)
-# Canonical label helpers (exported for reuse)
-# ---------------------------------------------------------------------------
 def get_root_cause_label(root_cause: str) -> str:
     return _ROOT_CAUSE_LABELS.get(root_cause, _ROOT_CAUSE_LABELS["unknown"])
 
@@ -198,10 +189,6 @@ def get_recommendation(report: dict[str, Any]) -> str:
         return rec
     root = report.get("diagnostic_root_cause", "unknown")
     return _FALLBACK_RECOMMENDATION.get(root, _FALLBACK_RECOMMENDATION["unknown"])
-
-
-# ---------------------------------------------------------------------------
-# JSON-LD render helpers
 
 
 def _build_run_metadata(data: dict[str, Any]) -> dict[str, Any]:
@@ -273,18 +260,20 @@ def _build_per_source_health(data: dict[str, Any]) -> list[dict[str, Any]]:
     sorted_sources = sorted(per_source, key=lambda s: str(s.get("feed_url", "")))
     items = []
     for src in sorted_sources:
-        items.append({
-            "@type": "ghost:SourceHealth",
-            "ghost:feedUrl": _safe_str(src.get("feed_url", "")),
-            "ghost:label": _safe_str(src.get("label", "")),
-            "ghost:origin": _safe_str(src.get("origin", "")),
-            "ghost:priority": src.get("priority"),
-            "ghost:fetchedEntries": src.get("fetched_entries", 0),
-            "ghost:acceptedFindings": src.get("accepted_findings", 0),
-            "ghost:storedFindings": src.get("stored_findings", 0),
-            "ghost:elapsedSourceMs": src.get("elapsed_ms", 0),
-            "ghost:error": _safe_str(src.get("error") or "") or None,
-        })
+        items.append(
+            {
+                "@type": "ghost:SourceHealth",
+                "ghost:feedUrl": _safe_str(src.get("feed_url", "")),
+                "ghost:label": _safe_str(src.get("label", "")),
+                "ghost:origin": _safe_str(src.get("origin", "")),
+                "ghost:priority": src.get("priority"),
+                "ghost:fetchedEntries": src.get("fetched_entries", 0),
+                "ghost:acceptedFindings": src.get("accepted_findings", 0),
+                "ghost:storedFindings": src.get("stored_findings", 0),
+                "ghost:elapsedSourceMs": src.get("elapsed_ms", 0),
+                "ghost:error": _safe_str(src.get("error") or "") or None,
+            }
+        )
     return items
 
 
@@ -300,9 +289,6 @@ def _build_root_cause(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Sprint F263: Forensic analysis JSON-LD builder
-# ---------------------------------------------------------------------------
 def _parse_forensic_payload_jsonld(payload: str | None) -> dict[str, str] | None:
     """
     Parse a forensic finding's payload_text into a small dict.
@@ -317,6 +303,7 @@ def _parse_forensic_payload_jsonld(payload: str | None) -> dict[str, str] | None
     if bounded.lstrip().startswith("{"):
         try:
             import json as _json
+
             obj = _json.loads(bounded)
         except Exception:
             return None
@@ -391,7 +378,7 @@ def build_forensic_analysis_jsonld(
             by_source[src] = by_source.get(src, 0) + 1
             try:
                 c = float(f.get("confidence", 0.0) or 0.0)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 c = 0.0
             if 0.0 <= c <= 1.0:
                 confs.append(c)
@@ -448,9 +435,6 @@ def build_forensic_analysis_jsonld(
         return empty
 
 
-# ---------------------------------------------------------------------------
-# Main renderer
-# ---------------------------------------------------------------------------
 def render_jsonld(report: object) -> dict[str, Any]:
     """
     Render an ObservedRunReport (or Mapping) as a JSON-LD dict.
@@ -474,9 +458,7 @@ def render_jsonld(report: object) -> dict[str, Any]:
         "@context": _JSONLD_CONTEXT,
         "@type": "ghost:DiagnosticReport",
         "ghost:reportVersion": "1.0",
-        "ghost:generatedAt": _iso_timestamp(
-            data.get("started_ts") or data.get("finished_ts")
-        ),
+        "ghost:generatedAt": _iso_timestamp(data.get("started_ts") or data.get("finished_ts")),
         "ghost:runMetadata": _build_run_metadata(data),
         "ghost:acceptedFindings": data.get("accepted_findings", 0),
         "ghost:signalFunnel": _build_signal_funnel(data),
@@ -484,13 +466,10 @@ def render_jsonld(report: object) -> dict[str, Any]:
         "ghost:runtimeTruth": _build_runtime_truth(data),
         "ghost:rootCause": root_cause_data,
         "ghost:perSourceHealth": _build_per_source_health(data),
-        "ghost:forensicAnalysis": build_forensic_analysis_jsonld(
-            data.get("forensic_findings")
-        ),
+        "ghost:forensicAnalysis": build_forensic_analysis_jsonld(data.get("forensic_findings")),
         "ghost:diagnosticRunId": _safe_str(data.get("diagnostic_run_id") or data.get("run_id") or "unknown"),
     }
 
-    # Remove None values for cleaner output
     def _clean(v: Any) -> Any:
         if isinstance(v, dict):
             return {k2: _clean(v2) for k2, v2 in v.items() if v2 is not None}
@@ -501,11 +480,6 @@ def render_jsonld(report: object) -> dict[str, Any]:
     return _maybe_sign_jsonld(_clean(obj))
 
 
-# ---------------------------------------------------------------------------
-# Sprint F214AC: Post-Quantum ML-DSA-65 JSON-LD signature
-# Fail-safe throughout — skip silently if PQ backend unavailable
-# ---------------------------------------------------------------------------
-
 def _maybe_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     """
     Add ML-DSA-65 PQ signature to JSON-LD dict if backend available.
@@ -514,6 +488,7 @@ def _maybe_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     P1-1: run_sync_async handles both running and non-running loop cases.
     """
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 
@@ -525,6 +500,7 @@ def _sync_pq_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     asyncio.run() inside run_in_executor thread is M1 Metal crash vector.
     """
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 
@@ -536,7 +512,9 @@ async def _maybe_sign_jsonld_async(obj: dict[str, Any]) -> dict[str, Any]:
     """
     try:
         # F314: migrated asyncio.gather -> parallel(policy='collect')
-        _result = await parallel([_get_pq_backend_async()], taskgroup=True, policy='collect', ctx="jsonld_exporter:pq_backend")
+        _result = await parallel(
+            [_get_pq_backend_async()], taskgroup=True, policy="collect", ctx="jsonld_exporter:pq_backend"
+        )
         results = _result.ok
         error_results = _result.errors
         if error_results:
@@ -614,9 +592,6 @@ def render_jsonld_str(report: object) -> str:
     return _json_dumps(obj, indent=True, sort_keys=True, ensure_ascii=False)
 
 
-# ---------------------------------------------------------------------------
-# File-output helper
-# ---------------------------------------------------------------------------
 def render_jsonld_to_path(
     report: object,
     path: str | Path | None = None,
@@ -641,6 +616,7 @@ def render_jsonld_to_path(
             base = Path(export_dir_env)
         else:
             from hledac.universal.paths import RUNS_ROOT
+
             base = RUNS_ROOT
             base.mkdir(parents=True, exist_ok=True)
     else:
@@ -658,7 +634,9 @@ def render_jsonld_to_path(
             filename = f"ghost_diagnostic_{safe}.jsonld"
         else:
             try:
-                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get("finished_ts")  # noqa: E501
+                ts = normalize_export_input(report).get("started_ts") or normalize_export_input(report).get(
+                    "finished_ts"
+                )  # noqa: E501
             except Exception:
                 ts = None
             if ts:
@@ -672,9 +650,6 @@ def render_jsonld_to_path(
     return out_path
 
 
-# ============================================================================
-# Sprint F202F: Analyst Workbench Evidence Export
-# ============================================================================
 def render_analyst_evidence_jsonld(
     question: str,
     extractive_answer: str,

@@ -31,21 +31,16 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import get_simd_similarity
 
-# Create singleton instance
 _simd_similarity = get_simd_similarity()
-
 
 def simd_similarity_wired():
     """Get the wired SIMD similarity integration."""
     return _simd_similarity
-
 
 def batch_cosine_scores(
     query_embedding: list[float],
@@ -69,7 +64,6 @@ def batch_cosine_scores(
         query_embedding, candidate_embeddings, top_k
     )
 
-
 def rerank_embeddings(
     query_embedding: list[float],
     candidate_embeddings: list[list[float]],
@@ -92,7 +86,6 @@ def rerank_embeddings(
         {"index": idx, "score": score, "rank": rank + 1}
         for rank, (idx, score) in enumerate(scores)
     ]
-
 
 def batch_hamming_scores(
     query_packed: list[int],
@@ -120,7 +113,6 @@ def batch_hamming_scores(
     return _simd_similarity.batch_hamming_scores(
         query_packed, candidates_packed, num_candidates, num_bytes
     )
-
 
 def similarity_matrix(
     embeddings_a: list[list[float]],
@@ -154,7 +146,6 @@ def similarity_matrix(
 
     return matrix
 
-
 def _normalize(vec: list[float]) -> list[float]:
     """L2 normalize a vector."""
     norm = sum(v * v for v in vec) ** 0.5
@@ -162,8 +153,6 @@ def _normalize(vec: list[float]) -> list[float]:
         return vec
     return [v / norm for v in vec]
 
-
-# Check availability at import time for logging
 if _simd_similarity.available:
     logger.info("[SIMDSimilarity] Rust simd_similarity.rs integration: ENABLED")
 else:

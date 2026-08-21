@@ -12,7 +12,6 @@
 import ast
 import re
 import sys
-from _core import aclose
 
 REVERT_FUNCS = {"safe_gather", "safe_gather_ok", "safe_gather_fire_and_forget", "safe_gather_strict"}
 
@@ -122,7 +121,7 @@ def _strip_safe_gather_imports(source: str) -> str:
         m = re.match(
             r"^from\s+utils\.asyncx\s+import\s+(?P<names>.+?)$",
             stripped,
-    )
+        )
         if not m:
             new_lines.append(line)
             continue

@@ -25,18 +25,12 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Batch parallel configuration (shared with quality_gate.rs)
-// ---------------------------------------------------------------------------
-
 const BATCH_HARD_CAP: usize = 4096;
 // F266-U5: Calibrated for 2 threads (was 100 for 4 threads).
 // With 2 workers the parallel break-even is ~50 items.
 const BATCH_PARALLEL_THRESHOLD: usize = 50;
 // F266-U5: Halved from 64 — 2 workers × 32 items = 64 total work unit.
 const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
-
-// ===== FNV-1a 64-bit hash (no external deps) =====
 
 /// FNV-1a 64-bit hash function for tokens.
 /// Pure Rust implementation - no external crates needed.
@@ -52,8 +46,6 @@ fn fnv64(s: &str) -> u64 {
     hash
 }
 
-// ===== Tokenization =====
-
 /// Weighted token for SimHash computation.
 struct WeightedToken {
     token: String,
@@ -65,7 +57,6 @@ struct WeightedToken {
 /// - ngram_size > 1: character n-grams
 fn tokenize(text: &str, ngram_size: usize) -> Vec<String> {
     let text = text);
-    // Remove punctuation, preserve spaces
     let clean: String = text
         .chars()
         .map(|c| {
@@ -116,8 +107,6 @@ fn compute_tf_weights(tokens: &[String]) -> Vec<WeightedToken> {
         })
         .collect()
 }
-
-// ===== Core SimHash =====
 
 /// Alias for simhash() - maintains API compatibility with existing callers.
 /// See simhash() for documentation.
@@ -209,8 +198,6 @@ fn compute_simhash_from_tokens(weighted_tokens: &[WeightedToken]) -> u64 {
 pub fn hamming_distance(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
-
-// ===== PyO3 Public API =====
 
 /// Computes SimHash fingerprint for text.
 /// Returns 64-bit integer representing the fingerprint.
@@ -391,8 +378,6 @@ impl SimHashStore {
     }
 }
 
-// ===== find_near_duplicates — called from semantic_deduplicator.py =====
-
 /// Finds all near-duplicate pairs in a batch of pre-computed fingerprints.
 /// O(n²) brute-force over fingerprints. Threshold: ≤ threshold bits differ.
 ///
@@ -423,8 +408,6 @@ pub fn find_near_duplicates(fingerprints: Vec<u64>, threshold: u32) -> Vec<(u32,
     }
     results
 }
-
-// ===== Module Registration =====
 
 /// Registers all SimHash functions and classes with Python module.
 ///

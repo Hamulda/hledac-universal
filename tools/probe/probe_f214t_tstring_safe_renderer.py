@@ -11,16 +11,9 @@ Environment: Python 3.13 (t-strings NOT available — NO_PATCH for runner)
 Requires: Python 3.14+ for t-string feature probes
 """
 
-
-
 import html
 import re
-from _core import aclose
 
-# ---------------------------------------------------------------------------
-# Candidate Map: user-controlled f-string sites in export/report pipeline
-# ---------------------------------------------------------------------------
-# Exclusions per spec: STIX/JSON export, SQL/shell generation, core pipeline
 CANDIDATE_MAP: dict = {
     # export/sprint_markdown_reporter.py
     "sprint_markdown_reporter.py:328": {
@@ -119,14 +112,14 @@ CANDIDATE_MAP: dict = {
         "line": 132,
         "pattern": 'f"title: \\"{title}\\""',
         "context": "YAML frontmatter title",
-        "risk": "title could contain \" — YAML string break",
+        "risk": 'title could contain " — YAML string break',
         "user_controlled": True,
     },
     "export_manager.py:151": {
         "line": 151,
         "pattern": 'f"{key}: \\"{value}\\""',
         "context": "YAML metadata key-value",
-        "risk": "value could contain \" — YAML break",
+        "risk": 'value could contain " — YAML break',
         "user_controlled": True,
     },
     "export_manager.py:161": {
@@ -219,13 +212,6 @@ CANDIDATE_MAP: dict = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# T-STRING SAFE RENDERER — POC
-# ---------------------------------------------------------------------------
-# Python 3.14 t-strings are NOT available (runner is 3.13).
-# This POC demonstrates the escaping strategy that a hypothetical
-# t-string renderer would need to enforce.
-# ---------------------------------------------------------------------------
 
 class TStringSafeRenderer:
     """
@@ -249,17 +235,17 @@ class TStringSafeRenderer:
         if not text:
             return ""
         # Escape in order of precedence
-        text = text.replace('\\', '\\\\')       # backslash first
-        text = text.replace('`', '\\`')          # inline code
-        text = text.replace('*', '\\*')          # bold/italic
-        text = text.replace('_', '\\_')          # italic
-        text = text.replace('[', '\\[')          # link text
-        text = text.replace(']', '\\]')          # link close
-        text = text.replace('(', '\\(')          # link paren
-        text = text.replace(')', '\\)')          # link close paren
-        text = text.replace('<', '\\<')          # HTML-like
-        text = text.replace('|', '\\|')          # table
-        text = text.replace('\n', '\\n')          # forced line break
+        text = text.replace("\\", "\\\\")  # backslash first
+        text = text.replace("`", "\\`")  # inline code
+        text = text.replace("*", "\\*")  # bold/italic
+        text = text.replace("_", "\\_")  # italic
+        text = text.replace("[", "\\[")  # link text
+        text = text.replace("]", "\\]")  # link close
+        text = text.replace("(", "\\(")  # link paren
+        text = text.replace(")", "\\)")  # link close paren
+        text = text.replace("<", "\\<")  # HTML-like
+        text = text.replace("|", "\\|")  # table
+        text = text.replace("\n", "\\n")  # forced line break
         return text
 
     @staticmethod
@@ -274,16 +260,16 @@ class TStringSafeRenderer:
         Validates URL scheme, escapes both label and URL.
         """
         # Whitelist allowed schemes
-        allowed = {'http', 'https', 'ftp', 'mailto'}
-        if '://' in url:
-            scheme = url.split('://')[0].lower()
+        allowed = {"http", "https", "ftp", "mailto"}
+        if "://" in url:
+            scheme = url.split("://")[0].lower()
             if scheme not in allowed:
-                url = '#blocked-scheme'
+                url = "#blocked-scheme"
         else:
             # No scheme — flag as suspicious (data:, javascript:, etc.)
-            url = '#blocked-scheme'
+            url = "#blocked-scheme"
         # Escape URL characters (parens, etc.)
-        url = url.replace('(', '%28').replace(')', '%29')
+        url = url.replace("(", "%28").replace(")", "%29")
         label = TStringSafeRenderer.escape_markdown(label)
         return f"[{label}]({url})"
 
@@ -293,10 +279,10 @@ class TStringSafeRenderer:
         Render text as inline code (backtick-wrapped).
         Escape any backticks in the text to prevent breakout.
         """
-        opener = '`' * backticks
+        opener = "`" * backticks
         # Escape inner backticks by padding with zero-width space approach
         # Simple: replace backticks with unicode escape
-        safe_text = text.replace('`', '​`​')
+        safe_text = text.replace("`", "​`​")
         return f"{opener}{safe_text}{opener}"
 
     @staticmethod
@@ -307,7 +293,7 @@ class TStringSafeRenderer:
         """
         level = max(1, min(6, level))
         # Strip existing markdown heading markers
-        clean = re.sub(r'^#{1,6}\s*', '', text.strip())
+        clean = re.sub(r"^#{1,6}\s*", "", text.strip())
         clean = TStringSafeRenderer.escape_markdown(clean)
         return f"{'#' * level} {clean}"
 
@@ -317,10 +303,10 @@ class TStringSafeRenderer:
         Escape a string for YAML double-quoted scalar.
         Handles ", newlines, unicode.
         """
-        text = text.replace('\\', '\\\\')
+        text = text.replace("\\", "\\\\")
         text = text.replace('"', '\\"')
         # Escape control chars but preserve newlines as \n
-        text = text.replace('\n', '\\n')
+        text = text.replace("\n", "\\n")
         return f'"{text}"'
 
     @staticmethod
@@ -341,14 +327,11 @@ class TStringSafeRenderer:
         return TStringSafeRenderer.safe_markdown_link(url_label, url)
 
 
-# ---------------------------------------------------------------------------
-# TEST VECTORS
-# ---------------------------------------------------------------------------
 TESTS = [
     ("<script>alert(1)</script>", "HTML tag injection"),
     ("[click](javascript:alert(1))", "Markdown link injection"),
     ("```\ninjected\n```", "Fenced code block injection"),
-    ('onerror="alert(1)"', 'HTML attribute injection'),
+    ('onerror="alert(1)"', "HTML attribute injection"),
     ("**bold** and _italic_", "Markdown formatting chars"),
     ("[link](https://evil.com) text", "Malicious link URL"),
     ("text `code` more *bold*", "Mixed injection"),
@@ -357,7 +340,7 @@ TESTS = [
 ]
 
 
-def run_tests():
+def run_tests() -> bool:
     print("=" * 70)
     print("F214T T-String Safe Renderer POC — Test Results")
     print("=" * 70)
@@ -392,10 +375,9 @@ def run_tests():
 
         print()
 
-    # Check candidates
     print("=" * 70)
     print(f"CANONICAL CANDIDATES: {len(CANDIDATE_MAP)} sites")
-    high_risk = [k for k, v in CANDIDATE_MAP.items() if v.get('severity') == 'HIGH' or v.get('user_controlled')]
+    high_risk = [k for k, v in CANDIDATE_MAP.items() if v.get("severity") == "HIGH" or v.get("user_controlled")]
     print(f"HIGH/USER sites: {len(high_risk)}")
     for k in high_risk[:10]:
         v = CANDIDATE_MAP[k]

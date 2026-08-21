@@ -17,9 +17,7 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from typing import Any
 from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
 
 @dataclass(frozen=True, slots=True)
 class MetalMemoryStats:

@@ -8,10 +8,8 @@ Requires: Tor running on 127.0.0.1:9050 (or TOR_SOCKS_PROXY_URL env)
 Exit: 0 = healthy, 1 = Tor unreachable, 2 = other error
 """
 
-
 import os
 import sys
-from _core import aclose
 
 SOCKS_PROXY = os.environ.get("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 CHECK_URL = "https://check.torproject.org"
@@ -32,7 +30,7 @@ def main() -> int:
             proxies={"https": SOCKS_PROXY},
             timeout=15.0,
             impersonate="chrome110",
-    )
+        )
         text = resp.text
         if "Congratulations" in text or "Tor is working" in text:
             print("[TOR-HEALTH] OK: Tor circuit active, connectivity confirmed")

@@ -9,8 +9,6 @@ Scope: export/report rendering only.
 Exclusions: STIX/JSON export, SQL/shell generation, core pipeline.
 """
 
-
-
 __all__ = [
     "escape_markdown_text",
     "escape_html_text",
@@ -18,25 +16,20 @@ __all__ = [
     "safe_code_fence",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Markdown escaping
-# ---------------------------------------------------------------------------
-
 MARKDOWN_SPECIAL_CHARS = (
-    ("\\", "\\\\"),   # backslash first
-    ("`", "\\`"),     # inline code
-    ("*", "\\*"),     # bold/italic
-    ("_", "\\_"),     # italic
-    ("[", "\\["),     # link text
-    ("]", "\\]"),     # link close
-    ("(", "\\("),     # link paren
-    (")", "\\)"),     # link close paren
-    ("<", "\\<"),     # html-like
-    (">", "\\>"),     # html-like
-    ("|", "\\|"),     # table
-    ("\n", "\\n"),    # newlines
-    )
+    ("\\", "\\\\"),  # backslash first
+    ("`", "\\`"),  # inline code
+    ("*", "\\*"),  # bold/italic
+    ("_", "\\_"),  # italic
+    ("[", "\\["),  # link text
+    ("]", "\\]"),  # link close
+    ("(", "\\("),  # link paren
+    (")", "\\)"),  # link close paren
+    ("<", "\\<"),  # html-like
+    (">", "\\>"),  # html-like
+    ("|", "\\|"),  # table
+    ("\n", "\\n"),  # newlines
+)
 
 
 def escape_markdown_text(text: str) -> str:
@@ -53,10 +46,6 @@ def escape_markdown_text(text: str) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# HTML escaping
-# ---------------------------------------------------------------------------
-
 def escape_html_text(text: str) -> str:
     """Escape characters that break HTML rendering.
 
@@ -66,10 +55,6 @@ def escape_html_text(text: str) -> str:
 
     return html.escape(text, quote=True)
 
-
-# ---------------------------------------------------------------------------
-# Safe Markdown links
-# ---------------------------------------------------------------------------
 
 # Allowed URL schemes in markdown links
 _ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https", "ftp", "mailto"})
@@ -86,7 +71,6 @@ def safe_markdown_link(label: str, url: str) -> str:
 
     Does NOT guard against malicious domains — only scheme-level.
     """
-    # Validate scheme
     scheme = url.split("://", 1)[0].lower() if "://" in url else url.split(":", 1)[0].lower()
     if scheme not in _ALLOWED_SCHEMES:
         url = _BLOCKED_SCHEME_REPLACEMENT
@@ -100,10 +84,6 @@ def safe_markdown_link(label: str, url: str) -> str:
 
     return f"[{escaped_label}]({safe_url})"
 
-
-# ---------------------------------------------------------------------------
-# Safe code fences
-# ---------------------------------------------------------------------------
 
 def safe_code_fence(text: str) -> str:
     """Escape text intended for a fenced code block.

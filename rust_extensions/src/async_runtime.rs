@@ -60,9 +60,6 @@
 
 use std::sync::OnceLock;
 
-// NEXTGEN-03: E-core configuration for Tokio workers
-// ============================================================================
-
 /// NEXTGEN-03: Configuration for E-core worker affinity.
 /// Tokio workers run on E-cores for network I/O exclusivity.
 #[derive(Debug, Clone)]
@@ -84,10 +81,6 @@ impl Default for ECoreWorkerConfig {
     }
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Minimum worker threads (fallback for constrained environments).
 const MIN_WORKERS: usize = 1;
 
@@ -96,10 +89,6 @@ const MAX_WORKERS: usize = 4;
 
 /// Multiplier for blocking threads relative to workers.
 const BLOCKING_MULTIPLIER: usize = 2;
-
-// ============================================================================
-// Error Types
-// ============================================================================
 
 /// Errors from shared runtime initialization.
 #[derive(Debug, Clone)]
@@ -120,10 +109,6 @@ impl std::fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
-
-// ============================================================================
-// Runtime Configuration
-// ============================================================================
 
 /// Runtime configuration parameters.
 /// Detected at compile time based on target.
@@ -157,10 +142,6 @@ impl RuntimeConfig {
     }
 }
 
-// ============================================================================
-// Global Runtime (OnceLock)
-// ============================================================================
-
 /// Global shared Tokio runtime.
 /// 
 /// Initialized lazily on first access via `get_runtime()`.
@@ -175,10 +156,6 @@ static SHARED_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 /// Synchronization semaphore for runtime initialization.
 /// Prevents race conditions during lazy init.
 static INIT_SEM: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 /// Get or create the shared Tokio runtime.
 ///
@@ -248,10 +225,6 @@ pub fn config() -> RuntimeConfig {
     RuntimeConfig::default()
 }
 
-// ============================================================================
-// Internal Builders
-// ============================================================================
-
 /// Build a tokio runtime with the given configuration.
 fn build_runtime(config: RuntimeConfig) -> Result<tokio::runtime::Runtime, String> {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -313,10 +286,6 @@ pub(crate) fn build_fallback_runtime() -> tokio::runtime::Runtime {
         .build()
         .expect("async_runtime: fallback runtime build failed — this should never happen")
 }
-
-// ============================================================================
-// Re-exports for convenience
-// ============================================================================
 
 pub use tokio::runtime::{Handle, Runtime, Builder};
 pub use tokio::task::{JoinSet, AbortHandle};

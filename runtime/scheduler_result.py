@@ -7,9 +7,10 @@ F350M-R / Issue #P2.
 
 ~380 fields — frozen dataclass with SoA int-counter layout.
 """
+
 from dataclasses import dataclass, field
 from typing import Any
-from _core import aclose
+
 _UNSET: Any = object()
 
 
@@ -24,10 +25,12 @@ def _run_async_safe(coro: Any) -> Any:
     - Running loop → asyncio.run_coroutine_threadsafe().result()
     """
     from hledac.universal.utils.sync_bridge import run_sync_async
+
     try:
         return run_sync_async(coro)
     except Exception:
         return None
+
 
 @dataclass(slots=True)
 class SprintSchedulerResult:
@@ -36,6 +39,7 @@ class SprintSchedulerResult:
     STEP 1 extracted from sprint_scheduler.py (33 449 LOC → modular package).
     F350M-R / Issue #P2.
     """
+
     cycles_started: int = 0
     cycles_completed: int = 0
     consecutive_empty_cycles: int = 0
@@ -47,24 +51,24 @@ class SprintSchedulerResult:
     entries_scanned: int = 0
     entries_with_hits: int = 0
     findings_built_pre_store: int = 0
-    signal_stage: str = 'unknown'
+    signal_stage: str = "unknown"
     accepted_findings: int = 0
     entries_per_source: dict[str, int] = field(default_factory=dict)
     hits_per_source: dict[str, int] = field(default_factory=dict)
-    final_phase: str = 'BOOT'
+    final_phase: str = "BOOT"
     export_paths: list[str] = field(default_factory=list)
     # P4-1: Partial export path (early windup export)
-    partial_export_path: str = ''
+    partial_export_path: str = ""
     aborted: bool = False
-    abort_reason: str = ''
+    abort_reason: str = ""
     stop_requested: bool = False
     synthesis_success: bool = False
-    synthesis_engine: str = 'unknown'
+    synthesis_engine: str = "unknown"
     synthesis_findings_count: int = 0
     ioc_cooccurrence_edges: int = 0
     # P4-1: IOC co-occurrence telemetry
     ioc_cooccurrence_stats: dict = field(default_factory=dict)
-    synthesis_text: str = ''
+    synthesis_text: str = ""
     synthesis_uncertainty_flags: dict = field(default_factory=dict)  # APEX-1009
     # P4-1: Epistemic gap advisory telemetry
     epistemic_gap_advisory: dict = field(default_factory=dict)
@@ -75,19 +79,19 @@ class SprintSchedulerResult:
     public_matched_patterns: int = 0
     public_accepted_findings: int = 0
     public_stored_findings: int = 0
-    public_error: str = ''
+    public_error: str = ""
     public_provider_selection_debug: dict = field(default_factory=dict)
     public_backend_degraded: bool = False
-    dominant_public_blocker: str = ''
-    public_terminal_stage: str = ''
+    dominant_public_blocker: str = ""
+    public_terminal_stage: str = ""
     public_stage_counters: dict = field(default_factory=dict)
-    public_discovery_empty_reason: str = ''
+    public_discovery_empty_reason: str = ""
     public_branch_timed_out: bool = False
     ct_log_discovered: int = 0
     ct_log_stored: int = 0
     ct_log_accepted_findings: int = 0
-    ct_log_error: str = ''
-    ct_loss_stage: str = 'no_loss'
+    ct_log_error: str = ""
+    ct_loss_stage: str = "no_loss"
     ct_bridge_invoked: bool = False
     ct_raw_sample_keys: tuple[str, ...] = ()
     ct_raw_sample_count: int = 0
@@ -117,25 +121,25 @@ class SprintSchedulerResult:
     low_information_by_family: dict = field(default_factory=dict)
     ct_quarantine_count: int = 0
     ct_quarantine_samples: tuple[str, ...] = ()
-    ct_provider_status: str = ''
+    ct_provider_status: str = ""
     ct_cache_used: bool = False
     ct_cache_stale: bool = False
     ct_cache_age_s: float = 0.0
     ct_planned: bool = False
     ct_scheduled: bool = False
-    ct_provider_selected: str = ''
+    ct_provider_selected: str = ""
     ct_request_attempted: bool = False
     ct_request_timeout: bool = False
     ct_storage_attempted: bool = False
     ct_storage_accepted: bool = False
-    ct_terminal_stage: str = ''
+    ct_terminal_stage: str = ""
     ct_prelude_missing_but_final_attempted: bool = False
     ct_branch_timed_out: bool = False
     entered_active_at_monotonic: float | None = None
     pre_loop_elapsed_s: float | None = None
     first_cycle_started_at_monotonic: float | None = None
     pre_active_starved: bool = False
-    pre_loop_blocker_reason: str = ''
+    pre_loop_blocker_reason: str = ""
     dedup_preload_count: int | None = None
     dedup_preload_elapsed_s: float | None = None
     feed_zero_yield_detected: bool = False
@@ -144,9 +148,9 @@ class SprintSchedulerResult:
     feed_no_pattern_with_content: bool = False
     findings_build_loss_detected: bool = False
     feed_no_signal_sources: list[str] = field(default_factory=list)
-    dominant_feed_blocker: str = ''
-    dominant_branch_blocker: str = ''
-    branch_degradation_summary: str = ''
+    dominant_feed_blocker: str = ""
+    dominant_branch_blocker: str = ""
+    branch_degradation_summary: str = ""
     policy_quality_feedback_calls: int = 0
     policy_quality_feedback_decisions: int = 0
     policy_quality_feedback_sources: int = 0
@@ -156,10 +160,10 @@ class SprintSchedulerResult:
     rl_total_reward: float = 0.0
     rl_last_action: int = 0
     rl_lane_combo: frozenset = field(default_factory=frozenset)
-    rl_suggested_pivot: str = ''
+    rl_suggested_pivot: str = ""
     hermes_model_loaded: bool = False
     hermes_load_attempted: bool = False
-    hermes_load_reason: str = ''
+    hermes_load_reason: str = ""
     hermes_load_elapsed_s: float = 0.0
     mlx_batcher_stats: dict = field(default_factory=dict)
     pattern_extraction_drain_completed: int = 0
@@ -172,9 +176,9 @@ class SprintSchedulerResult:
     circuit_breaker_opens: int = 0
     # RESILIENCE-01: Sprint Health & Degradation Mode Tracking
     # Added fields for FailureRegistry visibility in sprint results
-    health_mode: str = 'HEALTHY'  # HEALTHY, DEGRADED, IO_ONLY, EMERGENCY
+    health_mode: str = "HEALTHY"  # HEALTHY, DEGRADED, IO_ONLY, EMERGENCY
     health_score: float = 100.0  # 0-100 score
-    health_grade: str = 'A'  # A, B, C, D, F
+    health_grade: str = "A"  # A, B, C, D, F
     total_failures_recorded: int = 0
     high_critical_failures: int = 0
     components_degraded: tuple[str, ...] = ()  # Components that experienced failures
@@ -184,10 +188,10 @@ class SprintSchedulerResult:
     dynamic_branch_floor_s: float = 0.0
     effective_windup_lead_used_s: float = 0.0
     windup_lead_adaptive_factor: float = 1.0
-    duckdb_mode: str = 'unknown'
+    duckdb_mode: str = "unknown"
     arrow_batch_hard_cap: int = 0
     arrow_batch_dropped_after_flush_failure: int = 0
-    arrow_last_flush_error: str = ''
+    arrow_last_flush_error: str = ""
     arrow_metrics: dict = field(default_factory=dict)
     forensics_enriched_ct_findings: int = 0
     multimodal_enriched_findings: int = 0
@@ -217,7 +221,7 @@ class SprintSchedulerResult:
     pii_redacted_count: int = 0
     peak_rss_gib: float = 0.0
     budget_violations: int = 0
-    governor_uma_state: str = ''
+    governor_uma_state: str = ""
     governor_system_used_gib: float = 0.0
     governor_swap_detected: bool = False
     governor_io_only: bool = False
@@ -238,10 +242,10 @@ class SprintSchedulerResult:
     doh_domains_attempted: int = 0
     doh_raw_count: int = 0
     doh_accepted_findings: int = 0
-    doh_terminal_stage: str = ''
+    doh_terminal_stage: str = ""
     doh_provider_errors: tuple[str, ...] = ()
     doh_cache_used: bool = False
-    doh_seed_source: str = ''
+    doh_seed_source: str = ""
     wayback_attempted: bool = False
     wayback_raw_count: int = 0
     wayback_candidates_built: int = 0
@@ -274,7 +278,7 @@ class SprintSchedulerResult:
     nonfeed_budget_unresolved_lanes: tuple[str, ...] = ()
     feed_suppressed_by_nonfeed_budget: int = 0
     feed_suppression_count: int = 0
-    feed_suppression_reason: str = ''
+    feed_suppression_reason: str = ""
     nonfeed_prelude_enabled: bool = False
     nonfeed_prelude_expected_lanes: tuple[str, ...] = ()
     nonfeed_prelude_attempted_lanes: tuple[str, ...] = ()
@@ -287,12 +291,12 @@ class SprintSchedulerResult:
     nonfeed_priority_enabled: bool = False
     nonfeed_profile_expected_lanes: tuple[str, ...] = ()
     nonfeed_expected_lanes: tuple[str, ...] = ()
-    nonfeed_expected_lanes_source: str = ''
+    nonfeed_expected_lanes_source: str = ""
     seed_context_available: bool = False
     seed_context_propagated: bool = False
     lanes_unlocked_by_seed_context: list[str] = field(default_factory=list)
-    seed_context_skip_reason: str = ''
-    seed_context_source: str = ''
+    seed_context_skip_reason: str = ""
+    seed_context_source: str = ""
     feed_domain_seeds: tuple[str, ...] = ()
     pivot_seed_count: int = 0
     pivot_seed_type_counts: dict[str, int] = field(default_factory=dict)
@@ -303,8 +307,8 @@ class SprintSchedulerResult:
     pivot_seed_hashes: tuple[str, ...] = ()
     pivot_seed_cves: tuple[str, ...] = ()
     next_seeds_query_suggestions: tuple[str, ...] = ()
-    next_seeds_skip_reason: str = ''
-    planner_action_skip_reason: str = ''
+    next_seeds_skip_reason: str = ""
+    planner_action_skip_reason: str = ""
     next_seeds_ioc_domains: tuple[str, ...] = ()
     next_seeds_ioc_ips: tuple[str, ...] = ()
     next_seeds_ioc_urls: tuple[str, ...] = ()
@@ -313,10 +317,10 @@ class SprintSchedulerResult:
     next_seeds_provider_yield: bool = False
     next_seeds_pivot_deepening: bool = False
     next_seeds_consumed_count: int = 0
-    next_seeds_seed_source: str = ''
+    next_seeds_seed_source: str = ""
     planner_actions_consumed_count: int = 0
     planner_action_lanes_requested: list[str] = field(default_factory=list)
-    planner_action_seed_source: str = ''
+    planner_action_seed_source: str = ""
     quantum_path_seeds: list[str] = field(default_factory=list)
     graph_rag_context_count: int = 0
     dark_surface_pivots_attempted: int = 0
@@ -347,22 +351,22 @@ class SprintSchedulerResult:
     windup_delayed_for_nonfeed: bool = False
     prewindup_barrier_delayed_cycle: bool = False
     prewindup_guard_async_bridge_used: bool = False
-    prewindup_guard_async_error: str = ''
+    prewindup_guard_async_error: str = ""
     prewindup_guard_fail_closed: bool = False
     windup_guard_call_count: int = 0
     # P4-1: Pre-windup barrier telemetry
     prewindup_unimplemented_lanes: tuple = ()
     windup_guard_callback_supplied_count: int = 0
     windup_guard_callback_executed_count: int = 0
-    windup_guard_last_reason: str = ''
-    windup_guard_last_phase: str = ''
+    windup_guard_last_reason: str = ""
+    windup_guard_last_phase: str = ""
     windup_guard_last_allowed: bool | None = None
-    windup_guard_last_callback_not_executed_reason: str = ''
+    windup_guard_last_callback_not_executed_reason: str = ""
     return_guard_checked: bool = False
     return_guard_required_lanes: tuple[str, ...] = ()
     return_guard_satisfied: bool = False
     return_guard_delayed_for_nonfeed: bool = False
-    return_guard_block_reason: str = ''
+    return_guard_block_reason: str = ""
     return_guard_attempted_lanes: tuple[str, ...] = ()
     return_guard_skipped_lanes: dict[str, str] = field(default_factory=dict)
     return_guard_errors: dict[str, str] = field(default_factory=dict)
@@ -372,21 +376,21 @@ class SprintSchedulerResult:
     active_window_budget_s: float = 0.0
     active_window_elapsed_s: float = 0.0
     windup_efficiency: float = 0.0
-    early_exit_class: str = ''
-    early_exit_reason: str = ''
-    run_error_class: str = ''
-    run_error: str = ''
+    early_exit_class: str = ""
+    early_exit_reason: str = ""
+    run_error_class: str = ""
+    run_error: str = ""
     feed_dominance_ratio: float = 0.0
-    feed_dominance_class: str = ''
+    feed_dominance_class: str = ""
     feed_dominance_guard_triggered: bool = False
     should_recommend_nonfeed_diagnostic: bool = False
     feed_budget_active: bool = False
-    feed_budget_reason: str = ''
+    feed_budget_reason: str = ""
     feed_accepted_before_cap: int = 0
     feed_suppressed_by_budget: int = 0
     feed_budget_per_source: dict[str, int] = field(default_factory=dict)
     top_feed_source_counts: tuple[tuple[str, int], ...] = ()
-    max_per_source_applied: str = ''
+    max_per_source_applied: str = ""
     acquisition_prelude_checked: bool = False
     acquisition_prelude_ran: bool = False
     acquisition_prelude_required_lanes: tuple[str, ...] = ()
@@ -395,14 +399,14 @@ class SprintSchedulerResult:
     acquisition_prelude_skipped_lanes: dict[str, str] = field(default_factory=dict)
     acquisition_prelude_errors: dict[str, str] = field(default_factory=dict)
     acquisition_prelude_duration_s: float = 0.0
-    acquisition_prelude_reason: str = ''
+    acquisition_prelude_reason: str = ""
     acquisition_prelude_domain_detected: bool = False
     acquisition_prelude_plan_present: bool = False
     acquisition_prelude_plan_built_for_prelude: bool = False
-    acquisition_prelude_domain_detection_error: str = ''
+    acquisition_prelude_domain_detection_error: str = ""
     acquisition_plan_build_failed: bool = False
-    acquisition_plan_build_error_type: str = ''
-    acquisition_plan_build_error: str = ''
+    acquisition_plan_build_error_type: str = ""
+    acquisition_plan_build_error: str = ""
     acquisition_terminality_checked: bool = False
     acquisition_terminality_satisfied: bool = False
     acquisition_terminality_missing_lanes: tuple[str, ...] = ()
@@ -423,7 +427,7 @@ class SprintSchedulerResult:
     nonfeed_any_accepted: bool = False
     nonfeed_provider_failures: tuple[str, ...] = ()
     nonfeed_memory_skips: tuple[str, ...] = ()
-    nonfeed_mission_exit_reason: str = ''
+    nonfeed_mission_exit_reason: str = ""
     nonfeed_candidate_ledger_summary: dict = field(default_factory=dict)
     nonfeed_lane_eligibility: dict[str, bool] = field(default_factory=dict)
     nonfeed_doh_planner_input: list[str] = field(default_factory=list)
@@ -438,14 +442,14 @@ class SprintSchedulerResult:
     seed_quality_drop_reasons: dict = field(default_factory=dict)
     seed_quality_kept_sample: list = field(default_factory=list)
     seed_quality_dropped_sample: list = field(default_factory=list)
-    seed_quality_bypass_reason: str = ''
+    seed_quality_bypass_reason: str = ""
     source_family_events: list[dict] = field(default_factory=list)
     MAX_SOURCE_FAMILY_EVENTS: int = 200
     acquisition_plan_present_for_prelude: bool = False
     acquisition_plan_lanes_for_prelude: tuple[str, ...] = ()
     acquisition_plan_enabled_lanes_for_prelude: tuple[str, ...] = ()
-    acquisition_plan_profile_for_prelude: str = ''
-    acquisition_plan_build_error_for_prelude: str = ''
+    acquisition_plan_profile_for_prelude: str = ""
+    acquisition_plan_build_error_for_prelude: str = ""
     research_context: Any = None
     timer_events: list[dict] | None = None
     _int_counter_layout: Any = None
@@ -461,14 +465,15 @@ class SprintSchedulerResult:
             return
         try:
             import hledac.universal.runtime.sprint_scheduler as _ss
-            _layout_class = getattr(_ss, 'IntCounterLayoutRust', None) or getattr(_ss, 'IntCounterLayout', None)
-            _names = getattr(_ss, 'INT_COUNTER_LAYOUT_NAMES', ())
+
+            _layout_class = getattr(_ss, "IntCounterLayoutRust", None) or getattr(_ss, "IntCounterLayout", None)
+            _names = getattr(_ss, "INT_COUNTER_LAYOUT_NAMES", ())
             if _layout_class is not None and _names:
-                object.__setattr__(self, '_int_counter_layout', _layout_class(_names))
+                object.__setattr__(self, "_int_counter_layout", _layout_class(_names))
             else:
-                object.__setattr__(self, '_int_counter_layout', None)
+                object.__setattr__(self, "_int_counter_layout", None)
         except Exception:
-            object.__setattr__(self, '_int_counter_layout', None)
+            object.__setattr__(self, "_int_counter_layout", None)
 
     def cycles_started_(self) -> int:
         return self.cycles_started
@@ -476,11 +481,12 @@ class SprintSchedulerResult:
     def cycles_completed_(self) -> int:
         return self.cycles_completed
 
-    def bump_counter(self, name: str, n: int=1) -> int:
+    def bump_counter(self, name: str, n: int = 1) -> int:
         layout = self._int_counter_layout
         if layout is not None:
             return layout.bump(name, n)
         return 0
+
 
 class SprintResultBuilder:
     """
@@ -513,7 +519,7 @@ class SprintResultBuilder:
         """Reflect field names from SprintSchedulerResult at runtime."""
         return list(SprintSchedulerResult.__dataclass_fields__.keys())
 
-    def _set(self, name: str, value: object) -> "SprintResultBuilder":
+    def _set(self, name: str, value: object) -> SprintResultBuilder:
         """Internal setter — bypasses __setattr__ for speed."""
         object.__setattr__(self._result, name, value)
         return self
@@ -529,138 +535,138 @@ class SprintResultBuilder:
         else:
             self._set(name, value)
 
-    def with_cycles_started(self, v: int) -> "SprintResultBuilder":
+    def with_cycles_started(self, v: int) -> SprintResultBuilder:
         return self._set("cycles_started", v) or self
 
-    def with_cycles_completed(self, v: int) -> "SprintResultBuilder":
+    def with_cycles_completed(self, v: int) -> SprintResultBuilder:
         return self._set("cycles_completed", v) or self
 
-    def with_aborted(self, v: bool) -> "SprintResultBuilder":
+    def with_aborted(self, v: bool) -> SprintResultBuilder:
         return self._set("aborted", v) or self
 
-    def with_abort_reason(self, v: str) -> "SprintResultBuilder":
+    def with_abort_reason(self, v: str) -> SprintResultBuilder:
         return self._set("abort_reason", v) or self
 
-    def with_final_phase(self, v: str) -> "SprintResultBuilder":
+    def with_final_phase(self, v: str) -> SprintResultBuilder:
         return self._set("final_phase", v) or self
 
-    def with_accepted_findings(self, v: int) -> "SprintResultBuilder":
+    def with_accepted_findings(self, v: int) -> SprintResultBuilder:
         return self._set("accepted_findings", v) or self
 
-    def with_total_pattern_hits(self, v: int) -> "SprintResultBuilder":
+    def with_total_pattern_hits(self, v: int) -> SprintResultBuilder:
         return self._set("total_pattern_hits", v) or self
 
-    def with_unique_entry_hashes_seen(self, v: int) -> "SprintResultBuilder":
+    def with_unique_entry_hashes_seen(self, v: int) -> SprintResultBuilder:
         return self._set("unique_entry_hashes_seen", v) or self
 
-    def with_duplicate_entry_hashes_skipped(self, v: int) -> "SprintResultBuilder":
+    def with_duplicate_entry_hashes_skipped(self, v: int) -> SprintResultBuilder:
         return self._set("duplicate_entry_hashes_skipped", v) or self
 
-    def with_consecutive_empty_cycles(self, v: int) -> "SprintResultBuilder":
+    def with_consecutive_empty_cycles(self, v: int) -> SprintResultBuilder:
         return self._set("consecutive_empty_cycles", v) or self
 
-    def with_max_consecutive_empty_cycles(self, v: int) -> "SprintResultBuilder":
+    def with_max_consecutive_empty_cycles(self, v: int) -> SprintResultBuilder:
         return self._set("max_consecutive_empty_cycles", v) or self
 
-    def with_entries_per_source(self, v: dict[str, int]) -> "SprintResultBuilder":
+    def with_entries_per_source(self, v: dict[str, int]) -> SprintResultBuilder:
         return self._set("entries_per_source", v) or self
 
-    def with_hits_per_source(self, v: dict[str, int]) -> "SprintResultBuilder":
+    def with_hits_per_source(self, v: dict[str, int]) -> SprintResultBuilder:
         return self._set("hits_per_source", v) or self
 
-    def with_export_paths(self, v: list[str]) -> "SprintResultBuilder":
+    def with_export_paths(self, v: list[str]) -> SprintResultBuilder:
         return self._set("export_paths", v) or self
 
-    def with_stop_requested(self, v: bool) -> "SprintResultBuilder":
+    def with_stop_requested(self, v: bool) -> SprintResultBuilder:
         return self._set("stop_requested", v) or self
 
-    def with_synthesis_success(self, v: bool) -> "SprintResultBuilder":
+    def with_synthesis_success(self, v: bool) -> SprintResultBuilder:
         return self._set("synthesis_success", v) or self
 
-    def with_synthesis_engine(self, v: str) -> "SprintResultBuilder":
+    def with_synthesis_engine(self, v: str) -> SprintResultBuilder:
         return self._set("synthesis_engine", v) or self
 
-    def with_synthesis_findings_count(self, v: int) -> "SprintResultBuilder":
+    def with_synthesis_findings_count(self, v: int) -> SprintResultBuilder:
         return self._set("synthesis_findings_count", v) or self
 
-    def with_synthesis_text(self, v: str) -> "SprintResultBuilder":
+    def with_synthesis_text(self, v: str) -> SprintResultBuilder:
         return self._set("synthesis_text", v) or self
 
-    def with_hypotheses_generated(self, v: int) -> "SprintResultBuilder":
+    def with_hypotheses_generated(self, v: int) -> SprintResultBuilder:
         return self._set("hypotheses_generated", v) or self
 
-    def with_public_discovered(self, v: int) -> "SprintResultBuilder":
+    def with_public_discovered(self, v: int) -> SprintResultBuilder:
         return self._set("public_discovered", v) or self
 
-    def with_public_fetched(self, v: int) -> "SprintResultBuilder":
+    def with_public_fetched(self, v: int) -> SprintResultBuilder:
         return self._set("public_fetched", v) or self
 
-    def with_public_matched_patterns(self, v: int) -> "SprintResultBuilder":
+    def with_public_matched_patterns(self, v: int) -> SprintResultBuilder:
         return self._set("public_matched_patterns", v) or self
 
-    def with_public_accepted_findings(self, v: int) -> "SprintResultBuilder":
+    def with_public_accepted_findings(self, v: int) -> SprintResultBuilder:
         return self._set("public_accepted_findings", v) or self
 
-    def with_public_stored_findings(self, v: int) -> "SprintResultBuilder":
+    def with_public_stored_findings(self, v: int) -> SprintResultBuilder:
         return self._set("public_stored_findings", v) or self
 
-    def with_public_error(self, v: str) -> "SprintResultBuilder":
+    def with_public_error(self, v: str) -> SprintResultBuilder:
         return self._set("public_error", v) or self
 
-    def with_ct_log_discovered(self, v: int) -> "SprintResultBuilder":
+    def with_ct_log_discovered(self, v: int) -> SprintResultBuilder:
         return self._set("ct_log_discovered", v) or self
 
-    def with_ct_log_stored(self, v: int) -> "SprintResultBuilder":
+    def with_ct_log_stored(self, v: int) -> SprintResultBuilder:
         return self._set("ct_log_stored", v) or self
 
-    def with_ct_log_accepted_findings(self, v: int) -> "SprintResultBuilder":
+    def with_ct_log_accepted_findings(self, v: int) -> SprintResultBuilder:
         return self._set("ct_log_accepted_findings", v) or self
 
-    def with_ct_log_error(self, v: str) -> "SprintResultBuilder":
+    def with_ct_log_error(self, v: str) -> SprintResultBuilder:
         return self._set("ct_log_error", v) or self
 
-    def with_entered_active_at_monotonic(self, v: float) -> "SprintResultBuilder":
+    def with_entered_active_at_monotonic(self, v: float) -> SprintResultBuilder:
         return self._set("entered_active_at_monotonic", v) or self
 
-    def with_pre_loop_elapsed_s(self, v: float) -> "SprintResultBuilder":
+    def with_pre_loop_elapsed_s(self, v: float) -> SprintResultBuilder:
         return self._set("pre_loop_elapsed_s", v) or self
 
-    def with_first_cycle_started_at_monotonic(self, v: float) -> "SprintResultBuilder":
+    def with_first_cycle_started_at_monotonic(self, v: float) -> SprintResultBuilder:
         return self._set("first_cycle_started_at_monotonic", v) or self
 
-    def with_pre_active_starved(self, v: bool) -> "SprintResultBuilder":
+    def with_pre_active_starved(self, v: bool) -> SprintResultBuilder:
         return self._set("pre_active_starved", v) or self
 
     # RESILIENCE-01: Health field setters
-    def with_health_mode(self, v: str) -> "SprintResultBuilder":
+    def with_health_mode(self, v: str) -> SprintResultBuilder:
         """Set health mode (HEALTHY, DEGRADED, IO_ONLY, EMERGENCY)."""
         return self._set("health_mode", v) or self
 
-    def with_health_score(self, v: float) -> "SprintResultBuilder":
+    def with_health_score(self, v: float) -> SprintResultBuilder:
         """Set health score (0-100)."""
         return self._set("health_score", v) or self
 
-    def with_health_grade(self, v: str) -> "SprintResultBuilder":
+    def with_health_grade(self, v: str) -> SprintResultBuilder:
         """Set health grade (A, B, C, D, F)."""
         return self._set("health_grade", v) or self
 
-    def with_total_failures_recorded(self, v: int) -> "SprintResultBuilder":
+    def with_total_failures_recorded(self, v: int) -> SprintResultBuilder:
         """Set total failures recorded to FailureRegistry."""
         return self._set("total_failures_recorded", v) or self
 
-    def with_high_critical_failures(self, v: int) -> "SprintResultBuilder":
+    def with_high_critical_failures(self, v: int) -> SprintResultBuilder:
         """Set high/critical failure count."""
         return self._set("high_critical_failures", v) or self
 
-    def with_components_degraded(self, v: tuple[str, ...]) -> "SprintResultBuilder":
+    def with_components_degraded(self, v: tuple[str, ...]) -> SprintResultBuilder:
         """Set list of degraded components."""
         return self._set("components_degraded", v) or self
 
-    def with_health_transitions(self, v: int) -> "SprintResultBuilder":
+    def with_health_transitions(self, v: int) -> SprintResultBuilder:
         """Set number of health mode transitions."""
         return self._set("health_transitions", v) or self
 
-    def update_health_from_ledger(self, ledger: Any) -> "SprintResultBuilder":
+    def update_health_from_ledger(self, ledger: Any) -> SprintResultBuilder:
         """
         Update all health fields from SprintHealthLedger.
 
@@ -672,22 +678,24 @@ class SprintResultBuilder:
         """
         try:
             from hledac.universal.utils.resilience import HealthScore
+
             score = HealthScore.from_ledger(ledger)
             self.with_health_mode(ledger.degradation_mode.name)
             self.with_health_score(score.total)
             self.with_health_grade(score.grade)
-            
+
             # Get summary synchronously if possible
             summary = None
-            if hasattr(ledger, 'get_health_summary'):
+            if hasattr(ledger, "get_health_summary"):
                 import asyncio
+
                 try:
                     # Try to get running loop first
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                     # Can't use run_until_complete from running loop - use fallback
                     summary = {
                         "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
-                        "transitions": []
+                        "transitions": [],
                     }
                 except RuntimeError:
                     # No running loop - safe to use asyncio.Runner() (Python 3.11+)
@@ -698,12 +706,12 @@ class SprintResultBuilder:
                     except RuntimeError:
                         summary = {
                             "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
-                            "transitions": []
+                            "transitions": [],
                         }
             else:
                 summary = {
                     "registry": {"total_failures": 0, "high_critical_count": 0, "component_details": {}},
-                    "transitions": []
+                    "transitions": [],
                 }
             registry = summary.get("registry", {})
             self.with_total_failures_recorded(registry.get("total_failures", 0))
@@ -715,7 +723,7 @@ class SprintResultBuilder:
             pass  # Don't fail if health update fails
         return self
 
-    def with_(self, field: str, value: object) -> "SprintResultBuilder":
+    def with_(self, field: str, value: object) -> SprintResultBuilder:
         """
         Generic setter for any field by name.
         Use for fields without dedicated with_ methods.
@@ -728,18 +736,17 @@ class SprintResultBuilder:
         self._set(field, value)
         return self
 
-    def update(self, **kwargs: object) -> "SprintResultBuilder":
+    def update(self, **kwargs: object) -> SprintResultBuilder:
         """
-        Batch update multiple fields at once.
+            Batch update multiple fields at once.
 
-        Example:
-            builder.update(
-                cycles_started=5,
-                aborted=True,
-                abort_reason="timeout"
-    )
+            Example:
+                builder.update(
+                    cycles_started=5,
+                    aborted=True,
+                    abort_reason="timeout"
+        )
         """
         for k, v in kwargs.items():
             self._set(k, v)
         return self
-

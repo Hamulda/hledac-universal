@@ -24,9 +24,8 @@ from __future__ import annotations
 import os
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
-from _core import aclose
 
+from compat.msgspec_gc_compat import Struct
 
 # ── Constants ─────────────────────────────────────────────────────────────────────
 
@@ -74,7 +73,7 @@ class FeedDominanceBudget(Struct, frozen=True):
     """
 
     max_feed_accepted_before_nonfeed_terminal: int | None = None  # None = no cap
-    max_feed_per_source: int | None = None                       # None = no cap
+    max_feed_per_source: int | None = None  # None = no cap
     max_feed_share_before_nonfeed_terminal: float | None = None  # None = no cap (1.0 = 100%)
 
     def is_sentinel(self) -> bool:
@@ -83,7 +82,7 @@ class FeedDominanceBudget(Struct, frozen=True):
             self.max_feed_accepted_before_nonfeed_terminal is None
             and self.max_feed_per_source is None
             and self.max_feed_share_before_nonfeed_terminal is None
-    )
+        )
 
     def is_active(self) -> bool:
         """Return True when any cap is configured (non-sentinel)."""
@@ -128,18 +127,14 @@ class FeedDominanceBudget(Struct, frozen=True):
                 profile_cap = _NONFEED_PROFILE_FEED_CAP_THRESHOLDS.get(_effective_intent, 0)
                 if profile_cap > 0 and feed_accepted_so_far >= profile_cap:
                     return True, (
-                        f"feed_cap_active:nonfeed_profile:{_effective_intent}:{feed_accepted_so_far}"
-                        f">={profile_cap}"
-    )
+                        f"feed_cap_active:nonfeed_profile:{_effective_intent}:{feed_accepted_so_far}>={profile_cap}"
+                    )
 
             # F227D: Mission-aware cap — use per-intent threshold when nonfeed unresolved
             if self._mission_cap_active(mission_intent) and nonfeed_unresolved:
                 mission_cap = _MISSION_FEED_CAP_THRESHOLDS.get(mission_intent, 0)
                 if mission_cap > 0 and feed_accepted_so_far >= mission_cap:
-                    return True, (
-                        f"feed_cap_active:mission:{mission_intent}:{feed_accepted_so_far}"
-                        f">={mission_cap}"
-    )
+                    return True, (f"feed_cap_active:mission:{mission_intent}:{feed_accepted_so_far}>={mission_cap}")
 
             # Base budget caps — only evaluated when budget is active
             if self.is_active():
@@ -152,30 +147,23 @@ class FeedDominanceBudget(Struct, frozen=True):
                     return True, (
                         f"feed_cap_active:global:{feed_accepted_so_far}"
                         f">={self.max_feed_accepted_before_nonfeed_terminal}"
-    )
+                    )
 
                 # Cap 3: per-source cap
                 if self.max_feed_per_source is not None:
                     for source, count in feed_per_source.items():
                         if count >= self.max_feed_per_source:
-                            return True, (
-                                f"feed_cap_active:per_source:{source}:{count}"
-                                f">={self.max_feed_per_source}"
-    )
+                            return True, (f"feed_cap_active:per_source:{source}:{count}>={self.max_feed_per_source}")
 
                 # Cap 2: feed share of total (only meaningful when nonfeed unresolved)
-                if (
-                    self.max_feed_share_before_nonfeed_terminal is not None
-                    and nonfeed_unresolved
-                ):
+                if self.max_feed_share_before_nonfeed_terminal is not None and nonfeed_unresolved:
                     total = feed_accepted_so_far + nonfeed_accepted_so_far
                     if total > 0:
                         share = feed_accepted_so_far / total
                         if share >= self.max_feed_share_before_nonfeed_terminal:
                             return True, (
-                                f"feed_cap_active:share:{share:.2f}"
-                                f">={self.max_feed_share_before_nonfeed_terminal}"
-    )
+                                f"feed_cap_active:share:{share:.2f}>={self.max_feed_share_before_nonfeed_terminal}"
+                            )
 
             return False, ""
         except Exception:
@@ -230,28 +218,23 @@ def _load_feed_budget_from_env() -> FeedDominanceBudget:
       - No network I/O, no model/MLX load
       - All values clamped to safe bounds [1, 10000] or [0.0, 1.0]
     """
+
     def _int(key: str, default: int | None) -> int | None:
         try:
             val = os.environ.get(key, "")
             return max(1, min(10000, int(val))) if val else default
-        except (ValueError, OverflowError):
+        except ValueError, OverflowError:
             return default
 
     def _float(key: str, default: float | None) -> float | None:
         try:
             val = os.environ.get(key, "")
             return max(0.0, min(1.0, float(val))) if val else default
-        except (ValueError, OverflowError):
+        except ValueError, OverflowError:
             return default
 
     return FeedDominanceBudget(
-        max_feed_accepted_before_nonfeed_terminal=_int(
-            "HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED", None
-        ),
-        max_feed_per_source=_int(
-            "HLEDAC_FEED_MAX_PER_SOURCE", None
-        ),
-        max_feed_share_before_nonfeed_terminal=_float(
-            "HLEDAC_FEED_MAX_SHARE_BEFORE_NONFEED", None
-        ),
+        max_feed_accepted_before_nonfeed_terminal=_int("HLEDAC_FEED_MAX_ACCEPTED_BEFORE_NONFEED", None),
+        max_feed_per_source=_int("HLEDAC_FEED_MAX_PER_SOURCE", None),
+        max_feed_share_before_nonfeed_terminal=_float("HLEDAC_FEED_MAX_SHARE_BEFORE_NONFEED", None),
     )

@@ -2,8 +2,6 @@
 Semantic Deduplicator — Embedding-Based Duplicate Detection (F195 Sprint)
 =======================================================================
 
-
-
 ROLE: Secondary dedup layer after URL/content fingerprint dedup.
 Uses vector embeddings to detect semantically similar findings that
 passed the primary (hash-based) dedup but are still near-duplicates.
@@ -27,17 +25,21 @@ PERSISTENCE:
 - Idempotent upsert (put_many)
 - Fail-soft init — any error stores in _boot_error, dedup proceeds without persistence
 """
+
 import hashlib
 import logging
 from collections import OrderedDict
 from pathlib import Path
+
 import numpy as np
 import psutil
+
 from hledac.universal.embedding_pipeline import generate_embeddings
-from _core import aclose
+
 try:
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     _rust_simhash = rust.raw.compute_simhash
     _SIMHASH_AVAILABLE = True
 except ImportError:
@@ -51,6 +53,7 @@ _EMBEDDING_DIM = 256
 _BATCH_SIZE = 16
 _MEMORY_GUARD_THRESHOLD_GB = 6.0
 
+
 class _SemanticDedupLMDB:
     """
     Persistent LMDB store for semantic dedup embeddings.
@@ -58,43 +61,45 @@ class _SemanticDedupLMDB:
     Fail-soft: any exception during init stored in _boot_error.
     Dedup proceeds without persistence if init fails.
     """
-    __slots__ = tuple(('_boot_error', '_env'))
+
+    __slots__ = ("_boot_error", "_env")
 
     # F320-REFACTOR: Use canonical close() from _patterns
     from hledac.universal.utils._patterns import make_close_method
 
     close = make_close_method("_env")
 
-    def __init__(self, path_str: str | None=None):
+    def __init__(self, path_str: str | None = None) -> None:
         self._env = None
         self._boot_error: str | None = None
         if path_str is None:
-            self._boot_error = 'no path provided'
+            self._boot_error = "no path provided"
             return
         try:
             from hledac.universal.paths import open_lmdb
+
             lmdb_path = Path(path_str)
             lmdb_path.mkdir(parents=True, exist_ok=True)
             self._env = open_lmdb(lmdb_path, map_size=256 * 1024 * 1024)
             self._boot_error = None
-            logger.debug(f'[SEMDEDUP] LMDB persistent store initialized: {path_str}')
+            logger.debug(f"[SEMDEDUP] LMDB persistent store initialized: {path_str}")
         except Exception as e:
             self._boot_error = str(e)
             self._env = None
-            logger.warning(f'[SEMDEDUP] LMDB init failed: {e}')
+            logger.warning(f"[SEMDEDUP] LMDB init failed: {e}")
 
     def put(self, key: str, embedding: np.ndarray) -> bool:
         """Store a single embedding. Returns True on success."""
         if self._env is None:
             return False
         try:
-            key_bytes = key.encode('utf-8')
+            key_bytes = key.encode("utf-8")
             emb_bytes = embedding.astype(np.float32).tobytes()
             with self._env.begin(write=True) as txn:
                 txn.put(key_bytes, emb_bytes)
             return True
         except Exception as e:
-            logger.debug(f'[SEMDEDUP] LMDB put failed: {e}')
+            logger.debug(f"[SEMDEDUP] LMDB put failed: {e}")
             return False
 
     def get(self, key: str) -> np.ndarray | None:
@@ -102,7 +107,7 @@ class _SemanticDedupLMDB:
         if self._env is None:
             return None
         try:
-            key_bytes = key.encode('utf-8')
+            key_bytes = key.encode("utf-8")
             with self._env.begin(write=False, buffers=True) as txn:
                 raw = txn.get(key_bytes)
                 if raw is None:
@@ -129,9 +134,18 @@ class SemanticDedupCache:
     LOW-MEMORY contract: if RSS > _MEMORY_GUARD_THRESHOLD_GB, semantic dedup
     is skipped entirely (returns duplicate=False). This prevents OOM on M1 8GB.
     """
-    __slots__ = tuple(('_cache', '_cache_hits', '_cache_memory_bytes', '_cache_misses', '_duplicate_count', '_lmdb_store', '_skipped_count'))
 
-    def __init__(self, lmdb_path: str | None=None):
+    __slots__ = (
+        "_cache",
+        "_cache_hits",
+        "_cache_memory_bytes",
+        "_cache_misses",
+        "_duplicate_count",
+        "_lmdb_store",
+        "_skipped_count",
+    )
+
+    def __init__(self, lmdb_path: str | None = None) -> None:
         self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._cache_memory_bytes: int = 0
         self._lmdb_store = _SemanticDedupLMDB(lmdb_path) if lmdb_path else None
@@ -149,8 +163,10 @@ class SemanticDedupCache:
         """
         try:
             rss = psutil.Process().memory_info().rss
-            if rss > _MEMORY_GUARD_THRESHOLD_GB * 1024 ** 3:
-                logger.warning(f'[SEMDEDUP] Memory guard triggered: RSS={rss / 1024 ** 3:.2f}GB > {_MEMORY_GUARD_THRESHOLD_GB}GB. Skipping semantic dedup.')
+            if rss > _MEMORY_GUARD_THRESHOLD_GB * 1024**3:
+                logger.warning(
+                    f"[SEMDEDUP] Memory guard triggered: RSS={rss / 1024**3:.2f}GB > {_MEMORY_GUARD_THRESHOLD_GB}GB. Skipping semantic dedup."
+                )
                 self._skipped_count += 1
                 return False
             return True
@@ -163,7 +179,7 @@ class SemanticDedupCache:
 
     def _cache_item_size_bytes(self, text: str, emb: np.ndarray) -> int:
         """Total bytes for text key + embedding value."""
-        return len(text.encode('utf-8')) + emb.nbytes
+        return len(text.encode("utf-8")) + emb.nbytes
 
     def _evict_if_needed(self, text: str, emb: np.ndarray) -> None:
         """Evict LRU items until we have room for text+emb."""
@@ -190,7 +206,7 @@ class SemanticDedupCache:
         self._cache.move_to_end(text)
         return self._cache[text]
 
-    def check_and_cache(self, text: str, threshold: float=0.85) -> bool:
+    def check_and_cache(self, text: str, threshold: float = 0.85) -> bool:
         """
         Check if text is a semantic duplicate of any cached text.
 
@@ -225,18 +241,20 @@ class SemanticDedupCache:
                 sim = _cosine_similarity(query_emb, cached_emb.reshape(1, -1))[0, 0]
                 if sim >= threshold:
                     self._duplicate_count += 1
-                    logger.debug(f'[SEMDEDUP] Duplicate detected: sim={sim:.3f}')
+                    logger.debug(f"[SEMDEDUP] Duplicate detected: sim={sim:.3f}")
                     return True
             # xxh3-64 LMDB key (~10× faster than blake2b-256 on M1)
             # Falls back to blake2b-64 if hashing utils unavailable
             try:
                 from hledac.universal.utils.hashing import xxh3_64_hex
+
                 key = xxh3_64_hex(text)
             except Exception:
-                key = hashlib.blake2b(text.encode('utf-8'), digest_size=8).hexdigest()
-            text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                key = hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             try:
                 from hledac.universal.knowledge.ann_index import check_ann_duplicate
+
                 if check_ann_duplicate(emb, text_hash, key):
                     self._duplicate_count += 1
                     return True
@@ -246,12 +264,10 @@ class SemanticDedupCache:
                 self._lmdb_store.put(key, emb)
             return False
         except Exception as e:
-            logger.debug(f'[SEMDEDUP] check_and_cache failed: {e}')
+            logger.debug(f"[SEMDEDUP] check_and_cache failed: {e}")
             return False
 
-    def _deduplicate_texts(
-        self, texts: list[str]
-    ) -> tuple[list[str], list[int], dict[int, list[int]]]:
+    def _deduplicate_texts(self, texts: list[str]) -> tuple[list[str], list[int], dict[int, list[int]]]:
         """
         Phase 1: Deduplicate texts by exact match.
 
@@ -275,9 +291,7 @@ class SemanticDedupCache:
 
         return unique_texts, index_map, unique_to_original
 
-    def _compute_normalized_embeddings(
-        self, unique_texts: list[str]
-    ) -> np.ndarray | None:
+    def _compute_normalized_embeddings(self, unique_texts: list[str]) -> np.ndarray | None:
         """
         Phase 2: Generate and normalize embeddings for unique texts.
 
@@ -314,7 +328,7 @@ class SemanticDedupCache:
         """
         results: list[set[int]] = [set() for _ in texts]
 
-        for i, t in enumerate(texts):
+        for i, _t in enumerate(texts):
             ui = index_map[i]
             query = norm_embs[ui].reshape(1, -1)
             sims = (query @ norm_embs.T)[0]
@@ -327,7 +341,7 @@ class SemanticDedupCache:
 
         return results
 
-    def check_batch(self, texts: list[str], threshold: float=0.95) -> list[set[int]]:
+    def check_batch(self, texts: list[str], threshold: float = 0.95) -> list[set[int]]:
         """
         Batch semantic dedup — find groups of duplicate texts.
 
@@ -347,7 +361,6 @@ class SemanticDedupCache:
         if not self._check_memory_guard():
             return [set() for _ in texts]
         try:
-            # Phase 1: Deduplicate by exact match
             unique_texts, index_map, unique_to_original = self._deduplicate_texts(texts)
 
             if len(unique_texts) == 1:
@@ -356,30 +369,35 @@ class SemanticDedupCache:
                     result[i].add(0)
                 return result
 
-            # Phase 2: Generate and normalize embeddings
             norm_embs = self._compute_normalized_embeddings(unique_texts)
             if norm_embs is None:
                 return [set() for _ in texts]
 
-            # Build canonical mapping
             canonical_of: dict[int, int] = {j: unique_to_original[j][0] for j in unique_to_original}
 
-            # Phase 3: Compute similarities
-            return self._compute_similarities(
-                texts, index_map, norm_embs, canonical_of, threshold)
+            return self._compute_similarities(texts, index_map, norm_embs, canonical_of, threshold)
         except Exception as e:
-            logger.debug(f'[SEMDEDUP] check_batch failed: {e}')
+            logger.debug(f"[SEMDEDUP] check_batch failed: {e}")
             return [set() for _ in texts]
 
     def get_stats(self) -> dict:
         """Return dedup cache statistics."""
-        return {'cache_items': len(self._cache), 'cache_memory_mb': self._cache_memory_bytes / (1024 * 1024), 'cache_hits': self._cache_hits, 'cache_misses': self._cache_misses, 'duplicate_count': self._duplicate_count, 'skipped_count': self._skipped_count, 'lmdb_ready': self._lmdb_store is not None and self._lmdb_store._boot_error is None}
+        return {
+            "cache_items": len(self._cache),
+            "cache_memory_mb": self._cache_memory_bytes / (1024 * 1024),
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "duplicate_count": self._duplicate_count,
+            "skipped_count": self._skipped_count,
+            "lmdb_ready": self._lmdb_store is not None and self._lmdb_store._boot_error is None,
+        }
 
     def close(self) -> None:
         """F196B: Close LMDB environment."""
         if self._lmdb_store is not None:
             self._lmdb_store.close()
             self._lmdb_store = None
+
 
 def _generate_single_embedding(text: str) -> np.ndarray | None:
     """Generate embedding for a single text. Fail-soft on error."""
@@ -389,14 +407,16 @@ def _generate_single_embedding(text: str) -> np.ndarray | None:
             return None
         return embeddings[0].astype(np.float32)
     except Exception as e:
-        logger.debug(f'[SEMDEDUP] Embedding generation failed: {e}')
+        logger.debug(f"[SEMDEDUP] Embedding generation failed: {e}")
         return None
+
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Compute cosine similarity between rows of a and b."""
     norm_a = np.linalg.norm(a, axis=1, keepdims=True) + 1e-08
     norm_b = np.linalg.norm(b, axis=1, keepdims=True) + 1e-08
     return a / norm_a @ (b / norm_b).T
+
 
 def _compute_simhash_fingerprint(text: str) -> str:
     """
@@ -405,11 +425,13 @@ def _compute_simhash_fingerprint(text: str) -> str:
     blake2b when not (preserves existing ANN cache key format).
     """
     if _SIMHASH_AVAILABLE:
-        return format(_rust_simhash(text), '016x')
+        return format(_rust_simhash(text), "016x")
     import hashlib
-    return hashlib.blake2b(text.encode('utf-8'), digest_size=8).hexdigest()
 
-def find_near_duplicates_in_batch(texts: list[str], threshold: int=3) -> list[tuple[int, int]]:
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+
+
+def find_near_duplicates_in_batch(texts: list[str], threshold: int = 3) -> list[tuple[int, int]]:
     """
     Find near-duplicate text pairs using SimHash Hamming distance.
 
@@ -428,14 +450,16 @@ def find_near_duplicates_in_batch(texts: list[str], threshold: int=3) -> list[tu
     if not _SIMHASH_AVAILABLE or len(texts) < 2:
         return []
     if len(texts) > MAX_SIMHASH_ITEMS:
-        logger.debug(f'[SIMDEDUP] find_near_duplicates_in_batch: {len(texts)} > MAX={MAX_SIMHASH_ITEMS}, skipping')
+        logger.debug(f"[SIMDEDUP] find_near_duplicates_in_batch: {len(texts)} > MAX={MAX_SIMHASH_ITEMS}, skipping")
         return []
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _batch_simhash = rust.raw.batch_compute_simhash
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _find_near_dup = rust.raw.find_near_duplicates
         fps = _batch_simhash(texts)
         return _find_near_dup(fps, threshold)

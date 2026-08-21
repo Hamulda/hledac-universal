@@ -69,7 +69,9 @@ USAGE:
   elif get_capability("tor") == TransportCapability.STUB:
       log.warning("Tor stub mode: results will be simulated")
 """
+
 from __future__ import annotations
+
 import asyncio
 import contextvars
 import logging
@@ -77,11 +79,13 @@ import os
 import shutil
 from enum import Enum
 from typing import TYPE_CHECKING
+
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 logger = logging.getLogger(__name__)
+
 
 class TransportCapability(Enum):
     """
@@ -103,11 +107,57 @@ class TransportCapability(Enum):
                                 Sidecar stub exists but actual implementation missing.
                                 Sidecars should skip with INFO log and TODO marker.
     """
-    READY = 'ready'
-    STUB = 'stub'
-    UNAVAILABLE = 'unavailable'
-    MISSING_IMPLEMENTATION = 'missing_implementation'
-_CAPABILITY_REASONS: dict[str, dict[TransportCapability, str]] = {'tor': {TransportCapability.READY: 'Tor SOCKS5 proxy running and circuit established', TransportCapability.UNAVAILABLE: 'Tor binary not found (install: brew install tor)', TransportCapability.STUB: 'TorTransport.start() not called or circuit not established'}, 'i2p': {TransportCapability.READY: 'I2P SAM v3 client connected and session active', TransportCapability.UNAVAILABLE: 'I2P SAM bridge not running on port 7656', TransportCapability.STUB: 'I2P HTTP/SOCKS proxy available but SAM v3 not connected', TransportCapability.MISSING_IMPLEMENTATION: 'I2P discovery sidecar not wired to orchestrator'}, 'arti': {TransportCapability.READY: 'ArtiNode Rust embedding bootstrapped and running', TransportCapability.UNAVAILABLE: 'Rust arti_bridge module not available (embedded_tor feature disabled)', TransportCapability.STUB: 'Arti subprocess mode: real Tor but no circuit isolation'}, 'nym': {TransportCapability.READY: 'nym-client WebSocket bridge connected', TransportCapability.UNAVAILABLE: 'nym-client binary not found in PATH', TransportCapability.STUB: 'nym-client process started but WebSocket not connected'}, 'ipfs': {TransportCapability.READY: 'IPFS HTTP gateway accessible', TransportCapability.UNAVAILABLE: 'No IPFS gateway configured or accessible', TransportCapability.STUB: 'IPFS library present but no real network operations', TransportCapability.MISSING_IMPLEMENTATION: 'IPFS Kademlia/BitSwap not implemented (HTTP gateway only)'}, 'dht': {TransportCapability.READY: 'DHT network accessible and responding', TransportCapability.STUB: 'KademliaNode initialized but _transport is None (simulated mode)', TransportCapability.MISSING_IMPLEMENTATION: 'DHT crawler not integrated with sidecar orchestrator'}, 'gopher': {TransportCapability.READY: 'Gopher protocol client functional', TransportCapability.MISSING_IMPLEMENTATION: 'GopherLane not implemented'}, 'i2p_sam': {TransportCapability.READY: 'I2P SAM v3 client connected and session active', TransportCapability.UNAVAILABLE: 'I2P SAM bridge not running on port 7656', TransportCapability.STUB: 'I2P transport available but SAM v3 session not created'}}
+
+    READY = "ready"
+    STUB = "stub"
+    UNAVAILABLE = "unavailable"
+    MISSING_IMPLEMENTATION = "missing_implementation"
+
+
+_CAPABILITY_REASONS: dict[str, dict[TransportCapability, str]] = {
+    "tor": {
+        TransportCapability.READY: "Tor SOCKS5 proxy running and circuit established",
+        TransportCapability.UNAVAILABLE: "Tor binary not found (install: brew install tor)",
+        TransportCapability.STUB: "TorTransport.start() not called or circuit not established",
+    },
+    "i2p": {
+        TransportCapability.READY: "I2P SAM v3 client connected and session active",
+        TransportCapability.UNAVAILABLE: "I2P SAM bridge not running on port 7656",
+        TransportCapability.STUB: "I2P HTTP/SOCKS proxy available but SAM v3 not connected",
+        TransportCapability.MISSING_IMPLEMENTATION: "I2P discovery sidecar not wired to orchestrator",
+    },
+    "arti": {
+        TransportCapability.READY: "ArtiNode Rust embedding bootstrapped and running",
+        TransportCapability.UNAVAILABLE: "Rust arti_bridge module not available (embedded_tor feature disabled)",
+        TransportCapability.STUB: "Arti subprocess mode: real Tor but no circuit isolation",
+    },
+    "nym": {
+        TransportCapability.READY: "nym-client WebSocket bridge connected",
+        TransportCapability.UNAVAILABLE: "nym-client binary not found in PATH",
+        TransportCapability.STUB: "nym-client process started but WebSocket not connected",
+    },
+    "ipfs": {
+        TransportCapability.READY: "IPFS HTTP gateway accessible",
+        TransportCapability.UNAVAILABLE: "No IPFS gateway configured or accessible",
+        TransportCapability.STUB: "IPFS library present but no real network operations",
+        TransportCapability.MISSING_IMPLEMENTATION: "IPFS Kademlia/BitSwap not implemented (HTTP gateway only)",
+    },
+    "dht": {
+        TransportCapability.READY: "DHT network accessible and responding",
+        TransportCapability.STUB: "KademliaNode initialized but _transport is None (simulated mode)",
+        TransportCapability.MISSING_IMPLEMENTATION: "DHT crawler not integrated with sidecar orchestrator",
+    },
+    "gopher": {
+        TransportCapability.READY: "Gopher protocol client functional",
+        TransportCapability.MISSING_IMPLEMENTATION: "GopherLane not implemented",
+    },
+    "i2p_sam": {
+        TransportCapability.READY: "I2P SAM v3 client connected and session active",
+        TransportCapability.UNAVAILABLE: "I2P SAM bridge not running on port 7656",
+        TransportCapability.STUB: "I2P transport available but SAM v3 session not created",
+    },
+}
+
 
 async def _detect_tor_capability() -> tuple[TransportCapability, str]:
     """Detect Tor transport capability.
@@ -123,8 +173,8 @@ async def _detect_tor_capability() -> tuple[TransportCapability, str]:
     Returns STUB if:
       - tor binary exists but SOCKS5 not reachable
     """
-    if shutil.which('tor') is None:
-        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS['tor'][TransportCapability.UNAVAILABLE])
+    if shutil.which("tor") is None:
+        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["tor"][TransportCapability.UNAVAILABLE])
     try:
         import socket
 
@@ -132,18 +182,20 @@ async def _detect_tor_capability() -> tuple[TransportCapability, str]:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(2.0)
             try:
-                s.connect(('127.0.0.1', 9050))
+                s.connect(("127.0.0.1", 9050))
                 s.close()
                 return True
             except OSError:
                 return False
+
         loop = asyncio.get_running_loop()
         socks_ok = await loop.run_in_executor(None, _check_port)
         if socks_ok:
-            return (TransportCapability.READY, _CAPABILITY_REASONS['tor'][TransportCapability.READY])
-        return (TransportCapability.STUB, 'Tor binary exists but SOCKS5 proxy not reachable on port 9050')
+            return (TransportCapability.READY, _CAPABILITY_REASONS["tor"][TransportCapability.READY])
+        return (TransportCapability.STUB, "Tor binary exists but SOCKS5 proxy not reachable on port 9050")
     except Exception as e:
-        return (TransportCapability.STUB, f'Tor capability check failed: {e}')
+        return (TransportCapability.STUB, f"Tor capability check failed: {e}")
+
 
 async def _detect_i2p_capability() -> tuple[TransportCapability, str]:
     """Detect I2P transport capability.
@@ -164,7 +216,7 @@ async def _detect_i2p_capability() -> tuple[TransportCapability, str]:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2.0)
         try:
-            s.connect(('127.0.0.1', 7656))
+            s.connect(("127.0.0.1", 7656))
             s.close()
             return True
         except OSError:
@@ -174,22 +226,24 @@ async def _detect_i2p_capability() -> tuple[TransportCapability, str]:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2.0)
         try:
-            s.connect(('127.0.0.1', 4444))
+            s.connect(("127.0.0.1", 4444))
             s.close()
             return True
         except OSError:
             return False
+
     try:
         loop = asyncio.get_running_loop()
         sam_ok = await loop.run_in_executor(None, _check_sam_port)
         if sam_ok:
-            return (TransportCapability.READY, _CAPABILITY_REASONS['i2p'][TransportCapability.READY])
+            return (TransportCapability.READY, _CAPABILITY_REASONS["i2p"][TransportCapability.READY])
         socks_ok = await loop.run_in_executor(None, _check_socks_port)
         if socks_ok:
-            return (TransportCapability.STUB, 'I2P SOCKS5 proxy available (port 4444) but SAM v3 not connected')
-        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS['i2p'][TransportCapability.UNAVAILABLE])
+            return (TransportCapability.STUB, "I2P SOCKS5 proxy available (port 4444) but SAM v3 not connected")
+        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["i2p"][TransportCapability.UNAVAILABLE])
     except Exception as e:
-        return (TransportCapability.UNAVAILABLE, f'I2P capability check failed: {e}')
+        return (TransportCapability.UNAVAILABLE, f"I2P capability check failed: {e}")
+
 
 async def _detect_arti_capability() -> tuple[TransportCapability, str]:
     """Detect Arti transport capability.
@@ -216,21 +270,24 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
     """
     import asyncio
     import shutil
+
     try:
         import rust
-        if not hasattr(rust, 'arti_bridge'):
-            if shutil.which('arti') is not None:
-                return (TransportCapability.STUB, 'Rust arti_bridge unavailable, subprocess arti not connected')
-            return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS['arti'][TransportCapability.UNAVAILABLE])
+
+        if not hasattr(rust, "arti_bridge"):
+            if shutil.which("arti") is not None:
+                return (TransportCapability.STUB, "Rust arti_bridge unavailable, subprocess arti not connected")
+            return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE])
         arti_bridge = rust.arti_bridge
-        if not hasattr(arti_bridge, 'ArtiNode'):
-            return (TransportCapability.STUB, 'ArtiNode class not found in arti_bridge module')
-        node_class = getattr(arti_bridge, 'ArtiNode')
+        if not hasattr(arti_bridge, "ArtiNode"):
+            return (TransportCapability.STUB, "ArtiNode class not found in arti_bridge module")
+        node_class = arti_bridge.ArtiNode
         if not callable(node_class):
-            return (TransportCapability.STUB, 'ArtiNode is not callable')
+            return (TransportCapability.STUB, "ArtiNode is not callable")
         try:
             import os
-            data_dir = os.environ.get('HLEDAC_ARTI_DATA_DIR', '~/.hledac/arti')
+
+            data_dir = os.environ.get("HLEDAC_ARTI_DATA_DIR", "~/.hledac/arti")
 
             async def _try_bootstrap() -> tuple[bool, str]:
                 """Attempt ArtiNode bootstrap and return (success, reason)."""
@@ -241,38 +298,44 @@ async def _detect_arti_capability() -> tuple[TransportCapability, str]:
                     def _do_start() -> bool:
                         try:
                             return node.start()
-                        except Exception as e:
+                        except Exception:
                             return False
+
                     bootstrapped = await safe_wait_for(loop.run_in_executor(None, _do_start), timeout=5.0)
                     if bootstrapped:
                         try:
                             status = node.session_status()
-                            if status and status.get('bootstrap_status'):
+                            if status and status.get("bootstrap_status"):
                                 return (True, f"ArtiNode bootstrapped: {status.get('bootstrap_status')}")
                         except Exception:
                             pass
-                        return (True, 'ArtiNode bootstrapped successfully')
-                    return (False, 'ArtiNode.start() returned False')
-                except asyncio.TimeoutError:
-                    return (False, 'ArtiNode bootstrap timed out (5s)')
+                        return (True, "ArtiNode bootstrapped successfully")
+                    return (False, "ArtiNode.start() returned False")
+                except TimeoutError:
+                    return (False, "ArtiNode bootstrap timed out (5s)")
                 except PermissionError:
-                    return (False, 'ArtiNode creation blocked by permissions')
+                    return (False, "ArtiNode creation blocked by permissions")
                 except OSError as e:
-                    return (False, f'ArtiNode creation failed: {e}')
+                    return (False, f"ArtiNode creation failed: {e}")
                 except Exception as e:
-                    return (False, f'ArtiNode bootstrap error: {e}')
+                    return (False, f"ArtiNode bootstrap error: {e}")
+
             success, reason = await _try_bootstrap()
             if success:
                 return (TransportCapability.READY, reason)
             return (TransportCapability.STUB, reason)
         except Exception as e:
-            return (TransportCapability.STUB, f'ArtiNode bootstrap verification failed: {e}')
+            return (TransportCapability.STUB, f"ArtiNode bootstrap verification failed: {e}")
     except ImportError:
-        if shutil.which('arti') is not None:
-            return (TransportCapability.STUB, 'Rust module unavailable, subprocess arti binary present but not connected')
-        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS['arti'][TransportCapability.UNAVAILABLE])
+        if shutil.which("arti") is not None:
+            return (
+                TransportCapability.STUB,
+                "Rust module unavailable, subprocess arti binary present but not connected",
+            )
+        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["arti"][TransportCapability.UNAVAILABLE])
     except Exception as e:
-        return (TransportCapability.UNAVAILABLE, f'Arti detection error: {e}')
+        return (TransportCapability.UNAVAILABLE, f"Arti detection error: {e}")
+
 
 async def _detect_nym_capability() -> tuple[TransportCapability, str]:
     """Detect Nym transport capability.
@@ -285,26 +348,29 @@ async def _detect_nym_capability() -> tuple[TransportCapability, str]:
       - nym-client binary not found
     """
     import socket
-    if shutil.which('nym-client') is None and (not os.environ.get('HLEDAC_NYM_SOCKS_PROXY')):
-        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS['nym'][TransportCapability.UNAVAILABLE])
+
+    if shutil.which("nym-client") is None and (not os.environ.get("HLEDAC_NYM_SOCKS_PROXY")):
+        return (TransportCapability.UNAVAILABLE, _CAPABILITY_REASONS["nym"][TransportCapability.UNAVAILABLE])
 
     def _check_ws_port() -> bool:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.0)
         try:
-            s.connect(('127.0.0.1', 1977))
+            s.connect(("127.0.0.1", 1977))
             s.close()
             return True
         except OSError:
             return False
+
     try:
         loop = asyncio.get_running_loop()
         ws_ok = await loop.run_in_executor(None, _check_ws_port)
         if ws_ok:
-            return (TransportCapability.READY, _CAPABILITY_REASONS['nym'][TransportCapability.READY])
-        return (TransportCapability.STUB, 'nym-client binary exists but WebSocket bridge not connected')
+            return (TransportCapability.READY, _CAPABILITY_REASONS["nym"][TransportCapability.READY])
+        return (TransportCapability.STUB, "nym-client binary exists but WebSocket bridge not connected")
     except Exception:
-        return (TransportCapability.STUB, 'nym-client may be available but connection check failed')
+        return (TransportCapability.STUB, "nym-client may be available but connection check failed")
+
 
 async def _detect_ipfs_capability() -> tuple[TransportCapability, str]:
     """Detect IPFS capability.
@@ -321,10 +387,12 @@ async def _detect_ipfs_capability() -> tuple[TransportCapability, str]:
     M1 8GB OPTIMIZATION: Uses HLEDAC_IPFS_GATEWAY_URL env var for gateway URL,
     with fallback to public gateways. Checks with lightweight HEAD request.
     """
-    import httpx
     import os
-    configured_gateway = os.environ.get('HLEDAC_IPFS_GATEWAY_URL', '').strip()
-    fallback_gateways = ['https://ipfs.io', 'https://cloudflare-ipfs.com', 'https://dweb.link']
+
+    import httpx
+
+    configured_gateway = os.environ.get("HLEDAC_IPFS_GATEWAY_URL", "").strip()
+    fallback_gateways = ["https://ipfs.io", "https://cloudflare-ipfs.com", "https://dweb.link"]
     gateways_to_check = []
     if configured_gateway:
         gateways_to_check.append(configured_gateway)
@@ -335,11 +403,15 @@ async def _detect_ipfs_capability() -> tuple[TransportCapability, str]:
                 resp = await client.head(gateway)
                 if resp.status_code < 500:
                     if configured_gateway and gateway == configured_gateway:
-                        return (TransportCapability.READY, f'IPFS gateway {gateway} accessible (user-configured)')
-                    return (TransportCapability.READY, f'IPFS gateway {gateway} accessible')
+                        return (TransportCapability.READY, f"IPFS gateway {gateway} accessible (user-configured)")
+                    return (TransportCapability.READY, f"IPFS gateway {gateway} accessible")
         except Exception:
             pass
-    return (TransportCapability.MISSING_IMPLEMENTATION, _CAPABILITY_REASONS['ipfs'][TransportCapability.MISSING_IMPLEMENTATION])
+    return (
+        TransportCapability.MISSING_IMPLEMENTATION,
+        _CAPABILITY_REASONS["ipfs"][TransportCapability.MISSING_IMPLEMENTATION],
+    )
+
 
 async def _detect_dht_capability() -> tuple[TransportCapability, str]:
     """Detect DHT capability.
@@ -356,11 +428,13 @@ async def _detect_dht_capability() -> tuple[TransportCapability, str]:
     """
     try:
         from hledac.universal.network.dht import kademlia_node
-        if hasattr(kademlia_node, '_transport') and getattr(kademlia_node, '_transport', None) is not None:
-            return (TransportCapability.READY, 'DHT network has UDP transport active')
-        return (TransportCapability.STUB, _CAPABILITY_REASONS['dht'][TransportCapability.STUB])
+
+        if hasattr(kademlia_node, "_transport") and getattr(kademlia_node, "_transport", None) is not None:
+            return (TransportCapability.READY, "DHT network has UDP transport active")
+        return (TransportCapability.STUB, _CAPABILITY_REASONS["dht"][TransportCapability.STUB])
     except ImportError:
-        return (TransportCapability.MISSING_IMPLEMENTATION, 'KademliaNode not importable')
+        return (TransportCapability.MISSING_IMPLEMENTATION, "KademliaNode not importable")
+
 
 async def _detect_gopher_capability() -> tuple[TransportCapability, str]:
     """Detect Gopher capability.
@@ -370,13 +444,16 @@ async def _detect_gopher_capability() -> tuple[TransportCapability, str]:
     """
     try:
         from hledac.universal.transport.gopher_transport import GopherTransport
-        return (TransportCapability.READY, _CAPABILITY_REASONS['gopher'][TransportCapability.READY])
+
+        return (TransportCapability.READY, _CAPABILITY_REASONS["gopher"][TransportCapability.READY])
     except ImportError:
         try:
             from .gopher_transport import GopherTransport
-            return (TransportCapability.READY, _CAPABILITY_REASONS['gopher'][TransportCapability.READY])
+
+            return (TransportCapability.READY, _CAPABILITY_REASONS["gopher"][TransportCapability.READY])
         except ImportError:
-            return (TransportCapability.MISSING_IMPLEMENTATION, 'GopherTransport not importable')
+            return (TransportCapability.MISSING_IMPLEMENTATION, "GopherTransport not importable")
+
 
 class _TransportCapabilityRegistry:
     """
@@ -385,9 +462,19 @@ class _TransportCapabilityRegistry:
     Uses ContextVar for per-sprint isolation (enables parallel sprint execution).
     Capabilities are cached after first detection per async context.
     """
+
     _cache: dict[str, tuple[TransportCapability, str]] | None = None
-    _detectors: dict[str, Callable[[], Awaitable[tuple[TransportCapability, str]]]] = {'tor': _detect_tor_capability, 'i2p': _detect_i2p_capability, 'i2p_sam': _detect_i2p_capability, 'arti': _detect_arti_capability, 'nym': _detect_nym_capability, 'ipfs': _detect_ipfs_capability, 'dht': _detect_dht_capability, 'gopher': _detect_gopher_capability}
-    __slots__ = ('_cache',)
+    _detectors: dict[str, Callable[[], Awaitable[tuple[TransportCapability, str]]]] = {
+        "tor": _detect_tor_capability,
+        "i2p": _detect_i2p_capability,
+        "i2p_sam": _detect_i2p_capability,
+        "arti": _detect_arti_capability,
+        "nym": _detect_nym_capability,
+        "ipfs": _detect_ipfs_capability,
+        "dht": _detect_dht_capability,
+        "gopher": _detect_gopher_capability,
+    }
+    __slots__ = ("_cache",)
 
     def __init__(self) -> None:
         self._cache = {}
@@ -402,7 +489,10 @@ class _TransportCapabilityRegistry:
         if self._cache is None:
             self._cache = {}
         if protocol not in self._cache:
-            return (TransportCapability.MISSING_IMPLEMENTATION, f"Protocol '{protocol}' not registered in capability registry")
+            return (
+                TransportCapability.MISSING_IMPLEMENTATION,
+                f"Protocol '{protocol}' not registered in capability registry",
+            )
         return self._cache[protocol]
 
     async def detect_capability(self, protocol: str) -> tuple[TransportCapability, str]:
@@ -425,8 +515,8 @@ class _TransportCapabilityRegistry:
                 capability, reason = await detector()
             except Exception as e:
                 capability = TransportCapability.UNAVAILABLE
-                reason = f'Detection failed with error: {e}'
-                logger.debug('Capability detection for %s failed: %s', protocol, e)
+                reason = f"Detection failed with error: {e}"
+                logger.debug("Capability detection for %s failed: %s", protocol, e)
         self._cache[protocol] = (capability, reason)
         return (capability, reason)
 
@@ -465,7 +555,12 @@ class _TransportCapabilityRegistry:
         """Check if a protocol has MISSING_IMPLEMENTATION."""
         capability, _ = self.get_capability(protocol)
         return capability == TransportCapability.MISSING_IMPLEMENTATION
-_capability_registry_var: contextvars.ContextVar[_TransportCapabilityRegistry | None] = contextvars.ContextVar('_capability_registry_var', default=None)
+
+
+_capability_registry_var: contextvars.ContextVar[_TransportCapabilityRegistry | None] = contextvars.ContextVar(
+    "_capability_registry_var", default=None
+)
+
 
 def get_capability_registry() -> _TransportCapabilityRegistry:
     """Get the current sprint's capability registry (or create one)."""
@@ -474,6 +569,7 @@ def get_capability_registry() -> _TransportCapabilityRegistry:
         registry = _TransportCapabilityRegistry()
         _capability_registry_var.set(registry)
     return registry
+
 
 async def get_capability(protocol: str) -> tuple[TransportCapability, str]:
     """
@@ -488,6 +584,7 @@ async def get_capability(protocol: str) -> tuple[TransportCapability, str]:
     registry = get_capability_registry()
     return await registry.detect_capability(protocol)
 
+
 async def is_protocol_ready(protocol: str) -> bool:
     """
     Check if a protocol is READY.
@@ -501,6 +598,7 @@ async def is_protocol_ready(protocol: str) -> bool:
     capability, _ = await get_capability(protocol)
     return capability == TransportCapability.READY
 
+
 async def get_all_capabilities() -> dict[str, tuple[TransportCapability, str]]:
     """
     Get capabilities for all registered protocols.
@@ -511,6 +609,7 @@ async def get_all_capabilities() -> dict[str, tuple[TransportCapability, str]]:
     registry = get_capability_registry()
     return await registry.detect_all()
 
+
 def get_capability_summary() -> dict[str, str]:
     """
     Get a human-readable summary of all protocol capabilities.
@@ -520,10 +619,11 @@ def get_capability_summary() -> dict[str, str]:
     """
     registry = get_capability_registry()
     summary = {}
-    for protocol in ['tor', 'i2p', 'arti', 'nym', 'ipfs', 'dht', 'gopher']:
+    for protocol in ["tor", "i2p", "arti", "nym", "ipfs", "dht", "gopher"]:
         capability, reason = registry.get_capability(protocol)
-        summary[protocol] = f'[{capability.value.upper()}] {reason}'
+        summary[protocol] = f"[{capability.value.upper()}] {reason}"
     return summary
+
 
 def clear_capability_cache() -> None:
     """Clear the capability cache and reset the ContextVar.
@@ -533,6 +633,7 @@ def clear_capability_cache() -> None:
     instance is created on next access.
     """
     _capability_registry_var.set(None)
+
 
 def get_skip_reason(protocol: str) -> str | None:
     """
@@ -545,9 +646,9 @@ def get_skip_reason(protocol: str) -> str | None:
     if capability == TransportCapability.READY:
         return None
     if capability == TransportCapability.STUB:
-        return f'[STUB] {reason}. Sidecar will run but results may be simulated.'
+        return f"[STUB] {reason}. Sidecar will run but results may be simulated."
     if capability == TransportCapability.UNAVAILABLE:
-        return f'[UNAVAILABLE] {reason}. Skipping sidecar.'
+        return f"[UNAVAILABLE] {reason}. Skipping sidecar."
     if capability == TransportCapability.MISSING_IMPLEMENTATION:
-        return f'[MISSING_IMPLEMENTATION] {reason}. Sidecar stub exists but no real implementation.'
-    return f'[UNKNOWN] Unexpected capability state for {protocol}'
+        return f"[MISSING_IMPLEMENTATION] {reason}. Sidecar stub exists but no real implementation."
+    return f"[UNKNOWN] Unexpected capability state for {protocol}"

@@ -17,15 +17,13 @@ M1 8GB: 256 slots × 512B = 128 KiB negligible overhead.
 from __future__ import annotations
 
 import asyncio
-import time as _time
-from typing import Any
 
 import pytest
 
 from hledac.universal.runtime.finding_pipeline import (
+    _QUEUE_CAPACITY,
     FindingPipeline,
     create_finding_pipeline,
-    _QUEUE_CAPACITY,
 )
 
 try:
@@ -59,9 +57,7 @@ class _FakeStore:
         self.ingest_errors: int = 0
         self._closed: bool = False
 
-    async def async_ingest_findings_batch(
-        self, findings: list[CanonicalFinding]
-    ) -> list:
+    async def async_ingest_findings_batch(self, findings: list[CanonicalFinding]) -> list:
         if self._closed:
             return []
         self.ingested.extend(findings)
@@ -272,9 +268,7 @@ class TestFindingPipelineBackpressure:
 class TestFindingPipelineConsumer:
     """Consumer drain loop tests."""
 
-    async def test_consumer_drains_to_store(
-        self, fake_store: _FakeStore
-    ) -> None:
+    async def test_consumer_drains_to_store(self, fake_store: _FakeStore) -> None:
         p = FindingPipeline(fake_store, capacity=256)
         p.start()
 
@@ -287,9 +281,7 @@ class TestFindingPipelineConsumer:
 
         assert len(fake_store.ingested) == 20
 
-    async def test_cancelled_error_propagates(
-        self, fake_store: _FakeStore
-    ) -> None:
+    async def test_cancelled_error_propagates(self, fake_store: _FakeStore) -> None:
         p = FindingPipeline(fake_store)
         p.start()
 
@@ -311,9 +303,7 @@ class TestFindingPipelineConsumer:
 class TestFindingPipelineDirectIngestFallback:
     """Fallback when Rust MPSC unavailable."""
 
-    async def test_direct_ingest_when_mpsc_unavailable(
-        self, fake_store: _FakeStore
-    ) -> None:
+    async def test_direct_ingest_when_mpsc_unavailable(self, fake_store: _FakeStore) -> None:
         # Force mpsc to None
         p = FindingPipeline(fake_store)
         p._mpsc = None

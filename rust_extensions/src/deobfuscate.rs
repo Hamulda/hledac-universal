@@ -71,10 +71,6 @@ static LAYERS_STRIPPED_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Telemetry: total bytes decoded.
 static BYTES_DECODED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-// ---------------------------------------------------------------------------
-// Entropy computation — delegated to existing _entropy.rs primitives
-// ---------------------------------------------------------------------------
-
 /// Compute Shannon entropy (bits/byte) of a byte slice.
 /// Uses the same algorithm as quality_gate::entropy but lightweight.
 fn byte_entropy(data: &[u8]) -> f64 {
@@ -98,10 +94,6 @@ fn byte_entropy(data: &[u8]) -> f64 {
     }
     entropy
 }
-
-// ---------------------------------------------------------------------------
-// Entropy probe — sliding window across text
-// ---------------------------------------------------------------------------
 
 /// Candidate region found by entropy probe.
 #[derive(Debug, Clone)]
@@ -190,10 +182,6 @@ fn probe_entropy_regions(text: &str) -> Vec<CandidateRegion> {
 
     regions
 }
-
-// ---------------------------------------------------------------------------
-// Decoding ladder — per candidate region, try all decoders in parallel
-// ---------------------------------------------------------------------------
 
 /// Result of a successful decode attempt.
 #[derive(Debug, Clone)]
@@ -328,10 +316,6 @@ fn printable_ratio(data: &[u8]) -> f64 {
     printable as f64 / data.len() as f64
 }
 
-// ---------------------------------------------------------------------------
-// Individual decoders
-// ---------------------------------------------------------------------------
-
 fn try_base64(s: &str) -> Option<String> {
     let s_clean = s.trim();
     // Try standard base64 (no external crate — std-only implementation)
@@ -395,7 +379,6 @@ fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
         _ => {}
     }
 
-    // Process 4-char blocks
     let mut result = Vec::with_capacity(chars.len() * 3 / 4);
     let mut i = 0;
     while i < chars.len() {
@@ -582,9 +565,6 @@ fn try_rot13(s: &str) -> Option<String> {
 
 fn try_xor1(encoded: &str) -> Option<String> {
     let s_clean = encoded.trim();
-    // Single-byte XOR: try all 256 keys, score by printable ratio.
-    // Serial implementation (called from within rayon parallel context).
-    // Only worth it for strings ≥ 8 bytes (avoids false positives on short strings).
     if s_clean.len() < 8 {
         return None;
     }
@@ -610,10 +590,6 @@ fn try_xor1(encoded: &str) -> Option<String> {
     best.and_then(|(_, decoded)| String::from_utf8(decoded).ok())
 }
 
-// ---------------------------------------------------------------------------
-// Core recursive deobfuscation (private — used by tests and public API)
-// ---------------------------------------------------------------------------
-
 /// Decode a single candidate region recursively.
 /// depth = current recursion depth (1 = first peel).
 /// Serial implementation — rayon parallelism is at the TEXT level, not region level.
@@ -622,7 +598,6 @@ fn peel_region(region: &str, depth: u8, max_depth: u8) -> Option<DecodedCandidat
         return None;
     }
 
-    // Try all decoders (serial, called from within rayon parallel context at text level)
     let results: Vec<Option<DecodedCandidate>> = vec![
         try_base64(region).and_then(|decoded| {
             let ratio = printable_ratio(decoded.as_bytes());
@@ -762,10 +737,6 @@ fn deobfuscate_impl(text: &str, max_depth: u8) -> Vec<String> {
     candidates
 }
 
-// ---------------------------------------------------------------------------
-// Public API — PyO3
-// ---------------------------------------------------------------------------
-
 /// Result struct for telemetry + caller feedback.
 #[derive(Debug, Clone)]
 #[pyclass(module = "hledac_rust_extensions", from_py_object)]
@@ -864,7 +835,6 @@ pub fn decode_ioc_candidates(text: &str, max_depth: Option<u8>) -> DeobfuscateRe
         return DeobfuscateResult::new(Vec::new(), 0, Vec::new(), 0);
     }
 
-    // Process each region serially (decode_ioc_candidates is already called from par_iter)
     let decoded: Vec<(String, String, usize)> = regions
         .iter()
         .filter_map(|region| {
@@ -960,10 +930,6 @@ pub fn deobfuscate_telemetry_reset() {
     BYTES_DECODED_COUNTER.store(0, Ordering::Relaxed);
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_ioc_candidates))?;
     m.add_function(wrap_pyfunction!(batch_decode_ioc_candidates))?;
@@ -972,10 +938,6 @@ pub fn register(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     m.add_class::<DeobfuscateResult>()?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

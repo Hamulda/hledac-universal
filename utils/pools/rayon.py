@@ -26,10 +26,6 @@ __all__ = [
     "run_in_mixed_pool_async",
 ]
 
-# ---------------------------------------------------------------------------
-# Availability check
-# ---------------------------------------------------------------------------
-
 _RAYON_AVAILABLE: bool | None = None
 
 
@@ -42,20 +38,11 @@ def RayonPoolsAvailable() -> bool:
     from hledac.universal._core.rust_backend import rust
 
     raw = rust.raw
-    if (
-        raw.cpu_pool_run is not None
-        and raw.io_pool_run is not None
-        and raw.mixed_pool_run is not None
-    ):
+    if raw.cpu_pool_run is not None and raw.io_pool_run is not None and raw.mixed_pool_run is not None:
         _RAYON_AVAILABLE = True
     else:
         _RAYON_AVAILABLE = False
     return _RAYON_AVAILABLE
-
-
-# ---------------------------------------------------------------------------
-# CPU-bound pool — 4 P-cores for SIMD/hot CPU workloads
-# ---------------------------------------------------------------------------
 
 
 def run_in_cpu_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
@@ -114,11 +101,6 @@ def run_in_cpu_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T 
             return None
 
 
-# ---------------------------------------------------------------------------
-# I/O-bound pool — 2 threads for DuckDB/graph_traverse
-# ---------------------------------------------------------------------------
-
-
 def run_in_io_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Run I/O-bound function on rayon io_pool (2 threads).
@@ -168,14 +150,7 @@ def run_in_io_pool[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T |
             return None
 
 
-# ---------------------------------------------------------------------------
-# Mixed pool — adaptive 1-2 threads based on batch size
-# ---------------------------------------------------------------------------
-
-
-def run_in_mixed_pool[T](
-    n_items: int, fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T | None:
+def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Run mixed workload on rayon mixed_pool (1-2 threads, adaptive).
 
@@ -229,14 +204,7 @@ def run_in_mixed_pool[T](
             return None
 
 
-# ---------------------------------------------------------------------------
-# Async wrappers
-# ---------------------------------------------------------------------------
-
-
-async def run_in_cpu_pool_async[T](
-    fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T | None:
+async def run_in_cpu_pool_async[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Async wrapper for run_in_cpu_pool.
 
@@ -260,9 +228,7 @@ async def run_in_cpu_pool_async[T](
     return await asyncio.to_thread(run_in_cpu_pool, fn, *args, **kwargs)
 
 
-async def run_in_io_pool_async[T](
-    fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T | None:
+async def run_in_io_pool_async[T](fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Async wrapper for run_in_io_pool.
 
@@ -286,9 +252,7 @@ async def run_in_io_pool_async[T](
     return await asyncio.to_thread(run_in_io_pool, fn, *args, **kwargs)
 
 
-async def run_in_mixed_pool_async[T](
-    n_items: int, fn: Callable[..., T], /, *args: Any, **kwargs: Any
-) -> T | None:
+async def run_in_mixed_pool_async[T](n_items: int, fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> T | None:
     """
     Async wrapper for run_in_mixed_pool.
 

@@ -15,23 +15,18 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency, lightweight models only.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import secrets
 import time
 from enum import Enum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.project_types import (
-    BrowserType,
-    CaptchaSolution,
-    CaptchaType,
-    RiskLevel,
     StealthConfig,
     StealthSession,
 )
@@ -39,47 +34,46 @@ from hledac.universal.project_types import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    'StealthLayer',
-    'BehaviorSimulator',
-    'BehaviorPattern',
-    'ProfileGenerator',
-    'FingerprintProfile',
-    'EvasionCategory',
-    'EvasionScript',
-    'SimulationConfig',
-    'MouseMovement',
+    "StealthLayer",
+    "BehaviorSimulator",
+    "BehaviorPattern",
+    "ProfileGenerator",
+    "FingerprintProfile",
+    "EvasionCategory",
+    "EvasionScript",
+    "SimulationConfig",
+    "MouseMovement",
 ]
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
 
-# ─── Evasion Pipeline ────────────────────────────────────────────────────────
-
-
 class EvasionCategory(Enum):
     """Categories for evasion scripts."""
-    WEBDRIVER = 'webdriver'
-    AUTOMATION = 'automation'
-    PLUGINS = 'plugins'
-    PERMISSIONS = 'permissions'
-    WEBRTC = 'webrtc'
-    CANVAS = 'canvas'
-    WEBGL = 'webgl'
-    FONTS = 'fonts'
-    EVENTS = 'events'
-    DETECTION = 'detection'
-    GLOBALS = 'globals'
-    CHROME_RUNTIME = 'chrome_runtime'
-    CHROME_PLUGINS = 'chrome_plugins'
-    SCREEN = 'screen'
-    TIMEZONE = 'timezone'
-    HARDWARE = 'hardware'
-    AUDIO = 'audio'
+
+    WEBDRIVER = "webdriver"
+    AUTOMATION = "automation"
+    PLUGINS = "plugins"
+    PERMISSIONS = "permissions"
+    WEBRTC = "webrtc"
+    CANVAS = "canvas"
+    WEBGL = "webgl"
+    FONTS = "fonts"
+    EVENTS = "events"
+    DETECTION = "detection"
+    GLOBALS = "globals"
+    CHROME_RUNTIME = "chrome_runtime"
+    CHROME_PLUGINS = "chrome_plugins"
+    SCREEN = "screen"
+    TIMEZONE = "timezone"
+    HARDWARE = "hardware"
+    AUDIO = "audio"
 
 
 class EvasionScript(Struct, gc=False):
     """Evasion script with metadata."""
+
     script_id: str
     script: str
     category: EvasionCategory
@@ -88,6 +82,7 @@ class EvasionScript(Struct, gc=False):
 
 class FingerprintProfile(Struct, gc=False):
     """Browser fingerprint profile."""
+
     canvas_noise: tuple[int, int, int]
     webgl_vendor: str
     webgl_renderer: str
@@ -111,39 +106,45 @@ class ProfileGenerator:
     ]
 
     TIMEZONES = [
-        ('America/New_York', -5),
-        ('America/Los_Angeles', -8),
-        ('Europe/London', 0),
-        ('Europe/Paris', 1),
-        ('Asia/Tokyo', 9),
+        ("America/New_York", -5),
+        ("America/Los_Angeles", -8),
+        ("Europe/London", 0),
+        ("Europe/Paris", 1),
+        ("Asia/Tokyo", 9),
     ]
 
     WEBGL_PROFILES = [
-        ('Intel Inc.', 'Intel Iris OpenGL Engine'),
-        ('Apple Inc.', 'Apple M1'),
-        ('NVIDIA Corporation', 'NVIDIA GeForce GTX 1080'),
+        ("Intel Inc.", "Intel Iris OpenGL Engine"),
+        ("Apple Inc.", "Apple M1"),
+        ("NVIDIA Corporation", "NVIDIA GeForce GTX 1080"),
     ]
 
     COMMON_FONTS = [
-        'Arial', 'Helvetica', 'Times New Roman', 'Courier New',
-        'Georgia', 'Verdana', 'Tahoma', 'Trebuchet MS',
+        "Arial",
+        "Helvetica",
+        "Times New Roman",
+        "Courier New",
+        "Georgia",
+        "Verdana",
+        "Tahoma",
+        "Trebuchet MS",
     ]
 
     COMMON_PLUGINS = [
-        {'name': 'Chrome PDF Plugin', 'filename': 'internal-pdf-viewer'},
-        {'name': 'Chrome PDF Viewer', 'filename': 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+        {"name": "Chrome PDF Plugin", "filename": "internal-pdf-viewer"},
+        {"name": "Chrome PDF Viewer", "filename": "mhjfbmdgcfjbbpaeojofohoefgiehjai"},
     ]
 
     __slots__ = (
-        '_current_profile',
-        'consistent_per_session',
-        'platform',
-        'randomize_canvas',
-        'randomize_fonts',
-        'randomize_screen',
-        'randomize_timezone',
-        'randomize_webgl',
-        'session_duration',
+        "_current_profile",
+        "consistent_per_session",
+        "platform",
+        "randomize_canvas",
+        "randomize_fonts",
+        "randomize_screen",
+        "randomize_timezone",
+        "randomize_webgl",
+        "session_duration",
     )
 
     def __init__(
@@ -157,7 +158,7 @@ class ProfileGenerator:
         randomize_screen: bool = True,
         randomize_timezone: bool = True,
     ) -> None:
-        self.platform = platform or 'MacIntel'
+        self.platform = platform or "MacIntel"
         self.session_duration = session_duration
         self.consistent_per_session = consistent_per_session
         self.randomize_canvas = randomize_canvas
@@ -175,22 +176,14 @@ class ProfileGenerator:
         self._current_profile = FingerprintProfile(
             canvas_noise=self._generate_canvas_noise(),
             webgl_vendor=(
-                self._generate_webgl(self.platform)[0]
-                if self.randomize_webgl else ('Apple Inc.', 'Apple M1')
+                self._generate_webgl(self.platform)[0] if self.randomize_webgl else ("Apple Inc.", "Apple M1")
             ),
-            webgl_renderer=(
-                self._generate_webgl(self.platform)[1]
-                if self.randomize_webgl else ('Apple M1')
-            ),
-            screen_resolution=(
-                self._generate_screen() if self.randomize_screen else (1920, 1080, 1.0)
-            ),
-            timezone=(
-                self._generate_timezone() if self.randomize_timezone else ('America/New_York', -5)
-            ),
+            webgl_renderer=(self._generate_webgl(self.platform)[1] if self.randomize_webgl else ("Apple M1")),
+            screen_resolution=(self._generate_screen() if self.randomize_screen else (1920, 1080, 1.0)),
+            timezone=(self._generate_timezone() if self.randomize_timezone else ("America/New_York", -5)),
             fonts=self._generate_fonts() if self.randomize_fonts else self.COMMON_FONTS[:5],
             plugins=self._generate_plugins(),
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             platform=self.platform,
         )
         return self._current_profile
@@ -237,19 +230,18 @@ class ProfileGenerator:
         return self.generate(force_new=True)
 
 
-# ─── Behavior Simulation ──────────────────────────────────────────────────────
-
-
 class BehaviorPattern(Enum):
     """Pre-defined behavior patterns."""
-    CASUAL = 'casual'
-    RESEARCHER = 'researcher'
-    QUICK = 'quick'
-    CAREFUL = 'careful'
+
+    CASUAL = "casual"
+    RESEARCHER = "researcher"
+    QUICK = "quick"
+    CAREFUL = "careful"
 
 
 class SimulationConfig(Struct, gc=False):
     """Configuration for behavior simulation."""
+
     pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
     min_delay: float = 0.5
     max_delay: float = 3.0
@@ -262,6 +254,7 @@ class SimulationConfig(Struct, gc=False):
 
 class MouseMovement(Struct, gc=False):
     """Mouse movement point."""
+
     x: float
     y: float
     timestamp: float
@@ -273,34 +266,55 @@ class BehaviorSimulator:
 
     M1-Optimized: Minimal CPU usage, efficient randomization.
     """
+
     PATTERNS: dict[BehaviorPattern, dict[str, Any]] = {
         BehaviorPattern.CASUAL: {
-            'min_delay': 1.0, 'max_delay': 5.0, 'mouse_speed': 0.7,
-            'scroll_min': 200, 'scroll_max': 1000, 'scroll_pause': 0.2, 'randomness': 0.4,
+            "min_delay": 1.0,
+            "max_delay": 5.0,
+            "mouse_speed": 0.7,
+            "scroll_min": 200,
+            "scroll_max": 1000,
+            "scroll_pause": 0.2,
+            "randomness": 0.4,
         },
         BehaviorPattern.RESEARCHER: {
-            'min_delay': 0.8, 'max_delay': 2.5, 'mouse_speed': 1.0,
-            'scroll_min': 300, 'scroll_max': 800, 'scroll_pause': 0.15, 'randomness': 0.25,
+            "min_delay": 0.8,
+            "max_delay": 2.5,
+            "mouse_speed": 1.0,
+            "scroll_min": 300,
+            "scroll_max": 800,
+            "scroll_pause": 0.15,
+            "randomness": 0.25,
         },
         BehaviorPattern.QUICK: {
-            'min_delay': 0.3, 'max_delay': 1.2, 'mouse_speed': 1.3,
-            'scroll_min': 400, 'scroll_max': 1200, 'scroll_pause': 0.05, 'randomness': 0.35,
+            "min_delay": 0.3,
+            "max_delay": 1.2,
+            "mouse_speed": 1.3,
+            "scroll_min": 400,
+            "scroll_max": 1200,
+            "scroll_pause": 0.05,
+            "randomness": 0.35,
         },
         BehaviorPattern.CAREFUL: {
-            'min_delay': 2.0, 'max_delay': 8.0, 'mouse_speed': 0.5,
-            'scroll_min': 100, 'scroll_max': 400, 'scroll_pause': 0.3, 'randomness': 0.2,
+            "min_delay": 2.0,
+            "max_delay": 8.0,
+            "mouse_speed": 0.5,
+            "scroll_min": 100,
+            "scroll_max": 400,
+            "scroll_pause": 0.3,
+            "randomness": 0.2,
         },
     }
 
-    __slots__ = tuple((
-        'action_count',
-        'config',
-        'last_action_time',
-        'mouse_position',
-        'scroll_position',
-        'viewport_height',
-        'viewport_width',
-    ))
+    __slots__ = (
+        "action_count",
+        "config",
+        "last_action_time",
+        "mouse_position",
+        "scroll_position",
+        "viewport_height",
+        "viewport_width",
+    )
 
     def __init__(self, config: SimulationConfig | None = None) -> None:
         self.config = config or SimulationConfig()
@@ -344,8 +358,8 @@ class BehaviorSimulator:
         now = time.time()
         for i in range(num_points):
             t = i / (num_points - 1)
-            x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * control[0] + t ** 2 * end[0]
-            y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * control[1] + t ** 2 * end[1]
+            x = (1 - t) ** 2 * start[0] + 2 * (1 - t) * t * control[0] + t**2 * end[0]
+            y = (1 - t) ** 2 * start[1] + 2 * (1 - t) * t * control[1] + t**2 * end[1]
             jitter = self.config.randomness * 2
             x += _RNG.uniform(-jitter, jitter)
             y += _RNG.uniform(-jitter, jitter)
@@ -381,21 +395,21 @@ class BehaviorSimulator:
             await self.simulate_mouse_move(x, y, callback)
         await asyncio.sleep(self._random_delay(0.1, 0.3))
         if callback:
-            await callback(('click', self.mouse_position))
+            await callback(("click", self.mouse_position))
         await asyncio.sleep(self._random_delay(0.2, 0.5))
         self.action_count += 1
         self.last_action_time = time.time()
 
     async def simulate_scroll(
         self,
-        direction: str = 'down',
+        direction: str = "down",
         amount: int | None = None,
         callback: Any | None = None,
     ) -> None:
         """Simulate scrolling."""
         if amount is None:
             amount = _RNG.randint(self.config.scroll_min, self.config.scroll_max)
-        if direction == 'up':
+        if direction == "up":
             amount = -amount
         chunk_size = 100
         remaining = amount
@@ -404,13 +418,15 @@ class BehaviorSimulator:
             if remaining < 0:
                 chunk = -chunk
             if callback:
-                await callback(('scroll', chunk))
+                await callback(("scroll", chunk))
             self.scroll_position += chunk
             remaining -= chunk
-            await asyncio.sleep(_RNG.uniform(
-                self.config.scroll_pause * 0.8,
-                self.config.scroll_pause * 1.2,
-            ))
+            await asyncio.sleep(
+                _RNG.uniform(
+                    self.config.scroll_pause * 0.8,
+                    self.config.scroll_pause * 1.2,
+                )
+            )
         self.action_count += 1
         self.last_action_time = time.time()
 
@@ -426,7 +442,7 @@ class BehaviorSimulator:
         for char in text:
             delay = base_delay * _RNG.uniform(0.7, 1.3)
             if callback:
-                await callback(('type', char))
+                await callback(("type", char))
             await asyncio.sleep(delay)
             if _RNG.random() < 0.05:  # Occasional pause
                 await asyncio.sleep(_RNG.uniform(0.2, 0.5))
@@ -443,20 +459,17 @@ class BehaviorSimulator:
         while time.time() - start_time < duration:
             await asyncio.sleep(self._random_delay(0.5, 1.5))
             if _RNG.random() < scroll_probability:
-                direction = 'down' if _RNG.random() > 0.3 else 'up'
+                direction = "down" if _RNG.random() > 0.3 else "up"
                 await self.simulate_scroll(direction)
 
     def get_statistics(self) -> dict[str, Any]:
         """Get simulation statistics."""
         return {
-            'action_count': self.action_count,
-            'mouse_position': self.mouse_position,
-            'scroll_position': self.scroll_position,
-            'pattern': self.config.pattern.value,
+            "action_count": self.action_count,
+            "mouse_position": self.mouse_position,
+            "scroll_position": self.scroll_position,
+            "pattern": self.config.pattern.value,
         }
-
-
-# ─── Stealth Layer ───────────────────────────────────────────────────────────
 
 
 class StealthLayer:
@@ -471,20 +484,21 @@ class StealthLayer:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
-    layer_name: str = 'stealth'
+
+    layer_name: str = "stealth"
     _priority: int = 60  # Medium-high priority
 
-    __slots__ = tuple((
-        '_behavior_simulator',
-        '_captcha_solver',
-        '_ctx',
-        '_evasion_scripts',
-        '_fingerprint_randomizer',
-        '_initialized',
-        '_profile_generator',
-        '_sessions',
-        'config',
-    ))
+    __slots__ = (
+        "_behavior_simulator",
+        "_captcha_solver",
+        "_ctx",
+        "_evasion_scripts",
+        "_fingerprint_randomizer",
+        "_initialized",
+        "_profile_generator",
+        "_sessions",
+        "config",
+    )
 
     def __init__(self, config: StealthConfig | None = None) -> None:
         self.config = config or StealthConfig()
@@ -500,7 +514,7 @@ class StealthLayer:
     async def mount(self, ctx: Any) -> None:
         """Mount the stealth layer."""
         await self.initialize()
-        ctx.set('stealth', self)
+        ctx.set("stealth", self)
 
     async def unmount(self, ctx: Any) -> None:
         """Unmount the stealth layer."""
@@ -512,20 +526,20 @@ class StealthLayer:
 
     async def rollback(self, ctx: Any, error: Exception) -> None:
         """Rollback on error."""
-        logger.warning(f'StealthLayer rollback: {error}')
+        logger.warning(f"StealthLayer rollback: {error}")
 
     async def initialize(self) -> bool:
         """Initialize stealth components."""
         try:
-            logger.info('🚀 Initializing StealthLayer...')
+            logger.info("🚀 Initializing StealthLayer...")
             self._generate_fingerprint()
             self._generate_evasion_scripts()
             self._behavior_simulator = BehaviorSimulator()
-            logger.info('✅ StealthLayer initialized successfully')
+            logger.info("✅ StealthLayer initialized successfully")
             self._initialized = True
             return True
         except Exception as e:
-            logger.error(f'❌ StealthLayer initialization failed: {e}')
+            logger.error(f"❌ StealthLayer initialization failed: {e}")
             return False
 
     def _generate_fingerprint(self) -> FingerprintProfile:
@@ -543,7 +557,7 @@ class StealthLayer:
 
         # Canvas noise
         noise = profile.canvas_noise
-        scripts.append(f'''
+        scripts.append(f"""
 (function() {{
     const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
     HTMLCanvasElement.prototype.toDataURL = function(type) {{
@@ -560,10 +574,10 @@ class StealthLayer:
         return originalToDataURL.apply(this, arguments);
     }};
 }})();
-''')
+""")
 
         # WebGL spoofing
-        scripts.append(f'''
+        scripts.append(f"""
 (function() {{
     const getParameter = WebGLRenderingContext.prototype.getParameter;
     WebGLRenderingContext.prototype.getParameter = function(param) {{
@@ -572,10 +586,10 @@ class StealthLayer:
         return getParameter.apply(this, arguments);
     }};
 }})();
-''')
+""")
 
         # Hide webdriver
-        scripts.append('''
+        scripts.append("""
 (function() {
     Object.defineProperty(navigator, 'webdriver', {
         get: function() { return false; },
@@ -583,7 +597,7 @@ class StealthLayer:
     });
     navigator.webdriver = false;
 })();
-''')
+""")
 
         self._evasion_scripts = scripts
         return scripts
@@ -605,23 +619,23 @@ class StealthLayer:
         if not self._behavior_simulator:
             self._behavior_simulator = BehaviorSimulator()
 
-        if behavior_type == 'mouse_move':
-            target_x = kwargs.get('x', 100)
-            target_y = kwargs.get('y', 100)
+        if behavior_type == "mouse_move":
+            target_x = kwargs.get("x", 100)
+            target_y = kwargs.get("y", 100)
             await self._behavior_simulator.simulate_mouse_move(target_x, target_y)
-        elif behavior_type == 'click':
-            x = kwargs.get('x')
-            y = kwargs.get('y')
+        elif behavior_type == "click":
+            x = kwargs.get("x")
+            y = kwargs.get("y")
             await self._behavior_simulator.simulate_click(x, y)
-        elif behavior_type == 'scroll':
-            direction = kwargs.get('direction', 'down')
-            amount = kwargs.get('amount')
+        elif behavior_type == "scroll":
+            direction = kwargs.get("direction", "down")
+            amount = kwargs.get("amount")
             await self._behavior_simulator.simulate_scroll(direction, amount)
-        elif behavior_type == 'typing':
-            text = kwargs.get('text', '')
+        elif behavior_type == "typing":
+            text = kwargs.get("text", "")
             await self._behavior_simulator.simulate_typing(text)
-        elif behavior_type == 'reading':
-            duration = kwargs.get('duration', 10.0)
+        elif behavior_type == "reading":
+            duration = kwargs.get("duration", 10.0)
             await self._behavior_simulator.simulate_reading(duration)
 
         return self._behavior_simulator.get_statistics()
@@ -644,31 +658,28 @@ class StealthLayer:
     def get_statistics(self) -> dict[str, Any]:
         """Get stealth layer statistics."""
         return {
-            'initialized': self._initialized,
-            'fingerprint': {
-                'has_profile': self._fingerprint_randomizer is not None,
-                'platform': self._fingerprint_randomizer.platform if self._fingerprint_randomizer else None,
+            "initialized": self._initialized,
+            "fingerprint": {
+                "has_profile": self._fingerprint_randomizer is not None,
+                "platform": self._fingerprint_randomizer.platform if self._fingerprint_randomizer else None,
             },
-            'evasion_scripts_count': len(self._evasion_scripts),
-            'behavior': (
-                self._behavior_simulator.get_statistics()
-                if self._behavior_simulator else None
-            ),
+            "evasion_scripts_count": len(self._evasion_scripts),
+            "behavior": (self._behavior_simulator.get_statistics() if self._behavior_simulator else None),
         }
 
     async def cleanup(self) -> None:
         """Cleanup resources."""
-        logger.info('🧹 Cleaning up StealthLayer...')
+        logger.info("🧹 Cleaning up StealthLayer...")
         self._initialized = False
-        logger.info('✅ StealthLayer cleanup complete')
+        logger.info("✅ StealthLayer cleanup complete")
 
 
 __all__ = [
-    'StealthLayer',
-    'BehaviorSimulator',
-    'BehaviorPattern',
-    'ProfileGenerator',
-    'FingerprintProfile',
-    'EvasionScript',
-    'EvasionCategory',
+    "StealthLayer",
+    "BehaviorSimulator",
+    "BehaviorPattern",
+    "ProfileGenerator",
+    "FingerprintProfile",
+    "EvasionScript",
+    "EvasionCategory",
 ]

@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_domain() -> "FeedPipelineDomain":
+def get_domain() -> FeedPipelineDomain:
     from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
 
     _probe = getattr(_ext, "feed_entry_pipeline", None)
@@ -83,13 +83,7 @@ class FeedPipelineDomain:
         return self._ext.feed_batch_pipeline(feeds, patterns, labels)
 
 
-# ---------------------------------------------------------------------------
-# Python fallback — pure Python implementation
-# ---------------------------------------------------------------------------
-
 import re
-from collections import deque
-from _core._util import aclose
 
 
 class PythonFallbackFeedPipelineDomain:

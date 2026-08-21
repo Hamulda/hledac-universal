@@ -24,8 +24,6 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-import weakref
-from collections.abc import Generator
 
 import pytest
 
@@ -379,10 +377,7 @@ class TestIntegration:
             except BaseException as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=register_many, name=f"worker_{i}")
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=register_many, name=f"worker_{i}") for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:

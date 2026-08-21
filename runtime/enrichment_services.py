@@ -12,25 +12,32 @@ LMDB paths are derived from paths.py (no absolute paths).
 
 Migrated to ConcurrencyBudgetRegistry (F268).
 """
+
 import asyncio
-from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 import logging
 from pathlib import Path
 from typing import Any
+
+from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.utils.asyncx import bounded_parallel_map
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
-from _core import aclose
+
 log = logging.getLogger(__name__)
-_FORENSICS_LMDB_NAME = 'forensics_enrichment.lmdb'
-_MULTIMODAL_LMDB_NAME = 'multimodal_enrichment.lmdb'
+_FORENSICS_LMDB_NAME = "forensics_enrichment.lmdb"
+_MULTIMODAL_LMDB_NAME = "multimodal_enrichment.lmdb"
+
 
 def _get_forensics_lmdb_path() -> Path:
     from hledac.universal.paths import LMDB_ROOT
+
     return LMDB_ROOT / _FORENSICS_LMDB_NAME
+
 
 def _get_multimodal_lmdb_path() -> Path:
     from hledac.universal.paths import LMDB_ROOT
+
     return LMDB_ROOT / _MULTIMODAL_LMDB_NAME
+
 
 class EnrichmentServices:
     """
@@ -41,9 +48,25 @@ class EnrichmentServices:
     Fail-safe throughout — all methods are noexcept on None inputs.
     LMDB paths are derived from paths.py (no absolute paths).
     """
-    __slots__ = tuple(('_evidence_log', '_forensics_enricher', '_forensics_lmdb_env', '_multimodal_enricher', '_multimodal_governor', '_multimodal_lmdb_env'))
 
-    def __init__(self, forensics_enricher: Any=None, forensics_lmdb_env: Any=None, multimodal_enricher: Any=None, multimodal_lmdb_env: Any=None, multimodal_governor: Any=None, evidence_log: Any=None):
+    __slots__ = (
+        "_evidence_log",
+        "_forensics_enricher",
+        "_forensics_lmdb_env",
+        "_multimodal_enricher",
+        "_multimodal_governor",
+        "_multimodal_lmdb_env",
+    )
+
+    def __init__(
+        self,
+        forensics_enricher: Any = None,
+        forensics_lmdb_env: Any = None,
+        multimodal_enricher: Any = None,
+        multimodal_lmdb_env: Any = None,
+        multimodal_governor: Any = None,
+        evidence_log: Any = None,
+    ) -> None:
         self._forensics_enricher = forensics_enricher
         self._forensics_lmdb_env = forensics_lmdb_env
         self._multimodal_enricher = multimodal_enricher
@@ -51,7 +74,7 @@ class EnrichmentServices:
         self._multimodal_governor = multimodal_governor
         self._evidence_log = evidence_log
 
-    def inject_forensics_enricher(self, enricher: Any, lmdb_env: Any=None) -> None:
+    def inject_forensics_enricher(self, enricher: Any, lmdb_env: Any = None) -> None:
         """
         F195C: Inject ForensicsEnricher + LMDB env (external wiring).
 
@@ -63,7 +86,7 @@ class EnrichmentServices:
         self._forensics_enricher = enricher
         self._forensics_lmdb_env = lmdb_env
 
-    def inject_multimodal_enricher(self, enricher: Any, lmdb_env: Any=None) -> None:
+    def inject_multimodal_enricher(self, enricher: Any, lmdb_env: Any = None) -> None:
         """
         F195C: Inject MultimodalEnricher + LMDB env (external wiring).
 
@@ -114,7 +137,7 @@ class EnrichmentServices:
         await self._close_forensics()
         await self._close_multimodal()
 
-    async def enrich_ct_findings(self, findings: list, result: Any=None, store: Any=None) -> None:
+    async def enrich_ct_findings(self, findings: list, result: Any = None, store: Any = None) -> None:
         """
         Enrich CT findings with forensics analysis before storage.
 
@@ -133,12 +156,12 @@ class EnrichmentServices:
             lmdb_env=self._forensics_lmdb_env,
             result=result,
             store=store,
-            counter_attr='forensics_enriched_ct_findings',
-            ctx='forensics_enrichment',
-            lmdb_label='forensics',
-    )
+            counter_attr="forensics_enriched_ct_findings",
+            ctx="forensics_enrichment",
+            lmdb_label="forensics",
+        )
 
-    async def enrich_findings_multimodal(self, findings: list, result: Any=None) -> None:
+    async def enrich_findings_multimodal(self, findings: list, result: Any = None) -> None:
         """
         Enrich PDF/image findings with multimodal analysis before storage.
 
@@ -151,10 +174,10 @@ class EnrichmentServices:
             lmdb_env=self._multimodal_lmdb_env,
             result=result,
             store=None,
-            counter_attr='multimodal_enriched_findings',
-            ctx='multimodal_enrichment',
-            lmdb_label='multimodal',
-    )
+            counter_attr="multimodal_enriched_findings",
+            ctx="multimodal_enrichment",
+            lmdb_label="multimodal",
+        )
 
     async def _enrich_findings(
         self,
@@ -185,15 +208,18 @@ class EnrichmentServices:
                     try:
                         res = await enricher.enrich(finding)
                         if res is not None:
-                            fid = getattr(finding, 'finding_id', None)
+                            fid = getattr(finding, "finding_id", None)
                             if fid:
-                                res_for_lmdb = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
+                                res_for_lmdb = {k: v for k, v in res.items() if k != "_ioc_canonical_findings"}
                                 try:
                                     import orjson
+
                                     from hledac.universal.evidence_log import _normalize_payload
+
                                     payload = orjson.dumps(_normalize_payload(res_for_lmdb))
                                 except ImportError:
                                     import msgspec.json as _msgspec_json
+
                                     payload = _msgspec_json.encode(res_for_lmdb)
                                 enriched_pairs.append((fid.encode(), payload))
                                 if result is not None:
@@ -204,19 +230,21 @@ class EnrichmentServices:
                                 if store is not None:
                                     try:
                                         from forensics.enrichment_service import make_canonical_finding_from_enrichment
+
                                         canonical = make_canonical_finding_from_enrichment(finding, res)
                                         if canonical is not None:
                                             all_to_ingest: list[Any] = [canonical]
-                                            ioc_children = res.get('_ioc_canonical_findings') or []
+                                            ioc_children = res.get("_ioc_canonical_findings") or []
                                             if ioc_children:
                                                 from forensics.ioc_extractor import GLOBAL_IOC_BUDGET_DEFAULT
+
                                                 current_ioc_total = 0
-                                                if result is not None and hasattr(result, 'ioc_findings_total'):
-                                                    current_ioc_total = int(getattr(result, 'ioc_findings_total', 0))
+                                                if result is not None and hasattr(result, "ioc_findings_total"):
+                                                    current_ioc_total = int(getattr(result, "ioc_findings_total", 0))
                                                 remaining = max(0, GLOBAL_IOC_BUDGET_DEFAULT - current_ioc_total)
                                                 ioc_children_trimmed = ioc_children[:remaining]
                                                 all_to_ingest.extend(ioc_children_trimmed)
-                                                if result is not None and hasattr(result, 'ioc_findings_total'):
+                                                if result is not None and hasattr(result, "ioc_findings_total"):
                                                     result.ioc_findings_total += len(ioc_children_trimmed)
                                             # NOTE: async_ingest_findings_batch is a native async coroutine.
                                             # asyncio.shield guards the awaitable directly — no to_thread wrapper.
@@ -228,7 +256,7 @@ class EnrichmentServices:
                                 # No C-extension I/O, no to_thread needed.
                                 # asyncio.shield kept to survive TaskGroup cancellation — forensic data is high-value.
                                 if self._evidence_log is not None:
-                                    res_for_evidence = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
+                                    res_for_evidence = {k: v for k, v in res.items() if k != "_ioc_canonical_findings"}
                                     await asyncio.shield(
                                         asyncio.to_thread(
                                             self._evidence_log.attach_forensic_analysis,
@@ -236,7 +264,7 @@ class EnrichmentServices:
                                             forensic_result=res_for_evidence,
                                             source_id=str(fid)[:128],
                                             confidence=0.95,
-    )
+                                        )
                                     )
                     except Exception:  # noqa: BLE001
                         pass
@@ -245,9 +273,9 @@ class EnrichmentServices:
             if enriched_pairs:
                 try:
                     written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
-                    log.debug('%s LMDB bulk-write: %d/%d', lmdb_label, written, len(enriched_pairs))
+                    log.debug("%s LMDB bulk-write: %d/%d", lmdb_label, written, len(enriched_pairs))
                 except Exception as exc:
-                    log.warning('%s LMDB bulk-write failed: %s', lmdb_label, exc)
+                    log.warning("%s LMDB bulk-write failed: %s", lmdb_label, exc)
         except Exception:  # noqa: BLE001
             pass
 
@@ -255,13 +283,15 @@ class EnrichmentServices:
         """Initialize forensics enricher and LMDB. Fail-safe — never raises."""
         try:
             from forensics.enrichment_service import ForensicsEnricher
+
             self._forensics_enricher = ForensicsEnricher()
             await self._forensics_enricher.initialize()
         except Exception as exc:
-            log.debug('Forensics enricher init failed: %s', exc)
+            log.debug("Forensics enricher init failed: %s", exc)
             self._forensics_enricher = None
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
             db_path = _get_forensics_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
             # POTENTIAL-2 Fix: Explicit fast crash-inconsistent pattern for recoverable caches
@@ -271,14 +301,13 @@ class EnrichmentServices:
                 map_size=50 * 1024 * 1024,
                 max_dbs=1,
                 critical=False,  # recoverable data — fast writes acceptable
-    )
+            )
         except Exception as exc:
-            log.debug('Forensics LMDB open failed: %s', exc)
+            log.debug("Forensics LMDB open failed: %s", exc)
             self._forensics_lmdb_env = None
 
     async def _flush_forensics(self) -> None:
         """Flush forensics LMDB. Called at WINDUP. No-op if not initialized."""
-        pass
 
     async def _close_forensics(self) -> None:
         """Close forensics enricher and LMDB at TEARDOWN."""
@@ -286,26 +315,30 @@ class EnrichmentServices:
             try:
                 await self._forensics_enricher.close()
             except Exception as exc:
-                log.debug('Forensics enricher close failed: %s', exc)
+                log.debug("Forensics enricher close failed: %s", exc)
             self._forensics_enricher = None
         if self._forensics_lmdb_env is not None:
             try:
                 self._forensics_lmdb_env.close()
             except Exception as exc:
-                log.debug('Forensics LMDB close failed: %s', exc)
+                log.debug("Forensics LMDB close failed: %s", exc)
             self._forensics_lmdb_env = None
 
     async def _init_multimodal(self) -> None:
         """Initialize multimodal enricher and LMDB. Fail-safe — never raises."""
         try:
             from hledac.universal.multimodal.analyzer import MultimodalEnricher
-            self._multimodal_enricher = MultimodalEnricher(governor=self._multimodal_governor, embedding_dim=1280, batch_size=4)
+
+            self._multimodal_enricher = MultimodalEnricher(
+                governor=self._multimodal_governor, embedding_dim=1280, batch_size=4
+            )
             await self._multimodal_enricher.initialize()
         except Exception as exc:
-            log.debug('Multimodal enricher init failed: %s', exc)
+            log.debug("Multimodal enricher init failed: %s", exc)
             self._multimodal_enricher = None
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
+
             db_path = _get_multimodal_lmdb_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
             # POTENTIAL-2 Fix: Explicit fast crash-inconsistent pattern for recoverable caches
@@ -315,14 +348,13 @@ class EnrichmentServices:
                 map_size=50 * 1024 * 1024,
                 max_dbs=1,
                 critical=False,  # recoverable data — fast writes acceptable
-    )
+            )
         except Exception as exc:
-            log.debug('Multimodal LMDB open failed: %s', exc)
+            log.debug("Multimodal LMDB open failed: %s", exc)
             self._multimodal_lmdb_env = None
 
     async def _flush_multimodal(self) -> None:
         """Flush multimodal LMDB. Called at WINDUP. No-op if not initialized."""
-        pass
 
     async def _close_multimodal(self) -> None:
         """Close multimodal enricher and LMDB at TEARDOWN."""
@@ -330,11 +362,11 @@ class EnrichmentServices:
             try:
                 await self._multimodal_enricher.close()
             except Exception as exc:
-                log.debug('Multimodal enricher close failed: %s', exc)
+                log.debug("Multimodal enricher close failed: %s", exc)
             self._multimodal_enricher = None
         if self._multimodal_lmdb_env is not None:
             try:
                 self._multimodal_lmdb_env.close()
             except Exception as exc:
-                log.debug('Multimodal LMDB close failed: %s', exc)
+                log.debug("Multimodal LMDB close failed: %s", exc)
             self._multimodal_lmdb_env = None

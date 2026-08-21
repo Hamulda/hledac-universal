@@ -55,13 +55,11 @@ M1 compatibility:
   speed as `try/except: pass` (no measurable difference on M1)
 """
 
-
 import contextlib
 import functools
 import logging
 from collections.abc import Callable, Iterator
 from typing import ParamSpec, TypeVar
-from _core import aclose
 
 # Module-level cache: name → logger
 _LOGGER_CACHE: dict[str, logging.Logger] = {}
@@ -103,11 +101,6 @@ def safe_swallow(
     """
     log = logger or _get_logger(site_name)
     log.log(level, "silent-except swallowed: %s", site_name, exc_info=exc)
-
-
-# =============================================================================
-# Modern (Python 3.11+) primitives
-# =============================================================================
 
 
 @contextlib.contextmanager
@@ -193,6 +186,7 @@ def silence_errors(
     Returns:
         Decorator that wraps the function.
     """
+
     def decorator(fn: Callable[_P, _R]) -> Callable[_P, _R | None]:
         @functools.wraps(fn)
         def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R | None:
@@ -202,17 +196,12 @@ def silence_errors(
                 log = logger or _get_logger(name)
                 log.log(level, "silenced: %s", name, exc_info=exc)
                 return None
+
         return wrapper
+
     return decorator
 
 
-# =============================================================================
-# Classification helper (for the AST audit tool)
-# =============================================================================
-
-
-# Categories used by the audit script and any future PR check.
-# Lower-case keys → human-readable label.
 SITE_CATEGORIES: dict[str, str] = {
     "exception": "broad-catch",
     "importerror": "defensive-import",

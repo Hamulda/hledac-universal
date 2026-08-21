@@ -1,24 +1,37 @@
 """
 Replay buffer pro MARL s ukládáním do numpy polí (bezpečné, serializovatelné).
 """
+
 from pathlib import Path
 
 import numpy as np
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
+
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mlx_core():
     """Lazily import mlx.core, returning None if unavailable."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
 
-class MARLReplayBuffer:
-    __slots__ = tuple(('actions', 'capacity', 'dones', 'n_agents', 'next_states', 'pos', 'rewards', 'size', 'state_dim', 'states'))
 
-    def __init__(self, capacity: int=50000, state_dim: int=12, n_agents: int=5):
+class MARLReplayBuffer:
+    __slots__ = (
+        "actions",
+        "capacity",
+        "dones",
+        "n_agents",
+        "next_states",
+        "pos",
+        "rewards",
+        "size",
+        "state_dim",
+        "states",
+    )
+
+    def __init__(self, capacity: int = 50000, state_dim: int = 12, n_agents: int = 5) -> None:
         self.capacity = capacity
         self.state_dim = state_dim
         self.n_agents = n_agents
@@ -30,7 +43,7 @@ class MARLReplayBuffer:
         self.pos = 0
         self.size = 0
 
-    def push(self, state, actions: np.ndarray, reward: float, next_state, done: bool):
+    def push(self, state, actions: np.ndarray, reward: float, next_state, done: bool) -> None:
         mx = _get_mlx_core()
         if mx is not None:
             mx.eval(state, next_state)
@@ -46,19 +59,38 @@ class MARLReplayBuffer:
         idx = np.random.randint(0, self.size, batch_size)
         mx = _get_mlx_core()
         if mx is not None:
-            return {'states': mx.array(self.states[idx]), 'actions': mx.array(self.actions[idx]), 'rewards': mx.array(self.rewards[idx]), 'next_states': mx.array(self.next_states[idx]), 'dones': mx.array(self.dones[idx])}
-        return {'states': self.states[idx], 'actions': self.actions[idx], 'rewards': self.rewards[idx], 'next_states': self.next_states[idx], 'dones': self.dones[idx]}
+            return {
+                "states": mx.array(self.states[idx]),
+                "actions": mx.array(self.actions[idx]),
+                "rewards": mx.array(self.rewards[idx]),
+                "next_states": mx.array(self.next_states[idx]),
+                "dones": mx.array(self.dones[idx]),
+            }
+        return {
+            "states": self.states[idx],
+            "actions": self.actions[idx],
+            "rewards": self.rewards[idx],
+            "next_states": self.next_states[idx],
+            "dones": self.dones[idx],
+        }
 
-    def save(self, path: Path):
-        np.savez_compressed(path.with_suffix('.npz'), states=self.states[:self.size], actions=self.actions[:self.size], rewards=self.rewards[:self.size], next_states=self.next_states[:self.size], dones=self.dones[:self.size])
+    def save(self, path: Path) -> None:
+        np.savez_compressed(
+            path.with_suffix(".npz"),
+            states=self.states[: self.size],
+            actions=self.actions[: self.size],
+            rewards=self.rewards[: self.size],
+            next_states=self.next_states[: self.size],
+            dones=self.dones[: self.size],
+        )
 
-    def load(self, path: Path):
-        data = np.load(path.with_suffix('.npz'))
-        n = data['states'].shape[0]
-        self.states[:n] = data['states']
-        self.actions[:n] = data['actions']
-        self.rewards[:n] = data['rewards']
-        self.next_states[:n] = data['next_states']
-        self.dones[:n] = data['dones']
+    def load(self, path: Path) -> None:
+        data = np.load(path.with_suffix(".npz"))
+        n = data["states"].shape[0]
+        self.states[:n] = data["states"]
+        self.actions[:n] = data["actions"]
+        self.rewards[:n] = data["rewards"]
+        self.next_states[:n] = data["next_states"]
+        self.dones[:n] = data["dones"]
         self.size = n
         self.pos = n % self.capacity

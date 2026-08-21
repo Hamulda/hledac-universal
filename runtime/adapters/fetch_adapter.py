@@ -11,13 +11,10 @@ GHOST_INVARIANTS:
 - Bounded: semaphore limits concurrency
 """
 
-
-
 import asyncio
 from typing import Any
 
 from hledac.universal.runtime.protocols.fetch_protocol import FetchProtocol
-from _core import aclose
 
 
 class FetchCoordinatorAdapter(FetchProtocol):
@@ -34,7 +31,7 @@ class FetchCoordinatorAdapter(FetchProtocol):
         result = await adapter.fetch(work)
     """
 
-    __slots__ = ('_coordinator',)
+    __slots__ = ("_coordinator",)
 
     def __init__(self, coordinator: Any) -> None:
         """
@@ -58,6 +55,7 @@ class FetchCoordinatorAdapter(FetchProtocol):
             return self._coordinator.get_semaphore()
         except Exception:
             from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
             return get_semaphore(ConcurrencyCategory.HTTP_LANE)
 
     def get_backpressure(self) -> float | None:

@@ -20,11 +20,8 @@ The module NEVER raises. It returns str (possibly with replacement chars).
 M1 8GB-safe: pure-Python paths only, no heavy ML models, no streaming.
 """
 
-
-
 import logging
 from typing import Final
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +107,7 @@ def decode_response_bytes(
     if http_charset:
         try:
             return raw_b.decode(http_charset, errors="strict")
-        except (LookupError, UnicodeDecodeError):  # noqa: BLE001
+        except LookupError, UnicodeDecodeError:  # noqa: BLE001
             pass  # unknown encoding or invalid bytes — fall through
 
     # 1) charset_normalizer (best accuracy)
@@ -155,7 +152,7 @@ def parse_charset_from_content_type(content_type: str | None) -> str | None:
         for part in content_type.split(";"):
             token = part.strip()
             if token.lower().startswith("charset="):
-                value = token[len("charset="):].strip().strip('"').strip("'")
+                value = token[len("charset=") :].strip().strip('"').strip("'")
                 return value or None
     except Exception:
         return None

@@ -13,7 +13,7 @@ Verifies:
 class TestTP1Invariant:
     """TP-1: T0 (curl_cffi) is always-on regardless of memory pressure."""
 
-    def test_tp1_t0_never_blocked_in_policy_decision(self, monkeypatch: pytest.MonkeyPatch):
+    def test_tp1_t0_never_blocked_in_policy_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """
         [TP-1] get_transport_policy() must NEVER return a decision where T0
         is in blocked_tiers. This is enforced by an assertion at every
@@ -27,13 +27,13 @@ class TestTP1Invariant:
         from hledac.universal.transport.policy import (
             TransportPolicyDecision,
             get_transport_policy,
-    )
+        )
 
         # Normal memory: all tiers available, T0 must not be blocked
         decision: TransportPolicyDecision = get_transport_policy()
         assert "T0_curl_cffi" not in decision.blocked_tiers, (
             f"[TP-1] T0 must never be blocked! blocked_tiers={decision.blocked_tiers}"
-    )
+        )
         assert decision.tier == "T0_curl_cffi"
 
         # JS rendering: T0 still not blocked
@@ -50,7 +50,7 @@ class TestTP1Invariant:
         assert "T0_curl_cffi" not in decision_stealth.blocked_tiers
         assert decision_stealth.tier == "T0_curl_cffi"
 
-    def test_tp1_h2_candidate_bypasses_t0_gate(self):
+    def test_tp1_h2_candidate_bypasses_t0_gate(self) -> None:
         """
         When is_httpx_h2_candidate=True AND h2 is available (httpx+h2 installed),
         H2 lane is selected and T0 is NOT blocked.
@@ -65,7 +65,7 @@ class TestTP1Invariant:
         # If httpx+h2 installed: tier=T1; if not installed: tier=T0 (fallback)
         assert decision.tier in ("T1_httpx_h2", "T0_curl_cffi"), decision.tier
 
-    def test_tp1_assertion_fires_on_programmer_error(self):
+    def test_tp1_assertion_fires_on_programmer_error(self) -> None:
         """
         If a future code change accidentally puts T0 in blocked list,
         the assertion fires with a clear message.
@@ -78,13 +78,13 @@ class TestTP1Invariant:
         source = inspect.getsource(policy)
         assert "_tp1_assert" in source or ("T0_curl_cffi" in source and "assert" in source), (
             "[TP-1] assertion must be present in get_transport_policy() source"
-    )
+        )
 
 
 class TestPolicyWireInPublicFetcher:
     """Verify policy decision is used in _fetch_single_url transport routing."""
 
-    def test_policy_import_in_public_fetcher(self):
+    def test_policy_import_in_public_fetcher(self) -> None:
         """
         public_fetcher.py must import and call get_transport_policy
         before selecting the H2 lane.
@@ -98,7 +98,7 @@ class TestPolicyWireInPublicFetcher:
         assert "get_transport_policy" in source
         assert "_h2_allowed" in source, "_h2_allowed from policy decision must be used in transport selection"
 
-    def test_h2_lane_gated_by_policy(self):
+    def test_h2_lane_gated_by_policy(self) -> None:
         """
         _use_httpx_h2 must be False when _h2_allowed is False,
         even if _router_lane == 'httpx_h2'.
@@ -118,7 +118,7 @@ class TestPolicyWireInPublicFetcher:
 class TestEnvExampleDocs:
     """Verify .env.example documents Transport Policy variables."""
 
-    def test_env_example_has_transport_policy_section(self):
+    def test_env_example_has_transport_policy_section(self) -> None:
         """Transport Policy (F265C) section must exist in .env.example."""
         import os
 

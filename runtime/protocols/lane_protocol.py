@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: lane budgets enforced per sprint
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -42,8 +39,6 @@ class LaneProtocol(Protocol):
         """Get remaining time budget for lane."""
         ...
 
-    def record_lane_outcome(
-        self, lane_name: str, outcome: dict[str, Any]
-    ) -> None:
+    def record_lane_outcome(self, lane_name: str, outcome: dict[str, Any]) -> None:
         """Record lane execution outcome."""
         ...

@@ -2,8 +2,6 @@
 Stylometry Analyzer — Multi-Dimensional Writing Style Fingerprinting
 ====================================================================
 
-
-
 ISSUE [UNINDEXED]-007: Replaces the single cosine-similarity-on-char-distribution
 approach in ``brain/inference_engine.py:398-405`` and ``recon/identity_stitching.py:645-675``
 with a proper multi-dimensional stylometry engine.
@@ -37,20 +35,13 @@ from __future__ import annotations
 
 import gc
 import logging
-import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
-from _core import aclose
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 # Minimum text length (characters) to build a meaningful profile
 MIN_TEXT_LENGTH: int = 50
@@ -66,66 +57,158 @@ PROFILE_MEMORY_BUDGET: int = 5 * 1024 * 1024  # 5 MB
 
 # Sentence boundary regex (handles . ! ? with quote/brace edges)
 _SENTENCE_BOUNDARY: re.Pattern[str] = re.compile(
-    r'(?<=[.!?])(?:\s+)(?=[A-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF])',
-    )
+    r"(?<=[.!?])(?:\s+)(?=[A-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF])",
+)
 
 # Function words — high-frequency low-semantic-content markers of writing style
-_FUNCTION_WORDS: frozenset[str] = frozenset({
-    # English
-    'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i',
-    'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
-    'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 'she',
-    'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 'their',
-    'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 'go',
-    'me', 'when', 'make', 'can', 'like', 'time', 'no', 'just', 'him',
-    'know', 'take', 'people', 'into', 'year', 'your', 'good', 'some',
-    'could', 'them', 'see', 'other', 'than', 'then', 'now', 'look',
-    'only', 'come', 'its', 'over', 'think', 'also', 'back', 'after',
-    'use', 'two', 'how', 'our', 'work', 'first', 'well', 'way', 'even',
-    'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most',
-    'us', 'been', 'had', 'did', 'very', 'much', 'being', 'still',
-})
-
+_FUNCTION_WORDS: frozenset[str] = frozenset(
+    {
+        # English
+        "the",
+        "be",
+        "to",
+        "of",
+        "and",
+        "a",
+        "in",
+        "that",
+        "have",
+        "i",
+        "it",
+        "for",
+        "not",
+        "on",
+        "with",
+        "he",
+        "as",
+        "you",
+        "do",
+        "at",
+        "this",
+        "but",
+        "his",
+        "by",
+        "from",
+        "they",
+        "we",
+        "say",
+        "her",
+        "she",
+        "or",
+        "an",
+        "will",
+        "my",
+        "one",
+        "all",
+        "would",
+        "there",
+        "their",
+        "what",
+        "so",
+        "up",
+        "out",
+        "if",
+        "about",
+        "who",
+        "get",
+        "which",
+        "go",
+        "me",
+        "when",
+        "make",
+        "can",
+        "like",
+        "time",
+        "no",
+        "just",
+        "him",
+        "know",
+        "take",
+        "people",
+        "into",
+        "year",
+        "your",
+        "good",
+        "some",
+        "could",
+        "them",
+        "see",
+        "other",
+        "than",
+        "then",
+        "now",
+        "look",
+        "only",
+        "come",
+        "its",
+        "over",
+        "think",
+        "also",
+        "back",
+        "after",
+        "use",
+        "two",
+        "how",
+        "our",
+        "work",
+        "first",
+        "well",
+        "way",
+        "even",
+        "new",
+        "want",
+        "because",
+        "any",
+        "these",
+        "give",
+        "day",
+        "most",
+        "us",
+        "been",
+        "had",
+        "did",
+        "very",
+        "much",
+        "being",
+        "still",
+    }
+)
 
 # Common typo patterns for detection
 _TYPO_PATTERNS: list[tuple[str, str]] = [
     # Swapped adjacent characters
-    ('ie', 'ei'),  # receive vs recieve
-    ('tion', 'iton'),
-    ('able', 'abel'),
-    ('ment', 'mnet'),
-    ('ly', 'yl'),
+    ("ie", "ei"),  # receive vs recieve
+    ("tion", "iton"),
+    ("able", "abel"),
+    ("ment", "mnet"),
+    ("ly", "yl"),
     # Missing letters
-    ('the', 'teh'),
-    ('and', 'adn'),
-    ('that', 'taht'),
-    ('with', 'wiht'),
-    ('have', 'hvae'),
-    ('this', 'thsi'),
-    ('from', 'form'),
-    ('they', 'tehy'),
-    ('what', 'waht'),
-    ('when', 'wneh'),
+    ("the", "teh"),
+    ("and", "adn"),
+    ("that", "taht"),
+    ("with", "wiht"),
+    ("have", "hvae"),
+    ("this", "thsi"),
+    ("from", "form"),
+    ("they", "tehy"),
+    ("what", "waht"),
+    ("when", "wneh"),
     # Double-letter patterns
-    ('tt', 't'),
-    ('ll', 'l'),
-    ('ss', 's'),
-    ('pp', 'p'),
-    ('rr', 'r'),
-    ('mm', 'm'),
-    ('nn', 'n'),
-    ('ff', 'f'),
-    ('gg', 'g'),
-    ('bb', 'b'),
+    ("tt", "t"),
+    ("ll", "l"),
+    ("ss", "s"),
+    ("pp", "p"),
+    ("rr", "r"),
+    ("mm", "m"),
+    ("nn", "n"),
+    ("ff", "f"),
+    ("gg", "g"),
+    ("bb", "b"),
 ]
 
 # Letters with doubled counterparts for typo detection
-_DOUBLE_LETTERS: frozenset[str] = frozenset('tlspmnfgbdcrk')
+_DOUBLE_LETTERS: frozenset[str] = frozenset("tlspmnfgbdcrk")
 
-
-# ---------------------------------------------------------------------------
-# StylometryProfile dataclass
-# ---------------------------------------------------------------------------
 
 @dataclass(slots=True)
 class StylometryProfile:
@@ -156,6 +239,7 @@ class StylometryProfile:
         text_length: Character count of source text
         created_at: Unix timestamp of profile creation
     """
+
     avg_sentence_length: float = 0.0
     vocabulary_richness: float = 0.0
     hapax_legomena_ratio: float = 0.0
@@ -184,13 +268,16 @@ class StylometryProfile:
         Args:
             keep_fields: If provided, only drop fields NOT in this set.
         """
-        _default_drop = frozenset({
-            'ngram_vectors', 'ngram_vocab', 'function_word_dist',
-            'punctuation_frequency', 'typo_scores',
-        })
-        drop = _default_drop if keep_fields is None else {
-            f for f in _default_drop if f not in keep_fields
-        }
+        _default_drop = frozenset(
+            {
+                "ngram_vectors",
+                "ngram_vocab",
+                "function_word_dist",
+                "punctuation_frequency",
+                "typo_scores",
+            }
+        )
+        drop = _default_drop if keep_fields is None else {f for f in _default_drop if f not in keep_fields}
         for field_name in drop:
             if hasattr(self, field_name):
                 setattr(self, field_name, {} if isinstance(getattr(self, field_name), dict) else {})
@@ -199,10 +286,6 @@ class StylometryProfile:
         self.ngram_vectors.clear()
         self.ngram_vocab.clear()
 
-
-# ---------------------------------------------------------------------------
-# StylometryAnalyzer — core engine
-# ---------------------------------------------------------------------------
 
 class StylometryAnalyzer:
     """
@@ -215,23 +298,23 @@ class StylometryAnalyzer:
     """
 
     __slots__ = (
-        '_profile_cache',
-        '_comparison_cache',
-        '_mlx_available',
-        '_max_cache_entries',
+        "_profile_cache",
+        "_comparison_cache",
+        "_mlx_available",
+        "_max_cache_entries",
     )
 
     # Dimension weights for profile comparison (sum = 1.0)
     DEFAULT_DIMENSION_WEIGHTS: dict[str, float] = {
-        'ngram_2': 0.25,       # Bigram — most discriminative for authorship
-        'ngram_3': 0.20,       # Trigram — captures letter combination habits
-        'ngram_1': 0.10,       # Unigram — overall letter frequency
-        'ngram_4': 0.05,       # 4-gram — fine-grained patterns
-        'function_words': 0.15,  # Function-word styling (the, and, but, etc.)
-        'sentence_structure': 0.10,  # Sentence length + complexity
-        'vocabulary': 0.08,    # Type-token ratio, hapax, Simpson
-        'punctuation': 0.05,   # Punctuation usage patterns
-        'typo_patterns': 0.02, # Typo fingerprint (minor weight)
+        "ngram_2": 0.25,  # Bigram — most discriminative for authorship
+        "ngram_3": 0.20,  # Trigram — captures letter combination habits
+        "ngram_1": 0.10,  # Unigram — overall letter frequency
+        "ngram_4": 0.05,  # 4-gram — fine-grained patterns
+        "function_words": 0.15,  # Function-word styling (the, and, but, etc.)
+        "sentence_structure": 0.10,  # Sentence length + complexity
+        "vocabulary": 0.08,  # Type-token ratio, hapax, Simpson
+        "punctuation": 0.05,  # Punctuation usage patterns
+        "typo_patterns": 0.02,  # Typo fingerprint (minor weight)
     }
 
     def __init__(self, max_cache_entries: int = MAX_PROFILE_CACHE) -> None:
@@ -239,10 +322,6 @@ class StylometryAnalyzer:
         self._comparison_cache: dict[tuple[int, int], float] = {}
         self._mlx_available: bool = self._probe_mlx()
         self._max_cache_entries = max_cache_entries
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def extract_profile(self, texts: str | list[str]) -> StylometryProfile | None:
         """
@@ -257,11 +336,12 @@ class StylometryAnalyzer:
         if isinstance(texts, str):
             texts = [texts]
 
-        combined = '\n\n'.join(t for t in texts if t and len(t.strip()) >= 20)
+        combined = "\n\n".join(t for t in texts if t and len(t.strip()) >= 20)
         if len(combined) < MIN_TEXT_LENGTH:
             return None
 
         import time
+
         return self._build_profile(combined, created_at=time.time())
 
     def compare_profiles(
@@ -299,7 +379,7 @@ class StylometryAnalyzer:
         # Align vocabularies before computing cosine — each text produces
         # a different set of n-grams, so raw vectors have mismatched dims.
         for n in range(1, 5):
-            dim_key = f'ngram_{n}'
+            dim_key = f"ngram_{n}"
             if dim_key not in weights:
                 continue
             vocab_a = profile_a.ngram_vocab.get(n, [])
@@ -308,31 +388,37 @@ class StylometryAnalyzer:
             vec_b = profile_b.ngram_vectors.get(n)
             if vocab_a and vocab_b and vec_a is not None and vec_b is not None:
                 scores[dim_key] = self._compare_ngram_vectors(
-                    vec_a, vocab_a, vec_b, vocab_b,
-    )
+                    vec_a,
+                    vocab_a,
+                    vec_b,
+                    vocab_b,
+                )
             else:
                 scores[dim_key] = 0.0
 
         # 2. Function word distribution similarity
-        scores['function_words'] = self._compare_function_words(
-            profile_a.function_word_dist, profile_b.function_word_dist,
-    )
+        scores["function_words"] = self._compare_function_words(
+            profile_a.function_word_dist,
+            profile_b.function_word_dist,
+        )
 
         # 3. Sentence structure similarity
-        scores['sentence_structure'] = self._compare_sentence_structure(profile_a, profile_b)
+        scores["sentence_structure"] = self._compare_sentence_structure(profile_a, profile_b)
 
         # 4. Vocabulary metrics similarity
-        scores['vocabulary'] = self._compare_vocabulary(profile_a, profile_b)
+        scores["vocabulary"] = self._compare_vocabulary(profile_a, profile_b)
 
         # 5. Punctuation similarity
-        scores['punctuation'] = self._compare_punctuation(
-            profile_a.punctuation_frequency, profile_b.punctuation_frequency,
-    )
+        scores["punctuation"] = self._compare_punctuation(
+            profile_a.punctuation_frequency,
+            profile_b.punctuation_frequency,
+        )
 
         # 6. Typo pattern similarity
-        scores['typo_patterns'] = self._compare_typo_patterns(
-            profile_a.typo_scores, profile_b.typo_scores,
-    )
+        scores["typo_patterns"] = self._compare_typo_patterns(
+            profile_a.typo_scores,
+            profile_b.typo_scores,
+        )
 
         # Weighted aggregation
         total_weight = 0.0
@@ -379,18 +465,12 @@ class StylometryAnalyzer:
         self._comparison_cache.clear()
         gc.collect()
 
-    # ------------------------------------------------------------------
-    # Profile building
-    # ------------------------------------------------------------------
-
     def _build_profile(self, text: str, created_at: float = 0.0) -> StylometryProfile:
         """Build complete stylometry profile from text."""
 
-        # ---- Tokenization ----
         tokens = self._tokenize(text)
         sentences = self._segment_sentences(text)
 
-        # ---- Scalar metrics ----
         total_tokens = len(tokens)
         total_sentences = max(len(sentences), 1)
         text_length = len(text)
@@ -418,10 +498,9 @@ class StylometryAnalyzer:
         uppercase_ratio = uppercase_count / letter_count if letter_count > 0 else 0.0
 
         # Sentence complexity (avg clauses via comma/semicolon count)
-        clause_delimiters = sum(text.count(d) for d in (',', ';', ':', '-'))
+        clause_delimiters = sum(text.count(d) for d in (",", ";", ":", "-"))
         sentence_complexity = clause_delimiters / total_sentences if total_sentences > 0 else 0.0
 
-        # ---- N-gram vectors ----
         ngram_vectors: dict[int, np.ndarray] = {}
         ngram_vocab: dict[int, list[str]] = {}
         for n in range(NGRAM_RANGE[0], NGRAM_RANGE[1] + 1):
@@ -437,13 +516,10 @@ class StylometryAnalyzer:
             ngram_vectors[n] = vec
             ngram_vocab[n] = vocab
 
-        # ---- Punctuation frequency ----
         punct_freq = self._extract_punctuation_frequency(text)
 
-        # ---- Function word distribution ----
         func_dist = self._extract_function_word_dist(tokens, total_tokens)
 
-        # ---- Typo patterns ----
         typo_scores = self._detect_typo_patterns(text)
 
         return StylometryProfile(
@@ -463,11 +539,7 @@ class StylometryAnalyzer:
             total_sentences=total_sentences,
             text_length=text_length,
             created_at=created_at,
-    )
-
-    # ------------------------------------------------------------------
-    # Dimension comparison helpers
-    # ------------------------------------------------------------------
+        )
 
     @staticmethod
     def _compare_function_words(
@@ -495,7 +567,7 @@ class StylometryAnalyzer:
             ratio_len = min(
                 profile_a.avg_sentence_length / profile_b.avg_sentence_length,
                 profile_b.avg_sentence_length / profile_a.avg_sentence_length,
-    )
+            )
             ratios.append(ratio_len * 0.5)
 
         # Sentence complexity similarity
@@ -509,7 +581,7 @@ class StylometryAnalyzer:
             ratio_wl = min(
                 profile_a.avg_word_length / profile_b.avg_word_length,
                 profile_b.avg_word_length / profile_a.avg_word_length,
-    )
+            )
             ratios.append(ratio_wl * 0.2)
 
         return sum(ratios) if ratios else 0.0
@@ -623,14 +695,10 @@ class StylometryAnalyzer:
         result = dot / (norm_a * norm_b)
         return float(np.clip(result, 0.0, 1.0))
 
-    # ------------------------------------------------------------------
-    # Extraction helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _tokenize(text: str) -> list[str]:
         """Extract word tokens (3+ characters, alphanumeric)."""
-        return re.findall(r'\b[a-zA-Z\u00C0-\u024F]{3,}\b', text.lower())
+        return re.findall(r"\b[a-zA-Z\u00C0-\u024F]{3,}\b", text.lower())
 
     @staticmethod
     def _segment_sentences(text: str) -> list[str]:
@@ -660,7 +728,7 @@ class StylometryAnalyzer:
         text_lower = text.lower()
         ngrams: dict[str, int] = defaultdict(int)
         for i in range(len(text_lower) - n + 1):
-            ngram = text_lower[i:i + n]
+            ngram = text_lower[i : i + n]
             if ngram.strip():  # Skip whitespace-only ngrams
                 ngrams[ngram] += 1
         total = sum(ngrams.values())
@@ -671,7 +739,7 @@ class StylometryAnalyzer:
     @staticmethod
     def _extract_punctuation_frequency(text: str) -> dict[str, float]:
         """Extract punctuation character frequency distribution."""
-        punct_chars = set(',.!?;:\'"()-[]{}…—–/\\@#$%^&*_+=<>|~`')
+        punct_chars = set(",.!?;:'\"()-[]{}…—–/\\@#$%^&*_+=<>|~`")
         counts: dict[str, int] = defaultdict(int)
         total_punct = 0
         for c in text:
@@ -716,36 +784,32 @@ class StylometryAnalyzer:
         text_lower = text.lower()
         scores: dict[str, float] = {}
 
-        # Check each common misspelling
         for correct, wrong in _TYPO_PATTERNS:
             correct_count = text_lower.count(correct)
             wrong_count = text_lower.count(wrong)
             total = correct_count + wrong_count
             if total > 0:
                 # Score = fraction that are wrong (higher = more typos of this pattern)
-                scores[f'{wrong}_for_{correct}'] = wrong_count / total
+                scores[f"{wrong}_for_{correct}"] = wrong_count / total
 
         # Double letter analysis
         for ch in _DOUBLE_LETTERS:
             double = ch * 2
-            double_count = len(re.findall(double, text_lower))
-            single_count = len(re.findall(ch + r'(?!' + ch + ')', text_lower))
+            len(re.findall(double, text_lower))
+            len(re.findall(ch + r"(?!" + ch + ")", text_lower))
             # If there are double-letter words, check consistency
-            double_words = len(re.findall(r'\w*' + double + r'\w*', text_lower))
+            double_words = len(re.findall(r"\w*" + double + r"\w*", text_lower))
             if double_words > 0:
-                scores[f'double_{ch}'] = min(1.0, double_words / max(len(text_lower.split()), 1) * 100)
+                scores[f"double_{ch}"] = min(1.0, double_words / max(len(text_lower.split()), 1) * 100)
 
         return scores
-
-    # ------------------------------------------------------------------
-    # MLX helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _probe_mlx() -> bool:
         """Probe for MLX availability on Apple Silicon."""
         try:
             import mlx.core as mx  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -756,6 +820,7 @@ class StylometryAnalyzer:
             return self._cosine(vec_a, vec_b)
         try:
             import mlx.core as mx
+
             a_mx = mx.array(vec_a)
             b_mx = mx.array(vec_b)
             dot = mx.sum(a_mx * b_mx)
@@ -767,10 +832,6 @@ class StylometryAnalyzer:
         except Exception:
             return self._cosine(vec_a, vec_b)
 
-
-# ---------------------------------------------------------------------------
-# Convenience functions (module-level)
-# ---------------------------------------------------------------------------
 
 _global_analyzer: StylometryAnalyzer | None = None
 

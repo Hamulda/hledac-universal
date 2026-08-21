@@ -38,20 +38,16 @@ Invariant tests (TestSprint44):
     INV: settings_duckdb_threads — duckdb threads capped at 4 for M1
     INV: settings_metal_cache — metal cache bounded to [512MiB, 1GiB]
 """
+
 from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Callable
 
 from _core.lock_registry import LockCategory, register_lock
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal._core.env_config import ENV
-from _core import aclose
 
 __all__ = [
     "Settings",
@@ -74,19 +70,9 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Canonical Model Constants (ISSUE-015: Config Drift Fix)
-# Single source of truth for model identifiers - referenced by all config classes
-# ---------------------------------------------------------------------------
-
 HERMES_MODEL_DEFAULT: str = "mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit"
 MODERNBERT_MODEL_DEFAULT: str = "mlx-community/answerdotai-ModernBERT-base-6bit"
 GLINER_MODEL_DEFAULT: str = "knowledgator/gliner-relex-large-v0.5"
-
-
-# ---------------------------------------------------------------------------
-# Domain Structs (msgspec.Struct — immutable, zero-copy)
-# ---------------------------------------------------------------------------
 
 
 class FetchSettings(Struct, frozen=True):
@@ -114,7 +100,7 @@ class FetchSettings(Struct, frozen=True):
     browser_mem_threshold_gib: float = 1.0
 
     @classmethod
-    def from_env(cls) -> "FetchSettings":
+    def from_env(cls) -> FetchSettings:
         return cls(
             curl_cffi_pool_size=ENV.get_int("HLEDAC_CURL_CFFI_POOL_SIZE", 4),
             curl_cffi_prewarm=ENV.get_bool("HLEDAC_CURL_CFFI_PREWARM", True),
@@ -129,7 +115,7 @@ class FetchSettings(Struct, frozen=True):
             retry_attempts=ENV.get_int("HLEDAC_FETCH_RETRY_ATTEMPTS", 3),
             retry_backoff_s=ENV.get_float("HLEDAC_FETCH_RETRY_BACKOFF_S", 1.0),
             browser_mem_threshold_gib=ENV.get_float("HLEDAC_BROWSER_MEM_THRESHOLD_GIB", 1.0),
-    )
+        )
 
 
 class MLXSettings(Struct, frozen=True):
@@ -151,7 +137,7 @@ class MLXSettings(Struct, frozen=True):
 
     # Session / cache
     session_cache_memory_mb: int = 0  # 0 = auto
-    session_cache_maxsize: int = 0    # 0 = auto
+    session_cache_maxsize: int = 0  # 0 = auto
     idle_unload_timeout_s: float = 1800.0
 
     # DSPy / optimizer
@@ -167,15 +153,12 @@ class MLXSettings(Struct, frozen=True):
     ane_dedup_threshold: float = 0.92
 
     @classmethod
-    def from_env(cls) -> "MLXSettings":
+    def from_env(cls) -> MLXSettings:
         return cls(
             kv_bits=ENV.get_int("GHOST_KV_BITS", 4),
             max_kv_size=ENV.get_int("GHOST_KV_SIZE", 8192),
             # ISSUE-015: Uses canonical constant as default
-            hermes_model=os.environ.get(
-                "HLEDAC_HERMES_MODEL",
-                HERMES_MODEL_DEFAULT
-            ),
+            hermes_model=os.environ.get("HLEDAC_HERMES_MODEL", HERMES_MODEL_DEFAULT),
             hermes_no_cache=ENV.get_bool("HLEDAC_HERMES_NO_CACHE", False),
             half_precision=ENV.get_bool("HLEDAC_HALF_PRECISION", True),
             paged_kv_cache=ENV.get_bool("HLEDAC_PAGED_KV_CACHE", False),
@@ -193,14 +176,14 @@ class MLXSettings(Struct, frozen=True):
             batch_timeout_s=ENV.get_float("HLEDAC_BATCH_TIMEOUT_S", 120.0),
             ane_embed_batch_size=ENV.get_int("HLEDAC_ANE_EMBED_BATCH_SIZE", 32),
             ane_dedup_threshold=ENV.get_float("HLEDAC_ANE_DEDUP_THRESHOLD", 0.92),
-    )
+        )
 
 
 class DuckDBSettings(Struct, frozen=True):
     """DuckDB storage configuration."""
 
-    in_process: bool = True   # HLEDAC_DUCKDB_INPROCESS (default ON, saves ~200MB RAM)
-    threads: int = 2          # HLEDAC_DUCKDB_THREADS (2 optimal for M1 thread-local conn)
+    in_process: bool = True  # HLEDAC_DUCKDB_INPROCESS (default ON, saves ~200MB RAM)
+    threads: int = 2  # HLEDAC_DUCKDB_THREADS (2 optimal for M1 thread-local conn)
     checkpoint_policy: str = "auto"
     arrow_ingest: bool = True  # HLEDAC_ARROW_INGEST (default ON, zero-copy)
 
@@ -209,9 +192,10 @@ class DuckDBSettings(Struct, frozen=True):
     memory_ceiling_gib: float = 5.5  # SSOT: MISSION_PEAK_RSS_GIB (was 4.0 - WRONG!)
 
     @classmethod
-    def from_env(cls) -> "DuckDBSettings":
+    def from_env(cls) -> DuckDBSettings:
         # SSOT: Import UmaBudget for correct ceiling
         from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
+
         return cls(
             in_process=ENV.get_bool("HLEDAC_DUCKDB_INPROCESS", True),
             threads=min(ENV.get_int("HLEDAC_DUCKDB_THREADS", 2), 4),  # M1 cap: 4
@@ -219,23 +203,23 @@ class DuckDBSettings(Struct, frozen=True):
             arrow_ingest=ENV.get_bool("HLEDAC_ARROW_INGEST", True),
             memory_limit_gib=min(ENV.get_float("HLEDAC_DUCKDB_MEMORY", 2.0), MISSION_PEAK_RSS_GIB),
             memory_ceiling_gib=ENV.get_float("HLEDAC_DUCKDB_MEMORY_CEILING", MISSION_PEAK_RSS_GIB),
-    )
+        )
 
 
 class DedupSettings(Struct, frozen=True):
     """Deduplication configuration."""
 
-    lmdb_map_size: int = 256 * 1024 * 1024   # 256 MB
+    lmdb_map_size: int = 256 * 1024 * 1024  # 256 MB
     hot_cache_max: int = 10_000
     max_ngrams: int = 5_000
 
     @classmethod
-    def from_env(cls) -> "DedupSettings":
+    def from_env(cls) -> DedupSettings:
         return cls(
             lmdb_map_size=ENV.get_int("HLEDAC_DEDUP_LMDB_MAP_SIZE", 256 * 1024 * 1024),
             hot_cache_max=ENV.get_int("HLEDAC_DEDUP_HOT_CACHE_MAX", 10_000),
             max_ngrams=ENV.get_int("HLEDAC_DEDUP_MAX_NGRAMS", 5_000),
-    )
+        )
 
 
 class TransportSettings(Struct, frozen=True):
@@ -256,7 +240,7 @@ class TransportSettings(Struct, frozen=True):
     dht_rpc_timeout_s: float = 10.0
 
     @classmethod
-    def from_env(cls) -> "TransportSettings":
+    def from_env(cls) -> TransportSettings:
         return cls(
             tor_enabled=ENV.get_bool("HLEDAC_ENABLE_TOR", False),
             i2p_enabled=ENV.get_bool("HLEDAC_ENABLE_I2P", False),
@@ -270,7 +254,7 @@ class TransportSettings(Struct, frozen=True):
             dht_enabled=ENV.get_bool("HLEDAC_ENABLE_DHT", False),
             dht_max_peers=ENV.get_int("HLEDAC_DHT_MAX_PEERS", 100),
             dht_rpc_timeout_s=ENV.get_float("HLEDAC_DHT_RPC_TIMEOUT_S", 10.0),
-    )
+        )
 
 
 class MemorySettings(Struct, frozen=True):
@@ -291,14 +275,14 @@ class MemorySettings(Struct, frozen=True):
     # Resource governor thresholds
     # MODERN-45 Fix: Values derived from SSOT UmaBudget (M1 8GB, 6.25 GiB ceiling)
     # These MUST match utils.uma_budget.UmaBudget.THRESHOLD_*_GIB values
-    threshold_soft_warn_gib: float = 5.5       # = UmaBudget.THRESHOLD_SOFT_WARN_GIB (88% of ceiling)
-    threshold_warn_gib: float = 5.94          # = UmaBudget.THRESHOLD_WARN_GIB (95% of ceiling)
-    threshold_critical_gib: float = 6.19      # = UmaBudget.THRESHOLD_CRITICAL_GIB (99% of ceiling)
-    threshold_emergency_gib: float = 6.25     # = UmaBudget.THRESHOLD_EMERGENCY_GIB (100% = ceiling)
-    hysteresis_exit_gib: float = 4.5          # = SOFT_WARN - ORCHESTRATOR (proper hysteresis band)
+    threshold_soft_warn_gib: float = 5.5  # = UmaBudget.THRESHOLD_SOFT_WARN_GIB (88% of ceiling)
+    threshold_warn_gib: float = 5.94  # = UmaBudget.THRESHOLD_WARN_GIB (95% of ceiling)
+    threshold_critical_gib: float = 6.19  # = UmaBudget.THRESHOLD_CRITICAL_GIB (99% of ceiling)
+    threshold_emergency_gib: float = 6.25  # = UmaBudget.THRESHOLD_EMERGENCY_GIB (100% = ceiling)
+    hysteresis_exit_gib: float = 4.5  # = SOFT_WARN - ORCHESTRATOR (proper hysteresis band)
 
     @classmethod
-    def from_env(cls) -> "MemorySettings":
+    def from_env(cls) -> MemorySettings:
         return cls(
             memory_limit_mb=ENV.get_float("HLEDAC_MEMORY_LIMIT_MB", 5500.0),
             thermal_threshold_c=ENV.get_float("HLEDAC_THERMAL_THRESHOLD_C", 85.0),
@@ -311,13 +295,13 @@ class MemorySettings(Struct, frozen=True):
             threshold_critical_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_CRITICAL_GIB", 6.191),
             threshold_emergency_gib=ENV.get_float("HLEDAC_RG_THRESHOLD_EMERGENCY_GIB", 6.25),
             hysteresis_exit_gib=ENV.get_float("HLEDAC_RG_HYSTERESIS_EXIT_GIB", 4.5),
-    )
+        )
 
 
 class SprintSettings(Struct, frozen=True):
     """Sprint lifecycle / timing configuration."""
 
-    default_duration_s: float = 1800.0   # 30 min
+    default_duration_s: float = 1800.0  # 30 min
     default_windup_lead_s: float = 180.0  # 3 min before end
     default_cycle_sleep_s: float = 5.0
 
@@ -327,12 +311,12 @@ class SprintSettings(Struct, frozen=True):
 
     # Adaptive ratios (F250)
     windup_ratio_aggressive: float = 0.15
-    windup_ratio_quick: float = 0.20   # ≤120s
-    windup_ratio_short: float = 0.25   # ≤300s
+    windup_ratio_quick: float = 0.20  # ≤120s
+    windup_ratio_short: float = 0.25  # ≤300s
     windup_ratio_default: float = 0.30
 
     @classmethod
-    def from_env(cls) -> "SprintSettings":
+    def from_env(cls) -> SprintSettings:
         return cls(
             default_duration_s=ENV.get_float("HLEDAC_SPRINT_DURATION_S", 1800.0),
             default_windup_lead_s=ENV.get_float("HLEDAC_WINDUP_LEAD_S", 180.0),
@@ -343,7 +327,7 @@ class SprintSettings(Struct, frozen=True):
             windup_ratio_quick=ENV.get_float("HLEDAC_WINDUP_RATIO_QUICK", 0.20),
             windup_ratio_short=ENV.get_float("HLEDAC_WINDUP_RATIO_SHORT", 0.25),
             windup_ratio_default=ENV.get_float("HLEDAC_WINDUP_RATIO_DEFAULT", 0.30),
-    )
+        )
 
 
 class GraphSettings(Struct, frozen=True):
@@ -355,13 +339,13 @@ class GraphSettings(Struct, frozen=True):
     hot_cache_max: int = 512
 
     @classmethod
-    def from_env(cls) -> "GraphSettings":
+    def from_env(cls) -> GraphSettings:
         return cls(
             graph_enabled=ENV.get_bool("HLEDAC_ENABLE_GRAPH_ANALYSIS", False),
             max_hops=ENV.get_int("HLEDAC_GRAPH_MAX_HOPS", 3),
             max_candidates=ENV.get_int("HLEDAC_GRAPH_MAX_CANDIDATES", 1000),
             hot_cache_max=ENV.get_int("HLEDAC_GRAPH_HOT_CACHE_MAX", 512),
-    )
+        )
 
 
 class SynthesisSettings(Struct, frozen=True):
@@ -375,14 +359,14 @@ class SynthesisSettings(Struct, frozen=True):
     pydantic_validation: bool = False
 
     @classmethod
-    def from_env(cls) -> "SynthesisSettings":
+    def from_env(cls) -> SynthesisSettings:
         return cls(
             hermes_enabled=ENV.get_bool("HLEDAC_ENABLE_LLM", False),
             hermes_synthesis_enabled=ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS", False),
             hermes_budget_ratio=ENV.get_float("HLEDAC_HERMES_BUDGET_RATIO", 0.35),
             deep_hermes_enabled=ENV.get_bool("HLEDAC_ENABLE_DEEPHERMES", False),
             pydantic_validation=ENV.get_bool("HLEDAC_DEEPHERMES_PYDANTIC_VALIDATION", False),
-    )
+        )
 
 
 class CooldownSettings(Struct, frozen=True):
@@ -408,7 +392,7 @@ class CooldownSettings(Struct, frozen=True):
     cooldown_backoff_factor: float = 1.5
 
     @classmethod
-    def from_env(cls) -> "CooldownSettings":
+    def from_env(cls) -> CooldownSettings:
         return cls(
             cb_max_tracked_domains=ENV.get_int("HLEDAC_CB_MAX_TRACKED_DOMAINS", 500),
             cb_max_recovery_timeout_s=ENV.get_float("HLEDAC_CB_MAX_RECOVERY_TIMEOUT_S", 120.0),
@@ -425,12 +409,7 @@ class CooldownSettings(Struct, frozen=True):
             cooldown_base_s=ENV.get_float("HLEDAC_COOLDOWN_BASE_S", 60.0),
             cooldown_max_s=ENV.get_float("HLEDAC_COOLDOWN_MAX_S", 600.0),
             cooldown_backoff_factor=ENV.get_float("HLEDAC_COOLDOWN_BACKOFF_FACTOR", 1.5),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Feature Gates (msgspec.Struct — computed once, cached)
-# ---------------------------------------------------------------------------
+        )
 
 
 class FeatureGates(Struct, frozen=True):
@@ -476,7 +455,7 @@ class FeatureGates(Struct, frozen=True):
     httpx_h3: bool = False
 
     @classmethod
-    def from_env(cls) -> "FeatureGates":
+    def from_env(cls) -> FeatureGates:
         return cls(
             academic=ENV.get_bool("HLEDAC_ENABLE_ACADEMIC"),
             alt_protocols=ENV.get_bool("HLEDAC_ENABLE_ALT_PROTOCOLS"),
@@ -515,12 +494,8 @@ class FeatureGates(Struct, frozen=True):
             curl_cffi=ENV.get_bool("HLEDAC_ENABLE_CURL_CFFI"),
             httpx_h2=ENV.get_bool("HLEDAC_ENABLE_HTTPX_H2"),
             httpx_h3=ENV.get_bool("HLEDAC_ENABLE_HTTPX_H3"),
-    )
+        )
 
-
-# ---------------------------------------------------------------------------
-# Canonical Settings singleton
-# ---------------------------------------------------------------------------
 
 class Settings(Struct, frozen=True):
     """
@@ -560,7 +535,7 @@ class Settings(Struct, frozen=True):
     features: FeatureGates = FeatureGates()
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         """Build Settings from ENV — called once at startup."""
         return cls(
             fetch=FetchSettings.from_env(),
@@ -574,12 +549,8 @@ class Settings(Struct, frozen=True):
             synthesis=SynthesisSettings.from_env(),
             cooldown=CooldownSettings.from_env(),
             features=FeatureGates.from_env(),
-    )
+        )
 
-
-# ---------------------------------------------------------------------------
-# Process-wide singleton with lazy initialization
-# ---------------------------------------------------------------------------
 
 _settings: Settings | None = None
 
@@ -605,13 +576,10 @@ def settings() -> Settings:
     return _settings
 
 
-# ---------------------------------------------------------------------------
-# Backward compatibility — re-export ENV for raw / dynamic lookups
-# ---------------------------------------------------------------------------
-
 def __getattr__(name: str) -> Any:
     """Route missing attrs to ENV for backward compat."""
     if name == "ENV":
         from hledac.universal._core.env_config import ENV as _ENV
+
         return _ENV
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

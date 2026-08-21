@@ -22,18 +22,17 @@ M1 8GB safety:
 Feature flag: HLEDAC_DOMAIN_REPUTATION=1 (default ON). Set to 0 to disable
 persistence (in-memory fallback with TTL).
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import threading
 import time as _time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -41,22 +40,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Feature flag
-# ---------------------------------------------------------------------------
 _DOMAIN_REPUTATION_ENABLED: bool = os.getenv("HLEDAC_DOMAIN_REPUTATION", "1") != "0"
-_DOMAIN_REPUTATION_MAX_ROWS: int = int(
-    os.getenv("HLEDAC_DOMAIN_REPUTATION_MAX_ROWS", "5000")
-    )
+_DOMAIN_REPUTATION_MAX_ROWS: int = int(os.getenv("HLEDAC_DOMAIN_REPUTATION_MAX_ROWS", "5000"))
 # In-memory fallback TTL when persistence disabled (seconds)
 _DOMAIN_REPUTATION_MEMORY_TTL_S: float = 3600.0  # 1 hour
 # Max in-memory entries when persistence disabled
 _DOMAIN_REPUTATION_MEMORY_MAX: int = 512
 
-
-# ---------------------------------------------------------------------------
-# DTO
-# ---------------------------------------------------------------------------
 
 class DomainReputation(Struct, frozen=True):
     """Immutable domain reputation snapshot from DuckDB.
@@ -96,9 +86,7 @@ class DomainReputation(Struct, frozen=True):
     @property
     def is_hostile(self) -> bool:
         """True if domain is known tarpit or has very low success_rate."""
-        return self.is_tarpit or (
-            self.total_attempts >= 5 and self.success_rate < 0.3
-    )
+        return self.is_tarpit or (self.total_attempts >= 5 and self.success_rate < 0.3)
 
     @property
     def preferred_proxy(self) -> str | None:
@@ -117,10 +105,6 @@ class DomainReputation(Struct, frozen=True):
             return "residential"
         return "none"
 
-
-# ---------------------------------------------------------------------------
-# In-memory fallback (when HLEDAC_DOMAIN_REPUTATION=0)
-# ---------------------------------------------------------------------------
 
 class _MemoryReputationStore:
     """TTL-bounded LRU in-memory fallback when persistence is disabled."""
@@ -153,10 +137,6 @@ class _MemoryReputationStore:
         self._data.clear()
 
 
-# ---------------------------------------------------------------------------
-# DomainReputationService
-# ---------------------------------------------------------------------------
-
 class DomainReputationService:
     """Async service for domain reputation CRUD with DuckDB persistence.
 
@@ -188,12 +168,8 @@ class DomainReputationService:
         self._memory_fallback: _MemoryReputationStore = _MemoryReputationStore(
             max_entries=_DOMAIN_REPUTATION_MEMORY_MAX,
             ttl_s=_DOMAIN_REPUTATION_MEMORY_TTL_S,
-    )
+        )
         self._evict_lock: threading.Lock = threading.Lock()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     async def get(self, domain: str) -> DomainReputation:
         """Get domain reputation, or neutral default if unknown.
@@ -254,7 +230,7 @@ class DomainReputationService:
                 # ISSUE [ADVERSARY]-002: preserve cognitive_tarpit_score on success
                 cognitive_tarpit_score=current.cognitive_tarpit_score,
                 cognitive_tarpit_reasons=current.cognitive_tarpit_reasons,
-    )
+            )
             await self._persist(new_rep)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -303,7 +279,7 @@ class DomainReputationService:
                 challenge_type=challenge_type or current.challenge_type,
                 cognitive_tarpit_score=new_ct_score,
                 cognitive_tarpit_reasons=new_ct_reasons,
-    )
+            )
             await self._persist(new_rep)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
             pass
@@ -323,10 +299,6 @@ class DomainReputationService:
             return "none"
         except Exception:  # noqa: BLE001 — fail-safe
             return "none"
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
     def _compute_updated_reputation(
         self,
@@ -385,7 +357,7 @@ class DomainReputationService:
             last_seen=now,
             cognitive_tarpit_score=round(new_ct_score, 3),
             cognitive_tarpit_reasons=new_ct_reasons,
-    )
+        )
 
     async def _get_from_duckdb(self, domain: str) -> DomainReputation | None:
         """Synchronous DuckDB query run on write executor."""
@@ -425,14 +397,14 @@ class DomainReputationService:
                     last_seen=float(result[9]) if result[9] is not None else 0.0,
                     cognitive_tarpit_score=float(result[10]) if result[10] is not None else 0.0,
                     cognitive_tarpit_reasons=str(result[11]) if result[11] is not None else "",
-    )
+                )
             except Exception:  # noqa: BLE001 — fail-safe; DB query failure; non-critical
                 return None
 
         return await loop.run_in_executor(
             self._store._shared_executor,  # noqa: SLF001
             _sync_query,
-    )
+        )
 
     async def _persist(self, rep: DomainReputation) -> None:
         """Persist domain reputation to DuckDB, with LRU eviction if needed."""
@@ -487,13 +459,11 @@ class DomainReputationService:
                         rep.cognitive_tarpit_score,
                         rep.cognitive_tarpit_reasons,
                     ],
-    )
+                )
 
                 # LRU eviction: remove oldest entries if over max_rows
                 with self._evict_lock:
-                    count_result = conn.execute(
-                        "SELECT COUNT(*) FROM domain_reputation"
-                    ).fetchone()
+                    count_result = conn.execute("SELECT COUNT(*) FROM domain_reputation").fetchone()
                     if count_result and count_result[0] > self._max_rows:
                         excess = count_result[0] - self._max_rows
                         conn.execute(
@@ -502,14 +472,14 @@ class DomainReputationService:
                             "ORDER BY last_seen ASC LIMIT ?"
                             ")",
                             [excess],
-    )
+                        )
             except Exception:  # noqa: BLE001 — fail-safe; DB write failure; non-critical
                 pass
 
         await loop.run_in_executor(
             self._store._shared_executor,  # noqa: SLF001
             _sync_upsert,
-    )
+        )
 
     @staticmethod
     def _parse_json_list(raw: str | None) -> tuple[str, ...]:
@@ -518,6 +488,7 @@ class DomainReputationService:
             return ()
         try:
             import json as _json
+
             parsed = _json.loads(raw)
             if isinstance(parsed, list):
                 return tuple(str(x) for x in parsed)
@@ -532,16 +503,13 @@ class DomainReputationService:
             return "[]"
         try:
             import json as _json
+
             return _json.dumps(list(items))
         except Exception:
             return "[]"
 
 
-# ---------------------------------------------------------------------------
-# Singleton factory (F320: Refactored to use centralized pattern)
-# ---------------------------------------------------------------------------
 from hledac.universal.utils._patterns import module_singleton_getter
-from _core import aclose
 
 
 def _make_reputation_service(store: DuckDBShadowStore | None) -> DomainReputationService:
@@ -553,7 +521,7 @@ def _make_reputation_service(store: DuckDBShadowStore | None) -> DomainReputatio
 _get_reputation_service = module_singleton_getter(
     singleton_name="_reputation_service_singleton",
     factory=lambda: _make_reputation_service(None),
-    )
+)
 
 
 def get_domain_reputation_service(

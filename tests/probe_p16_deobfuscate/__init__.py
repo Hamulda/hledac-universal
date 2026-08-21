@@ -53,6 +53,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
+
 from _core import aclose
 
 # -------------------------------------------------------------------------------------------------
@@ -107,9 +108,7 @@ class TestModuleAvailability:
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
             ioc = rust.ioc
-            assert hasattr(ioc, "decode_ioc_candidates"), (
-                "decode_ioc_candidates not found in rust.ioc"
-    )
+            assert hasattr(ioc, "decode_ioc_candidates"), "decode_ioc_candidates not found in rust.ioc"
         except ImportError:
             pytest.skip("core.rust_backend not available")
 
@@ -121,9 +120,7 @@ class TestModuleAvailability:
             if not rust.is_available:
                 pytest.skip("Rust extension not available")
             ioc = rust.ioc
-            assert hasattr(ioc, "batch_decode_ioc_candidates"), (
-                "batch_decode_ioc_candidates not found"
-    )
+            assert hasattr(ioc, "batch_decode_ioc_candidates"), "batch_decode_ioc_candidates not found"
         except ImportError:
             pytest.skip("core.rust_backend not available")
 
@@ -171,9 +168,9 @@ class TestSingleLayer:
             result = ioc.decode_ioc_candidates(encoded, max_depth=3)
             candidates = getattr(result, "candidates", result)
             assert candidates, f"Base64-wrapped BTC should decode, got {candidates}"
-            assert any(
-                "b12key" in c or "1234567890" in c for c in candidates
-            ), f"Decoded should contain 'b12key' or '1234567890', got {candidates}"
+            assert any("b12key" in c or "1234567890" in c for c in candidates), (
+                f"Decoded should contain 'b12key' or '1234567890', got {candidates}"
+            )
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -189,9 +186,7 @@ class TestSingleLayer:
             result = ioc.decode_ioc_candidates(encoded, max_depth=3)
             candidates = getattr(result, "candidates", result)
             assert candidates, f"Hex-wrapped email should decode, got {candidates}"
-            assert any(
-                "admin" in c for c in candidates
-            ), f"Decoded should contain 'admin', got {candidates}"
+            assert any("admin" in c for c in candidates), f"Decoded should contain 'admin', got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -207,9 +202,7 @@ class TestSingleLayer:
             result = ioc.decode_ioc_candidates(encoded, max_depth=3)
             candidates = getattr(result, "candidates", result)
             assert candidates, f"ROT13 should decode, got {candidates}"
-            assert any(
-                "hello" in c.lower() for c in candidates
-            ), f"Decoded should contain 'hello', got {candidates}"
+            assert any("hello" in c.lower() for c in candidates), f"Decoded should contain 'hello', got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -225,9 +218,7 @@ class TestSingleLayer:
             result = ioc.decode_ioc_candidates(encoded, max_depth=3)
             candidates = getattr(result, "candidates", result)
             assert candidates, f"URL-encoded should decode, got {candidates}"
-            assert any(
-                "example" in c for c in candidates
-            ), f"Decoded should contain 'example', got {candidates}"
+            assert any("example" in c for c in candidates), f"Decoded should contain 'example', got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -286,9 +277,7 @@ class TestNestedLayers:
             result = ioc.decode_ioc_candidates(outer, max_depth=3)
             candidates = getattr(result, "candidates", result)
             assert candidates, f"Nested Base64→Hex should peel to 'biocind', got {candidates}"
-            assert any(
-                "biocind" in c.lower() for c in candidates
-            ), f"Should peel to 'biocind', got {candidates}"
+            assert any("biocind" in c.lower() for c in candidates), f"Should peel to 'biocind', got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -348,13 +337,11 @@ class TestFalsePositiveGuard:
                 "This is a normal paragraph. It contains regular English text. "
                 "There is nothing suspicious here. Just ordinary words and sentences. "
                 "The quick brown fox jumps over the lazy dog."
-    )
+            )
             result = ioc.decode_ioc_candidates(text, max_depth=3)
             candidates = getattr(result, "candidates", result)
             # Normal English has entropy ~3.5-4.5 bits/byte, below threshold 5.5
-            assert not candidates, (
-                f"Normal paragraph should not trigger deobfuscation, got {candidates}"
-    )
+            assert not candidates, f"Normal paragraph should not trigger deobfuscation, got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -372,15 +359,13 @@ class TestFalsePositiveGuard:
                 "        if item.active:\n"
                 "            results.append(process_item(item))\n"
                 "    return results\n"
-    )
+            )
             result = ioc.decode_ioc_candidates(code, max_depth=3)
             candidates = getattr(result, "candidates", result)
             # Code has moderate entropy but not >5.5 bits/byte
             # It may contain some base64-looking identifiers, so we just check
             # it doesn't produce excessive candidates
-            assert len(candidates) < 10, (
-                f"Code should not produce excessive candidates, got {len(candidates)}"
-    )
+            assert len(candidates) < 10, f"Code should not produce excessive candidates, got {len(candidates)}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -405,9 +390,7 @@ class TestAdversarialInputs:
             text = "AAAA" * 100
             result = ioc.decode_ioc_candidates(text, max_depth=3)
             candidates = getattr(result, "candidates", result)
-            assert not candidates, (
-                f"Homogeneous AAAA should not decode, got {candidates}"
-    )
+            assert not candidates, f"Homogeneous AAAA should not decode, got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -674,9 +657,7 @@ class TestMultipleRegions:
             text = f"First: {b64_1} then: {b64_2} done."
             result = ioc.decode_ioc_candidates(text, max_depth=3)
             candidates = getattr(result, "candidates", result)
-            assert len(candidates) >= 1, (
-                f"Should decode at least one region, got {candidates}"
-    )
+            assert len(candidates) >= 1, f"Should decode at least one region, got {candidates}"
         except ImportError:
             pytest.skip("Rust extension not available")
 
@@ -776,9 +757,7 @@ class TestM1Budget:
             start = time.monotonic()
             result = ioc.decode_ioc_candidates(text, max_depth=2)
             elapsed = time.monotonic() - start
-            assert elapsed <= 0.025, (
-                f"100 KB should process in ≤25ms, took {elapsed*1000:.1f}ms"
-    )
+            assert elapsed <= 0.025, f"100 KB should process in ≤25ms, took {elapsed * 1000:.1f}ms"
             assert result is not None
         except ImportError:
             pytest.skip("Rust extension not available")

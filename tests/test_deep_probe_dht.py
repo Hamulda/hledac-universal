@@ -16,13 +16,12 @@ import hashlib
 import os
 import unittest
 from unittest.mock import MagicMock, patch
-from _core import aclose
 
 
 class TestDHTGate(unittest.TestCase):
     """Test HLEDAC_ENABLE_DHT gate behavior."""
 
-    def test_dht_disabled_returns_empty(self):
+    def test_dht_disabled_returns_empty(self) -> None:
         """invariant_1: DHT returns [] when not enabled."""
         # Clear any existing env var
         with patch.dict(os.environ, {}, clear=True):
@@ -32,7 +31,7 @@ class TestDHTGate(unittest.TestCase):
             # Check that DHT_REAL_UDP is False when env var not set
             self.assertFalse(kademlia_node.DHT_REAL_UDP)
 
-    def test_dht_enabled_when_env_set(self):
+    def test_dht_enabled_when_env_set(self) -> None:
         """DHT enabled when HLEDAC_ENABLE_DHT=1."""
         with patch.dict(os.environ, {"HLEDAC_ENABLE_DHT": "1"}):
             # Re-import to pick up env
@@ -47,19 +46,19 @@ class TestDHTGate(unittest.TestCase):
 class TestDHTM1Constraints(unittest.TestCase):
     """Test M1-specific constraints for DHT."""
 
-    def test_bootstrap_semaphore_limit(self):
+    def test_bootstrap_semaphore_limit(self) -> None:
         """invariant: Max 2 concurrent bootstrap operations."""
         from hledac.universal.dht.kademlia_node import DHT_BOOTSTRAP_SEMAPHORE
 
         self.assertEqual(DHT_BOOTSTRAP_SEMAPHORE._value, 2)
 
-    def test_request_semaphore_limit(self):
+    def test_request_semaphore_limit(self) -> None:
         """invariant_4: Max 50 concurrent UDP requests."""
         from hledac.universal.dht.kademlia_node import DHT_REQUEST_SEMAPHORE
 
         self.assertEqual(DHT_REQUEST_SEMAPHORE._value, 50)
 
-    def test_request_timeout(self):
+    def test_request_timeout(self) -> None:
         """invariant_5: 5s timeout per DHT request."""
         from hledac.universal.dht.kademlia_node import DHT_REQUEST_TIMEOUT_S
 
@@ -69,7 +68,7 @@ class TestDHTM1Constraints(unittest.TestCase):
 class TestDHTInfohashGeneration(unittest.TestCase):
     """Test info_hash generation from query."""
 
-    def test_infohash_sha256_40_chars(self):
+    def test_infohash_sha256_40_chars(self) -> None:
         """invariant_7: info_hash is SHA256 hex[:40] of query."""
         query = "test query for DHT"
         query_bytes = query.encode()[:256]
@@ -80,7 +79,7 @@ class TestDHTInfohashGeneration(unittest.TestCase):
         self.assertEqual(result, expected)
         self.assertEqual(len(result), 40)
 
-    def test_infohash_capped_at_256_bytes(self):
+    def test_infohash_capped_at_256_bytes(self) -> None:
         """info_hash generation caps input at 256 bytes."""
         long_query = "x" * 500  # 500 bytes
         result = hashlib.sha256(long_query.encode()[:256]).hexdigest()[:40]
@@ -92,7 +91,7 @@ class TestDHTInfohashGeneration(unittest.TestCase):
 class TestDHTFindingsStructure(unittest.TestCase):
     """Test CanonicalFinding structure for DHT findings."""
 
-    def test_dht_finding_source_type(self):
+    def test_dht_finding_source_type(self) -> None:
         """invariant_2: DHT findings use source_type='dht_discovery'."""
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -104,11 +103,11 @@ class TestDHTFindingsStructure(unittest.TestCase):
             ts=1234567890.0,
             provenance=("deep_probe", "dht", "192.168.1.1:6881"),
             payload_text="DHT peer 192.168.1.1:6881",
-    )
+        )
 
         self.assertEqual(finding.source_type, "dht_discovery")
 
-    def test_dht_finding_provenance_format(self):
+    def test_dht_finding_provenance_format(self) -> None:
         """DHT findings include peer info in provenance tuple."""
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -120,7 +119,7 @@ class TestDHTFindingsStructure(unittest.TestCase):
             ts=1234567890.0,
             provenance=("deep_probe", "dht", "192.168.1.1:6881"),
             payload_text="DHT peer 192.168.1.1:6881 for abc123",
-    )
+        )
 
         # Provenance format: (probe_source, dht, peer_addr)
         self.assertEqual(finding.provenance[0], "deep_probe")
@@ -131,7 +130,7 @@ class TestDHTFindingsStructure(unittest.TestCase):
 class TestDHTFailSoft(unittest.TestCase):
     """Test fail-soft error handling in DHT."""
 
-    def test_scan_dht_handles_local_graph_store_error(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_scan_dht_handles_local_graph_store_error(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """invariant_6: _scan_dht returns [] on LocalGraphStore error."""
 
         async def _test():
@@ -154,7 +153,7 @@ class TestDHTFailSoft(unittest.TestCase):
         result = session_event_loop.run_until_complete(_test())
         self.assertEqual(result, [])
 
-    def test_scan_dht_handles_dht_disabled(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_scan_dht_handles_dht_disabled(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """invariant_1: Returns [] when DHT disabled."""
         with patch.dict(os.environ, {}, clear=True):
 
@@ -171,13 +170,13 @@ class TestDHTFailSoft(unittest.TestCase):
 class TestDHTLocalGraphStore(unittest.TestCase):
     """Test LocalGraphStore DHT methods."""
 
-    def test_count_dht_nodes_method_exists(self):
+    def test_count_dht_nodes_method_exists(self) -> None:
         """LocalGraphStore has count_dht_nodes() method."""
         from hledac.universal.dht.local_graph import LocalGraphStore
 
         self.assertTrue(hasattr(LocalGraphStore, "count_dht_nodes"))
 
-    def test_count_dht_nodes_is_async(self):
+    def test_count_dht_nodes_is_async(self) -> None:
         """count_dht_nodes is an async method."""
         import inspect
 
@@ -189,14 +188,14 @@ class TestDHTLocalGraphStore(unittest.TestCase):
 class TestDHTBencode(unittest.TestCase):
     """Test bencode implementation for BEP-5."""
 
-    def test_bencode_dict(self):
+    def test_bencode_dict(self) -> None:
         """Bencode encodes dicts correctly."""
         from hledac.universal.dht.kademlia_node import KademliaNode
 
         node = KademliaNode(
             node_id="test-node-id",
             governor=MagicMock(),
-    )
+        )
 
         # BEP-5: dict keys must be bytes, values encoded correctly
         msg = {"t": "aa", "y": "q", "q": "ping", "a": {"id": b"test"}}
@@ -206,14 +205,14 @@ class TestDHTBencode(unittest.TestCase):
         self.assertIn(b"d", encoded)  # dict start
         self.assertIn(b"ping", encoded)
 
-    def test_bdecode(self):
+    def test_bdecode(self) -> None:
         """Bencode decodes correctly."""
         from hledac.universal.dht.kademlia_node import KademliaNode
 
         node = KademliaNode(
             node_id="test-node-id",
             governor=MagicMock(),
-    )
+        )
 
         # BEP-5: dict keys are bytes, not strings
         # d1:ai1ee = {b"a": 1}
@@ -233,7 +232,7 @@ class TestDHTModuleBencode(unittest.TestCase):
     Sprint F214: Module-level bencode/bdecode (BEP-3 standard).
     """
 
-    def test_bencode_bytes_keys(self):
+    def test_bencode_bytes_keys(self) -> None:
         from hledac.universal.dht.kademlia_node import bdecode, bencode
 
         msg = {b"y": b"q", b"q": b"ping", b"a": {b"id": b"\x00" * 20}}
@@ -242,25 +241,25 @@ class TestDHTModuleBencode(unittest.TestCase):
         self.assertEqual(rt[b"q"], b"ping")
         self.assertEqual(rt[b"a"][b"id"], b"\x00" * 20)
 
-    def test_bencode_int(self):
+    def test_bencode_int(self) -> None:
         from hledac.universal.dht.kademlia_node import bencode
 
         self.assertEqual(bencode(42), b"i42e")
         self.assertEqual(bencode(0), b"i0e")
         self.assertEqual(bencode(-7), b"i-7e")
 
-    def test_bencode_list(self):
+    def test_bencode_list(self) -> None:
         from hledac.universal.dht.kademlia_node import bencode
 
         self.assertEqual(bencode([1, b"ab", 3]), b"li1e2:abi3ee")
 
-    def test_bencode_string(self):
+    def test_bencode_string(self) -> None:
         from hledac.universal.dht.kademlia_node import bencode
 
         self.assertEqual(bencode("hello"), b"5:hello")
         self.assertEqual(bencode(b"hello"), b"5:hello")
 
-    def test_bdecode_roundtrip_complex(self):
+    def test_bdecode_roundtrip_complex(self) -> None:
         from hledac.universal.dht.kademlia_node import bdecode, bencode
 
         msg = {
@@ -284,35 +283,35 @@ class TestBEP5UDPProtocol(unittest.TestCase):
     Sprint F214: asyncio.DatagramProtocol for BEP-5 with future-based pending map.
     """
 
-    def test_protocol_class_exists(self):
+    def test_protocol_class_exists(self) -> None:
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
 
         self.assertTrue(issubclass(BEP5UDPProtocol, asyncio.DatagramProtocol))
 
-    def test_protocol_has_send_and_wait(self):
+    def test_protocol_has_send_and_wait(self) -> None:
         import inspect
 
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
 
         self.assertTrue(inspect.iscoroutinefunction(BEP5UDPProtocol.send_and_wait))
 
-    def test_protocol_initial_state(self):
+    def test_protocol_initial_state(self) -> None:
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
 
         proto = BEP5UDPProtocol(message_handler=lambda m, a: None)
         self.assertIsNone(proto._transport)
         self.assertEqual(proto._pending, {})
 
-    def test_datagram_received_malformed_drops(self):
+    def test_datagram_received_malformed_drops(self) -> None:
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
 
         proto = BEP5UDPProtocol(message_handler=lambda m, a: None)
         proto.datagram_received(b"this is not bencode", ("127.0.0.1", 6881))
 
-    def test_datagram_received_future_resolved(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_datagram_received_future_resolved(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol, bencode
 
-        async def runner():
+        async def runner() -> None:
             proto = BEP5UDPProtocol(message_handler=lambda m, a: None)
             loop = asyncio.get_running_loop()
             proto._loop = loop
@@ -329,10 +328,10 @@ class TestBEP5UDPProtocol(unittest.TestCase):
 
         session_event_loop.run_until_complete(runner())
 
-    def test_send_and_wait_timeout(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_send_and_wait_timeout(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         from hledac.universal.dht.kademlia_node import BEP5UDPProtocol
 
-        async def runner():
+        async def runner() -> None:
             proto = BEP5UDPProtocol(message_handler=lambda m, a: None)
             result = await proto.send_and_wait(("127.0.0.1", 6881), {b"y": b"q"}, timeout=0.1)
             self.assertIsNone(result)
@@ -345,17 +344,17 @@ class TestKademliaNodeConstants(unittest.TestCase):
     Sprint F214: New constants for routing table persistence and iterative lookup.
     """
 
-    def test_max_crawl_depth_is_3(self):
+    def test_max_crawl_depth_is_3(self) -> None:
         from hledac.universal.dht.kademlia_node import MAXCRAWLDEPTH
 
         self.assertEqual(MAXCRAWLDEPTH, 3)
 
-    def test_snapshot_every_n_is_50(self):
+    def test_snapshot_every_n_is_50(self) -> None:
         from hledac.universal.dht.kademlia_node import DHT_SNAPSHOT_EVERY_N
 
         self.assertEqual(DHT_SNAPSHOT_EVERY_N, 50)
 
-    def test_snapshot_key(self):
+    def test_snapshot_key(self) -> None:
         from hledac.universal.dht.kademlia_node import DHT_SNAPSHOT_KEY
 
         self.assertEqual(DHT_SNAPSHOT_KEY, b"routing_table_v1")
@@ -367,7 +366,7 @@ class TestKademliaNodeOrderedDictTypo(unittest.TestCase):
     that would crash at runtime. data_store MUST be OrderedDict instance.
     """
 
-    def test_data_store_is_ordered_dict_instance(self):
+    def test_data_store_is_ordered_dict_instance(self) -> None:
         from collections import OrderedDict
 
         from hledac.universal.dht.kademlia_node import KademliaNode
@@ -381,10 +380,10 @@ class TestKademliaNodeStartUDP(unittest.TestCase):
     Sprint F214: start_udp() creates persistent BEP-5 transport.
     """
 
-    def test_start_udp_creates_transport(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_start_udp_creates_transport(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         from hledac.universal.dht import kademlia_node
 
-        async def runner():
+        async def runner() -> None:
             prev = kademlia_node.DHT_REAL_UDP
             kademlia_node.DHT_REAL_UDP = True
             try:
@@ -407,13 +406,13 @@ class TestKademliaNodeSnapshotMethods(unittest.TestCase):
     Sprint F214: _flatten_routing_table + counter increment on _update_routing.
     """
 
-    def test_flatten_routing_table_empty(self):
+    def test_flatten_routing_table_empty(self) -> None:
         from hledac.universal.dht.kademlia_node import KademliaNode
 
         node = KademliaNode(node_id="test", governor=MagicMock())
         self.assertEqual(node._flatten_routing_table(), [])
 
-    def test_flatten_routing_table_filters_incomplete(self):
+    def test_flatten_routing_table_filters_incomplete(self) -> None:
         from hledac.universal.dht.kademlia_node import KademliaNode
 
         node = KademliaNode(node_id="test", governor=MagicMock())
@@ -428,7 +427,7 @@ class TestKademliaNodeSnapshotMethods(unittest.TestCase):
         self.assertEqual(flat[0]["port"], 6881)
         self.assertIn("last_seen", flat[0])
 
-    def test_update_routing_increments_counter(self):
+    def test_update_routing_increments_counter(self) -> None:
         from hledac.universal.dht.kademlia_node import KademliaNode
 
         node = KademliaNode(node_id="t" * 5, governor=MagicMock())
@@ -442,14 +441,14 @@ class TestLocalGraphStoreSnapshot(unittest.TestCase):
     Sprint F214: LocalGraphStore snapshot methods exist and are async.
     """
 
-    def test_save_snapshot_method_exists(self):
+    def test_save_snapshot_method_exists(self) -> None:
         import inspect
 
         from hledac.universal.dht.local_graph import LocalGraphStore
 
         self.assertTrue(inspect.iscoroutinefunction(LocalGraphStore.save_routing_snapshot))
 
-    def test_load_snapshot_method_exists(self):
+    def test_load_snapshot_method_exists(self) -> None:
         import inspect
 
         from hledac.universal.dht.local_graph import LocalGraphStore

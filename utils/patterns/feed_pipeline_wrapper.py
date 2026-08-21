@@ -9,25 +9,27 @@ Provides:
 
 Issue E2: Pipeline overlap — eliminates 4-stage Python pipeline overhead.
 """
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-from _core import aclose
+from typing import Any
 
 # Lazy import to avoid hard dependency at module load
 _RUST_FEED_PIPELINE: Any | None = None
 _RUST_FEED_BATCH_PIPELINE: Any | None = None
 _FEED_PIPELINE_AVAILABLE: bool = False
 
+
 def _try_import_rust_feed_pipeline() -> bool:
     """Try to import Rust feed pipeline functions. Returns True if available."""
     global _RUST_FEED_PIPELINE, _RUST_FEED_BATCH_PIPELINE, _FEED_PIPELINE_AVAILABLE
     if _FEED_PIPELINE_AVAILABLE:
         return True
-    
+
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         feed_entry_pipeline = rust.raw.feed_entry_pipeline
         feed_batch_pipeline = rust.raw.feed_batch_pipeline
         _RUST_FEED_PIPELINE = feed_entry_pipeline
@@ -48,35 +50,35 @@ def feed_entry_pipeline_fast(
 ) -> list[tuple[int, str, list[tuple[int, int, str, str, str]], int, int, str]]:
     """
     Unified parse + scan + dedup via Rust feed_entry_pipeline.
-    
+
     Replaces the 4-stage Python pipeline:
       1. Parse XML → entries (Python selectolax)
       2. Fetch article text (I/O)
       3. Scan patterns (Python → Rust)
       4. Dedup (Python dict)
-    
+
     With single Rust call:
       - quick-xml parsing (no GIL, ~2-4ms)
       - Aho-Corasick scan (SIMD-accelerated, rayon parallel)
       - Inline dedup via HashSet
-    
+
     Args:
         raw_xml: Raw RSS/Atom XML string
         max_entries: Maximum entries to process (0 = all)
         patterns: List of pattern strings for Aho-Corasick
         labels: Parallel list of labels for each pattern
-    
+
     Returns:
         List of tuples: (entry_idx, entry_url, combined_hits, title_hits_count, desc_hits_count, assembly_phase)
-        
+
         combined_hits: List of (start, end, pattern, label, value) tuples
     """
     if not _FEED_PIPELINE_AVAILABLE:
         _try_import_rust_feed_pipeline()
-    
+
     if _RUST_FEED_PIPELINE is not None:
         return _RUST_FEED_PIPELINE(raw_xml, max_entries, patterns, labels)
-    
+
     # Fallback: return empty list (caller handles via Python pipeline)
     return []
 
@@ -88,21 +90,21 @@ def feed_batch_pipeline_fast(
 ) -> list[list[tuple[int, str, list[tuple[int, int, str, str, str]], int, int, str]]]:
     """
     Batch version — process multiple feeds in parallel via rayon.
-    
+
     Args:
         feeds: List of (xml, max_entries) tuples
         patterns: List of pattern strings
         labels: Parallel list of labels
-    
+
     Returns:
         List of feed results (same as feed_entry_pipeline_fast per feed)
     """
     if not _FEED_PIPELINE_AVAILABLE:
         _try_import_rust_feed_pipeline()
-    
+
     if _RUST_FEED_BATCH_PIPELINE is not None:
         return _RUST_FEED_BATCH_PIPELINE(feeds, patterns, labels)
-    
+
     # Fallback: return empty batch
     return [[] for _ in feeds]
 

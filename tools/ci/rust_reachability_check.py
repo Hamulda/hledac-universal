@@ -13,19 +13,18 @@ Exit codes:
     1 = unreachable modules found
     2 = error (file not found, parse error, etc.)
 """
+
 from __future__ import annotations
 
 import re
 import sys
 from pathlib import Path
-from collections.abc import Iterator
-from _core import aclose
 
 
 def extract_pub_modules(lib_rs_content: str) -> set[str]:
     """
     Extract all pub mod declarations from lib.rs.
-    
+
     Handles:
     - Simple: pub mod foo;
     - Feature-gated: #[cfg(feature = "foo")] pub mod bar;
@@ -42,11 +41,10 @@ def extract_pub_modules(lib_rs_content: str) -> set[str]:
         module = match.group(2)
         modules.add(f"{feature}:{module}")
 
-    # Remove cfg attributes for non-feature analysis
-    content = re.sub(r'#\[cfg\([^)]*\)\]', '', lib_rs_content)
+    content = re.sub(r"#\[cfg\([^)]*\)\]", "", lib_rs_content)
 
     # Match pub mod declarations (simple and nested)
-    pattern = r'^\s*pub\s+mod\s+(\w+)\s*;'
+    pattern = r"^\s*pub\s+mod\s+(\w+)\s*;"
     for match in re.finditer(pattern, content, re.MULTILINE):
         modules.add(match.group(1))
 
@@ -56,7 +54,7 @@ def extract_pub_modules(lib_rs_content: str) -> set[str]:
 def extract_module_files(src_dir: Path) -> set[str]:
     """
     Extract all module names from src/ directory (including subdirectories).
-    
+
     Handles:
     - src/*.rs files (e.g., circuit_breaker.rs -> circuit_breaker)
     - src/subdir/*.rs files (e.g., pools/cpu.rs -> pools/cpu)
@@ -69,18 +67,17 @@ def extract_module_files(src_dir: Path) -> set[str]:
         return modules
 
     # Exclude backup/experimental directories
-    exclude_dirs = {'collections_backup', 'stix_2_1', 'simd', 'ioc', 'data', 'graph_traverse'}
-    
+    exclude_dirs = {"collections_backup", "stix_2_1", "simd", "ioc", "data", "graph_traverse"}
+
     for rs_file in src_path.rglob("*.rs"):
-        # Get relative path from src/
         rel_path = rs_file.relative_to(src_path)
-        
+
         # Skip files in excluded directories
         if any(part in exclude_dirs for part in rel_path.parts[:-1]):
             continue
-            
+
         # Build module path (e.g., pools/cpu, graph_analytics)
-        module_name = str(rel_path.with_suffix('')).replace('/', '_')
+        module_name = str(rel_path.with_suffix("")).replace("/", "_")
         modules.add(module_name)
 
     return modules
@@ -128,7 +125,6 @@ def check_reachability(rust_dir: Path) -> tuple[set[str], set[str], dict[str, se
     # Extract all declared modules (including feature-gated)
     declared_modules = extract_pub_modules(lib_rs_content)
 
-    # Extract feature gates
     feature_gate_map = extract_cfgs(lib_rs_content)
 
     # Get all actual module files (including subdirectories)
@@ -139,7 +135,7 @@ def check_reachability(rust_dir: Path) -> tuple[set[str], set[str], dict[str, se
     feature_gated_modules: set[str] = set()
 
     for module in declared_modules:
-        if ':' in module:
+        if ":" in module:
             # Feature-gated: feature:module
             feature_gated_modules.add(module)
         else:
@@ -154,13 +150,12 @@ def check_reachability(rust_dir: Path) -> tuple[set[str], set[str], dict[str, se
             # Maybe it's a submodule directory
             # pools -> pools/mod.rs exists
             module_path = rust_dir / "src" / module
-            if not (module_path.with_suffix('.rs').exists() or 
-                    (module_path / "mod.rs").exists()):
+            if not (module_path.with_suffix(".rs").exists() or (module_path / "mod.rs").exists()):
                 unreachable_required.add(module)
 
     # Check for unreachable files (modules not in lib.rs)
     # Only report if not feature-gated
-    all_declared = {m.split(':')[1] if ':' in m else m for m in declared_modules}
+    all_declared = {m.split(":")[1] if ":" in m else m for m in declared_modules}
     unreachable_optional = actual_modules - all_declared
 
     return unreachable_required, unreachable_optional, feature_gate_map
@@ -185,26 +180,26 @@ def get_feature_matrix(rust_dir: Path) -> dict[str, set[str]]:
     # full = ["module1", "module2", ...]
     features: dict[str, set[str]] = {}
 
-    feature_section = re.search(r'\[features\](.*?)(?=\n\[|\Z)', content, re.DOTALL)
+    feature_section = re.search(r"\[features\](.*?)(?=\n\[|\Z)", content, re.DOTALL)
     if not feature_section:
         return features
 
     feature_block = feature_section.group(1)
 
     # Match: feature_name = ["dep", "module1", ...]
-    pattern = r'(\w+)\s*=\s*\[([^\]]*)\]'
+    pattern = r"(\w+)\s*=\s*\[([^\]]*)\]"
     for match in re.finditer(pattern, feature_block, re.MULTILINE):
         feature_name = match.group(1)
         deps_str = match.group(2)
 
         # Extract module names (simple heuristics: look for .rs files mentioned)
         modules: set[str] = set()
-        for line in deps_str.split(','):
+        for line in deps_str.split(","):
             line = line.strip()
             # Match: crate_name/path or just path
-            if '/' in line:
-                path_part = line.split('/')[-1].strip('"')
-                if path_part.endswith('.rs'):
+            if "/" in line:
+                path_part = line.split("/")[-1].strip('"')
+                if path_part.endswith(".rs"):
                     path_part = path_part[:-3]
                 modules.add(path_part)
 
@@ -229,10 +224,8 @@ def main() -> int:
     print(f"Checking Rust module reachability in {rust_dir}")
     print("=" * 60)
 
-    # Check reachability
     unreachable_required, unreachable_optional, feature_gate_map = check_reachability(rust_dir)
 
-    # Get feature matrix
     feature_matrix = get_feature_matrix(rust_dir)
 
     # Report results

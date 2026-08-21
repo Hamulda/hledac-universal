@@ -17,18 +17,16 @@ New import:
 import warnings
 
 warnings.warn(
-    "coordinators.backpressure is deprecated. "
-    "Import from coordinators.resource.resource_coordinator instead.",
+    "coordinators.backpressure is deprecated. Import from coordinators.resource.resource_coordinator instead.",
     DeprecationWarning,
     stacklevel=2,
-    )
+)
 
 # Re-export from new location for backwards compatibility
 from hledac.universal.coordinators.resource.resource_coordinator import (
     BackpressureDecision,
     BackpressureMonitor,
-    )
-from _core import aclose
+)
 
 __all__ = [
     "BackpressureDecision",

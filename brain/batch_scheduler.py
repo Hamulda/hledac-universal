@@ -12,6 +12,7 @@ No MLX/GPU dependencies. Schedules structured output requests with:
 
 Sprint F226H: Extracted from Hermes3Engine as standalone policy layer.
 """
+
 import asyncio
 import hashlib
 import itertools
@@ -19,11 +20,13 @@ import logging
 import time
 from collections.abc import Callable, Coroutine
 from typing import Any
-from hledac.universal.utils.asyncx import safe_create_task, parallel
+
 from hledac.universal._core.constants import MLX
-from hledac.universal.compat.pydantic_compat import is_pydantic_model, is_msgspec_struct
-from _core import aclose
+from hledac.universal.compat.pydantic_compat import is_msgspec_struct, is_pydantic_model
+from hledac.universal.utils.asyncx import parallel, safe_create_task
+
 logger = logging.getLogger(__name__)
+
 
 class BatchScheduler:
     """
@@ -42,9 +45,41 @@ class BatchScheduler:
         B.S7: Age bump interval ≥ 1
         B.S8: flush_interval ≥ 0.5s
     """
-    __slots__ = tuple(('_age_bump_interval', '_batch_queue', '_batch_tie_breaker', '_default_flush_interval', '_ema_alpha', '_execute_callback', '_flush_cycle_count', '_high_pressure_depth', '_items_processed_since_last', '_last_age_bump', '_last_batch_finished_at', '_max_queue', '_max_size', '_medium_pressure_depth', '_pending_futures', '_settables', '_telemetry_counters', '_telemetry_ema', '_worker_shutting_down', '_worker_task'))
 
-    def __init__(self, execute_callback: Callable[[dict[str, Any]], Coroutine[Any, Any, Any]], max_size: int=MLX().batch_max_size, max_queue: int=MLX().batch_queue_max, default_flush_interval: float=MLX().flush_default, medium_pressure_depth: int=MLX().batch_medium_pressure_depth, high_pressure_depth: int=MLX().batch_high_pressure_depth, age_bump_interval: int=MLX().age_bump_interval, ema_alpha: float=MLX().batch_ema_alpha) -> None:
+    __slots__ = (
+        "_age_bump_interval",
+        "_batch_queue",
+        "_batch_tie_breaker",
+        "_default_flush_interval",
+        "_ema_alpha",
+        "_execute_callback",
+        "_flush_cycle_count",
+        "_high_pressure_depth",
+        "_items_processed_since_last",
+        "_last_age_bump",
+        "_last_batch_finished_at",
+        "_max_queue",
+        "_max_size",
+        "_medium_pressure_depth",
+        "_pending_futures",
+        "_settables",
+        "_telemetry_counters",
+        "_telemetry_ema",
+        "_worker_shutting_down",
+        "_worker_task",
+    )
+
+    def __init__(
+        self,
+        execute_callback: Callable[[dict[str, Any]], Coroutine[Any, Any, Any]],
+        max_size: int = MLX().batch_max_size,
+        max_queue: int = MLX().batch_queue_max,
+        default_flush_interval: float = MLX().flush_default,
+        medium_pressure_depth: int = MLX().batch_medium_pressure_depth,
+        high_pressure_depth: int = MLX().batch_high_pressure_depth,
+        age_bump_interval: int = MLX().age_bump_interval,
+        ema_alpha: float = MLX().batch_ema_alpha,
+    ) -> None:
         """
         Args:
             execute_callback: Async callable(payload) → result.
@@ -59,7 +94,7 @@ class BatchScheduler:
         """
         self._execute_callback = execute_callback
         self._max_size = max_size
-        self._settables: set[str] = {'_max_size'}
+        self._settables: set[str] = {"_max_size"}
         self._max_queue = max_queue
         self._default_flush_interval = default_flush_interval
         self._medium_pressure_depth = medium_pressure_depth
@@ -73,8 +108,24 @@ class BatchScheduler:
         self._pending_futures: set[asyncio.Future] = set()
         self._flush_cycle_count = 0
         self._last_age_bump = 0
-        self._telemetry_ema = {'dispatch_to_result_ms': 0.0, 'batch_size': 0, 'queue_depth': 0, 'throughput_items_per_sec': 0.0}
-        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_shattered': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'prompt_mismatch_flushes': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'age_bump_cycles': 0}
+        self._telemetry_ema = {
+            "dispatch_to_result_ms": 0.0,
+            "batch_size": 0,
+            "queue_depth": 0,
+            "throughput_items_per_sec": 0.0,
+        }
+        self._telemetry_counters = {
+            "batch_submitted": 0,
+            "batch_executed": 0,
+            "batch_shattered": 0,
+            "schema_mismatch_flushes": 0,
+            "length_bin_mismatch_flushes": 0,
+            "prompt_mismatch_flushes": 0,
+            "adaptive_flush_default_entries": 0,
+            "adaptive_flush_medium_entries": 0,
+            "adaptive_flush_fast_entries": 0,
+            "age_bump_cycles": 0,
+        }
         self._last_batch_finished_at: float = 0.0
         self._items_processed_since_last: int = 0
 
@@ -88,7 +139,7 @@ class BatchScheduler:
 
         Callers: MLXBatchedExecutor.is_batch_safe() after each PID adjustment.
         """
-        if not hasattr(self, '_settables') or '_max_size' not in self._settables:
+        if not hasattr(self, "_settables") or "_max_size" not in self._settables:
             return
         self._max_size = max(1, min(256, new_size))
 
@@ -100,9 +151,9 @@ class BatchScheduler:
         self._batch_tie_breaker = itertools.count()
         self._worker_shutting_down = False
         self._worker_task = safe_create_task(self._worker())
-        logger.debug('BatchScheduler worker started')
+        logger.debug("BatchScheduler worker started")
 
-    async def shutdown(self, timeout: float=3.0) -> None:
+    async def shutdown(self, timeout: float = 3.0) -> None:
         """
         Bounded shutdown — max 3.0s, fail-pending-futures.
 
@@ -117,7 +168,7 @@ class BatchScheduler:
             return
         for fut in list(self._pending_futures):
             if not fut.done():
-                fut.set_exception(RuntimeError('batch_scheduler_shutdown'))
+                fut.set_exception(RuntimeError("batch_scheduler_shutdown"))
         self._pending_futures.clear()
         self._worker_shutting_down = True
         self._worker_task.cancel()
@@ -131,9 +182,17 @@ class BatchScheduler:
             raise
         self._worker_task = None
         self._batch_queue = None
-        logger.debug('BatchScheduler shutdown complete')
+        logger.debug("BatchScheduler shutdown complete")
 
-    async def submit(self, prompt: str, response_model: type, priority: float=1.0, temperature: float=0.1, max_tokens: int=1024, system_msg: str | None=None) -> asyncio.Future:
+    async def submit(
+        self,
+        prompt: str,
+        response_model: type,
+        priority: float = 1.0,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        system_msg: str | None = None,
+    ) -> asyncio.Future:
         """
         Submit a structured output request to the batch queue.
 
@@ -154,16 +213,26 @@ class BatchScheduler:
             await self.start()
         schema_key = self._compute_schema_key(response_model, temperature)
         # ISSUE-11: name= param for better async diagnostics (Python 3.14+)
-        future: asyncio.Future = asyncio.get_running_loop().create_future(name=f"batch_scheduler:structured:{response_model.__name__}")
+        future: asyncio.Future = asyncio.get_running_loop().create_future(
+            name=f"batch_scheduler:structured:{response_model.__name__}"
+        )
         tie = next(self._batch_tie_breaker)
-        payload = {'prompt': prompt, 'response_model': response_model, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'future': future, 'type': 'structured'}
+        payload = {
+            "prompt": prompt,
+            "response_model": response_model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "system_msg": system_msg,
+            "future": future,
+            "type": "structured",
+        }
         await self._batch_queue.put((priority, tie, schema_key, payload))
-        self._telemetry_counters['batch_submitted'] += 1
+        self._telemetry_counters["batch_submitted"] += 1
         self._pending_futures.add(future)
         future.add_done_callback(lambda f: self._pending_futures.discard(f))
         return future
 
-    def is_batch_safe(self, response_model: type, priority: float, timeout_s: float | None=None) -> bool:
+    def is_batch_safe(self, response_model: type, priority: float, timeout_s: float | None = None) -> bool:
         """
         Batch-safe eligibility check.
 
@@ -188,7 +257,7 @@ class BatchScheduler:
             return True
         return False
 
-    async def flush(self, timeout: float=5.0) -> int:
+    async def flush(self, timeout: float = 5.0) -> int:
         """
         Drain all pending items from the batch queue.
 
@@ -217,7 +286,7 @@ class BatchScheduler:
 
     def get_telemetry(self) -> dict[str, Any]:
         """Return telemetry snapshot (EMA + counters)."""
-        return {'ema': dict(self._telemetry_ema), 'counters': dict(self._telemetry_counters)}
+        return {"ema": dict(self._telemetry_ema), "counters": dict(self._telemetry_counters)}
 
     async def _worker(self) -> None:
         """Background worker that processes batches with boundary segregation."""
@@ -225,7 +294,7 @@ class BatchScheduler:
             if self._worker_shutting_down:
                 for fut in list(self._pending_futures):
                     if not fut.done():
-                        fut.set_exception(RuntimeError('batch_scheduler_shutdown'))
+                        fut.set_exception(RuntimeError("batch_scheduler_shutdown"))
                 self._pending_futures.clear()
                 break
             try:
@@ -235,19 +304,19 @@ class BatchScheduler:
                 current_length_bin = None
                 flush_interval = self._current_flush_interval()
                 if flush_interval >= 1.9:
-                    self._telemetry_counters['adaptive_flush_default_entries'] += 1
+                    self._telemetry_counters["adaptive_flush_default_entries"] += 1
                 elif flush_interval >= 0.9:
-                    self._telemetry_counters['adaptive_flush_medium_entries'] += 1
+                    self._telemetry_counters["adaptive_flush_medium_entries"] += 1
                 else:
-                    self._telemetry_counters['adaptive_flush_fast_entries'] += 1
+                    self._telemetry_counters["adaptive_flush_fast_entries"] += 1
                 try:
                     async with asyncio.timeout(flush_interval):
                         first_item = await self._batch_queue.get()
                     current_schema_key = first_item[2]
                     items.append(first_item)
                     first_payload = first_item[3]
-                    first_prompt = first_payload.get('prompt', '')
-                    first_system_msg = first_payload.get('system_msg')
+                    first_prompt = first_payload.get("prompt", "")
+                    first_system_msg = first_payload.get("system_msg")
                     current_prompt_hash = self._compute_system_prompt_hash(first_system_msg)
                     current_length_bin = self._compute_length_bin(first_prompt)
                     while len(items) < self._max_size:
@@ -256,21 +325,21 @@ class BatchScheduler:
                                 item = await self._batch_queue.get_nowait()
                             item_schema = item[2]
                             item_payload = item[3]
-                            item_prompt = item_payload.get('prompt', '')
-                            item_system_msg = item_payload.get('system_msg')
+                            item_prompt = item_payload.get("prompt", "")
+                            item_system_msg = item_payload.get("system_msg")
                             item_prompt_hash = self._compute_system_prompt_hash(item_system_msg)
                             item_length_bin = self._compute_length_bin(item_prompt)
                             if item_schema != current_schema_key:
                                 await self._batch_queue.put(item)
-                                self._telemetry_counters['schema_mismatch_flushes'] += 1
+                                self._telemetry_counters["schema_mismatch_flushes"] += 1
                                 break
                             if item_prompt_hash != current_prompt_hash:
                                 await self._batch_queue.put(item)
-                                self._telemetry_counters['prompt_mismatch_flushes'] += 1
+                                self._telemetry_counters["prompt_mismatch_flushes"] += 1
                                 break
                             if item_length_bin != current_length_bin:
                                 await self._batch_queue.put(item)
-                                self._telemetry_counters['length_bin_mismatch_flushes'] += 1
+                                self._telemetry_counters["length_bin_mismatch_flushes"] += 1
                                 break
                             items.append(item)
                         except TimeoutError:
@@ -281,18 +350,20 @@ class BatchScheduler:
                 if self._flush_cycle_count - self._last_age_bump >= self._age_bump_interval:
                     self._last_age_bump = self._flush_cycle_count
                     await self._age_bump_queue()
-                    self._telemetry_counters['age_bump_cycles'] += 1
+                    self._telemetry_counters["age_bump_cycles"] += 1
                 if self._batch_queue is not None:
-                    self._telemetry_ema['queue_depth'] = self._batch_queue.qsize()
+                    self._telemetry_ema["queue_depth"] = self._batch_queue.qsize()
                 t0 = time.monotonic()
                 await self._process_batch(items)
                 dispatch_ms = (time.monotonic() - t0) * 1000
-                self._telemetry_ema['batch_size'] = len(items)
-                self._telemetry_ema['dispatch_to_result_ms'] = self._ema_alpha * dispatch_ms + (1 - self._ema_alpha) * self._telemetry_ema['dispatch_to_result_ms']
+                self._telemetry_ema["batch_size"] = len(items)
+                self._telemetry_ema["dispatch_to_result_ms"] = (
+                    self._ema_alpha * dispatch_ms + (1 - self._ema_alpha) * self._telemetry_ema["dispatch_to_result_ms"]
+                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f'BatchScheduler worker error: {e}')
+                logger.warning(f"BatchScheduler worker error: {e}")
 
     async def _process_batch(self, items: list) -> None:
         """
@@ -311,17 +382,20 @@ class BatchScheduler:
             try:
                 await self._process_structured_batch(group)
             except Exception as e:
-                logger.debug(f'BatchScheduler process error for schema {schema_key}: {e}')
+                logger.debug(f"BatchScheduler process error for schema {schema_key}: {e}")
         self._items_processed_since_last += len(items)
         now = time.monotonic()
         if self._last_batch_finished_at > 0:
             elapsed = now - self._last_batch_finished_at
             if elapsed > 0:
-                is_cold = self._telemetry_ema['throughput_items_per_sec'] == 0.0
+                is_cold = self._telemetry_ema["throughput_items_per_sec"] == 0.0
                 alpha = 0.5 if is_cold else 0.3
-                self._telemetry_ema['throughput_items_per_sec'] = alpha * (self._items_processed_since_last / elapsed) + (1 - alpha) * self._telemetry_ema['throughput_items_per_sec']
-        elif self._telemetry_ema['throughput_items_per_sec'] == 0.0:
-            self._telemetry_ema['throughput_items_per_sec'] = 0.001
+                self._telemetry_ema["throughput_items_per_sec"] = (
+                    alpha * (self._items_processed_since_last / elapsed)
+                    + (1 - alpha) * self._telemetry_ema["throughput_items_per_sec"]
+                )
+        elif self._telemetry_ema["throughput_items_per_sec"] == 0.0:
+            self._telemetry_ema["throughput_items_per_sec"] = 0.001
         self._last_batch_finished_at = now
         self._items_processed_since_last = 0
 
@@ -342,13 +416,17 @@ class BatchScheduler:
             return
         try:
             from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
             _batch_sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def process_with_sem(payload: dict[str, Any]) -> tuple[dict, Any]:
                 async with _batch_sem:
                     return (payload, await self._execute_callback(payload))
+
             _tasks = [process_with_sem(payload) for payload, _ in items]
-            _gathered = await parallel(_tasks, taskgroup=True, policy='collect', ctx='batch_scheduler', logger_instance=logger)
+            _gathered = await parallel(
+                _tasks, taskgroup=True, policy="collect", ctx="batch_scheduler", logger_instance=logger
+            )
             results = []
             ok_idx = 0
             err_idx = 0
@@ -362,25 +440,25 @@ class BatchScheduler:
             if _gathered.re_raised is not None:
                 raise _gathered.re_raised
             for payload, result in results:
-                future = payload.get('future')
+                future = payload.get("future")
                 if future and (not future.done()):
                     if isinstance(result, Exception):
                         future.set_exception(result)
                     else:
                         future.set_result(result)
-            self._telemetry_counters['batch_executed'] += 1
+            self._telemetry_counters["batch_executed"] += 1
         except Exception as batch_error:
-            logger.debug(f'[BATCH] Batch shattered: {batch_error}')
-            self._telemetry_counters['batch_shattered'] += 1
+            logger.debug(f"[BATCH] Batch shattered: {batch_error}")
+            self._telemetry_counters["batch_shattered"] += 1
             for payload, _ in items:
                 try:
                     result = await self._execute_callback(payload)
-                    future = payload.get('future')
+                    future = payload.get("future")
                     if future and (not future.done()):
                         future.set_result(result)
                 except Exception as item_error:
-                    logger.debug(f'BatchScheduler item error: {item_error}')
-                    future = payload.get('future')
+                    logger.debug(f"BatchScheduler item error: {item_error}")
+                    future = payload.get("future")
                     if future and (not future.done()):
                         future.set_exception(item_error)
 
@@ -431,7 +509,7 @@ class BatchScheduler:
             return 0.3
         if depth > self._medium_pressure_depth:
             return 0.7
-        throughput = self._telemetry_ema.get('throughput_items_per_sec', 0.0)
+        throughput = self._telemetry_ema.get("throughput_items_per_sec", 0.0)
         if throughput <= 0.001:
             return MLX().flush_fast
         if throughput > MLX().batch_throughput_high:
@@ -444,10 +522,10 @@ class BatchScheduler:
         """Length binning — short/medium/long to prevent padding waste."""
         tokens_est = len(prompt) // 4
         if tokens_est < MLX().length_bin_short:
-            return 'short'
+            return "short"
         elif tokens_est < MLX().length_bin_medium:
-            return 'medium'
-        return 'long'
+            return "medium"
+        return "long"
 
     def _compute_schema_key(self, response_model: type, temperature: float) -> str:
         """
@@ -465,18 +543,18 @@ class BatchScheduler:
 
         For real schemas (msgspec/pydantic), use the class name directly.
         """
-        name = getattr(response_model, '__name__', None) if isinstance(response_model, type) else None
-        if name == 'FreeText':
+        name = getattr(response_model, "__name__", None) if isinstance(response_model, type) else None
+        if name == "FreeText":
             if temperature <= 0.3:
-                return 'FreeText:low'
+                return "FreeText:low"
             elif temperature <= 0.7:
-                return 'FreeText:medium'
+                return "FreeText:medium"
             else:
-                return 'FreeText:high'
-        return name if name else 'unknown'
+                return "FreeText:high"
+        return name if name else "unknown"
 
     def _compute_system_prompt_hash(self, system_msg: str | None) -> str:
         """Hash of system prompt for segregation."""
         if not system_msg:
-            return 'default'
+            return "default"
         return hashlib.md5(system_msg.encode(), usedforsecurity=False).hexdigest()[:8]

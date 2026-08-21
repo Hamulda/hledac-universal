@@ -15,8 +15,6 @@ This maintains backward compatibility for:
 No active production code should import from this module. PivotTask has been
 extracted to runtime/pivot_types.py.
 Canonical paths (use these):
-    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
-    from hledac.universal.runtime.sprint_scheduler import SprintScheduler  # → SprintSchedulerV2
 """
 
 from __future__ import annotations
@@ -25,7 +23,6 @@ import importlib
 import importlib.util
 import os
 import sys
-from _core import aclose
 
 # Absolute path to the archived module
 _ARCHIVE_DIR = os.path.join(
@@ -33,7 +30,7 @@ _ARCHIVE_DIR = os.path.join(
     "..",
     "archive",
     "scheduler_archives",
-    )
+)
 _ARCHIVE_MODULE_PATH = os.path.join(_ARCHIVE_DIR, "sprint_scheduler_v1_archived.py")
 
 # Cached reference to the loaded archive module
@@ -46,13 +43,9 @@ def __getattr__(name: str):
 
     if _archived_module is None:
         # Use importlib to load from file path (archive/ is not a package)
-        spec = importlib.util.spec_from_file_location(
-            "sprint_scheduler_v1_archived", _ARCHIVE_MODULE_PATH
-    )
+        spec = importlib.util.spec_from_file_location("sprint_scheduler_v1_archived", _ARCHIVE_MODULE_PATH)
         if spec is None or spec.loader is None:
-            raise ImportError(
-                f"Cannot load archived module from {_ARCHIVE_MODULE_PATH}"
-    )
+            raise ImportError(f"Cannot load archived module from {_ARCHIVE_MODULE_PATH}")
         _archived_module = importlib.util.module_from_spec(spec)
         # Add to sys.modules so nested imports resolve correctly
         sys.modules["sprint_scheduler_v1_archived"] = _archived_module

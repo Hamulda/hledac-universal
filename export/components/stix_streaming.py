@@ -3,7 +3,6 @@
 """
 Streaming STIX bundle write — bounded memory for large sprint sets.
 
-
 When len(ioc_nodes) > 500, uses batched in-memory processing with
 explicit memory management and size tracking.
 
@@ -13,20 +12,18 @@ A10: Uses Rust serde_json_rs for 3-4× faster JSON serialization.
 Fallback chain: Rust serde_json → orjson → stdlib json
 """
 
-
 from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from _core import aclose
+import orjson as _orjson
 
 # A10: Import canonical codec with Rust serde_json support
 from hledac.universal.utils.codec import (
-    encode_pretty_sorted,
-    encode_compact_sorted,
     ORJSON_AVAILABLE,
+    encode_compact_sorted,
+    encode_pretty_sorted,
 )
-import orjson as _orjson
 
 
 def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> str:
@@ -58,6 +55,7 @@ def _json_dumps(data: Any, *, indent: bool = False, sort_keys: bool = False) -> 
 
     # Last resort: stdlib json
     import json as _j
+
     kwargs: dict[str, Any] = {"separators": (",", ":")}
     if indent:
         kwargs["indent"] = 2
@@ -137,6 +135,7 @@ def stream_stix_bundle(
     content_bytes = content.encode("utf-8")
     try:
         from hledac.universal.export.components.zstd_dict_exporter import compress_export_section
+
         compressed = compress_export_section(content_bytes)
         result.compressed_size_bytes = len(compressed)
     except Exception:
@@ -208,7 +207,6 @@ def _build_batched_stix_bundle(data: dict[str, Any], batch_size: int) -> dict[st
     for batch_idx in range(total_batches):
         batch = findings[batch_idx * batch_size : (batch_idx + 1) * batch_size]
         for finding in batch:
-            # Build indicator from finding
             if isinstance(finding, dict):
                 ioc_nodes = finding.get("ioc_nodes", []) or []
                 for ioc in ioc_nodes:
@@ -216,12 +214,11 @@ def _build_batched_stix_bundle(data: dict[str, Any], batch_size: int) -> dict[st
                     if ind:
                         objects.append(ind)
             elif hasattr(finding, "ioc_nodes"):
-                for ioc in (finding.ioc_nodes or []):
+                for ioc in finding.ioc_nodes or []:
                     ind = _build_indicator_from_ioc(dict(finding), ioc)
                     if ind:
                         objects.append(ind)
 
-    # Build minimal bundle structure
     from datetime import datetime
 
     now = datetime.now(UTC)
@@ -264,7 +261,7 @@ def _build_indicator_from_ioc(finding: dict, ioc: dict) -> dict[str, Any] | None
             labels=labels,
             valid_from=_safe_str(finding.get("ts", "")) or "2020-01-01T00:00:00Z",
             description=f"hledac_ioc:{ioc_value}",
-    )
+        )
         return ind
     except Exception:
         return None

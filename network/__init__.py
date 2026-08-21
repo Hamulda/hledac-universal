@@ -37,8 +37,6 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from importlib import import_module
-from _core import aclose
-
 
 # ── Lazy OSINT re-exports via __getattr__ ─────────────────────────────────────
 # Avoids circular import: network/__init__ → recon.dns.passive_dns → session_runtime → network/__init__
@@ -108,12 +106,14 @@ def __getattr__(name: str):
 
 # ── Infrastructure module availability flags (eager, at import time) ───────────
 
+
 def _try_import(module_name: str) -> bool:
     try:
         importlib.import_module(f".{module_name}", __package__)
         return True
     except Exception:
         return False
+
 
 DNS_TUNNEL_DETECTOR_AVAILABLE: bool = _try_import("dns_tunnel_detector")
 BANNER_GRABBER_AVAILABLE: bool = _try_import("banner_grabber")

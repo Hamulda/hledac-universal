@@ -17,11 +17,8 @@ Anti-patterns enforced:
 - Limited iterations and queue size
 """
 
-
-
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +63,6 @@ async def active_learning_step(
         from hledac.universal.brain.model_lifecycle import model_lifecycle
         from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
 
-        # Create Hermes engine with memory guard via model_lifecycle
         async with model_lifecycle("hermes3"):
             hermes = DeepHermes3Engine()
 
@@ -74,7 +70,6 @@ async def active_learning_step(
                 step_count += 1
                 logger.info(f"[P14] Active learning step {step_count}/{_MAX_LEARNING_STEPS}")
 
-                # Build prompt for query suggestion
                 context_for_prompt = "\n".join(current_results[:10])  # First 10 for context
                 prompt = f"""Navrhni nové vyhledávací dotazy pro hlubší výzkum tématu: {query}
 
@@ -115,9 +110,8 @@ Formát: jeden dotaz na řádek, bez čísel nebo odrážek."""
                             else:
                                 hits = []
 
-                            # Extract URLs, filter duplicates
                             for hit in hits:
-                                url = getattr(hit, 'url', '') or str(getattr(hit, 'url', ''))
+                                url = getattr(hit, "url", "") or str(getattr(hit, "url", ""))
                                 if url and url not in seen_urls:
                                     seen_urls.add(url)
                                     new_urls.append(url)
@@ -155,4 +149,4 @@ async def _ASYNC_DISCOVERY_SEARCH(query: str, max_results: int) -> Any:  # noqa:
         return result
     except Exception as e:
         logger.warning(f"[_ASYNC_DISCOVERY_SEARCH] Failed: {e}")
-        return type('obj', (object,), {'hits': []})()
+        return type("obj", (object,), {"hits": []})()

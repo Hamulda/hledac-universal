@@ -13,15 +13,14 @@ Coverage:
   6. pattern_matcher API: match_text, configure_patterns, get_backend_info
 """
 
-
 import sys
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Helpers: block a top-level module import in a single test scope
 # ---------------------------------------------------------------------------
+
 
 class _BlockImport:
     """Meta-path finder that raises ImportError for a given set of names.
@@ -34,7 +33,7 @@ class _BlockImport:
     def __init__(self, *names: str) -> None:
         self.names = frozenset(names)
 
-    def find_spec(self, name: str, path=None, target=None):  # noqa: ARG002
+    def find_spec(self, name: str, path=None, target=None) -> None:  # noqa: ARG002
         if name in self.names:
             raise ImportError(f"CP314-FALLBACK-TEST: blocked {name}")
         return None
@@ -76,6 +75,7 @@ def no_rust():
 # Group 1: Direct _PyAhoCorasickAutomaton unit tests (always available)
 # ---------------------------------------------------------------------------
 
+
 class TestPyAhoCorasickAutomatonDirect:
     """Unit tests for the pure-Python Aho-Corasick fallback.
 
@@ -87,13 +87,16 @@ class TestPyAhoCorasickAutomatonDirect:
         """Import _PyAhoCorasickAutomaton directly from source file."""
         import importlib.util
         from pathlib import Path
+
         src = Path(__file__).resolve().parent.parent / "patterns" / "pattern_matcher.py"
+
         # Pre-register a sentinel module for ahocorasick that raises on attribute
         # access, so the top-level `import ahocorasick as _ahocorasick` succeeds
         # but any subsequent use fails.
         class _Raiser:
             def __getattr__(self, name):
                 raise ImportError(f"CP314-FALLBACK-TEST: ahocorasick.{name} blocked")
+
         sys.modules["ahocorasick"] = _Raiser()  # type: ignore[assignment]
         try:
             spec = importlib.util.spec_from_file_location("_pm_pure_test", str(src))
@@ -104,7 +107,7 @@ class TestPyAhoCorasickAutomatonDirect:
             sys.modules.pop("ahocorasick", None)
         return mod._PyAhoCorasickAutomaton
 
-    def test_api_compat_minimal(self):
+    def test_api_compat_minimal(self) -> None:
         """add_word + make_automaton + iter produce (end_idx, value) pairs."""
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
@@ -120,21 +123,21 @@ class TestPyAhoCorasickAutomatonDirect:
             assert isinstance(end_idx, int)
             assert end_idx >= 0
 
-    def test_no_matches_returns_empty(self):
+    def test_no_matches_returns_empty(self) -> None:
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("xyz", "X")
         auto.make_automaton()
         assert list(auto.iter("hello world")) == []
 
-    def test_empty_text_returns_empty(self):
+    def test_empty_text_returns_empty(self) -> None:
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
         auto.make_automaton()
         assert list(auto.iter("")) == []
 
-    def test_overlapping_prefixes(self):
+    def test_overlapping_prefixes(self) -> None:
         """Pattern 'he' and 'she' share the 'he' suffix of 'she' — both must match."""
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
@@ -147,7 +150,7 @@ class TestPyAhoCorasickAutomatonDirect:
         assert "HE" in vals
         assert "SHE" in vals
 
-    def test_duplicate_add_word_ignored(self):
+    def test_duplicate_add_word_ignored(self) -> None:
         """Same word added twice is a no-op (first value wins)."""
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
@@ -159,7 +162,7 @@ class TestPyAhoCorasickAutomatonDirect:
         _, val = results[0]
         assert val == "FIRST"
 
-    def test_make_automaton_idempotent(self):
+    def test_make_automaton_idempotent(self) -> None:
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
@@ -168,7 +171,7 @@ class TestPyAhoCorasickAutomatonDirect:
         auto.make_automaton()
         assert list(auto.iter("foo")) == [(2, "F")]
 
-    def test_add_word_after_make_raises(self):
+    def test_add_word_after_make_raises(self) -> None:
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
@@ -176,7 +179,7 @@ class TestPyAhoCorasickAutomatonDirect:
         with pytest.raises(RuntimeError):
             auto.add_word("bar", "B")
 
-    def test_iter_before_make_raises(self):
+    def test_iter_before_make_raises(self) -> None:
         Aho = self._import_pure_class()  # noqa: N806
         auto = Aho()
         auto.add_word("foo", "F")
@@ -188,12 +191,14 @@ class TestPyAhoCorasickAutomatonDirect:
 # Group 2: pattern_matcher integration with various backend combinations
 # ---------------------------------------------------------------------------
 
+
 class TestPatternMatcherFallback:
     """Verify pattern_matcher.selects the right backend per environment."""
 
-    def test_default_backend_info_shape(self):
+    def test_default_backend_info_shape(self) -> None:
         """get_backend_info() always returns a 5-key dict."""
         from patterns.pattern_matcher import get_backend_info
+
         info = get_backend_info()
         assert "backend" in info
         assert "version" in info
@@ -203,9 +208,10 @@ class TestPatternMatcherFallback:
         # BACKEND_AVAILABLE is always True (we always have a fallback)
         assert info["available"] is True
 
-    def test_match_text_works_with_default_backends(self):
+    def test_match_text_works_with_default_backends(self) -> None:
         """Regression: with whatever is installed, match_text must produce hits."""
         from patterns.pattern_matcher import configure_patterns, match_text, reset_pattern_matcher
+
         reset_pattern_matcher()
         configure_patterns((("malware", "malware_type"), ("cve-", "cve_id")))
         hits = match_text("cve-2024-1234 mentions malware", boundary_policy="none")
@@ -215,9 +221,10 @@ class TestPatternMatcherFallback:
         assert "cve_id" in labels
         assert "malware_type" in labels
 
-    def test_no_pyahocorasick_uses_python_fallback(self, no_pyahocorasick):
+    def test_no_pyahocorasick_uses_python_fallback(self, no_pyahocorasick) -> None:
         """When both pyahocorasick and Rust ext are blocked, fallback is used."""
         from patterns.pattern_matcher import _PyAhoCorasickAutomaton, get_backend_info
+
         info = get_backend_info()
         assert info["backend"] == "python_fallback"
         assert info["pyahocorasick_available"] is False
@@ -226,15 +233,18 @@ class TestPatternMatcherFallback:
         # _PyAhoCorasickAutomaton is importable
         assert _PyAhoCorasickAutomaton is not None
 
-    def test_no_pyahocorasick_match_text_works(self, no_pyahocorasick):
+    def test_no_pyahocorasick_match_text_works(self, no_pyahocorasick) -> None:
         """End-to-end: match_text returns correct hits via Python fallback."""
         from patterns.pattern_matcher import configure_patterns, match_text, reset_pattern_matcher
+
         reset_pattern_matcher()
-        configure_patterns((
-            ("malware", "malware_type"),
-            ("ransomware", "ransomware_type"),
-            ("cve-", "cve_id"),
-        ))
+        configure_patterns(
+            (
+                ("malware", "malware_type"),
+                ("ransomware", "ransomware_type"),
+                ("cve-", "cve_id"),
+            )
+        )
         text = "this cve-2024-1234 reports malware and ransomware"
         hits = match_text(text, boundary_policy="none")
         # Pure-Python AC + regex post-pass should yield >= 4 hits
@@ -243,9 +253,10 @@ class TestPatternMatcherFallback:
         assert "malware_type" in labels
         assert "ransomware_type" in labels
 
-    def test_no_rust_uses_pyahocorasick(self, no_rust):
+    def test_no_rust_uses_pyahocorasick(self, no_rust) -> None:
         """When only Rust ext is blocked, pyahocorasick path is used."""
         from patterns.pattern_matcher import get_backend_info
+
         info = get_backend_info()
         # Backend label is "pyahocorasick" even when no Rust is available
         # (the build path is the same — only _matcher_state._rust_aco is None)

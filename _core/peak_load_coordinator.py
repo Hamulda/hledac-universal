@@ -44,44 +44,25 @@
 #     Process RSS cap (5.5):  5.5 GiB (88% of ceiling = MISSION_PEAK_RSS_GIB)
 #     Available for workload:  5.5 GiB (subsystem allocations)
 
-
-
-
-
-
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import sys
 import threading
 import time
 from collections import defaultdict
 from enum import StrEnum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# MODERN-36 Fix: SSOT imports — M1 8GB UMA calibration
-# =============================================================================
-# FIX: Removed hardcoded 6.48 GiB — now imports from SSOT (uma_budget.py)
-# Old: _DEFAULT_TOTAL_BUDGET_GIB: float = 6.48  # 81% of 8 GiB
-# New: Uses UmaBudget.UMA_HARD_CEILING_GIB = 6.25 GiB (SSOT)
-
 from hledac.universal.utils.uma_budget import (
-    UmaBudget,
-    MISSION_PEAK_RSS_GIB,
-    ORCHESTRATOR_GIB,
-    LLM_WEIGHTS_GIB,
-    KV_CACHE_GIB,
     SWAP_TIERS,  # MODERN-41 Fix: Use SSOT swap tiers instead of hardcoded 3.8
-    )
+    UmaBudget,
+)
 
 # PRIMARY SSOT: The ONE authoritative ceiling
 _DEFAULT_TOTAL_BUDGET_GIB: float = UmaBudget.UMA_HARD_CEILING_GIB  # 6.25 GiB
@@ -103,11 +84,6 @@ _EMERGENCY_FRACTION: float = UmaBudget.CRITICAL_RATIO  # 99% of ceiling = ~6.191
 
 # Max admission log entries (bounded for memory safety)
 _MAX_ADMISSION_LOG: int = 64
-
-
-# =============================================================================
-# ENUMS
-# =============================================================================
 
 
 class ResourceClass(StrEnum):
@@ -147,11 +123,6 @@ _PRIORITY_ORDER: dict[TaskPriority, int] = {
 }
 
 
-# =============================================================================
-# UNIFIED-003: MUTUAL EXCLUSION GROUPS
-# =============================================================================
-
-
 class MutexGroup(StrEnum):
     """Hardware-backed mutual exclusion groups for M1 8GB.
 
@@ -186,15 +157,10 @@ _RESOURCE_MUTEX_GROUPS: dict[ResourceClass, set[MutexGroup]] = {
     ResourceClass.SIDECAR_ADVISORY: set(),  # No mutex constraints
 }
 
-
-# =============================================================================
-# UNIFIED-003: DEADLINE-AWARE PRIORITY BOOSTING
-# =============================================================================
-
 # Default boost thresholds (seconds before deadline)
-_DEFAULT_CRITICAL_BOOST_S: float = 15.0   # < 15s -> CRITICAL
-_DEFAULT_HIGH_BOOST_S: float = 60.0       # < 60s -> HIGH
-_DEFAULT_NORMAL_BOOST_S: float = 300.0    # < 300s -> NORMAL minimum
+_DEFAULT_CRITICAL_BOOST_S: float = 15.0  # < 15s -> CRITICAL
+_DEFAULT_HIGH_BOOST_S: float = 60.0  # < 60s -> HIGH
+_DEFAULT_NORMAL_BOOST_S: float = 300.0  # < 300s -> NORMAL minimum
 
 # Global sprint deadline (set by GlobalCoScheduler)
 _sprint_deadline_ts: float | None = None  # time.monotonic() of sprint end
@@ -211,6 +177,7 @@ def set_sprint_deadline(deadline_s: float | None) -> None:
         _sprint_deadline_ts = None
     else:
         import time as _time
+
         _sprint_deadline_ts = _time.monotonic() + deadline_s
 
 
@@ -228,6 +195,7 @@ def _boost_for_deadline(priority: TaskPriority) -> TaskPriority:
         return priority  # No deadline set, no boost
 
     import time as _time
+
     remaining = _sprint_deadline_ts - _time.monotonic()
 
     # Already CRITICAL or deadline passed -> no change
@@ -246,11 +214,6 @@ def _boost_for_deadline(priority: TaskPriority) -> TaskPriority:
         if priority == TaskPriority.LOW:
             return TaskPriority.NORMAL
     return priority
-
-
-# =============================================================================
-# DATA STRUCTURES
-# =============================================================================
 
 
 class AllocationTicket(Struct, frozen=True):
@@ -295,11 +258,6 @@ class PeakLoadSnapshot(Struct, frozen=True):
     timestamp: float  # time.monotonic()
 
 
-# =============================================================================
-# ACTIVE PREEMPTION TOKEN (UNIFIED-003)
-# =============================================================================
-
-
 class _ActivePreemptionToken:
     """Weak-reference token for active task preemption.
 
@@ -316,7 +274,7 @@ class _ActivePreemptionToken:
 
     def __init__(
         self,
-        task: "asyncio.Task[Any] | None",
+        task: asyncio.Task[Any] | None,
         priority: TaskPriority,
         resource_class: ResourceClass,
         estimated_mb: float,
@@ -329,7 +287,7 @@ class _ActivePreemptionToken:
         self._owner = owner
 
     @property
-    def task(self) -> "asyncio.Task[Any] | None":
+    def task(self) -> asyncio.Task[Any] | None:
         return self._task
 
     @property
@@ -349,11 +307,6 @@ class _ActivePreemptionToken:
         return self._owner
 
 
-# =============================================================================
-# ALLOCATION GUARD (async context manager)
-# =============================================================================
-
-
 class _AllocationGuard:
     """Async context manager returned by acquire().
 
@@ -362,7 +315,7 @@ class _AllocationGuard:
 
     __slots__ = ("_coordinator", "_ticket", "_released")
 
-    def __init__(self, coordinator: "GlobalPeakLoadCoordinator", ticket: AllocationTicket) -> None:
+    def __init__(self, coordinator: GlobalPeakLoadCoordinator, ticket: AllocationTicket) -> None:
         self._coordinator = coordinator
         self._ticket = ticket
         self._released = False
@@ -372,18 +325,13 @@ class _AllocationGuard:
         """Access the allocation ticket for telemetry."""
         return self._ticket
 
-    async def __aenter__(self) -> "_AllocationGuard":
+    async def __aenter__(self) -> _AllocationGuard:
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         if not self._released:
             self._released = True
             await self._coordinator._release(self._ticket)
-
-
-# =============================================================================
-# GLOBAL PEAK-LOAD COORDINATOR
-# =============================================================================
 
 
 class GlobalPeakLoadCoordinator:
@@ -453,12 +401,11 @@ class GlobalPeakLoadCoordinator:
 
     def __init__(self, budget_gib: float | None = None) -> None:
         self._lock_factory = threading.Lock()
-        self._lock: "asyncio.Lock | None" = None
+        self._lock: asyncio.Lock | None = None
         self._budget_gib = budget_gib or _DEFAULT_TOTAL_BUDGET_GIB
-        self._class_reservations: dict[ResourceClass, float] = {
-            cls: self._budget_gib * 1024 * _CLASS_RESERVATION_FRACTION
-            for cls in ResourceClass
-        }
+        self._class_reservations: dict[ResourceClass, float] = dict.fromkeys(
+            ResourceClass, self._budget_gib * 1024 * _CLASS_RESERVATION_FRACTION
+        )
         self._allocations: dict[int, AllocationTicket] = {}
         self._next_ticket_id: int = 0
         self._total_allocated_mb: float = 0.0
@@ -469,9 +416,7 @@ class GlobalPeakLoadCoordinator:
         self._preempt_signal = asyncio.Event()
         self._admission_log: list[AdmissionResult] = []
         # UNIFIED-003: Mutual exclusion tracking
-        self._mutex_active: dict[MutexGroup, ResourceClass | None] = {
-            grp: None for grp in MutexGroup
-        }
+        self._mutex_active: dict[MutexGroup, ResourceClass | None] = dict.fromkeys(MutexGroup)
         self._mutex_lock = threading.Lock()  # Protects _mutex_active writes
         # UNIFIED-003: Active preemption tokens
         self._active_tokens: dict[int, _ActivePreemptionToken] = {}
@@ -501,7 +446,7 @@ class GlobalPeakLoadCoordinator:
         priority: TaskPriority = TaskPriority.NORMAL,
         owner: str = "",
         timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
-    ) -> "_AllocationGuard":
+    ) -> _AllocationGuard:
         """Request admission to allocate estimated_mb megabytes.
 
         Blocks until:
@@ -536,7 +481,7 @@ class GlobalPeakLoadCoordinator:
             logger.debug(
                 f"[UNIFIED-003] Priority boosted: {priority} -> {boosted_priority} "
                 f"for {resource_class} ({owner}), remaining={_sprint_deadline_ts - time.monotonic() if _sprint_deadline_ts else 'N/A':.1f}s"
-    )
+            )
             priority = boosted_priority
 
         start_time = time.monotonic()
@@ -549,13 +494,15 @@ class GlobalPeakLoadCoordinator:
                 ticket = self._allocate(resource_class, estimated_mb, priority, owner)
                 # UNIFIED-003: Register active preemption token
                 self._register_token(ticket, priority, resource_class, estimated_mb, owner)
-                self._log_admission(AdmissionResult(
-                    granted=True,
-                    ticket_id=ticket.ticket_id,
-                    wait_time_s=0.0,
-                    reason=reason,
-                    total_allocated_gib=self._total_allocated_mb / 1024,
-                ))
+                self._log_admission(
+                    AdmissionResult(
+                        granted=True,
+                        ticket_id=ticket.ticket_id,
+                        wait_time_s=0.0,
+                        reason=reason,
+                        total_allocated_gib=self._total_allocated_mb / 1024,
+                    )
+                )
                 return _AllocationGuard(self, ticket)
 
         # Slow path: wait for budget to become available
@@ -564,16 +511,18 @@ class GlobalPeakLoadCoordinator:
             while True:
                 elapsed = time.monotonic() - start_time
                 if elapsed >= timeout_s:
-                    self._log_admission(AdmissionResult(
-                        granted=False,
-                        wait_time_s=elapsed,
-                        reason=f"timeout after {timeout_s:.1f}s",
-                        total_allocated_gib=self._total_allocated_mb / 1024,
-                    ))
+                    self._log_admission(
+                        AdmissionResult(
+                            granted=False,
+                            wait_time_s=elapsed,
+                            reason=f"timeout after {timeout_s:.1f}s",
+                            total_allocated_gib=self._total_allocated_mb / 1024,
+                        )
+                    )
                     raise TimeoutError(
                         f"PeakLoadCoordinator: admission timeout for {resource_class} "
                         f"({estimated_mb:.0f} MB, priority={priority})"
-    )
+                    )
 
                 # UNIFIED-003: Re-apply deadline boost (deadline may have changed)
                 priority = _boost_for_deadline(priority)
@@ -587,8 +536,8 @@ class GlobalPeakLoadCoordinator:
                             await asyncio.wait_for(
                                 self._preempt_signal.wait(),
                                 timeout=min(1.0, timeout_s - elapsed),
-    )
-                        except asyncio.TimeoutError:  # noqa: BLE001
+                            )
+                        except TimeoutError:  # noqa: BLE001
                             pass  # Continue loop, will check again
                         continue
 
@@ -599,13 +548,15 @@ class GlobalPeakLoadCoordinator:
                         ticket = self._allocate(resource_class, estimated_mb, priority, owner)
                         # UNIFIED-003: Register active preemption token
                         self._register_token(ticket, priority, resource_class, estimated_mb, owner)
-                        self._log_admission(AdmissionResult(
-                            granted=True,
-                            ticket_id=ticket.ticket_id,
-                            wait_time_s=time.monotonic() - start_time,
-                            reason=reason,
-                            total_allocated_gib=self._total_allocated_mb / 1024,
-                        ))
+                        self._log_admission(
+                            AdmissionResult(
+                                granted=True,
+                                ticket_id=ticket.ticket_id,
+                                wait_time_s=time.monotonic() - start_time,
+                                reason=reason,
+                                total_allocated_gib=self._total_allocated_mb / 1024,
+                            )
+                        )
                         return _AllocationGuard(self, ticket)
 
                 # Wait for a release signal before retrying
@@ -613,9 +564,9 @@ class GlobalPeakLoadCoordinator:
                     await asyncio.wait_for(
                         self._high_water_event.wait(),
                         timeout=min(_PREEMPTION_CHECK_INTERVAL_S, timeout_s - elapsed),
-    )
+                    )
                     self._high_water_event.clear()
-                except asyncio.TimeoutError:  # noqa: BLE001
+                except TimeoutError:  # noqa: BLE001
                     pass  # Continue loop, will check again
 
         finally:
@@ -674,7 +625,6 @@ class GlobalPeakLoadCoordinator:
             self._emergency_event.set()
             # UNIFIED-003: Trigger active preemption at high-water
             self._cancel_preemptible_tasks(estimated_mb, priority)
-            # Check priority-based admission
             match priority:
                 case TaskPriority.CRITICAL:
                     return True, "CRITICAL bypass high-water"
@@ -743,6 +693,7 @@ class GlobalPeakLoadCoordinator:
             # Use cached UMA sample (same source as M1ResourceGovernor)
             # Avoids DRY violation — governor owns the canonical sampling path
             from hledac.universal._core.resource_governor import sample_uma_status
+
             uma = sample_uma_status()
             system_used_gib = uma.system_used_gib
             system_total_gib = uma.system_used_gib + uma.system_available_gib
@@ -754,9 +705,8 @@ class GlobalPeakLoadCoordinator:
             # (warn * 1.10 = 6.53 > 6.25 ceiling)
             uma_budget_warn_gib = UmaBudget.THRESHOLD_WARN_GIB  # 5.938 GiB
             system_limit_gib = min(
-                system_total_gib * 0.90,
-                min(uma_budget_warn_gib * 1.10, UmaBudget.UMA_HARD_CEILING_GIB)
-    )
+                system_total_gib * 0.90, min(uma_budget_warn_gib * 1.10, UmaBudget.UMA_HARD_CEILING_GIB)
+            )
             projected_used_gib = system_used_gib + (estimated_mb / 1024)
 
             if projected_used_gib > system_limit_gib:
@@ -764,7 +714,7 @@ class GlobalPeakLoadCoordinator:
                     f"UMA pressure: projected {projected_used_gib:.2f} GiB "
                     f"> limit {system_limit_gib:.2f} GiB "
                     f"(system used={system_used_gib:.2f} GiB)"
-    )
+                )
 
             # MODERN-41 Fix: Check swap using SSOT DIAGNOSTIC threshold
             # SWAP_TIERS.DIAGNOSTIC = 4.675 GiB — elevated swap indicates systemic pressure
@@ -774,7 +724,7 @@ class GlobalPeakLoadCoordinator:
                     return False, (
                         f"UMA pressure: swap={uma.swap_used_gib:.1f} GiB "
                         f"(threshold={SWAP_TIERS.DIAGNOSTIC:.3f} GiB from SSOT)"
-    )
+                    )
 
             return True, f"UMA OK ({system_used_gib:.1f}/{system_total_gib:.1f} GiB)"
         except Exception:
@@ -805,7 +755,7 @@ class GlobalPeakLoadCoordinator:
             resource_class=resource_class,
             estimated_mb=estimated_mb,
             owner=owner,
-    )
+        )
         self._active_tokens[ticket.ticket_id] = token
 
     def _unregister_token(self, ticket_id: int) -> None:
@@ -840,7 +790,7 @@ class GlobalPeakLoadCoordinator:
                 logger.warning(
                     f"[UNIFIED-003] Preempting mutex conflict: cancelling "
                     f"{token.resource_class} ({token.owner}) for {incoming_class}"
-    )
+                )
                 token.task.cancel()
                 self._total_preemptions += 1
 
@@ -888,7 +838,7 @@ class GlobalPeakLoadCoordinator:
                 f"[UNIFIED-003] Active preemption: cancelling "
                 f"{token.resource_class} ({token.owner}, "
                 f"priority={token.priority}, est={token.estimated_mb:.0f} MB)"
-    )
+            )
             # Cancel the asyncio task
             if token.task is not None:
                 token.task.cancel()
@@ -920,7 +870,7 @@ class GlobalPeakLoadCoordinator:
             estimated_mb=estimated_mb,
             allocated_at=time.monotonic(),
             owner=owner,
-    )
+        )
 
         self._allocations[ticket_id] = ticket
         self._total_allocated_mb += estimated_mb
@@ -932,7 +882,6 @@ class GlobalPeakLoadCoordinator:
             if self._mutex_active.get(group) is None:
                 self._mutex_active[group] = resource_class
 
-        # Update high-water state
         utilization = self._total_allocated_mb / (self._budget_gib * 1024)
         if utilization >= _HIGH_WATER_FRACTION:
             self._high_water_event.set()
@@ -948,7 +897,7 @@ class GlobalPeakLoadCoordinator:
             f"[PeakLoad] Allocated ticket #{ticket_id}: {resource_class} "
             f"{estimated_mb:.0f} MB (total: {self._total_allocated_mb:.0f} MB, "
             f"{utilization:.1%} utilization)"
-    )
+        )
 
         return ticket
 
@@ -985,7 +934,6 @@ class GlobalPeakLoadCoordinator:
             if self._per_class_mb[ticket.resource_class] < 0:
                 self._per_class_mb[ticket.resource_class] = 0.0
 
-            # Update high-water state
             utilization = self._total_allocated_mb / (self._budget_gib * 1024)
             if utilization < _HIGH_WATER_FRACTION:
                 self._high_water_event.clear()
@@ -1003,7 +951,7 @@ class GlobalPeakLoadCoordinator:
                 f"[PeakLoad] Released ticket #{ticket.ticket_id}: {ticket.resource_class} "
                 f"{ticket.estimated_mb:.0f} MB (total: {self._total_allocated_mb:.0f} MB, "
                 f"{utilization:.1%} utilization)"
-    )
+            )
 
     def _get_preemptable_mb(self, requester_priority: TaskPriority) -> float:
         """Calculate how much memory can be freed by preempting lower-priority tasks.
@@ -1036,16 +984,10 @@ class GlobalPeakLoadCoordinator:
         Thread-safe: reads are atomic under GIL.
         """
         utilization = self._total_allocated_mb / (self._budget_gib * 1024)
-        per_class_gib = {
-            cls.value: mb / 1024
-            for cls, mb in self._per_class_mb.items()
-        }
+        per_class_gib = {cls.value: mb / 1024 for cls, mb in self._per_class_mb.items()}
 
         # UNIFIED-003: Mutex group occupancy
-        mutex_occupancy = {
-            grp.value: (cls.value if cls else None)
-            for grp, cls in self._mutex_active.items()
-        }
+        {grp.value: (cls.value if cls else None) for grp, cls in self._mutex_active.items()}
 
         snapshot = PeakLoadSnapshot(
             total_allocated_gib=self._total_allocated_mb / 1024,
@@ -1057,16 +999,13 @@ class GlobalPeakLoadCoordinator:
             high_water_active=self._high_water_event.is_set(),
             emergency_active=self._emergency_event.is_set(),
             timestamp=time.monotonic(),
-    )
+        )
 
         return snapshot
 
     def get_mutex_occupancy(self) -> dict[str, str | None]:
         """UNIFIED-003: Return mutex group occupancy for telemetry."""
-        return {
-            grp.value: (cls.value if cls else None)
-            for grp, cls in self._mutex_active.items()
-        }
+        return {grp.value: (cls.value if cls else None) for grp, cls in self._mutex_active.items()}
 
     def get_preemption_stats(self) -> dict[str, int]:
         """UNIFIED-003: Return preemption and rejection counters."""
@@ -1106,14 +1045,10 @@ class GlobalPeakLoadCoordinator:
                     f"[PeakLoad] Preemption: signal set + {freed:.0f} MB "
                     f"actively cancelled ({preemptable_mb:.0f} MB preemptable, "
                     f"target: {target_mb:.0f} MB)"
-    )
+                )
 
             return freed
 
-
-# =============================================================================
-# SINGLETON ACCESSOR
-# =============================================================================
 
 _coordinator: GlobalPeakLoadCoordinator | None = None
 _coordinator_lock = threading.Lock()

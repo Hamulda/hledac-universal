@@ -14,13 +14,10 @@ Provides:
 No heavy imports in hot-path. No global unbounded state.
 """
 
-
-import os
 import time
+from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 # Lazy import only — no module-level heavy deps
 # Types imported under TYPE_CHECKING to satisfy static type checkers (mypy/pyright).
 # Runtime lazy import still used inside functions to avoid heavy deps in hot-path.
@@ -36,16 +33,16 @@ _store_enabled: bool | None = None
 DEFAULT_MAX_KEYS = 4096
 
 __all__ = [
-    'is_temporal_store_enabled',
-    'get_temporal_signal_store',
-    'load_temporal_signal_snapshot',
-    'save_temporal_signal_snapshot',
-    'close_temporal_signal_store',
-    'get_temporal_signal_layer',
-    'reset_temporal_signal_layer',
-    'get_temporal_signal_summary',
-    'build_temporal_priority_hints',
-    'DEFAULT_MAX_KEYS',
+    "is_temporal_store_enabled",
+    "get_temporal_signal_store",
+    "load_temporal_signal_snapshot",
+    "save_temporal_signal_snapshot",
+    "close_temporal_signal_store",
+    "get_temporal_signal_layer",
+    "reset_temporal_signal_layer",
+    "get_temporal_signal_summary",
+    "build_temporal_priority_hints",
+    "DEFAULT_MAX_KEYS",
 ]
 
 
@@ -54,6 +51,7 @@ def is_temporal_store_enabled() -> bool:
     global _store_enabled
     if _store_enabled is None:
         from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
         _store_enabled = FeatureFlags.get(FeatureFlag.TEMPORAL_STORE)
     return _store_enabled
 
@@ -70,6 +68,7 @@ def get_temporal_signal_store() -> TemporalSignalStore | None:
         return None
     if _store is None:
         from hledac.universal.layers.temporal_signal_store import TemporalSignalStore
+
         _store = TemporalSignalStore()
         _store.initialize()
     return _store
@@ -92,6 +91,7 @@ def load_temporal_signal_snapshot() -> bool:
         return False
     try:
         from hledac.universal.layers.temporal_signal_layer import TemporalSignalLayer
+
         if _layer is None:
             _layer = TemporalSignalLayer.from_snapshot(snapshot)
         else:
@@ -103,9 +103,7 @@ def load_temporal_signal_snapshot() -> bool:
                     _layer._states[key] = state
                     _layer._lru_order.append(key)
             # Merge edge candidates (deduplicated by src_dst pair)
-            existing_edges = {
-                (c.src_key, c.dst_key, c.edge_type) for c in _layer._edge_candidates
-            }
+            existing_edges = {(c.src_key, c.dst_key, c.edge_type) for c in _layer._edge_candidates}
             for candidate in restored._edge_candidates:
                 key = (candidate.src_key, candidate.dst_key, candidate.edge_type)
                 if key not in existing_edges:
@@ -162,6 +160,7 @@ def get_temporal_signal_layer(max_keys: int = DEFAULT_MAX_KEYS) -> TemporalSigna
     global _layer
     if _layer is None:
         from hledac.universal.layers.temporal_signal_layer import TemporalSignalLayer
+
         _layer = TemporalSignalLayer(max_keys=max_keys)
     return _layer
 
@@ -265,7 +264,7 @@ def build_temporal_priority_hints(k: int = 10) -> list[dict]:
                 + s.burst_score * 0.20
                 + s.change_point_score * 0.20
                 + s.source_synchrony_score * 0.15
-    )
+            )
 
             # Derive reason tag (in priority order)
             # Note: periodicity_score influences the reason tag (periodic_checkin)
@@ -288,18 +287,20 @@ def build_temporal_priority_hints(k: int = 10) -> list[dict]:
             # Prefer most specific reason
             reason = reasons[0]
 
-            hints.append({
-                "key": s.key,
-                "family": s.family,
-                "priority_hint": priority_hint,
-                "reason": reason,
-                "anomaly_score": s.anomaly_score,
-                "burst_score": s.burst_score,
-                "periodicity_score": s.periodicity_score,
-                "change_point_score": s.change_point_score,
-                "source_synchrony_score": s.source_synchrony_score,
-                "advisory_only": True,
-            })
+            hints.append(
+                {
+                    "key": s.key,
+                    "family": s.family,
+                    "priority_hint": priority_hint,
+                    "reason": reason,
+                    "anomaly_score": s.anomaly_score,
+                    "burst_score": s.burst_score,
+                    "periodicity_score": s.periodicity_score,
+                    "change_point_score": s.change_point_score,
+                    "source_synchrony_score": s.source_synchrony_score,
+                    "advisory_only": True,
+                }
+            )
 
         # Stable sort by priority_hint descending (deterministic)
         hints.sort(key=itemgetter("priority_hint"), reverse=True)

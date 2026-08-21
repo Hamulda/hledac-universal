@@ -7,17 +7,20 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+
 import orjson
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
-class TaskCache:
-    __slots__ = tuple(('_lock', 'db_path', 'env'))
 
-    def __init__(self, db_path: str | None=None, max_size_mb: int=100):
+class TaskCache:
+    __slots__ = ("_lock", "db_path", "env")
+
+    def __init__(self, db_path: str | None = None, max_size_mb: int = 100) -> None:
         from hledac.universal.paths import SPRINT_LMDB_ROOT, open_lmdb
+
         if db_path is None:
-            self.db_path = SPRINT_LMDB_ROOT / 'task_cache.lmdb'
+            self.db_path = SPRINT_LMDB_ROOT / "task_cache.lmdb"
         else:
             self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,21 +37,23 @@ class TaskCache:
                     if data is None:
                         return None
                     entry = orjson.loads(data)
-                    if entry.get('version') != model_version:
+                    if entry.get("version") != model_version:
                         return None
-                    return entry['value']
+                    return entry["value"]
+
             return await asyncio.to_thread(_get)
 
-    async def put(self, key: str, value: Any, model_version: int):
+    async def put(self, key: str, value: Any, model_version: int) -> None:
         """Uloží do cache s aktuální verzí."""
-        entry = {'version': model_version, 'value': value}
+        entry = {"version": model_version, "value": value}
         data = orjson.dumps(entry)
         async with self._lock:
 
-            def _put():
+            def _put() -> None:
                 with self.env.begin(write=True) as txn:
                     txn.put(key.encode(), data)
+
             await asyncio.to_thread(_put)
 
-    async def close(self):
+    async def close(self) -> None:
         self.env.close()

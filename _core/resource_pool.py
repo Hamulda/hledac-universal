@@ -27,32 +27,32 @@ M1 8GB UMA constraints:
 Sprint R-1 (2026-07-18)
 ISSUE-010 Update (2026-08-15)
 """
+
 from __future__ import annotations
+
 import asyncio
 import atexit
 import contextlib
-import functools
 import logging
 import sys
 import threading
-import time
-import weakref
 
 logger = logging.getLogger(__name__)
 from collections import deque
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
-from collections.abc import Generator
-from hledac.universal._core.env_config import ENV
-from _core._util import aclose
+
 if TYPE_CHECKING:
     pass
 
+
 class PoolKind(Enum):
     """Canonical pool identifiers."""
+
     DUCKDB_RO = auto()
     DUCKDB_RW = auto()
     MLX = auto()
@@ -63,10 +63,12 @@ class PoolKind(Enum):
     # ── MODERN-36: Hermes pools deprecated — merged into CPU_IO ────────────────
     # Hermes operations now use cpu_io_pool via asyncio.to_thread().
     # Keeping enum values for backward compatibility (they map to CPU_IO).
-    HERMES_PREP = auto()       # DEPRECATED: Maps to CPU_IO
-    HERMES_POST = auto()       # DEPRECATED: Maps to CPU_IO
+    HERMES_PREP = auto()  # DEPRECATED: Maps to CPU_IO
+    HERMES_POST = auto()  # DEPRECATED: Maps to CPU_IO
     HERMES_INFERENCE = auto()  # DEPRECATED: Maps to CPU_IO
-    HERMES_COMPILE = auto()    # DEPRECATED: Maps to CPU_IO
+    HERMES_COMPILE = auto()  # DEPRECATED: Maps to CPU_IO
+
+
 _DUCKDB_POOL_SIZE = 2  # MODERN-36: Reduced from 4 (memory savings ~100MB)
 _DUCKDB_POOL_MAX = 4  # MODERN-36: Max burst still 4 for spikes
 _MLX_POOL_SIZE = 1
@@ -77,15 +79,17 @@ _COREML_POOL_SIZE = 1
 _CPU_IO_WORKERS_DEFAULT = 3  # Reduced from 8
 _CPU_BLOCKING_WORKERS_DEFAULT = 0  # Merged into CPU_IO pool
 _thread_local = threading.local()
-_current_duckdb_conn: ContextVar[Any | None] = ContextVar('current_duckdb_conn', default=None)
+_current_duckdb_conn: ContextVar[Any | None] = ContextVar("current_duckdb_conn", default=None)
+
 
 def _health_check_duckdb(conn: Any) -> bool:
     """Verify DuckDB connection is still alive."""
     try:
-        conn.execute('SELECT 1')
+        conn.execute("SELECT 1")
         return True
     except Exception:
         return False
+
 
 def _get_max_workers_from_governor() -> int:
     """
@@ -94,25 +98,30 @@ def _get_max_workers_from_governor() -> int:
     Falls back to default if governor unavailable.
     """
     try:
-        from hledac.universal._core.resource_governor import evaluate_uma_state, ConcurrencyPreset
         import psutil
+
+        from hledac.universal._core.resource_governor import ConcurrencyPreset, evaluate_uma_state
+
         mem = psutil.virtual_memory()
-        system_used_gib = mem.used / 1024 ** 3
+        system_used_gib = mem.used / 1024**3
         state = evaluate_uma_state(system_used_gib)
         preset = ConcurrencyPreset.from_state(state)
         return preset.max_workers
     except Exception:
         return _CPU_IO_WORKERS_DEFAULT
 
+
 @dataclass(frozen=True, slots=True)
 class _DuckDBPoolStats:
     """DuckDB pool statistics."""
+
     acquire_count: int = 0
     release_count: int = 0
     health_check_failures: int = 0
     new_connections: int = 0
     pool_hits: int = 0
     pool_misses: int = 0
+
 
 class _DuckDBPool:
     """
@@ -124,9 +133,21 @@ class _DuckDBPool:
     - Per-db_path pools to avoid cross-database pollution
     - Thread-safe with minimal lock contention
     """
-    __slots__ = tuple(('_health_check', '_lock', '_max_absolute', '_max_size', '_pools', '_round_robin', '_stats', '_total_connections'))
 
-    def __init__(self, max_size: int=_DUCKDB_POOL_SIZE, max_absolute: int=_DUCKDB_POOL_MAX, health_check: bool=True) -> None:
+    __slots__ = (
+        "_health_check",
+        "_lock",
+        "_max_absolute",
+        "_max_size",
+        "_pools",
+        "_round_robin",
+        "_stats",
+        "_total_connections",
+    )
+
+    def __init__(
+        self, max_size: int = _DUCKDB_POOL_SIZE, max_absolute: int = _DUCKDB_POOL_MAX, health_check: bool = True
+    ) -> None:
         self._max_size = max_size
         self._max_absolute = max_absolute
         self._health_check = health_check
@@ -144,16 +165,17 @@ class _DuckDBPool:
                 self._round_robin[db_path] = 0
             return self._pools[db_path]
 
-    def _create_connection(self, db_path: str, read_only: bool=True) -> Any:
+    def _create_connection(self, db_path: str, read_only: bool = True) -> Any:
         """Create new DuckDB connection with lazy import."""
         try:
             import duckdb
+
             conn = duckdb.connect(db_path, read_only=read_only)
             return conn
         except ImportError:
             return None
 
-    def acquire(self, db_path: str, read_only: bool=True) -> tuple[Any, str] | tuple[None, None]:
+    def acquire(self, db_path: str, read_only: bool = True) -> tuple[Any, str] | tuple[None, None]:
         """
         Acquire connection from pool.
 
@@ -182,7 +204,7 @@ class _DuckDBPool:
                         self._stats.pool_hits += 1
                         del pool[idx]
                         return (conn, db_path)
-                except (IndexError, TypeError):  # noqa: BLE001
+                except IndexError, TypeError:  # noqa: BLE001
                     pass
         self._stats.pool_misses += 1
         with self._lock:
@@ -251,22 +273,7 @@ class _DuckDBPool:
             self._pools.clear()
             self._round_robin.clear()
             self._total_connections = 0
-# =============================================================================
-# DEPRECATED DUCKDB POOLS - ISSUE-18
-# =============================================================================
-# WARNING: These pools are DEPRECATED in favor of _core.duckdb_pool
-#
-# The canonical DuckDB pool is now _core/duckdb_pool.py which provides:
-# - ReadCoordinator for ISSUE-17 read-write coordination
-# - asyncio.Semaphore(2) to limit concurrent reads
-# - Write barrier pattern to prevent deadlocks
-#
-# Migration:
-#   OLD: with_resource(PoolKind.DUCKDB_RO, db_path) as conn
-#   NEW: duckdb_ro_read(db_path) or duckdb_ro_acquire(db_path)
-#
-# See _core/duckdb_pool.py for the canonical implementation.
-# =============================================================================
+
 
 _duckdb_ro_pool = _DuckDBPool(max_size=_DUCKDB_POOL_SIZE)
 _duckdb_rw_pool = _DuckDBPool(max_size=2, max_absolute=4)
@@ -275,6 +282,7 @@ _duckdb_rw_pool = _DuckDBPool(max_size=2, max_absolute=4)
 def _warn_deprecated_duckdb_pool() -> None:
     """Issue deprecation warning for resource_pool.py DuckDB pools."""
     import warnings
+
     warnings.warn(
         "resource_pool.py DuckDB pools are deprecated. "
         "Use _core.duckdb_pool.duckdb_ro_read() or duckdb_ro_acquire() instead. "
@@ -288,7 +296,8 @@ class _CPUPool:
     """
     Bounded CPU thread pool with adaptive sizing based on M1ResourceGovernor.
     """
-    __slots__ = tuple(('_adaptive_max', '_executor', '_kind', '_lock', '_max_workers', '_name', '_semaphore'))
+
+    __slots__ = ("_adaptive_max", "_executor", "_kind", "_lock", "_max_workers", "_name", "_semaphore")
 
     def __init__(self, name: str, max_workers: int, kind: PoolKind) -> None:
         self._name = name
@@ -309,7 +318,7 @@ class _CPUPool:
             if self._executor is None:
                 max_w = self._get_adaptive_max()
                 self._adaptive_max = max_w
-                self._executor = ThreadPoolExecutor(max_workers=max_w, thread_name_prefix=f'hledac_{self._name}')
+                self._executor = ThreadPoolExecutor(max_workers=max_w, thread_name_prefix=f"hledac_{self._name}")
             return self._executor
 
     def get_semaphore(self) -> asyncio.Semaphore:
@@ -324,20 +333,24 @@ class _CPUPool:
         with self._lock:
             if self._executor is not None and max_workers != self._adaptive_max:
                 old = self._executor
-                self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f'hledac_{self._name}')
+                self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"hledac_{self._name}")
                 self._adaptive_max = max_workers
                 old.shutdown(wait=False)
                 self._semaphore = asyncio.Semaphore(max_workers)
 
-    def shutdown(self, wait: bool=True) -> None:
+    def shutdown(self, wait: bool = True) -> None:
         """Shutdown the pool."""
         with self._lock:
             if self._executor is not None:
                 self._executor.shutdown(wait=wait)
                 self._executor = None
             self._semaphore = None
-_cpu_io_pool = _CPUPool(name='cpu_io', max_workers=_CPU_IO_WORKERS_DEFAULT, kind=PoolKind.CPU_IO)
-_cpu_blocking_pool = _CPUPool(name='cpu_blocking', max_workers=_CPU_BLOCKING_WORKERS_DEFAULT, kind=PoolKind.CPU_BLOCKING)
+
+
+_cpu_io_pool = _CPUPool(name="cpu_io", max_workers=_CPU_IO_WORKERS_DEFAULT, kind=PoolKind.CPU_IO)
+_cpu_blocking_pool = _CPUPool(
+    name="cpu_blocking", max_workers=_CPU_BLOCKING_WORKERS_DEFAULT, kind=PoolKind.CPU_BLOCKING
+)
 
 # ── MODERN-36: Hermes pools unified into cpu_io_pool ────────────────────────
 # Hermes operations (prep, post, inference, compile) now share the unified
@@ -402,7 +415,8 @@ class _MLXPool:
     """
     MLX compute stream pool (single stream, lazy initialization).
     """
-    __slots__ = tuple(('_loaded', '_lock', '_stream'))
+
+    __slots__ = ("_loaded", "_lock", "_stream")
 
     def __init__(self) -> None:
         self._stream: Any | None = None
@@ -415,6 +429,7 @@ class _MLXPool:
             if not self._loaded:
                 try:
                     import mlx.core as mx
+
                     self._stream = mx
                     self._loaded = True
                 except ImportError:
@@ -423,22 +438,24 @@ class _MLXPool:
 
     def release(self, _stream: Any) -> None:
         """MLX has single stream, release is no-op."""
-        pass
 
     @property
     def is_available(self) -> bool:
         """Check if MLX is available."""
         try:
             import mlx.core
+
             return True
         except ImportError:
             return False
+
 
 class _ANEPool:
     """
     Apple Neural Engine pool (single stream, lazy initialization).
     """
-    __slots__ = tuple(('_loaded', '_lock', '_model'))
+
+    __slots__ = ("_loaded", "_lock", "_model")
 
     def __init__(self) -> None:
         self._model: Any | None = None
@@ -451,6 +468,7 @@ class _ANEPool:
             if not self._loaded:
                 try:
                     import coremltools as ct
+
                     self._model = ct
                     self._loaded = True
                 except ImportError:
@@ -459,22 +477,22 @@ class _ANEPool:
 
     def release(self, _model: Any) -> None:
         """ANE has single model, release is no-op."""
-        pass
 
     @property
     def is_available(self) -> bool:
         """Check if CoreML/ANE is available."""
         try:
-            import coremltools
             return True
         except ImportError:
             return False
+
 
 class _CoreMLPool:
     """
     CoreML compute pool (single stream, lazy initialization).
     """
-    __slots__ = tuple(('_loaded', '_lock', '_runtime'))
+
+    __slots__ = ("_loaded", "_lock", "_runtime")
 
     def __init__(self) -> None:
         self._runtime: Any | None = None
@@ -487,6 +505,7 @@ class _CoreMLPool:
             if not self._loaded:
                 try:
                     import coremltools as ct
+
                     self._runtime = ct
                     self._loaded = True
                 except ImportError:
@@ -495,33 +514,35 @@ class _CoreMLPool:
 
     def release(self, _runtime: Any) -> None:
         """CoreML has single runtime, release is no-op."""
-        pass
 
     @property
     def is_available(self) -> bool:
         """Check if CoreML is available."""
         try:
-            import coremltools
             return True
         except ImportError:
             return False
+
+
 _mlx_pool = _MLXPool()
 _ane_pool = _ANEPool()
 _coreml_pool = _CoreMLPool()
 
 _POOL_CONFIG = {
-    PoolKind.DUCKDB_RO: ('duckdb_ro', True),
-    PoolKind.DUCKDB_RW: ('duckdb_rw', False),
-    PoolKind.MLX: ('mlx', None),
-    PoolKind.ANE: ('ane', None),
-    PoolKind.COREML: ('coreml', None),
+    PoolKind.DUCKDB_RO: ("duckdb_ro", True),
+    PoolKind.DUCKDB_RW: ("duckdb_rw", False),
+    PoolKind.MLX: ("mlx", None),
+    PoolKind.ANE: ("ane", None),
+    PoolKind.COREML: ("coreml", None),
 }
+
 
 def _acquire_pool_resource(kind: PoolKind, db_path: str | None) -> tuple[Any, str | None]:
     """Acquire resource from the appropriate pool based on kind."""
     # ISSUE-18: Deprecation warning for DuckDB pools
     if kind in (PoolKind.DUCKDB_RO, PoolKind.DUCKDB_RW):
         import warnings
+
         warnings.warn(
             "PoolKind.DUCKDB_* is deprecated. "
             "Use _core.duckdb_pool.duckdb_ro_read() or duckdb_ro_acquire() instead. "
@@ -531,26 +552,26 @@ def _acquire_pool_resource(kind: PoolKind, db_path: str | None) -> tuple[Any, st
         )
     if kind in _POOL_CONFIG:
         pool_name, read_only_flag = _POOL_CONFIG[kind]
-        if 'duckdb' in pool_name:
+        if "duckdb" in pool_name:
             if db_path is None:
-                raise ValueError(f'db_path required for {kind.name} pool')
-            pool = _duckdb_ro_pool if pool_name == 'duckdb_ro' else _duckdb_rw_pool
+                raise ValueError(f"db_path required for {kind.name} pool")
+            pool = _duckdb_ro_pool if pool_name == "duckdb_ro" else _duckdb_rw_pool
             resource, acquired_path = pool.acquire(db_path, read_only=read_only_flag)
             if resource is None:
-                raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
+                raise RuntimeError(f"DuckDB pool exhausted for {db_path}")
             return resource, acquired_path
         else:
-            pool = getattr(sys.modules[__name__], f'_{pool_name}_pool')
+            pool = getattr(sys.modules[__name__], f"_{pool_name}_pool")
             resource = pool.acquire()
             if resource is None and (not pool.is_available):
-                raise RuntimeError(f'{kind.name} not available')
+                raise RuntimeError(f"{kind.name} not available")
             return resource, None
     elif kind == PoolKind.CPU_IO:
         return _cpu_io_pool.get_executor(), None
     elif kind == PoolKind.CPU_BLOCKING:
         return _cpu_blocking_pool.get_executor(), None
     else:
-        raise ValueError(f'Unknown pool kind: {kind}')
+        raise ValueError(f"Unknown pool kind: {kind}")
 
 
 def _release_pool_resource(kind: PoolKind, resource: Any, acquired_db_path: str | None) -> None:
@@ -573,7 +594,7 @@ def _release_pool_resource(kind: PoolKind, resource: Any, acquired_db_path: str 
 
 
 @contextlib.contextmanager
-def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Generator[Any, None, None]:  # noqa: ARG001
+def with_resource(kind: PoolKind, db_path: str | None = None, read_only: bool = True) -> Generator[Any]:  # noqa: ARG001
     """
     Context manager for acquiring/releasing pooled resources.
 
@@ -607,9 +628,11 @@ def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True
     finally:
         _release_pool_resource(kind, resource, acquired_db_path)
 
+
 class _AsyncPoolContextManager:
     """Async context manager for CPU pools with semaphore."""
-    __slots__ = ('_pool', '_semaphore', '_executor')
+
+    __slots__ = ("_pool", "_semaphore", "_executor")
 
     def __init__(self, pool: _CPUPool) -> None:
         self._pool = pool
@@ -626,7 +649,8 @@ class _AsyncPoolContextManager:
         if self._semaphore is not None:
             self._semaphore.release()
 
-def with_resource_async(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Any:
+
+def with_resource_async(kind: PoolKind, db_path: str | None = None, read_only: bool = True) -> Any:
     """
     Async context manager for acquiring/releasing pooled resources.
 
@@ -639,9 +663,11 @@ def with_resource_async(kind: PoolKind, db_path: str | None=None, read_only: boo
     else:
         return _SyncPoolContextManagerWrapper(kind, db_path, read_only)
 
+
 class _SyncPoolContextManagerWrapper:
     """Sync context manager wrapper for async context."""
-    __slots__ = ('_kind', '_db_path', '_read_only', '_ctx')
+
+    __slots__ = ("_kind", "_db_path", "_read_only", "_ctx")
 
     def __init__(self, kind: PoolKind, db_path: str | None, read_only: bool) -> None:
         self._kind = kind
@@ -657,6 +683,7 @@ class _SyncPoolContextManagerWrapper:
         if self._ctx is not None:
             self._ctx.__exit__(*exc_info)
 
+
 async def run_in_io_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     """
     Run function in bounded CPU I/O pool.
@@ -669,8 +696,7 @@ async def run_in_io_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     import warnings
 
     warnings.warn(
-        "DEPRECATED (ISSUE-010): run_in_io_pool is deprecated. "
-        "Use utils.pools.run_in_thread_pool_async instead.",
+        "DEPRECATED (ISSUE-010): run_in_io_pool is deprecated. Use utils.pools.run_in_thread_pool_async instead.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -697,8 +723,7 @@ async def run_in_blocking_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
     import warnings
 
     warnings.warn(
-        "DEPRECATED (ISSUE-010): run_in_blocking_pool is deprecated. "
-        "Use utils.pools.run_in_thread_pool_async instead.",
+        "DEPRECATED (ISSUE-010): run_in_blocking_pool is deprecated. Use utils.pools.run_in_thread_pool_async instead.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -712,9 +737,11 @@ async def run_in_blocking_pool(func: Any, *args: Any, **kwargs: Any) -> Any:
         executor = _cpu_blocking_pool.get_executor()
         return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
 
+
 @dataclass(frozen=True, slots=True)
 class PoolStats:
     """Aggregated pool statistics."""
+
     duckdb_ro: _DuckDBPoolStats = field(default_factory=_DuckDBPoolStats)
     duckdb_rw: _DuckDBPoolStats = field(default_factory=_DuckDBPoolStats)
     cpu_io_max: int = 0
@@ -723,9 +750,19 @@ class PoolStats:
     ane_available: bool = False
     coreml_available: bool = False
 
+
 def get_pool_stats() -> PoolStats:
     """Get snapshot of all pool statistics."""
-    return PoolStats(duckdb_ro=_duckdb_ro_pool.stats, duckdb_rw=_duckdb_rw_pool.stats, cpu_io_max=_cpu_io_pool._adaptive_max, cpu_blocking_max=_cpu_blocking_pool._adaptive_max, mlx_available=_mlx_pool.is_available, ane_available=_ane_pool.is_available, coreml_available=_coreml_pool.is_available)
+    return PoolStats(
+        duckdb_ro=_duckdb_ro_pool.stats,
+        duckdb_rw=_duckdb_rw_pool.stats,
+        cpu_io_max=_cpu_io_pool._adaptive_max,
+        cpu_blocking_max=_cpu_blocking_pool._adaptive_max,
+        mlx_available=_mlx_pool.is_available,
+        ane_available=_ane_pool.is_available,
+        coreml_available=_coreml_pool.is_available,
+    )
+
 
 def _cleanup_pools() -> None:
     """Cleanup all pools at interpreter exit."""
@@ -735,7 +772,10 @@ def _cleanup_pools() -> None:
     _cpu_blocking_pool.shutdown(wait=False)
     # R3: Hermes engine pools
     close_hermes_pools()
+
+
 atexit.register(_cleanup_pools)
+
 
 def resize_cpu_pools(preset: Any) -> None:
     """
@@ -744,9 +784,25 @@ def resize_cpu_pools(preset: Any) -> None:
     Called by M1ResourceGovernor when memory state changes.
     """
     try:
-        new_max = max(1, getattr(preset, 'max_workers', _CPU_IO_WORKERS_DEFAULT))
+        new_max = max(1, getattr(preset, "max_workers", _CPU_IO_WORKERS_DEFAULT))
     except Exception:
         new_max = _CPU_IO_WORKERS_DEFAULT
     _cpu_io_pool.resize(new_max)
     _cpu_blocking_pool.resize(max(1, new_max // 2))
-__all__ = ['PoolKind', 'PoolStats', 'with_resource', 'with_resource_async', 'run_in_io_pool', 'run_in_blocking_pool', 'get_pool_stats', 'resize_cpu_pools', 'close_hermes_pools', 'get_hermes_prep_executor', 'get_hermes_post_executor', 'get_hermes_inference_executor', 'get_hermes_compile_executor']
+
+
+__all__ = [
+    "PoolKind",
+    "PoolStats",
+    "with_resource",
+    "with_resource_async",
+    "run_in_io_pool",
+    "run_in_blocking_pool",
+    "get_pool_stats",
+    "resize_cpu_pools",
+    "close_hermes_pools",
+    "get_hermes_prep_executor",
+    "get_hermes_post_executor",
+    "get_hermes_inference_executor",
+    "get_hermes_compile_executor",
+]

@@ -31,10 +31,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from _core import aclose
 
 if TYPE_CHECKING:
     from pathlib import Path
+
     from ._quality_types import FindingQualityDecision
 
 
@@ -156,15 +156,11 @@ class DuckDBStoreProtocol(Protocol):
         """Upsert target_profiles row."""
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DuckDBArrowBuilder Protocol — F360 Phase 4
-# ─────────────────────────────────────────────────────────────────────────────
-
 @runtime_checkable
 class DuckDBArrowBuilderProtocol(Protocol):
     """
     Typed contract for DuckDBArrowBuilder — Arrow batch building.
-    
+
     F360 Phase 4: DuckDBArrowBuilder handles Arrow IPC batch construction
     from CanonicalFinding objects with multiple fallback paths.
     """
@@ -178,10 +174,6 @@ class DuckDBArrowBuilderProtocol(Protocol):
     def get_metrics(self) -> dict[str, int]:
         """Return arrow metrics."""
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DedupManager Protocol — F360 Phase 2
-# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class DedupManagerProtocol(Protocol):
@@ -207,9 +199,7 @@ class DedupManagerProtocol(Protocol):
     def add_ioc_batch(self, iocs: list[Any]) -> None:
         """Add IOC batch to bloom filter and persistent store."""
 
-    def store_persistent_dedup_batch(
-        self, fingerprints: list[tuple[str, str]]
-    ) -> None:
+    def store_persistent_dedup_batch(self, fingerprints: list[tuple[str, str]]) -> None:
         """Store fingerprint → finding_id mappings in LMDB."""
 
     def lookup_persistent_dedup(self, fingerprint: str) -> str | None:
@@ -225,9 +215,7 @@ class DedupManagerProtocol(Protocol):
     def add_to_hot_cache(self, fingerprint: str, finding_id: str) -> None:
         """Add fingerprint → finding_id to hot cache."""
 
-    def is_duplicate_ioc_batch(
-        self, iocs: list[Any]
-    ) -> tuple[set[str], list[dict[str, Any]]]:
+    def is_duplicate_ioc_batch(self, iocs: list[Any]) -> tuple[set[str], list[dict[str, Any]]]:
         """
         Check batch for duplicate IOCs.
 
@@ -241,10 +229,6 @@ class DedupManagerProtocol(Protocol):
     def close(self) -> None:
         """Close all dedup subsystems (LMDB, bloom filter, mmap stores)."""
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# QualityGate Protocol — F360 Phase 3
-# ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
 class QualityGateProtocol(Protocol):
@@ -262,5 +246,5 @@ class QualityGateProtocol(Protocol):
     a separate state object owned by duckdb_store itself, NOT injected.
     """
 
-    def _assess_finding_quality(self, finding: Any) -> "FindingQualityDecision":
+    def _assess_finding_quality(self, finding: Any) -> FindingQualityDecision:
         """Apply quality rules to a single finding. Returns FindingQualityDecision."""

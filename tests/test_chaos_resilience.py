@@ -23,25 +23,18 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import os
 import random
-import sys
-import tempfile
-import threading
 import time
+import weakref
 from collections import deque
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, call
-import weakref
+from typing import Any, Never
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Importujeme testované komponenty
-from hledac.universal._core.lmdb_unified import SubDB, UnifiedLMDB, get_unified_lmdb
-from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-from _core import aclose
-
+from hledac.universal._core.lmdb_unified import SubDB, UnifiedLMDB
 
 # =============================================================================
 # TEST-03 Invariant: Všechny chaos testy musí přežít bez crash
@@ -64,37 +57,35 @@ CHAOS_INVARIANTS = {
 # CHAOS FIXTURES — simulace krizových stavů
 # =============================================================================
 
+
 class ChaosError(Exception):
     """Base exception for chaos injection."""
-    pass
 
 
 class OOMError(ChaosError):
     """Simulated Out-of-Memory error."""
-    pass
 
 
 class DiskFullError(ChaosError):
     """Simulated Disk Full error (ENOSPC)."""
-    def __init__(self, message: str = "No space left on device"):
+
+    def __init__(self, message: str = "No space left on device") -> None:
         self.errno = 28  # ENOSPC
         super().__init__(message)
 
 
 class NetworkTimeoutError(ChaosError, asyncio.TimeoutError):
     """Simulated Network Timeout error."""
-    pass
 
 
 class ConnectionError(ChaosError):
     """Simulated Connection Error."""
-    pass
 
 
 class MockVirtualMemory:
     """Mock pro psutil.virtual_memory při OOM simulaci."""
 
-    def __init__(self, available_mb: int = 1):
+    def __init__(self, available_mb: int = 1) -> None:
         self.total = 8 * 1024 * 1024 * 1024  # 8GB
         self.available = available_mb * 1024 * 1024
         self.percent = 100.0 - (available_mb / (8 * 1024) * 100)
@@ -105,7 +96,7 @@ class MockVirtualMemory:
 class MockVirtualMemoryHighPressure:
     """Mock pro psutil.virtual_memory při 90% využití."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.total = 8 * 1024 * 1024 * 1024  # 8GB
         self.available = 800 * 1024 * 1024  # 800MB available — 90% full
         self.percent = 90.0
@@ -122,7 +113,7 @@ def mock_oom_condition():
     Mockuje psutil.virtual_memory tak, aby available ~= 1MB.
     """
     mock_vm = MockVirtualMemory(available_mb=1)
-    with patch('hledac.universal._core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
+    with patch("hledac.universal._core.psutil_shim.psutil.virtual_memory", return_value=mock_vm):
         yield mock_vm
 
 
@@ -159,7 +150,7 @@ def mock_high_memory_pressure():
     graceful degradation.
     """
     mock_vm = MockVirtualMemoryHighPressure()
-    with patch('hledac.universal._core.psutil_shim.psutil.virtual_memory', return_value=mock_vm):
+    with patch("hledac.universal._core.psutil_shim.psutil.virtual_memory", return_value=mock_vm):
         yield mock_vm
 
 
@@ -176,7 +167,7 @@ class ChaosMonkey:
     10% selhání rate simuluje network partitions, bit rot, etc.
     """
 
-    def __init__(self, failure_rate: float = 0.1):
+    def __init__(self, failure_rate: float = 0.1) -> None:
         self.failure_rate = failure_rate
         self.failures: list[Exception] = []
         self.successes: list[Any] = []
@@ -188,6 +179,7 @@ class ChaosMonkey:
 
     def wrap_function(self, func: Any, name: str) -> Any:
         """Wrap a function with chaos monkey logic."""
+
         def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ARG001
             if self.should_fail():
                 error = RuntimeError(f"Chaos monkey: {name} injected failure")
@@ -200,10 +192,12 @@ class ChaosMonkey:
             except Exception as e:
                 self.failures.append(e)
                 raise
+
         return wrapper
 
     def wrap_async_function(self, func: Any, name: str) -> Any:
         """Wrap an async function with chaos monkey logic."""
+
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             if self.should_fail():
                 error = RuntimeError(f"Chaos monkey: {name} injected failure")
@@ -216,6 +210,7 @@ class ChaosMonkey:
             except Exception as e:
                 self.failures.append(e)
                 raise
+
         return wrapper
 
     def patch_module(self, module: Any, func_name: str) -> None:
@@ -250,12 +245,13 @@ def chaos_monkey():
     # LMDB patches - lazy import
     try:
         from hledac.universal._core import lmdb_unified as _lmdb_unified
-        if hasattr(_lmdb_unified.UnifiedLMDB, 'put'):
-            monkey.patch_module(_lmdb_unified.UnifiedLMDB, 'put')
-        if hasattr(_lmdb_unified.UnifiedLMDB, 'get'):
-            monkey.patch_module(_lmdb_unified.UnifiedLMDB, 'get')
-        if hasattr(_lmdb_unified.UnifiedLMDB, 'put_batch'):
-            monkey.patch_module(_lmdb_unified.UnifiedLMDB, 'put_batch')
+
+        if hasattr(_lmdb_unified.UnifiedLMDB, "put"):
+            monkey.patch_module(_lmdb_unified.UnifiedLMDB, "put")
+        if hasattr(_lmdb_unified.UnifiedLMDB, "get"):
+            monkey.patch_module(_lmdb_unified.UnifiedLMDB, "get")
+        if hasattr(_lmdb_unified.UnifiedLMDB, "put_batch"):
+            monkey.patch_module(_lmdb_unified.UnifiedLMDB, "put_batch")
     except Exception:
         pass
 
@@ -267,6 +263,7 @@ def chaos_monkey():
 # =============================================================================
 # Bounded Collection Limits — runtime discovery
 # =============================================================================
+
 
 def _discover_bounded_limits() -> dict[str, int]:
     """
@@ -284,13 +281,15 @@ def _discover_bounded_limits() -> dict[str, int]:
     # Try to discover from runtime
     try:
         from hledac.universal.layers.communication_layer import CommunicationLayer
-        if hasattr(CommunicationLayer, 'MAX_QUEUE_SIZE'):
+
+        if hasattr(CommunicationLayer, "MAX_QUEUE_SIZE"):
             limits["MAX_QUEUE_SIZE"] = CommunicationLayer.MAX_QUEUE_SIZE
     except Exception:
         pass
 
     try:
         from hledac.universal.context_optimization.active_learning import _MAX_QUEUE_SIZE
+
         if isinstance(_MAX_QUEUE_SIZE, int):
             limits["MAX_QUEUE_SIZE"] = _MAX_QUEUE_SIZE
     except Exception:
@@ -312,6 +311,7 @@ def bounded_collection_limit() -> dict[str, int]:
 # =============================================================================
 # TEST-03: LMDB Chaos Tests
 # =============================================================================
+
 
 class TestLMDBChaosResilience:
     """TEST-03: LMDB musí přežít OOM, disk full a chaos monkey injects."""
@@ -340,7 +340,6 @@ class TestLMDBChaosResilience:
         SPRÁVNÉ CHOVÁNÍ: OOMError by měla být zachycena internally
         a put() by měl vrátit False. Výjimka NESMÍ propagovat.
         """
-        from hledac.universal._core.lmdb_unified import SubDB
 
         # SubDB je pouze konstanta (bez __init__)
         assert SubDB.TASK_CACHE == 12  # Verify constants exist
@@ -352,7 +351,7 @@ class TestLMDBChaosResilience:
 
         # Reprezentace toho, jak správný kód handluje OOM:
         # Kód by měl zachytit OOMError a vrátit False
-        def safe_put(env, key, value):
+        def safe_put(env, key, value) -> bool | None:
             try:
                 env.put(key, value)
                 return True
@@ -450,10 +449,10 @@ class TestLMDBChaosResilience:
                 raise
 
         # First transaction fails
-        def failing_tx():
+        def failing_tx() -> Never:
             raise DiskFullError()
 
-        def successful_tx():
+        def successful_tx() -> str:
             return "success"
 
         # Execute transactions
@@ -474,6 +473,7 @@ class TestLMDBChaosResilience:
 # TEST-03: DuckDB Chaos Tests
 # =============================================================================
 
+
 class TestDuckDBChaosResilience:
     """TEST-03: DuckDB musí přežít disk full a chaos monkey injects."""
 
@@ -488,11 +488,8 @@ class TestDuckDBChaosResilience:
         mock_store.insert_shadow_finding = MagicMock(return_value=False)
 
         result = mock_store.insert_shadow_finding(
-            finding_id="test_123",
-            query="test query",
-            source_type="test",
-            confidence=0.9
-    )
+            finding_id="test_123", query="test query", source_type="test", confidence=0.9
+        )
 
         # Mělo by vrátit False, ne crash
         assert result is False
@@ -509,11 +506,8 @@ class TestDuckDBChaosResilience:
 
         # Try insert that would fail with disk full
         result = mock_store.insert_shadow_finding(
-            finding_id="test_456",
-            query="test",
-            source_type="chaos",
-            confidence=0.5
-    )
+            finding_id="test_456", query="test", source_type="chaos", confidence=0.5
+        )
 
         assert result is False
 
@@ -578,6 +572,7 @@ class TestDuckDBChaosResilience:
 # TEST-03: Network Chaos Tests
 # =============================================================================
 
+
 class TestNetworkChaosResilience:
     """TEST-03: Network operace musí přežít timeout a partition."""
 
@@ -591,14 +586,13 @@ class TestNetworkChaosResilience:
         SPRÁVNÉ CHOVÁNÍ: NetworkTimeoutError by měla být zachycena internally
         a fetch() by měl vrátit None. Výjimka NESMÍ propagovat.
         """
-        from hledac.universal.coordinators.fetch_coordinator import FetchCoordinator
 
         # Simulace správného fetch handlování timeout:
         # FetchCoordinator by měl zachytit TimeoutError a vrátit None
         async def fetch_with_timeout_handling(fetcher, url):
             try:
                 return await fetcher.fetch(url)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None  # Správně:graceful failure, ne propagace
 
         # Test že fetch_with_timeout_handling vrací None místo propagace
@@ -621,11 +615,12 @@ class TestNetworkChaosResilience:
         SPRÁVNÉ CHOVÁNÍ: ConnectionError by měla být zachycena internally
         a fetch() by měl vrátit None. Výjimka NESMÍ propagovat.
         """
+
         # Simulace správného fetch handlování connection error
         async def fetch_with_connection_handling(fetcher, url):
             try:
                 return await fetcher.fetch(url)
-            except (ConnectionError, OSError):
+            except ConnectionError, OSError:
                 return None  # Správně:graceful failure, ne propagace
 
         mock_fetcher = MagicMock()
@@ -646,6 +641,7 @@ class TestNetworkChaosResilience:
         SPRÁVNÉ CHOVÁNÍ: DNS failure by měla být zachycena internally
         a fetch() by měl vrátit None. Výjimka NESMÍ propagovat.
         """
+
         # Simulace správného handlování DNS failure
         async def fetch_with_dns_handling(fetcher, url):
             try:
@@ -676,6 +672,7 @@ class TestNetworkChaosResilience:
         ]
 
         for error in errors:
+
             async def mock_fetch_with_error(_url: str, **_kwargs: Any) -> None:
                 raise error
 
@@ -692,6 +689,7 @@ class TestNetworkChaosResilience:
 # =============================================================================
 # TEST-03: Chaos Monkey Survival Tests
 # =============================================================================
+
 
 class TestChaosMonkeySurvival:
     """TEST-03: Systém musí přežít 10% chaos monkey inject rate."""
@@ -712,6 +710,7 @@ class TestChaosMonkeySurvival:
                     raise RuntimeError(f"Chaos monkey: {name}")
                 successes.append(name)
                 return func(*args, **kwargs)
+
             return wrapper
 
         # Test s 1000 voláními
@@ -769,9 +768,11 @@ class TestChaosMonkeySurvival:
 
         operations = []
         for i in range(20):
-            def op():
+
+            def op() -> bool:
                 operations.append(i)
                 return True
+
             wrapped = monkey.wrap_function(op, f"op_{i}")
             try:
                 wrapped()
@@ -786,6 +787,7 @@ class TestChaosMonkeySurvival:
 # =============================================================================
 # TEST-03: Memory Pressure Graceful Degradation
 # =============================================================================
+
 
 class TestMemoryPressureDegradation:
     """TEST-03: Systém musí graceful degrade při memory pressure."""
@@ -808,6 +810,7 @@ class TestMemoryPressureDegradation:
 
         Invariant: memory_pressure_degradation
         """
+
         # Simulate memory pressure detection
         def calculate_pressure_level(used_mb: float, limit_mb: float) -> str:
             usage_ratio = used_mb / limit_mb
@@ -851,6 +854,7 @@ class TestMemoryPressureDegradation:
         Důležité: CancelledError dědí z BaseException, ne Exception.
         Proto `except Exception` ho NEZACHYTÍ!
         """
+
         async def cancellable_operation() -> str:
             try:
                 await asyncio.sleep(10)  # Long operation
@@ -879,7 +883,7 @@ class TestMemoryPressureDegradation:
         """
         # Create some objects
         data = [list(range(1000)) for _ in range(100)]
-        weak_ref = weakref.ref(data)
+        weakref.ref(data)
 
         # Delete and collect
         del data
@@ -897,7 +901,7 @@ class TestMemoryPressureDegradation:
         import gc
 
         class Expensive:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.data = [1, 2, 3]
 
         # Create object with weakref
@@ -919,6 +923,7 @@ class TestMemoryPressureDegradation:
 # TEST-03: Circuit Breaker Chaos Tests
 # =============================================================================
 
+
 class TestCircuitBreakerChaos:
     """TEST-03: Circuit breaker pattern musí fungovat při chaos условиях."""
 
@@ -928,9 +933,10 @@ class TestCircuitBreakerChaos:
 
         Invariant: circuit_breaker_trials
         """
+
         # Simple circuit breaker implementation for testing
         class SimpleCircuitBreaker:
-            def __init__(self, failure_threshold: int = 3):
+            def __init__(self, failure_threshold: int = 3) -> None:
                 self.failure_threshold = failure_threshold
                 self.failures = 0
                 self.state = "closed"  # closed, open, half_open
@@ -976,8 +982,9 @@ class TestCircuitBreakerChaos:
 
         Invariant: circuit_breaker_trials
         """
+
         class SimpleCircuitBreaker:
-            def __init__(self, failure_threshold: int = 2, cooldown: float = 0.1):
+            def __init__(self, failure_threshold: int = 2, cooldown: float = 0.1) -> None:
                 self.failure_threshold = failure_threshold
                 self.cooldown = cooldown
                 self.failures = 0
@@ -1027,8 +1034,9 @@ class TestCircuitBreakerChaos:
 
         Invariant: circuit_breaker_trials
         """
+
         class SimpleCircuitBreaker:
-            def __init__(self, failure_threshold: int = 2):
+            def __init__(self, failure_threshold: int = 2) -> None:
                 self.failure_threshold = failure_threshold
                 self.failures = 0
                 self.state = "closed"
@@ -1065,6 +1073,7 @@ class TestCircuitBreakerChaos:
 # TEST-03: Retry and Backoff Tests
 # =============================================================================
 
+
 class TestRetryBackoffChaos:
     """TEST-03: Retry s exponential backoff musí fungovat při chaos условиях."""
 
@@ -1088,11 +1097,11 @@ class TestRetryBackoffChaos:
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                result = await unreliable_operation()
+                await unreliable_operation()
                 break
             except ConnectionError:
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
+                    delay = base_delay * (2**attempt)
                     await asyncio.sleep(delay)
                 else:
                     raise
@@ -1129,7 +1138,7 @@ class TestRetryBackoffChaos:
             except ConnectionError as e:
                 final_error = e
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(0.01 * (2 ** attempt))
+                    await asyncio.sleep(0.01 * (2**attempt))
 
         assert len(attempts) == max_retries
         assert final_error is not None
@@ -1158,7 +1167,7 @@ class TestRetryBackoffChaos:
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                result = await unreliable_with_cb()
+                await unreliable_with_cb()
                 break
             except ConnectionError as e:
                 if "Circuit breaker is open" in str(e):
@@ -1172,6 +1181,7 @@ class TestRetryBackoffChaos:
 # TEST-03: Failure Isolation Tests
 # =============================================================================
 
+
 class TestFailureIsolation:
     """TEST-03: Selhání jedné komponenty nesmí ovlivnit ostatní."""
 
@@ -1184,12 +1194,12 @@ class TestFailureIsolation:
         # Mock LMDB failure
         lmdb_failed = True
 
-        def lmdb_operation():
+        def lmdb_operation() -> str:
             if lmdb_failed:
                 raise OOMError("LMDB OOM")
             return "lmdb_success"
 
-        def duckdb_operation():
+        def duckdb_operation() -> str:
             return "duckdb_success"
 
         # LMDB fails
@@ -1211,12 +1221,12 @@ class TestFailureIsolation:
         fetch_fail_count = 0
         storage_operations = []
 
-        def fetch_operation():
+        def fetch_operation() -> Never:
             nonlocal fetch_fail_count
             fetch_fail_count += 1
             raise NetworkTimeoutError("Network timeout")
 
-        def storage_operation(key: str, value: str):
+        def storage_operation(key: str, value: str) -> bool:
             storage_operations.append((key, value))
             return True
 
@@ -1251,7 +1261,7 @@ class TestFailureIsolation:
             "passive_dns": 0,
         }
 
-        def fetch_lane(lane: str, should_fail: bool = False):
+        def fetch_lane(lane: str, should_fail: bool = False) -> None:
             if should_fail:
                 lane_errors[lane] += 1
                 raise ConnectionError(f"{lane} failed")
@@ -1279,6 +1289,7 @@ class TestFailureIsolation:
 # =============================================================================
 # TEST-03: Bounded Queue Chaos Tests
 # =============================================================================
+
 
 class TestBoundedQueueChaos:
     """TEST-03: Bounded queues musí správně handle overflow."""
@@ -1359,7 +1370,7 @@ class TestBoundedQueueChaos:
         consumed = []
         overflow_rejected = 0
 
-        async def producer():
+        async def producer() -> None:
             for i in range(20):
                 try:
                     queue.put_nowait(f"item_{i}")
@@ -1367,12 +1378,12 @@ class TestBoundedQueueChaos:
                 except asyncio.QueueFull:
                     overflow_rejected += 1
 
-        async def consumer():
+        async def consumer() -> None:
             while len(consumed) < 10:
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=0.01)
                     consumed.append(item)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
         # Run producer and consumer concurrently
@@ -1386,6 +1397,7 @@ class TestBoundedQueueChaos:
 # =============================================================================
 # TEST-03: Integration Stress Tests
 # =============================================================================
+
 
 class TestChaosIntegrationStress:
     """TEST-03: Integrační testy s více chaos faktory současně."""
@@ -1451,7 +1463,7 @@ class TestChaosIntegrationStress:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise asyncio.TimeoutError("Timeout")
+                raise TimeoutError("Timeout")
             return "success_after_retries"
 
         # Retry until success
@@ -1462,7 +1474,7 @@ class TestChaosIntegrationStress:
                 assert result == "success_after_retries"
                 assert call_count == 3
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if attempt == max_retries - 1:
                     pytest.fail("All retries exhausted")
                 continue
@@ -1477,11 +1489,11 @@ class TestChaosIntegrationStress:
         cleanup_called = False
         tasks = []
 
-        async def cleanup():
+        async def cleanup() -> None:
             nonlocal cleanup_called
             cleanup_called = True
 
-        async def worker():
+        async def worker() -> None:
             try:
                 while True:
                     await asyncio.sleep(0.01)
@@ -1510,6 +1522,7 @@ class TestChaosIntegrationStress:
 # =============================================================================
 # TEST-03: Chaos Test Summary
 # =============================================================================
+
 
 def test_chaos_invariants_summary() -> None:
     """
@@ -1543,6 +1556,7 @@ def test_chaos_invariants_summary() -> None:
 # =============================================================================
 # TEST-03: Additional Edge Case Tests
 # =============================================================================
+
 
 class TestChaosEdgeCases:
     """TEST-03: Edge cases and additional chaos scenarios."""
@@ -1607,7 +1621,7 @@ class TestChaosEdgeCases:
         released = []
 
         class Resource:
-            def __init__(self, name: str):
+            def __init__(self, name: str) -> None:
                 self.name = name
 
             def __enter__(self):
@@ -1632,9 +1646,8 @@ class TestChaosEdgeCases:
 
         Invariant: failure_isolation
         """
-        errors_raised = []
 
-        async def error_task(n: int):
+        async def error_task(n: int) -> Never:
             await asyncio.sleep(n * 0.001)
             raise ValueError(f"Error {n}")
 

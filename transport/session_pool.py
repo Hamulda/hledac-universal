@@ -37,9 +37,7 @@ Usage:
     resp = await client.get(url)
 
     # curl_cffi (JA3 stealth)
-    from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
 """
-
 
 import asyncio
 import logging
@@ -48,31 +46,31 @@ import time
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-
 from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal.utils.locks import LazyAsyncioLock
+
 from ._tcp_keepalive import (
-    SO_KEEPALIVE,
-    TCP_KEEPIDLE,
-    TCP_KEEPINTVL,
-    TCP_KEEPCNT,
     KEEPALIVE_IDLE_S,
     KEEPALIVE_INTERVAL_S,
     KEEPALIVE_MAX_PROBES,
-    )
+    SO_KEEPALIVE,
+    TCP_KEEPCNT,
+    TCP_KEEPIDLE,
+    TCP_KEEPINTVL,
+)
 
 if TYPE_CHECKING:
     import httpx
     from httpx import AsyncClient
 
-from _core import aclose  # F350M-R: Type-4 clone elimination
+from _core import aclose
 
 logger = logging.getLogger(__name__)
 
 # M1 Resource Ledger: Lazy import to avoid circular dependencies
 _resource_ledger = None
+
 
 def _get_ledger():
     """Get ResourceLedger instance lazily."""
@@ -80,6 +78,7 @@ def _get_ledger():
     if _resource_ledger is None:
         try:
             from hledac.universal._core.resource_ledger import get_resource_ledger
+
             _resource_ledger = get_resource_ledger()
         except Exception:
             _resource_ledger = None
@@ -159,12 +158,8 @@ def _patch_socket_keepalive(sock: socket.socket) -> None:
 
         logging.getLogger("hledac.universal.transport.session_pool").debug(
             f"[ISSUE-P6-001] Could not patch socket keep-alive options: {e}"
-    )
+        )
 
-
-# =============================================================================
-# ConnectionPreset — Adaptive limits based on UMA memory pressure (ISSUE-013)
-# =============================================================================
 
 class ConnectionPreset(Struct, frozen=True):
     """
@@ -197,10 +192,6 @@ class ConnectionPreset(Struct, frozen=True):
             case _:
                 return cls(max_connections=25, max_keepalive=10, keepalive_expiry=30.0)
 
-
-# =============================================================================
-# UMA-aware adaptive limits (ISSUE-013)
-# =============================================================================
 
 # LRU cache for UMA state — 1s TTL to avoid sampling overhead
 _uma_state_cache: tuple[str, float] | None = None  # (state, timestamp)
@@ -238,10 +229,6 @@ def _get_connection_preset() -> ConnectionPreset:
     return ConnectionPreset.from_uma_state(state)
 
 
-# =============================================================================
-# Pool State
-# =============================================================================
-
 _httpx_client: httpx.AsyncClient | None = None
 _httpx_lock = LazyAsyncioLock()
 
@@ -269,10 +256,6 @@ def _record_pool_metrics() -> None:
     except Exception:  # noqa: BLE001
         pass  # Fail-soft: metrics are diagnostic only
 
-
-# =============================================================================
-# httpx Singleton (ISSUE-013: Adaptive limits)
-# =============================================================================
 
 _CONNECT_TIMEOUT_S = 5.0
 
@@ -329,7 +312,9 @@ async def _probe_http2_negotiation(client: httpx.AsyncClient) -> bool:
 
         # No HTTP/2 indicator found — assume HTTP/1.1 fallback
         _http2_negotiated = False
-        logger.warning("[SessionPool] HTTP/2 not negotiated — HTTP/1.1 fallback detected (http_version=%s)", http_version)
+        logger.warning(
+            "[SessionPool] HTTP/2 not negotiated — HTTP/1.1 fallback detected (http_version=%s)", http_version
+        )
         return False
     except httpx.ConnectError as e:
         # DNS/connection failure — don't cache, retry next time
@@ -372,8 +357,8 @@ async def httpx_client() -> httpx.AsyncClient:
 
     # Lazy capability check
     try:
-        import httpx
         import h2  # noqa: F401
+        import httpx
     except ImportError as e:
         raise RuntimeError(f"httpx with HTTP/2 not available: {e}") from e
 
@@ -385,13 +370,13 @@ async def httpx_client() -> httpx.AsyncClient:
                 max_connections=preset.max_connections,
                 max_keepalive_connections=preset.max_keepalive,
                 keepalive_expiry=preset.keepalive_expiry,
-    )
+            )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
                 read=20.0,
                 write=10.0,
                 pool=10.0,
-    )
+            )
             _httpx_client = httpx.AsyncClient(
                 limits=limits,
                 http2=True,
@@ -399,11 +384,11 @@ async def httpx_client() -> httpx.AsyncClient:
                 follow_redirects=True,
                 cookies=None,
                 trust_env=False,
-    )
+            )
             logger.debug(
                 f"[SessionPool] httpx.AsyncClient created (HTTP/2, "
                 f"max_conn={preset.max_connections}, max_keep={preset.max_keepalive})"
-    )
+            )
 
             # M1 FIX: Track session pool FDs via ResourceLedger
             # Session pool consumes file descriptors for each connection in the pool
@@ -411,13 +396,14 @@ async def httpx_client() -> httpx.AsyncClient:
             if ledger is not None:
                 try:
                     from hledac.universal._core.resource_ledger import ResourceType
+
                     # Track FDs: estimated max_connections FDs for the pool
                     for i in range(preset.max_connections):
                         ledger.allocate(
                             ResourceType.FILE_DESCRIPTOR,
                             handle=f"session_pool:httpx:{i}",
                             owner="session_pool",
-    )
+                        )
                 except Exception:  # noqa: BLE001
                     pass  # Fail-safe: don't block client creation
 
@@ -438,7 +424,7 @@ async def httpx_client() -> httpx.AsyncClient:
                 safe_create_task(
                     _probe_http2_negotiation(_httpx_client),
                     name="session_pool:http2_probe",
-    )
+                )
             except Exception:  # noqa: BLE001
                 pass  # Fail-safe: don't block client creation
 
@@ -477,7 +463,7 @@ async def probe_http2_at_startup() -> bool:
             timeout=httpx.Timeout(connect=3.0, read=3.0),
             limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
             trust_env=False,
-    )
+        )
         result = await _probe_http2_negotiation(client)
         return result if _http2_negotiated is not None else None
     except Exception as e:
@@ -519,17 +505,11 @@ async def close_httpx() -> None:
     ledger = _get_ledger()
     if ledger is not None:
         try:
-            from hledac.universal._core.resource_ledger import ResourceType
             # Release all session pool resources (tracked FDs will be released)
             ledger.release_all("session_pool")
             logger.debug("[SessionPool] Released session pool resources from ledger")
         except Exception as e:
             logger.debug(f"[SessionPool] Resource ledger cleanup error: {e}")
-
-
-# =============================================================================
-# httpx-socks SOCKS5 Singleton Pool (ISSUE-007 / ISSUE-013: Adaptive limits)
-# =============================================================================
 
 
 async def httpx_socks_client(
@@ -589,18 +569,18 @@ async def httpx_socks_client(
                 max_connections=socks_max_conn,
                 max_keepalive_connections=socks_max_keep,
                 keepalive_expiry=preset.keepalive_expiry,
-    )
+            )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
                 read=20.0,
                 write=10.0,
                 pool=10.0,
-    )
+            )
             # ISSUE-080: Pass rdns to httpx-socks for remote DNS resolution
             transport = httpx_socks.AsyncProxyTransport.from_url(
                 proxy_url,
                 rdns=rdns,
-    )
+            )
             _httpx_socks_clients[cache_key] = httpx.AsyncClient(
                 limits=limits,
                 http2=False,  # SOCKS5 tunnel doesn't support HTTP/2 ALPN negotiation
@@ -608,7 +588,7 @@ async def httpx_socks_client(
                 follow_redirects=True,
                 transport=transport,
                 trust_env=False,
-    )
+            )
             # ISSUE-P6-001: Patch TCP keep-alive on existing SOCKS5 pooled sockets.
             # SOCKS5 tunnels are long-lived; keep-alive ensures dead Tor/I2P
             # connections are detected before TIME_WAIT exhausts the port pool.
@@ -617,9 +597,8 @@ async def httpx_socks_client(
             except Exception:  # noqa: BLE001
                 pass  # fail-safe: best-effort
             logger.debug(
-                f"[SessionPool] httpx-socks client created for {proxy_url} "
-                f"(rdns={rdns}, max_conn={socks_max_conn})"
-    )
+                f"[SessionPool] httpx-socks client created for {proxy_url} (rdns={rdns}, max_conn={socks_max_conn})"
+            )
             _record_pool_metrics()
         return _httpx_socks_clients[cache_key]
 
@@ -641,11 +620,6 @@ async def close_httpx_socks() -> None:
             except Exception:  # noqa: BLE001
                 pass
     logger.debug("[SessionPool] all httpx-socks clients closed")
-
-
-# =============================================================================
-# curl_cffi Delegation
-# =============================================================================
 
 
 async def curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, str]:
@@ -670,11 +644,6 @@ async def close_curl_cffi() -> None:
     from .curl_cffi_runtime import close_curl_cffi_sessions_async
 
     await close_curl_cffi_sessions_async()
-
-
-# =============================================================================
-# Unified Pool API
-# =============================================================================
 
 
 class SessionPool:
@@ -782,16 +751,8 @@ class SessionPool:
         }
 
 
-# =============================================================================
-# Module-level Singleton
-# =============================================================================
-
 session_pool = SessionPool()
 
-
-# =============================================================================
-# Backward-compatibility Aliases
-# =============================================================================
 
 # For files already importing from transport.httpx_client
 async def get_httpx_client() -> httpx.AsyncClient:

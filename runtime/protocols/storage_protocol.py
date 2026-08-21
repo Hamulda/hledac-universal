@@ -10,11 +10,8 @@ GHOST_INVARIANTS:
 - Bounded: no unbounded collections
 """
 
-
-
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -35,9 +32,7 @@ class StorageProtocol(Protocol):
         - query_sprint_results: SQL queries
     """
 
-    async def async_ingest_findings(
-        self, findings: list[Any], sprint_id: str
-    ) -> None:
+    async def async_ingest_findings(self, findings: list[Any], sprint_id: str) -> None:
         """Ingest findings into DuckDB canonical store."""
         ...
 

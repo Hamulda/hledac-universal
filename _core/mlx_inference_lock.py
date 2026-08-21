@@ -46,31 +46,24 @@ M1 8GB invariants:
     - U.M1: Single LLM inference slot (semaphore limit=1)
     - Always-on, fail-safe, bounded
 """
+
 from __future__ import annotations
 
 import asyncio
 import gc
 import logging
 import threading
-import time
-import weakref
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from _core._util import aclose
 from _core.lock_registry import LockCategory, auto_register
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
-    from typing import Iterator
+    from collections.abc import AsyncIterator, Callable, Iterator
 
 _T = TypeVar("_T")
 
 logger = logging.getLogger(__name__)
-
-# ==============================================================================
-# MLXInferenceLock — Unified Singleton Facade
-# ==============================================================================
 
 # DCLP singleton instance
 _MLX_INFERENCE_LOCK: MLXInferenceLock | None = None
@@ -128,10 +121,6 @@ class MLXInferenceLock:
         self._worker_lock = threading.Lock()
         self._started = False
 
-    # --------------------------------------------------------------------------
-    # Primary: asyncio.Semaphore via ConcurrencyCategory
-    # --------------------------------------------------------------------------
-
     def _get_semaphore(self) -> asyncio.Semaphore:
         """
         Get the ConcurrencyCategory.MLX_INFERENCE semaphore (lazy init).
@@ -148,6 +137,7 @@ class MLXInferenceLock:
                         ConcurrencyCategory,
                         get_semaphore,
                     )
+
                     self._semaphore = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
                     self._semaphore_loaded = True
                     logger.debug("[MLXInferenceLock] Semaphore loaded from registry")
@@ -190,10 +180,6 @@ class MLXInferenceLock:
         finally:
             sem.release()
 
-    # --------------------------------------------------------------------------
-    # Legacy: threading.Lock for non-async contexts
-    # --------------------------------------------------------------------------
-
     def _get_threading_lock(self) -> threading.Lock:
         """
         Get the legacy threading lock (lazy init, DCLP).
@@ -222,10 +208,6 @@ class MLXInferenceLock:
         finally:
             lock.release()
 
-    # --------------------------------------------------------------------------
-    # MLXWorker: asyncio-safe blocking MLX operations
-    # --------------------------------------------------------------------------
-
     def _get_mlx_worker(self) -> MLXWorker:
         """
         Get or create the MLXWorker singleton (lazy init).
@@ -238,9 +220,7 @@ class MLXInferenceLock:
         if self._mlx_worker is None:
             with self._worker_lock:
                 if self._mlx_worker is None:
-                    self._mlx_worker = MLXWorker(
-                        name="mlx-inference", max_active_experts=1
-                    )
+                    self._mlx_worker = MLXWorker(name="mlx-inference", max_active_experts=1)
                     logger.debug("[MLXInferenceLock] MLXWorker created")
         return self._mlx_worker
 
@@ -287,10 +267,6 @@ class MLXInferenceLock:
         worker = self._get_mlx_worker()
         return await worker.run_sync_with_metal_cleanup(fn, *args, **kwargs)
 
-    # --------------------------------------------------------------------------
-    # Compatibility with legacy patterns
-    # --------------------------------------------------------------------------
-
     @property
     def semaphore(self) -> asyncio.Semaphore:
         """
@@ -323,11 +299,6 @@ class MLXInferenceLock:
         }
 
 
-# ==============================================================================
-# Module-level convenience API (DCLP singleton)
-# ==============================================================================
-
-
 def _get_inference_lock() -> MLXInferenceLock:
     """Get or create the module-level MLXInferenceLock singleton."""
     global _MLX_INFERENCE_LOCK
@@ -340,20 +311,35 @@ def _get_inference_lock() -> MLXInferenceLock:
 
 
 # Convenient aliases matching the class methods — use module-level for singleton
-acquire = lambda: _get_inference_lock().acquire()
-hold = lambda: _get_inference_lock().hold()
-run_sync = lambda fn, *a, **kw: _get_inference_lock().run_sync(fn, *a, **kw)
-run_sync_with_cleanup = lambda fn, *a, **kw: _get_inference_lock().run_sync_with_cleanup(fn, *a, **kw)
+def acquire():
+    return _get_inference_lock().acquire()
+
+
+def hold():
+    return _get_inference_lock().hold()
+
+
+def run_sync(fn, *a, **kw):
+    return _get_inference_lock().run_sync(fn, *a, **kw)
+
+
+def run_sync_with_cleanup(fn, *a, **kw):
+    return _get_inference_lock().run_sync_with_cleanup(fn, *a, **kw)
+
+
 # FIX Issue #2: threading_lock() returns the module-level DCLP singleton lock,
 # NOT a new instance's _threading_lock_context() which creates a new lock each time.
-threading_lock = lambda: _get_inference_lock()._threading_lock_context()
-shutdown = lambda timeout=5.0: _get_inference_lock().shutdown(timeout=timeout)
-get_stats = lambda: _get_inference_lock().get_stats()
+def threading_lock():
+    return _get_inference_lock()._threading_lock_context()
 
 
-# ==============================================================================
-# MLXWorker — asyncio-safe MLX operations
-# ==============================================================================
+def shutdown(timeout=5.0):
+    return _get_inference_lock().shutdown(timeout=timeout)
+
+
+def get_stats():
+    return _get_inference_lock().get_stats()
+
 
 # Module-level worker instance — lazily initialized
 _MLX_WORKER: MLXWorker | None = None
@@ -411,10 +397,6 @@ class MLXWorker:
         self._semaphore: asyncio.Semaphore | None = None
         self._semaphore_lock = threading.Lock()
 
-    # ------------------------------------------------------------------
-    # Worker thread lifecycle
-    # ------------------------------------------------------------------
-
     def _run_loop(self) -> None:
         """Worker thread main: create + run event loop forever."""
         loop: asyncio.AbstractEventLoop | None = None
@@ -442,9 +424,7 @@ class MLXWorker:
                     try:
                         from hledac.universal.utils.asyncx import safe_gather_fire_and_forget
 
-                        loop.run_until_complete(
-                            safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown")
-                        )
+                        loop.run_until_complete(safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown"))
                     except Exception:  # noqa: BLE001
                         pass
                 loop.close()
@@ -493,10 +473,6 @@ class MLXWorker:
                     self._semaphore = asyncio.Semaphore(self._max_active)
         return self._semaphore
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def run_sync(
         self,
         fn: Callable[..., _T],
@@ -536,7 +512,7 @@ class MLXWorker:
             future = loop.run_in_executor(None, lambda: fn(*args, **kwargs))
             async with asyncio.timeout(120.0):
                 return await future
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError("mlx_worker_timeout: operation exceeded 120s")
         finally:
             sem.release()
@@ -615,10 +591,6 @@ def _get_mlx_worker() -> MLXWorker:
     return _MLX_WORKER
 
 
-# ==============================================================================
-# EXPORTS
-# ==============================================================================
-
 __all__ = [
     # Primary API (preferred)
     "MLXInferenceLock",
@@ -639,11 +611,6 @@ __all__ = [
 ]
 
 
-# ==============================================================================
-# Legacy compatibility shims (redirect to new API)
-# ==============================================================================
-
-
 def _get_mlx_inference_lock() -> MLXInferenceLock:
     """
     Legacy compatibility — returns MLXInferenceLock instance.
@@ -653,7 +620,7 @@ def _get_mlx_inference_lock() -> MLXInferenceLock:
     return _get_inference_lock()
 
 
-def mlx_inference_lock_context(
+def mlx_inference_lock_context[T](
     fn: Callable[..., _T],
 ) -> Callable[..., _T]:
     """
@@ -661,13 +628,15 @@ def mlx_inference_lock_context(
 
     DEPRECATED: Use MLXInferenceLock.run_sync() or MLXInferenceLock.acquire().
     """
+
     def wrapper(*args: object, **kwargs: object) -> _T:
         with threading_lock():
             return fn(*args, **kwargs)  # type: ignore[return-value]
+
     return wrapper  # type: ignore[return-value]
 
 
-async def mlx_inference_lock_aio(
+async def mlx_inference_lock_aio[T](
     fn: Callable[..., _T],
     *args: object,
     **kwargs: object,

@@ -14,8 +14,6 @@ Usage:
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
-from _core import aclose
 
 
 def _scan_module_public_attrs(mod_path: str) -> list[str]:
@@ -27,7 +25,7 @@ def _scan_module_public_attrs(mod_path: str) -> list[str]:
     """
     try:
         mod = import_module(mod_path)
-    except (ImportError, ModuleNotFoundError):
+    except ImportError, ModuleNotFoundError:
         return []
 
     # __all__ takes precedence — it's the authoritative public API list
@@ -58,13 +56,10 @@ def build_module_index(
     """
     idx: dict[str, str] = {}
 
-    # Phase 1: explicit whitelists — no imports needed, no side effects
     for mod_path, names in explicit_attrs.items():
         for name in names:
             idx.setdefault(name, mod_path)
 
-    # Phase 2: scan remaining modules for __all__ contributions
-    # Only runs for modules without explicit entries
     for mod_path in auto_module_paths:
         if mod_path in explicit_attrs:
             continue  # already covered by phase 1

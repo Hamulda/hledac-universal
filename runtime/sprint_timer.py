@@ -1,5 +1,3 @@
-
-
 # runtime/sprint_timer.py
 # Sprint F238E Phase A: Minimal fail-soft timer infrastructure for sprint runtime instrumentation.
 #
@@ -18,15 +16,13 @@
 #   - psutil RSS sampling
 
 
-
 import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
+from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
-from operator import attrgetter, itemgetter
-from _core import aclose
 if TYPE_CHECKING:
     pass
 
@@ -61,7 +57,7 @@ _CANONICAL_PHASES: tuple[str, ...] = (
     "export",
     "investigation_packet_build",
     "next_sprint_seeds_generation",
-    )
+)
 
 
 class SprintTimer:
@@ -192,7 +188,7 @@ _PHASE_LABELS = (
     "export",
     "investigation_packet_build",
     "next_sprint_seeds_generation",
-    )
+)
 
 
 def compute_runtime_loop_telemetry(

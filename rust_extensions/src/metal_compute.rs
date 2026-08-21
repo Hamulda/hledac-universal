@@ -146,8 +146,6 @@ pub struct MetalTelemetry {
     pub errors: u64,
 }
 
-// ─── Python-callable functions ───────────────────────────────────────────────
-
 /// Initialize Metal subsystem.
 ///
 /// Returns: (available: bool, device_name: Option<String>, error_message: Option<String>)
@@ -216,7 +214,6 @@ pub fn batch_matmul(
     hidden_dim: usize,
     expert_dim: usize,
 ) -> Result<(Vec<f32>, (usize, usize, usize), f64), PyErr> {
-    // Validate inputs
     if query.is_empty() || expert_weights.is_empty() {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "Input arrays cannot be empty",
@@ -258,7 +255,6 @@ pub fn batch_matmul(
         )));
     }
 
-    // Update telemetry
     {
         let mut telemetry = METAL_TELEMETRY);
         telemetry.matmul_calls += 1;
@@ -287,7 +283,6 @@ pub fn batch_matmul(
 
     let gpu_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    // Update fallback counter
     {
         let mut telemetry = METAL_TELEMETRY);
         telemetry.gpu_fallback_cpu += 1;
@@ -520,8 +515,6 @@ pub fn clear_cache() -> usize {
     released
 }
 
-// ─── Module registration ──────────────────────────────────────────────────────
-
 /// Register Metal module functions with PyO3 module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init))?;
@@ -539,8 +532,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

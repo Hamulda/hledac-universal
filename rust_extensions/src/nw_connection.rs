@@ -79,9 +79,6 @@ use tokio::sync::Semaphore;
 #[allow(deprecated)]
 use block2::ConcreteBlock;
 
-// ---------------------------------------------------------------------------
-// Objective-C / Network.framework type aliases (opaque C types)
-// ---------------------------------------------------------------------------
 #[allow(dead_code)]
 type NwConnectionT = *mut c_void;
 #[allow(dead_code)]
@@ -109,10 +106,6 @@ const NW_CONNECTION_STATE_FAILED: i32 = 4;
 #[allow(dead_code)]
 const NW_CONNECTION_STATE_CANCELLED: i32 = 5;
 
-// ---------------------------------------------------------------------------
-// M1 8GB bounds
-// ---------------------------------------------------------------------------
-/// Maximum concurrent connections (200 per issue spec: 200 × 50 KB = 10 MB).
 #[allow(dead_code)]
 const MAX_CONCURRENT_CONNECTIONS: usize = 200;
 
@@ -123,12 +116,6 @@ const MAX_RESPONSE_BODY: usize = 10 * 1024 * 1024;
 /// Default timeout in seconds.
 #[allow(dead_code)]
 const DEFAULT_TIMEOUT_S: f64 = 10.0;
-
-// ---------------------------------------------------------------------------
-// Network.framework C function declarations (feature-gated)
-// ---------------------------------------------------------------------------
-// These are linked at runtime from /System/Library/Frameworks/Network.framework
-// which is always present on macOS 10.14+.
 
 #[cfg(feature = "nw_framework")]
 #[link(name = "Network", kind = "framework")]
@@ -180,10 +167,6 @@ extern "C" {
     ) -> *mut c_void; // dispatch_data_map_t (opaque, released via dispatch_release)
 }
 
-// ---------------------------------------------------------------------------
-// Response type returned to Python
-// ---------------------------------------------------------------------------
-
 /// HTTP response returned to Python via PyO3.
 #[derive(Debug, Clone)]
 #[pyclass(from_py_object)]
@@ -221,10 +204,6 @@ impl NwResponse {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Connection state machine — shared between Rust and Network.framework blocks
-// ---------------------------------------------------------------------------
 
 /// Shared connection state, signalled by Network.framework state-change blocks.
 #[allow(dead_code)]
@@ -319,26 +298,6 @@ impl ConnectionState {
         std::mem::take(&mut *buf)
     }
 }
-
-// ---------------------------------------------------------------------------
-// MODERN-12: Connection State for Async FFI Bridge
-//
-// This struct is used by fetch_async_impl() which runs inside spawn_blocking().
-// It uses std::sync::mpsc channels to receive completion signals from dispatch
-// queue callbacks (which run on OS threads outside tokio context).
-//
-// Why std::sync::mpsc instead of tokio channels?
-//   - Dispatch queue callbacks execute on libdispatch threads, NOT tokio tasks
-//   - tokio::sync primitives require tokio runtime context (unavailable here)
-//   - std::sync::mpsc works across any thread context
-//
-// The flow is:
-//   1. Create mpsc::Receiver in this blocking thread
-//   2. Pass Arc<AsyncConnectionState> to dispatch queue callbacks
-//   3. Callbacks store Sender via on_recv_done_setup()
-//   4. Callbacks signal via on_recv_done() when complete
-//   5. This thread receives via recv_timeout() with timeout
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "nw_framework")]
 struct AsyncConnectionState {
@@ -448,10 +407,6 @@ impl AsyncConnectionState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Global semaphore for connection pool bounding
-// ---------------------------------------------------------------------------
-
 /// Global semaphore capping concurrent connections at MAX_CONCURRENT_CONNECTIONS.
 /// MODERN-12: Uses tokio::sync::Semaphore for try_acquire() across threads.
 /// This is initialized lazily since tokio::sync::Semaphore::new() is const.
@@ -510,15 +465,10 @@ unsafe fn extract_dispatch_data(data: DispatchDataT) -> Vec<u8> {
     result
 }
 
-// ---------------------------------------------------------------------------
-// Core fetch implementation (TCP)
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "nw_framework")]
 fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let t0 = Instant::now();
 
-    // Parse URL to extract host, port, path
     let parsed = match url::Url::parse(url) {
         Ok(u) => u,
         Err(e) => return NwResponse::error(&format!("nw: invalid URL: {}", e), elapsed_ms(t0)),
@@ -561,7 +511,6 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
     let _permit = permit; // Drop guard when function exits
 
-    // Update active count
     {
         let mut stats = get_pool_stats());
         stats.active_connections += 1;
@@ -573,7 +522,6 @@ fn fetch_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     let result = fetch_inner_impl(host, port_str.as_str(), &path, use_tls, timeout_ms, t0);
 
-    // Update active count on exit
     {
         let mut stats = get_pool_stats());
         stats.active_connections = stats.active_connections.saturating_sub(1);
@@ -596,14 +544,12 @@ fn fetch_inner_impl(
 ) -> NwResponse {
     let timeout = Duration::from_millis(timeout_ms);
 
-    // Create dispatch queue for this connection
     let label = format!("com.hledac.nw.{}:{}\0", host, port_str);
     let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
 
     // Create endpoint: nw_endpoint_create_host(hostname, port)
     let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
 
-    // Create parameters: secure TCP with default TLS, or plain TCP
     let parameters: NwParametersT = if use_tls {
         // Default TLS configuration (hardware-accelerated TLS 1.3 via Network.framework)
         // NULL configure_tls = use default TLS settings
@@ -617,7 +563,6 @@ fn fetch_inner_impl(
         unsafe { nw_parameters_create_secure_tcp(std::ptr::null(), queue) }
     };
 
-    // Create connection
     let connection = unsafe { nw_connection_create(endpoint, parameters) };
     unsafe { nw_connection_set_queue(connection, queue) };
 
@@ -648,7 +593,6 @@ fn fetch_inner_impl(
         );
     }
 
-    // Start connection
     unsafe { nw_connection_start(connection) };
 
     // Wait for ready state
@@ -660,13 +604,11 @@ fn fetch_inner_impl(
         return NwResponse::error(&e, elapsed_ms(t0));
     }
 
-    // Build HTTP request
     let request = format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Hledac/1.0 (Network.framework)\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         path, host
     );
 
-    // Create dispatch_data for the request body
     let request_data = unsafe {
         dispatch_data_create(
             request.as_ptr(),
@@ -676,7 +618,6 @@ fn fetch_inner_impl(
         )
     };
 
-    // Create content context
     let context_label = b"com.hledac.http-request\0";
     let content_context = unsafe { nw_content_context_create(context_label.as_ptr()) };
 
@@ -721,7 +662,6 @@ fn fetch_inner_impl(
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    // Check send error
     if let Some(ref err) = *conn_state.send_error.lock() {
         let err = err);
         unsafe { nw_connection_cancel(connection) };
@@ -783,10 +723,8 @@ fn fetch_inner_impl(
         return NwResponse::error("nw: receive timeout", elapsed_ms(t0));
     }
 
-    // Get received data
     let mut response_bytes = conn_state);
 
-    // Clean up
     unsafe { nw_connection_cancel(connection) };
     drop(recv_handler_block);
     drop(send_handler_block);
@@ -794,7 +732,6 @@ fn fetch_inner_impl(
     unsafe { dispatch_release(connection) };
     unsafe { dispatch_release(queue) };
 
-    // Parse HTTP response
     parse_http_response(&response_bytes, t0)
 }
 
@@ -820,7 +757,6 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
     let header_part = &data[..separator];
     let body_part = &data[separator + 2..]; // skip the separator (\r\n\r\n or \n\n)
 
-    // Parse status line: "HTTP/1.x NNN ..."
     let header_str = match std::str::from_utf8(header_part) {
         Ok(s) => s,
         Err(_) => return NwResponse::error("nw: invalid HTTP headers (non-UTF8)", elapsed_ms(t0)),
@@ -832,7 +768,6 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
         None => return NwResponse::error("nw: empty HTTP response", elapsed_ms(t0)),
     };
 
-    // Extract status code: "HTTP/1.1 200 OK" → 200
     let parts: Vec<&str> = status_line.split_whitespace());
     if parts.len() < 2 {
         return NwResponse::error("nw: malformed HTTP status line", elapsed_ms(t0));
@@ -842,7 +777,6 @@ fn parse_http_response(data: &[u8], t0: Instant) -> NwResponse {
         Err(_) => return NwResponse::error("nw: invalid HTTP status code", elapsed_ms(t0)),
     };
 
-    // Parse headers
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
         if line.is_empty() {
@@ -879,10 +813,6 @@ fn elapsed_ms(t0: Instant) -> f64 {
     t0.elapsed().as_secs_f64() * 1000.0
 }
 
-// ---------------------------------------------------------------------------
-// PyO3 exported function
-// ---------------------------------------------------------------------------
-
 /// Fetch a URL using Apple Network.framework (user-space TCP + hardware TLS).
 ///
 /// This is a synchronous (blocking) function designed to be called from
@@ -900,31 +830,6 @@ pub fn fetch(url: &str, timeout_ms: Option<u64>) -> NwResponse {
     let timeout = timeout_ms.unwrap_or((DEFAULT_TIMEOUT_S * 1000.0) as u64);
     fetch_inner(url, timeout)
 }
-
-// ---------------------------------------------------------------------------
-// MODERN-12: Async FFI Bridge
-//
-// Bridges Apple's callback-driven Network.framework API to Python asyncio awaitables.
-// Architecture:
-//
-//   Python asyncio
-//       └── await rust.nw_connection.fetch_async(url)
-//           └── future_into_py()
-//               └── tokio task (spawn_blocking)
-//                   ├── FFI: dispatch queue + Network.framework
-//                   ├── Callbacks: std::sync::mpsc channels (cross-thread signaling)
-//                   └── Result: returned to tokio task
-//
-// Why std::sync::mpsc (not tokio::sync::mpsc)?
-//   - Dispatch queue callbacks run on OS threads, not tokio tasks
-//   - std::sync::mpsc works across any thread context
-//   - tokio channels require tokio runtime context (unavailable in dispatch callbacks)
-//
-// Key optimizations vs sync version:
-//   - Python call sites: `await fetch_async()` instead of `to_thread(fetch)`
-//   - No asyncio.to_thread() wrapper overhead (~50-100µs per call)
-//   - Shared tokio runtime across all async modules
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "nw_framework")]
 use crate::async_bridge::future_into_py;
@@ -944,7 +849,6 @@ use crate::async_bridge::future_into_py;
 fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let t0 = Instant::now();
 
-    // Parse URL to extract host, port, path
     let parsed = match url::Url::parse(url) {
         Ok(u) => u,
         Err(e) => return NwResponse::error(&format!("nw-async: invalid URL: {}", e), elapsed_ms(t0)),
@@ -987,7 +891,6 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
     };
     let _permit = permit;
 
-    // Update active count
     {
         let mut stats = get_pool_stats());
         stats.active_connections += 1;
@@ -999,7 +902,6 @@ fn fetch_async_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     let result = fetch_async_impl(host, port_str.as_str(), &path, use_tls, timeout_ms, t0);
 
-    // Update active count on exit
     {
         let mut stats = get_pool_stats());
         stats.active_connections = stats.active_connections.saturating_sub(1);
@@ -1033,21 +935,17 @@ fn fetch_async_impl(
 
     let timeout = Duration::from_millis(timeout_ms);
 
-    // Create dispatch queue for this connection
     let label = format!("com.hledac.nw-async.{}:{}\0", host, port_str);
     let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
 
-    // Create endpoint
     let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
 
-    // Create parameters
     let parameters: NwParametersT = if use_tls {
         unsafe { nw_parameters_create_secure_tcp(std::ptr::null(), queue) }
     } else {
         unsafe { nw_parameters_create_secure_tcp(std::ptr::null(), queue) }
     };
 
-    // Create connection
     let connection = unsafe { nw_connection_create(endpoint, parameters) };
     unsafe { nw_connection_set_queue(connection, queue) };
 
@@ -1075,7 +973,6 @@ fn fetch_async_impl(
         );
     }
 
-    // Start connection
     unsafe { nw_connection_start(connection) };
 
     // MODERN-12: Wait for ready state with async timeout
@@ -1118,13 +1015,11 @@ fn fetch_async_impl(
     }
     drop(state);
 
-    // Build HTTP request
     let request = format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Hledac/1.0 (Network.framework async)\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         path, host
     );
 
-    // Create dispatch_data
     let request_data = unsafe {
         dispatch_data_create(
             request.as_ptr(),
@@ -1264,7 +1159,6 @@ fn fetch_async_impl(
         }
     };
 
-    // Clean up
     unsafe { nw_connection_cancel(connection) };
     drop(recv_handler_block);
     drop(send_handler_block);
@@ -1272,7 +1166,6 @@ fn fetch_async_impl(
     unsafe { dispatch_release(connection) };
     unsafe { dispatch_release(queue) };
 
-    // Parse HTTP response
     parse_http_response(&response_bytes, t0)
 }
 
@@ -1329,29 +1222,6 @@ pub fn fetch_async(
     })
 }
 
-// ---------------------------------------------------------------------------
-// QUIC / HTTP/3 via Network.framework (macOS 12.0+)
-//
-// SILICON-05: Native QUIC transport via nw_parameters_create_quic().
-// Eliminates the need for quinn crate (Rust) and aioquic (Python).
-//
-// Network.framework provides:
-//   - Kernel-bypass QUIC with hardware-accelerated TLS 1.3
-//   - Stream multiplexing (bidirectional + unidirectional)
-//   - Connection migration (no drop on network change)
-//   - 0-RTT support
-//
-// HTTP/3 framing (RFC 9114) implemented in pure Rust:
-//   - QPACK: static-table-only, literal without indexing
-//   - Frame types: HEADERS (0x01), DATA (0x00)
-//   - Variable-length integer encoding (RFC 9000)
-//
-// M1 8GB bounds:
-//   - Max 12 concurrent QUIC connections (shared with TCP pool)
-//   - Each QUIC connection: ~80 KB (UDP buffers + TLS context)
-//   - HTTP/3 framing: zero-alloc where possible (stack-allocated varints)
-// ---------------------------------------------------------------------------
-
 // nw_parameters_create_quic — macOS 12.0+ (Monterey)
 // Creates a parameters object configured for QUIC transport.
 // The resulting parameters use UDP/QUIC instead of TCP/TLS.
@@ -1360,10 +1230,6 @@ pub fn fetch_async(
 extern "C" {
     fn nw_parameters_create_quic() -> NwParametersT;
 }
-
-// ---------------------------------------------------------------------------
-// QUIC variable-length integer encoding (RFC 9000 §16)
-// ---------------------------------------------------------------------------
 
 /// Encode a u64 as a QUIC variable-length integer.
 /// Returns a stack-allocated array of up to 8 bytes + the actual length.
@@ -1448,10 +1314,6 @@ fn push_varint(buf: &mut Vec<u8>, value: u64) {
     buf.extend_from_slice(&encoded[..len]);
 }
 
-// ---------------------------------------------------------------------------
-// QPACK encoder — minimal static-table-only (RFC 9204)
-// ---------------------------------------------------------------------------
-
 /// Encode a single header as QPACK "Literal Header Field Without Indexing".
 ///
 /// Uses prefix 0x00 (0000xxxx) = literal without indexing, literal name.
@@ -1507,10 +1369,6 @@ fn qpack_encode_headers(headers: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// HTTP/3 frame builder (RFC 9114)
-// ---------------------------------------------------------------------------
-
 /// Build an HTTP/3 HEADERS frame.
 fn h3_headers_frame(qpack_encoded: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(9 + qpack_encoded.len());
@@ -1534,10 +1392,6 @@ fn h3_data_frame(data: &[u8]) -> Vec<u8> {
     frame.extend_from_slice(data);
     frame
 }
-
-// ---------------------------------------------------------------------------
-// HTTP/3 response parser
-// ---------------------------------------------------------------------------
 
 /// Parsed HTTP/3 response from raw bytes received on a QUIC stream.
 #[allow(dead_code)]
@@ -1670,15 +1524,10 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
     }
 }
 
-// ---------------------------------------------------------------------------
-// QUIC fetch via Network.framework
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "nw_framework")]
 fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     let t0 = Instant::now();
 
-    // Parse URL
     let parsed = match url::Url::parse(url) {
         Ok(u) => u,
         Err(e) => {
@@ -1735,21 +1584,17 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     let timeout = Duration::from_millis(timeout_ms);
 
-    // Create dispatch queue
     let label = format!("com.hledac.nw-quic.{}:{}\0", host, port_str);
     let queue = unsafe { dispatch_queue_create(label.as_ptr(), std::ptr::null()) };
 
-    // Create endpoint
     let endpoint = unsafe { nw_endpoint_create_host(host.as_ptr(), port_str.as_ptr()) };
 
     // Create QUIC parameters (instead of TCP)
     let parameters: NwParametersT = unsafe { nw_parameters_create_quic() };
 
-    // Create connection with QUIC parameters
     let connection = unsafe { nw_connection_create(endpoint, parameters) };
     unsafe { nw_connection_set_queue(connection, queue) };
 
-    // Set up shared state for async callbacks
     let conn_state = ConnectionState::new();
     
     let conn_state_for_block = Arc::clone(&conn_state);
@@ -1774,7 +1619,6 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         );
     }
 
-    // Start connection
     unsafe { nw_connection_start(connection) };
 
     // Wait for ready state
@@ -1788,8 +1632,6 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         return result;
     }
 
-    // Build HTTP/3 request
-    // Step 1: QPACK-encode headers
     let qpack_headers = qpack_encode_headers(&[
         (b":method".to_vec(), b"GET".to_vec()),
         (b":scheme".to_vec(), b"https".to_vec()),
@@ -1803,18 +1645,14 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
         (b"accept-encoding".to_vec(), b"identity".to_vec()),
     ]);
 
-    // Step 2: Build HEADERS frame
     let headers_frame = h3_headers_frame(&qpack_headers);
 
-    // Step 3: Build DATA frame (empty for GET)
     let data_frame = h3_data_frame(b"");
 
-    // Step 4: Concatenate HTTP/3 frames for the request
     let mut request_data = Vec::with_capacity(headers_frame.len() + data_frame.len());
     request_data.extend_from_slice(&headers_frame);
     request_data.extend_from_slice(&data_frame);
 
-    // Create dispatch_data for the request
     let req_dispatch_data = unsafe {
         dispatch_data_create(
             request_data.as_ptr(),
@@ -1935,7 +1773,6 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
 
     let response_bytes = conn_state);
 
-    // Clean up
     unsafe { nw_connection_cancel(connection) };
     drop(recv_handler_block);
     drop(send_handler_block);
@@ -1943,7 +1780,6 @@ fn fetch_quic_inner(url: &str, timeout_ms: u64) -> NwResponse {
     unsafe { dispatch_release(connection) };
     unsafe { dispatch_release(queue) };
 
-    // Parse HTTP/3 response
     let h3_resp = parse_h3_response(&response_bytes);
 
     if let Some(ref err) = h3_resp.error {
@@ -2106,10 +1942,6 @@ pub fn pool_stats() -> PyResult<Py<PyAny>> {
         Ok(dict.into())
     })
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "nw_framework")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

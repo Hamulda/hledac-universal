@@ -2,12 +2,6 @@
 coordinators/resource/resource_coordinator.py — Unified Resource Management
 ========================================================================
 
-
-
-
-
-
-
 Consolidated resource management layer for M1 8GB:
 
 GC STRATEGY (from gc_policy.py):
@@ -44,17 +38,15 @@ import asyncio
 import gc as _gc
 import logging
 import subprocess
-import sys
 import threading
 import time as _time_module
 from collections import deque
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from msgspec import field
 
 from _core.lock_registry import LockCategory, register_lock
+from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from hledac.universal._core.resource_governor import GovernorDecision
@@ -66,23 +58,21 @@ class GovernorProtocol(Protocol):
 
     async def evaluate(self) -> GovernorDecision: ...
 
-logger = logging.getLogger(__name__)
 
-# =============================================================================
-# GC STRATEGY
-# =============================================================================
+logger = logging.getLogger(__name__)
 
 # PHYSICS-06/07: GC thresholds managed by BlitzGCStrategy.
 # During active sprint, GC is disabled entirely; explicit gen-0 ticks
 # replace involuntary collections. Boot thresholds are applied once at import.
 from hledac.universal.coordinators.resource.blitz_gc import (
-    BLITZ_THRESHOLD,
-    BOOT_THRESHOLD,
-    POST_TEARDOWN_THRESHOLD,
     _GC_FREEZE_NATIVE as _BLITZ_GC_FREEZE_NATIVE,
+)
+from hledac.universal.coordinators.resource.blitz_gc import (
+    BOOT_THRESHOLD,
+)
+from hledac.universal.coordinators.resource.blitz_gc import (
     blitz_gc as _blitz_gc,
-    )
-from _core import aclose
+)
 
 # Legacy threshold constant — kept for backward compat, but BlitzGCStrategy
 # is the canonical source of truth for sprint GC lifecycle.
@@ -123,6 +113,7 @@ def _get_system_memory_percent() -> float:
     percent: float = 0.0
     try:
         from hledac.universal._core.psutil_shim import psutil as _psutil
+
         if _psutil is not None:
             percent = float(_psutil.virtual_memory().percent)
     except Exception:  # noqa: BLE001
@@ -134,7 +125,7 @@ def _get_system_memory_percent() -> float:
 
 def _ensure_configured() -> None:
     """Apply gc.set_threshold and gc.freeze() — called once at startup.
-    
+
     PHYSICS-06/07: Delegates to blitz_gc module for boot config.
     BlitzGCStrategy.sprint_start() must be called separately at sprint boot.
     """
@@ -149,7 +140,7 @@ def _ensure_configured() -> None:
 
 def _apply_gc_config() -> None:
     """Apply gc thresholds + freeze. Idempotent.
-    
+
     PHYSICS-06/07: Boot thresholds from blitz_gc module.
     Native freeze is attempted if Python >= 3.14.7.
     Full blitz activation happens via BlitzGCStrategy.sprint_start().
@@ -230,7 +221,7 @@ async def gc_collect_async(
             logger.debug(
                 "[GC] blitz active — skipping gen-%s collect (deferred to teardown)",
                 generation if not force_aggressive else "aggressive",
-    )
+            )
             return
         # fall through for non-blitz paths
 
@@ -260,11 +251,6 @@ def get_gc_stats() -> dict[str, Any]:
         return {}
 
 
-# =============================================================================
-# AIMD CONTROLLER
-# =============================================================================
-
-# Fetch AIMD constants
 AIMD_FETCH_ADDITIVE_INCREMENT = 2
 AIMD_FETCH_DECREASE_FACTOR = 0.75
 AIMD_FETCH_MIN = 1
@@ -312,6 +298,7 @@ class AIMDController(Struct):
         window = await controller.on_success()  # increase
         window = await controller.on_failure()  # decrease
     """
+
     min_value: float
     max_value: float
     additive_increment: float
@@ -419,10 +406,6 @@ def make_extract_aimd() -> AIMDController:
     )
 
 
-# =============================================================================
-# BACKPRESSURE MONITOR
-# =============================================================================
-
 _DEFAULT_CLEARNET_MAX = 5
 _DEFAULT_STEALTH_MAX = 3
 _MIN_CLEARNET = 1
@@ -436,6 +419,7 @@ class BackpressureDecision(Struct, frozen=True):
 
     HW-03: Includes thermal scaling factors for worker/batch adjustment.
     """
+
     clearnet_max: int
     stealth_max: int
     uma_state: str
@@ -455,9 +439,16 @@ class BackpressureMonitor:
     Lives in the scheduler; called by FetchCoordinator on every _aimd_acquire().
     The provider callable is the seam — FetchCoordinator never imports this module directly.
     """
+
     __slots__ = (
-        "_decision", "_governor", "_last_evaluate", "_last_state",
-        "_lock", "_max_clearnet", "_min_clearnet", "_state_changes",
+        "_decision",
+        "_governor",
+        "_last_evaluate",
+        "_last_state",
+        "_lock",
+        "_max_clearnet",
+        "_min_clearnet",
+        "_state_changes",
     )
 
     def __init__(
@@ -474,7 +465,7 @@ class BackpressureMonitor:
             stealth_max=_DEFAULT_STEALTH_MAX,
             uma_state="ok",
             io_only=False,
-    )
+        )
         self._last_evaluate: float = 0.0
         self._lock = asyncio.Lock()
         self._state_changes: int = 0
@@ -489,6 +480,7 @@ class BackpressureMonitor:
         now = _time_module.monotonic()
         try:
             from hledac.universal._core.resource_governor import ConcurrencyPreset
+
             cache_ttl = ConcurrencyPreset.from_state(self._decision.uma_state).cache_ttl_seconds
         except Exception:
             cache_ttl = 5.0  # safe default
@@ -508,7 +500,7 @@ class BackpressureMonitor:
                     uma_state="ok",
                     io_only=False,
                     swap_detected=False,
-    )
+                )
                 self._last_evaluate = now
                 return self._decision
 
@@ -531,12 +523,13 @@ class BackpressureMonitor:
                 thermal_headroom=governor_decision.thermal_headroom,
                 worker_scale_factor=governor_decision.worker_scale_factor,
                 batch_scale_factor=governor_decision.batch_scale_factor,
-    )
+            )
             if new_decision.uma_state != self._last_state:
                 # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
                 # parallel() call sites globally respect the same memory pressure limits.
                 try:
                     from hledac.universal._core.concurrency_registry import ConcurrencyBudgetRegistry
+
                     registry = await ConcurrencyBudgetRegistry.get_instance_async()
                     await registry.adjust_for_state(new_decision.uma_state)
                 except Exception:  # noqa: BLE001
@@ -545,7 +538,7 @@ class BackpressureMonitor:
                     f"[BACKPRESSURE] uma_state: {self._last_state} → "
                     f"{new_decision.uma_state} "
                     f"(clearnet_max={clearnet_max}, stealth_max={stealth_max})"
-    )
+                )
                 self._state_changes += 1
                 self._last_state = new_decision.uma_state
             self._decision = new_decision
@@ -585,15 +578,12 @@ class BackpressureMonitor:
         }
 
 
-# =============================================================================
-# M1 RESOURCE COORDINATOR
-# =============================================================================
-
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
 
 class CapacitySnapshot(Struct, frozen=True):
     """Immutable snapshot of M1 resource capacity with TTL tracking."""
+
     cpu_percent: float
     gpu_memory: float
     gpu_usage: float
@@ -608,12 +598,16 @@ class _CapacitySampler:
     Offloads blocking psutil.cpu_percent(interval=1) and system_profiler
     calls from async hot paths via asyncio.to_thread.
     """
+
     _CPU_TTL_S = 3.0
     _METAL_TTL_S = 300.0
 
     __slots__ = (
-        "_cpu_cache", "_cpu_lock",
-        "_metal_cache", "_metal_cache_time", "_metal_lock",
+        "_cpu_cache",
+        "_cpu_lock",
+        "_metal_cache",
+        "_metal_cache_time",
+        "_metal_lock",
     )
 
     def __init__(self) -> None:
@@ -649,9 +643,9 @@ class _CapacitySampler:
                 capture_output=True,
                 text=True,
                 timeout=5,
-    )
+            )
             return "Metal" in result.stdout
-        except (subprocess.TimeoutExpired, OSError, ValueError):
+        except subprocess.TimeoutExpired, OSError, ValueError:
             return False
 
     async def sample(self) -> CapacitySnapshot:
@@ -676,7 +670,7 @@ class _CapacitySampler:
                 gpu_usage=gpu_usage,
                 metal_available=metal_available,
                 sampled_at_monotonic=now,
-    )
+            )
             return self._cpu_cache
 
     async def _get_metal_with_cache(self, now: float) -> bool:
@@ -712,6 +706,7 @@ class M1ResourceCoordinator:
         - MAX_ENRICHMENT_WORKERS = 16
         - MAX_EXTRACTION_WORKERS = 8
     """
+
     __slots__ = (
         "_capacity_sampler",
         "completed_allocations",

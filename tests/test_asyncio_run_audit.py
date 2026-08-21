@@ -12,6 +12,7 @@ since regex-based detection fails on comments and docstrings.
 
 Acceptance: Zero asyncio.run() violations in production code (non-test, non-__main__).
 """
+
 from __future__ import annotations
 
 import ast
@@ -19,7 +20,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from _core import aclose
 
 
 @dataclass
@@ -33,13 +33,13 @@ class Violation:
 # Authorized patterns: asyncio.run() IS allowed inside these
 AUTHORIZED_PATTERNS = (
     "__main__.py",
-    "test_",          # test modules
-    "_test.py",       # test modules alt pattern
-    "conftest.py",    # pytest fixtures
-    "probe_",         # probe test files (recon/tests/, etc.)
-    "quick_scrape",   # convenience sync wrapper for async scrape()
-    "scraper.py",     # StealthWebScraper convenience wrapper module
-    )
+    "test_",  # test modules
+    "_test.py",  # test modules alt pattern
+    "conftest.py",  # pytest fixtures
+    "probe_",  # probe test files (recon/tests/, etc.)
+    "quick_scrape",  # convenience sync wrapper for async scrape()
+    "scraper.py",  # StealthWebScraper convenience wrapper module
+)
 
 
 # Directories to exclude from scanning (tools, benchmarks, probes, venv)
@@ -66,7 +66,7 @@ EXCLUDE_DIRS = (
     # Vendor/stub code
     "stubs",
     "layers/examples",
-    )
+)
 
 
 def is_authorized_path(path: str) -> bool:
@@ -134,9 +134,9 @@ def scan_file(filepath: str) -> list[Violation]:
         return []
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             source = f.read()
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return []
 
     try:
@@ -154,7 +154,7 @@ def scan_file(filepath: str) -> list[Violation]:
                         line=node.lineno,
                         col=node.col_offset,
                         context="asyncio.run()",
-    )
+                    )
                 )
     return violations
 

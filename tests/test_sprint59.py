@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
 # MLX is optional - skip if not available
 try:
     import mlx.core as mx
+
     _HAS_MLX = True
 except ImportError:
     mx = None  # type: ignore
@@ -33,6 +33,7 @@ except ImportError:
 # Check if prefetch_oracle exists
 try:
     from hledac.universal.prefetch.prefetch_oracle import PrefetchOracle
+
     _HAS_PREFETCH_ORACLE = True
 except ImportError:
     PrefetchOracle = None  # type: ignore
@@ -41,13 +42,14 @@ except ImportError:
 # Check if ssm_reranker exists
 try:
     from hledac.universal.prefetch.ssm_reranker import SSMReranker
+
     _HAS_SSM_RERANKER = True
 except ImportError:
     SSMReranker = None  # type: ignore
     _HAS_SSM_RERANKER = False
 
 
-def pytest_configure(config):
+def pytest_configure(config) -> None:
     """Register custom markers."""
     config.addinivalue_line("markers", "requires_oracle: tests requiring PrefetchOracle")
     config.addinivalue_line("markers", "requires_ssm: tests requiring SSMReranker")
@@ -71,7 +73,7 @@ class TestPrefetchCache:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
     @pytest.mark.asyncio
-    async def test_cache_ttl(self, prefetch_cache):
+    async def test_cache_ttl(self, prefetch_cache) -> None:
         """
         Test cache s TTL.
 
@@ -100,7 +102,7 @@ class TestPrefetchCache:
         await prefetch_cache.stop()
 
     @pytest.mark.asyncio
-    async def test_cache_stop(self, prefetch_cache):
+    async def test_cache_stop(self, prefetch_cache) -> None:
         """Test background writer a stop."""
         await prefetch_cache.start()
 
@@ -122,6 +124,7 @@ class TestPrefetchCache:
 # These modules need to be implemented first before these tests can run
 # ============================================================================
 
+
 @pytest.mark.skipif(not _HAS_PREFETCH_ORACLE, reason="prefetch_oracle module not implemented")
 class TestPrefetchOracle:
     """Testy pro PrefetchOracle (STUB - module not yet implemented)."""
@@ -142,7 +145,7 @@ class TestPrefetchOracle:
                 {"url": "http://example.com/1", "score": 0.9},
                 {"url": "http://example.com/2", "score": 0.8},
             ]
-    )
+        )
         if mx is not None:
             engine.get_entity_embedding = MagicMock(return_value=mx.random.normal((64,)))
         return engine
@@ -188,13 +191,13 @@ class TestPrefetchOracle:
             bandit_weight=0.2,
             lambda_waste=0.01,
             lambda_prior=1.0,
-    )
+        )
         return oracle
 
     # ========= Testy Stage A =========
 
     @pytest.mark.asyncio
-    async def test_stage_a_candidates(self, oracle, mock_rel_engine):
+    async def test_stage_a_candidates(self, oracle, mock_rel_engine) -> None:
         """Test generování kandidátů ve Stage A."""
         # Registrujeme node URL pro PQ index
         oracle.register_node_url(0, "http://example.com/1")
@@ -210,7 +213,7 @@ class TestPrefetchOracle:
         assert isinstance(candidates, list)
 
     @pytest.mark.asyncio
-    async def test_stage_a_adaptive_limits(self, oracle):
+    async def test_stage_a_adaptive_limits(self, oracle) -> None:
         """Test adaptivních limitů Stage A."""
         # Simulujme překročení budgetu
         oracle._stage_a_time_accum = 20.0  # 10 volání po 2ms
@@ -228,7 +231,7 @@ class TestPrefetchOracle:
     # ========= Testy LinUCB =========
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
-    def test_linucb(self, oracle):
+    def test_linucb(self, oracle) -> None:
         """Test LinUCB - inicializace, UCB výpočet, update."""
         # Test cold start - nové rameno
         arm_id = "example.com"
@@ -248,7 +251,7 @@ class TestPrefetchOracle:
         assert isinstance(ucb2, float)
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
-    def test_linucb_cold_start(self, oracle):
+    def test_linucb_cold_start(self, oracle) -> None:
         """Test LinUCB cold-start - nové rameno dostává exploraci."""
         # Různá ramena
         arms = ["google.com", "facebook.com", "twitter.com"]
@@ -263,7 +266,7 @@ class TestPrefetchOracle:
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
     @pytest.mark.asyncio
-    async def test_expire(self, oracle):
+    async def test_expire(self, oracle) -> None:
         """Test expirace naplánovaných prefetchů."""
         # Simuluj naplánovaný prefetch
         url = "http://test.com/expire"
@@ -283,7 +286,7 @@ class TestPrefetchOracle:
         assert oracle.prefetch_stats["test.com"]["misses"] > 0
 
     @pytest.mark.asyncio
-    async def test_expire_shutdown(self, oracle):
+    async def test_expire_shutdown(self, oracle) -> None:
         """Test shutdown expire loop."""
         oracle._stop_event.set()  # Nastavíme stop event
 
@@ -295,7 +298,7 @@ class TestPrefetchOracle:
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
     @pytest.mark.asyncio
-    async def test_prefetch_e2e(self, oracle, mock_scheduler):
+    async def test_prefetch_e2e(self, oracle, mock_scheduler) -> None:
         """End-to-end test prefetch pipeline."""
         # Nastav task embedding
         oracle.set_task_embedding(mx.random.normal((64,)))
@@ -319,7 +322,7 @@ class TestSSMReranker:
     """Testy pro SSM Reranker (STUB - module not yet implemented)."""
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
-    def test_ssm_forward(self):
+    def test_ssm_forward(self) -> None:
         """Test forward pass SSM rerankeru."""
         if SSMReranker is None:
             pytest.skip("SSMReranker not available")
@@ -333,7 +336,7 @@ class TestSSMReranker:
         assert scores.shape == (2, 10)
 
     @pytest.mark.skipif(mx is None, reason="MLX not available")
-    def test_ssm_benchmark(self):
+    def test_ssm_benchmark(self) -> None:
         """Test benchmark rozhodování o depthwise."""
         if SSMReranker is None:
             pytest.skip("SSMReranker not available")

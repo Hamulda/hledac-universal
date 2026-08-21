@@ -11,10 +11,8 @@ has the broken pattern where the outer caller does the ingest and backfills
 accepted_findings after the gather).
 """
 
-
-from typing import Any
 from collections.abc import AsyncIterator
-from _core import aclose
+from typing import Any
 
 _scheduler_lanes = None
 

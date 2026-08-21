@@ -12,34 +12,31 @@ Lane architecture:
   FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, BLOCKCHAIN, STEALTH, PIVOT_EXECUTOR
 """
 
-import msgspec
-from enum import StrEnum
-
 # Re-export from acquisition_strategy.py for now (until full extraction)
 from hledac.universal.runtime.acquisition_strategy import (
-    AcquisitionLane,
-    RiskLevel,
-    AcquisitionLanePlan,
     AcquisitionContext,
-    LaneSpec,
-    LaneRule,
-    _lc,
-    _lane_rule,
-    _disabled_reason,
+    AcquisitionLane,
+    AcquisitionLanePlan,
     AcquisitionProfile,
+    LaneRule,
+    LaneSpec,
+    RiskLevel,
+    _disabled_reason,
+    _lane_rule,
+    _lc,
     normalize_acquisition_profile,
 )
 
 __all__ = [
-    'AcquisitionLane',
-    'RiskLevel',
-    'AcquisitionLanePlan',
-    'AcquisitionContext',
-    'LaneSpec',
-    'LaneRule',
-    'AcquisitionProfile',
-    '_lc',
-    '_lane_rule',
-    '_disabled_reason',
-    'normalize_acquisition_profile',
+    "AcquisitionLane",
+    "RiskLevel",
+    "AcquisitionLanePlan",
+    "AcquisitionContext",
+    "LaneSpec",
+    "LaneRule",
+    "AcquisitionProfile",
+    "_lc",
+    "_lane_rule",
+    "_disabled_reason",
+    "normalize_acquisition_profile",
 ]

@@ -27,7 +27,6 @@ import tempfile
 from unittest.mock import MagicMock
 
 import pytest
-from _core import aclose
 
 # Make the package importable when pytest is launched from a worktree.
 _HERE = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"
@@ -41,7 +40,7 @@ class TestSprintFAsyncioShadowing:
     # ------------------------------------------------------------------ #
     # 1. Static AST check — no local `import asyncio` inside the function
     # ------------------------------------------------------------------ #
-    def test_no_local_import_asyncio_in_async_run_live_public_pipeline(self):
+    def test_no_local_import_asyncio_in_async_run_live_public_pipeline(self) -> None:
         """AST scan: zero local `import asyncio` inside the function body.
 
         Why: any `import asyncio` anywhere in the function body makes the name
@@ -65,9 +64,7 @@ class TestSprintFAsyncioShadowing:
                 func_def = node
                 break
 
-        assert func_def is not None, (
-            "async_run_live_public_pipeline FunctionDef/AsyncFunctionDef not found via AST"
-    )
+        assert func_def is not None, "async_run_live_public_pipeline FunctionDef/AsyncFunctionDef not found via AST"
 
         shadowing: list[tuple[int, str]] = []
         for node in ast.walk(func_def):
@@ -88,9 +85,9 @@ class TestSprintFAsyncioShadowing:
             "function body, causing UnboundLocalError for every earlier "
             "asyncio.X reference (e.g. asyncio.Semaphore). Use the "
             "module-level import (line 14) — do NOT add a local `import asyncio`."
-    )
+        )
 
-    def test_no_local_import_asyncio_in_other_public_pipeline_functions(self):
+    def test_no_local_import_asyncio_in_other_public_pipeline_functions(self) -> None:
         """AST scan: zero local `import asyncio` in any other pipeline fn.
 
         The fix targets the specific function, but the same Python scoping
@@ -120,13 +117,13 @@ class TestSprintFAsyncioShadowing:
             f"Found local `import asyncio` inside top-level functions: "
             f"{offenders}. Same scoping bug class — fix by removing the "
             f"redundant import (asyncio is module-scoped at line 14)."
-    )
+        )
 
     # ------------------------------------------------------------------ #
     # 2. Runtime smoke — actually call the function and assert no ULE
     # ------------------------------------------------------------------ #
     @pytest.mark.asyncio
-    async def test_async_run_live_public_pipeline_reaches_semaphore_construction_without_ule(self):
+    async def test_async_run_live_public_pipeline_reaches_semaphore_construction_without_ule(self) -> None:
         """Call the function with DI seams. Must NOT raise UnboundLocalError: asyncio.
 
         This is the runtime mirror of the static AST check. The DI seam path
@@ -148,7 +145,7 @@ class TestSprintFAsyncioShadowing:
                 score=0.9,
                 reason="test",
             ),
-    )
+        )
         canned_discovery.cache_hit = False
 
         async def canned_fetch(url, timeout, max_bytes, use_stealth=False, use_js=False, use_doh=False):
@@ -185,13 +182,13 @@ class TestSprintFAsyncioShadowing:
                     fetch_fn=canned_fetch,
                     match_fn=canned_match,
                     discovery_fn=canned_discovery_fn,
-    )
+                )
             except UnboundLocalError as exc:
                 if "asyncio" in str(exc):
                     pytest.fail(
                         f"REGRESSION: UnboundLocalError: asyncio fired — "
                         f"the local `import asyncio` shadowing bug has returned. "
                         f"Original: {exc}"
-    )
+                    )
                 # Any other UnboundLocalError is a different bug — let it propagate
                 raise

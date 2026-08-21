@@ -26,7 +26,6 @@ Design
 All ops bounded, fail-soft. No exceptions raised to caller.
 """
 
-
 import logging
 import os
 from pathlib import Path
@@ -39,7 +38,6 @@ import orjson
 # numpy in the envelope). Read path keeps orjson (fast parse, no schema
 # benefit on decode).
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +99,12 @@ def save_nx_graph_jsonl(
                         [n for n in degree_sorted if n in graph.nodes()],
                         key=lambda n: graph.degree(n),
                         reverse=True,
-    )
+                    )
                 logger.warning(
                     "[GraphSerde] Pruned %d edges to meet max_edges=%d",
                     edge_count - graph.number_of_edges(),
                     max_edges,
-    )
+                )
             except Exception as prune_err:  # noqa: BLE001
                 logger.warning("[GraphSerde] Edge prune failed (continuing): %s", prune_err)
 
@@ -117,8 +115,9 @@ def save_nx_graph_jsonl(
                 graph.remove_nodes_from(set(degree_sorted[:prune]))
                 logger.warning(
                     "[GraphSerde] Pruned %d lowest-degree nodes (max=%d)",
-                    prune, max_nodes,
-    )
+                    prune,
+                    max_nodes,
+                )
             except Exception as prune_err:  # noqa: BLE001
                 logger.warning("[GraphSerde] Prune failed (continuing): %s", prune_err)
 
@@ -144,7 +143,7 @@ def save_nx_graph_jsonl(
             graph.number_of_nodes(),
             graph.number_of_edges(),
             path,
-    )
+        )
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("[GraphSerde] save_nx_graph_jsonl failed: %s", e)
@@ -172,27 +171,19 @@ def load_nx_graph_jsonl(path: str, max_nodes: int = DEFAULT_MAX_NODES) -> Any | 
         if not is_ours:
             # Legacy pickle fallback. F196B requires safe path.
             if not _safe_path(path):
-                logger.warning(
-                    "[F196B] Refused legacy pickle load outside graphs dir: %s", path
-    )
+                logger.warning("[F196B] Refused legacy pickle load outside graphs dir: %s", path)
                 return None
-            logger.info(
-                "[GraphSerde] Legacy pickle file detected, one-shot migration: %s", path
-    )
+            logger.info("[GraphSerde] Legacy pickle file detected, one-shot migration: %s", path)
             # F265C: size guard against zip bombs / memory exhaustion on M1 8GB
             import os as _os
+
             file_size = _os.path.getsize(path)
             _MAX_PICKLE_SIZE = 50 * 1024 * 1024  # 50 MB cap
             if file_size > _MAX_PICKLE_SIZE:
-                logger.warning(
-                    "[F265C] Refused pickle load >50MB (%d bytes): %s", file_size, path
-    )
+                logger.warning("[F265C] Refused pickle load >50MB (%d bytes): %s", file_size, path)
                 return None
             import pickle  # lazy, only for legacy migration
 
-            # Security fix: F196B path already validated by _safe_path() above,
-            # add explicit assert as defense-in-depth for RCE prevention
-            assert _safe_path(path), f"Path traversal detected: {path}"
             with open(path, "rb") as f:
                 obj = pickle.load(f)
             return _bound_or_none(obj, max_nodes)
@@ -222,8 +213,9 @@ def _bound_or_none(graph: Any, max_nodes: int) -> Any | None:
             graph.remove_nodes_from(set(degree_sorted[:prune]))
             logger.warning(
                 "[GraphSerde] Post-load prune: dropped %d nodes (max=%d)",
-                prune, max_nodes,
-    )
+                prune,
+                max_nodes,
+            )
         return graph
     except Exception as e:  # noqa: BLE001
         logger.warning("[GraphSerde] bound check failed: %s", e)

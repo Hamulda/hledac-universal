@@ -27,12 +27,14 @@ For cryptographic random number generation, use:
 
 M1 8GB: This module is CPU-light — noise generation is O(1) per value.
 """
+
 import logging
 import math
 import random
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
+
 
 class DPNoise:
     """Differential noise for aggregate statistics in OSINT reports.
@@ -40,16 +42,17 @@ class DPNoise:
     Note: Uses stdlib `random.gauss()` for noise generation — intentional
     for OSINT reporting (fast, reproducible, not cryptographic).
     """
-    __slots__ = tuple(('delta', 'epsilon', 'noise_scale', 'sensitivity'))
 
-    def __init__(self, epsilon: float=1.0, delta: float=1e-05, sensitivity: float=1.0):
+    __slots__ = ("delta", "epsilon", "noise_scale", "sensitivity")
+
+    def __init__(self, epsilon: float = 1.0, delta: float = 1e-05, sensitivity: float = 1.0) -> None:
         self.epsilon = epsilon
         self.delta = delta
         self.sensitivity = sensitivity
         self.noise_scale = sensitivity * math.sqrt(2 * math.log(1.25 / delta)) / epsilon
-        logger.info(f'DPNoise: epsilon={epsilon}, delta={delta}, noise_scale={self.noise_scale:.4f}')
+        logger.info(f"DPNoise: epsilon={epsilon}, delta={delta}, noise_scale={self.noise_scale:.4f}")
 
-    def clip_update(self, weights: dict[str, Any], max_norm: float=1.0) -> dict[str, Any]:
+    def clip_update(self, weights: dict[str, Any], max_norm: float = 1.0) -> dict[str, Any]:
         """Clip gradient/model update to max L2 norm."""
         clipped = {}
         for k, v in weights.items():
@@ -60,7 +63,7 @@ class DPNoise:
                 else:
                     clipped[k] = v
             elif isinstance(v, (list, tuple)):
-                norm = math.sqrt(sum((x * x for x in v)))
+                norm = math.sqrt(sum(x * x for x in v))
                 if norm > max_norm:
                     scale = max_norm / norm
                     clipped[k] = [x * scale for x in v]
@@ -88,15 +91,17 @@ class DPNoise:
                 noisy[k] = v
         return noisy
 
+
 class RDPCalculator:
     """Rényi Differential Privacy calculator for composition."""
-    __slots__ = tuple(('delta', 'noise_scale'))
 
-    def __init__(self, noise_scale: float, delta: float=1e-05):
+    __slots__ = ("delta", "noise_scale")
+
+    def __init__(self, noise_scale: float, delta: float = 1e-05) -> None:
         self.noise_scale = noise_scale
         self.delta = delta
 
-    def get_epsilon(self, q: float, steps: int, alpha: float=10.0) -> float:
+    def get_epsilon(self, q: float, steps: int, alpha: float = 10.0) -> float:
         """
         Compute epsilon from Rényi DP.
 

@@ -231,8 +231,6 @@ impl LSHIndex {
     }
 }
 
-// ===== Python Module Functions =====
-
 /// Create a new LSH index.
 ///
 /// Shorthand for `LSHIndex.new()`.
@@ -279,8 +277,6 @@ pub fn lsh_estimate_recall(threshold: f64, num_tables: usize, num_rows: usize) -
     let recall = 1.0 - (1.0 - row_match_prob).powi(tables as i32);
     recall.max(0.0).min(1.0)
 }
-
-// ===== Module Registration =====
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lsh_index_new))?;

@@ -2,9 +2,6 @@
 OpsEC Coordinator — F350M-R Architectural Split
 ===============================================
 
-
-
-
 OPSEC-only (Stealth/Privacy/VPN/Tor/PGP) operations extracted from
 UniversalSecurityCoordinator for LCOM reduction and domain isolation.
 
@@ -19,6 +16,7 @@ Integrates:
 Shared DTOs (also used by SecurityCoordinator):
 - SecurityLevel, SecurityContext, SecurityResult
 """
+
 import contextlib
 import importlib
 import logging
@@ -27,18 +25,17 @@ from dataclasses import field
 from enum import Enum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
-from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
-from _core import aclose
+from .base import DecisionResponse, ExecutionResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
 
 class SecurityLevel(Enum):
     """Security levels for operations (1-4 scale)."""
+
     MINIMAL = 1
     STANDARD = 2
     HIGH = 3
@@ -47,6 +44,7 @@ class SecurityLevel(Enum):
 
 class SecurityContext(Struct):
     """Security context for operations."""
+
     operation_id: str
     security_level: SecurityLevel
     stealth_active: bool = False
@@ -58,6 +56,7 @@ class SecurityContext(Struct):
 
 class SecurityResult(Struct, frozen=True):
     """Result of security operation."""
+
     operation_type: str
     success: bool
     summary: str
@@ -68,8 +67,9 @@ class SecurityResult(Struct, frozen=True):
     result_data: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
+
 _OPSEC_SUBSYSTEMS: list[tuple[str, str, str]] = [
-    ('stealth_engine', 'hledac.security.stealth_engine', 'StealthEngine'),
+    ("stealth_engine", "hledac.security.stealth_engine", "StealthEngine"),
 ]
 
 
@@ -89,17 +89,20 @@ class OpsECCoordinator(UniversalCoordinator):
     - 'leak'/'breach'/'monitoring' → DataLeakHunter
     - 'pgp'/'encrypt'/'identity' → PGPManager
     """
+
     __slots__ = (
-        '_stealth_engine', '_stealth_available', '_stealth_mode_active',
-        '_stealth_activations',
+        "_stealth_engine",
+        "_stealth_available",
+        "_stealth_mode_active",
+        "_stealth_activations",
     )
 
     def __init__(self, max_concurrent: int = 5) -> None:
         super().__init__(
-            name='opsec_coordinator',
+            name="opsec_coordinator",
             max_concurrent=max_concurrent,
             memory_aware=True,
-    )
+        )
         self._stealth_engine: Any | None = None
         self._stealth_available = False
         self._stealth_mode_active = False
@@ -113,49 +116,49 @@ class OpsECCoordinator(UniversalCoordinator):
                 module = importlib.import_module(module_path)
                 factory = getattr(module, factory_name)
                 instance = factory()
-                if hasattr(instance, 'initialize'):
+                if hasattr(instance, "initialize"):
                     await instance.initialize()
-                setattr(self, f'_{attr_name}', instance)
-                setattr(self, f'{attr_name}_available', True)
+                setattr(self, f"_{attr_name}", instance)
+                setattr(self, f"{attr_name}_available", True)
                 initialized_any = True
-                logger.info(f'OpsECCoordinator: {factory_name} initialized')
+                logger.info(f"OpsECCoordinator: {factory_name} initialized")
             except ImportError:
-                logger.warning(f'OpsECCoordinator: {factory_name} not available')
+                logger.warning(f"OpsECCoordinator: {factory_name} not available")
             except Exception as e:
-                logger.warning(f'OpsECCoordinator: {factory_name} init failed: {e}')
+                logger.warning(f"OpsECCoordinator: {factory_name} init failed: {e}")
         return initialized_any
 
     async def _do_cleanup(self) -> None:
         """Cleanup OPSEC subsystems."""
-        if self._stealth_engine and hasattr(self._stealth_engine, 'cleanup'):
+        if self._stealth_engine and hasattr(self._stealth_engine, "cleanup"):
             try:
                 await self._stealth_engine.cleanup()
             except Exception as e:
-                logger.error(f'Error cleaning up StealthEngine: {e}')
+                logger.error(f"Error cleaning up StealthEngine: {e}")
 
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.SECURITY]
 
     def _get_operation_type_for_tracking(self) -> str:
         """Return operation type for tracking."""
-        return 'opsec'
+        return "opsec"
 
     async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle OPSEC request — delegates to appropriate backend."""
         chosen = decision.chosen_option.lower()
-        if any(k in chosen for k in ('stealth', 'evasion', 'anonymize')):
+        if any(k in chosen for k in ("stealth", "evasion", "anonymize")):
             if self._stealth_available:
-                result = await self._execute_stealth_op(decision, '', SecurityLevel.MINIMAL)
+                result = await self._execute_stealth_op(decision, "", SecurityLevel.MINIMAL)
                 return ExecutionResult(
-                    status='completed' if result.success else 'failed',
+                    status="completed" if result.success else "failed",
                     result_summary=result.summary,
                     success=result.success,
-                    metadata={'operation_type': result.operation_type},
-    )
+                    metadata={"operation_type": result.operation_type},
+                )
             else:
-                raise RuntimeError('No OPSEC backends available')
+                raise RuntimeError("No OPSEC backends available")
         else:
-            raise RuntimeError(f'Unhandled OPSEC operation: {decision.chosen_option}')
+            raise RuntimeError(f"Unhandled OPSEC operation: {decision.chosen_option}")
 
     async def _execute_stealth_op(
         self,
@@ -166,30 +169,28 @@ class OpsECCoordinator(UniversalCoordinator):
         """Execute stealth operation (stub for handle_request routing)."""
         start_time = time.time()
         if not self._stealth_engine:
-            raise RuntimeError('StealthEngine not available')
+            raise RuntimeError("StealthEngine not available")
         stealth_result = await self._stealth_engine.activate_stealth_mode(
             operation_type=context,
             confidence_threshold=decision.confidence,
             security_level=security_level.value,
-    )
+        )
         self._stealth_activations += 1
-        self._stealth_mode_active = stealth_result.get('active', False)
+        self._stealth_mode_active = stealth_result.get("active", False)
         return SecurityResult(
-            operation_type='stealth',
-            success=stealth_result.get('success', False),
+            operation_type="stealth",
+            success=stealth_result.get("success", False),
             summary=f"Stealth: {stealth_result.get('measures_activated', 0)} measures activated",
             security_level=security_level,
             execution_time=time.time() - start_time,
-            measures_activated=stealth_result.get('measures_activated', 0),
+            measures_activated=stealth_result.get("measures_activated", 0),
             result_data=stealth_result,
-    )
-
-    # ─── Privacy / VPN ────────────────────────────────────────────────────────
+        )
 
     async def establish_vpn_connection(
         self,
-        provider: str = 'mullvad',
-        protocol: str = 'wireguard',
+        provider: str = "mullvad",
+        protocol: str = "wireguard",
         server: str | None = None,
     ) -> dict[str, Any]:
         """Establish VPN connection via PersonalPrivacyManager."""
@@ -199,67 +200,76 @@ class OpsECCoordinator(UniversalCoordinator):
                 PrivacyLevel,
                 VPNConfig,
                 VPNDriver,
-    )
+            )
+
             if not server:
-                servers = VPNDriver.PROVIDERS.get(provider, {}).get('servers', [])
+                servers = VPNDriver.PROVIDERS.get(provider, {}).get("servers", [])
                 if servers:
                     import secrets
+
                     server = secrets.choice(servers)
                 else:
-                    return {'success': False, 'error': f'Unknown provider: {provider}'}
+                    return {"success": False, "error": f"Unknown provider: {provider}"}
             config = VPNConfig(
-                provider=provider, server=server, protocol=protocol,
-                dns_leak_protection=True, kill_switch=True,
-    )
+                provider=provider,
+                server=server,
+                protocol=protocol,
+                dns_leak_protection=True,
+                kill_switch=True,
+            )
             driver = VPNDriver(config)
             success = await driver.connect()
             if success:
                 return {
-                    'success': True, 'provider': provider, 'protocol': protocol,
-                    'server': server, 'connected': True,
-                    'dns_protection': config.dns_leak_protection,
+                    "success": True,
+                    "provider": provider,
+                    "protocol": protocol,
+                    "server": server,
+                    "connected": True,
+                    "dns_protection": config.dns_leak_protection,
                 }
             return {
-                'success': False, 'error': 'VPN connection failed',
-                'provider': provider, 'server': server,
+                "success": False,
+                "error": "VPN connection failed",
+                "provider": provider,
+                "server": server,
             }
         except ImportError:
-            return {'success': False, 'error': 'PersonalPrivacyManager not available'}
+            return {"success": False, "error": "PersonalPrivacyManager not available"}
         except Exception as e:
-            logger.error(f'VPN connection failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"VPN connection failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def disconnect_vpn(self) -> dict[str, Any]:
         """Disconnect active VPN connection."""
         try:
-            from hledac.universal.privacy_protection.personal_privacy_manager import VPNDriver  # noqa: F401
+            from hledac.universal.privacy_protection.personal_privacy_manager import VPNDriver
+
             return {
-                'success': True,
-                'message': 'VPN disconnect initiated',
-                'note': 'Use system network settings to verify disconnection',
+                "success": True,
+                "message": "VPN disconnect initiated",
+                "note": "Use system network settings to verify disconnection",
             }
         except ImportError:
-            return {'success': False, 'error': 'VPNDriver not available'}
+            return {"success": False, "error": "VPNDriver not available"}
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            return {"success": False, "error": str(e)}
 
     async def establish_privacy_connection(
         self,
-        privacy_level: str = 'enhanced',
+        privacy_level: str = "enhanced",
         connection_type: str | None = None,
     ) -> dict[str, Any]:
         """Establish privacy-protected connection via PersonalPrivacyManager."""
-        logger.warning('PersonalPrivacyManager not available')
-        return {'success': False, 'error': 'PersonalPrivacyManager not available'}
-
-    # ─── Email / PGP ───────────────────────────────────────────────────────────
+        logger.warning("PersonalPrivacyManager not available")
+        return {"success": False, "error": "PersonalPrivacyManager not available"}
 
     async def send_anonymous_email(
         self,
         to_address: str,
         subject: str,
         body: str,
-        provider: str = 'protonmail',
+        provider: str = "protonmail",
         use_tor: bool = True,
         encrypt: bool = False,
         recipient_key: str | None = None,
@@ -269,58 +279,67 @@ class OpsECCoordinator(UniversalCoordinator):
             from hledac.universal.privacy_protection.anonymous_communication import (
                 EmailConfig,
                 TorMailer,
-    )
+            )
+
             mailer = TorMailer(use_tor=use_tor)
             config = EmailConfig(
-                smtp_server='127.0.0.1' if use_tor else 'smtp.protonmail.com',
+                smtp_server="127.0.0.1" if use_tor else "smtp.protonmail.com",
                 smtp_port=1025 if use_tor else 587,
-                username='anonymous@protonmail.com',
-                password='',
+                username="anonymous@protonmail.com",
+                password="",
                 use_tls=not use_tor,
                 use_tor=use_tor,
-    )
+            )
             success = await mailer.send_email(
-                config=config, to_address=to_address, subject=subject, body=body,
-                encrypt=encrypt, recipient_key=recipient_key,
-    )
+                config=config,
+                to_address=to_address,
+                subject=subject,
+                body=body,
+                encrypt=encrypt,
+                recipient_key=recipient_key,
+            )
             return {
-                'success': success, 'provider': provider, 'tor_used': use_tor,
-                'encrypted': encrypt, 'recipient': to_address,
-                'privacy_level': 'maximum' if use_tor and encrypt else 'high',
+                "success": success,
+                "provider": provider,
+                "tor_used": use_tor,
+                "encrypted": encrypt,
+                "recipient": to_address,
+                "privacy_level": "maximum" if use_tor and encrypt else "high",
             }
         except ImportError:
-            logger.warning('Anonymous communication module not available')
-            return {'success': False, 'error': 'Module not available'}
+            logger.warning("Anonymous communication module not available")
+            return {"success": False, "error": "Module not available"}
         except Exception as e:
-            logger.error(f'Anonymous email failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Anonymous email failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def create_pgp_identity(
         self,
         name: str,
         email: str,
-        key_type: str = 'RSA',
+        key_type: str = "RSA",
         key_length: int = 4096,
     ) -> dict[str, Any]:
         """Create PGP identity for secure communication."""
         try:
             from hledac.universal.privacy_protection.anonymous_communication import PGPManager
+
             manager = PGPManager()
             key = manager.generate_key(name, email, key_type, key_length)
             if key:
                 return {
-                    'success': True,
-                    'key_id': key.key_id,
-                    'fingerprint': key.fingerprint,
-                    'public_key': key.public_key[:100] + '...',
-                    'created_at': key.created_at.isoformat(),
-                    'expires_at': key.expires_at.isoformat() if key.expires_at else None,
+                    "success": True,
+                    "key_id": key.key_id,
+                    "fingerprint": key.fingerprint,
+                    "public_key": key.public_key[:100] + "...",
+                    "created_at": key.created_at.isoformat(),
+                    "expires_at": key.expires_at.isoformat() if key.expires_at else None,
                 }
-            return {'success': False, 'error': 'Key generation failed'}
+            return {"success": False, "error": "Key generation failed"}
         except ImportError:
-            return {'success': False, 'error': 'PGPManager not available'}
+            return {"success": False, "error": "PGPManager not available"}
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            return {"success": False, "error": str(e)}
 
     async def establish_secure_channel(
         self,
@@ -331,61 +350,58 @@ class OpsECCoordinator(UniversalCoordinator):
         try:
             from hledac.universal.privacy_protection.anonymous_communication import (
                 SecureChannelManager,
-    )
+            )
+
             manager = SecureChannelManager()
             channel = manager.create_channel(participant_ids, channel_name)
             if channel:
                 return {
-                    'success': True,
-                    'channel_id': channel.channel_id,
-                    'participants': list(channel.participants),
-                    'encryption': 'AES-256-GCM',
-                    'created_at': channel.created_at.isoformat(),
+                    "success": True,
+                    "channel_id": channel.channel_id,
+                    "participants": list(channel.participants),
+                    "encryption": "AES-256-GCM",
+                    "created_at": channel.created_at.isoformat(),
                 }
-            return {'success': False, 'error': 'Channel creation failed'}
+            return {"success": False, "error": "Channel creation failed"}
         except ImportError:
-            return {'success': False, 'error': 'SecureChannelManager not available'}
+            return {"success": False, "error": "SecureChannelManager not available"}
         except Exception as e:
-            return {'success': False, 'error': str(e)}
-
-    # ─── Leak Detection ────────────────────────────────────────────────────────
+            return {"success": False, "error": str(e)}
 
     async def check_data_leaks(
         self,
         target: str,
-        target_type: str = 'email',
+        target_type: str = "email",
     ) -> dict[str, Any]:
         """Check for data leaks using DataLeakHunter."""
         try:
             from hledac.universal.intel.data_leak_hunter import DataLeakHunter
+
             hunter = DataLeakHunter()
             await hunter.initialize()
             await hunter.add_target(target, target_type)
             alerts = await hunter.check_target(target, target_type)
             return {
-                'success': True,
-                'target': target,
-                'alerts_count': len(alerts),
-                'alerts': [
+                "success": True,
+                "target": target,
+                "alerts_count": len(alerts),
+                "alerts": [
                     {
-                        'severity': alert.severity.value,
-                        'source': alert.source.value,
-                        'breach_name': alert.breach_name,
-                        'timestamp': alert.timestamp.isoformat(),
+                        "severity": alert.severity.value,
+                        "source": alert.source.value,
+                        "breach_name": alert.breach_name,
+                        "timestamp": alert.timestamp.isoformat(),
                     }
                     for alert in alerts
                 ],
-                'high_risk': sum(
-                    1 for a in alerts
-                    if a.severity.value in ('high', 'critical')
-                ),
+                "high_risk": sum(1 for a in alerts if a.severity.value in ("high", "critical")),
             }
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('DataLeakHunter not available')
-            return {'success': False, 'error': 'DataLeakHunter not available'}
+        except ImportError, ModuleNotFoundError:
+            logger.warning("DataLeakHunter not available")
+            return {"success": False, "error": "DataLeakHunter not available"}
         except Exception as e:
-            logger.error(f'Data leak check failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Data leak check failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def manage_data_leak_monitoring(
         self,
@@ -397,27 +413,31 @@ class OpsECCoordinator(UniversalCoordinator):
         """Manage continuous data leak monitoring."""
         try:
             from hledac.universal.stealth_osint.data_leak_hunter import DataLeakHunter
-            if not hasattr(self, '_leak_hunter'):
+
+            if not hasattr(self, "_leak_hunter"):
                 self._leak_hunter = DataLeakHunter(check_interval=check_interval)
                 await self._leak_hunter.initialize()
             hunter = self._leak_hunter
-            if action == 'start':
+            if action == "start":
                 await hunter.start_monitoring()
                 return {
-                    'success': True, 'action': 'start_monitoring',
-                    'interval': check_interval,
-                    'targets_count': len(hunter._targets),
+                    "success": True,
+                    "action": "start_monitoring",
+                    "interval": check_interval,
+                    "targets_count": len(hunter._targets),
                 }
-            elif action == 'stop':
+            elif action == "stop":
                 await hunter.stop_monitoring()
-                return {'success': True, 'action': 'stop_monitoring'}
-            elif action == 'add_target' and target and target_type:
+                return {"success": True, "action": "stop_monitoring"}
+            elif action == "add_target" and target and target_type:
                 target_id = await hunter.add_target(target, target_type)
                 return {
-                    'success': True, 'action': 'add_target',
-                    'target_id': target_id, 'target': target,
+                    "success": True,
+                    "action": "add_target",
+                    "target_id": target_id,
+                    "target": target,
                 }
-            elif action == 'remove_target' and target:
+            elif action == "remove_target" and target:
                 target_id = None
                 for tid, t in hunter._targets.items():
                     if t.value == target:
@@ -425,25 +445,23 @@ class OpsECCoordinator(UniversalCoordinator):
                         break
                 if target_id:
                     success = await hunter.remove_target(target_id)
-                    return {'success': success, 'action': 'remove_target', 'target': target}
-                return {'success': False, 'error': 'Target not found'}
-            elif action == 'status':
+                    return {"success": success, "action": "remove_target", "target": target}
+                return {"success": False, "error": "Target not found"}
+            elif action == "status":
                 return {
-                    'success': True,
-                    'action': 'status',
-                    'is_monitoring': hunter._is_monitoring,
-                    'targets_count': len(hunter._targets),
-                    'checks_performed': hunter._checks_performed,
-                    'alerts_generated': hunter._alerts_generated,
+                    "success": True,
+                    "action": "status",
+                    "is_monitoring": hunter._is_monitoring,
+                    "targets_count": len(hunter._targets),
+                    "checks_performed": hunter._checks_performed,
+                    "alerts_generated": hunter._alerts_generated,
                 }
-            return {'success': False, 'error': f'Unknown action: {action}'}
+            return {"success": False, "error": f"Unknown action: {action}"}
         except ImportError:
-            return {'success': False, 'error': 'DataLeakHunter not available'}
+            return {"success": False, "error": "DataLeakHunter not available"}
         except Exception as e:
-            logger.error(f'Monitoring management failed: {e}')
-            return {'success': False, 'error': str(e)}
-
-    # ─── Stealth / Scraping ────────────────────────────────────────────────────
+            logger.error(f"Monitoring management failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def stealth_scrape(
         self,
@@ -454,31 +472,32 @@ class OpsECCoordinator(UniversalCoordinator):
         """Stealth web scraping with anti-detection via StealthWebScraper."""
         try:
             from hledac.universal.intel.stealth_crawler import StealthWebScraper
+
             scraper = StealthWebScraper()
             await scraper.initialize()
             result = await scraper.scrape(url=url, headers=None, use_proxy=protection_bypass)
             return {
-                'success': result.success,
-                'content': result.content,
-                'status_code': result.status_code,
-                'protection_detected': result.protection_detected.value,
-                'bypass_method': result.bypass_method_used.value,
-                'duration': result.duration,
-                'proxy_used': result.proxy_used,
+                "success": result.success,
+                "content": result.content,
+                "status_code": result.status_code,
+                "protection_detected": result.protection_detected.value,
+                "bypass_method": result.bypass_method_used.value,
+                "duration": result.duration,
+                "proxy_used": result.proxy_used,
             }
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('StealthWebScraper not available')
-            return {'success': False, 'error': 'StealthWebScraper not available'}
+        except ImportError, ModuleNotFoundError:
+            logger.warning("StealthWebScraper not available")
+            return {"success": False, "error": "StealthWebScraper not available"}
         except Exception as e:
-            logger.error(f'Stealth scraping failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Stealth scraping failed: {e}")
+            return {"success": False, "error": str(e)}
 
     async def stealth_request_with_jitter(
         self,
         url: str,
-        method: str = 'GET',
+        method: str = "GET",
         headers: dict[str, str] | None = None,
-        impersonate: str = 'chrome110',
+        impersonate: str = "chrome110",
         jitter_shape: float = 1.5,
         jitter_scale: float = 2.0,
         min_delay: float = 0.5,
@@ -500,13 +519,16 @@ class OpsECCoordinator(UniversalCoordinator):
         - Proper proxy configuration for Tor/I2P
         """
         import asyncio
+
         start_time = time.time()
         delay: float = 0.0  # BLITZ-12: default to 0 (no jitter) when blitz mode active
         try:
             from hledac.universal._core.telemetry.context_state import is_blitz_mode as _is_blitz
+
             if not _is_blitz():
                 try:
                     import numpy as np
+
                     delay = np.random.weibull(jitter_shape) * jitter_scale
                 except ImportError:
                     delay = _RNG.uniform(min_delay, max_delay)
@@ -515,106 +537,110 @@ class OpsECCoordinator(UniversalCoordinator):
 
             # E1 FIX: Use canonical transport layer instead of raw AsyncSession
             # This ensures fail-closed darknet guard, JA3 rotation, session reuse, max_bytes cap
-            
+
             # E1 ENHANCEMENT: Auto-detect darknet TLDs and configure proxies
             # This ensures fail-closed behavior - darknet URLs require proxy configuration
             from hledac.universal.transport.curl_cffi_fetch import _DARKNET_TLDS
-            
+
             def _get_darknet_proxy(url: str) -> dict[str, str] | None:
                 """Detect darknet TLD and return appropriate proxy config."""
                 try:
                     from urllib.parse import urlparse
+
                     parsed = urlparse(url)
                     host = parsed.netloc.lower().split(":")[0]
                 except Exception:
                     return None
-                
+
                 is_darknet = any(host.endswith(tld) for tld in _DARKNET_TLDS)
                 if is_darknet:
-                    # Import proxy URLs from canonical transport module
                     from hledac.universal.transport.curl_cffi_fetch import (
-                        _TOR_CURL_PROXY, _I2P_CURL_PROXY,
-    )
-                    if host.endswith('.onion') or host.endswith('.b32.i2p'):
+                        _I2P_CURL_PROXY,
+                        _TOR_CURL_PROXY,
+                    )
+
+                    if host.endswith(".onion") or host.endswith(".b32.i2p"):
                         return {"http": _TOR_CURL_PROXY, "https": _TOR_CURL_PROXY}
-                    elif host.endswith('.i2p'):
+                    elif host.endswith(".i2p"):
                         return {"http": _I2P_CURL_PROXY, "https": _I2P_CURL_PROXY}
                 return None
-            
+
             proxies = _get_darknet_proxy(url)
-            
-            if method.upper() == 'GET':
+
+            if method.upper() == "GET":
                 # Use canonical fetch_via_curl_cffi_cached for GET requests
                 from hledac.universal.fetching.curl_cffi_fetch import (
                     fetch_via_curl_cffi_cached,
-    )
+                )
+
                 fetch_kwargs = {
-                    'url': url,
-                    'headers': headers,
-                    'timeout_s': 10.0,  # Default timeout
-                    'max_bytes': 5_000_000,  # 5MB cap
-                    'profile': impersonate,
+                    "url": url,
+                    "headers": headers,
+                    "timeout_s": 10.0,  # Default timeout
+                    "max_bytes": 5_000_000,  # 5MB cap
+                    "profile": impersonate,
                 }
                 if proxies:
-                    fetch_kwargs['proxies'] = proxies
+                    fetch_kwargs["proxies"] = proxies
                 result = await fetch_via_curl_cffi_cached(**fetch_kwargs)
                 elapsed = time.time() - start_time
                 # Adapt return format to match original interface
-                content = result.get('content', b'')
+                content = result.get("content", b"")
                 if isinstance(content, bytes):
-                    content = content[:5000].decode('utf-8', errors='replace')
+                    content = content[:5000].decode("utf-8", errors="replace")
                 else:
                     content = str(content)[:5000]
                 return {
-                    'success': result.get('success', False),
-                    'url': url,
-                    'status_code': result.get('status_code', 0),
-                    'content': content,
-                    'headers': result.get('headers', {}),
-                    'elapsed_seconds': elapsed,
-                    'jitter_delay': delay,
-                    'impersonate': impersonate,
-                    'method': 'curl_cffi_cached',
+                    "success": result.get("success", False),
+                    "url": url,
+                    "status_code": result.get("status_code", 0),
+                    "content": content,
+                    "headers": result.get("headers", {}),
+                    "elapsed_seconds": elapsed,
+                    "jitter_delay": delay,
+                    "impersonate": impersonate,
+                    "method": "curl_cffi_cached",
                 }
             else:
                 # For POST and other methods, use fetch_via_curl_cffi_with_caps_check
                 # This still goes through the canonical layer but without caching
                 from hledac.universal.fetching.curl_cffi_fetch import (
                     fetch_via_curl_cffi_with_caps_check,
-    )
+                )
+
                 fetch_kwargs = {
-                    'url': url,
-                    'headers': headers,
-                    'timeout_s': 10.0,
-                    'max_bytes': 5_000_000,
-                    'profile': impersonate,
+                    "url": url,
+                    "headers": headers,
+                    "timeout_s": 10.0,
+                    "max_bytes": 5_000_000,
+                    "profile": impersonate,
                 }
                 if proxies:
-                    fetch_kwargs['proxies'] = proxies
+                    fetch_kwargs["proxies"] = proxies
                 result = await fetch_via_curl_cffi_with_caps_check(**fetch_kwargs)
                 if result is None:
                     raise RuntimeError("curl_cffi not available via CAPS")
                 elapsed = time.time() - start_time
-                content = result.get('content', b'')
+                content = result.get("content", b"")
                 if isinstance(content, bytes):
-                    content = content[:5000].decode('utf-8', errors='replace')
+                    content = content[:5000].decode("utf-8", errors="replace")
                 else:
                     content = str(content)[:5000]
                 return {
-                    'success': result.get('success', False),
-                    'url': url,
-                    'status_code': result.get('status_code', 0),
-                    'content': content,
-                    'headers': result.get('headers', {}),
-                    'elapsed_seconds': elapsed,
-                    'jitter_delay': delay,
-                    'impersonate': impersonate,
-                    'method': 'curl_cffi',
+                    "success": result.get("success", False),
+                    "url": url,
+                    "status_code": result.get("status_code", 0),
+                    "content": content,
+                    "headers": result.get("headers", {}),
+                    "elapsed_seconds": elapsed,
+                    "jitter_delay": delay,
+                    "impersonate": impersonate,
+                    "method": "curl_cffi",
                 }
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error(f'Stealth request failed for {url}: {e}')
-            return {'success': False, 'url': url, 'error': str(e), 'elapsed_seconds': elapsed}
+            logger.error(f"Stealth request failed for {url}: {e}")
+            return {"success": False, "url": url, "error": str(e), "elapsed_seconds": elapsed}
 
     async def batch_stealth_requests(
         self,
@@ -632,28 +658,30 @@ class OpsECCoordinator(UniversalCoordinator):
         async def fetch_with_limit(url: str) -> dict[str, Any]:
             async with semaphore:
                 return await self.stealth_request_with_jitter(
-                    url, min_delay=jitter_range[0], max_delay=jitter_range[1],
-    )
+                    url,
+                    min_delay=jitter_range[0],
+                    max_delay=jitter_range[1],
+                )
 
         tasks = [fetch_with_limit(url) for url in urls]
-        _sec_result = await parallel(tasks, policy='log', ctx='opsec_coordinator')
+        _sec_result = await parallel(tasks, policy="log", ctx="opsec_coordinator")
         results = _sec_result.ok
         processed = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                processed.append({'success': False, 'url': urls[i], 'error': str(result)})
+                processed.append({"success": False, "url": urls[i], "error": str(result)})
             else:
                 processed.append(result)
         return processed
 
-    async def enable_stealth_mode(self, level: str = 'medium') -> dict[str, Any]:
+    async def enable_stealth_mode(self, level: str = "medium") -> dict[str, Any]:
         """Enable stealth mode via AnonymityManager."""
         try:
-            logger.warning('AnonymityManager not available, stealth mode unavailable')
-            return {'success': False, 'error': 'Anonymity Manager not available', 'level': level}
+            logger.warning("AnonymityManager not available, stealth mode unavailable")
+            return {"success": False, "error": "Anonymity Manager not available", "level": level}
         except Exception as e:
-            logger.error(f'Stealth activation failed: {e}')
-            return {'success': False, 'error': str(e)}
+            logger.error(f"Stealth activation failed: {e}")
+            return {"success": False, "error": str(e)}
 
     def is_stealth_active(self) -> bool:
         """Check if stealth mode is currently active."""
@@ -665,13 +693,13 @@ class OpsECCoordinator(UniversalCoordinator):
 
     def get_browser_fingerprint(
         self,
-        platform: str = 'macos',
-        browser: str = 'chrome',
+        platform: str = "macos",
+        browser: str = "chrome",
         domain: str | None = None,
     ) -> dict[str, Any]:
         """Get browser fingerprint via FingerprintManager."""
-        logger.warning('FingerprintManager not available')
-        return {'success': False, 'error': 'FingerprintManager not available'}
+        logger.warning("FingerprintManager not available")
+        return {"success": False, "error": "FingerprintManager not available"}
 
     async def resurrect_from_archive(
         self,
@@ -682,48 +710,50 @@ class OpsECCoordinator(UniversalCoordinator):
         """Resurrect content from web archives using ArchiveResurrector."""
         try:
             from hledac.universal.intel.archive_discovery import ArchiveResurrector
+
             resurrector = ArchiveResurrector()
             await resurrector.initialize()
             parsed_date = None
             if target_date:
                 from datetime import datetime
+
                 with contextlib.suppress(ValueError):
                     parsed_date = datetime.fromisoformat(target_date)
             result = await resurrector.resurrect(url=url, target_date=parsed_date, min_quality=None)
             return {
-                'success': result.success,
-                'content': result.content,
-                'title': result.title,
-                'snapshots_found': len(result.all_snapshots),
-                'best_snapshot': result.best_snapshot.snapshot_id if result.best_snapshot else None,
-                'processing_time': result.processing_time,
+                "success": result.success,
+                "content": result.content,
+                "title": result.title,
+                "snapshots_found": len(result.all_snapshots),
+                "best_snapshot": result.best_snapshot.snapshot_id if result.best_snapshot else None,
+                "processing_time": result.processing_time,
             }
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('ArchiveResurrector not available')
-            return {'success': False, 'error': 'ArchiveResurrector not available'}
+        except ImportError, ModuleNotFoundError:
+            logger.warning("ArchiveResurrector not available")
+            return {"success": False, "error": "ArchiveResurrector not available"}
         except Exception as e:
-            logger.error(f'Archive resurrection failed: {e}')
-            return {'success': False, 'error': str(e)}
-
-    # ─── Shared state helpers ──────────────────────────────────────────────────
+            logger.error(f"Archive resurrection failed: {e}")
+            return {"success": False, "error": str(e)}
 
     def get_available_security_systems(self) -> dict[str, bool]:
         """Get availability status of all OPSEC systems."""
-        return {'stealth': self._stealth_available}
+        return {"stealth": self._stealth_available}
 
     def get_security_stats(self) -> dict[str, int]:
         """Get OPSEC operation statistics."""
-        return {'stealth_activations': self._stealth_activations}
+        return {"stealth_activations": self._stealth_activations}
 
     def _get_feature_list(self) -> list[str]:
         """Report available OPSEC features."""
-        features = ['OPSEC coordinator']
+        features = ["OPSEC coordinator"]
         if self._stealth_available:
-            features.append('Stealth/Evasion Operations')
-        features.extend([
-            'Privacy connections (VPN/Tor)',
-            'Anonymous email',
-            'PGP identity management',
-            'Data leak monitoring',
-        ])
+            features.append("Stealth/Evasion Operations")
+        features.extend(
+            [
+                "Privacy connections (VPN/Tor)",
+                "Anonymous email",
+                "PGP identity management",
+                "Data leak monitoring",
+            ]
+        )
         return features

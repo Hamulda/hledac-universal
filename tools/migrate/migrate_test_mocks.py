@@ -2,7 +2,6 @@
 """
 Migrate Test Files to Spec-Based Mocks — Issue 1.2
 
-
 Usage:
     # Preview changes (dry-run)
     python tools/migrate_test_mocks.py --dry-run tests/test_storage_router.py
@@ -13,7 +12,6 @@ Usage:
     # Apply to all mock-heavy files
     python tools/migrate_test_mocks.py --all
 
-    # Check migration status
     python tools/migrate_test_mocks.py --status
 
 Patterns this handles:
@@ -31,11 +29,6 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
-from _core import aclose
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Mapping: mock variable patterns → spec class
-# ─────────────────────────────────────────────────────────────────────────────
 
 MOCK_SPEC_MAP: dict[str, tuple[str, str]] = {
     # NOTE: mock_governor intentionally NO spec= because M1ResourceGovernor has no Protocol
@@ -92,7 +85,7 @@ def find_mock_creations(content: str) -> list[dict]:
                 "pos": match.start(),
                 "end": match.end(),
             }
-    )
+        )
 
     # Find AsyncMock() creations
     for match in re.finditer(r"(\w+)\s*=\s*AsyncMock\s*\(\s*\)", content):
@@ -106,14 +99,13 @@ def find_mock_creations(content: str) -> list[dict]:
                 "pos": match.start(),
                 "end": match.end(),
             }
-    )
+        )
 
     return results
 
 
 def find_spec_class_for_var(var_name: str) -> str | None:
     """Find the spec class for a given variable name."""
-    # Check exact matches
     for prefix, (_, spec_class) in MOCK_SPEC_MAP.items():
         if var_name.startswith(prefix):
             return spec_class
@@ -133,7 +125,7 @@ def add_spec_to_mock(line: str, var_name: str, spec_class: str) -> str:
 
 def get_import_for_spec(spec_class: str) -> str:
     """Get the import statement for a spec class."""
-    for prefix, (import_stmt, spec) in MOCK_SPEC_MAP.items():
+    for _prefix, (import_stmt, spec) in MOCK_SPEC_MAP.items():
         if spec == spec_class:
             return import_stmt
     return None

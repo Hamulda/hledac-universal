@@ -3,9 +3,6 @@ JTMS — Justification-based Truth Maintenance System.
 
 Provides belief revision with dependency tracking for multi-source evidence fusion.
 
-
-
-
 When a source is retracted, all facts derived from it are revised automatically.
 
 Architecture:
@@ -31,9 +28,8 @@ Usage:
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
-from _core import aclose
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +45,7 @@ class Justification:
         timestamp: Unix timestamp when this justification was created
         source_reliability: Aggregate reliability score of sources (0..1)
     """
+
     fact_id: str
     source_ids: tuple[str, ...]
     inference_rule: str
@@ -76,6 +73,7 @@ class EvidenceRecord:
         source_id: Identifier of the source providing this evidence
         timestamp: Unix timestamp when evidence was added
     """
+
     evidence_id: str
     hypothesis: str
     mass: float
@@ -95,6 +93,7 @@ class BetaEvidenceRecord:
         source_id: Source identifier
         timestamp: Unix timestamp when evidence was added
     """
+
     evidence_id: str
     weight: float
     source_id: str
@@ -115,7 +114,7 @@ class JTMS:
         - No external DB required — pure in-memory with optional persistence
     """
 
-    __slots__ = ('_facts', '_justifications', '_source_index', '_fact_counter')
+    __slots__ = ("_facts", "_justifications", "_source_index", "_fact_counter")
 
     def __init__(self) -> None:
         self._facts: dict[str, dict[str, Any]] = {}
@@ -161,18 +160,17 @@ class JTMS:
             inference_rule=inference_rule,
             timestamp=timestamp,
             source_reliability=source_reliability,
-    )
+        )
 
         self._facts[fact_id] = {
-            'ioc_id': ioc_id,
-            'confidence': confidence,
-            'justification': justification,
-            'metadata': metadata or {},
-            'active': True,
+            "ioc_id": ioc_id,
+            "confidence": confidence,
+            "justification": justification,
+            "metadata": metadata or {},
+            "active": True,
         }
         self._justifications[fact_id] = justification
 
-        # Update source index
         for source_id in source_ids:
             if source_id not in self._source_index:
                 self._source_index[source_id] = set()
@@ -204,20 +202,18 @@ class JTMS:
                 continue
 
             fact = self._facts[fact_id]
-            if not fact['active']:
+            if not fact["active"]:
                 continue
 
             # Mark fact as inactive
-            fact['active'] = False
+            fact["active"] = False
             revised_count += 1
 
-            # Remove from all source indices
-            justification = fact['justification']
+            justification = fact["justification"]
             for sid in justification.source_ids:
                 if sid in self._source_index:
                     self._source_index[sid].discard(fact_id)
 
-        # Clean up source index
         if source_id in self._source_index:
             del self._source_index[source_id]
 
@@ -226,7 +222,7 @@ class JTMS:
     def get_fact(self, fact_id: str) -> dict[str, Any] | None:
         """Retrieve a fact by ID (returns None if not found or inactive)."""
         fact = self._facts.get(fact_id)
-        if fact and fact['active']:
+        if fact and fact["active"]:
             return fact
         return None
 
@@ -238,23 +234,20 @@ class JTMS:
         """Get all active fact IDs justified by a source."""
         if source_id not in self._source_index:
             return []
-        return [fid for fid in self._source_index[source_id] if self._facts[fid]['active']]
+        return [fid for fid in self._source_index[source_id] if self._facts[fid]["active"]]
 
     def get_facts_by_ioc(self, ioc_id: str) -> list[dict[str, Any]]:
         """Get all active facts for a specific IOC."""
-        return [
-            fact for fact in self._facts.values()
-            if fact['active'] and fact['ioc_id'] == ioc_id
-        ]
+        return [fact for fact in self._facts.values() if fact["active"] and fact["ioc_id"] == ioc_id]
 
     def stats(self) -> dict[str, int]:
         """Return JTMS statistics."""
-        active_facts = sum(1 for f in self._facts.values() if f['active'])
+        active_facts = sum(1 for f in self._facts.values() if f["active"])
         return {
-            'total_facts': len(self._facts),
-            'active_facts': active_facts,
-            'inactive_facts': len(self._facts) - active_facts,
-            'tracked_sources': len(self._source_index),
+            "total_facts": len(self._facts),
+            "active_facts": active_facts,
+            "inactive_facts": len(self._facts) - active_facts,
+            "tracked_sources": len(self._source_index),
         }
 
 
@@ -290,9 +283,9 @@ def apply_temporal_decay(
 
 
 __all__ = [
-    'JTMS',
-    'Justification',
-    'EvidenceRecord',
-    'BetaEvidenceRecord',
-    'apply_temporal_decay',
+    "JTMS",
+    "Justification",
+    "EvidenceRecord",
+    "BetaEvidenceRecord",
+    "apply_temporal_decay",
 ]

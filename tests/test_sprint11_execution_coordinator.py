@@ -6,13 +6,15 @@ Tests:
 2. inject_worker_pool sets _worker_pool
 3. Memory-aware concurrency via AdaptiveWorkerPool.get_max_workers()
 """
+
 import asyncio
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from hledac.universal.coordinators.execution_coordinator import (
-    ExecutionTask,
     ExecutionResult,
+    ExecutionTask,
     UniversalExecutionCoordinator,
 )
 
@@ -33,14 +35,14 @@ class TestSprint11ExecuteBatch:
         return pool
 
     @pytest.mark.asyncio
-    async def test_inject_worker_pool(self, coordinator):
+    async def test_inject_worker_pool(self, coordinator) -> None:
         """ISSUE-011: inject_worker_pool sets _worker_pool."""
         pool = MagicMock()
         coordinator.inject_worker_pool(pool)
         assert coordinator._worker_pool is pool
 
     @pytest.mark.asyncio
-    async def test_execute_batch_without_pool(self, coordinator):
+    async def test_execute_batch_without_pool(self, coordinator) -> None:
         """ISSUE-011: Falls back to max_parallel when no pool injected."""
         tasks = [
             ExecutionTask(
@@ -70,7 +72,7 @@ class TestSprint11ExecuteBatch:
         assert all(r.success for r in results)
 
     @pytest.mark.asyncio
-    async def test_execute_batch_with_pool_uses_min(self, coordinator, mock_worker_pool):
+    async def test_execute_batch_with_pool_uses_min(self, coordinator, mock_worker_pool) -> None:
         """ISSUE-011: Uses min(max_parallel, pool.get_max_workers()) for concurrency."""
         coordinator.inject_worker_pool(mock_worker_pool)
 
@@ -107,7 +109,7 @@ class TestSprint11ExecuteBatch:
         mock_worker_pool.get_max_workers.assert_called()
 
     @pytest.mark.asyncio
-    async def test_execute_batch_pool_exception_fallback(self, coordinator):
+    async def test_execute_batch_pool_exception_fallback(self, coordinator) -> None:
         """ISSUE-011: Falls back to max_parallel if pool.get_max_workers() raises."""
         pool = MagicMock()
         pool.get_max_workers.side_effect = RuntimeError("Pool error")

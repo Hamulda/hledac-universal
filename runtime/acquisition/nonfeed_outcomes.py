@@ -19,14 +19,11 @@ MODERNIZATION (Issue #18):
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import msgspec
-from _core import aclose
 
 from compat.msgspec_gc_compat import Struct
-
 
 # ── NonfeedPlanDebug ─────────────────────────────────────────────────────────
 

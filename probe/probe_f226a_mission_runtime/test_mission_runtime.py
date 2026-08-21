@@ -9,9 +9,7 @@ Scope: acquisition_strategy.py, pivot_planner.py, sprint_scheduler.py.
 No network, no model load.
 """
 
-
 import pytest
-
 from hledac.universal.runtime.acquisition_strategy import (
     AcquisitionStrategySnapshot,
     MissionIntent,
@@ -19,14 +17,14 @@ from hledac.universal.runtime.acquisition_strategy import (
     build_acquisition_report,
 )
 from hledac.universal.runtime.pivot_planner import (
-    generate_pivot_candidates_from_query,
-    score_pivot_for_mission,
     Pivot,
     PivotType,
+    generate_pivot_candidates_from_query,
+    score_pivot_for_mission,
 )
 
-
 # ── shared helpers ────────────────────────────────────────────────────────────
+
 
 def _snap(query: str, uma: str = "ok") -> AcquisitionStrategySnapshot:
     return build_acquisition_plan(
@@ -45,7 +43,8 @@ def _snap(query: str, uma: str = "ok") -> AcquisitionStrategySnapshot:
 
 # ── Task 2: domain query → domain_recon, expected lanes include PUBLIC/CT/WAYBACK/PASSIVE_DNS/PIVOT_EXECUTOR ──
 
-def test_domain_recon_expected_lanes_include_public_ct_wayback_passive_dns_pivot():
+
+def test_domain_recon_expected_lanes_include_public_ct_wayback_passive_dns_pivot() -> None:
     snap = _snap("mozilla.org")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -62,7 +61,7 @@ def test_domain_recon_expected_lanes_include_public_ct_wayback_passive_dns_pivot
     assert "PASSIVE_DNS" in optional, f"PASSIVE_DNS not in optional lanes: {optional}"
 
 
-def test_domain_recon_nonfeed_profile_expected_lanes():
+def test_domain_recon_nonfeed_profile_expected_lanes() -> None:
     snap = _snap("example.com")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -74,7 +73,8 @@ def test_domain_recon_nonfeed_profile_expected_lanes():
 
 # ── Task 2: CVE query → cve_recon, does NOT disable FEED ────────────────────
 
-def test_cve_recon_does_not_disable_feed():
+
+def test_cve_recon_does_not_disable_feed() -> None:
     snap = _snap("CVE-2024-1234")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -85,7 +85,7 @@ def test_cve_recon_does_not_disable_feed():
     assert feed_plan.enabled, "FEED must not be disabled by cve_recon mission intent"
 
 
-def test_cve_recon_required_lanes_public_ct_pivot():
+def test_cve_recon_required_lanes_public_ct_pivot() -> None:
     snap = _snap("CVE-2021-44228")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -97,7 +97,8 @@ def test_cve_recon_required_lanes_public_ct_pivot():
 
 # ── Task 2: wallet query → wallet_recon, BLOCKCHAIN only when crypto indicators present ──
 
-def test_wallet_recon_expected_lanes():
+
+def test_wallet_recon_expected_lanes() -> None:
     snap = _snap("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -111,7 +112,7 @@ def test_wallet_recon_expected_lanes():
     assert "CT" in optional
 
 
-def test_wallet_recon_nonfeed_profile_expected_lanes():
+def test_wallet_recon_nonfeed_profile_expected_lanes() -> None:
     snap = _snap("0x71C7656EC7aB44D0bE590Ba897C0c6B6bE8F5Ef3")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -123,7 +124,8 @@ def test_wallet_recon_nonfeed_profile_expected_lanes():
 
 # ── Task 2: person/email query → person_recon, leak/identity pivot types rank higher ──
 
-def test_person_recon_leak_identity_pivots_boosted():
+
+def test_person_recon_leak_identity_pivots_boosted() -> None:
     snap = _snap("john.doe@example.com")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -135,25 +137,39 @@ def test_person_recon_leak_identity_pivots_boosted():
     assert "CT" in optional or "PASSIVE_DNS" in optional
 
 
-def test_person_recon_pivot_scoring_boosts_leak_identity():
+def test_person_recon_pivot_scoring_boosts_leak_identity() -> None:
     # Verify score_pivot_for_mission boosts leak/identity for person_recon
-    from hledac.universal.runtime.pivot_planner import Pivot, PivotType
     leak_pivot = Pivot(
-        priority=-0.7, pivot_id="test-leak", pivot_type=PivotType.LEAK,
-        ioc_value="test@example.com", ioc_type="email",
-        reason="leak check", expected_value=0.7, source_hint="test",
+        priority=-0.7,
+        pivot_id="test-leak",
+        pivot_type=PivotType.LEAK,
+        ioc_value="test@example.com",
+        ioc_type="email",
+        reason="leak check",
+        expected_value=0.7,
+        source_hint="test",
         evidence_pointers=(),
     )
     identity_pivot = Pivot(
-        priority=-0.5, pivot_id="test-id", pivot_type=PivotType.IDENTITY,
-        ioc_value="test@example.com", ioc_type="email",
-        reason="identity check", expected_value=0.5, source_hint="test",
+        priority=-0.5,
+        pivot_id="test-id",
+        pivot_type=PivotType.IDENTITY,
+        ioc_value="test@example.com",
+        ioc_type="email",
+        reason="identity check",
+        expected_value=0.5,
+        source_hint="test",
         evidence_pointers=(),
     )
     graph_pivot = Pivot(
-        priority=-0.6, pivot_id="test-graph", pivot_type=PivotType.GRAPH,
-        ioc_value="test@example.com", ioc_type="email",
-        reason="graph check", expected_value=0.6, source_hint="test",
+        priority=-0.6,
+        pivot_id="test-graph",
+        pivot_type=PivotType.GRAPH,
+        ioc_value="test@example.com",
+        ioc_type="email",
+        reason="graph check",
+        expected_value=0.6,
+        source_hint="test",
         evidence_pointers=(),
     )
     leak_boost = score_pivot_for_mission(leak_pivot, MissionIntent.PERSON_RECON)
@@ -167,7 +183,8 @@ def test_person_recon_pivot_scoring_boosts_leak_identity():
 
 # ── Task 2: unknown query → safe/default behavior unchanged ──────────────────
 
-def test_unknown_intent_safe_lanes_only():
+
+def test_unknown_intent_safe_lanes_only() -> None:
     snap = _snap("random unknown query text")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -177,7 +194,7 @@ def test_unknown_intent_safe_lanes_only():
     assert debug.mission_pivot_boost_applied is False, "unknown intent must not set mission_pivot_boost_applied=True"
 
 
-def test_unknown_intent_nonfeed_profile_expected_lanes_empty():
+def test_unknown_intent_nonfeed_profile_expected_lanes_empty() -> None:
     snap = _snap("who is the CEO of this company")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -189,7 +206,8 @@ def test_unknown_intent_nonfeed_profile_expected_lanes_empty():
 
 # ── Task 5: telemetry fields ────────────────────────────────────────────────────
 
-def test_mission_runtime_applied_set_for_known_intents():
+
+def test_mission_runtime_applied_set_for_known_intents() -> None:
     for query, expected_intent in [
         ("mozilla.org", MissionIntent.DOMAIN_RECON),
         ("CVE-2024-1234", MissionIntent.CVE_RECON),
@@ -201,10 +219,12 @@ def test_mission_runtime_applied_set_for_known_intents():
         debug = snap.nonfeed_plan_debug
         assert debug is not None
         assert debug.mission_intent == expected_intent
-        assert debug.mission_runtime_applied is True, f"{query}: mission_runtime_applied should be True for {expected_intent}"
+        assert debug.mission_runtime_applied is True, (
+            f"{query}: mission_runtime_applied should be True for {expected_intent}"
+        )
 
 
-def test_mission_lane_priority_matches_required_lanes():
+def test_mission_lane_priority_matches_required_lanes() -> None:
     snap = _snap("example.com")
     debug = snap.nonfeed_plan_debug
     assert debug is not None
@@ -213,7 +233,7 @@ def test_mission_lane_priority_matches_required_lanes():
     assert len(debug.mission_lane_priority) > 0
 
 
-def test_mission_pivot_boost_applied_for_known_intents():
+def test_mission_pivot_boost_applied_for_known_intents() -> None:
     for query in ["mozilla.org", "CVE-2024-1234", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"]:
         snap = _snap(query)
         debug = snap.nonfeed_plan_debug
@@ -221,18 +241,21 @@ def test_mission_pivot_boost_applied_for_known_intents():
         assert debug.mission_pivot_boost_applied is True, f"{query}: mission_pivot_boost_applied should be True"
 
 
-def test_mission_feed_cap_reason_is_none():
+def test_mission_feed_cap_reason_is_none() -> None:
     # mission intent does NOT drive feed cap (nonfeed_diagnostic does)
     for query in ["mozilla.org", "CVE-2024-1234", "wallet"]:
         snap = _snap(query)
         debug = snap.nonfeed_plan_debug
         assert debug is not None
-        assert debug.mission_feed_cap_reason is None, f"mission_feed_cap_reason must be None, got {debug.mission_feed_cap_reason}"
+        assert debug.mission_feed_cap_reason is None, (
+            f"mission_feed_cap_reason must be None, got {debug.mission_feed_cap_reason}"
+        )
 
 
 # ── safety: mission intent does NOT enable STEALTH ─────────────────────────
 
-def test_stealth_not_enabled_by_mission_intent():
+
+def test_stealth_not_enabled_by_mission_intent() -> None:
     for query in ["dark web target", "tor hidden service", "onion probe"]:
         snap = _snap(query)
         stealth_plan = next((p for p in snap.plans if p.lane == "STEALTH"), None)
@@ -242,7 +265,8 @@ def test_stealth_not_enabled_by_mission_intent():
 
 # ── safety: hardware critical still blocks heavy lanes ──────────────────────
 
-def test_hardware_critical_blocks_heavy_lanes_regardless_of_mission():
+
+def test_hardware_critical_blocks_heavy_lanes_regardless_of_mission() -> None:
     snap = build_acquisition_plan(
         query="CVE-2024-1234",
         duration_s=120.0,
@@ -267,8 +291,11 @@ def test_hardware_critical_blocks_heavy_lanes_regardless_of_mission():
 
 # ── safety: no live network, no model load ───────────────────────────────────
 
-def test_no_network_in_acquisition_strategy():
-    import ast, sys
+
+def test_no_network_in_acquisition_strategy() -> None:
+    import ast
+    import sys
+
     mod = sys.modules["hledac.universal.runtime.acquisition_strategy"]
     path = mod.__file__ or ""
     with open(path) as f:
@@ -278,8 +305,10 @@ def test_no_network_in_acquisition_strategy():
             pytest.fail(f"Network library referenced: {node.id}")
 
 
-def test_no_network_in_pivot_planner():
-    import ast, sys
+def test_no_network_in_pivot_planner() -> None:
+    import ast
+    import sys
+
     mod = sys.modules["hledac.universal.runtime.pivot_planner"]
     path = mod.__file__ or ""
     with open(path) as f:
@@ -289,12 +318,13 @@ def test_no_network_in_pivot_planner():
             pytest.fail(f"Network library referenced: {node.id}")
 
 
-def test_no_mlx_import_in_modules():
+def test_no_mlx_import_in_modules() -> None:
     for mod_path in [
         "hledac.universal.runtime.acquisition_strategy",
         "hledac.universal.runtime.pivot_planner",
     ]:
         import sys
+
         mod = sys.modules.get(mod_path)
         if mod:
             path = mod.__file__ or ""
@@ -307,7 +337,8 @@ def test_no_mlx_import_in_modules():
 
 # ── integration: build_acquisition_report includes F226A fields ─────────────
 
-def test_acquisition_report_includes_f226a_telemetry_fields():
+
+def test_acquisition_report_includes_f226a_telemetry_fields() -> None:
     plan = build_acquisition_plan(
         query="CVE-2021-44228",
         duration_s=300.0,
@@ -327,13 +358,14 @@ def test_acquisition_report_includes_f226a_telemetry_fields():
 
 # ── pivot generation: mission_intent passed through ───────────────────────────
 
-def test_generate_pivot_candidates_accepts_mission_intent_param():
+
+def test_generate_pivot_candidates_accepts_mission_intent_param() -> None:
     # Verify signature: (query, max_candidates=25, mission_intent=None)
     candidates = generate_pivot_candidates_from_query("test@example.com", mission_intent="person_recon")
     assert isinstance(candidates, list)
 
 
-def test_generate_pivot_candidates_with_unknown_intent_no_boost():
+def test_generate_pivot_candidates_with_unknown_intent_no_boost() -> None:
     candidates = generate_pivot_candidates_from_query("test@example.com", mission_intent="unknown")
     # With unknown intent, mission boost is not applied (score_pivot_for_mission returns 1.0)
     assert len(candidates) >= 0  # Just verify it runs without error

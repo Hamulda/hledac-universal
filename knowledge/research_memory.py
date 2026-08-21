@@ -28,13 +28,12 @@ import asyncio
 import logging
 import re
 import time as _time
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 import orjson
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
@@ -90,7 +89,7 @@ class ResearchSessionMemory:
 
     __slots__ = ("_store", "_initialized", "_init_lock", "_episode_count")
 
-    def __init__(self, store: DuckDBShadowStore | None = None):
+    def __init__(self, store: DuckDBShadowStore | None = None) -> None:
         global _MAYBE_MEMORY
         if _MAYBE_MEMORY is not None:
             raise RuntimeError("ResearchSessionMemory is a singleton.")
@@ -153,16 +152,28 @@ class ResearchSessionMemory:
         ]
         await self._store.async_record_entity_observations_bulk(observations)
 
-        gaps_json = orjson.dumps(
-            [{"area": getattr(g, "area", ""), "description": getattr(g, "description", ""),
-              "importance": getattr(g, "importance", 0.5)} for g in (gaps or [])]
-        ).decode() if gaps else "[]"
+        gaps_json = (
+            orjson.dumps(
+                [
+                    {
+                        "area": getattr(g, "area", ""),
+                        "description": getattr(g, "description", ""),
+                        "importance": getattr(g, "importance", 0.5),
+                    }
+                    for g in (gaps or [])
+                ]
+            ).decode()
+            if gaps
+            else "[]"
+        )
         entities_json = orjson.dumps(
             [{"value": e["value"], "type": e["type"], "count": e["count"]} for e in entities[:MAX_EPISODE_ENTITIES]]
         ).decode()
         unexplored_json = orjson.dumps(
-            [{"angle": u.angle, "rationale": u.rationale, "sources": u.suggested_sources,
-              "confidence": u.confidence} for u in unexplored]
+            [
+                {"angle": u.angle, "rationale": u.rationale, "sources": u.suggested_sources, "confidence": u.confidence}
+                for u in unexplored
+            ]
         ).decode()
         source_patterns_json = orjson.dumps(source_patterns).decode()
 
@@ -178,7 +189,7 @@ class ResearchSessionMemory:
             source_patterns_json=source_patterns_json,
             unexplored_angles_json=unexplored_json,
             temporal_anomalies_json="[]",
-    )
+        )
         self._episode_count += 1
         return session_id
 
@@ -226,20 +237,24 @@ class ResearchSessionMemory:
         common_sources = ["web", "feed", "document", "academic", "social"]
         for src in common_sources:
             if src not in sources_hit:
-                angles.append(UnexploredAngle(
-                    angle=f"Explore {src} sources",
-                    rationale=f"Source {src} not explored",
-                    suggested_sources=[src],
-                    confidence=0.4,
-                ))
+                angles.append(
+                    UnexploredAngle(
+                        angle=f"Explore {src} sources",
+                        rationale=f"Source {src} not explored",
+                        suggested_sources=[src],
+                        confidence=0.4,
+                    )
+                )
         entities = self._extract_entities_from_findings(findings)
         for e in entities[:5]:
-            angles.append(UnexploredAngle(
-                angle=f"Follow up {e['type']}: {e['value']}",
-                rationale=f"Entity appeared {e['count']} times",
-                suggested_sources=["web", "graph"],
-                confidence=0.3,
-            ))
+            angles.append(
+                UnexploredAngle(
+                    angle=f"Follow up {e['type']}: {e['value']}",
+                    rationale=f"Entity appeared {e['count']} times",
+                    suggested_sources=["web", "graph"],
+                    confidence=0.3,
+                )
+            )
         seen, unique = set(), []
         for a in angles:
             if a.angle not in seen:
@@ -273,17 +288,17 @@ class ResearchSessionMemory:
                 confidence=r["confidence"] or 0.0,
                 ts=r["ts"],
                 finding_id=r["finding_id"],
-    )
+            )
             for r in rows
         ]
         return EntityHistory(
             entity_value=entity_value,
             observations=observations,
-            sprint_count=len(set(o.sprint_id for o in observations)),
+            sprint_count=len({o.sprint_id for o in observations}),
             first_seen_ts=min(o.ts for o in observations),
             last_seen_ts=max(o.ts for o in observations),
             activity_trend="stable",
-    )
+        )
 
     async def get_next_sprint_hints(self, query: str, current_sprint_id: str) -> dict[str, Any]:
         angles = await self.get_unexplored_angles(query, current_sprint_id)

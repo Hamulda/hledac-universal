@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +43,8 @@ class _DuckDBQueryCache:
     __slots__ = ("_l1", "_l2_env", "_l2_path", "_max_l1", "_max_l2", "_ttl_s", "_enabled")
 
     def __init__(self, lmdb_path: Path, *, max_l1: int = 500, max_l2: int = 5000, ttl_s: int = 300) -> None:
-        import os
         from collections import OrderedDict
+
         from hledac.universal._core.env_config import ENV
 
         _DUCKDB_QUERY_CACHE_ENABLED = ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE")
@@ -72,7 +71,7 @@ class _DuckDBQueryCache:
                 critical=False,  # recoverable data — fast writes acceptable
                 readahead=False,
                 meminit=False,
-    )
+            )
             object.__setattr__(self, "_l2_env", env)
         except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
             logger.debug("LMDB environment initialization failed, L2 cache disabled", exc_info=True)

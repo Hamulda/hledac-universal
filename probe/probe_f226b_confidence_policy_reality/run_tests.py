@@ -13,27 +13,37 @@ sys.path.insert(0, str(_root))
 # Import the modules we need directly (no package init)
 # NOTE: 'intelligence' is a legacy alias for 'recon' via PEP 562 lazy loading.
 # Use canonical 'recon' imports for clarity.
-import recon.confidence_policy
-import recon.social_identity_miner
 import coordinators.claims_coordinator
-from _core import aclose
+
 
 def run_tests():
-    from recon.confidence_policy import (
-        compute_confidence, _SOURCE_BASELINES,
-        FEED, PUBLIC, CT, WAYBACK, PASSIVE_DNS, SOCIAL, PLANNER, STEALTH,
-        MIN_CONFIDENCE, MAX_CONFIDENCE,
-    )
-    from recon.social_identity_miner import SocialIdentityMiner, SOCIAL_MIN_CONFIDENCE
     from coordinators.claims_coordinator import ClaimsCoordinator
+
+    from recon.confidence_policy import (
+        _SOURCE_BASELINES,
+        CT,
+        FEED,
+        MAX_CONFIDENCE,
+        MIN_CONFIDENCE,
+        PASSIVE_DNS,
+        PLANNER,
+        PUBLIC,
+        SOCIAL,
+        STEALTH,
+        WAYBACK,
+        compute_confidence,
+    )
+    from recon.social_identity_miner import SOCIAL_MIN_CONFIDENCE, SocialIdentityMiner
 
     passed = 0
     failed = 0
 
     # Test 1: no local _BASELINES inside compute_confidence
-    import inspect, re
+    import inspect
+    import re
+
     src = inspect.getsource(compute_confidence)
-    if '_BASELINES =' not in src:
+    if "_BASELINES =" not in src:
         print("PASS: no local _BASELINES in compute_confidence")
         passed += 1
     else:
@@ -50,10 +60,19 @@ def run_tests():
         failed += 1
 
     # Test 3: values match
-    ok = all(_SOURCE_BASELINES[k] == v for k, v in [
-        ("FEED", FEED), ("PUBLIC", PUBLIC), ("CT", CT), ("WAYBACK", WAYBACK),
-        ("PASSIVE_DNS", PASSIVE_DNS), ("SOCIAL", SOCIAL), ("PLANNER", PLANNER), ("STEALTH", STEALTH)
-    ])
+    ok = all(
+        _SOURCE_BASELINES[k] == v
+        for k, v in [
+            ("FEED", FEED),
+            ("PUBLIC", PUBLIC),
+            ("CT", CT),
+            ("WAYBACK", WAYBACK),
+            ("PASSIVE_DNS", PASSIVE_DNS),
+            ("SOCIAL", SOCIAL),
+            ("PLANNER", PLANNER),
+            ("STEALTH", STEALTH),
+        ]
+    )
     if ok:
         print("PASS: _SOURCE_BASELINES values match constants")
         passed += 1
@@ -72,8 +91,7 @@ def run_tests():
         failed += 1
 
     # Test 5: _derive_confidence calls compute_confidence
-    match = re.search(r'def _derive_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)',
-                      claims_src, re.DOTALL)
+    match = re.search(r"def _derive_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)", claims_src, re.DOTALL)
     if match and "compute_confidence(" in match.group(0):
         print("PASS: _derive_confidence calls compute_confidence")
         passed += 1
@@ -92,8 +110,7 @@ def run_tests():
         failed += 1
 
     # Test 7: _compute_confidence calls compute_confidence
-    sim_match = re.search(r'def _compute_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)',
-                          sim_src, re.DOTALL)
+    sim_match = re.search(r"def _compute_confidence\([^)]+\)[^:]*:.*?(?=\n    def |\nclass |\Z)", sim_src, re.DOTALL)
     if sim_match and "compute_confidence(" in sim_match.group(0):
         print("PASS: _compute_confidence calls compute_confidence")
         passed += 1
@@ -126,10 +143,10 @@ def run_tests():
         failed += 1
 
     # Test 10: URL/IOC raises claims confidence
-    conf_no_ioc = coord._derive_confidence("Some claim without identifiers",
-                                            {"source_type": "public"}, "", "")
-    conf_yes_ioc = coord._derive_confidence("Visit https://example.com or admin@domain.com",
-                                            {"source_type": "public"}, "", "")
+    conf_no_ioc = coord._derive_confidence("Some claim without identifiers", {"source_type": "public"}, "", "")
+    conf_yes_ioc = coord._derive_confidence(
+        "Visit https://example.com or admin@domain.com", {"source_type": "public"}, "", ""
+    )
     if conf_yes_ioc > conf_no_ioc:
         print("PASS: URL/IOC raises claims confidence")
         passed += 1
@@ -158,9 +175,7 @@ def run_tests():
         failed += 1
 
     # Test 13: social rich profile > bare profile
-    conf_rich = miner._compute_confidence("github", "testuser",
-                                           ["example.com", "test.io"],
-                                           ["user@example.com"])
+    conf_rich = miner._compute_confidence("github", "testuser", ["example.com", "test.io"], ["user@example.com"])
     if conf_rich > conf_bare:
         print("PASS: rich profile > bare profile")
         passed += 1
@@ -169,9 +184,9 @@ def run_tests():
         failed += 1
 
     # Test 14: social confidence bounded <= 0.95
-    conf_max = miner._compute_confidence("github", "testuser12345",
-                                         ["a.com", "b.com", "c.com", "d.com"],
-                                         ["a@a.com", "b@b.com", "c@c.com"])
+    conf_max = miner._compute_confidence(
+        "github", "testuser12345", ["a.com", "b.com", "c.com", "d.com"], ["a@a.com", "b@b.com", "c@c.com"]
+    )
     if conf_max <= MAX_CONFIDENCE:
         print(f"PASS: social confidence {conf_max} <= MAX_CONFIDENCE=0.95")
         passed += 1
@@ -180,7 +195,7 @@ def run_tests():
         failed += 1
 
     # Test 15: no MLX in claims_coordinator
-    if not hasattr(coordinators.claims_coordinator, 'mlx'):
+    if not hasattr(coordinators.claims_coordinator, "mlx"):
         print("PASS: no MLX in claims_coordinator")
         passed += 1
     else:
@@ -188,14 +203,14 @@ def run_tests():
         failed += 1
 
     # Test 16: no MLX in social_identity_miner
-    if not hasattr(intelligence.social_identity_miner, 'mlx'):
+    if not hasattr(intelligence.social_identity_miner, "mlx"):
         print("PASS: no MLX in social_identity_miner")
         passed += 1
     else:
         print("FAIL: MLX imported in social_identity_miner")
         failed += 1
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"RESULTS: {passed} passed, {failed} failed")
     return failed == 0
 

@@ -7,9 +7,7 @@ Tests the contract between transport/policy.py and its callers:
 3. Fallback from httpx_h2 / curl_cffi to aiohttp respects policy decision
 """
 
-
 import pytest
-from _core import aclose
 
 
 class TestTP1T0AlwaysOn:
@@ -169,7 +167,7 @@ class TestPublicFetcherWiring:
         from hledac.universal.transport.policy import (
             get_tier_for_lane,
             get_transport_policy,
-    )
+        )
 
         assert get_transport_policy is not None
         assert get_tier_for_lane("curl_cffi_stealth") == "T0_curl_cffi"

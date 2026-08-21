@@ -19,63 +19,62 @@ from __future__ import annotations
 
 import ctypes
 import sys
-import threading
-from typing import Any
 
 import pytest
-from _core import aclose
-
 
 # Apple Silicon QoS class values (from libdispatch)
 # These MUST match the values in rust_extensions/src/lib.rs
 EXPECTED_QOS_VALUES = {
     "USER_INITIATED": 0x19,  # 25 - P-core scheduling priority
-    "UTILITY": 0x11,         # 17 - Balanced efficiency
-    "BACKGROUND": 0x09,      #  9 - Background efficiency
+    "UTILITY": 0x11,  # 17 - Balanced efficiency
+    "BACKGROUND": 0x09,  #  9 - Background efficiency
 }
 
 
 class TestQoSConstantsExist:
     """Test that QoS constants exist and are importable."""
 
-    def test_qos_constants_import(self):
+    def test_qos_constants_import(self) -> None:
         """QoS constants must be importable from core.resource_governor."""
         from _core.resource_governor import (
+            _QOS_BACKGROUND,
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
-            _QOS_BACKGROUND,
-    )
+        )
 
         assert _QOS_USER_INITIATED is not None
         assert _QOS_UTILITY is not None
         assert _QOS_BACKGROUND is not None
 
-    def test_qos_constants_values(self):
+    def test_qos_constants_values(self) -> None:
         """QoS constants must match expected libc::qos_class_t values."""
         from _core.resource_governor import (
+            _QOS_BACKGROUND,
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
-            _QOS_BACKGROUND,
-    )
+        )
 
-        assert _QOS_USER_INITIATED == EXPECTED_QOS_VALUES["USER_INITIATED"], \
+        assert _QOS_USER_INITIATED == EXPECTED_QOS_VALUES["USER_INITIATED"], (
             f"USER_INITIATED should be 0x{EXPECTED_QOS_VALUES['USER_INITIATED']:02x}, got 0x{_QOS_USER_INITIATED:02x}"
-        assert _QOS_UTILITY == EXPECTED_QOS_VALUES["UTILITY"], \
+        )
+        assert _QOS_UTILITY == EXPECTED_QOS_VALUES["UTILITY"], (
             f"UTILITY should be 0x{EXPECTED_QOS_VALUES['UTILITY']:02x}, got 0x{_QOS_UTILITY:02x}"
-        assert _QOS_BACKGROUND == EXPECTED_QOS_VALUES["BACKGROUND"], \
+        )
+        assert _QOS_BACKGROUND == EXPECTED_QOS_VALUES["BACKGROUND"], (
             f"BACKGROUND should be 0x{EXPECTED_QOS_VALUES['BACKGROUND']:02x}, got 0x{_QOS_BACKGROUND:02x}"
+        )
 
 
 class TestQoSLevelEnum:
     """Test QoSLevel StrEnum."""
 
-    def test_qos_level_import(self):
+    def test_qos_level_import(self) -> None:
         """QoSLevel must be importable."""
         from _core.resource_governor import QoSLevel
 
         assert QoSLevel is not None
 
-    def test_qos_level_has_required_values(self):
+    def test_qos_level_has_required_values(self) -> None:
         """QoSLevel must have all required levels."""
         from _core.resource_governor import QoSLevel
 
@@ -85,7 +84,7 @@ class TestQoSLevelEnum:
         for level in required_levels:
             assert level in enum_values, f"QoSLevel missing: {level}"
 
-    def test_qos_level_is_strenum(self):
+    def test_qos_level_is_strenum(self) -> None:
         """QoSLevel must be a StrEnum."""
         from _core.resource_governor import QoSLevel
 
@@ -95,15 +94,15 @@ class TestQoSLevelEnum:
 class TestSetThreadQoS:
     """Test set_thread_qos function."""
 
-    def test_set_thread_qos_import(self):
+    def test_set_thread_qos_import(self) -> None:
         """set_thread_qos must be importable."""
         from _core.resource_governor import set_thread_qos
 
         assert callable(set_thread_qos)
 
-    def test_set_thread_qos_accepts_qos_level(self):
+    def test_set_thread_qos_accepts_qos_level(self) -> None:
         """set_thread_qos must accept QoS level as integer."""
-        from _core.resource_governor import set_thread_qos, _QOS_USER_INITIATED
+        from _core.resource_governor import _QOS_USER_INITIATED, set_thread_qos
 
         # Should not raise
         try:
@@ -111,7 +110,7 @@ class TestSetThreadQoS:
         except Exception as exc:
             pytest.fail(f"set_thread_qos raised unexpectedly: {exc}")
 
-    def test_set_thread_qos_accepts_all_qos_levels(self):
+    def test_set_thread_qos_accepts_all_qos_levels(self) -> None:
         """set_thread_qos must accept all defined QoS levels."""
         from _core.resource_governor import set_thread_qos
 
@@ -127,20 +126,20 @@ class TestSetThreadQoS:
 class TestQoSProfile:
     """Test QoSProfile struct."""
 
-    def test_qos_profile_import(self):
+    def test_qos_profile_import(self) -> None:
         """QoSProfile must be importable."""
         from _core.resource_governor import QoSProfile
 
         assert QoSProfile is not None
 
-    def test_qos_profile_is_msgspec_struct(self):
+    def test_qos_profile_is_msgspec_struct(self) -> None:
         """QoSProfile must be a msgspec.Struct (M1 optimized)."""
         from _core.resource_governor import QoSProfile
 
         # Should be msgspec.Struct (frozen=True, gc=False)
         assert hasattr(QoSProfile, "__slots__") or hasattr(QoSProfile, "__struct__")
 
-    def test_qos_profile_has_required_fields(self):
+    def test_qos_profile_has_required_fields(self) -> None:
         """QoSProfile must have required fields."""
         from _core.resource_governor import QoSProfile
 
@@ -150,7 +149,7 @@ class TestQoSProfile:
         # Must have qos_level
         assert hasattr(profile, "qos_level")
 
-    def test_qos_profile_is_frozen(self):
+    def test_qos_profile_is_frozen(self) -> None:
         """QoSProfile must be frozen (immutable)."""
         from _core.resource_governor import QoSProfile
 
@@ -162,21 +161,21 @@ class TestQoSProfile:
 class TestQoSSignal:
     """Test _qos_signal context variable."""
 
-    def test_qos_signal_exists(self):
+    def test_qos_signal_exists(self) -> None:
         """_qos_signal must exist in resource_governor module."""
         from _core import resource_governor
 
         assert hasattr(resource_governor, "_qos_signal")
 
-    def test_get_qos_signal_import(self):
+    def test_get_qos_signal_import(self) -> None:
         """get_qos_signal must be importable."""
         from _core.resource_governor import get_qos_signal
 
         assert callable(get_qos_signal)
 
-    def test_get_qos_signal_returns_profile(self):
+    def test_get_qos_signal_returns_profile(self) -> None:
         """get_qos_signal must return a QoSProfile."""
-        from _core.resource_governor import get_qos_signal, QoSProfile
+        from _core.resource_governor import QoSProfile, get_qos_signal
 
         profile = get_qos_signal()
         assert isinstance(profile, QoSProfile)
@@ -185,13 +184,13 @@ class TestQoSSignal:
 class TestGetQoSLevel:
     """Test get_qos_level function."""
 
-    def test_get_qos_level_import(self):
+    def test_get_qos_level_import(self) -> None:
         """get_qos_level must be importable."""
         from _core.resource_governor import get_qos_level
 
         assert callable(get_qos_level)
 
-    def test_get_qos_level_returns_string(self):
+    def test_get_qos_level_returns_string(self) -> None:
         """get_qos_level must return a string."""
         from _core.resource_governor import get_qos_level
 
@@ -203,7 +202,7 @@ class TestMacOSQoSIntegration:
     """Test actual macOS QoS integration."""
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
-    def test_libpthread_available(self):
+    def test_libpthread_available(self) -> None:
         """libpthread must be available on macOS."""
         try:
             libpthread = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
@@ -212,9 +211,9 @@ class TestMacOSQoSIntegration:
             pytest.fail("libpthread not available")
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
-    def test_set_thread_qos_calls_pthread(self):
+    def test_set_thread_qos_calls_pthread(self) -> None:
         """set_thread_qos must call pthread_set_qos_class_self_np on macOS."""
-        from _core.resource_governor import set_thread_qos, _QOS_USER_INITIATED
+        from _core.resource_governor import _QOS_USER_INITIATED, set_thread_qos
 
         # Should not raise on macOS
         try:
@@ -226,7 +225,7 @@ class TestMacOSQoSIntegration:
 class TestRustQOSConsistency:
     """Test that Python QoS values match Rust implementation."""
 
-    def test_qos_values_match_rust_comments(self):
+    def test_qos_values_match_rust_comments(self) -> None:
         """QoS values must match documented Rust implementation."""
         # Dynamic project root detection
         project_root = Path(__file__).parent.parent
@@ -243,10 +242,10 @@ class TestRustQOSConsistency:
 
         # Compare with Python constants
         from _core.resource_governor import (
+            _QOS_BACKGROUND,
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
-            _QOS_BACKGROUND,
-    )
+        )
 
         python_values = {
             "USER_INITIATED": _QOS_USER_INITIATED,
@@ -259,14 +258,15 @@ class TestRustQOSConsistency:
             python_val = python_values.get(name.upper())
 
             if python_val is not None:
-                assert rust_val == python_val, \
+                assert rust_val == python_val, (
                     f"QoS mismatch for {name}: Python={hex(python_val)}, Rust={hex(rust_val)}"
+                )
 
 
 class TestQoSDegradation:
     """Test QoS degradation ladder."""
 
-    def test_qos_profile_has_degradation_info(self):
+    def test_qos_profile_has_degradation_info(self) -> None:
         """QoSProfile should contain degradation information."""
         from _core.resource_governor import QoSProfile
 
@@ -276,7 +276,7 @@ class TestQoSDegradation:
         # This depends on actual implementation
         assert hasattr(profile, "qos_level")
 
-    def test_qos_level_transitions(self):
+    def test_qos_level_transitions(self) -> None:
         """QoS levels should have a defined degradation order."""
         from _core.resource_governor import QoSLevel
 
@@ -288,19 +288,19 @@ class TestQoSDegradation:
 class TestM1QoSOptimization:
     """Test M1-specific QoS optimizations."""
 
-    def test_qos_constants_are_int(self):
+    def test_qos_constants_are_int(self) -> None:
         """QoS constants must be integers (not floats)."""
         from _core.resource_governor import (
+            _QOS_BACKGROUND,
             _QOS_USER_INITIATED,
             _QOS_UTILITY,
-            _QOS_BACKGROUND,
-    )
+        )
 
         assert isinstance(_QOS_USER_INITIATED, int)
         assert isinstance(_QOS_UTILITY, int)
         assert isinstance(_QOS_BACKGROUND, int)
 
-    def test_qos_profile_is_hashable(self):
+    def test_qos_profile_is_hashable(self) -> None:
         """QoSProfile should be hashable (frozen msgspec.Struct)."""
         from _core.resource_governor import QoSProfile
 
@@ -317,13 +317,13 @@ class TestM1QoSOptimization:
 class TestQoSGovernorIntegration:
     """Test QoS integration with ResourceGovernor."""
 
-    def test_resource_governor_import(self):
+    def test_resource_governor_import(self) -> None:
         """ResourceGovernor must be importable."""
         from _core.resource_governor import ResourceGovernor
 
         assert ResourceGovernor is not None
 
-    def test_resource_governor_has_qos_method(self):
+    def test_resource_governor_has_qos_method(self) -> None:
         """ResourceGovernor should have methods for QoS management."""
         from _core.resource_governor import ResourceGovernor
 
@@ -333,6 +333,3 @@ class TestQoSGovernorIntegration:
 
         # At minimum, there should be some QoS-related functionality
         assert len(methods) > 0 or hasattr(ResourceGovernor, "evaluate")
-
-
-

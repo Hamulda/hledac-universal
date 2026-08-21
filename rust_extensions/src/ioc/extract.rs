@@ -19,10 +19,6 @@
 //! - Adaptive threading via `adaptive_scheduler`
 //! - SIMD path only for large texts (amortizes automaton build)
 
-// ============================================================================
-// Re-exports from root-level modules
-// ============================================================================
-
 // From ioc_extract_fast
 pub use crate::ioc_extract_fast::{
     extract_structured_entities_py, batch_extract_structured_entities_py,

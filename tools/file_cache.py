@@ -15,13 +15,11 @@ they called madvise(NULL, 0, advice) which always returns EINVAL.
 Use madvise_lmdb_mmap(path, advice=1) for MAP_NOCACHE on LMDB/DuckDB.
 """
 
-
 import ctypes
 import ctypes.util
 import fcntl
 import os
 import platform
-from _core import aclose
 
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50MB
 F_NOCACHE: int | None = 48 if platform.system() == "Darwin" else None
@@ -74,6 +72,7 @@ def madvise_lmdb_mmap(path: str | os.PathLike, advice: int = 1) -> bool:
     path_str = str(path)
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     _rust_madvise = rust.raw.madvise_lmdb_mmap
     if _rust_madvise is None:
         return False
@@ -147,6 +146,7 @@ def apply_thread_qos(qos_class: int) -> bool:
     """
     try:
         from hledac.universal._core.rust_backend import rust
+
         if rust.is_available:
             # B-5: new API — no pthread_id needed (always sets calling thread)
             return rust.apply_current_thread_qos(qos_class) == 0

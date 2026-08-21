@@ -15,6 +15,7 @@ ISSUE-003 FIX: _scheduler_ref replaced with ContextVar.
 - Enables parallel sprint execution in tests without monkey-patching.
 - bind_scheduler() sets the ContextVar for the current async context.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -22,7 +23,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.runtime.sidecar_protocol import BaseSidecarAdapter, SidecarContext
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.runtime.sprint_scheduler import SprintScheduler
@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 # Each sprint (async context) gets its own scheduler reference.
 # This enables parallel sprint execution in tests and eliminates
 # the module-level mutable _scheduler_ref global.
-_scheduler_ref_var: contextvars.ContextVar["SprintScheduler | None"] = contextvars.ContextVar("_scheduler_ref_var")
+_scheduler_ref_var: contextvars.ContextVar[SprintScheduler | None] = contextvars.ContextVar("_scheduler_ref_var")
 
 
-def bind_scheduler(scheduler: "SprintScheduler | None") -> None:
+def bind_scheduler(scheduler: SprintScheduler | None) -> None:
     """Bind the live SprintScheduler instance for the current async context.
 
     Called by `SidecarOrchestrator.__init__`. Idempotent. Pass `None` to
@@ -67,7 +67,7 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
     scheduler_method_name: str = ""
     missing_method_expected: bool = False
 
-    __slots__ = tuple(("_missing_logged",))
+    __slots__ = ("_missing_logged",)
 
     def __init__(self) -> None:
         super().__init__()
@@ -87,7 +87,7 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
             self.scheduler_method_name,
             ctx.sprint_id,
             ctx.sprint_mode,
-    )
+        )
         method = getattr(scheduler, self.scheduler_method_name, None)
         if method is None:
             if not self._missing_logged:
@@ -97,7 +97,7 @@ class SchedulerBackedSidecarAdapter(BaseSidecarAdapter):
                     "%s: scheduler method %r not implemented (returning empty findings)",
                     self.sidecar_id,
                     self.scheduler_method_name,
-    )
+                )
                 self._missing_logged = True
             return []
         result = method()

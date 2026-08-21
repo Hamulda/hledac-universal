@@ -13,46 +13,52 @@ https://arxiv.org/abs/2205.13147
 Author: Hledac Team
 Issue: [SWARM]-002
 """
+
 from __future__ import annotations
+
 import logging
-from typing import Optional
+
 import numpy as np
-from _core._util import aclose
+
 logger = logging.getLogger(__name__)
 MRL_DIMENSIONS = (8, 16, 32, 64, 128, 256, 384, 512, 768, 1024)
+
 
 class MRLTruncator:
     """
     Matryoshka Representation Learning truncation for embedding dimensionality reduction.
-    
+
     MRL encodes information hierarchically:
     - First N dimensions capture most semantic information
     - Each additional layer adds finer details
     - Truncating to lower dimensions preserves approximate similarity
-    
+
     For cross-lingual search:
     - BGE-M3 1024d → truncate to 256d for USEARCH index compatibility
     - Cross-lingual vectors map to same neighborhood regardless of source language
     - Quality loss is minimal for retrieval tasks (<5% MRR drop)
     """
-    __slots__ = ('_normalize', '_source_dim', '_target_dim')
 
-    def __init__(self, source_dim: int=1024, target_dim: int=256, normalize: bool=True):
+    __slots__ = ("_normalize", "_source_dim", "_target_dim")
+
+    def __init__(self, source_dim: int = 1024, target_dim: int = 256, normalize: bool = True) -> None:
         """
         Initialize MRL truncator.
-        
+
         Args:
             source_dim: Original embedding dimension (e.g., 1024 for BGE-M3).
             target_dim: Target dimension after truncation (e.g., 256 for USEARCH).
             normalize: L2-normalize after truncation.
         """
         if target_dim > source_dim:
-            raise ValueError(f'target_dim ({target_dim}) cannot exceed source_dim ({source_dim})')
+            raise ValueError(f"target_dim ({target_dim}) cannot exceed source_dim ({source_dim})")
         self._source_dim = source_dim
         self._target_dim = target_dim
         self._normalize = normalize
         if target_dim not in MRL_DIMENSIONS and target_dim > source_dim:
-            logger.warning(f'target_dim {target_dim} not in MRL_DIMENSIONS ladder. Using anyway but consider using: {[d for d in MRL_DIMENSIONS if d <= source_dim]}')
+            logger.warning(
+                f"target_dim {target_dim} not in MRL_DIMENSIONS ladder. Using anyway but consider using: {[d for d in MRL_DIMENSIONS if d <= source_dim]}"
+            )
 
     @property
     def source_dim(self) -> int:
@@ -67,19 +73,19 @@ class MRLTruncator:
     def truncate(self, embedding: np.ndarray) -> np.ndarray:
         """
         Truncate embedding to target dimension using MRL.
-        
+
         MRL property: First target_dim dimensions contain most semantic information.
         Simply taking the prefix preserves approximate semantic relationships.
-        
+
         Args:
             embedding: Full-dimensional embedding array (source_dim,).
-            
+
         Returns:
             Truncated embedding array (target_dim,).
         """
         if embedding.shape[-1] != self._source_dim:
-            raise ValueError(f'Expected embedding dim {self._source_dim}, got {embedding.shape[-1]}')
-        truncated = embedding[..., :self._target_dim]
+            raise ValueError(f"Expected embedding dim {self._source_dim}, got {embedding.shape[-1]}")
+        truncated = embedding[..., : self._target_dim]
         if self._normalize:
             truncated = self._l2_normalize(truncated)
         return truncated
@@ -87,18 +93,18 @@ class MRLTruncator:
     def truncate_batch(self, embeddings: np.ndarray) -> np.ndarray:
         """
         Truncate batch of embeddings to target dimension.
-        
+
         Args:
             embeddings: Batch of embeddings with shape (batch, source_dim).
-            
+
         Returns:
             Truncated embeddings with shape (batch, target_dim).
         """
         if embeddings.ndim == 1:
             return self.truncate(embeddings)
         if embeddings.shape[-1] != self._source_dim:
-            raise ValueError(f'Expected embedding dim {self._source_dim}, got {embeddings.shape[-1]}')
-        truncated = embeddings[..., :self._target_dim]
+            raise ValueError(f"Expected embedding dim {self._source_dim}, got {embeddings.shape[-1]}")
+        truncated = embeddings[..., : self._target_dim]
         if self._normalize:
             truncated = self._l2_normalize_batch(truncated)
         return truncated
@@ -122,11 +128,11 @@ class MRLTruncator:
     def find_closest_mrl_dim(target_dim: int, source_dim: int) -> int:
         """
         Find the closest MRL dimension <= target_dim.
-        
+
         Args:
             target_dim: Desired target dimension.
             source_dim: Source embedding dimension.
-            
+
         Returns:
             Closest MRL dimension that fits.
         """
@@ -135,19 +141,21 @@ class MRLTruncator:
             return source_dim
         return min(valid_dims, key=lambda x: abs(x - target_dim))
 
-    def create_multi_level_index(self, embeddings: np.ndarray, dimensions: Optional[list[int]]=None) -> dict[int, np.ndarray]:
+    def create_multi_level_index(
+        self, embeddings: np.ndarray, dimensions: list[int] | None = None
+    ) -> dict[int, np.ndarray]:
         """
         Create multi-level index at different MRL dimensions.
-        
+
         Useful for hierarchical retrieval:
         1. Fast coarse search at 8d/16d
         2. Refine with 64d/128d
         3. Final ranking at 256d
-        
+
         Args:
             embeddings: Full embeddings (N, source_dim).
             dimensions: List of target dimensions. Defaults to [64, 128, 256].
-            
+
         Returns:
             Dict mapping dimension -> truncated embeddings.
         """
@@ -161,15 +169,16 @@ class MRLTruncator:
             result[dim] = truncator.truncate_batch(embeddings)
         return result
 
-def truncate_embedding(embedding: np.ndarray, target_dim: int, normalize: bool=True) -> np.ndarray:
+
+def truncate_embedding(embedding: np.ndarray, target_dim: int, normalize: bool = True) -> np.ndarray:
     """
     Convenience function for MRL truncation.
-    
+
     Args:
         embedding: Full embedding vector.
         target_dim: Target dimension.
         normalize: L2-normalize result.
-        
+
     Returns:
         Truncated embedding.
     """
@@ -177,15 +186,16 @@ def truncate_embedding(embedding: np.ndarray, target_dim: int, normalize: bool=T
     truncator = MRLTruncator(source_dim=source_dim, target_dim=target_dim, normalize=normalize)
     return truncator.truncate(embedding)
 
-def truncate_batch(embeddings: np.ndarray, target_dim: int, normalize: bool=True) -> np.ndarray:
+
+def truncate_batch(embeddings: np.ndarray, target_dim: int, normalize: bool = True) -> np.ndarray:
     """
     Convenience function for batch MRL truncation.
-    
+
     Args:
         embeddings: Batch of embeddings (N, source_dim).
         target_dim: Target dimension.
         normalize: L2-normalize result.
-        
+
     Returns:
         Truncated embeddings (N, target_dim).
     """

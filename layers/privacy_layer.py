@@ -18,6 +18,7 @@ Note: For new code, prefer using SecurityLayer which includes privacy functional
 
 # Deprecation warning
 import warnings
+
 warnings.warn(
     "layers.privacy_layer is deprecated. Import from layers.security instead.",
     DeprecationWarning,
@@ -26,13 +27,11 @@ warnings.warn(
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum
 from typing import Any
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
@@ -40,6 +39,7 @@ logger = logging.getLogger(__name__)
 # Optional dependencies
 try:
     from ...privacy_protection.ppm_manager import PrivacyProtectionManager
+
     HAS_PPM = True
 except ImportError:
     HAS_PPM = False
@@ -47,6 +47,7 @@ except ImportError:
 
 try:
     from ...privacy_protection.anon_comm import AnonymousCommManager
+
     HAS_AC = True
 except ImportError:
     HAS_AC = False
@@ -54,9 +55,10 @@ except ImportError:
 
 try:
     from ...privacy_protection.privacy_audit_log import (
-        PrivacyAuditLog,
         AnonymizationLevel,
+        PrivacyAuditLog,
     )
+
     HAS_PAL = True
 except ImportError:
     HAS_PAL = False
@@ -66,6 +68,7 @@ except ImportError:
 
 class PrivacyLevel(Enum):
     """Privacy protection levels."""
+
     MINIMAL = 0
     STANDARD = 1
     ENHANCED = 2
@@ -74,6 +77,7 @@ class PrivacyLevel(Enum):
 
 class PrivacyContext(Struct, gc=False):
     """Privacy context for operations."""
+
     level: PrivacyLevel
     identity_id: str | None = None
     channel_id: str | None = None
@@ -83,14 +87,15 @@ class PrivacyContext(Struct, gc=False):
 def _check_privacy() -> dict[str, bool]:
     """Check privacy module availability."""
     return {
-        'ppm': HAS_PPM,
-        'anon_comm': HAS_AC,
-        'audit_log': HAS_PAL,
+        "ppm": HAS_PPM,
+        "anon_comm": HAS_AC,
+        "audit_log": HAS_PAL,
     }
 
 
 class PrivacyConfig(Struct, gc=False):
     """Privacy layer configuration."""
+
     privacy_level: PrivacyLevel = PrivacyLevel.STANDARD
     enable_vpn: bool = False
     enable_tor: bool = False
@@ -116,18 +121,19 @@ class PrivacyLayer:
 
     M1 8GB: Uses __slots__ for memory efficiency.
     """
-    layer_name: str = 'privacy'
+
+    layer_name: str = "privacy"
     _priority: int = 70
 
     __slots__ = (
-        '_audit',
-        '_comm',
-        '_contexts',
-        '_initialized',
-        '_privacy_manager',
-        '_protocol_gen',
-        '_security_layer',
-        'config',
+        "_audit",
+        "_comm",
+        "_contexts",
+        "_initialized",
+        "_privacy_manager",
+        "_protocol_gen",
+        "_security_layer",
+        "config",
     )
 
     def __init__(self, config: PrivacyConfig | None = None) -> None:
@@ -149,110 +155,108 @@ class PrivacyLayer:
     async def initialize(self) -> bool:
         """Initialize privacy layer components."""
         try:
-            logger.info('🔒 Initializing PrivacyLayer...')
+            logger.info("🔒 Initializing PrivacyLayer...")
 
             if self.config.enable_audit and HAS_PAL:
                 self._audit = PrivacyAuditLog()
                 await self._audit.initialize()
-                logger.info('✅ Privacy audit logging initialized')
+                logger.info("✅ Privacy audit logging initialized")
 
             if self.config.enable_vpn and HAS_PPM:
-                self._privacy_manager = PrivacyProtectionManager(
-                    vpn_config=self.config.vpn_config
-                )
-                logger.info('✅ VPN privacy manager initialized')
+                self._privacy_manager = PrivacyProtectionManager(vpn_config=self.config.vpn_config)
+                logger.info("✅ VPN privacy manager initialized")
 
             if self.config.enable_tor:
-                logger.info('✅ Tor configuration available')
+                logger.info("✅ Tor configuration available")
 
             if self.config.enable_pgp and HAS_AC:
                 self._comm = AnonymousCommManager()
-                logger.info('✅ Anonymous communication initialized')
+                logger.info("✅ Anonymous communication initialized")
 
             self._initialized = True
-            logger.info('✅ PrivacyLayer initialized successfully')
+            logger.info("✅ PrivacyLayer initialized successfully")
             return True
 
         except Exception as e:
-            logger.error(f'❌ PrivacyLayer initialization failed: {e}')
+            logger.error(f"❌ PrivacyLayer initialization failed: {e}")
             return False
 
-    async def setup_vpn(self, vpn_type: str = 'wireguard') -> dict[str, Any]:
+    async def setup_vpn(self, vpn_type: str = "wireguard") -> dict[str, Any]:
         """Setup VPN connection."""
         if not self._initialized:
             await self.initialize()
 
-        result = {'success': False, 'vpn_type': vpn_type}
+        result = {"success": False, "vpn_type": vpn_type}
 
         try:
             if self._privacy_manager:
                 # VPN setup would go here
-                result['success'] = True
-                logger.info(f'✅ VPN ({vpn_type}) configured')
+                result["success"] = True
+                logger.info(f"✅ VPN ({vpn_type}) configured")
             else:
-                result['error'] = 'VPN manager not available'
+                result["error"] = "VPN manager not available"
         except Exception as e:
-            result['error'] = str(e)
-            logger.error(f'❌ VPN setup failed: {e}')
+            result["error"] = str(e)
+            logger.error(f"❌ VPN setup failed: {e}")
 
         return result
 
     async def setup_tor(self, circuits: int = 3) -> dict[str, Any]:
         """Setup Tor circuits."""
-        result = {'success': False, 'circuits': circuits}
+        result = {"success": False, "circuits": circuits}
 
         try:
             # Tor setup would go here
-            result['success'] = True
-            logger.info(f'✅ Tor configured with {circuits} circuits')
+            result["success"] = True
+            logger.info(f"✅ Tor configured with {circuits} circuits")
         except Exception as e:
-            result['error'] = str(e)
-            logger.error(f'❌ Tor setup failed: {e}')
+            result["error"] = str(e)
+            logger.error(f"❌ Tor setup failed: {e}")
 
         return result
 
     async def setup_dns(self, servers: list[str] | None = None) -> dict[str, Any]:
         """Configure secure DNS."""
-        servers = servers or ['1.1.1.1', '1.0.0.1']  # Cloudflare
-        result = {'success': False, 'servers': servers}
+        servers = servers or ["1.1.1.1", "1.0.0.1"]  # Cloudflare
+        result = {"success": False, "servers": servers}
 
         try:
-            result['success'] = True
-            logger.info(f'✅ Secure DNS configured: {servers}')
+            result["success"] = True
+            logger.info(f"✅ Secure DNS configured: {servers}")
         except Exception as e:
-            result['error'] = str(e)
+            result["error"] = str(e)
 
         return result
 
     async def check_privacy(self, context: PrivacyContext) -> dict[str, Any]:
         """Check privacy status for a context."""
         return {
-            'level': context.level.value,
-            'vpn_active': self._privacy_manager is not None,
-            'tor_active': False,
-            'dns_secure': True,
-            'audit_enabled': self._audit is not None,
+            "level": context.level.value,
+            "vpn_active": self._privacy_manager is not None,
+            "tor_active": False,
+            "dns_secure": True,
+            "audit_enabled": self._audit is not None,
         }
 
     async def anonymize_pii(
         self,
         data: dict[str, Any],
-        level: str = 'standard',
+        level: str = "standard",
     ) -> dict[str, Any]:
         """Anonymize PII in data."""
-        result = {'anonymized': data.copy(), 'count': 0}
+        result = {"anonymized": data.copy(), "count": 0}
 
         try:
             # Basic PII anonymization
-            pii_fields = ['email', 'phone', 'ssn', 'address', 'name']
+            pii_fields = ["email", "phone", "ssn", "address", "name"]
             for field in pii_fields:
-                if field in result['anonymized']:
-                    result['anonymized'][field] = '[REDACTED]'
-                    result['count'] += 1
+                if field in result["anonymized"]:
+                    result["anonymized"][field] = "[REDACTED]"
+                    result["count"] += 1
 
-            logger.info(f'✅ Anonymized {result["count"]} PII fields')
+            logger.info(f"✅ Anonymized {result['count']} PII fields")
         except Exception as e:
-            logger.error(f'❌ PII anonymization failed: {e}')
+            logger.error(f"❌ PII anonymization failed: {e}")
 
         return result
 
@@ -262,18 +266,18 @@ class PrivacyLayer:
         context: PrivacyContext,
     ) -> dict[str, Any]:
         """Setup privacy audit logging for a session."""
-        result = {'success': False, 'session_id': session_id}
+        result = {"success": False, "session_id": session_id}
 
         try:
             if self._audit:
                 context.audit_session = session_id
                 self._contexts[session_id] = context
-                result['success'] = True
-                logger.info(f'✅ Audit logging setup for session {session_id}')
+                result["success"] = True
+                logger.info(f"✅ Audit logging setup for session {session_id}")
             else:
-                result['error'] = 'Audit not available'
+                result["error"] = "Audit not available"
         except Exception as e:
-            result['error'] = str(e)
+            result["error"] = str(e)
 
         return result
 
@@ -292,23 +296,19 @@ class PrivacyLayer:
 
             self._contexts.clear()
             self._initialized = False
-            logger.info('✅ PrivacyLayer cleaned up')
+            logger.info("✅ PrivacyLayer cleaned up")
 
         except Exception as e:
-            logger.error(f'❌ PrivacyLayer cleanup failed: {e}')
+            logger.error(f"❌ PrivacyLayer cleanup failed: {e}")
 
     def __repr__(self) -> str:
-        return (
-            f'PrivacyLayer('
-            f'level={self.config.privacy_level.value}, '
-            f'initialized={self._initialized})'
-        )
+        return f"PrivacyLayer(level={self.config.privacy_level.value}, initialized={self._initialized})"
 
 
 __all__ = [
-    'PrivacyLayer',
-    'PrivacyContext',
-    'PrivacyLevel',
-    'PrivacyConfig',
-    '_check_privacy',
+    "PrivacyLayer",
+    "PrivacyContext",
+    "PrivacyLevel",
+    "PrivacyConfig",
+    "_check_privacy",
 ]

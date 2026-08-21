@@ -28,28 +28,20 @@ M1 8GB: zero-overhead on Ok path; HOT_PATH skips all allocations.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import TypeVar, Generic
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import msgspec
+from typing import Generic, TypeVar
+
 from compat.msgspec_gc_compat import Struct
-from _core._util import aclose
 
 T = TypeVar("T", default=object)
 F = TypeVar("F", default=object)
 
 
-# ---------------------------------------------------------------------------
-# Core Result types — frozen dataclasses with __slots__ for zero dict overhead.
-# Ok = 40 B, Err = 48 B (measured via sys.getsizeof on Python 3.14).
-# __slots__ eliminates the per-instance __dict__ (~64 B) that would otherwise
-# be allocated on each Ok/Err construction.
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True, slots=True)
 class Ok(Generic[T]):
     """Ok result — carries a value."""
+
     value: T
 
     def is_ok(self) -> bool:
@@ -68,6 +60,7 @@ class Ok(Generic[T]):
 
 class Err(Struct, frozen=True):
     """Err result — carries error message and optional exception. F350M-R: gc=False for M1 8GB."""
+
     error: str
     exception: BaseException | None = None
 
@@ -89,11 +82,6 @@ class Err(Struct, frozen=True):
 Result = Ok[T] | Err  # type: ignore[valid-type,misc]
 
 
-# ---------------------------------------------------------------------------
-# Logger cache — avoids repeated getLogger() lookups at call sites.
-# Pattern matches silent_except_helper; _LOGGER_CACHE is module-private.
-# ---------------------------------------------------------------------------
-
 _LOGGER_CACHE: dict[str, logging.Logger] = {}
 
 
@@ -106,10 +94,6 @@ def _get_logger(name: str) -> logging.Logger:
     return logger
 
 
-# ---------------------------------------------------------------------------
-# ResultPolicy — runtime behaviour configuration.
-# ---------------------------------------------------------------------------
-
 class ResultPolicy:
     """
     Policy controlling Result handling behaviour.
@@ -118,14 +102,15 @@ class ResultPolicy:
     HOT_PATH: skip all allocations — return None on Err, caller decides.
     QUIET: suppress logging entirely.
     """
+
     _LOG_ERR: int = logging.DEBUG
     _LOG_OK: int = logging.DEBUG
     _RAISE_ERR: bool = False
 
-    LOG_ERR: "ResultPolicy"  # doc placeholder
-    LOG_OK: "ResultPolicy"
-    HOT_PATH: "ResultPolicy"
-    QUIET: "ResultPolicy"
+    LOG_ERR: ResultPolicy  # doc placeholder
+    LOG_OK: ResultPolicy
+    HOT_PATH: ResultPolicy
+    QUIET: ResultPolicy
 
     @classmethod
     def configure(
@@ -146,14 +131,10 @@ class ResultPolicy:
 
 # Pre-built policy singletons — stable object identity for identity checks.
 ResultPolicy.LOG_ERR = ResultPolicy()  # type: ignore[attr-defined]
-ResultPolicy.LOG_OK = ResultPolicy()   # type: ignore[attr-defined]
+ResultPolicy.LOG_OK = ResultPolicy()  # type: ignore[attr-defined]
 ResultPolicy.HOT_PATH = ResultPolicy()  # type: ignore[attr-defined]
-ResultPolicy.QUIET = ResultPolicy()    # type: ignore[attr-defined]
+ResultPolicy.QUIET = ResultPolicy()  # type: ignore[attr-defined]
 
-
-# ---------------------------------------------------------------------------
-# try_op — primary migration target for bare except blocks.
-# ---------------------------------------------------------------------------
 
 def try_op(
     fn: Callable[[], T],
@@ -189,7 +170,7 @@ def try_op(
             "try_op failed: %s",
             error_msg,
             exc_info=e,
-    )
+        )
         return Err(label or "unknown", e)  # type: ignore[return-value]
 
 
@@ -221,14 +202,9 @@ async def try_op_async(
             "try_op_async failed: %s",
             error_msg,
             exc_info=e,
-    )
+        )
         return Err(label or "unknown", e)  # type: ignore[return-value]
 
-
-# ---------------------------------------------------------------------------
-# Hot-path helpers — ZERO Result allocation on the happy path.
-# Use these in I/O-bound loops where GC pressure matters.
-# ---------------------------------------------------------------------------
 
 def try_or(fn: Callable[[], T], default: T) -> T:
     """
@@ -297,10 +273,6 @@ def try_or_raise(
         raise exc_type(f"{label}: {e}") from e
 
 
-# ---------------------------------------------------------------------------
-# map_result — transform or extract from a Result.
-# ---------------------------------------------------------------------------
-
 def map_result(
     result: Result[T],
     *,
@@ -333,11 +305,6 @@ def map_result(
     else:
         return None  # type: ignore[return-value]
 
-
-# ---------------------------------------------------------------------------
-# Async hot-path helpers — ZERO allocation on the happy path.
-# Use these in async I/O-bound loops where GC pressure matters.
-# ---------------------------------------------------------------------------
 
 async def try_or_async(
     fn: Callable[[], Awaitable[T]],
@@ -408,10 +375,6 @@ async def try_or_raise_async(
     except Exception as e:  # noqa: BLE001
         raise exc_type(f"{label}: {e}") from e
 
-
-# ---------------------------------------------------------------------------
-# Exports
-# ---------------------------------------------------------------------------
 
 __all__ = [
     # Types

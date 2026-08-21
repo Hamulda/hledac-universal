@@ -43,12 +43,13 @@ Modern Python 3.14+ Practices:
     - AsyncGenerator for lazy consumption
     - Graceful fallback when Rust extension unavailable
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Coroutine
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,6 +63,7 @@ _Scanner: type | None = None
 
 try:
     from hledac_rust_extensions import StreamingIocScanner as _RustStreamingIocScanner
+
     _RUST_SCANNER_AVAILABLE = True
     _Scanner = _RustStreamingIocScanner
 except ImportError as _exc:
@@ -82,7 +84,7 @@ def _default_patterns() -> list[str]:
 
 async def stream_scan(
     findings: AsyncIterator[str],
-    on_ioc: Callable[[dict], Union[Coroutine[Any, Any, None], None]],
+    on_ioc: Callable[[dict], Coroutine[Any, Any, None] | None],
     *,
     patterns: Sequence[str] | None = None,
     labels: Sequence[str] | None = None,
@@ -138,7 +140,6 @@ async def stream_scan(
             pass
         return
 
-    # Initialize scanner with patterns
     scanner_patterns = list(patterns) if patterns else _default_patterns()
     scanner_labels = list(labels) if labels else []
 
@@ -210,8 +211,7 @@ async def scan_file_with_callbacks(
     """
     if not _RUST_SCANNER_AVAILABLE:
         logger.warning(
-            f"[HEIST-01] Rust StreamingIocScanner unavailable, file scan disabled. "
-            f"Import error: {_RUST_IMPORT_ERROR}"
+            f"[HEIST-01] Rust StreamingIocScanner unavailable, file scan disabled. Import error: {_RUST_IMPORT_ERROR}"
         )
         return
 
@@ -252,7 +252,6 @@ def _hit_to_dict(hit) -> dict:
         "label": hit.label,
         "value": hit.value,
     }
-
 
 
 async def scan_batch(
@@ -296,6 +295,7 @@ async def scan_batch(
             scanner.close()
         except Exception:
             pass
+
 
 async def scan_bytes_with_streaming(
     buffer: bytes | bytearray | memoryview,

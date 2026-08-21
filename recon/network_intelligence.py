@@ -10,7 +10,6 @@ M1 Optimized: Async I/O, bounded RAM (<300MB for BGP data), no blocking sync cal
 import logging
 import os
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ async def get_bgp_info(prefix: str) -> dict[str, Any]:
         stream = pybgpstream.BGPStream(
             data_interface="single",
             filter=f"prefix {prefix}",
-    )
+        )
 
         records = []
         for i, rec in enumerate(stream):
@@ -65,13 +64,11 @@ async def get_bgp_info(prefix: str) -> dict[str, Any]:
             result["found"] = True
             result["announced"] = True
 
-            # Parse first record for ASN info
             for rec in records:
                 elem = rec[2]  # elementary record
                 if elem:
                     result["asn"] = elem.get("asn")
                     result["as_path"] = elem.get("path")
-                    # Extract origin AS from path
                     path = elem.get("path", "")
                     if path:
                         asns = path.split()
@@ -114,7 +111,6 @@ async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
     api_key = os.environ.get("IPINFO_API_KEY")
 
     try:
-        # Extract IP from prefix for API call
         ip = prefix.split("/")[0]
 
         url = f"https://ipinfo.io/{ip}/json"
@@ -123,8 +119,10 @@ async def _get_bgp_via_ipinfo(prefix: str) -> dict[str, Any]:
             headers["Authorization"] = f"Bearer {api_key}"
 
         # F-01: session_pool.httpx() returns shared singleton
-        from hledac.universal.transport.session_pool import session_pool
         import httpx
+
+        from hledac.universal.transport.session_pool import session_pool
+
         session = await session_pool.httpx()
         resp = await session.get(url, headers=headers, timeout=httpx.Timeout(10))
         if resp.status_code == 200:
@@ -193,7 +191,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
                     query,
                     doh_url,
                     timeout=10,
-    )
+                )
 
                 for answer in response.answer:
                     for rdata in answer:
@@ -209,7 +207,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
                     mx_query,
                     doh_url,
                     timeout=10,
-    )
+                )
 
                 for answer in mx_response.answer:
                     for rdata in answer:
@@ -223,7 +221,7 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
                     txt_query,
                     doh_url,
                     timeout=10,
-    )
+                )
 
                 for answer in txt_response.answer:
                     for rdata in answer:
@@ -272,8 +270,10 @@ async def _resolve_doh_direct(domain: str) -> dict[str, list[str]]:
     ]
 
     # F-01: session_pool.httpx() returns shared singleton
-    from hledac.universal.transport.session_pool import session_pool
     import httpx
+
+    from hledac.universal.transport.session_pool import session_pool
+
     session = await session_pool.httpx()
     for provider, url in doh_endpoints:
         try:
@@ -337,7 +337,7 @@ def integrate_bgp_doh_to_graph(
                 as_name=asn_info.get("as_name"),
                 country=asn_info.get("country"),
                 prefix=asn_info.get("prefix"),
-    )
+            )
 
         # Add IP nodes with ASN relationship
         for ip in ip_addresses:
@@ -349,7 +349,7 @@ def integrate_bgp_doh_to_graph(
                     ip_id,
                     asn_id,
                     relationship="belongs_to",
-    )
+                )
 
         logger.debug(f"Integrated {len(ip_addresses)} IPs and ASN {asn_info.get('asn')} to graph")
 

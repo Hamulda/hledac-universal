@@ -38,34 +38,38 @@ ROADMAP-002: Uses MLXInferenceLock for cross-lane serialization instead of
 
 Always-on, fail-safe, bounded.
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import threading
 import time as time_module
 import weakref
+from collections.abc import Callable
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
-from collections.abc import Callable
+
 import msgspec
-from compat.msgspec_gc_compat import Struct
 
 # F350M-R: Import from core.protocols (breaks runtime ↔ core cycle)
 from _core.protocols import shutdown_aclose
-from _core._util import aclose
+from compat.msgspec_gc_compat import Struct
+
 if TYPE_CHECKING:
+    from hledac.universal._core.resource_governor import ConcurrencyPreset
     from hledac.universal.brain.ane_embedder import ANE_MLX_Mutex
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
     from hledac.universal.brain.mlx_embedder import MLXEmbedder
     from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
-    from hledac.universal._core.resource_governor import ConcurrencyPreset
 logger = logging.getLogger(__name__)
 _METAL_CACHE_ALPHA = 0.2
 _METAL_CACHE_MIN = 512 * 1024 * 1024
 _METAL_CACHE_MAX = 768 * 1024 * 1024
 _EMBEDDING_HIGH_WATER = 128
 _EMBEDDING_LOW_WATER = 32
+
 
 class LanePriority(IntEnum):
     """Priority lanes for MLX work scheduling.
@@ -75,9 +79,11 @@ class LanePriority(IntEnum):
     EMBEDDING (1): Batch embedding encode — medium priority, batched, ANE-accelerated
     BACKGROUND (2): Speculative decoding, background synthesis — lowest priority
     """
+
     INTERACTIVE = 0
     EMBEDDING = 1
     BACKGROUND = 2
+
 
 class SchedulerStats(Struct):
     """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation.
@@ -85,6 +91,7 @@ class SchedulerStats(Struct):
     NOTE: msgspec.Struct without frozen=True allows field mutations.
     This is intentional for hot-path telemetry updates.
     """
+
     llm_requests: int = 0
     embedding_requests: int = 0
     background_requests: int = 0
@@ -92,7 +99,7 @@ class SchedulerStats(Struct):
     cache_misses: int = 0
     ane_offload_count: int = 0
     gpu_fallback_count: int = 0
-    active_lane: str = 'none'
+    active_lane: str = "none"
     memory_pressure: float = 0.0
     queue_depth: int = 0
 
@@ -112,18 +119,22 @@ class SchedulerStats(Struct):
         """Return frozen copy for external consumers (get_stats)."""
         return msgspec.convert(self, SchedulerStats)
 
+
 class EmbeddedModelInfo(Struct):
     """Information about loaded MLX/ANE models."""
+
     llm_loaded: bool = False
     embedding_loaded: bool = False
     ane_available: bool = False
     ane_busy: bool = False
+
 
 class LaneMetrics(Struct):
     """Per-lane metrics for adaptive scheduling.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.
     """
+
     requests: int = 0
     total_latency_ms: float = 0.0
     avg_latency_ms: float = 0.0
@@ -134,6 +145,7 @@ class LaneMetrics(Struct):
         self.total_latency_ms += latency_ms
         self.avg_latency_ms = self.total_latency_ms / self.requests if self.requests else 0.0
         self.last_used_ts = time_module.monotonic()
+
 
 class MLXUnifiedScheduler:
     """
@@ -181,9 +193,38 @@ class MLXUnifiedScheduler:
         U.M7: O(1) direct dispatch — žádný heap, žádný mutex v hot path
         U.M8: Cross-lane serialization via MLXInferenceLock (ROADMAP-002)
     """
-    __slots__ = tuple(('_ane_mutex', '_batcher', '_batcher_loaded', '_current_preset', '_embedder', '_embedder_loaded', '_finalizer', '_inference_semaphore', '_lane_metrics', '_llm_engine', '_memory_pressure', '_model_info', '_shutdown', '_stats', '_stats_lock', '_token_cache', '_worker_thread', '_worker_thread_loaded'))
 
-    def __init__(self, llm_engine: DeepHermes3Engine, *, embedder: MLXEmbedder | None=None, batcher: MLXBatchedExecutor | None=None, worker_thread: MLXWorkerThread | None=None, token_cache: Any=None, ane_mutex: ANE_MLX_Mutex | None=None) -> None:
+    __slots__ = (
+        "_ane_mutex",
+        "_batcher",
+        "_batcher_loaded",
+        "_current_preset",
+        "_embedder",
+        "_embedder_loaded",
+        "_finalizer",
+        "_inference_semaphore",
+        "_lane_metrics",
+        "_llm_engine",
+        "_memory_pressure",
+        "_model_info",
+        "_shutdown",
+        "_stats",
+        "_stats_lock",
+        "_token_cache",
+        "_worker_thread",
+        "_worker_thread_loaded",
+    )
+
+    def __init__(
+        self,
+        llm_engine: DeepHermes3Engine,
+        *,
+        embedder: MLXEmbedder | None = None,
+        batcher: MLXBatchedExecutor | None = None,
+        worker_thread: MLXWorkerThread | None = None,
+        token_cache: Any = None,
+        ane_mutex: ANE_MLX_Mutex | None = None,
+    ) -> None:
         """
         Args:
             llm_engine: DeepHermes3Engine instance (required)
@@ -202,7 +243,11 @@ class MLXUnifiedScheduler:
         self._shutdown: bool = False
         self._current_preset: ConcurrencyPreset | None = None
         self._memory_pressure: float = 0.0
-        self._lane_metrics: dict[LanePriority, LaneMetrics] = {LanePriority.INTERACTIVE: LaneMetrics(), LanePriority.EMBEDDING: LaneMetrics(), LanePriority.BACKGROUND: LaneMetrics()}
+        self._lane_metrics: dict[LanePriority, LaneMetrics] = {
+            LanePriority.INTERACTIVE: LaneMetrics(),
+            LanePriority.EMBEDDING: LaneMetrics(),
+            LanePriority.BACKGROUND: LaneMetrics(),
+        }
         self._stats_lock = threading.Lock()
         self._stats = SchedulerStats()
         self._model_info = EmbeddedModelInfo()
@@ -212,15 +257,30 @@ class MLXUnifiedScheduler:
         # ROADMAP-002 FIX: Use module-level _get_inference_lock() for canonical semaphore.
         # FIX Issue #1: Get the singleton instance, not a new MLXInferenceLock()
         from _core.mlx_inference_lock import _get_inference_lock
+
         self._inference_semaphore = _get_inference_lock().semaphore if llm_engine else None
         self._finalizer = weakref.finalize(self, _scheduler_at_exit, self)
-        logger.debug('[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s', bool(llm_engine), bool(embedder), bool(batcher), bool(worker_thread))
+        logger.debug(
+            "[MLXScheduler] Created — components: engine=%s, embedder=%s, batcher=%s, worker=%s",
+            bool(llm_engine),
+            bool(embedder),
+            bool(batcher),
+            bool(worker_thread),
+        )
 
     def _update_stats(self, **kwargs: Any) -> None:
         """O(1) in-place stats update — no allocation, no lock (event-loop thread)."""
         self._stats.inc(**kwargs)
 
-    async def submit_inference(self, prompt: str, *, temperature: float | None=None, max_tokens: int=1024, system_msg: str | None=None, priority: LanePriority=LanePriority.INTERACTIVE) -> str:
+    async def submit_inference(
+        self,
+        prompt: str,
+        *,
+        temperature: float | None = None,
+        max_tokens: int = 1024,
+        system_msg: str | None = None,
+        priority: LanePriority = LanePriority.INTERACTIVE,
+    ) -> str:
         """
         Submit LLM inference request.
 
@@ -241,7 +301,7 @@ class MLXUnifiedScheduler:
             Generated text string
         """
         if self._shutdown:
-            raise RuntimeError('MLXUnifiedScheduler: submit_inference after shutdown')
+            raise RuntimeError("MLXUnifiedScheduler: submit_inference after shutdown")
         start_ts = time_module.monotonic()
         cache_hit = False
         if self._token_cache is not None and priority == LanePriority.INTERACTIVE:
@@ -262,15 +322,16 @@ class MLXUnifiedScheduler:
             result = await self._submit_interactive(prompt, temperature, max_tokens, system_msg)
         latency_ms = (time_module.monotonic() - start_ts) * 1000
         self._lane_metrics[LanePriority.INTERACTIVE].record(latency_ms)
-        self._update_stats(llm_requests=1, active_lane='llm')
+        self._update_stats(llm_requests=1, active_lane="llm")
         try:
             from hledac.universal._core.telemetry.context_state import update_lane_latency
-            update_lane_latency('llm', latency_ms)
+
+            update_lane_latency("llm", latency_ms)
         except Exception:  # noqa: BLE001
             pass
         return result
 
-    async def submit_embedding(self, texts: list[str], *, batch_size: int | None=None) -> list[list[float]]:
+    async def submit_embedding(self, texts: list[str], *, batch_size: int | None = None) -> list[list[float]]:
         """
         Submit batch embedding request.
 
@@ -295,7 +356,7 @@ class MLXUnifiedScheduler:
             List of embedding vectors
         """
         if self._shutdown:
-            raise RuntimeError('MLXUnifiedScheduler: submit_embedding after shutdown')
+            raise RuntimeError("MLXUnifiedScheduler: submit_embedding after shutdown")
         if not texts:
             return []
         start_ts = time_module.monotonic()
@@ -309,13 +370,14 @@ class MLXUnifiedScheduler:
         if effective_bs <= 16 and len(texts) <= 16:
             try:
                 from hledac.universal.brain.ane_inference import get_ane_engine
+
                 ane_engine = get_ane_engine()
-                result = await ane_engine.embed_batch_ane(texts, model_key='bge-small')
+                result = await ane_engine.embed_batch_ane(texts, model_key="bge-small")
                 if result is not None:
                     ane_embeddings = result.tolist()
                     ane_routed = True
-                    self._update_stats(ane_offload_count=1, active_lane='embedding_ane')
-                    logger.debug('[MLXScheduler] ANE embed OK: %d texts', len(texts))
+                    self._update_stats(ane_offload_count=1, active_lane="embedding_ane")
+                    logger.debug("[MLXScheduler] ANE embed OK: %d texts", len(texts))
             except Exception:
                 self._update_stats(gpu_fallback_count=1)
 
@@ -325,7 +387,8 @@ class MLXUnifiedScheduler:
             self._update_stats(embedding_requests=len(texts))
             try:
                 from hledac.universal._core.telemetry.context_state import update_lane_latency
-                update_lane_latency('embedding', latency_ms)
+
+                update_lane_latency("embedding", latency_ms)
             except Exception:  # noqa: BLE001
                 pass
             return ane_embeddings
@@ -351,25 +414,33 @@ class MLXUnifiedScheduler:
                 result = await self._do_embedding_batch(texts, batch_size)
             else:
                 from hledac.universal.brain.mlx_embedder import AdaptiveEmbeddingBatcher
+
                 initial = self._adaptive_embedding_batch_size()
-                batcher = AdaptiveEmbeddingBatcher(initial_batch_size=initial, min_batch_size=_EMBEDDING_LOW_WATER, max_batch_size=_EMBEDDING_HIGH_WATER, pressure_high=0.8, pressure_low=0.5)
+                batcher = AdaptiveEmbeddingBatcher(
+                    initial_batch_size=initial,
+                    min_batch_size=_EMBEDDING_LOW_WATER,
+                    max_batch_size=_EMBEDDING_HIGH_WATER,
+                    pressure_high=0.8,
+                    pressure_low=0.5,
+                )
                 result = await batcher.process(texts, embedder, memory_provider=self._sample_memory_pressure)
         finally:
             if ane_routed and self._ane_mutex is not None:
-                self._ane_mutex.release(runtime='embed_ane')
+                self._ane_mutex.release(runtime="embed_ane")
             if _inference_sem is not None:
                 _inference_sem.release()
         latency_ms = (time_module.monotonic() - start_ts) * 1000
         self._lane_metrics[LanePriority.EMBEDDING].record(latency_ms)
-        self._update_stats(embedding_requests=len(texts), active_lane='embedding')
+        self._update_stats(embedding_requests=len(texts), active_lane="embedding")
         try:
             from hledac.universal._core.telemetry.context_state import update_lane_latency
-            update_lane_latency('embedding', latency_ms)
+
+            update_lane_latency("embedding", latency_ms)
         except Exception:  # noqa: BLE001
             pass
         return result
 
-    async def submit_background(self, coro: Any, *, priority: LanePriority=LanePriority.BACKGROUND) -> Any:
+    async def submit_background(self, coro: Any, *, priority: LanePriority = LanePriority.BACKGROUND) -> Any:
         """
         Submit background MLX work (speculative decoding, synthesis, etc.).
 
@@ -385,14 +456,19 @@ class MLXUnifiedScheduler:
             Result of coroutine
         """
         if self._shutdown:
-            raise RuntimeError('MLXUnifiedScheduler: submit_background after shutdown')
-        self._update_stats(background_requests=self._stats.background_requests + 1, active_lane='background')
+            raise RuntimeError("MLXUnifiedScheduler: submit_background after shutdown")
+        self._update_stats(background_requests=self._stats.background_requests + 1, active_lane="background")
         try:
             from hledac.universal._core.telemetry.context_state import update_lane_latency
-            update_lane_latency('background', 0.0)
+
+            update_lane_latency("background", 0.0)
         except Exception:  # noqa: BLE001
             pass
-        if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
+        if (
+            self._worker_thread is not None
+            and hasattr(self._worker_thread, "is_active")
+            and self._worker_thread.is_active()
+        ):
             return await self._worker_thread.submit(coro, timeout=120.0)
         return await coro
 
@@ -408,7 +484,11 @@ class MLXUnifiedScheduler:
         """
         self._current_preset = preset
         self._memory_pressure = self._preset_to_pressure(preset)
-        logger.debug('[MLXScheduler] Memory preset updated: state=%s, pressure=%.2f', preset.state if hasattr(preset, 'state') else 'unknown', self._memory_pressure)
+        logger.debug(
+            "[MLXScheduler] Memory preset updated: state=%s, pressure=%.2f",
+            preset.state if hasattr(preset, "state") else "unknown",
+            self._memory_pressure,
+        )
 
     def get_stats(self) -> SchedulerStats:
         """Return frozen snapshot of scheduler telemetry (thread-safe for external callers)."""
@@ -421,7 +501,7 @@ class MLXUnifiedScheduler:
 
     async def start(self) -> None:
         """No-op — O(1) direct dispatch, žádné worker tasky."""
-        logger.debug('[MLXScheduler] Started — O(1) direct dispatch')
+        logger.debug("[MLXScheduler] Started — O(1) direct dispatch")
 
     # P1-9: Canonical timeout for this scheduler.
     DEFAULT_TIMEOUT_S = 5.0
@@ -439,12 +519,12 @@ class MLXUnifiedScheduler:
             name="MLXUnifiedScheduler",
             coro=self._do_shutdown(),
             timeout_s=timeout,
-    )
+        )
 
     async def _do_shutdown(self) -> None:
         """Inner cleanup — called by shutdown() via shutdown_aclose()."""
         self._shutdown = True
-        if self._token_cache is not None and hasattr(self._token_cache, 'clear_cache'):
+        if self._token_cache is not None and hasattr(self._token_cache, "clear_cache"):
             try:
                 self._token_cache.clear_cache()
             except Exception:  # noqa: BLE001
@@ -453,18 +533,20 @@ class MLXUnifiedScheduler:
         if self._ane_mutex is not None:
             try:
                 # Issue-1 FIX: Use correct runtime name 'embed_ane' not 'ane'
-                self._ane_mutex.release(runtime='embed_ane')
+                self._ane_mutex.release(runtime="embed_ane")
             except Exception:  # noqa: BLE001
                 pass
             try:
-                self._ane_mutex.release(runtime='llm')
+                self._ane_mutex.release(runtime="llm")
             except Exception:  # noqa: BLE001
                 pass
-        logger.info('[MLXScheduler] Shutdown complete')
+        logger.info("[MLXScheduler] Shutdown complete")
 
-    async def _submit_interactive(self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None) -> str:
+    async def _submit_interactive(
+        self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None
+    ) -> str:
         """Submit to interactive LLM lane — highest priority, no batching.
-        
+
         P3-7 FIX: Acquire ANE mutex with 'llm' runtime to prevent concurrent ANE embeddings.
         This enforces U.M2 invariant: ANE/MLX mutual exclusion.
         """
@@ -476,32 +558,44 @@ class MLXUnifiedScheduler:
                     self._ane_mutex.acquire_llm(model_size_mb=1750)  # Hermes model size
                     llm_mutex_acquired = True
                 except MemoryError:
-                    logger.warning('[MLXScheduler] ANE mutex acquisition failed for LLM - proceeding anyway')
-            
+                    logger.warning("[MLXScheduler] ANE mutex acquisition failed for LLM - proceeding anyway")
+
             if self._batcher is not None:
                 try:
-                    return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=0)
+                    return await self._batcher.execute(
+                        prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=0
+                    )
                 except Exception as e:
-                    logger.debug('[MLXScheduler] Batcher unavailable: %s', e)
-            if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
-                coro = self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+                    logger.debug("[MLXScheduler] Batcher unavailable: %s", e)
+            if (
+                self._worker_thread is not None
+                and hasattr(self._worker_thread, "is_active")
+                and self._worker_thread.is_active()
+            ):
+                coro = self._llm_engine.generate(
+                    prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+                )
                 result = await self._worker_thread.submit(coro, timeout=60.0)
                 await self._post_inference_hook_async()
                 return result
-            result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+            result = await self._llm_engine.generate(
+                prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+            )
             await self._post_inference_hook_async()
             return result
         finally:
             # P3-7 FIX: Release ANE mutex when done
             if llm_mutex_acquired and self._ane_mutex is not None:
                 try:
-                    self._ane_mutex.release(runtime='llm')
+                    self._ane_mutex.release(runtime="llm")
                 except Exception as e:
-                    logger.debug('[MLXScheduler] ANE mutex release failed: %s', e)
+                    logger.debug("[MLXScheduler] ANE mutex release failed: %s", e)
 
-    async def _submit_background(self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None) -> str:
+    async def _submit_background(
+        self, prompt: str, temperature: float | None, max_tokens: int, system_msg: str | None
+    ) -> str:
         """Submit to background LLM lane — lowest priority, batched.
-        
+
         P3-7 FIX: Acquire ANE mutex with 'llm' runtime to prevent concurrent ANE embeddings.
         This enforces U.M2 invariant: ANE/MLX mutual exclusion.
         """
@@ -513,23 +607,31 @@ class MLXUnifiedScheduler:
                     self._ane_mutex.acquire_llm(model_size_mb=1750)  # Hermes model size
                     llm_mutex_acquired = True
                 except MemoryError:
-                    logger.warning('[MLXScheduler] ANE mutex acquisition failed for background LLM - proceeding anyway')
-            
+                    logger.warning("[MLXScheduler] ANE mutex acquisition failed for background LLM - proceeding anyway")
+
             if self._batcher is not None:
                 try:
-                    return await self._batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=10)
+                    return await self._batcher.execute(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system_msg=system_msg,
+                        priority=10,
+                    )
                 except Exception as e:
-                    logger.debug('[MLXScheduler] Batcher unavailable for background: %s', e)
-            result = await self._llm_engine.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg)
+                    logger.debug("[MLXScheduler] Batcher unavailable for background: %s", e)
+            result = await self._llm_engine.generate(
+                prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg
+            )
             await self._post_inference_hook_async()
             return result
         finally:
             # P3-7 FIX: Release ANE mutex when done
             if llm_mutex_acquired and self._ane_mutex is not None:
                 try:
-                    self._ane_mutex.release(runtime='llm')
+                    self._ane_mutex.release(runtime="llm")
                 except Exception as e:
-                    logger.debug('[MLXScheduler] ANE mutex release failed: %s', e)
+                    logger.debug("[MLXScheduler] ANE mutex release failed: %s", e)
 
     async def _do_embedding_batch(self, texts: list[str], batch_size: int) -> list[list[float]]:
         """Execute embedding batch with adaptive sizing."""
@@ -537,15 +639,15 @@ class MLXUnifiedScheduler:
             self._embedder = await self._ensure_embedder()
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             embedder = self._embedder
-            if hasattr(embedder, 'embed_batch') and callable(getattr(embedder, 'embed_batch', None)):
-                batch_result: list[list[float]] = await getattr(embedder, 'embed_batch')(batch)
-            elif hasattr(embedder, 'embed') and callable(getattr(embedder, 'embed', None)):
-                embed_fn: Callable[[list[str]], list[list[float]]] = getattr(embedder, 'embed')
+            if hasattr(embedder, "embed_batch") and callable(getattr(embedder, "embed_batch", None)):
+                batch_result: list[list[float]] = await embedder.embed_batch(batch)
+            elif hasattr(embedder, "embed") and callable(getattr(embedder, "embed", None)):
+                embed_fn: Callable[[list[str]], list[list[float]]] = embedder.embed
                 batch_result = await asyncio.to_thread(embed_fn, batch)
             else:
-                raise RuntimeError(f'Embedder {type(embedder)} has no embed/embed_batch method')
+                raise RuntimeError(f"Embedder {type(embedder)} has no embed/embed_batch method")
             all_embeddings.extend(batch_result)
         return all_embeddings
 
@@ -554,6 +656,7 @@ class MLXUnifiedScheduler:
         if self._embedder_loaded and self._embedder is not None:
             return self._embedder
         from hledac.universal.brain.mlx_embedder import MLXEmbedder
+
         embedder = MLXEmbedder()
         await embedder.load()
         self._embedder = embedder
@@ -570,19 +673,19 @@ class MLXUnifiedScheduler:
 
     def _preset_to_pressure(self, preset: ConcurrencyPreset) -> float:
         """Convert ConcurrencyPreset to 0.0-1.0 pressure scale."""
-        if hasattr(preset, 'state'):
+        if hasattr(preset, "state"):
             state = preset.state
-            if state == 'emergency':
+            if state == "emergency":
                 return 0.95
-            elif state == 'critical':
+            elif state == "critical":
                 return 0.85
-            elif state == 'warn':
+            elif state == "warn":
                 return 0.7
-            elif state == 'ok':
+            elif state == "ok":
                 return 0.3
-            elif state == 'soft_warn':
+            elif state == "soft_warn":
                 return 0.55
-        if hasattr(preset, 'mlx_max') and preset.mlx_max:
+        if hasattr(preset, "mlx_max") and preset.mlx_max:
             mlx_max_val = preset.mlx_max
             if isinstance(mlx_max_val, (int, float)):
                 return min(float(mlx_max_val) / 2.0, 1.0)
@@ -619,10 +722,11 @@ class MLXUnifiedScheduler:
         """
         try:
             import mlx.core as mx
+
             mx.eval([])
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-            elif hasattr(mx.metal, 'clear_cache'):
+            elif hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
         except Exception:  # noqa: BLE001
             pass
@@ -637,31 +741,35 @@ class MLXUnifiedScheduler:
         """
         try:
             import mlx.core as mx
+
             await asyncio.to_thread(mx.eval)
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
-            elif hasattr(mx.metal, 'clear_cache'):
+            elif hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
         except Exception:  # noqa: BLE001
             pass
 
     def __repr__(self) -> str:
-        state = 'active' if not self._shutdown else 'shutdown'
-        return f'MLXUnifiedScheduler(state={state}, llm_req={self._stats.llm_requests}, emb_req={self._stats.embedding_requests}, pressure={self._memory_pressure:.2f})'
+        state = "active" if not self._shutdown else "shutdown"
+        return f"MLXUnifiedScheduler(state={state}, llm_req={self._stats.llm_requests}, emb_req={self._stats.embedding_requests}, pressure={self._memory_pressure:.2f})"
+
 
 def _scheduler_at_exit(instance: MLXUnifiedScheduler) -> None:
     """Called by weakref.finalize at interpreter exit if explicit shutdown was not called."""
     try:
-        if hasattr(instance, '_ane_mutex') and instance._ane_mutex is not None:
+        if hasattr(instance, "_ane_mutex") and instance._ane_mutex is not None:
             try:
                 # Issue-1 FIX: Use correct runtime name 'embed_ane' not 'ane'
-                instance._ane_mutex.release(runtime='embed_ane')
+                instance._ane_mutex.release(runtime="embed_ane")
             except Exception:  # noqa: BLE001
                 pass
             try:
-                instance._ane_mutex.release(runtime='llm')
+                instance._ane_mutex.release(runtime="llm")
             except Exception:  # noqa: BLE001
                 pass
     except Exception:  # noqa: BLE001
         pass
-__all__ = ['MLXUnifiedScheduler', 'LanePriority', 'SchedulerStats', 'EmbeddedModelInfo']
+
+
+__all__ = ["MLXUnifiedScheduler", "LanePriority", "SchedulerStats", "EmbeddedModelInfo"]

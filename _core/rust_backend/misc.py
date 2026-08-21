@@ -1,43 +1,14 @@
 # misc.py — Miscellaneous domains: graph, hot_edges, aho, evidence, madvise, memory, json, spsc, query, text, int_counter, simd, sprint_policies, metal
 
-from dataclasses import dataclass
-
 import re
 import warnings
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from collections import deque
-from threading import Lock
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 # Issue R-17: Deprecation markers for domains where Python fallback always wins
 _DEPRECATED_RUST_DOMAINS: set[str] = {
-    "_RustGraphDomain",   # Rust has incompatible signature → Python always wins
-    "_RustXmlDomain",     # Rust sanitize_xml absent on older builds → Python fallback
+    "_RustGraphDomain",  # Rust has incompatible signature → Python always wins
+    "_RustXmlDomain",  # Rust sanitize_xml absent on older builds → Python fallback
     # NOTE: _RustSimdDomain removed - uses proper SIMDSimilarityIntegration via
     # rust_extensions.wiring.simd_similarity_wiring (not this deprecated path)
 }
@@ -70,8 +41,6 @@ try:
 except ImportError:
     _SelectolaxParser = None  # type: ignore[assignment]
 
-# =============================================================================
-
 
 def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
     """Regex fallback: extract href values from HTML."""
@@ -95,11 +64,6 @@ def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
     return results
 
 
-# =============================================================================
-# Graph
-# =============================================================================
-
-
 class _RustGraphDomain:
     __slots__ = ("_ext",)
 
@@ -109,7 +73,7 @@ class _RustGraphDomain:
             "Rust batch_graph_traverse has incompatible signature — Python fallback always wins",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         self._ext = ext
 
     def batch_graph_traverse(
@@ -148,11 +112,6 @@ def _python_batch_graph_traverse(
     for rid in root_ids:
         result.append({"node_id": rid, "depth": 0, "edges": []})
     return result
-
-
-# =============================================================================
-# Hot Edges
-# =============================================================================
 
 
 class _RustHotEdgesDomain:
@@ -221,17 +180,12 @@ class _PythonHotEdgesDomain:
         return _PythonIntCounterLayout(field_names)
 
     def bulk_bump_aggregate(self, counter: _PythonHotEdgeCounter, indices: list[int], deltas: list[int]) -> None:
-        for idx, delta in zip(indices, deltas):
+        for idx, delta in zip(indices, deltas, strict=False):
             counter.bump_edge(idx, idx, delta)
 
     def bulk_snapshot_dict(self, counter: _PythonHotEdgeCounter) -> dict[Any, int]:
         # counter.snapshot() returns dict[tuple[int,int], int] for HotEdgeCounter
-        return {k: v for k, v in counter.snapshot().items()}
-
-
-# =============================================================================
-# Aho-Corasick
-# =============================================================================
+        return dict(counter.snapshot().items())
 
 
 class _RustAhoDomain:
@@ -263,11 +217,6 @@ class _PythonAhoDomain:
         return matcher.search(text)
 
 
-# =============================================================================
-# Evidence / Chain Hash
-# =============================================================================
-
-
 class _RustEvidenceDomain:
     __slots__ = ("_ext",)
 
@@ -293,11 +242,6 @@ class _PythonEvidenceDomain:
     @staticmethod
     def is_duplicate(content_hash_bytes: bytes, bloom_filter: Any) -> bool:
         return _python_is_duplicate(content_hash_bytes, bloom_filter)
-
-
-# =============================================================================
-# Madvise
-# =============================================================================
 
 
 class _RustMadvisDomain:
@@ -374,11 +318,6 @@ class _PythonMadvisDomain:
         return 0
 
 
-# =============================================================================
-# Memory
-# =============================================================================
-
-
 class _RustMemoryDomain:
     __slots__ = ("_ext",)
 
@@ -408,15 +347,10 @@ class _PythonMemoryDomain:
         return _python_get_total_memory()
 
 
-# =============================================================================
-# JSON
-# =============================================================================
-
-
 class _RustJsonDomain:
     """
     A10: Rust serde_json wrapper for 3-4× faster JSON serialization.
-    
+
     Wraps rust_extensions serde_json_rs functions. Uses the same pattern as
     _RustJsonDomain in json.py - pre-serialize with Python json.dumps first,
     then re-serialize with Rust serde_json for fast deterministic formatting.
@@ -430,6 +364,7 @@ class _RustJsonDomain:
     def _serialize_first(self, data: Any) -> str:
         """Pre-serialize Python object to JSON string before Rust re-serialization."""
         import json as _stdlib_json
+
         return _stdlib_json.dumps(data)
 
     def pretty_sorted(self, data: Any) -> str:
@@ -450,21 +385,25 @@ class _RustJsonDomain:
 
     def batch_pretty(self, items: list[Any]) -> list[str]:
         import json as _stdlib_json
+
         json_strs = [_stdlib_json.dumps(item) for item in items]
         return self._ext.batch_serde_json_pretty(json_strs)
 
     def batch_compact(self, items: list[Any]) -> list[str]:
         import json as _stdlib_json
+
         json_strs = [_stdlib_json.dumps(item) for item in items]
         return self._ext.batch_serde_json_compact(json_strs)
 
     def batch_pretty_sorted(self, items: list[Any]) -> list[str]:
         import json as _stdlib_json
+
         json_strs = [_stdlib_json.dumps(item) for item in items]
         return self._ext.batch_serde_json_pretty_sorted(json_strs)
 
     def batch_compact_sorted(self, items: list[Any]) -> list[str]:
         import json as _stdlib_json
+
         json_strs = [_stdlib_json.dumps(item) for item in items]
         return self._ext.batch_serde_json_compact_sorted(json_strs)
 
@@ -523,11 +462,6 @@ class _PythonJsonDomain:
         return _json.dumps(data, indent=2, sort_keys=sort_keys).encode("utf-8")
 
 
-# =============================================================================
-# SPSC Queue
-# =============================================================================
-
-
 class _RustSPSCDomain:
     __slots__ = ("_ext",)
 
@@ -561,11 +495,6 @@ class _PythonSPSCDomain:
         return (sender, q)
 
 
-# =============================================================================
-# Query (DuckDB)
-# =============================================================================
-
-
 class _RustQueryDomain:
     __slots__ = ("_ext",)
 
@@ -596,11 +525,6 @@ class _PythonQueryDomain:
     @staticmethod
     def drop_query_connections() -> None:
         pass
-
-
-# =============================================================================
-# Text (NFC, diacritics)
-# =============================================================================
 
 
 class _RustTextDomain:
@@ -668,10 +592,6 @@ class _PythonTextDomain:
         return [_python_strip_diacritics(t) for t in texts]
 
 
-# =============================================================================
-# XML Sanitization (Issue #7c)
-
-
 class _RustXmlDomain:
     __slots__ = ("_ext",)
 
@@ -681,7 +601,7 @@ class _RustXmlDomain:
             "Rust sanitize_xml may be absent on older builds — Python fallback preferred",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         self._ext = ext
 
     def sanitize_xml(self, raw: str) -> str:
@@ -722,11 +642,6 @@ class _PythonXmlDomain:
         return [_py_sanitize_xml(item) for item in items]
 
 
-# =============================================================================
-# Int Counter
-# =============================================================================
-
-
 class _RustIntCounterDomain:
     __slots__ = ("_ext",)
 
@@ -744,11 +659,6 @@ class _PythonIntCounterDomain:
         return _PythonIntCounterLayout(field_names)
 
 
-# =============================================================================
-# SIMD / Cosine Similarity
-# =============================================================================
-
-
 class _RustSimdDomain:
     __slots__ = ("_ext",)
 
@@ -758,7 +668,7 @@ class _RustSimdDomain:
             "Rust batch_cosine_scores has incompatible signature — Python fallback always wins",
             DeprecationWarning,
             stacklevel=2,
-    )
+        )
         self._ext = ext
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:
@@ -780,11 +690,6 @@ class _PythonSimdDomain:
     @staticmethod
     def batch_cosine_similarity(vectors: list[list[float]], query: list[float]) -> list[float]:
         return _python_batch_cosine_similarity(vectors, query)
-
-
-# =============================================================================
-# Sprint Policies (FeedDominanceGuard, LaneBudgetPool)
-# =============================================================================
 
 
 class _RustSprintPoliciesDomain:
@@ -831,7 +736,9 @@ class _RustFeedDominanceGuard:
 
     __slots__ = ("_threshold", "_min_nonfeed", "_strict", "_ext")
 
-    def __init__(self, dominance_ratio_threshold: float, min_nonfeed_findings: int, strict: bool, ext: hledac_rust_extensions) -> None:
+    def __init__(
+        self, dominance_ratio_threshold: float, min_nonfeed_findings: int, strict: bool, ext: hledac_rust_extensions
+    ) -> None:
         self._threshold = dominance_ratio_threshold
         self._min_nonfeed = min_nonfeed_findings
         self._strict = strict
@@ -845,9 +752,12 @@ class _RustFeedDominanceGuard:
         **kwargs: Any,
     ) -> _FeedDominanceResult:
         d = self._ext.compute_feed_dominance(
-            total_accepted, feed_accepted, nonfeed_accepted,
-            self._threshold, self._min_nonfeed,
-    )
+            total_accepted,
+            feed_accepted,
+            nonfeed_accepted,
+            self._threshold,
+            self._min_nonfeed,
+        )
         # Rust may have different threshold semantics — compute guard_triggered using Python logic
         ratio = d["feed_dominance_ratio"]
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
@@ -860,7 +770,7 @@ class _RustFeedDominanceGuard:
             guard_triggered=guard_triggered,
             block_early_exit=block_early_exit,
             reason=d["reason"],
-    )
+        )
 
     def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _FeedDominanceResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
@@ -942,11 +852,6 @@ class _PythonSprintPoliciesDomain:
         ratio = feed_accepted / total_accepted
         guard_triggered = ratio >= 0.95 and nonfeed_accepted < 5
         return {"feed_dominance_ratio": ratio, "guard_triggered": guard_triggered}
-
-
-# =============================================================================
-# Pure-Python helper classes / functions
-# =============================================================================
 
 
 class _PythonHotEdgeCounter:
@@ -1065,7 +970,7 @@ class _PythonMetalDomainInner:
         self._ipv4_re = re.compile(
             r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-    )
+        )
         self._ipv6_re = re.compile(
             r"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|"
             r"(?:[0-9a-fA-F]{1,4}:){1,7}:|"
@@ -1078,14 +983,14 @@ class _PythonMetalDomainInner:
             r":(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|"
             r"::(?:[fF]{4}:)?(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
             r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
-    )
+        )
         self._url_re = re.compile(r"https?://[^\s<>\"\']+")
         self._email_re = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
         # MD5, SHA1, SHA256, SHA512
         self._hash_re = re.compile(
             r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|"
             r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{128}\b"
-    )
+        )
 
     def batch_keyword_scan(self, texts: list[str], keywords: list[str]) -> list[tuple[int, int, int, int]]:
         # Returns (text_idx, start, end, keyword_idx) for each match
@@ -1211,7 +1116,7 @@ def _python_get_total_memory() -> int:
 def _python_cosine_similarity(a: list[float], b: list[float]) -> float:
     import math
 
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:
@@ -1223,22 +1128,11 @@ def _python_batch_cosine_similarity(vectors: list[list[float]], query: list[floa
     return [_python_cosine_similarity(v, query) for v in vectors]
 
 
-# =============================================================================
-# DuckDB Read-Only Connection Pool (ISSUE-04: delegated to core.duckdb_pool)
-# =============================================================================
-# ISSUE-04: Replaced inline pool with canonical duckdb_pool.
-# This ensures:
-# - Bounded pool size from resource_governor (io_threads = 2 on M1 8GB)
-# - Health validation on acquire (prevents stale connections)
-# - M1 8GB safe defaults on all connections
-# - Single source of truth for connection pooling
-
 from hledac.universal._core.duckdb_pool import (
-    duckdb_ro_acquire,
-    duckdb_ro_pool,
-    get_pool_stats,
     close_all_pools,
-    )
+    duckdb_ro_acquire,
+    get_pool_stats,
+)
 
 # Backward compatibility aliases
 _POOL_MAX_SIZE: int = 4  # Deprecated: use duckdb_ro_pool.max_size
@@ -1248,6 +1142,7 @@ def _get_duckdb_module() -> Any:
     """Get DuckDB module (lazy import to avoid hard dependency)."""
     try:
         import duckdb
+
         return duckdb
     except ImportError:
         return None
@@ -1274,11 +1169,6 @@ def _pool_stats() -> dict:
 def _pool_close_all() -> None:
     """Close all pooled connections. Call on process shutdown."""
     close_all_pools()
-
-
-# =============================================================================
-# DuckDB Query Functions (pooled)
-# =============================================================================
 
 
 def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[dict[str, Any]]:
@@ -1313,7 +1203,7 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
             cur = conn.execute(sql)
             cols = [desc[0] for desc in cur.description] if cur.description else []
             rows = cur.fetchall()
-            return [dict(zip(cols, row)) for row in rows]
+            return [dict(zip(cols, row, strict=False)) for row in rows]
         except Exception:
             raise
     except Exception:
@@ -1337,11 +1227,6 @@ def _python_strip_diacritics(text: str) -> str:
         return "".join(c for c in nfkd if not unicodedata.combining(c))
     except Exception:
         return text
-
-
-# =============================================================================
-# FeedDominanceGuard + LaneBudgetPool (Pure Python)
-# =============================================================================
 
 
 @dataclass(slots=True)
@@ -1386,16 +1271,16 @@ class PythonFeedDominanceGuard:
         # should_recommend: feed dominance AND insufficient nonfeed AND NOT timed out
         should_recommend = (
             ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed and not nonfeed_diagnostic_timed_out
-    )
+        )
         guard_triggered = ratio >= self._threshold and nonfeed_accepted < self._min_nonfeed
         block_early_exit = self._strict and guard_triggered
         reason = (
             f"feed_dominance={ratio:.2%} (threshold={self._threshold}), "
             f"nonfeed={nonfeed_accepted} (min={self._min_nonfeed})"
-    )
+        )
         return PythonFeedDominanceGuardResult(
             ratio, nonfeed_accepted, cls, should_recommend, guard_triggered, block_early_exit, reason
-    )
+        )
 
     def compute_simple(
         self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int
@@ -1592,9 +1477,3 @@ def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain 
 # Re-export _PythonHtmlDomain from html.py for differential fuzzing compatibility
 # (_PythonHtmlDomain lives in html.py; misc.py re-exports it so that
 # test_differential_fuzzing.py can import it from the canonical location.)
-from hledac.universal._core.rust_backend.html import _PythonHtmlDomain
-from _core._util import aclose
-
-
-
-

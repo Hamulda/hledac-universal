@@ -82,10 +82,6 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Python exports
-// ---------------------------------------------------------------------------
-
 #[pyfunction]
 pub fn duckdb_open_connection(db_path: String) -> PyResult<bool> {
     let path = std::path::Path::new(&db_path);

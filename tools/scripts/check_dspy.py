@@ -6,10 +6,8 @@ HLEDAC_ENABLE_DSPY=1 gates DSPy features.
 All DSPy calls are fail-soft: sprint continues even if DSPy is unavailable.
 """
 
-
 import os
 import sys
-from _core import aclose
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -34,11 +32,14 @@ def main() -> int:
 
         async def check_lm():
             # F-01: session_pool.httpx() returns shared singleton
-            from hledac.universal.transport.session_pool import session_pool
             import httpx
+
+            from hledac.universal.transport.session_pool import session_pool
+
             session = await session_pool.httpx()
             resp = await session.get("http://localhost:8080/health", timeout=httpx.Timeout(3.0))
             return resp.status_code == 200
+
         lm_ok = asyncio.run(check_lm())
     except Exception as e:
         print(f"WARN: mlx_lm.server not reachable: {e}")
@@ -48,6 +49,7 @@ def main() -> int:
 
     # Check cache
     from pathlib import Path
+
     cache_path = Path.home() / ".hledac" / "dspy_cache.json"
     cache_exists = cache_path.exists()
     print(f"dspy_cache.json exists: {'YES' if cache_exists else 'WARN (not found)'}")
@@ -56,6 +58,7 @@ def main() -> int:
     if cache_exists:
         try:
             import orjson
+
             with open(cache_path, "rb") as f:
                 data = orjson.loads(f.read())
             prompts = data.get("prompts", {})

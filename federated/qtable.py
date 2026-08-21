@@ -25,13 +25,15 @@ FAIL-SOFT
 =========
 All methods return safe defaults on any error. They never raise.
 """
+
 import logging
 from typing import Any
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-__all__ = ['FederatedQTable', 'RustFederatedQTable', 'MAX_QTABLE_ENTRIES']
+__all__ = ["FederatedQTable", "RustFederatedQTable", "MAX_QTABLE_ENTRIES"]
 MAX_QTABLE_ENTRIES: int = 1024
-'Hard cap on state-action pairs. Past this, lowest-Q entries are evicted.'
+"Hard cap on state-action pairs. Past this, lowest-Q entries are evicted."
+
 
 class FederatedQTable:
     """
@@ -44,9 +46,10 @@ class FederatedQTable:
     ISSUE 4.4 D-24 FIX: Secondary max-Q index dict[state, float] for O(1)
     next_max_q lookup instead of O(n) scan. Update is O(1) amortized.
     """
-    __slots__ = tuple(('_alpha', '_gamma', '_max_entries', '_q', '_max_q_per_state'))
 
-    def __init__(self, alpha: float=0.1, gamma: float=0.9, max_entries: int=MAX_QTABLE_ENTRIES) -> None:
+    __slots__ = ("_alpha", "_gamma", "_max_entries", "_q", "_max_q_per_state")
+
+    def __init__(self, alpha: float = 0.1, gamma: float = 0.9, max_entries: int = MAX_QTABLE_ENTRIES) -> None:
         self._alpha: float = float(alpha)
         self._gamma: float = float(gamma)
         self._max_entries: int = max(1, int(max_entries))
@@ -59,13 +62,13 @@ class FederatedQTable:
         try:
             return self._q.get((state, action), 0.0)
         except Exception as e:
-            logger.debug(f'[FED-Q] get_q failed: {e}')
+            logger.debug(f"[FED-Q] get_q failed: {e}")
             return 0.0
 
     def get_best_action(self, state: tuple, actions: list[str]) -> str:
         """Return the action with the highest Q-value, or the first action if all zero."""
         if not actions:
-            return ''
+            return ""
         try:
             best_action = actions[0]
             best_q = self.get_q(state, best_action)
@@ -76,8 +79,8 @@ class FederatedQTable:
                     best_action = a
             return best_action
         except Exception as e:
-            logger.debug(f'[FED-Q] get_best_action failed: {e}')
-            return actions[0] if actions else ''
+            logger.debug(f"[FED-Q] get_best_action failed: {e}")
+            return actions[0] if actions else ""
 
     def update(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
@@ -101,7 +104,7 @@ class FederatedQTable:
             if len(self._q) > self._max_entries:
                 self._evict_lowest()
         except Exception as e:
-            logger.debug(f'[FED-Q] update failed: {e}')
+            logger.debug(f"[FED-Q] update failed: {e}")
 
     def _evict_lowest(self) -> None:
         """Evict the entry with the lowest Q-value. Ties broken by insertion order."""
@@ -119,23 +122,25 @@ class FederatedQTable:
                 else:
                     self._max_q_per_state.pop(evicted_state, None)
         except Exception as e:
-            logger.debug(f'[FED-Q] evict failed: {e}')
+            logger.debug(f"[FED-Q] evict failed: {e}")
 
     def to_dict(self) -> dict[str, float]:
         """Serialize to a JSON-safe dict (keys as 'state|action' strings)."""
         try:
-            return {f'{state}|{action}': q for (state, action), q in self._q.items()}
+            return {f"{state}|{action}": q for (state, action), q in self._q.items()}
         except Exception:
             return {}
 
     @classmethod
-    def from_dict(cls, data: dict[str, float], alpha: float=0.1, gamma: float=0.9, max_entries: int=MAX_QTABLE_ENTRIES) -> FederatedQTable:
+    def from_dict(
+        cls, data: dict[str, float], alpha: float = 0.1, gamma: float = 0.9, max_entries: int = MAX_QTABLE_ENTRIES
+    ) -> FederatedQTable:
         """Deserialize from the to_dict() format. Best-effort, never raises."""
         try:
             qt = cls(alpha=alpha, gamma=gamma, max_entries=max_entries)
             for k, v in (data or {}).items():
-                if '|' in k:
-                    state_str, action = k.rsplit('|', 1)
+                if "|" in k:
+                    state_str, action = k.rsplit("|", 1)
                     state = (state_str,)
                     qt._q[state, action] = float(v)
             # ISSUE 4.4 D-24 FIX: rebuild max-Q index after loading
@@ -155,7 +160,6 @@ class FederatedQTable:
         self._max_q_per_state.clear()
 
 
-# --- ISSUE-23: Rust-backed Q-table with rayon parallel batch updates ---
 _rust_qtable_class: Any = None
 
 
@@ -176,6 +180,7 @@ def _get_rust_qtable() -> Any | None:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _cls = rust.raw.RustFederatedQTable  # type: ignore[assignment]
         _rust_qtable_class = _cls
         return _cls
@@ -204,9 +209,7 @@ class RustFederatedQTable:
         - Persistence: bincode file (2 MiB cap), or JSON fallback
     """
 
-    __slots__ = tuple(
-        ('_rust', '_python', '_alpha', '_gamma', '_max_entries')
-    )
+    __slots__ = ("_rust", "_python", "_alpha", "_gamma", "_max_entries")
 
     def __init__(
         self,
@@ -221,9 +224,7 @@ class RustFederatedQTable:
         else:
             # Transparent fallback to pure-Python
             self._rust: Any = None
-            self._python: FederatedQTable = FederatedQTable(
-                alpha=alpha, gamma=gamma, max_entries=max_entries
-    )
+            self._python: FederatedQTable = FederatedQTable(alpha=alpha, gamma=gamma, max_entries=max_entries)
         self._alpha: float = float(alpha)
         self._gamma: float = float(gamma)
         self._max_entries: int = max_entries
@@ -256,9 +257,7 @@ class RustFederatedQTable:
                 pass
         return self._python.get_best_action(state, actions)
 
-    def update(
-        self, state: tuple, action: str, reward: float, next_state: tuple
-    ) -> None:
+    def update(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
         Q-learning update. Routes to Rust batch path if available.
 
@@ -321,9 +320,11 @@ class RustFederatedQTable:
         # Python fallback: serialize to dict then write JSON
         try:
             import os
-            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             import json
-            with open(path, 'w') as f:
+
+            with open(path, "w") as f:
                 json.dump(self.to_dict(), f)
             return True
         except Exception:
@@ -339,6 +340,7 @@ class RustFederatedQTable:
         # Python fallback
         try:
             import json
+
             with open(path) as f:
                 data = json.load(f)
             restored = FederatedQTable.from_dict(data, alpha=self._alpha, gamma=self._gamma)

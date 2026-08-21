@@ -2,7 +2,6 @@
 Sprint F227C: next_sprint_seeds consumption reality probe
 =========================================================
 
-
 Classification: PRODUCED_AND_CONSUMED_INDIRECT
 
 next_sprint_seeds flow:
@@ -40,16 +39,14 @@ Sprint F233C: Added consume_next_sprint_seeds() + NextSeedsDiagnostics for
 active consumption in acquisition planning.
 """
 
-
 import logging
-
-from operator import attrgetter, itemgetter
-import msgspec.json as _json
 import re as _re
+from operator import attrgetter
 from typing import Any
 
+import msgspec.json as _json
+
 from hledac.universal.paths import get_sprint_next_seeds_path
-from _core import aclose
 
 log = logging.getLogger(__name__)
 
@@ -141,7 +138,6 @@ def _is_valid_seed_entry(entry: dict[str, Any]) -> bool:
     """
     if not isinstance(entry, dict):
         return False
-    # Check shared required fields exist and are non-None
     for field in _REQUIRED_FIELDS:
         if field not in entry or entry[field] is None:
             return False
@@ -176,9 +172,7 @@ def get_seed_summary(seeds: list[dict[str, Any]]) -> dict[str, Any]:
         "count": len(seeds),
         "by_task_type": by_task_type,
         "top_priority": top_priority,
-        "has_F226D_format": any(
-            "seed_source" in s or "mission_intent" in s for s in seeds
-        ),
+        "has_F226D_format": any("seed_source" in s or "mission_intent" in s for s in seeds),
     }
 
 
@@ -213,7 +207,7 @@ class NextSeedsDiagnostics:
             f"NextSeedsDiagnostics(provider_yield={self.provider_yield_active}, "
             f"pivot_deepening={self.pivot_deepening_active}, "
             f"query_suggestions={len(self.query_suggestions)})"
-    )
+        )
 
 
 # ── F233C: Bounds ────────────────────────────────────────────────────────────
@@ -319,11 +313,9 @@ def extract_ioc_values_from_seeds(
     hashes: list[str] = []
     cves: list[str] = []
 
-    domain_pat = _re.compile(
-        r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
-    )
-    ip_pat = _re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
-    cve_pat = _re.compile(r'^CVE-\d{4}-\d{4,}$', _re.IGNORECASE)
+    domain_pat = _re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
+    ip_pat = _re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+    cve_pat = _re.compile(r"^CVE-\d{4}-\d{4,}$", _re.IGNORECASE)
 
     for seed in seeds:
         value = seed.get("value", "")
@@ -345,10 +337,10 @@ def extract_ioc_values_from_seeds(
             elif ip_pat.match(value):
                 if value not in ips:
                     ips.append(value)
-            elif value.startswith(('http://', 'https://')):
+            elif value.startswith(("http://", "https://")):
                 if value not in urls:
                     urls.append(value)
-            elif len(value) == 64 and all(c in '0123456789abcdefABCDEF' for c in value):
+            elif len(value) == 64 and all(c in "0123456789abcdefABCDEF" for c in value):
                 if value not in hashes:
                     hashes.append(value)
 
@@ -407,12 +399,12 @@ def _process_action_ioc(
         if target.startswith(("http://", "https://")):
             _add_unique(urls, target)
     elif ioc_type == "domain_or_ip":
-        if _re.match(r'^(\d{1,3}\.){3}\d{1,3}$', target):
+        if _re.match(r"^(\d{1,3}\.){3}\d{1,3}$", target):
             _add_unique(ips, target)
-        elif _re.match(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b', target):
+        elif _re.match(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b", target):
             _add_unique(domains, target)
     elif ioc_type == "domain":
-        if _re.match(r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b', target):
+        if _re.match(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b", target):
             _add_unique(domains, target)
 
 
@@ -457,7 +449,6 @@ def consume_planner_actions(
     ips: list[str] = []
     urls: list[str] = []
     lanes: list[str] = []
-    seen_lanes: set[str] = set()
 
     for action in planner_actions[:20]:  # bound: max 20 actions
         if not isinstance(action, dict):
@@ -471,7 +462,6 @@ def consume_planner_actions(
         if lane_hint and lane_hint not in ("STOP", "REPORT_ONLY", "DIAGNOSTIC"):
             _add_unique(lanes, lane_hint)
 
-        # Extract IOCs using dispatch
         _process_action_ioc(action_type, target, domains, ips, urls)
 
     # Enforce caps

@@ -3,12 +3,6 @@ SynthesisRunner — Sprint 8QC
 ============================
 Orchestrates MLX-based structured synthesis of OSINT findings into STIX-ready reports.
 
-
-
-
-
-
-
 Works in WINDUP phase only (or with explicit force_synthesis=True).
 
 OSINTReport schema (msgspec.Struct):
@@ -25,11 +19,9 @@ E2E flow:
   → structured_generate() (Outlines MLX constrained JSON)
   → unload + gc → JSON export do ~/.hledac/reports/
 """
-from __future__ import annotations
-import msgspec
-from compat.msgspec_gc_compat import Struct
 
-from operator import attrgetter, itemgetter
+from __future__ import annotations
+
 import asyncio
 import gc
 import hashlib
@@ -38,24 +30,28 @@ import os
 import re
 import threading
 import time
+from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
+
 if TYPE_CHECKING:
     from hledac.universal._core.model_runtime import ModelLifecycleProtocol
+    from hledac.universal.brain.collapser_with_consistency import CollapserWithConsistency
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
     from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
-    from hledac.universal.brain.collapser_with_consistency import CollapserWithConsistency
 
-from hledac.universal.utils.asyncx import safe_create_task, parallel, first_completed, _check_gathered  # ISSUE-15 + F320
+from hledac.universal.utils.asyncx import _check_gathered, first_completed, parallel, safe_create_task
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from hledac.universal._core.dlq_manager import dlq_catch  # DLQ-02
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
-_BRACKET_RE = re.compile(r'\[.*?\]', re.DOTALL)
+_BRACKET_RE = re.compile(r"\[.*?\]", re.DOTALL)
 _SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
 
 # ISSUE-009: Speculative URL/IP detection for streaming token accumulation
@@ -125,10 +121,12 @@ def _mlx_cleanup() -> None:
 
 try:
     import msgspec as _msgspec
+
     msgspec = _msgspec
 except ImportError:
     msgspec = None  # type: ignore
     import logging
+
     _logger_msgspec = logging.getLogger(__name__)
     _logger_msgspec.warning("msgspec not installed — JSON constrained generation disabled")
 
@@ -143,20 +141,16 @@ logger = logging.getLogger(__name__)
 SYNTHESIS_STRATEGY = os.getenv("SYNTHESIS_STRATEGY", "sequential_preferred").strip()
 assert SYNTHESIS_STRATEGY in ("sequential_preferred", "race_first_wins"), (
     f"SYNTHESIS_STRATEGY must be 'sequential_preferred' or 'race_first_wins', got {SYNTHESIS_STRATEGY!r}"
-    )
+)
 
 # NEXUS-018-04: Collapse threshold — collapse only when findings exceed this count
 # to avoid overhead on small batches. Default 30; 0 to disable, -1 to force always.
 _HLEDAC_COLLAPSE_THRESHOLD = int(os.getenv("HLEDAC_COLLAPSE_THRESHOLD", "30"))
 
 
-# ---------------------------------------------------------------------------
-# L-05: Race task helpers — extracted from _race_inference_first_wins
-# Reduces CC of _race_inference_first_wins from 22 → ~8
-# ---------------------------------------------------------------------------
-
 async def _race_try_xgrammar(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try xgrammar generation. Extracted from _race_inference_first_wins."""
     try:
@@ -171,7 +165,8 @@ async def _race_try_xgrammar(
 
 
 async def _race_try_streaming(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try streaming generation. Extracted from _race_inference_first_wins."""
     try:
@@ -186,7 +181,8 @@ async def _race_try_streaming(
 
 
 async def _race_try_structured(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, str, list[float]]:
     """Race task: try structured generation. Extracted from _race_inference_first_wins."""
     try:
@@ -199,13 +195,10 @@ async def _race_try_structured(
         logger.debug("[SYNTHESIS] structured failed in race: %s", e)
     return None, "none", []
 
-# ---------------------------------------------------------------------------
-# L-05: Sequential cascade helpers — extracted from _race_inference_sequential
-# Reduces CC of _race_inference_sequential from 13 → ~6
-# ---------------------------------------------------------------------------
 
 async def _cascade_xgrammar(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 1: xgrammar cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
@@ -223,7 +216,8 @@ async def _cascade_xgrammar(
 
 
 async def _cascade_streaming(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 2: streaming cascade. Returns (dict, token_logprobs) on success, (None, []) on failure."""
     try:
@@ -241,7 +235,8 @@ async def _cascade_streaming(
 
 
 async def _cascade_structured(
-    lifecycle: ModelLifecycleProtocol, prompt: str,
+    lifecycle: ModelLifecycleProtocol,
+    prompt: str,
 ) -> tuple[dict | None, list[float]]:
     """Step 3: structured Outlines cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
@@ -258,13 +253,9 @@ async def _cascade_structured(
     return None, []
 
 
-# ---------------------------------------------------------------------------
-# Sprint 8SB: Model discovery helpers — extracted from _ensure_model
-# Reduces CC of _ensure_model from 19 → ~10
-# ---------------------------------------------------------------------------
-
 async def _extract_stix_nodes(
-    graph: Any, graph_label: str,  # type: ignore[type-arg]
+    graph: Any,
+    graph_label: str,  # type: ignore[type-arg]
 ) -> tuple[list[str], str, str]:
     """
     Sprint 8TH: Extract 'value' fields from graph.export_stix_bundle().
@@ -324,14 +315,10 @@ async def _download_model(model_id: str) -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Issue #20 improvement: Adaptive KV cache for M1 8GB Metal memory
-# ---------------------------------------------------------------------------
-# Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
-# ---------------------------------------------------------------------------
 import re as _re_synth  # noqa: E402
 
 _MAX_VALIDATION_FINDINGS = 100  # bounded — M1 8GB guard
+
 
 def _extract_text_iocs_from_finding(finding: dict) -> set[str]:
     """Extract IOC-like strings from a single finding dict.
@@ -340,18 +327,18 @@ def _extract_text_iocs_from_finding(finding: dict) -> set[str]:
     """
     iocs: set[str] = set()
     try:
-        for field in ('ioc_val', 'val', 'value', 'indicator', 'ioc', 'hash', 'ip', 'domain'):
+        for field in ("ioc_val", "val", "value", "indicator", "ioc", "hash", "ip", "domain"):
             v = finding.get(field)
             if v and isinstance(v, str):
                 iocs.add(v.strip())
-        content = (finding.get('content') or finding.get('raw_content')
-                   or finding.get('text') or finding.get('snippet') or '')
+        content = (
+            finding.get("content") or finding.get("raw_content") or finding.get("text") or finding.get("snippet") or ""
+        )
         if content:
-            iocs.update(_re_synth.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', content))
-            iocs.update(_re_synth.findall(
-                r'\b[a-zA-Z0-9][a-zA-Z0-9\-]{1,61}\.[a-zA-Z]{2,}\b', content))
-            iocs.update(_re_synth.findall(r'\b[a-fA-F0-9]{32,64}\b', content))
-            iocs.update(_re_synth.findall(r'CVE-\d{4}-\d{4,7}', content, _re_synth.I))
+            iocs.update(_re_synth.findall(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", content))
+            iocs.update(_re_synth.findall(r"\b[a-zA-Z0-9][a-zA-Z0-9\-]{1,61}\.[a-zA-Z]{2,}\b", content))
+            iocs.update(_re_synth.findall(r"\b[a-fA-F0-9]{32,64}\b", content))
+            iocs.update(_re_synth.findall(r"CVE-\d{4}-\d{4,7}", content, _re_synth.I))
     except Exception as e:
         logger.debug(f"_extract_text_iocs_from_finding failed: {e}")
     return iocs
@@ -373,17 +360,15 @@ def validate_evidence_grounding(
         evidence_set: set[str] = set()
         for f in findings[:_MAX_VALIDATION_FINDINGS]:
             evidence_set.update(_extract_text_iocs_from_finding(f))
-        ioc_entities = getattr(report, 'ioc_entities', None) or []
+        ioc_entities = getattr(report, "ioc_entities", None) or []
         unmatched = [
-            str(ioc.value)
-            for ioc in ioc_entities
-            if hasattr(ioc, 'value') and str(ioc.value) not in evidence_set
+            str(ioc.value) for ioc in ioc_entities if hasattr(ioc, "value") and str(ioc.value) not in evidence_set
         ]
         if unmatched:
             logger.warning(
                 f"GAP-8 grounding: {len(unmatched)}/{len(ioc_entities)} IOCs unverified "
                 f"in findings — values: {unmatched[:5]}"
-    )
+            )
         return (True, unmatched)
     except Exception as e:
         logger.debug(f"validate_evidence_grounding exception (fail-soft): {e}")
@@ -400,26 +385,24 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
     """
     errors: list[str] = []
     try:
-        conf = getattr(report, 'confidence', None)
+        conf = getattr(report, "confidence", None)
         if conf is not None and not (0.0 <= float(conf) <= 1.0):
             errors.append(f"confidence {conf} out of range [0.0, 1.0]")
 
-        sc = getattr(report, 'sources_count', None)
+        sc = getattr(report, "sources_count", None)
         if sc is not None and int(sc) < 0:
             errors.append(f"sources_count {sc} is negative")
 
-        ts = getattr(report, 'timestamp', None)
+        ts = getattr(report, "timestamp", None)
         if ts is not None and float(ts) <= 0:
             errors.append(f"timestamp {ts} invalid (must be positive unix epoch)")
 
-        ioc_entities = getattr(report, 'ioc_entities', None) or []
+        ioc_entities = getattr(report, "ioc_entities", None) or []
         if not ioc_entities and sc is not None and int(sc) > 0:
-            errors.append(
-                f"ioc_entities empty but sources_count={sc} — possible generation failure")
+            errors.append(f"ioc_entities empty but sources_count={sc} — possible generation failure")
 
-        threat_summary = getattr(report, 'threat_summary', None)
-        if (not threat_summary or not isinstance(threat_summary, str)
-                or not threat_summary.strip()):
+        threat_summary = getattr(report, "threat_summary", None)
+        if not threat_summary or not isinstance(threat_summary, str) or not threat_summary.strip():
             errors.append("threat_summary is empty or whitespace-only")
 
     except Exception as e:
@@ -432,20 +415,13 @@ def validate_report_semantics(report: OSINTReport) -> tuple[bool, list[str]]:
 # F3.2: PyCacheDict replaces manual dict+RLock — bounded + TTL + thread-safe
 _GRAMMAR_CACHE: PyCacheDict[str, object] = PyCacheDict(256, 600.0)
 
-
 # Issue #12.6: Thread-safe grammar compilation lock
 _GRAMMAR_BUILD_LOCK = threading.Lock()
 
-
-# ---------------------------------------------------------------------------
-# G2: Streaming findings infrastructure for M1 8GB memory efficiency
-# ---------------------------------------------------------------------------
-
-from typing import Protocol, TypeAlias
 from collections.abc import AsyncIterator
 
 # Type alias: findings can be a list or an async iterator
-FindingsSource: TypeAlias = "list[dict] | AsyncIterator[dict]"
+type FindingsSource = "list[dict] | AsyncIterator[dict]"
 
 
 async def _collect_findings_bounded(
@@ -510,23 +486,18 @@ def _get_cached_grammar(schema_json_str: str, tokenizer) -> object:
     return grammar
 
 
-# ---------------------------------------------------------------------------
-# Sprint 8UC B.1: JSON Schema for OSINTReport — xgrammar + Outlines compatible
-# ---------------------------------------------------------------------------
-
-
 def _build_osint_json_schema() -> dict:
     """JSON Schema for OSINTReport — compatible with xgrammar GrammarCompiler and Outlines."""
     return {
         "type": "object",
         "properties": {
-            "title":           {"type": "string"},
-            "summary":         {"type": "string"},
-            "confidence":      {"type": "number", "minimum": 0.0, "maximum": 1.0},
-            "findings":        {"type": "array", "items": {"type": "string"}, "maxItems": 20},
-            "threat_actors":   {"type": "array", "items": {"type": "string"}, "maxItems": 10},
-            "iocs":            {"type": "array", "items": {"type": "string"}, "maxItems": 50},
-            "ttps":            {"type": "array", "items": {"type": "string"}, "maxItems": 15},
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "findings": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+            "threat_actors": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+            "iocs": {"type": "array", "items": {"type": "string"}, "maxItems": 50},
+            "ttps": {"type": "array", "items": {"type": "string"}, "maxItems": 15},
             "recommendations": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
         },
         "required": ["title", "summary", "confidence"],
@@ -551,10 +522,7 @@ def _infer_ioc_type(text: str) -> str:
         return "email"
     return "domain"
 
-# ---------------------------------------------------------------------------
-# F3.2: PyCacheDict replaces lru_cache — bounded + TTL + thread-safe
-# (PyCacheDict already imported at L36)
-# Thread-safe singleton init with double-check locking
+
 _optimizer_init_lock = threading.Lock()
 _dspy_optimizer_cache: PyCacheDict[None, object] = PyCacheDict(1, 300.0)
 _prompt_bandit_cache: PyCacheDict[None, object] = PyCacheDict(1, 300.0)
@@ -623,8 +591,8 @@ def _get_prompt_bandit():
                 alpha=1.0,
                 lambda_reg=0.01,
                 context_dim=9,
-                persist_path=str(Path.home() / '.hledac' / 'prompt_bandit.json'),
-    )
+                persist_path=str(Path.home() / ".hledac" / "prompt_bandit.json"),
+            )
             _prompt_bandit_cache.set(None, instance)
             return instance
         except Exception:
@@ -642,21 +610,14 @@ async def _distill_findings(
     """
     try:
         from hledac.universal.brain.distillation_engine import distil
+
         return await distil(findings, max_tokens=max_tokens)
     except Exception:
         # Fallback: serialize top findings jako text
         lines = []
         for f in findings[:20]:
-            lines.append(
-                f"[{f.get('source', '?')}] {f.get('title', '')} "
-                f"— {f.get('snippet', f.get('text', ''))[:200]}"
-    )
+            lines.append(f"[{f.get('source', '?')}] {f.get('title', '')} — {f.get('snippet', f.get('text', ''))[:200]}")
         return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# OSINTReport Schema — msgspec.Struct for JSON constrained generation
-# ---------------------------------------------------------------------------
 
 
 class SynthesisOutcome(Struct):
@@ -666,24 +627,25 @@ class SynthesisOutcome(Struct):
     Carries structured truth about every exit path in synthesize_findings()
     so callers never have to guess why synthesis returned None.
     """
+
     # execution status
-    status: str            # "executed" | "skipped" | "failed" | "success"
-    primary_reason: str    # "lifecycle_blocked" | "uma_blocked" | "no_model"
-                          # | "no_findings" | "generation_failed" | "parse_failed"
-                          # | "success" | "unknown"
+    status: str  # "executed" | "skipped" | "failed" | "success"
+    primary_reason: str  # "lifecycle_blocked" | "uma_blocked" | "no_model"
+    # | "no_findings" | "generation_failed" | "parse_failed"
+    # | "success" | "unknown"
     # lifecycle gate truth (Sprint 8VL)
     lifecycle_gate_source: str  # "runtime" | "compat" | "unavailable" | "forced" | "unknown"
-    lifecycle_gate_mode: str   # "windup" | "forced" | "blocked" | "unknown"
+    lifecycle_gate_mode: str  # "windup" | "forced" | "blocked" | "unknown"
     # STIX degradation state (Sprint 8TH)
-    stix_status: str       # "available" | "unavailable" | "error" | "unknown"
-    stix_reason: str       # concrete reason string
-    stix_backend: str      # backend class name or ""
+    stix_status: str  # "available" | "unavailable" | "error" | "unknown"
+    stix_reason: str  # concrete reason string
+    stix_backend: str  # backend class name or ""
     # engine + findings
-    engine_used: str        # "xgrammar" | "streaming" | "constrained" | "none"
-    findings_considered: int # count of findings passed to synthesis
-    report_produced: bool   # True if OSINTReport was returned
-    confidence: float      # 0.0-1.0, valid only if report_produced=True
-    operator_note: str     # short human-readable note
+    engine_used: str  # "xgrammar" | "streaming" | "constrained" | "none"
+    findings_considered: int  # count of findings passed to synthesis
+    report_produced: bool  # True if OSINTReport was returned
+    confidence: float  # 0.0-1.0, valid only if report_produced=True
+    operator_note: str  # short human-readable note
 
 
 def synthesis_outcome_to_dict(outcome: SynthesisOutcome | None) -> dict:
@@ -708,9 +670,7 @@ def synthesis_outcome_to_dict(outcome: SynthesisOutcome | None) -> dict:
             "lifecycle_gate_source": outcome.lifecycle_gate_source,
             "lifecycle_gate_mode": outcome.lifecycle_gate_mode,
             "report_present": outcome.report_produced,
-            "degraded": (
-                outcome.primary_reason in ("generation_failed", "parse_failed")
-            ),
+            "degraded": (outcome.primary_reason in ("generation_failed", "parse_failed")),
             "operator_note": outcome.operator_note,
         }
     except AttributeError:
@@ -733,6 +693,7 @@ class UncertaintyFlags(Struct):
         risk_level: "low" | "medium" | "high" based on divergence magnitude
         token_count: Number of tokens analyzed for entropy
     """
+
     measured_entropy: float = 0.0
     entropy_stability: float = 1.0
     implied_confidence: float = 1.0
@@ -824,7 +785,7 @@ def uncertainty_gate(
             hallucination_risk=hallucination_risk,
             risk_level=risk_level,
             token_count=len(logprobs_array),
-    )
+        )
     except Exception as e:
         logger.debug(f"uncertainty_gate failed (fail-soft): {e}")
         return UncertaintyFlags()
@@ -894,10 +855,11 @@ def _resolve_alternative_protocols(
 
 class IOCEntity(Struct):
     """Jedna IOC entita extrahovaná z findingu."""
+
     value: str
     ioc_type: str  # "cve","ip","hash","onion","domain","apt","malware","btc"
-    severity: str   # "critical","high","medium","low"
-    context: str    # 1 věta
+    severity: str  # "critical","high","medium","low"
+    context: str  # 1 věta
     # APEX-1008: Token-level uncertainty from logprobs extraction
     confidence: float = 1.0  # 0.0-1.0, derived from token entropy
     uncertainty_flag: str = "normal"  # "normal", "elevated", "high_entropy"
@@ -910,42 +872,34 @@ class OSINTReport(Struct):
     Vrací se z structured_generate() při úspěchu.
     Timestamp je Unix epoch (float), threat_actors jsou APT/ransomware gangy.
     """
+
     query: str
     ioc_entities: list[IOCEntity]
-    threat_summary: str          # max 3 věty
-    threat_actors: list[str]     # APT skupiny, ransomware gangy
-    confidence: float            # 0.0-1.0
+    threat_summary: str  # max 3 věty
+    threat_actors: list[str]  # APT skupiny, ransomware gangy
+    confidence: float  # 0.0-1.0
     sources_count: int
-    timestamp: float            # Unix epoch
+    timestamp: float  # Unix epoch
     uncertainty_flags: UncertaintyFlags | None = None  # APEX-1009
 
 
-# ---------------------------------------------------------------------------
-# Sprint 8TA: Outlines json_schema dict — not msgspec.Struct
-# ---------------------------------------------------------------------------
+OSINT_JSON_SCHEMA: str = _msgspec_encode(
+    {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "summary": {"type": "string"},
+            "threat_actors": {"type": "array", "items": {"type": "string"}},
+            "findings": {"type": "array", "items": {"type": "string"}},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "timestamp": {"type": "number"},
+        },
+        "required": ["title", "summary", "threat_actors", "findings", "confidence", "timestamp"],
+        "additionalProperties": False,
+    }
+).decode()
 
-OSINT_JSON_SCHEMA: str = _msgspec_encode({
-    "type": "object",
-    "properties": {
-        "title":          {"type": "string"},
-        "summary":        {"type": "string"},
-        "threat_actors":  {"type": "array", "items": {"type": "string"}},
-        "findings":       {"type": "array", "items": {"type": "string"}},
-        "confidence":     {"type": "number", "minimum": 0, "maximum": 1},
-        "timestamp":      {"type": "number"},
-    },
-    "required": ["title", "summary", "threat_actors", "findings", "confidence", "timestamp"],
-    "additionalProperties": False,
-}).decode()
-
-
-# ---------------------------------------------------------------------------
-# Issue #A5: SynthesisSession async context manager + SynthesisContext dataclass
-# Guarantees SynthesisRunner.cleanup() on all exit paths (exception, success, ImportError)
-# ---------------------------------------------------------------------------
-
-from dataclasses import dataclass, field
-from _core import aclose
+from dataclasses import dataclass
 
 
 @dataclass(slots=True)
@@ -960,6 +914,7 @@ class SynthesisContext:
         force_synthesis: Always run synthesis even if disabled (default True).
         max_findings: Optional cap on findings passed to synthesis.
     """
+
     query: str
     findings: list
     lifecycle: Any = None
@@ -989,7 +944,7 @@ class SynthesisSession:
         self._runner: SynthesisRunner | None = None
         self._inited: bool = False
 
-    async def __aenter__(self) -> "SynthesisSession":
+    async def __aenter__(self) -> SynthesisSession:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
@@ -1000,7 +955,7 @@ class SynthesisSession:
             return
         try:
             await self._runner.close()  # type: ignore[union-attr]
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
 
     async def synthesize_findings(
@@ -1022,7 +977,7 @@ class SynthesisSession:
                 query=self._ctx.query,
                 findings=self._ctx.findings,
                 force_synthesis=self._ctx.force_synthesis,
-    )
+            )
             if self._ctx.lifecycle is not None:
                 runner._lifecycle = self._ctx.lifecycle
             self._runner = runner
@@ -1036,7 +991,7 @@ class SynthesisSession:
             _findings,
             max_findings=_max,
             force_synthesis=force_synthesis,
-    )
+        )
 
 
 # Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
@@ -1044,6 +999,7 @@ class SynthesisSession:
 # Canonical reranker owner is tools/reranker.py (LightweightReranker).
 # This instance exists for historical reasons and serves the synthesis context.
 _FLASHRANK_RANKER = None
+
 
 def _get_flashrank_ranker():
     """Get FlashRank reranker for synthesis path.
@@ -1055,10 +1011,11 @@ def _get_flashrank_ranker():
     global _FLASHRANK_RANKER
     if _FLASHRANK_RANKER is None:
         from flashrank import Ranker
+
         _FLASHRANK_RANKER = Ranker(
             model_name="ms-marco-MiniLM-L-12-v2",
             cache_dir="/tmp",
-    )
+        )
     return _FLASHRANK_RANKER
 
 
@@ -1081,17 +1038,13 @@ def _get_collapser() -> CollapserWithConsistency:
 
     try:
         import hledac_rust_extensions as _hre
+
         mod = getattr(_hre, "finding_collapser", None)
         _COLLAPSER_CACHE = mod if mod is not None else False
         return mod
     except ImportError:
         _COLLAPSER_CACHE = False
         return None
-
-
-# ---------------------------------------------------------------------------
-# SynthesisRunner
-# ---------------------------------------------------------------------------
 
 
 class SynthesisRunner:
@@ -1105,26 +1058,41 @@ class SynthesisRunner:
         await runner.close()
     """
 
-    __slots__ = ("_lifecycle", "_ioc_graph", "_cached_model_path", "_last_outlines_used",
-                 "_custom_synthesis_prompt", "_prompt_modifier", "_duckdb_store",
-                 "_last_synthesis_engine", "_last_arm", "_bandit_rewards",
-                 "_stix_status", "_stix_reason", "_stix_backend",
-                 "_lifecycle_gate_source", "_lifecycle_gate_mode", "_lifecycle_adapter",
-                 "_stix_graph", "_last_synthesis_outcome",
-                 "_compression_threshold", "_compressor",
-                 "_hypothesis_engine",
-                 "_hermes_engine",  # P2-1: cached Hermes3Engine for continuous batching
-                 "_inference_pipeliner",  # P2-1b: InferencePipeliner for non-blocking submit + prompt overlap
-                 "_collapser",  # NEXUS-018-04: Rust finding collapser singleton
-                 # Issue #20: KV cache params — initialized from ModelLifecycle or hardcoded defaults
-                 "_kv_bits", "_max_kv_size",
-                 # Cached Metal memory probe (Issue #20-A: avoid per-call Rust FFI)
-                 "_metal_probe_cache",
-                 # L-05: Synthesis strategy for _race_inference dispatch
-                 "_synthesis_strategy",
-                 # ULTIMATE-001: Seed state for deterministic cognitive replay
-                 "_seed_state")
-
+    __slots__ = (
+        "_lifecycle",
+        "_ioc_graph",
+        "_cached_model_path",
+        "_last_outlines_used",
+        "_custom_synthesis_prompt",
+        "_prompt_modifier",
+        "_duckdb_store",
+        "_last_synthesis_engine",
+        "_last_arm",
+        "_bandit_rewards",
+        "_stix_status",
+        "_stix_reason",
+        "_stix_backend",
+        "_lifecycle_gate_source",
+        "_lifecycle_gate_mode",
+        "_lifecycle_adapter",
+        "_stix_graph",
+        "_last_synthesis_outcome",
+        "_compression_threshold",
+        "_compressor",
+        "_hypothesis_engine",
+        "_hermes_engine",  # P2-1: cached Hermes3Engine for continuous batching
+        "_inference_pipeliner",  # P2-1b: InferencePipeliner for non-blocking submit + prompt overlap
+        "_collapser",  # NEXUS-018-04: Rust finding collapser singleton
+        # Issue #20: KV cache params — initialized from ModelLifecycle or hardcoded defaults
+        "_kv_bits",
+        "_max_kv_size",
+        # Cached Metal memory probe (Issue #20-A: avoid per-call Rust FFI)
+        "_metal_probe_cache",
+        # L-05: Synthesis strategy for _race_inference dispatch
+        "_synthesis_strategy",
+        # ULTIMATE-001: Seed state for deterministic cognitive replay
+        "_seed_state",
+    )
 
     def __init__(self, lifecycle: ModelLifecycle) -> None:
         self._lifecycle = lifecycle
@@ -1243,10 +1211,6 @@ class SynthesisRunner:
         """
         self._seed_state = seed_state
 
-    # ------------------------------------------------------------------
-    # P2-1: Hermes3Engine lazy init for continuous batching
-    # ------------------------------------------------------------------
-
     def _get_hermes_engine(self) -> DeepHermes3Engine | None:
         """
         P2-1: Get or create Hermes3Engine instance for continuous batching.
@@ -1261,13 +1225,14 @@ class SynthesisRunner:
             return self._hermes_engine
         try:
             from .deephermes3_engine import DeepHermes3Engine
+
             self._hermes_engine = DeepHermes3Engine()
             logger.debug("[P2-1] Hermes3Engine created for continuous batching")
         except Exception as e:
             logger.warning("[P2-1] Hermes3Engine init failed: %s", e)
         return self._hermes_engine
 
-    def _get_inference_pipeliner(self) -> "InferencePipeliner | None":
+    def _get_inference_pipeliner(self) -> InferencePipeliner | None:
         """
         P2-1b: Get or create InferencePipeliner for non-blocking submit + prompt overlap.
 
@@ -1283,11 +1248,9 @@ class SynthesisRunner:
             from .inference_pipeliner import InferencePipeliner
             from .mlx_worker_thread import MLXWorkerThread
 
-            # Create worker thread for non-blocking dispatch
             worker = MLXWorkerThread(name="mlx-pipeliner-worker")
             worker.start()
 
-            # Create engine and pipeliner
             engine = self._get_hermes_engine()
             if engine is None:
                 return None
@@ -1295,16 +1258,11 @@ class SynthesisRunner:
             self._inference_pipeliner = InferencePipeliner(
                 engine=engine,
                 worker_thread=worker,
-    )
+            )
             logger.debug("[P2-1b] InferencePipeliner created with MLXWorkerThread")
         except Exception as e:
             logger.warning("[P2-1b] InferencePipeliner init failed: %s", e)
         return self._inference_pipeliner
-
-    # ------------------------------------------------------------------
-    # Issue #20 improvement: Adaptive KV cache methods
-    # G2: Now delegates to brain.kv_cache_config — single source of truth
-    # ------------------------------------------------------------------
 
     def _probe_metal_memory(self) -> tuple[int, str, tuple[int, int, int]]:
         """
@@ -1362,12 +1320,8 @@ class SynthesisRunner:
             input_tokens=input_tokens,
             max_tokens=max_tokens,
             kv_bits_override=self._kv_bits,
-    )
+        )
         return config.as_kwargs()
-
-    # ------------------------------------------------------------------
-    # F214: HypothesisEngine injection
-    # ------------------------------------------------------------------
 
     def inject_hypothesis_engine(self, engine: HypothesisEngine) -> None:
         """
@@ -1390,10 +1344,6 @@ class SynthesisRunner:
         if pipeliner is not None and hasattr(engine, "_inference_pipeliner"):
             engine._inference_pipeliner = pipeliner
 
-    # ------------------------------------------------------------------
-    # Sprint 8TD: Custom prompt injection
-    # ------------------------------------------------------------------
-
     def set_custom_prompt(self, prompt: str) -> None:
         """Sprint 8TD: Set custom synthesis prompt from DSPy optimizer."""
         self._custom_synthesis_prompt = prompt
@@ -1403,10 +1353,6 @@ class SynthesisRunner:
         """Sprint 8TD: Set prompt modifier from bandit arm selection."""
         self._prompt_modifier = modifier
         logger.info(f"SynthesisRunner: prompt modifier set ({len(modifier)} chars)")
-
-    # ------------------------------------------------------------------
-    # F234: Context compression threshold (opt-in)
-    # ------------------------------------------------------------------
 
     def set_compression_threshold(self, token_threshold: int) -> None:
         """
@@ -1420,22 +1366,15 @@ class SynthesisRunner:
         if token_threshold > 0 and self._compressor is None:
             try:
                 from context_optimization.context_compressor import ContextCompressor
+
                 self._compressor = ContextCompressor()
                 logger.info(f"SynthesisRunner: compression enabled, threshold={token_threshold}")
             except Exception as e:
                 logger.warning(f"SynthesisRunner: compressor init failed: {e}")
 
-    # ------------------------------------------------------------------
-    # Sprint F151A: Synthesis outcome seam
-    # ------------------------------------------------------------------
-
     def get_last_synthesis_outcome(self) -> SynthesisOutcome | None:
         """Sprint F151A: Vrátí structured outcome posledního synthesis volání."""
         return self._last_synthesis_outcome
-
-    # ------------------------------------------------------------------
-    # Sprint 8TD: Custom prompt injection
-    # ------------------------------------------------------------------
 
     @property
     def last_synthesis_meta(self) -> dict:
@@ -1447,15 +1386,6 @@ class SynthesisRunner:
             "bandit_arm_used": self._last_arm,
             "bandit_arm_rewards": self._bandit_rewards,
         }
-
-    # ------------------------------------------------------------------
-    # Public synthesis API
-    # ------------------------------------------------------------------
-
-    # =======================================================================
-    # Sub-pipeline steps — each is a focused async method.
-    # Complexity per method: 1-7 (vs original 43).
-    # =======================================================================
 
     async def _synth_phase1_guards(
         self,
@@ -1489,7 +1419,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="windup guard blocked — not in WINDUP phase",
-    )
+            )
             return False
 
         # B.7: UMA RSS > 5.5GiB guard
@@ -1512,7 +1442,7 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="UMA RSS > 5.5GiB or EMERGENCY state",
-    )
+            )
             return False
 
         return True
@@ -1532,8 +1462,8 @@ class SynthesisRunner:
 
         Fail-safe: any error → returns all findings unfiltered (conservative).
         """
+        from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
         from hledac.universal.brain.fast_path_triage import FastPathTriage
-        from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
 
         if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings, {"total_triaged": len(findings), "filtered_out": 0}
@@ -1542,7 +1472,6 @@ class SynthesisRunner:
             triage = FastPathTriage(query)
             loop = asyncio.get_running_loop()
 
-            # Extract text payloads for triage
             texts: list[str] = []
             for f in findings:
                 if isinstance(f, dict):
@@ -1560,11 +1489,9 @@ class SynthesisRunner:
             results = await loop.run_in_executor(
                 None,  # default executor
                 lambda: triage.triage_batch(texts),
-    )
+            )
 
-            filtered: list[dict] = [
-                f for f, keep in zip(findings, results) if keep
-            ]
+            filtered: list[dict] = [f for f, keep in zip(findings, results, strict=False) if keep]
             stats = triage.stats
             filtered_out = stats.get("filtered_out", 0)
             noise_pct = stats.get("noise_reduction_pct", 0)
@@ -1575,7 +1502,7 @@ class SynthesisRunner:
                     filtered_out,
                     len(findings),
                     noise_pct,
-    )
+                )
 
             return filtered, stats
 
@@ -1608,16 +1535,13 @@ class SynthesisRunner:
                 if self._duckdb_store is not None:
                     tg_ep = tg.create_task(
                         self._build_episode_context(self._duckdb_store, query), name="syn:ep", eager_start=True
-    )
+                    )
                 else:
                     tg_ep = None
-                tg_rag = tg.create_task(
-                    self._rag_query_safe(query, findings), name="syn:rag", eager_start=True
-    )
+                tg_rag = tg.create_task(self._rag_query_safe(query, findings), name="syn:rag", eager_start=True)
         except ExceptionGroup as eg:
             logger.debug("[SYNTHESIS] Parallel discovery partial failure: %s", eg)
 
-        # Extract results — re-raise cancellation as None/empty
         try:
             model_path = tg_model.result()
         except asyncio.CancelledError:
@@ -1704,7 +1628,7 @@ class SynthesisRunner:
             result_bytes = await asyncio.to_thread(_collapse_sync)
             if result_bytes:
                 collapsed = result_bytes.decode("utf-8", errors="replace")
-                
+
                 # [SWARM]-004: Apply entropy-guided word pruning to collapser output
                 # This is a fast Rust pre-pass (~5-10μs for 4000 chars) that:
                 # - Removes boilerplate words (TF-IDF: words in >=80% of groups)
@@ -1713,6 +1637,7 @@ class SynthesisRunner:
                 # - Target: 30-50% token reduction, ~1.5x Hermes inference speedup
                 try:
                     from hledac.universal._core.rust_backend import rust
+
                     compressed = rust.raw.compress_prompt(collapsed)
                     if compressed and len(compressed) < len(collapsed):
                         original_len = len(collapsed)
@@ -1721,11 +1646,11 @@ class SynthesisRunner:
                         logger.debug(
                             f"[SYNTHESIS] [SWARM]-004: compress_prompt "
                             f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
-    )
+                        )
                         return compressed
                 except Exception as compress_err:
                     logger.debug(f"[SYNTHESIS] [SWARM]-004: compress_prompt failed: {compress_err}")
-                
+
                 return collapsed
             return ""
         except Exception as e:
@@ -1760,7 +1685,7 @@ class SynthesisRunner:
                 f"Findings:\n[No findings collected during this sprint]\n"
                 f"Current timestamp: {time.time()}\n"
                 f"Note: Provide a threat intelligence report based on the query and general knowledge."
-    )
+            )
 
         # NEXUS-018-04: Structured collapser output — richer, more compact
         if collapsed_markdown:
@@ -1778,19 +1703,12 @@ class SynthesisRunner:
                     f"{header}\n"
                     f"{collapsed_markdown}\n"
                     f"Current timestamp: {time.time()}"
-    )
+                )
             else:
-                return (
-                    f"{header}\n"
-                    f"{collapsed_markdown}\n"
-                    f"Current timestamp: {time.time()}"
-    )
+                return f"{header}\n{collapsed_markdown}\nCurrent timestamp: {time.time()}"
 
         # Legacy flat path — used when no collapser or findings below threshold
-        findings_text = "\n".join(
-            f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
-            for f in top
-    )
+        findings_text = "\n".join(f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}" for f in top)
 
         context_parts = []
         if episode_ctx:
@@ -1806,13 +1724,9 @@ class SynthesisRunner:
                 f"Query: {query}{stix_context}\n"
                 f"Findings:\n{findings_text}\n"
                 f"Current timestamp: {time.time()}"
-    )
+            )
         else:
-            return (
-                f"Query: {query}{stix_context}\n"
-                f"Findings:\n{findings_text}\n"
-                f"Current timestamp: {time.time()}"
-    )
+            return f"Query: {query}{stix_context}\nFindings:\n{findings_text}\nCurrent timestamp: {time.time()}"
 
     async def _synth_phase5_prompt_optimization(
         self,
@@ -1830,14 +1744,14 @@ class SynthesisRunner:
             dspy_opt = _get_dspy_optimizer(self._lifecycle)
             if dspy_opt is not None:
                 try:
-                    optimized = dspy_opt.get_prompt('analysis', {'complexity': 'medium'})
+                    optimized = dspy_opt.get_prompt("analysis", {"complexity": "medium"})
                     if optimized:
                         self.set_custom_prompt(optimized)
                         logger.info(f"[SYNTHESIS] DSPy optimized prompt loaded ({len(optimized)} chars)")
                 except Exception:  # noqa: BLE001
                     pass
-            elif dspy_prompts.get('analysis:medium'):
-                self.set_custom_prompt(dspy_prompts['analysis:medium'])
+            elif dspy_prompts.get("analysis:medium"):
+                self.set_custom_prompt(dspy_prompts["analysis:medium"])
 
         # Sprint F234: Bandit arm selection — select before generation, apply modifier to prompt
         bandit = _get_prompt_bandit()
@@ -1880,7 +1794,7 @@ class SynthesisRunner:
                     logger.info(
                         f"[SYNTHESIS] Context compressed: {prompt_len} → {len(compressed_prompt)} chars "
                         f"(ratio={compressed.compression_ratio:.2f})"
-    )
+                    )
                     prompt = compressed_prompt
                 except Exception as e:
                     logger.warning(f"[SYNTHESIS] Context compression failed (using original prompt): {e}")
@@ -1904,8 +1818,10 @@ class SynthesisRunner:
             gc.collect()
 
         return raw_dict, used_engine, token_logprobs
+
     async def _run_absence_mining(
-        self, report: OSINTReport,
+        self,
+        report: OSINTReport,
     ) -> tuple[OSINTReport, Any]:
         """
         Phase A: Absence Mining Engine — detect structural absences and adjust confidence.
@@ -1915,49 +1831,53 @@ class SynthesisRunner:
         Fail-soft: returns original report on any error.
         """
         try:
-            from .absence_mining import get_absence_engine, AbsenceReport as _AbsenceReport
+            from .absence_mining import AbsenceReport as _AbsenceReport
+            from .absence_mining import get_absence_engine
+
             absence_enabled = os.environ.get(
-                'HLEDAC_ENABLE_ABSENCE_MINING', '1',
-            ).lower() in ('1', 'true', 'yes', 'on')
+                "HLEDAC_ENABLE_ABSENCE_MINING",
+                "1",
+            ).lower() in ("1", "true", "yes", "on")
             if not absence_enabled or self._duckdb_store is None:
                 return report, None
             absence_engine = await get_absence_engine(self._duckdb_store)
             absence_report: _AbsenceReport = await absence_engine.run(
-                report, self._duckdb_store,
-    )
+                report,
+                self._duckdb_store,
+            )
             if not absence_report.absences:
                 return report, absence_report
             logger.info(
-                "[SYNTHESIS] [FINAL]-019: Absence mining found %d absences "
-                "(checked=%d, refetch=%s)",
+                "[SYNTHESIS] [FINAL]-019: Absence mining found %d absences (checked=%d, refetch=%s)",
                 len(absence_report.absences),
                 absence_report.total_checked,
                 absence_report.should_trigger_refetch,
-    )
+            )
             adjusted_conf = absence_engine.apply_confidence_adjustment(
-                report, absence_report,
-    )
+                report,
+                absence_report,
+            )
             if adjusted_conf != report.confidence:
                 logger.debug(
-                    "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f "
-                    "due to %d absence findings",
+                    "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f due to %d absence findings",
                     report.confidence,
                     adjusted_conf,
                     len(absence_report.confidence_adjustments),
-    )
+                )
                 report = msgspec.replace(report, confidence=adjusted_conf)
             return report, absence_report
         except ImportError:
             logger.debug(
-                "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable "
-                "(dependency missing) — skipping",
-    )
+                "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable (dependency missing) — skipping",
+            )
         except Exception as e:
             logger.debug("[SYNTHESIS] [FINAL]-019: Absence mining exception (fail-soft): %s", e)
         return report, None
 
     async def _process_uncertainty_gate(
-        self, report: OSINTReport, token_logprobs: list[float] | None,
+        self,
+        report: OSINTReport,
+        token_logprobs: list[float] | None,
     ) -> OSINTReport:
         """
         Phase B: APEX-1009 uncertainty gate — compare self-reported confidence with measured entropy.
@@ -1975,27 +1895,26 @@ class SynthesisRunner:
 
         _ENTROPY_THRESHOLD_BITS = 1.5
         should_emit = (
-            uncertainty_flags.hallucination_risk
-            or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
-    )
+            uncertainty_flags.hallucination_risk or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
+        )
         if not should_emit:
             logger.debug(
-                "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
-                "divergence=%.3f, risk=%s, tokens=%d",
+                "[SYNTHESIS] APEX-1009 uncertainty_gate passed: divergence=%.3f, risk=%s, tokens=%d",
                 uncertainty_flags.confidence_divergence,
                 uncertainty_flags.risk_level,
                 uncertainty_flags.token_count,
-    )
+            )
             return report
 
         _entropy_feedback_enabled = os.environ.get(
-            'HLEDAC_ENABLE_ENTROPY_FEEDBACK', '1',
-        ).lower() in ('1', 'true', 'yes', 'on')
+            "HLEDAC_ENABLE_ENTROPY_FEEDBACK",
+            "1",
+        ).lower() in ("1", "true", "yes", "on")
         if not _entropy_feedback_enabled:
             logger.debug(
                 "[SYNTHESIS] UNIFIED-003: Entropy feedback disabled "
                 "(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0) — alert suppressed",
-    )
+            )
             return report
 
         if uncertainty_flags.hallucination_risk:
@@ -2007,7 +1926,7 @@ class SynthesisRunner:
                 uncertainty_flags.measured_entropy,
                 uncertainty_flags.confidence_divergence,
                 uncertainty_flags.risk_level,
-    )
+            )
         else:
             logger.info(
                 "[SYNTHESIS] UNIFIED-003 high-entropy threshold "
@@ -2016,19 +1935,21 @@ class SynthesisRunner:
                 uncertainty_flags.measured_entropy,
                 _ENTROPY_THRESHOLD_BITS,
                 report.confidence,
-    )
+            )
 
         try:
             from .uncertainty_quant import EntropyAlert, get_entropy_bridge
+
             bridge = get_entropy_bridge()
             if bridge is None:
                 return report
             for ioc_entity in (report.ioc_entities or [])[:5]:
-                entity_value = getattr(ioc_entity, 'value', str(ioc_entity))
-                ioc_type = getattr(ioc_entity, 'ioc_type', 'unknown')
+                entity_value = getattr(ioc_entity, "value", str(ioc_entity))
+                ioc_type = getattr(ioc_entity, "ioc_type", "unknown")
                 alt_protocols = _resolve_alternative_protocols(
-                    ioc_type=ioc_type, entity_value=entity_value,
-    )
+                    ioc_type=ioc_type,
+                    entity_value=entity_value,
+                )
                 alert = EntropyAlert(
                     entity_id=entity_value[:100],
                     entropy=round(1.0 - uncertainty_flags.implied_confidence, 3),
@@ -2042,24 +1963,24 @@ class SynthesisRunner:
                         "ioc_type": ioc_type,
                         "alternative_protocols": alt_protocols,
                         "trigger_path": (
-                            "hallucination_risk"
-                            if uncertainty_flags.hallucination_risk
-                            else "high_entropy"
+                            "hallucination_risk" if uncertainty_flags.hallucination_risk else "high_entropy"
                         ),
                     },
-    )
+                )
                 await bridge.emit(alert)
             logger.debug(
                 "[SYNTHESIS] UNIFIED-003: Emitted %d EntropyAlert(s) to bridge (trigger=%s)",
                 min(len(report.ioc_entities or []), 5),
                 alert.metadata.get("trigger_path", "unknown"),
-    )
+            )
         except Exception as e:
             logger.debug("[SYNTHESIS] UNIFIED-003: EntropyAlert emit failed (fail-soft): %s", e)
         return report
 
     async def _process_contradictions(
-        self, report: OSINTReport, findings: list[dict],
+        self,
+        report: OSINTReport,
+        findings: list[dict],
     ) -> None:
         """
         Phase C: [META]-011 ContradictionBridge — detect and emit alerts for propositional contradictions.
@@ -2070,14 +1991,19 @@ class SynthesisRunner:
         """
         try:
             from .contradiction_bridge import get_contradiction_bridge
+
             _cb_enabled = os.environ.get(
-                "HLEDAC_ENABLE_CONTRADICTION_FEEDBACK", "1",
+                "HLEDAC_ENABLE_CONTRADICTION_FEEDBACK",
+                "1",
             ).lower() in ("1", "true", "yes", "on")
             if not _cb_enabled or self._hypothesis_engine is None:
                 return
             cb = get_contradiction_bridge()
+            from datetime import UTC as _utc
+            from datetime import datetime as _dt
+
             from hledac_hypothesis.types.evidence import Evidence
-            from datetime import UTC as _utc, datetime as _dt
+
             _evidence_list: list[Evidence] = [
                 Evidence(
                     evidence_id=f"ev_{f.get('id', str(i))[:12]}",
@@ -2085,13 +2011,14 @@ class SynthesisRunner:
                     content=(f.get("payload_text", "") or "")[:500],
                     timestamp=_dt.now(_utc),
                     reliability=float(f.get("confidence", 0.5)),
-    )
+                )
                 for i, f in enumerate(findings[:100])
                 if f.get("payload_text")
             ]
             if not _evidence_list:
                 return
             from hledac_hypothesis.adversarial import AdversarialVerifier
+
             _verifier = AdversarialVerifier(hypothesis_engine=self._hypothesis_engine)
             _contradictions = _verifier.detect_contradictions(_evidence_list)
             if not _contradictions:
@@ -2101,23 +2028,27 @@ class SynthesisRunner:
                 ioc_entities=report.ioc_entities or [],
                 findings=findings,
                 sprint_id="",
-    )
+            )
             if not _alerts:
                 return
             from .uncertainty_quant import get_entropy_bridge
+
             _entropy_bridge = get_entropy_bridge()
             for _alert in _alerts:
                 await _entropy_bridge.emit(_alert)
             logger.info(
                 "[SYNTHESIS] [META]-011: Emitted %d contradiction EntropyAlert(s) (severity > 0.7)",
                 len(_alerts),
-    )
+            )
             await cb._auto_retract_systematic_dissenters()
         except Exception as e:
             logger.debug("[SYNTHESIS] [META]-011: ContradictionBridge failed (fail-soft): %s", e)
 
     async def _update_bandit_reward(
-        self, bandit: Any, arm_used: str, report: OSINTReport,
+        self,
+        bandit: Any,
+        arm_used: str,
+        report: OSINTReport,
     ) -> None:
         """
         Phase E: Sprint F234 — update bandit UCB1 reward.
@@ -2129,10 +2060,11 @@ class SynthesisRunner:
             return
         try:
             response_text = (
-                report.threat_summary + " " +
-                " ".join(str(e) for e in report.ioc_entities) +
-                " ".join(report.threat_actors)
-    )
+                report.threat_summary
+                + " "
+                + " ".join(str(e) for e in report.ioc_entities)
+                + " ".join(report.threat_actors)
+            )
             response_len_norm = min(1.0, len(response_text) / 2000.0)
             reward = response_len_norm * report.confidence
             bandit.update_reward(arm_used, reward, reward)
@@ -2141,7 +2073,9 @@ class SynthesisRunner:
             logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
 
     async def _extract_hypotheses(
-        self, query: str, report: OSINTReport,
+        self,
+        query: str,
+        report: OSINTReport,
     ) -> None:
         """
         Phase F: F214 — extract testable hypotheses from synthesis output.
@@ -2160,15 +2094,18 @@ class SynthesisRunner:
             }
             hermes = getattr(self._hypothesis_engine, "_inference_engine", None)
             hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
-                context=ctx, hermes_engine=hermes,
-    )
+                context=ctx,
+                hermes_engine=hermes,
+            )
             if hyp_strings:
                 logger.debug(f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report")
         except Exception as e:
             logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
 
     async def _filter_cognitive_tarpits(
-        self, report: OSINTReport, findings: list[dict],
+        self,
+        report: OSINTReport,
+        findings: list[dict],
     ) -> OSINTReport:
         """
         Phase G: ISSUE [ADVERSARY]-002 — filter IOCs from cognitive tarpit domains.
@@ -2178,27 +2115,30 @@ class SynthesisRunner:
         Fail-soft: returns original report on any error.
         """
         _ct_filter_enabled = os.environ.get(
-            'HLEDAC_ENABLE_COGNITIVE_TARPIT', '1',
-        ).lower() in ('1', 'true', 'yes', 'on')
+            "HLEDAC_ENABLE_COGNITIVE_TARPIT",
+            "1",
+        ).lower() in ("1", "true", "yes", "on")
         if not _ct_filter_enabled or not report.ioc_entities or not findings:
             return report
         try:
             from hledac.universal.knowledge.domain_reputation import (
                 get_domain_reputation_service as _get_rep_svc,
-    )
+            )
+
             _rep_svc = _get_rep_svc()
             if _rep_svc is None:
                 return report
             _domains_to_check: list[str] = []
             _seen: set[str] = set()
             for f in findings:
-                _src_url = f.get('url') or f.get('source_url') or ''
+                _src_url = f.get("url") or f.get("source_url") or ""
                 if not _src_url:
                     continue
                 try:
                     from urllib.parse import urlparse
+
                     _parsed = urlparse(_src_url)
-                    _fdomain = _parsed.netloc.removeprefix('www.')
+                    _fdomain = _parsed.netloc.removeprefix("www.")
                     if _fdomain and _fdomain not in _seen:
                         _seen.add(_fdomain)
                         _domains_to_check.append(_fdomain)
@@ -2209,10 +2149,10 @@ class SynthesisRunner:
             _reps = await asyncio.gather(
                 *[_rep_svc.get(d) for d in _domains_to_check],
                 return_exceptions=True,
-    )
+            )
             _ok_reps, _err_reps = _check_gathered(_reps)
             _tarpit_domains: set[str] = set()
-            for _d, _rep in zip(_domains_to_check, _ok_reps):
+            for _d, _rep in zip(_domains_to_check, _ok_reps, strict=False):
                 if _rep is None:
                     continue
                 if _rep.cognitive_tarpit_score >= 1.0:
@@ -2221,23 +2161,26 @@ class SynthesisRunner:
                 return report
             _before_count = len(report.ioc_entities)
             _filtered_iocs = [
-                ioc for ioc in report.ioc_entities
-                if getattr(ioc, 'source_url', None) not in _tarpit_domains
-                and getattr(ioc, 'source_domain', None) not in _tarpit_domains
+                ioc
+                for ioc in report.ioc_entities
+                if getattr(ioc, "source_url", None) not in _tarpit_domains
+                and getattr(ioc, "source_domain", None) not in _tarpit_domains
             ]
             _after_count = len(_filtered_iocs)
             if _after_count < _before_count:
                 _dropped = _before_count - _after_count
                 report = msgspec.replace(report, ioc_entities=_filtered_iocs)
                 logger.warning(
-                    "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs "
-                    "from cognitive tarpit domains: %s",
-                    _dropped, _before_count, sorted(_tarpit_domains),
-    )
+                    "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs from cognitive tarpit domains: %s",
+                    _dropped,
+                    _before_count,
+                    sorted(_tarpit_domains),
+                )
         except Exception as e:
             logger.debug(
-                "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed (fail-soft): %s", e,
-    )
+                "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed (fail-soft): %s",
+                e,
+            )
         return report
 
     async def _synth_phase7_parse_and_validate(
@@ -2285,10 +2228,7 @@ class SynthesisRunner:
         # ── Phase D: Evidence validation ──────────────────────────────────
         _, grounding_warnings = validate_evidence_grounding(report, findings)
         if grounding_warnings:
-            logger.warning(
-                f"[SYNTHESIS] GAP-8 grounding warnings: "
-                f"{len(grounding_warnings)} unverified IOCs"
-    )
+            logger.warning(f"[SYNTHESIS] GAP-8 grounding warnings: {len(grounding_warnings)} unverified IOCs")
 
         sem_ok, sem_errors = validate_report_semantics(report)
         if not sem_ok:
@@ -2304,10 +2244,6 @@ class SynthesisRunner:
         report = await self._filter_cognitive_tarpits(report, findings)
 
         return report
-
-    # =======================================================================
-    # Public synthesis API — orchestrates 8 sub-pipeline steps
-    # =======================================================================
 
     async def synthesize_findings(
         self,
@@ -2359,13 +2295,13 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note=f"triage filtered all {triage_stats.get('total_triaged', 0)} findings",
-    )
+            )
             return None
 
         # ── Phase 2: Parallel discovery ──────────────────────────────────
-        model_path, stix_context, episode_ctx, rag_context = (
-            await self._synth_phase2_parallel_discovery(query, findings)
-    )
+        model_path, stix_context, episode_ctx, rag_context = await self._synth_phase2_parallel_discovery(
+            query, findings
+        )
 
         if model_path is None:
             logger.warning("[SYNTHESIS] No model available — skipping")
@@ -2382,17 +2318,14 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note="no model available after discovery and download attempt",
-    )
+            )
             return None
 
-        # Update lifecycle model path for structured_generate
         self._lifecycle._model_path = model_path
         self._lifecycle._loaded = False  # force reload with new path
 
         # ── Phase 3: Rerank + GraphRAG ──────────────────────────────────
-        top, graph_context = await self._synth_phase3_rerank_and_graphrag(
-            query, findings, max_findings
-    )
+        top, graph_context = await self._synth_phase3_rerank_and_graphrag(query, findings, max_findings)
 
         # ── Phase 3.5: Collapse + categorize (NEXUS-018-04) ──────────────
         # Only triggers when findings exceed threshold to avoid overhead on small batches.
@@ -2403,10 +2336,15 @@ class SynthesisRunner:
 
         # ── Phase 4: Build prompt ────────────────────────────────────────
         prompt = await self._synth_phase4_build_prompt(
-            query, stix_context, episode_ctx, rag_context, graph_context,
-            top, findings_count,
+            query,
+            stix_context,
+            episode_ctx,
+            rag_context,
+            graph_context,
+            top,
+            findings_count,
             collapsed_markdown=collapsed_markdown,
-    )
+        )
 
         # ── Phase 5: DSPy + Bandit ──────────────────────────────────────
         prompt = await self._synth_phase5_prompt_optimization(prompt)
@@ -2432,10 +2370,9 @@ class SynthesisRunner:
                 report_produced=False,
                 confidence=0.0,
                 operator_note=f"exception during generation: {e}",
-    )
+            )
             return None
 
-        # Log engine used
         logger.info(f"[SYNTHESIS] Engine used: {used_engine}")
         self._last_synthesis_engine = used_engine
 
@@ -2445,10 +2382,15 @@ class SynthesisRunner:
 
         if raw_dict is not None:
             report = await self._synth_phase7_parse_and_validate(
-                raw_dict, used_engine, findings,
-                bandit, arm_used, query, findings_count,
+                raw_dict,
+                used_engine,
+                findings,
+                bandit,
+                arm_used,
+                query,
+                findings_count,
                 token_logprobs=token_logprobs,
-    )
+            )
             if report is not None:
                 self._last_synthesis_outcome = SynthesisOutcome(
                     status="success",
@@ -2463,7 +2405,7 @@ class SynthesisRunner:
                     report_produced=True,
                     confidence=report.confidence,
                     operator_note=f"report produced with confidence {report.confidence:.3f}",
-    )
+                )
                 return report
 
         # ── Phase 8 (inline): All engines failed or parse failed ────────
@@ -2480,12 +2422,8 @@ class SynthesisRunner:
             report_produced=False,
             confidence=0.0,
             operator_note=f"engines={used_engine}, raw_dict={'set' if raw_dict is not None else 'None'}",
-    )
+        )
         return None
-
-    # ------------------------------------------------------------------
-    # G2: Streaming synthesis for M1 8GB memory efficiency
-    # ------------------------------------------------------------------
 
     async def synthesize_findings_streaming(
         self,
@@ -2534,18 +2472,17 @@ class SynthesisRunner:
                     findings=findings_batch,
                     max_findings=max_findings,
                     force_synthesis=force_synthesis,
-    )
+                )
                 findings_batch.clear()  # Free memory immediately
                 yield report
 
-        # Process remaining findings
         if findings_batch:
             report = await self.synthesize_findings(
                 query=query,
                 findings=findings_batch,
                 max_findings=max_findings,
                 force_synthesis=force_synthesis,
-    )
+            )
             yield report
 
     async def close(self) -> None:
@@ -2571,20 +2508,17 @@ class SynthesisRunner:
         # Note: self._lifecycle.unload() above already calls mlx_cleanup_sync()
         # which handles gc.collect() → mx.eval([]) → clear_cache() canonically.
 
-    # ------------------------------------------------------------------
-    # Issue #12.1 + #12.2: Helper methods for parallel discovery + async-safe rerank
-    # ------------------------------------------------------------------
-
     async def _rag_query_safe(self, query: str, findings: list[dict]) -> str:
         """RAG retrieval — fail-soft wrapper for parallel discovery TaskGroup."""
         try:
             from hledac.universal.knowledge.rag_engine import RAGEngine
+
             _rag = RAGEngine()
             rag_result = await _rag.query(
                 query=query,
                 context_chunks=[f.get("text", "")[:500] for f in findings[:20]],
                 use_compression=False,
-    )
+            )
             if rag_result and rag_result.get("context"):
                 raw_ctx = rag_result["context"]
                 max_chars = 7200
@@ -2602,8 +2536,9 @@ class SynthesisRunner:
         ChatML context injection when multi_hop_search results are available.
         """
         try:
-            from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
             from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
+            from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
+
             kl = PersistentKnowledgeLayer()
             _grag = GraphRAGOrchestrator(kl)
 
@@ -2612,6 +2547,7 @@ class SynthesisRunner:
                 graph_result = await _grag.multi_hop_search(query=query, hops=2, max_nodes=15)
                 if graph_result and graph_result.get("insights"):
                     from hledac.universal.brain.graph_prompt_builder import build_graph_chatml_context
+
                     return build_graph_chatml_context(graph_result, query, token_budget=1500)
             except Exception:  # noqa: BLE001
                 pass
@@ -2628,9 +2564,7 @@ class SynthesisRunner:
                         continue
                     conns = await _grag.find_connections(ioc_str, ioc_str, max_hops=2)
                     if conns:
-                        conn_texts.append(
-                            f"IOC {ioc_str}: {'; '.join(str(c)[:80] for c in conns[:3])}"
-    )
+                        conn_texts.append(f"IOC {ioc_str}: {'; '.join(str(c)[:80] for c in conns[:3])}")
                 except Exception:  # noqa: BLE001
                     pass
             if conn_texts:
@@ -2666,10 +2600,6 @@ class SynthesisRunner:
             return [findings[i] for i in ranked_idxs]
 
         return await asyncio.to_thread(_rerank_sync)
-
-    # ------------------------------------------------------------------
-    # L-05: Synthesis strategy — sequential_preferred (default) or race_first_wins
-    # ------------------------------------------------------------------
 
     async def _race_inference(
         self,
@@ -2720,17 +2650,14 @@ class SynthesisRunner:
         Each step runs with the global MLX inference lock = strict serialization.
         First-success wins. Lowest latency overhead.
         """
-        # Step 1: xgrammar (highest JSON guarantee)
         result, xgram_logprobs = await _cascade_xgrammar(self._lifecycle, prompt)
         if result is not None:
             return result, "xgrammar", xgram_logprobs
 
-        # Step 2: streaming with early-exit
         result, stream_logprobs = await _cascade_streaming(self._lifecycle, prompt)
         if result is not None:
             return result, "streaming", stream_logprobs
 
-        # Step 3: structured (Outlines fallback)
         result, struct_logprobs = await _cascade_structured(self._lifecycle, prompt)
         if result is not None:
             return result, "constrained", struct_logprobs
@@ -2769,11 +2696,10 @@ class SynthesisRunner:
                 # This is a race-first-wins pattern — first successful result wins
                 try:
                     result, winner_task = await first_completed(*pending)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # No timeout configured, shouldn't happen
                     break
 
-                # Remove winner from pending
                 pending.discard(winner_task)
 
                 try:
@@ -2807,10 +2733,6 @@ class SynthesisRunner:
         logger.debug("[SYNTHESIS] race_first_wins: all engines failed")
         return None, "none", []
 
-    # ------------------------------------------------------------------
-    # Sprint 8TC B.3: Streaming synthesis s early-exit
-    # ------------------------------------------------------------------
-
     async def _run_streaming_generation(  # noqa: C901
         self,
         prompt: str,
@@ -2828,23 +2750,42 @@ class SynthesisRunner:
         """
         # LLM-01: ALWAYS sanitize prompt before LLM inference (fail-safe, always-on)
         try:
-            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            _sanitize_fn = __import__(
+                "hledac.universal.brain.prompt_injection_validator", fromlist=["sanitize_prompt_injection_patterns"]
+            ).sanitize_prompt_injection_patterns
             validation_result = _sanitize_fn(prompt)
             if validation_result.suspicious:
-                _high_risk = any(p in validation_result.patterns for p in (
-                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                    'structural_repeated_delimiters', 'structural_html_comment',
-                ))
+                _high_risk = any(
+                    p in validation_result.patterns
+                    for p in (
+                        "ignore_previous_instructions",
+                        "disregard_instructions",
+                        "forget_instructions",
+                        "system_prompt_injection",
+                        "developer_message_injection",
+                        "you_are_chatgpt",
+                        "you_are_an_ai",
+                        "as_an_ai",
+                        "jailbreak",
+                        "dan",
+                        "structural_repeated_delimiters",
+                        "structural_html_comment",
+                    )
+                )
                 if _high_risk:
-                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in streaming: {validation_result.patterns}')
+                    logger.warning(
+                        f"[LLM-01-BLOCK] High-risk prompt injection in streaming: {validation_result.patterns}"
+                    )
                     return None
-                logger.warning('[SYNTHESIS] streaming prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+                logger.warning(
+                    "[SYNTHESIS] streaming prompt_injection: suspicious=%s, patterns=%s",
+                    validation_result.suspicious,
+                    validation_result.patterns,
+                )
             prompt = validation_result.safe_text
         except Exception:
             # LLM-01 fail-safe: reject on any internal error
-            logger.error('[LLM-01] streaming prompt injection validation failed internally')
+            logger.error("[LLM-01] streaming prompt injection validation failed internally")
             return None
 
         try:
@@ -2861,7 +2802,7 @@ class SynthesisRunner:
                 "You are a cybersecurity analyst. "
                 "Extract IOC entities from findings. "
                 "Respond with valid JSON matching the schema exactly."
-    )
+            )
         full_prompt = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
 
         # Pokus o chat template
@@ -2878,9 +2819,7 @@ class SynthesisRunner:
                     {"role": "system", "content": system_text},
                     {"role": "user", "content": user_text},
                 ]
-                formatted = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-    )
+                formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             else:
                 formatted = full_prompt
         except Exception:
@@ -2929,9 +2868,13 @@ class SynthesisRunner:
                             if hasattr(chunk, "logprobs") and chunk.logprobs:
                                 # Take the logprob of the generated token (last entry)
                                 try:
-                                    logprob_val = chunk.logprobs[-1][1] if isinstance(chunk.logprobs[-1], tuple) else chunk.logprobs[-1]
+                                    logprob_val = (
+                                        chunk.logprobs[-1][1]
+                                        if isinstance(chunk.logprobs[-1], tuple)
+                                        else chunk.logprobs[-1]
+                                    )
                                     token_logprobs.append(float(logprob_val))
-                                except (IndexError, TypeError, ValueError):  # noqa: BLE001
+                                except IndexError, TypeError, ValueError:  # noqa: BLE001
                                     pass  # Fail-soft: skip if logprob extraction fails
                             # ISSUE-009: Speculative URL/IP detection — scan sliding window
                             # O(1) memory per token, avoids O(n²) full-string concat for detection
@@ -2979,10 +2922,6 @@ class SynthesisRunner:
 
         return await asyncio.to_thread(_stream_sync)
 
-    # ------------------------------------------------------------------
-    # Sprint 8UC B.1: xgrammar guaranteed-JSON synthesis
-    # ------------------------------------------------------------------
-
     async def _run_xgrammar_generation(  # noqa: C901
         self,
         prompt: str,
@@ -3003,23 +2942,42 @@ class SynthesisRunner:
 
         # LLM-01: ALWAYS sanitize prompt before LLM inference (fail-safe, always-on)
         try:
-            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            _sanitize_fn = __import__(
+                "hledac.universal.brain.prompt_injection_validator", fromlist=["sanitize_prompt_injection_patterns"]
+            ).sanitize_prompt_injection_patterns
             validation_result = _sanitize_fn(prompt)
             if validation_result.suspicious:
-                _high_risk = any(p in validation_result.patterns for p in (
-                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                    'structural_repeated_delimiters', 'structural_html_comment',
-                ))
+                _high_risk = any(
+                    p in validation_result.patterns
+                    for p in (
+                        "ignore_previous_instructions",
+                        "disregard_instructions",
+                        "forget_instructions",
+                        "system_prompt_injection",
+                        "developer_message_injection",
+                        "you_are_chatgpt",
+                        "you_are_an_ai",
+                        "as_an_ai",
+                        "jailbreak",
+                        "dan",
+                        "structural_repeated_delimiters",
+                        "structural_html_comment",
+                    )
+                )
                 if _high_risk:
-                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in xgrammar: {validation_result.patterns}')
+                    logger.warning(
+                        f"[LLM-01-BLOCK] High-risk prompt injection in xgrammar: {validation_result.patterns}"
+                    )
                     return None, False
-                logger.warning('[SYNTHESIS] xgrammar prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+                logger.warning(
+                    "[SYNTHESIS] xgrammar prompt_injection: suspicious=%s, patterns=%s",
+                    validation_result.suspicious,
+                    validation_result.patterns,
+                )
             prompt = validation_result.safe_text
         except Exception:
             # LLM-01 fail-safe: reject on any internal error
-            logger.error('[LLM-01] xgrammar prompt injection validation failed internally')
+            logger.error("[LLM-01] xgrammar prompt injection validation failed internally")
             return None, False
 
         # Format prompt OUTSIDE _xgrammar_sync so tokenizer.count_tokens() is accessible
@@ -3030,9 +2988,7 @@ class SynthesisRunner:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ]
-                formatted = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-    )
+                formatted = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             else:
                 formatted = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
         except Exception:
@@ -3053,10 +3009,9 @@ class SynthesisRunner:
                 import mlx_lm
                 import xgrammar as xgr
 
-                from hledac.universal.utils.mlx_memory import get_metal_stream_context
-
                 # L-01: Globální MLX Metal lock — serializuje všechny mlx_lm.generate() volání
                 from hledac.universal._core.mlx_inference_lock import _get_mlx_inference_lock
+                from hledac.universal.utils.mlx_memory import get_metal_stream_context
 
                 _mlx_lock = _get_mlx_inference_lock()
 
@@ -3065,16 +3020,16 @@ class SynthesisRunner:
                 schema_str = _msgspec_encode(schema).decode()
                 grammar = _get_cached_grammar(schema_str, tokenizer)
 
-                # Build logits processor via contrib.hf
                 try:
                     processor = xgr.contrib.hf.LogitsProcessor(grammar, tokenizer)
-                except (AttributeError, TypeError):
+                except AttributeError, TypeError:
                     # Fallback: use grammar directly if LogitsProcessor unavailable
                     return None, False
 
                 # P0-1: mx.eval([]) barrier BEFORE mlx_lm.generate() — canonical F266 order
                 try:
                     import mlx.core as _mx
+
                     if _mx.metal.is_available():
                         _mx.eval([])
                 except Exception:  # noqa: BLE001
@@ -3089,24 +3044,26 @@ class SynthesisRunner:
                         with _mlx_lock:
                             try:
                                 output = mlx_lm.generate(
-                                    model, tokenizer,
+                                    model,
+                                    tokenizer,
                                     prompt=_input_tokens_list,  # M-03: pass tokens directly
                                     max_tokens=512,
                                     logits_processors=[processor],
                                     kv_bits=self._get_adaptive_kv_bits(),
                                     **self._get_kv_cache_kwargs(_input_tokens, 512),
                                     verbose=False,
-    )
+                                )
                             except TypeError:
                                 # Old mlx_lm without logits_processors
                                 output = mlx_lm.generate(
-                                    model, tokenizer,
+                                    model,
+                                    tokenizer,
                                     prompt=_input_tokens_list,  # M-03: pass tokens directly
                                     max_tokens=512,
                                     kv_bits=self._get_adaptive_kv_bits(),
                                     **self._get_kv_cache_kwargs(_input_tokens, 512),
                                     verbose=False,
-    )
+                                )
                 except RuntimeError as _e:
                     if "Stream(gpu" in str(_e):
                         _stream_err = _e
@@ -3116,23 +3073,25 @@ class SynthesisRunner:
                                 try:
                                     try:
                                         output = mlx_lm.generate(
-                                            model, tokenizer,
+                                            model,
+                                            tokenizer,
                                             prompt=_input_tokens_list,  # M-03: pass tokens directly (fixes fallback path)
                                             max_tokens=512,
                                             logits_processors=[processor],
                                             kv_bits=self._get_adaptive_kv_bits(),
                                             **self._get_kv_cache_kwargs(_input_tokens, 512),
                                             verbose=False,
-    )
+                                        )
                                     except TypeError:
                                         output = mlx_lm.generate(
-                                            model, tokenizer,
+                                            model,
+                                            tokenizer,
                                             prompt=_input_tokens_list,  # M-03: pass tokens directly (fixes fallback path)
                                             max_tokens=512,
                                             kv_bits=self._get_adaptive_kv_bits(),
                                             **self._get_kv_cache_kwargs(_input_tokens, 512),
                                             verbose=False,
-    )
+                                        )
                                 except Exception as _direct_err:
                                     logger.warning("[P0-1] [SYNTHESIS] Direct retry also failed: %s", _direct_err)
                     else:
@@ -3156,10 +3115,6 @@ class SynthesisRunner:
                 return None, False
 
         return await asyncio.to_thread(_xgrammar_sync)
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     async def _ensure_model(self) -> Path | None:  # noqa: C901
         """
@@ -3200,25 +3155,22 @@ class SynthesisRunner:
             ("mlx-community/SmolLM2-135M-Instruct-4bit", 0.2),
         ]
 
-        # Phase 1: Check all model sizes in parallel
-        # F314-4: migrated asyncio.gather -> parallel_ok (fail-soft, preserves order)
         _size_result = await parallel(
             [_check_model_size(mid, mgb) for mid, mgb in model_candidates],
             policy="log",
             ctx="synthesis:check_model_sizes",
-    )
+        )
         size_results = _size_result.ok
 
         # Filter eligible models (fit within budget)
         eligible: list[str] = []
-        for (model_id, max_gb), result in zip(model_candidates, size_results):
+        for (model_id, _max_gb), result in zip(model_candidates, size_results, strict=False):
             if isinstance(result, Exception) or result is None:
                 continue
             _, size_bytes = result
             eligible.append(model_id)
             logger.info("[SYNTHESIS] Model %s fits budget (%.0fMB)", model_id, size_bytes / 1e6)
 
-        # Phase 2: Parallel download of all eligible models for pre-warming
         if eligible:
             # F314-4: migrated asyncio.gather -> safe_gather_fire_and_forget
             # Download in parallel - best effort, don't fail all if one fails.
@@ -3227,7 +3179,7 @@ class SynthesisRunner:
                 [_download_model(mid) for mid in eligible],
                 policy="log",
                 ctx="synthesis:download_models",
-    )
+            )
             # Re-scan disk for any successfully downloaded model
             for d in search:
                 for pat in ["**/config.json"]:
@@ -3258,7 +3210,6 @@ class SynthesisRunner:
         actors = getattr(report, "threat_actors", None)
         if actors:
             score += 0.20
-        # Check for CVE mentions in IOC entities
         iocs = getattr(report, "ioc_entities", None) or []
         if any("CVE" in str(e.value) for e in iocs if hasattr(e, "value")):
             score += 0.20
@@ -3272,11 +3223,17 @@ class SynthesisRunner:
         sc = getattr(report, "sources_count", None)
         tm = getattr(report, "timestamp", None)
         if (
-            q is not None and isinstance(q, str) and q
-            and ts is not None and isinstance(ts, str) and ts
+            q is not None
+            and isinstance(q, str)
+            and q
+            and ts is not None
+            and isinstance(ts, str)
+            and ts
             and ie is not None
-            and sc is not None and sc >= 1
-            and tm is not None and tm > 0
+            and sc is not None
+            and sc >= 1
+            and tm is not None
+            and tm > 0
         ):
             score += 0.15
         if used_outlines and has_content:
@@ -3322,6 +3279,7 @@ class SynthesisRunner:
         # was injected as _runtime_lifecycle attribute on self (set by windup_engine)
         try:
             from ..runtime.sprint_lifecycle import SprintLifecycleManager as RuntimeLC
+
             for _name in ("_runtime_lifecycle", "_lc"):
                 if hasattr(self, _name):
                     lc = getattr(self, _name)
@@ -3336,6 +3294,7 @@ class SynthesisRunner:
         # Path 3: utils.sprint_lifecycle (COMPAT fallback — labeled as such)
         try:
             from ..utils.sprint_lifecycle import SprintLifecycleManager
+
             manager = SprintLifecycleManager.get_instance()
             should_windup = manager.is_windup_phase()
             self._lifecycle_gate_source = "compat"
@@ -3356,6 +3315,7 @@ class SynthesisRunner:
         """
         try:
             from ..core.resource_governor import evaluate_uma_state, sample_uma_status
+
             status = sample_uma_status()
             if status.rss_gib > 5.5:
                 logger.warning("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", status.rss_gib)
@@ -3417,14 +3377,16 @@ class SynthesisRunner:
                             entity_confidence = 0.95
                             entity_uncertainty_flag = "normal"
 
-                    ioc_entities.append(IOCEntity(
-                        value=f[:100],
-                        ioc_type=_infer_ioc_type(f),
-                        severity="medium",
-                        context=f[:200],
-                        confidence=entity_confidence,
-                        uncertainty_flag=entity_uncertainty_flag,
-                    ))
+                    ioc_entities.append(
+                        IOCEntity(
+                            value=f[:100],
+                            ioc_type=_infer_ioc_type(f),
+                            severity="medium",
+                            context=f[:200],
+                            confidence=entity_confidence,
+                            uncertainty_flag=entity_uncertainty_flag,
+                        )
+                    )
 
             return OSINTReport(
                 query=title,
@@ -3435,7 +3397,7 @@ class SynthesisRunner:
                 sources_count=len(findings),
                 timestamp=float(timestamp) if timestamp else time.time(),
                 uncertainty_flags=uncertainty_flags,
-    )
+            )
         except Exception as e:
             logger.warning("[SYNTHESIS] _parse_raw_to_osintreport failed: %s", e)
             return None
@@ -3463,7 +3425,7 @@ class SynthesisRunner:
                     f"Generate 3-5 specific search queries for: {query}\n"
                     "Output ONLY a JSON array of strings, no explanation.\n"
                     'Example: ["LockBit IOCs 2026","LockBit C2 infra","LockBit victims list"]'
-    )
+                )
                 out = await pipeliner.generate(prompt, max_tokens=80, thinking=False)
                 m = _BRACKET_RE.search(out)
                 if m:
@@ -3526,6 +3488,7 @@ class SynthesisRunner:
         if not episodes:
             return ""
         import orjson
+
         lines = ["Past research context (most recent first):"]
         for ep in episodes[:3]:
             findings_raw = ep.get("top_findings", "")
@@ -3534,7 +3497,7 @@ class SynthesisRunner:
             except Exception:
                 findings = []
             ep_query = ep.get("query", "")[:60]
-            lines.append(f"  Sprint {ep.get('sprint_id','')}: query='{ep_query}'")
+            lines.append(f"  Sprint {ep.get('sprint_id', '')}: query='{ep_query}'")
             if findings and isinstance(findings, list) and findings:
                 lines.append(f"    Key finding: {findings[0][:120]}")
         return "\n".join(lines)
@@ -3568,7 +3531,7 @@ class SynthesisRunner:
         if self._stix_graph is not None:
             values, backend_name, error = await _extract_stix_nodes(
                 self._stix_graph, f"stix_graph '{type(self._stix_graph).__name__}'"
-    )
+            )
             if error:
                 self._stix_status = "unavailable" if "lacks" in error else "error"
                 self._stix_reason = f"stix_graph {error}"
@@ -3593,7 +3556,7 @@ class SynthesisRunner:
 
         values, backend_name, error = await _extract_stix_nodes(
             self._ioc_graph, f"backend '{type(self._ioc_graph).__name__}'"
-    )
+        )
         if error:
             self._stix_status = "unavailable" if "lacks" in error else "error"
             self._stix_reason = f"STIX {error}"
@@ -3608,11 +3571,6 @@ class SynthesisRunner:
         self._stix_reason = "graph had no extractable IOC values"
         self._stix_backend = backend_name
         return ""
-
-
-# ---------------------------------------------------------------------------
-# E2E export helper (volá se z __main__.py)
-# ---------------------------------------------------------------------------
 
 
 def slugify(s: str) -> str:

@@ -21,13 +21,10 @@ Usage:
     uv run python scripts/model_stack_smoke.py --print-download-commands
 """
 
-
-
 import argparse
 import shutil
 import sys
 from pathlib import Path
-from _core import aclose
 
 # F218A fix: ensure 'hledac' parent is on sys.path so 'hledac.universal' imports resolve
 # When run from inside universal/ (cwd), parent of cwd = hledac/
@@ -60,12 +57,14 @@ def check_llm() -> dict:
     notes = []
     try:
         import mlx.core as mx
+
         notes.append(f"mlx.core {getattr(mx, '__version__', 'unknown')}")
     except Exception as e:
         return {"status": "FAIL", "component": "llm", "error": str(e)}
 
     try:
         import mlx_lm
+
         notes.append(f"mlx_lm {mlx_lm.__version__}")
     except Exception as e:
         return {"status": "FAIL", "component": "llm", "error": f"mlx_lm not importable: {e}"}
@@ -78,6 +77,7 @@ def check_llm() -> dict:
     import inspect
 
     import mlx_lm.generate as _gen
+
     sig = inspect.getfullargspec(_gen)
     gen_kwargs = sig.args + sig.kwonlyargs
     has_kv = "kv_bits" in gen_kwargs
@@ -100,26 +100,26 @@ def check_embeddings() -> dict:
     try:
         import CoreML  # noqa: F401
         import Foundation  # noqa: F401
+
         notes.append("CoreML+Foundation=OK")
     except ImportError:
         notes.append("CoreML+Foundation=N/A (ANE unavailable)")
 
     # 2. mlx_embeddings for ModernBERT
     try:
-        from mlx_embeddings import load as _mlx_load  # noqa: F401
         notes.append("mlx_embeddings=OK")
     except ImportError:
         notes.append("mlx_embeddings=N/A (optional)")
 
     # 3. Import the pipeline components
     try:
-        from hledac.universal.embedding_pipeline import EmbeddingRouter  # noqa: F401
         notes.append("EmbeddingRouter=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "embeddings", "error": f"EmbeddingRouter import failed: {e}"}
 
     try:
         from hledac.universal.brain.ane_embedder import ANE_AVAILABLE
+
         notes.append(f"ANEEmbedder import=OK (ANE_AVAILABLE={ANE_AVAILABLE})")
 
         # Sprint F216B: ANEEmbedder is deprecated, CoreML path disabled
@@ -150,13 +150,13 @@ def check_ner() -> dict:
     notes = []
 
     try:
-        from hledac.universal.brain.ner_engine import NEREngine  # noqa: F401
         notes.append("NEREngine=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "ner", "error": f"NEREngine import failed: {e}"}
 
     try:
         from hledac.universal.brain.ner_engine import _get_torch
+
         torch = _get_torch()
         notes.append(f"torch={torch.__version__ if hasattr(torch, '__version__') else 'loaded'}")
     except Exception as e:
@@ -165,6 +165,7 @@ def check_ner() -> dict:
     # Check NaturalLanguage framework (ANE NER acceleration)
     try:
         import Foundation  # noqa: F401
+
         notes.append("Foundation=OK")
     except ImportError:
         notes.append("Foundation=N/A")
@@ -188,6 +189,7 @@ def check_reranker(mode: str = "check") -> dict:
 
     try:
         from hledac.universal.tools.reranker import FLASHRANK_AVAILABLE
+
         notes.append(f"LightweightReranker=OK (FLASHRANK_AVAILABLE={FLASHRANK_AVAILABLE})")
     except Exception as e:
         return {"status": "FAIL", "component": "reranker", "error": f"Reranker import failed: {e}"}
@@ -196,6 +198,7 @@ def check_reranker(mode: str = "check") -> dict:
         # Check module import only — never auto-download in --check mode
         try:
             import flashrank
+
             notes.append("flashrank module=OK")
         except Exception as e:
             notes.append(f"flashrank module: {e}")
@@ -234,6 +237,7 @@ def check_pii() -> dict:
 
     try:
         from hledac.universal.security.pii_gate import create_security_gate
+
         notes.append("SecurityGate=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "pii", "error": f"SecurityGate import failed: {e}"}
@@ -249,6 +253,7 @@ def check_pii() -> dict:
 
     try:
         from hledac.universal.security.pii_gate import get_pii_backend
+
         backend = get_pii_backend()
         notes.append(f"pii_backend={backend}")
     except Exception as e:
@@ -266,13 +271,13 @@ def check_ocr() -> dict:
     notes = []
 
     try:
-        from hledac.universal.tools.ocr_engine import VisionOCR  # noqa: F401
         notes.append("VisionOCR=OK")
     except Exception as e:
         return {"status": "FAIL", "component": "ocr", "error": f"VisionOCR import failed: {e}"}
 
     try:
         import ocrmac
+
         notes.append(f"ocrmac=OK ({ocrmac.__version__ if hasattr(ocrmac, '__version__') else 'loaded'})")
     except ImportError:
         notes.append("ocrmac=N/A (not installed)")
@@ -358,7 +363,7 @@ def print_download_commands() -> None:
     print("#   Cache: ~/.cache/huggingface/hub/")
     print()
     print("#   # Pre-download:")
-    print("#   python -c \"from transformers import AutoModelForTokenClassification, AutoTokenizer; \\")
+    print('#   python -c "from transformers import AutoModelForTokenClassification, AutoTokenizer; \\')
     print(f"#   m = AutoModelForTokenClassification.from_pretrained('{NER_MODEL}'); \\")
     print(f"#   t = AutoTokenizer.from_pretrained('{NER_MODEL}')\"")
     print()

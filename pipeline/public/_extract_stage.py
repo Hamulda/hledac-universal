@@ -9,13 +9,13 @@ Responsibilities:
 Input: FetchedBatch (urls, texts, text_lens, fetch_errors, ...)
 Output: ScoredBatch (urls, quality_signals, usable_signals, value_tiers, ...)
 """
+
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FetchedBatch, ScoredBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ def _get_rust_batch_quality_score() -> Any | None:
     if _rust_batch_quality_score is None:
         try:
             from hledac.universal.rust_extensions import signal_batch as _sig
+
             _rust_batch_quality_score = getattr(_sig, "batch_quality_score", None)
         except Exception:
             _rust_batch_quality_score = None
@@ -51,9 +52,7 @@ class ExtractStage:
     def name(self) -> str:
         return "extract"
 
-    async def process(
-        self, input_batch: FetchedBatch | None
-    ) -> tuple[ScoredBatch, dict[str, Any]]:
+    async def process(self, input_batch: FetchedBatch | None) -> tuple[ScoredBatch, dict[str, Any]]:
         """Score fetched pages.
 
         Args:
@@ -89,21 +88,15 @@ class ExtractStage:
             try:
                 # Call Rust batch_quality_score
                 n = len(input_batch.urls)
-                texts_list: list[str] = [
-                    input_batch.texts[i] if i < len(input_batch.texts) else ""
-                    for i in range(n)
-                ]
+                texts_list: list[str] = [input_batch.texts[i] if i < len(input_batch.texts) else "" for i in range(n)]
                 text_lens_list: list[int] = [
-                    input_batch.text_lens[i] if i < len(input_batch.text_lens) else 0
-                    for i in range(n)
+                    input_batch.text_lens[i] if i < len(input_batch.text_lens) else 0 for i in range(n)
                 ]
                 fetch_errors_list: list[str | None] = [
-                    input_batch.fetch_errors[i] if i < len(input_batch.fetch_errors) else None
-                    for i in range(n)
+                    input_batch.fetch_errors[i] if i < len(input_batch.fetch_errors) else None for i in range(n)
                 ]
                 failure_stages_list: list[str | None] = [
-                    input_batch.failure_stages[i] if i < len(input_batch.failure_stages) else None
-                    for i in range(n)
+                    input_batch.failure_stages[i] if i < len(input_batch.failure_stages) else None for i in range(n)
                 ]
 
                 rust_results = rust_fn(text_lens_list, texts_list, fetch_errors_list, failure_stages_list)
@@ -149,14 +142,8 @@ class ExtractStage:
             for i in range(len(input_batch.urls)):
                 text = input_batch.texts[i] if i < len(input_batch.texts) else ""
                 text_len = input_batch.text_lens[i] if i < len(input_batch.text_lens) else 0
-                fetch_error = (
-                    input_batch.fetch_errors[i] if i < len(input_batch.fetch_errors) else None
-    )
-                failure_stage = (
-                    input_batch.failure_stages[i]
-                    if i < len(input_batch.failure_stages)
-                    else None
-    )
+                fetch_error = input_batch.fetch_errors[i] if i < len(input_batch.fetch_errors) else None
+                failure_stage = input_batch.failure_stages[i] if i < len(input_batch.failure_stages) else None
 
                 # Compute quality signal
                 signal, tier, waste_cat, structural, is_fp, skip_reason = _score_one(
@@ -164,7 +151,7 @@ class ExtractStage:
                     text_len=text_len,
                     fetch_error=fetch_error,
                     failure_stage=failure_stage,
-    )
+                )
 
                 quality_signals.append(signal)
                 usable_signals.append(tier != "waste")
@@ -185,8 +172,7 @@ class ExtractStage:
 
         # Preserve texts for MatchStage (index-aligned with urls)
         texts: list[str] = [
-            input_batch.texts[i] if i < len(input_batch.texts) else ""
-            for i in range(len(input_batch.urls))
+            input_batch.texts[i] if i < len(input_batch.texts) else "" for i in range(len(input_batch.urls))
         ]
 
         batch = ScoredBatch(
@@ -199,7 +185,7 @@ class ExtractStage:
             structural_qualities=structural_qualities,
             discovery_false_positives=discovery_false_positives,
             skipped_reasons=skipped_reasons,
-    )
+        )
 
         return batch, telemetry
 
@@ -214,7 +200,7 @@ class ExtractStage:
             structural_qualities=[],
             discovery_false_positives=[],
             skipped_reasons=[],
-    )
+        )
 
 
 def _score_one(

@@ -17,10 +17,6 @@ use std::collections::HashMap;
 /// ~500k × (8 + 8) bytes ≈ 8 MB in the worst case.
 const MAX_EDGE_ENTRIES: usize = 500_000;
 
-// =====================================================================
-// Key packing / unpacking
-// =====================================================================
-
 /// Pack a `(src_id, dst_id)` pair into a single `u64` for use as a HashMap key.
 ///
 /// # Packing scheme
@@ -40,10 +36,6 @@ fn unpack_key(key: u64) -> (i64, i64) {
     let dst = (key & 0xFFFF_FFFF) as i64;
     (src, dst)
 }
-
-// =====================================================================
-// HotEdgeCounterRust
-// =====================================================================
 
 /// In-memory L1 write buffer for hot edge counts.
 ///
@@ -169,19 +161,11 @@ impl HotEdgeCounterRust {
     }
 }
 
-// =====================================================================
-// Register
-// =====================================================================
-
 /// Register `HotEdgeCounterRust` with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HotEdgeCounterRust>()?;
     Ok(())
 }
-
-// =====================================================================
-// Unit tests
-// =====================================================================
 
 #[cfg(test)]
 mod tests {

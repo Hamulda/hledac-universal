@@ -16,19 +16,21 @@ from brain.causal_engine import (
     CausalEngine,
 )
 from export.hypothesis_builder import HypothesisBuilder
-from runtime.lane_registry import LANE_REGISTRY
 from graph.hypothesis_graph import (
     HypothesisEdge,
     HypothesisGraph,
 )
+from runtime.lane_registry import LANE_REGISTRY
 
 # =============================================================================
 # Fixtures
 # =============================================================================
 
+
 @dataclass
 class MockCanonicalFinding:
     """Mock CanonicalFinding for testing."""
+
     finding_id: str
     query: str
     source_type: str
@@ -73,11 +75,12 @@ def sample_findings() -> list[MockCanonicalFinding]:
 # CausalEngine Tests
 # =============================================================================
 
+
 class TestCausalEngine:
     """Tests for CausalEngine entity extraction and hypothesis generation."""
 
     @pytest.mark.asyncio
-    async def test_extract_entities_from_findings(self, sample_findings):
+    async def test_extract_entities_from_findings(self, sample_findings) -> None:
         """Test entity extraction from sample findings."""
         engine = CausalEngine()
         entities = engine.extract_entities(sample_findings)
@@ -88,7 +91,7 @@ class TestCausalEngine:
         assert any(e.entity_type == "email" for e in entities), "Should extract email entity"
 
     @pytest.mark.asyncio
-    async def test_entity_deduplication(self, sample_findings):
+    async def test_entity_deduplication(self, sample_findings) -> None:
         """Test that duplicate entities are properly merged."""
         engine = CausalEngine()
         entities = engine.extract_entities(sample_findings)
@@ -99,7 +102,7 @@ class TestCausalEngine:
         assert ip_entities[0].value == "192.168.1.1"
 
     @pytest.mark.asyncio
-    async def test_build_temporal_sequences(self, sample_findings):
+    async def test_build_temporal_sequences(self, sample_findings) -> None:
         """Test temporal sequence building."""
         engine = CausalEngine()
         engine.extract_entities(sample_findings)
@@ -111,7 +114,7 @@ class TestCausalEngine:
             assert len(seq.timestamps) == len(seq.entities), "Timestamps should match entities"
 
     @pytest.mark.asyncio
-    async def test_compute_co_occurrence_matrix(self, sample_findings):
+    async def test_compute_co_occurrence_matrix(self, sample_findings) -> None:
         """Test co-occurrence matrix computation."""
         engine = CausalEngine()
         engine.extract_entities(sample_findings)
@@ -119,13 +122,14 @@ class TestCausalEngine:
 
         if matrix is not None:
             import numpy as np
+
             assert isinstance(matrix, np.ndarray), "Should return numpy array"
             assert matrix.dtype in [np.float16, np.float32], "Should be float type"
             # Diagonal should be zero (entity doesn't co-occur with itself)
             assert matrix.diagonal().sum() == 0, "Diagonal should be zero"
 
     @pytest.mark.asyncio
-    async def test_detect_anomalies(self, sample_findings):
+    async def test_detect_anomalies(self, sample_findings) -> None:
         """Test anomaly detection."""
         engine = CausalEngine()
         engine.extract_entities(sample_findings)
@@ -139,7 +143,7 @@ class TestCausalEngine:
             assert hasattr(anomaly, "score"), "Should have score"
 
     @pytest.mark.asyncio
-    async def test_generate_causal_hypotheses(self, sample_findings):
+    async def test_generate_causal_hypotheses(self, sample_findings) -> None:
         """Test causal hypothesis generation."""
         engine = CausalEngine()
         engine.extract_entities(sample_findings)
@@ -159,7 +163,7 @@ class TestCausalEngine:
             assert 0.0 <= hyp.confidence <= 1.0, "Confidence should be 0.0-1.0"
 
     @pytest.mark.asyncio
-    async def test_full_pipeline(self, sample_findings):
+    async def test_full_pipeline(self, sample_findings) -> None:
         """Test full hypothesis generation pipeline."""
         engine = CausalEngine()
         hypotheses = await engine.generate_hypotheses(sample_findings)
@@ -170,7 +174,7 @@ class TestCausalEngine:
         assert len(engine._sequences) >= 0, "Should have built sequences"
 
     @pytest.mark.asyncio
-    async def test_contradiction_detection(self, sample_findings):
+    async def test_contradiction_detection(self, sample_findings) -> None:
         """Test contradiction detection."""
         engine = CausalEngine()
         engine.extract_entities(sample_findings)
@@ -188,10 +192,11 @@ class TestCausalEngine:
 # HypothesisGraph Tests
 # =============================================================================
 
+
 class TestHypothesisGraph:
     """Tests for HypothesisGraph network-based reasoning."""
 
-    def test_add_entity(self):
+    def test_add_entity(self) -> None:
         """Test adding entities to the graph."""
         graph = HypothesisGraph()
         result = graph.add_entity("entity_1", "ip")
@@ -199,7 +204,7 @@ class TestHypothesisGraph:
         assert result is True, "Should return True for new entity"
         assert graph.node_count == 1, "Should have 1 node"
 
-    def test_add_duplicate_entity(self):
+    def test_add_duplicate_entity(self) -> None:
         """Test adding duplicate entities."""
         graph = HypothesisGraph()
         graph.add_entity("entity_1", "ip")
@@ -208,7 +213,7 @@ class TestHypothesisGraph:
         assert result is False, "Should return False for duplicate"
         assert graph.node_count == 1, "Should still have 1 node"
 
-    def test_add_hypothesis_edge(self):
+    def test_add_hypothesis_edge(self) -> None:
         """Test adding hypothesis edges."""
         graph = HypothesisGraph()
         edge = HypothesisEdge(
@@ -226,7 +231,7 @@ class TestHypothesisGraph:
         assert result is True, "Should return True for new edge"
         assert graph.edge_count == 1, "Should have 1 edge"
 
-    def test_get_entity_type(self):
+    def test_get_entity_type(self) -> None:
         """Test getting entity type."""
         graph = HypothesisGraph()
         graph.add_entity("entity_1", "ip")
@@ -234,21 +239,21 @@ class TestHypothesisGraph:
         etype = graph.get_entity_type("entity_1")
         assert etype == "ip", "Should return correct entity type"
 
-    def test_get_nonexistent_entity_type(self):
+    def test_get_nonexistent_entity_type(self) -> None:
         """Test getting type for nonexistent entity."""
         graph = HypothesisGraph()
 
         etype = graph.get_entity_type("nonexistent")
         assert etype is None, "Should return None for nonexistent entity"
 
-    def test_find_hidden_bridges_empty_graph(self):
+    def test_find_hidden_bridges_empty_graph(self) -> None:
         """Test hidden bridge detection on empty graph."""
         graph = HypothesisGraph()
         bridges = graph.find_hidden_bridges()
 
         assert bridges == [], "Should return empty list for empty graph"
 
-    def test_find_hidden_bridges_small_graph(self):
+    def test_find_hidden_bridges_small_graph(self) -> None:
         """Test hidden bridge detection on small graph."""
         graph = HypothesisGraph()
 
@@ -269,14 +274,14 @@ class TestHypothesisGraph:
         # Node B should have high betweenness as it connects A and C
         # (exact behavior depends on graph connectivity)
 
-    def test_detect_anomalous_clusters_empty(self):
+    def test_detect_anomalous_clusters_empty(self) -> None:
         """Test anomalous cluster detection on empty graph."""
         graph = HypothesisGraph()
         anomalies = graph.detect_anomalous_clusters()
 
         assert anomalies == [], "Should return empty list for empty graph"
 
-    def test_to_stix_bundle(self):
+    def test_to_stix_bundle(self) -> None:
         """Test STIX bundle export."""
         graph = HypothesisGraph()
 
@@ -299,7 +304,7 @@ class TestHypothesisGraph:
         assert "objects" in bundle, "Should have objects array"
         assert len(bundle["objects"]) > 0, "Should have objects"
 
-    def test_serialization(self):
+    def test_serialization(self) -> None:
         """Test graph serialization and deserialization."""
         graph = HypothesisGraph()
 
@@ -326,11 +331,12 @@ class TestHypothesisGraph:
 # HypothesisBuilder Tests
 # =============================================================================
 
+
 class TestHypothesisBuilder:
     """Tests for HypothesisBuilder export integration."""
 
     @pytest.mark.asyncio
-    async def test_hypothesis_disabled(self, sample_findings):
+    async def test_hypothesis_disabled(self, sample_findings) -> None:
         """Test behavior when hypothesis generation is disabled."""
         builder = HypothesisBuilder()
 
@@ -343,7 +349,7 @@ class TestHypothesisBuilder:
                 assert "disabled" in result.error.lower(), "Should mention disabled"
 
     @pytest.mark.asyncio
-    async def test_no_findings(self):
+    async def test_no_findings(self) -> None:
         """Test handling of empty findings list."""
         builder = HypothesisBuilder()
         result = await builder.run_hypothesis_generation([])
@@ -353,7 +359,7 @@ class TestHypothesisBuilder:
         assert result.hypotheses_generated is not None or result.enabled is False
 
     @pytest.mark.asyncio
-    async def test_get_graph_stats(self, sample_findings):
+    async def test_get_graph_stats(self, sample_findings) -> None:
         """Test getting graph statistics."""
         builder = HypothesisBuilder()
 
@@ -364,7 +370,7 @@ class TestHypothesisBuilder:
         assert len(stats) >= 0, "Should have causal entities"
 
     @pytest.mark.asyncio
-    async def test_reset(self, sample_findings):
+    async def test_reset(self, sample_findings) -> None:
         """Test reset functionality."""
         builder = HypothesisBuilder()
 
@@ -382,10 +388,11 @@ class TestHypothesisBuilder:
 # Boundary Tests
 # =============================================================================
 
+
 class TestBoundaries:
     """Tests for boundary conditions and limits."""
 
-    def test_max_nodes_limit(self):
+    def test_max_nodes_limit(self) -> None:
         """Test that graph respects MAX_NODES limit."""
         graph = HypothesisGraph(max_nodes=5)
 
@@ -395,42 +402,46 @@ class TestBoundaries:
 
         assert graph.node_count <= 5, "Should respect MAX_NODES limit"
 
-    def test_max_entities_limit(self):
+    def test_max_entities_limit(self) -> None:
         """Test that causal engine respects MAX_ENTITIES limit."""
         engine = CausalEngine(max_entities=10)
 
         # Create many findings
         findings = []
         for i in range(100):
-            findings.append(MockCanonicalFinding(
-                finding_id=f"f{i}",
-                query="test",
-                source_type="web",
-                confidence=0.8,
-                ts=time.time(),
-                payload_text=f"IP 10.0.0.{i % 255}",
-            ))
+            findings.append(
+                MockCanonicalFinding(
+                    finding_id=f"f{i}",
+                    query="test",
+                    source_type="web",
+                    confidence=0.8,
+                    ts=time.time(),
+                    payload_text=f"IP 10.0.0.{i % 255}",
+                )
+            )
 
         engine.extract_entities(findings)
 
         assert len(engine._entities) <= 10, "Should respect MAX_ENTITIES limit"
 
     @pytest.mark.asyncio
-    async def test_max_hypotheses_cap(self):
+    async def test_max_hypotheses_cap(self) -> None:
         """Test that hypothesis generation caps at MAX_HYPOTHESES."""
         engine = CausalEngine()
 
         # Create many findings with overlapping entities
         findings = []
         for i in range(50):
-            findings.append(MockCanonicalFinding(
-                finding_id=f"f{i}",
-                query="test",
-                source_type="web",
-                confidence=0.8,
-                ts=time.time(),
-                payload_text=f"IP 192.168.1.{i % 50} associated with domain example{i % 50}.com",
-            ))
+            findings.append(
+                MockCanonicalFinding(
+                    finding_id=f"f{i}",
+                    query="test",
+                    source_type="web",
+                    confidence=0.8,
+                    ts=time.time(),
+                    payload_text=f"IP 192.168.1.{i % 50} associated with domain example{i % 50}.com",
+                )
+            )
 
         engine.extract_entities(findings)
         engine.build_temporal_sequences()

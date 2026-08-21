@@ -14,7 +14,6 @@ Usage:
 
     from hledac.universal.utils.exception_diagnostics import ExceptionDiagnostics, get_diagnostics
 
-    # Get singleton
     diag = get_diagnostics()
 
     # Real-time snapshot
@@ -35,15 +34,13 @@ Design:
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from hledac.universal._core.locks import LockCategory, make_lock
-from hledac.universal.utils.exception_severity import Severity, ExceptionEvent
-from _core import aclose
+from hledac.universal.utils.exception_severity import ExceptionEvent, Severity
 
 __all__ = [
     "ExceptionDiagnostics",
@@ -52,8 +49,8 @@ __all__ = [
     "SprintDiagnosticReport",
 ]
 
-
 # ── Diagnostic Report ───────────────────────────────────────────────────────
+
 
 @dataclass(slots=True, frozen=True)
 class DiagnosticReport:
@@ -127,6 +124,7 @@ class SprintDiagnosticReport:
 
 # ── Diagnostics Singleton ────────────────────────────────────────────────────
 
+
 class ExceptionDiagnostics:
     """
     Thread-safe singleton for exception diagnostics.
@@ -186,8 +184,8 @@ class ExceptionDiagnostics:
                 oldest_cascade = min(
                     (cid for cid in self._cascade_ids if cid in self._by_cascade),
                     key=lambda cid: self._by_cascade[cid][0].timestamp if self._by_cascade.get(cid) else now,
-                    default=None
-    )
+                    default=None,
+                )
                 if oldest_cascade:
                     self._cascade_ids.discard(oldest_cascade)
                     self._by_cascade.pop(oldest_cascade, None)
@@ -195,7 +193,6 @@ class ExceptionDiagnostics:
             # Add event
             self._events.append(event)
 
-            # Update indexes
             self._by_severity[event.severity].append(event)
             self._by_scope[event.scope].append(event)
             self._by_category[event.category].append(event)
@@ -274,12 +271,14 @@ class ExceptionDiagnostics:
                     if scope_events:
                         max_sev = max(e.severity for e in scope_events)
                         if max_sev in (Severity.P0_CRITICAL, Severity.P1_ERROR, Severity.P2_WARNING):
-                            escalation_alerts.append({
-                                "scope": scope,
-                                "count": count,
-                                "max_severity": max_sev.name,
-                                "alert": f"High frequency {max_sev.name} in {scope}",
-                            })
+                            escalation_alerts.append(
+                                {
+                                    "scope": scope,
+                                    "count": count,
+                                    "max_severity": max_sev.name,
+                                    "alert": f"High frequency {max_sev.name} in {scope}",
+                                }
+                            )
 
             return DiagnosticReport(
                 timestamp=now,
@@ -291,7 +290,7 @@ class ExceptionDiagnostics:
                 top_categories=top_categories,
                 escalation_alerts=escalation_alerts[:5],
                 exception_types=dict(exc_counts),
-    )
+            )
 
     def get_sprint_report(self, sprint_id: str) -> SprintDiagnosticReport:
         """
@@ -310,10 +309,7 @@ class ExceptionDiagnostics:
         with self._snapshot_lock:
             # Find events for this sprint (by cascade_id prefix)
             sprint_prefix = f"sprint-{sprint_id}"
-            sprint_events = [
-                e for e in self._events
-                if e.cascade_id.startswith(sprint_prefix)
-            ]
+            sprint_events = [e for e in self._events if e.cascade_id.startswith(sprint_prefix)]
 
             # Cascade correlation
             cascade_counts: dict[str, int] = defaultdict(int)
@@ -321,15 +317,13 @@ class ExceptionDiagnostics:
                 cascade_counts[e.cascade_id] += 1
 
             # Critical paths (P0/P1 events)
-            critical_paths = list(set(
-                e.scope for e in sprint_events
-                if e.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR)
-            ))
+            critical_paths = list(
+                {e.scope for e in sprint_events if e.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR)}
+            )
 
             # Escalation events
             escalation_events = [
-                e for e in sprint_events
-                if e.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR, Severity.P2_WARNING)
+                e for e in sprint_events if e.severity in (Severity.P0_CRITICAL, Severity.P1_ERROR, Severity.P2_WARNING)
             ]
 
             return SprintDiagnosticReport(
@@ -339,7 +333,7 @@ class ExceptionDiagnostics:
                 cascade_summary=dict(cascade_counts),
                 critical_paths=critical_paths,
                 escalation_events=escalation_events,
-    )
+            )
 
     def get_top_exceptions(self, limit: int = 10) -> list[tuple[str, int, str]]:
         """
@@ -359,9 +353,7 @@ class ExceptionDiagnostics:
 
             return [
                 (exc_type, count, most_common)
-                for exc_type, (count, most_common) in sorted(
-                    type_scope.items(), key=lambda x: -x[1][0]
-                )[:limit]
+                for exc_type, (count, most_common) in sorted(type_scope.items(), key=lambda x: -x[1][0])[:limit]
             ]
 
     def detect_escalation(self) -> list[dict[str, Any]]:
@@ -385,9 +377,14 @@ class ExceptionDiagnostics:
                 # Sort by time
                 events.sort(key=lambda e: e.timestamp)
 
-                # Check for severity escalation
-                severities = [e.severity for e in events]
-                severity_order = [Severity.P4_DEBUG, Severity.P3_INFO, Severity.P2_WARNING, Severity.P1_ERROR, Severity.P0_CRITICAL]
+                [e.severity for e in events]
+                severity_order = [
+                    Severity.P4_DEBUG,
+                    Severity.P3_INFO,
+                    Severity.P2_WARNING,
+                    Severity.P1_ERROR,
+                    Severity.P0_CRITICAL,
+                ]
 
                 # Find if there's been escalation
                 first_idx = severity_order.index(events[0].severity)
@@ -395,14 +392,16 @@ class ExceptionDiagnostics:
 
                 if last_idx < first_idx:
                     # Escalation detected
-                    alerts.append({
-                        "exception_hash": exc_hash,
-                        "first_severity": events[0].severity.name,
-                        "last_severity": events[-1].severity.name,
-                        "occurrences": len(events),
-                        "scope": events[0].scope,
-                        "recommendation": "Consider increasing severity or investigating root cause",
-                    })
+                    alerts.append(
+                        {
+                            "exception_hash": exc_hash,
+                            "first_severity": events[0].severity.name,
+                            "last_severity": events[-1].severity.name,
+                            "occurrences": len(events),
+                            "scope": events[0].scope,
+                            "recommendation": "Consider increasing severity or investigating root cause",
+                        }
+                    )
 
             return sorted(alerts, key=lambda a: -a["occurrences"])
 

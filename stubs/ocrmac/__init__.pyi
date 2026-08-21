@@ -10,7 +10,13 @@ class OCR:
     Real class lives in `ocrmac.ocrmac.OCR`; stub exposes the public surface
     consumed by tools/ocr_engine.py: detect(), recognize(), recognize_text().
     """
-    def __init__(self, image_path: str, language_preference: list[str] | None = None, recognition_level: str = "accurate", min_confidence: float = 0.0) -> None: ...
+    def __init__(
+        self,
+        image_path: str,
+        language_preference: list[str] | None = None,
+        recognition_level: str = "accurate",
+        min_confidence: float = 0.0,
+    ) -> None: ...
     def recognize(self) -> list[Any]: ...
     def recognize_text(self) -> list[tuple[str, float, tuple[float, float, float, float]]]: ...
     @property

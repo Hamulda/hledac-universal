@@ -12,29 +12,27 @@ Features:
 
 M1 8GB: Uses __slots__ for memory efficiency.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 import math
-import struct
 import threading
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
 class EntropyConfig(Struct, frozen=True):
     """Entropy configuration. M1 8GB: msgspec.Struct for fast init."""
+
     high_entropy_threshold: float = 7.5
     alert_queue_size: int = 1000
     sample_size: int = 10000
@@ -43,26 +41,19 @@ class EntropyConfig(Struct, frozen=True):
     entropy_chunk_size: int = 4096
 
 
-# =============================================================================
-# Entropy Result
-# =============================================================================
-
 @dataclass(slots=True)
 class EntropyResult:
     """Result of entropy analysis."""
+
     url: str
     entropy_bits_per_byte: float
     chi_square_score: float
     is_anomaly: bool
-    anomaly_type: str = 'none'
-    alert_level: str = 'normal'
-    content_hash: str = ''
+    anomaly_type: str = "none"
+    alert_level: str = "normal"
+    content_hash: str = ""
     sample_size: int = 0
 
-
-# =============================================================================
-# Streaming Entropy Calculator
-# =============================================================================
 
 class StreamingEntropyCalculator:
     """
@@ -92,7 +83,6 @@ class StreamingEntropyCalculator:
 
     def _feed_impl(self, chunk: bytes) -> None:
         """Internal feed implementation (must be called with lock held)."""
-        # Update hash
         self._hash.update(chunk)
 
         # Count bytes (up to sample_size)
@@ -178,10 +168,6 @@ class StreamingEntropyCalculator:
             self._hash = hashlib.sha256()
 
 
-# =============================================================================
-# Entropy Feedback Service
-# =============================================================================
-
 @dataclass(slots=True)
 class EntropyFeedbackService:
     """
@@ -199,28 +185,27 @@ class EntropyFeedbackService:
     STRESS-25 pattern: asyncio.Event provides immediate cancellation response
     (no polling delay when stop() is called).
     """
+
     config: EntropyConfig = field(default_factory=EntropyConfig)
 
-    _alert_queue: asyncio.Queue[EntropyResult] = field(
-        default_factory=lambda: asyncio.Queue(maxsize=1000)
-    )
+    _alert_queue: asyncio.Queue[EntropyResult] = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _running: asyncio.Event = field(default=None, init=False)  # ISSUE-OPT-1: Event-driven
     _consumer_task: asyncio.Task[None] | None = field(default=None, init=False)
-    _alert_callbacks: list[Callable[[EntropyResult], Awaitable[None]]] = field(
-        default_factory=list, init=False
+    _alert_callbacks: list[Callable[[EntropyResult], Awaitable[None]]] = field(default_factory=list, init=False)
+    _stats: dict[str, Any] = field(
+        default_factory=lambda: {
+            "samples_analyzed": 0,
+            "anomalies_detected": 0,
+            "alerts_queued": 0,
+            "alerts_processed": 0,
+        }
     )
-    _stats: dict[str, Any] = field(default_factory=lambda: {
-        'samples_analyzed': 0,
-        'anomalies_detected': 0,
-        'alerts_queued': 0,
-        'alerts_processed': 0,
-    })
 
     def __post_init__(self) -> None:
         # ISSUE-OPT-1: Initialize asyncio.Event lazily
         if self._running is None:
-            object.__setattr__(self, '_running', asyncio.Event())
+            object.__setattr__(self, "_running", asyncio.Event())
             self._running.set()  # Start in running state
 
     def register_alert_callback(self, callback: Callable[[EntropyResult], Awaitable[None]]) -> None:
@@ -239,23 +224,23 @@ class EntropyFeedbackService:
             EntropyResult with analysis
         """
         calc = StreamingEntropyCalculator(sample_size=self.config.sample_size)
-        calc.feed(content[:self.config.sample_size])
+        calc.feed(content[: self.config.sample_size])
 
         entropy = calc.calculate_entropy()
         chi_square = calc.calculate_chi_square()
 
         # Determine anomaly
         is_anomaly = entropy > self.config.high_entropy_threshold
-        anomaly_type = 'none'
-        alert_level = 'normal'
+        anomaly_type = "none"
+        alert_level = "normal"
 
         if is_anomaly:
             if entropy > 7.8:
-                anomaly_type = 'high_entropy'
-                alert_level = 'critical'
+                anomaly_type = "high_entropy"
+                alert_level = "critical"
             elif entropy > 7.5:
-                anomaly_type = 'elevated_entropy'
-                alert_level = 'warning'
+                anomaly_type = "elevated_entropy"
+                alert_level = "warning"
 
         result = EntropyResult(
             url=url,
@@ -269,14 +254,13 @@ class EntropyFeedbackService:
         )
 
         async with self._lock:
-            self._stats['samples_analyzed'] += 1
+            self._stats["samples_analyzed"] += 1
             if is_anomaly:
-                self._stats['anomalies_detected'] += 1
+                self._stats["anomalies_detected"] += 1
 
-                # Queue alert
                 try:
                     self._alert_queue.put_nowait(result)
-                    self._stats['alerts_queued'] += 1
+                    self._stats["alerts_queued"] += 1
                 except asyncio.QueueFull:
                     logger.warning("Entropy alert queue full, dropping alert")
 
@@ -297,18 +281,18 @@ class EntropyFeedbackService:
 
         for chunk in chunks:
             if self.config.enable_streaming:
-                calc.feed(chunk[:self.config.entropy_chunk_size])
+                calc.feed(chunk[: self.config.entropy_chunk_size])
 
         entropy = calc.calculate_entropy()
         chi_square = calc.calculate_chi_square()
 
         is_anomaly = entropy > self.config.high_entropy_threshold
-        anomaly_type = 'none'
-        alert_level = 'normal'
+        anomaly_type = "none"
+        alert_level = "normal"
 
         if is_anomaly:
-            anomaly_type = 'high_entropy'
-            alert_level = 'warning' if entropy < 7.8 else 'critical'
+            anomaly_type = "high_entropy"
+            alert_level = "warning" if entropy < 7.8 else "critical"
 
         result = EntropyResult(
             url=url,
@@ -322,9 +306,9 @@ class EntropyFeedbackService:
         )
 
         async with self._lock:
-            self._stats['samples_analyzed'] += 1
+            self._stats["samples_analyzed"] += 1
             if is_anomaly:
-                self._stats['anomalies_detected'] += 1
+                self._stats["anomalies_detected"] += 1
 
         return result
 
@@ -354,22 +338,18 @@ class EntropyFeedbackService:
             try:
                 # Use wait_for with Event.wait() for immediate cancellation on stop()
                 try:
-                    result = await asyncio.wait_for(
-                        self._alert_queue.get(),
-                        timeout=self.config.update_interval_s
-                    )
-                except asyncio.TimeoutError:
+                    result = await asyncio.wait_for(self._alert_queue.get(), timeout=self.config.update_interval_s)
+                except TimeoutError:
                     # Check if we should continue or exit
                     if self._running.is_set():
                         continue
                     else:
                         break
 
-                # Process alert callbacks
                 for callback in self._alert_callbacks:
                     try:
                         await callback(result)
-                        self._stats['alerts_processed'] += 1
+                        self._stats["alerts_processed"] += 1
                     except Exception as e:  # noqa: BLE001
                         logger.error(f"Entropy alert callback error: {e}")
 
@@ -389,8 +369,8 @@ class EntropyFeedbackService:
         """Get entropy statistics."""
         return {
             **self._stats,
-            'queue_size': self._alert_queue.qsize(),
-            'callbacks_registered': len(self._alert_callbacks),
+            "queue_size": self._alert_queue.qsize(),
+            "callbacks_registered": len(self._alert_callbacks),
         }
 
     async def aclose(self) -> None:
@@ -400,10 +380,6 @@ class EntropyFeedbackService:
             self._alert_callbacks.clear()
         logger.debug("EntropyFeedbackService closed")
 
-
-# =============================================================================
-# Alternative: Blocking Entropy Calculator (for sync contexts)
-# =============================================================================
 
 class BlockingEntropyCalculator:
     """
@@ -432,9 +408,9 @@ class BlockingEntropyCalculator:
 
 
 __all__ = [
-    'EntropyConfig',
-    'EntropyResult',
-    'StreamingEntropyCalculator',
-    'EntropyFeedbackService',
-    'BlockingEntropyCalculator',
+    "EntropyConfig",
+    "EntropyResult",
+    "StreamingEntropyCalculator",
+    "EntropyFeedbackService",
+    "BlockingEntropyCalculator",
 ]

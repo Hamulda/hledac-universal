@@ -3,23 +3,18 @@
 Pure scoring from SprintSchedulerResult.src_family_outcomes.
 No LLM. No network. No raw evidence text storage.
 
-
 """
+
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-# ----------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------
 _FEED = "feed"
 _PUBLIC = "public"
 _CT = "ct"
@@ -31,26 +26,25 @@ _NONFEED_FAMILIES = {_CT, _DOH, _WAYBACK, _PASSIVE_DNS}
 
 _TERMINAL_COMPLETED = "COMPLETED"
 _TERMINAL_NO_RESULTS = "ATTEMPTED_NO_RESULTS"
-_TERMINAL_ATTEMPTED_STATES = frozenset({
-    "COMPLETED",
-    "ATTEMPTED_NO_RESULTS",
-    "ATTEMPTED_EMPTY",
-    "ATTEMPTED_ERROR",
-    "ATTEMPTED_TIMEOUT",
-    "attempted_empty",
-    "request_timeout",
-    "error",
-    "not_scheduled",
-    "dependency_missing",
-})
+_TERMINAL_ATTEMPTED_STATES = frozenset(
+    {
+        "COMPLETED",
+        "ATTEMPTED_NO_RESULTS",
+        "ATTEMPTED_EMPTY",
+        "ATTEMPTED_ERROR",
+        "ATTEMPTED_TIMEOUT",
+        "attempted_empty",
+        "request_timeout",
+        "error",
+        "not_scheduled",
+        "dependency_missing",
+    }
+)
 
 _MAX_SCORE = 1.0
 _MIN_SCORE = 0.0
 
 
-# ----------------------------------------------------------------------
-# Dataclass
-# ----------------------------------------------------------------------
 class LaneCorroborationScore(Struct, frozen=True):
     """Lane-level corroboration score for a sprint result.
 
@@ -91,9 +85,6 @@ class LaneTerminalCoverage(Struct, frozen=True):
     terminal_coverage_reason: str
 
 
-# ----------------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------------
 def _terminal_ok(state: str | None) -> bool:
     """True when the lane terminal state counts as a successful outcome."""
     return state in (_TERMINAL_COMPLETED, _TERMINAL_NO_RESULTS)
@@ -106,9 +97,6 @@ def _nonfeed_terminal(family: str, outcomes: dict) -> bool:
     return _terminal_ok(ts)
 
 
-# ----------------------------------------------------------------------
-# Core scorer
-# ----------------------------------------------------------------------
 def score_lane_outcomes(
     *,
     feed_present: bool,
@@ -185,12 +173,7 @@ def score_lane_outcomes(
         score -= 0.25
 
     # Nonfeed expected but all missing penalty
-    nonfeed_missed = (
-        not ct_terminal
-        and not doh_terminal
-        and not wayback_terminal
-        and not passive_dns_terminal
-    )
+    nonfeed_missed = not ct_terminal and not doh_terminal and not wayback_terminal and not passive_dns_terminal
     if not feed_present and nonfeed_missed and nonfeed_terminal_count == 0:
         score -= 0.20
 
@@ -201,7 +184,6 @@ def score_lane_outcomes(
     # Clamp
     score = max(_MIN_SCORE, min(_MAX_SCORE, score))
 
-    # Build reason string
     if not feed_present and nonfeed_terminal_count == 0:
         reason = "no corroborating sources; score near zero"
     elif nonfeed_terminal_count >= 3:
@@ -222,9 +204,6 @@ def score_lane_outcomes(
     )
 
 
-# ----------------------------------------------------------------------
-# Passthrough from SprintSchedulerResult fields
-# ----------------------------------------------------------------------
 def score_from_result(result: object) -> LaneCorroborationScore:
     """Score corroboration given a SprintSchedulerResult instance.
 
@@ -240,9 +219,7 @@ def score_from_result(result: object) -> LaneCorroborationScore:
         return _nonfeed_terminal(fam, outcomes)
 
     # Count nonfeed terminals
-    nonfeed_terminals = sum(
-        1 for f in _NONFEED_FAMILIES if _terminal(f)
-    )
+    nonfeed_terminals = sum(1 for f in _NONFEED_FAMILIES if _terminal(f))
 
     # Detect zero-results flag from public lane
     public_zero = outcomes.get(_PUBLIC, {}).get("terminal_state") == _TERMINAL_NO_RESULTS
@@ -260,9 +237,6 @@ def score_from_result(result: object) -> LaneCorroborationScore:
     )
 
 
-# ----------------------------------------------------------------------
-# Terminal coverage (F231A): distinct from positive corroboration
-# ----------------------------------------------------------------------
 def _terminal_coverage_ok(state: str | None) -> bool:
     """True when the lane terminal state counts as terminal coverage (attempted)."""
     return state in _TERMINAL_ATTEMPTED_STATES
@@ -312,7 +286,6 @@ def compute_terminal_coverage(
     else:
         coverage_score = 0.0
 
-    # Build reason
     if terminal_count == 0:
         reason = "no nonfeed lanes reached terminal state"
     elif terminal_count == expected_count:

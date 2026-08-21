@@ -16,35 +16,41 @@ References:
 
 M1-Optimized: O(n) complexity, minimal memory footprint
 """
+
 import hashlib
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import Any
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 logger = logging.getLogger(__name__)
+
 
 class RRFConfig(Struct):
     """Configuration for Reciprocal Rank Fusion"""
+
     k: int = 60
     max_results: int = 100
     min_score_threshold: float = 0.01
     deduplication: bool = True
     dedup_threshold: float = 0.7
 
+
 class RankedResult(Struct, frozen=True):
     """Individual ranked result"""
+
     id: str
     title: str
     content: str
     url: str | None = None
-    source: str = 'unknown'
+    source: str = "unknown"
     score: float = 0.0
     rank: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     # frozen=True auto-generates __hash__ and __eq__
+
 
 class ReciprocalRankFusion:
     """
@@ -61,9 +67,10 @@ class ReciprocalRankFusion:
         ...     "web": web_results
         ... })
     """
-    __slots__ = tuple(('_source_stats', 'config'))
 
-    def __init__(self, config: RRFConfig | None=None):
+    __slots__ = ("_source_stats", "config")
+
+    def __init__(self, config: RRFConfig | None = None) -> None:
         self.config = config or RRFConfig()
         self._source_stats: dict[str, dict[str, Any]] = defaultdict(dict)
 
@@ -71,22 +78,24 @@ class ReciprocalRankFusion:
         """Generate unique ID for deduplication"""
         if result.url:
             return hashlib.md5(result.url.encode()).hexdigest()[:16]
-        content_hash = hashlib.md5(f'{result.title}:{result.content[:200]}'.encode()).hexdigest()[:16]
+        content_hash = hashlib.md5(f"{result.title}:{result.content[:200]}".encode()).hexdigest()[:16]
         return content_hash
 
     def _normalize_text(self, text: str) -> str:
         """Normalize text for similarity comparison"""
-        return ' '.join(text.lower().split())
+        return " ".join(text.lower().split())
 
-    def _calculate_similarity(self, r1: RankedResult, r2: RankedResult, cache1: set[str] | None=None, cache2: set[str] | None=None) -> float:
+    def _calculate_similarity(
+        self, r1: RankedResult, r2: RankedResult, cache1: set[str] | None = None, cache2: set[str] | None = None
+    ) -> float:
         """Calculate simple text similarity for deduplication.
 
         Uses pre-computed normalized token sets from cache when available.
         """
         if r1.url and r2.url and (r1.url == r2.url):
             return 1.0
-        words1 = cache1 if cache1 is not None else set(self._normalize_text(r1.title + ' ' + r1.content[:300]).split())
-        words2 = cache2 if cache2 is not None else set(self._normalize_text(r2.title + ' ' + r2.content[:300]).split())
+        words1 = cache1 if cache1 is not None else set(self._normalize_text(r1.title + " " + r1.content[:300]).split())
+        words2 = cache2 if cache2 is not None else set(self._normalize_text(r2.title + " " + r2.content[:300]).split())
         if not words1 or not words2:
             return 0.0
         intersection = words1 & words2
@@ -95,7 +104,7 @@ class ReciprocalRankFusion:
 
     def _normalize_and_tokenize(self, result: RankedResult) -> set[str]:
         """Pre-compute normalized token set for a result (used for dedup cache)."""
-        return set(self._normalize_text(result.title + ' ' + result.content[:300]).split())
+        return set(self._normalize_text(result.title + " " + result.content[:300]).split())
 
     def _remove_duplicates(self, results: list[RankedResult]) -> list[RankedResult]:
         """Remove near-duplicate results.
@@ -125,7 +134,9 @@ class ReciprocalRankFusion:
                     if result.score > existing.score:
                         existing.score = result.score
                     break
-                similarity = self._calculate_similarity(result, existing, cache1=result_tokens, cache2=token_cache[existing_idx])
+                similarity = self._calculate_similarity(
+                    result, existing, cache1=result_tokens, cache2=token_cache[existing_idx]
+                )
                 if similarity >= self.config.dedup_threshold:
                     is_duplicate = True
                     existing.metadata.update(result.metadata)
@@ -137,7 +148,9 @@ class ReciprocalRankFusion:
                 unique_indices.append(i)
         return unique_results
 
-    def fuse(self, source_results: dict[str, list[RankedResult]], source_weights: dict[str, float] | None=None) -> list[RankedResult]:
+    def fuse(
+        self, source_results: dict[str, list[RankedResult]], source_weights: dict[str, float] | None = None
+    ) -> list[RankedResult]:
         """
         Fuse results from multiple sources using RRF.
 
@@ -163,25 +176,28 @@ class ReciprocalRankFusion:
                     existing_result, existing_score = result_scores[result_id]
                     new_score = existing_score + rrf_score
                     result_scores[result_id] = (existing_result, new_score)
-                    existing_result.metadata['sources'] = existing_result.metadata.get('sources', []) + [source]
+                    existing_result.metadata["sources"] = existing_result.metadata.get("sources", []) + [source]
                 else:
-                    result.metadata['sources'] = [source]
+                    result.metadata["sources"] = [source]
                     result_scores[result_id] = (result, rrf_score)
         sorted_results = sorted(result_scores.values(), key=lambda x: x[1], reverse=True)
         final_results: list[RankedResult] = []
-        for rank, (result, score) in enumerate(sorted_results[:self.config.max_results], start=1):
+        for rank, (result, score) in enumerate(sorted_results[: self.config.max_results], start=1):
             result.score = score
             result.rank = rank
             final_results.append(result)
         final_results = self._remove_duplicates(final_results)
-        logger.info(f'RRF fusion complete: {len(source_results)} sources, {sum((len(r) for r in source_results.values()))} input results, {len(final_results)} output results')
+        logger.info(
+            f"RRF fusion complete: {len(source_results)} sources, {sum(len(r) for r in source_results.values())} input results, {len(final_results)} output results"
+        )
         return final_results
 
     def get_source_statistics(self) -> dict[str, Any]:
         """Get statistics about recent fusion operations"""
         return dict(self._source_stats)
 
-def rrf_fuse(ranked_lists: list[list[tuple[str, float]]], k: int=60) -> list[str]:
+
+def rrf_fuse(ranked_lists: list[list[tuple[str, float]]], k: int = 60) -> list[str]:
     """
     Fuse multiple ranked lists using Reciprocal Rank Fusion.
 
@@ -216,6 +232,7 @@ def rrf_fuse(ranked_lists: list[list[tuple[str, float]]], k: int=60) -> list[str
     sorted_ids = sorted(id_scores.keys(), key=lambda x: id_scores[x], reverse=True)
     return sorted_ids
 
+
 class ScoreAggregator:
     """Aggregate scores from multiple sources with configurable weights."""
 
@@ -249,7 +266,10 @@ class ScoreAggregator:
         """Get minimum score from all sources."""
         return min(scores.values()) if scores else 0.0
 
-def fuse_results(source_results: dict[str, list[RankedResult]], k: int=60, max_results: int=100) -> list[RankedResult]:
+
+def fuse_results(
+    source_results: dict[str, list[RankedResult]], k: int = 60, max_results: int = 100
+) -> list[RankedResult]:
     """
     Quick fusion of results from multiple sources.
 

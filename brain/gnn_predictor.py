@@ -7,25 +7,23 @@ ANE inference pro grafy >= GNN_ACTIVATION_THRESHOLD (default: 100).
 MLX inference pro menší grafy (rychlejší warmup).
 """
 
-from itertools import combinations
 import array
-
-from operator import attrgetter, itemgetter
 import concurrent.futures
 import heapq
 import logging
 import time
 from collections import OrderedDict
+from itertools import combinations
 from typing import TYPE_CHECKING, Any
+
 import numpy as np
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 
 # Type alias for MLX arrays (avoids runtime import at module level)
 MLXArray = Any  # Will be mlx.array at runtime when available
 if TYPE_CHECKING:
-    import mlx.core as _mlx
-
+    pass
 
 # [GNN-3] Constants for ANE-GNN
 GNN_ACTIVATION_THRESHOLD: int = 100  # Use ANE for graphs >= 100 nodes
@@ -38,6 +36,7 @@ ANE_GNN_AVAILABLE: bool = False
 _rx = None
 _ane_gnn: Any = None
 
+
 def _ensure_rustworkx() -> bool:
     """Lazy-load rustworkx on first actual use. Returns True if available."""
     global RUSTWORKX_AVAILABLE, _rx
@@ -45,14 +44,18 @@ def _ensure_rustworkx() -> bool:
         return True
     try:
         import rustworkx as rx
+
         _rx = rx
         RUSTWORKX_AVAILABLE = True
         return True
     except ImportError:
         RUSTWORKX_AVAILABLE = False
         return False
+
+
 mx = None
 nn = None
+
 
 def _ensure_mlx_gnn() -> bool:
     """Lazy-load MLX on first actual use. Returns True if available."""
@@ -62,22 +65,27 @@ def _ensure_mlx_gnn() -> bool:
     try:
         import mlx.core as mx
         import mlx.nn as nn
+
         MLX_GNN_AVAILABLE = True
         return True
     except ImportError:
         return False
 
-def _require_mlx():
+
+def _require_mlx() -> None:
     """Raise RuntimeError if MLX is not available."""
     if not _ensure_mlx_gnn():
-        raise RuntimeError('MLX not available, cannot use GNN functionality')
+        raise RuntimeError("MLX not available, cannot use GNN functionality")
+
+
 if _ensure_mlx_gnn():
 
     class GraphSAGE(nn.Module):
         """GraphSAGE model pro predikci hran."""
-        __slots__ = tuple(('layers', 'out_proj'))
 
-        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int=2):
+        __slots__ = ("layers", "out_proj")
+
+        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, num_layers: int = 2) -> None:
             super().__init__()
             self.layers = []
             for i in range(num_layers):
@@ -93,13 +101,14 @@ else:
     class GraphSAGE:
         """Stub when MLX not available."""
 
-        def __init__(self, *args, **kwargs):
-            raise RuntimeError('MLX not available, cannot create GraphSAGE')
+        def __init__(self, *args, **kwargs) -> None:
+            raise RuntimeError("MLX not available, cannot create GraphSAGE")
 
         def __call__(self, *args, **kwargs):
-            raise RuntimeError('MLX not available')
+            raise RuntimeError("MLX not available")
 
-def neighbor_sampling(adj_list: list[list[int]], node_ids: list[int], k: int=10):
+
+def neighbor_sampling(adj_list: list[list[int]], node_ids: list[int], k: int = 10):
     """
     Vrátí pro každý uzel seznam k náhodných sousedů (s vracením).
     """
@@ -121,11 +130,12 @@ def _ensure_ane_gnn() -> bool:
         return True
     try:
         from rust_extensions import ane as rust_ane
+
         # Check if GNN functions are available
-        if hasattr(rust_ane, 'gnn_load_model') and hasattr(rust_ane, 'gnn_run_inference'):
+        if hasattr(rust_ane, "gnn_load_model") and hasattr(rust_ane, "gnn_run_inference"):
             _ane_gnn = rust_ane
             ANE_GNN_AVAILABLE = True
-            logger.info('[ANE-GNN] Loaded GNN functions from rust.ane')
+            logger.info("[ANE-GNN] Loaded GNN functions from rust.ane")
             return True
     except ImportError:
         pass
@@ -146,9 +156,10 @@ class ANEGNNEngine:
     - Unified node ID mapping (Kuzu string ↔ DuckDB BIGINT)
     - Per-node features from LanceDB embeddings
     """
-    __slots__ = ('model_id', '_initialized', '_lancedb_store', '_node_mapper')
 
-    def __init__(self, model_id: str = 'graphsage_default', lancedb_store: Any = None):
+    __slots__ = ("model_id", "_initialized", "_lancedb_store", "_node_mapper")
+
+    def __init__(self, model_id: str = "graphsage_default", lancedb_store: Any = None) -> None:
         self.model_id = model_id
         self._initialized = False
         self._lancedb_store = lancedb_store
@@ -164,20 +175,19 @@ class ANEGNNEngine:
             return False
 
         try:
-            # Load default GraphSAGE model
             _ane_gnn.gnn_load_model(
                 model_id=self.model_id,
-                model_path='models/graphsage_default.mlmodel',
+                model_path="models/graphsage_default.mlmodel",
                 in_dim=GNN_FEATURE_DIM,
                 hidden_dim=64,
                 out_dim=32,
                 num_layers=2,
-    )
+            )
             self._initialized = True
-            logger.info(f'[ANE-GNN] Initialized model: {self.model_id}')
+            logger.info(f"[ANE-GNN] Initialized model: {self.model_id}")
             return True
         except Exception as e:
-            logger.warning(f'[ANE-GNN] Failed to load model: {e}')
+            logger.warning(f"[ANE-GNN] Failed to load model: {e}")
             return False
 
     def _build_enhanced_features(
@@ -203,15 +213,15 @@ class ANEGNNEngine:
             GNN_IOC_TYPES,
             NUM_GNN_IOC_TYPES,
             normalize_ioc_type,
-    )
-        
+        )
+
         type_to_idx = {t: i for i, t in enumerate(GNN_IOC_TYPES)}
 
         features = []
         for node in graph_nodes:
-            ioc_type = node.get('type', 'unknown')
+            ioc_type = node.get("type", "unknown")
             normalized = normalize_ioc_type(ioc_type)
-            type_idx = type_to_idx.get(normalized, type_to_idx.get('pending', NUM_GNN_IOC_TYPES - 1))
+            type_idx = type_to_idx.get(normalized, type_to_idx.get("pending", NUM_GNN_IOC_TYPES - 1))
 
             # One-hot type encoding (canonical types)
             type_onehot = [0.0] * NUM_GNN_IOC_TYPES
@@ -221,7 +231,7 @@ class ANEGNNEngine:
             # [GNN-3] Try to get embedding from LanceDB
             # SAFE-2.2: Use constants for dimension instead of magic number 64
             embedding = [0.0] * self.EXPECTED_EMBEDDING_DIM  # Default zero embedding
-            node_value = node.get('value', node.get('id', ''))
+            node_value = node.get("value", node.get("id", ""))
 
             if lancedb_store is not None:
                 try:
@@ -239,7 +249,7 @@ class ANEGNNEngine:
 
     # SAFE-2.2: Embedding validation constants
     EXPECTED_EMBEDDING_DIM: int = 64  # GNN expects 64-dim embeddings
-    EMBEDDING_DIM_TOLERANCE: int = 2   # Allow 2-dim tolerance for LanceDB schema variations
+    EMBEDDING_DIM_TOLERANCE: int = 2  # Allow 2-dim tolerance for LanceDB schema variations
     EMBEDDING_VALUE_MAX: float = 100.0  # Max absolute value to prevent NaN/Inf in MLX
     EMBEDDING_VALUE_MIN: float = -100.0  # Min absolute value
 
@@ -249,7 +259,7 @@ class ANEGNNEngine:
         node_value: str,
     ) -> list[float] | None:
         """Fetch embedding from LanceDB for a node value.
-        
+
         SAFE-2.2: Validates dimension, type, and value range to prevent:
         - OOM from malformed embeddings
         - NaN/Inf propagation into MLX computation
@@ -257,15 +267,14 @@ class ANEGNNEngine:
         """
         try:
             # Try common embedding table names
-            for table_name in ['ioc_embeddings', 'entity_embeddings', 'default']:
+            for table_name in ["ioc_embeddings", "entity_embeddings", "default"]:
                 try:
                     tbl = lancedb_store.get_table(table_name)
                     result = tbl.search(node_value).limit(1).to_list()
                     if result:
-                        # Extract embedding column
-                        if 'embedding' in result[0]:
-                            emb = result[0]['embedding']
-                            
+                        if "embedding" in result[0]:
+                            emb = result[0]["embedding"]
+
                             # SAFE-2.2: Validate embedding before returning
                             validated = self._validate_embedding(emb)
                             if validated is not None:
@@ -278,7 +287,7 @@ class ANEGNNEngine:
 
     def _validate_embedding(self, embedding: Any) -> list[float] | None:
         """SAFE-2.2: Validate embedding dimension, type, and value range.
-        
+
         Returns normalized 64-dim embedding or None if invalid.
         Prevents NaN/Inf from propagating into MLX Metal computation.
         """
@@ -287,54 +296,52 @@ class ANEGNNEngine:
             # Try numpy array
             try:
                 import numpy as np
+
                 if isinstance(embedding, np.ndarray):
                     embedding = embedding.tolist()
-                elif hasattr(embedding, '__iter__'):
+                elif hasattr(embedding, "__iter__"):
                     embedding = list(embedding)
                 else:
-                    logger.warning('[SAFE-2.2] Invalid embedding type: %s', type(embedding))
+                    logger.warning("[SAFE-2.2] Invalid embedding type: %s", type(embedding))
                     return None
             except Exception:
                 return None
-        
+
         # Convert to list of floats
         try:
             emb_list = [float(x) for x in embedding]
         except (ValueError, TypeError) as e:
-            logger.warning('[SAFE-2.2] Cannot convert embedding to float list: %s', e)
+            logger.warning("[SAFE-2.2] Cannot convert embedding to float list: %s", e)
             return None
-        
+
         # Dimension validation with tolerance
         dim = len(emb_list)
         min_dim = self.EXPECTED_EMBEDDING_DIM - self.EMBEDDING_DIM_TOLERANCE
         max_dim = self.EXPECTED_EMBEDDING_DIM + self.EMBEDDING_DIM_TOLERANCE
-        
+
         if not (min_dim <= dim <= max_dim):
-            logger.warning(
-                '[SAFE-2.2] Embedding dimension %d outside valid range [%d, %d]',
-                dim, min_dim, max_dim
-    )
+            logger.warning("[SAFE-2.2] Embedding dimension %d outside valid range [%d, %d]", dim, min_dim, max_dim)
             return None
-        
+
         # Value range validation - prevent NaN/Inf in MLX Metal
-        for i, val in enumerate(emb_list[:self.EXPECTED_EMBEDDING_DIM]):
+        for i, val in enumerate(emb_list[: self.EXPECTED_EMBEDDING_DIM]):
             if not (self.EMBEDDING_VALUE_MIN <= val <= self.EMBEDDING_VALUE_MAX):
                 # Clamp outlier values to prevent numerical instability
                 emb_list[i] = max(self.EMBEDDING_VALUE_MIN, min(self.EMBEDDING_VALUE_MAX, val))
-        
-        # Check for NaN/Inf
+
         import math
-        for i, val in enumerate(emb_list[:self.EXPECTED_EMBEDDING_DIM]):
+
+        for i, val in enumerate(emb_list[: self.EXPECTED_EMBEDDING_DIM]):
             if math.isnan(val) or math.isinf(val):
-                logger.warning('[SAFE-2.2] Embedding contains NaN/Inf at index %d', i)
+                logger.warning("[SAFE-2.2] Embedding contains NaN/Inf at index %d", i)
                 return None
-        
+
         # Return exactly EXPECTED_EMBEDDING_DIM elements (truncate or pad)
         if len(emb_list) > self.EXPECTED_EMBEDDING_DIM:
-            emb_list = emb_list[:self.EXPECTED_EMBEDDING_DIM]
+            emb_list = emb_list[: self.EXPECTED_EMBEDDING_DIM]
         elif len(emb_list) < self.EXPECTED_EMBEDDING_DIM:
             emb_list.extend([0.0] * (self.EXPECTED_EMBEDDING_DIM - len(emb_list)))
-        
+
         return emb_list
 
     def _validate_features_for_ffi(
@@ -343,39 +350,33 @@ class ANEGNNEngine:
         expected_dim: int,
     ) -> tuple[list[list[float]], bool]:
         """SAFE-2.3: Validate feature matrix before FFI call to rust.ane.
-        
+
         Prevents:
         - OOM from oversized feature matrices
         - NaN/Inf from propagating to ANE Metal
         - Mismatched dimensions causing buffer overflow
-        
+
         Returns (validated_features, is_valid).
         """
         import math
-        
+
         if not features:
             return features, True
-        
+
         # Check feature count (OOM guard)
         n_features = len(features)
         if n_features > self._MLX_MAX_INFERENCE_NODES:
             logger.warning(
-                '[SAFE-2.3] Feature count %d exceeds OOM guard %d',
-                n_features, self._MLX_MAX_INFERENCE_NODES
-    )
+                "[SAFE-2.3] Feature count %d exceeds OOM guard %d", n_features, self._MLX_MAX_INFERENCE_NODES
+            )
             return features, False
-        
+
         validated = []
         for i, feat in enumerate(features):
-            # Check dimension
             if len(feat) != expected_dim:
-                logger.warning(
-                    '[SAFE-2.3] Feature %d dimension %d != expected %d',
-                    i, len(feat), expected_dim
-    )
+                logger.warning("[SAFE-2.3] Feature %d dimension %d != expected %d", i, len(feat), expected_dim)
                 return features, False
-            
-            # Check for NaN/Inf and clamp values
+
             has_issue = False
             safe_feat = []
             for val in feat:
@@ -386,12 +387,12 @@ class ANEGNNEngine:
                     # Clamp extreme values for numerical stability
                     clamped = max(-1000.0, min(1000.0, val))
                     safe_feat.append(clamped)
-            
+
             if has_issue:
-                logger.warning('[SAFE-2.3] Feature %d contained NaN/Inf, zeroed', i)
-            
+                logger.warning("[SAFE-2.3] Feature %d contained NaN/Inf, zeroed", i)
+
             validated.append(safe_feat)
-        
+
         return validated, True
 
     def _validate_ffi_output_embeddings(
@@ -401,40 +402,40 @@ class ANEGNNEngine:
         node_ids: list[str],
     ) -> tuple[dict[str, list[float]], bool]:
         """SAFE-2.3: Validate FFI output embeddings from rust.ane.gnn_run_inference.
-        
+
         Prevents NaN/Inf from Rust FFI propagating to Python-side computation.
         Ensures consistent output dimensions for downstream consumers.
-        
+
         Returns (validated_embeddings_dict, is_valid).
         """
         import math
-        
+
         if not embeddings:
             return {}, True
-        
+
         validated = {}
         has_issues = False
-        
+
         for i, emb in enumerate(embeddings):
             if i >= len(node_ids):
-                logger.warning('[SAFE-2.3] Extra embedding at index %d, expected %d', i, len(node_ids))
+                logger.warning("[SAFE-2.3] Extra embedding at index %d, expected %d", i, len(node_ids))
                 continue
-            
+
             node_id = node_ids[i]
-            
-            # Validate dimension
+
             if len(emb) != expected_out_dim:
                 logger.warning(
-                    '[SAFE-2.3] Embedding dim %d != expected %d for node %s, truncating/padding',
-                    len(emb), expected_out_dim, node_id
-    )
+                    "[SAFE-2.3] Embedding dim %d != expected %d for node %s, truncating/padding",
+                    len(emb),
+                    expected_out_dim,
+                    node_id,
+                )
                 # Normalize to expected dimension
                 if len(emb) > expected_out_dim:
                     emb = emb[:expected_out_dim]
                 else:
                     emb = emb + [0.0] * (expected_out_dim - len(emb))
-            
-            # Validate for NaN/Inf
+
             safe_emb = []
             has_nan_inf = False
             for val in emb:
@@ -445,13 +446,13 @@ class ANEGNNEngine:
                     # Clamp extreme values
                     clamped = max(-self.EMBEDDING_VALUE_MAX, min(self.EMBEDDING_VALUE_MAX, val))
                     safe_emb.append(clamped)
-            
+
             if has_nan_inf:
-                logger.warning('[SAFE-2.3] NaN/Inf in embedding for node %s, zeroed', node_id)
+                logger.warning("[SAFE-2.3] NaN/Inf in embedding for node %s, zeroed", node_id)
                 has_issues = True
-            
+
             validated[node_id] = safe_emb
-        
+
         return validated, not has_issues
 
     def run_inference_batched(
@@ -472,24 +473,22 @@ class ANEGNNEngine:
             Dict mapping node_id -> embedding vector
         """
         if not self._initialized or _ane_gnn is None:
-            logger.warning('[ANE-GNN] Engine not initialized, returning empty')
+            logger.warning("[ANE-GNN] Engine not initialized, returning empty")
             return {}
 
         n = len(graph_nodes)
         if n == 0:
             return {}
 
-        # Build node index
-        node_index = {node['id']: i for i, node in enumerate(graph_nodes)}
+        node_index = {node["id"]: i for i, node in enumerate(graph_nodes)}
 
-        # Build enhanced features
         features, feat_dim = self._build_enhanced_features(graph_nodes, lancedb_store)
 
         # SAFE-2.3: Pre-FFI validation - prevent OOM from malformed inputs
         # Validate features before passing to rust.ane FFI
         validated_features, is_valid = self._validate_features_for_ffi(features, feat_dim)
         if not is_valid:
-            logger.warning('[SAFE-2.3] Feature validation failed, using zero features')
+            logger.warning("[SAFE-2.3] Feature validation failed, using zero features")
             validated_features = [[0.0] * feat_dim for _ in range(n)]
 
         # Flatten features: [n_nodes * feat_dim]
@@ -499,41 +498,38 @@ class ANEGNNEngine:
         # M1 8GB: 2000 nodes * 81 dim * 4 bytes = ~648KB max
         max_nodes_for_ffi = min(n, self._MLX_MAX_INFERENCE_NODES)
         if n > max_nodes_for_ffi:
-            logger.warning('[SAFE-2.3] Capping %d nodes to %d for FFI safety', n, max_nodes_for_ffi)
-            features_flat = features_flat[:max_nodes_for_ffi * feat_dim]
+            logger.warning("[SAFE-2.3] Capping %d nodes to %d for FFI safety", n, max_nodes_for_ffi)
+            features_flat = features_flat[: max_nodes_for_ffi * feat_dim]
 
         # Build edges as (src_idx, dst_idx)
         edge_pairs = []
         for edge in graph_edges:
-            src_i = node_index.get(edge.get('source', ''))
-            dst_i = node_index.get(edge.get('target', ''))
+            src_i = node_index.get(edge.get("source", ""))
+            dst_i = node_index.get(edge.get("target", ""))
             if src_i is not None and dst_i is not None and src_i < max_nodes_for_ffi and dst_i < max_nodes_for_ffi:
                 edge_pairs.append((src_i, dst_i))
 
-        # Run inference
         try:
-            node_ids_list = [node['id'] for node in graph_nodes]
+            node_ids_list = [node["id"] for node in graph_nodes]
             embeddings_flat = _ane_gnn.gnn_run_inference(
                 model_id=self.model_id,
                 node_ids=node_ids_list,
                 features=features_flat,
                 edges=edge_pairs,
-    )
+            )
 
             # SAFE-2.3: Validate FFI output embeddings
             # Expected output dimension is GNN_DEFAULT_OUT_DIM (32) from rust.ane
             expected_out_dim = 32  # GNN_DEFAULT_OUT_DIM from rust.ane
-            result, is_valid = self._validate_ffi_output_embeddings(
-                embeddings_flat, expected_out_dim, node_ids_list
-    )
-            
+            result, is_valid = self._validate_ffi_output_embeddings(embeddings_flat, expected_out_dim, node_ids_list)
+
             if not is_valid:
-                logger.warning('[SAFE-2.3] FFI output validation had issues, embeddings sanitized')
+                logger.warning("[SAFE-2.3] FFI output validation had issues, embeddings sanitized")
 
             return result
 
         except Exception as e:
-            logger.error(f'[ANE-GNN] Inference failed: {e}')
+            logger.error(f"[ANE-GNN] Inference failed: {e}")
             return {}
 
     def predict_links(
@@ -564,12 +560,11 @@ class ANEGNNEngine:
 
         # Use all nodes if no candidates specified
         if candidate_nodes is None:
-            candidate_nodes = [n for n in graph_nodes if n['id'] != query_node_id]
+            candidate_nodes = [n for n in graph_nodes if n["id"] != query_node_id]
 
         if len(candidate_nodes) == 0:
             return []
 
-        # Run GNN inference
         embeddings = self.run_inference_batched(graph_nodes, graph_edges)
 
         if query_node_id not in embeddings:
@@ -577,14 +572,13 @@ class ANEGNNEngine:
 
         query_emb = embeddings[query_node_id]
 
-        # Build adjacency for heuristics
         adjacency: dict[int, list[int]] = {}
-        node_index = {node['id']: i for i, node in enumerate(graph_nodes)}
+        node_index = {node["id"]: i for i, node in enumerate(graph_nodes)}
         degrees: dict[int, int] = {}
 
         for edge in graph_edges:
-            src_i = node_index.get(edge.get('source', ''))
-            dst_i = node_index.get(edge.get('target', ''))
+            src_i = node_index.get(edge.get("source", ""))
+            dst_i = node_index.get(edge.get("target", ""))
             if src_i is not None and dst_i is not None:
                 adjacency.setdefault(src_i, []).append(dst_i)
                 adjacency.setdefault(dst_i, []).append(src_i)
@@ -597,7 +591,7 @@ class ANEGNNEngine:
         existing_neighbors = set(adjacency.get(query_idx, []))
 
         for node in candidate_nodes:
-            node_id = node['id']
+            node_id = node["id"]
             if node_id not in embeddings:
                 continue
 
@@ -612,25 +606,25 @@ class ANEGNNEngine:
             gnn_score = self._cosine_similarity(query_emb, cand_emb)
 
             # Heuristic scores
-            heur_score = self._compute_heuristic_score(
-                query_idx, node_idx, adjacency, degrees
-    )
+            heur_score = self._compute_heuristic_score(query_idx, node_idx, adjacency, degrees)
 
             # Combined score
             combined = gnn_weight * gnn_score + (1.0 - gnn_weight) * heur_score
 
-            predictions.append({
-                'node_id': node_id,
-                'predicted_link_probability': round(combined, 4),
-                'node_type': node.get('type', 'unknown'),
-                'node_value': node.get('value', node_id),
-                'gnn_score': round(gnn_score, 4),
-                'heuristic_score': round(heur_score, 4),
-                'method': 'gnn' if gnn_score > 0.7 else ('heuristic' if heur_score > 0.5 else 'hybrid'),
-            })
+            predictions.append(
+                {
+                    "node_id": node_id,
+                    "predicted_link_probability": round(combined, 4),
+                    "node_type": node.get("type", "unknown"),
+                    "node_value": node.get("value", node_id),
+                    "gnn_score": round(gnn_score, 4),
+                    "heuristic_score": round(heur_score, 4),
+                    "method": "gnn" if gnn_score > 0.7 else ("heuristic" if heur_score > 0.5 else "hybrid"),
+                }
+            )
 
         # Sort by combined score
-        predictions.sort(key=lambda x: x['predicted_link_probability'], reverse=True)
+        predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
         return predictions[:top_k]
 
     @staticmethod
@@ -639,7 +633,7 @@ class ANEGNNEngine:
         if not a or not b or len(a) != len(b):
             return 0.0
 
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = sum(x * x for x in a) ** 0.5
         norm_b = sum(x * x for x in b) ** 0.5
 
@@ -673,20 +667,41 @@ class ANEGNNEngine:
 
         return 0.6 * jaccard + 0.4 * min(1.0, pref_attach)
 
+
 class GNNPredictor:
     """
     Prediktor, který obaluje GNN model a umožňuje trénink na pozadí.
     """
-    __slots__ = ('model', 'optimizer', 'trained', '_training_scheduled', 'node_features', 'scheduler', 'graph', '_edge_count', 'max_nodes', 'max_edges', 'max_node_features', '_in_dim', '_hidden_dim', '_out_dim', '_last_cleanup', '_cleanup_interval', '_cpu_executor')
 
-    def __init__(self, in_dim: int=64, hidden_dim: int=32, out_dim: int=1):
+    __slots__ = (
+        "model",
+        "optimizer",
+        "trained",
+        "_training_scheduled",
+        "node_features",
+        "scheduler",
+        "graph",
+        "_edge_count",
+        "max_nodes",
+        "max_edges",
+        "max_node_features",
+        "_in_dim",
+        "_hidden_dim",
+        "_out_dim",
+        "_last_cleanup",
+        "_cleanup_interval",
+        "_cpu_executor",
+    )
+
+    def __init__(self, in_dim: int = 64, hidden_dim: int = 32, out_dim: int = 1) -> None:
         if not MLX_GNN_AVAILABLE:
-            raise RuntimeError('MLX not available, cannot create GNNPredictor')
+            raise RuntimeError("MLX not available, cannot create GNNPredictor")
         self.model = GraphSAGE(in_dim, hidden_dim, out_dim)
         try:
             import mlx.optimizers as optim
+
             self.optimizer = optim.Adam(learning_rate=0.001)
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             self.optimizer = None
         self.trained = False
         self._training_scheduled = False
@@ -704,7 +719,7 @@ class GNNPredictor:
         self._cleanup_interval = 300
         self._cpu_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
-    def set_scheduler(self, scheduler):
+    def set_scheduler(self, scheduler) -> None:
         """Nastaví scheduler pro background training."""
         self.scheduler = scheduler
 
@@ -714,7 +729,7 @@ class GNNPredictor:
             self._cpu_executor.shutdown(wait=False, cancel_futures=True)
             self._cpu_executor = None
 
-    def _add_edge(self, src: int, dst: int):
+    def _add_edge(self, src: int, dst: int) -> None:
         """Přidá hranu; detekuje duplicity, při dosažení limitu eviktuje nejstarší uzel."""
         if src not in self.graph:
             self.graph[src] = set()
@@ -722,7 +737,6 @@ class GNNPredictor:
             return
         if self._edge_count >= self.max_edges:
             oldest = next(iter(self.graph))
-            # Clean up inbound references from all other nodes first
             edges_removed = 0
             for node_id, neighbors in self.graph.items():
                 if node_id != oldest and oldest in neighbors:
@@ -734,53 +748,54 @@ class GNNPredictor:
             del self.graph[oldest]
             # Clean up node_features if exists
             self.node_features.pop(oldest, None)
-            logger.debug(f'GNN evicted node {oldest} ({edges_removed} edges)')
+            logger.debug(f"GNN evicted node {oldest} ({edges_removed} edges)")
         self.graph[src].add(dst)
         self._edge_count += 1
         if dst not in self.graph:
             self.graph[dst] = set()
 
-    def build_adj_list(self, edges: list[tuple[int, int]], n_nodes: int):
+    def build_adj_list(self, edges: list[tuple[int, int]], n_nodes: int) -> None:
         """Vytvoří seznam sousedů pomocí plain dict (ne defaultdict)."""
         for u, v in edges:
             if u < n_nodes and v < n_nodes:
                 self._add_edge(u, v)
                 self._add_edge(v, u)
 
-    def _maybe_cleanup(self):
+    def _maybe_cleanup(self) -> None:
         """Periodické čištění osiřelých uzlů (bez feature a bez hran)."""
         now = time.time()
         if now - self._last_cleanup < self._cleanup_interval:
             return
-        orphaned = [node_id for node_id in self.graph if node_id not in self.node_features and (not self.graph.get(node_id))]
+        orphaned = [
+            node_id for node_id in self.graph if node_id not in self.node_features and (not self.graph.get(node_id))
+        ]
         for node_id in orphaned:
             del self.graph[node_id]
         self._last_cleanup = now
         if orphaned:
-            logger.debug(f'GNN cleanup: removed {len(orphaned)} orphaned nodes')
+            logger.debug(f"GNN cleanup: removed {len(orphaned)} orphaned nodes")
 
     def get_neighbors(self, node_id: int) -> set:
         """Vrátí sousedy (read-only, nevytváří záznamy)."""
         return self.graph.get(node_id, set())
 
-    def add_node_feature(self, node_id: int, feature: np.ndarray):
+    def add_node_feature(self, node_id: int, feature: np.ndarray) -> None:
         """
         G2: Add node feature with bounded LRU eviction.
         Uses array('f') for memory efficiency.
         """
         if node_id in self.node_features:
             self.node_features.move_to_end(node_id)
-        self.node_features[node_id] = array.array('f', feature)
+        self.node_features[node_id] = array.array("f", feature)
         while len(self.node_features) > self.max_node_features:
             oldest_id, _ = self.node_features.popitem(last=False)
             self.graph.pop(oldest_id, None)
 
-    def trigger_training(self, edges: list[tuple[int, int]], features, labels, num_epochs: int=10):
+    def trigger_training(self, edges: list[tuple[int, int]], features, labels, num_epochs: int = 10) -> None:
         """Spustí trénink na pozadí, pokud je k dispozici scheduler."""
         if self.scheduler and (not self._training_scheduled):
             self._training_scheduled = True
-            pass
-            self.scheduler.schedule(8, 'train_gnn', self, edges, features, labels, num_epochs)
+            self.scheduler.schedule(8, "train_gnn", self, edges, features, labels, num_epochs)
 
     def predict(self, node_ids: list[int], edges: list[tuple[int, int]]) -> MLXArray:
         """
@@ -790,10 +805,10 @@ class GNNPredictor:
         G1: Guard against OOM - limit matrix size.
         """
         if not self.trained:
-            raise RuntimeError('GNN not trained yet')
+            raise RuntimeError("GNN not trained yet")
         MAX_PREDICT_NODES = 1000
         if len(node_ids) > MAX_PREDICT_NODES:
-            logger.warning(f'Limiting prediction from {len(node_ids)} to {MAX_PREDICT_NODES} nodes')
+            logger.warning(f"Limiting prediction from {len(node_ids)} to {MAX_PREDICT_NODES} nodes")
             node_ids = node_ids[:MAX_PREDICT_NODES]
         n = len(node_ids)
         if n <= 100:
@@ -854,7 +869,7 @@ class GNNPredictor:
         all_embs = mx.stack([mx.array(e) for e in emb_list])
         return mx.mean(all_embs, axis=0)[:8]
 
-    def score_ioc_batch(self, ioc_nodes: list[tuple[str, str]], ioc_graph: Any=None) -> dict[str, float]:
+    def score_ioc_batch(self, ioc_nodes: list[tuple[str, str]], ioc_graph: Any = None) -> dict[str, float]:
         """
         Sprint 8TD + 8UA: Batch scoring IOC uzlů pomocí GNN graph centrality.
         8UA: Live Kuzu degree lookup přes IOCGraph Cypher API.
@@ -867,27 +882,42 @@ class GNNPredictor:
             Dict mapping ioc_value -> confidence_score (0.0-1.0)
         """
         import math
+
         scores = {}
-        type_weight = {'domain': 1.2, 'ipv4': 1.1, 'ipv6': 1.05, 'sha256': 1.15, 'md5': 1.1, 'sha1': 1.08, 'cve': 1.25, 'url': 0.95, 'email': 0.9, 'malware_family': 1.3}
+        type_weight = {
+            "domain": 1.2,
+            "ipv4": 1.1,
+            "ipv6": 1.05,
+            "sha256": 1.15,
+            "md5": 1.1,
+            "sha1": 1.08,
+            "cve": 1.25,
+            "url": 0.95,
+            "email": 0.9,
+            "malware_family": 1.3,
+        }
         for value, ioc_type in ioc_nodes:
             try:
                 degree = 0
                 if ioc_graph is not None:
                     try:
-                        kuzu_conn = getattr(ioc_graph, '_conn', None)
+                        kuzu_conn = getattr(ioc_graph, "_conn", None)
                         if kuzu_conn is not None:
-                            res = kuzu_conn.execute('MATCH (n:IOC)-[r:OBSERVED]->() WHERE n.value = $v AND n.ioc_type = $t RETURN count(r)', {'v': value, 't': ioc_type})
+                            res = kuzu_conn.execute(
+                                "MATCH (n:IOC)-[r:OBSERVED]->() WHERE n.value = $v AND n.ioc_type = $t RETURN count(r)",
+                                {"v": value, "t": ioc_type},
+                            )
                             if res.has_next():
                                 row = res.get_next()
                                 degree = int(row[0]) if row else 0
                         else:
-                            degree_fn = getattr(ioc_graph, 'degree', None)
+                            degree_fn = getattr(ioc_graph, "degree", None)
                             if degree_fn:
                                 degree = degree_fn(value)
-                            elif hasattr(ioc_graph, 'get_degree'):
+                            elif hasattr(ioc_graph, "get_degree"):
                                 degree = ioc_graph.get_degree(value)
                             else:
-                                node_degree = getattr(ioc_graph, 'nodes', {}).get(value, {}).get('degree', 0)
+                                node_degree = getattr(ioc_graph, "nodes", {}).get(value, {}).get("degree", 0)
                                 degree = node_degree
                     except Exception:
                         degree = 0
@@ -899,7 +929,7 @@ class GNNPredictor:
                 scores[value] = 0.5
         return scores
 
-    async def score_ioc_batch_async(self, ioc_nodes: list[tuple[str, str]], ioc_graph: Any=None) -> dict[str, float]:
+    async def score_ioc_batch_async(self, ioc_nodes: list[tuple[str, str]], ioc_graph: Any = None) -> dict[str, float]:
         """
         Sprint 8TD: Async wrapper pro score_ioc_batch.
 
@@ -907,10 +937,12 @@ class GNNPredictor:
         MLX Metal state is not thread-safe, so max_workers=1 is correct.
         """
         import asyncio
+
         from hledac.universal.utils.domain_executors import get_or_create
 
         def _sync():
             return self.score_ioc_batch(ioc_nodes, ioc_graph)
+
         loop = asyncio.get_running_loop()
         # Use 'parallel' preset (3 workers) - GNN batch scoring is CPU-bound
         return await loop.run_in_executor(get_or_create("parallel"), _sync)
@@ -919,14 +951,14 @@ class GNNPredictor:
 
     def _build_node_index(self, graph_nodes: list[dict]) -> dict[str, int]:
         """Build node_id → row-index mapping."""
-        return {node['id']: i for i, node in enumerate(graph_nodes)}
+        return {node["id"]: i for i, node in enumerate(graph_nodes)}
 
     def _build_adjacency_matrix(self, n: int, graph_edges: list[dict], node_index: dict[str, int]) -> list[list[float]]:
         """Construct symmetric adjacency matrix from edges."""
         adj = [[0.0] * n for _ in range(n)]
         for edge in graph_edges:
-            src_i = node_index.get(edge.get('source', ''))
-            dst_i = node_index.get(edge.get('target', ''))
+            src_i = node_index.get(edge.get("source", ""))
+            dst_i = node_index.get(edge.get("target", ""))
             if src_i is not None and dst_i is not None:
                 adj[src_i][dst_i] = 1.0
                 adj[dst_i][src_i] = 1.0
@@ -934,7 +966,7 @@ class GNNPredictor:
 
     def _build_feature_matrix(self, graph_nodes: list[dict]) -> tuple[list[list[float]], int]:
         """Build one-hot feature matrix from node types. Returns (features, feat_dim).
-        
+
         Uses canonical IOC types from gnn_node_mapper to ensure consistent encoding.
         Falls back to dynamic type extraction if gnn_node_mapper unavailable.
         """
@@ -944,35 +976,38 @@ class GNNPredictor:
                 GNN_IOC_TYPES,
                 NUM_GNN_IOC_TYPES,
                 normalize_ioc_type,
-    )
+            )
+
             type_to_idx = {t: i for i, t in enumerate(GNN_IOC_TYPES)}
             default_idx = NUM_GNN_IOC_TYPES - 1  # 'pending' type
             feat_dim = NUM_GNN_IOC_TYPES
         except ImportError:
             # Fallback: dynamic type extraction
-            node_types = list({n.get('ioc_type', n.get('type', 'unknown')) for n in graph_nodes})
+            node_types = list({n.get("ioc_type", n.get("type", "unknown")) for n in graph_nodes})
             type_to_idx = {t: i for i, t in enumerate(node_types)}
             default_idx = 0
             feat_dim = max(len(node_types), 4)
-        
+
         features = []
         for n in graph_nodes:
             # Try ioc_type first (Kuzu/DuckDB canonical name), fallback to type
-            ioc_type = n.get('ioc_type', n.get('type', 'unknown'))
+            ioc_type = n.get("ioc_type", n.get("type", "unknown"))
             try:
-                normalized = normalize_ioc_type(ioc_type) if 'normalize_ioc_type' in dir() else ioc_type
+                normalized = normalize_ioc_type(ioc_type) if "normalize_ioc_type" in dir() else ioc_type
                 type_idx = type_to_idx.get(normalized, default_idx)
             except Exception:
                 type_idx = default_idx
-            
+
             feat_vec = [0.0] * feat_dim
             if type_idx < feat_dim:
                 feat_vec[type_idx] = 1.0
             features.append(feat_vec)
-        
+
         return features, feat_dim
 
-    def _compute_gnn_hidden(self, adj_data: list[list[float]], features_data: list[list[float]], feat_dim: int) -> mx.array:
+    def _compute_gnn_hidden(
+        self, adj_data: list[list[float]], features_data: list[list[float]], feat_dim: int
+    ) -> mx.array:
         """MLX-native GCN hidden layer: symmetric normalize → ReLU(A_norm @ X @ W)."""
         A = mx.array(adj_data, dtype=mx.float32)
         X = mx.array(features_data, dtype=mx.float32)
@@ -988,21 +1023,30 @@ class GNNPredictor:
         """Gather already-connected node IDs to exclude from predictions."""
         neighbors = set()
         for edge in graph_edges:
-            if edge.get('source') == query_node_id:
-                neighbors.add(edge.get('target'))
-            elif edge.get('target') == query_node_id:
-                neighbors.add(edge.get('source'))
+            if edge.get("source") == query_node_id:
+                neighbors.add(edge.get("target"))
+            elif edge.get("target") == query_node_id:
+                neighbors.add(edge.get("source"))
         return neighbors
 
-    def _score_and_sort(self, graph_nodes: list[dict], query_scores: list[float], query_node_id: str, existing_neighbors: set[str], top_k: int) -> list[dict]:
+    def _score_and_sort(
+        self,
+        graph_nodes: list[dict],
+        query_scores: list[float],
+        query_node_id: str,
+        existing_neighbors: set[str],
+        top_k: int,
+    ) -> list[dict]:
         """Build prediction dicts, filter self+known edges, return top-k by score."""
         predictions = [
-            {'node_id': node['id'],
-             'predicted_link_probability': float(score),
-             'node_type': node.get('type', 'unknown'),
-             'node_value': node.get('value', node['id'])}
+            {
+                "node_id": node["id"],
+                "predicted_link_probability": float(score),
+                "node_type": node.get("type", "unknown"),
+                "node_value": node.get("value", node["id"]),
+            }
             for node, score in zip(graph_nodes, query_scores, strict=False)
-            if node['id'] != query_node_id and node['id'] not in existing_neighbors
+            if node["id"] != query_node_id and node["id"] not in existing_neighbors
         ]
         predictions.sort(key=lambda x: x["predicted_link_probability"], reverse=True)
         return predictions[:top_k]
@@ -1012,15 +1056,23 @@ class GNNPredictor:
         try:
             mx.eval([])
             import gc
+
             gc.collect()
-            if hasattr(mx, 'clear_cache'):
+            if hasattr(mx, "clear_cache"):
                 mx.clear_cache()
         except Exception:  # noqa: BLE001
             pass
 
     # ── main ─────────────────────────────────────────────────────────────────────
 
-    async def predict_ioc_links(self, graph_nodes: list[dict], graph_edges: list[dict], query_node_id: str, top_k: int=10, lancedb_store: Any = None) -> list[dict]:
+    async def predict_ioc_links(
+        self,
+        graph_nodes: list[dict],
+        graph_edges: list[dict],
+        query_node_id: str,
+        top_k: int = 10,
+        lancedb_store: Any = None,
+    ) -> list[dict]:
         """
         Predict pravděpodobné linky z query_node na neznámé uzly.
         Vstup: graph uzly a hrany z graph/ modulu, ID dotazovaného uzlu.
@@ -1039,6 +1091,7 @@ class GNNPredictor:
         # Memory guard
         try:
             from _core.memory import memory_pressure_level
+
             if memory_pressure_level() >= 2:  # 2 = CRITICAL
                 return []
         except Exception:  # noqa: BLE001
@@ -1071,11 +1124,11 @@ class GNNPredictor:
 
         try:
             # Lazy init ANE-GNN engine
-            if not hasattr(self, '_ane_engine') or self._ane_engine is None:
+            if not hasattr(self, "_ane_engine") or self._ane_engine is None:
                 self._ane_engine = ANEGNNEngine(
-                    model_id=f'gnn_{id(self)}',
+                    model_id=f"gnn_{id(self)}",
                     lancedb_store=lancedb_store,
-    )
+                )
 
             if self._ane_engine._initialized:
                 predictions = self._ane_engine.predict_links(
@@ -1083,12 +1136,12 @@ class GNNPredictor:
                     graph_edges=graph_edges,
                     query_node_id=query_node_id,
                     top_k=top_k,
-    )
+                )
                 if predictions:
                     return predictions
 
         except Exception as e:
-            logger.warning(f'[ANE-GNN] Prediction failed, falling back to MLX: {e}')
+            logger.warning(f"[ANE-GNN] Prediction failed, falling back to MLX: {e}")
 
         # Fallback to MLX
         return self._predict_with_mlx(graph_nodes, graph_edges, query_node_id, top_k)
@@ -1114,14 +1167,12 @@ class GNNPredictor:
         """
         try:
             n = len(graph_nodes)
-            
+
             # OOM guard: cap nodes for dense matrix inference
             if n > self._MLX_MAX_INFERENCE_NODES:
                 # Use sparse mode: only compute query row of H @ H.T
-                return self._predict_with_mlx_sparse(
-                    graph_nodes, graph_edges, query_node_id, top_k
-    )
-            
+                return self._predict_with_mlx_sparse(graph_nodes, graph_edges, query_node_id, top_k)
+
             node_index = self._build_node_index(graph_nodes)
             adj_data = self._build_adjacency_matrix(n, graph_edges, node_index)
 
@@ -1146,7 +1197,7 @@ class GNNPredictor:
             return predictions
 
         except Exception as e:
-            logger.warning(f'GNN prediction failed: {e}')
+            logger.warning(f"GNN prediction failed: {e}")
             return []
 
     def _predict_with_mlx_sparse(
@@ -1158,7 +1209,7 @@ class GNNPredictor:
     ) -> list[dict]:
         """
         Sparse GCN prediction for large graphs (M1 8GB safe).
-        
+
         Instead of computing full n×n matrix, we:
         1. Build subgraph around query_node (ego network up to 3 hops)
         2. Run GCN on the subgraph
@@ -1169,41 +1220,37 @@ class GNNPredictor:
             query_idx = node_index.get(query_node_id)
             if query_idx is None:
                 return []
-            
+
             # Build ego network (query + neighbors up to 2 hops)
             ego_nodes = self._build_ego_network(graph_nodes, graph_edges, query_node_id, max_hops=2)
             if len(ego_nodes) > self._MLX_MAX_INFERENCE_NODES:
-                ego_nodes = ego_nodes[:self._MLX_MAX_INFERENCE_NODES]
-            
+                ego_nodes = ego_nodes[: self._MLX_MAX_INFERENCE_NODES]
+
             # Reindex for subgraph
             sub_index = {node_id: i for i, node_id in enumerate(ego_nodes)}
             n_sub = len(ego_nodes)
-            
-            # Build subgraph adjacency and features
-            sub_edges = [e for e in graph_edges 
-                        if e.get('source') in sub_index and e.get('target') in sub_index]
+
+            sub_edges = [e for e in graph_edges if e.get("source") in sub_index and e.get("target") in sub_index]
             adj_data = self._build_adjacency_matrix(n_sub, sub_edges, sub_index)
-            features_data, feat_dim = self._build_feature_matrix(
-                [n for n in graph_nodes if n['id'] in sub_index]
-    )
-            
+            features_data, feat_dim = self._build_feature_matrix([n for n in graph_nodes if n["id"] in sub_index])
+
             # GCN on subgraph
             H1 = self._compute_gnn_hidden(adj_data, features_data, feat_dim)
             mx.eval(H1)
-            
+
             # Compute only query row of H @ H.T
             query_emb = H1[sub_index[query_node_id]]
             query_scores = (query_emb @ H1.T).tolist()
-            
+
             existing_neighbors = self._collect_existing_neighbors(graph_edges, query_node_id)
-            sub_nodes = [n for n in graph_nodes if n['id'] in sub_index]
+            sub_nodes = [n for n in graph_nodes if n["id"] in sub_index]
             predictions = self._score_and_sort(sub_nodes, query_scores, query_node_id, existing_neighbors, top_k)
-            
+
             self._cleanup_mlx_memory()
             return predictions
-            
+
         except Exception as e:
-            logger.warning(f'GNN sparse prediction failed: {e}')
+            logger.warning(f"GNN sparse prediction failed: {e}")
             return []
 
     def _build_ego_network(
@@ -1214,15 +1261,14 @@ class GNNPredictor:
         max_hops: int = 2,
     ) -> list[str]:
         """Build ego network (query node + neighbors up to max_hops)."""
-        # Build adjacency
         adj: dict[str, set] = {}
         for edge in graph_edges:
-            src = edge.get('source', '')
-            dst = edge.get('target', '')
+            src = edge.get("source", "")
+            dst = edge.get("target", "")
             if src and dst:
                 adj.setdefault(src, set()).add(dst)
                 adj.setdefault(dst, set()).add(src)
-        
+
         # BFS to collect ego network
         ego: set = {query_node_id}
         frontier = {query_node_id}
@@ -1236,47 +1282,58 @@ class GNNPredictor:
             frontier = next_frontier
             if not frontier:
                 break
-        
+
         return list(ego)
 
-    async def enrich_graph_from_research(self, research_results: list[dict], existing_graph_nodes: list[dict], existing_graph_edges: list[dict]) -> dict:
+    async def enrich_graph_from_research(
+        self, research_results: list[dict], existing_graph_nodes: list[dict], existing_graph_edges: list[dict]
+    ) -> dict:
         """
         Přidej nové uzly/hrany z výzkumných výsledků do IOC grafu.
         Volej po každém výzkumném sprintu pro kontinuální grafové obohacení.
         """
         import re
+
         new_nodes = []
         new_edges = []
-        domain_pattern = re.compile('\\b(?:[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}\\b')
-        ip_pattern = re.compile('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b')
-        hash_pattern = re.compile('\\b[0-9a-f]{64}\\b', re.I)
-        existing_ids = {n['id'] for n in existing_graph_nodes}
+        domain_pattern = re.compile("\\b(?:[a-z0-9](?:[a-z0-9\\-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}\\b")
+        ip_pattern = re.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
+        hash_pattern = re.compile("\\b[0-9a-f]{64}\\b", re.I)
+        existing_ids = {n["id"] for n in existing_graph_nodes}
         for result in research_results:
             text = str(result)
-            result.get('action', 'unknown')
+            result.get("action", "unknown")
             for match in domain_pattern.findall(text)[:20]:
-                node_id = f'domain:{match}'
+                node_id = f"domain:{match}"
                 if node_id not in existing_ids:
-                    new_nodes.append({'id': node_id, 'type': 'domain', 'value': match})
+                    new_nodes.append({"id": node_id, "type": "domain", "value": match})
                     existing_ids.add(node_id)
             for match in ip_pattern.findall(text)[:20]:
-                if match not in ('127.0.0.1', '0.0.0.0'):
-                    node_id = f'ip:{match}'
+                if match not in ("127.0.0.1", "0.0.0.0"):
+                    node_id = f"ip:{match}"
                     if node_id not in existing_ids:
-                        new_nodes.append({'id': node_id, 'type': 'ip', 'value': match})
+                        new_nodes.append({"id": node_id, "type": "ip", "value": match})
                         existing_ids.add(node_id)
             for match in hash_pattern.findall(text)[:10]:
-                node_id = f'sha256:{match}'
+                node_id = f"sha256:{match}"
                 if node_id not in existing_ids:
-                    new_nodes.append({'id': node_id, 'type': 'hash', 'value': match})
+                    new_nodes.append({"id": node_id, "type": "hash", "value": match})
                     existing_ids.add(node_id)
-        result_nodes_list = [[n for n in new_nodes if n['value'] in str(r)] for r in research_results]
+        result_nodes_list = [[n for n in new_nodes if n["value"] in str(r)] for r in research_results]
         for rn in result_nodes_list:
             for node_a, node_b in combinations(rn, 2):
-                new_edges.append({'source': node_a['id'], 'target': node_b['id'], 'type': 'co_occurrence', 'weight': 1.0})
-        return {'new_nodes': new_nodes, 'new_edges': new_edges, 'total_nodes': len(existing_graph_nodes) + len(new_nodes), 'total_edges': len(existing_graph_edges) + len(new_edges)}
+                new_edges.append(
+                    {"source": node_a["id"], "target": node_b["id"], "type": "co_occurrence", "weight": 1.0}
+                )
+        return {
+            "new_nodes": new_nodes,
+            "new_edges": new_edges,
+            "total_nodes": len(existing_graph_nodes) + len(new_nodes),
+            "total_edges": len(existing_graph_edges) + len(new_edges),
+        }
 
-def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: int=10) -> list[dict]:
+
+def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: int = 10) -> list[dict]:
     """
     Bridge mezi DuckPGQGraph.export_edge_list() a GNN inference.
 
@@ -1293,6 +1350,7 @@ def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: 
         seřazené podle frekvence (heuristika bez modelu).
     """
     from collections import Counter
+
     if not edge_list:
         return []
     try:
@@ -1315,7 +1373,7 @@ def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: 
                 results = []
                 for val, score in top_k_items:
                     rel = _most_common_rel(edge_list, val)
-                    results.append({'src': 'graph', 'dst': val, 'score': float(score), 'rel_type': rel})
+                    results.append({"src": "graph", "dst": val, "score": float(score), "rel_type": rel})
                 return results
     except Exception:  # noqa: BLE001
         pass
@@ -1324,29 +1382,35 @@ def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: 
     results = []
     for dst, count in freq.most_common(top_k):
         if dst not in seen_src:
-            results.append({'src': 'graph', 'dst': dst, 'score': float(count / max(1, len(edge_list))), 'rel_type': 'predicted'})
+            results.append(
+                {"src": "graph", "dst": dst, "score": float(count / max(1, len(edge_list))), "rel_type": "predicted"}
+            )
     return results
+
 
 def _infer_rel_type(rel: str) -> str:
     """Infer IOC type from relationship string."""
     rel_lower = rel.lower()
-    if 'resolv' in rel_lower or 'dns' in rel_lower:
-        return 'domain'
-    if 'links_to' in rel_lower or 'connects' in rel_lower:
-        return 'domain'
-    if 'communicat' in rel_lower or 'contact' in rel_lower:
-        return 'email'
-    if 'hosts' in rel_lower or 'serves' in rel_lower:
-        return 'ipv4'
-    return 'domain'
+    if "resolv" in rel_lower or "dns" in rel_lower:
+        return "domain"
+    if "links_to" in rel_lower or "connects" in rel_lower:
+        return "domain"
+    if "communicat" in rel_lower or "contact" in rel_lower:
+        return "email"
+    if "hosts" in rel_lower or "serves" in rel_lower:
+        return "ipv4"
+    return "domain"
+
 
 def _most_common_rel(edge_list: list[tuple[str, str, str, float]], dst: str) -> str:
     """Return most common relationship type for a given dst node."""
     from collections import Counter
+
     rels = [rel for _, d, rel, _ in edge_list if d == dst]
     if not rels:
-        return 'observed'
+        return "observed"
     return Counter(rels).most_common(1)[0][0]
+
 
 def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dict]:
     """
@@ -1361,6 +1425,7 @@ def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dic
         return []
     import statistics
     from collections import Counter
+
     try:
         try:
             from hledac.universal.brain.gnn_predictor import GNNPredictor
@@ -1375,10 +1440,10 @@ def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dic
             node_types = {}
             for node in all_nodes:
                 node_types[node] = _infer_rel_type(_most_common_rel(edge_list, node))
-            nodes_with_types = [(n, node_types.get(n, 'domain')) for n in all_nodes]
+            nodes_with_types = [(n, node_types.get(n, "domain")) for n in all_nodes]
             scores = predictor.score_ioc_batch(nodes_with_types, ioc_graph=None)
             threshold = 0.7
-            anomalies = [{'value': n, 'anomaly_score': float(s)} for n, s in scores.items() if s >= threshold]
+            anomalies = [{"value": n, "anomaly_score": float(s)} for n, s in scores.items() if s >= threshold]
             if anomalies:
                 return sorted(anomalies, key=lambda x: x["anomaly_score"], reverse=True)
     except Exception:  # noqa: BLE001
@@ -1391,9 +1456,22 @@ def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dic
     mean = statistics.mean(vals)
     stdev = statistics.stdev(vals) if len(vals) > 1 else 1.0
     threshold_val = mean + 2 * stdev
-    return [{'value': node, 'anomaly_score': min(1.0, count / max(1, threshold_val))} for node, count in degree.most_common() if count > threshold_val]
+    return [
+        {"value": node, "anomaly_score": min(1.0, count / max(1, threshold_val))}
+        for node, count in degree.most_common()
+        if count > threshold_val
+    ]
 
-def train_gnn_task(predictor: GNNPredictor, edges: list[tuple[int, int]], features, labels, num_epochs: int=10, batch_size: int=32, learning_rate: float=0.001):
+
+def train_gnn_task(
+    predictor: GNNPredictor,
+    edges: list[tuple[int, int]],
+    features,
+    labels,
+    num_epochs: int = 10,
+    batch_size: int = 32,
+    learning_rate: float = 0.001,
+) -> None:
     """
     Trénink GNN na pozadí – voláno schedulerem.
     edges: seznam (u, v) hran (neorientovaných)
@@ -1401,26 +1479,27 @@ def train_gnn_task(predictor: GNNPredictor, edges: list[tuple[int, int]], featur
     labels: vektor (n_nodes,) – 1 pro pozitivní (hrana existuje), 0 pro negativní
     """
     if not MLX_GNN_AVAILABLE:
-        logger.warning('MLX not available, skipping GNN training')
+        logger.warning("MLX not available, skipping GNN training")
         return
     try:
         import mlx.optimizers as optim
         from mlx.nn import losses
     except (ImportError, AttributeError) as e:
-        logger.warning(f'MLX imports failed: {e}, skipping GNN training')
+        logger.warning(f"MLX imports failed: {e}, skipping GNN training")
         return
     n_nodes = features.shape[0]
     MAX_TRAIN_NODES = 5000
     if n_nodes > MAX_TRAIN_NODES:
-        logger.warning(f'Limiting GNN training from {n_nodes} to {MAX_TRAIN_NODES} nodes')
+        logger.warning(f"Limiting GNN training from {n_nodes} to {MAX_TRAIN_NODES} nodes")
         import random
+
         node_subset = random.sample(range(n_nodes), MAX_TRAIN_NODES)
         node_set = set(node_subset)
         edges = [(u, v) for u, v in edges if u in node_set and v in node_set]
         node_map = {old: new for new, old in enumerate(node_subset)}
         edges = [(node_map[u], node_map[v]) for u, v in edges]
         features = features[node_subset]
-        labels = labels[node_subset] if hasattr(labels, '__getitem__') else labels
+        labels = labels[node_subset] if hasattr(labels, "__getitem__") else labels
         n_nodes = MAX_TRAIN_NODES
     adj_np = np.zeros((n_nodes, n_nodes), dtype=np.float32)
     for u, v in edges:
@@ -1434,13 +1513,14 @@ def train_gnn_task(predictor: GNNPredictor, edges: list[tuple[int, int]], featur
     def loss_fn(model, x, adj, y):
         pred = model(x, adj).squeeze()
         return losses.binary_cross_entropy(pred, y)
+
     loss_and_grad_fn = nn.value_and_grad(model, loss_fn)
     for epoch in range(num_epochs):
         loss, grads = loss_and_grad_fn(model, features, adj, labels)
         optimizer.update(model, grads)
         mx.eval(model.parameters(), optimizer.state)
         if epoch % 2 == 0:
-            logger.debug(f'GNN training epoch {epoch}, loss: {loss.item():.4f}')
+            logger.debug(f"GNN training epoch {epoch}, loss: {loss.item():.4f}")
     predictor.model = model
     predictor.trained = True
-    logger.info('GNN training completed')
+    logger.info("GNN training completed")

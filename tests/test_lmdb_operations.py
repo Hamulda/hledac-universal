@@ -14,29 +14,27 @@ Run with: pytest tests/test_lmdb_operations.py -v
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
 
-import pytest
-from hypothesis import given, settings, Verbosity, assume, Phase
+from hypothesis import Phase, Verbosity, assume, given, settings
 from hypothesis.strategies import (
     binary,
-    booleans,
     dictionaries,
     floats,
     integers,
     lists,
-    none,
     one_of,
     text,
     tuples,
 )
 
+from hledac.universal.security.pii_gate import (
+    SanitizationResult,
+    SecurityGate,
+)
 from hledac.universal.tools.lmdb_kv import LMDBKVStore
 from hledac.universal.utils.lmdb_bulk import (
-    DEFAULT_BULK_BATCH,
-    LMDBPair,
     _BULK_BATCH_MAX,
     _BULK_BATCH_MIN,
     _normalise_items,
@@ -44,17 +42,11 @@ from hledac.universal.utils.lmdb_bulk import (
     putmulti_bounded_str,
     putmulti_safe,
 )
-from hledac.universal.security.pii_gate import (
-    PIICategory,
-    PIIMatch,
-    SanitizationResult,
-    SecurityGate,
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_temp_dir() -> Path:
     return Path(tempfile.mkdtemp(prefix="hypothesis_lmdb_"))
@@ -64,18 +56,22 @@ def _make_temp_dir() -> Path:
 # LMDBKVStore — put/get/delete round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestLMDBKVStorePropertyBased:
     """LMDBKVStore key-value invariants via Hypothesis."""
 
     @given(
         keys=lists(text(min_size=1, max_size=256), min_size=1, max_size=500, unique=True),
-        values=dictionaries(keys=text(min_size=1, max_size=256), values=one_of(
-            text(max_size=4096),
-            dictionaries(keys=text(max_size=64), values=text(max_size=1024)),
-        )),
+        values=dictionaries(
+            keys=text(min_size=1, max_size=256),
+            values=one_of(
+                text(max_size=4096),
+                dictionaries(keys=text(max_size=64), values=text(max_size=1024)),
+            ),
+        ),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None, phases=[Phase.generate])
-    def test_put_get_roundtrip(self, keys, values):
+    def test_put_get_roundtrip(self, keys, values) -> None:
         """Every stored key-value pair is retrievable via get()."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -98,7 +94,7 @@ class TestLMDBKVStorePropertyBased:
         n=integers(min_value=10, max_value=500),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_put_many_all_keys_retrievable(self, n):
+    def test_put_many_all_keys_retrievable(self, n) -> None:
         """put_many stores N items; all are get-able afterwards."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -117,7 +113,7 @@ class TestLMDBKVStorePropertyBased:
         pct=floats(min_value=0.1, max_value=0.9),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_put_many_partial_duplicates(self, n, pct):
+    def test_put_many_partial_duplicates(self, n, pct) -> None:
         """put_many with intra-batch duplicates: first-seen wins, dropped count correct."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -140,7 +136,7 @@ class TestLMDBKVStorePropertyBased:
 
     @given(keys=lists(text(min_size=1, max_size=256), min_size=1, max_size=200, unique=True))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_delete_key_gone(self, keys):
+    def test_delete_key_gone(self, keys) -> None:
         """After delete, get returns None."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -166,7 +162,7 @@ class TestLMDBKVStorePropertyBased:
 
     @given(keys=lists(text(min_size=1, max_size=256), min_size=1, max_size=200, unique=True))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_delete_nonexistent_returns_false(self, keys):
+    def test_delete_nonexistent_returns_false(self, keys) -> None:
         """Deleting a never-stored key returns False (not an exception)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -181,7 +177,7 @@ class TestLMDBKVStorePropertyBased:
         value=dictionaries(keys=text(max_size=128), values=text(max_size=2048)),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None)
-    def test_overwrite_updates_value(self, key, value):
+    def test_overwrite_updates_value(self, key, value) -> None:
         """Overwriting an existing key updates the stored value."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -196,7 +192,7 @@ class TestLMDBKVStorePropertyBased:
 
     @given(items=lists(tuples(text(min_size=1, max_size=128), binary(max_size=4096)), min_size=1, max_size=300))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_binary_value_roundtrip(self, items):
+    def test_binary_value_roundtrip(self, items) -> None:
         """Binary values (bytes) are stored and retrieved intact."""
         assume(all(len(k) > 0 for k, _ in items))
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -211,7 +207,7 @@ class TestLMDBKVStorePropertyBased:
                 assert retrieved["binary_data"] == v["binary_data"]
             store.close()
 
-    def test_empty_put_many_returns_empty_list(self):
+    def test_empty_put_many_returns_empty_list(self) -> None:
         """put_many([]) returns [] (never raises)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir)
@@ -224,6 +220,7 @@ class TestLMDBKVStorePropertyBased:
 # putmulti_bounded — batch bounds, normalization, partial failure
 # ---------------------------------------------------------------------------
 
+
 class TestPutmultiBoundedPropertyBased:
     """putmulti_bounded invariants via Hypothesis."""
 
@@ -231,9 +228,10 @@ class TestPutmultiBoundedPropertyBased:
         n_keys=integers(min_value=1, max_value=5000),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_returns_exact_count(self, n_keys):
+    def test_returns_exact_count(self, n_keys) -> None:
         """putmulti_bounded returns number of items processed (≤ n_keys)."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         items = [(f"k{i}".encode(), f"v{i}".encode()) for i in range(n_keys)]
@@ -246,9 +244,10 @@ class TestPutmultiBoundedPropertyBased:
         max_batch=integers(min_value=_BULK_BATCH_MIN, max_value=_BULK_BATCH_MAX),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_max_batch_never_exceeded(self, n_keys, max_batch):
+    def test_max_batch_never_exceeded(self, n_keys, max_batch) -> None:
         """Chunk size never exceeds max_batch."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         items = [(f"k{i}".encode(), f"v{i}".encode()) for i in range(n_keys)]
@@ -262,9 +261,10 @@ class TestPutmultiBoundedPropertyBased:
 
     @given(items=lists(tuples(binary(max_size=64), binary(max_size=512)), min_size=0, max_size=1000))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_empty_input_returns_zero(self, _items):
+    def test_empty_input_returns_zero(self, _items) -> None:
         """Empty input returns 0 (never raises)."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         result = putmulti_bounded(env, [])
@@ -276,9 +276,10 @@ class TestPutmultiBoundedPropertyBased:
         max_batch=integers(min_value=_BULK_BATCH_MIN, max_value=_BULK_BATCH_MAX),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_mapping_input_normalized(self, n, max_batch):
+    def test_mapping_input_normalized(self, n, max_batch) -> None:
         """Single-entry mappings are accepted and normalized correctly."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         # Dict input (1-entry mappings)
@@ -291,9 +292,10 @@ class TestPutmultiBoundedPropertyBased:
         n=integers(min_value=1, max_value=100),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_putmulti_safe_swallows_exceptions(self, n):
+    def test_putmulti_safe_swallows_exceptions(self, n) -> None:
         """putmulti_safe returns 0 on exception (never propagates)."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         items = [(f"k{i}".encode(), f"v{i}".encode()) for i in range(n)]
@@ -307,9 +309,10 @@ class TestPutmultiBoundedPropertyBased:
         max_batch=integers(min_value=1, max_value=_BULK_BATCH_MAX),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_str_key_dict_value_roundtrip(self, n, max_batch):
+    def test_str_key_dict_value_roundtrip(self, n, max_batch) -> None:
         """putmulti_bounded_str with str keys and dict values: all round-trip correctly."""
         import lmdb
+
         tmpdir = str(_make_temp_dir())
         env = lmdb.open(tmpdir, map_size=256 * 1024 * 1024)
         items = [(f"key_{i}", {"seq": i, "data": f"val_{i}"}) for i in range(n)]
@@ -329,6 +332,7 @@ class TestPutmultiBoundedPropertyBased:
 # UnifiedLMDB — SubDB operations
 # ---------------------------------------------------------------------------
 
+
 class TestUnifiedLMDBPropertyBased:
     """UnifiedLMDB SubDB put/get/delete/scan_prefix invariants."""
 
@@ -337,9 +341,9 @@ class TestUnifiedLMDBPropertyBased:
         sub_idx=integers(min_value=0, max_value=15),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_put_get_delete_roundtrip(self, n, sub_idx):
+    def test_put_get_delete_roundtrip(self, n, sub_idx) -> None:
         """SubDB put→get→delete: value retrievable after put, gone after delete."""
-        from hledac.universal._core.lmdb_unified import UnifiedLMDB, SubDB
+        from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
         tmpdir = str(_make_temp_dir())
         store = UnifiedLMDB(path=tmpdir, lazy=False)
@@ -379,7 +383,7 @@ class TestUnifiedLMDBPropertyBased:
         sub_idx=integers(min_value=0, max_value=15),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_scan_prefix_exact(self, n, sub_idx):
+    def test_scan_prefix_exact(self, n, sub_idx) -> None:
         """scan_prefix returns all items matching the prefix."""
         from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
@@ -410,7 +414,7 @@ class TestUnifiedLMDBPropertyBased:
         sub_idx=integers(min_value=0, max_value=15),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_put_batch_all_retrievable(self, n, sub_idx):
+    def test_put_batch_all_retrievable(self, n, sub_idx) -> None:
         """put_batch stores items that are then individually get-able."""
         from hledac.universal._core.lmdb_unified import UnifiedLMDB
 
@@ -432,6 +436,7 @@ class TestUnifiedLMDBPropertyBased:
 # LMDBKVStore — max_keys bound
 # ---------------------------------------------------------------------------
 
+
 class TestLMDBKVStoreBounds:
     """LMDBKVStore bounded storage invariants."""
 
@@ -440,7 +445,7 @@ class TestLMDBKVStoreBounds:
         max_keys=integers(min_value=5, max_value=50),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=10, deadline=None)
-    def test_max_keys_early_reject(self, _n_stores, max_keys):
+    def test_max_keys_early_reject(self, _n_stores, max_keys) -> None:
         """When max_keys is reached, subsequent put returns False (no crash)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir, max_keys=max_keys)
@@ -450,13 +455,13 @@ class TestLMDBKVStoreBounds:
                 assert ok, f"put {i} should succeed"
 
             # Next put must fail gracefully
-            ok = store.put(f"overflow_key", {"overflow": True})
+            ok = store.put("overflow_key", {"overflow": True})
             assert ok is False, "put beyond max_keys should return False"
             store.close()
 
     @given(max_keys=integers(min_value=5, max_value=50))
     @settings(verbosity=Verbosity.verbose, max_examples=10, deadline=None)
-    def test_put_many_respects_max_keys(self, max_keys):
+    def test_put_many_respects_max_keys(self, max_keys) -> None:
         """put_many writes at most max_keys items."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = LMDBKVStore(path=tmpdir, max_keys=max_keys)
@@ -473,12 +478,13 @@ class TestLMDBKVStoreBounds:
 # SecurityGate — PII sanitization invariants
 # ---------------------------------------------------------------------------
 
+
 class TestSecurityGatePropertyBased:
     """SecurityGate sanitization invariants via Hypothesis."""
 
     @given(text_content=text(min_size=0, max_size=10000))
     @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None)
-    def test_sanitize_never_crashes(self, text_content):
+    def test_sanitize_never_crashes(self, text_content) -> None:
         """sanitize() never raises on any string input."""
         gate = SecurityGate()
         result = gate.sanitize(text_content)
@@ -490,7 +496,7 @@ class TestSecurityGatePropertyBased:
 
     @given(text_content=text(min_size=0, max_size=10000))
     @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None)
-    def test_sanitize_deterministic(self, text_content):
+    def test_sanitize_deterministic(self, text_content) -> None:
         """sanitize() is deterministic: same input → same output."""
         gate = SecurityGate()
         r1 = gate.sanitize(text_content)
@@ -501,7 +507,7 @@ class TestSecurityGatePropertyBased:
 
     @given(text_content=text(min_size=0, max_size=10000))
     @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None)
-    def test_sanitized_not_shorter_than_original(self, text_content):
+    def test_sanitized_not_shorter_than_original(self, text_content) -> None:
         """Sanitized text is never longer than original (masking reduces length)."""
         gate = SecurityGate()
         result = gate.sanitize(text_content)
@@ -509,7 +515,7 @@ class TestSecurityGatePropertyBased:
 
     @given(text_content=text(min_size=0, max_size=5000))
     @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None)
-    def test_mask_pii_replaces_matches(self, text_content):
+    def test_mask_pii_replaces_matches(self, text_content) -> None:
         """When mask_pii=True, matched PII positions are masked."""
         gate = SecurityGate()
         result = gate.sanitize(text_content, mask_pii=True)
@@ -521,7 +527,7 @@ class TestSecurityGatePropertyBased:
 
     @given(text_content=text(min_size=0, max_size=5000))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_non_string_returns_empty_clean(self, text_content):
+    def test_non_string_returns_empty_clean(self, text_content) -> None:
         """Non-string input returns empty sanitized text with success=True."""
         gate = SecurityGate()
         result = gate.sanitize(text_content)
@@ -529,7 +535,7 @@ class TestSecurityGatePropertyBased:
 
     @given(emails=lists(text(min_size=3, max_size=50), min_size=0, max_size=100))
     @settings(verbosity=Verbosity.verbose, max_examples=10, deadline=None)
-    def test_email_detection_roundtrip(self, emails):
+    def test_email_detection_roundtrip(self, emails) -> None:
         """Known emails are detected and masked."""
         gate = SecurityGate()
         text_block = " | ".join(emails) if emails else ""
@@ -543,7 +549,7 @@ class TestSecurityGatePropertyBased:
 
     @given(text_content=text(min_size=0, max_size=5000))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_return_matches_false_hides_detail(self, text_content):
+    def test_return_matches_false_hides_detail(self, text_content) -> None:
         """return_matches=False returns empty pii_found list (but pii_count still valid)."""
         gate = SecurityGate()
         r_full = gate.sanitize(text_content, return_matches=True)
@@ -556,18 +562,19 @@ class TestSecurityGatePropertyBased:
 # Normalize_items — type normalization invariants
 # ---------------------------------------------------------------------------
 
+
 class TestNormaliseItemsPropertyBased:
     """_normalise_items type normalization invariants."""
 
     @given(n=integers(min_value=0, max_value=100))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_empty_returns_empty(self, _n):
+    def test_empty_returns_empty(self, _n) -> None:
         """Empty input returns empty list."""
         assert _normalise_items([]) == []
 
     @given(n=integers(min_value=1, max_value=100))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_tuple_pairs_unchanged(self, n):
+    def test_tuple_pairs_unchanged(self, n) -> None:
         """(bytes, bytes) tuples pass through unchanged."""
         items = [(f"k{i}".encode(), f"v{i}".encode()) for i in range(n)]
         result = _normalise_items(items)
@@ -578,7 +585,7 @@ class TestNormaliseItemsPropertyBased:
 
     @given(n=integers(min_value=1, max_value=100))
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_single_entry_mapping_normalized(self, n):
+    def test_single_entry_mapping_normalized(self, n) -> None:
         """Single-entry {bytes: bytes} mappings are normalized to tuples."""
         items = [{f"k{i}".encode(): f"v{i}".encode()} for i in range(n)]
         result = _normalise_items(items)
@@ -589,7 +596,7 @@ class TestNormaliseItemsPropertyBased:
 
     @given()
     @settings(verbosity=Verbosity.verbose, max_examples=10, deadline=None)
-    def test_multi_entry_mapping_raises(self):
+    def test_multi_entry_mapping_raises(self) -> None:
         """Multi-entry mapping raises TypeError (not ValueError, not crash)."""
         import pytest as p
 
@@ -599,7 +606,7 @@ class TestNormaliseItemsPropertyBased:
 
     @given(n=integers(min_value=1, max_value=100))
     @settings(verbosity=Verbosity.verbose, max_examples=10, deadline=None)
-    def test_non_tuple_non_mapping_raises(self, n):
+    def test_non_tuple_non_mapping_raises(self, n) -> None:
         """Non-tuple, non-mapping items raise TypeError."""
         import pytest as p
 
@@ -612,6 +619,7 @@ class TestNormaliseItemsPropertyBased:
 # putmulti_bounded_str — str-keyed JSON round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestPutmultiBoundedStrPropertyBased:
     """putmulti_bounded_str JSON dict value round-trip."""
 
@@ -620,7 +628,7 @@ class TestPutmultiBoundedStrPropertyBased:
         key_prefix=text(max_size=32),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_prefixed_key_roundtrip(self, n, key_prefix):
+    def test_prefixed_key_roundtrip(self, n, key_prefix) -> None:
         """Key prefix is correctly prepended and can be scanned."""
         import lmdb
 
@@ -650,7 +658,7 @@ class TestPutmultiBoundedStrPropertyBased:
         n=integers(min_value=1, max_value=200),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=15, deadline=None)
-    def test_no_prefix_roundtrip(self, n):
+    def test_no_prefix_roundtrip(self, n) -> None:
         """Without key_prefix, items stored with exact str key bytes."""
         import lmdb
 

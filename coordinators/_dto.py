@@ -12,6 +12,7 @@ These DTOs are used across multiple coordinators.
 Canonical import:
     from hledac.universal.coordinators._dto import DecisionResponse, OperationResult, CoordinatorCapabilities, OperationType
 """
+
 from __future__ import annotations
 
 import time
@@ -19,13 +20,14 @@ from enum import Enum, auto
 from typing import Any
 
 import msgspec
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 
 class OperationType(Enum):
     """Universal operation types supported by coordinators."""
+
     RESEARCH = auto()
     EXECUTION = auto()
     SECURITY = auto()
@@ -36,6 +38,7 @@ class OperationType(Enum):
 
 class DecisionResponse(Struct):
     """Decision from orchestrator to be executed by coordinator."""
+
     decision_id: str
     chosen_option: str
     confidence: float
@@ -47,6 +50,7 @@ class DecisionResponse(Struct):
 
 class OperationResult(Struct, frozen=True):
     """Result of coordinator operation execution."""
+
     operation_id: str
     status: str
     result_summary: str
@@ -64,15 +68,17 @@ class ExecutionResult(Struct):
     Used by the handle_request template method to construct OperationResult.
     All fields except 'success' are optional — template fills in the rest.
     """
+
     success: bool
-    status: str = 'completed'
-    result_summary: str = ''
+    status: str = "completed"
+    result_summary: str = ""
     error_message: str | None = None
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
 class CoordinatorCapabilities(Struct, frozen=True):
     """Capabilities reported by a coordinator."""
+
     name: str
     supported_operations: list[OperationType]
     features: list[str]
@@ -83,9 +89,9 @@ class CoordinatorCapabilities(Struct, frozen=True):
 
 
 __all__ = [
-    'OperationType',
-    'DecisionResponse',
-    'OperationResult',
-    'ExecutionResult',
-    'CoordinatorCapabilities',
+    "OperationType",
+    "DecisionResponse",
+    "OperationResult",
+    "ExecutionResult",
+    "CoordinatorCapabilities",
 ]

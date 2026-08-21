@@ -18,13 +18,13 @@ Usage:
     await notifier.start()
     # Now Rust can wake Python via pipe write
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
-from _core import aclose
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -42,7 +42,8 @@ class WakeFdNotifier:
     Když Rust zapíše do pipe (wake), Python callback
     zavolá recv_batch() a notifikuje waitery.
     """
-    __slots__ = tuple(('_pool', '_loop', '_reader_handle', '_callbacks', '_running'))
+
+    __slots__ = ("_pool", "_loop", "_reader_handle", "_callbacks", "_running")
 
     def __init__(self, pool: Any, loop: asyncio.AbstractEventLoop) -> None:
         self._pool = pool
@@ -90,7 +91,7 @@ class WakeFdNotifier:
             self._reader_handle = self._loop.add_reader(
                 wake_fd,
                 self._on_wake,
-    )
+            )
             self._running = True
             logger.info(f"[WakeFdNotifier] Registered wake_fd={wake_fd}")
 
@@ -136,6 +137,7 @@ async def create_mpsc_notifier(
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         MPSCPool = rust.raw.MPSCPool
     except ImportError:
         logger.error("[create_mpsc_notifier] hledac_rust_extensions not available")

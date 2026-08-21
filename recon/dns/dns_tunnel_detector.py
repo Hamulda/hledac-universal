@@ -17,21 +17,24 @@ Architecture:
 
 M1 Optimized: Uses MLX for LSTM inference when available.
 """
+
 import asyncio
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
 import numpy as np
+
+from compat.msgspec_gc_compat import Struct
 
 # scapy.all — strict import with fallback
 try:
     from scapy.all import DNS, DNSQR, PcapReader
+
     HAS_SCAPY = True
 except ImportError:
     DNS = None
@@ -42,6 +45,7 @@ except ImportError:
 # pywt — strict import with fallback
 try:
     import pywt
+
     HAS_PYWAVELETS = True
 except ImportError:
     pywt = None
@@ -51,6 +55,7 @@ except ImportError:
 try:
     import mlx.core as mx
     import mlx.nn as nn
+
     HAS_MLX = True
 except ImportError:
     mx = None
@@ -59,16 +64,15 @@ except ImportError:
 
 # R6: Centralized Rust access via core.rust_backend
 from hledac.universal._core.rust_backend import rust
-from _core import aclose
 
 HAS_RUST_ENCODING = rust.is_available
 
 _entropy_mod = rust.raw.rust_calculate_entropy
 if _entropy_mod is not None and _entropy_mod:
-    rust_fast_entropy_screen = getattr(_entropy_mod, 'fast_entropy_screen', None)
-    rust_ngram_analysis = getattr(_entropy_mod, 'ngram_analysis', None)
-    rust_majority_vote = getattr(_entropy_mod, 'majority_vote', None)
-    rust_batch_entropy_analysis = getattr(_entropy_mod, 'batch_entropy_analysis', None)
+    rust_fast_entropy_screen = getattr(_entropy_mod, "fast_entropy_screen", None)
+    rust_ngram_analysis = getattr(_entropy_mod, "ngram_analysis", None)
+    rust_majority_vote = getattr(_entropy_mod, "majority_vote", None)
+    rust_batch_entropy_analysis = getattr(_entropy_mod, "batch_entropy_analysis", None)
     HAS_RUST_ENTROPY = True
 else:
     rust_fast_entropy_screen = None
@@ -77,12 +81,15 @@ else:
     rust_batch_entropy_analysis = None
     HAS_RUST_ENTROPY = False
 
+
 class Verdict(Enum):
     """Detection verdict enumeration."""
-    BENIGN = 'benign'
-    SUSPICIOUS = 'suspicious'
-    MALICIOUS = 'malicious'
-    AMBIGUOUS = 'ambiguous'
+
+    BENIGN = "benign"
+    SUSPICIOUS = "suspicious"
+    MALICIOUS = "malicious"
+    AMBIGUOUS = "ambiguous"
+
 
 class DNSTunnelConfig(Struct):
     """Configuration for DNS tunneling detector.
@@ -97,6 +104,7 @@ class DNSTunnelConfig(Struct):
         wavelet_levels: Number of wavelet decomposition levels
         majority_vote_threshold: Minimum votes needed for definitive verdict
     """
+
     entropy_threshold: float = 4.2
     ngram_threshold: float = 0.7
     lstm_threshold: float = 0.8
@@ -105,6 +113,7 @@ class DNSTunnelConfig(Struct):
     pcap_chunk_seconds: int = 60
     wavelet_levels: int = 4
     majority_vote_threshold: int = 2
+
 
 class NGramScore(Struct, frozen=True):
     """N-gram analysis score.
@@ -115,10 +124,12 @@ class NGramScore(Struct, frozen=True):
         char_distribution: Character distribution entropy
         anomaly_score: Combined anomaly score (0-1, higher = more anomalous)
     """
+
     bigram_freq: float = 0.0
     trigram_freq: float = 0.0
     char_distribution: float = 0.0
     anomaly_score: float = 0.0
+
 
 class TunnelingFinding(Struct):
     """DNS tunneling detection finding.
@@ -135,16 +146,19 @@ class TunnelingFinding(Struct):
         source_ip: Optional source IP address
         dest_ip: Optional destination IP address
     """
+
     query: str
     entropy: float = 0.0
     ngram_score: NGramScore = field(default_factory=NGramScore)
     lstm_score: float = 0.0
     verdict: Verdict = Verdict.BENIGN
     confidence: float = 0.0
-    encoding_type: str = ''
+    encoding_type: str = ""
     timestamp: float | None = None
     source_ip: str | None = None
     dest_ip: str | None = None
+
+
 if HAS_MLX:
 
     class LSTMTunnelClassifier(nn.Module):
@@ -153,9 +167,10 @@ if HAS_MLX:
         2-layer LSTM with 128 hidden units for classifying DNS queries
         as benign or malicious based on wavelet-transformed features.
         """
-        __slots__ = tuple(('dropout', 'fc1', 'fc2', 'hidden_dim', 'lstm_layers', 'num_layers'))
 
-        def __init__(self, input_dim: int=256, hidden_dim: int=128, num_layers: int=2):
+        __slots__ = ("dropout", "fc1", "fc2", "hidden_dim", "lstm_layers", "num_layers")
+
+        def __init__(self, input_dim: int = 256, hidden_dim: int = 128, num_layers: int = 2) -> None:
             super().__init__()
             self.hidden_dim = hidden_dim
             self.num_layers = num_layers
@@ -188,6 +203,7 @@ if HAS_MLX:
 else:
     LSTMTunnelClassifier = None
 
+
 class DNSTunnelDetector:
     """Cascade DNS tunneling detector.
 
@@ -204,14 +220,66 @@ class DNSTunnelDetector:
         >>> findings = await detector.analyze_queries(["example.com", "a1b2c3..."])
         >>> await detector.cleanup()
     """
-    ENGLISH_BIGRAMS: dict[str, float] = {'th': 0.035, 'he': 0.03, 'in': 0.024, 'er': 0.022, 'an': 0.021, 're': 0.018, 'on': 0.017, 'at': 0.016, 'en': 0.015, 'nd': 0.015, 'ti': 0.014, 'es': 0.014, 'or': 0.014, 'te': 0.013, 'of': 0.013, 'ed': 0.013, 'is': 0.012, 'it': 0.012, 'al': 0.012, 'ar': 0.011, 'st': 0.011, 'to': 0.011, 'nt': 0.011, 'ng': 0.01, 'se': 0.01, 'ha': 0.01, 'as': 0.009, 'ou': 0.009, 'io': 0.009, 'le': 0.009, 've': 0.009, 'co': 0.009, 'me': 0.009, 'de': 0.009, 'hi': 0.008, 'ri': 0.008, 'ro': 0.008, 'ic': 0.008, 'ne': 0.008, 'ea': 0.008, 'ra': 0.008, 'ce': 0.007, 'li': 0.007, 'ch': 0.007, 'll': 0.007, 'be': 0.007, 'ma': 0.007, 'si': 0.007, 'om': 0.007, 'ur': 0.006}
-    BASE32_PATTERN = re.compile('^[A-Z2-7]+=*$')
-    BASE64_PATTERN = re.compile('^[A-Za-z0-9+/]+=*$')
-    HEX_PATTERN = re.compile('^[0-9a-fA-F]+$')
-    HIGH_ENTROPY_PATTERN = re.compile('[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]')
-    __slots__ = tuple(('_bigram_db', '_initialized', '_lstm_model', '_query_stats', 'config'))
 
-    def __init__(self, config: DNSTunnelConfig | None=None):
+    ENGLISH_BIGRAMS: dict[str, float] = {
+        "th": 0.035,
+        "he": 0.03,
+        "in": 0.024,
+        "er": 0.022,
+        "an": 0.021,
+        "re": 0.018,
+        "on": 0.017,
+        "at": 0.016,
+        "en": 0.015,
+        "nd": 0.015,
+        "ti": 0.014,
+        "es": 0.014,
+        "or": 0.014,
+        "te": 0.013,
+        "of": 0.013,
+        "ed": 0.013,
+        "is": 0.012,
+        "it": 0.012,
+        "al": 0.012,
+        "ar": 0.011,
+        "st": 0.011,
+        "to": 0.011,
+        "nt": 0.011,
+        "ng": 0.01,
+        "se": 0.01,
+        "ha": 0.01,
+        "as": 0.009,
+        "ou": 0.009,
+        "io": 0.009,
+        "le": 0.009,
+        "ve": 0.009,
+        "co": 0.009,
+        "me": 0.009,
+        "de": 0.009,
+        "hi": 0.008,
+        "ri": 0.008,
+        "ro": 0.008,
+        "ic": 0.008,
+        "ne": 0.008,
+        "ea": 0.008,
+        "ra": 0.008,
+        "ce": 0.007,
+        "li": 0.007,
+        "ch": 0.007,
+        "ll": 0.007,
+        "be": 0.007,
+        "ma": 0.007,
+        "si": 0.007,
+        "om": 0.007,
+        "ur": 0.006,
+    }
+    BASE32_PATTERN = re.compile("^[A-Z2-7]+=*$")
+    BASE64_PATTERN = re.compile("^[A-Za-z0-9+/]+=*$")
+    HEX_PATTERN = re.compile("^[0-9a-fA-F]+$")
+    HIGH_ENTROPY_PATTERN = re.compile("[a-z][A-Z]|[A-Z][a-z]|[a-zA-Z][0-9]|[0-9][a-zA-Z]")
+    __slots__ = ("_bigram_db", "_initialized", "_lstm_model", "_query_stats", "config")
+
+    def __init__(self, config: DNSTunnelConfig | None = None) -> None:
         """Initialize detector with configuration.
 
         Args:
@@ -221,7 +289,13 @@ class DNSTunnelDetector:
         self._initialized = False
         self._bigram_db: dict[str, float] = {}
         self._lstm_model: LSTMTunnelClassifier | None = None
-        self._query_stats: dict[str, Any] = {'total_processed': 0, 'entropy_hits': 0, 'ngram_hits': 0, 'lstm_validations': 0, 'lstm_hits': 0}
+        self._query_stats: dict[str, Any] = {
+            "total_processed": 0,
+            "entropy_hits": 0,
+            "ngram_hits": 0,
+            "lstm_validations": 0,
+            "lstm_hits": 0,
+        }
 
     async def initialize(self) -> None:
         """Initialize detector with bigram database and LSTM model.
@@ -252,7 +326,7 @@ class DNSTunnelDetector:
         if not data:
             return 0.0
         if isinstance(data, str):
-            data = data.encode('utf-8')
+            data = data.encode("utf-8")
         byte_counts = Counter(data)
         total = len(data)
         entropy = 0.0
@@ -273,11 +347,11 @@ class DNSTunnelDetector:
             Tuple of (entropy_value, is_suspicious)
             is_suspicious is None if inconclusive
         """
-        parts = query.lower().split('.')
+        parts = query.lower().split(".")
         if len(parts) < 2:
             subdomain = query
         else:
-            subdomain = '.'.join(parts[:-2]) if len(parts) > 2 else parts[0]
+            subdomain = ".".join(parts[:-2]) if len(parts) > 2 else parts[0]
         if not subdomain or len(subdomain) < 4:
             return (0.0, False)
         entropy = self._calculate_entropy(subdomain)
@@ -300,24 +374,24 @@ class DNSTunnelDetector:
         Returns:
             NGramScore with frequency and anomaly metrics
         """
-        parts = query.lower().split('.')
+        parts = query.lower().split(".")
         if len(parts) < 2:
             text = query.lower()
         else:
-            text = ''.join(parts[:-2]) if len(parts) > 2 else parts[0].lower()
+            text = "".join(parts[:-2]) if len(parts) > 2 else parts[0].lower()
         if len(text) < 3:
             return NGramScore(bigram_freq=0.5, trigram_freq=0.5, char_distribution=0.5, anomaly_score=0.0)
-        bigrams = [''.join(t) for t in zip(text, text[1:])]
+        bigrams = ["".join(t) for t in zip(text, text[1:], strict=False)]
         bigram_scores = []
         for bg in bigrams:
             freq = self._bigram_db.get(bg, 0.001)
             bigram_scores.append(freq)
         avg_bigram = sum(bigram_scores) / len(bigram_scores) if bigram_scores else 0.0
-        trigrams = [''.join(t) for t in zip(text, text[1:], text[2:])]
+        trigrams = ["".join(t) for t in zip(text, text[1:], text[2:], strict=False)]
         trigram_scores = []
-        vowels = set('aeiou')
+        vowels = set("aeiou")
         for tg in trigrams:
-            vowel_count = sum((1 for c in tg if c in vowels))
+            vowel_count = sum(1 for c in tg if c in vowels)
             if vowel_count == 1 or vowel_count == 2:
                 trigram_scores.append(0.7)
             elif vowel_count == 0:
@@ -334,7 +408,9 @@ class DNSTunnelDetector:
         max_entropy = math.log2(len(set(text))) if len(set(text)) > 1 else 1
         char_dist_score = 1.0 - char_entropy / max_entropy if max_entropy > 0 else 0.5
         anomaly = (1.0 - min(avg_bigram * 10, 1.0)) * 0.4 + (1.0 - avg_trigram) * 0.3 + char_dist_score * 0.3
-        return NGramScore(bigram_freq=avg_bigram, trigram_freq=avg_trigram, char_distribution=char_dist_score, anomaly_score=anomaly)
+        return NGramScore(
+            bigram_freq=avg_bigram, trigram_freq=avg_trigram, char_distribution=char_dist_score, anomaly_score=anomaly
+        )
 
     def _wavelet_preprocess(self, query: str) -> np.ndarray:
         """Preprocess query using wavelet transform.
@@ -348,14 +424,14 @@ class DNSTunnelDetector:
         Returns:
             256-dimensional numpy array
         """
-        query_bytes = query.encode('utf-8', errors='ignore')
+        query_bytes = query.encode("utf-8", errors="ignore")
         signal = np.zeros(64, dtype=np.float32)
         length = min(len(query_bytes), 64)
         if length > 0:
             signal[:length] = np.array(list(query_bytes[:length]), dtype=np.float32) / 255.0
         if HAS_PYWAVELETS:
             try:
-                coeffs = pywt.wavedec(signal, 'db4', level=self.config.wavelet_levels)
+                coeffs = pywt.wavedec(signal, "db4", level=self.config.wavelet_levels)
                 features = np.concatenate([c[:64] for c in coeffs[:4]])
                 if len(features) < 256:
                     features = np.pad(features, (0, 256 - len(features)))
@@ -413,25 +489,25 @@ class DNSTunnelDetector:
         if HAS_RUST_ENCODING:
             return _rust_detect_encoding(query)
         patterns = []
-        parts = query.split('.')
+        parts = query.split(".")
         for part in parts:
             if len(part) < 4:
                 continue
             if self.BASE32_PATTERN.match(part) and len(part) >= 8:
-                base32_chars = sum((1 for c in part if c.isupper() or c in '234567'))
+                base32_chars = sum(1 for c in part if c.isupper() or c in "234567")
                 if base32_chars / len(part) > 0.9:
-                    patterns.append('base32')
+                    patterns.append("base32")
                     continue
             if self.BASE64_PATTERN.match(part) and len(part) >= 8:
-                has_lower = any((c.islower() for c in part))
-                has_upper = any((c.isupper() for c in part))
-                has_digit = any((c.isdigit() for c in part))
-                if (has_lower or has_upper) and (has_digit or '+' in part or '/' in part):
-                    patterns.append('base64')
+                has_lower = any(c.islower() for c in part)
+                has_upper = any(c.isupper() for c in part)
+                has_digit = any(c.isdigit() for c in part)
+                if (has_lower or has_upper) and (has_digit or "+" in part or "/" in part):
+                    patterns.append("base64")
                     continue
             if self.HEX_PATTERN.match(part) and len(part) >= 8:
                 if len(part) % 2 == 0:
-                    patterns.append('hex')
+                    patterns.append("hex")
                     continue
         seen = set()
         unique_patterns = []
@@ -441,7 +517,9 @@ class DNSTunnelDetector:
                 unique_patterns.append(p)
         return unique_patterns
 
-    def _majority_vote(self, entropy_suspicious: bool | None, ngram_score: NGramScore, encoding_patterns: list[str]) -> tuple[Verdict, float]:
+    def _majority_vote(
+        self, entropy_suspicious: bool | None, ngram_score: NGramScore, encoding_patterns: list[str]
+    ) -> tuple[Verdict, float]:
         """Combine detection layers using majority voting.
 
         Args:
@@ -454,36 +532,36 @@ class DNSTunnelDetector:
         """
         votes = []
         if entropy_suspicious is True:
-            votes.append(('malicious', 0.8))
+            votes.append(("malicious", 0.8))
         elif entropy_suspicious is False:
-            votes.append(('benign', 0.7))
+            votes.append(("benign", 0.7))
         else:
-            votes.append(('ambiguous', 0.5))
+            votes.append(("ambiguous", 0.5))
         if ngram_score.anomaly_score > self.config.ngram_threshold:
-            votes.append(('malicious', ngram_score.anomaly_score))
+            votes.append(("malicious", ngram_score.anomaly_score))
         elif ngram_score.anomaly_score < 0.3:
-            votes.append(('benign', 1.0 - ngram_score.anomaly_score))
+            votes.append(("benign", 1.0 - ngram_score.anomaly_score))
         else:
-            votes.append(('ambiguous', 0.5))
+            votes.append(("ambiguous", 0.5))
         if encoding_patterns:
-            if len(encoding_patterns) >= 2 or 'base64' in encoding_patterns:
-                votes.append(('malicious', 0.9))
+            if len(encoding_patterns) >= 2 or "base64" in encoding_patterns:
+                votes.append(("malicious", 0.9))
             else:
-                votes.append(('suspicious', 0.6))
+                votes.append(("suspicious", 0.6))
         else:
-            votes.append(('benign', 0.6))
-        malicious_votes = sum((1 for v, _ in votes if v == 'malicious'))
-        benign_votes = sum((1 for v, _ in votes if v == 'benign'))
-        suspicious_votes = sum((1 for v, _ in votes if v == 'suspicious'))
-        sum((1 for v, _ in votes if v == 'ambiguous'))
+            votes.append(("benign", 0.6))
+        malicious_votes = sum((1 for v, _ in votes if v == "malicious"))
+        benign_votes = sum((1 for v, _ in votes if v == "benign"))
+        suspicious_votes = sum((1 for v, _ in votes if v == "suspicious"))
+        sum((1 for v, _ in votes if v == "ambiguous"))
         if malicious_votes >= self.config.majority_vote_threshold:
-            confidence = sum((c for v, c in votes if v == 'malicious')) / malicious_votes
+            confidence = sum((c for v, c in votes if v == "malicious")) / malicious_votes
             return (Verdict.MALICIOUS, min(confidence, 1.0))
         elif benign_votes >= self.config.majority_vote_threshold:
-            confidence = sum((c for v, c in votes if v == 'benign')) / benign_votes
+            confidence = sum((c for v, c in votes if v == "benign")) / benign_votes
             return (Verdict.BENIGN, min(confidence, 1.0))
         elif suspicious_votes > 0:
-            confidence = sum((c for v, c in votes if v in ('suspicious', 'malicious')))
+            confidence = sum((c for v, c in votes if v in ("suspicious", "malicious")))
             return (Verdict.SUSPICIOUS, min(confidence, 1.0))
         else:
             confidence = 0.5
@@ -508,7 +586,7 @@ class DNSTunnelDetector:
             await self.initialize()
         findings = []
         for i in range(0, len(queries), self.config.max_queries_per_batch):
-            batch = queries[i:i + self.config.max_queries_per_batch]
+            batch = queries[i : i + self.config.max_queries_per_batch]
             for query in batch:
                 finding = await self._analyze_single_query(query)
                 findings.append(finding)
@@ -524,34 +602,45 @@ class DNSTunnelDetector:
         Returns:
             TunnelingFinding with complete analysis
         """
-        self._query_stats['total_processed'] += 1
+        self._query_stats["total_processed"] += 1
         encoding_patterns = self._detect_encoding_patterns(query)
         if HAS_RUST_ENTROPY:
             entropy, entropy_flag, bigram_freq, trigram_freq, char_dist, anomaly_score = rust_ngram_analysis(query)
             entropy_suspicious = entropy_flag == 1
             if entropy_suspicious:
-                self._query_stats['entropy_hits'] += 1
-            ngram_score = NGramScore(bigram_freq=bigram_freq, trigram_freq=trigram_freq, char_distribution=char_dist, anomaly_score=anomaly_score)
+                self._query_stats["entropy_hits"] += 1
+            ngram_score = NGramScore(
+                bigram_freq=bigram_freq,
+                trigram_freq=trigram_freq,
+                char_distribution=char_dist,
+                anomaly_score=anomaly_score,
+            )
             if anomaly_score > self.config.ngram_threshold:
-                self._query_stats['ngram_hits'] += 1
-            verdict_str, confidence = rust_majority_vote(entropy_flag, anomaly_score, bool(encoding_patterns), self.config.ngram_threshold, self.config.majority_vote_threshold)
+                self._query_stats["ngram_hits"] += 1
+            verdict_str, confidence = rust_majority_vote(
+                entropy_flag,
+                anomaly_score,
+                bool(encoding_patterns),
+                self.config.ngram_threshold,
+                self.config.majority_vote_threshold,
+            )
             verdict = Verdict(verdict_str)
         else:
             entropy, entropy_suspicious = self._fast_entropy_screen(query)
             if entropy_suspicious:
-                self._query_stats['entropy_hits'] += 1
+                self._query_stats["entropy_hits"] += 1
             ngram_score = self._ngram_analysis(query)
             if ngram_score.anomaly_score > self.config.ngram_threshold:
-                self._query_stats['ngram_hits'] += 1
+                self._query_stats["ngram_hits"] += 1
             verdict, confidence = self._majority_vote(entropy_suspicious, ngram_score, encoding_patterns)
         lstm_score = 0.0
         if verdict == Verdict.AMBIGUOUS or (verdict == Verdict.SUSPICIOUS and self.config.enable_lstm):
-            self._query_stats['lstm_validations'] += 1
+            self._query_stats["lstm_validations"] += 1
             lstm_score = self._lstm_validate(query)
             if lstm_score > self.config.lstm_threshold:
                 verdict = Verdict.MALICIOUS
                 confidence = lstm_score
-                self._query_stats['lstm_hits'] += 1
+                self._query_stats["lstm_hits"] += 1
             elif lstm_score > 0.5:
                 verdict = Verdict.SUSPICIOUS
                 confidence = lstm_score
@@ -560,7 +649,15 @@ class DNSTunnelDetector:
                 confidence = 1.0 - lstm_score
         if not HAS_RUST_ENTROPY:
             entropy = self._calculate_entropy(query)
-        return TunnelingFinding(query=query, entropy=entropy, ngram_score=ngram_score, lstm_score=lstm_score, verdict=verdict, confidence=confidence, encoding_type=','.join(encoding_patterns) if encoding_patterns else '')
+        return TunnelingFinding(
+            query=query,
+            entropy=entropy,
+            ngram_score=ngram_score,
+            lstm_score=lstm_score,
+            verdict=verdict,
+            confidence=confidence,
+            encoding_type=",".join(encoding_patterns) if encoding_patterns else "",
+        )
 
     async def analyze_pcap(self, pcap_path: str | Path) -> list[TunnelingFinding]:
         """Stream-analyze a PCAP file for DNS tunneling.
@@ -577,10 +674,10 @@ class DNSTunnelDetector:
         if not self._initialized:
             await self.initialize()
         if not HAS_SCAPY:
-            raise ImportError('scapy is required for PCAP analysis. Install with: pip install scapy')
+            raise ImportError("scapy is required for PCAP analysis. Install with: pip install scapy")
         pcap_path = Path(pcap_path)
         if not pcap_path.exists():
-            raise FileNotFoundError(f'PCAP file not found: {pcap_path}')
+            raise FileNotFoundError(f"PCAP file not found: {pcap_path}")
         findings = []
         query_batch = []
         query_metadata = []
@@ -590,10 +687,10 @@ class DNSTunnelDetector:
                     try:
                         if packet.haslayer(DNS) and packet.haslayer(DNSQR):
                             dns = packet[DNS]
-                            query = dns.qd.qname.decode('utf-8', errors='ignore').rstrip('.')
-                            timestamp = float(packet.time) if hasattr(packet, 'time') else None
+                            query = dns.qd.qname.decode("utf-8", errors="ignore").rstrip(".")
+                            timestamp = float(packet.time) if hasattr(packet, "time") else None
                             src_ip = dst_ip = None
-                            if hasattr(packet, 'src') and hasattr(packet, 'dst'):
+                            if hasattr(packet, "src") and hasattr(packet, "dst"):
                                 src_ip = packet.src
                                 dst_ip = packet.dst
                             query_batch.append(query)
@@ -610,7 +707,7 @@ class DNSTunnelDetector:
                 batch_findings = await self._process_query_batch(query_batch, query_metadata)
                 findings.extend(batch_findings)
         except Exception as e:
-            raise RuntimeError(f'Error analyzing PCAP: {e}') from e
+            raise RuntimeError(f"Error analyzing PCAP: {e}") from e
         return findings
 
     async def _process_query_batch(self, queries: list[str], metadata: list[tuple]) -> list[TunnelingFinding]:
@@ -652,14 +749,15 @@ class DNSTunnelDetector:
             Dictionary with processing statistics
         """
         stats = self._query_stats.copy()
-        if stats['total_processed'] > 0:
-            stats['entropy_detection_rate'] = stats['entropy_hits'] / stats['total_processed']
-            stats['ngram_detection_rate'] = stats['ngram_hits'] / stats['total_processed']
-            if stats['lstm_validations'] > 0:
-                stats['lstm_accuracy'] = stats['lstm_hits'] / stats['lstm_validations']
+        if stats["total_processed"] > 0:
+            stats["entropy_detection_rate"] = stats["entropy_hits"] / stats["total_processed"]
+            stats["ngram_detection_rate"] = stats["ngram_hits"] / stats["total_processed"]
+            if stats["lstm_validations"] > 0:
+                stats["lstm_accuracy"] = stats["lstm_hits"] / stats["lstm_validations"]
         return stats
 
-def create_dns_tunnel_detector(config: DNSTunnelConfig | None=None) -> DNSTunnelDetector | None:
+
+def create_dns_tunnel_detector(config: DNSTunnelConfig | None = None) -> DNSTunnelDetector | None:
     """Factory function for creating DNS tunnel detector instances.
 
     Creates a configured DNSTunnelDetector with graceful fallback

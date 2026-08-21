@@ -26,7 +26,6 @@ pub fn extract_tls_metadata(
     issuer_org: Option<String>,
     der_bytes: Option<Vec<u8>>,
 ) -> (Vec<String>, Option<String>, Option<String>) {
-    // --- SANs: cap at 20, cap each at 500 chars ---
     let sans: Vec<String> = san_entries
         .into_iter()
         .take(20)
@@ -39,7 +38,6 @@ pub fn extract_tls_metadata(
         })
         );
 
-    // --- Issuer: already extracted by Python, just cap at 200 chars ---
     let issuer = issuer_org.map(|s| {
         if s.len() > 200 {
             s[..200].to_string()
@@ -48,7 +46,6 @@ pub fn extract_tls_metadata(
         }
     });
 
-    // --- SHA-256 of DER cert ---
     let sha256 = der_bytes.map(|der| {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();

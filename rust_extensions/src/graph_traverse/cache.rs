@@ -27,10 +27,6 @@ use std::path::PathBuf;
 
 use super::TraversalResult;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Maximum cached (root_value, max_hops) → results entries.
 const MAX_CACHE_ENTRIES: usize = 50_000;
 /// Maximum total byte size of cache file on disk.
@@ -41,10 +37,6 @@ const CACHE_MAGIC: u32 = 0x4754_5256; // "GTRV" — Graph TRAVersal
 const CACHE_VERSION: u8 = 1;
 /// File name for the mmap cache.
 const CACHE_FILE: &str = "traversal_cache.lz4";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cache key
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Cache key: (root_value, max_hops).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -70,10 +62,6 @@ impl CacheKey {
         4 + self.root_value.len() + 4
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cache file header
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct CacheHeader {
@@ -116,10 +104,6 @@ impl CacheHeader {
         })
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LRU cache state (in-memory)
-// ─────────────────────────────────────────────────────────────────────────────
 
 pub struct LRUCache {
     /// O(1) lookup: key → value
@@ -275,7 +259,6 @@ impl LRUCache {
             return;
         }
 
-        // Parse entries sequentially after header
         let mut offset = CacheHeader::SIZE;
         let mut loaded = 0u32;
 
@@ -423,7 +406,6 @@ impl LRUCache {
             all_data
         };
 
-        // Write header + data
         let header = CacheHeader {
             magic: CACHE_MAGIC,
             version: CACHE_VERSION,
@@ -446,10 +428,6 @@ impl LRUCache {
         self.dirty = false;
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Thread-local cache accessor
-// ─────────────────────────────────────────────────────────────────────────────
 
 use std::cell::RefCell;
 

@@ -10,23 +10,23 @@ feed-only dominance, wall-clock failures, and memory taint.
 
 Safety: no network, no MLX, no live execution.
 """
+
 import argparse
 import json
 import sys
-from dataclasses import dataclass
-import msgspec
 from enum import StrEnum
 from pathlib import Path
-from hledac.universal.utils.serialization import _safe_dataclass_to_dict
-from _core import aclose
+
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.serialization import _safe_dataclass_to_dict
 
 
 class Grade(StrEnum):
-    FEED_ONLY = 'FEED_ONLY'
-    MULTISOURCE_SHALLOW = 'MULTISOURCE_SHALLOW'
-    MULTISOURCE_USEFUL = 'MULTISOURCE_USEFUL'
-    DEEP_RESEARCH_READY = 'DEEP_RESEARCH_READY'
+    FEED_ONLY = "FEED_ONLY"
+    MULTISOURCE_SHALLOW = "MULTISOURCE_SHALLOW"
+    MULTISOURCE_USEFUL = "MULTISOURCE_USEFUL"
+    DEEP_RESEARCH_READY = "DEEP_RESEARCH_READY"
+
 
 def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int | None) -> float:
     """Coerce feed_dominance_score to numeric, fail-safe.
@@ -52,7 +52,7 @@ def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int 
             f = float(value)
             if 0.0 <= f <= 1.0:
                 return f
-        except (ValueError, TypeError):  # noqa: BLE001
+        except ValueError, TypeError:  # noqa: BLE001
             pass
     else:
         pass
@@ -61,15 +61,18 @@ def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int 
         return max(0.0, min(1.0, ratio))
     return 1.0
 
+
 class QualityGate(StrEnum):
-    QUALITY_PASS = 'QUALITY_PASS'
-    QUALITY_FAIL_FEED_ONLY = 'QUALITY_FAIL_FEED_ONLY'
-    QUALITY_FAIL_HARDWARE_TAINTED = 'QUALITY_FAIL_HARDWARE_TAINTED'
-    QUALITY_FAIL_NONFEED_ZERO = 'QUALITY_FAIL_NONFEED_ZERO'
-    QUALITY_WARN_MULTISOURCE_SHALLOW = 'QUALITY_WARN_MULTISOURCE_SHALLOW'
+    QUALITY_PASS = "QUALITY_PASS"
+    QUALITY_FAIL_FEED_ONLY = "QUALITY_FAIL_FEED_ONLY"
+    QUALITY_FAIL_HARDWARE_TAINTED = "QUALITY_FAIL_HARDWARE_TAINTED"
+    QUALITY_FAIL_NONFEED_ZERO = "QUALITY_FAIL_NONFEED_ZERO"
+    QUALITY_WARN_MULTISOURCE_SHALLOW = "QUALITY_WARN_MULTISOURCE_SHALLOW"
+
 
 class EvidenceDepth(Struct):
     """F231M: Production evidence depth diagnostics from KPI field aliases."""
+
     claims_depth: float = 0.0
     public_candidate_depth: float = 0.0
     ct_clue_depth: float = 0.0
@@ -79,6 +82,7 @@ class EvidenceDepth(Struct):
     ct_clues_present: bool = False
     advisory_clues_present: bool = False
     nonfeed_clues_without_acceptance: bool = False
+
 
 class ScoreComponents(Struct, frozen=True):
     findings_volume_score: float
@@ -92,6 +96,7 @@ class ScoreComponents(Struct, frozen=True):
     memory_taint_penalty: float
     analysis_depth_bonus: float = 0.0
 
+
 def _sum_alias_fields(src: dict | None, keys: list[str]) -> int:
     """Return first non-zero value from src dict, or 0 if all None/zero."""
     if not isinstance(src, dict):
@@ -102,36 +107,54 @@ def _sum_alias_fields(src: dict | None, keys: list[str]) -> int:
             return int(v)
     return 0
 
+
 def _extract_evidence_depth_inputs(live_kpi: dict | None) -> dict:
     """F231M: Extract evidence depth inputs from live_kpi, resolving all F231A/B/C aliases."""
     if live_kpi is None:
-        return {'claims_extracted_count': 0, 'public_candidates_seen': 0, 'ct_clues_seen': 0, 'wayback_clues_seen': 0, 'passivedns_clues_seen': 0}
+        return {
+            "claims_extracted_count": 0,
+            "public_candidates_seen": 0,
+            "ct_clues_seen": 0,
+            "wayback_clues_seen": 0,
+            "passivedns_clues_seen": 0,
+        }
     lk = live_kpi if isinstance(live_kpi, dict) else {}
-    claims_count = lk.get('claims_extracted_count', 0) or 0
-    pub_seen = _sum_alias_fields(lk, ['public_candidates_seen'])
+    claims_count = lk.get("claims_extracted_count", 0) or 0
+    pub_seen = _sum_alias_fields(lk, ["public_candidates_seen"])
     if pub_seen == 0:
-        pcl = lk.get('public_candidate_ledger_summary') or {}
-        pub_seen = _sum_alias_fields(pcl, ['public_candidates_discovered', 'public_candidates_built', 'public_candidates_stored'])
-    ct_seen = _sum_alias_fields(lk, ['ct_clues_seen'])
+        pcl = lk.get("public_candidate_ledger_summary") or {}
+        pub_seen = _sum_alias_fields(
+            pcl, ["public_candidates_discovered", "public_candidates_built", "public_candidates_stored"]
+        )
+    ct_seen = _sum_alias_fields(lk, ["ct_clues_seen"])
     if ct_seen == 0:
-        ct_seen = _sum_alias_fields(lk, ['ct_expansion_clues_count', 'ct_valid_public_domains'])
-    wayback_seen = _sum_alias_fields(lk, ['wayback_clues_seen'])
+        ct_seen = _sum_alias_fields(lk, ["ct_expansion_clues_count", "ct_valid_public_domains"])
+    wayback_seen = _sum_alias_fields(lk, ["wayback_clues_seen"])
     if wayback_seen == 0:
-        wayback_seen = _sum_alias_fields(lk, ['wayback_advisory_clues_count'])
+        wayback_seen = _sum_alias_fields(lk, ["wayback_advisory_clues_count"])
     if wayback_seen == 0:
-        wayback_seen = _sum_alias_fields(lk, ['wayback_changed_url_count', 'wayback_added_url_count', 'wayback_digest_changed_count'])
-    pdns_seen = _sum_alias_fields(lk, ['passivedns_clues_seen'])
+        wayback_seen = _sum_alias_fields(
+            lk, ["wayback_changed_url_count", "wayback_added_url_count", "wayback_digest_changed_count"]
+        )
+    pdns_seen = _sum_alias_fields(lk, ["passivedns_clues_seen"])
     if pdns_seen == 0:
-        pdns_seen = _sum_alias_fields(lk, ['passive_dns_advisory_clues_count', 'passive_dns_public_ip_count'])
-    return {'claims_extracted_count': claims_count, 'public_candidates_seen': pub_seen, 'ct_clues_seen': ct_seen, 'wayback_clues_seen': wayback_seen, 'passivedns_clues_seen': pdns_seen}
+        pdns_seen = _sum_alias_fields(lk, ["passive_dns_advisory_clues_count", "passive_dns_public_ip_count"])
+    return {
+        "claims_extracted_count": claims_count,
+        "public_candidates_seen": pub_seen,
+        "ct_clues_seen": ct_seen,
+        "wayback_clues_seen": wayback_seen,
+        "passivedns_clues_seen": pdns_seen,
+    }
+
 
 def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     """F231M: Compute evidence depth diagnostics from normalized KPI inputs."""
-    claims_count = norm.get('claims_extracted_count', 0) or 0
-    pub_candidates = norm.get('public_candidates_seen', 0) or 0
-    ct_clues = norm.get('ct_clues_seen', 0) or 0
-    wayback = norm.get('wayback_clues_seen', 0) or 0
-    passivedns = norm.get('passivedns_clues_seen', 0) or 0
+    claims_count = norm.get("claims_extracted_count", 0) or 0
+    pub_candidates = norm.get("public_candidates_seen", 0) or 0
+    ct_clues = norm.get("ct_clues_seen", 0) or 0
+    wayback = norm.get("wayback_clues_seen", 0) or 0
+    passivedns = norm.get("passivedns_clues_seen", 0) or 0
     advisory_total = wayback + passivedns
     claims_depth = min(1.0, claims_count / 10.0) if claims_count > 0 else 0.0
     public_candidate_depth = min(1.0, pub_candidates / 10.0) if pub_candidates > 0 else 0.0
@@ -141,8 +164,21 @@ def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     public_candidates_seen = pub_candidates > 0
     ct_clues_present = ct_clues > 0
     advisory_clues_present = advisory_total > 0
-    nonfeed_clues_without_acceptance = (public_candidates_seen or ct_clues_present or advisory_clues_present) and nonfeed == 0
-    return EvidenceDepth(claims_depth=round(claims_depth, 4), public_candidate_depth=round(public_candidate_depth, 4), ct_clue_depth=round(ct_clue_depth, 4), advisory_clue_depth=round(advisory_clue_depth, 4), claims_extracted=claims_extracted, public_candidates_seen=public_candidates_seen, ct_clues_present=ct_clues_present, advisory_clues_present=advisory_clues_present, nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance)
+    nonfeed_clues_without_acceptance = (
+        public_candidates_seen or ct_clues_present or advisory_clues_present
+    ) and nonfeed == 0
+    return EvidenceDepth(
+        claims_depth=round(claims_depth, 4),
+        public_candidate_depth=round(public_candidate_depth, 4),
+        ct_clue_depth=round(ct_clue_depth, 4),
+        advisory_clue_depth=round(advisory_clue_depth, 4),
+        claims_extracted=claims_extracted,
+        public_candidates_seen=public_candidates_seen,
+        ct_clues_present=ct_clues_present,
+        advisory_clues_present=advisory_clues_present,
+        nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance,
+    )
+
 
 class ResearchQualityScore(Struct, frozen=True):
     total_quality_score: float
@@ -162,141 +198,210 @@ class ResearchQualityScore(Struct, frozen=True):
     wallclock_exceeded: bool
     swap_gib: float | None
     swap_warning: bool
-    ct_loss_stage: str = 'no_loss'
+    ct_loss_stage: str = "no_loss"
     quality_gate: QualityGate = QualityGate.QUALITY_PASS
     research_quality_comparable: bool = True
     evidence_depth: EvidenceDepth | None = None
 
+
 def _extract_uma_swap_gib(data: dict) -> float | None:
     """Extract swap in GiB from various UMA fields across formats."""
-    if data.get('uma_post_swap_gib') is not None:
-        return float(data['uma_post_swap_gib'])
-    live_kpi = data.get('live_kpi')
-    if isinstance(live_kpi, dict) and live_kpi.get('uma_post_swap_gib') is not None:
-        return float(live_kpi['uma_post_swap_gib'])
-    mem = data.get('memory')
+    if data.get("uma_post_swap_gib") is not None:
+        return float(data["uma_post_swap_gib"])
+    live_kpi = data.get("live_kpi")
+    if isinstance(live_kpi, dict) and live_kpi.get("uma_post_swap_gib") is not None:
+        return float(live_kpi["uma_post_swap_gib"])
+    mem = data.get("memory")
     if isinstance(mem, dict):
-        state = mem.get('uma_state') or mem.get('state')
-        if isinstance(state, str) and 'swap' in state.lower():
+        state = mem.get("uma_state") or mem.get("state")
+        if isinstance(state, str) and "swap" in state.lower():
             return None
     return None
 
+
 def _extract_swap_warning(data: dict) -> bool:
     """Extract swap_warning flag."""
-    if isinstance(data.get('swap_warning'), bool):
-        return data['swap_warning']
-    live_kpi = data.get('live_kpi')
-    if isinstance(live_kpi, dict) and isinstance(live_kpi.get('swap_warning'), bool):
-        return live_kpi['swap_warning']
-    if isinstance(data.get('memory'), dict):
-        return bool(data['memory'].get('swap_warning'))
+    if isinstance(data.get("swap_warning"), bool):
+        return data["swap_warning"]
+    live_kpi = data.get("live_kpi")
+    if isinstance(live_kpi, dict) and isinstance(live_kpi.get("swap_warning"), bool):
+        return live_kpi["swap_warning"]
+    if isinstance(data.get("memory"), dict):
+        return bool(data["memory"].get("swap_warning"))
     return False
+
 
 def _normalize_benchmark(data: dict) -> dict:
     """Convert benchmark JSON format to normalized internal dict."""
-    rt = data.get('runtime_truth', {})
-    branch_mix = rt.get('branch_mix', {}) if isinstance(rt, dict) else {}
-    lane_verdict = rt.get('lane_verdict', {}) if isinstance(rt, dict) else {}
-    ct = int(branch_mix.get('ct_findings', 0))
-    pub = int(branch_mix.get('public_findings', 0))
-    passive = int(branch_mix.get('passive_findings', 0))
-    feed = int(branch_mix.get('feed_findings', 0))
-    rt_accepted = rt.get('accepted_findings') if isinstance(rt, dict) else None
-    accepted_findings = rt_accepted if rt_accepted is not None else data.get('runtime_accepted_findings') or data.get('accepted_findings') or data.get('findings_count') or 0
+    rt = data.get("runtime_truth", {})
+    branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
+    lane_verdict = rt.get("lane_verdict", {}) if isinstance(rt, dict) else {}
+    ct = int(branch_mix.get("ct_findings", 0))
+    pub = int(branch_mix.get("public_findings", 0))
+    passive = int(branch_mix.get("passive_findings", 0))
+    feed = int(branch_mix.get("feed_findings", 0))
+    rt_accepted = rt.get("accepted_findings") if isinstance(rt, dict) else None
+    accepted_findings = (
+        rt_accepted
+        if rt_accepted is not None
+        else data.get("runtime_accepted_findings") or data.get("accepted_findings") or data.get("findings_count") or 0
+    )
     if branch_mix:
         total_findings = feed + ct + pub + passive
     else:
-        total_findings = data.get('runtime_accepted_findings') or data.get('findings_count') or accepted_findings or 0
-    live_kpi = data.get('live_kpi', {}) or None
-    ct_loss_stage = lane_verdict.get('ct_loss_stage', 'no_loss') if isinstance(lane_verdict, dict) else 'no_loss'
-    norm = {'total_findings': total_findings, 'accepted_findings': accepted_findings, 'feed_findings': feed, 'ct_findings': ct, 'public_findings': pub, 'passive_findings': passive, 'nonfeed_findings': ct + pub + passive, 'source_family_count': sum((1 for v in branch_mix.values() if v > 0)) if branch_mix else 0, 'feed_dominance_score': _coerce_feed_dominance_score((live_kpi or {}).get('feed_dominance_score') if live_kpi else None, total_findings, feed), 'planned_duration_s': data.get('planned_duration_s') or data.get('requested_duration_s'), 'actual_duration_s': rt.get('actual_duration_s', data.get('actual_duration_s')) if isinstance(rt, dict) else data.get('actual_duration_s'), 'swap_gib': _extract_uma_swap_gib(data), 'swap_warning': _extract_swap_warning(data), 'branch_mix': branch_mix, 'live_kpi': live_kpi or {}, 'ct_loss_stage': ct_loss_stage, 'ct_quarantine_count': data.get('acquisition_report', {}).get('ct_quarantine_count', 0) if isinstance(data.get('acquisition_report'), dict) else 0}
+        total_findings = data.get("runtime_accepted_findings") or data.get("findings_count") or accepted_findings or 0
+    live_kpi = data.get("live_kpi", {}) or None
+    ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
+    norm = {
+        "total_findings": total_findings,
+        "accepted_findings": accepted_findings,
+        "feed_findings": feed,
+        "ct_findings": ct,
+        "public_findings": pub,
+        "passive_findings": passive,
+        "nonfeed_findings": ct + pub + passive,
+        "source_family_count": sum(1 for v in branch_mix.values() if v > 0) if branch_mix else 0,
+        "feed_dominance_score": _coerce_feed_dominance_score(
+            (live_kpi or {}).get("feed_dominance_score") if live_kpi else None, total_findings, feed
+        ),
+        "planned_duration_s": data.get("planned_duration_s") or data.get("requested_duration_s"),
+        "actual_duration_s": rt.get("actual_duration_s", data.get("actual_duration_s"))
+        if isinstance(rt, dict)
+        else data.get("actual_duration_s"),
+        "swap_gib": _extract_uma_swap_gib(data),
+        "swap_warning": _extract_swap_warning(data),
+        "branch_mix": branch_mix,
+        "live_kpi": live_kpi or {},
+        "ct_loss_stage": ct_loss_stage,
+        "ct_quarantine_count": data.get("acquisition_report", {}).get("ct_quarantine_count", 0)
+        if isinstance(data.get("acquisition_report"), dict)
+        else 0,
+    }
     if live_kpi:
         norm.update(_extract_evidence_depth_inputs(live_kpi))
     return norm
+
 
 def _resolve_ct_loss_stage_from_acquisition(data: dict, ct_findings: int) -> str:
     """Resolve ct_loss_stage from acquisition_report when runtime_truth.lane_verdict.ct_loss_stage is missing.
 
     Maps provider errors and terminal stages to canonical ct_loss_stage values.
     """
-    acq = data.get('acquisition_report', {}) or {}
-    rt = data.get('runtime_truth', {}) or {}
-    ct_request_timeout = rt.get('ct_request_timeout', False)
+    acq = data.get("acquisition_report", {}) or {}
+    rt = data.get("runtime_truth", {}) or {}
+    ct_request_timeout = rt.get("ct_request_timeout", False)
     if ct_request_timeout is True:
-        return 'request_timeout'
-    ct_log_error = rt.get('ct_log_error', '') or ''
-    ct_provider_status = acq.get('ct_provider_status', '') or ''
+        return "request_timeout"
+    ct_log_error = rt.get("ct_log_error", "") or ""
+    ct_provider_status = acq.get("ct_provider_status", "") or ""
     for err_field in [ct_log_error, ct_provider_status]:
         err_lower = str(err_field).lower()
-        if any((x in err_lower for x in ['502', 'http_502', 'http error', 'provider http'])):
-            return 'provider_http_error'
-    ct_terminal_stage = rt.get('ct_terminal_stage', '') or acq.get('ct_terminal_stage', '') or ''
-    if ct_terminal_stage == 'provider_unavailable':
-        return 'provider_unavailable'
-    ct_request_attempted = rt.get('ct_request_attempted', False)
-    ct_raw_count = rt.get('ct_raw_count', 0)
+        if any(x in err_lower for x in ["502", "http_502", "http error", "provider http"]):
+            return "provider_http_error"
+    ct_terminal_stage = rt.get("ct_terminal_stage", "") or acq.get("ct_terminal_stage", "") or ""
+    if ct_terminal_stage == "provider_unavailable":
+        return "provider_unavailable"
+    ct_request_attempted = rt.get("ct_request_attempted", False)
+    ct_raw_count = rt.get("ct_raw_count", 0)
     if ct_request_attempted is True and ct_findings == 0 and (ct_raw_count == 0):
-        return 'provider_returned_zero'
-    ct_bridge_invoked = rt.get('ct_bridge_invoked', False)
-    ct_candidates_built = rt.get('ct_candidates_built', 0)
+        return "provider_returned_zero"
+    ct_bridge_invoked = rt.get("ct_bridge_invoked", False)
+    ct_candidates_built = rt.get("ct_candidates_built", 0)
     if ct_bridge_invoked is True and ct_candidates_built == 0:
-        return 'bridge_no_candidates'
-    ct_storage_attempted = rt.get('ct_storage_attempted', False)
-    ct_storage_rejected = rt.get('ct_storage_rejected', 0)
+        return "bridge_no_candidates"
+    ct_storage_attempted = rt.get("ct_storage_attempted", False)
+    ct_storage_rejected = rt.get("ct_storage_rejected", 0)
     if ct_storage_attempted is True and ct_storage_rejected > 0:
-        return 'storage_rejected'
-    return 'no_loss'
+        return "storage_rejected"
+    return "no_loss"
+
 
 def _normalize_live(data: dict) -> dict:
     """Convert live_active300 JSON format to normalized internal dict."""
-    rt = data.get('runtime_truth', {})
-    branch_mix = rt.get('branch_mix', {}) if isinstance(rt, dict) else {}
-    lane_verdict = rt.get('lane_verdict', {}) if isinstance(rt, dict) else {}
-    live_kpi = data.get('live_kpi', {}) or None
-    ct = int(branch_mix.get('ct_findings', 0))
-    pub = int(branch_mix.get('public_findings', 0))
-    passive = int(branch_mix.get('passive_findings', 0))
-    feed = int(branch_mix.get('feed_findings', 0))
-    nonfeed_total = (live_kpi or {}).get('nonfeed_accepted_findings', ct + pub + passive) if live_kpi else ct + pub + passive
-    ct_loss_stage = lane_verdict.get('ct_loss_stage', 'no_loss') if isinstance(lane_verdict, dict) else 'no_loss'
-    if ct_loss_stage in ('no_loss', '') or ct_loss_stage is None:
+    rt = data.get("runtime_truth", {})
+    branch_mix = rt.get("branch_mix", {}) if isinstance(rt, dict) else {}
+    lane_verdict = rt.get("lane_verdict", {}) if isinstance(rt, dict) else {}
+    live_kpi = data.get("live_kpi", {}) or None
+    ct = int(branch_mix.get("ct_findings", 0))
+    pub = int(branch_mix.get("public_findings", 0))
+    passive = int(branch_mix.get("passive_findings", 0))
+    feed = int(branch_mix.get("feed_findings", 0))
+    nonfeed_total = (
+        (live_kpi or {}).get("nonfeed_accepted_findings", ct + pub + passive) if live_kpi else ct + pub + passive
+    )
+    ct_loss_stage = lane_verdict.get("ct_loss_stage", "no_loss") if isinstance(lane_verdict, dict) else "no_loss"
+    if ct_loss_stage in ("no_loss", "") or ct_loss_stage is None:
         ct_loss_stage = _resolve_ct_loss_stage_from_acquisition(data, ct)
-    rt_accepted = rt.get('accepted_findings') if isinstance(rt, dict) else None
-    accepted_findings = rt_accepted if rt_accepted is not None else data.get('runtime_accepted_findings') or data.get('accepted_findings') or data.get('findings_count') or 0
+    rt_accepted = rt.get("accepted_findings") if isinstance(rt, dict) else None
+    accepted_findings = (
+        rt_accepted
+        if rt_accepted is not None
+        else data.get("runtime_accepted_findings") or data.get("accepted_findings") or data.get("findings_count") or 0
+    )
     if branch_mix:
         total_findings = feed + ct + pub + passive
     else:
-        total_findings = data.get('runtime_accepted_findings') or data.get('findings_count') or accepted_findings or 0
-    norm = {'total_findings': total_findings, 'accepted_findings': accepted_findings, 'feed_findings': feed, 'ct_findings': ct, 'public_findings': pub, 'passive_findings': passive, 'nonfeed_findings': nonfeed_total, 'source_family_count': (live_kpi or {}).get('source_family_count', sum((1 for v in branch_mix.values() if v > 0))) if live_kpi else 0, 'feed_dominance_score': _coerce_feed_dominance_score((live_kpi or {}).get('feed_dominance_score') if live_kpi else None, total_findings, feed), 'planned_duration_s': data.get('planned_duration_s') or data.get('duration_s'), 'actual_duration_s': data.get('actual_duration_s') or (rt.get('actual_duration_s') if isinstance(rt, dict) else None), 'swap_gib': _extract_uma_swap_gib(data), 'swap_warning': _extract_swap_warning(data), 'branch_mix': branch_mix, 'live_kpi': live_kpi or {}, 'ct_loss_stage': ct_loss_stage, 'ct_quarantine_count': data.get('acquisition_report', {}).get('ct_quarantine_count', 0) if isinstance(data.get('acquisition_report'), dict) else 0}
+        total_findings = data.get("runtime_accepted_findings") or data.get("findings_count") or accepted_findings or 0
+    norm = {
+        "total_findings": total_findings,
+        "accepted_findings": accepted_findings,
+        "feed_findings": feed,
+        "ct_findings": ct,
+        "public_findings": pub,
+        "passive_findings": passive,
+        "nonfeed_findings": nonfeed_total,
+        "source_family_count": (live_kpi or {}).get("source_family_count", sum(1 for v in branch_mix.values() if v > 0))
+        if live_kpi
+        else 0,
+        "feed_dominance_score": _coerce_feed_dominance_score(
+            (live_kpi or {}).get("feed_dominance_score") if live_kpi else None, total_findings, feed
+        ),
+        "planned_duration_s": data.get("planned_duration_s") or data.get("duration_s"),
+        "actual_duration_s": data.get("actual_duration_s")
+        or (rt.get("actual_duration_s") if isinstance(rt, dict) else None),
+        "swap_gib": _extract_uma_swap_gib(data),
+        "swap_warning": _extract_swap_warning(data),
+        "branch_mix": branch_mix,
+        "live_kpi": live_kpi or {},
+        "ct_loss_stage": ct_loss_stage,
+        "ct_quarantine_count": data.get("acquisition_report", {}).get("ct_quarantine_count", 0)
+        if isinstance(data.get("acquisition_report"), dict)
+        else 0,
+    }
     if live_kpi:
         norm.update(_extract_evidence_depth_inputs(live_kpi))
     return norm
 
+
 def _detect_format(data: dict) -> str:
     """Detect whether this is 'benchmark' (hermetic) or 'live' format."""
-    if data.get('mode') == 'live':
-        return 'live'
-    if 'runtime_truth' in data and isinstance(data.get('runtime_truth'), dict):
-        rt = data['runtime_truth']
-        if 'branch_mix' in rt:
-            return 'live'
-    if 'live_kpi' in data or 'live_kpi_marker' in data:
-        return 'live'
-    return 'benchmark'
+    if data.get("mode") == "live":
+        return "live"
+    if "runtime_truth" in data and isinstance(data.get("runtime_truth"), dict):
+        rt = data["runtime_truth"]
+        if "branch_mix" in rt:
+            return "live"
+    if "live_kpi" in data or "live_kpi_marker" in data:
+        return "live"
+    return "benchmark"
+
 
 def normalize_benchmark_json(data: dict) -> dict:
     fmt = _detect_format(data)
-    if fmt == 'live':
+    if fmt == "live":
         return _normalize_live(data)
     return _normalize_benchmark(data)
+
 
 def _findings_volume_score(total: int, nonfeed: int) -> float:
     """Volume is only rewarded if there's meaningful nonfeed content."""
     if nonfeed == 0:
         return 0.0
     import math
+
     raw = 10 * math.log1p(total) / math.log1p(5000)
     return min(50.0, raw)
+
 
 def _source_diversity_score(family_count: int, nonfeed: int) -> float:
     """Reward source diversity up to 25pts."""
@@ -305,13 +410,15 @@ def _source_diversity_score(family_count: int, nonfeed: int) -> float:
     table = {1: 5.0, 2: 12.0, 3: 22.0, 4: 30.0}
     return table.get(family_count, 30.0) if family_count > 0 else 0.0
 
+
 def _nonfeed_evidence_score(nonfeed: int, total: int) -> float:
     """Reward nonfeed findings proportion up to 25pts."""
     if total == 0 or nonfeed == 0:
         return 0.0
     ratio = nonfeed / total
-    score = 25.0 * ratio ** 0.3
+    score = 25.0 * ratio**0.3
     return min(25.0, max(0.0, score))
+
 
 def _ct_evidence_score(ct: int, total: int) -> float:
     """Certificate Transparency evidence score up to 20pts."""
@@ -319,8 +426,10 @@ def _ct_evidence_score(ct: int, total: int) -> float:
         return 0.0
     ratio = ct / total
     import math
+
     score = 10 * math.log1p(ratio * 50) / math.log1p(10)
     return min(20.0, max(0.0, score))
+
 
 def _public_evidence_score(pub: int, total: int) -> float:
     """Public/web evidence score up to 15pts."""
@@ -328,8 +437,10 @@ def _public_evidence_score(pub: int, total: int) -> float:
         return 0.0
     ratio = pub / total
     import math
+
     score = 7 * math.log1p(ratio * 50) / math.log1p(10)
     return min(15.0, max(0.0, score))
+
 
 def _passive_evidence_score(passive: int, total: int) -> float:
     """Passive DNS/log evidence score up to 10pts."""
@@ -337,8 +448,10 @@ def _passive_evidence_score(passive: int, total: int) -> float:
         return 0.0
     ratio = passive / total
     import math
+
     score = 5 * math.log1p(ratio * 100) / math.log1p(10)
     return min(10.0, max(0.0, score))
+
 
 def _feed_dominance_penalty(feed_dominance: float, nonfeed_ratio: float) -> float:
     """
@@ -350,6 +463,7 @@ def _feed_dominance_penalty(feed_dominance: float, nonfeed_ratio: float) -> floa
         return 0.0
     severity = (0.05 - nonfeed_ratio) / 0.05
     return 40.0 * severity
+
 
 def _wallclock_penalty(planned: float | None, actual: float | None) -> tuple[float, bool]:
     """
@@ -366,6 +480,7 @@ def _wallclock_penalty(planned: float | None, actual: float | None) -> tuple[flo
         penalty = min(30.0, 10.0 + 20.0 * overage)
         return (penalty, True)
     return (0.0, False)
+
 
 def _memory_taint_penalty(swap_gib: float | None, swap_warning: bool) -> float:
     """
@@ -384,26 +499,27 @@ def _memory_taint_penalty(swap_gib: float | None, swap_warning: bool) -> float:
         return 5.0
     return 0.0
 
+
 def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
-    total = norm['total_findings']
-    accepted = norm['accepted_findings'] or 0
-    nonfeed = norm['nonfeed_findings']
-    ct = norm['ct_findings']
-    pub = norm['public_findings']
-    passive = norm['passive_findings']
-    feed = norm['feed_findings']
-    family_count = norm['source_family_count']
-    feed_dom = _coerce_feed_dominance_score(norm['feed_dominance_score'], total, feed)
-    planned = norm['planned_duration_s']
-    actual = norm['actual_duration_s']
-    swap_gib = norm['swap_gib']
-    swap_warn = norm['swap_warning']
-    ct_loss_stage = norm.get('ct_loss_stage', 'no_loss')
-    claims_extracted = norm.get('claims_extracted_count', 0)
+    total = norm["total_findings"]
+    accepted = norm["accepted_findings"] or 0
+    nonfeed = norm["nonfeed_findings"]
+    ct = norm["ct_findings"]
+    pub = norm["public_findings"]
+    passive = norm["passive_findings"]
+    feed = norm["feed_findings"]
+    family_count = norm["source_family_count"]
+    feed_dom = _coerce_feed_dominance_score(norm["feed_dominance_score"], total, feed)
+    planned = norm["planned_duration_s"]
+    actual = norm["actual_duration_s"]
+    swap_gib = norm["swap_gib"]
+    swap_warn = norm["swap_warning"]
+    ct_loss_stage = norm.get("ct_loss_stage", "no_loss")
+    claims_extracted = norm.get("claims_extracted_count", 0)
     hw_constrained = False
-    live_kpi = norm.get('live_kpi')
+    live_kpi = norm.get("live_kpi")
     if isinstance(live_kpi, dict):
-        hw_constrained = bool(live_kpi.get('hardware_constrained'))
+        hw_constrained = bool(live_kpi.get("hardware_constrained"))
     nonfeed_ratio = nonfeed / accepted if accepted > 0 else 0.0
     fvs = _findings_volume_score(total, nonfeed)
     sds = _source_diversity_score(family_count, nonfeed)
@@ -432,11 +548,49 @@ def compute_research_quality_score(norm: dict) -> ResearchQualityScore:
         comparable = False
     elif swap_gib is not None and swap_gib >= 3.0:
         comparable = False
-    gate = quality_gate_verdict(grade=grade, nonfeed_findings=nonfeed, swap_gib=swap_gib, hardware_constrained=hw_constrained)
+    gate = quality_gate_verdict(
+        grade=grade, nonfeed_findings=nonfeed, swap_gib=swap_gib, hardware_constrained=hw_constrained
+    )
     ed = _compute_evidence_depth(norm, nonfeed)
-    return ResearchQualityScore(total_quality_score=round(total_quality_score, 2), grade=grade, components=ScoreComponents(findings_volume_score=round(fvs, 2), source_diversity_score=round(sds, 2), nonfeed_evidence_score=round(nes, 2), ct_evidence_score=round(cts, 2), public_evidence_score=round(pus, 2), passive_evidence_score=round(pas, 2), feed_dominance_penalty=round(fdp, 2), wallclock_penalty=round(wcp, 2), memory_taint_penalty=round(mtp, 2), analysis_depth_bonus=round(analysis_depth_bonus, 2)), total_findings=total, accepted_findings=accepted, feed_findings=feed, ct_findings=ct, public_findings=pub, passive_findings=passive, nonfeed_findings=nonfeed, source_family_count=family_count, feed_dominance_score=round(feed_dom, 4), planned_duration_s=planned, actual_duration_s=actual, wallclock_exceeded=exceeded, swap_gib=swap_gib, swap_warning=swap_warn, ct_loss_stage=ct_loss_stage, quality_gate=gate, research_quality_comparable=comparable, evidence_depth=ed)
+    return ResearchQualityScore(
+        total_quality_score=round(total_quality_score, 2),
+        grade=grade,
+        components=ScoreComponents(
+            findings_volume_score=round(fvs, 2),
+            source_diversity_score=round(sds, 2),
+            nonfeed_evidence_score=round(nes, 2),
+            ct_evidence_score=round(cts, 2),
+            public_evidence_score=round(pus, 2),
+            passive_evidence_score=round(pas, 2),
+            feed_dominance_penalty=round(fdp, 2),
+            wallclock_penalty=round(wcp, 2),
+            memory_taint_penalty=round(mtp, 2),
+            analysis_depth_bonus=round(analysis_depth_bonus, 2),
+        ),
+        total_findings=total,
+        accepted_findings=accepted,
+        feed_findings=feed,
+        ct_findings=ct,
+        public_findings=pub,
+        passive_findings=passive,
+        nonfeed_findings=nonfeed,
+        source_family_count=family_count,
+        feed_dominance_score=round(feed_dom, 4),
+        planned_duration_s=planned,
+        actual_duration_s=actual,
+        wallclock_exceeded=exceeded,
+        swap_gib=swap_gib,
+        swap_warning=swap_warn,
+        ct_loss_stage=ct_loss_stage,
+        quality_gate=gate,
+        research_quality_comparable=comparable,
+        evidence_depth=ed,
+    )
 
-def quality_gate_verdict(grade: Grade, nonfeed_findings: int, swap_gib: float | None, hardware_constrained: bool) -> QualityGate:
+
+def quality_gate_verdict(
+    grade: Grade, nonfeed_findings: int, swap_gib: float | None, hardware_constrained: bool
+) -> QualityGate:
     """
     Determine quality gate verdict from research quality score components.
 
@@ -459,62 +613,106 @@ def quality_gate_verdict(grade: Grade, nonfeed_findings: int, swap_gib: float | 
         return QualityGate.QUALITY_WARN_MULTISOURCE_SHALLOW
     return QualityGate.QUALITY_PASS
 
+
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description='F213D Research Quality Score')
-    p.add_argument('--benchmark-json', required=True, help='Path to benchmark or live KPI JSON')
-    p.add_argument('--output-json', help='Path to write JSON output')
-    p.add_argument('--output-md', help='Path to write Markdown report')
+    p = argparse.ArgumentParser(description="F213D Research Quality Score")
+    p.add_argument("--benchmark-json", required=True, help="Path to benchmark or live KPI JSON")
+    p.add_argument("--output-json", help="Path to write JSON output")
+    p.add_argument("--output-md", help="Path to write Markdown report")
     return p
 
+
 def _render_md(score: ResearchQualityScore) -> str:
-    ct_loss_alert = ''
-    if score.ct_loss_stage != 'no_loss':
-        ct_loss_alert = f'\n**⚠️ CT Loss Stage:** `{score.ct_loss_stage}` (CT raw &gt; 0 but accepted = 0 — evidence lost in pipeline)'
-    lines = ['# Research Quality Score', '', f'**Total Score:** {score.total_quality_score:.1f}/100', f'**Grade:** `{score.grade.value}`', f'**Quality Gate:** `{score.quality_gate.value}`', f'**Comparable:** `{score.research_quality_comparable}`{ct_loss_alert}', '', '## Score Components', '', '| Component | Score |', '|-----------|-------|', f'| Findings Volume | {score.components.findings_volume_score:.1f} |', f'| Source Diversity | {score.components.source_diversity_score:.1f} |', f'| Nonfeed Evidence | {score.components.nonfeed_evidence_score:.1f} |', f'| CT Evidence | {score.components.ct_evidence_score:.1f} |', f'| Public Evidence | {score.components.public_evidence_score:.1f} |', f'| Passive Evidence | {score.components.passive_evidence_score:.1f} |', f'| Feed Dominance Penalty | -{score.components.feed_dominance_penalty:.1f} |', f'| Wallclock Penalty | -{score.components.wallclock_penalty:.1f} |', f'| Memory Taint Penalty | -{score.components.memory_taint_penalty:.1f} |', '', '## Finding Breakdown', '', f'- Total findings: {score.total_findings}', f'- Accepted findings: {score.accepted_findings}', f'- Feed findings: {score.feed_findings}', f'- CT findings: {score.ct_findings}', f'- Public findings: {score.public_findings}', f'- Passive findings: {score.passive_findings}', f'- Nonfeed findings: {score.nonfeed_findings}', f'- Source families: {score.source_family_count}', f'- Feed dominance score: {score.feed_dominance_score:.2f}', '', '## Diagnostic Flags', '', f'- Wallclock exceeded: {score.wallclock_exceeded}', f'- Swap GiB: {score.swap_gib}', f'- Swap warning: {score.swap_warning}', f'- CT loss stage: `{score.ct_loss_stage}`']
-    return '\n'.join(lines)
+    ct_loss_alert = ""
+    if score.ct_loss_stage != "no_loss":
+        ct_loss_alert = f"\n**⚠️ CT Loss Stage:** `{score.ct_loss_stage}` (CT raw &gt; 0 but accepted = 0 — evidence lost in pipeline)"
+    lines = [
+        "# Research Quality Score",
+        "",
+        f"**Total Score:** {score.total_quality_score:.1f}/100",
+        f"**Grade:** `{score.grade.value}`",
+        f"**Quality Gate:** `{score.quality_gate.value}`",
+        f"**Comparable:** `{score.research_quality_comparable}`{ct_loss_alert}",
+        "",
+        "## Score Components",
+        "",
+        "| Component | Score |",
+        "|-----------|-------|",
+        f"| Findings Volume | {score.components.findings_volume_score:.1f} |",
+        f"| Source Diversity | {score.components.source_diversity_score:.1f} |",
+        f"| Nonfeed Evidence | {score.components.nonfeed_evidence_score:.1f} |",
+        f"| CT Evidence | {score.components.ct_evidence_score:.1f} |",
+        f"| Public Evidence | {score.components.public_evidence_score:.1f} |",
+        f"| Passive Evidence | {score.components.passive_evidence_score:.1f} |",
+        f"| Feed Dominance Penalty | -{score.components.feed_dominance_penalty:.1f} |",
+        f"| Wallclock Penalty | -{score.components.wallclock_penalty:.1f} |",
+        f"| Memory Taint Penalty | -{score.components.memory_taint_penalty:.1f} |",
+        "",
+        "## Finding Breakdown",
+        "",
+        f"- Total findings: {score.total_findings}",
+        f"- Accepted findings: {score.accepted_findings}",
+        f"- Feed findings: {score.feed_findings}",
+        f"- CT findings: {score.ct_findings}",
+        f"- Public findings: {score.public_findings}",
+        f"- Passive findings: {score.passive_findings}",
+        f"- Nonfeed findings: {score.nonfeed_findings}",
+        f"- Source families: {score.source_family_count}",
+        f"- Feed dominance score: {score.feed_dominance_score:.2f}",
+        "",
+        "## Diagnostic Flags",
+        "",
+        f"- Wallclock exceeded: {score.wallclock_exceeded}",
+        f"- Swap GiB: {score.swap_gib}",
+        f"- Swap warning: {score.swap_warning}",
+        f"- CT loss stage: `{score.ct_loss_stage}`",
+    ]
+    return "\n".join(lines)
+
 
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
     path = Path(args.benchmark_json)
     if not path.exists():
-        print(f'ERROR: file not found: {path}', file=sys.stderr)
+        print(f"ERROR: file not found: {path}", file=sys.stderr)
         return 1
     try:
         with open(path) as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        print(f'ERROR: invalid JSON: {e}', file=sys.stderr)
+        print(f"ERROR: invalid JSON: {e}", file=sys.stderr)
         return 1
     norm = normalize_benchmark_json(data)
     score = compute_research_quality_score(norm)
     result = _safe_dataclass_to_dict(score)
-    result['grade'] = score.grade.value
-    result['quality_gate'] = score.quality_gate.value
+    result["grade"] = score.grade.value
+    result["quality_gate"] = score.quality_gate.value
     if args.output_json:
-        with open(args.output_json, 'w') as f:
+        with open(args.output_json, "w") as f:
             json.dump(result, f, indent=2)
-        print(f'JSON written: {args.output_json}')
+        print(f"JSON written: {args.output_json}")
     if args.output_md:
         md = _render_md(score)
-        with open(args.output_md, 'w') as f:
+        with open(args.output_md, "w") as f:
             f.write(md)
-        print(f'Markdown written: {args.output_md}')
+        print(f"Markdown written: {args.output_md}")
     if not args.output_json and (not args.output_md):
-        print(f'Score: {score.total_quality_score:.1f} / 100')
-        print(f'Grade: {score.grade.value}')
-        print(f'Quality Gate: {score.quality_gate.value}')
-        print(f'Comparable: {score.research_quality_comparable}')
-        print(f'  findings_volume_score:      {score.components.findings_volume_score:.1f}')
-        print(f'  source_diversity_score:   {score.components.source_diversity_score:.1f}')
-        print(f'  nonfeed_evidence_score:   {score.components.nonfeed_evidence_score:.1f}')
-        print(f'  ct_evidence_score:        {score.components.ct_evidence_score:.1f}')
-        print(f'  public_evidence_score:    {score.components.public_evidence_score:.1f}')
-        print(f'  passive_evidence_score:   {score.components.passive_evidence_score:.1f}')
-        print(f'  feed_dominance_penalty:   -{score.components.feed_dominance_penalty:.1f}')
-        print(f'  wallclock_penalty:        -{score.components.wallclock_penalty:.1f}')
-        print(f'  memory_taint_penalty:     -{score.components.memory_taint_penalty:.1f}')
+        print(f"Score: {score.total_quality_score:.1f} / 100")
+        print(f"Grade: {score.grade.value}")
+        print(f"Quality Gate: {score.quality_gate.value}")
+        print(f"Comparable: {score.research_quality_comparable}")
+        print(f"  findings_volume_score:      {score.components.findings_volume_score:.1f}")
+        print(f"  source_diversity_score:   {score.components.source_diversity_score:.1f}")
+        print(f"  nonfeed_evidence_score:   {score.components.nonfeed_evidence_score:.1f}")
+        print(f"  ct_evidence_score:        {score.components.ct_evidence_score:.1f}")
+        print(f"  public_evidence_score:    {score.components.public_evidence_score:.1f}")
+        print(f"  passive_evidence_score:   {score.components.passive_evidence_score:.1f}")
+        print(f"  feed_dominance_penalty:   -{score.components.feed_dominance_penalty:.1f}")
+        print(f"  wallclock_penalty:        -{score.components.wallclock_penalty:.1f}")
+        print(f"  memory_taint_penalty:     -{score.components.memory_taint_penalty:.1f}")
     return 0
+
 
 def score_research_quality(data: dict) -> dict:
     """
@@ -540,14 +738,70 @@ def score_research_quality(data: dict) -> dict:
     rqs = compute_research_quality_score(norm)
     comp = rqs.components
     hw_constrained = False
-    live_kpi = norm.get('live_kpi')
+    live_kpi = norm.get("live_kpi")
     if isinstance(live_kpi, dict):
-        hw_constrained = bool(live_kpi.get('hardware_constrained'))
+        hw_constrained = bool(live_kpi.get("hardware_constrained"))
     ed = rqs.evidence_depth
     if ed is None:
         evidence_depth_dict: dict = {}
     else:
-        evidence_depth_dict = {'claims_depth': ed.claims_depth, 'public_candidate_depth': ed.public_candidate_depth, 'ct_clue_depth': ed.ct_clue_depth, 'advisory_clue_depth': ed.advisory_clue_depth, 'claims_extracted': ed.claims_extracted, 'public_candidates_seen': ed.public_candidates_seen, 'ct_clues_present': ed.ct_clues_present, 'advisory_clues_present': ed.advisory_clues_present, 'nonfeed_clues_without_acceptance': ed.nonfeed_clues_without_acceptance}
-    return {'total_quality_score': rqs.total_quality_score, 'grade': rqs.grade.value, 'quality_gate': rqs.quality_gate.value, 'research_quality_comparable': rqs.research_quality_comparable, 'components': {'findings_volume_score': comp.findings_volume_score, 'source_diversity_score': comp.source_diversity_score, 'nonfeed_evidence_score': comp.nonfeed_evidence_score, 'ct_evidence_score': comp.ct_evidence_score, 'public_evidence_score': comp.public_evidence_score, 'passive_evidence_score': comp.passive_evidence_score, 'feed_dominance_penalty': comp.feed_dominance_penalty, 'wallclock_penalty': comp.wallclock_penalty, 'memory_taint_penalty': comp.memory_taint_penalty, 'analysis_depth_bonus': comp.analysis_depth_bonus}, 'diagnostic_flags': {'wallclock_exceeded': rqs.wallclock_exceeded, 'swap_gib': rqs.swap_gib, 'swap_warning': rqs.swap_warning, 'hardware_constrained': hw_constrained, 'claims_extracted': ed.claims_extracted if ed else False, 'public_candidates_seen': ed.public_candidates_seen if ed else False, 'ct_clues_present': ed.ct_clues_present if ed else False, 'advisory_clues_present': ed.advisory_clues_present if ed else False, 'nonfeed_clues_without_acceptance': ed.nonfeed_clues_without_acceptance if ed else False, 'ct_quarantine_count': norm.get('ct_quarantine_count', 0), 'ct_quarantine_without_loss': norm.get('ct_quarantine_count', 0) > 0 and norm.get('ct_loss_stage', 'no_loss') == 'no_loss'}, 'feed_dominance_score': rqs.feed_dominance_score, 'swap_gib': rqs.swap_gib, 'swap_warning': rqs.swap_warning, 'hardware_constrained': hw_constrained, 'total_findings': rqs.total_findings, 'accepted_findings': rqs.accepted_findings, 'feed_findings': rqs.feed_findings, 'ct_findings': rqs.ct_findings, 'public_findings': rqs.public_findings, 'passive_findings': rqs.passive_findings, 'nonfeed_findings': rqs.nonfeed_findings, 'source_family_count': rqs.source_family_count, 'evidence_depth': evidence_depth_dict}
-if __name__ == '__main__':
+        evidence_depth_dict = {
+            "claims_depth": ed.claims_depth,
+            "public_candidate_depth": ed.public_candidate_depth,
+            "ct_clue_depth": ed.ct_clue_depth,
+            "advisory_clue_depth": ed.advisory_clue_depth,
+            "claims_extracted": ed.claims_extracted,
+            "public_candidates_seen": ed.public_candidates_seen,
+            "ct_clues_present": ed.ct_clues_present,
+            "advisory_clues_present": ed.advisory_clues_present,
+            "nonfeed_clues_without_acceptance": ed.nonfeed_clues_without_acceptance,
+        }
+    return {
+        "total_quality_score": rqs.total_quality_score,
+        "grade": rqs.grade.value,
+        "quality_gate": rqs.quality_gate.value,
+        "research_quality_comparable": rqs.research_quality_comparable,
+        "components": {
+            "findings_volume_score": comp.findings_volume_score,
+            "source_diversity_score": comp.source_diversity_score,
+            "nonfeed_evidence_score": comp.nonfeed_evidence_score,
+            "ct_evidence_score": comp.ct_evidence_score,
+            "public_evidence_score": comp.public_evidence_score,
+            "passive_evidence_score": comp.passive_evidence_score,
+            "feed_dominance_penalty": comp.feed_dominance_penalty,
+            "wallclock_penalty": comp.wallclock_penalty,
+            "memory_taint_penalty": comp.memory_taint_penalty,
+            "analysis_depth_bonus": comp.analysis_depth_bonus,
+        },
+        "diagnostic_flags": {
+            "wallclock_exceeded": rqs.wallclock_exceeded,
+            "swap_gib": rqs.swap_gib,
+            "swap_warning": rqs.swap_warning,
+            "hardware_constrained": hw_constrained,
+            "claims_extracted": ed.claims_extracted if ed else False,
+            "public_candidates_seen": ed.public_candidates_seen if ed else False,
+            "ct_clues_present": ed.ct_clues_present if ed else False,
+            "advisory_clues_present": ed.advisory_clues_present if ed else False,
+            "nonfeed_clues_without_acceptance": ed.nonfeed_clues_without_acceptance if ed else False,
+            "ct_quarantine_count": norm.get("ct_quarantine_count", 0),
+            "ct_quarantine_without_loss": norm.get("ct_quarantine_count", 0) > 0
+            and norm.get("ct_loss_stage", "no_loss") == "no_loss",
+        },
+        "feed_dominance_score": rqs.feed_dominance_score,
+        "swap_gib": rqs.swap_gib,
+        "swap_warning": rqs.swap_warning,
+        "hardware_constrained": hw_constrained,
+        "total_findings": rqs.total_findings,
+        "accepted_findings": rqs.accepted_findings,
+        "feed_findings": rqs.feed_findings,
+        "ct_findings": rqs.ct_findings,
+        "public_findings": rqs.public_findings,
+        "passive_findings": rqs.passive_findings,
+        "nonfeed_findings": rqs.nonfeed_findings,
+        "source_family_count": rqs.source_family_count,
+        "evidence_depth": evidence_depth_dict,
+    }
+
+
+if __name__ == "__main__":
     sys.exit(main())

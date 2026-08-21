@@ -38,8 +38,9 @@ from hledac.universal.utils.aho_extractor import (
 # Test 1: classification is explicit
 # ---------------------------------------------------------------------------
 
+
 class TestClassification:
-    def test_live_or_dormant_classification_is_explicit(self):
+    def test_live_or_dormant_classification_is_explicit(self) -> None:
         """Report must explicitly state LIVE or DORMANT."""
         # The integration is DORMANT: _document_intelligence_search returns
         # static capabilities, never calls analyze() or _detect_suspicious_content
@@ -50,6 +51,7 @@ class TestClassification:
 # ---------------------------------------------------------------------------
 # Test 2-5: suspicious_keywords behavior parity
 # ---------------------------------------------------------------------------
+
 
 class TestSuspiciousKeywordsBehavior:
     _test_cases = [
@@ -65,27 +67,26 @@ class TestSuspiciousKeywordsBehavior:
         ("internal use only document", ["internal use only"]),
     ]
 
-    def test_suspicious_keywords_matches_previous_behavior(self):
+    def test_suspicious_keywords_matches_previous_behavior(self) -> None:
         """Aho path must match substring scan on all test cases."""
         for text, expected in self._test_cases:
             result = scan_suspicious_keywords_list(text)
             assert sorted(result) == sorted(expected), f"Failed on: {text!r}"
 
-    def test_suspicious_keywords_multiple_hits(self):
+    def test_suspicious_keywords_multiple_hits(self) -> None:
         """Multiple keywords in one text are all detected."""
         # All 9 keywords in one text (adjacent to ensure detection)
-        text = ("CLASSIFIED SECRET confidential proprietary DRAFT redacted sensitive "
-                "internal use only do not distribute")
+        text = "CLASSIFIED SECRET confidential proprietary DRAFT redacted sensitive internal use only do not distribute"
         result = scan_suspicious_keywords_list(text)
         assert len(result) == 9
         assert set(result) == set(PILOT_PATTERNS)
 
-    def test_suspicious_keywords_no_hits(self):
+    def test_suspicious_keywords_no_hits(self) -> None:
         """Empty result when no keywords present."""
         result = scan_suspicious_keywords_list("This is completely normal text.")
         assert result == []
 
-    def test_suspicious_keywords_case_insensitive(self):
+    def test_suspicious_keywords_case_insensitive(self) -> None:
         """Matching must be case-insensitive (keywords are lowercase, text lowercased)."""
         cases = ["CLASSIFIED", "Classified", "CLASSIFIed", "classified"]
         for case in cases:
@@ -97,13 +98,15 @@ class TestSuspiciousKeywordsBehavior:
 # Test 6: fallback
 # ---------------------------------------------------------------------------
 
+
 class TestFallback:
-    def test_fallback_to_substring_logic_if_aho_unavailable(self):
+    def test_fallback_to_substring_logic_if_aho_unavailable(self) -> None:
         """When aho_extractor is unavailable, fallback to substring scan."""
         analyzer = PDFAnalyzer()
 
         # Monkeypatch _get_aho_extractor to return None (simulates unavailability)
         import intelligence.document_intelligence as di_mod
+
         original_get = di_mod._get_aho_extractor
         di_mod._get_aho_extractor = lambda: None
 
@@ -122,8 +125,9 @@ class TestFallback:
 # Test 7: singleton
 # ---------------------------------------------------------------------------
 
+
 class TestSingleton:
-    def test_automaton_built_once_only(self):
+    def test_automaton_built_once_only(self) -> None:
         """Automaton must be built exactly once and reused."""
         auto1 = get_suspicious_keywords_automaton()
         auto2 = get_suspicious_keywords_automaton()
@@ -138,8 +142,9 @@ class TestSingleton:
 # Test 11: regression subset
 # ---------------------------------------------------------------------------
 
+
 class TestDIRegression:
-    def test_pdf_analyzer_suspicious_content_basic(self):
+    def test_pdf_analyzer_suspicious_content_basic(self) -> None:
         """Basic suspicious content detection still works."""
         analyzer = PDFAnalyzer()
         text = "This document is CLASSIFIED and contains SECRET data."
@@ -148,7 +153,7 @@ class TestDIRegression:
         assert "secret" in result
         assert len(result) == 2
 
-    def test_pdf_analyzer_suspicious_content_empty(self):
+    def test_pdf_analyzer_suspicious_content_empty(self) -> None:
         """No false positives on clean text."""
         analyzer = PDFAnalyzer()
         result = analyzer._detect_suspicious_content("Just normal text here.")

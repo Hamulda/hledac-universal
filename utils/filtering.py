@@ -2,14 +2,6 @@
 Filtering Utilities - URL Filtering and Frontier Management
 ===========================================================
 
-
-
-
-
-
-
-
-
 Combines:
 - FastFilter: Binary Fuse Filter for URL filtering (memory efficient)
 - EfficientFrontier: Quotient Filter for URL deduplication
@@ -28,30 +20,32 @@ Usage:
     frontier = EfficientFrontier()
     if not frontier.contains(url):
         frontier.add(url)
-        # Process URL
 """
+
 import hashlib
 import logging
 import re
 from collections.abc import Iterator
 from contextlib import closing
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+
 try:
     import orjson
+
     ORJSON_AVAILABLE = True
 except ImportError:
     ORJSON_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
+
 class FilterStats(Struct):
     """Statistics for fast filter."""
+
     total_checked: int = 0
     blocked: int = 0
     allowed: int = 0
@@ -64,41 +58,45 @@ class FilterStats(Struct):
             return 0.0
         return self.blocked / self.total_checked
 
+
 class FrontierStats(Struct, frozen=True):
     """Statistics for frontier operations."""
+
     total_urls: int = 0
     checked_urls: int = 0
     skipped_urls: int = 0
     added_urls: int = 0
     false_positives: int = 0
 
+
 class SimpleSetFilter:
     """
     Python set-based filter as fallback.
     Simple but memory-intensive for large datasets.
     """
-    __slots__ = tuple(('_blocked_domains', '_blocked_patterns', '_blocked_urls'))
 
-    def __init__(self):
+    __slots__ = ("_blocked_domains", "_blocked_patterns", "_blocked_urls")
+
+    def __init__(self) -> None:
         self._blocked_domains: set[str] = set()
         self._blocked_urls: set[str] = set()
         self._blocked_patterns: list[re.Pattern] = []
 
-    def add_domain(self, domain: str):
+    def add_domain(self, domain: str) -> None:
         """Add blocked domain."""
         self._blocked_domains.add(domain.lower())
 
-    def add_url(self, url: str):
+    def add_url(self, url: str) -> None:
         """Add blocked URL."""
         self._blocked_urls.add(url.lower())
 
-    def add_pattern(self, pattern: str):
+    def add_pattern(self, pattern: str) -> None:
         """Add blocked URL pattern (regex)."""
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
             self._blocked_patterns.append(compiled)
         except re.error as e:
-            logger.warning(f'Invalid regex pattern: {pattern}, error: {e}')
+            logger.warning(f"Invalid regex pattern: {pattern}, error: {e}")
 
     def is_blocked(self, url: str) -> bool:
         """Check if URL is blocked."""
@@ -109,60 +107,64 @@ class SimpleSetFilter:
             parsed = urlparse(url_lower)
             domain = parsed.netloc.lower()
             for blocked in self._blocked_domains:
-                if domain == blocked or domain.endswith('.' + blocked):
+                if domain == blocked or domain.endswith("." + blocked):
                     return True
             for pattern in self._blocked_patterns:
                 if pattern.search(url_lower):
                     return True
         except Exception as e:
-            logger.error(f'URL parsing error: {e}')
+            logger.error(f"URL parsing error: {e}")
         return False
 
     def size(self) -> int:
         """Get filter size."""
         return len(self._blocked_domains) + len(self._blocked_urls) + len(self._blocked_patterns)
 
+
 class BinaryFuseFilter:
     """
     Binary Fuse Filter wrapper using pyxorfilter.
     Memory-efficient probabilistic filter with 0% false negatives.
     """
-    __slots__ = tuple(('_expected_size', '_filter', '_initialized', '_items'))
 
-    def __init__(self, expected_size: int=100000):
+    __slots__ = ("_expected_size", "_filter", "_initialized", "_items")
+
+    def __init__(self, expected_size: int = 100000) -> None:
         self._filter = None
         self._initialized = False
         self._expected_size = expected_size
         self._items: set[str] = set()
         self._init_filter()
 
-    def _init_filter(self):
+    def _init_filter(self) -> None:
         """Initialize pyxorfilter."""
         try:
             from pyxorfilter import FuseFilter
-            logger.info('Initializing Binary Fuse Filter')
+
+            logger.info("Initializing Binary Fuse Filter")
             self._initialized = True
         except ImportError:
-            logger.warning('pyxorfilter not available, using set fallback')
+            logger.warning("pyxorfilter not available, using set fallback")
 
-    def add(self, item: str):
+    def add(self, item: str) -> None:
         """Add item to filter."""
         self._items.add(item)
 
-    def build(self):
+    def build(self) -> None:
         """Build the filter from added items."""
         if not self._initialized:
             return
         try:
             from pyxorfilter import FuseFilter
+
             if not self._items:
-                logger.warning('No items to build filter')
+                logger.warning("No items to build filter")
                 return
             items_list = list(self._items)
             self._filter = FuseFilter(items_list)
-            logger.info(f'Binary Fuse Filter built with {len(items_list)} items')
+            logger.info(f"Binary Fuse Filter built with {len(items_list)} items")
         except Exception as e:
-            logger.error(f'Failed to build Binary Fuse Filter: {e}')
+            logger.error(f"Failed to build Binary Fuse Filter: {e}")
             self._filter = None
 
     def contains(self, item: str) -> bool:
@@ -171,12 +173,13 @@ class BinaryFuseFilter:
             try:
                 return item in self._filter
             except Exception as e:
-                logger.error(f'Filter lookup error: {e}')
+                logger.error(f"Filter lookup error: {e}")
         return item in self._items
 
     def is_available(self) -> bool:
         """Check if filter is available."""
         return self._initialized and self._filter is not None
+
 
 class FastFilter:
     """
@@ -184,11 +187,21 @@ class FastFilter:
     Optimized for M1 Silicon (8GB RAM).
     Falls back to Python set if pyxorfilter unavailable.
     """
-    DEFAULT_BLOCKED_DOMAINS = ['spam.com', 'advertising.net', 'malware-site.org', 'phishing-example.com']
-    DEFAULT_BLOCKED_PATTERNS = ['.*\\.exe$', '.*\\.dll$', '.*download.*virus.*', '.*free.*crack.*']
-    __slots__ = tuple(('_bff', '_cache', '_cache_size', '_enable_cache', '_fallback_to_set', '_set_filter', '_stats', '_use_bff'))
 
-    def __init__(self, use_bff: bool=True, fallback_to_set: bool=True, enable_cache: bool=True):
+    DEFAULT_BLOCKED_DOMAINS = ["spam.com", "advertising.net", "malware-site.org", "phishing-example.com"]
+    DEFAULT_BLOCKED_PATTERNS = [".*\\.exe$", ".*\\.dll$", ".*download.*virus.*", ".*free.*crack.*"]
+    __slots__ = (
+        "_bff",
+        "_cache",
+        "_cache_size",
+        "_enable_cache",
+        "_fallback_to_set",
+        "_set_filter",
+        "_stats",
+        "_use_bff",
+    )
+
+    def __init__(self, use_bff: bool = True, fallback_to_set: bool = True, enable_cache: bool = True) -> None:
         self._bff: BinaryFuseFilter | None = None
         self._set_filter: SimpleSetFilter | None = None
         self._use_bff = use_bff
@@ -202,9 +215,9 @@ class FastFilter:
         if fallback_to_set:
             self._set_filter = SimpleSetFilter()
         self._load_default_blocklists()
-        logger.info('FastFilter initialized')
+        logger.info("FastFilter initialized")
 
-    def _load_default_blocklists(self):
+    def _load_default_blocklists(self) -> None:
         """Load default blocked domains and patterns."""
         for domain in self.DEFAULT_BLOCKED_DOMAINS:
             self.add_blocked_domain(domain)
@@ -216,11 +229,11 @@ class FastFilter:
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for consistent matching."""
         url = url.lower().strip()
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
         try:
             parsed = urlparse(url)
-            normalized = f'{parsed.scheme}://{parsed.netloc}{parsed.path}'
+            normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
             return normalized
         except Exception:
             return url
@@ -245,7 +258,7 @@ class FastFilter:
         self._stats.cache_misses += 1
         return None
 
-    def _update_cache(self, url: str, blocked: bool):
+    def _update_cache(self, url: str, blocked: bool) -> None:
         """Update cache with URL result."""
         if not self._enable_cache:
             return
@@ -255,7 +268,7 @@ class FastFilter:
             self._cache.popitem()
         self._cache[url_hash] = blocked
 
-    def add_blocked_domain(self, domain: str):
+    def add_blocked_domain(self, domain: str) -> None:
         """Add domain to blocklist."""
         domain = domain.lower()
         if self._bff:
@@ -263,7 +276,7 @@ class FastFilter:
         if self._set_filter:
             self._set_filter.add_domain(domain)
 
-    def add_blocked_url(self, url: str):
+    def add_blocked_url(self, url: str) -> None:
         """Add URL to blocklist."""
         normalized = self._normalize_url(url)
         if self._bff:
@@ -271,28 +284,28 @@ class FastFilter:
         if self._set_filter:
             self._set_filter.add_url(normalized)
 
-    def add_blocked_pattern(self, pattern: str):
+    def add_blocked_pattern(self, pattern: str) -> None:
         """Add regex pattern to blocklist."""
         if self._set_filter:
             self._set_filter.add_pattern(pattern)
 
-    def load_blocklist_file(self, filepath: str):
+    def load_blocklist_file(self, filepath: str) -> None:
         """Load blocklist from file (one entry per line)."""
         try:
-            with open(filepath, encoding='utf-8') as f:
+            with open(filepath, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith('#'):
+                    if not line or line.startswith("#"):
                         continue
-                    if line.startswith('http'):
+                    if line.startswith("http"):
                         self.add_blocked_url(line)
                     else:
                         self.add_blocked_domain(line)
             if self._bff:
                 self._bff.build()
-            logger.info(f'Loaded blocklist from: {filepath}')
+            logger.info(f"Loaded blocklist from: {filepath}")
         except Exception as e:
-            logger.error(f'Failed to load blocklist: {e}')
+            logger.error(f"Failed to load blocklist: {e}")
 
     def check_url(self, url: str) -> bool:
         """
@@ -331,9 +344,18 @@ class FastFilter:
 
     def get_stats(self) -> dict[str, Any]:
         """Get filter statistics."""
-        return {'total_checked': self._stats.total_checked, 'blocked': self._stats.blocked, 'allowed': self._stats.allowed, 'block_rate': self._stats.block_rate(), 'cache_hits': self._stats.cache_hits, 'cache_misses': self._stats.cache_misses, 'bff_available': self._bff.is_available() if self._bff else False, 'set_filter_size': self._set_filter.size() if self._set_filter else 0}
+        return {
+            "total_checked": self._stats.total_checked,
+            "blocked": self._stats.blocked,
+            "allowed": self._stats.allowed,
+            "block_rate": self._stats.block_rate(),
+            "cache_hits": self._stats.cache_hits,
+            "cache_misses": self._stats.cache_misses,
+            "bff_available": self._bff.is_available() if self._bff else False,
+            "set_filter_size": self._set_filter.size() if self._set_filter else 0,
+        }
 
-    def reset_stats(self):
+    def reset_stats(self) -> None:
         """Reset statistics."""
         self._stats = FilterStats()
         self._cache.clear()
@@ -341,6 +363,7 @@ class FastFilter:
     def is_bff_available(self) -> bool:
         """Check if Binary Fuse Filter is available."""
         return self._bff is not None and self._bff.is_available()
+
 
 class QuotientFilterFrontier:
     """
@@ -352,36 +375,38 @@ class QuotientFilterFrontier:
     - Lower memory usage than Bloom Filter
     - Supports deletion operations
     """
-    __slots__ = tuple(('_exact_set', '_quotient_filter', '_stats', 'capacity'))
 
-    def __init__(self, capacity: int=1000000, filter_size: int | None=None):
+    __slots__ = ("_exact_set", "_quotient_filter", "_stats", "capacity")
+
+    def __init__(self, capacity: int = 1000000, filter_size: int | None = None) -> None:
         self.capacity = capacity
         self._quotient_filter: Any | None = None
         self._exact_set: set[str] = set()
         self._stats = FrontierStats(total_urls=0, checked_urls=0, skipped_urls=0, added_urls=0)
         try:
             self._init_quotient_filter(filter_size)
-            logger.info(f'QuotientFilterFrontier initialized (capacity: {capacity})')
+            logger.info(f"QuotientFilterFrontier initialized (capacity: {capacity})")
         except ImportError:
-            logger.warning('PyProbables not available, using set-based fallback')
+            logger.warning("PyProbables not available, using set-based fallback")
             self._init_fallback()
 
-    def _init_quotient_filter(self, filter_size: int | None):
+    def _init_quotient_filter(self, filter_size: int | None) -> None:
         """Initialize quotient filter."""
         try:
             from pyprobables import QuotientFilter
+
             if filter_size is None:
                 filter_size = self.capacity * 2
             self._quotient_filter = QuotientFilter(filter_size=filter_size)
         except Exception as e:
-            logger.error(f'Failed to initialize quotient filter: {e}')
+            logger.error(f"Failed to initialize quotient filter: {e}")
             self._init_fallback()
 
-    def _init_fallback(self):
+    def _init_fallback(self) -> None:
         """Initialize fallback using set."""
         self._quotient_filter = None
 
-    def add(self, url: str):
+    def add(self, url: str) -> None:
         """Add URL to frontier."""
         if self._quotient_filter is not None:
             self._quotient_filter.add(url)
@@ -401,7 +426,7 @@ class QuotientFilterFrontier:
                 return True
         return in_exact
 
-    def remove(self, url: str):
+    def remove(self, url: str) -> None:
         """Remove URL from frontier."""
         if url in self._exact_set:
             self._exact_set.remove(url)
@@ -420,121 +445,155 @@ class QuotientFilterFrontier:
         """Get current number of URLs in frontier."""
         return len(self._exact_set)
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear all URLs from frontier."""
         self._exact_set.clear()
         self._stats = FrontierStats(total_urls=0, checked_urls=0, skipped_urls=0, added_urls=0)
         if self._quotient_filter is not None:
             try:
                 from pyprobables import QuotientFilter
+
                 filter_size = self._quotient_filter.size
                 self._quotient_filter = QuotientFilter(filter_size=filter_size)
             except Exception:  # noqa: BLE001
                 pass
+
 
 class PersistentFrontier:
     """
     Persistent URL frontier with disk storage.
     Supports multiple storage backends (JSON, Pickle, SQLite).
     """
-    __slots__ = tuple(('_frontier', 'backend', 'storage_path'))
 
-    def __init__(self, storage_path: Path | None=None, backend: str='orjson'):
+    __slots__ = ("_frontier", "backend", "storage_path")
+
+    def __init__(self, storage_path: Path | None = None, backend: str = "orjson") -> None:
         if storage_path is None:
-            storage_path = Path.home() / '.cache' / 'hledac' / 'frontier'
+            storage_path = Path.home() / ".cache" / "hledac" / "frontier"
         self.storage_path = storage_path
         self.backend = backend
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self._frontier = QuotientFilterFrontier()
         self._load_from_disk()
-        logger.info(f'PersistentFrontier initialized (backend: {backend})')
+        logger.info(f"PersistentFrontier initialized (backend: {backend})")
 
     def _get_storage_file(self) -> Path:
         """Get path to storage file."""
-        extension = {'orjson': '.json', 'json': '.json', 'sqlite': '.db'}.get(self.backend, '.json')
-        return self.storage_path / f'frontier{extension}'
+        extension = {"orjson": ".json", "json": ".json", "sqlite": ".db"}.get(self.backend, ".json")
+        return self.storage_path / f"frontier{extension}"
 
-    def _save_to_disk(self):
+    def _save_to_disk(self) -> None:
         """Save frontier to disk."""
         storage_file = self._get_storage_file()
         try:
-            if self.backend == 'orjson':
-                data = {'urls': list(self._frontier._exact_set), 'stats': {'total_urls': self._frontier._stats.total_urls, 'checked_urls': self._frontier._stats.checked_urls, 'skipped_urls': self._frontier._stats.skipped_urls, 'added_urls': self._frontier._stats.added_urls, 'false_positives': self._frontier._stats.false_positives}, 'timestamp': datetime.now(UTC).isoformat()}
+            if self.backend == "orjson":
+                data = {
+                    "urls": list(self._frontier._exact_set),
+                    "stats": {
+                        "total_urls": self._frontier._stats.total_urls,
+                        "checked_urls": self._frontier._stats.checked_urls,
+                        "skipped_urls": self._frontier._stats.skipped_urls,
+                        "added_urls": self._frontier._stats.added_urls,
+                        "false_positives": self._frontier._stats.false_positives,
+                    },
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
                 if ORJSON_AVAILABLE:
-                    with open(storage_file, 'wb') as f:
+                    with open(storage_file, "wb") as f:
                         f.write(orjson.dumps(data))
                 else:
                     import json
-                    with open(storage_file, 'w') as f:
-                        json.dump(data, f)
-            elif self.backend == 'json':
-                import json
-                with open(storage_file, 'w') as f:
-                    json.dump({'urls': list(self._frontier._exact_set), 'stats': {'total_urls': self._frontier._stats.total_urls, 'checked_urls': self._frontier._stats.checked_urls, 'skipped_urls': self._frontier._stats.skipped_urls, 'added_urls': self._frontier._stats.added_urls, 'false_positives': self._frontier._stats.false_positives}, 'timestamp': datetime.now(UTC).isoformat()}, f)
-            elif self.backend == 'sqlite':
-                self._save_sqlite()
-            logger.info(f'Frontier saved to {storage_file}')
-        except Exception as e:
-            logger.error(f'Failed to save frontier: {e}')
 
-    def _save_sqlite(self):
+                    with open(storage_file, "w") as f:
+                        json.dump(data, f)
+            elif self.backend == "json":
+                import json
+
+                with open(storage_file, "w") as f:
+                    json.dump(
+                        {
+                            "urls": list(self._frontier._exact_set),
+                            "stats": {
+                                "total_urls": self._frontier._stats.total_urls,
+                                "checked_urls": self._frontier._stats.checked_urls,
+                                "skipped_urls": self._frontier._stats.skipped_urls,
+                                "added_urls": self._frontier._stats.added_urls,
+                                "false_positives": self._frontier._stats.false_positives,
+                            },
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        },
+                        f,
+                    )
+            elif self.backend == "sqlite":
+                self._save_sqlite()
+            logger.info(f"Frontier saved to {storage_file}")
+        except Exception as e:
+            logger.error(f"Failed to save frontier: {e}")
+
+    def _save_sqlite(self) -> None:
         """Save frontier to SQLite."""
         try:
             import sqlite3
+
             storage_file = self._get_storage_file()
             with closing(sqlite3.connect(storage_file)) as conn:
                 cursor = conn.cursor()
-                cursor.execute('\n                    CREATE TABLE IF NOT EXISTS frontier (\n                        url TEXT PRIMARY KEY,\n                        timestamp TEXT\n                    )\n                ')
-                cursor.execute('DELETE FROM frontier')
+                cursor.execute(
+                    "\n                    CREATE TABLE IF NOT EXISTS frontier (\n                        url TEXT PRIMARY KEY,\n                        timestamp TEXT\n                    )\n                "
+                )
+                cursor.execute("DELETE FROM frontier")
                 timestamp = datetime.now(UTC).isoformat()
                 data = [(url, timestamp) for url in self._frontier._exact_set]
-                cursor.executemany('INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)', data)
+                cursor.executemany("INSERT OR REPLACE INTO frontier (url, timestamp) VALUES (?, ?)", data)
                 conn.commit()
         except Exception as e:
-            logger.error(f'Failed to save SQLite frontier: {e}')
+            logger.error(f"Failed to save SQLite frontier: {e}")
 
-    def _load_from_disk(self):
+    def _load_from_disk(self) -> None:
         """Load frontier from disk."""
         storage_file = self._get_storage_file()
         if not storage_file.exists():
-            logger.info('No existing frontier found, starting fresh')
+            logger.info("No existing frontier found, starting fresh")
             return
         try:
-            if self.backend == 'orjson':
+            if self.backend == "orjson":
                 if ORJSON_AVAILABLE:
-                    with open(storage_file, 'rb') as f:
+                    with open(storage_file, "rb") as f:
                         data = orjson.loads(f.read())
                 else:
                     import json
+
                     with open(storage_file) as f:
                         data = json.load(f)
-                self._frontier._exact_set = set(data.get('urls', []))
-            elif self.backend == 'json':
+                self._frontier._exact_set = set(data.get("urls", []))
+            elif self.backend == "json":
                 import json
+
                 with open(storage_file) as f:
                     data = json.load(f)
-                    self._frontier._exact_set = set(data.get('urls', []))
-            elif self.backend == 'sqlite':
+                    self._frontier._exact_set = set(data.get("urls", []))
+            elif self.backend == "sqlite":
                 self._load_sqlite()
-            logger.info(f'Loaded {len(self._frontier._exact_set)} URLs from {storage_file}')
+            logger.info(f"Loaded {len(self._frontier._exact_set)} URLs from {storage_file}")
         except Exception as e:
-            logger.error(f'Failed to load frontier: {e}')
+            logger.error(f"Failed to load frontier: {e}")
 
-    def _load_sqlite(self):
+    def _load_sqlite(self) -> None:
         """Load frontier from SQLite."""
         try:
             import sqlite3
+
             storage_file = self._get_storage_file()
             with closing(sqlite3.connect(storage_file)) as conn:
                 cursor = conn.cursor()
-                cursor.execute('SELECT url FROM frontier LIMIT 50000')
+                cursor.execute("SELECT url FROM frontier LIMIT 50000")
                 urls = [row[0] for row in cursor.fetchall()]
                 self._frontier._exact_set = set(urls)
                 self._frontier._stats.total_urls = len(urls)
         except Exception as e:
-            logger.error(f'Failed to load SQLite frontier: {e}')
+            logger.error(f"Failed to load SQLite frontier: {e}")
 
-    def add(self, url: str, persist: bool=True):
+    def add(self, url: str, persist: bool = True) -> None:
         """Add URL to frontier."""
         self._frontier.add(url)
         if persist:
@@ -547,7 +606,7 @@ class PersistentFrontier:
             self._frontier._stats.skipped_urls += 1
         return result
 
-    def remove(self, url: str, persist: bool=True):
+    def remove(self, url: str, persist: bool = True) -> None:
         """Remove URL from frontier."""
         self._frontier.remove(url)
         if persist:
@@ -561,7 +620,7 @@ class PersistentFrontier:
         """Get current number of URLs in frontier."""
         return self._frontier.get_size()
 
-    def clear(self, persist: bool=True):
+    def clear(self, persist: bool = True) -> None:
         """Clear all URLs from frontier."""
         self._frontier.clear()
         if persist:
@@ -575,14 +634,16 @@ class PersistentFrontier:
         """Get all URLs in frontier."""
         return list(self._frontier._exact_set)
 
+
 class EfficientFrontier(PersistentFrontier):
     """
     High-level frontier interface with smart deduplication.
     Combines quotient filter efficiency with intelligent URL normalization.
     """
-    __slots__ = tuple(('normalize_urls',))
 
-    def __init__(self, storage_path: Path | None=None, backend: str='orjson', normalize_urls: bool=True):
+    __slots__ = ("normalize_urls",)
+
+    def __init__(self, storage_path: Path | None = None, backend: str = "orjson", normalize_urls: bool = True) -> None:
         super().__init__(storage_path, backend)
         self.normalize_urls = normalize_urls
 
@@ -593,13 +654,13 @@ class EfficientFrontier(PersistentFrontier):
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
         netloc = parsed.netloc.lower()
-        path = parsed.path or '/'
-        params = ''
-        query = ''
-        fragment = ''
+        path = parsed.path or "/"
+        params = ""
+        query = ""
+        fragment = ""
         return urlunparse((scheme, netloc, path, params, query, fragment))
 
-    def add(self, url: str, persist: bool=True):
+    def add(self, url: str, persist: bool = True) -> None:
         """Add normalized URL to frontier."""
         normalized = self._normalize_url(url)
         super().add(normalized, persist)
@@ -609,12 +670,12 @@ class EfficientFrontier(PersistentFrontier):
         normalized = self._normalize_url(url)
         return super().contains(normalized)
 
-    def remove(self, url: str, persist: bool=True):
+    def remove(self, url: str, persist: bool = True) -> None:
         """Remove normalized URL from frontier."""
         normalized = self._normalize_url(url)
         super().remove(normalized, persist)
 
-    def add_batch(self, urls: list[str], persist: bool=True):
+    def add_batch(self, urls: list[str], persist: bool = True) -> None:
         """Add multiple URLs to frontier."""
         for url in urls:
             self.add(url, persist=False)
@@ -624,8 +685,11 @@ class EfficientFrontier(PersistentFrontier):
     def check_batch(self, urls: list[str]) -> list[bool]:
         """Check multiple URLs against frontier."""
         return [self.contains(url) for url in urls]
+
+
 _global_filter: FastFilter | None = None
 _global_frontier: EfficientFrontier | None = None
+
 
 def get_fast_filter() -> FastFilter:
     """Get global FastFilter instance."""
@@ -634,7 +698,8 @@ def get_fast_filter() -> FastFilter:
         _global_filter = FastFilter()
     return _global_filter
 
-def get_frontier(storage_path: Path | None=None, backend: str='orjson') -> EfficientFrontier:
+
+def get_frontier(storage_path: Path | None = None, backend: str = "orjson") -> EfficientFrontier:
     """Get global EfficientFrontier instance."""
     global _global_frontier
     if _global_frontier is None:

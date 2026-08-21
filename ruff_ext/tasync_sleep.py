@@ -37,15 +37,17 @@ class Violation(NamedTuple):
 
 
 # Executor patterns - functions that wrap blocking calls in threads
-EXECUTOR_PATTERNS = frozenset({
-    "to_thread_with_timeout",
-    "to_thread",
-    "run_in_executor",
-    "submit",
-    "rayon_submit",
-    "run_lmdb",
-    "mlx_inference_lock_aio",
-})
+EXECUTOR_PATTERNS = frozenset(
+    {
+        "to_thread_with_timeout",
+        "to_thread",
+        "run_in_executor",
+        "submit",
+        "rayon_submit",
+        "run_lmdb",
+        "mlx_inference_lock_aio",
+    }
+)
 
 
 def _is_time_sleep_call(node: ast.expr) -> bool:
@@ -114,78 +116,77 @@ def _is_in_nested_sync_function(time_sleep_node: ast.Call, async_func: ast.Async
 def _check_async_function(node: ast.AsyncFunctionDef, file_path: Path) -> list[Violation]:
     """Check an async function for time.sleep() violations."""
     violations = []
-    
-    is_test = node.name.startswith('test_')
+
+    is_test = node.name.startswith("test_")
     if not is_test:
         return violations
-    
+
     for child in ast.walk(node):
         if isinstance(child, ast.Call) and _is_time_sleep_call(child):
             # Check if time.sleep is in an executor-wrapped context
-            is_executor_wrapped = (
-                _is_lambda_passed_to_executor(child, node) or
-                _is_in_nested_sync_function(child, node)
-            )
-            
+            is_executor_wrapped = _is_lambda_passed_to_executor(child, node) or _is_in_nested_sync_function(child, node)
+
             if not is_executor_wrapped:
-                violations.append(Violation(
-                    file=file_path,
-                    line=child.lineno or 0,
-                    col=child.col_offset or 0,
-                    name="TASYNC001",
-                    message=f"TASYNC001: time.sleep() in async def {node.name} "
-                            f"is not in executor context. Use 'await asyncio.sleep(duration)' instead.",
-                ))
-    
+                violations.append(
+                    Violation(
+                        file=file_path,
+                        line=child.lineno or 0,
+                        col=child.col_offset or 0,
+                        name="TASYNC001",
+                        message=f"TASYNC001: time.sleep() in async def {node.name} "
+                        f"is not in executor context. Use 'await asyncio.sleep(duration)' instead.",
+                    )
+                )
+
     return violations
 
 
 def check_file(file_path: Path) -> list[Violation]:
     """Check a single file for TASYNC001 violations."""
     violations = []
-    
+
     # Only check test files
-    if not str(file_path).startswith('tests/') or not file_path.name.startswith('test_'):
+    if not str(file_path).startswith("tests/") or not file_path.name.startswith("test_"):
         return violations
-    
+
     try:
         with open(file_path) as f:
             content = f.read()
         tree = ast.parse(content, filename=str(file_path))
-    except (SyntaxError, OSError):
+    except SyntaxError, OSError:
         return violations
-    
+
     for node in ast.walk(tree):
         if isinstance(node, ast.AsyncFunctionDef):
             violations.extend(_check_async_function(node, file_path))
-    
+
     return violations
 
 
 def check_directory(base_path: Path = Path(".")) -> list[Violation]:
     """Check all test files in directory for TASYNC001 violations."""
     violations = []
-    
+
     tests_dir = base_path / "tests"
     if not tests_dir.exists():
         return violations
-    
+
     for py_file in tests_dir.glob("test_*.py"):
         violations.extend(check_file(py_file))
-    
+
     return violations
 
 
 def main() -> int:
     """CLI entry point."""
     violations = check_directory(Path("."))
-    
+
     if violations:
         print("TASYNC001 violations found:")
         for v in violations:
             print(f"  {v.file}:{v.line}:{v.col} {v.name}: {v.message}")
         return 1
-    
+
     print("No TASYNC001 violations found.")
     return 0
 

@@ -33,23 +33,15 @@ INVARIANTS:
   [H2-I8] HTTPX client closed ONLY via close_httpx_client_async()
 """
 
-
-
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from hledac.universal.utils.locks import LazyAsyncioLock
-from _core import aclose
 
 if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Capability Detection — fail-soft, no hard import
-# =============================================================================
 
 _httpx_h2_enabled: bool = False
 _httpx_import_error: str | None = None
@@ -83,7 +75,7 @@ def _check_httpx_h2_capability() -> bool:
     # httpx available — verify version >= 0.28.0 (bundles h2 internally)
     try:
         version = httpx.__version__
-        major, minor = map(int, version.split('.')[:2])
+        major, minor = map(int, version.split(".")[:2])
         # Pre-1.0 versioning: (major, minor) < (0, 28) means too old
         if (major, minor) < (0, 28):
             _httpx_import_error = f"httpx {version} too old (>=0.28.0 required for bundled HTTP/2)"
@@ -99,10 +91,6 @@ def _check_httpx_h2_capability() -> bool:
     logger.debug(f"[HTTPX] HTTP/2 capability detected (httpx={version}, h2 bundled)")
     return True
 
-
-# =============================================================================
-# Lazy HTTPX Client Singleton
-# =============================================================================
 
 # F4.3: Delegates to transport.session_pool for unified pool management.
 # Kept as facade for backward compatibility with existing call sites.
@@ -135,9 +123,7 @@ async def async_get_httpx_client() -> httpx.AsyncClient:
     global _httpx_client_instance, _httpx_client_closed
 
     if not _check_httpx_h2_capability():
-        raise RuntimeError(
-            f"HTTPX HTTP/2 not available: {_httpx_import_error or 'unknown'}"
-    )
+        raise RuntimeError(f"HTTPX HTTP/2 not available: {_httpx_import_error or 'unknown'}")
 
     # F4.3: Use session_pool for unified httpx singleton
     from .session_pool import session_pool as _pool

@@ -14,7 +14,6 @@ methods return []. Fixed by delegating to forensics/ioc_extractor Python fallbac
 which uses the same combined regex but bypasses broken Rust path.
 """
 
-
 import re
 from typing import TYPE_CHECKING
 
@@ -32,6 +31,7 @@ def _get_executor() -> ThreadPoolExecutor:
     """Return shared 'crypto' domain executor for CPU-bound IOC extraction."""
     return get_or_create("crypto")
 
+
 _PY_IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
 _PY_DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 _PY_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -41,14 +41,11 @@ _PY_HASH_RE = re.compile(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]
 
 # ISSUE-4 FIX: Shared batch helper to eliminate duplicate `if not texts` guards.
 # Both _RustIocDomain and _PythonIocDomain use the same pattern for parallel batch ops.
-from typing import Any
 from collections.abc import Callable
-from _core._util import aclose
+from typing import Any
 
 
-def _batch_extract_iocs_helper(
-    texts: list[str], func: Callable[[str], Any]
-) -> list[Any]:
+def _batch_extract_iocs_helper(texts: list[str], func: Callable[[str], Any]) -> list[Any]:
     """Shared batch extraction helper with early-exit guard."""
     if not texts:
         return []
@@ -98,7 +95,6 @@ class _RustIocDomain:
         # Uses regex-automata build_many with Teddy (NEON on M1) for 8-10 MB/s throughput.
         return self._ext.extract_iocs_simd(text)
 
-
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         # D2 fix: Call Rust batch_extract_iocs_simd — Tier 0 SIMD batch path.
         # Uses regex-automata build_many + rayon parallel with mixed_pool (P-core only).
@@ -121,7 +117,7 @@ class _RustIocDomain:
         """
         try:
             return self._ext.extract_iocs_zero_copy(texts)
-        except (AttributeError, RuntimeError):
+        except AttributeError, RuntimeError:
             # Fallback to batch_extract_iocs_simd if zero_copy not available
             return self.batch_extract_iocs_simd(texts)
 
@@ -140,9 +136,7 @@ class _RustIocDomain:
         result = self._ext.deobfuscate.decode_ioc_candidates(text, max_depth)
         return result.candidates if hasattr(result, "candidates") else []
 
-    def batch_decode_ioc_candidates(
-        self, texts: list[str], max_depth: int | None = None
-    ) -> list[list[str]]:
+    def batch_decode_ioc_candidates(self, texts: list[str], max_depth: int | None = None) -> list[list[str]]:
         results = self._ext.deobfuscate.batch_decode_ioc_candidates(texts, max_depth)
         return [r.candidates if hasattr(r, "candidates") else [] for r in results]
 
@@ -211,9 +205,7 @@ class _PythonIocDomain:
         return []
 
     @staticmethod
-    def batch_decode_ioc_candidates(
-        texts: list[str], max_depth: int | None = None
-    ) -> list[list[str]]:
+    def batch_decode_ioc_candidates(texts: list[str], max_depth: int | None = None) -> list[list[str]]:
         return [[] for _ in texts]
 
     # ADVERSARY-003: module-level telemetry helpers (work for both Rust and Python paths).
@@ -222,6 +214,7 @@ class _PythonIocDomain:
         Returns (0,0,0) when Rust extension is unavailable."""
         try:
             from hledac_rust_extensions import hledac_rust_extensions
+
             return hledac_rust_extensions.deobfuscate_telemetry()  # type: ignore[attr-defined]
         except Exception:
             return (0, 0, 0)
@@ -230,6 +223,7 @@ class _PythonIocDomain:
         """Reset telemetry counters. Call at sprint boundary."""
         try:
             from hledac_rust_extensions import hledac_rust_extensions
+
             hledac_rust_extensions.deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
             pass
@@ -419,14 +413,26 @@ def _python_batch_dedup_urls(urls: list[str]) -> list[str]:
     3. Filter tracking params
     4. Deduplicate
     """
-    from urllib.parse import parse_qsl, urlencode, urlparse
     import unicodedata
+    from urllib.parse import parse_qsl, urlencode, urlparse
 
     # Tracking params matching forensics/ioc_patterns_generated
-    _TRACKING_PARAMS: frozenset[str] = frozenset({
-        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-        "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src", "ref_url",
-    })
+    _TRACKING_PARAMS: frozenset[str] = frozenset(
+        {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "fbclid",
+            "gclid",
+            "mc_cid",
+            "mc_eid",
+            "ref",
+            "ref_src",
+            "ref_url",
+        }
+    )
 
     def _strip_diacritics(text: str) -> str:
         """Strip diacritics: NFC normalize + remove combining marks."""

@@ -9,15 +9,15 @@ Responsibilities:
 Input: MatchedBatch (urls, matched_pattern_counts, matched_pattern_labels, ...)
 Output: FindingBatch (finding_ids, urls, titles, snippets, timestamps, confidences, payloads, ...)
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FindingBatch, MatchedBatch
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,6 @@ class BuildStage:
             Tuple of (FindingBatch, telemetry)
 
         """
-        # Handle both tuple and single batch input
         if isinstance(input_tuple, tuple):
             matched_batch, query_context = input_tuple[0], input_tuple[1] if len(input_tuple) > 1 else ""
         else:
@@ -87,15 +86,11 @@ class BuildStage:
         for i in range(len(matched_batch.urls)):
             url = matched_batch.urls[i] if i < len(matched_batch.urls) else ""
             pattern_count = (
-                matched_batch.matched_pattern_counts[i]
-                if i < len(matched_batch.matched_pattern_counts)
-                else 0
-    )
+                matched_batch.matched_pattern_counts[i] if i < len(matched_batch.matched_pattern_counts) else 0
+            )
             pattern_labels = (
-                matched_batch.matched_pattern_labels[i]
-                if i < len(matched_batch.matched_pattern_labels)
-                else []
-    )
+                matched_batch.matched_pattern_labels[i] if i < len(matched_batch.matched_pattern_labels) else []
+            )
             error = matched_batch.errors[i] if i < len(matched_batch.errors) else None
 
             # Skip pages with no matches or errors
@@ -106,7 +101,6 @@ class BuildStage:
                 telemetry["findings_filtered"] += 1
                 continue
 
-            # Build finding
             try:
                 finding_id = _make_finding_id(url, query_context)
                 timestamp = time.time()
@@ -143,7 +137,7 @@ class BuildStage:
             payloads=payloads,
             raw_payloads=raw_payloads,
             matched_pattern_labels=matched_pattern_labels,
-    )
+        )
 
         return batch, telemetry
 
@@ -160,7 +154,7 @@ class BuildStage:
             payloads=[],
             raw_payloads=[],
             matched_pattern_labels=[],
-    )
+        )
 
 
 def _make_finding_id(url: str, query_context: str = "") -> str:

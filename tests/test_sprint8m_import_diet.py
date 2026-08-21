@@ -9,13 +9,12 @@ Tests verify:
 """
 
 import unittest
-from _core import aclose
 
 
 class TestAutonomousOrchestratorUntouched(unittest.TestCase):
     """Verify autonomous_orchestrator.py was not edited in Sprint 8M."""
 
-    def test_no_changes_to_autonomous_orchestrator(self):
+    def test_no_changes_to_autonomous_orchestrator(self) -> None:
         """autonomous_orchestrator.py should not be modified in Sprint 8M."""
         import inspect
 
@@ -30,7 +29,7 @@ class TestAutonomousOrchestratorUntouched(unittest.TestCase):
 class TestLazyScipyInMemoryCoordinator(unittest.TestCase):
     """Verify scipy.sparse is lazily imported via try/except."""
 
-    def test_scipy_sparse_is_lazy_guard(self):
+    def test_scipy_sparse_is_lazy_guard(self) -> None:
         """scipy.sparse import should be wrapped in try/except (in knowledge.neuromorphic)."""
         import inspect
 
@@ -45,7 +44,7 @@ class TestLazyScipyInMemoryCoordinator(unittest.TestCase):
         self.assertIn("_scIPY_AVAILABLE", source)  # Note: underscore prefix
         self.assertIn("except ImportError:", source)
 
-    def test_scipy_sparse_fallback_when_unavailable(self):
+    def test_scipy_sparse_fallback_when_unavailable(self) -> None:
         """When scipy is not available, NeuromorphicMemoryManager handles it gracefully."""
         # Sprint F320-10: _get_sparse moved to knowledge.neuromorphic as _get_scipy_sparse
         from hledac.universal.knowledge.neuromorphic import _get_scipy_sparse, _scIPY_AVAILABLE
@@ -60,13 +59,13 @@ class TestLazyScipyInMemoryCoordinator(unittest.TestCase):
 class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
     """Verify NeuromorphicMemoryManager uses lazy numpy accessor."""
 
-    def test_get_np_function_exists(self):
+    def test_get_np_function_exists(self) -> None:
         """_get_np() function should exist at module level."""
         from hledac.universal.coordinators.memory_coordinator import _get_np
 
         self.assertTrue(callable(_get_np))
 
-    def test_get_np_returns_numpy(self):
+    def test_get_np_returns_numpy(self) -> None:
         """_get_np() should return numpy module."""
         from hledac.universal.coordinators.memory_coordinator import _get_np
 
@@ -75,7 +74,7 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
         self.assertTrue(hasattr(np, "random"))
         self.assertTrue(hasattr(np, "exp"))
 
-    def test_neuromorphic_memory_manager_instantiates(self):
+    def test_neuromorphic_memory_manager_instantiates(self) -> None:
         """NeuromorphicMemoryManager should instantiate with lazy numpy."""
         # Sprint F320-10: NeuromorphicMemoryManager moved to knowledge.neuromorphic
         from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager
@@ -84,7 +83,7 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
         self.assertEqual(nm.n_neurons, 64)
         self.assertIsNotNone(nm.spike_traces)
 
-    def test_neuromorphic_pattern_storage(self):
+    def test_neuromorphic_pattern_storage(self) -> None:
         """NeuromorphicMemoryManager should store and recall patterns."""
         # Sprint F320-10: NeuromorphicMemoryManager moved to knowledge.neuromorphic
         from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
@@ -101,16 +100,16 @@ class TestNeuromorphicMemoryManagerLazyNumpy(unittest.TestCase):
 class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
     """Verify UniversalMemoryCoordinator still works correctly."""
 
-    def test_memory_coordinator_instantiates(self):
+    def test_memory_coordinator_instantiates(self) -> None:
         """UniversalMemoryCoordinator should instantiate."""
         from hledac.universal.coordinators.memory_coordinator import (
             UniversalMemoryCoordinator,
-    )
+        )
 
         coord = UniversalMemoryCoordinator(memory_limit_mb=500)
         self.assertEqual(coord.memory_limit_mb, 500)
 
-    def test_memory_usage_tracking(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_memory_usage_tracking(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """MemoryCoordinator should track memory usage."""
         from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator
@@ -120,14 +119,14 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
         self.assertGreater(stats.total_memory_mb, 0)
         self.assertIsNotNone(stats.current_level)
 
-    def test_memory_zone_operations(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_memory_zone_operations(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """MemoryCoordinator should support zone operations."""
         from hledac.universal.coordinators.memory_coordinator import MemoryZone, UniversalMemoryCoordinator
 
         coord = UniversalMemoryCoordinator(memory_limit_mb=500)
 
-        async def _test():
+        async def _test() -> None:
             allocated = await coord.allocate("test_alloc", MemoryZone.HIGH, size_bytes=1024, priority=5)
             self.assertTrue(allocated)
             zone_stats = await coord.get_zone_usage(MemoryZone.HIGH)
@@ -138,7 +137,7 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
 
         session_event_loop.run_until_complete(_test())
 
-    def test_aggressive_cleanup(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_aggressive_cleanup(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         """MemoryCoordinator should perform aggressive cleanup."""
         from hledac.universal.coordinators.memory_coordinator import UniversalMemoryCoordinator
@@ -152,7 +151,7 @@ class TestUniversalMemoryCoordinatorFunctionality(unittest.TestCase):
 class TestTypeAnnotationsSafe(unittest.TestCase):
     """Verify future annotations prevent NameError."""
 
-    def test_future_annotations_imported(self):
+    def test_future_annotations_imported(self) -> None:
         """memory_coordinator should have future annotations import."""
         # The class should define np.ndarray in type hints without triggering NameError
         # This tests that __future__ annotations are present
@@ -167,7 +166,7 @@ class TestTypeAnnotationsSafe(unittest.TestCase):
         self.assertIn("Any", source)
         self.assertNotIn("np.ndarray", source)
 
-    def test_no_name_error_on_import(self):
+    def test_no_name_error_on_import(self) -> None:
         """Importing memory_coordinator should not raise NameError."""
         # This test passes if we get here without exception
         # All classes imported successfully
@@ -177,7 +176,7 @@ class TestTypeAnnotationsSafe(unittest.TestCase):
 class TestPackageCascadeAudit(unittest.TestCase):
     """Audit the coordinators package cascade root cause."""
 
-    def test_scipy_sparse_is_optional_guard(self):
+    def test_scipy_sparse_is_optional_guard(self) -> None:
         """scipy.sparse should be guarded with lazy _get_scipy_sparse() in knowledge.neuromorphic."""
         # Sprint F320-10: moved to knowledge.neuromorphic as _get_scipy_sparse / _scIPY_AVAILABLE
         from hledac.universal.knowledge.neuromorphic import _get_scipy_sparse, _scIPY_AVAILABLE
@@ -185,7 +184,7 @@ class TestPackageCascadeAudit(unittest.TestCase):
         self.assertTrue(callable(_get_scipy_sparse))
         self.assertIn(_scIPY_AVAILABLE, [True, False])
 
-    def test_numpy_still_available(self):
+    def test_numpy_still_available(self) -> None:
         """numpy should still be available for non-neuromorphic paths."""
         from hledac.universal.coordinators.memory_coordinator import np
 
@@ -196,7 +195,7 @@ class TestPackageCascadeAudit(unittest.TestCase):
 class TestCoordinatorsPackageCascade(unittest.TestCase):
     """Audit coordinators package import cascade."""
 
-    def test_coordinators_init_has_many_imports(self):
+    def test_coordinators_init_has_many_imports(self) -> None:
         """coordinators/__init__.py imports many submodules."""
         import inspect
 

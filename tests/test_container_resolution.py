@@ -91,6 +91,7 @@ class TestServiceContainer:
 
     def test_is_registered(self) -> None:
         """is_registered() returns True for registered services."""
+
         def factory() -> object:
             return object()
 
@@ -113,6 +114,7 @@ class TestServiceContainer:
 
     def test_registered_names(self) -> None:
         """registered_names() returns all local registrations."""
+
         def factory() -> object:
             return object()
 

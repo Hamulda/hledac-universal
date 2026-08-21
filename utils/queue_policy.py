@@ -7,11 +7,9 @@ No imports with heavy side effects.
 import asyncio
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-# Queue size constants
 DEFAULT_LOW_PRIORITY_QUEUE_MAXSIZE = 64
 DEFAULT_CONTROL_QUEUE_MAXSIZE = 256
 

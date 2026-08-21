@@ -3,8 +3,6 @@ Semantic Gravity Field — [SILICON]-05
 ======================================
 Detects voids in the semantic embedding space of collected IOCs and suggests
 
-
-
 fetch targets to fill those gaps. Prevents the meta-reasoning coordinator
 from making blind decisions based solely on keyword matching.
 
@@ -37,11 +35,10 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +54,8 @@ _HNSW_CONNECTIVITY: int = 16
 _HNSW_EXPANSION_ADD: int = 128
 _HNSW_EXPANSION_SEARCH: int = 64
 
-
 # ── Data types ───────────────────────────────────────────────────────────────
+
 
 @dataclass(slots=True)
 class VoidRegion:
@@ -76,10 +73,10 @@ class VoidRegion:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'radius': float(self.radius),
-            'nearest_entity_id': self.nearest_entity_id,
-            'nearest_distance': float(self.nearest_distance),
-            'density_estimate': float(self.density_estimate),
+            "radius": float(self.radius),
+            "nearest_entity_id": self.nearest_entity_id,
+            "nearest_distance": float(self.nearest_distance),
+            "density_estimate": float(self.density_estimate),
         }
 
 
@@ -99,14 +96,15 @@ class FetchDirective:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'query_hint': self.query_hint,
-            'void_score': float(self.void_score),
-            'nearest_entity_id': self.nearest_entity_id,
-            'nearest_distance': float(self.nearest_distance),
+            "query_hint": self.query_hint,
+            "void_score": float(self.void_score),
+            "nearest_entity_id": self.nearest_entity_id,
+            "nearest_distance": float(self.nearest_distance),
         }
 
 
 # ── SemanticGravityField ─────────────────────────────────────────────────────
+
 
 class SemanticGravityField:
     """HNSW-based semantic density field for void detection and fetch targeting.
@@ -127,16 +125,16 @@ class SemanticGravityField:
     """
 
     __slots__ = (
-        '_dim',
-        '_max_embeddings',
-        '_index',          # usearch.index.Index | None
-        '_embeddings',     # np.ndarray (N, dim) float32 — preallocated ring buffer
-        '_ids',            # list[str] — parallel to _embeddings
-        '_count',          # int — current number of stored vectors
-        '_write_pos',      # int — next write position in ring buffer
-        '_last_void_scan', # float — monotonic timestamp of last find_voids()
-        '_cached_voids',   # list[VoidRegion] | None — cached from last scan
-        '_stats',          # dict — internal counters
+        "_dim",
+        "_max_embeddings",
+        "_index",  # usearch.index.Index | None
+        "_embeddings",  # np.ndarray (N, dim) float32 — preallocated ring buffer
+        "_ids",  # list[str] — parallel to _embeddings
+        "_count",  # int — current number of stored vectors
+        "_write_pos",  # int — next write position in ring buffer
+        "_last_void_scan",  # float — monotonic timestamp of last find_voids()
+        "_cached_voids",  # list[VoidRegion] | None — cached from last scan
+        "_stats",  # dict — internal counters
     )
 
     def __init__(self, dim: int = _EMBEDDING_DIM, max_embeddings: int = _MAX_EMBEDDINGS) -> None:
@@ -144,15 +142,15 @@ class SemanticGravityField:
         self._max_embeddings = min(max_embeddings, _MAX_EMBEDDINGS)
         self._index = None
         self._embeddings = np.zeros((self._max_embeddings, dim), dtype=np.float32)
-        self._ids: list[str] = [''] * self._max_embeddings  # preallocated ring buffer
+        self._ids: list[str] = [""] * self._max_embeddings  # preallocated ring buffer
         self._count = 0
         self._write_pos = 0
         self._last_void_scan: float = 0.0
         self._cached_voids: list[VoidRegion] | None = None
         self._stats: dict[str, int] = {
-            'added': 0,
-            'evicted': 0,
-            'void_scans': 0,
+            "added": 0,
+            "evicted": 0,
+            "void_scans": 0,
         }
 
     # ── Lazy index init ──────────────────────────────────────────────────
@@ -163,28 +161,31 @@ class SemanticGravityField:
             return True
         try:
             import usearch.index
+
             self._index = usearch.index.Index(
                 ndim=self._dim,
-                metric='cos',
-                dtype='f32',
+                metric="cos",
+                dtype="f32",
                 connectivity=_HNSW_CONNECTIVITY,
                 expansion_add=_HNSW_EXPANSION_ADD,
                 expansion_search=_HNSW_EXPANSION_SEARCH,
-    )
+            )
             # Re-add existing embeddings to the new index
             for i in range(self._count):
                 idx = (self._write_pos - self._count + i) % self._max_embeddings
                 self._index.add(i, self._embeddings[idx])
             logger.debug(
-                '[gravity] USearch index initialized: dim=%d connectivity=%d max=%d',
-                self._dim, _HNSW_CONNECTIVITY, self._max_embeddings,
-    )
+                "[gravity] USearch index initialized: dim=%d connectivity=%d max=%d",
+                self._dim,
+                _HNSW_CONNECTIVITY,
+                self._max_embeddings,
+            )
             return True
         except ImportError:
-            logger.debug('[gravity] usearch not available — gravity field disabled')
+            logger.debug("[gravity] usearch not available — gravity field disabled")
             return False
         except Exception as e:
-            logger.warning('[gravity] USearch init failed: %s', e)
+            logger.warning("[gravity] USearch init failed: %s", e)
             return False
 
     # ── Embedding ingestion ──────────────────────────────────────────────
@@ -197,7 +198,7 @@ class SemanticGravityField:
             vec: (256,) float32 embedding vector
         """
         if vec.ndim != 1 or len(vec) != self._dim:
-            logger.debug('[gravity] add_embedding: wrong dim %s', getattr(vec, 'shape', '?'))
+            logger.debug("[gravity] add_embedding: wrong dim %s", getattr(vec, "shape", "?"))
             return
 
         # Normalize for cosine distance
@@ -212,7 +213,7 @@ class SemanticGravityField:
         if self._count < self._max_embeddings:
             self._count += 1
         else:
-            self._stats['evicted'] += 1
+            self._stats["evicted"] += 1
 
         # Add to HNSW index
         if self._ensure_index():
@@ -220,10 +221,10 @@ class SemanticGravityField:
                 internal_id = self._write_pos % self._max_embeddings
                 self._index.add(internal_id, normalized)
             except Exception as e:
-                logger.debug('[gravity] HNSW add failed: %s', e)
+                logger.debug("[gravity] HNSW add failed: %s", e)
 
         self._write_pos += 1
-        self._stats['added'] += 1
+        self._stats["added"] += 1
         self._cached_voids = None  # invalidate cache
 
     def add_embeddings_batch(self, ids: list[str], vecs: np.ndarray) -> None:
@@ -234,10 +235,10 @@ class SemanticGravityField:
             vecs: (N, 256) float32 embedding matrix
         """
         if vecs.ndim != 2 or vecs.shape[1] != self._dim:
-            logger.debug('[gravity] add_embeddings_batch: wrong shape %s', getattr(vecs, 'shape', '?'))
+            logger.debug("[gravity] add_embeddings_batch: wrong shape %s", getattr(vecs, "shape", "?"))
             return
         if len(ids) != vecs.shape[0]:
-            logger.debug('[gravity] add_embeddings_batch: id/vec count mismatch')
+            logger.debug("[gravity] add_embeddings_batch: id/vec count mismatch")
             return
 
         # Normalize
@@ -254,7 +255,7 @@ class SemanticGravityField:
             if self._count < self._max_embeddings:
                 self._count += 1
             else:
-                self._stats['evicted'] += 1
+                self._stats["evicted"] += 1
 
             if index_ready and self._index is not None:
                 try:
@@ -264,7 +265,7 @@ class SemanticGravityField:
 
             self._write_pos += 1
 
-        self._stats['added'] += len(ids)
+        self._stats["added"] += len(ids)
         self._cached_voids = None
 
     # ── Void detection ───────────────────────────────────────────────────
@@ -290,13 +291,8 @@ class SemanticGravityField:
         if self._count < _VOID_MIN_POINTS:
             return []
 
-        # Check cache
         now = time.monotonic()
-        if (
-            self._cached_voids is not None
-            and (now - self._last_void_scan) < _VOID_REFRESH_INTERVAL_S
-        ):
-            # Return from cache, re-filtering by min_distance
+        if self._cached_voids is not None and (now - self._last_void_scan) < _VOID_REFRESH_INTERVAL_S:
             return [v for v in self._cached_voids if v.radius >= min_distance][:k]
 
         if not self._ensure_index():
@@ -322,8 +318,8 @@ class SemanticGravityField:
                 results = self._index.search(vec.astype(np.float32), 2)
                 if len(results) >= 2:
                     # results[0] is the query point itself (distance ≈ 0)
-                    nn_dist = float(getattr(results[1], 'distance', 2.0))
-                    nn_key = int(getattr(results[1], 'key', 0))
+                    nn_dist = float(getattr(results[1], "distance", 2.0))
+                    nn_key = int(getattr(results[1], "key", 0))
                     if nn_dist >= min_distance:
                         voids_raw.append((ring_idx, nn_dist, nn_key, nn_dist))
 
@@ -331,38 +327,39 @@ class SemanticGravityField:
             voids_raw.sort(key=lambda x: x[1], reverse=True)
             voids_raw = voids_raw[:k]
 
-            # Build VoidRegion objects
             voids: list[VoidRegion] = []
             for ring_idx, radius, nn_ring_idx, nn_dist in voids_raw:
                 # Nearest entity: use the ring buffer position directly
                 nn_pos = nn_ring_idx % self._max_embeddings
-                nn_entity_id = self._ids[nn_pos] if nn_pos < len(self._ids) else ''
+                nn_entity_id = self._ids[nn_pos] if nn_pos < len(self._ids) else ""
 
                 # Density estimate: 1.0 - normalized radius (max cosine distance is 2.0)
                 density = max(0.0, min(1.0, 1.0 - radius / 2.0))
 
-                voids.append(VoidRegion(
-                    centroid=self._embeddings[ring_idx].copy(),
-                    radius=radius,
-                    nearest_entity_id=nn_entity_id,
-                    nearest_distance=nn_dist,
-                    density_estimate=density,
-                ))
+                voids.append(
+                    VoidRegion(
+                        centroid=self._embeddings[ring_idx].copy(),
+                        radius=radius,
+                        nearest_entity_id=nn_entity_id,
+                        nearest_distance=nn_dist,
+                        density_estimate=density,
+                    )
+                )
 
-            # Update cache
             self._cached_voids = voids
             self._last_void_scan = now
-            self._stats['void_scans'] += 1
+            self._stats["void_scans"] += 1
 
             logger.debug(
-                '[gravity] find_voids: scanned=%d found=%d top_radius=%.3f',
-                sample_size, len(voids),
+                "[gravity] find_voids: scanned=%d found=%d top_radius=%.3f",
+                sample_size,
+                len(voids),
                 voids[0].radius if voids else 0.0,
-    )
+            )
             return voids
 
         except Exception as e:
-            logger.debug('[gravity] find_voids failed: %s', e)
+            logger.debug("[gravity] find_voids failed: %s", e)
             return []
 
     # ── Fetch directive generation ───────────────────────────────────────
@@ -386,7 +383,7 @@ class SemanticGravityField:
             return []
 
         directives: list[FetchDirective] = []
-        for i, void in enumerate(voids[:n]):
+        for _i, void in enumerate(voids[:n]):
             # Score: higher radius = more important, normalized to [0, 1]
             void_score = min(1.0, void.radius / 1.5)
 
@@ -394,18 +391,20 @@ class SemanticGravityField:
             if void.nearest_entity_id:
                 hint = (
                     f'Explore region semantically distant from "{void.nearest_entity_id[:60]}" '
-                    f'(gap radius: {void.radius:.2f})'
-    )
+                    f"(gap radius: {void.radius:.2f})"
+                )
             else:
-                hint = f'Explore semantic void region (radius: {void.radius:.2f})'
+                hint = f"Explore semantic void region (radius: {void.radius:.2f})"
 
-            directives.append(FetchDirective(
-                query_hint=hint,
-                centroid=void.centroid.copy(),
-                void_score=void_score,
-                nearest_entity_id=void.nearest_entity_id,
-                nearest_distance=void.nearest_distance,
-            ))
+            directives.append(
+                FetchDirective(
+                    query_hint=hint,
+                    centroid=void.centroid.copy(),
+                    void_score=void_score,
+                    nearest_entity_id=void.nearest_entity_id,
+                    nearest_distance=void.nearest_distance,
+                )
+            )
 
         return directives
 
@@ -415,16 +414,14 @@ class SemanticGravityField:
         """Return internal statistics for monitoring."""
         return {
             **self._stats,
-            'count': self._count,
-            'max_embeddings': self._max_embeddings,
-            'dim': self._dim,
-            'index_ready': self._index is not None,
-            'last_void_scan_age_s': (
-                time.monotonic() - self._last_void_scan
-                if self._last_void_scan > 0
-                else float('inf')
+            "count": self._count,
+            "max_embeddings": self._max_embeddings,
+            "dim": self._dim,
+            "index_ready": self._index is not None,
+            "last_void_scan_age_s": (
+                time.monotonic() - self._last_void_scan if self._last_void_scan > 0 else float("inf")
             ),
-            'cached_voids': len(self._cached_voids) if self._cached_voids else 0,
+            "cached_voids": len(self._cached_voids) if self._cached_voids else 0,
         }
 
     @property
@@ -441,9 +438,9 @@ class SemanticGravityField:
         """Reset the gravity field — frees all memory."""
         self._index = None
         self._embeddings = np.zeros((self._max_embeddings, self._dim), dtype=np.float32)
-        self._ids = [''] * self._max_embeddings
+        self._ids = [""] * self._max_embeddings
         self._count = 0
         self._write_pos = 0
         self._last_void_scan = 0.0
         self._cached_voids = None
-        self._stats = {'added': 0, 'evicted': 0, 'void_scans': 0}
+        self._stats = {"added": 0, "evicted": 0, "void_scans": 0}

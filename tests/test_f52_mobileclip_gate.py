@@ -1,14 +1,13 @@
 """F5.2: MobileCLIP opt-in env gate."""
 
 import pytest
-from _core import aclose
 
 
 class TestF52MobileCLIPGate:
     """Verify HLEDAC_ENABLE_MOBILECLIP env gate is respected."""
 
     @pytest.mark.asyncio
-    async def test_mobileclip_gated_off_by_default(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_mobileclip_gated_off_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without env var, _lazy_load() raises RuntimeError (not ImportError)."""
         monkeypatch.delenv("HLEDAC_ENABLE_MOBILECLIP", raising=False)
         from multimodal.fusion import MobileCLIPFusion
@@ -19,7 +18,7 @@ class TestF52MobileCLIPGate:
         assert "HLEDAC_ENABLE_MOBILECLIP" in str(exc.value)
 
     @pytest.mark.asyncio
-    async def test_mobileclip_gated_off_with_zero(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_mobileclip_gated_off_with_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HLEDAC_ENABLE_MOBILECLIP=0 still keeps the gate closed."""
         monkeypatch.setenv("HLEDAC_ENABLE_MOBILECLIP", "0")
         from multimodal.fusion import MobileCLIPFusion
@@ -29,7 +28,7 @@ class TestF52MobileCLIPGate:
             await f._lazy_load()
 
     @pytest.mark.asyncio
-    async def test_mobileclip_gated_on_proceeds_to_import(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_mobileclip_gated_on_proceeds_to_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HLEDAC_ENABLE_MOBILECLIP=1 reaches the import step (fails on missing pkg)."""
         monkeypatch.setenv("HLEDAC_ENABLE_MOBILECLIP", "1")
         from multimodal.fusion import MobileCLIPFusion
@@ -41,7 +40,7 @@ class TestF52MobileCLIPGate:
             await f._lazy_load()
 
     @pytest.mark.asyncio
-    async def test_mobileclip_gate_accepts_truthy_strings(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_mobileclip_gate_accepts_truthy_strings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Gate accepts 1, true, yes (case-insensitive)."""
         for value in ("1", "true", "TRUE", "yes"):
             monkeypatch.setenv("HLEDAC_ENABLE_MOBILECLIP", value)

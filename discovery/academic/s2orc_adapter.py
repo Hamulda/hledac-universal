@@ -15,26 +15,29 @@ Features:
 
 M1 8GB: async, bounded results, fail-soft.
 """
+
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import NamedTuple
+
 import orjson
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
+
 logger = logging.getLogger(__name__)
-S2AG_BASE = 'https://api.semanticscholar.org/graph/v1'
-S2AG_PAPER_FIELDS = 'paperId,title,authors,year,abstract,venue,citationCount,referenceCount,openAccessPdf,externalIds,influentialCitationCount'
-S2AG_AUTHOR_FIELDS = 'authorId,name,hIndex,paperCount,citationCount'
+S2AG_BASE = "https://api.semanticscholar.org/graph/v1"
+S2AG_PAPER_FIELDS = "paperId,title,authors,year,abstract,venue,citationCount,referenceCount,openAccessPdf,externalIds,influentialCitationCount"
+S2AG_AUTHOR_FIELDS = "authorId,name,hIndex,paperCount,citationCount"
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 25.0
 
+
 class S2Paper(Struct):
     """Semantic Scholar paper."""
+
     paper_id: str
     title: str
     authors: list[str]
@@ -48,60 +51,86 @@ class S2Paper(Struct):
     doi: str | None
     tldr: str | None
 
+
 class CitationEdge(Struct, frozen=True):
     """Citation edge between papers."""
+
     source_id: str
     target_id: str
     citation_context: str | None
 
+
 class S2Result(NamedTuple):
     """Result of S2ORC search."""
+
     papers: list[S2Paper]
     citations: list[CitationEdge]
     error: str | None
 
+
 class S2ORCAdapter:
     """Semantic Scholar S2ORC full text adapter."""
-    __slots__ = tuple(('_cache', '_cache_ttl', '_semaphore', '_tldr_semaphore'))
+
+    __slots__ = ("_cache", "_cache_ttl", "_semaphore", "_tldr_semaphore")
 
     def __init__(self) -> None:
         from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
         self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._tldr_semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[S2Paper]]] = {}
         self._cache_ttl = 1800.0
 
-    async def _fetch(self, endpoint: str, params: dict | None=None) -> dict | None:
+    async def _fetch(self, endpoint: str, params: dict | None = None) -> dict | None:
         """Fetch from S2AG API with rate limiting."""
         async with self._semaphore:
             try:
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-                url = f'{S2AG_BASE}{endpoint}'
+
+                url = f"{S2AG_BASE}{endpoint}"
                 if params:
                     import urllib.parse
-                    url += '?' + urllib.parse.urlencode(params)
+
+                    url += "?" + urllib.parse.urlencode(params)
                 result = await async_fetch_public_text(url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
                 if not result or not result.content:
                     return None
                 return orjson.loads(result.content)
             except Exception as e:
-                logger.debug(f'S2AG fetch error {endpoint}: {e}')
+                logger.debug(f"S2AG fetch error {endpoint}: {e}")
                 return None
 
-    async def search_papers(self, query: str, max_results: int=20) -> list[S2Paper]:
+    async def search_papers(self, query: str, max_results: int = 20) -> list[S2Paper]:
         """Search papers by query."""
         try:
-            data = await self._fetch('/paper/search', params={'query': query, 'limit': max_results, 'fields': S2AG_PAPER_FIELDS})
+            data = await self._fetch(
+                "/paper/search", params={"query": query, "limit": max_results, "fields": S2AG_PAPER_FIELDS}
+            )
             if not data:
                 return []
             papers = []
-            for item in data.get('data', [])[:max_results]:
-                ext_ids = item.get('externalIds', {}) or {}
-                pdf = item.get('openAccessPdf', {}) or {}
-                papers.append(S2Paper(paper_id=item.get('paperId', ''), title=item.get('title', ''), authors=[a.get('name', '') for a in item.get('authors', [])], year=item.get('year'), abstract=item.get('abstract', '') or '', venue=item.get('venue'), citation_count=item.get('citationCount', 0), reference_count=item.get('referenceCount', 0), influential_citations=item.get('influentialCitationCount', 0), open_access_pdf=pdf.get('url') if isinstance(pdf, dict) else None, doi=ext_ids.get('DOI'), tldr=None))
+            for item in data.get("data", [])[:max_results]:
+                ext_ids = item.get("externalIds", {}) or {}
+                pdf = item.get("openAccessPdf", {}) or {}
+                papers.append(
+                    S2Paper(
+                        paper_id=item.get("paperId", ""),
+                        title=item.get("title", ""),
+                        authors=[a.get("name", "") for a in item.get("authors", [])],
+                        year=item.get("year"),
+                        abstract=item.get("abstract", "") or "",
+                        venue=item.get("venue"),
+                        citation_count=item.get("citationCount", 0),
+                        reference_count=item.get("referenceCount", 0),
+                        influential_citations=item.get("influentialCitationCount", 0),
+                        open_access_pdf=pdf.get("url") if isinstance(pdf, dict) else None,
+                        doi=ext_ids.get("DOI"),
+                        tldr=None,
+                    )
+                )
             return papers
         except Exception as e:
-            logger.error(f'S2ORC search error: {e}')
+            logger.error(f"S2ORC search error: {e}")
             return []
 
     async def get_paper_tldr(self, paper_id: str) -> str | None:
@@ -109,31 +138,49 @@ class S2ORCAdapter:
         async with self._tldr_semaphore:
             try:
                 from hledac.universal.fetching.public_fetcher import async_fetch_public_text
-                url = f'{S2AG_BASE}/paper/{paper_id}/tldr'
+
+                url = f"{S2AG_BASE}/paper/{paper_id}/tldr"
                 result = await async_fetch_public_text(url, timeout_s=REQUEST_TIMEOUT_S, use_stealth=True)
                 if not result or not result.content:
                     return None
                 data = orjson.loads(result.content)
-                return data.get('text') or data.get('extendedText')
+                return data.get("text") or data.get("extendedText")
             except Exception as e:
-                logger.debug(f'S2ORC TLDR error: {e}')
+                logger.debug(f"S2ORC TLDR error: {e}")
                 return None
 
-    async def get_citations(self, paper_id: str, limit: int=10) -> list[S2Paper]:
+    async def get_citations(self, paper_id: str, limit: int = 10) -> list[S2Paper]:
         """Get papers that cite the given paper (outgoing citations)."""
-        data = await self._fetch(f'/paper/{paper_id}/citations', params={'limit': limit, 'fields': S2AG_PAPER_FIELDS})
+        data = await self._fetch(f"/paper/{paper_id}/citations", params={"limit": limit, "fields": S2AG_PAPER_FIELDS})
         if not data:
             return []
         papers = []
-        for item in data.get('data', [])[:limit]:
-            citing = item.get('citingPaper', {}) or item.get('citedPaper', {})
+        for item in data.get("data", [])[:limit]:
+            citing = item.get("citingPaper", {}) or item.get("citedPaper", {})
             if not citing:
                 continue
-            ext_ids = citing.get('externalIds', {}) or {}
-            papers.append(S2Paper(paper_id=citing.get('paperId', ''), title=citing.get('title', ''), authors=[a.get('name', '') for a in citing.get('authors', [])], year=citing.get('year'), abstract=citing.get('abstract', '') or '', venue=citing.get('venue'), citation_count=citing.get('citationCount', 0), reference_count=citing.get('referenceCount', 0), influential_citations=citing.get('influentialCitationCount', 0), open_access_pdf=None, doi=ext_ids.get('DOI'), tldr=None))
+            ext_ids = citing.get("externalIds", {}) or {}
+            papers.append(
+                S2Paper(
+                    paper_id=citing.get("paperId", ""),
+                    title=citing.get("title", ""),
+                    authors=[a.get("name", "") for a in citing.get("authors", [])],
+                    year=citing.get("year"),
+                    abstract=citing.get("abstract", "") or "",
+                    venue=citing.get("venue"),
+                    citation_count=citing.get("citationCount", 0),
+                    reference_count=citing.get("referenceCount", 0),
+                    influential_citations=citing.get("influentialCitationCount", 0),
+                    open_access_pdf=None,
+                    doi=ext_ids.get("DOI"),
+                    tldr=None,
+                )
+            )
         return papers
 
-    async def traverse_citation_graph(self, seed_papers: list[S2Paper], max_hops: int=2, max_papers: int=50) -> tuple[list[S2Paper], list[CitationEdge]]:
+    async def traverse_citation_graph(
+        self, seed_papers: list[S2Paper], max_hops: int = 2, max_papers: int = 50
+    ) -> tuple[list[S2Paper], list[CitationEdge]]:
         """
         Traverse citation graph 2 hops from seed papers.
 
@@ -166,10 +213,12 @@ class S2ORCAdapter:
                     if p2.paper_id and p2.paper_id not in visited and p2.title:
                         visited.add(p2.paper_id)
                         all_papers.append(p2)
-                        all_edges.append(CitationEdge(source_id=p.paper_id, target_id=p2.paper_id, citation_context=None))
+                        all_edges.append(
+                            CitationEdge(source_id=p.paper_id, target_id=p2.paper_id, citation_context=None)
+                        )
         return (all_papers[:max_papers], all_edges)
 
-    async def enrich_with_tldr(self, papers: list[S2Paper], max_enrich: int=10) -> list[S2Paper]:
+    async def enrich_with_tldr(self, papers: list[S2Paper], max_enrich: int = 10) -> list[S2Paper]:
         """Add TLDR summaries to papers (parallel, limited)."""
         tasks = []
         for p in papers[:max_enrich]:
@@ -177,7 +226,7 @@ class S2ORCAdapter:
                 tasks.append(self._enrich_one(p))
             else:
                 tasks.append(asyncio.sleep(0, p))
-        results = await parallel_ok(*tasks, label='s2orc_adapter:268')
+        results = await parallel_ok(*tasks, label="s2orc_adapter:268")
         enriched = []
         for r in results:
             if isinstance(r, S2Paper):
@@ -185,10 +234,10 @@ class S2ORCAdapter:
             elif papers:
                 papers[0].tldr = None
                 enriched.append(papers[0])
-        for p in papers[len(enriched):]:
+        for p in papers[len(enriched) :]:
             p.tldr = None
             enriched.append(p)
-        return enriched[:len(papers)]
+        return enriched[: len(papers)]
 
     async def _enrich_one(self, paper: S2Paper) -> S2Paper:
         """Enrich one paper with TLDR."""
@@ -201,13 +250,40 @@ class S2ORCAdapter:
         findings = []
         for paper in papers:
             import hashlib
-            fid = hashlib.sha256(f'{query}\x00{paper.paper_id}\x00s2orc'.encode()).hexdigest()[:16]
-            payload = '\n'.join([f'title: {paper.title}', f"authors: {', '.join(paper.authors[:5])}{('...' if len(paper.authors) > 5 else '')}", f"year: {paper.year or 'N/A'}", f"venue: {paper.venue or 'N/A'}", f'citations: {paper.citation_count}', f'influential: {paper.influential_citations}', f"doi: {paper.doi or 'N/A'}", f"pdf: {paper.open_access_pdf or 'N/A'}", f"tldr: {paper.tldr or 'N/A'}", f"abstract: {(paper.abstract[:800] if paper.abstract else 'N/A')}"])
-            findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='s2orc', confidence=0.85, ts=time.time(), provenance=('semantic_scholar', paper.paper_id, paper.title[:50]), payload_text=payload))
+
+            fid = hashlib.sha256(f"{query}\x00{paper.paper_id}\x00s2orc".encode()).hexdigest()[:16]
+            payload = "\n".join(
+                [
+                    f"title: {paper.title}",
+                    f"authors: {', '.join(paper.authors[:5])}{('...' if len(paper.authors) > 5 else '')}",
+                    f"year: {paper.year or 'N/A'}",
+                    f"venue: {paper.venue or 'N/A'}",
+                    f"citations: {paper.citation_count}",
+                    f"influential: {paper.influential_citations}",
+                    f"doi: {paper.doi or 'N/A'}",
+                    f"pdf: {paper.open_access_pdf or 'N/A'}",
+                    f"tldr: {paper.tldr or 'N/A'}",
+                    f"abstract: {(paper.abstract[:800] if paper.abstract else 'N/A')}",
+                ]
+            )
+            findings.append(
+                CanonicalFinding(
+                    finding_id=fid,
+                    query=query,
+                    source_type="s2orc",
+                    confidence=0.85,
+                    ts=time.time(),
+                    provenance=("semantic_scholar", paper.paper_id, paper.title[:50]),
+                    payload_text=payload,
+                )
+            )
         return findings
+
+
 _adapter: S2ORCAdapter | None = None
 
-async def search_s2orc(query: str, max_results: int=20, include_citations: bool=True) -> list[CanonicalFinding]:
+
+async def search_s2orc(query: str, max_results: int = 20, include_citations: bool = True) -> list[CanonicalFinding]:
     """
     Search S2ORC and optionally traverse citation graph.
 
@@ -228,4 +304,6 @@ async def search_s2orc(query: str, max_results: int=20, include_citations: bool=
         papers.extend(cited)
     papers = await _adapter.enrich_with_tldr(papers, max_enrich=min(10, len(papers)))
     return _adapter.to_canonical_findings(papers, query)
-__all__ = ['S2ORCAdapter', 'S2Paper', 'S2Result', 'CitationEdge', 'search_s2orc']
+
+
+__all__ = ["S2ORCAdapter", "S2Paper", "S2Result", "CitationEdge", "search_s2orc"]

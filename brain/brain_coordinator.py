@@ -2,7 +2,6 @@
 brain/brain_coordinator.py — Brain Composition Layer
 =================================================
 
-
 ARCH-SRP-001: Clean SRP separation for brain module.
 
 Composition layer that orchestrates:
@@ -28,15 +27,12 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
-from _core import aclose
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from hledac.universal.brain._inference import GenerationFacade
-    from hledac.universal.brain._prompts import ChatMLMessage, ChatMLPromptFormatter, PromptRole, PromptTemplate
+    from hledac.universal.brain._prompts import ChatMLPromptFormatter, PromptTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +50,12 @@ class BrainCoordinator:
     """
 
     __slots__ = (
-        '_hypothesis',
-        '_hypothesis_engine',
-        '_llm',
-        '_llm_engine',
-        '_prompt',
-        '_prompt_builder',
+        "_hypothesis",
+        "_hypothesis_engine",
+        "_llm",
+        "_llm_engine",
+        "_prompt",
+        "_prompt_builder",
     )
 
     def __init__(
@@ -112,22 +108,21 @@ class BrainCoordinator:
             system_msg=system,
             user_msg=query,
             history=history,
-    )
+        )
 
         # Delegate to LLMEngine (inference responsibility)
         gen_result = await self._llm.generate(
             formatted,
             temperature=temperature,
             max_tokens=max_tokens,
-    )
+        )
 
-        # Extract text from GenerateResult
-        text = gen_result.text if hasattr(gen_result, 'text') else gen_result
+        text = gen_result.text if hasattr(gen_result, "text") else gen_result
 
         # Extract thinking if present
-        if hasattr(self._prompt, 'extract_thinking'):
+        if hasattr(self._prompt, "extract_thinking"):
             extracted = self._prompt.extract_thinking(text)
-            return extracted.get('answer', text)
+            return extracted.get("answer", text)
 
         return text
 
@@ -157,7 +152,7 @@ class BrainCoordinator:
             system_msg=system,
             user_msg=query,
             history=None,
-    )
+        )
 
         async for token in self._llm.generate_stream(
             formatted,
@@ -193,16 +188,16 @@ class BrainCoordinator:
         formatted = template.format(
             query=query,
             evidence=evidence_text,
-    )
+        )
 
         # Use thinking mode for complex analysis
         gen_result = await self._llm.generate(
             formatted,
             temperature=template.temperature,
             max_tokens=template.max_tokens,
-    )
+        )
 
-        return gen_result.text if hasattr(gen_result, 'text') else gen_result
+        return gen_result.text if hasattr(gen_result, "text") else gen_result
 
     async def synthesize(
         self,
@@ -225,9 +220,8 @@ class BrainCoordinator:
         blocks = [f"Original Query: {query}\n\nExpert Analyses:"]
         for i, output in enumerate(expert_outputs, 1):
             blocks.append(
-                f"## Expert {i}: {output['expert'].upper()} "
-                f"(confidence: {output['score']:.2f})\n{output['output']}"
-    )
+                f"## Expert {i}: {output['expert'].upper()} (confidence: {output['score']:.2f})\n{output['output']}"
+            )
         blocks.append("\nSynthesize a comprehensive answer combining these perspectives.")
 
         synthesis_input = "\n".join(blocks)
@@ -237,9 +231,9 @@ class BrainCoordinator:
             synthesis_input,
             temperature=EVIDENCE_SYNTHESIS_PROMPT.temperature,
             max_tokens=EVIDENCE_SYNTHESIS_PROMPT.max_tokens,
-    )
+        )
 
-        return gen_result.text if hasattr(gen_result, 'text') else gen_result
+        return gen_result.text if hasattr(gen_result, "text") else gen_result
 
     def _default_system(self) -> str:
         """Default system message for OSINT research."""
@@ -247,7 +241,7 @@ class BrainCoordinator:
             "You are a thorough OSINT research assistant. "
             "Analyze the provided information and extract actionable intelligence. "
             "Always cite your sources. When uncertain, explicitly state confidence levels."
-    )
+        )
 
     def _context_to_history(
         self,

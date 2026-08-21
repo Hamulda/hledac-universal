@@ -24,15 +24,12 @@ import logging
 import os
 import queue
 import threading
-from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from compat.msgspec_gc_compat import Struct
-
-from utils.cache import LRUCache, TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -53,62 +50,106 @@ MAX_SPRINT_EVENTS = 100
 
 # ── Predefined metric names (security bound) ───────────────────────────────────
 
-METRIC_NAMES = frozenset([
-    # Orchestrator
-    'orchestrator_rss_mb', 'orchestrator_frontier_size', 'orchestrator_evidence_ring_len',
-    'orchestrator_tool_exec_events', 'orchestrator_budget_remaining_tokens',
-    'orchestrator_budget_remaining_time', 'orchestrator_budget_remaining_api_calls',
-    # Cache
-    'cache_http_size', 'cache_snapshot_size', 'cache_frontier_size',
-    # Memory
-    'memory_open_fds', 'memory_rss_mb', 'memory_vms_mb',
-    # ML
-    'mlx_cache_hits', 'mlx_cache_misses', 'mlx_cache_size_bytes',
-    'mlx_active_memory_bytes', 'mlx_peak_memory_bytes', 'mlx_cache_fragmentation_ratio',
-    'mlx_kernel_compilation_time_ms', 'mlx_kernel_cache_hit_rate',
-    # Model
-    'model_load_duration_ms', 'model_unload_count', 'model_load_failures',
-    # Action
-    'action_latency_ms', 'thermal_throttle_events', 'thermal_recovery_events',
-    # Memory zones
-    'memory_zone_normal_seconds', 'memory_zone_high_seconds',
-    'memory_zone_critical_seconds',
-    # Circuit breaker
-    'circuit_breaker_state_transitions', 'circuit_breaker_open_count',
-    'circuit_breaker_half_open_count', 'circuit_breaker_closed_count',
-    'circuit_breaker_recovery_success', 'circuit_breaker_open_duration_s',
-    'circuit_breaker_closed_duration_s',
-    # Dark surface
-    'dark_surface_pivots_attempted', 'dark_surface_pivots_successful',
-    'cover_traffic_fired', 'alert_warning_circuit_breaker_open_over_30s',
-    'memory_pressure_vs_finding_yield', 'windup_entry_count',
-    # Sprint
-    'sprint_budget_elapsed_ms', 'sprint_budget_remaining_ms', 'sprint_budget_phase',
-    'sprint_phase_duration_avg_ms', 'sprint_phase_duration_p50_ms', 'sprint_phase_duration_p95_ms',
-    # Storage
-    'duckdb_ingest_latency_ms', 'duckdb_query_latency_ms',
-    # Bounded gather
-    'bounded_gather_tasks_gathered', 'bounded_gather_tasks_errors', 'bounded_gather_errors_suppressed',
-    # Fetch
-    'memory_layer_pressure_pct', 'fetch_coordinator_active',
-    'fetch_coordinator_blocked_domains', 'fetch_coordinator_circuit_open',
-    # Pipeline (ISSUE-12)
-    'stage_latency_ms', 'stage_items_in', 'stage_items_out', 'stage_errors',
-    'pipeline_stage_count', 'pipeline_total_latency_ms',
-    # Memory pressure correlation (ISSUE-12)
-    'm1_memory_pressure', 'm1_memory_available_gib', 'm1_memory_rss_gib',
-    # HTTP (ISSUE-16)
-    'http_request_count', 'http_request_latency_ms', 'http_error_count',
-    'http_circuit_breaker_state', 'http_blocked_domains',
-])
+METRIC_NAMES = frozenset(
+    [
+        # Orchestrator
+        "orchestrator_rss_mb",
+        "orchestrator_frontier_size",
+        "orchestrator_evidence_ring_len",
+        "orchestrator_tool_exec_events",
+        "orchestrator_budget_remaining_tokens",
+        "orchestrator_budget_remaining_time",
+        "orchestrator_budget_remaining_api_calls",
+        # Cache
+        "cache_http_size",
+        "cache_snapshot_size",
+        "cache_frontier_size",
+        # Memory
+        "memory_open_fds",
+        "memory_rss_mb",
+        "memory_vms_mb",
+        # ML
+        "mlx_cache_hits",
+        "mlx_cache_misses",
+        "mlx_cache_size_bytes",
+        "mlx_active_memory_bytes",
+        "mlx_peak_memory_bytes",
+        "mlx_cache_fragmentation_ratio",
+        "mlx_kernel_compilation_time_ms",
+        "mlx_kernel_cache_hit_rate",
+        # Model
+        "model_load_duration_ms",
+        "model_unload_count",
+        "model_load_failures",
+        # Action
+        "action_latency_ms",
+        "thermal_throttle_events",
+        "thermal_recovery_events",
+        # Memory zones
+        "memory_zone_normal_seconds",
+        "memory_zone_high_seconds",
+        "memory_zone_critical_seconds",
+        # Circuit breaker
+        "circuit_breaker_state_transitions",
+        "circuit_breaker_open_count",
+        "circuit_breaker_half_open_count",
+        "circuit_breaker_closed_count",
+        "circuit_breaker_recovery_success",
+        "circuit_breaker_open_duration_s",
+        "circuit_breaker_closed_duration_s",
+        # Dark surface
+        "dark_surface_pivots_attempted",
+        "dark_surface_pivots_successful",
+        "cover_traffic_fired",
+        "alert_warning_circuit_breaker_open_over_30s",
+        "memory_pressure_vs_finding_yield",
+        "windup_entry_count",
+        # Sprint
+        "sprint_budget_elapsed_ms",
+        "sprint_budget_remaining_ms",
+        "sprint_budget_phase",
+        "sprint_phase_duration_avg_ms",
+        "sprint_phase_duration_p50_ms",
+        "sprint_phase_duration_p95_ms",
+        # Storage
+        "duckdb_ingest_latency_ms",
+        "duckdb_query_latency_ms",
+        # Bounded gather
+        "bounded_gather_tasks_gathered",
+        "bounded_gather_tasks_errors",
+        "bounded_gather_errors_suppressed",
+        "memory_layer_pressure_pct",
+        "fetch_coordinator_active",
+        "fetch_coordinator_blocked_domains",
+        "fetch_coordinator_circuit_open",
+        # Pipeline (ISSUE-12)
+        "stage_latency_ms",
+        "stage_items_in",
+        "stage_items_out",
+        "stage_errors",
+        "pipeline_stage_count",
+        "pipeline_total_latency_ms",
+        # Memory pressure correlation (ISSUE-12)
+        "m1_memory_pressure",
+        "m1_memory_available_gib",
+        "m1_memory_rss_gib",
+        # HTTP (ISSUE-16)
+        "http_request_count",
+        "http_request_latency_ms",
+        "http_error_count",
+        "http_circuit_breaker_state",
+        "http_blocked_domains",
+    ]
+)
 
-_GRAMMAR_KEYS = frozenset(['run_id', 'branch_id', 'provider_id', 'action_id'])
+_GRAMMAR_KEYS = frozenset(["run_id", "branch_id", "provider_id", "action_id"])
 
 # ── Data Structures ────────────────────────────────────────────────────────────
 
 
 class MetricSnapshot(Struct):
     """A single metric snapshot - compact for M1 8GB."""
+
     ts: datetime
     name: str
     value: float
@@ -119,6 +160,7 @@ class MetricSnapshot(Struct):
 @dataclass(slots=True)
 class _BoundedCounter:
     """Bounded counter with access tracking for LRU eviction."""
+
     value: int
     last_update: float  # monotonic timestamp
 
@@ -135,9 +177,16 @@ class _AsyncBatchFlusher:
     """
 
     __slots__ = (
-        '_queue', '_thread', '_running', '_persist_file',
-        '_persist_file_path', '_orjson_available', '_flush_count',
-        '_error_count', '_last_error', '_orjson',
+        "_queue",
+        "_thread",
+        "_running",
+        "_persist_file",
+        "_persist_file_path",
+        "_orjson_available",
+        "_flush_count",
+        "_error_count",
+        "_last_error",
+        "_orjson",
     )
 
     def __init__(self, persist_file_path: Path | None = None) -> None:
@@ -154,6 +203,7 @@ class _AsyncBatchFlusher:
         self._orjson: Any = None
         try:
             import orjson
+
             self._orjson = orjson
             self._orjson_available = True
         except ImportError:
@@ -167,11 +217,11 @@ class _AsyncBatchFlusher:
         self._running = True
         self._thread = threading.Thread(
             target=self._run_loop,
-            name='metrics-flusher',
+            name="metrics-flusher",
             daemon=True,
         )
         self._thread.start()
-        logger.debug('[_AsyncBatchFlusher] started')
+        logger.debug("[_AsyncBatchFlusher] started")
 
     def _run_loop(self) -> None:
         """Main loop - runs in background thread."""
@@ -179,9 +229,9 @@ class _AsyncBatchFlusher:
             # Open persist file in this thread
             if self._persist_file_path:
                 try:
-                    self._persist_file = open(self._persist_file_path, 'ab')
+                    self._persist_file = open(self._persist_file_path, "ab")
                 except Exception as e:
-                    logger.warning(f'[_AsyncBatchFlusher] Failed to open persist file: {e}')
+                    logger.warning(f"[_AsyncBatchFlusher] Failed to open persist file: {e}")
                     self._persist_file = None
         except Exception:
             pass
@@ -196,7 +246,7 @@ class _AsyncBatchFlusher:
             except Exception as e:
                 self._error_count += 1
                 self._last_error = str(e)
-                logger.debug(f'[_AsyncBatchFlusher] queue error: {e}')
+                logger.debug(f"[_AsyncBatchFlusher] queue error: {e}")
 
         # Drain queue on shutdown
         self._drain_queue()
@@ -216,8 +266,9 @@ class _AsyncBatchFlusher:
             else:
                 # Fallback: import stdlib json (should never happen in production)
                 import json as _stdlib_json
+
                 for metric in batch:
-                    line = _stdlib_json.dumps(metric).encode('utf-8') + b'\n'
+                    line = _stdlib_json.dumps(metric).encode("utf-8") + b"\n"
                     self._persist_file.write(line)
             self._persist_file.flush()
             os.fsync(self._persist_file.fileno())
@@ -225,7 +276,7 @@ class _AsyncBatchFlusher:
         except Exception as e:
             self._error_count += 1
             self._last_error = str(e)
-            logger.debug(f'[_AsyncBatchFlusher] write error: {e}')
+            logger.debug(f"[_AsyncBatchFlusher] write error: {e}")
 
     def _drain_queue(self) -> None:
         """Drain remaining items on shutdown."""
@@ -270,15 +321,15 @@ class _AsyncBatchFlusher:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
-        logger.debug(f'[_AsyncBatchFlusher] stopped (flushes={self._flush_count}, errors={self._error_count})')
+        logger.debug(f"[_AsyncBatchFlusher] stopped (flushes={self._flush_count}, errors={self._error_count})")
 
     @property
     def stats(self) -> dict[str, Any]:
         """Return flusher statistics."""
         return {
-            'running': self._running,
-            'flush_count': self._flush_count,
-            'error_count': self._error_count,
-            'last_error': self._last_error,
-            'queue_size': self._queue.qsize(),
+            "running": self._running,
+            "flush_count": self._flush_count,
+            "error_count": self._error_count,
+            "last_error": self._last_error,
+            "queue_size": self._queue.qsize(),
         }

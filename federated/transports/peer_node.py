@@ -100,6 +100,7 @@ INVARIANTS
       open sockets.
 [PN-6] All public methods are async and never raise.
 """
+
 import asyncio
 import logging
 import os
@@ -107,35 +108,39 @@ import secrets
 import time
 from collections import deque
 from typing import Any
+
 from hledac.universal.utils.asyncx import safe_wait_for
+
 from .protocol import NodeTransportFactory
-from _core import aclose
+
 logger = logging.getLogger(__name__)
 PEER_NODE_MAX_PEERS: int = 4
-'Hard cap on simultaneous peer sessions.'
+"Hard cap on simultaneous peer sessions."
 PEER_NODE_HANDSHAKE_TIMEOUT_S: float = 5.0
-'Per-handshake timeout. Fail-soft: timeout → peer not added.'
+"Per-handshake timeout. Fail-soft: timeout → peer not added."
 PEER_NODE_MSG_MAX_BYTES: int = 8192
-'Maximum size of a single encrypted message (before Noise framing).'
+"Maximum size of a single encrypted message (before Noise framing)."
 PEER_NODE_NONCE_CACHE_MAX: int = 1024
-'Anti-replay nonce cache. Oldest nonces evicted when full.'
+"Anti-replay nonce cache. Oldest nonces evicted when full."
 PEER_NODE_MDNS_RATE_LIMIT_S: float = 60.0
-'mDNS discovery result cache TTL.'
+"mDNS discovery result cache TTL."
 PEER_NODE_DEFAULT_PORT: int = 47715
-'Default UDP port for Hledac federated peer mesh.'
-PEER_NODE_SERVICE_TYPE: str = '_hledac-fed._udp.local.'
-'mDNS service type. Configurable via HLEDAC_FEDERATED_P2P_SERVICE.'
+"Default UDP port for Hledac federated peer mesh."
+PEER_NODE_SERVICE_TYPE: str = "_hledac-fed._udp.local."
+"mDNS service type. Configurable via HLEDAC_FEDERATED_P2P_SERVICE."
 PEER_NODE_PROTO_VERSION: int = 1
-'Wire protocol version. Bump on incompatible changes.'
+"Wire protocol version. Bump on incompatible changes."
 PEER_NODE_ID_LEN: int = 8
-'Length of the short peer id (hex chars).'
-ENV_GATE: str = 'HLEDAC_ENABLE_FEDERATED_P2P'
-'Env-var gate. Set to 1/true/yes/on to enable the P2P transport.'
+"Length of the short peer id (hex chars)."
+ENV_GATE: str = "HLEDAC_ENABLE_FEDERATED_P2P"
+"Env-var gate. Set to 1/true/yes/on to enable the P2P transport."
+
 
 def is_peer_node_enabled() -> bool:
     """True iff the env-gate is set to a truthy value."""
-    val = os.environ.get(ENV_GATE, '').strip().lower()
-    return val in ('1', 'true', 'yes', 'on')
+    val = os.environ.get(ENV_GATE, "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
 
 class _NonceCache:
     """
@@ -147,9 +152,10 @@ class _NonceCache:
     Thread-safety: cooperative (single event loop). Not safe across
     threads; we never share between event loops.
     """
-    __slots__ = ('_deque', '_set', '_max')
 
-    def __init__(self, max_size: int=PEER_NODE_NONCE_CACHE_MAX) -> None:
+    __slots__ = ("_deque", "_set", "_max")
+
+    def __init__(self, max_size: int = PEER_NODE_NONCE_CACHE_MAX) -> None:
         self._deque: deque[str] = deque(maxlen=max_size)
         self._set: set[str] = set()
         self._max = max_size
@@ -170,6 +176,7 @@ class _NonceCache:
 
     def __len__(self) -> int:
         return len(self._deque)
+
 
 class _NoiseXXSession:
     """
@@ -192,9 +199,21 @@ class _NoiseXXSession:
     encrypt/decrypt raise NoiseError). Caller treats this as a dropped
     peer.
     """
-    __slots__ = ('static_priv', 'static_pub', 'ephemeral_priv', 'ephemeral_pub', '_send_cipher', '_recv_cipher', '_send_nonce', '_recv_nonce', '_handshake_complete', '_is_initiator')
 
-    def __init__(self, is_initiator: bool, static_keypair: tuple[bytes, bytes] | None=None) -> None:
+    __slots__ = (
+        "static_priv",
+        "static_pub",
+        "ephemeral_priv",
+        "ephemeral_pub",
+        "_send_cipher",
+        "_recv_cipher",
+        "_send_nonce",
+        "_recv_nonce",
+        "_handshake_complete",
+        "_is_initiator",
+    )
+
+    def __init__(self, is_initiator: bool, static_keypair: tuple[bytes, bytes] | None = None) -> None:
         """
         Args:
             is_initiator: True if this side starts the handshake.
@@ -202,6 +221,7 @@ class _NoiseXXSession:
                 long-term identity. If None, a fresh keypair is generated.
         """
         from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
         if static_keypair is None:
             priv = X25519PrivateKey.generate()
             self.static_priv: bytes = priv.private_bytes_raw()
@@ -239,6 +259,7 @@ class _NoiseXXSession:
           6. Return: responder_ephemeral_pub + encrypted(static_pub)
         """
         from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
         responder_ephemeral = X25519PrivateKey.generate()
         responder_ephemeral_pub = responder_ephemeral.public_key().public_bytes_raw()
         initiator_ephemeral_pub = X25519PublicKey.from_public_bytes(msg1)
@@ -264,8 +285,9 @@ class _NoiseXXSession:
         Then we encrypt our static_pub and return it.
         """
         from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
         if len(msg2) < 32 + 16:
-            raise ValueError('handshake msg2 too short')
+            raise ValueError("handshake msg2 too short")
         responder_ephemeral_pub = msg2[:32]
         enc_static = msg2[32:]
         local_ephemeral_priv = X25519PrivateKey.from_private_bytes(self.ephemeral_priv)
@@ -281,7 +303,7 @@ class _NoiseXXSession:
         try:
             responder_static_pub = self._send_cipher.decrypt(nonce, enc_static, None)
         except Exception as e:
-            raise ValueError(f'handshake msg2 decrypt failed: {e}') from e
+            raise ValueError(f"handshake msg2 decrypt failed: {e}") from e
         enc_my_static = self._send_cipher.encrypt(self._next_handshake_nonce(), self.static_pub, None)
         self._handshake_complete = True
         self._peer_static_pub = responder_static_pub
@@ -295,20 +317,20 @@ class _NoiseXXSession:
         if self._handshake_complete:
             return
         if len(msg3) < 16:
-            raise ValueError('handshake msg3 too short')
+            raise ValueError("handshake msg3 too short")
         nonce = self._next_handshake_nonce()
         try:
             initiator_static_pub = self._send_cipher.decrypt(nonce, msg3, None)
         except Exception as e:
-            raise ValueError(f'handshake msg3 decrypt failed: {e}') from e
+            raise ValueError(f"handshake msg3 decrypt failed: {e}") from e
         self._peer_static_pub = initiator_static_pub
         self._handshake_complete = True
 
     def encrypt(self, plaintext: bytes) -> bytes:
         """Encrypt with the send cipher. Advances nonce."""
         if not self._handshake_complete or self._send_cipher is None:
-            raise RuntimeError('Noise: handshake not complete')
-        n = self._send_nonce.to_bytes(12, 'big')
+            raise RuntimeError("Noise: handshake not complete")
+        n = self._send_nonce.to_bytes(12, "big")
         ct = self._send_cipher.encrypt(n, plaintext, None)
         self._send_nonce += 1
         return ct
@@ -316,16 +338,16 @@ class _NoiseXXSession:
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt with the recv cipher. Advances nonce."""
         if not self._handshake_complete or self._recv_cipher is None:
-            raise RuntimeError('Noise: handshake not complete')
-        n = self._recv_nonce.to_bytes(12, 'big')
+            raise RuntimeError("Noise: handshake not complete")
+        n = self._recv_nonce.to_bytes(12, "big")
         pt = self._recv_cipher.decrypt(n, ciphertext, None)
         self._recv_nonce += 1
         return pt
 
     def _next_handshake_nonce(self) -> bytes:
-        if not hasattr(self, '_hs_nonce'):
+        if not hasattr(self, "_hs_nonce"):
             self._hs_nonce = 0
-        n = self._hs_nonce.to_bytes(12, 'big')
+        n = self._hs_nonce.to_bytes(12, "big")
         self._hs_nonce += 1
         return n
 
@@ -338,7 +360,8 @@ class _NoiseXXSession:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        okm = HKDF(algorithm=hashes.SHA256(), length=64, salt=None, info=b'hledac-noise-xx-v1').derive(shared)
+
+        okm = HKDF(algorithm=hashes.SHA256(), length=64, salt=None, info=b"hledac-noise-xx-v1").derive(shared)
         if is_initiator:
             key_send = okm[:32]
             key_recv = okm[32:]
@@ -355,13 +378,15 @@ class _NoiseXXSession:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-        okm = HKDF(algorithm=hashes.SHA256(), length=64, salt=None, info=b'hledac-noise-xx-v1-es').derive(shared2)
+
+        okm = HKDF(algorithm=hashes.SHA256(), length=64, salt=None, info=b"hledac-noise-xx-v1-es").derive(shared2)
         if self._is_initiator:
             self._send_cipher = ChaCha20Poly1305(okm[:32])
             self._recv_cipher = ChaCha20Poly1305(okm[32:])
         else:
             self._send_cipher = ChaCha20Poly1305(okm[32:])
             self._recv_cipher = ChaCha20Poly1305(okm[:32])
+
 
 class _PeerSession:
     """
@@ -374,16 +399,18 @@ class _PeerSession:
       - last_seen_ts (monotonic)
       - address (host, port) for UDP framing
     """
-    __slots__ = ('peer_id', 'peer_static_pub', 'noise', 'last_seen_ts', 'address')
+
+    __slots__ = ("peer_id", "peer_static_pub", "noise", "last_seen_ts", "address")
 
     def __init__(self, peer_id: str, peer_static_pub: bytes, noise: _NoiseXXSession, address: tuple[str, int]) -> None:
-        self.peer_id = peer_id[:PEER_NODE_ID_LEN * 2]
+        self.peer_id = peer_id[: PEER_NODE_ID_LEN * 2]
         self.peer_static_pub = peer_static_pub
         self.noise = noise
         self.last_seen_ts = time.monotonic()
         self.address = address
 
-@NodeTransportFactory.register('peer_node')
+
+@NodeTransportFactory.register("peer_node")
 class PeerNodeTransport:
     """
     Real cross-host P2P transport.
@@ -407,14 +434,26 @@ class PeerNodeTransport:
     This is the Tier-2 transport. The Tier-1 LaneDispatchTransport
     remains the default; PeerNodeTransport is opt-in.
     """
-    __slots__ = tuple(('_closed', '_is_initiator', '_listener_task', '_mdns_browser', '_nonce_cache', '_peers', '_round_robin_idx', '_sprint_id', '_static_keypair', '_transport'))
+
+    __slots__ = (
+        "_closed",
+        "_is_initiator",
+        "_listener_task",
+        "_mdns_browser",
+        "_nonce_cache",
+        "_peers",
+        "_round_robin_idx",
+        "_sprint_id",
+        "_static_keypair",
+        "_transport",
+    )
 
     def __init__(self) -> None:
         self._peers: dict[str, _PeerSession] = {}
         self._nonce_cache: _NonceCache = _NonceCache()
         self._listener_task: asyncio.Task | None = None
         self._transport: asyncio.DatagramTransport | None = None
-        self._sprint_id: str = ''
+        self._sprint_id: str = ""
         self._is_initiator: bool = True
         self._static_keypair: tuple[bytes, bytes] = self._generate_static_keypair()
         self._round_robin_idx: int = 0
@@ -423,7 +462,7 @@ class PeerNodeTransport:
 
     def set_sprint_id(self, sprint_id: str) -> None:
         """Set sprint id for traceability. Idempotent."""
-        self._sprint_id = str(sprint_id or '')[:64]
+        self._sprint_id = str(sprint_id or "")[:64]
 
     def _check_preconditions(self) -> tuple[bool, str | None]:
         """Check if run can proceed. Returns (can_run, lane_for_log)."""
@@ -437,13 +476,15 @@ class PeerNodeTransport:
         """Discover peers and select one via round-robin."""
         if not self._peers:
             try:
-                await safe_wait_for(self._discover_peers(), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='mDNS_discover')
+                await safe_wait_for(
+                    self._discover_peers(), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label="mDNS_discover"
+                )
             except TimeoutError as e:
-                logger.debug('[FED-P2P] mDNS discover timed out: %s', e)
+                logger.debug("[FED-P2P] mDNS discover timed out: %s", e)
             except Exception as e:
-                logger.debug('[FED-P2P] mDNS discover failed: %s', e)
+                logger.debug("[FED-P2P] mDNS discover failed: %s", e)
         if not self._peers:
-            logger.debug('[FED-P2P] no peers available, lane=%r', lane)
+            logger.debug("[FED-P2P] no peers available, lane=%r", lane)
             return None
         peer_ids = sorted(self._peers.keys())
         if not peer_ids:
@@ -452,25 +493,32 @@ class PeerNodeTransport:
         peer_id = peer_ids[self._round_robin_idx]
         return self._peers[peer_id], peer_id
 
-    async def _send_peer_request(self, session: Any, lane: str, query: str, peer_id: str) -> list[dict[str, Any]] | None:
+    async def _send_peer_request(
+        self, session: Any, lane: str, query: str, peer_id: str
+    ) -> list[dict[str, Any]] | None:
         """Send request to peer and return results or None on error."""
         payload = {
-            'v': PEER_NODE_PROTO_VERSION, 't': 'research',
-            'lane': str(lane)[:32], 'q': str(query or '')[:256],
-            'n': secrets.token_hex(8), 'ts': int(time.time() * 1000)
+            "v": PEER_NODE_PROTO_VERSION,
+            "t": "research",
+            "lane": str(lane)[:32],
+            "q": str(query or "")[:256],
+            "n": secrets.token_hex(8),
+            "ts": int(time.time() * 1000),
         }
-        self._nonce_cache.seen(payload['n'])
+        self._nonce_cache.seen(payload["n"])
         try:
-            raw_response = await safe_wait_for(self._send_request(session, payload), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label='send_request')
+            raw_response = await safe_wait_for(
+                self._send_request(session, payload), timeout=PEER_NODE_HANDSHAKE_TIMEOUT_S, label="send_request"
+            )
         except TimeoutError:
-            logger.debug('[FED-P2P] peer %s request timeout lane=%r', peer_id, lane)
+            logger.debug("[FED-P2P] peer %s request timeout lane=%r", peer_id, lane)
             return None
         except Exception as e:
-            logger.debug('[FED-P2P] peer %s request failed: %s: %s', peer_id, type(e).__name__, e)
+            logger.debug("[FED-P2P] peer %s request failed: %s: %s", peer_id, type(e).__name__, e)
             return None
         if not isinstance(raw_response, dict):
             return None
-        results = raw_response.get('results', [])
+        results = raw_response.get("results", [])
         if not isinstance(results, list):
             return None
         return results
@@ -509,13 +557,13 @@ class PeerNodeTransport:
                 return []
             out = self._normalize_results(results, lane, peer_id)
             elapsed = time.monotonic() - started
-            logger.debug('[FED-P2P] lane=%r peer=%s findings=%d dur=%.3fs', lane, peer_id, len(out), elapsed)
+            logger.debug("[FED-P2P] lane=%r peer=%s findings=%d dur=%.3fs", lane, peer_id, len(out), elapsed)
             return out
         except asyncio.CancelledError:
             raise
         except Exception as e:
             elapsed = time.monotonic() - started
-            logger.warning('[FED-P2P] run fail-soft lane=%r %s: %s dur=%.3fs', lane, type(e).__name__, e, elapsed)
+            logger.warning("[FED-P2P] run fail-soft lane=%r %s: %s dur=%.3fs", lane, type(e).__name__, e, elapsed)
             return []
 
     async def close(self) -> None:
@@ -529,7 +577,7 @@ class PeerNodeTransport:
             except Exception:  # noqa: BLE001
                 pass
             try:
-                await safe_wait_for(self._listener_task, timeout=1.0, label='listener_task')
+                await safe_wait_for(self._listener_task, timeout=1.0, label="listener_task")
             except TimeoutError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
@@ -555,10 +603,11 @@ class PeerNodeTransport:
         """Generate an X25519 keypair for the local node identity."""
         try:
             from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
             priv = X25519PrivateKey.generate()
             return (priv.private_bytes_raw(), priv.public_key().public_bytes_raw())
         except Exception as e:
-            logger.debug('[FED-P2P] keypair generation failed: %s', e)
+            logger.debug("[FED-P2P] keypair generation failed: %s", e)
             rnd = secrets.token_bytes(32)
             return (rnd, rnd)
 
@@ -569,16 +618,17 @@ class PeerNodeTransport:
         None on failure.
         """
         import orjson
+
         try:
             body = orjson.dumps(payload)
         except Exception:
-            body = str(payload).encode('utf-8')[:PEER_NODE_MSG_MAX_BYTES]
+            body = str(payload).encode("utf-8")[:PEER_NODE_MSG_MAX_BYTES]
         if len(body) > PEER_NODE_MSG_MAX_BYTES:
             body = body[:PEER_NODE_MSG_MAX_BYTES]
         try:
             ct = session.noise.encrypt(body)
         except Exception as e:
-            logger.debug('[FED-P2P] encrypt failed: %s', e)
+            logger.debug("[FED-P2P] encrypt failed: %s", e)
             return None
         if self._transport is None:
             return None
@@ -586,7 +636,7 @@ class PeerNodeTransport:
         try:
             self._transport.sendto(frame, session.address)
         except Exception as e:
-            logger.debug('[FED-P2P] sendto failed: %s', e)
+            logger.debug("[FED-P2P] sendto failed: %s", e)
             return None
         try:
             await asyncio.sleep(0.05)
@@ -605,17 +655,17 @@ class PeerNodeTransport:
         try:
             from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
         except Exception as e:
-            logger.debug('[FED-P2P] zeroconf not available: %s', e)
+            logger.debug("[FED-P2P] zeroconf not available: %s", e)
             return
-        service_type = os.environ.get('HLEDAC_FEDERATED_P2P_SERVICE', PEER_NODE_SERVICE_TYPE)
+        service_type = os.environ.get("HLEDAC_FEDERATED_P2P_SERVICE", PEER_NODE_SERVICE_TYPE)
         try:
             zc = Zeroconf()
         except Exception as e:
-            logger.debug('[FED-P2P] Zeroconf() init failed: %s', e)
+            logger.debug("[FED-P2P] Zeroconf() init failed: %s", e)
             return
 
         class _Listener(ServiceListener):
-            __slots__ = tuple(('outer',))
+            __slots__ = ("outer",)
 
             def __init__(self, outer: PeerNodeTransport) -> None:
                 self.outer = outer
@@ -628,11 +678,12 @@ class PeerNodeTransport:
 
             def add_service(self, *args: Any, **kwargs: Any) -> None:
                 self.outer._add_mdns_peer_from_args(args, kwargs)
+
         try:
             listener = _Listener(self)
             self._mdns_browser = ServiceBrowser(zc, service_type, listener)
         except Exception as e:
-            logger.debug('[FED-P2P] mDNS ServiceBrowser failed: %s', e)
+            logger.debug("[FED-P2P] mDNS ServiceBrowser failed: %s", e)
             return
         try:
             await asyncio.sleep(0.5)
@@ -645,6 +696,7 @@ class PeerNodeTransport:
             return
         try:
             from zeroconf import ServiceStateChange
+
             if len(args) < 4:
                 return
             zc, _stype, name, state_change = (args[0], args[1], args[2], args[3])
@@ -656,11 +708,11 @@ class PeerNodeTransport:
             addrs = info.addresses
             if not addrs:
                 return
-            host = '.'.join((str(b) for b in addrs[0]))
+            host = ".".join(str(b) for b in addrs[0])
             port = int(info.port or PEER_NODE_DEFAULT_PORT)
             self._register_mdns_peer(name, host, port)
         except Exception as e:
-            logger.debug('[FED-P2P] mDNS peer parse failed: %s', e)
+            logger.debug("[FED-P2P] mDNS peer parse failed: %s", e)
 
     def _register_mdns_peer(self, name: str, host: str, port: int) -> None:
         """
@@ -670,33 +722,61 @@ class PeerNodeTransport:
         """
         if len(self._peers) >= PEER_NODE_MAX_PEERS:
             return
-        peer_id = secrets.token_hex(PEER_NODE_ID_LEN // 2) if not name else name.replace('.', '_')[:PEER_NODE_ID_LEN * 2]
+        peer_id = (
+            secrets.token_hex(PEER_NODE_ID_LEN // 2) if not name else name.replace(".", "_")[: PEER_NODE_ID_LEN * 2]
+        )
         if peer_id in self._peers:
             return
         noise = _NoiseXXSession(is_initiator=True, static_keypair=self._static_keypair)
-        self._peers[peer_id] = _PeerSession(peer_id=peer_id, peer_static_pub=b'\x00' * 32, noise=noise, address=(host, int(port)))
+        self._peers[peer_id] = _PeerSession(
+            peer_id=peer_id, peer_static_pub=b"\x00" * 32, noise=noise, address=(host, int(port))
+        )
+
+
 _PEER_MAX_FINDINGS: int = 25
-'Hard cap on findings returned by a single peer per lane per cycle.\nSame as LANE_DISPATCH_MAX_FINDINGS — keeps the contract uniform.'
+"Hard cap on findings returned by a single peer per lane per cycle.\nSame as LANE_DISPATCH_MAX_FINDINGS — keeps the contract uniform."
+
 
 def _normalize_peer_finding(raw: dict[str, Any], lane: str, peer_id: str, sprint_id: str) -> dict[str, Any] | None:
     """
     Normalize a peer response finding into the federated contract.
     Mirrors the lane_dispatch normalizer but adds a peer_id tag.
     """
-    ioc_type = raw.get('ioc_type') or raw.get('type') or 'observation'
-    ioc_value = raw.get('ioc_value') or raw.get('value') or ''
+    ioc_type = raw.get("ioc_type") or raw.get("type") or "observation"
+    ioc_value = raw.get("ioc_value") or raw.get("value") or ""
     if not ioc_value:
         return None
     try:
-        confidence = float(raw.get('confidence', 0.5) or 0.5)
-    except (TypeError, ValueError):
+        confidence = float(raw.get("confidence", 0.5) or 0.5)
+    except TypeError, ValueError:
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
-    finding: dict[str, Any] = {'ioc_type': str(ioc_type)[:64], 'ioc_value': str(ioc_value)[:512], 'confidence': confidence, 'source_lane': lane, 'source_type': 'federated_peer_node', 'provenance': ('federated_peer_node', f'peer={peer_id}')}
-    payload = raw.get('payload_text') or raw.get('payload')
+    finding: dict[str, Any] = {
+        "ioc_type": str(ioc_type)[:64],
+        "ioc_value": str(ioc_value)[:512],
+        "confidence": confidence,
+        "source_lane": lane,
+        "source_type": "federated_peer_node",
+        "provenance": ("federated_peer_node", f"peer={peer_id}"),
+    }
+    payload = raw.get("payload_text") or raw.get("payload")
     if payload is not None and isinstance(payload, str):
-        finding['payload_text'] = payload[:1024]
+        finding["payload_text"] = payload[:1024]
     if sprint_id:
-        finding['sprint_id'] = str(sprint_id)[:64]
+        finding["sprint_id"] = str(sprint_id)[:64]
     return finding
-__all__ = ['PeerNodeTransport', 'is_peer_node_enabled', 'ENV_GATE', 'PEER_NODE_MAX_PEERS', 'PEER_NODE_HANDSHAKE_TIMEOUT_S', 'PEER_NODE_MSG_MAX_BYTES', 'PEER_NODE_NONCE_CACHE_MAX', 'PEER_NODE_MDNS_RATE_LIMIT_S', 'PEER_NODE_DEFAULT_PORT', 'PEER_NODE_SERVICE_TYPE', 'PEER_NODE_PROTO_VERSION']
+
+
+__all__ = [
+    "PeerNodeTransport",
+    "is_peer_node_enabled",
+    "ENV_GATE",
+    "PEER_NODE_MAX_PEERS",
+    "PEER_NODE_HANDSHAKE_TIMEOUT_S",
+    "PEER_NODE_MSG_MAX_BYTES",
+    "PEER_NODE_NONCE_CACHE_MAX",
+    "PEER_NODE_MDNS_RATE_LIMIT_S",
+    "PEER_NODE_DEFAULT_PORT",
+    "PEER_NODE_SERVICE_TYPE",
+    "PEER_NODE_PROTO_VERSION",
+]

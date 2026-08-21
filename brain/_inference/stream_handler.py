@@ -15,29 +15,36 @@ Extracted from:
 
 M1 8GB: Streaming provides better perceived latency for long generations.
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncIterator
-from _core import aclose
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
+
 @dataclass(slots=True)
 class StreamConfig:
     """Configuration for streaming."""
+
     queue_size: int = 1024
     cancel_timeout: float = 2.0
+
 
 @dataclass(slots=True)
 class StreamStats:
     """Streaming statistics."""
+
     tokens_yielded: int = 0
     tokens_cancelled: int = 0
     stream_errors: int = 0
+
 
 class StreamHandler:
     """
@@ -56,9 +63,10 @@ class StreamHandler:
 
     M1 8GB: Uses queue-based streaming to prevent blocking.
     """
-    __slots__ = ('_config',)
 
-    def __init__(self, config: StreamConfig | None=None) -> None:
+    __slots__ = ("_config",)
+
+    def __init__(self, config: StreamConfig | None = None) -> None:
         self._config = config or StreamConfig()
         self._queue: asyncio.Queue[str] | None = None
         self._cancelled = False
@@ -69,7 +77,9 @@ class StreamHandler:
         """Get streaming statistics."""
         return self._stats
 
-    async def stream_tokens(self, generate_fn: Callable[..., AsyncIterator[str]], *args: Any, **kwargs: Any) -> AsyncIterator[str]:
+    async def stream_tokens(
+        self, generate_fn: Callable[..., AsyncIterator[str]], *args: Any, **kwargs: Any
+    ) -> AsyncIterator[str]:
         """
         Stream tokens from a generator function.
 
@@ -93,26 +103,27 @@ class StreamHandler:
                     try:
                         async with asyncio.timeout(1.0):
                             await self._queue.put(token)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self._stats.stream_errors += 1
                         continue
                 await self._queue.put(None)
             except asyncio.CancelledError:
                 self._stats.tokens_cancelled += 1
             except Exception as e:
-                logger.warning(f'[StreamHandler] Producer error: {e}')
+                logger.warning(f"[StreamHandler] Producer error: {e}")
                 self._stats.stream_errors += 1
                 try:
                     self._queue.put_nowait(None)
                 except asyncio.QueueFull:
                     pass
+
         producer_task = asyncio.create_task(producer())
         try:
             while True:
                 try:
                     async with asyncio.timeout(0.1):
                         token = await self._queue.get()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if self._cancelled:
                         break
                     continue
@@ -158,6 +169,7 @@ class StreamHandler:
         """
         return decoded
 
+
 class SyncStreamPrep:
     """
     Synchronous streaming preparation.
@@ -167,7 +179,7 @@ class SyncStreamPrep:
     """
 
     @staticmethod
-    def format_chatml(system_msg: str, user_msg: str, history: list[dict[str, str]] | None=None) -> str:
+    def format_chatml(system_msg: str, user_msg: str, history: list[dict[str, str]] | None = None) -> str:
         """
         Format messages in ChatML format.
 
@@ -179,17 +191,19 @@ class SyncStreamPrep:
         Returns:
             Formatted ChatML string
         """
-        parts = [f'<|im_start|>system\n{system_msg}<|im_end|>']
+        parts = [f"<|im_start|>system\n{system_msg}<|im_end|>"]
         if history:
             for msg in history[-4:]:
-                role = msg.get('role', 'user')
-                content = msg.get('content', '')
-                parts.append(f'<|im_start|>{role}\n{content}<|im_end|>')
-        parts.append(f'<|im_start|>user\n{user_msg}<|im_end|>')
-        return '\n'.join(parts)
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
+        parts.append(f"<|im_start|>user\n{user_msg}<|im_end|>")
+        return "\n".join(parts)
 
     @staticmethod
-    def prepare_streaming_kwargs(prompt: str, max_tokens: int=512, temperature: float=0.7, **kwargs: Any) -> dict[str, Any]:
+    def prepare_streaming_kwargs(
+        prompt: str, max_tokens: int = 512, temperature: float = 0.7, **kwargs: Any
+    ) -> dict[str, Any]:
         """
         Prepare kwargs for streaming generate.
 
@@ -203,4 +217,5 @@ class SyncStreamPrep:
             kwargs dict for mlx_lm.generate
         """
         from mlx_lm.sample_utils import make_sampler
-        return {'prompt': prompt, 'max_tokens': max_tokens, 'sampler': make_sampler(temp=temperature), **kwargs}
+
+        return {"prompt": prompt, "max_tokens": max_tokens, "sampler": make_sampler(temp=temperature), **kwargs}

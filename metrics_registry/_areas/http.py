@@ -21,20 +21,22 @@ Sprint ISSUE-16 (2026-08-18)
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from metrics_registry.registry import MetricsRegistry
 
 # ── Metric Names ───────────────────────────────────────────────────────────────
 
-HTTP_METRIC_NAMES = frozenset([
-    'http_request_count',
-    'http_request_latency_ms',
-    'http_error_count',
-    'http_circuit_breaker_state',
-    'http_blocked_domains',
-])
+HTTP_METRIC_NAMES = frozenset(
+    [
+        "http_request_count",
+        "http_request_latency_ms",
+        "http_error_count",
+        "http_circuit_breaker_state",
+        "http_blocked_domains",
+    ]
+)
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -43,12 +45,12 @@ _registered: dict[int, bool] = {}  # registry id -> registered status
 _registered_lock = threading.Lock()
 
 
-def register_area(registry: "MetricsRegistry") -> None:
+def register_area(registry: MetricsRegistry) -> None:
     """
     Register HTTP area metrics with the registry.
 
     Called automatically by the lazy area registry on first use.
-    
+
     ISSUE-18 fix: Thread-safe per-registry tracking instead of global flag.
     """
     registry_id = id(registry)
@@ -59,7 +61,7 @@ def register_area(registry: "MetricsRegistry") -> None:
 
 
 def record_http_request(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     latency_ms: float,
     error: bool = False,
 ) -> None:
@@ -71,14 +73,14 @@ def record_http_request(
         latency_ms: Request latency in milliseconds
         error: Whether request resulted in error
     """
-    registry.inc('http_request_count')
-    registry.set_gauge('http_request_latency_ms', latency_ms)
+    registry.inc("http_request_count")
+    registry.set_gauge("http_request_latency_ms", latency_ms)
     if error:
-        registry.inc('http_error_count')
+        registry.inc("http_error_count")
 
 
 def record_circuit_breaker_state(
-    registry: "MetricsRegistry",
+    registry: MetricsRegistry,
     state: str,  # 'closed', 'half_open', 'open'
 ) -> None:
     """
@@ -88,11 +90,11 @@ def record_circuit_breaker_state(
         registry: MetricsRegistry instance
         state: Circuit breaker state
     """
-    state_map = {'closed': 0, 'half_open': 1, 'open': 2}
-    registry.set_gauge('http_circuit_breaker_state', float(state_map.get(state, 0)))
+    state_map = {"closed": 0, "half_open": 1, "open": 2}
+    registry.set_gauge("http_circuit_breaker_state", float(state_map.get(state, 0)))
 
 
-def record_blocked_domains(registry: "MetricsRegistry", count: int) -> None:
+def record_blocked_domains(registry: MetricsRegistry, count: int) -> None:
     """
     Record number of blocked domains.
 
@@ -100,4 +102,4 @@ def record_blocked_domains(registry: "MetricsRegistry", count: int) -> None:
         registry: MetricsRegistry instance
         count: Number of blocked domains
     """
-    registry.set_gauge('http_blocked_domains', float(count))
+    registry.set_gauge("http_blocked_domains", float(count))

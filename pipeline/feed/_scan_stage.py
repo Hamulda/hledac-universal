@@ -10,15 +10,15 @@ Responsibilities:
 Input: FeedAssembledBatch
 Output: FeedMatchedBatch (entry_urls, matched_pattern_counts, matched_pattern_labels, entry_dedup_hits, errors)
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from hledac.universal.pipeline._soa_types import FeedAssembledBatch, FeedMatchedBatch
 from hledac.universal.utils.asyncx import parallel_ok
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,8 @@ _text_norm_batch = None
 
 # M1 8GB Safety: Batch size limits to prevent OOM
 _MAX_BATCH_SIZE = 10000  # Maximum items per batch
-_MAX_TEXT_LEN = 50000    # Maximum text length per item
-_NFC_BATCH_SIZE = 1000   # Batch size for NFC normalization (perf/overhead tradeoff)
+_MAX_TEXT_LEN = 50000  # Maximum text length per item
+_NFC_BATCH_SIZE = 1000  # Batch size for NFC normalization (perf/overhead tradeoff)
 
 
 def _get_signal_batch():
@@ -41,6 +41,7 @@ def _get_signal_batch():
     if _signal_batch is None:
         try:
             from rust_extensions.wiring.signal_batch_wiring import signal_batch_wired
+
             _signal_batch = signal_batch_wired()
         except Exception:
             _signal_batch = None
@@ -53,6 +54,7 @@ def _get_text_norm():
     if _text_norm_nfc is None:
         try:
             from rust_extensions.wiring.text_norm_wiring import nfc_normalize as _nfc
+
             _text_norm_nfc = _nfc
         except Exception:
             _text_norm_nfc = None
@@ -65,6 +67,7 @@ def _get_text_norm_batch():
     if _text_norm_batch is None:
         try:
             from rust_extensions.wiring.text_norm_wiring import batch_nfc_normalize_fast as _batch
+
             _text_norm_batch = _batch
         except Exception:
             _text_norm_batch = None
@@ -92,6 +95,7 @@ def _normalize_text(text: str) -> str:
         return text
     try:
         import unicodedata
+
         return unicodedata.normalize("NFC", text)
     except Exception:
         return text
@@ -144,9 +148,7 @@ class ScanStage:
     def name(self) -> str:
         return "scan"
 
-    async def process(
-        self, input_batch: FeedAssembledBatch | None
-    ) -> tuple[FeedMatchedBatch, dict[str, Any]]:
+    async def process(self, input_batch: FeedAssembledBatch | None) -> tuple[FeedMatchedBatch, dict[str, Any]]:
         """Scan assembled texts for patterns.
 
         Args:
@@ -175,7 +177,6 @@ class ScanStage:
         else:
             results = await _python_scan_batch(input_batch)
 
-        # Build FeedMatchedBatch
         matched_pattern_counts = [r["count"] for r in results]
         matched_pattern_labels = [r["labels"] for r in results]
         errors = [r.get("error") for r in results]
@@ -195,7 +196,7 @@ class ScanStage:
             matched_pattern_labels=matched_pattern_labels,
             entry_dedup_hits=[False] * len(input_batch.entry_urls),  # filled by dedup stage
             errors=errors,
-    )
+        )
 
         return batch, telemetry
 
@@ -206,7 +207,7 @@ class ScanStage:
             matched_pattern_labels=[],
             entry_dedup_hits=[],
             errors=[],
-    )
+        )
 
 
 def _get_rust_feed_domain() -> Any | None:
@@ -214,6 +215,7 @@ def _get_rust_feed_domain() -> Any | None:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         _ext = rust.raw.module
 
         probe = getattr(_ext, "feed_entry_pipeline", None)
@@ -233,8 +235,7 @@ async def _rust_scan_batch(
 
     # F1: Batch NFC normalize all texts at once for efficiency
     assembled_texts = [
-        batch.assembled_texts[i] if i < len(batch.assembled_texts) else ""
-        for i in range(len(batch.entry_urls))
+        batch.assembled_texts[i] if i < len(batch.assembled_texts) else "" for i in range(len(batch.entry_urls))
     ]
     normalized_texts = _normalize_texts_batch(assembled_texts)
 
@@ -256,7 +257,11 @@ async def _rust_scan_batch(
             return {"count": 0, "labels": [], "error": str(exc)}
 
     tasks = [
-        scan_one(i, normalized_texts[i] if i < len(normalized_texts) else "", batch.entry_urls[i] if i < len(batch.entry_urls) else "")
+        scan_one(
+            i,
+            normalized_texts[i] if i < len(normalized_texts) else "",
+            batch.entry_urls[i] if i < len(batch.entry_urls) else "",
+        )
         for i in range(len(batch.entry_urls))
     ]
     # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order.
@@ -276,8 +281,7 @@ async def _python_scan_batch(
 
     # F1: Batch NFC normalize all texts at once for efficiency
     assembled_texts = [
-        batch.assembled_texts[i] if i < len(batch.assembled_texts) else ""
-        for i in range(len(batch.entry_urls))
+        batch.assembled_texts[i] if i < len(batch.assembled_texts) else "" for i in range(len(batch.entry_urls))
     ]
     normalized_texts = _normalize_texts_batch(assembled_texts)
 
@@ -313,11 +317,6 @@ def _parse_combined_hits(combined_hits: int) -> list[str]:
     # combined_hits is a bitmask from Rust Aho-Corasick
     # For now, return empty list (labels extracted from Rust in future)
     return []
-
-
-# ============================================================================
-# Signal Batch Processing (NEON-accelerated)
-# ============================================================================
 
 
 async def batch_compute_signals(
@@ -356,7 +355,7 @@ async def batch_compute_signals(
         logger.debug(f"Splitting batch of {len(items)} items into chunks of {_MAX_BATCH_SIZE}")
         results = []
         for i in range(0, len(items), _MAX_BATCH_SIZE):
-            chunk = items[i:i + _MAX_BATCH_SIZE]
+            chunk = items[i : i + _MAX_BATCH_SIZE]
             chunk_results = await batch_compute_signals(chunk, default_weight)
             results.extend(chunk_results)
         return results
@@ -467,8 +466,8 @@ async def batch_aggregate_signals(
         chunk_size = _MAX_BATCH_SIZE
         results = None
         for i in range(0, len(signals), chunk_size):
-            chunk_signals = signals[i:i + chunk_size]
-            chunk_weights = weights[i:i + chunk_size]
+            chunk_signals = signals[i : i + chunk_size]
+            chunk_weights = weights[i : i + chunk_size]
             chunk_result = await asyncio.to_thread(
                 _python_batch_aggregate_signals,
                 chunk_signals,

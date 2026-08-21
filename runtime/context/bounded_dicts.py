@@ -36,14 +36,11 @@ Ring-buffer drop counter telemetry (per SprintSchedulerResult):
   - entries_per_source_dropped: int = 0
   - novelty_bonuses_dropped: int = 0
 """
+
 from __future__ import annotations
 
-import msgspec
-from compat.msgspec_gc_compat import Struct
-
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
-from _core import aclose
+from collections.abc import Iterator
 
 __all__ = [
     "BoundedLRUDict",
@@ -55,9 +52,6 @@ __all__ = [
     "DEFAULT_FETCH_LATENCY_EMA_MAXSIZE",
 ]
 
-# -----------------------------------------------------------------------
-# Default capacity constants — match historical observed cardinalities
-# -----------------------------------------------------------------------
 DEFAULT_SEEN_HASHES_MAXSIZE: int = 100_000
 """Max unique entry hashes per sprint. Observed: 100k+ IOCs on 18h sprint."""
 

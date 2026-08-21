@@ -25,12 +25,8 @@
 use pyo3::prelude::*;
 use std::sync::OnceLock;
 
-// ============== Global State ==============
-
 static TRACING_INIT: OnceLock<bool> = OnceLock::new();
 static TRACING_ENABLED: OnceLock<bool> = OnceLock::new();
-
-// ============== W3C TraceContext Constants ==============
 
 /// Valid W3C TraceContext trace_id: exactly 32 lowercase hex chars.
 const TRACE_ID_LEN: usize = 32;
@@ -83,8 +79,6 @@ impl TraceContext {
     }
 }
 
-// ============== TLS Accessors (pub(crate) for pool_run.rs) ==============
-
 /// Set the current trace context on this thread. Used by pool_run.rs.
 #[cfg(feature = "otel")]
 pub(crate) fn set_tls_trace_context(trace_id: Option<u128>, span_id: Option<u128>) {
@@ -134,8 +128,6 @@ pub(crate) fn get_tls_span_id() -> Option<String> {
 #[cfg(not(feature = "otel"))]
 pub(crate) fn clear_tls_trace_context() {}
 
-// ============== Tracing Enabled Check ==============
-
 /// Check if tracing is enabled (env var HLEDAC_TRACING_ENABLED != "0").
 /// Cached via OnceLock so this is fast on the hot path.
 /// Made pub(crate) so pool_run.rs can reuse it instead of duplicating the logic.
@@ -150,8 +142,6 @@ pub(crate) fn is_tracing_enabled() -> bool {
 fn get_service_name() -> String {
     std::env::var("HLEDAC_TRACING_SERVICE_NAME").unwrap_or_else(|_| "hledac-rust".to_string())
 }
-
-// ============== Init ==============
 
 #[cfg(feature = "otel")]
 fn init_tracing() -> Result<(), String> {
@@ -189,8 +179,6 @@ fn init_tracing() -> Result<(), String> {
 fn init_tracing() -> Result<(), String> {
     Ok(())
 }
-
-// ============== W3C TraceContext Helpers ==============
 
 /// Parse a W3C trace_id from a hex string (32 chars).
 #[cfg(feature = "otel")]
@@ -253,8 +241,6 @@ fn hex_encode_8_bytes(bytes: [u8; 8]) -> String {
     }
     String::from_iter(chars.iter())
 }
-
-// ============== Python API ==============
 
 /// Configure tracing subsystem.
 /// Call once at startup before any #[pyfunction] is invoked.
@@ -383,7 +369,6 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
         return false;
     }
 
-    // Validate inputs
     let trace_id = match parse_trace_id_hex(&trace_id) {
         Some(tid) => tid,
         None => return false,
@@ -544,8 +529,6 @@ pub fn flush_tracing() {
     // stdout is synchronous, no flush needed
 }
 
-// ============== MODERN-CROSS-2: Async Span Support ==============
-
 /// MODERN-CROSS-2: Async-aware span wrapper for Python asyncio ↔ Rust tokio bridging.
 ///
 /// This provides a scoped span that properly handles async context switches.
@@ -616,7 +599,6 @@ pub fn async_span_enter(name: String) -> (String, String, String) {
         trace_id
     };
 
-    // Create and enter the span
     let span = tracing::info_span!(
         "async:{}",
         name,
@@ -752,8 +734,6 @@ pub fn get_active_async_spans() -> Vec<(String, String, u64)> {
 pub fn get_active_async_spans() -> Vec<(String, String, u64)> {
     Vec::new()
 }
-
-// ============== Module Registration ==============
 
 #[cfg(feature = "otel")]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

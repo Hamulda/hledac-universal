@@ -12,17 +12,7 @@ M1 8GB: CO_OCCURRENCE_FP16=True saves RAM on co-occurrence matrices.
 
 from __future__ import annotations
 
-from typing import Any
-
-import msgspec
-from _core import aclose
-
 from compat.msgspec_gc_compat import Struct
-
-
-# ============================================================================
-# Bounds for M1 8GB optimization
-# ============================================================================
 
 MAX_CAUSAL_ENTITIES = 5000
 MAX_CAUSAL_FINDINGS = 50000
@@ -33,6 +23,7 @@ CO_OCCURRENCE_FP16 = True  # Use float16 for RAM savings
 
 class CausalEntity(Struct, frozen=True):
     """An entity extracted from findings for causal reasoning."""
+
     entity_id: str
     entity_type: str  # ip, domain, person, org, email, url, etc.
     value: str  # the actual value (e.g., "192.168.1.1")
@@ -43,6 +34,7 @@ class CausalEntity(Struct, frozen=True):
 
 class TemporalSequence(Struct, frozen=True):
     """An ordered sequence of events."""
+
     sequence_id: str
     entities: list[str]  # entity IDs in temporal order
     timestamps: list[float]
@@ -52,6 +44,7 @@ class TemporalSequence(Struct, frozen=True):
 
 class AnomalySignal(Struct, frozen=True):
     """An anomaly signal from unexpected source combinations."""
+
     anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
     entities: tuple[str, ...]
     expected_sources: tuple[str, ...]
@@ -62,6 +55,7 @@ class AnomalySignal(Struct, frozen=True):
 
 class CausalHypothesis(Struct, frozen=True):
     """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
+
     hypothesis_id: str
     source_entity: str
     target_entity: str

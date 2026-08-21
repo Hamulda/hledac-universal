@@ -35,20 +35,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# ISSUE-P7-001: mlock FFI — lazy import (M1 safe)
-# ---------------------------------------------------------------------------
 
 _mlock_mod: Any = None
 
@@ -59,6 +53,7 @@ def _get_mlock():
     if _mlock_mod is None:
         try:
             import rust  # type: ignore[attr-defined]
+
             # rust.madvise.mlock_key_region, munlock_key_region, madvise_free_reusable, madvise_dontdump_region
             _mlock_mod = rust
         except ImportError:
@@ -102,7 +97,7 @@ def _key_material_guard(key_bytes: bytearray):
         from hledac.universal.security.ephemeral_wipe import (
             register_mlock_region,
             unregister_mlock_region,
-    )
+        )
     except ImportError:
         register_mlock_region = None  # type: ignore
         unregister_mlock_region = None  # type: ignore
@@ -123,14 +118,13 @@ def _key_material_guard(key_bytes: bytearray):
     try:
         yield
     finally:
-        # Step 3: secure wipe
         try:
             from hledac.universal.utils.secure_zero import secure_zero
+
             secure_zero(key_bytes)
         except Exception as exc:
             logger.debug(f"KeyMaterialGuard: secure_zero failed ({exc})")
 
-        # Step 4: munlock
         if ml is not None and addr is not None:
             try:
                 ml.madvise.munlock_key_region(addr, len(key_bytes))
@@ -151,10 +145,6 @@ def _key_material_guard(key_bytes: bytearray):
                 pass
 
 
-# ---------------------------------------------------------------------------
-# macOS Keychain — lazy import (M1 safe)
-# ---------------------------------------------------------------------------
-
 _SecurityFramework: bool | object = False
 _KEYCHAIN_SERVICE = "com.hledac.universal"
 _KEYCHAIN_ACCOUNT = "master_key"
@@ -169,12 +159,13 @@ def _init_security() -> bool:
                 SecItemAdd,
                 SecItemCopyMatching,
                 SecItemDelete,
+                kSecAttrAccessible,
+                kSecAttrAccessibleAfterFirstUnlock,
                 kSecClassGenericPassword,
                 kSecMatchLimit,
                 kSecReturnData,
-                kSecAttrAccessible,
-                kSecAttrAccessibleAfterFirstUnlock,
-    )
+            )
+
             _SecurityFramework = {
                 "SecItemAdd": SecItemAdd,
                 "SecItemCopyMatching": SecItemCopyMatching,
@@ -191,10 +182,6 @@ def _init_security() -> bool:
             return False
     return _SecurityFramework is not False
 
-
-# ---------------------------------------------------------------------------
-# HKDF-SHA256 key derivation
-# ---------------------------------------------------------------------------
 
 def _hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
     """
@@ -213,8 +200,9 @@ def _hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> byte
     Returns:
         Derived key bytes
     """
-    import hmac
     import hashlib
+    import hmac
+
     # Extract: PRK = HMAC-SHA256(salt, ikm)
     prk = hmac.new(salt, ikm, hashlib.sha256).digest()
     # Expand
@@ -226,10 +214,6 @@ def _hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int = 32) -> byte
         okm += t
     return okm[:length]
 
-
-# ---------------------------------------------------------------------------
-# KeyManager — real implementation
-# ---------------------------------------------------------------------------
 
 class KeyManager:
     """
@@ -251,10 +235,14 @@ class KeyManager:
         - Keychain errors raise RuntimeError (fail-loud, never return stub)
     """
 
-    __slots__ = tuple((
-        '_current_version', '_db_path', '_keychain_lock',
-        '_master_key', '_master_key_cached', '_salt',
-    ))
+    __slots__ = (
+        "_current_version",
+        "_db_path",
+        "_keychain_lock",
+        "_master_key",
+        "_master_key_cached",
+        "_salt",
+    )
 
     def __init__(self, db_path: str | None = None) -> None:
         """
@@ -263,14 +251,14 @@ class KeyManager:
         Args:
             db_path: Optional path to LMDB database directory for metadata
         """
-        self._db_path = Path(db_path) if db_path else Path.home() / '.hledac' / 'keys'
+        self._db_path = Path(db_path) if db_path else Path.home() / ".hledac" / "keys"
         self._current_version = 1
         self._master_key: bytes | None = None
         self._master_key_cached = False
         self._salt: bytes | None = None
         # asyncio.Lock for thread-safe Keychain ops
         self._keychain_lock: asyncio.Lock | None = None
-        logger.debug(f'KeyManager: db_path={self._db_path}')
+        logger.debug(f"KeyManager: db_path={self._db_path}")
 
     @property
     def db_path(self) -> Path:
@@ -279,9 +267,9 @@ class KeyManager:
 
     def _open_lmdb(self) -> Any:
         """Open LMDB environment for salt metadata storage."""
-        import lmdb
         import os
-        import stat as _stat
+
+        import lmdb
 
         # SEC-02: Create directory with 0700 before umask scope
         self._db_path.mkdir(parents=True, exist_ok=True)
@@ -310,6 +298,7 @@ class KeyManager:
         """
         try:
             from hledac.universal.tools.file_cache import madvise_lmdb_mmap
+
             mdb_path = self._db_path / "data.mdb"
             if mdb_path.exists():
                 madvise_lmdb_mmap(str(mdb_path), advice=1)  # MADV_NOCACHE
@@ -393,7 +382,7 @@ class KeyManager:
                     "KeyManager requires macOS Keychain (Security framework). "
                     "PyObjC is required: pip install pyobjc-framework-Security. "
                     "Alternatively set HLEDAC_KEY_MANAGER_FALLBACK=1 for development only."
-    )
+                )
 
             sec = _SecurityFramework
             # Try to read existing master key from Keychain
@@ -433,9 +422,8 @@ class KeyManager:
             add_result = sec["SecItemAdd"](add_attrs, None)
             if add_result != 0 and add_result is not None:
                 raise RuntimeError(
-                    f"Keychain SecItemAdd failed with result {add_result}. "
-                    f"Cannot store master key securely."
-    )
+                    f"Keychain SecItemAdd failed with result {add_result}. Cannot store master key securely."
+                )
 
             # Store salt in LMDB metadata (salt is not sensitive, only used for HKDF)
             self._store_salt_in_lmdb(salt)
@@ -464,13 +452,13 @@ class KeyManager:
             tuple[bytes, int]: (32-byte derived key, version)
         """
         master_key, _salt, version = await self.get_master_key()
-        bucket_salt = bucket_id.encode('utf-8')
+        bucket_salt = bucket_id.encode("utf-8")
         raw_key = _hkdf_sha256(
             ikm=master_key,
             salt=bucket_salt,
             info=bucket_salt,
             length=32,
-    )
+        )
         # ISSUE-P7-001: bytearray for mlock, guard wipes it after use.
         # raw_key_bytes is captured BEFORE guard so return value is correct.
         key_ba = bytearray(raw_key)
@@ -525,4 +513,4 @@ class KeyManager:
         logger.warning("KeyManager: deleted master key from Keychain")
 
 
-__all__ = ['KeyManager', '_key_material_guard']
+__all__ = ["KeyManager", "_key_material_guard"]

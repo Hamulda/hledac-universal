@@ -47,10 +47,6 @@
 //! 3. **Pattern Centralization**: All patterns in `patterns.rs` (codegen source)
 //! 4. **M1 8GB Safe**: Bounded batch sizes, adaptive threading
 
-// ============================================================================
-// Module Facades - delegate to root-level implementations
-// ============================================================================
-
 // IOC patterns - delegates to root-level ioc_patterns
 pub mod patterns {
     pub use crate::ioc_patterns::*;

@@ -2,8 +2,6 @@
 knowledge/embedding_dedup_index.py — A7: USearch Embedding-Based Dedup for Prelude
 ================================================================================
 
-
-
 Embedding-based near-duplicate detection using usearch + MLX embeddings.
 Integrates with existing UnifiedEmbeddingManager (M1 ANE-accelerated).
 
@@ -33,24 +31,19 @@ Usage:
     result = await idx.check_duplicate(finding_id, text)
 """
 
-
 import asyncio
 import logging
-from dataclasses import dataclass
-
-from typing import cast
-
-from hledac.universal.utils.asyncx import parallel
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import numpy as np
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.asyncx import parallel
 
 try:
     from usearch.index import Index as _UsearchIndexClass
+
     _USEARCH_AVAILABLE = True
 except ImportError:
     _UsearchIndexClass: type | None = None  # type: ignore[assignment]
@@ -79,12 +72,12 @@ USEARCH_EXPANSION_SEARCH: Final[int] = 50  # search expansion (ef equivalent)
 HNSW_SEARCH_K: Final[int] = 5  # number of neighbors to search
 MIN_TEXT_LEN: Final[int] = 50  # minimum text length for embedding dedup
 
-
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
 class DedupResult(Struct, frozen=True):
     """Embedding-based dedup advisory result."""
+
     is_duplicate: bool
     similarity: float  # cosine similarity to nearest neighbor
     nearest_id: str | None  # ID of most similar known finding
@@ -114,9 +107,13 @@ class EmbeddingDedupIndex:
     """
 
     __slots__ = (
-        "_index", "_texts", "_finding_ids",
+        "_index",
+        "_texts",
+        "_finding_ids",
         "_int_to_id",  # reverse map: usearch int_id → original finding_id
-        "_embedder", "_lock", "_stats",
+        "_embedder",
+        "_lock",
+        "_stats",
     )
 
     def __init__(self) -> None:
@@ -131,7 +128,7 @@ class EmbeddingDedupIndex:
                 connectivity=USEARCH_CONNECTIVITY,
                 expansion_add=USEARCH_EXPANSION_ADD,
                 expansion_search=USEARCH_EXPANSION_SEARCH,
-    )
+            )
         self._index = idx
 
         self._texts: dict[str, str] = {}  # finding_id → truncated text
@@ -150,6 +147,7 @@ class EmbeddingDedupIndex:
         """Lazily get UnifiedEmbeddingManager (imports mlx at first use)."""
         if self._embedder is None:
             from hledac.universal.brain.unified_embedding_manager import get_unified_embedder
+
             self._embedder = get_unified_embedder()
         return self._embedder
 
@@ -167,6 +165,7 @@ class EmbeddingDedupIndex:
         try:
             # P2-07: Použij MLXDispatcher s async batching frontou
             from hledac.universal.brain._mlx_dispatcher import get_mlx_dispatcher
+
             dispatcher = get_mlx_dispatcher()
             # embed_batch na dispatcher používá AsyncEmbeddingBatcher pro small batches
             embedding: np.ndarray = await dispatcher.embed_batch(text)
@@ -203,6 +202,7 @@ class EmbeddingDedupIndex:
 
         try:
             from hledac.universal.brain._mlx_dispatcher import get_mlx_dispatcher
+
             dispatcher = get_mlx_dispatcher()
             # Normalizovat texty pro batch
             texts_to_encode = [t for _, t in processed]
@@ -247,7 +247,7 @@ class EmbeddingDedupIndex:
                 nearest_id=None,
                 nearest_text=None,
                 confidence=0.0,
-    )
+            )
 
         try:
             embedding = await self._embed_text(text)
@@ -258,7 +258,7 @@ class EmbeddingDedupIndex:
                     nearest_id=None,
                     nearest_text=None,
                     confidence=0.0,
-    )
+                )
 
             async with self._lock:
                 count = len(self._finding_ids)
@@ -270,7 +270,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=1.0,
-    )
+                    )
 
                 try:
                     if self._index is None:
@@ -279,7 +279,7 @@ class EmbeddingDedupIndex:
                     results = self._index.search(
                         embedding.astype(np.float32),
                         count=min(HNSW_SEARCH_K, count),
-    )
+                    )
                 except Exception as exc:
                     logger.debug("EmbeddingDedupIndex: USearch search error: %s", exc)
                     self._stats["usearch_errors"] += 1
@@ -290,7 +290,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=0.0,
-    )
+                    )
 
                 if not results:
                     await self._add_to_index(finding_id, text, embedding)
@@ -300,7 +300,7 @@ class EmbeddingDedupIndex:
                         nearest_id=None,
                         nearest_text=None,
                         confidence=0.0,
-    )
+                    )
 
                 # Best neighbor: results sorted by distance ascending
                 # usearch returns Match|Matches; access via getattr for type safety
@@ -323,7 +323,7 @@ class EmbeddingDedupIndex:
                         nearest_id=best_original_id,
                         nearest_text=best_text,
                         confidence=similarity,
-    )
+                    )
 
                 await self._add_to_index(finding_id, text, embedding)
                 return DedupResult(
@@ -332,7 +332,7 @@ class EmbeddingDedupIndex:
                     nearest_id=best_original_id,
                     nearest_text=best_text,
                     confidence=similarity,
-    )
+                )
 
         except Exception as exc:
             logger.debug("EmbeddingDedupIndex: check_duplicate error: %s", exc)
@@ -342,7 +342,7 @@ class EmbeddingDedupIndex:
                 nearest_id=None,
                 nearest_text=None,
                 confidence=0.0,
-    )
+            )
 
     async def _add_to_index(
         self,
@@ -357,7 +357,6 @@ class EmbeddingDedupIndex:
             for i in range(min(evict_count, len(self._finding_ids))):
                 old_id = self._finding_ids[i]
                 self._texts.pop(old_id, None)
-                # Remove reverse mapping for evicted entry
                 old_int_id = abs(hash(old_id)) % (MAX_INDEX_ENTRIES * 10)
                 self._int_to_id.pop(old_int_id, None)
             self._finding_ids = self._finding_ids[evict_count:]
@@ -369,7 +368,7 @@ class EmbeddingDedupIndex:
             self._index.add(
                 int_id,
                 embedding.astype(np.float32),
-    )
+            )
             self._texts[finding_id] = text[:MAX_TEXT_EMBED_BYTES]
             self._int_to_id[int_id] = finding_id
             self._finding_ids.append(finding_id)
@@ -391,7 +390,7 @@ class EmbeddingDedupIndex:
             *[self.check_duplicate(finding_id, text, metadata) for finding_id, text, metadata in items],
             policy="log",
             concurrency=8,
-    )
+        )
         results: list[DedupResult] = cast(list[DedupResult], _raw)
         return list(results)
 
@@ -412,7 +411,7 @@ class EmbeddingDedupIndex:
                 connectivity=USEARCH_CONNECTIVITY,
                 expansion_add=USEARCH_EXPANSION_ADD,
                 expansion_search=USEARCH_EXPANSION_SEARCH,
-    )
+            )
         self._index = idx
         self._texts.clear()
         self._finding_ids.clear()

@@ -16,13 +16,13 @@ Usage:
 """
 
 import sys
-from _core import aclose
 
 
-def _check_annotationlib():
+def _check_annotationlib() -> bool | None:
     """Guard: annotationlib (new in 3.14)."""
     try:
         import annotationlib
+
         ver = getattr(annotationlib, "__version__", "no version attr")
         print(f"annotationlib: available ({ver})")
         return True
@@ -31,10 +31,11 @@ def _check_annotationlib():
         return False
 
 
-def _check_uuid7():
+def _check_uuid7() -> bool | None:
     """Guard: uuid.uuid7 (new in 3.14)."""
     try:
         import uuid
+
         if not hasattr(uuid, "uuid7"):
             print("ERROR: uuid.uuid7 not available (requires Python 3.14+)")
             return False
@@ -45,10 +46,9 @@ def _check_uuid7():
         return False
 
 
-def _check_interpreter_pool():
+def _check_interpreter_pool() -> bool | None:
     """Guard: concurrent.futures.InterpreterPoolExecutor (new in 3.14)."""
     try:
-        from concurrent.futures import InterpreterPoolExecutor as IPE  # noqa: F401
         print("InterpreterPoolExecutor: available")
         return True
     except ImportError:

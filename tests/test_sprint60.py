@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
-from _core import aclose
 
 # Testuje se pouze pokud je MLX dostupný
 np = pytest.importorskip("numpy")
@@ -17,7 +16,7 @@ mx = pytest.importorskip("mlx").core
 class TestResourceGovernor:
     """Testy pro ResourceGovernor."""
 
-    def test_priority_enum(self):
+    def test_priority_enum(self) -> None:
         """Test priority enum hodnot."""
         from hledac.universal._core.resource_governor import Priority
 
@@ -26,7 +25,7 @@ class TestResourceGovernor:
         assert Priority.NORMAL.value == "NORMAL"
         assert Priority.LOW.value == "LOW"
 
-    def test_governor_init(self):
+    def test_governor_init(self) -> None:
         """Test inicializace ResourceGovernor."""
         from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 
@@ -36,7 +35,7 @@ class TestResourceGovernor:
         assert gov._priority_factor[Priority.CRITICAL] == 1.2
         assert gov._priority_factor[Priority.LOW] == 0.7
 
-    def test_can_afford_sync_no_resources(self):
+    def test_can_afford_sync_no_resources(self) -> None:
         """Test can_afford_sync když nejsou dostupné zdroje."""
         from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
@@ -49,7 +48,7 @@ class TestResourceGovernor:
             result = gov.can_afford_sync({"ram_mb": 500}, Priority.NORMAL)
             assert result is False
 
-    def test_can_afford_sync_with_resources(self):
+    def test_can_afford_sync_with_resources(self) -> None:
         """Test can_afford_sync když jsou dostupné zdroje."""
         from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
@@ -63,7 +62,7 @@ class TestResourceGovernor:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_reserve_context_manager(self):
+    async def test_reserve_context_manager(self) -> None:
         """Test async context manager pro rezervaci."""
         from hledac.universal._core.resource_governor import Priority, ResourceGovernor, reset_psutil_cache
 
@@ -84,7 +83,7 @@ class TestResourceGovernor:
 class TestCostModel:
     """Testy pro AdaptiveCostModel."""
 
-    def test_online_ridge(self):
+    def test_online_ridge(self) -> None:
         """Test online ridge regression."""
         from hledac.universal.planning.cost_model import OnlineRidge
 
@@ -99,7 +98,7 @@ class TestCostModel:
         pred = ridge.predict(x)
         assert isinstance(pred, float)
 
-    def test_running_normalizer(self):
+    def test_running_normalizer(self) -> None:
         """Test running normalizer."""
         from hledac.universal.planning.cost_model import RunningNormalizer
 
@@ -111,7 +110,7 @@ class TestCostModel:
         normalized = norm.normalize(x)
         assert normalized.shape == (10,)
 
-    def test_adaptive_cost_model_init(self):
+    def test_adaptive_cost_model_init(self) -> None:
         """Test inicializace AdaptiveCostModel."""
         from hledac.universal.planning.cost_model import AdaptiveCostModel
 
@@ -122,7 +121,7 @@ class TestCostModel:
         assert len(model.baseline) == 4
         assert model.ssm_ready is False
 
-    def test_build_features(self):
+    def test_build_features(self) -> None:
         """Test build features."""
         from hledac.universal.planning.cost_model import AdaptiveCostModel
 
@@ -135,7 +134,7 @@ class TestCostModel:
         assert feat.shape == (64,)
         assert feat[0] == 1.0  # fetch = 0
 
-    def test_predict(self):
+    def test_predict(self) -> None:
         """Test predikce."""
         from hledac.universal.planning.cost_model import AdaptiveCostModel
 
@@ -149,7 +148,7 @@ class TestCostModel:
         assert isinstance(result[0], float)
 
     @pytest.mark.asyncio
-    async def test_update(self):
+    async def test_update(self) -> None:
         """Test update cost model."""
         from hledac.universal.planning.cost_model import AdaptiveCostModel
 
@@ -160,7 +159,7 @@ class TestCostModel:
             {"url": "http://test.com"},
             {"active_tasks": 1, "rss_gb": 3.0, "avg_latency": 0.2},
             (1.0, 50.0, 0.5, 1.0),
-    )
+        )
 
         assert model.baseline_ready is True
 
@@ -169,7 +168,7 @@ class TestTaskCache:
     """Testy pro TaskCache."""
 
     @pytest.mark.asyncio
-    async def test_cache_put_get(self):
+    async def test_cache_put_get(self) -> None:
         """Test put a get."""
         from hledac.universal.planning.task_cache import TaskCache
 
@@ -190,7 +189,7 @@ class TestTaskCache:
             await cache.close()
 
     @pytest.mark.asyncio
-    async def test_cache_miss(self):
+    async def test_cache_miss(self) -> None:
         """Test cache miss."""
         from hledac.universal.planning.task_cache import TaskCache
 
@@ -206,7 +205,7 @@ class TestTaskCache:
 class TestSearch:
     """Testy pro anytime beam search."""
 
-    def test_search_node(self):
+    def test_search_node(self) -> None:
         """Test SearchNode."""
         from hledac.universal.planning.search import SearchNode
 
@@ -217,7 +216,7 @@ class TestSearch:
         assert node.value == 2.0
         assert node.score == 0.0
 
-    def test_anytime_beam_search_simple(self):
+    def test_anytime_beam_search_simple(self) -> None:
         """Test simple beam search."""
         from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.planning.search import anytime_beam_search
@@ -256,7 +255,7 @@ class TestSearch:
             ram_budget_mb=1000.0,
             net_budget_mb=100.0,
             beam_width=5,
-    )
+        )
 
         assert plan is not None
 
@@ -288,7 +287,7 @@ class TestHTNPlanner:
                 "evidence_log": MagicMock(),
             }
 
-    def test_planner_init(self, mock_components):
+    def test_planner_init(self, mock_components) -> None:
         """Test inicializace HTNPlanner."""
         from hledac.universal.planning.htn_planner import HTNPlanner
 
@@ -298,12 +297,12 @@ class TestHTNPlanner:
             decomposer=mock_components["decomposer"],
             scheduler=mock_components["scheduler"],
             evidence_log=mock_components["evidence_log"],
-    )
+        )
 
         assert planner.governor is not None
         assert not planner._task_types
 
-    def test_register_task_type(self, mock_components):
+    def test_register_task_type(self, mock_components) -> None:
         """Test registrace typu úkolu."""
         from hledac.universal.planning.htn_planner import HTNPlanner
 
@@ -313,7 +312,7 @@ class TestHTNPlanner:
             decomposer=mock_components["decomposer"],
             scheduler=mock_components["scheduler"],
             evidence_log=mock_components["evidence_log"],
-    )
+        )
 
         def dummy_expander(task, context):
             return []
@@ -327,7 +326,7 @@ class TestHTNPlanner:
 class TestHypothesis:
     """Testy pro hypothesis moduly."""
 
-    def test_dempster_shafer_init(self):
+    def test_dempster_shafer_init(self) -> None:
         """Test inicializace DempsterShafer."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
@@ -337,7 +336,7 @@ class TestHypothesis:
         assert ds.conflict == 0.0
         assert len(ds.masses) == 3
 
-    def test_dempster_shafer_add_evidence(self):
+    def test_dempster_shafer_add_evidence(self) -> None:
         """Test přidávání evidence."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
@@ -347,7 +346,7 @@ class TestHypothesis:
 
         assert ds.masses["h1"] > 0
 
-    def test_dempster_shafer_belief(self):
+    def test_dempster_shafer_belief(self) -> None:
         """Test belief výpočet."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
 
@@ -358,7 +357,7 @@ class TestHypothesis:
         assert ds.belief("h1") > 0
         assert ds.belief() > 0
 
-    def test_eig_calculator(self):
+    def test_eig_calculator(self) -> None:
         """Test EIG calculator."""
         from hledac_hypothesis.dempster_shafer import DempsterShafer
         from hledac_hypothesis.eig import EIGCalculator
@@ -384,7 +383,7 @@ class TestExplainer:
         graph.multi_hop_search = AsyncMock(return_value={"nodes": ["A", "B", "C"], "edges": [("A", "B"), ("B", "C")]})
         return graph
 
-    def test_fast_explainer_init(self, mock_graph_rag):
+    def test_fast_explainer_init(self, mock_graph_rag) -> None:
         """Test inicializace FastExplainer."""
         from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.fast import FastExplainer
@@ -396,7 +395,7 @@ class TestExplainer:
         assert explainer.governor is not None
 
     @pytest.mark.asyncio
-    async def test_fast_explainer_explain_path(self, mock_graph_rag):
+    async def test_fast_explainer_explain_path(self, mock_graph_rag) -> None:
         """Test explain_path."""
         from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.fast import FastExplainer
@@ -408,7 +407,7 @@ class TestExplainer:
 
         assert isinstance(result, list)
 
-    def test_deep_explainer_init(self):
+    def test_deep_explainer_init(self) -> None:
         """Test inicializace DeepExplainer."""
         from hledac.universal._core.resource_governor import ResourceGovernor
         from hledac.universal.knowledge.explainer.deep import DeepExplainer
@@ -447,12 +446,12 @@ class TestSLMDecomposer:
             except RuntimeError:
                 pass
 
-    def test_decomposer_init(self, decomposer):
+    def test_decomposer_init(self, decomposer) -> None:
         """Test inicializace SLMDecomposer."""
         assert decomposer.model_name == "test"
         assert decomposer._model is None
 
-    def test_rule_based_fallback(self, decomposer):
+    def test_rule_based_fallback(self, decomposer) -> None:
         """Test rule-based fallback."""
         result = decomposer._rule_based_fallback("test task", {"context": "data"})
 
@@ -460,7 +459,7 @@ class TestSLMDecomposer:
         assert result
         assert result[0]["type"] == "fetch"
 
-    def test_cache_key(self, decomposer):
+    def test_cache_key(self, decomposer) -> None:
         """Test generování cache key."""
         key1 = decomposer._cache_key("task1", {"a": 1})
         key2 = decomposer._cache_key("task1", {"a": 1})

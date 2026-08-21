@@ -32,7 +32,6 @@ Ruff pravidlo F911 (E911) zakazuje asyncio.wait_for() s výjimkou:
 import re
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_call_extent(lines: list[str], start: int) -> tuple[int, int] | None:
@@ -88,7 +87,7 @@ def find_timeout_arg(lines: list[str], call_start: int, call_end: int) -> tuple[
                 continue
             last_result = (value, line_idx, m.start(), 0)
 
-    if 'last_result' not in dir() or last_result is None:
+    if "last_result" not in dir() or last_result is None:
         return None
 
     value, line_idx, arg_start_col, _ = last_result
@@ -160,7 +159,7 @@ def transform_to_safe_wait_for(line: str, timeout_str: str) -> str:
     # Najdi asyncio.wait_for( a nahraď za safe_wait_for(
     pos = new_line.find("asyncio.wait_for(")
     if pos >= 0:
-        new_line = new_line[:pos] + "safe_wait_for" + new_line[pos + len("asyncio.wait_for("):]
+        new_line = new_line[:pos] + "safe_wait_for" + new_line[pos + len("asyncio.wait_for(") :]
 
     # Odstraníme timeout= z argumentu (safe_wait_for už timeout nemá v tomto formátu)
     # Ve skutečnosti ne - timeout= zůstává jako keyword argument
@@ -173,7 +172,7 @@ def transform_tight_block(lines: list[str], call_start: int, call_end: int, time
     Transformuje TIGHT pattern: try/except TimeoutError → safe_wait_for.
     Odstraní asyncio.wait_for() wrapper, zachová try/except strukturu.
     """
-    block = list(lines[call_start:call_end + 1])
+    block = list(lines[call_start : call_end + 1])
 
     # Najdi řádku s asyncio.wait_for
     wait_for_line_idx = None
@@ -191,7 +190,7 @@ def transform_tight_block(lines: list[str], call_start: int, call_end: int, time
     pos = wait_for_line.find("asyncio.wait_for(")
 
     # Nahraď asyncio.wait_for( za safe_wait_for(
-    new_line = wait_for_line[:pos] + "safe_wait_for(" + wait_for_line[pos + len("asyncio.wait_for("):]
+    new_line = wait_for_line[:pos] + "safe_wait_for(" + wait_for_line[pos + len("asyncio.wait_for(") :]
 
     # Odstraň trailing ) ale pozor na vnořené závorky
     # Jednodušší: najdi poslední ) co uzavírá wait_for
@@ -202,8 +201,9 @@ def transform_tight_block(lines: list[str], call_start: int, call_end: int, time
     return block
 
 
-def transform_loose_to_timeout(lines: list[str], call_start: int, call_end: int,
-                               timeout_str: str, lhs_start: int) -> list[str]:
+def transform_loose_to_timeout(
+    lines: list[str], call_start: int, call_end: int, timeout_str: str, lhs_start: int
+) -> list[str]:
     """
     Transformuje LOOSE pattern (bez try/except) na async with asyncio.timeout().
 
@@ -225,7 +225,7 @@ def transform_loose_to_timeout(lines: list[str], call_start: int, call_end: int,
     result.append(" " * lhs_indent + f"async with asyncio.timeout({timeout_str}):")
 
     # Zkopíruj řádky od lhs_start do call_end
-    inner_lines = lines[lhs_start:call_end + 1]
+    inner_lines = lines[lhs_start : call_end + 1]
 
     for line in inner_lines:
         # Odstraň asyncio.wait_for( a timeout=... z každého řádku
@@ -237,7 +237,7 @@ def transform_loose_to_timeout(lines: list[str], call_start: int, call_end: int,
             # Najdi where it ends (první ) matches the outer)
             # Jednodušší: just remove the function call wrapper
             before = new_line[:pos]
-            rest = new_line[pos + len("asyncio.wait_for("):]
+            rest = new_line[pos + len("asyncio.wait_for(") :]
 
             # Remove trailing ) ale musíme najít správnou
             # Pro simple case: rest[:-1] (remove last paren)
@@ -247,11 +247,10 @@ def transform_loose_to_timeout(lines: list[str], call_start: int, call_end: int,
             new_line = before + rest
 
         # Odstraň "timeout=..." z řádky
-        timeout_match = re.search(r',?\s*timeout\s*=\s*[^,\)]+', new_line)
+        timeout_match = re.search(r",?\s*timeout\s*=\s*[^,\)]+", new_line)
         if timeout_match:
-            new_line = new_line[:timeout_match.start()] + new_line[timeout_match.end():]
-            # Cleanup trailing comma
-            new_line = new_line.rstrip().rstrip(',').rstrip()
+            new_line = new_line[: timeout_match.start()] + new_line[timeout_match.end() :]
+            new_line = new_line.rstrip().rstrip(",").rstrip()
 
         # Přidej indentaci
         result.append("    " + new_line.rstrip())
@@ -290,10 +289,9 @@ def migrate_file(filepath: Path, dry_run: bool = True) -> tuple[int, list[str], 
         call_start, call_end = span
 
         # Najdi LHS start (pro multi-line)
-        lhs_start = call_start
         for back in range(call_start - 1, max(-1, call_start - 5), -1):
             if "=" in line_only[back] and "await" not in line_only[back]:
-                lhs_start = back + 1
+                back + 1
                 break
 
         # Zkontroluj pattern
@@ -313,7 +311,7 @@ def migrate_file(filepath: Path, dry_run: bool = True) -> tuple[int, list[str], 
         if is_tight_pattern(line_only, call_start):
             # TIGHT: Transform to safe_wait_for
             new_block = transform_tight_block(line_only, call_start, call_end, timeout_str)
-            line_only[call_start:call_end + 1] = new_block
+            line_only[call_start : call_end + 1] = new_block
             migrations.append(f"{filepath.name}:{call_start + 1} → safe_wait_for (TIGHT)")
             i = call_start + len(new_block)
         else:
@@ -328,7 +326,7 @@ def migrate_file(filepath: Path, dry_run: bool = True) -> tuple[int, list[str], 
     return len(migrations), migrations, warnings
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: migrate_waitfor_issue9.py <file1.py> [file2.py ...] [--apply]")
         print("  --apply: apply changes (default is dry-run)")

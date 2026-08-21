@@ -239,27 +239,6 @@ pub fn priority_classify_urls(urls: Vec<(String, f32)>) -> Vec<(String, f32, Str
         .collect()
 }
 
-// =============================================================================
-// UrlClassifyCache — embedded xxh3 cached in Rust (Issue #4)
-// =============================================================================
-//
-// Problem solved:
-//   Python PyCacheDict has 3 bottlenecks for batch classify:
-//   1. Stage 1 (cache lookup): Python dict.get() = 50-100ns + GIL overhead
-//   2. Stage 3 (cache write):   Python dict.set() = 50-100ns + GIL overhead
-//   3. String keys: 80-200 bytes per URL vs 8 bytes for u64 hash
-//
-// Solution:
-//   - xxh3_64(url) → u64 as cache key (5-10ns hash in Rust)
-//   - AHashMap<u64, (u8, String)> — ahash is 10× faster than Python dict
-//   - parking_lot::RwLock — read-lock-free (multiple concurrent readers)
-//   - Single GIL transition for batch: all N lookups + rayon classify in one call
-//   - TTL via lazy expiry (check on read, no background thread)
-//
-// M1 8GB: 10k entries ≈ 3 MB (vs Python dict 8 MB for same)
-// Bounded: hard_cap 50_000 entries (same as batch_classify guard)
-//
-
 /// In-memory URL classification cache with xxh3_64 keys.
 ///
 /// Stores: url_hash → (kind_id, lowercase_host)
@@ -331,7 +310,6 @@ impl UrlClassifyCache {
 
         // Enforce hard cap (LRU eviction via arbitrary AHashMap order)
         if self.map.len() >= 50_000 {
-            // Remove ~10% oldest entries by taking first N entries
             let evict_count = (self.map.len() / 10).max(100);
             let keys_to_remove: Vec<u64> = self.map.keys().take(evict_count).copied());
             for k in keys_to_remove {
@@ -698,7 +676,6 @@ pub fn canonical_url(url: &str) -> String {
         return String::new();
     }
 
-    // Parse with synthetic http:// prefix for scheme-less inputs.
     let synthetic = if trimmed.contains("://") {
         trimmed.to_string()
     } else {
@@ -787,7 +764,6 @@ pub fn strip_tracking(url: &str) -> String {
         return String::new();
     }
 
-    // Parse with synthetic http:// prefix for scheme-less inputs.
     let synthetic = if trimmed.contains("://") {
         trimmed.to_string()
     } else {

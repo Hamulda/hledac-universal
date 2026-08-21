@@ -2,7 +2,6 @@
 
 F350M-R / A1: Tres paralelni runtime roviny sjednocene.
 
-
 SPRINT SCOPE (3 phase orchestrators):
   - prelude.py    (151, 185, 335): safe_create_task_tracked(...) — registered, awaited via TaskGroup
   - acquisition.py (269, 276): safe_create_task_tracked(...) — fire-and-forget with local await
@@ -33,14 +32,12 @@ import asyncio
 import collections
 import contextvars
 import gc
-import sys
-import typing
 import threading
+import typing
 from typing import Any
 
 from hledac.universal.runtime.watchdog import StuckTaskDetector
-from hledac.universal.utils.asyncx import parallel, _check_gathered
-from _core import aclose
+from hledac.universal.utils.asyncx import _check_gathered, parallel
 
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 
@@ -56,11 +53,11 @@ __all__ = [
 
 # ── Module-level singleton ─────────────────────────────────────────────────
 
-_registry: "TaskRegistry | None" = None
+_registry: TaskRegistry | None = None
 _registry_initialized: asyncio.Event | None = None
 
 
-async def _get_registry_async() -> "TaskRegistry":
+async def _get_registry_async() -> TaskRegistry:
     """Async-safe singleton creation using asyncio.Event for initialization lock."""
     global _registry, _registry_initialized
 
@@ -83,7 +80,7 @@ async def _get_registry_async() -> "TaskRegistry":
     return _registry
 
 
-def get_task_registry() -> "TaskRegistry":
+def get_task_registry() -> TaskRegistry:
     """Return the TaskRegistry singleton, creating on first call.
 
     NOTE: For async contexts, prefer _get_registry_async() to avoid
@@ -97,6 +94,7 @@ def get_task_registry() -> "TaskRegistry":
         global _registry_initialized
         if _registry_initialized is None:
             import threading
+
             _init_lock = threading.Lock()
             with _init_lock:
                 if _registry is None:
@@ -107,6 +105,7 @@ def get_task_registry() -> "TaskRegistry":
 
 
 # ── TaskScope ──────────────────────────────────────────────────────────────
+
 
 class TaskScope:
     """Logical scope for task grouping (phase or lane).
@@ -164,14 +163,12 @@ class TaskScope:
 # Hierarchical task scoping via ContextVar for orphaned task prevention
 
 # ContextVar holding the current task scope string
-_current_scope: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "hledac_task_scope", default=TaskScope.ACQUISITION
-    )
+_current_scope: contextvars.ContextVar[str] = contextvars.ContextVar("hledac_task_scope", default=TaskScope.ACQUISITION)
 
 # Optional: ContextVar holding the parent TaskGroup for structured concurrency
-_current_task_group: contextvars.ContextVar["asyncio.TaskGroup | None"] = contextvars.ContextVar(
+_current_task_group: contextvars.ContextVar[asyncio.TaskGroup | None] = contextvars.ContextVar(
     "hledac_task_group", default=None
-    )
+)
 
 
 def get_current_scope() -> str:
@@ -203,13 +200,13 @@ class TaskScopeContext:
     def __init__(
         self,
         scope: str,
-        task_group: "asyncio.TaskGroup | None" = None,
+        task_group: asyncio.TaskGroup | None = None,
     ) -> None:
         self._scope = scope
         self._token: contextvars.Token | None = None
         self._task_group_token: contextvars.Token | None = None
 
-    def __enter__(self) -> "TaskScopeContext":
+    def __enter__(self) -> TaskScopeContext:
         self._token = _current_scope.set(self._scope)
         if self._task_group_token is not None:
             self._task_group_token = _current_task_group.set(None)
@@ -223,6 +220,7 @@ class TaskScopeContext:
 
 
 # ── TaskRegistry ────────────────────────────────────────────────────────────
+
 
 class TaskRegistry:
     """Unified task registry for SprintScheduler v2.
@@ -240,7 +238,7 @@ class TaskRegistry:
     Thread-safety:
       - asyncio.Lock (_lock) for async operations (unregister, cancel_scope, cancel_all)
       - threading.Lock (_sync_lock) for register/evict/reset (called from sync context)
-    
+
     M1 8GB OPTIMIZATIONS:
       - Uses collections.deque for _task_order (O(1) popleft vs O(n) list.pop(0))
       - Uses _task_reverse mapping for O(1) task->task_id lookup in unregister()
@@ -250,21 +248,19 @@ class TaskRegistry:
     MAX_TASKS: typing.ClassVar[int] = 512
     _EVICT_OLDEST: typing.ClassVar[bool] = True  # evict on overflow
 
-    __slots__ = tuple(
-        (
-            "_tasks",
-            "_scope_index",
-            "_lock",
-            "_sync_lock",     # threading.Lock for register/evict (sync context)
-            "_cancel_event",
-            "_registered_count",
-            "_cancelled_count",
-            "_eviction_count",
-            "_stuck_detector",
-            "_task_counter",  # Monotonic task ID counter
-            "_task_order",    # Ordered deque of task IDs for FIFO eviction (O(1) popleft)
-            "_task_reverse",  # task -> task_id mapping for O(1) unregister lookup
-    )
+    __slots__ = (
+        "_tasks",
+        "_scope_index",
+        "_lock",
+        "_sync_lock",  # threading.Lock for register/evict (sync context)
+        "_cancel_event",
+        "_registered_count",
+        "_cancelled_count",
+        "_eviction_count",
+        "_stuck_detector",
+        "_task_counter",  # Monotonic task ID counter
+        "_task_order",  # Ordered deque of task IDs for FIFO eviction (O(1) popleft)
+        "_task_reverse",  # task -> task_id mapping for O(1) unregister lookup
     )
 
     def __init__(self) -> None:
@@ -371,7 +367,6 @@ class TaskRegistry:
             return  # Already unregistered
 
         _name, _scope, oldest_task = self._tasks[oldest_id]
-        # Remove from scope index
         scope_set = self._scope_index.get(_scope)
         if scope_set and oldest_id in scope_set:
             scope_set.discard(oldest_id)
@@ -397,10 +392,10 @@ class TaskRegistry:
         """
         # O(1) lookup using reverse mapping
         task_id_to_remove = self._task_reverse.get(id(task))
-        
+
         # Fallback to linear search if not found in reverse map
         if task_id_to_remove is None:
-            for tid, (name, scope, t) in list(self._tasks.items()):
+            for tid, (_name, scope, t) in list(self._tasks.items()):
                 if t is task:
                     task_id_to_remove = tid
                     break
@@ -418,7 +413,6 @@ class TaskRegistry:
                     # Note: we don't need to remove from _task_order since we use task_id
                     # and it will naturally be skipped if already evicted
 
-        # Remove reverse mapping
         self._task_reverse.pop(id(task), None)
 
         # P7-006: remove from stuck detector
@@ -430,9 +424,7 @@ class TaskRegistry:
 
     # ── Cancellation API ───────────────────────────────────────────────────
 
-    async def cancel_scope(
-        self, scope: str, timeout: float = 2.0
-    ) -> dict[str, Any]:
+    async def cancel_scope(self, scope: str, timeout: float = 2.0) -> dict[str, Any]:
         """Cancel all tasks in a given scope and their child scopes.
 
         Args:
@@ -483,9 +475,7 @@ class TaskRegistry:
 
         # Await with timeout
         if cancelled > 0:
-            timed_out = await self._await_tasks_by_ids(
-                task_ids, timeout=timeout
-    )
+            timed_out = await self._await_tasks_by_ids(task_ids, timeout=timeout)
 
         async with self._lock:
             self._cancelled_count += cancelled
@@ -507,10 +497,7 @@ class TaskRegistry:
         """
         async with self._lock:
             all_task_ids = list(self._tasks.keys())
-            all_tasks = {
-                tid: (name, scope, task)
-                for tid, (name, scope, task) in self._tasks.items()
-            }
+            all_tasks = {tid: (name, scope, task) for tid, (name, scope, task) in self._tasks.items()}
 
         if not all_task_ids:
             return {"total": 0, "cancelled_count": 0, "timed_out_count": 0}
@@ -524,7 +511,6 @@ class TaskRegistry:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Fire cancel event
         if self._cancel_event is not None and not self._cancel_event.is_set():
             try:
                 self._cancel_event.set()
@@ -543,9 +529,7 @@ class TaskRegistry:
             "timed_out_count": timed_out,
         }
 
-    async def _await_tasks_by_ids(
-        self, task_ids: list[int], timeout: float
-    ) -> int:
+    async def _await_tasks_by_ids(self, task_ids: list[int], timeout: float) -> int:
         """Await tasks by ID list with a hard timeout.
 
         Returns number of tasks that did NOT observe CancelledError within
@@ -577,7 +561,7 @@ class TaskRegistry:
                 # NOTE: wind-down cancellation intentionally ignores individual task errors.
                 # We only care that tasks complete (not whether they raised exceptions).
                 # The error count is available in `len(errors)` for future telemetry.
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = len(live_tasks)
         except asyncio.CancelledError:
             # Outer cancellation — count how many actually timed out (still running).
@@ -595,9 +579,7 @@ class TaskRegistry:
 
         return timed_out
 
-    async def await_join(
-        self, timeout: float = 1.0, scope: str | None = None
-    ) -> int:
+    async def await_join(self, timeout: float = 1.0, scope: str | None = None) -> int:
         """Await completion of all (or scope-specific) tasks.
 
         Does NOT cancel — only waits for tasks that are already done or
@@ -637,7 +619,7 @@ class TaskRegistry:
             async with asyncio.timeout(timeout):
                 # F3XX: parallel(policy="log") replaces asyncio.gather — fire-and-forget pattern.
                 await parallel(list(live_tasks), policy="log", ctx="_wait_all")
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except TimeoutError, asyncio.CancelledError:
             return len(live_tasks)
         except Exception:
             return len(live_tasks)
@@ -692,21 +674,22 @@ class TaskRegistry:
                 stuck = await self._stuck_detector.run()
                 if stuck:
                     import logging as _log
+
                     _logger = _log.getLogger(__name__)
                     _logger.warning(
                         f"[P7-006] StuckTaskDetector: {len(stuck)} task(s) still "
                         f"running after cancellation grace period: {stuck}"
-    )
+                    )
                 # Also get elapsed times for stuck tasks
                 if stuck:
                     with_tasks = await self._stuck_detector.get_stuck_with_tasks()
                     for tid, elapsed in with_tasks:
                         import logging as _log2
+
                         _logger2 = _log2.getLogger(__name__)
                         _logger2.warning(
-                            f"[P7-006] Stuck task id={tid} elapsed={elapsed:.1f}s "
-                            f"(likely C-extension I/O hang)"
-    )
+                            f"[P7-006] Stuck task id={tid} elapsed={elapsed:.1f}s (likely C-extension I/O hang)"
+                        )
             except Exception:  # noqa: BLE001
                 pass
 
@@ -715,6 +698,7 @@ class TaskRegistry:
         # Called here because winddown is one of the 3 designated call sites.
         try:
             from hledac.universal.utils.mlx_memory import metal_reclaim
+
             metal_reclaim()
         except Exception:  # noqa: BLE001
             # mlx may not be installed — skip Metal cache cleanup
@@ -771,6 +755,7 @@ class TaskRegistry:
 
 # ── Tracked safe_create_task ─────────────────────────────────────────────────
 
+
 def safe_create_task_tracked(
     coro: Any,
     *,
@@ -798,7 +783,7 @@ def safe_create_task_tracked(
     Returns:
         asyncio.Task, registered in the global TaskRegistry.
     """
-    from hledac.universal.utils.asyncx import parallel, safe_create_task as _safe_create_task
+    from hledac.universal.utils.asyncx import safe_create_task as _safe_create_task
 
     # Use ContextVar scope if not explicitly provided
     _effective_scope = scope if scope is not None else _current_scope.get()
@@ -815,7 +800,7 @@ def safe_create_task_tracked(
 
 def safe_create_managed_task(
     coro: Any,
-    task_group: "asyncio.TaskGroup",
+    task_group: asyncio.TaskGroup,
     *,
     name: str | None = None,
     scope: str | None = None,
@@ -863,6 +848,7 @@ def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
     This pattern is safe: callback returns immediately, unregister runs on
     the next event loop iteration.
     """
+
     def _cb(done_task: asyncio.Task[Any]) -> None:
         # done_task is the same object as task (passed via closure)
         try:
@@ -870,9 +856,8 @@ def _make_unregister_callback(task: asyncio.Task[Any]) -> Any:
             loop = asyncio.get_running_loop()
             # Schedule async unregister - fire-and-forget is safe here since
             # unregister is idempotent and we don't need to await completion
-            loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(registry.unregister(done_task))
-    )
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(registry.unregister(done_task)))
         except Exception:  # noqa: BLE001
             pass
+
     return _cb

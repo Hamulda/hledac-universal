@@ -20,6 +20,7 @@ Usage:
     # Scrub dict (e.g., before evidence_log storage)
     scrubbed = scrub_dict_recursive({"password": "secret123", "data": "ok"})
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,6 @@ import os
 import re
 from functools import lru_cache
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,6 @@ _MAX_RECURSION_DEPTH = 8
 # Compiled patterns for common secret formats
 # Format: (name, regex_pattern)
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # === API Keys ===
-    # AWS Access Key ID
     (
         "aws_access_key",
         re.compile(r"\b(A3T[A-Z0-9]|AKIA|ABIA|ACCA)[A-Z0-9]{16}\b", re.IGNORECASE),
@@ -61,9 +59,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Slack Token
     (
         "slack_token",
-        re.compile(
-            r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*\b", re.IGNORECASE
-        ),
+        re.compile(r"\bxox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*\b", re.IGNORECASE),
     ),
     # Slack Webhook URL
     (
@@ -81,9 +77,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Google OAuth Client ID
     (
         "google_oauth",
-        re.compile(
-            r"\b[0-9]+-[0-9A-Fa-f]{32}\.apps\.googleusercontent\.com\b", re.IGNORECASE
-        ),
+        re.compile(r"\b[0-9]+-[0-9A-Fa-f]{32}\.apps\.googleusercontent\.com\b", re.IGNORECASE),
     ),
     # Azure Key (32 char hex)
     (
@@ -136,8 +130,6 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "basic_auth",
         re.compile(r"\bBasic\s+[A-Za-z0-9+/=]+\b", re.IGNORECASE),
     ),
-    # === Password Patterns ===
-    # Password in URL param or similar
     (
         "password_param",
         re.compile(
@@ -169,12 +161,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
-    # === Connection Strings ===
-    # Database connection string with password
     (
         "db_connection",
         re.compile(
-            r'(?:mysql|postgres|postgresql|mongodb|redis|sqlite):\/\/[^:]+:[^@]+@',
+            r"(?:mysql|postgres|postgresql|mongodb|redis|sqlite):\/\/[^:]+:[^@]+@",
             re.IGNORECASE,
         ),
     ),
@@ -219,9 +209,7 @@ def scrub_secrets(text: str) -> str:
     try:
         result = text
         for pattern_name, pattern in _get_compiled_patterns():
-            result = pattern.sub(
-                f"{_REDACTED_PREFIX}{pattern_name}{_REDACTED_SUFFIX}", result
-    )
+            result = pattern.sub(f"{_REDACTED_PREFIX}{pattern_name}{_REDACTED_SUFFIX}", result)
         return result
     except Exception as e:
         # Fail-safe: return original text on any error
@@ -229,9 +217,7 @@ def scrub_secrets(text: str) -> str:
         return text
 
 
-def scrub_dict_recursive(
-    data: Any, depth: int = 0, max_depth: int = _MAX_RECURSION_DEPTH
-) -> Any:
+def scrub_dict_recursive(data: Any, depth: int = 0, max_depth: int = _MAX_RECURSION_DEPTH) -> Any:
     """
     Recursively scrub secrets from dictionary/JSON-serializable data.
 
@@ -267,20 +253,13 @@ def scrub_dict_recursive(
             except Exception:
                 return data
         elif isinstance(data, dict):
-            return {
-                k: scrub_dict_recursive(v, depth + 1, max_depth)
-                for k, v in data.items()
-            }
+            return {k: scrub_dict_recursive(v, depth + 1, max_depth) for k, v in data.items()}
         elif isinstance(data, list):
             return [scrub_dict_recursive(v, depth + 1, max_depth) for v in data]
         elif isinstance(data, tuple):
-            return tuple(
-                scrub_dict_recursive(v, depth + 1, max_depth) for v in data
-    )
+            return tuple(scrub_dict_recursive(v, depth + 1, max_depth) for v in data)
         elif isinstance(data, set):
-            return {
-                scrub_dict_recursive(v, depth + 1, max_depth) for v in data
-            }
+            return {scrub_dict_recursive(v, depth + 1, max_depth) for v in data}
         else:
             # int, float, bool, None, etc. - return as-is
             return data
@@ -321,12 +300,6 @@ def count_secrets(text: str) -> int:
         count += len(pattern.findall(text))
     return count
 
-
-# =============================================================================
-# API-Key Specific Redaction (ISSUE [FINAL]-019-09)
-# Defense-in-depth: redact environment-sourced API keys from any text that
-# might be logged or stored before scrub_secrets() patterns can match.
-# =============================================================================
 
 _REDACTED_MARKER = "[REDACTED_API_KEY]"
 
@@ -489,16 +462,14 @@ def safe_error_log(logger: logging.Logger, message: str, *args: Any) -> None:
             redact_hibp_key(
                 redact_ipinfo_key(
                     redact_greynoise_key(
-                        redact_censys_credentials(
-                            redact_shodan_key(arg) if isinstance(arg, str) else arg
-    )
+                        redact_censys_credentials(redact_shodan_key(arg) if isinstance(arg, str) else arg)
                     )
-    )
+                )
             )
             if isinstance(arg, str)
             else arg
             for arg in args
-    )
+        )
 
         logger.warning(safe_msg, *safe_args)
     except Exception as e:

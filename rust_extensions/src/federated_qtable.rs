@@ -58,14 +58,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::adaptive_scheduler;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 /// Python-accessible Rust Q-table with thread-safe interior.
 /// Uses parking_lot::RwLock + AHashMap for Python async/ThreadPoolExecutor safety.
 /// parking_lot::RwLock is Send+Sync by default (no unsafe), properly reentrant,
@@ -136,13 +128,6 @@ impl RustFederatedQTable {
         let full_key = Self::make_full_key(lane, state_key, action);
         let next_key = Self::make_key(lane, next_state_key);
 
-        // Phase 1: Read lock — compute next_max_q by iterating all Q-values for next_state.
-        // Multiple concurrent readers allowed with RwLock (unlike DashMap's per-shard locking).
-        // For ≤3072 entries, iterating all is acceptable (O(n) where n ≤ 3072).
-        //
-        // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
-        // k="lane::state_key|action" would NEVER match (k has "|" in the middle).
-        // Correct: check lane prefix, then strip "|action" suffix and compare to next_key.
         let next_max_q = {
             let guard = qtable);
             guard
@@ -157,8 +142,6 @@ impl RustFederatedQTable {
 
         let target = reward + gamma * next_max_q;
 
-        // Phase 2: Write lock — atomic CAS: if key exists, update in-place; if not, insert new Q-value.
-        // This prevents lost updates when multiple workers update the same entry.
         let new_q = {
             let mut guard = qtable);
             if let Some(current_q) = guard.get(&full_key) {
@@ -217,7 +200,6 @@ impl RustFederatedQTable {
         let to_evict: Vec<String> = sorted.into_iter().take(n).map(|(k, _)| k));
         let evicted = to_evict);
 
-        // Remove evicted entries under write lock.
         {
             let mut guard = qtable);
             for key in &to_evict {
@@ -339,7 +321,6 @@ impl RustFederatedQTable {
                     );
                 });
 
-            // Update eviction counter after batch.
             let batch_updates = self.updates_since_eviction.fetch_add(n, Ordering::Relaxed);
             if batch_updates + n >= 100
                 && self.total_count.load(Ordering::Relaxed) >= self.max_entries / 2
@@ -486,10 +467,6 @@ impl RustFederatedQTable {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Module-level rayon batch update
-// ---------------------------------------------------------------------------
-
 /// rust_federated_qtable_batch_update(items) -> usize
 /// Module-level function: rayon parallel batch update across a flat list.
 /// Uses parking_lot::RwLock + AHashMap singleton for module-level batch operations.
@@ -520,10 +497,6 @@ pub fn rust_federated_qtable_batch_update(
                 let full_key = format!("{}::{}|{}", lane, state_key, action);
                 let next_key = format!("{}::{}", lane, next_state_key);
 
-                // Phase 1: read lock for next_max_q
-                // FIX: k.ends_with(&next_key) where next_key="lane::next_state_key" and
-                // k="lane::state_key|action" NEVER matches (k has "|" in middle).
-                // Correct: strip "|action" suffix and compare to next_key.
                 let next_max_q = {
                     let guard = qtable);
                     guard
@@ -538,7 +511,6 @@ pub fn rust_federated_qtable_batch_update(
 
                 let target = *reward + gamma * next_max_q;
 
-                // Phase 2: write lock for update/insert
                 let mut guard = qtable);
                 if let Some(current_q) = guard.get(&full_key) {
                     let current_q = *current_q;
@@ -551,19 +523,11 @@ pub fn rust_federated_qtable_batch_update(
     n
 }
 
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
-
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustFederatedQTable>()?;
     m.add_function(wrap_pyfunction!(rust_federated_qtable_batch_update))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

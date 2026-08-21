@@ -40,8 +40,8 @@ import functools
 import logging
 import random
 import traceback
-from typing import Any, TypeVar
 from collections.abc import Callable
+from typing import Any, TypeVar
 
 T = TypeVar("T", default=Any)
 
@@ -57,9 +57,10 @@ def _get_resilience():
             from hledac.universal.utils.resilience import (
                 FailureRegistry,
                 FailureSeverity,
-                get_ledger,
                 SeverityMapper,
-    )
+                get_ledger,
+            )
+
             _RESILIENCE_MODULE = {
                 "FailureRegistry": FailureRegistry,
                 "FailureSeverity": FailureSeverity,
@@ -71,34 +72,17 @@ def _get_resilience():
     return _RESILIENCE_MODULE
 
 
-# ---------------------------------------------------------------------------
-# R-3: Failure Observability — cascading failure tracking via ContextVar
-# ---------------------------------------------------------------------------
-# Every async task carries a cascading_failure_id via contextvars.
-# Silent except blocks log [FAILURE] {cascade_id} {scope} {exc_info}.
-# Auto-ESCALATE: if parent chain has ≥2 failures, log at WARNING with traceback.
-# Zero overhead on happy path (ContextVar access is ~30ns, single dict lookup).
-# ---------------------------------------------------------------------------
-
-_CASCADE_CTX: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "_cascade_failure_id", default=""
-    )
+_CASCADE_CTX: contextvars.ContextVar[str] = contextvars.ContextVar("_cascade_failure_id", default="")
 
 # Module-level counter for generating unique failure IDs per sprint/execution.
-_FAILURE_COUNTER: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "_failure_counter", default=0
-    )
+_FAILURE_COUNTER: contextvars.ContextVar[int] = contextvars.ContextVar("_failure_counter", default=0)
 
 # Failure path for the current cascade — stores (scope, exc_info_str, count).
 # Escalation threshold: after 2 failures in a chain, switch to WARNING.
-_FAILURE_PATH: contextvars.ContextVar[list[tuple[str, str, int]]] = contextvars.ContextVar(
-    "_failure_path", default=[]
-    )
+_FAILURE_PATH: contextvars.ContextVar[list[tuple[str, str, int]]] = contextvars.ContextVar("_failure_path", default=[])
 
 # Sentinel: marks that we're already inside a failure log — prevents re-entry.
-_IN_FAILURE_LOG: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_in_failure_log", default=False
-    )
+_IN_FAILURE_LOG: contextvars.ContextVar[bool] = contextvars.ContextVar("_in_failure_log", default=False)
 
 # Global logger for failure events — use sprint's logger when available.
 _FAILURE_LOGGER = logging.getLogger("hledac.failures")
@@ -150,13 +134,7 @@ def _format_failure(
     if len(tb) > 512:
         tb = tb[:512] + "…"
     level = "WARNING" if is_escalated else "DEBUG"
-    return (
-        f"[{level}] "
-        f"{{cascade={_CASCADE_CTX.get()}}} "
-        f"{{scope={scope}}} "
-        f"{exc_type}: {exc_msg} | "
-        f"tb={tb}"
-    )
+    return f"[{level}] {{cascade={_CASCADE_CTX.get()}}} {{scope={scope}}} {exc_type}: {exc_msg} | tb={tb}"
 
 
 def _log_failure(
@@ -172,11 +150,10 @@ def _log_failure(
 
     token = _IN_FAILURE_LOG.set(True)
     try:
-        # Build failure path entry
         exc_info = f"{type(exc).__qualname__}: {exc}"
         failure_path = _FAILURE_PATH.get()
         count = 1
-        for i, (s, e, c) in enumerate(failure_path):
+        for i, (s, _e, c) in enumerate(failure_path):
             if s == scope:
                 count = c + 1
                 failure_path[i] = (scope, exc_info, count)
@@ -239,8 +216,14 @@ class silent_except:
     """
 
     __slots__ = (
-        "_fn", "_scope", "_default", "_escalate", "_log_level",
-        "_otel_trace", "_record_to_registry", "_severity"
+        "_fn",
+        "_scope",
+        "_default",
+        "_escalate",
+        "_log_level",
+        "_otel_trace",
+        "_record_to_registry",
+        "_severity",
     )
 
     def __init__(
@@ -274,7 +257,6 @@ class silent_except:
 
         try:
             ledger = resilience["get_ledger"]()
-            # Get severity - use SeverityMapper for auto-detection
             sev_class = resilience["FailureSeverity"]
             mapper = resilience.get("SeverityMapper")
 
@@ -293,8 +275,9 @@ class silent_except:
                         severity=severity,
                         error=exc,
                         context={"cascade_id": _CASCADE_CTX.get()},
-    )
+                    )
                 )
+
                 # Best-effort: add done callback to log if recording fails
                 def _log_if_failed(t: asyncio.Task) -> None:
                     try:
@@ -303,7 +286,8 @@ class silent_except:
                         _FAILURE_LOGGER.warning(
                             "[REGISTRY] Failed to record failure: %s",
                             recorded_exc,
-    )
+                        )
+
                 _task.add_done_callback(_log_if_failed)
         except Exception:
             # Silently ignore ledger failures to not compound original error
@@ -319,14 +303,14 @@ class silent_except:
                     return await fn(*args, **kwargs)
                 except asyncio.CancelledError:
                     raise
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     _log_failure(
                         self._scope,
                         exc,
                         is_escalated=self._escalate,
-    )
+                    )
                     # Record to registry for orchestrator visibility
                     self._record_to_ledger(exc)
                     if self._default is not ...:
@@ -347,7 +331,7 @@ class silent_except:
                         self._scope,
                         exc,
                         is_escalated=self._escalate,
-    )
+                    )
                     # Record to registry for orchestrator visibility
                     self._record_to_ledger(exc)
                     if self._default is not ...:
@@ -362,7 +346,7 @@ class silent_except:
             f"silent_except(scope={self._scope!r}, "
             f"default={self._default!r}, escalate={self._escalate}, "
             f"record={self._record_to_registry})"
-    )
+        )
 
 
 __all__ = [

@@ -16,7 +16,7 @@ from hledac.universal.recon.exposure_clients import (  # noqa: E402
 
 
 @pytest.mark.asyncio
-async def test_get_intelligence_session_returns_httpx_client():
+async def test_get_intelligence_session_returns_httpx_client() -> None:
     """Helper returns an httpx.AsyncClient instance."""
     import httpx  # noqa: F401 - lazy import
 
@@ -25,7 +25,7 @@ async def test_get_intelligence_session_returns_httpx_client():
 
 
 @pytest.mark.asyncio
-async def test_get_intelligence_session_returns_fresh_client():
+async def test_get_intelligence_session_returns_fresh_client() -> None:
     """Each call returns a distinct client instance."""
     client1 = await get_intelligence_session()
     client2 = await get_intelligence_session()
@@ -37,7 +37,7 @@ async def test_get_intelligence_session_returns_fresh_client():
 
 
 @pytest.mark.asyncio
-async def test_shodan_client_uses_shared_helper():
+async def test_shodan_client_uses_shared_helper() -> None:
     """ShodanClient._get_session routes through get_intelligence_session."""
     async with httpx.AsyncClient() as fake_session:
         async with httpx.AsyncClient() as injected:
@@ -57,7 +57,7 @@ async def test_shodan_client_uses_shared_helper():
 
 
 @pytest.mark.asyncio
-async def test_censys_client_uses_shared_helper():
+async def test_censys_client_uses_shared_helper() -> None:
     """CensysClient._get_session routes through get_intelligence_session."""
     async with httpx.AsyncClient() as fake_session:
         async with httpx.AsyncClient() as injected:
@@ -77,7 +77,7 @@ async def test_censys_client_uses_shared_helper():
 
 
 @pytest.mark.asyncio
-async def test_cv_intelligence_client_uses_shared_helper():
+async def test_cv_intelligence_client_uses_shared_helper() -> None:
     """CVIntelligenceClient._get_session is a pure passthrough to the helper."""
     async with httpx.AsyncClient() as fake_session:
         with patch(
@@ -89,7 +89,7 @@ async def test_cv_intelligence_client_uses_shared_helper():
             assert got is fake_session
 
 
-def test_helper_module_exports_session_symbol():
+def test_helper_module_exports_session_symbol() -> None:
     """_http_helpers exports get_intelligence_session."""
     import hledac.universal.recon._http_helpers as helpers_mod
 

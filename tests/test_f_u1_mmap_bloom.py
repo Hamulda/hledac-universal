@@ -19,11 +19,10 @@ The tests cover:
 These tests do NOT touch network, MLX, or any other heavy dep.
 """
 
-
 from pathlib import Path
+from typing import Never
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Skip helpers — fail fast if Rust extension not built (CI fresh checkouts).
@@ -52,19 +51,14 @@ def _bf(path, *args, **kwargs):
     the assert exists so mypy sees a non-Optional type on the
     subsequent call expression.
     """
-    assert _MmapBloomFilter is not None, (
-        "MmapBloomFilter not available — pytestmark skipif should have skipped"
-    )
+    assert _MmapBloomFilter is not None, "MmapBloomFilter not available — pytestmark skipif should have skipped"
     return _MmapBloomFilter(path, *args, **kwargs)
 
 
 pytestmark = pytest.mark.skipif(
     not _RUST_AVAILABLE,
-    reason=(
-        f"hledac_rust_extensions.MmapBloomFilter not available "
-        f"({_RUST_IMPORT_ERROR or 'extension not built'})"
-    ),
-    )
+    reason=(f"hledac_rust_extensions.MmapBloomFilter not available ({_RUST_IMPORT_ERROR or 'extension not built'})"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +220,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "factory.bin"),
             est_elements=500,
             false_positive_rate=0.01,
-    )
+        )
         assert bf is not None
         bf.add("hello")
         assert "hello" in bf
@@ -236,13 +230,13 @@ class TestMmapBloomFilterAdapter:
         from hledac.universal.tools.url_dedup import (  # type: ignore[import-not-found]
             DeduplicationStrategy,
             MmapBloomFilterAdapter,
-    )
+        )
 
         bf = MmapBloomFilterAdapter(
             path=str(tmp_path / "proto.bin"),
             capacity=100,
             fp_rate=0.01,
-    )
+        )
         assert isinstance(bf, DeduplicationStrategy)
         bf.add("x")
         assert ("x" in bf) is True
@@ -253,12 +247,12 @@ class TestMmapBloomFilterAdapter:
         from hledac.universal.tools.url_dedup import (  # type: ignore[import-not-found]
             create_mmap_bloom_filter,
             dedupe_url_list,
-    )
+        )
 
         bf = create_mmap_bloom_filter(
             path=str(tmp_path / "f_a5.bin"),
             est_elements=1000,
-    )
+        )
         urls = [
             "https://example.com/a",
             "https://example.com/a",  # dupe within input
@@ -294,27 +288,27 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "fail.bin"),
             capacity=10,
             fp_rate=0.01,
-    )
+        )
 
         class _RaisingFilter:
             """Stand-in for the Rust filter whose methods always raise."""
 
-            def add(self, _):
+            def add(self, _) -> Never:
                 raise OSError("simulated io failure")
 
-            def contains(self, _):
+            def contains(self, _) -> Never:
                 raise OSError("simulated io failure")
 
-            def __len__(self):
+            def __len__(self) -> int:
                 raise OSError("simulated io failure")
 
-            def sync(self):
+            def sync(self) -> Never:
                 raise OSError("simulated io failure")
 
-            def reset(self):
+            def reset(self) -> Never:
                 raise OSError("simulated io failure")
 
-            def byte_size(self):
+            def byte_size(self) -> Never:
                 raise OSError("simulated io failure")
 
         # Swap the Rust filter with a fully-raising stub.
@@ -335,7 +329,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "sync.bin"),
             capacity=100,
             fp_rate=0.01,
-    )
+        )
         bf.add("a")
         # sync() returns bool, must not raise.
         result = bf.sync()
@@ -348,7 +342,7 @@ class TestMmapBloomFilterAdapter:
             path=str(tmp_path / "reset.bin"),
             capacity=100,
             fp_rate=0.01,
-    )
+        )
         bf.add("a")
         bf.add("b")
         assert len(bf) == 2

@@ -7,27 +7,47 @@ Provides explainable confidence scores for identity stitching candidates.
 
 No model load, no network, pure Python with Levenshtein fallback.
 """
+
 import re
-from dataclasses import dataclass, field
-import msgspec
-from compat.msgspec_gc_compat import Struct
+from dataclasses import field
 from typing import Any
+
 from rapidfuzz.distance import Levenshtein
-__all__ = ['AttributionFactor', 'AttributionScore', 'AttributionConfidenceScorer', 'create_attribution_scorer', 'enrich_candidate_with_attribution']
+
+from compat.msgspec_gc_compat import Struct
+
+__all__ = [
+    "AttributionFactor",
+    "AttributionScore",
+    "AttributionConfidenceScorer",
+    "create_attribution_scorer",
+    "enrich_candidate_with_attribution",
+]
 MAX_FACTOR_COMPARISONS = 5000
 MAX_EVIDENCE_PER_FACTOR = 10
-DEFAULT_FACTOR_WEIGHTS = {'email_domain_match': 0.25, 'username_pattern_similarity': 0.2, 'temporal_overlap': 0.2, 'shared_infrastructure': 0.2, 'pgp_key_correlation': 0.15, 'social_profile_overlap': 0.15, 'bio_link_overlap': 0.1}
+DEFAULT_FACTOR_WEIGHTS = {
+    "email_domain_match": 0.25,
+    "username_pattern_similarity": 0.2,
+    "temporal_overlap": 0.2,
+    "shared_infrastructure": 0.2,
+    "pgp_key_correlation": 0.15,
+    "social_profile_overlap": 0.15,
+    "bio_link_overlap": 0.1,
+}
 SOCIAL_FACTOR_MIN_OVERLAP: int = 1
 SOCIAL_FACTOR_MAX_FACTOR_SCORE: float = 0.8
 
+
 class AttributionFactor(Struct, frozen=True):
     """A single factor contributing to attribution confidence."""
+
     factor_id: str
     factor_type: str
     raw_score: float
     weighted_score: float
     evidence: tuple[str, ...] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class AttributionScore(Struct, frozen=True):
     """
@@ -39,21 +59,40 @@ class AttributionScore(Struct, frozen=True):
         evidence_ids: Unique evidence identifiers for audit trail
         factor_weights: The weights used (for reproducibility)
     """
+
     confidence: float
     factors: tuple[AttributionFactor, ...]
     evidence_ids: tuple[str, ...]
     factor_weights: dict[str, float]
 
     def to_dict(self) -> dict[str, Any]:
-        return {'confidence': round(self.confidence, 4), 'factors': [{'factor_id': f.factor_id, 'factor_type': f.factor_type, 'raw_score': round(f.raw_score, 4), 'weighted_score': round(f.weighted_score, 4), 'evidence': list(f.evidence), 'metadata': f.metadata} for f in self.factors], 'evidence_ids': list(self.evidence_ids), 'factor_weights': {k: round(v, 4) for k, v in self.factor_weights.items()}}
+        return {
+            "confidence": round(self.confidence, 4),
+            "factors": [
+                {
+                    "factor_id": f.factor_id,
+                    "factor_type": f.factor_type,
+                    "raw_score": round(f.raw_score, 4),
+                    "weighted_score": round(f.weighted_score, 4),
+                    "evidence": list(f.evidence),
+                    "metadata": f.metadata,
+                }
+                for f in self.factors
+            ],
+            "evidence_ids": list(self.evidence_ids),
+            "factor_weights": {k: round(v, 4) for k, v in self.factor_weights.items()},
+        }
+
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
     """Levenshtein distance via rapidfuzz (C++ backend, O(mn) time)."""
     return Levenshtein.distance(s1, s2)
 
+
 def _normalized_levenshtein(s1: str, s2: str) -> float:
     """Returns similarity 0-1 where 1 = identical."""
     return Levenshtein.normalized_similarity(s1.lower(), s2.lower())
+
 
 class AttributionConfidenceScorer:
     """
@@ -64,9 +103,12 @@ class AttributionConfidenceScorer:
     Args:
         factor_weights: Optional dict of factor_type -> weight override.
     """
-    __slots__ = tuple(('_comparison_count', '_max_comparisons', '_weights'))
 
-    def __init__(self, factor_weights: dict[str, float] | None=None, max_comparisons: int=MAX_FACTOR_COMPARISONS) -> None:
+    __slots__ = ("_comparison_count", "_max_comparisons", "_weights")
+
+    def __init__(
+        self, factor_weights: dict[str, float] | None = None, max_comparisons: int = MAX_FACTOR_COMPARISONS
+    ) -> None:
         self._weights = factor_weights or dict(DEFAULT_FACTOR_WEIGHTS)
         self._max_comparisons = max_comparisons
         self._comparison_count = 0
@@ -81,8 +123,8 @@ class AttributionConfidenceScorer:
 
     def _extract_email_domain(self, email: str) -> str | None:
         """Extract domain from email address."""
-        if '@' in email:
-            parts = email.split('@')
+        if "@" in email:
+            parts = email.split("@")
             if len(parts) == 2 and parts[1]:
                 return parts[1].lower()
         return None
@@ -100,19 +142,26 @@ class AttributionConfidenceScorer:
             return None
         intersection = left_domains & right_domains
         if intersection:
-            factor_id = f'email_domain_{list(intersection)[0]}'
-            evidence = tuple((f'domain:{d}' for d in intersection))
+            factor_id = f"email_domain_{list(intersection)[0]}"
+            evidence = tuple(f"domain:{d}" for d in intersection)
             raw = 1.0
         else:
-            left_tlds = {d.split('.')[-1] if '.' in d else d for d in left_domains if d}
-            right_tlds = {d.split('.')[-1] if '.' in d else d for d in right_domains if d}
+            left_tlds = {d.split(".")[-1] if "." in d else d for d in left_domains if d}
+            right_tlds = {d.split(".")[-1] if "." in d else d for d in right_domains if d}
             if left_tlds & right_tlds:
-                factor_id = 'email_domain_tld_shared'
-                evidence = tuple((f'tld:{tld}' for tld in left_tlds & right_tlds))
+                factor_id = "email_domain_tld_shared"
+                evidence = tuple(f"tld:{tld}" for tld in left_tlds & right_tlds)
                 raw = 0.5
             else:
                 return None
-        return AttributionFactor(factor_id=factor_id, factor_type='email_domain_match', raw_score=raw, weighted_score=raw * self._weights.get('email_domain_match', 0.25), evidence=evidence, metadata={'left_domains': list(left_domains), 'right_domains': list(right_domains)})
+        return AttributionFactor(
+            factor_id=factor_id,
+            factor_type="email_domain_match",
+            raw_score=raw,
+            weighted_score=raw * self._weights.get("email_domain_match", 0.25),
+            evidence=evidence,
+            metadata={"left_domains": list(left_domains), "right_domains": list(right_domains)},
+        )
 
     def _username_pattern_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
         """
@@ -130,9 +179,16 @@ class AttributionConfidenceScorer:
                 sim = _normalized_levenshtein(lu, ru)
                 if sim > best_score:
                     best_score = sim
-                    best_evidence = [f'{lu}|{ru} ({sim:.2f})']
+                    best_evidence = [f"{lu}|{ru} ({sim:.2f})"]
         if best_score >= 0.6:
-            return AttributionFactor(factor_id='username_pattern_sim', factor_type='username_pattern_similarity', raw_score=best_score, weighted_score=best_score * self._weights.get('username_pattern_similarity', 0.2), evidence=tuple(best_evidence), metadata={'match_count': len(left.usernames) * len(right.usernames)})
+            return AttributionFactor(
+                factor_id="username_pattern_sim",
+                factor_type="username_pattern_similarity",
+                raw_score=best_score,
+                weighted_score=best_score * self._weights.get("username_pattern_similarity", 0.2),
+                evidence=tuple(best_evidence),
+                metadata={"match_count": len(left.usernames) * len(right.usernames)},
+            )
         return None
 
     def _temporal_overlap_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
@@ -150,11 +206,20 @@ class AttributionConfidenceScorer:
             return None
         jaccard = overlap / union
         if jaccard >= 0.3:
-            factor_id = f'temporal_finding_overlap_{overlap}'
-            return AttributionFactor(factor_id=factor_id, factor_type='temporal_overlap', raw_score=jaccard, weighted_score=jaccard * self._weights.get('temporal_overlap', 0.2), evidence=(f'shared_findings:{overlap}', f'union_findings:{union}'), metadata={'left_finding_count': len(left_fids), 'right_finding_count': len(right_fids)})
+            factor_id = f"temporal_finding_overlap_{overlap}"
+            return AttributionFactor(
+                factor_id=factor_id,
+                factor_type="temporal_overlap",
+                raw_score=jaccard,
+                weighted_score=jaccard * self._weights.get("temporal_overlap", 0.2),
+                evidence=(f"shared_findings:{overlap}", f"union_findings:{union}"),
+                metadata={"left_finding_count": len(left_fids), "right_finding_count": len(right_fids)},
+            )
         return None
 
-    def _shared_infrastructure_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
+    def _shared_infrastructure_score(
+        self, left: IdentityCandidate, right: IdentityCandidate
+    ) -> AttributionFactor | None:
         """
         Assess shared infrastructure via platform overlap.
         Platform = where the identity was observed (github, twitter, etc.)
@@ -168,7 +233,14 @@ class AttributionConfidenceScorer:
         intersection = left_plat & right_plat
         if intersection:
             raw = min(1.0, len(intersection) * 0.5)
-            return AttributionFactor(factor_id=f'infra_platform_{len(intersection)}', factor_type='shared_infrastructure', raw_score=raw, weighted_score=raw * self._weights.get('shared_infrastructure', 0.2), evidence=tuple((f'platform:{p}' for p in intersection)), metadata={'left_platforms': list(left_plat), 'right_platforms': list(right_plat)})
+            return AttributionFactor(
+                factor_id=f"infra_platform_{len(intersection)}",
+                factor_type="shared_infrastructure",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("shared_infrastructure", 0.2),
+                evidence=tuple(f"platform:{p}" for p in intersection),
+                metadata={"left_platforms": list(left_plat), "right_platforms": list(right_plat)},
+            )
         return None
 
     def _pgp_key_correlation_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
@@ -178,7 +250,7 @@ class AttributionConfidenceScorer:
         """
         left_pgp = set()
         right_pgp = set()
-        pgp_pattern = re.compile('[A-F0-9]{8,}(?:[A-F0-9]{4,}){3,}', re.IGNORECASE)
+        pgp_pattern = re.compile("[A-F0-9]{8,}(?:[A-F0-9]{4,}){3,}", re.IGNORECASE)
         for e in left.evidence:
             matches = pgp_pattern.findall(e)
             left_pgp.update(matches)
@@ -187,12 +259,12 @@ class AttributionConfidenceScorer:
             right_pgp.update(matches)
         if left.signals:
             for sig_key, sig_val in left.signals.items():
-                if 'pgp' in sig_key.lower() or 'key' in sig_key.lower():
+                if "pgp" in sig_key.lower() or "key" in sig_key.lower():
                     matches = pgp_pattern.findall(str(sig_val))
                     left_pgp.update(matches)
         if right.signals:
             for sig_key, sig_val in right.signals.items():
-                if 'pgp' in sig_key.lower() or 'key' in sig_key.lower():
+                if "pgp" in sig_key.lower() or "key" in sig_key.lower():
                     matches = pgp_pattern.findall(str(sig_val))
                     right_pgp.update(matches)
         if not left_pgp or not right_pgp:
@@ -200,10 +272,19 @@ class AttributionConfidenceScorer:
         intersection = left_pgp & right_pgp
         if intersection:
             raw = 1.0
-            return AttributionFactor(factor_id=f'pgp_key_{list(intersection)[0][:16]}', factor_type='pgp_key_correlation', raw_score=raw, weighted_score=raw * self._weights.get('pgp_key_correlation', 0.15), evidence=tuple((f'pgp:{k[:16]}...' for k in intersection)), metadata={'left_keys': len(left_pgp), 'right_keys': len(right_pgp)})
+            return AttributionFactor(
+                factor_id=f"pgp_key_{list(intersection)[0][:16]}",
+                factor_type="pgp_key_correlation",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("pgp_key_correlation", 0.15),
+                evidence=tuple(f"pgp:{k[:16]}..." for k in intersection),
+                metadata={"left_keys": len(left_pgp), "right_keys": len(right_pgp)},
+            )
         return None
 
-    def _social_profile_overlap_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
+    def _social_profile_overlap_score(
+        self, left: IdentityCandidate, right: IdentityCandidate
+    ) -> AttributionFactor | None:
         """
         Assess social profile overlap between two identity candidates.
 
@@ -218,15 +299,27 @@ class AttributionConfidenceScorer:
             """Build 'platform:username' profile strings."""
             result = set()
             for i, username in enumerate(usernames):
-                platform = platforms[i] if i < len(platforms) else 'unknown'
-                result.add(f'{platform}:{username.lower()}')
+                platform = platforms[i] if i < len(platforms) else "unknown"
+                result.add(f"{platform}:{username.lower()}")
             return result
+
         left_profiles = make_profile_set(left.usernames, left.platforms)
         right_profiles = make_profile_set(right.usernames, right.platforms)
         overlap = left_profiles & right_profiles
         if len(overlap) >= SOCIAL_FACTOR_MIN_OVERLAP:
             raw = min(1.0, len(overlap) / SOCIAL_FACTOR_MAX_FACTOR_SCORE)
-            return AttributionFactor(factor_id=f'social_profile_{len(overlap)}', factor_type='social_profile_overlap', raw_score=raw, weighted_score=raw * self._weights.get('social_profile_overlap', 0.15), evidence=tuple(overlap), metadata={'left_profile_count': len(left_profiles), 'right_profile_count': len(right_profiles), 'overlap_count': len(overlap)})
+            return AttributionFactor(
+                factor_id=f"social_profile_{len(overlap)}",
+                factor_type="social_profile_overlap",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("social_profile_overlap", 0.15),
+                evidence=tuple(overlap),
+                metadata={
+                    "left_profile_count": len(left_profiles),
+                    "right_profile_count": len(right_profiles),
+                    "overlap_count": len(overlap),
+                },
+            )
         return None
 
     def _bio_link_overlap_score(self, left: IdentityCandidate, right: IdentityCandidate) -> AttributionFactor | None:
@@ -252,11 +345,12 @@ class AttributionConfidenceScorer:
 
         def extract_domains_from_evidence(evidence: list[str]) -> set[str]:
             domain_set = set()
-            domain_re = re.compile('[a-zA-Z0-9-]+\\.[a-zA-Z]{2,}')
+            domain_re = re.compile("[a-zA-Z0-9-]+\\.[a-zA-Z]{2,}")
             for e in evidence:
                 for m in domain_re.finditer(e):
                     domain_set.add(m.group(0).lower())
             return domain_set
+
         left_domains.update(extract_domains_from_evidence(left.evidence))
         right_domains.update(extract_domains_from_evidence(right.evidence))
         if not left_domains or not right_domains:
@@ -264,10 +358,23 @@ class AttributionConfidenceScorer:
         overlap = left_domains & right_domains
         if len(overlap) >= SOCIAL_FACTOR_MIN_OVERLAP:
             raw = min(1.0, len(overlap) / SOCIAL_FACTOR_MAX_FACTOR_SCORE)
-            return AttributionFactor(factor_id=f'bio_link_{len(overlap)}', factor_type='bio_link_overlap', raw_score=raw, weighted_score=raw * self._weights.get('bio_link_overlap', 0.1), evidence=tuple(overlap), metadata={'left_domain_count': len(left_domains), 'right_domain_count': len(right_domains), 'overlap_count': len(overlap)})
+            return AttributionFactor(
+                factor_id=f"bio_link_{len(overlap)}",
+                factor_type="bio_link_overlap",
+                raw_score=raw,
+                weighted_score=raw * self._weights.get("bio_link_overlap", 0.1),
+                evidence=tuple(overlap),
+                metadata={
+                    "left_domain_count": len(left_domains),
+                    "right_domain_count": len(right_domains),
+                    "overlap_count": len(overlap),
+                },
+            )
         return None
 
-    def score_pair(self, left: IdentityCandidate, right: IdentityCandidate, context: dict[str, Any] | None=None) -> AttributionScore:
+    def score_pair(
+        self, left: IdentityCandidate, right: IdentityCandidate, context: dict[str, Any] | None = None
+    ) -> AttributionScore:
         """
         Score a pair of identity candidates and return explainable AttributionScore.
 
@@ -289,7 +396,15 @@ class AttributionConfidenceScorer:
             if isinstance(right, dict):
                 right = IdentityCandidate(**right)
             factors: list[AttributionFactor] = []
-            factor_methods = [self._email_domain_match_score, self._username_pattern_score, self._temporal_overlap_score, self._shared_infrastructure_score, self._pgp_key_correlation_score, self._social_profile_overlap_score, self._bio_link_overlap_score]
+            factor_methods = [
+                self._email_domain_match_score,
+                self._username_pattern_score,
+                self._temporal_overlap_score,
+                self._shared_infrastructure_score,
+                self._pgp_key_correlation_score,
+                self._social_profile_overlap_score,
+                self._bio_link_overlap_score,
+            ]
             for method in factor_methods:
                 try:
                     factor = method(left, right)
@@ -298,12 +413,17 @@ class AttributionConfidenceScorer:
                 except Exception:  # noqa: BLE001
                     pass
             if factors:
-                confidence = sum((f.weighted_score for f in factors))
+                confidence = sum(f.weighted_score for f in factors)
                 confidence = max(0.0, min(1.0, confidence))
             else:
                 confidence = 0.0
-            evidence_ids = tuple((f.factor_id for f in factors))
-            return AttributionScore(confidence=confidence, factors=tuple(factors), evidence_ids=evidence_ids, factor_weights=dict(self._weights))
+            evidence_ids = tuple(f.factor_id for f in factors)
+            return AttributionScore(
+                confidence=confidence,
+                factors=tuple(factors),
+                evidence_ids=evidence_ids,
+                factor_weights=dict(self._weights),
+            )
         except Exception:
             return AttributionScore(confidence=0.0, factors=(), evidence_ids=(), factor_weights=dict(self._weights))
 
@@ -325,13 +445,13 @@ class AttributionConfidenceScorer:
             return scores
         try:
             for i, left in enumerate(candidates):
-                for right in candidates[i + 1:]:
+                for right in candidates[i + 1 :]:
                     if not self._check_limit():
                         break
                     try:
                         score = self.score_pair(left, right)
                         if score.confidence > 0.0:
-                            key = f'{left.candidate_id}|{right.candidate_id}'
+                            key = f"{left.candidate_id}|{right.candidate_id}"
                             scores[key] = score
                     except Exception:
                         continue
@@ -343,11 +463,26 @@ class AttributionConfidenceScorer:
 
     def get_factor_breakdown(self, score: AttributionScore) -> dict[str, Any]:
         """Return human-readable factor breakdown from an AttributionScore."""
-        return {'total_confidence': round(score.confidence, 4), 'factors': [{'type': f.factor_type, 'raw': round(f.raw_score, 4), 'weighted': round(f.weighted_score, 4), 'contribution_pct': round(f.weighted_score / max(score.confidence, 0.001) * 100, 1), 'evidence': list(f.evidence)[:5]} for f in score.factors], 'weights_used': score.factor_weights}
+        return {
+            "total_confidence": round(score.confidence, 4),
+            "factors": [
+                {
+                    "type": f.factor_type,
+                    "raw": round(f.raw_score, 4),
+                    "weighted": round(f.weighted_score, 4),
+                    "contribution_pct": round(f.weighted_score / max(score.confidence, 0.001) * 100, 1),
+                    "evidence": list(f.evidence)[:5],
+                }
+                for f in score.factors
+            ],
+            "weights_used": score.factor_weights,
+        }
 
-def create_attribution_scorer(factor_weights: dict[str, float] | None=None) -> AttributionConfidenceScorer:
+
+def create_attribution_scorer(factor_weights: dict[str, float] | None = None) -> AttributionConfidenceScorer:
     """Create a configured AttributionConfidenceScorer instance."""
     return AttributionConfidenceScorer(factor_weights=factor_weights)
+
 
 def enrich_candidate_with_attribution(candidate: IdentityCandidate, score: AttributionScore) -> IdentityCandidate:
     """
@@ -361,14 +496,33 @@ def enrich_candidate_with_attribution(candidate: IdentityCandidate, score: Attri
     if isinstance(candidate, dict):
         candidate = IdentityCandidate(**candidate)
     new_signals = dict(candidate.signals)
-    new_signals['attribution_confidence'] = score.confidence
-    new_signals['attribution_factor_types'] = [f.factor_type for f in score.factors]
+    new_signals["attribution_confidence"] = score.confidence
+    new_signals["attribution_factor_types"] = [f.factor_type for f in score.factors]
     new_evidence = list(candidate.evidence)
     for factor in score.factors:
         for ev in factor.evidence:
             if ev not in new_evidence:
                 new_evidence.append(ev)
-    return IdentityCandidate(candidate_id=candidate.candidate_id, profile_ids=candidate.profile_ids, primary_name=candidate.primary_name, emails=candidate.emails, usernames=candidate.usernames, platforms=candidate.platforms, confidence=candidate.confidence, signals=new_signals, evidence=new_evidence, finding_ids=candidate.finding_ids)
+    return IdentityCandidate(
+        candidate_id=candidate.candidate_id,
+        profile_ids=candidate.profile_ids,
+        primary_name=candidate.primary_name,
+        emails=candidate.emails,
+        usernames=candidate.usernames,
+        platforms=candidate.platforms,
+        confidence=candidate.confidence,
+        signals=new_signals,
+        evidence=new_evidence,
+        finding_ids=candidate.finding_ids,
+    )
+
+
 from hledac.universal.recon.identity_stitching_canonical import IdentityCandidate
-from _core import aclose
-__all__ = ['AttributionFactor', 'AttributionScore', 'AttributionConfidenceScorer', 'create_attribution_scorer', 'enrich_candidate_with_attribution']
+
+__all__ = [
+    "AttributionFactor",
+    "AttributionScore",
+    "AttributionConfidenceScorer",
+    "create_attribution_scorer",
+    "enrich_candidate_with_attribution",
+]

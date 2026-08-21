@@ -2,33 +2,12 @@
 runtime/sidecar_protocol_adapters.py — F350M-R: Protocol-Based Sidecar Adapters
 ==============================================================================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 Protocol-based plugin adapters for orphaned sidecar modules.
 Each adapter wraps an existing module and exposes SidecarAdapterProtocol.
 
 Registered via @SidecarRegistry.register decorator.
 Env gates and RAM budgets configured per sidecar.
 """
-
-
 
 import collections.abc
 import logging
@@ -53,8 +32,8 @@ _URL_RE = re.compile(
     r"(?:\.[a-zA-Z]{2,})+/?)"
 )
 
-
 # ── Fediverse Sidecar ──────────────────────────────────────────────────────────
+
 
 # Protocol-based interface for FediverseAdapter (decouples sidecar from concrete implementation)
 @runtime_checkable
@@ -69,6 +48,7 @@ class FediverseSearchEngine(Protocol):
 def _default_fediverse_adapter_factory() -> Any:  # noqa: ANN401
     """Lazy factory: imports and instantiates FediverseAdapter only when called."""
     from hledac.universal.discovery.fediverse_adapter import FediverseAdapter
+
     return FediverseAdapter()
 
 
@@ -142,18 +122,20 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
                     post_dict = post
                 else:
                     continue
-                findings.append({
-                    "source_type": "fediverse",
-                    "query": ctx.query,
-                    "sprint_id": ctx.sprint_id,
-                    "ioc_type": "social_media_post",
-                    "ioc_value": post_dict.get("url", post_dict.get("id", "")),
-                    "confidence": 0.6,
-                    "payload_text": (
-                        f"{post_dict.get('content', '')} | "
-                        f"@{post_dict.get('account', {}).get('username', 'unknown')}"
-                    ),
-                })
+                findings.append(
+                    {
+                        "source_type": "fediverse",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "social_media_post",
+                        "ioc_value": post_dict.get("url", post_dict.get("id", "")),
+                        "confidence": 0.6,
+                        "payload_text": (
+                            f"{post_dict.get('content', '')} | "
+                            f"@{post_dict.get('account', {}).get('username', 'unknown')}"
+                        ),
+                    }
+                )
             return findings if findings else None
         except Exception:
             return None
@@ -163,6 +145,7 @@ class FediverseSidecarAdapter(GenericSidecarAdapter):
 
 
 # ── DHT Sidecar ────────────────────────────────────────────────────────────────
+
 
 @SidecarRegistry.register("dht")
 class DHTSidecarAdapter(BaseSidecarAdapter):
@@ -218,6 +201,7 @@ class DHTSidecarAdapter(BaseSidecarAdapter):
 
 # ── DHT Leak Harvest Sidecar (ISSUE-006) ───────────────────────────────────────
 
+
 @SidecarRegistry.register("dht_leak_harvest")
 class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
     """
@@ -247,6 +231,7 @@ class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
 
         # Both gates must be enabled
         import os
+
         if os.getenv("HLEDAC_ENABLE_DHT", "0").lower() not in ("1", "true", "yes", "on"):
             return []
         if os.getenv("HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0").lower() not in ("1", "true", "yes", "on"):
@@ -270,8 +255,8 @@ class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
             # Convert crawl results to findings format expected by sidecar framework
             findings = []
             for hit in crawl_results[:30]:
-                name = hit.get('name', '')
-                info_hash = hit.get('info_hash', '')
+                name = hit.get("name", "")
+                info_hash = hit.get("info_hash", "")
                 finding = {
                     "source_type": "dht_metadata",
                     "query": ctx.query,
@@ -292,7 +277,8 @@ class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
             if findings:
                 logger.info(
                     "DHTLeakHarvestSidecar: %d findings for query '%s'",
-                    len(findings), ctx.query[:50],
+                    len(findings),
+                    ctx.query[:50],
                 )
             return findings
 
@@ -300,7 +286,9 @@ class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
             logger.warning("DHTLeakHarvestSidecarAdapter.run: fail-soft", exc_info=True)
             return []
 
+
 # ── Academic Sidecar ──────────────────────────────────────────────────────────
+
 
 @SidecarRegistry.register("academic")
 class AcademicSidecarAdapter(BaseSidecarAdapter):
@@ -368,6 +356,7 @@ class AcademicSidecarAdapter(BaseSidecarAdapter):
 
 # ── Alt Protocols Sidecar ──────────────────────────────────────────────────────
 
+
 @SidecarRegistry.register("alt_protocols")
 class AltProtocolSidecarAdapter(BaseSidecarAdapter):
     """
@@ -401,26 +390,26 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            # Extract CIDs/hashes from findings for IPFS lookup
             cids = self._extract_cids(ctx)
 
             findings = []
 
-            # Fetch via IPFS using the correct API
             if cids:
                 for cid in cids[:5]:  # Limit to 5 CIDs
                     try:
                         results = await fetch_ipfs_only(cid)
                         if results:
-                            findings.append({
-                                "source_type": "ipfs",
-                                "query": ctx.query,
-                                "sprint_id": ctx.sprint_id,
-                                "ioc_type": "ipfs_cid",
-                                "ioc_value": cid,
-                                "confidence": 0.6,
-                                "payload_text": f"IPFS content: {len(results)} items",
-                            })
+                            findings.append(
+                                {
+                                    "source_type": "ipfs",
+                                    "query": ctx.query,
+                                    "sprint_id": ctx.sprint_id,
+                                    "ioc_type": "ipfs_cid",
+                                    "ioc_value": cid,
+                                    "confidence": 0.6,
+                                    "payload_text": f"IPFS content: {len(results)} items",
+                                }
+                            )
                     except Exception:
                         continue
 
@@ -429,15 +418,17 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
                 try:
                     results = await fetch_gemini_only(ctx.query)
                     if results:
-                        findings.append({
-                            "source_type": "gemini",
-                            "query": ctx.query,
-                            "sprint_id": ctx.sprint_id,
-                            "ioc_type": "gemini_content",
-                            "ioc_value": ctx.query[:256],
-                            "confidence": 0.5,
-                            "payload_text": f"Gemini content: {len(results)} items",
-                        })
+                        findings.append(
+                            {
+                                "source_type": "gemini",
+                                "query": ctx.query,
+                                "sprint_id": ctx.sprint_id,
+                                "ioc_type": "gemini_content",
+                                "ioc_value": ctx.query[:256],
+                                "confidence": 0.5,
+                                "payload_text": f"Gemini content: {len(results)} items",
+                            }
+                        )
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -459,6 +450,7 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
 
 
 # ── Leak Sentinel Sidecar ──────────────────────────────────────────────────────
+
 
 @SidecarRegistry.register("leak_sentinel")
 class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
@@ -500,15 +492,17 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
             # Convert CanonicalFinding objects to dicts
             result = []
             for finding in findings[:50]:  # Cap at 50
-                result.append({
-                    "source_type": getattr(finding, "source_type", "leak"),
-                    "query": ctx.query,
-                    "sprint_id": ctx.sprint_id,
-                    "ioc_type": "leak_detection",
-                    "ioc_value": getattr(finding, "ioc_value", "") or getattr(finding, "finding_id", ""),
-                    "confidence": getattr(finding, "confidence", 0.7),
-                    "payload_text": getattr(finding, "payload_text", ""),
-                })
+                result.append(
+                    {
+                        "source_type": getattr(finding, "source_type", "leak"),
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "leak_detection",
+                        "ioc_value": getattr(finding, "ioc_value", "") or getattr(finding, "finding_id", ""),
+                        "confidence": getattr(finding, "confidence", 0.7),
+                        "payload_text": getattr(finding, "payload_text", ""),
+                    }
+                )
 
             return result
 
@@ -516,7 +510,9 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
             logger.warning("LeakSentinelSidecarAdapter.run: fail-soft", exc_info=True)
             return []
 
+
 # ── TV News Sidecar ─────────────────────────────────────────────────────────────
+
 
 @SidecarRegistry.register("tvnews")
 class TVNewsSidecarAdapter(BaseSidecarAdapter):
@@ -579,6 +575,7 @@ class TVNewsSidecarAdapter(BaseSidecarAdapter):
 
 # ── Federated Research Sidecar (F350M-FED) ───────────────────────────────────
 
+
 @SidecarRegistry.register("federated_research")
 class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
     """
@@ -610,6 +607,7 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
         """Env-gated check delegating to the federated module's gate."""
         try:
             from hledac.universal.federated import is_federated_enabled
+
             return is_federated_enabled()
         except Exception:
             return False
@@ -620,6 +618,7 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
             from hledac.universal.federated.sidecar_adapter import (
                 FederatedSidecarAdapter,
             )
+
             adapter = FederatedSidecarAdapter()
             return await adapter.run(ctx)
         except Exception:
@@ -631,6 +630,7 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
 
 
 # ── Passive Fingerprint Sidecar (F350M-R) ───────────────────────────────────────
+
 
 @SidecarRegistry.register("passive_fingerprint")
 class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
@@ -656,10 +656,12 @@ class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
         from hledac.universal.recon.passive_fingerprint import (
             create_passive_fingerprint_adapter,
         )
+
         return create_passive_fingerprint_adapter()
 
 
 # ── Passive Tech-Stack Sidecar (F350M-R / R11) ────────────────────────────────
+
 
 @SidecarRegistry.register("passive_tech_stack")
 class PassiveTechStackSidecarAdapter(CorrelateBasedSidecarAdapter):
@@ -686,10 +688,12 @@ class PassiveTechStackSidecarAdapter(CorrelateBasedSidecarAdapter):
         from hledac.universal.recon.passive_fingerprint import (
             create_passive_tech_stack_adapter,
         )
+
         return create_passive_tech_stack_adapter()
 
 
 # ── Social Identity Surface Sidecar (F350M-R / F204I) ────────────────────────
+
 
 @SidecarRegistry.register("social_identity_surface")
 class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
@@ -728,6 +732,7 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
 
 # ── Identity Stitching Sidecar (F350M-R / F202B) ──────────────────────────────
 
+
 @SidecarRegistry.register("identity_stitching")
 class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     """
@@ -759,6 +764,7 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
 
 
 # ── Temporal Archaeology Sidecar (F350M-R / F202E) ────────────────────────────
+
 
 @SidecarRegistry.register("temporal_archaeology")
 class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
@@ -869,15 +875,17 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
             similar = await rag.search(query=ctx.query, top_k=5, use_mmr=True)
             findings = []
             for i, chunk in enumerate(similar[:5]):
-                findings.append({
-                    "source_type": "lancedb_rag_corpus",
-                    "query": ctx.query,
-                    "sprint_id": ctx.sprint_id,
-                    "ioc_type": "corpus_similar",
-                    "ioc_value": f"similar_query_{i}",
-                    "confidence": chunk.final_score,
-                    "payload_text": chunk.chunk_text[:1024],
-                })
+                findings.append(
+                    {
+                        "source_type": "lancedb_rag_corpus",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "corpus_similar",
+                        "ioc_value": f"similar_query_{i}",
+                        "confidence": chunk.final_score,
+                        "payload_text": chunk.chunk_text[:1024],
+                    }
+                )
 
             return findings
 
@@ -950,6 +958,7 @@ class GitHubGistSidecarAdapter(GenericSidecarAdapter):
 
 # ── JA4 TLS Fingerprint Collector Sidecar (F350M-R) ────────────────────────────
 
+
 @SidecarRegistry.register("ja4_collector")
 class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
     """
@@ -984,7 +993,6 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
         """
         from hledac.universal.recon.network_reconnaissance import SSLAnalyzer
 
-        # Extract domains from findings
         domains = self._extract_domains(ctx)
         if not domains:
             return []
@@ -1001,31 +1009,33 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
 
             findings = []
             for result in results:
-                ja4 = result.get('ja4', '')
-                if ja4 and ja4 != 'unknown':
-                    findings.append({
-                        'source_type': 'ja4_fingerprint',
-                        'query': ctx.query,
-                        'sprint_id': ctx.sprint_id,
-                        'ioc_type': 'ja4_fingerprint',
-                        'ioc_value': ja4,
-                        'title': f"JA4: {result.get('host', 'unknown')} — TLS {result.get('tls_version', '?')}",
-                        'confidence': 0.9,
-                        'payload_text': (
-                            f"JA4={ja4} TLS={result.get('tls_version', '?')} "
-                            f"ECH={'yes' if result.get('ech_detected') else 'no'} "
-                            f"ALPN={result.get('alpn', 'none')}"
-                        ),
-                        'extra_data': {
-                            'host': result.get('host', ''),
-                            'port': result.get('port', 443),
-                            'ech_detected': result.get('ech_detected', False),
-                            'tls_version': result.get('tls_version', ''),
-                            'server_ciphers': result.get('server_ciphers', []),
-                            'alpn': result.get('alpn', ''),
-                            'cert_verified': result.get('cert_verified', False),
-                        },
-                    })
+                ja4 = result.get("ja4", "")
+                if ja4 and ja4 != "unknown":
+                    findings.append(
+                        {
+                            "source_type": "ja4_fingerprint",
+                            "query": ctx.query,
+                            "sprint_id": ctx.sprint_id,
+                            "ioc_type": "ja4_fingerprint",
+                            "ioc_value": ja4,
+                            "title": f"JA4: {result.get('host', 'unknown')} — TLS {result.get('tls_version', '?')}",
+                            "confidence": 0.9,
+                            "payload_text": (
+                                f"JA4={ja4} TLS={result.get('tls_version', '?')} "
+                                f"ECH={'yes' if result.get('ech_detected') else 'no'} "
+                                f"ALPN={result.get('alpn', 'none')}"
+                            ),
+                            "extra_data": {
+                                "host": result.get("host", ""),
+                                "port": result.get("port", 443),
+                                "ech_detected": result.get("ech_detected", False),
+                                "tls_version": result.get("tls_version", ""),
+                                "server_ciphers": result.get("server_ciphers", []),
+                                "alpn": result.get("alpn", ""),
+                                "cert_verified": result.get("cert_verified", False),
+                            },
+                        }
+                    )
 
             return findings
 
@@ -1037,20 +1047,19 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
         """Extract domain IOC values from findings."""
         domains: list[str] = []
         for finding in ctx.findings:
-            ioc_type = getattr(finding, 'ioc_type', '')
-            ioc_value = getattr(finding, 'ioc_value', '')
+            ioc_type = getattr(finding, "ioc_type", "")
+            ioc_value = getattr(finding, "ioc_value", "")
 
             # Accept domain types
-            if ioc_type in ('domain', 'hostname', 'url', 'fqdn'):
+            if ioc_type in ("domain", "hostname", "url", "fqdn"):
                 if ioc_value and len(ioc_value) < 253:
                     domains.append(ioc_value)
             # Accept URL-like values ( URLs with :// )
-            elif ioc_value and '://' in ioc_value:
-                # Extract domain from URL
+            elif ioc_value and "://" in ioc_value:
                 try:
                     parsed = urlparse(ioc_value)
                     if parsed.netloc:
-                        domains.append(parsed.netloc.split(':')[0].split('@')[-1])
+                        domains.append(parsed.netloc.split(":")[0].split("@")[-1])
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1107,6 +1116,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                 from hledac.universal.intel.whois_service import (
                     configure_historical_api,
                 )
+
                 configure_historical_api(hist_api, hist_key)
 
             service = WhoisService(
@@ -1114,7 +1124,6 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                 historical_api_key=hist_key,
             )
 
-            # Extract domain IOCs from findings
             domains = self._extract_domains(ctx)
             if not domains:
                 domains = [ctx.query] if ctx.query else []
@@ -1127,7 +1136,6 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                 if not res.registrar and not res.creation_date:
                     continue  # Skip failed lookups
 
-                # Build payload text
                 lines = [
                     f"Registrar: {res.registrar or 'N/A'}",
                     f"Created: {res.creation_date or 'N/A'}",
@@ -1145,25 +1153,27 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
                 if res.historical:
                     lines.append("(historical record)")
 
-                findings.append({
-                    "source_type": "whois",
-                    "query": ctx.query,
-                    "sprint_id": ctx.sprint_id,
-                    "ioc_type": "domain",
-                    "ioc_value": res.domain,
-                    "confidence": 0.75 if res.source == "rdap" else 0.65,
-                    "payload_text": "\n".join(lines),
-                    "whois_registrar": res.registrar,
-                    "whois_created": res.creation_date,
-                    "whois_expires": res.expiration_date,
-                    "whois_updated": res.updated_date,
-                    "whois_nameservers": res.name_servers,
-                    "whois_dnssec": res.dnssec,
-                    "whois_asn": res.asn,
-                    "whois_org": res.org,
-                    "whois_source": res.source,
-                    "whois_historical": res.historical,
-                })
+                findings.append(
+                    {
+                        "source_type": "whois",
+                        "query": ctx.query,
+                        "sprint_id": ctx.sprint_id,
+                        "ioc_type": "domain",
+                        "ioc_value": res.domain,
+                        "confidence": 0.75 if res.source == "rdap" else 0.65,
+                        "payload_text": "\n".join(lines),
+                        "whois_registrar": res.registrar,
+                        "whois_created": res.creation_date,
+                        "whois_expires": res.expiration_date,
+                        "whois_updated": res.updated_date,
+                        "whois_nameservers": res.name_servers,
+                        "whois_dnssec": res.dnssec,
+                        "whois_asn": res.asn,
+                        "whois_org": res.org,
+                        "whois_source": res.source,
+                        "whois_historical": res.historical,
+                    }
+                )
 
             return findings[:100]
 
@@ -1180,7 +1190,6 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             if ioc_type == "domain" and ioc_value:
                 domains.append(ioc_value)
             elif ioc_type == "url":
-                # Extract domain from URL — urlparse is module-level import
                 try:
                     parsed = urlparse(ioc_value)
                     if parsed.netloc:
@@ -1247,22 +1256,24 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
                 confidence = (entry.get("confidence_level", 50) or 50) / 100
                 # Filter entries matching the query (malware name, actor, etc.)
                 if not query_lower or query_lower in malware.lower() or query_lower in ioc.lower():
-                    findings.append({
-                        "source_type": "threatfox",
-                        "query": ctx.query,
-                        "sprint_id": ctx.sprint_id,
-                        "ioc_type": entry.get("ioc_type", "unknown"),
-                        "ioc_value": ioc,
-                        "confidence": confidence,
-                        "payload_text": (
-                            f"Malware: {malware}\n"
-                            f"IOC: {ioc}\n"
-                            f"Threat type: {threat_type}\n"
-                            f"Confidence: {confidence:.0%}"
-                        ),
-                        "malware": malware,
-                        "threat_type": threat_type,
-                    })
+                    findings.append(
+                        {
+                            "source_type": "threatfox",
+                            "query": ctx.query,
+                            "sprint_id": ctx.sprint_id,
+                            "ioc_type": entry.get("ioc_type", "unknown"),
+                            "ioc_value": ioc,
+                            "confidence": confidence,
+                            "payload_text": (
+                                f"Malware: {malware}\n"
+                                f"IOC: {ioc}\n"
+                                f"Threat type: {threat_type}\n"
+                                f"Confidence: {confidence:.0%}"
+                            ),
+                            "malware": malware,
+                            "threat_type": threat_type,
+                        }
+                    )
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: ThreatFox fetch failed", exc_info=True)
 
@@ -1273,21 +1284,23 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
                 # entry keys: ioc (ip_address), ioc_type (ip), port, status
                 ip_address = entry.get("ioc", "") or entry.get("ip_address", "")
                 if ip_address:
-                    findings.append({
-                        "source_type": "feodo_tracker",
-                        "query": ctx.query,
-                        "sprint_id": ctx.sprint_id,
-                        "ioc_type": "ip",
-                        "ioc_value": ip_address,
-                        "confidence": 0.8,
-                        "payload_text": (
-                            f"Feodo C2: {ip_address}\n"
-                            f"Port: {entry.get('port', 'N/A')}\n"
-                            f"Status: {entry.get('status', 'active')}"
-                        ),
-                        "port": entry.get("port"),
-                        "status": entry.get("status"),
-                    })
+                    findings.append(
+                        {
+                            "source_type": "feodo_tracker",
+                            "query": ctx.query,
+                            "sprint_id": ctx.sprint_id,
+                            "ioc_type": "ip",
+                            "ioc_value": ip_address,
+                            "confidence": 0.8,
+                            "payload_text": (
+                                f"Feodo C2: {ip_address}\n"
+                                f"Port: {entry.get('port', 'N/A')}\n"
+                                f"Status: {entry.get('status', 'active')}"
+                            ),
+                            "port": entry.get("port"),
+                            "status": entry.get("status"),
+                        }
+                    )
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: Feodo fetch failed", exc_info=True)
 
@@ -1299,21 +1312,23 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
                 # entry keys: ioc (url), threat, url_status
                 url = entry.get("ioc", "") or entry.get("url", "")
                 if url and query_lower and query_lower in url.lower():
-                    findings.append({
-                        "source_type": "urlhaus",
-                        "query": ctx.query,
-                        "sprint_id": ctx.sprint_id,
-                        "ioc_type": "url",
-                        "ioc_value": url,
-                        "confidence": 0.6,
-                        "payload_text": (
-                            f"URLhaus: {url}\n"
-                            f"Threat: {entry.get('threat', 'N/A')}\n"
-                            f"Status: {entry.get('url_status', 'N/A')}"
-                        ),
-                        "threat": entry.get("threat"),
-                        "url_status": entry.get("url_status"),
-                    })
+                    findings.append(
+                        {
+                            "source_type": "urlhaus",
+                            "query": ctx.query,
+                            "sprint_id": ctx.sprint_id,
+                            "ioc_type": "url",
+                            "ioc_value": url,
+                            "confidence": 0.6,
+                            "payload_text": (
+                                f"URLhaus: {url}\n"
+                                f"Threat: {entry.get('threat', 'N/A')}\n"
+                                f"Status: {entry.get('url_status', 'N/A')}"
+                            ),
+                            "threat": entry.get("threat"),
+                            "url_status": entry.get("url_status"),
+                        }
+                    )
         except Exception:
             logger.debug("ThreatIntelSidecarAdapter: URLhaus fetch failed", exc_info=True)
 
@@ -1321,6 +1336,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
 
 
 # ── ShadowWalker Sidecar ───────────────────────────────────────────────────────
+
 
 @SidecarRegistry.register("shadow_walker")
 class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
@@ -1344,6 +1360,7 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
     def is_available(self) -> bool:
         """Available only when feature flag is enabled."""
         import os
+
         return os.getenv("HLEDAC_ENABLE_SHADOW_WALKER", "0").lower() in ("1", "true", "yes", "on")
 
     def _extract_base_url(self, query: str) -> str | None:
@@ -1384,9 +1401,7 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
         findings = []
         for path, confidence in predictions:
             try:
-                fid = hashlib.sha256(
-                    f"shadow:{base_url}:{path}".encode()
-                ).hexdigest()[:16]
+                fid = hashlib.sha256(f"shadow:{base_url}:{path}".encode()).hexdigest()[:16]
                 finding = CanonicalFinding(
                     finding_id=fid,
                     query=ctx.query,

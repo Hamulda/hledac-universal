@@ -25,39 +25,39 @@ Invariants tested:
 
 Author: A4 (F350M-R)
 """
+
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock
 
 import pytest
 
 from _core.inference_coordinator import (
+    _DEFAULT_BACKENDS,
     InferenceBackend,
     InferenceCoordinator,
     InferenceRequest,
     InferenceResponse,
-    _DEFAULT_BACKENDS,
     get_inference_coordinator,
 )
 
-
 # ─── A4 Invariants ──────────────────────────────────────────────────────────
+
 
 class TestSprintA4BackendSimplification:
     """B1: MLXCEL is now the default; MLX_INPROC always available as fallback."""
 
-    def test_default_backends_is_mlxcel(self):
+    def test_default_backends_is_mlxcel(self) -> None:
         """_DEFAULT_BACKENDS contains only MLXCEL (B1 fix)."""
         assert list(_DEFAULT_BACKENDS.keys()) == [InferenceBackend.MLXCEL]
 
-    def test_mlx_inproc_always_in_backends(self):
+    def test_mlx_inproc_always_in_backends(self) -> None:
         """MLX_INPROC is always registered as fallback (B1 fix)."""
         coord = InferenceCoordinator()
         assert InferenceBackend.MLX_INPROC in coord._backends
 
-    def test_mlxcel_in_default_backends(self):
+    def test_mlxcel_in_default_backends(self) -> None:
         """MLXCEL is in _DEFAULT_BACKENDS (B1 fix)."""
         coord = InferenceCoordinator()
         assert InferenceBackend.MLXCEL in coord._backends
@@ -65,11 +65,12 @@ class TestSprintA4BackendSimplification:
 
 # ─── Prompt Cache ─────────────────────────────────────────────────────────────
 
+
 class TestSprintA4PromptCache:
     """A4: Prompt cache LRU (32 entries) on InferenceCoordinator.generate()."""
 
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_same_response(self):
+    async def test_cache_hit_returns_same_response(self) -> None:
         """Second call with same params returns cached response."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
@@ -95,14 +96,20 @@ class TestSprintA4PromptCache:
         assert mock_be.generate.call_count == 1  # still 1 (no new call)
 
     @pytest.mark.asyncio
-    async def test_cache_miss_calls_backend(self):
+    async def test_cache_miss_calls_backend(self) -> None:
         """Different prompt calls backend."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
-        mock_be.generate = AsyncMock(side_effect=[
-            InferenceResponse(text="first", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC),
-            InferenceResponse(text="second", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC),
-        ])
+        mock_be.generate = AsyncMock(
+            side_effect=[
+                InferenceResponse(
+                    text="first", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
+                ),
+                InferenceResponse(
+                    text="second", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
+                ),
+            ]
+        )
         coord._backends[coord._default_backend] = mock_be
 
         r1 = await coord.generate(InferenceRequest(prompt="prompt A", backend=coord._default_backend))
@@ -113,7 +120,7 @@ class TestSprintA4PromptCache:
         assert mock_be.generate.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_cache_hit_under_5ms(self):
+    async def test_cache_hit_under_5ms(self) -> None:
         """Cache hit completes in <5ms (no backend call)."""
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
@@ -138,34 +145,38 @@ class TestSprintA4PromptCache:
 
         assert elapsed_ms < 5.0, f"Cache hit took {elapsed_ms:.2f}ms (expected <5ms)"
 
-    def test_lru_eviction_at_32_entries(self):
+    def test_lru_eviction_at_32_entries(self) -> None:
         """Cache evicts oldest entry when at 32 entries."""
         coord = InferenceCoordinator()
 
         # Fill 32 entries
         for i in range(32):
             key = f"key_{i}"
-            coord._cache_put(key, InferenceResponse(
-                text=f"val_{i}", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
-            ))
+            coord._cache_put(
+                key,
+                InferenceResponse(
+                    text=f"val_{i}", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
+                ),
+            )
 
         assert len(coord._prompt_cache) == 32
 
         # Add 33rd — should evict oldest (key_0)
-        coord._cache_put("key_32", InferenceResponse(
-            text="val_32", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
-        ))
+        coord._cache_put(
+            "key_32",
+            InferenceResponse(text="val_32", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC),
+        )
 
         assert len(coord._prompt_cache) == 32
         assert "key_0" not in coord._prompt_cache
         assert "key_32" in coord._prompt_cache
 
-    def test_cache_stats(self):
+    def test_cache_stats(self) -> None:
         """cache_stats() returns correct size and max."""
         coord = InferenceCoordinator()
-        coord._cache_put("k1", InferenceResponse(
-            text="v1", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC
-        ))
+        coord._cache_put(
+            "k1", InferenceResponse(text="v1", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC)
+        )
         stats = coord.cache_stats()
         assert stats["size"] == 1
         assert stats["max"] == 32
@@ -173,10 +184,11 @@ class TestSprintA4PromptCache:
 
 # ─── Cache Key Generation ─────────────────────────────────────────────────────
 
+
 class TestSprintA4CacheKey:
     """A4: xxh3 fingerprint for cache key (with sha256 fallback)."""
 
-    def test_cache_key_includes_prompt_temperature_max_tokens(self):
+    def test_cache_key_includes_prompt_temperature_max_tokens(self) -> None:
         """Different params produce different cache keys."""
         coord = InferenceCoordinator()
 
@@ -197,7 +209,7 @@ class TestSprintA4CacheKey:
         assert k2 != k4
         assert k3 != k4
 
-    def test_cache_key_is_deterministic(self):
+    def test_cache_key_is_deterministic(self) -> None:
         """Same params always produce same key."""
         coord = InferenceCoordinator()
         req = InferenceRequest(prompt="test", temperature=0.5, max_tokens=256, thinking=False)
@@ -208,10 +220,11 @@ class TestSprintA4CacheKey:
 
 # ─── Coordinator Singleton ────────────────────────────────────────────────────
 
+
 class TestSprintA4Singleton:
     """A4: get_inference_coordinator() returns same instance."""
 
-    def test_singleton_returns_same_instance(self):
+    def test_singleton_returns_same_instance(self) -> None:
         """Multiple calls return the same coordinator instance."""
         c1 = get_inference_coordinator()
         c2 = get_inference_coordinator()
@@ -220,15 +233,14 @@ class TestSprintA4Singleton:
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
-def mock_env_mlxcel(monkeypatch):
+def mock_env_mlxcel(monkeypatch) -> None:
     """HLEDAC_INFERENCE_BACKEND=mlxcel (but backend not registered)."""
-    import os
     monkeypatch.setenv("HLEDAC_INFERENCE_BACKEND", "mlxcel")
 
 
 @pytest.fixture
-def mock_env_coreml(monkeypatch):
+def mock_env_coreml(monkeypatch) -> None:
     """HLEDAC_INFERENCE_BACKEND=coreml (but backend not registered)."""
-    import os
     monkeypatch.setenv("HLEDAC_INFERENCE_BACKEND", "coreml")

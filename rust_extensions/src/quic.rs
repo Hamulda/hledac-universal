@@ -83,10 +83,6 @@ impl QuicResponse {
 static CONNECTION_SEM: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
 
-// ============================================================================
-// Shared Runtime (MODERN-07)
-// ============================================================================
-
 /// Get or create the shared tokio runtime.
 /// [MODERN-07]: Returns the shared Tokio runtime from async_runtime module.
 /// Consolidates 3 separate runtimes (dns, quic, arti) into 1 shared runtime,
@@ -122,7 +118,6 @@ pub fn fetch(
 ) -> QuicResponse {
     let timeout_secs = timeout_s.unwrap_or(30.0);
 
-    // Parse URL
     let Ok(parsed) = url::Url::parse(url) else {
         return QuicResponse::error("quic: invalid URL");
     };
@@ -258,7 +253,6 @@ async fn fetch_async_internal(
             Err(_) => return QuicResponse::error("quic: open_bi timeout"),
         };
 
-    // Build HTTP/3 request headers
     let mut request = Vec::new();
 
     // Add pseudo-headers first (required for HTTP/3)
@@ -359,7 +353,6 @@ async fn fetch_async_internal(
         if let Some(s) = find_status_in_response(&response_body) {
             status = s;
         }
-        // Extract headers from QPACK-encoded response
         response_headers = extract_response_headers(&response_body);
     }
 
@@ -543,10 +536,6 @@ pub fn fetch(
     )
 }
 
-// ============================================================================
-// MODERN-10: Async FFI — Native Python Awaitable
-// ============================================================================
-
 /// Fetch a URL via QUIC/HTTP3 — async version returning Python awaitable.
 ///
 /// This function returns a native Python awaitable that can be used with
@@ -585,7 +574,6 @@ pub fn fetch_async(
     let method = method.unwrap_or_else(|| "GET".to_string());
     let timeout_secs = timeout_s.unwrap_or(30.0);
 
-    // Parse URL upfront for early validation
     let parsed = match url::Url::parse(&url) {
         Ok(p) => p,
         Err(e) => {
@@ -626,7 +614,6 @@ pub fn fetch_async(
     // Use future_into_py to return native Python awaitable
     // MODERN-10: This is the key change — no more block_on() blocking the event loop!
     future_into_py(py, async move {
-        // Run the async QUIC fetch
         let result = fetch_async_internal(
             &host,
             port,

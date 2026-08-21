@@ -12,14 +12,11 @@ MIGRATION NOTE (Issue #2):
     Extracted from knowledge/duckdb_store.py to enable independent testing
     and reduce monolith size. These are read-heavy, append-only tables.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
-import msgspec
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from _core import aclose
 
 
 class SourceHitLog(Struct, frozen=True):

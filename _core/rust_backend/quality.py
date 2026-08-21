@@ -1,8 +1,6 @@
 # quality.py — Text quality assessment domain (entropy, dedup fingerprint)
 
-from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -121,14 +119,10 @@ class _PythonQualityDomain:
         return [_python_dedup_fingerprint(t) for t in texts]
 
 
-# ------------------------------------------------------------------
-# Pure-Python quality helpers (moved from top of rust_backend.py)
-# ------------------------------------------------------------------
-
-
 def _python_normalize_quality_text(text: str) -> str:
     """Normalize text for quality assessment: lowercase, strip."""
     import re
+
     text = text.lower().strip()
     text = re.sub(r"\s+", " ", text)
     return text
@@ -137,6 +131,7 @@ def _python_normalize_quality_text(text: str) -> str:
 def _python_compute_entropy(text: str) -> float:
     """Shannon entropy of text characters."""
     from collections import Counter
+
     if not text:
         return 0.0
     freq = Counter(text)
@@ -146,6 +141,7 @@ def _python_compute_entropy(text: str) -> float:
         p = count / total
         if p > 0:
             import math
+
             entropy -= p * math.log2(p)
     return entropy
 
@@ -157,6 +153,7 @@ def _python_batch_entropy(texts: list[str]) -> list[float]:
 def _python_dedup_fingerprint(text: str) -> str:
     """Deduplication fingerprint: normalized text hash."""
     import hashlib
+
     normalized = _python_normalize_quality_text(text)
     return hashlib.sha256(normalized.encode()).hexdigest()[:32]
 

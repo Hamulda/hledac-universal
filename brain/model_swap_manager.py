@@ -27,18 +27,21 @@ Usage:
     manager = ModelSwapManager(lifecycle=my_lifecycle_object)
     result = await manager.async_swap_to("qwen")
 """
+
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any, TypeVar
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
-T = TypeVar('T', default=Any)
+T = TypeVar("T", default=Any)
+
 
 class ModelLifecycleProtocol(Struct, frozen=True):
     """
@@ -55,7 +58,6 @@ class ModelLifecycleProtocol(Struct, frozen=True):
 
     def get_current_model_name(self) -> str | None:
         """Return currently loaded model name, or None if no model loaded."""
-        ...
 
     async def cancel_pending_model_tasks(self, model_name: str) -> int:
         """
@@ -68,7 +70,6 @@ class ModelLifecycleProtocol(Struct, frozen=True):
 
     async def unload_current_model(self) -> None:
         """Unload the currently active model."""
-        ...
 
     async def load_model(self, target_model: str) -> bool:
         """
@@ -78,6 +79,7 @@ class ModelLifecycleProtocol(Struct, frozen=True):
             True if load succeeded, False otherwise.
         """
         return False
+
 
 class SwapResult(Struct, frozen=True):
     """
@@ -96,6 +98,7 @@ class SwapResult(Struct, frozen=True):
         error: Error message if swap failed, None otherwise.
         duration_ms: Time taken for the swap operation in milliseconds.
     """
+
     target_model: str
     previous_model: str | None
     success: bool
@@ -108,19 +111,24 @@ class SwapResult(Struct, frozen=True):
     error: str | None = None
     duration_ms: float = 0.0
 
+
 class SwapStatus(Struct, frozen=True):
     """Lightweight snapshot of swap manager state."""
+
     current_model: str | None
     swap_in_progress: bool
     total_swaps: int
     failed_swaps: int
     last_swap_ms: float | None
 
+
 class DrainResult(Struct, frozen=True):
     """Result of a drain operation."""
+
     cancelled_count: int
     timed_out: bool
     error: str | None
+
 
 class ModelSwapManager:
     """
@@ -134,10 +142,19 @@ class ModelSwapManager:
     5. Žádné background tasky, žádné circular importy
     6. Async-safe přes asyncio.Lock
     """
-    DEFAULT_DRAIN_TIMEOUT: float = 3.0
-    __slots__ = tuple(('_drain_timeout', '_failed_swaps', '_last_swap_ms', '_lifecycle', '_lock', '_swap_in_progress', '_total_swaps'))
 
-    def __init__(self, lifecycle: Any, drain_timeout: float | None=None) -> None:
+    DEFAULT_DRAIN_TIMEOUT: float = 3.0
+    __slots__ = (
+        "_drain_timeout",
+        "_failed_swaps",
+        "_last_swap_ms",
+        "_lifecycle",
+        "_lock",
+        "_swap_in_progress",
+        "_total_swaps",
+    )
+
+    def __init__(self, lifecycle: Any, drain_timeout: float | None = None) -> None:
         """
         Initialize ModelSwapManager.
 
@@ -188,7 +205,7 @@ class ModelSwapManager:
                     current_model = self._lifecycle.get_current_model_name()
                     previous_model = current_model
                 except Exception as e:
-                    logger.warning(f'[SWAP] get_current_model_name failed: {e}')
+                    logger.warning(f"[SWAP] get_current_model_name failed: {e}")
                     current_model = None
                     previous_model = None
                 if current_model == target_model:
@@ -197,46 +214,70 @@ class ModelSwapManager:
                     duration_ms = (time.perf_counter() - t0) * 1000.0
                     self._last_swap_ms = duration_ms
                     self._swap_in_progress = False
-                    return SwapResult(target_model=target_model, previous_model=previous_model, success=True, cancelled_pending=0, cancel_supported=False, cancelled_timed_out=False, rollback_attempted=False, rollback_succeeded=False, noop=True, error=None, duration_ms=duration_ms)
+                    return SwapResult(
+                        target_model=target_model,
+                        previous_model=previous_model,
+                        success=True,
+                        cancelled_pending=0,
+                        cancel_supported=False,
+                        cancelled_timed_out=False,
+                        rollback_attempted=False,
+                        rollback_succeeded=False,
+                        noop=True,
+                        error=None,
+                        duration_ms=duration_ms,
+                    )
                 drain_result = await self._safe_drain(current_model)
                 cancelled_pending = drain_result.cancelled_count
                 cancelled_timed_out = drain_result.timed_out
                 if drain_result.error and (not drain_result.timed_out):
-                    logger.warning(f'[SWAP] drain warning: {drain_result.error}')
+                    logger.warning(f"[SWAP] drain warning: {drain_result.error}")
                 if cancelled_timed_out:
                     duration_ms = (time.perf_counter() - t0) * 1000.0
                     self._last_swap_ms = duration_ms
                     self._total_swaps += 1
                     self._failed_swaps += 1
                     self._swap_in_progress = False
-                    return SwapResult(target_model=target_model, previous_model=previous_model, success=False, cancelled_pending=cancelled_pending, cancel_supported=True, cancelled_timed_out=True, rollback_attempted=False, rollback_succeeded=False, noop=False, error='drain_timeout', duration_ms=duration_ms)
+                    return SwapResult(
+                        target_model=target_model,
+                        previous_model=previous_model,
+                        success=False,
+                        cancelled_pending=cancelled_pending,
+                        cancel_supported=True,
+                        cancelled_timed_out=True,
+                        rollback_attempted=False,
+                        rollback_succeeded=False,
+                        noop=False,
+                        error="drain_timeout",
+                        duration_ms=duration_ms,
+                    )
                 if current_model is not None:
                     try:
                         await self._lifecycle.unload_current_model()
-                        logger.info(f'[SWAP] Unloaded {current_model}')
+                        logger.info(f"[SWAP] Unloaded {current_model}")
                     except Exception as e:
-                        logger.warning(f'[SWAP] unload_current_model failed: {e}')
+                        logger.warning(f"[SWAP] unload_current_model failed: {e}")
                 try:
                     load_ok = await self._lifecycle.load_model(target_model)
                     if load_ok:
                         success = True
-                        logger.info(f'[SWAP] Loaded {target_model}')
+                        logger.info(f"[SWAP] Loaded {target_model}")
                     else:
-                        error = 'load_failed'
+                        error = "load_failed"
                         if previous_model is not None:
                             rollback_attempted = True
                             rollback_succeeded = await self._safe_rollback(previous_model)
                             if not rollback_succeeded:
-                                error = 'critical_no_model'
+                                error = "critical_no_model"
                 except Exception as e:
-                    error = f'load_exception:{e}'
+                    error = f"load_exception:{e}"
                     if previous_model is not None:
                         rollback_attempted = True
                         rollback_succeeded = await self._safe_rollback(previous_model)
                         if not rollback_succeeded:
-                            error = 'critical_no_model'
+                            error = "critical_no_model"
         except Exception as e:
-            error = f'swap_exception:{e}'
+            error = f"swap_exception:{e}"
             success = False
         finally:
             self._swap_in_progress = False
@@ -245,7 +286,19 @@ class ModelSwapManager:
             self._total_swaps += 1
             if not success:
                 self._failed_swaps += 1
-        return SwapResult(target_model=target_model, previous_model=previous_model, success=success, cancelled_pending=cancelled_pending, cancel_supported=True, cancelled_timed_out=cancelled_timed_out, rollback_attempted=rollback_attempted, rollback_succeeded=rollback_succeeded, noop=noop, error=error, duration_ms=duration_ms)
+        return SwapResult(
+            target_model=target_model,
+            previous_model=previous_model,
+            success=success,
+            cancelled_pending=cancelled_pending,
+            cancel_supported=True,
+            cancelled_timed_out=cancelled_timed_out,
+            rollback_attempted=rollback_attempted,
+            rollback_succeeded=rollback_succeeded,
+            noop=noop,
+            error=error,
+            duration_ms=duration_ms,
+        )
 
     def get_swap_status(self) -> SwapStatus:
         """
@@ -253,7 +306,13 @@ class ModelSwapManager:
 
         This method is intentionally lock-free and cheap — reads atomic counters.
         """
-        return SwapStatus(current_model=self._lifecycle.get_current_model_name(), swap_in_progress=self._swap_in_progress, total_swaps=self._total_swaps, failed_swaps=self._failed_swaps, last_swap_ms=self._last_swap_ms)
+        return SwapStatus(
+            current_model=self._lifecycle.get_current_model_name(),
+            swap_in_progress=self._swap_in_progress,
+            total_swaps=self._total_swaps,
+            failed_swaps=self._failed_swaps,
+            last_swap_ms=self._last_swap_ms,
+        )
 
     @property
     def lifecycle(self) -> Any:
@@ -274,10 +333,10 @@ class ModelSwapManager:
                 cancelled = await self._lifecycle.cancel_pending_model_tasks(model_name)
             return DrainResult(cancelled_count=cancelled, timed_out=False, error=None)
         except TimeoutError:
-            logger.warning(f'[SWAP] Drain timed out after {self._drain_timeout}s for {model_name}')
-            return DrainResult(cancelled_count=0, timed_out=True, error='drain_timeout')
+            logger.warning(f"[SWAP] Drain timed out after {self._drain_timeout}s for {model_name}")
+            return DrainResult(cancelled_count=0, timed_out=True, error="drain_timeout")
         except Exception as e:
-            logger.warning(f'[SWAP] Drain failed: {e}')
+            logger.warning(f"[SWAP] Drain failed: {e}")
             return DrainResult(cancelled_count=0, timed_out=False, error=str(e))
 
     async def _safe_rollback(self, previous_model: str | None) -> bool:
@@ -290,13 +349,13 @@ class ModelSwapManager:
         if previous_model is None:
             return False
         try:
-            logger.warning(f'[SWAP] Attempting rollback to {previous_model}')
+            logger.warning(f"[SWAP] Attempting rollback to {previous_model}")
             ok = await self._lifecycle.load_model(previous_model)
             if ok:
-                logger.info(f'[SWAP] Rollback to {previous_model} succeeded')
+                logger.info(f"[SWAP] Rollback to {previous_model} succeeded")
             else:
-                logger.error(f'[SWAP] Rollback to {previous_model} returned False')
+                logger.error(f"[SWAP] Rollback to {previous_model} returned False")
             return ok
         except Exception as e:
-            logger.error(f'[SWAP] Rollback to {previous_model} failed: {e}')
+            logger.error(f"[SWAP] Rollback to {previous_model} failed: {e}")
             return False

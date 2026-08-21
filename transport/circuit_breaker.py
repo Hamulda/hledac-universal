@@ -42,40 +42,62 @@ GHOST_INVARIANTS:
 - RAM guard: registry evicts domains above MAX_TRACKED_DOMAINS via LRU
 - Fail-soft: if breaker check fails, fetch continues via safe path
 """
+
 from __future__ import annotations
-import asyncio
+
 import collections.abc
+import dataclasses
 import logging
 import secrets
 import threading
 import time
-from hledac.universal._core.locks import LockCategory, register_lock
-import dataclasses
-from dataclasses import field
 from enum import Enum
 from typing import TYPE_CHECKING, Final
-import msgspec
+
 from compat.msgspec_gc_compat import Struct
+from hledac.universal._core.locks import LockCategory, register_lock
+
 if TYPE_CHECKING:
     import httpx
 logger = logging.getLogger(__name__)
 _JITTER_RNG = secrets.SystemRandom()
-__all__ = ['CircuitBreaker', 'CircuitBreakerEvents', 'CircuitBreakerOpen', 'CircuitState', 'DomainCircuitBreakerRegistry', 'ModelCircuitBreakerRegistry', 'TRANSPORT_CIRCUIT_CLOSE', 'TRANSPORT_CIRCUIT_HALF_OPEN', 'TRANSPORT_CIRCUIT_OPEN', 'TransportCircuitBreaker', 'checked_aiohttp_get', 'get_all_breaker_states', 'get_all_breaker_states_async', 'get_breaker', 'get_transport_breaker', 'get_transport_event_callback', 'record_failure', 'rust_circuit_is_open', 'set_transport_event_callback']
+__all__ = [
+    "CircuitBreaker",
+    "CircuitBreakerEvents",
+    "CircuitBreakerOpen",
+    "CircuitState",
+    "DomainCircuitBreakerRegistry",
+    "ModelCircuitBreakerRegistry",
+    "TRANSPORT_CIRCUIT_CLOSE",
+    "TRANSPORT_CIRCUIT_HALF_OPEN",
+    "TRANSPORT_CIRCUIT_OPEN",
+    "TransportCircuitBreaker",
+    "checked_aiohttp_get",
+    "get_all_breaker_states",
+    "get_all_breaker_states_async",
+    "get_breaker",
+    "get_transport_breaker",
+    "get_transport_event_callback",
+    "record_failure",
+    "rust_circuit_is_open",
+    "set_transport_event_callback",
+]
 try:
     from hledac.universal.config import _cb_float, _cb_int
-    MAX_TRACKED_DOMAINS: Final[int] = _cb_int('MAX_TRACKED_DOMAINS')
-    MAX_RECOVERY_TIMEOUT_S: Final[float] = _cb_float('MAX_RECOVERY_TIMEOUT_S')
-    BOOT_RECOVERY_TIMEOUT_S: Final[float] = _cb_float('BOOT_RECOVERY_TIMEOUT_S')
-    BASE_RECOVERY_TIMEOUT_S: Final[float] = _cb_float('BASE_RECOVERY_TIMEOUT_S')
-    _BOOT_PHASE_DURATION_S: Final[float] = _cb_float('BOOT_PHASE_DURATION_S')
+
+    MAX_TRACKED_DOMAINS: Final[int] = _cb_int("MAX_TRACKED_DOMAINS")
+    MAX_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("MAX_RECOVERY_TIMEOUT_S")
+    BOOT_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("BOOT_RECOVERY_TIMEOUT_S")
+    BASE_RECOVERY_TIMEOUT_S: Final[float] = _cb_float("BASE_RECOVERY_TIMEOUT_S")
+    _BOOT_PHASE_DURATION_S: Final[float] = _cb_float("BOOT_PHASE_DURATION_S")
     _BOOT_PHASE_PAST_S: Final[float] = 99999.0
-    CIRCUIT_FAILURE_THRESHOLD: Final[int] = _cb_int('CIRCUIT_FAILURE_THRESHOLD')
-    CIRCUIT_HALF_OPEN_PROBES: Final[int] = _cb_int('CIRCUIT_HALF_OPEN_PROBES')
-    _TIMEOUT_ACCUMULATOR_WEIGHT: Final[float] = _cb_float('TIMEOUT_ACCUMULATOR_WEIGHT')
-    _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD: Final[int] = _cb_int('CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD')
-    _JITTER_MIN_MULTIPLIER: Final[float] = _cb_float('JITTER_MIN_MULTIPLIER')
-    _JITTER_MAX_MULTIPLIER: Final[float] = _cb_float('JITTER_MAX_MULTIPLIER')
-    _JITTER_MIN_FRACTION: Final[float] = _cb_float('JITTER_MIN_FRACTION')
+    CIRCUIT_FAILURE_THRESHOLD: Final[int] = _cb_int("CIRCUIT_FAILURE_THRESHOLD")
+    CIRCUIT_HALF_OPEN_PROBES: Final[int] = _cb_int("CIRCUIT_HALF_OPEN_PROBES")
+    _TIMEOUT_ACCUMULATOR_WEIGHT: Final[float] = _cb_float("TIMEOUT_ACCUMULATOR_WEIGHT")
+    _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD: Final[int] = _cb_int("CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD")
+    _JITTER_MIN_MULTIPLIER: Final[float] = _cb_float("JITTER_MIN_MULTIPLIER")
+    _JITTER_MAX_MULTIPLIER: Final[float] = _cb_float("JITTER_MAX_MULTIPLIER")
+    _JITTER_MIN_FRACTION: Final[float] = _cb_float("JITTER_MIN_FRACTION")
 except ImportError:
     MAX_TRACKED_DOMAINS: Final[int] = 500
     MAX_RECOVERY_TIMEOUT_S: Final[float] = 120.0
@@ -91,12 +113,13 @@ except ImportError:
     _JITTER_MAX_MULTIPLIER: Final[float] = 1.5
     _JITTER_MIN_FRACTION: Final[float] = 0.1
 _boot_started_at: float = 0.0
-_CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {'crt.sh': 120.0, 'certstream': 120.0}
+_CIRCUIT_BREAKER_TTL_S: Final[dict[str, float]] = {"crt.sh": 120.0, "certstream": 120.0}
 _DEFAULT_TTL_S: Final[float] = BASE_RECOVERY_TIMEOUT_S
-TRANSPORT_CIRCUIT_OPEN: str = 'TRANSPORT_CIRCUIT_OPEN'
-TRANSPORT_CIRCUIT_HALF_OPEN: str = 'TRANSPORT_CIRCUIT_HALF_OPEN'
-TRANSPORT_CIRCUIT_CLOSE: str = 'TRANSPORT_CIRCUIT_CLOSE'
+TRANSPORT_CIRCUIT_OPEN: str = "TRANSPORT_CIRCUIT_OPEN"
+TRANSPORT_CIRCUIT_HALF_OPEN: str = "TRANSPORT_CIRCUIT_HALF_OPEN"
+TRANSPORT_CIRCUIT_CLOSE: str = "TRANSPORT_CIRCUIT_CLOSE"
 _transport_event_callback: collections.abc.Callable[[str, str], None] | None = None
+
 
 def set_transport_event_callback(cb: collections.abc.Callable[[str, str], None] | None) -> None:
     """Set the global transport circuit event callback.
@@ -107,9 +130,11 @@ def set_transport_event_callback(cb: collections.abc.Callable[[str, str], None] 
     global _transport_event_callback
     _transport_event_callback = cb
 
+
 def get_transport_event_callback() -> collections.abc.Callable[[str, str], None] | None:
     """Return the current global transport circuit event callback."""
     return _transport_event_callback
+
 
 def _emit_transport_event(event: str, domain: str) -> None:
     """Fire-and-forget emit a circuit event to the registered callback."""
@@ -121,21 +146,26 @@ def _emit_transport_event(event: str, domain: str) -> None:
     except Exception:
         pass
 
+
 class CBState(Enum):
-    CLOSED = 'closed'
-    OPEN = 'open'
-    HALF_OPEN = 'half_open'
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
 
 def _metrics_safe_increment(metric_name: str) -> None:
     """Fire-and-forget metric increment — never blocks CB logic."""
     try:
         from metrics_registry import get_metrics_registry
+
         get_metrics_registry().inc(metric_name)
     except Exception:
         pass
 
+
 class CircuitBreakerSnapshot(Struct, frozen=True, kw_only=True):
     """Immutable snapshot of circuit breaker state for diagnostics."""
+
     domain: str
     state: str
     failure_count: int
@@ -144,13 +174,16 @@ class CircuitBreakerSnapshot(Struct, frozen=True, kw_only=True):
     last_failure_kind: str
     warmup_failure_count: int = 0
 
+
 class CircuitDecision(Struct, frozen=True, kw_only=True):
     """Decision returned when checking a domain circuit breaker."""
+
     allowed: bool
     domain: str
     state: str
     retry_after_s: float
     reason: str
+
 
 @dataclasses.dataclass
 class CircuitBreaker:
@@ -166,6 +199,7 @@ class CircuitBreaker:
     Invariant: hold _state_lock for ALL reads AND writes of _state, _failure_count,
     _consecutive_timeouts, _half_open_probes, recovery_timeout fields.
     """
+
     domain: str
     failure_threshold: int = CIRCUIT_FAILURE_THRESHOLD
     recovery_timeout: float = BASE_RECOVERY_TIMEOUT_S
@@ -176,7 +210,7 @@ class CircuitBreaker:
     _last_failure_time: float = dataclasses.field(default=0.0, init=False)
     _consecutive_timeouts: int = dataclasses.field(default=0, init=False)
     _opened_at_monotonic: float = dataclasses.field(default=0.0, init=False)
-    _last_failure_kind: str = dataclasses.field(default='', init=False)
+    _last_failure_kind: str = dataclasses.field(default="", init=False)
     _half_open_probes: int = dataclasses.field(default=0, init=False)
     _state_entered_at_monotonic: float = dataclasses.field(default_factory=time.monotonic, init=False)
     _state_lock: threading.RLock = dataclasses.field(default=None, init=False)
@@ -192,13 +226,14 @@ class CircuitBreaker:
         """Sprint F4: Record duration gauge when transitioning between states."""
         try:
             from metrics_registry import get_metrics_registry
+
             duration = time.monotonic() - self._state_entered_at_monotonic
             if from_state == CBState.OPEN and to_state == CBState.HALF_OPEN:
-                get_metrics_registry().set_gauge('circuit_breaker_open_duration_s', duration)
+                get_metrics_registry().set_gauge("circuit_breaker_open_duration_s", duration)
             elif from_state == CBState.HALF_OPEN and to_state == CBState.CLOSED:
-                get_metrics_registry().set_gauge('circuit_breaker_half_open_duration_s', duration)
+                get_metrics_registry().set_gauge("circuit_breaker_half_open_duration_s", duration)
             elif from_state == CBState.CLOSED and to_state == CBState.OPEN:
-                get_metrics_registry().set_gauge('circuit_breaker_closed_duration_s', duration)
+                get_metrics_registry().set_gauge("circuit_breaker_closed_duration_s", duration)
         except Exception:
             pass
 
@@ -210,7 +245,7 @@ class CircuitBreaker:
         # re-transition (would reset _half_open_probes counter, breaking Rust/Python sync).
         if self._rust_cb:
             try:
-                rust_open = self._rust_cb['is_open'](self.domain)
+                rust_open = self._rust_cb["is_open"](self.domain)
                 if rust_open:
                     return True  # Circuit definitively blocked
                 # Rust says not open — check Python state to avoid HALF_OPEN double-transition
@@ -227,12 +262,12 @@ class CircuitBreaker:
                         self._half_open_probes = 0
                         self._state_entered_at_monotonic = time.monotonic()
                         self._record_state_duration(prev, self._state)
-                        _metrics_safe_increment('circuit_breaker_state_transitions')
-                        _metrics_safe_increment('circuit_breaker_half_open_count')
+                        _metrics_safe_increment("circuit_breaker_state_transitions")
+                        _metrics_safe_increment("circuit_breaker_half_open_count")
                         _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
                         return False
                     return False  # CLOSED
-            except (SystemError, OSError, RuntimeError):
+            except SystemError, OSError, RuntimeError:
                 pass  # Fall through to Python for full logic
         # Python fallback: handles half-open transitions, metrics, events
         with self._state_lock:
@@ -243,8 +278,8 @@ class CircuitBreaker:
                     self._half_open_probes = 0
                     self._state_entered_at_monotonic = time.monotonic()
                     self._record_state_duration(prev, self._state)
-                    _metrics_safe_increment('circuit_breaker_state_transitions')
-                    _metrics_safe_increment('circuit_breaker_half_open_count')
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_half_open_count")
                     _emit_transport_event(TRANSPORT_CIRCUIT_HALF_OPEN, self.domain)
                     return False
                 return True
@@ -258,7 +293,9 @@ class CircuitBreaker:
         samples from the same range, spreading out retry attempts.
         """
         try:
-            raw = _JITTER_RNG.uniform(_JITTER_MIN_MULTIPLIER * self.recovery_timeout, _JITTER_MAX_MULTIPLIER * self.recovery_timeout)
+            raw = _JITTER_RNG.uniform(
+                _JITTER_MIN_MULTIPLIER * self.recovery_timeout, _JITTER_MAX_MULTIPLIER * self.recovery_timeout
+            )
             floor = _JITTER_MIN_FRACTION * self.recovery_timeout
             return max(raw, floor)
         except Exception:
@@ -274,50 +311,82 @@ class CircuitBreaker:
                     self._half_open_probes = 0
                     self._state_entered_at_monotonic = time.monotonic()
                     self._record_state_duration(prev, self._state)
-                    _metrics_safe_increment('circuit_breaker_state_transitions')
-                    _metrics_safe_increment('circuit_breaker_half_open_count')
-                    return CircuitDecision(allowed=True, domain=self.domain, state='half_open', retry_after_s=self._jittered_retry_after(), reason='circuit_half_open_recovery_probe')
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_half_open_count")
+                    return CircuitDecision(
+                        allowed=True,
+                        domain=self.domain,
+                        state="half_open",
+                        retry_after_s=self._jittered_retry_after(),
+                        reason="circuit_half_open_recovery_probe",
+                    )
                 remaining = self.recovery_timeout - (time.monotonic() - self._last_failure_time)
                 jittered_after = self._jittered_retry_after() if remaining > 0 else 0.0
                 try:
                     from hledac.universal.monitoring.alert_manager import check_circuit_breaker_alert
                     from hledac.universal.utils.asyncx import safe_create_task
-                    safe_create_task(check_circuit_breaker_alert(domain=self.domain, is_open=True, recovery_timeout=self.recovery_timeout), otel_trace=False)
+
+                    safe_create_task(
+                        check_circuit_breaker_alert(
+                            domain=self.domain, is_open=True, recovery_timeout=self.recovery_timeout
+                        ),
+                        otel_trace=False,
+                    )
                 except Exception:
                     pass
-                return CircuitDecision(allowed=False, domain=self.domain, state='open', retry_after_s=jittered_after, reason='circuit_open_failure_threshold_exceeded')
+                return CircuitDecision(
+                    allowed=False,
+                    domain=self.domain,
+                    state="open",
+                    retry_after_s=jittered_after,
+                    reason="circuit_open_failure_threshold_exceeded",
+                )
             if self._state == CBState.HALF_OPEN:
                 if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
                     prev = self._state
                     self._state = CBState.CLOSED
                     self._state_entered_at_monotonic = time.monotonic()
                     self._record_state_duration(prev, self._state)
-                    _metrics_safe_increment('circuit_breaker_state_transitions')
-                    _metrics_safe_increment('circuit_breaker_open_count')
+                    _metrics_safe_increment("circuit_breaker_state_transitions")
+                    _metrics_safe_increment("circuit_breaker_open_count")
                     _emit_transport_event(TRANSPORT_CIRCUIT_CLOSE, self.domain)
-                    return CircuitDecision(allowed=False, domain=self.domain, state='closed', retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)), reason='circuit_half_open_max_probes_reached')
+                    return CircuitDecision(
+                        allowed=False,
+                        domain=self.domain,
+                        state="closed",
+                        retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
+                        reason="circuit_half_open_max_probes_reached",
+                    )
                 self._half_open_probes += 1
                 jittered = self._jittered_retry_after()
-                return CircuitDecision(allowed=True, domain=self.domain, state='half_open', retry_after_s=jittered, reason='circuit_half_open_probe_allowed')
-            return CircuitDecision(allowed=True, domain=self.domain, state='closed', retry_after_s=0.0, reason='circuit_closed')
+                return CircuitDecision(
+                    allowed=True,
+                    domain=self.domain,
+                    state="half_open",
+                    retry_after_s=jittered,
+                    reason="circuit_half_open_probe_allowed",
+                )
+            return CircuitDecision(
+                allowed=True, domain=self.domain, state="closed", retry_after_s=0.0, reason="circuit_closed"
+            )
 
-    def record_success(self):
+    def record_success(self) -> None:
         # A3: Rust lock-free record_success — fast path
         # Rust AtomicU32 resets failure_count without GIL contention
         # FIX-3: Also call Rust half_open_probe to count probes in HALF_OPEN state.
         # This keeps Rust's probe counter in sync with Python.
         if self._rust_cb:
             try:
-                self._rust_cb['record_success'](self.domain)
+                self._rust_cb["record_success"](self.domain)
                 # Count probe in HALF_OPEN if Rust is tracking this state
-                half_open_probe = self._rust_cb.get('half_open_probe')
+                half_open_probe = self._rust_cb.get("half_open_probe")
                 if half_open_probe:
                     half_open_probe(self.domain)
-            except (SystemError, OSError, RuntimeError):
+            except SystemError, OSError, RuntimeError:
                 pass  # Fall through to Python for full logic
         # Python: authoritative for metrics, events, adaptive timeout
         event_to_emit: str | None = None
-        _domain_for_emit: str = ''
+        _domain_for_emit: str = ""
         with self._state_lock:
             prev = self._state
             self._failure_count = 0
@@ -325,18 +394,25 @@ class CircuitBreaker:
             self._half_open_probes = 0
             self._state = CBState.CLOSED
             self.recovery_timeout = BASE_RECOVERY_TIMEOUT_S
-            self._last_failure_kind = ''
+            self._last_failure_kind = ""
             if prev == CBState.HALF_OPEN:
                 self._state_entered_at_monotonic = time.monotonic()
                 self._record_state_duration(prev, CBState.CLOSED)
-                _metrics_safe_increment('circuit_breaker_state_transitions')
-                _metrics_safe_increment('circuit_breaker_recovery_success')
+                _metrics_safe_increment("circuit_breaker_state_transitions")
+                _metrics_safe_increment("circuit_breaker_recovery_success")
                 event_to_emit = TRANSPORT_CIRCUIT_CLOSE
                 _domain_for_emit = self.domain
         if event_to_emit is not None:
             _emit_transport_event(event_to_emit, _domain_for_emit)
 
-    def record_failure(self, is_timeout: bool=False, failure_kind: str='', *, is_warmup: bool=False, sprint_remaining_s: float | None=None):
+    def record_failure(
+        self,
+        is_timeout: bool = False,
+        failure_kind: str = "",
+        *,
+        is_warmup: bool = False,
+        sprint_remaining_s: float | None = None,
+    ) -> None:
         """Record a failure against the circuit breaker.
 
         A3: Rust lock-free record_failure — fast path.
@@ -358,20 +434,20 @@ class CircuitBreaker:
         # Warmup failures: Python-only (Rust has no warmup concept)
         if not is_warmup and self._rust_cb:
             try:
-                self._rust_cb['record_failure'](self.domain, is_timeout)
-            except (SystemError, OSError, RuntimeError):
+                self._rust_cb["record_failure"](self.domain, is_timeout)
+            except SystemError, OSError, RuntimeError:
                 pass  # Fall through to Python for full logic
         # Python: authoritative for warmup, adaptive timeout, metrics, events
         event_to_emit: str | None = None
-        _domain_for_emit: str = ''
+        _domain_for_emit: str = ""
         with self._state_lock:
             if is_warmup:
                 self._warmup_failure_count += 1
                 self._warmup_last_failure_time = time.monotonic()
-                self._last_failure_kind = failure_kind or ('warmup_timeout' if is_timeout else 'warmup_error')
+                self._last_failure_kind = failure_kind or ("warmup_timeout" if is_timeout else "warmup_error")
                 return
             self._last_failure_time = time.monotonic()
-            self._last_failure_kind = failure_kind or ('timeout' if is_timeout else 'error')
+            self._last_failure_kind = failure_kind or ("timeout" if is_timeout else "error")
             if is_timeout:
                 self._consecutive_timeouts += _TIMEOUT_ACCUMULATOR_WEIGHT
                 if self._consecutive_timeouts >= _CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD:
@@ -398,8 +474,8 @@ class CircuitBreaker:
                 if prev != CBState.OPEN:
                     self._record_state_duration(prev, CBState.OPEN)
                     try:
-                        _metrics_safe_increment('circuit_breaker_state_transitions')
-                        _metrics_safe_increment('circuit_breaker_open_count')
+                        _metrics_safe_increment("circuit_breaker_state_transitions")
+                        _metrics_safe_increment("circuit_breaker_open_count")
                     except Exception:
                         pass
                     event_to_emit = TRANSPORT_CIRCUIT_OPEN
@@ -420,12 +496,23 @@ class CircuitBreaker:
     def get_snapshot(self) -> CircuitBreakerSnapshot:
         """Return immutable snapshot of current state."""
         with self._state_lock:
-            return CircuitBreakerSnapshot(domain=self.domain, state=self._state.value, failure_count=self._failure_count, warmup_failure_count=self._warmup_failure_count, recovery_timeout_s=self.recovery_timeout, opened_at_monotonic=self._opened_at_monotonic, last_failure_kind=self._last_failure_kind)
+            return CircuitBreakerSnapshot(
+                domain=self.domain,
+                state=self._state.value,
+                failure_count=self._failure_count,
+                warmup_failure_count=self._warmup_failure_count,
+                recovery_timeout_s=self.recovery_timeout,
+                opened_at_monotonic=self._opened_at_monotonic,
+                last_failure_kind=self._last_failure_kind,
+            )
+
+
 from hledac.universal.utils.cache import PyCacheDict
-from _core import aclose
+
 _rust_cb: dict | None = None
 _rust_cb_lock = threading.Lock()
-register_lock(LockCategory.NETWORK, _rust_cb_lock, 'circuit_breaker._rust_cb_lock')
+register_lock(LockCategory.NETWORK, _rust_cb_lock, "circuit_breaker._rust_cb_lock")
+
 
 def _get_rust_cb() -> dict:
     """Lazy load Rust circuit breaker functions — thread-safe singleton.
@@ -443,21 +530,30 @@ def _get_rust_cb() -> dict:
         if _rust_cb is None:
             try:
                 from hledac.universal._core.rust_backend import rust
+
                 raw = rust.raw
-                circuit_breaker_is_open = getattr(raw, 'circuit_breaker_is_open', None)
-                circuit_breaker_record_success = getattr(raw, 'circuit_breaker_record_success', None)
-                circuit_breaker_record_failure = getattr(raw, 'circuit_breaker_record_failure', None)
-                circuit_breaker_half_open_probe = getattr(raw, 'circuit_breaker_half_open_probe', None)
-                circuit_breaker_clear_all = getattr(raw, 'circuit_breaker_clear_all', None)
-                circuit_breaker_get_stats = getattr(raw, 'circuit_breaker_get_stats', None)
+                circuit_breaker_is_open = getattr(raw, "circuit_breaker_is_open", None)
+                circuit_breaker_record_success = getattr(raw, "circuit_breaker_record_success", None)
+                circuit_breaker_record_failure = getattr(raw, "circuit_breaker_record_failure", None)
+                circuit_breaker_half_open_probe = getattr(raw, "circuit_breaker_half_open_probe", None)
+                circuit_breaker_clear_all = getattr(raw, "circuit_breaker_clear_all", None)
+                circuit_breaker_get_stats = getattr(raw, "circuit_breaker_get_stats", None)
                 if all([circuit_breaker_is_open, circuit_breaker_record_success, circuit_breaker_record_failure]):
-                    _rust_cb = {'is_open': circuit_breaker_is_open, 'record_success': circuit_breaker_record_success, 'record_failure': circuit_breaker_record_failure, 'half_open_probe': circuit_breaker_half_open_probe, 'clear_all': circuit_breaker_clear_all, 'get_stats': circuit_breaker_get_stats}
+                    _rust_cb = {
+                        "is_open": circuit_breaker_is_open,
+                        "record_success": circuit_breaker_record_success,
+                        "record_failure": circuit_breaker_record_failure,
+                        "half_open_probe": circuit_breaker_half_open_probe,
+                        "clear_all": circuit_breaker_clear_all,
+                        "get_stats": circuit_breaker_get_stats,
+                    }
                 else:
                     _rust_cb = {}
             except Exception:
                 # Rust backend unavailable (not built, import error, etc.)
                 _rust_cb = {}
     return _rust_cb
+
 
 def rust_circuit_is_open(domain: str) -> bool | None:
     """Fast-path lock-free circuit check via Rust.
@@ -471,9 +567,10 @@ def rust_circuit_is_open(domain: str) -> bool | None:
     if not cb:
         return None
     try:
-        return cb['is_open'](domain)
+        return cb["is_open"](domain)
     except Exception:
         return None
+
 
 def rust_circuit_record_success(domain: str) -> None:
     """Record success in Rust circuit breaker — resets failure count.
@@ -487,11 +584,12 @@ def rust_circuit_record_success(domain: str) -> None:
     if not cb:
         return
     try:
-        cb['record_success'](domain)
+        cb["record_success"](domain)
     except Exception:
         pass
 
-def rust_circuit_record_failure(domain: str, is_timeout: bool=False) -> None:
+
+def rust_circuit_record_failure(domain: str, is_timeout: bool = False) -> None:
     """Record failure in Rust circuit breaker — trips after threshold.
 
     ISSUE-41: Called alongside Python CircuitBreaker.record_failure()
@@ -503,12 +601,15 @@ def rust_circuit_record_failure(domain: str, is_timeout: bool=False) -> None:
     if not cb:
         return
     try:
-        cb['record_failure'](domain, is_timeout)
+        cb["record_failure"](domain, is_timeout)
     except Exception:
         pass
+
+
 _BREAKERS: PyCacheDict[str, CircuitBreaker] = PyCacheDict(maxsize=MAX_TRACKED_DOMAINS)
 _breakers_lock = threading.Lock()
-register_lock(LockCategory.NETWORK, _breakers_lock, 'circuit_breaker._breakers_lock')
+register_lock(LockCategory.NETWORK, _breakers_lock, "circuit_breaker._breakers_lock")
+
 
 def _get_effective_ttl(domain: str) -> float:
     """Return TTL based on boot vs runtime phase.
@@ -527,6 +628,7 @@ def _get_effective_ttl(domain: str) -> float:
         return BOOT_RECOVERY_TIMEOUT_S
     return BASE_RECOVERY_TIMEOUT_S
 
+
 def get_breaker(domain: str) -> CircuitBreaker:
     """Canonical domain circuit breaker accessor with LRU eviction.
 
@@ -539,6 +641,7 @@ def get_breaker(domain: str) -> CircuitBreaker:
         ttl = _get_effective_ttl(domain)
         _BREAKERS[domain] = CircuitBreaker(domain=domain, recovery_timeout=ttl)
         return _BREAKERS[domain]
+
 
 def _sync_snapshot_breakers() -> dict[str, str]:
     """Thread-safe snapshot bez nested locking — lock-free read pattern.
@@ -556,6 +659,7 @@ def _sync_snapshot_breakers() -> dict[str, str]:
         domains = list(_BREAKERS.keys())
     return {d: _BREAKERS[d].get_state() for d in domains if d in _BREAKERS}
 
+
 def get_all_breaker_states() -> dict[str, str]:
     """Vrátí snapshot stavů všech breakerů — lock-free read pattern.
 
@@ -563,6 +667,7 @@ def get_all_breaker_states() -> dict[str, str]:
     Bezpečné pro volání z thread pool (asyncio.to_thread) i sync kontextu.
     """
     return _sync_snapshot_breakers()
+
 
 async def get_all_breaker_states_async() -> dict[str, str]:
     """Async-friendly: to_thread run, žádný nested locking.
@@ -572,15 +677,30 @@ async def get_all_breaker_states_async() -> dict[str, str]:
     Safe pro volání z async context kde chceme non-blocking result.
     """
     import anyio
+
     return await anyio.to_thread.run_sync(_sync_snapshot_breakers)
+
 
 def get_all_breaker_snapshots() -> list[CircuitBreakerSnapshot]:
     with _breakers_lock:
         return [b.get_snapshot() for b in _BREAKERS.values()]
 
+
 def per_domain_stats() -> dict[str, dict]:
     with _breakers_lock:
-        return {d: {'state': b.get_state(), 'failure_count': b._failure_count, 'warmup_failure_count': b._warmup_failure_count, 'last_failure_time': b._last_failure_time, 'opened_at_monotonic': b._opened_at_monotonic, 'last_failure_kind': b._last_failure_kind, 'recovery_timeout_s': b.recovery_timeout} for d, b in _BREAKERS.items()}
+        return {
+            d: {
+                "state": b.get_state(),
+                "failure_count": b._failure_count,
+                "warmup_failure_count": b._warmup_failure_count,
+                "last_failure_time": b._last_failure_time,
+                "opened_at_monotonic": b._opened_at_monotonic,
+                "last_failure_kind": b._last_failure_kind,
+                "recovery_timeout_s": b.recovery_timeout,
+            }
+            for d, b in _BREAKERS.items()
+        }
+
 
 def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
     with _breakers_lock:
@@ -588,6 +708,7 @@ def get_snapshot(domain: str) -> CircuitBreakerSnapshot | None:
         if breaker is None:
             return None
         return breaker.get_snapshot()
+
 
 def clear_all_breakers() -> None:
     """Clear all circuit breaker state — used for testing.
@@ -599,6 +720,7 @@ def clear_all_breakers() -> None:
     with _breakers_lock:
         _BREAKERS.clear()
         _boot_started_at = 0.0
+
 
 @dataclasses.dataclass
 class ModelCircuitBreaker:
@@ -613,13 +735,14 @@ class ModelCircuitBreaker:
     HLEDAC_CB_MODEL_FAILURE_THRESHOLD / HLEDAC_CB_BASE_RECOVERY_TIMEOUT_S env vars
     at instantiation time.
     """
+
     model_id: str
-    failure_threshold: int = dataclasses.field(default_factory=lambda: _cb_int('CIRCUIT_FAILURE_THRESHOLD'))
-    recovery_timeout_s: float = dataclasses.field(default_factory=lambda: _cb_float('BASE_RECOVERY_TIMEOUT_S'))
+    failure_threshold: int = dataclasses.field(default_factory=lambda: _cb_int("CIRCUIT_FAILURE_THRESHOLD"))
+    recovery_timeout_s: float = dataclasses.field(default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S"))
     _failure_count: int = dataclasses.field(default=0, init=False, repr=False)
     _warmup_failure_count: int = dataclasses.field(default=0, init=False, repr=False)
     _last_failure_time: float = dataclasses.field(default=0.0, init=False, repr=False)
-    _last_failure_kind: str = dataclasses.field(default='', init=False, repr=False)
+    _last_failure_kind: str = dataclasses.field(default="", init=False, repr=False)
     _state: CBState = dataclasses.field(default=CBState.CLOSED, init=False)
     _state_lock: threading.RLock = dataclasses.field(default=None, init=False)
 
@@ -627,7 +750,15 @@ class ModelCircuitBreaker:
         if self._state_lock is None:
             self._state_lock = threading.RLock()
 
-    def record_failure(self, is_timeout: bool=False, failure_kind: str='', *, kind: str='', is_warmup: bool=False, sprint_remaining_s: float | None=None) -> None:
+    def record_failure(
+        self,
+        is_timeout: bool = False,
+        failure_kind: str = "",
+        *,
+        kind: str = "",
+        is_warmup: bool = False,
+        sprint_remaining_s: float | None = None,
+    ) -> None:
         """Record inference failure. Trips breaker at failure_threshold.
 
         Matches CircuitBreaker.record_failure signature for consistent API.
@@ -639,17 +770,19 @@ class ModelCircuitBreaker:
                 return
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
-            self._last_failure_kind = failure_kind or kind or 'unknown'
+            self._last_failure_kind = failure_kind or kind or "unknown"
             if self._failure_count >= self.failure_threshold:
                 self._state = CBState.OPEN
-                logger.warning(f'ModelCircuitBreaker OPEN: model={self.model_id!r} after {self._failure_count} failures, last={self._last_failure_kind!r}')
+                logger.warning(
+                    f"ModelCircuitBreaker OPEN: model={self.model_id!r} after {self._failure_count} failures, last={self._last_failure_kind!r}"
+                )
 
     def record_success(self) -> None:
         """Reset breaker on successful inference."""
         with self._state_lock:
             self._failure_count = 0
             self._state = CBState.CLOSED
-            self._last_failure_kind = ''
+            self._last_failure_kind = ""
 
     def reset(self) -> None:
         """Reset breaker to CLOSED state after successful inference.
@@ -661,7 +794,7 @@ class ModelCircuitBreaker:
             self._failure_count = 0
             self._state = CBState.CLOSED
             self._last_failure_time = 0.0
-            self._last_failure_kind = ''
+            self._last_failure_kind = ""
 
     def is_open(self) -> bool:
         """True if inference is blocked. HALF_OPEN allows a probe attempt.
@@ -676,9 +809,9 @@ class ModelCircuitBreaker:
                 elapsed = time.monotonic() - self._last_failure_time
                 if elapsed >= self.recovery_timeout_s:
                     self._state = CBState.HALF_OPEN
-                    _metrics_safe_increment('model_circuit_breaker_state_transitions')
-                    _metrics_safe_increment('model_circuit_breaker_half_open_count')
-                    _emit_transport_event(f'MODEL_CIRCUIT_{self._state.value.upper()}', self.model_id)
+                    _metrics_safe_increment("model_circuit_breaker_state_transitions")
+                    _metrics_safe_increment("model_circuit_breaker_half_open_count")
+                    _emit_transport_event(f"MODEL_CIRCUIT_{self._state.value.upper()}", self.model_id)
                     return True
                 return True
             if self._state == CBState.HALF_OPEN:
@@ -688,7 +821,16 @@ class ModelCircuitBreaker:
     def get_snapshot(self) -> dict:
         """Structured snapshot for telemetry/scorecard."""
         with self._state_lock:
-            return {'model_id': self.model_id, 'state': self._state.value, 'failure_count': self._failure_count, 'last_failure_kind': self._last_failure_kind, 'last_failure_age_s': round(time.monotonic() - self._last_failure_time, 1) if self._last_failure_time > 0 else None}
+            return {
+                "model_id": self.model_id,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "last_failure_kind": self._last_failure_kind,
+                "last_failure_age_s": round(time.monotonic() - self._last_failure_time, 1)
+                if self._last_failure_time > 0
+                else None,
+            }
+
 
 class TransportCircuitBreaker:
     """Transport-level circuit breaker for Tor/I2P.
@@ -698,10 +840,21 @@ class TransportCircuitBreaker:
 
     CB-03: Separate CircuitBreaker instances for transport:tor and transport:i2p.
     """
-    __slots__ = ('_failure_count', '_half_open_probes', '_last_failure_time', '_state', '_state_entered_at_monotonic', '_state_lock', 'failure_threshold', 'recovery_timeout', 'transport')
 
-    def __init__(self, transport: str, failure_threshold: int=3, recovery_timeout: float=60.0) -> None:
-        if transport not in ('tor', 'i2p'):
+    __slots__ = (
+        "_failure_count",
+        "_half_open_probes",
+        "_last_failure_time",
+        "_state",
+        "_state_entered_at_monotonic",
+        "_state_lock",
+        "failure_threshold",
+        "recovery_timeout",
+        "transport",
+    )
+
+    def __init__(self, transport: str, failure_threshold: int = 3, recovery_timeout: float = 60.0) -> None:
+        if transport not in ("tor", "i2p"):
             raise ValueError(f"Transport must be 'tor' or 'i2p', got {transport!r}")
         self.transport = transport
         self.failure_threshold = failure_threshold
@@ -729,16 +882,52 @@ class TransportCircuitBreaker:
             if self._state == CBState.OPEN:
                 if time.monotonic() - self._last_failure_time > self.recovery_timeout:
                     self._transition_to(CBState.HALF_OPEN)
-                    return CircuitDecision(allowed=True, domain=f'transport:{self.transport}', state='half_open', retry_after_s=0.0, reason='transport_circuit_half_open_recovery')
-                jitter = _JITTER_RNG.uniform(_JITTER_MIN_MULTIPLIER * self.recovery_timeout, _JITTER_MAX_MULTIPLIER * self.recovery_timeout) if self.recovery_timeout > 0 else 0.0
-                return CircuitDecision(allowed=False, domain=f'transport:{self.transport}', state='open', retry_after_s=jitter, reason='transport_circuit_open_overload')
+                    return CircuitDecision(
+                        allowed=True,
+                        domain=f"transport:{self.transport}",
+                        state="half_open",
+                        retry_after_s=0.0,
+                        reason="transport_circuit_half_open_recovery",
+                    )
+                jitter = (
+                    _JITTER_RNG.uniform(
+                        _JITTER_MIN_MULTIPLIER * self.recovery_timeout, _JITTER_MAX_MULTIPLIER * self.recovery_timeout
+                    )
+                    if self.recovery_timeout > 0
+                    else 0.0
+                )
+                return CircuitDecision(
+                    allowed=False,
+                    domain=f"transport:{self.transport}",
+                    state="open",
+                    retry_after_s=jitter,
+                    reason="transport_circuit_open_overload",
+                )
             if self._state == CBState.HALF_OPEN:
                 if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
                     self._transition_to(CBState.CLOSED)
-                    return CircuitDecision(allowed=False, domain=f'transport:{self.transport}', state='closed', retry_after_s=0.0, reason='transport_circuit_half_open_max_probes')
+                    return CircuitDecision(
+                        allowed=False,
+                        domain=f"transport:{self.transport}",
+                        state="closed",
+                        retry_after_s=0.0,
+                        reason="transport_circuit_half_open_max_probes",
+                    )
                 self._half_open_probes += 1
-                return CircuitDecision(allowed=True, domain=f'transport:{self.transport}', state='half_open', retry_after_s=0.0, reason='transport_circuit_half_open_probe')
-            return CircuitDecision(allowed=True, domain=f'transport:{self.transport}', state='closed', retry_after_s=0.0, reason='transport_circuit_closed')
+                return CircuitDecision(
+                    allowed=True,
+                    domain=f"transport:{self.transport}",
+                    state="half_open",
+                    retry_after_s=0.0,
+                    reason="transport_circuit_half_open_probe",
+                )
+            return CircuitDecision(
+                allowed=True,
+                domain=f"transport:{self.transport}",
+                state="closed",
+                retry_after_s=0.0,
+                reason="transport_circuit_closed",
+            )
 
     def record_success(self) -> None:
         """Reset breaker on successful fetch."""
@@ -746,7 +935,7 @@ class TransportCircuitBreaker:
             if self._state in (CBState.HALF_OPEN, CBState.CLOSED):
                 self._transition_to(CBState.CLOSED)
 
-    def record_failure(self, is_timeout: bool=False) -> None:
+    def record_failure(self, is_timeout: bool = False) -> None:
         """Record transport-level failure (e.g., Tor circuit exhausted)."""
         with self._state_lock:
             self._last_failure_time = time.monotonic()
@@ -761,22 +950,28 @@ class TransportCircuitBreaker:
         self._state_entered_at_monotonic = time.monotonic()
         if prev == CBState.OPEN and new_state == CBState.HALF_OPEN:
             self._half_open_probes = 0
-            _metrics_safe_increment('transport_circuit_breaker_state_transitions')
-            _metrics_safe_increment('transport_circuit_breaker_half_open_count')
-            _emit_transport_event(f'TRANSPORT_CIRCUIT_{new_state.value.upper()}', f'transport:{self.transport}')
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_half_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
         elif prev == CBState.HALF_OPEN and new_state == CBState.CLOSED:
-            _metrics_safe_increment('transport_circuit_breaker_state_transitions')
-            _metrics_safe_increment('transport_circuit_breaker_recovery_success')
-            _emit_transport_event(f'TRANSPORT_CIRCUIT_{new_state.value.upper()}', f'transport:{self.transport}')
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_recovery_success")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
         elif prev == CBState.CLOSED and new_state == CBState.OPEN:
-            _metrics_safe_increment('transport_circuit_breaker_state_transitions')
-            _metrics_safe_increment('transport_circuit_breaker_open_count')
-            _emit_transport_event(f'TRANSPORT_CIRCUIT_{new_state.value.upper()}', f'transport:{self.transport}')
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
         elif prev == CBState.HALF_OPEN and new_state == CBState.OPEN:
-            _metrics_safe_increment('transport_circuit_breaker_state_transitions')
-            _metrics_safe_increment('transport_circuit_breaker_open_count')
-            _emit_transport_event(f'TRANSPORT_CIRCUIT_{new_state.value.upper()}', f'transport:{self.transport}')
-_TRANSPORT_BREAKERS: dict[str, TransportCircuitBreaker] = {'tor': TransportCircuitBreaker('tor', failure_threshold=3, recovery_timeout=60.0), 'i2p': TransportCircuitBreaker('i2p', failure_threshold=3, recovery_timeout=60.0)}
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
+
+
+_TRANSPORT_BREAKERS: dict[str, TransportCircuitBreaker] = {
+    "tor": TransportCircuitBreaker("tor", failure_threshold=3, recovery_timeout=60.0),
+    "i2p": TransportCircuitBreaker("i2p", failure_threshold=3, recovery_timeout=60.0),
+}
+
 
 def get_transport_breaker(transport: str) -> TransportCircuitBreaker | None:
     """Get transport circuit breaker for tor or i2p.
@@ -787,23 +982,27 @@ def get_transport_breaker(transport: str) -> TransportCircuitBreaker | None:
     """
     return _TRANSPORT_BREAKERS.get(transport)
 
+
 def get_tor_transport_breaker() -> TransportCircuitBreaker:
     """Get Tor transport circuit breaker."""
-    return _TRANSPORT_BREAKERS['tor']
+    return _TRANSPORT_BREAKERS["tor"]
+
 
 def get_i2p_transport_breaker() -> TransportCircuitBreaker:
     """Get I2P transport circuit breaker."""
-    return _TRANSPORT_BREAKERS['i2p']
+    return _TRANSPORT_BREAKERS["i2p"]
+
 
 async def resilient_fetch(url: str) -> None:
     """TEST-SEAM ONLY: Minimal CB-aware fetch stub."""
     from urllib.parse import urlparse
+
     try:
         parsed = urlparse(url)
         domain = parsed.netloc
     except Exception:
         return None
-    if domain.startswith('tor:'):
+    if domain.startswith("tor:"):
         domain = domain[4:]
     breaker = get_breaker(domain)
     decision = breaker.check_circuit()
@@ -812,29 +1011,33 @@ async def resilient_fetch(url: str) -> None:
     breaker.record_success()
     return None
 
+
 async def get_transport_for_domain(domain: str) -> str:
     """TEST-SEAM ONLY: Return resolved transport hint for domain."""
-    if domain.endswith('.onion'):
+    if domain.endswith(".onion"):
         breaker = get_breaker(domain)
         decision = breaker.check_circuit()
         if not decision.allowed:
-            return 'nym'
-        return 'tor'
-    return 'clearnet'
+            return "nym"
+        return "tor"
+    return "clearnet"
+
 
 def _domain_from_url(url: str) -> str:
     """Extract netloc domain from a URL string."""
     from urllib.parse import urlparse
+
     try:
         parsed = urlparse(url)
         domain = parsed.netloc
-        if not domain and parsed.scheme == 'tor':
+        if not domain and parsed.scheme == "tor":
             domain = parsed.path
-        if domain.startswith('tor:'):
+        if domain.startswith("tor:"):
             domain = domain[4:]
         return domain
     except Exception:
-        return ''
+        return ""
+
 
 def domain_breaker_check(domain: str) -> CircuitDecision:
     """Check circuit breaker for a domain.
@@ -850,11 +1053,19 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
     Python's ~500KB+ dict overhead. Hot path called 100-1000× per sprint.
     """
     if not domain:
-        return CircuitDecision(allowed=True, domain=domain, state='unknown', retry_after_s=0.0, reason='empty_domain_skip')
+        return CircuitDecision(
+            allowed=True, domain=domain, state="unknown", retry_after_s=0.0, reason="empty_domain_skip"
+        )
     rust_result = rust_circuit_is_open(domain)
     if rust_result is not None:
         if rust_result:
-            return CircuitDecision(allowed=False, domain=domain, state='open', retry_after_s=BASE_RECOVERY_TIMEOUT_S, reason='circuit_open_rust')
+            return CircuitDecision(
+                allowed=False,
+                domain=domain,
+                state="open",
+                retry_after_s=BASE_RECOVERY_TIMEOUT_S,
+                reason="circuit_open_rust",
+            )
         # FIX-4: Rust says not open — check Python for accurate state reporting.
         # Rust is_open returns False for both CLOSED and HALF_OPEN states.
         # Use Python's state to distinguish for proper telemetry/event emission.
@@ -863,11 +1074,20 @@ def domain_breaker_check(domain: str) -> CircuitDecision:
             py_state = breaker._state
             if py_state == CBState.HALF_OPEN:
                 jittered = breaker._jittered_retry_after()
-                return CircuitDecision(allowed=True, domain=domain, state='half_open', retry_after_s=jittered, reason='circuit_half_open_recovery_probe')
+                return CircuitDecision(
+                    allowed=True,
+                    domain=domain,
+                    state="half_open",
+                    retry_after_s=jittered,
+                    reason="circuit_half_open_recovery_probe",
+                )
             # CLOSED or unknown (first call) — treat as closed
-            return CircuitDecision(allowed=True, domain=domain, state='closed', retry_after_s=0.0, reason='circuit_closed_rust')
+            return CircuitDecision(
+                allowed=True, domain=domain, state="closed", retry_after_s=0.0, reason="circuit_closed_rust"
+            )
     breaker = get_breaker(domain)
     return breaker.check_circuit()
+
 
 def domain_breaker_record_success(domain: str) -> None:
     """Record a successful external API call for the domain circuit breaker.
@@ -886,7 +1106,8 @@ def domain_breaker_record_success(domain: str) -> None:
         pass
     rust_circuit_record_success(domain)
 
-def domain_breaker_record_failure(domain: str, is_timeout: bool=False, failure_kind: str='') -> None:
+
+def domain_breaker_record_failure(domain: str, is_timeout: bool = False, failure_kind: str = "") -> None:
     """Record a failed external API call for the domain circuit breaker.
 
     R23 FIX: Syncs to both Python CircuitBreaker AND Rust circuit_breaker.
@@ -898,18 +1119,28 @@ def domain_breaker_record_failure(domain: str, is_timeout: bool=False, failure_k
         return
     try:
         breaker = get_breaker(domain)
-        breaker.record_failure(is_timeout=is_timeout, failure_kind=failure_kind or 'fetch_error')
+        breaker.record_failure(is_timeout=is_timeout, failure_kind=failure_kind or "fetch_error")
     except Exception:
         pass
     rust_circuit_record_failure(domain, is_timeout)
 
-async def checked_httpx_get(session: 'httpx.AsyncClient', url: str, *, params: dict | None=None, headers: dict | None=None, timeout: 'httpx.Timeout', failure_kind: str='fetch_error') -> tuple[dict | str | bytes | None, int, str | None]:
+
+async def checked_httpx_get(
+    session: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    timeout: httpx.Timeout,
+    failure_kind: str = "fetch_error",
+) -> tuple[dict | str | bytes | None, int, str | None]:
     """Perform an httpx GET with shared domain circuit breaker protection."""
     import httpx
+
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
-        return (None, 0, f'circuit_breaker_open:{decision.reason}')
+        return (None, 0, f"circuit_breaker_open:{decision.reason}")
     try:
         resp = await session.get(url, params=params, headers=headers, timeout=timeout)
         if 200 <= resp.status_code < 400:
@@ -919,25 +1150,34 @@ async def checked_httpx_get(session: 'httpx.AsyncClient', url: str, *, params: d
             except Exception:
                 data = resp.text
                 return (data, resp.status_code, None)
-        get_breaker(domain).record_failure(failure_kind=f'{failure_kind}:{resp.status_code}')
+        get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
         return (None, resp.status_code, None)
     except httpx.TimeoutException:
-        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f'{failure_kind}:timeout')
-        return (None, 0, 'timeout')
+        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
+        return (None, 0, "timeout")
     except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
-        return (None, 0, 'client_error')
+        return (None, 0, "client_error")
     except Exception:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
-        return (None, 0, 'unknown_error')
+        return (None, 0, "unknown_error")
 
-async def checked_httpx_post(session: 'httpx.AsyncClient', url: str, *, json: dict | None=None, timeout: 'httpx.Timeout', failure_kind: str='post_error') -> tuple[dict | str | bytes | None, int, str | None]:
+
+async def checked_httpx_post(
+    session: httpx.AsyncClient,
+    url: str,
+    *,
+    json: dict | None = None,
+    timeout: httpx.Timeout,
+    failure_kind: str = "post_error",
+) -> tuple[dict | str | bytes | None, int, str | None]:
     """Perform an httpx POST with shared domain circuit breaker protection."""
     import httpx
+
     domain = _domain_from_url(url)
     decision = domain_breaker_check(domain)
     if not decision.allowed:
-        return (None, 0, f'circuit_breaker_open:{decision.reason}')
+        return (None, 0, f"circuit_breaker_open:{decision.reason}")
     try:
         resp = await session.post(url, json=json, timeout=timeout)
         if 200 <= resp.status_code < 400:
@@ -947,18 +1187,20 @@ async def checked_httpx_post(session: 'httpx.AsyncClient', url: str, *, json: di
             except Exception:
                 data = resp.text
                 return (data, resp.status_code, None)
-        get_breaker(domain).record_failure(failure_kind=f'{failure_kind}:{resp.status_code}')
-        return (None, resp.status_code, f'http_error:{resp.status_code}')
+        get_breaker(domain).record_failure(failure_kind=f"{failure_kind}:{resp.status_code}")
+        return (None, resp.status_code, f"http_error:{resp.status_code}")
     except httpx.TimeoutException:
-        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f'{failure_kind}:timeout')
-        return (None, 0, 'timeout')
+        get_breaker(domain).record_failure(is_timeout=True, failure_kind=f"{failure_kind}:timeout")
+        return (None, 0, "timeout")
     except httpx.HTTPError:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
-        return (None, 0, 'client_error')
+        return (None, 0, "client_error")
     except Exception:
         get_breaker(domain).record_failure(is_timeout=False, failure_kind=failure_kind)
-        return (None, 0, 'unknown_error')
+        return (None, 0, "unknown_error")
+
+
 checked_aiohttp_get = checked_httpx_get
-'F4XX: alias for checked_httpx_get — kept for backward compat. Prefer checked_httpx_get in new code.'
+"F4XX: alias for checked_httpx_get — kept for backward compat. Prefer checked_httpx_get in new code."
 checked_aiohttp_post = checked_httpx_post
-'F4XX: alias for checked_httpx_post — kept for backward compat. Prefer checked_httpx_post in new code.'
+"F4XX: alias for checked_httpx_post — kept for backward compat. Prefer checked_httpx_post in new code."

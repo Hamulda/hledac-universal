@@ -3,45 +3,52 @@
 Extracted from live_public_pipeline.py.
 Handles: rescue URLs, bootstrap, keyword search, CT/CC/Onion injection,
 
-
-
-
          _DiscoveryEngine (discovery loop, academic search, TOT).
 
 DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,
 and `_async_search_multi_engine_var` via `_patch_*()` helpers to override defaults.
 """
+
 import asyncio
 import contextvars
 import logging
 import re
 import time
 import urllib.parse
-from dataclasses import dataclass
-import msgspec
+from typing import TYPE_CHECKING, Any
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
 from .public_constants import _is_threat_query as _is_threat_query_impl
-from _core import aclose
-_async_discovery_search_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_async_discovery_search_var", default=None)
-_async_search_multi_engine_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_async_search_multi_engine_var", default=None)
+
+_async_discovery_search_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_async_discovery_search_var", default=None
+)
+_async_search_multi_engine_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_async_search_multi_engine_var", default=None
+)
+
 
 def _patch_discovery(search_fn: Any) -> None:
     """DI: override the async discovery search function."""
     _async_discovery_search_var.set(search_fn)
 
+
 def _ensure_discovery_patched() -> None:
     """Ensure discovery search is patched; fall back to duckduckgo if not."""
     if _async_discovery_search_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import async_search_public_web
+
         _async_discovery_search_var.set(async_search_public_web)
     if _async_search_multi_engine_var.get() is None:
         from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine as _search_multi_engine_bootstrap
+
         _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
+
 
 class FetchPolicy(Struct, frozen=True):
     """Bounded fetch policy for canonical public sprint."""
@@ -65,21 +72,36 @@ class FetchPolicy(Struct, frozen=True):
         """Return stealth-like fetch policy (no JS, no DOH, stealth)."""
         return cls(use_js=False, use_doh=False, use_stealth=True)
 
-def _compute_fetch_policy(url: str, discovery_score: float | None, discovery_reason: str | None, strong_signal: bool) -> FetchPolicy:
+
+def _compute_fetch_policy(
+    url: str, discovery_score: float | None, discovery_reason: str | None, strong_signal: bool
+) -> FetchPolicy:
     """Determine fetch policy per URL based on discovery metadata.
 
     DI seam: Reads _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT via
     _ensure_patched() from the fetch module.
     """
-    _JS_DOMAINS = ("google.com", "youtube.com", "twitter.com", "x.com", "facebook.com", "instagram.com", "reddit.com", "linkedin.com", "github.com", "stackoverflow.com")
+    _JS_DOMAINS = (
+        "google.com",
+        "youtube.com",
+        "twitter.com",
+        "x.com",
+        "facebook.com",
+        "instagram.com",
+        "reddit.com",
+        "linkedin.com",
+        "github.com",
+        "stackoverflow.com",
+    )
     try:
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
-        if any((d in netloc for d in _JS_DOMAINS)):
+        if any(d in netloc for d in _JS_DOMAINS):
             return FetchPolicy.js_capable()
     except Exception:  # noqa: BLE001
         pass
     return FetchPolicy.default()
+
 
 def hits_from_result(discovery_result) -> tuple:
     """Extract hits from discovery result object."""
@@ -91,7 +113,8 @@ def hits_from_result(discovery_result) -> tuple:
         return discovery_result
     return ()
 
-def generate_rescue_urls(query: str, max_urls: int=8) -> list:
+
+def generate_rescue_urls(query: str, max_urls: int = 8) -> list:
     """Generate lightweight rescue DiscoveryHits for non-domain threat queries.
 
     Sprint F220C: When bootstrap generates zero URLs (non-domain query),
@@ -99,6 +122,7 @@ def generate_rescue_urls(query: str, max_urls: int=8) -> list:
     generate rescue candidate hits from static CTI/news search URLs.
     """
     from .public_constants import _RESGUE_SOURCE_CANDIDATES
+
     if not query or max_urls < 1:
         return []
     if not _is_threat_query_impl(query):
@@ -106,27 +130,54 @@ def generate_rescue_urls(query: str, max_urls: int=8) -> list:
     hits = []
     for name, base_url in _RESGUE_SOURCE_CANDIDATES[:max_urls]:
         url = f"{base_url}{urllib.parse.quote(query.strip())}"
-        hits.append(_make_discovery_hit(query=query, title=f"Rescue: {name}", url=url, snippet=f"Rescue search via {name}: {query}", score=0.7, reason="rescue_candidate", rank=-1, source="rescue"))
+        hits.append(
+            _make_discovery_hit(
+                query=query,
+                title=f"Rescue: {name}",
+                url=url,
+                snippet=f"Rescue search via {name}: {query}",
+                score=0.7,
+                reason="rescue_candidate",
+                rank=-1,
+                source="rescue",
+            )
+        )
     return hits
 
-def _make_discovery_hit(query: str, title: str, url: str, snippet: str, score: float, reason: str, rank: int, source: str) -> Any:
+
+def _make_discovery_hit(
+    query: str, title: str, url: str, snippet: str, score: float, reason: str, rank: int, source: str
+) -> Any:
     """Construct a DiscoveryHit (lazy import to avoid circular deps)."""
     from hledac.universal.discovery.base import DiscoveryHit
-    return DiscoveryHit(query=query, title=title, url=url, snippet=snippet, score=score, reason=reason, rank=rank, source=source, retrieved_ts=time.time())
 
-def generate_bootstrap_urls(query: str, max_urls: int=5) -> list[str]:
+    return DiscoveryHit(
+        query=query,
+        title=title,
+        url=url,
+        snippet=snippet,
+        score=score,
+        reason=reason,
+        rank=rank,
+        source=source,
+        retrieved_ts=time.time(),
+    )
+
+
+def generate_bootstrap_urls(query: str, max_urls: int = 5) -> list[str]:
     """Generate deterministic bootstrap URLs for domain/URL queries.
 
     Bounded: at most max_urls URLs returned.
     No network I/O — pure synchronous URL construction.
     """
     from .public_constants import _BOOTSTRAP_DEFAULT_URLS
+
     if not query or max_urls < 1:
         return []
     clean_query = query.strip()
     for prefix in ("site:", "domain:", "url:"):
         if clean_query.lower().startswith(prefix):
-            clean_query = clean_query[len(prefix):].strip()
+            clean_query = clean_query[len(prefix) :].strip()
             break
     domain = _extract_domain_from_query(clean_query)
     if not domain:
@@ -141,9 +192,14 @@ def generate_bootstrap_urls(query: str, max_urls: int=5) -> list[str]:
         else:
             urls.append(f"https://{domain}")
     return urls
+
+
 _MAX_SEED_CONTEXT_BOOTSTRAP: int = 10
 
-def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int=_MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:
+
+def generate_seed_context_bootstrap_urls(
+    seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP
+) -> list[str]:
     """Generate deterministic bootstrap URLs from NonfeedSeedContext.
 
     Bounded: at most max_candidates URLs returned.
@@ -187,10 +243,13 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int=
             except Exception:
                 continue
     return urls[:max_candidates]
+
+
 _PUBLIC_BOOTSTRAP_SEARCH_ENGINES: tuple[str, ...] = ("duckduckgo", "yahoo", "bing", "startpage")
 _MAX_KEYWORD_BOOTSTRAP_URLS: int = 10
 
-async def generate_keyword_bootstrap_urls(query: str, max_urls: int=_MAX_KEYWORD_BOOTSTRAP_URLS) -> list:
+
+async def generate_keyword_bootstrap_urls(query: str, max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS) -> list:
     """Keyword-based search engine bootstrap — falls back through multiple engines."""
     _ensure_discovery_patched()
     if not query or not query.strip():
@@ -207,12 +266,24 @@ async def generate_keyword_bootstrap_urls(query: str, max_urls: int=_MAX_KEYWORD
                 snippet = item.get("snippet", "") if isinstance(item, dict) else getattr(item, "snippet", "")
                 if not url:
                     continue
-                hits.append(_make_discovery_hit(query=query, title=title or f"{engine.capitalize()} result {i + 1}", url=url, snippet=snippet or f"Keyword bootstrap via {engine}: {query}", score=0.75, reason=f"keyword_bootstrap_{engine}", rank=i, source=engine))
+                hits.append(
+                    _make_discovery_hit(
+                        query=query,
+                        title=title or f"{engine.capitalize()} result {i + 1}",
+                        url=url,
+                        snippet=snippet or f"Keyword bootstrap via {engine}: {query}",
+                        score=0.75,
+                        reason=f"keyword_bootstrap_{engine}",
+                        rank=i,
+                        source=engine,
+                    )
+                )
             if hits:
                 return hits
         except Exception:
             continue
     return []
+
 
 def _extract_domain_from_query(query: str) -> str | None:
     """Extract domain from query (plain domain, URL, or mixed OSINT query)."""
@@ -227,7 +298,7 @@ def _extract_domain_from_query(query: str) -> str | None:
         q = candidate
         for prefix in ("site:", "domain:", "url:"):
             if q.lower().startswith(prefix):
-                q = q[len(prefix):]
+                q = q[len(prefix) :]
                 break
         q = q.rstrip("/")
         if "/" in q and "://" in q:
@@ -256,13 +327,24 @@ def _extract_domain_from_query(query: str) -> str | None:
         return q.lower()
     return None
 
-def _extract_provider_surface(discovery_result, selected_out: list, skipped_out: list, stub_out: list, errors_out: list, timeout_count_out: list, import_error_count_out: list, empty_reason_out: list) -> None:
+
+def _extract_provider_surface(
+    discovery_result,
+    selected_out: list,
+    skipped_out: list,
+    stub_out: list,
+    errors_out: list,
+    timeout_count_out: list,
+    import_error_count_out: list,
+    empty_reason_out: list,
+) -> None:
     """Classify discovery hits into selected/skipped/stub/error buckets.
 
     DI seam: reads _ASYNC_FETCH_PUBLIC_TEXT, _SYNC_MATCH_TEXT via
     _ensure_patched() from the fetch module.
     """
     from .public_constants import _filter_public_noise
+
     if discovery_result is None:
         errors_out.append("discovery_result is None")
         return
@@ -273,11 +355,20 @@ def _extract_provider_surface(discovery_result, selected_out: list, skipped_out:
     for hit in hits:
         reason = getattr(hit, "reason", "") or ""
         score = getattr(hit, "score", 0.0)
-        url = getattr(hit, "url", "") or ""
+        getattr(hit, "url", "") or ""
         if score <= 0.05:
             skipped_hits.append(hit)
             continue
-        if reason in ("rescue_candidate", "bootstrap_root", "bootstrap_www", "bootstrap_security_txt", "bootstrap_robots", "bootstrap_sitemap", "seed_context_domain", "seed_context_url"):
+        if reason in (
+            "rescue_candidate",
+            "bootstrap_root",
+            "bootstrap_www",
+            "bootstrap_security_txt",
+            "bootstrap_robots",
+            "bootstrap_sitemap",
+            "seed_context_domain",
+            "seed_context_url",
+        ):
             stub_hits.append(hit)
             continue
         selected_hits.append(hit)
@@ -287,34 +378,42 @@ def _extract_provider_surface(discovery_result, selected_out: list, skipped_out:
     selected_out.extend(filtered)
     skipped_out.extend(skipped_hits)
     stub_out.extend(stub_hits)
+
+
 _ct_scanner_var: contextvars.ContextVar[Any] = contextvars.ContextVar("_ct_scanner_var", default=None)
+
 
 def _patch_ct_scanner(get_subdomains_fn: Any) -> None:
     """DI: override the CT subdomain scanner function."""
     _ct_scanner_var.set(get_subdomains_fn)
+
 
 def _ensure_ct_scanner_patched() -> None:
     """Ensure CT scanner is patched; fall back to _get_subdomains if not."""
     if _ct_scanner_var.get() is None:
         _ct_scanner_var.set(_get_subdomains)
 
-async def _get_subdomains(domain: str, async_session: Any=None) -> list[str]:
+
+async def _get_subdomains(domain: str, async_session: Any = None) -> list[str]:
     """Default CT subdomain lookup via _CTLogScanner."""
     try:
         from hledac.universal.network.ct_log_scanner import _CTLogScanner
+
         scanner = _CTLogScanner()
         return await scanner.get_subdomains(domain, async_session=async_session)
     except Exception:
         return []
+
 
 class _CTHit:
     """CT-synthesized discovery hit."""
 
     __slots__ = ("url", "rank")
 
-    def __init__(self, url: str, rank: int):
+    def __init__(self, url: str, rank: int) -> None:
         self.url = url
         self.rank = rank
+
 
 async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     """Inject CT subdomain hits into the discovery hits tuple.
@@ -323,6 +422,7 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     Fail-safe: returns original hits tuple on any error.
     """
     from .public_constants import _CT_QUERY_IS_DOMAIN_RE, _CT_SUBDOMAIN_BOUND
+
     _ensure_ct_scanner_patched()
     if not _CT_QUERY_IS_DOMAIN_RE.match(query):
         return hits
@@ -344,21 +444,25 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
         ct_hits.append(_CTHit(url=url, rank=rank))
     return ((*hits, *ct_hits), None, None, None, None, None, None, None, None)
 
+
 def _query_looks_like_domain_for_cc(query: str) -> bool:
     """Check if query looks like a domain suitable for CommonCrawl lookup."""
     from .public_constants import _CC_QUERY_IS_DOMAIN_RE
+
     return bool(_CC_QUERY_IS_DOMAIN_RE.match(query))
+
 
 class _CCHit:
     """CommonCrawl-synthesized discovery hit."""
 
     __slots__ = ("url", "title", "snippet", "rank")
 
-    def __init__(self, url: str, title: str, snippet: str, rank: int):
+    def __init__(self, url: str, title: str, snippet: str, rank: int) -> None:
         self.url = url
         self.title = title
         self.snippet = snippet
         self.rank = rank
+
 
 class _MinimalStealth:
     """Minimal stealth client for CommonCrawl adapter."""
@@ -368,20 +472,26 @@ class _MinimalStealth:
     async def get(self, url: str) -> str:
         try:
             from hledac.universal.network.session_runtime import async_get_httpx_session
+
             session = await async_get_httpx_session()
             resp = await session.get(url, timeout=httpx.Timeout(total=10.0))
             return resp.text
         except Exception:
             return ""
+
+
 _CC_SCANNER_LOOKUP: Any = None
+
 
 def _get_cc_adapter() -> Any:
     """Lazy-initialize CommonCrawl adapter."""
     global _CC_SCANNER_LOOKUP
     if _CC_SCANNER_LOOKUP is None:
         from hledac.universal.tools.commoncrawl_adapter import CommonCrawlAdapter
+
         _CC_SCANNER_LOOKUP = CommonCrawlAdapter(stealth=_MinimalStealth())
     return _CC_SCANNER_LOOKUP
+
 
 async def _inject_commoncrawl_hits(hits: tuple, query: str) -> tuple:
     """Inject CommonCrawl hits for domain-like queries.
@@ -412,17 +522,24 @@ async def _inject_commoncrawl_hits(hits: tuple, query: str) -> tuple:
         if url:
             cc_hits.append(_CCHit(url=url, title=title, snippet=snippet, rank=rank))
     return (*hits, *cc_hits)
+
+
 _ONION_HIT_MAX: int = 5
 _ONION_CIRCUIT_FAIL_LIMIT: int = 3
-_onion_circuit_failures_var: contextvars.ContextVar[int] = contextvars.ContextVar("_onion_circuit_failures_var", default=0)
+_onion_circuit_failures_var: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "_onion_circuit_failures_var", default=0
+)
+
 
 def _onion_circuit_is_open() -> bool:
     """Check if Tor circuit is available."""
     return _onion_circuit_failures_var.get() < _ONION_CIRCUIT_FAIL_LIMIT
 
+
 def _onion_circuit_record_failure() -> None:
     """Record Tor circuit failure."""
     _onion_circuit_failures_var.set(_onion_circuit_failures_var.get() + 1)
+
 
 async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
     """Inject onion hits for dark web queries.
@@ -431,12 +548,14 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
     Fail-safe: returns 0 on any error.
     """
     from .public_constants import _is_threat_query as _is_threat_q
+
     if not _is_threat_q(query):
         return 0
     if not _onion_circuit_is_open():
         return 0
     try:
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text
+
         base_url = f"https://ahmia.fi/search/?q={urllib.parse.quote(query)}"
         text = await async_fetch_public_text(url=base_url, timeout_s=10.0, max_bytes=100000)
         if not text:
@@ -446,7 +565,7 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
         return 0
     onion_count = 0
     text_str = text if isinstance(text, str) else ""
-    for match in re.finditer('onion[^\\s\\"\']+', text_str):
+    for match in re.finditer("onion[^\\s\\\"']+", text_str):
         url = match.group(0).rstrip("/.,")
         if url.startswith("http") and ".onion" in url:
             hits = (*hits, _CTHit(url=url, rank=-1))
@@ -455,6 +574,7 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
                 break
     return onion_count
 
+
 class _DiscoveryEngine:
     """Discovery loop engine — orchestrates all discovery lanes.
 
@@ -462,9 +582,28 @@ class _DiscoveryEngine:
     Produces classified hits + telemetry.
     """
 
-    __slots__ = tuple(("ct_subdomains_fn", "discovery_telemetry", "empty_reasons", "errors", "import_error_count", "public_bootstrap_enabled", "query", "seed_context", "selected_hits", "skipped_hits", "stub_hits", "timeout_count"))
+    __slots__ = (
+        "ct_subdomains_fn",
+        "discovery_telemetry",
+        "empty_reasons",
+        "errors",
+        "import_error_count",
+        "public_bootstrap_enabled",
+        "query",
+        "seed_context",
+        "selected_hits",
+        "skipped_hits",
+        "stub_hits",
+        "timeout_count",
+    )
 
-    def __init__(self, query: str, public_bootstrap_enabled: bool=False, seed_context: Any | None=None, ct_subdomains_fn: Any | None=None):
+    def __init__(
+        self,
+        query: str,
+        public_bootstrap_enabled: bool = False,
+        seed_context: Any | None = None,
+        ct_subdomains_fn: Any | None = None,
+    ) -> None:
         self.query = query
         self.public_bootstrap_enabled = public_bootstrap_enabled
         self.seed_context = seed_context
@@ -489,6 +628,7 @@ class _DiscoveryEngine:
                   pastebin_findings_count, github_secrets_count)
         """
         from .public_constants import _filter_public_noise
+
         _ensure_discovery_patched()
         _ensure_ct_scanner_patched()
         start = time.monotonic()
@@ -514,18 +654,36 @@ class _DiscoveryEngine:
         for h in rescue_hits:
             all_hits.append(h)
         for url in bootstrap_urls:
-            all_hits.append(_make_discovery_hit(query=self.query, title="Bootstrap", url=url, snippet=f"Bootstrap: {url}", score=0.5, reason="bootstrap", rank=-1, source="bootstrap"))
+            all_hits.append(
+                _make_discovery_hit(
+                    query=self.query,
+                    title="Bootstrap",
+                    url=url,
+                    snippet=f"Bootstrap: {url}",
+                    score=0.5,
+                    reason="bootstrap",
+                    rank=-1,
+                    source="bootstrap",
+                )
+            )
         for url in seed_urls:
-            all_hits.append(_make_discovery_hit(query=self.query, title="SeedContext", url=url, snippet=f"SeedContext: {url}", score=0.5, reason="seed_context", rank=-1, source="seed_context"))
+            all_hits.append(
+                _make_discovery_hit(
+                    query=self.query,
+                    title="SeedContext",
+                    url=url,
+                    snippet=f"SeedContext: {url}",
+                    score=0.5,
+                    reason="seed_context",
+                    rank=-1,
+                    source="seed_context",
+                )
+            )
         for h in keyword_hits:
             all_hits.append(h)
         selected = []
         skipped = []
         stub = []
-        errors = []
-        timeout_count = 0
-        import_error_count = 0
-        empty_reasons = []
         is_threat = _is_threat_query_impl(self.query)
         filtered, rejected = _filter_public_noise(all_hits, is_threat)
         for hit in filtered:
@@ -533,11 +691,21 @@ class _DiscoveryEngine:
             score = getattr(hit, "score", 0.0)
             if score <= 0.05:
                 skipped.append(hit)
-            elif reason in ("rescue_candidate", "bootstrap_root", "bootstrap_www", "bootstrap_security_txt", "bootstrap_robots", "bootstrap_sitemap", "seed_context_domain", "seed_context_url"):
+            elif reason in (
+                "rescue_candidate",
+                "bootstrap_root",
+                "bootstrap_www",
+                "bootstrap_security_txt",
+                "bootstrap_robots",
+                "bootstrap_sitemap",
+                "seed_context_domain",
+                "seed_context_url",
+            ):
                 stub.append(hit)
             else:
                 selected.append(hit)
         from .public_constants import _CT_QUERY_IS_DOMAIN_RE
+
         ct_injected = 0
         if self.query and _CT_QUERY_IS_DOMAIN_RE.match(self.query):
             try:
@@ -557,7 +725,22 @@ class _DiscoveryEngine:
         academic_findings_count = 0
         pastebin_findings_count = 0
         github_secrets_count = 0
-        return (tuple(selected), discovery_result, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted, self.discovery_telemetry, academic_findings_count, ct_injected, cc_injected, onion_findings_count, pastebin_findings_count, github_secrets_count)
+        return (
+            tuple(selected),
+            discovery_result,
+            discovery_error,
+            discovery_error_type,
+            discovery_elapsed_s,
+            discovery_attempted,
+            self.discovery_telemetry,
+            academic_findings_count,
+            ct_injected,
+            cc_injected,
+            onion_findings_count,
+            pastebin_findings_count,
+            github_secrets_count,
+        )
+
 
 async def limited_academic_search(query: str, uma_state: str, telemetry: dict) -> int:
     """Run bounded academic/pastebin/github discovery lanes.
@@ -574,14 +757,15 @@ async def limited_academic_search(query: str, uma_state: str, telemetry: dict) -
     if ACADEMIC_ENABLED:
         try:
             academic_hits = await search_all_academic(query, max_results_per_source=10)
-            for hit in academic_hits:
+            for _hit in academic_hits:
                 telemetry["academic_hits"] = telemetry.get("academic_hits", 0) + 1
                 academic_count += 1
         except Exception:  # noqa: BLE001
             pass
     return academic_count
 
-async def run_tot_with_timeout(hypo: str, timeout_s: float=15.0) -> str:
+
+async def run_tot_with_timeout(hypo: str, timeout_s: float = 15.0) -> str:
     """Run tree-of-thought reasoning on a hypothesis with hard timeout.
 
     Bounded: timeout_s caps the TOT reasoning time.
@@ -591,6 +775,7 @@ async def run_tot_with_timeout(hypo: str, timeout_s: float=15.0) -> str:
         tot_layer = None
         try:
             from hledac.universal.tot_integration import TotIntegrationLayer
+
             tot_layer = TotIntegrationLayer()
         except ImportError:
             return ""
@@ -600,5 +785,4 @@ async def run_tot_with_timeout(hypo: str, timeout_s: float=15.0) -> str:
     except TimeoutError:
         return ""
     except Exception:
-        # Log unexpected errors but don't crash
         return ""

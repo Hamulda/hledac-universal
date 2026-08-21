@@ -17,19 +17,18 @@ Tests:
 
 from __future__ import annotations
 
-import tempfile
-import threading
-import time
 import pathlib
+import threading
+
 import pytest
 
 from hledac.universal._core.lmdb_unified import (
-    UnifiedLMDB,
+    _UNIFIED_MAP_SIZE_DEFAULT,
     SubDB,
+    UnifiedLMDB,
     get_unified_lmdb,
     reset_unified_lmdb,
     unified_lmdb_stats,
-    _UNIFIED_MAP_SIZE_DEFAULT,
 )
 
 
@@ -244,7 +243,7 @@ class TestUnifiedLMDBThreadSafety:
             t.join()
 
         # All threads should get the same instance
-        assert len(set(id(r) for r in results)) == 1
+        assert len({id(r) for r in results}) == 1
         get_unified_lmdb().close()
         reset_unified_lmdb()
 

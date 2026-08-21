@@ -32,6 +32,15 @@ try:
         batch_content_hash_hex as _rust_batch_content_hash_hex,
     )
     from hledac_rust_extensions import (
+        batch_nfc_normalize as _rust_batch_nfc_normalize,
+    )
+    from hledac_rust_extensions import (
+        buffer_entropy as _rust_buffer_entropy,
+    )
+    from hledac_rust_extensions import (
+        buffer_entropy_batched as _rust_buffer_entropy_batched,
+    )
+    from hledac_rust_extensions import (
         content_hash_64 as _rust_content_hash_64,
     )
     from hledac_rust_extensions import (
@@ -46,15 +55,7 @@ try:
     from hledac_rust_extensions import (
         strip_tracking_params as _rust_strip_tracking_params,
     )
-    from hledac_rust_extensions import (
-        batch_nfc_normalize as _rust_batch_nfc_normalize,
-    )
-    from hledac_rust_extensions import (
-        buffer_entropy as _rust_buffer_entropy,
-    )
-    from hledac_rust_extensions import (
-        buffer_entropy_batched as _rust_buffer_entropy_batched,
-    )
+
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -106,7 +107,11 @@ def _python_normalize(url: str) -> str:
         strip_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
         out = f"{scheme}://{host}" + (f":{port}" if port and not strip_port else "")
         params = urllib.parse.parse_qsl(parsed.query)
-        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_")]  # noqa: E501
+        params = [
+            (k, v)
+            for k, v in params
+            if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_")
+        ]  # noqa: E501
         query = urllib.parse.urlencode(sorted(params)) if params else ""
         fragment = parsed.fragment if parsed.fragment else ""
         return out + (f"?{query}" if query else "") + (f"#{fragment}" if fragment else "")
@@ -118,9 +123,18 @@ def _python_strip_tracking_params(url: str) -> str:
     try:
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qsl(parsed.query)
-        params = [(k, v) for k, v in params if not k.startswith("utm_") and not k.startswith("fb_") and not k.startswith("mc_") and not k.startswith("ref")]  # noqa: E501
+        params = [
+            (k, v)
+            for k, v in params
+            if not k.startswith("utm_")
+            and not k.startswith("fb_")
+            and not k.startswith("mc_")
+            and not k.startswith("ref")
+        ]  # noqa: E501
         query = urllib.parse.urlencode(sorted(params)) if params else ""
-        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))  # noqa: E501
+        return urllib.parse.urlunparse(
+            (parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment)
+        )  # noqa: E501
     except Exception:
         return url
 
@@ -174,6 +188,7 @@ def content_hash_64(data):
     if _RUST_AVAILABLE and _rust_content_hash_64 is not None:
         return _rust_content_hash_64(data)
     import hashlib
+
     return int.from_bytes(hashlib.sha256(data).digest()[:8], "big")
 
 
@@ -184,6 +199,7 @@ def content_hash_hex(data):
     if _RUST_AVAILABLE and _rust_content_hash_hex is not None:
         return _rust_content_hash_hex(data)
     import hashlib
+
     return hashlib.sha256(data).hexdigest()[:16]
 
 
@@ -207,65 +223,65 @@ def batch_content_hash_hex(items):
 class TestExtractIocs:
     """Test IOC extraction for each type."""
 
-    def test_ipv4_basic(self):
+    def test_ipv4_basic(self) -> None:
         text = "Host 192.168.1.1 contacted on port 8080"
         iocs = extract_iocs(text)
         assert any(v == "192.168.1.1" and t == "ipv4" for v, t in iocs), f"Expected IPv4, got {iocs}"
 
-    def test_ipv4_private_ranges(self):
+    def test_ipv4_private_ranges(self) -> None:
         for ip in ["10.0.0.1", "172.16.0.1", "192.168.255.255", "0.0.0.0", "255.255.255.255"]:
             iocs = extract_iocs(ip)
             assert any(v == ip and t == "ipv4" for v, t in iocs), f"Expected {ip}, got {iocs}"
 
-    def test_ipv4_negative(self):
+    def test_ipv4_negative(self) -> None:
         text = "CVE-2024-12345 refers to this vulnerability"
         iocs = extract_iocs(text)
         assert not any(t == "ipv4" and v == "2024" for v, t in iocs)
 
-    def test_ipv6(self):
+    def test_ipv6(self) -> None:
         text = " IPv6: 2001:0db8:85a3:0000:0000:8a2e:0370:7334 "
         iocs = extract_iocs(text)
         assert any(t == "ipv6" for _, t in iocs)
 
-    def test_onion_v3(self):
+    def test_onion_v3(self) -> None:
         text = "http://example.onion"
         iocs = extract_iocs(text)
         # .onion is not a standard regex match — domain match may trigger
         assert isinstance(iocs, list)
 
-    def test_onion_negative_short(self):
+    def test_onion_negative_short(self) -> None:
         text = "short.onion"  # too short to be valid onion
         iocs = extract_iocs(text)
         assert not any(t == "ipv6" and "onion" in str(v).lower() for v, t in iocs)
 
-    def test_domain(self):
+    def test_domain(self) -> None:
         text = "Contact admin@example.com or visit https://example.org"
         iocs = extract_iocs(text)
         [v for v, t in iocs if t == "ipv4" and "." in v]
         # Pure Python path uses limited domain regex
 
-    def test_md5(self):
+    def test_md5(self) -> None:
         text = "MD5: d41d8cd98f00b204e9800998ecf8427e"
         iocs = extract_iocs(text)
         assert any(t == "md5" for _, t in iocs)
 
-    def test_sha1(self):
+    def test_sha1(self) -> None:
         text = "SHA1: da39a3ee5e6b4b0d3255bfef95601890afd80709"
         iocs = extract_iocs(text)
         assert any(t == "sha1" for _, t in iocs)
 
-    def test_sha256(self):
+    def test_sha256(self) -> None:
         text = "SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         iocs = extract_iocs(text)
         assert any(t == "sha256" for _, t in iocs)
 
-    def test_email(self):
+    def test_email(self) -> None:
         text = "Contact admin@test.example.com or support@example.org"
         iocs = extract_iocs(text)
         emails = [v for v, t in iocs if t == "email"]
         assert "admin@test.example.com" in emails
 
-    def test_cve(self):
+    def test_cve(self) -> None:
         text = "CVE-2024-12345 and CVE-2023-9999"
         iocs = extract_iocs(text)
         cves = [v for v, t in iocs if t == "cve"]
@@ -279,42 +295,42 @@ class TestExtractIocs:
 class TestNormalize:
     """Test URL normalization via Rust url_engine."""
 
-    def test_lowercase_scheme_host(self):
+    def test_lowercase_scheme_host(self) -> None:
         result = normalize("HTTPS://Example.COM/Path")
         assert result.startswith("https://example.com")
 
-    def test_strip_default_http_port(self):
+    def test_strip_default_http_port(self) -> None:
         result = normalize("http://example.com:80/path")
         # Rust url_engine strips default port only in certain cases
         assert "example.com" in result
 
-    def test_strip_default_https_port(self):
+    def test_strip_default_https_port(self) -> None:
         result = normalize("https://example.com:443/path")
         # Rust url_engine strips default port only in certain cases
         assert "example.com" in result
 
-    def test_preserve_path(self):
+    def test_preserve_path(self) -> None:
         result = normalize("https://example.com/api/v1/resource")
         assert "/api/v1/resource" in result
 
-    def test_strip_utm_params(self):
+    def test_strip_utm_params(self) -> None:
         result = strip_tracking_params("https://example.com/page?utm_source=google&fbclid=abc")
         assert "utm_source" not in result
         assert "fbclid" not in result
 
-    def test_preserve_valid_params(self):
+    def test_preserve_valid_params(self) -> None:
         result = normalize("https://example.com/search?q=test&page=1")
         assert "q=test" in result or "search" in result
 
-    def test_ipv6_in_url(self):
+    def test_ipv6_in_url(self) -> None:
         result = normalize("http://[::1]:8080/path")
         assert "::1" in result or "[::1]" in result
 
-    def test_empty_url(self):
+    def test_empty_url(self) -> None:
         result = normalize("")
         assert result == ""
 
-    def test_fragment_preserved(self):
+    def test_fragment_preserved(self) -> None:
         result = normalize("https://example.com/page#section")
         # Fragment behavior may vary between Rust and Python
         assert "example.com" in result
@@ -326,17 +342,17 @@ class TestNormalize:
 class TestStripTrackingParams:
     """Test tracking parameter stripping."""
 
-    def test_strip_utm(self):
+    def test_strip_utm(self) -> None:
         url = "https://example.com/?utm_source=google&utm_medium=cpc"
         result = strip_tracking_params(url)
         assert "utm_source" not in result
 
-    def test_strip_fbclid(self):
+    def test_strip_fbclid(self) -> None:
         url = "https://example.com/?fbclid=abc123"
         result = strip_tracking_params(url)
         assert "fbclid" not in result
 
-    def test_preserve_other_params(self):
+    def test_preserve_other_params(self) -> None:
         url = "https://example.com/?q=test&page=1"
         result = strip_tracking_params(url)
         assert "q=test" in result
@@ -348,21 +364,21 @@ class TestStripTrackingParams:
 class TestFingerprint:
     """Test URL fingerprinting."""
 
-    def test_fingerprint_stable(self):
+    def test_fingerprint_stable(self) -> None:
         url = "https://example.com/page"
         fp1 = fingerprint(url)
         fp2 = fingerprint(url)
         assert fp1 == fp2
         assert isinstance(fp1, int)
 
-    def test_fingerprint_different_for_different_urls(self):
+    def test_fingerprint_different_for_different_urls(self) -> None:
         url1 = "https://example.com/page1"
         url2 = "https://example.com/page2"
         fp1 = fingerprint(url1)
         fp2 = fingerprint(url2)
         assert fp1 != fp2
 
-    def test_fingerprint_returns_u64(self):
+    def test_fingerprint_returns_u64(self) -> None:
         fp = fingerprint("https://example.com/page")
         assert isinstance(fp, int)
         assert fp >= 0
@@ -375,12 +391,12 @@ class TestRollingHashEngine:
     """Test Rust RollingHashEngine class."""
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
-    def test_creation(self):
+    def test_creation(self) -> None:
         engine = RollingHashEngine(4)
         assert engine is not None
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
-    def test_update_and_digest(self):
+    def test_update_and_digest(self) -> None:
         engine = RollingHashEngine(4)
         for byte in b"test data":
             engine.update(byte)
@@ -388,13 +404,13 @@ class TestRollingHashEngine:
         assert isinstance(digest, int)
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
-    def test_hash_method(self):
+    def test_hash_method(self) -> None:
         engine = RollingHashEngine(4)
         h = engine.hash(b"window")
         assert isinstance(h, int)
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
-    def test_hashes_method(self):
+    def test_hashes_method(self) -> None:
         engine = RollingHashEngine(4)
         data = b"0123456789"
         hashes = engine.hashes(data)
@@ -402,12 +418,12 @@ class TestRollingHashEngine:
         assert hashes
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or RollingHashEngine is None, reason="Rust not available")
-    def test_roll_method(self):
+    def test_roll_method(self) -> None:
         engine = RollingHashEngine(4)
         h = engine.hash(b"test")
         assert isinstance(h, int)
         # roll(old_hash, old_char, new_char, window_size)
-        h2 = engine.roll(h, ord(b't'), ord(b'b'), 4)
+        h2 = engine.roll(h, ord(b"t"), ord(b"b"), 4)
         assert isinstance(h2, int)
 
 
@@ -418,12 +434,12 @@ class TestBloomFilter:
     """Test Rust BloomFilter class."""
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or BloomFilter is None, reason="Rust not available")
-    def test_creation_with_size(self):
+    def test_creation_with_size(self) -> None:
         bf = BloomFilter(1000, 0.01)
         assert bf is not None
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or BloomFilter is None, reason="Rust not available")
-    def test_insert_and_check(self):
+    def test_insert_and_check(self) -> None:
         bf = BloomFilter(1000, 0.01)
         bf.add("test_key")
         result = bf.check("test_key")
@@ -438,7 +454,7 @@ class TestBatchDedupUrls:
     """Test batch URL deduplication."""
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or batch_dedup_urls is None, reason="Rust not available")
-    def test_batch_dedup_removes_duplicates(self):
+    def test_batch_dedup_removes_duplicates(self) -> None:
         urls = [
             "https://example.com/page1",
             "https://example.com/page1",  # duplicate
@@ -449,7 +465,7 @@ class TestBatchDedupUrls:
         assert "page1" in result[0] or "page1" in result[1]
 
     @pytest.mark.skipif(not _RUST_AVAILABLE or batch_dedup_urls is None, reason="Rust not available")
-    def test_batch_dedup_empty(self):
+    def test_batch_dedup_empty(self) -> None:
         result = batch_dedup_urls([])
         assert result == []
 
@@ -457,7 +473,7 @@ class TestBatchDedupUrls:
 # =============================================================================
 # Smoke tests
 # =============================================================================
-def test_rust_extension_loads():
+def test_rust_extension_loads() -> None:
     """Sanity: Rust extension loads without error."""
     if _RUST_AVAILABLE:
         assert callable(fast_ioc_extract) or callable(normalize)
@@ -466,12 +482,12 @@ def test_rust_extension_loads():
             assert engine is not None
 
 
-def test_module_guarded():
+def test_module_guarded() -> None:
     """Ensure all imports are properly guarded."""
     # Test passes implicitly: reaching here means the module loaded without raising
 
 
-def test_python_fallback_available():
+def test_python_fallback_available() -> None:
     """Python fallback path is always available."""
     # Test pure Python paths work even when Rust unavailable
     iocs = _python_extract_iocs("192.168.1.1")
@@ -481,7 +497,7 @@ def test_python_fallback_available():
     assert url.startswith("http://example.com")
 
 
-def test_rust_path_when_available():
+def test_rust_path_when_available() -> None:
     """Test Rust fast path when Rust extension is available."""
     if not _RUST_AVAILABLE:
         pytest.skip("Rust extension not available")
@@ -506,48 +522,49 @@ class TestContentHashXxhash:
     """Test xxHash3-64 content hashing for dedup keys and cache IDs."""
 
     @pytest.mark.skipif(content_hash_64 is None, reason="Rust not available")
-    def test_content_hash_64_idempotent(self):
+    def test_content_hash_64_idempotent(self) -> None:
         h = content_hash_64("hello")
         assert h == content_hash_64("hello")
 
     @pytest.mark.skipif(content_hash_64 is None, reason="Rust not available")
-    def test_content_hash_64_different_inputs(self):
+    def test_content_hash_64_different_inputs(self) -> None:
         assert content_hash_64("hello") != content_hash_64("world")
 
     @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
-    def test_content_hash_hex_idempotent(self):
+    def test_content_hash_hex_idempotent(self) -> None:
         h = content_hash_hex("hello")
         assert h == content_hash_hex("hello")
         assert len(h) == 16  # 64-bit hex
 
     @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
-    def test_content_hash_hex_different_inputs(self):
+    def test_content_hash_hex_different_inputs(self) -> None:
         assert content_hash_hex("hello") != content_hash_hex("world")
 
     @pytest.mark.skipif(batch_content_hash is None, reason="Rust not available")
-    def test_batch_content_hash_deterministic(self):
+    def test_batch_content_hash_deterministic(self) -> None:
         results = batch_content_hash(["a", "b", "a"])
         assert results[0] == results[2]  # same input → same hash
         assert results[0] != results[1]  # different input → different hash
 
     @pytest.mark.skipif(batch_content_hash_hex is None, reason="Rust not available")
-    def test_batch_content_hash_hex(self):
+    def test_batch_content_hash_hex(self) -> None:
         results = batch_content_hash_hex(["a", "b", "a"])
         assert results[0] == results[2]
         assert len(results[0]) == 16
         assert results[0] != results[1]
 
     @pytest.mark.skipif(content_hash_hex is None, reason="Rust not available")
-    def test_content_hash_hex_matches_manual(self):
+    def test_content_hash_hex_matches_manual(self) -> None:
         # 16-char hex = same format as truncated sha256
         h = content_hash_hex("test string")
         assert isinstance(h, str)
         assert len(h) == 16
         assert all(c in "0123456789abcdef" for c in h)
 
-    def test_python_fallback_content_hash(self):
+    def test_python_fallback_content_hash(self) -> None:
         """Python fallback uses hashlib.sha256 (not xxhash, just verifies import works)."""
         import hashlib
+
         hashlib.sha256(b"hello").hexdigest()[:16]
         if content_hash_hex is not None:
             # Rust path: should give consistent 16-char hex
@@ -572,6 +589,7 @@ try:
         _compute_simhash_fingerprint,
         find_near_duplicates_in_batch,
     )
+
     _SIMHASH_FUNC_AVAILABLE = True
 except ImportError:
     _SIMHASH_FUNC_AVAILABLE = False
@@ -584,7 +602,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_simhash_same_text_distance_zero(self):
+    def test_simhash_same_text_distance_zero(self) -> None:
         h = compute_simhash("hello world")
         assert hamming_distance(h, h) == 0
 
@@ -592,14 +610,14 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_simhash_identical_texts_equal_fingerprint(self):
+    def test_simhash_identical_texts_equal_fingerprint(self) -> None:
         assert compute_simhash("hello world") == compute_simhash("hello world")
 
     @pytest.mark.skipif(
         not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_simhash_near_duplicate_detection(self):
+    def test_simhash_near_duplicate_detection(self) -> None:
         # "hello world" vs "hello world!" — differ by 1 char
         a = compute_simhash("hello world")
         b = compute_simhash("hello world!")
@@ -612,7 +630,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_simhash_different_texts_high_distance(self):
+    def test_simhash_different_texts_high_distance(self) -> None:
         # Unrelated texts should have high Hamming distance
         a = compute_simhash("the quick brown fox jumps")
         b = compute_simhash("jpg encrypted archive contains malware")
@@ -623,7 +641,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or batch_compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_batch_compute_consistency(self):
+    def test_batch_compute_consistency(self) -> None:
         results = batch_compute_simhash(["alpha", "beta", "gamma"])
         assert len(results) == 3
         assert results[0] == batch_compute_simhash(["alpha"])[0]
@@ -633,7 +651,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
         reason="Rust SimHash not available",
     )
-    def test_find_near_duplicates_empty_list(self):
+    def test_find_near_duplicates_empty_list(self) -> None:
         result = find_near_duplicates([], 3)
         assert result == []
 
@@ -641,7 +659,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
         reason="Rust SimHash not available",
     )
-    def test_find_near_duplicates_no_pairs(self):
+    def test_find_near_duplicates_no_pairs(self) -> None:
         # Three very different texts — no pairs within threshold=3
         fps = [
             compute_simhash("the quick brown fox jumps over"),
@@ -655,7 +673,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates is None,
         reason="Rust SimHash not available",
     )
-    def test_find_near_duplicates_all_same(self):
+    def test_find_near_duplicates_all_same(self) -> None:
         # All identical — every pair is near-duplicate
         h = compute_simhash("identical text content")
         fps = [h, h, h, h]
@@ -667,7 +685,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or _compute_simhash_fingerprint is None or compute_simhash is None,
         reason="SimHash fallback not available",
     )
-    def test_compute_simhash_fingerprint_format(self):
+    def test_compute_simhash_fingerprint_format(self) -> None:
         fp = _compute_simhash_fingerprint("test input")
         # Returns 16-char hex string (64-bit fingerprint)
         assert isinstance(fp, str)
@@ -680,16 +698,15 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None,
         reason="SimHash batch function not available",
     )
-    def test_find_near_duplicates_in_batch_empty(self):
+    def test_find_near_duplicates_in_batch_empty(self) -> None:
         result = find_near_duplicates_in_batch([], 3)
         assert result == []
 
     @pytest.mark.skipif(
-        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None
-        or batch_compute_simhash is None,
+        not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None or batch_compute_simhash is None,
         reason="SimHash batch function not available",
     )
-    def test_find_near_duplicates_in_batch_all_same(self):
+    def test_find_near_duplicates_in_batch_all_same(self) -> None:
         texts = ["same content", "same content", "same content"]
         result = find_near_duplicates_in_batch(texts, 64)
         assert len(result) == 3  # pairs: (0,1)(0,2)(1,2)
@@ -698,7 +715,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or find_near_duplicates_in_batch is None,
         reason="SimHash batch function not available",
     )
-    def test_find_near_duplicates_in_batch_no_pairs(self):
+    def test_find_near_duplicates_in_batch_no_pairs(self) -> None:
         # Two very different texts should not be paired at threshold=3
         texts = [
             "the quick brown fox jumps over the lazy dog",
@@ -711,7 +728,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or is_near_duplicate is None or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_is_near_duplicate_true(self):
+    def test_is_near_duplicate_true(self) -> None:
         h = compute_simhash("hello world")
         # Very close text — likely within threshold=5
         near_h = compute_simhash("hello world")
@@ -721,7 +738,7 @@ class TestSimhash:
         not _SIMHASH_FUNC_AVAILABLE or is_near_duplicate is None or compute_simhash is None,
         reason="Rust SimHash not available",
     )
-    def test_is_near_duplicate_false_distant(self):
+    def test_is_near_duplicate_false_distant(self) -> None:
         h1 = compute_simhash("the quick brown fox jumps over")
         h2 = compute_simhash("malware executable virus infected file dropper")
         # Likely Hamming distance > 3
@@ -740,14 +757,14 @@ class TestBatchNfcNormalize:
     """
 
     @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
-    def test_batch_nfc_normalize_preserves_ascii(self):
+    def test_batch_nfc_normalize_preserves_ascii(self) -> None:
         texts = ["hello", "world", "test"]
         result = _rust_batch_nfc_normalize(texts)
         assert result == ["hello", "world", "test"]
         assert len(result) == len(texts)
 
     @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
-    def test_batch_nfc_normalize_nfc_composition(self):
+    def test_batch_nfc_normalize_nfc_composition(self) -> None:
         # "é" can be composed as single codepoint U+00E9 or
         # as e + combining acute (e + U+0301). NFC normalizes to single.
         # "café" = c-a-f-é where é may be precomposed or decomposed.
@@ -759,12 +776,12 @@ class TestBatchNfcNormalize:
         assert result[2] == "résumé"
 
     @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
-    def test_batch_nfc_normalize_empty_list(self):
+    def test_batch_nfc_normalize_empty_list(self) -> None:
         result = _rust_batch_nfc_normalize([])
         assert result == []
 
     @pytest.mark.skipif(_rust_batch_nfc_normalize is None, reason="Rust not available")
-    def test_batch_nfc_normalize_unicode_sameness(self):
+    def test_batch_nfc_normalize_unicode_sameness(self) -> None:
         # NFC of NFC is NFC — idempotent
         texts = ["ℌ𝔱𝔪𝔩", "Ǆ", "Å"]
         result = _rust_batch_nfc_normalize(texts)
@@ -778,7 +795,6 @@ class TestBatchNfcNormalize:
 # =============================================================================
 
 import sys
-from _core import aclose
 
 
 class TestBufferEntropy:
@@ -789,30 +805,24 @@ class TestBufferEntropy:
     Python bytes copy.
     """
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_bytes(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_bytes(self) -> None:
         """bytes input — goes through PyBytes zero-copy path."""
         data = b"hello world"
         result = _rust_buffer_entropy(data)
         assert isinstance(result, float)
         assert 0.0 <= result <= 4.0  # English text entropy range
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_bytearray(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_bytearray(self) -> None:
         """bytearray input — goes through TRUE PyBuffer zero-copy path."""
         data = bytearray(b"hello world")
         result = _rust_buffer_entropy(data)
         assert isinstance(result, float)
         assert result > 0.0
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_memoryview(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_memoryview(self) -> None:
         """memoryview input — goes through TRUE PyBuffer zero-copy path."""
         data = memoryview(b"hello world")
         result = _rust_buffer_entropy(data)
@@ -823,7 +833,7 @@ class TestBufferEntropy:
         _rust_buffer_entropy is None or "numpy" not in sys.modules,
         reason="Rust not available or numpy not installed",
     )
-    def test_buffer_entropy_numpy_array(self):
+    def test_buffer_entropy_numpy_array(self) -> None:
         """numpy array input — goes through TRUE PyBuffer zero-copy path.
 
         This is the PRIMARY issue that ISSUE-005 fixed: numpy arrays
@@ -838,26 +848,20 @@ class TestBufferEntropy:
         result_bytes = _rust_buffer_entropy(b"hello")
         assert abs(result - result_bytes) < 1e-6
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_empty(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_empty(self) -> None:
         """Empty input returns 0.0 entropy."""
         assert _rust_buffer_entropy(b"") == 0.0
         assert _rust_buffer_entropy(bytearray()) == 0.0
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_single_char(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_single_char(self) -> None:
         """Single repeated char has 0 entropy."""
         assert _rust_buffer_entropy(b"aaaa") == 0.0
         assert _rust_buffer_entropy(bytearray(b"aaaa")) == 0.0
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy is None, reason="Rust not available"
-    )
-    def test_buffer_entropy_type_error(self):
+    @pytest.mark.skipif(_rust_buffer_entropy is None, reason="Rust not available")
+    def test_buffer_entropy_type_error(self) -> None:
         """Non-buffer, non-bytes input raises TypeError."""
         import pytest
 
@@ -875,20 +879,16 @@ class TestBufferEntropyBatched:
     degradation for non-buffer items in the list.
     """
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy_batched is None, reason="Rust not available"
-    )
-    def test_batched_bytes_list(self):
+    @pytest.mark.skipif(_rust_buffer_entropy_batched is None, reason="Rust not available")
+    def test_batched_bytes_list(self) -> None:
         """List of bytes — all go through PyBytes fallback path."""
         data = [b"hello", b"world", b"test"]
         results = _rust_buffer_entropy_batched(data)
         assert len(results) == 3
         assert all(isinstance(r, float) for r in results)
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy_batched is None, reason="Rust not available"
-    )
-    def test_batched_mixed_buffers(self):
+    @pytest.mark.skipif(_rust_buffer_entropy_batched is None, reason="Rust not available")
+    def test_batched_mixed_buffers(self) -> None:
         """List of mixed buffer types — bytes, bytearray, memoryview.
 
         ISSUE-005-FIX2: graceful degradation — non-buffer items (int, float)
@@ -904,11 +904,10 @@ class TestBufferEntropyBatched:
         assert all(isinstance(r, float) for r in results)
 
     @pytest.mark.skipif(
-        _rust_buffer_entropy_batched is None
-        or "numpy" not in sys.modules,
+        _rust_buffer_entropy_batched is None or "numpy" not in sys.modules,
         reason="Rust not available or numpy not installed",
     )
-    def test_batched_with_numpy(self):
+    def test_batched_with_numpy(self) -> None:
         """List containing numpy array — PyBuffer zero-copy path."""
         import numpy as np
 
@@ -922,19 +921,16 @@ class TestBufferEntropyBatched:
         assert all(isinstance(r, float) for r in results)
         # numpy "world" should match bytes "world" entropy
         results_bytes = _rust_buffer_entropy_batched([b"hello", b"world", b"test"])
-        for a, b_val in zip(results, results_bytes):
+        for a, b_val in zip(results, results_bytes, strict=False):
             assert abs(a - b_val) < 1e-6
 
-    @pytest.mark.skipif(
-        _rust_buffer_entropy_batched is None, reason="Rust not available"
-    )
-    def test_batched_graceful_degradation(self):
+    @pytest.mark.skipif(_rust_buffer_entropy_batched is None, reason="Rust not available")
+    def test_batched_graceful_degradation(self) -> None:
         """Non-buffer items (int) are silently skipped.
 
         ISSUE-005-FIX2: ensures partial results are returned instead of
         hard failure when some items in the list don't support the buffer protocol.
         """
-        import pytest
 
         # Mixed list with int — int is silently skipped, only 2 results
         data: list = [b"hello", 12345, bytearray(b"world")]
@@ -942,4 +938,3 @@ class TestBufferEntropyBatched:
         # 12345 (int) should be skipped — only 2 valid buffer items
         assert len(results) == 2
         assert all(isinstance(r, float) for r in results)
-

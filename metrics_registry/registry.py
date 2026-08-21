@@ -42,18 +42,17 @@ from typing import TYPE_CHECKING, Any
 from utils.cache import LRUCache, TTLCache
 
 from ._core import (
+    _GRAMMAR_KEYS,
+    _MAX_COUNTER_CACHE_SIZE,
+    _MAX_GAUGE_CACHE_SIZE,
+    _TTL_SECONDS,
     FLUSH_EVENTS,
     FLUSH_SECONDS,
     MAX_SNAPSHOTS,
     MAX_SPRINT_EVENTS,
     METRIC_NAMES,
-    MetricSnapshot,
     _AsyncBatchFlusher,
     _BoundedCounter,
-    _GRAMMAR_KEYS,
-    _MAX_COUNTER_CACHE_SIZE,
-    _MAX_GAUGE_CACHE_SIZE,
-    _TTL_SECONDS,
 )
 
 if TYPE_CHECKING:
@@ -73,7 +72,7 @@ class MetricsRegistryPressureListener:
     for OtelBridge correlation.
     """
 
-    __slots__ = ('_registry',)
+    __slots__ = ("_registry",)
 
     def __init__(self, registry: MetricsRegistry) -> None:
         self._registry = registry
@@ -85,28 +84,28 @@ class MetricsRegistryPressureListener:
 
     @property
     def listener_name(self) -> str:
-        return 'metrics_registry'
+        return "metrics_registry"
 
     def on_soft_warn(self) -> None:
         """ELEVATED pressure - record to metrics."""
-        self._record_pressure('soft_warn')
+        self._record_pressure("soft_warn")
 
     def on_warn(self) -> None:
         """HIGH pressure - record to metrics."""
-        self._record_pressure('warn')
+        self._record_pressure("warn")
 
     def on_critical(self) -> None:
         """CRITICAL pressure - record to metrics."""
-        self._record_pressure('critical')
+        self._record_pressure("critical")
 
     def on_recovery(self) -> None:
         """Recovery - record to metrics."""
-        self._record_pressure('recovery')
+        self._record_pressure("recovery")
 
     def _record_pressure(self, level: str) -> None:
         """Record pressure level to metrics registry."""
         try:
-            self._registry.set_gauge('memory_pressure_listener_event', float(hash(level) % 1000))
+            self._registry.set_gauge("memory_pressure_listener_event", float(hash(level) % 1000))
         except Exception:
             pass
 
@@ -138,14 +137,25 @@ class MetricsRegistry:
     """
 
     __slots__ = (
-        '_closed', '_correlation', '_event_count',
-        '_last_flush', '_last_persist_failure', '_persist_available',
-        '_persist_file', '_run_dir', '_run_id', '_snapshots',
-        '_sprint_events', '_flusher', '_stage_stats', '_ttl_seconds',
-        '_counter_cache', '_gauge_cache',
+        "_closed",
+        "_correlation",
+        "_event_count",
+        "_last_flush",
+        "_last_persist_failure",
+        "_persist_available",
+        "_persist_file",
+        "_run_dir",
+        "_run_id",
+        "_snapshots",
+        "_sprint_events",
+        "_flusher",
+        "_stage_stats",
+        "_ttl_seconds",
+        "_counter_cache",
+        "_gauge_cache",
         # ISSUE-12 FIX: Legacy dicts removed - use _counter_cache/_gauge_cache
         # ISSUE-16: Lazy area registry
-        '_lazy_area_registry',
+        "_lazy_area_registry",
         # Backward compatibility via properties below
     )
 
@@ -163,7 +173,7 @@ class MetricsRegistry:
     def __init__(
         self,
         run_dir: Path,
-        run_id: str = 'default',
+        run_id: str = "default",
         correlation: dict[str, str | None] | None = None,
         *,
         ttl_seconds: float = _TTL_SECONDS,
@@ -183,19 +193,17 @@ class MetricsRegistry:
             gauge_cache_size: Max gauge entries (default 128)
         """
         # Guard: MAX_SNAPSHOTS must be bounded
-        assert MAX_SNAPSHOTS <= 1024, (
-            f'MAX_SNAPSHOTS must be <= 1024, got {MAX_SNAPSHOTS}'
-        )
+        assert MAX_SNAPSHOTS <= 1024, f"MAX_SNAPSHOTS must be <= 1024, got {MAX_SNAPSHOTS}"
 
         self._run_dir = run_dir
         self._run_id = run_id
         self._ttl_seconds = ttl_seconds
 
         if correlation is None:
-            self._correlation = {'run_id': run_id}
+            self._correlation = {"run_id": run_id}
         else:
             self._correlation = {k: correlation.get(k) for k in _GRAMMAR_KEYS}
-            self._correlation['run_id'] = run_id
+            self._correlation["run_id"] = run_id
 
         # Bounded storage with TTL (ISSUE-12 fix)
         # TTLCache for counters: automatic TTL expiration, no manual cleanup needed
@@ -217,9 +225,9 @@ class MetricsRegistry:
         # Persistence
         self._persist_available = True
         self._last_persist_failure: str | None = None
-        metrics_dir = run_dir / 'logs'
+        metrics_dir = run_dir / "logs"
         metrics_dir.mkdir(parents=True, exist_ok=True)
-        persist_file_path = metrics_dir / 'metrics.jsonl'
+        persist_file_path = metrics_dir / "metrics.jsonl"
 
         # Start async flusher (ISSUE-12)
         self._flusher = _AsyncBatchFlusher(persist_file_path)
@@ -229,7 +237,7 @@ class MetricsRegistry:
         # ISSUE-12: Register with MemoryPressureBroadcaster for live memory correlation
         self._register_memory_pressure_listener()
 
-        logger.info(f'MetricsRegistry initialized: run_id={run_id}, ttl={ttl_seconds}s')
+        logger.info(f"MetricsRegistry initialized: run_id={run_id}, ttl={ttl_seconds}s")
 
     # ── ISSUE-12: Memory Pressure Integration ─────────────────────────────────
 
@@ -242,11 +250,13 @@ class MetricsRegistry:
         """
         try:
             from hledac.universal._core.memory_pressure import MemoryPressureBroadcaster
+
             broadcaster = MemoryPressureBroadcaster.get_instance()
 
             class _MetricsPressureListener:
                 """Listener that records pressure events to metrics registry."""
-                __slots__ = ('_registry',)
+
+                __slots__ = ("_registry",)
 
                 def __init__(self, registry: MetricsRegistry) -> None:
                     self._registry = registry
@@ -257,28 +267,28 @@ class MetricsRegistry:
 
                 @property
                 def listener_name(self) -> str:
-                    return 'metrics_registry'
+                    return "metrics_registry"
 
                 def on_soft_warn(self) -> None:
-                    self._record('soft_warn')
+                    self._record("soft_warn")
 
                 def on_warn(self) -> None:
-                    self._record('warn')
+                    self._record("warn")
 
                 def on_critical(self) -> None:
-                    self._record('critical')
+                    self._record("critical")
 
                 def on_recovery(self) -> None:
-                    self._record('recovery')
+                    self._record("recovery")
 
                 def _record(self, level: str) -> None:
                     try:
-                        self._registry.set_gauge('memory_pressure_listener_event', float(hash(level) % 1000))
+                        self._registry.set_gauge("memory_pressure_listener_event", float(hash(level) % 1000))
                     except Exception:
                         pass
 
             broadcaster.register(_MetricsPressureListener(self))
-            logger.debug('[ISSUE-12] Registered with MemoryPressureBroadcaster')
+            logger.debug("[ISSUE-12] Registered with MemoryPressureBroadcaster")
         except ImportError:
             # Memory pressure module not available
             pass
@@ -294,7 +304,7 @@ class MetricsRegistry:
             return True
         # ISSUE-12 FIX: Allow dynamic stage metric names (e.g., stage_latency_ms_discovery)
         # Stage metrics follow pattern: stage_latency_ms_{name}, stage_items_in_{name}, etc.
-        if name.startswith(('stage_latency_ms_', 'stage_items_in_', 'stage_items_out_', 'stage_errors_')):
+        if name.startswith(("stage_latency_ms_", "stage_items_in_", "stage_items_out_", "stage_errors_")):
             return True
         return False
 
@@ -313,7 +323,7 @@ class MetricsRegistry:
         if self._closed:
             return
         if not self._validate_metric_name(name):
-            logger.warning(f'Invalid metric name: {name}')
+            logger.warning(f"Invalid metric name: {name}")
             return
 
         # Use bounded cache with TTL (ISSUE-12 fix)
@@ -341,7 +351,7 @@ class MetricsRegistry:
         if self._closed:
             return
         if not self._validate_metric_name(name):
-            logger.warning(f'Invalid metric name: {name}')
+            logger.warning(f"Invalid metric name: {name}")
             return
 
         # Use bounded cache with TTL (ISSUE-12 fix)
@@ -371,7 +381,7 @@ class MetricsRegistry:
             try:
                 # This triggers _evict_expired in TTLCache.get()
                 _ = self._counter_cache.get(next(iter(self._counter_cache)))
-            except (KeyError, StopIteration):
+            except KeyError, StopIteration:
                 pass
 
     def tick(self) -> None:
@@ -385,11 +395,12 @@ class MetricsRegistry:
             return
         try:
             import psutil
+
             process = psutil.Process(os.getpid())
             mem_info = process.memory_info()
-            self.set_gauge('memory_rss_mb', mem_info.rss / (1024 * 1024))
-            self.set_gauge('memory_vms_mb', mem_info.vms / (1024 * 1024))
-            self.set_gauge('memory_open_fds', float(process.num_fds()))
+            self.set_gauge("memory_rss_mb", mem_info.rss / (1024 * 1024))
+            self.set_gauge("memory_vms_mb", mem_info.vms / (1024 * 1024))
+            self.set_gauge("memory_open_fds", float(process.num_fds()))
         except ImportError:
             pass
         except Exception:
@@ -416,29 +427,28 @@ class MetricsRegistry:
         # Expire stale entries
         self._expire_stale_entries()
 
-        # Build metric batch
         metrics: list[dict[str, Any]] = []
         for name in list(self._counter_cache.keys()):
             counter = self._counter_cache[name]
             m: dict[str, Any] = {
-                'ts': now.isoformat(),
-                'name': name,
-                'type': 'counter',
-                'value': counter.value,
+                "ts": now.isoformat(),
+                "name": name,
+                "type": "counter",
+                "value": counter.value,
             }
             if self._correlation:
-                m['correlation'] = self._correlation
+                m["correlation"] = self._correlation
             metrics.append(m)
 
         for name, value in list(self._gauge_cache.items()):
             m: dict[str, Any] = {
-                'ts': now.isoformat(),
-                'name': name,
-                'type': 'gauge',
-                'value': value,
+                "ts": now.isoformat(),
+                "name": name,
+                "type": "gauge",
+                "value": value,
             }
             if self._correlation:
-                m['correlation'] = self._correlation
+                m["correlation"] = self._correlation
             metrics.append(m)
 
         # Add to snapshots ring buffer
@@ -451,7 +461,7 @@ class MetricsRegistry:
 
         self._last_flush = now
         self._event_count = 0
-        logger.debug(f'Flushed {len(metrics)} metrics (async)')
+        logger.debug(f"Flushed {len(metrics)} metrics (async)")
 
     # ── Summary ────────────────────────────────────────────────────────────────
 
@@ -462,25 +472,24 @@ class MetricsRegistry:
         Returns lightweight state snapshot for debugging and monitoring.
         No execution authority, no policy, no audit chain.
         """
-        # Get flusher stats
         flusher_stats = self._flusher.stats if self._flusher else {}
 
         return {
-            'run_id': self._run_id,
-            'closed': self._closed,
-            'persist_available': self._persist_available,
-            'degraded_ram_only': self._persist_available is False,
-            'last_persist_failure': self._last_persist_failure,
-            'counter_count': len(self._counter_cache),
-            'gauge_count': len(self._gauge_cache),
-            'snapshot_count': len(self._snapshots),
-            'sprint_event_count': len(self._sprint_events),
-            'counters': {k: c.value for k, c in self._counter_cache.items()},
-            'gauges': dict(self._gauge_cache),
-            'flusher': flusher_stats,
+            "run_id": self._run_id,
+            "closed": self._closed,
+            "persist_available": self._persist_available,
+            "degraded_ram_only": self._persist_available is False,
+            "last_persist_failure": self._last_persist_failure,
+            "counter_count": len(self._counter_cache),
+            "gauge_count": len(self._gauge_cache),
+            "snapshot_count": len(self._snapshots),
+            "sprint_event_count": len(self._sprint_events),
+            "counters": {k: c.value for k, c in self._counter_cache.items()},
+            "gauges": dict(self._gauge_cache),
+            "flusher": flusher_stats,
             # ISSUE-12: Cache efficiency stats
-            'counter_cache_stats': self._counter_cache.stats,
-            'gauge_cache_stats': self._gauge_cache.stats,
+            "counter_cache_stats": self._counter_cache.stats,
+            "gauge_cache_stats": self._gauge_cache.stats,
         }
 
     # ── Sprint events ────────────────────────────────────────────────────────
@@ -497,7 +506,7 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            required = {'session_id', 'phase', 'component', 'event', 'elapsed_ms'}
+            required = {"session_id", "phase", "component", "event", "elapsed_ms"}
             if not required.issubset(event.keys()):
                 return
             self._sprint_events.append(event)
@@ -526,9 +535,9 @@ class MetricsRegistry:
 
             # Use LRUCache for bounded storage (ISSUE-12)
             for name, delta in [
-                ('bounded_gather_tasks_gathered', ok_count),
-                ('bounded_gather_tasks_errors', error_count),
-                ('bounded_gather_errors_suppressed', suppressed_count),
+                ("bounded_gather_tasks_gathered", ok_count),
+                ("bounded_gather_tasks_errors", error_count),
+                ("bounded_gather_errors_suppressed", suppressed_count),
             ]:
                 if delta > 0:
                     self.inc(name, delta)
@@ -545,8 +554,8 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            self.set_gauge('fetch_coordinator_blocked_domains', float(blocked_domains))
-            self.set_gauge('fetch_coordinator_circuit_open', 1.0 if circuit_open else 0.0)
+            self.set_gauge("fetch_coordinator_blocked_domains", float(blocked_domains))
+            self.set_gauge("fetch_coordinator_circuit_open", 1.0 if circuit_open else 0.0)
         except Exception:
             pass
 
@@ -565,15 +574,15 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            self.set_gauge('sprint_budget_elapsed_ms', elapsed_ms)
-            self.set_gauge('sprint_budget_remaining_ms', remaining_ms)
-            self.set_gauge('sprint_budget_phase', float(hash(phase) % 1000))
+            self.set_gauge("sprint_budget_elapsed_ms", elapsed_ms)
+            self.set_gauge("sprint_budget_remaining_ms", remaining_ms)
+            self.set_gauge("sprint_budget_phase", float(hash(phase) % 1000))
             if phase_avg_ms is not None:
-                self.set_gauge('sprint_phase_duration_avg_ms', phase_avg_ms)
+                self.set_gauge("sprint_phase_duration_avg_ms", phase_avg_ms)
             if phase_p50_ms is not None:
-                self.set_gauge('sprint_phase_duration_p50_ms', phase_p50_ms)
+                self.set_gauge("sprint_phase_duration_p50_ms", phase_p50_ms)
             if phase_p95_ms is not None:
-                self.set_gauge('sprint_phase_duration_p95_ms', phase_p95_ms)
+                self.set_gauge("sprint_phase_duration_p95_ms", phase_p95_ms)
         except Exception:
             pass
 
@@ -605,11 +614,11 @@ class MetricsRegistry:
                 return
 
             # Record in metrics (bounded)
-            self.set_gauge(f'stage_latency_ms_{stage_name}', latency_ms)
-            self.set_gauge(f'stage_items_in_{stage_name}', float(items_in))
-            self.set_gauge(f'stage_items_out_{stage_name}', float(items_out))
+            self.set_gauge(f"stage_latency_ms_{stage_name}", latency_ms)
+            self.set_gauge(f"stage_items_in_{stage_name}", float(items_in))
+            self.set_gauge(f"stage_items_out_{stage_name}", float(items_out))
             if error:
-                self.inc(f'stage_errors_{stage_name}')
+                self.inc(f"stage_errors_{stage_name}")
 
             # Also record to OtelBridge if available (for live dashboard)
             self._record_to_otel_bridge(stage_name, latency_ms, items_in, items_out, error)
@@ -635,6 +644,7 @@ class MetricsRegistry:
         """
         try:
             from hledac.universal._core.python_otel_bridge import get_otel_bridge
+
             bridge = get_otel_bridge()
             if bridge is None:
                 return
@@ -670,13 +680,14 @@ class MetricsRegistry:
         try:
             if self._closed:
                 return
-            self.set_gauge('m1_memory_pressure', pressure)
-            self.set_gauge('m1_memory_available_gib', available_gib)
-            self.set_gauge('m1_memory_rss_gib', rss_gib)
+            self.set_gauge("m1_memory_pressure", pressure)
+            self.set_gauge("m1_memory_available_gib", available_gib)
+            self.set_gauge("m1_memory_rss_gib", rss_gib)
 
             # FIX-10: Wire to OtelBridge properly via record_memory_pressure
             try:
                 from hledac.universal._core.python_otel_bridge import get_otel_bridge
+
                 bridge = get_otel_bridge()
                 if bridge is not None:
                     bridge.record_memory_pressure(pressure, available_gib, rss_gib)
@@ -697,13 +708,12 @@ class MetricsRegistry:
         self._closed = True
         self.flush(force=True)
 
-        # Stop async flusher
         if self._flusher:
             self._flusher.stop()
 
-        logger.info(f'MetricsRegistry closed: run_id={self._run_id}')
+        logger.info(f"MetricsRegistry closed: run_id={self._run_id}")
 
-    def __enter__(self) -> "MetricsRegistry":
+    def __enter__(self) -> MetricsRegistry:
         return self
 
     def __exit__(self, _exc_type, _exc_val, _exc_tb) -> None:
@@ -715,7 +725,7 @@ class MetricsRegistry:
 
 def create_metrics_registry(
     run_dir: Path,
-    run_id: str = 'default',
+    run_id: str = "default",
     **kwargs,
 ) -> MetricsRegistry:
     """Create a MetricsRegistry instance."""
@@ -730,7 +740,7 @@ def get_metrics_registry() -> MetricsRegistry:
     global _metrics_registry_singleton
     if _metrics_registry_singleton is None:
         _metrics_registry_singleton = MetricsRegistry(
-            run_dir=Path('/tmp/hledac_metrics'),
-            run_id='default',
+            run_dir=Path("/tmp/hledac_metrics"),
+            run_id="default",
         )
     return _metrics_registry_singleton

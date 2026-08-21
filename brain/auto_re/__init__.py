@@ -18,9 +18,9 @@ Generated code stored in ~/.cache/hledac/auto_re/<sha256>.py for 24h audit.
 from __future__ import annotations
 
 from hledac.universal.brain.auto_re.parser_forge import (
-    AutoREEngine,
-    AutoRECatalog,
     MAGIC_ROUTER,
+    AutoRECatalog,
+    AutoREEngine,
     AutoREResult,
     ParsedIOC,
     get_auto_re_engine,

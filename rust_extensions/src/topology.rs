@@ -76,10 +76,6 @@ use std::thread;
 // MODERN-27 FIX: Import safe QoS conversion helper from qos_class_helpers module
 use crate::qos_class_helpers::qos_class_i32_to_qos_class_t;
 
-// ============================================================================
-// NEXTGEN-03: PerfLevelCluster for Asymmetric Topology-Aware Scheduling
-// ============================================================================
-
 /// Performance level cluster — groups cores by type and performance level.
 ///
 /// NEXTGEN-03: Used by elastic_pool.rs to create dedicated thread pools
@@ -129,10 +125,6 @@ impl PerfLevelCluster {
     }
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// Performance level 0 (E-cores = UTILITY cluster) sysctl name.
 const PERFLEVEL0_CPU: &[u8] = b"hw.perflevel0.physicalcpu\0";
 
@@ -145,10 +137,6 @@ const PHYSICAL_CPU: &[u8] = b"hw.physicalcpu\0";
 /// Fallback logical CPU count sysctl name.
 const LOGICAL_CPU: &[u8] = b"hw.logicalcpu\0";
 
-// ============================================================================
-// QoS Classes (for apply_affinity_for_workload)
-// ============================================================================
-
 /// QoS class for CPU-intensive work — runs on P-cores.
 const QOS_USER_INITIATED: c_int = 0x19;
 
@@ -157,10 +145,6 @@ const QOS_UTILITY: c_int = 0x11;
 
 /// QoS class for background/telemetry — runs on E-cores.
 const QOS_BACKGROUND: c_int = 0x09;
-
-// ============================================================================
-// Topology State (initialized once at startup)
-// ============================================================================
 
 /// Global topology info — initialized once via init_topology().
 static TOPOLOGY: OnceLock<TopologyInfo> = OnceLock::new();
@@ -201,10 +185,6 @@ impl Default for TopologyInfo {
         }
     }
 }
-
-// ============================================================================
-// Platform-Specific sysctl Helpers
-// ============================================================================
 
 #[cfg(target_os = "macos")]
 fn sysctl_int(name: &[u8]) -> Option<usize> {
@@ -255,10 +235,6 @@ fn is_apple_silicon() -> bool {
 fn sysctl_int(_name: &[u8]) -> Option<usize> {
     None
 }
-
-// ============================================================================
-// Public API — Topology Detection
-// ============================================================================
 
 /// Initialize topology info — called once at startup.
 ///
@@ -338,10 +314,6 @@ pub fn get_topology() -> &'static TopologyInfo {
     })
 }
 
-// ============================================================================
-// Public API — Convenience Accessors
-// ============================================================================
-
 /// Get the number of P-cores (performance cores).
 #[inline]
 pub fn p_core_count() -> usize {
@@ -377,10 +349,6 @@ pub fn get_p_core_indices() -> Vec<usize> {
 pub fn get_e_core_indices() -> Vec<usize> {
     get_topology().e_core_indices.clone()
 }
-
-// ============================================================================
-// NEXTGEN-03: PerfLevelCluster Detection
-// ============================================================================
 
 /// Initialize perflevel clusters — called once at startup.
 ///
@@ -447,10 +415,6 @@ pub fn get_cluster_for_workload(workload: WorkloadType) -> Option<&'static PerfL
         WorkloadType::Default => get_p_core_cluster(),
     }
 }
-
-// ============================================================================
-// Public API — Workload-Aware Affinity
-// ============================================================================
 
 /// Workload type for affinity selection.
 ///
@@ -562,10 +526,6 @@ pub fn apply_affinity_for_workload_str(_workload: &str) {
     // No-op
 }
 
-// ============================================================================
-// Thread Name Helpers
-// ============================================================================
-
 /// Get a descriptive name for this thread based on its workload affinity.
 pub fn get_thread_workload_name(workload: WorkloadType) -> &'static str {
     match workload {
@@ -578,10 +538,6 @@ pub fn get_thread_workload_name(workload: WorkloadType) -> &'static str {
         WorkloadType::Default => "hledac-worker",
     }
 }
-
-// ============================================================================
-// PyO3 Python FFI
-// ============================================================================
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -746,10 +702,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {

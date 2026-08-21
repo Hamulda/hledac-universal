@@ -32,13 +32,13 @@ PHASE ROTATION STRATEGY:
   - Tor: rotate on phase boundary instead of after N requests
   - Nym: circuit_breaker already uses timeout-based reset
 """
+
 import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.asyncx import safe_create_task, parallel, first_completed  # ISSUE-15
-from _core import aclose
+from hledac.universal.utils.asyncx import first_completed, parallel, safe_create_task
 
 if TYPE_CHECKING:
     from .base import Transport
@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 TRANSPORT_RAM_BUDGET_MB: float = 150.0
 KEEPALIVE_INTERVAL_S: float = 30.0
 SHUTDOWN_TIMEOUT_S: float = 10.0
+
 
 class TransportSupervisor:
     """
@@ -69,16 +70,29 @@ class TransportSupervisor:
         # At sprint shutdown:
         await supervisor.stop()
     """
-    __slots__ = tuple(('_health_events', '_keepalive_interval', '_last_health', '_phase', '_ram_budget_mb', '_started', '_stop_event', '_task', '_transports'))
 
-    def __init__(self, keepalive_interval: float=KEEPALIVE_INTERVAL_S, ram_budget_mb: float=TRANSPORT_RAM_BUDGET_MB):
+    __slots__ = (
+        "_health_events",
+        "_keepalive_interval",
+        "_last_health",
+        "_phase",
+        "_ram_budget_mb",
+        "_started",
+        "_stop_event",
+        "_task",
+        "_transports",
+    )
+
+    def __init__(
+        self, keepalive_interval: float = KEEPALIVE_INTERVAL_S, ram_budget_mb: float = TRANSPORT_RAM_BUDGET_MB
+    ) -> None:
         self._transports: dict[str, Transport] = {}
         self._health_events: dict[str, asyncio.Event] = {}
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event = asyncio.Event()
         self._keepalive_interval = keepalive_interval
         self._ram_budget_mb = ram_budget_mb
-        self._phase: str = 'init'
+        self._phase: str = "init"
         self._last_health: dict[str, bool] = {}
         self._started: bool = False
 
@@ -90,11 +104,13 @@ class TransportSupervisor:
         all registrations are complete.
         """
         if name in self._transports:
-            logger.warning('[TransportSupervisor] Transport %r already registered, replacing', name)
+            logger.warning("[TransportSupervisor] Transport %r already registered, replacing", name)
         self._transports[name] = transport
         self._health_events[name] = asyncio.Event()
         self._health_events[name].set()
-        logger.debug('[TransportSupervisor] Registered transport %r (health_cost=%.1f MB)', name, transport.health_cost())
+        logger.debug(
+            "[TransportSupervisor] Registered transport %r (health_cost=%.1f MB)", name, transport.health_cost()
+        )
 
     async def unregister(self, name: str) -> None:
         """Unregister a transport, stopping it if running."""
@@ -108,8 +124,8 @@ class TransportSupervisor:
                 async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
                     await transport.stop()
             except TimeoutError:
-                logger.warning('[TransportSupervisor] Transport %r did not stop gracefully', name)
-        logger.debug('[TransportSupervisor] Unregistered transport %r', name)
+                logger.warning("[TransportSupervisor] Transport %r did not stop gracefully", name)
+        logger.debug("[TransportSupervisor] Unregistered transport %r", name)
 
     async def start(self) -> None:
         """
@@ -118,12 +134,17 @@ class TransportSupervisor:
         Also starts all registered transports that have available=True.
         """
         if self._started:
-            logger.warning('[TransportSupervisor] Already started')
+            logger.warning("[TransportSupervisor] Already started")
             return
         self._stop_event = asyncio.Event()
-        self._task = safe_create_task(self._watchdog_loop(), name='transport_supervisor')
+        self._task = safe_create_task(self._watchdog_loop(), name="transport_supervisor")
         self._started = True
-        logger.info('[TransportSupervisor] Started (keepalive=%.0fs, ram_budget=%.0f MB, transports=%d)', self._keepalive_interval, self._ram_budget_mb, len(self._transports))
+        logger.info(
+            "[TransportSupervisor] Started (keepalive=%.0fs, ram_budget=%.0f MB, transports=%d)",
+            self._keepalive_interval,
+            self._ram_budget_mb,
+            len(self._transports),
+        )
 
     async def stop(self) -> None:
         """
@@ -137,7 +158,7 @@ class TransportSupervisor:
                 async with asyncio.timeout(SHUTDOWN_TIMEOUT_S + 5.0):
                     await self._task
             except TimeoutError:
-                logger.warning('[TransportSupervisor] Watchdog task did not exit cleanly')
+                logger.warning("[TransportSupervisor] Watchdog task did not exit cleanly")
                 self._task.cancel()
                 try:
                     await self._task
@@ -148,11 +169,11 @@ class TransportSupervisor:
                 async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
                     await transport.stop()
             except TimeoutError:
-                logger.warning('[TransportSupervisor] Transport %r stop timed out', name)
+                logger.warning("[TransportSupervisor] Transport %r stop timed out", name)
             except (KeyError, RuntimeError) as e:  # transport not found or stop failed
-                logger.error('[TransportSupervisor] Error stopping transport %r: %s', name, e)
+                logger.error("[TransportSupervisor] Error stopping transport %r: %s", name, e)
         self._started = False
-        logger.info('[TransportSupervisor] Stopped')
+        logger.info("[TransportSupervisor] Stopped")
 
     async def _watchdog_loop(self) -> None:
         """
@@ -189,7 +210,7 @@ class TransportSupervisor:
             unhealthy = await self._check_health_batch(health_check_failures)
             await self._enforce_ram_budget()
             for uname in unhealthy:
-                logger.warning('[TransportSupervisor] Transport %r failed health check', uname)
+                logger.warning("[TransportSupervisor] Transport %r failed health check", uname)
 
     async def _run_keepalive_batch(self) -> None:
         """
@@ -207,9 +228,10 @@ class TransportSupervisor:
                     async with asyncio.timeout(5.0):
                         await t.keepalive()
                 except TimeoutError:
-                    logger.debug('[TransportSupervisor] keepalive timeout for transport %r', n)
+                    logger.debug("[TransportSupervisor] keepalive timeout for transport %r", n)
                 except (KeyError, RuntimeError) as e:  # transport not found or keepalive failed
-                    logger.debug('[TransportSupervisor] keepalive error for transport %r: %s', n, e)
+                    logger.debug("[TransportSupervisor] keepalive error for transport %r: %s", n, e)
+
             task = safe_create_task(_keepalive_wrapper(transport, name))
             coros.append((name, task))
         if not coros:
@@ -217,14 +239,16 @@ class TransportSupervisor:
         tasks = [t for _, t in coros]
         try:
             async with asyncio.timeout(10.0):
-                await parallel(tasks, taskgroup=True, policy='log', ctx='transport_supervisor.keepalive', logger_instance=logger)
+                await parallel(
+                    tasks, taskgroup=True, policy="log", ctx="transport_supervisor.keepalive", logger_instance=logger
+                )
         except TimeoutError:
-            logger.debug('[TransportSupervisor] keepalive batch timed out (some transports skipped)')
+            logger.debug("[TransportSupervisor] keepalive batch timed out (some transports skipped)")
             for _, t in coros:
                 if not t.done():
                     t.cancel()
         except Exception as e:  # noqa: BLE001 — fail-soft: aggregate gather result, unknown errors per-transport
-            logger.debug('[TransportSupervisor] keepalive batch error: %s', e)
+            logger.debug("[TransportSupervisor] keepalive batch error: %s", e)
 
     async def _check_health_batch(self, failures: dict[str, int]) -> list[str]:
         """
@@ -241,7 +265,7 @@ class TransportSupervisor:
                     healthy = await transport.is_healthy()
             except TimeoutError:
                 healthy = False
-            except (KeyError, RuntimeError):  # transport not found or health check failed
+            except KeyError, RuntimeError:  # transport not found or health check failed
                 healthy = False
             self._last_health[name] = healthy
             if not healthy:
@@ -264,8 +288,13 @@ class TransportSupervisor:
         if total_ram <= self._ram_budget_mb:
             return
         overage_mb = total_ram - self._ram_budget_mb
-        logger.warning('[TransportSupervisor] RAM overage: %.1f MB (total=%.1f, budget=%.1f)', overage_mb, total_ram, self._ram_budget_mb)
-        priority_order = ['dht', 'nym', 'i2p', 'tor', 'httpx', 'curl_cffi']
+        logger.warning(
+            "[TransportSupervisor] RAM overage: %.1f MB (total=%.1f, budget=%.1f)",
+            overage_mb,
+            total_ram,
+            self._ram_budget_mb,
+        )
+        priority_order = ["dht", "nym", "i2p", "tor", "httpx", "curl_cffi"]
         for name in priority_order:
             if name not in self._transports:
                 continue
@@ -273,12 +302,12 @@ class TransportSupervisor:
             cost = transport.health_cost()
             if cost <= 0:
                 continue
-            logger.info('[TransportSupervisor] Pausing transport %r to reduce RAM (cost=%.1f MB)', name, cost)
+            logger.info("[TransportSupervisor] Pausing transport %r to reduce RAM (cost=%.1f MB)", name, cost)
             try:
                 async with asyncio.timeout(SHUTDOWN_TIMEOUT_S):
                     await transport.stop()
             except (KeyError, RuntimeError) as e:  # transport not found or pause failed
-                logger.error('[TransportSupervisor] Error pausing transport %r: %s', name, e)
+                logger.error("[TransportSupervisor] Error pausing transport %r: %s", name, e)
             break
 
     async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
@@ -289,7 +318,7 @@ class TransportSupervisor:
         Also updates internal phase tracking.
         """
         self._phase = new_phase
-        logger.info('[TransportSupervisor] Phase boundary: %s → %s', old_phase, new_phase)
+        logger.info("[TransportSupervisor] Phase boundary: %s → %s", old_phase, new_phase)
         tasks: list[asyncio.Task] = []
         for name, transport in self._transports.items():
             if not transport.available:
@@ -300,28 +329,45 @@ class TransportSupervisor:
                     async with asyncio.timeout(5.0):
                         await t.on_phase_boundary(old_phase, new_phase)
                 except TimeoutError:
-                    logger.debug('[TransportSupervisor] on_phase_boundary timeout for %r', n)
+                    logger.debug("[TransportSupervisor] on_phase_boundary timeout for %r", n)
                 except (KeyError, RuntimeError) as e:  # transport not found or notification failed
-                    logger.debug('[TransportSupervisor] on_phase_boundary error for %r: %s', n, e)
+                    logger.debug("[TransportSupervisor] on_phase_boundary error for %r: %s", n, e)
+
             task = safe_create_task(_notify(transport, name))
             tasks.append(task)
         if tasks:
             try:
                 async with asyncio.timeout(15.0):
-                    await parallel(tasks, taskgroup=True, policy='log', ctx='transport_supervisor.phase_boundary', logger_instance=logger)
+                    await parallel(
+                        tasks,
+                        taskgroup=True,
+                        policy="log",
+                        ctx="transport_supervisor.phase_boundary",
+                        logger_instance=logger,
+                    )
             except TimeoutError:
-                logger.warning('[TransportSupervisor] Phase boundary notification timed out')
+                logger.warning("[TransportSupervisor] Phase boundary notification timed out")
 
     def get_status(self) -> dict:
         """Return supervisor status for telemetry."""
         total_ram = sum(t.health_cost() for t in self._transports.values())
-        return {'phase': self._phase, 'started': self._started, 'transport_count': len(self._transports), 'total_ram_mb': total_ram, 'ram_budget_mb': self._ram_budget_mb, 'health': {name: self._last_health.get(name, False) for name in self._transports}}
+        return {
+            "phase": self._phase,
+            "started": self._started,
+            "transport_count": len(self._transports),
+            "total_ram_mb": total_ram,
+            "ram_budget_mb": self._ram_budget_mb,
+            "health": {name: self._last_health.get(name, False) for name in self._transports},
+        }
 
     @property
     def transports(self) -> dict[str, Transport]:
         """Return registered transports dict (read-only copy)."""
         return dict(self._transports)
+
+
 _supervisor: TransportSupervisor | None = None
+
 
 def get_transport_supervisor() -> TransportSupervisor:
     """Get or create the module-level TransportSupervisor singleton."""

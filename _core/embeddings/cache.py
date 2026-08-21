@@ -21,6 +21,7 @@ Key invariants:
 - Bounded: MAX_ENTRIES (soft cap) + MAX_BYTES (hard cap ~512MB)
 - asyncio.Lock for thread-safety in async context
 """
+
 from __future__ import annotations
 
 from ._shared import get_cache_lock_async as _get_cache_lock_async
@@ -33,29 +34,28 @@ except ImportError:
     ORJSON_AVAILABLE = False
 
 import asyncio
-import gc
 import hashlib
 import logging
 
 try:
     import xxhash
+
     XXHASH_AVAILABLE = True
 except ImportError:
     XXHASH_AVAILABLE = False
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 import numpy as np
 
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
-from _core._util import aclose
 
 try:
-    from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
+    from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+    from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 except ImportError:
     _msgspec_decode = cast(Any, None)
     _msgspec_encode = cast(Any, None)
@@ -72,11 +72,6 @@ _ENTRY_OVERHEAD = 128
 _VERSION_INT8 = 2
 _VERSION_FLOAT16 = 1
 _CACHE_VERSION = _VERSION_INT8
-
-
-# ---------------------------------------------------------------------------
-# Int8 quantization helpers (ISSUE #022)
-# ---------------------------------------------------------------------------
 
 
 def _quantize_int8(emb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -101,9 +96,7 @@ def _quantize_int8(emb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     else:
         scale = np.array([absmax / 127.0], dtype=np.float32)
 
-    int8_vec = np.clip(
-        np.round(emb_f / scale[0]), -127.0, 127.0
-    ).astype(np.int8)
+    int8_vec = np.clip(np.round(emb_f / scale[0]), -127.0, 127.0).astype(np.int8)
     return int8_vec, scale
 
 
@@ -119,11 +112,6 @@ def _dequantize_int8(int8_vec: np.ndarray, scale: np.ndarray) -> np.ndarray:
         float32 dequantized vector, shape (dim,)
     """
     return (int8_vec.astype(np.float32) * scale[0]).astype(np.float32)
-
-
-# ---------------------------------------------------------------------------
-# Cache stats
-# ---------------------------------------------------------------------------
 
 
 class CacheStats(Struct):
@@ -173,11 +161,6 @@ class CacheEntry(Struct):
     scale: np.ndarray | None = None  # ISSUE #022: scale factor for int8 (None=float16)
 
 
-# ---------------------------------------------------------------------------
-# EmbeddingCache
-# ---------------------------------------------------------------------------
-
-
 class EmbeddingCache:
     """
     Two-layer embedding cache with np.memmap backing.
@@ -209,26 +192,24 @@ class EmbeddingCache:
         """Dynamic float16 bytes per entry."""
         return self.dim * 2  # 2 bytes per float16 element
 
-    __slots__ = tuple(
-        (
-            "_file_size",
-            "_hash_index",  # E-5 FIX: text_hash → slot_idx for real L2
-            "_free_list",  # E-10 FIX: in-memory free_list — O(1) alloc/evict
-            "_l1",
-            "_l1_lock",
-            "_memmap_path",
-            "_meta_path",
-            "_mmap",
-            "_mmap_init_lock",  # E-4 FIX: threading.Lock for sync init
-            "_mmap_lock",
-            "_pending_meta_save",  # E-10 FIX: coalesced meta flush
-            "_version",
-            "cache_dir",
-            "dim",
-            "max_bytes",
-            "max_entries",
-            "stats",
-    )
+    __slots__ = (
+        "_file_size",
+        "_hash_index",  # E-5 FIX: text_hash → slot_idx for real L2
+        "_free_list",  # E-10 FIX: in-memory free_list — O(1) alloc/evict
+        "_l1",
+        "_l1_lock",
+        "_memmap_path",
+        "_meta_path",
+        "_mmap",
+        "_mmap_init_lock",  # E-4 FIX: threading.Lock for sync init
+        "_mmap_lock",
+        "_pending_meta_save",  # E-10 FIX: coalesced meta flush
+        "_version",
+        "cache_dir",
+        "dim",
+        "max_bytes",
+        "max_entries",
+        "stats",
     )
 
     def __init__(
@@ -237,7 +218,7 @@ class EmbeddingCache:
         max_entries: int = _MAX_ENTRIES,
         max_bytes: int = _MAX_BYTES,
         cache_dir: Path | None = None,
-    ):
+    ) -> None:
         self.dim = dim
         self.max_entries = max_entries
         self.max_bytes = max_bytes
@@ -290,7 +271,7 @@ class EmbeddingCache:
                         dtype=np.uint8,
                         mode="r",
                         shape=(read_size,),
-    )
+                    )
                     raw_header = bytes(header_arr)
                     try:
                         decoded = msgspec.json.decode(raw_header)
@@ -305,7 +286,7 @@ class EmbeddingCache:
                             mode="r+",
                             offset=_HEADER_SIZE,
                             shape=(self._max_shape()[0], self._int8_bytes_per_entry()),
-    )
+                        )
                     else:
                         self._mmap = np.memmap(
                             str(self._memmap_path),
@@ -313,19 +294,14 @@ class EmbeddingCache:
                             mode="r+",
                             offset=_HEADER_SIZE,
                             shape=(self._max_shape()[0], self.dim),
-    )
+                        )
                     self._file_size = self._memmap_path.stat().st_size
-                    logger.info(
-                        f"[EmbedCache] Opened memmap v{self._version}: "
-                        f"{self._file_size / 1024 / 1024:.1f} MB"
-    )
+                    logger.info(f"[EmbedCache] Opened memmap v{self._version}: {self._file_size / 1024 / 1024:.1f} MB")
                 else:
                     self._create_memmap_sync()
                     logger.info(f"[EmbedCache] Created new memmap v{self._version}")
             except Exception as e:
-                logger.warning(
-                    f"[EmbedCache] memmap init failed (fallback to encode-only): {e}"
-    )
+                logger.warning(f"[EmbedCache] memmap init failed (fallback to encode-only): {e}")
                 self.stats.memmap_errors += 1
                 self._mmap = None
 
@@ -358,13 +334,13 @@ class EmbeddingCache:
                         mtime=meta.get("slot_mtimes", {}).get(str(slot_idx), 0),
                         text_hash=th,
                         scale=scale,
-    )
+                    )
                 # E-10 FIX: populate in-memory free_list from meta — O(1) alloc after this
                 self._free_list = sorted(free_list)
                 logger.debug(
                     f"[EmbedCache] meta loaded: {len(used_slots)} slots, "
                     f"hash_index size={len(self._hash_index)}, free_list size={len(self._free_list)}"
-    )
+                )
         except Exception as e:
             logger.debug(f"[EmbedCache] meta load failed (recreating): {e}")
 
@@ -438,7 +414,7 @@ class EmbeddingCache:
                 mode="r+",
                 offset=_HEADER_SIZE,
                 shape=(max_entries, entry_bytes),
-    )
+            )
             self._file_size = total_size
             self._version = _VERSION_INT8
             # E-10 FIX: init free_list for new cache, set pending to flush meta
@@ -467,7 +443,7 @@ class EmbeddingCache:
                         dtype=np.uint8,
                         mode="r",
                         shape=(read_size,),
-    )
+                    )
                     raw_header = bytes(header_arr)
                     # msgspec.json.decode needs full JSON — raw_header is already padded with \x00
                     try:
@@ -484,7 +460,7 @@ class EmbeddingCache:
                             mode="r+",
                             offset=_HEADER_SIZE,
                             shape=(self._max_shape()[0], self._int8_bytes_per_entry()),
-    )
+                        )
                     else:
                         self._mmap = np.memmap(
                             str(self._memmap_path),
@@ -492,20 +468,18 @@ class EmbeddingCache:
                             mode="r+",
                             offset=_HEADER_SIZE,
                             shape=(self._max_shape()[0], self.dim),
-    )
+                        )
                     self._file_size = self._memmap_path.stat().st_size
                     logger.info(
                         f"[EmbedCache] Opened memmap v{self._version}: "
                         f"{self._file_size / 1024 / 1024:.1f} MB, "
                         f"bytes_per_entry={entry_bytes}"
-    )
+                    )
                 else:
                     await self._create_memmap()
                     logger.info(f"[EmbedCache] Created new memmap v{self._version}")
             except Exception as e:
-                logger.warning(
-                    f"[EmbedCache] memmap init failed (fallback to encode-only): {e}"
-    )
+                logger.warning(f"[EmbedCache] memmap init failed (fallback to encode-only): {e}")
                 self.stats.memmap_errors += 1
                 self._mmap = None
 
@@ -547,7 +521,7 @@ class EmbeddingCache:
                 mode="r+",
                 offset=_HEADER_SIZE,
                 shape=(max_entries, entry_bytes),
-    )
+            )
             self._file_size = total_size
             self._version = _VERSION_INT8
             # E-10 FIX: init free_list for new cache, set pending to flush meta
@@ -587,7 +561,7 @@ class EmbeddingCache:
                         mtime=meta.get("slot_mtimes", {}).get(str(slot_idx), 0),
                         text_hash=th,
                         scale=scale,
-    )
+                    )
                 # E-10 FIX: populate in-memory free_list from meta
                 self._free_list = sorted(free_list)
         except Exception as e:
@@ -621,7 +595,8 @@ class EmbeddingCache:
                 "slot_scales": slot_scales,  # BUG FIX: persist per-slot scales for int8
                 "format": "int8_scale" if self._version >= _VERSION_INT8 else "float16",
             }
-            def _write_sync():
+
+            def _write_sync() -> None:
                 if _msgspec_encode:
                     data: str | bytes = _msgspec_encode(meta).decode()
                     mode = "w"
@@ -630,6 +605,7 @@ class EmbeddingCache:
                     mode = "wb"
                 with open(self._meta_path, mode) as f:
                     f.write(data)
+
             await asyncio.to_thread(_write_sync)
             self._pending_meta_save = False
         except Exception as e:
@@ -645,9 +621,7 @@ class EmbeddingCache:
             return xxhash.xxh3_64_hexdigest(text)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    async def get_or_encode(
-        self, text: str, encode_fn: Any = None
-    ) -> np.ndarray | None:
+    async def get_or_encode(self, text: str, encode_fn: Any = None) -> np.ndarray | None:
         text_hash = self._hash_text(text)
         async with await self._get_l1_lock():
             entry = self._l1.get(text_hash)
@@ -724,9 +698,7 @@ class EmbeddingCache:
     async def set(self, text: str, embedding: np.ndarray) -> bool:
         text_hash = self._hash_text(text)
         if embedding.shape[0] != self.dim:
-            logger.warning(
-                f"[EmbedCache] dim mismatch: {embedding.shape[0]} != {self.dim}"
-    )
+            logger.warning(f"[EmbedCache] dim mismatch: {embedding.shape[0]} != {self.dim}")
             return False
         try:
             slot_idx = await self._allocate_slot()
@@ -748,16 +720,14 @@ class EmbeddingCache:
                     self._mmap[slot_idx, : self.dim] = int8_vec
                     # Write scale factor (4B) at offset 256 — store as raw int8 bytes (float32 layout)
                     scale_bytes = scale.tobytes()
-                    self._mmap[slot_idx, self.dim : self.dim + 4] = np.frombuffer(
-                        scale_bytes, dtype=np.int8
-    )
+                    self._mmap[slot_idx, self.dim : self.dim + 4] = np.frombuffer(scale_bytes, dtype=np.int8)
                     entry = CacheEntry(
                         offset=slot_offset,
                         length=self.dim,
                         mtime=asyncio.get_running_loop().time(),
                         text_hash=text_hash,
                         scale=scale,
-    )
+                    )
                 else:
                     # Legacy float16
                     vec_f16 = embedding.astype(np.float16)
@@ -768,7 +738,7 @@ class EmbeddingCache:
                         mtime=asyncio.get_running_loop().time(),
                         text_hash=text_hash,
                         scale=None,
-    )
+                    )
 
                 if hasattr(self._mmap, "flush"):
                     self._mmap.flush()
@@ -879,12 +849,13 @@ async def get_embedding_cache(dim: int = 256) -> EmbeddingCache:
             # Issue #16: Register with GlobalCacheRegistry for winddown clear_all
             try:
                 from hledac.universal._core.global_cache_registry import register_cache
+
                 register_cache(
                     "embeddings",
-                    get_size=lambda c=_cache: len(getattr(c, '_l1', {})),
+                    get_size=lambda c=_cache: len(getattr(c, "_l1", {})),
                     clear=_cache.clear_sync,
                     description="MLX embedding two-layer LRU cache",
-    )
+                )
             except Exception:  # noqa: BLE001
                 pass  # Non-fatal — registry is optional
         return _cache

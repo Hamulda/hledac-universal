@@ -38,8 +38,9 @@ aho_module = sys.modules["hledac.universal.utils.aho_extractor"]
 # Test 1: singleton automaton — built once, reused
 # ---------------------------------------------------------------------------
 
+
 class TestAutomatonCaching:
-    def test_automaton_is_cached_singleton(self):
+    def test_automaton_is_cached_singleton(self) -> None:
         """Automaton must be built exactly once and reused."""
         auto1 = get_suspicious_keywords_automaton()
         auto2 = get_suspicious_keywords_automaton()
@@ -50,8 +51,9 @@ class TestAutomatonCaching:
 # Test 2: non-overlapping pattern set
 # ---------------------------------------------------------------------------
 
+
 class TestPatternSetNonOverlap:
-    def test_pattern_subset_is_non_overlapping(self):
+    def test_pattern_subset_is_non_overlapping(self) -> None:
         """
         The 9 pilot patterns must not contain prefix collisions
         at the same position (no pattern is a prefix of another).
@@ -67,8 +69,9 @@ class TestPatternSetNonOverlap:
 # Test 3: output normalization (exclusive end)
 # ---------------------------------------------------------------------------
 
+
 class TestOutputNormalization:
-    def test_normalize_aho_match_exclusive_end(self):
+    def test_normalize_aho_match_exclusive_end(self) -> None:
         """Normalized match must have exclusive end (end = start + len(match))."""
         # "classified" at position 5 in "The classified doc"
         norm = normalize_aho_match(14, "classified")
@@ -76,7 +79,7 @@ class TestOutputNormalization:
         assert norm["end"] == 15  # 5 + len("classified") = 5 + 10 = 15 (EXCLUSIVE)
         assert norm["match"] == "classified"
 
-    def test_regex_span_parity(self):
+    def test_regex_span_parity(self) -> None:
         """Normalized output must match regex .span() convention (exclusive end)."""
         text = "This document is classified and secret"
         aho = aho_scan_text(get_suspicious_keywords_automaton(), text)
@@ -92,6 +95,7 @@ class TestOutputNormalization:
 # ---------------------------------------------------------------------------
 # Test 4: parity with ground-truth substring scan
 # ---------------------------------------------------------------------------
+
 
 class TestParityWithGroundTruth:
     @pytest.mark.parametrize(
@@ -109,12 +113,12 @@ class TestParityWithGroundTruth:
             "  spaces  and  internal use only  padding  ",
         ],
     )
-    def test_aho_matches_regex_on_representative_cases(self, text):
+    def test_aho_matches_regex_on_representative_cases(self, text) -> None:
         """Aho-Corasick must produce identical normalized output to substring scan."""
         _, _, are_identical = compare_aho_vs_regex(text)
         assert are_identical, f"Mismatch on: {text!r}"
 
-    def test_aho_handles_no_match_cases(self):
+    def test_aho_handles_no_match_cases(self) -> None:
         """No matches → empty list for both methods."""
         text = "This is completely normal content with no indicators"
         aho, regex, identical = compare_aho_vs_regex(text)
@@ -122,7 +126,7 @@ class TestParityWithGroundTruth:
         assert regex == []
         assert identical is True
 
-    def test_aho_handles_multiple_matches_in_one_pass(self):
+    def test_aho_handles_multiple_matches_in_one_pass(self) -> None:
         """Multiple distinct keywords in one text must all be found."""
         text = "The confidential report was marked classified and secret and sensitive"
         aho, regex, identical = compare_aho_vs_regex(text)
@@ -138,8 +142,9 @@ class TestParityWithGroundTruth:
 # Test 10: benchmark (scan time vs regex, build time)
 # ---------------------------------------------------------------------------
 
+
 class TestBenchmark:
-    def test_benchmark_build_and_scan(self):
+    def test_benchmark_build_and_scan(self) -> None:
         """
         Benchmark automaton build time and scan time vs regex.
 
@@ -201,12 +206,13 @@ class TestBenchmark:
         # Aho should be faster than N×regex for this pattern density
         # (not a hard requirement, just informational)
 
-    def test_aho_module_lazy_import_flag(self):
+    def test_aho_module_lazy_import_flag(self) -> None:
         """ahocorasick module is loaded only on first scan call."""
         # Force fresh import to test lazy flag
         import importlib
 
         import hledac.universal.utils.aho_extractor as aho_extractor
+
         importlib.reload(aho_extractor)
 
         # Before first call, the lazy module should be None

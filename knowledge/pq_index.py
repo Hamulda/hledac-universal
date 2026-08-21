@@ -2,7 +2,6 @@
 Product Quantization (PQ) index pro kompresi embeddingů.
 Vrací similarity (1/(1+L2)) konzistentní s HNSW cosine similarity.
 
-
 ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 ===========================================================
 - komprimuje embeddingy pomocí Product Quantization (12× úspora)
@@ -10,7 +9,6 @@ ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 - NENÍ owner identity store → lancedb_store
 - standalone tool: train() → encode() → search() workflow
 """
-
 
 import logging
 from typing import Any
@@ -20,13 +18,13 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # C1-X FIX: Import MLX_AVAILABLE from SSOT (zero-import detection)
-from hledac.universal.utils.mlx_memory import MLX_AVAILABLE
-from _core import aclose
+
 
 # Lazy accessor for mlx.core — uses centralized get_mx() from SSOT
 def _get_mx():
     """Lazy accessor for mlx.core — uses centralized get_mx() from SSOT."""
     from hledac.universal.utils.mlx_memory._core import get_mx as _get_mx_from_core
+
     return _get_mx_from_core()
 
 
@@ -40,9 +38,9 @@ class PQIndex:
         - 12× paměťová úspora (768 → 8 byte per vector)
     """
 
-    __slots__ = ('d', 'm', 'k', 'n_iter', 'sub_dim', 'centroids', 'codes', 'ids', 'perm', '_is_trained', '_mx')
+    __slots__ = ("d", "m", "k", "n_iter", "sub_dim", "centroids", "codes", "ids", "perm", "_is_trained", "_mx")
 
-    def __init__(self, d: int = 768, m: int = 96, k: int = 256, n_iter: int = 20):
+    def __init__(self, d: int = 768, m: int = 96, k: int = 256, n_iter: int = 20) -> None:
         """
         Initialize PQ index.
 
@@ -77,7 +75,7 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ training")
-        
+
         n = vectors.shape[0]
         logger.info(f"Starting PQ training on {n} vectors, {self.n_iter} iterations")
 
@@ -90,7 +88,6 @@ class PQIndex:
         for i in range(self.m):
             data = subvectors[:, i, :]
 
-            # Initialize centroids with k-means++ style
             idx = mx.random.randint(0, n, (self.k,))
             centroids = data[idx]
 
@@ -100,7 +97,6 @@ class PQIndex:
                 distances = mx.sum((data[:, None, :] - centroids[None, :, :]) ** 2, axis=2)
                 labels = mx.argmin(distances, axis=1)
 
-                # Update centroids - use numpy for complex indexing
                 new_centroids = []
                 labels_np = np.array(labels)
                 data_np = np.array(data)
@@ -114,7 +110,7 @@ class PQIndex:
                 centroids = mx.array(np.stack(new_centroids))
 
                 if it % 5 == 0:
-                    logger.debug(f"Subvector {i+1}/{self.m}, iteration {it+1}/{self.n_iter}")
+                    logger.debug(f"Subvector {i + 1}/{self.m}, iteration {it + 1}/{self.n_iter}")
 
             centroids_list.append(centroids)
 
@@ -136,7 +132,7 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ encoding")
-        
+
         if not self._is_trained:
             raise RuntimeError("PQ index not trained. Call train() first.")
 
@@ -147,10 +143,7 @@ class PQIndex:
         codes = []
         for i in range(self.m):
             # Compute distances to centroids for sub-vector i
-            dist = mx.sum(
-                (subvectors[:, i, :][:, None, :] - self.centroids[i][None, :, :]) ** 2,
-                axis=2
-    )
+            dist = mx.sum((subvectors[:, i, :][:, None, :] - self.centroids[i][None, :, :]) ** 2, axis=2)
             codes.append(mx.argmin(dist, axis=1).astype(mx.uint8))
 
         return mx.stack(codes, axis=1)
@@ -166,7 +159,7 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ add")
-        
+
         if not self._is_trained:
             raise RuntimeError("PQ index not trained. Call train() first.")
 
@@ -196,7 +189,7 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ search")
-        
+
         if self.codes is None or len(self.ids) == 0:
             return []
 
@@ -207,10 +200,7 @@ class PQIndex:
         # Compute distance table: (m, k)
         dist_table = mx.zeros((self.m, self.k))
         for i in range(self.m):
-            d = mx.sum(
-                (q_sub[0, i][None, :] - self.centroids[i]) ** 2,
-                axis=1
-    )
+            d = mx.sum((q_sub[0, i][None, :] - self.centroids[i]) ** 2, axis=1)
             dist_table[i] = d
 
         # Compute L2 distances using codes: (n,)
@@ -232,7 +222,6 @@ class PQIndex:
         # This is monotonically decreasing with L2, so higher = more similar
         similarities = 1.0 / (1.0 + dists)
 
-        # Get top-k indices
         if k >= len(self.ids):
             sorted_idx = mx.argsort(-similarities)
         else:
@@ -247,17 +236,11 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ save")
-        
+
         if not self._is_trained:
             raise RuntimeError("Cannot save untrained PQ index")
 
-        mx.savez(
-            path,
-            centroids=self.centroids,
-            codes=self.codes,
-            perm=self.perm,
-            ids=self.ids
-    )
+        mx.savez(path, centroids=self.centroids, codes=self.codes, perm=self.perm, ids=self.ids)
         logger.info(f"PQ index saved to {path}")
 
     def load(self, path: str) -> None:
@@ -265,12 +248,12 @@ class PQIndex:
         mx = _get_mx()
         if mx is None:
             raise RuntimeError("MLX not available for PQ load")
-        
+
         data = mx.load(path)
-        self.centroids = data['centroids']
-        self.codes = data['codes']
-        self.perm = data['perm']
-        self.ids = list(data['ids'])
+        self.centroids = data["centroids"]
+        self.codes = data["codes"]
+        self.perm = data["perm"]
+        self.ids = list(data["ids"])
         self._is_trained = True
         logger.info(f"PQ index loaded from {path}")
 

@@ -6,11 +6,11 @@ Provides URL blocking with binary fuse filter and LRU cache.
 
 This is a fail-safe stub: all methods return safe defaults.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 

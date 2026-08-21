@@ -106,13 +106,11 @@ pub fn validate_stix_json(json_str: &str) -> ValidationResult {
 /// Internal STIX validation implementation (only compiled when stix feature is enabled).
 #[cfg(feature = "stix")]
 fn validate_stix_json_impl(json_str: &str) -> ValidationResult {
-    // Step 1: Parse JSON — fail-fast on invalid JSON
     let value: Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => return ValidationResult::parse_error(e.to_string()),
     };
 
-    // Step 2: Basic structural checks (STIX 2.1 required fields)
     if let Some(obj) = value.as_object() {
         let has_type = obj.contains_key("type");
         let has_id = obj.contains_key("id");
@@ -175,7 +173,6 @@ fn validate_bundle(bundle: &serde_json::Map<String, Value>) -> ValidationResult 
             .unwrap_or("unknown");
         let obj_id = obj.get("id").and_then(|v| v.as_str());
 
-        // Check ID uniqueness
         if let Some(id) = obj_id {
             if !ids.insert(id.to_string()) {
                 errors.push(ValidationError {

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -44,9 +43,7 @@ class AnalyticsProtocol(Protocol):
         """
         ...
 
-    def find_connected(
-        self, ioc_value: str, max_depth: int = 2
-    ) -> list[dict[str, Any]]:
+    def find_connected(self, ioc_value: str, max_depth: int = 2) -> list[dict[str, Any]]:
         """Find connected entities via graph traversal. Returns [] on error."""
         ...
 
@@ -72,9 +69,7 @@ class AnalyticsProtocol(Protocol):
         """
         ...
 
-    def find_connected_batch(
-        self, values: list[str], max_depth: int = 2
-    ) -> dict[str, list[dict[str, Any]]]:
+    def find_connected_batch(self, values: list[str], max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Batch graph traversal. Returns {} on error."""
         ...
 

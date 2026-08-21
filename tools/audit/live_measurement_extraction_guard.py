@@ -25,17 +25,11 @@ CLI:
         --output-md probe_f227d_live_measurement_extraction_guard/LIVE_EXTRACTION_GUARD.md
 """
 
-
 import argparse
 import ast
 import json
 import sys
 from pathlib import Path
-from _core import aclose
-
-# --------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent  # tools/ → hledac/universal/
 BENCHMARKS = REPO_ROOT / "benchmarks"
@@ -49,20 +43,22 @@ MARKDOWN_MODULE = BENCHMARKS / "live_measurement_markdown.py"
 SCHEMA_CLASSES = {"RunMode", "MeasurementStatus", "RunQualityVerdict", "LiveMeasurementResult"}
 
 # Runtime module prefixes that extracted modules must NOT import
-RUNTIME_IMPORT_PREFIXES = frozenset([
-    "hledac.universal.runtime",
-    "hledac.universal._core",
-    "hledac.universal.pipeline",
-    "hledac.universal.discovery",
-    "hledac.universal.fetching",
-    "hledac.universal.export",
-    "hledac.universal.intel",
-    "hledac.universal.knowledge",
-    "mlx",
-    "aiohttp",
-    "curl_cffi",
-    "asyncio",
-])
+RUNTIME_IMPORT_PREFIXES = frozenset(
+    [
+        "hledac.universal.runtime",
+        "hledac.universal._core",
+        "hledac.universal.pipeline",
+        "hledac.universal.discovery",
+        "hledac.universal.fetching",
+        "hledac.universal.export",
+        "hledac.universal.intel",
+        "hledac.universal.knowledge",
+        "mlx",
+        "aiohttp",
+        "curl_cffi",
+        "asyncio",
+    ]
+)
 
 # Required public exports from extracted modules
 REQUIRED_EXPORTS = {
@@ -71,10 +67,6 @@ REQUIRED_EXPORTS = {
     MARKDOWN_MODULE: {"render_live_measurement_markdown"},
 }
 
-
-# --------------------------------------------------------------------------
-# Verdicts
-# --------------------------------------------------------------------------#
 
 class Verdict:
     PASS = "EXTRACTION_GUARD_PASS"
@@ -89,10 +81,6 @@ class Verdict:
     FAIL_KPI_DRIFT = "FAIL_KPI_DRIFT"
     FAIL_KPI_RUNTIME_IMPORT = "FAIL_KPI_RUNTIME_IMPORT"
 
-
-# --------------------------------------------------------------------------
-# Check helpers
-# --------------------------------------------------------------------------#
 
 def _read_source(path: Path) -> str:
     with path.open() as f:
@@ -293,24 +281,24 @@ def _check_extracted_module_exists(module_path: Path) -> bool:
     return module_path.exists()
 
 
-# --------------------------------------------------------------------------
-# F228G Shadow Guard helpers
-# --------------------------------------------------------------------------
-
 # Quality helpers that live in live_measurement_quality.py and must NOT be
 # locally redefined in live_sprint_measurement.py (unless body is single delegation)
-QUALITY_HELPERS = frozenset([
-    "_derive_run_quality_verdict",
-    "_uma_state_is_critical_or_emergency",
-    "_is_active_domain_query",
-])
+QUALITY_HELPERS = frozenset(
+    [
+        "_derive_run_quality_verdict",
+        "_uma_state_is_critical_or_emergency",
+        "_is_active_domain_query",
+    ]
+)
 
 # Terminality helpers that live in live_measurement_parser.py and must NOT be
 # locally redefined (unless body is single delegation)
-TERMINALITY_HELPERS = frozenset([
-    "_has_terminal_source_outcomes",
-    "_has_scheduler_exit_path",
-])
+TERMINALITY_HELPERS = frozenset(
+    [
+        "_has_terminal_source_outcomes",
+        "_has_scheduler_exit_path",
+    ]
+)
 
 
 def _is_thin_delegation(node: ast.FunctionDef) -> bool:
@@ -325,10 +313,12 @@ def _is_thin_delegation(node: ast.FunctionDef) -> bool:
         return False
     # Strip optional leading docstring (Expr(Constant(str)))
     body = node.body
-    if (len(body) >= 1
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)):
+    if (
+        len(body) >= 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
         body = body[1:]
     # Must have exactly one remaining statement
     if len(body) != 1:
@@ -375,11 +365,13 @@ def _check_shadowed_helpers(
         if isinstance(node, ast.FunctionDef) and node.name in helper_names:
             if _is_thin_delegation(node):
                 continue  # thin alias/delegation is allowed
-            violations.append({
-                "name": node.name,
-                "line": node.lineno,
-                "reason": "local definition — body is not single delegation to imported helper",
-            })
+            violations.append(
+                {
+                    "name": node.name,
+                    "line": node.lineno,
+                    "reason": "local definition — body is not single delegation to imported helper",
+                }
+            )
 
     return bool(violations), violations
 
@@ -425,22 +417,38 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
             if len(args) == 1 and args[0] == "inp":
                 pass
             else:
-                violations.append({
-                    "name": "_derive_live_kpi_from_input",
-                    "reason": f"expected single 'inp' param, got {len(args)} params: {args}",
-                })
+                violations.append(
+                    {
+                        "name": "_derive_live_kpi_from_input",
+                        "reason": f"expected single 'inp' param, got {len(args)} params: {args}",
+                    }
+                )
 
             # 3. Body must not load bare old param names as local vars
             # Old param names that must be accessed via inp.*
-            old_param_names = frozenset([
-                "status", "runtime_truth", "actual_duration_s", "primary_signal_source",
-                "run_quality_verdict", "hardware_constrained", "public_pipeline",
-                "timing_truth", "acquisition_strategy", "windup_guard_observation",
-                "return_guard_observation", "scheduler_exit", "acquisition_report",
-                "profile_verdict", "acquisition_terminality_checked",
-                "acquisition_terminality_satisfied", "acquisition_terminality_missing_lanes",
-                "planned_duration_s", "claims_runtime_status",
-            ])
+            old_param_names = frozenset(
+                [
+                    "status",
+                    "runtime_truth",
+                    "actual_duration_s",
+                    "primary_signal_source",
+                    "run_quality_verdict",
+                    "hardware_constrained",
+                    "public_pipeline",
+                    "timing_truth",
+                    "acquisition_strategy",
+                    "windup_guard_observation",
+                    "return_guard_observation",
+                    "scheduler_exit",
+                    "acquisition_report",
+                    "profile_verdict",
+                    "acquisition_terminality_checked",
+                    "acquisition_terminality_satisfied",
+                    "acquisition_terminality_missing_lanes",
+                    "planned_duration_s",
+                    "claims_runtime_status",
+                ]
+            )
 
             # Walk body and collect all Name nodes; then filter out those that
             # appear as the object of an Attribute (i.e., inp.status → status is obj)
@@ -464,10 +472,12 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
                         bad_usages.add(child.id)
 
             if bad_usages:
-                violations.append({
-                    "name": "_derive_live_kpi_from_input",
-                    "reason": f"body loads bare old params (must use inp.attr): {sorted(bad_usages)}",
-                })
+                violations.append(
+                    {
+                        "name": "_derive_live_kpi_from_input",
+                        "reason": f"body loads bare old params (must use inp.attr): {sorted(bad_usages)}",
+                    }
+                )
 
     if not has_kpi_func:
         # F230A extracted _derive_live_kpi_from_input to live_measurement_kpi.py
@@ -476,10 +486,6 @@ def _check_live_kpi_input_wiring(runner_path: Path, source: str | None = None) -
 
     return bool(violations), violations
 
-
-# --------------------------------------------------------------------------
-# F230B: KPI module boundary check
-# --------------------------------------------------------------------------#
 
 def _check_kpi_module_boundary(
     repo_root: Path,
@@ -503,10 +509,12 @@ def _check_kpi_module_boundary(
 
     # 1. KPI module must exist
     if not kpi_module.exists():
-        return True, [{
-            "name": "kpi_module_exists",
-            "reason": "benchmarks/live_measurement_kpi.py does not exist",
-        }]
+        return True, [
+            {
+                "name": "kpi_module_exists",
+                "reason": "benchmarks/live_measurement_kpi.py does not exist",
+            }
+        ]
 
     # 2. KPI module must export the required symbols
     try:
@@ -526,10 +534,12 @@ def _check_kpi_module_boundary(
 
     missing_exports = required_exports - found_exports
     if missing_exports:
-        violations.append({
-            "name": "kpi_exports",
-            "reason": f"live_measurement_kpi.py missing exports: {sorted(missing_exports)}",
-        })
+        violations.append(
+            {
+                "name": "kpi_exports",
+                "reason": f"live_measurement_kpi.py missing exports: {sorted(missing_exports)}",
+            }
+        )
 
     # 3. Runner must import the KPI symbols from live_measurement_kpi
     try:
@@ -546,43 +556,47 @@ def _check_kpi_module_boundary(
 
     missing_imports = required_exports - set(kpi_imports.keys())
     if missing_imports:
-        violations.append({
-            "name": "runner_imports_kpi",
-            "reason": f"live_sprint_measurement.py does not import from live_measurement_kpi: {sorted(missing_imports)}",  # noqa: E501
-        })
+        violations.append(
+            {
+                "name": "runner_imports_kpi",
+                "reason": f"live_sprint_measurement.py does not import from live_measurement_kpi: {sorted(missing_imports)}",  # noqa: E501
+            }
+        )
 
     # 4. Runner must NOT locally define LiveKpiInput
     for node in ast.walk(runner_tree):
         if isinstance(node, ast.ClassDef) and node.name == "LiveKpiInput":
-            violations.append({
-                "name": "LiveKpiInput_local",
-                "reason": "LiveKpiInput must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
-            })
+            violations.append(
+                {
+                    "name": "LiveKpiInput_local",
+                    "reason": "LiveKpiInput must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
+                }
+            )
             break
 
     # 5. Runner must NOT locally define _derive_live_kpi_from_input
     for node in ast.walk(runner_tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_derive_live_kpi_from_input":
-            violations.append({
-                "name": "_derive_live_kpi_from_input_local",
-                "reason": "_derive_live_kpi_from_input must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
-            })
+            violations.append(
+                {
+                    "name": "_derive_live_kpi_from_input_local",
+                    "reason": "_derive_live_kpi_from_input must not be defined locally in live_sprint_measurement.py — import from live_measurement_kpi",  # noqa: E501
+                }
+            )
             break
 
     # 6. KPI module must not import runtime/network/MLX
     has_runtime_import, runtime_msg = _check_module_imports_runtime(kpi_module)
     if has_runtime_import:
-        violations.append({
-            "name": "kpi_runtime_import",
-            "reason": f"live_measurement_kpi.py must not import runtime: {runtime_msg}",
-        })
+        violations.append(
+            {
+                "name": "kpi_runtime_import",
+                "reason": f"live_measurement_kpi.py must not import runtime: {runtime_msg}",
+            }
+        )
 
     return bool(violations), violations
 
-
-# --------------------------------------------------------------------------
-# Main guard logic
-# --------------------------------------------------------------------------#
 
 def run_guard(repo_root: Path) -> dict:
     """
@@ -601,11 +615,13 @@ def run_guard(repo_root: Path) -> dict:
     # 1. Check extracted modules exist
     for module_path, label in [(schema, "schema"), (parser, "parser"), (markdown, "markdown")]:
         exists = _check_extracted_module_exists(module_path)
-        checks.append({
-            "check": f"extracted_module_exists_{label}",
-            "pass": exists,
-            "detail": str(module_path),
-        })
+        checks.append(
+            {
+                "check": f"extracted_module_exists_{label}",
+                "pass": exists,
+                "detail": str(module_path),
+            }
+        )
         if not exists:
             verdict = Verdict.FAIL_MISSING_MODULE
 
@@ -614,63 +630,75 @@ def run_guard(repo_root: Path) -> dict:
 
     # 2. Check runner imports schema module correctly
     imports_schema, msg = _check_runner_imports_schema(runner)
-    checks.append({
-        "check": "runner_imports_schema",
-        "pass": not imports_schema,
-        "detail": msg or "OK",
-    })
+    checks.append(
+        {
+            "check": "runner_imports_schema",
+            "pass": not imports_schema,
+            "detail": msg or "OK",
+        }
+    )
     if imports_schema:
         verdict = Verdict.FAIL_SCHEMA_DRIFT
 
     # 3. Check schema classes NOT defined in runner
     has_classes, found = _check_schema_classes_not_in_runner(runner)
-    checks.append({
-        "check": "schema_classes_not_in_runner",
-        "pass": not has_classes,
-        "detail": f"Found: {found}" if found else "OK",
-    })
+    checks.append(
+        {
+            "check": "schema_classes_not_in_runner",
+            "pass": not has_classes,
+            "detail": f"Found: {found}" if found else "OK",
+        }
+    )
     if has_classes:
         verdict = Verdict.FAIL_SCHEMA_DRIFT
 
     # 4. Check _render_md delegates to extracted markdown
     not_delegated, msg = _check_render_md_delegation(runner)
-    checks.append({
-        "check": "render_md_delegation",
-        "pass": not not_delegated,
-        "detail": msg or "OK",
-    })
+    checks.append(
+        {
+            "check": "render_md_delegation",
+            "pass": not not_delegated,
+            "detail": msg or "OK",
+        }
+    )
     if not_delegated:
         verdict = Verdict.FAIL_MARKDOWN_DRIFT
 
     # 5. Check _parse_sprint_report delegates to extracted parser
     not_delegated, msg = _check_parse_sprint_report_delegation(runner)
-    checks.append({
-        "check": "parse_sprint_report_delegation",
-        "pass": not not_delegated,
-        "detail": msg or "OK",
-    })
+    checks.append(
+        {
+            "check": "parse_sprint_report_delegation",
+            "pass": not not_delegated,
+            "detail": msg or "OK",
+        }
+    )
     if not_delegated:
         verdict = Verdict.FAIL_PARSER_DRIFT
 
     # 6. Check extracted modules do NOT import runtime
     for module_path, label in [(schema, "schema"), (parser, "parser"), (markdown, "markdown")]:
         has_violation, msg = _check_module_imports_runtime(module_path)
-        checks.append({
-            "check": f"{label}_no_runtime_import",
-            "pass": not has_violation,
-            "detail": msg or "OK",
-        })
+        checks.append(
+            {
+                "check": f"{label}_no_runtime_import",
+                "pass": not has_violation,
+                "detail": msg or "OK",
+            }
+        )
         if has_violation:
             verdict = Verdict.FAIL_RUNTIME_IMPORT
 
     # 7. Check required exports from extracted modules
     for module_path, required in [(parser, {"parse_sprint_report"}), (markdown, {"render_live_measurement_markdown"})]:
         missing_export, missing = _check_required_exports(module_path, required)
-        checks.append({
-            "check": f"{module_path.stem}_has_required_exports",
-            "pass": not missing_export,
-            "detail": f"Missing: {missing}" if missing else "OK",
-        })
+        checks.append(
+            {
+                "check": f"{module_path.stem}_has_required_exports",
+                "pass": not missing_export,
+                "detail": f"Missing: {missing}" if missing else "OK",
+            }
+        )
         if missing_export:
             # Only fail if module exists (already checked above)
             if module_path.exists():
@@ -678,14 +706,14 @@ def run_guard(repo_root: Path) -> dict:
 
     # 8. F228G: Check quality helpers not shadowed (unless thin delegation)
     runner_source = _read_source(runner)
-    has_quality_violations, quality_violations = _check_shadowed_helpers(
-        runner, QUALITY_HELPERS, runner_source
+    has_quality_violations, quality_violations = _check_shadowed_helpers(runner, QUALITY_HELPERS, runner_source)
+    checks.append(
+        {
+            "check": "quality_helpers_not_shadowed",
+            "pass": not has_quality_violations,
+            "detail": f"Violations: {quality_violations}" if quality_violations else "OK",
+        }
     )
-    checks.append({
-        "check": "quality_helpers_not_shadowed",
-        "pass": not has_quality_violations,
-        "detail": f"Violations: {quality_violations}" if quality_violations else "OK",
-    })
     if has_quality_violations:
         verdict = Verdict.FAIL_QUALITY_SHADOWING
 
@@ -693,36 +721,42 @@ def run_guard(repo_root: Path) -> dict:
     has_terminality_violations, terminality_violations = _check_shadowed_helpers(
         runner, TERMINALITY_HELPERS, runner_source
     )
-    checks.append({
-        "check": "terminality_helpers_not_shadowed",
-        "pass": not has_terminality_violations,
-        "detail": f"Violations: {terminality_violations}" if terminality_violations else "OK",
-    })
+    checks.append(
+        {
+            "check": "terminality_helpers_not_shadowed",
+            "pass": not has_terminality_violations,
+            "detail": f"Violations: {terminality_violations}" if terminality_violations else "OK",
+        }
+    )
     if has_terminality_violations:
         verdict = Verdict.FAIL_TERMINALITY_SHADOWING
 
     # 10. F228G: Check LiveKpiInput wiring
     has_kpi_violations, kpi_violations = _check_live_kpi_input_wiring(runner, runner_source)
-    checks.append({
-        "check": "live_kpi_input_wiring",
-        "pass": not has_kpi_violations,
-        "detail": f"Violations: {kpi_violations}" if kpi_violations else "OK",
-    })
+    checks.append(
+        {
+            "check": "live_kpi_input_wiring",
+            "pass": not has_kpi_violations,
+            "detail": f"Violations: {kpi_violations}" if kpi_violations else "OK",
+        }
+    )
     if has_kpi_violations:
         verdict = Verdict.FAIL_KPI_INPUT_WIRING
 
     # 11. F230B: Check KPI module boundary
-    has_kpi_boundary_violations, kpi_boundary_violations = _check_kpi_module_boundary(
-        repo_root, runner, runner_source
+    has_kpi_boundary_violations, kpi_boundary_violations = _check_kpi_module_boundary(repo_root, runner, runner_source)
+    checks.append(
+        {
+            "check": "kpi_module_boundary",
+            "pass": not has_kpi_boundary_violations,
+            "detail": f"Violations: {kpi_boundary_violations}" if kpi_boundary_violations else "OK",
+        }
     )
-    checks.append({
-        "check": "kpi_module_boundary",
-        "pass": not has_kpi_boundary_violations,
-        "detail": f"Violations: {kpi_boundary_violations}" if kpi_boundary_violations else "OK",
-    })
     if has_kpi_boundary_violations:
         # Distinguish drift vs runtime import
-        has_runtime = any("runtime_import" in v.get("name", "") or "runtime" in v.get("reason", "") for v in kpi_boundary_violations)  # noqa: E501
+        has_runtime = any(
+            "runtime_import" in v.get("name", "") or "runtime" in v.get("reason", "") for v in kpi_boundary_violations
+        )  # noqa: E501
         verdict = Verdict.FAIL_KPI_RUNTIME_IMPORT if has_runtime else Verdict.FAIL_KPI_DRIFT
 
     return {
@@ -738,10 +772,6 @@ def run_guard(repo_root: Path) -> dict:
     }
 
 
-# --------------------------------------------------------------------------
-# Output formatters
-# --------------------------------------------------------------------------#
-
 def format_json(result: dict) -> str:
     return json.dumps(result, indent=2, default=str)
 
@@ -751,7 +781,11 @@ def format_markdown(result: dict) -> str:
     has_quality_check = any(c["check"] == "quality_helpers_not_shadowed" for c in result["checks"])
     has_kpi_check = any(c["check"] == "live_kpi_input_wiring" for c in result["checks"])
 
-    title = "F227D/F228G Live Measurement Extraction Guard" if (has_quality_check or has_kpi_check) else "F227D Live Measurement Extraction Guard"  # noqa: E501
+    title = (
+        "F227D/F228G Live Measurement Extraction Guard"
+        if (has_quality_check or has_kpi_check)
+        else "F227D Live Measurement Extraction Guard"
+    )  # noqa: E501
 
     lines = [
         f"# {title}",
@@ -767,49 +801,51 @@ def format_markdown(result: dict) -> str:
         pass_str = "PASS" if check["pass"] else "FAIL"
         lines.append(f"| {check['check']} | {pass_str} | {check['detail']} |")
 
-    lines.extend([
-        "",
-        "## Extracted Modules",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Extracted Modules",
+            "",
+        ]
+    )
     for label, path in result["extracted_modules"].items():
         lines.append(f"- **{label}**: `{path}`")
 
-    lines.extend([
-        "",
-        "## Schema Classes (must stay in schema module)",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Schema Classes (must stay in schema module)",
+            "",
+        ]
+    )
     for cls in result["schema_classes"]:
         lines.append(f"- `{cls}`")
 
     # F228G shadow guard section
     if has_quality_check or has_kpi_check:
-        lines.extend([
-            "",
-            "## F228G Shadow Guard",
-            "",
-            "### Quality Helpers (from live_measurement_quality.py)",
-            "- `_derive_run_quality_verdict`",
-            "- `_uma_state_is_critical_or_emergency`",
-            "- `_is_active_domain_query`",
-            "",
-            "### Terminality Helpers (from live_measurement_parser.py)",
-            "- `_has_terminal_source_outcomes`",
-            "- `_has_scheduler_exit_path`",
-            "",
-            "### LiveKpiInput Wiring Rules",
-            "- `LiveKpiInput` dataclass must exist",
-            "- `_derive_live_kpi_from_input` must have exactly one param: `inp`",
-            "- Function body must use `inp.attr` not bare `attr`",
-        ])
+        lines.extend(
+            [
+                "",
+                "## F228G Shadow Guard",
+                "",
+                "### Quality Helpers (from live_measurement_quality.py)",
+                "- `_derive_run_quality_verdict`",
+                "- `_uma_state_is_critical_or_emergency`",
+                "- `_is_active_domain_query`",
+                "",
+                "### Terminality Helpers (from live_measurement_parser.py)",
+                "- `_has_terminal_source_outcomes`",
+                "- `_has_scheduler_exit_path`",
+                "",
+                "### LiveKpiInput Wiring Rules",
+                "- `LiveKpiInput` dataclass must exist",
+                "- `_derive_live_kpi_from_input` must have exactly one param: `inp`",
+                "- Function body must use `inp.attr` not bare `attr`",
+            ]
+        )
 
     return "\n".join(lines)
 
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------#
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="F227D Live Measurement Extraction Guard")

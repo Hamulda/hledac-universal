@@ -30,22 +30,26 @@ M1 8GB: Unified memory architecture - no GPU transfer overhead.
 
 from __future__ import annotations
 
+
 # Use lazy loading to avoid circular imports
 def __getattr__(name: str):
     if name == "DeepHermes3Engine":
         from brain.hermes.engine import DeepHermes3Engine
+
         return DeepHermes3Engine
     if name == "format_chatml":
         from brain.hermes.chatml import format_chatml
+
         return format_chatml
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Also expose submodules for direct import if needed
 __all__ = [
     "DeepHermes3Engine",
     "format_chatml",
     "chatml",
-    "decisions", 
+    "decisions",
     "synthesis",
     "batch",
     "kv_cache",

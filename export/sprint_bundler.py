@@ -45,7 +45,6 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +64,7 @@ def _get_zstd():
     if _compression_zstd is None:
         try:
             import compression.zstd as _zstd
+
             _compression_zstd = _zstd
         except ImportError:
             _compression_zstd = False  # Mark as unavailable
@@ -73,9 +73,11 @@ def _get_zstd():
 
 # ── Utility Functions ───────────────────────────────────────────────────────────
 
+
 def _compute_sha256(data: bytes) -> str:
     """Compute SHA-256 hash of bytes."""
     return hashlib.sha256(data).hexdigest()
+
 
 def _clonefile_or_copy(src: Path, dst: Path) -> bool:
     """
@@ -88,7 +90,7 @@ def _clonefile_or_copy(src: Path, dst: Path) -> bool:
         # Try APFS clonefile first (macOS) - zero-copy
         os.clonefile(str(src), str(dst))
         return True
-    except (AttributeError, OSError):
+    except AttributeError, OSError:
         # Fallback to shutil.copy2
         try:
             shutil.copy2(src, dst)
@@ -96,6 +98,7 @@ def _clonefile_or_copy(src: Path, dst: Path) -> bool:
         except Exception as e:
             logger.warning(f"[BUNDLER] clonefile/copy failed: {e}")
             return False
+
 
 def _collect_sprint_artifacts(
     sprint_id: str,
@@ -123,6 +126,7 @@ def _collect_sprint_artifacts(
             logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
     return artifacts
 
+
 def _create_bundle_manifest(
     artifacts: dict[str, bytes],
     sprint_id: str,
@@ -131,14 +135,17 @@ def _create_bundle_manifest(
     """Create manifest entries from artifacts."""
     manifest_entries: list[dict[str, str]] = []
     for filename, data in artifacts.items():
-        manifest_entries.append({
-            "file": filename,
-            "sha256": _compute_sha256(data),
-            "size": str(len(data)),
-        })
+        manifest_entries.append(
+            {
+                "file": filename,
+                "sha256": _compute_sha256(data),
+                "size": str(len(data)),
+            }
+        )
     manifest_lines = [f"{e['sha256']}  {e['file']}" for e in manifest_entries]
     manifest_bytes = "\n".join(manifest_lines).encode("utf-8")
     return manifest_entries, manifest_bytes
+
 
 def _write_tarball(
     artifacts: dict[str, bytes],
@@ -169,8 +176,10 @@ def _write_tarball(
 def _auto_detect_evidence_path(sprint_id: str) -> Path | None:
     """Auto-detect evidence path from EVIDENCE_ROOT."""
     from hledac.universal.paths import EVIDENCE_ROOT
+
     evidence_candidates = list(EVIDENCE_ROOT.glob(f"*{sprint_id}*.jsonl"))
     return evidence_candidates[0] if evidence_candidates else None
+
 
 def _add_file_artifact(
     artifacts: dict[str, bytes],
@@ -189,14 +198,17 @@ def _add_file_artifact(
     try:
         data = path.read_bytes()
         artifacts[name] = data
-        manifest_entries.append({
-            "file": name,
-            "sha256": _compute_sha256(data),
-            "size": str(len(data)),
-        })
+        manifest_entries.append(
+            {
+                "file": name,
+                "sha256": _compute_sha256(data),
+                "size": str(len(data)),
+            }
+        )
         logger.debug(f"[BUNDLER] Added {name} ({len(data)} bytes)")
     except Exception as e:
         logger.warning(f"[BUNDLER] Failed to read {name}: {e}")
+
 
 def _add_compressed_evidence(
     artifacts: dict[str, bytes],
@@ -210,27 +222,32 @@ def _add_compressed_evidence(
         if zstd is not None:
             evidence_compressed = zstd.compress(evidence_bytes, level=9)
             artifacts["evidence.jsonl.zst"] = evidence_compressed
-            manifest_entries.append({
-                "file": "evidence.jsonl.zst",
-                "sha256": _compute_sha256(evidence_compressed),
-                "size": str(len(evidence_compressed)),
-            })
+            manifest_entries.append(
+                {
+                    "file": "evidence.jsonl.zst",
+                    "sha256": _compute_sha256(evidence_compressed),
+                    "size": str(len(evidence_compressed)),
+                }
+            )
             ratio = len(evidence_compressed) / len(evidence_bytes)
             logger.debug(
                 f"[BUNDLER] Added evidence.jsonl.zst "
                 f"({len(evidence_bytes)} → {len(evidence_compressed)} bytes, "
                 f"ratio={ratio:.2%})"
-    )
+            )
         else:
             artifacts["evidence.jsonl"] = evidence_bytes
-            manifest_entries.append({
-                "file": "evidence.jsonl",
-                "sha256": _compute_sha256(evidence_bytes),
-                "size": str(len(evidence_bytes)),
-            })
+            manifest_entries.append(
+                {
+                    "file": "evidence.jsonl",
+                    "sha256": _compute_sha256(evidence_bytes),
+                    "size": str(len(evidence_bytes)),
+                }
+            )
             logger.warning("[BUNDLER] compression.zstd not available, storing uncompressed")
     except Exception as e:
         logger.warning(f"[BUNDLER] Failed to read evidence: {e}")
+
 
 def _add_dashboard_artifact(
     artifacts: dict[str, bytes],
@@ -242,19 +259,23 @@ def _add_dashboard_artifact(
     try:
         html_bytes = dashboard_html.read_bytes()
         artifacts["dashboard.html"] = html_bytes
-        manifest_entries.append({
-            "file": "dashboard.html",
-            "sha256": _compute_sha256(html_bytes),
-            "size": str(len(html_bytes)),
-        })
+        manifest_entries.append(
+            {
+                "file": "dashboard.html",
+                "sha256": _compute_sha256(html_bytes),
+                "size": str(len(html_bytes)),
+            }
+        )
         logger.debug(f"[BUNDLER] Added dashboard.html ({len(html_bytes)} bytes)")
         try:
             import shutil as _shutil
+
             _shutil.copy2(dashboard_html, output_path.with_suffix(".html"))
         except Exception:  # noqa: BLE001
             pass  # Non-fatal
     except Exception as e:
         logger.warning(f"[BUNDLER] Failed to read dashboard: {e}")
+
 
 def _create_bundle_archive(
     artifacts: dict[str, bytes],
@@ -264,14 +285,13 @@ def _create_bundle_archive(
 ) -> Path | None:
     """
     Create tar archive, compress with zstd, and write to disk.
-    
+
     [FIX #5]: Returns the actual Path where the bundle was written,
     even when compression fallback changes the suffix.
     """
     # Determine actual output path before any modifications
     actual_output_path = output_path
-    
-    # Create tar in memory
+
     try:
         tar_buffer = io.BytesIO()
         with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
@@ -302,6 +322,7 @@ def _create_bundle_archive(
         logger.error(f"[BUNDLER] Failed to create bundle: {e}", exc_info=True)
         return None
 
+
 def _collect_manifest_entries(artifacts: dict[str, bytes]) -> list[dict[str, str]]:
     """Collect manifest entries from artifacts dict."""
     return [
@@ -310,9 +331,7 @@ def _collect_manifest_entries(artifacts: dict[str, bytes]) -> list[dict[str, str
     ]
 
 
-def _build_manifest_bytes(
-    entries: list[dict[str, str]], sprint_id: str, timestamp: str
-) -> bytes:
+def _build_manifest_bytes(entries: list[dict[str, str]], sprint_id: str, timestamp: str) -> bytes:
     """Build manifest bytes from entries."""
     lines = [
         "# SHA-256 manifest for .hledac-sprint bundle",
@@ -324,12 +343,16 @@ def _build_manifest_bytes(
     lines.extend(f"{e['sha256']}  {e['file']}" for e in entries)
     return "\n".join(lines).encode("utf-8") + b"\n"
 
-def _auto_detect_paths(sprint_id: str, report_path: Path | None, seeds_path: Path | None, evidence_path: Path | None) -> tuple[Path, Path, Path | None]:
+
+def _auto_detect_paths(
+    sprint_id: str, report_path: Path | None, seeds_path: Path | None, evidence_path: Path | None
+) -> tuple[Path, Path, Path | None]:
     """Auto-detect paths if not provided. Returns (report, seeds, evidence)."""
     from hledac.universal.paths import (
         get_sprint_json_report_path,
         get_sprint_next_seeds_path,
     )
+
     detected_report = report_path or get_sprint_json_report_path(sprint_id)
     detected_seeds = seeds_path or get_sprint_next_seeds_path(sprint_id)
     detected_evidence = evidence_path or _auto_detect_evidence_path(sprint_id)
@@ -362,11 +385,13 @@ def _collect_artifacts_for_bundle(
 
     metadata_bytes = _stdlib_json.dumps(bundle_metadata, indent=2).encode("utf-8")
     artifacts["metadata.json"] = metadata_bytes
-    manifest_entries.append({
-        "file": "metadata.json",
-        "sha256": _compute_sha256(metadata_bytes),
-        "size": str(len(metadata_bytes)),
-    })
+    manifest_entries.append(
+        {
+            "file": "metadata.json",
+            "sha256": _compute_sha256(metadata_bytes),
+            "size": str(len(metadata_bytes)),
+        }
+    )
 
     # File artifacts
     _add_file_artifact(artifacts, manifest_entries, report_path, "report.json")
@@ -422,15 +447,13 @@ def bundle_sprint(
 
     # Collect artifacts
     artifacts, manifest_entries, timestamp = _collect_artifacts_for_bundle(
-        sprint_id, detected_report, detected_seeds, detected_evidence,
-        dashboard_html, detected_output, metadata
+        sprint_id, detected_report, detected_seeds, detected_evidence, dashboard_html, detected_output, metadata
     )
 
     # Add manifest entries to artifacts
     manifest_bytes = _build_manifest_bytes(manifest_entries, sprint_id, timestamp)
     artifacts["manifest.sha256"] = manifest_bytes
 
-    # Create archive
     return _create_bundle_archive(artifacts, detected_output, sprint_id, timestamp)
 
 
@@ -475,9 +498,7 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
                 result["errors"].append("manifest.sha256 not found")
                 return result
 
-            manifest_entries = _parse_manifest_entries(
-                manifest_file.read().decode("utf-8")
-    )
+            manifest_entries = _parse_manifest_entries(manifest_file.read().decode("utf-8"))
 
             for filename, expected_hash in manifest_entries.items():
                 if filename == "manifest.sha256":
@@ -491,9 +512,8 @@ def verify_bundle(bundle_path: Path) -> dict[str, Any]:
                 actual_hash = _compute_sha256(file_obj.read())
                 if actual_hash != expected_hash:
                     result["errors"].append(
-                        f"{filename}: hash mismatch "
-                        f"(expected {expected_hash[:16]}..., got {actual_hash[:16]}...)"
-    )
+                        f"{filename}: hash mismatch (expected {expected_hash[:16]}..., got {actual_hash[:16]}...)"
+                    )
                 else:
                     result["files_checked"] += 1
 
@@ -571,6 +591,7 @@ def _index_single_line(
         return
     try:
         import orjson
+
         entry = orjson.loads(line)
     except Exception:
         return
@@ -598,7 +619,6 @@ def _index_single_line(
             "confidence_sum": 0.0,
         }
 
-    # Update aggregates
     entry_idx = entity_index[idx_key]
     entry_idx["source_count"] += 1
     if source not in entry_idx["sources"]:
@@ -624,10 +644,7 @@ def _index_evidence_file(
         sha256 = _compute_sha256(content)
 
         for line in text.splitlines():
-            _index_single_line(
-                line, entity_index, sha256, data_offset, data_length,
-                sprint_id, bundle_path, now
-    )
+            _index_single_line(line, entity_index, sha256, data_offset, data_length, sprint_id, bundle_path, now)
     except Exception as e:
         logger.debug("[BUNDLER] Evidence indexing failed: %s", e)
 
@@ -661,10 +678,7 @@ def _extract_tar_member(
     # Index evidence entries
     if member.name.startswith("evidence") and data is not None:
         data_length = len(data)
-        _index_evidence_file(
-            data, member.name, entity_index, data_offset, data_length,
-            sprint_id, bundle_path, now
-    )
+        _index_evidence_file(data, member.name, entity_index, data_offset, data_length, sprint_id, bundle_path, now)
 
     return data
 
@@ -728,8 +742,9 @@ def extract_bundle_streaming(
                             entity_index.update(existing_index)
                             logger.debug(
                                 "[BUNDLER] Loaded %d entries from existing %s",
-                                len(existing_index), ENTITY_INDEX_FILENAME
-    )
+                                len(existing_index),
+                                ENTITY_INDEX_FILENAME,
+                            )
                 except Exception as e:
                     logger.debug("[BUNDLER] Failed to load existing entity_index: %s", e)
 
@@ -738,9 +753,8 @@ def extract_bundle_streaming(
             with tarfile.open(fileobj=tar_buffer, mode="r") as tar2:
                 for member in tar2:
                     _extract_tar_member(
-                        tar2, member, extracted_dir, tar_buffer,
-                        sprint_id, bundle_path, entity_index, now
-    )
+                        tar2, member, extracted_dir, tar_buffer, sprint_id, bundle_path, entity_index, now
+                    )
 
     except Exception as e:
         logger.warning("[BUNDLER] Streaming extraction failed: %s", e)
@@ -774,9 +788,11 @@ async def index_bundle_entities(
                 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
                 # Try the singleton pattern if available
-                duckdb_store = DuckDBShadowStore.get_shared_instance() if hasattr(
-                    DuckDBShadowStore, "get_shared_instance"
-                ) else None
+                duckdb_store = (
+                    DuckDBShadowStore.get_shared_instance()
+                    if hasattr(DuckDBShadowStore, "get_shared_instance")
+                    else None
+                )
             except Exception:
                 duckdb_store = None
 
@@ -794,13 +810,9 @@ async def index_bundle_entities(
             return
 
         indexed = 0
-        for idx_key, entry in entity_index.items():
+        for _idx_key, entry in entity_index.items():
             try:
-                avg_confidence = (
-                    entry["confidence_sum"] / entry["source_count"]
-                    if entry["source_count"] > 0
-                    else 0.5
-    )
+                avg_confidence = entry["confidence_sum"] / entry["source_count"] if entry["source_count"] > 0 else 0.5
                 # _sync_upsert_cross_sprint_entity is synchronous — run in thread pool
                 ok = await asyncio.to_thread(
                     sync_method,
@@ -810,7 +822,7 @@ async def index_bundle_entities(
                     ts=entry["last_confirmed_ts"],
                     confidence=avg_confidence,
                     content_hash=entry.get("sha256"),
-    )
+                )
                 if ok:
                     indexed += 1
             except Exception:  # noqa: BLE001
@@ -820,7 +832,7 @@ async def index_bundle_entities(
             "[BUNDLER] Indexed %d entities from sprint %s into cross_sprint_entity_index",
             indexed,
             sprint_id,
-    )
+        )
 
     except Exception as e:
         logger.warning("[BUNDLER] Entity indexing failed: %s", e)
@@ -831,7 +843,7 @@ def _build_entity_index_for_bundle(
 ) -> bytes:
     """
     Build entity_index bytes from entity_index dict.
-    
+
     [NEXTGEN-04] [FIX #5]: Uses ENTITY_INDEX_FILENAME constant to ensure
     consistency with MmapDeltaIndex._extract_entity_index_from_bundle().
     """
@@ -849,28 +861,30 @@ def _add_entity_index_to_bundle(
 ) -> None:
     """
     Add entity_index to bundle artifacts with SHA-256 manifest entry.
-    
+
     [NEXTGEN-04] [FIX #5]: Uses ENTITY_INDEX_FILENAME constant to ensure
     consistency with MmapDeltaIndex._extract_entity_index_from_bundle().
     """
     if not entity_index:
         return
-    
+
     try:
         index_bytes = _build_entity_index_for_bundle(entity_index)
         # [FIX #5]: Use constant for filename to match reader
         artifacts[ENTITY_INDEX_FILENAME] = index_bytes
-        manifest_entries.append({
-            "file": ENTITY_INDEX_FILENAME,
-            "sha256": _compute_sha256(index_bytes),
-            "size": str(len(index_bytes)),
-        })
+        manifest_entries.append(
+            {
+                "file": ENTITY_INDEX_FILENAME,
+                "sha256": _compute_sha256(index_bytes),
+                "size": str(len(index_bytes)),
+            }
+        )
         logger.info(
             "[BUNDLER] Added %s (%d entries, %d bytes)",
             ENTITY_INDEX_FILENAME,
             len(entity_index),
             len(index_bytes),
-    )
+        )
     except Exception as e:
         logger.warning("[BUNDLER] Failed to add entity_index to bundle: %s", e)
 
@@ -924,24 +938,22 @@ async def bundle_and_index_sprint(
         try:
             _, entity_index = extract_bundle_streaming(bundle_path, sprint_id)
             await index_bundle_entities(sprint_id, bundle_path, entity_index, duckdb_store=duckdb_store)
-            
+
             # [NEXTGEN-04] Rebuild bundle with entity_index.json.zst
             # This creates a new bundle with the delta index embedded
             if entity_index:
                 try:
-                    bundle_path = await _rebuild_bundle_with_entity_index(
-                        bundle_path, sprint_id, entity_index
-    )
+                    bundle_path = await _rebuild_bundle_with_entity_index(bundle_path, sprint_id, entity_index)
                 except Exception as rebuild_err:
                     logger.warning(
                         "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed: %s",
                         rebuild_err,
-    )
-            
+                    )
+
             logger.info(
                 "[BUNDLER] [NEXTGEN-04] Built entity_index with %d entries for mmap delta",
                 len(entity_index),
-    )
+            )
         except Exception as e:
             logger.warning("[BUNDLER] Entity indexing failed: %s", e)
 
@@ -955,18 +967,18 @@ async def _rebuild_bundle_with_entity_index(
 ) -> Path:
     """
     [NEXTGEN-04] [FIX #5]: Rebuild bundle to include entity_index.json.zst.
-    
+
     Reads the original bundle, adds entity_index.json.zst, and writes
     a new bundle. This enables MmapDeltaIndex to load entity data
     directly from the bundle without DuckDB queries.
-    
+
     [FIX #5]: Now properly handles the return value from _create_bundle_archive
     to ensure the rebuilt bundle path is returned to the caller.
     """
     try:
         # Read original bundle
         original_bytes = original_bundle_path.read_bytes()
-        
+
         # Decompress tar (using cached import)
         zstd = _get_zstd()
         if zstd is not None:
@@ -976,8 +988,7 @@ async def _rebuild_bundle_with_entity_index(
                 tar_bytes = original_bytes
         else:
             tar_bytes = original_bytes
-        
-        # Extract artifacts from original tar
+
         artifacts: dict[str, bytes] = {}
         tar_buffer = io.BytesIO(tar_bytes)
         with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
@@ -986,41 +997,39 @@ async def _rebuild_bundle_with_entity_index(
                     f = tar.extractfile(member)
                     if f is not None:
                         artifacts[member.name] = f.read()
-        
+
         # Add entity_index.json.zst to artifacts and manifest
         manifest_entries = _collect_manifest_entries(artifacts)
         _add_entity_index_to_bundle(artifacts, manifest_entries, entity_index)
-        
-        # Create new bundle with updated manifest
+
         timestamp = datetime.now(UTC).isoformat()
         manifest_bytes = _build_manifest_bytes(manifest_entries, sprint_id, timestamp)
         artifacts["manifest.sha256"] = manifest_bytes
-        
+
         # [FIX #5]: _create_bundle_archive now returns the actual path written
         new_bundle_path = _create_bundle_archive(artifacts, original_bundle_path, sprint_id, timestamp)
-        
+
         if new_bundle_path and new_bundle_path != original_bundle_path:
-            # Log successful rebuild with the actual output path
             logger.info(
                 "[BUNDLER] [NEXTGEN-04] Rebuilt bundle with entity_index: %s",
                 new_bundle_path,
-    )
+            )
             return new_bundle_path
         elif new_bundle_path:
             # Same path - bundle was overwritten in place
             logger.debug(
                 "[BUNDLER] [NEXTGEN-04] Bundle updated in place with entity_index: %s",
                 new_bundle_path,
-    )
+            )
             return new_bundle_path
         else:
             # _create_bundle_archive returned None - fall back to original
             logger.warning(
                 "[BUNDLER] [NEXTGEN-04] Bundle rebuild failed, using original: %s",
                 original_bundle_path,
-    )
+            )
             return original_bundle_path
-        
+
     except Exception as e:
         logger.warning("[BUNDLER] [NEXTGEN-04] Bundle rebuild error: %s", e)
         return original_bundle_path
@@ -1033,7 +1042,7 @@ __all__ = [
     "extract_bundle_streaming",
     "index_bundle_entities",
     "_build_entity_index_for_bundle",  # [NEXTGEN-04]: For direct bundle building
-    "_add_entity_index_to_bundle",    # [FIX #5]: For testing/verification
-    "ENTITY_INDEX_FILENAME",           # [FIX #5]: Public constant for filename
+    "_add_entity_index_to_bundle",  # [FIX #5]: For testing/verification
+    "ENTITY_INDEX_FILENAME",  # [FIX #5]: Public constant for filename
     "BUNDLE_FORMAT_VERSION",
 ]

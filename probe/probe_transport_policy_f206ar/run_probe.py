@@ -15,22 +15,19 @@ Usage:
     python -m pytest tests/probe_transport_policy_f206ar -v
 """
 
-
 from pathlib import Path
-from _core import aclose
 
 PROBE_DIR = Path(__file__).parent
 REPORT_PATH = PROBE_DIR / "REPORT_TRANSPORT_POLICY_AUDIT.md"
 MATRIX_PATH = PROBE_DIR / "transport_policy_matrix.json"
 
 
-def main():
+def main() -> int:
     print("SPRINT F206AR — Transport Policy Audit Probe")
     print("=" * 50)
 
     errors = []
 
-    # Check files exist
     if not REPORT_PATH.exists():
         errors.append(f"FAIL: Report not found: {REPORT_PATH}")
     else:
@@ -55,7 +52,6 @@ def main():
         print("\n".join(errors))
         return 1
 
-    # Check critical files in matrix
     consumers = matrix.get("network_consumers", [])
     consumer_files = [c.get("file", "") for c in consumers]
 
@@ -76,17 +72,13 @@ def main():
         else:
             errors.append(f"FAIL: {cf} NOT in matrix")
 
-    # Check circuit breaker TEST-SEAM finding
     findings = matrix.get("key_findings", [])
-    test_seam_found = any(
-        "TEST" in f.get("finding", "").upper() for f in findings
-    )
+    test_seam_found = any("TEST" in f.get("finding", "").upper() for f in findings)
     if test_seam_found:
         print("OK: TEST-SEAM finding documented")
     else:
         errors.append("FAIL: TEST-SEAM finding not documented")
 
-    # Check transport_resolver DORMANT status
     tp = matrix.get("transport_policies", {})
     tr = tp.get("TransportResolver.resolve", {})
     if "DORMANT" in tr.get("status", ""):

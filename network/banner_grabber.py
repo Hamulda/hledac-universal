@@ -41,22 +41,36 @@ GHOST_INVARIANTS:
   - MAX_BANNER_GRABS bound
 
 """
+
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
+
+from compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.asyncx import parallel_ok, safe_wait_for
-from _core import aclose
+
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
 MAX_BANNER_GRABS: int = 100
-PORT_TIMEOUTS: dict[int, float] = {21: 5.0, 22: 8.0, 25: 8.0, 80: 5.0, 443: 5.0, 587: 5.0, 8080: 5.0, 8443: 5.0, 993: 5.0, 3389: 8.0, 5432: 5.0, 6379: 5.0}
+PORT_TIMEOUTS: dict[int, float] = {
+    21: 5.0,
+    22: 8.0,
+    25: 8.0,
+    80: 5.0,
+    443: 5.0,
+    587: 5.0,
+    8080: 5.0,
+    8443: 5.0,
+    993: 5.0,
+    3389: 8.0,
+    5432: 5.0,
+    6379: 5.0,
+}
 TOR_PORTS: frozenset[int] = frozenset({22, 25, 3389})
 CURL_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443, 993})
+
 
 class BannerResult(Struct):
     ip: str
@@ -65,6 +79,7 @@ class BannerResult(Struct):
     protocol: str
     elapsed_ms: float
     error: str
+
 
 class BannerGrabber:
     """
@@ -80,9 +95,10 @@ class BannerGrabber:
       - grab_ip(ip)            → list[BannerResult] for all ports on one IP
 
     """
-    __slots__ = tuple(('_fetch_session', '_tor_manager'))
 
-    def __init__(self):
+    __slots__ = ("_fetch_session", "_tor_manager")
+
+    def __init__(self) -> None:
         self._tor_manager = None
         self._fetch_session = None
 
@@ -91,9 +107,10 @@ class BannerGrabber:
         if self._tor_manager is None:
             try:
                 from hledac.universal.network.tor_manager import TorManager
+
                 self._tor_manager = TorManager()
             except Exception as e:
-                logger.debug(f'[Banner] Tor manager unavailable: {e}')
+                logger.debug(f"[Banner] Tor manager unavailable: {e}")
                 self._tor_manager = None
         return self._tor_manager
 
@@ -101,6 +118,7 @@ class BannerGrabber:
         """Lazy-load httpx session via async_get_httpx_session."""
         if self._fetch_session is None or self._fetch_session.is_closed:
             from hledac.universal.network.session_runtime import async_get_httpx_session
+
             self._fetch_session = await async_get_httpx_session()
         return self._fetch_session
 
@@ -117,24 +135,24 @@ class BannerGrabber:
     async def _grab_tcp(self, ip: str, port: int, t0: float) -> BannerResult:
         """Native asyncio.open_connection() TCP banner grab."""
         timeout = PORT_TIMEOUTS.get(port, 5.0)
-        banner = ''
-        error = ''
+        banner = ""
+        error = ""
         try:
             async with asyncio.timeout(timeout):
                 reader, writer = await asyncio.open_connection(ip, port)
                 try:
                     if port == 5432:
-                        writer.write(b'\x00\x00\x00\x00\x00\x03\x00\x00')
+                        writer.write(b"\x00\x00\x00\x00\x00\x03\x00\x00")
                     elif port == 6379:
-                        writer.write(b'PING\r\n')
+                        writer.write(b"PING\r\n")
                     await writer.drain()
                     try:
                         async with asyncio.timeout(3.0):
                             banner = await reader.read(1024)
                         if banner:
-                            banner = banner.decode('utf-8', errors='replace').strip()
+                            banner = banner.decode("utf-8", errors="replace").strip()
                     except TimeoutError:
-                        banner = ''
+                        banner = ""
                 finally:
                     writer.close()
                     try:
@@ -142,15 +160,17 @@ class BannerGrabber:
                     except Exception:  # noqa: BLE001
                         pass
         except TimeoutError:
-            error = 'timeout'
+            error = "timeout"
         except asyncio.CancelledError:
             raise
         except ConnectionRefusedError:
-            error = 'refused'
+            error = "refused"
         except Exception as e:
-            error = f'{type(e).__name__}:{e}'
+            error = f"{type(e).__name__}:{e}"
         elapsed_ms = (time.monotonic() - t0) * 1000
-        return BannerResult(ip=ip, port=port, banner=str(banner[:500]), protocol='tcp', elapsed_ms=elapsed_ms, error=error)
+        return BannerResult(
+            ip=ip, port=port, banner=str(banner[:500]), protocol="tcp", elapsed_ms=elapsed_ms, error=error
+        )
 
     async def _grab_tor(self, ip: str, port: int, t0: float) -> BannerResult:
         """Tor-circuit banner grab for sensitive ports."""
@@ -158,14 +178,14 @@ class BannerGrabber:
         if tor is None:
             return await self._grab_tcp(ip, port, t0)
         timeout = PORT_TIMEOUTS.get(port, 8.0)
-        banner = ''
-        error = ''
+        banner = ""
+        error = ""
         try:
             async with asyncio.timeout(timeout):
                 try:
                     await tor.get_circuit()
                 except Exception as e:
-                    logger.debug(f'[Banner] Tor circuit failed: {e}')
+                    logger.debug(f"[Banner] Tor circuit failed: {e}")
                     return await self._grab_tcp(ip, port, t0)
                 try:
                     reader, writer = await asyncio.open_connection(ip, port)
@@ -173,12 +193,12 @@ class BannerGrabber:
                         if port == 22:
                             pass
                         elif port == 25:
-                            writer.write(b'EHLO localhost\r\n')
+                            writer.write(b"EHLO localhost\r\n")
                             await writer.drain()
                         await asyncio.sleep(0.5)
-                        banner = await safe_wait_for(reader.read(1024), timeout=3.0, label='banner_read')
+                        banner = await safe_wait_for(reader.read(1024), timeout=3.0, label="banner_read")
                         if banner:
-                            banner = banner.decode('utf-8', errors='replace').strip()
+                            banner = banner.decode("utf-8", errors="replace").strip()
                     finally:
                         writer.close()
                         try:
@@ -188,58 +208,68 @@ class BannerGrabber:
                 except AttributeError:
                     return await self._grab_tcp(ip, port, t0)
         except TimeoutError:
-            error = 'timeout'
+            error = "timeout"
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            error = f'tor:{e}'
+            error = f"tor:{e}"
         elapsed_ms = (time.monotonic() - t0) * 1000
-        return BannerResult(ip=ip, port=port, banner=str(banner[:500]), protocol='tor', elapsed_ms=elapsed_ms, error=error)
+        return BannerResult(
+            ip=ip, port=port, banner=str(banner[:500]), protocol="tor", elapsed_ms=elapsed_ms, error=error
+        )
 
     async def _grab_curl(self, ip: str, port: int, t0: float) -> BannerResult:
         """curl_cffi HTTP/HTTPS banner grab via FetchCoordinator."""
-        banner = ''
-        error = ''
+        banner = ""
+        error = ""
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
+
             if not get_breaker(ip).check_circuit().allowed:
-                raise RuntimeError(f'circuit_open: {ip}')
+                raise RuntimeError(f"circuit_open: {ip}")
         except Exception as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            return BannerResult(ip=ip, port=port, banner='', protocol='http', elapsed_ms=elapsed_ms, error=f'breaker:{e}')
+            return BannerResult(
+                ip=ip, port=port, banner="", protocol="http", elapsed_ms=elapsed_ms, error=f"breaker:{e}"
+            )
         timeout = PORT_TIMEOUTS.get(port, 5.0)
-        scheme = 'https' if port in (443, 8443, 993) else 'http'
+        scheme = "https" if port in (443, 8443, 993) else "http"
         # E6 FIX: Use streaming with cap to avoid unbounded memory usage
         from hledac.universal.transport.body_limiter import read_body_with_cap
+
         _BANNER_MAX_BYTES = 64 * 1024  # 64KB cap for banner grab responses
         try:
             session = await self._get_fetch_session()
             import httpx
-            url = f'{scheme}://{ip}:{port}'
-            resp = await session.get(url, timeout=httpx.Timeout(total=timeout), headers={'User-Agent': 'curl/8.4.0'}, ssl=False)
+
+            url = f"{scheme}://{ip}:{port}"
+            resp = await session.get(
+                url, timeout=httpx.Timeout(total=timeout), headers={"User-Agent": "curl/8.4.0"}, ssl=False
+            )
             # Stream response with hard cap to prevent memory exhaustion from large responses
             body_bytes, _ = await read_body_with_cap(resp.aiter_bytes(), _BANNER_MAX_BYTES)
-            banner = body_bytes.decode('utf-8', errors='replace')
+            banner = body_bytes.decode("utf-8", errors="replace")
         except TimeoutError:
-            error = 'timeout'
+            error = "timeout"
         except Exception as e:
-            error = f'http:{e}'
+            error = f"http:{e}"
         elapsed_ms = (time.monotonic() - t0) * 1000
         try:
             from hledac.universal.transport.circuit_breaker import get_breaker
+
             br = get_breaker(ip)
-            if error or banner.startswith('error:'):
+            if error or banner.startswith("error:"):
                 br.record_failure(failure_kind=f"banner_grab:{error or 'http_error'}")
             else:
                 br.record_success()
         except Exception:  # noqa: BLE001
             pass
-        return BannerResult(ip=ip, port=port, banner=banner[:500], protocol='http', elapsed_ms=elapsed_ms, error=error)
+        return BannerResult(ip=ip, port=port, banner=banner[:500], protocol="http", elapsed_ms=elapsed_ms, error=error)
 
     async def grab_ip(self, ip: str) -> list[BannerResult]:
         """Grab banners from all standard ports on one IP."""
         tasks = [self.grab(ip, port) for port in PORT_TIMEOUTS]
-        results = await parallel_ok(*tasks, label='banner_grabber:1116')
+        results = await parallel_ok(*tasks, label="banner_grabber:1116")
         banners: list[BannerResult] = []
         for res in results:
             if isinstance(res, BannerResult):
@@ -250,12 +280,13 @@ class BannerGrabber:
         """Grab banners from a batch of (ip, port) tuples, bounded."""
         batch = targets[:MAX_BANNER_GRABS]
         tasks = [self.grab(ip, port) for ip, port in batch]
-        results = await parallel_ok(*tasks, label='banner_grabber:1160')
+        results = await parallel_ok(*tasks, label="banner_grabber:1160")
         banners: list[BannerResult] = []
         for res in results:
             if isinstance(res, BannerResult):
                 banners.append(res)
         return banners
+
 
 class BannerGrabberAdapter:
     """
@@ -265,21 +296,23 @@ class BannerGrabberAdapter:
     Wraps BannerGrabber, returns CanonicalFinding-compatible dicts.
 
     """
-    __slots__ = tuple(('_grabber',))
 
-    def __init__(self):
+    __slots__ = ("_grabber",)
+
+    def __init__(self) -> None:
         self._grabber = BannerGrabber()
 
     async def query(self, target: str) -> list[dict]:
         """Grab banners for a target IP address."""
         from typing import Any
+
         findings: list[dict[str, Any]] = []
         if not _is_ip(target):
             return findings
         try:
             results = await self._grabber.grab_ip(target)
         except Exception as e:
-            logger.debug(f'[BannerGrab] Error: {e}')
+            logger.debug(f"[BannerGrab] Error: {e}")
             return findings
         ts = time.time()
         for result in results:
@@ -287,23 +320,44 @@ class BannerGrabberAdapter:
                 continue
             if not result.banner:
                 continue
-            findings.append({'source_type': 'banner_grab', 'ioc_type': 'ipv4', 'ioc_value': target, 'target': f'{target}:{result.port}', 'confidence': 0.6, 'ts': ts, 'payload_text': f'port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}'})
+            findings.append(
+                {
+                    "source_type": "banner_grab",
+                    "ioc_type": "ipv4",
+                    "ioc_value": target,
+                    "target": f"{target}:{result.port}",
+                    "confidence": 0.6,
+                    "ts": ts,
+                    "payload_text": f"port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}",
+                }
+            )
         return findings[:100]
 
     async def close(self) -> None:
         pass
 
+
 def _is_ip(value: str) -> bool:
-    parts = value.split('.')
+    parts = value.split(".")
     if len(parts) == 4:
         try:
-            return all((0 <= int(p) <= 255 for p in parts))
+            return all(0 <= int(p) <= 255 for p in parts)
         except ValueError:  # noqa: BLE001
             pass
     return False
-__all__ = ['BannerGrabber', 'BannerGrabberAdapter', 'BannerResult', 'grab_batch_as_findings', 'MAX_BANNER_GRABS', 'PORT_TIMEOUTS']
 
-async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10, concurrency: int=20) -> list:
+
+__all__ = [
+    "BannerGrabber",
+    "BannerGrabberAdapter",
+    "BannerResult",
+    "grab_batch_as_findings",
+    "MAX_BANNER_GRABS",
+    "PORT_TIMEOUTS",
+]
+
+
+async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int = 10, concurrency: int = 20) -> list:
     """
 
     Grab banners from targets and return as CanonicalFinding list.
@@ -324,6 +378,7 @@ async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10
 
     """
     import time
+
     try:
         import hashlib
 
@@ -331,16 +386,20 @@ async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10
             """Lazy-load Rust content_hash_hex (xxh3-64). Cached after first call."""
             try:
                 from hledac.universal._core.rust_backend import rust as _rust_backend
+
                 if _rust_backend.is_available and _rust_backend.hash is not None:
                     return _rust_backend.hash.content_hash_hex
-                raise ImportError('Rust hash not available')
+                raise ImportError("Rust hash not available")
             except Exception:
 
                 def _fallback(data: bytes) -> str:
                     return hashlib.sha256(data).hexdigest()[:16]
+
                 return _fallback
+
         _xxh3_hex = _get_xxh3_hex()
         import time
+
         grabber = BannerGrabber()
         results = await grabber.grab_batch(targets)
     except Exception:
@@ -350,14 +409,28 @@ async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10
         try:
             if result.error:
                 continue
-            content = f'{result.ip}:{result.port}|{result.banner[:200]}'
+            content = f"{result.ip}:{result.port}|{result.banner[:200]}"
             content_hash = _xxh3_hex(content.encode())[:16]
-            finding_id = f'banner_{result.ip}_{result.port}_{content_hash}'
-            finding = CanonicalFinding(finding_id=finding_id, query=f'banner:{result.ip}:{result.port}', source_type='banner_grab', confidence=0.6, ts=time.time(), provenance=(result.ip, result.port, result.protocol), payload_text=f'port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}', accepted=True, reason='banner_grab', entropy=0.0, normalized_hash=None, duplicate=False)
+            finding_id = f"banner_{result.ip}_{result.port}_{content_hash}"
+            finding = CanonicalFinding(
+                finding_id=finding_id,
+                query=f"banner:{result.ip}:{result.port}",
+                source_type="banner_grab",
+                confidence=0.6,
+                ts=time.time(),
+                provenance=(result.ip, result.port, result.protocol),
+                payload_text=f"port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}",
+                accepted=True,
+                reason="banner_grab",
+                entropy=0.0,
+                normalized_hash=None,
+                duplicate=False,
+            )
             findings.append(finding)
         except Exception:
             continue
     return findings[:100]
+
 
 async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> list[CanonicalFinding]:
     """Banner grab adapter — mapuje banner grab output na CanonicalFinding.
@@ -376,11 +449,13 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
 
     """
     import time
+
     if len(ports) > 5:
         ports = ports[:5]
     grabber = BannerGrabber()
     findings = []
     from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
     sem = get_semaphore(ConcurrencyCategory.BANNER_GRAB)
 
     async def _grab_one(port: int) -> BannerResult | None:
@@ -390,8 +465,9 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
                     return await grabber.grab(host, port)
         except Exception:
             return None
+
     try:
-        results = await parallel_ok(*[_grab_one(p) for p in ports], label='banner_grabber:1740')
+        results = await parallel_ok(*[_grab_one(p) for p in ports], label="banner_grabber:1740")
         results = [r for r in results if r is not None and (not isinstance(r, Exception))]
     except Exception:
         results = []
@@ -399,7 +475,20 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
         if not result.banner:
             continue
         try:
-            finding = CanonicalFinding(finding_id=f'banner_{result.ip}_{result.port}_{int(time.time() * 1000)}', query=f'banner_grab:{host}:{result.port}', source_type='banner_grab', confidence=0.7, ts=time.time(), provenance=(result.ip, result.port, result.protocol), payload_text=f'port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}', accepted=True, reason='banner_grab', entropy=0.0, normalized_hash=None, duplicate=False)
+            finding = CanonicalFinding(
+                finding_id=f"banner_{result.ip}_{result.port}_{int(time.time() * 1000)}",
+                query=f"banner_grab:{host}:{result.port}",
+                source_type="banner_grab",
+                confidence=0.7,
+                ts=time.time(),
+                provenance=(result.ip, result.port, result.protocol),
+                payload_text=f"port:{result.port}|protocol:{result.protocol}|banner:{result.banner[:200]}",
+                accepted=True,
+                reason="banner_grab",
+                entropy=0.0,
+                normalized_hash=None,
+                duplicate=False,
+            )
             findings.append(finding)
         except Exception:
             continue

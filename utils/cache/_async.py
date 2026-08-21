@@ -47,16 +47,16 @@ Why not cachetools/aiocache?
 - aiocache: Redis/Memcached backends required, not in deps
 This module provides pure stdlib asyncio + functools.
 """
+
 from __future__ import annotations
 
 import asyncio
 import functools
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._sync import LRUCache
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -69,15 +69,9 @@ __all__ = ["AsyncLRUCache", "AsyncCacheError", "async_cached", "cached_awaitable
 
 class AsyncCacheError(Exception):
     """Raised on async cache misuse (e.g., dict argument to async_cached)."""
-    pass
 
 
-# ---------------------------------------------------------------------------
-# AsyncLRUCache — bounded LRU cache with per-key asyncio locks
-# ---------------------------------------------------------------------------
-
-
-class AsyncLRUCache(Generic[T, U]):
+class AsyncLRUCache[T, U]:
     """
     Bounded LRU cache with per-key asyncio locks for async single-flight.
 
@@ -119,10 +113,6 @@ class AsyncLRUCache(Generic[T, U]):
         # Optional callback on evicted items
         self._on_evict = on_evict
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def get(self, key: T) -> U | None:
         """Get value from cache. Returns None if not found."""
         # Fail-fast on unhashable keys
@@ -160,9 +150,7 @@ class AsyncLRUCache(Generic[T, U]):
         if key not in self._lock_order:
             self._lock_order.append(key)
 
-    async def acquire(
-        self, key: T, *, compute: Callable[[], Awaitable[U]] | None = None
-    ) -> U:
+    async def acquire(self, key: T, *, compute: Callable[[], Awaitable[U]] | None = None) -> U:
         """
         Get-or-compute with single-flight guarantee.
 
@@ -211,18 +199,13 @@ class AsyncLRUCache(Generic[T, U]):
     def __contains__(self, key: object) -> bool:
         return key in self._cache
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _check_hashable(self, key: T) -> None:
         """Fail-fast on unhashable keys (e.g., dict) instead of silent TypeError."""
         try:
             hash(key)
         except TypeError as e:
             raise AsyncCacheError(
-                f"Cache key must be hashable, got {type(key).__name__}. "
-                "Use a tuple or frozenset instead of dict/list."
+                f"Cache key must be hashable, got {type(key).__name__}. Use a tuple or frozenset instead of dict/list."
             ) from e
 
     async def _lock_for(self, key: T) -> asyncio.Lock:
@@ -266,15 +249,8 @@ class AsyncLRUCache(Generic[T, U]):
         return new_lock
 
     def __repr__(self) -> str:
-        return (
-            f"AsyncLRUCache(maxsize={self._maxsize}, "
-            f"len={len(self._cache)}, locks={len(self._locks)})"
-    )
+        return f"AsyncLRUCache(maxsize={self._maxsize}, len={len(self._cache)}, locks={len(self._locks)})"
 
-
-# ---------------------------------------------------------------------------
-# async_cached decorator — async-safe memoization
-# ---------------------------------------------------------------------------
 
 # Global registry of decorator instances (for cache_clear)
 _decorator_caches: list[AsyncLRUCache[Any, Any]] = []
@@ -317,16 +293,14 @@ def async_cached(
         _cache = cache
     _decorator_caches.append(_cache)
 
-    def decorator(
-        func: Callable[..., Awaitable[T]]
-    ) -> Callable[..., Awaitable[T]]:
-        func_name = getattr(func, '__qualname__', getattr(func, '__name__', '<unknown>'))
+    def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+        func_name = getattr(func, "__qualname__", getattr(func, "__name__", "<unknown>"))
         if not inspect.iscoroutinefunction(func):
             raise AsyncCacheError(
                 f"async_cached can only decorate async def functions. "
                 f"Got sync function: {func_name}. "
                 f"Use functools.lru_cache for sync functions."
-    )
+            )
 
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
@@ -348,19 +322,15 @@ def async_cached(
 
         # Provide cache_clear for test isolation (only used in tests)
         # These are dynamically added; ty can't see them through functools.wraps
-        setattr(wrapper, 'cache_clear', _cache.clear)  # type: ignore[arg-type]
-        setattr(wrapper, '__cache__', _cache)  # type: ignore[arg-type]
+        wrapper.cache_clear = _cache.clear  # type: ignore[arg-type]
+        wrapper.__cache__ = _cache  # type: ignore[arg-type]
 
         return wrapper
 
     return decorator
 
 
-# ---------------------------------------------------------------------------
-# Utility: cached_function with explicit lock per key (for non-decorator use)
-# ---------------------------------------------------------------------------
-
-async def cached_awaitable(
+async def cached_awaitable[U](
     cache: AsyncLRUCache[Any, U],
     key: Any,
     compute: Callable[[], Awaitable[U]],

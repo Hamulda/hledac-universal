@@ -41,10 +41,8 @@ import json as _stdjson
 import logging
 import os
 import secrets
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from _core import aclose
 
 if TYPE_CHECKING:
     import lmdb
@@ -84,20 +82,13 @@ def _orjson_default_serializer(obj: Any) -> Any:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Rust batch crypto (lazy import — falls back to pure Python)
-# ---------------------------------------------------------------------------
-# M1 8GB: Rust crypto_accelerate uses ARM AES-NI via aes-gcm crate + rayon
-# Bounded parallelism: >= 32 items → rayon parallel, < 32 → serial
-# Python fallback: cryptography.hazmat for FIPS compliance
-
 _RUST_CRYPTO_AVAILABLE: bool = False
 _RUST_CRYPTO_RAW: Any = None  # RustRawAccessor for crypto functions
 
 
 def _init_rust_crypto() -> bool:
     """Try to import Rust batch crypto; returns True if available.
-    
+
     R6: Access via rust.raw (RustRawAccessor) to get None on missing symbols.
     Functions: batch_encrypt_aes_gcm, batch_decrypt_aes_gcm
     """
@@ -108,9 +99,9 @@ def _init_rust_crypto() -> bool:
 
         # Access via rust.raw — returns None if unavailable (no AttributeError)
         _RUST_CRYPTO_RAW = rust.raw
-        encrypt_fn = getattr(_RUST_CRYPTO_RAW, 'batch_encrypt_aes_gcm', None)
-        decrypt_fn = getattr(_RUST_CRYPTO_RAW, 'batch_decrypt_aes_gcm', None)
-        
+        encrypt_fn = getattr(_RUST_CRYPTO_RAW, "batch_encrypt_aes_gcm", None)
+        decrypt_fn = getattr(_RUST_CRYPTO_RAW, "batch_decrypt_aes_gcm", None)
+
         if encrypt_fn is not None and decrypt_fn is not None:
             _RUST_CRYPTO_AVAILABLE = True
             return True
@@ -125,17 +116,17 @@ def _init_rust_crypto() -> bool:
 
 def _rust_batch_encrypt(password: str, salt: bytes, items: list[str]) -> list[bytes]:
     """Batch encrypt via Rust crypto_accelerate. Returns empty list if unavailable.
-    
+
     Bounded parallelism (Rust-side):
         - >= 32 items: rayon parallel (M1 P-cores)
         - < 32 items: serial
-    
+
     M1 optimization: PyO3 releases GIL during rayon parallel sections.
     """
     if not _RUST_CRYPTO_AVAILABLE or _RUST_CRYPTO_RAW is None:
         return []
     try:
-        encrypt_fn = getattr(_RUST_CRYPTO_RAW, 'batch_encrypt_aes_gcm', None)
+        encrypt_fn = getattr(_RUST_CRYPTO_RAW, "batch_encrypt_aes_gcm", None)
         if encrypt_fn is None:
             return []
         result = encrypt_fn(password, salt, items)
@@ -147,17 +138,17 @@ def _rust_batch_encrypt(password: str, salt: bytes, items: list[str]) -> list[by
 
 def _rust_batch_decrypt(password: str, salt: bytes, items: list[bytes]) -> list[str | None]:
     """Batch decrypt via Rust crypto_accelerate. Returns list with None for failures.
-    
+
     Bounded parallelism (Rust-side):
         - >= 32 items: rayon parallel (M1 P-cores)
         - < 32 items: serial
-    
+
     M1 optimization: PyO3 releases GIL during rayon parallel sections.
     """
     if not _RUST_CRYPTO_AVAILABLE or _RUST_CRYPTO_RAW is None:
         return [None] * len(items)
     try:
-        decrypt_fn = getattr(_RUST_CRYPTO_RAW, 'batch_decrypt_aes_gcm', None)
+        decrypt_fn = getattr(_RUST_CRYPTO_RAW, "batch_decrypt_aes_gcm", None)
         if decrypt_fn is None:
             return [None] * len(items)
         # PyO3 Vec<Vec<u8>> accepts bytes directly — no list() conversion needed
@@ -168,15 +159,9 @@ def _rust_batch_decrypt(password: str, salt: bytes, items: list[bytes]) -> list[
         return [None] * len(items)
 
 
-# ---------------------------------------------------------------------------
-# Async Rust batch crypto (for asyncio contexts)
-# ---------------------------------------------------------------------------
-
-async def _rust_batch_encrypt_async(
-    password: str, salt: bytes, items: list[str]
-) -> list[bytes]:
+async def _rust_batch_encrypt_async(password: str, salt: bytes, items: list[str]) -> list[bytes]:
     """Async batch encrypt via Rust crypto_accelerate.
-    
+
     Uses asyncio.to_thread for proper async integration:
     - Offloads CPU-bound Rust work to thread pool
     - Non-blocking for other async tasks
@@ -184,18 +169,16 @@ async def _rust_batch_encrypt_async(
     """
     if not items:
         return []
-    
+
     def _sync_call() -> list[bytes]:
         return _rust_batch_encrypt(password, salt, items)
-    
+
     return await asyncio.to_thread(_sync_call)
 
 
-async def _rust_batch_decrypt_async(
-    password: str, salt: bytes, items: list[bytes]
-) -> list[str | None]:
+async def _rust_batch_decrypt_async(password: str, salt: bytes, items: list[bytes]) -> list[str | None]:
     """Async batch decrypt via Rust crypto_accelerate.
-    
+
     Uses asyncio.to_thread for proper async integration:
     - Offloads CPU-bound Rust work to thread pool
     - Non-blocking for other async tasks
@@ -203,19 +186,12 @@ async def _rust_batch_decrypt_async(
     """
     if not items:
         return []
-    
+
     def _sync_call() -> list[str | None]:
         return _rust_batch_decrypt(password, salt, items)
-    
+
     return await asyncio.to_thread(_sync_call)
 
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Rust single-item crypto (large payload hot path)
-# ---------------------------------------------------------------------------
-# For single large items (>4 KB), use encrypt_aes_gcm_raw/decrypt_aes_gcm_raw
-# which accept pre-derived keys (no PBKDF2 overhead).
 
 _RUST_RAW_AVAILABLE: bool = False
 _RUST_RAW_ENCRYPT: Any = None
@@ -278,15 +254,12 @@ def _decrypt_rust_raw(key: bytes, encrypted: bytes) -> bytes | None:
         return None
 
 
-# Pure-Python fallback (AES-256-GCM via cryptography.hazmat)
-# ---------------------------------------------------------------------------
-
 _CRYPTO_AVAILABLE = False
 try:
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
     _CRYPTO_AVAILABLE = True
 except ImportError:  # noqa: BLE001
@@ -344,6 +317,7 @@ def _derive_key_python(password: str | bytearray, salt: bytes) -> bytes:
         # SEC-03: gc.disable blocks collection so wipe bytes aren't resurrection-swept
         # before overwrite completes. Two-pass wipe: noise then zeros.
         import gc
+
         gc.disable()
         try:
             _do_secure_wipe(password_ba)
@@ -388,7 +362,7 @@ def _aead_encrypt(data: bytes, key: bytes) -> bytes:
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(data) + encryptor.finalize()
     # Format: 0x01 || nonce(12) || ciphertext || tag(16)
-    return b'\x01' + nonce + ciphertext + encryptor.tag
+    return b"\x01" + nonce + ciphertext + encryptor.tag
 
 
 def _aead_decrypt(encrypted: bytes | None, key: bytes) -> bytes | None:
@@ -438,10 +412,6 @@ def _aead_decrypt(encrypted: bytes | None, key: bytes) -> bytes | None:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Module-level security helper (SEC-02)
-# ---------------------------------------------------------------------------
-
 def _chmod_lmdb_path(path: Path) -> None:
     """
     SEC-02: Harden LMDB directory and data file permissions.
@@ -461,11 +431,6 @@ def _chmod_lmdb_path(path: Path) -> None:
                 os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
             except OSError:  # noqa: BLE001
                 pass
-
-
-# ---------------------------------------------------------------------------
-# SecretVault
-# ---------------------------------------------------------------------------
 
 
 class SecretVault:
@@ -513,13 +478,11 @@ class SecretVault:
         # Open LMDB first to load/store salt metadata
         self._env: lmdb.Environment = self._open_lmdb()
 
-        # Load salt from LMDB or create new one
         self._salt = self._load_or_create_salt(salt)
 
         # Derive key ONCE — stored for AES-GCM operations
         self._derived_key = _derive_key_python(self._password, self._salt)
 
-        # Initialize Rust crypto
         _init_rust_crypto()
         _init_rust_raw_crypto()
         self._rust_available = _RUST_CRYPTO_AVAILABLE
@@ -545,8 +508,8 @@ class SecretVault:
 
     def _open_lmdb(self) -> lmdb.Environment:
         """Open LMDB environment with security-hardened settings."""
+
         import lmdb
-        import stat as _stat
 
         # SEC-02: Create directory with 0700 before umask scope
         self._path.mkdir(parents=True, exist_ok=True)
@@ -564,8 +527,6 @@ class SecretVault:
             return env
         finally:
             os.umask(_old_umask)
-
-    # ---- LMDB helpers ----
 
     def _lmdb_get(self, key: str) -> bytes | None:
         """Zero-copy LMDB read."""
@@ -589,8 +550,6 @@ class SecretVault:
             return True
         except Exception:
             return False
-
-    # ---- Encryption helpers ----
 
     def _encrypt_python(self, plaintext: bytes) -> bytes:
         """
@@ -637,7 +596,7 @@ class SecretVault:
         if orjson_dumps:
             return orjson_dumps(data, default=_orjson_default_serializer)
         # Fallback: orjson always available in this project, this path rarely reached
-        return _stdjson.dumps(data, default=str).encode('utf-8')
+        return _stdjson.dumps(data, default=str).encode("utf-8")
 
     def _deserialize(self, raw: bytes | memoryview) -> dict[str, Any]:
         """Deserialize JSON bytes to dict.
@@ -657,8 +616,6 @@ class SecretVault:
             # memoryview has no .decode() — convert to bytes first (F7 FIX)
             return _stdjson.loads(bytes(raw).decode())
 
-    # ---- Public API ----
-
     async def put(self, key: str, data: dict[str, Any]) -> bool:
         """
         Store a secret.
@@ -669,7 +626,7 @@ class SecretVault:
 
         Returns:
             True on success, False on failure.
-        
+
         Performance note:
             Single-item encryption uses Python cryptography.hazmat (hardware AES-NI).
             Rust batch encryption (via crypto_accelerate) is only beneficial for
@@ -692,7 +649,7 @@ class SecretVault:
 
         Returns:
             Secret payload dict, or None if not found / decryption fails.
-        
+
         Performance note:
             Single-item decryption uses Python cryptography.hazmat (hardware AES-NI).
             Rust batch decryption (via crypto_accelerate) is only beneficial for
@@ -743,30 +700,30 @@ class SecretVault:
         gc.disable()
         try:
             # SEC-03: Wipe derived key (bytes -> bytearray -> wipe)
-            if hasattr(self, '_derived_key') and self._derived_key is not None:
+            if hasattr(self, "_derived_key") and self._derived_key is not None:
                 dk_ba = bytearray(self._derived_key)
                 _do_secure_wipe(dk_ba)
-                self._derived_key = b'\x00' * len(self._derived_key)
+                self._derived_key = b"\x00" * len(self._derived_key)
 
             # SEC-03: Wipe salt (bytes -> bytearray -> wipe)
-            if hasattr(self, '_salt') and self._salt is not None:
+            if hasattr(self, "_salt") and self._salt is not None:
                 salt_ba = bytearray(self._salt)
                 _do_secure_wipe(salt_ba)
-                self._salt = b'\x00' * len(self._salt)
+                self._salt = b"\x00" * len(self._salt)
 
             # SEC-03: Wipe password — str immutable, but we wipe the encoded bytes.
             # This is best-effort; Python runtime may retain copies in GC.
-            if hasattr(self, '_password') and self._password is not None:
-                pw_ba = bytearray(self._password.encode('utf-8'))
+            if hasattr(self, "_password") and self._password is not None:
+                pw_ba = bytearray(self._password.encode("utf-8"))
                 _do_secure_wipe(pw_ba)
                 # Rebind to new string (original may still exist in GC)
-                self._password = '\x00' * len(self._password)
+                self._password = "\x00" * len(self._password)
         finally:
             gc.enable()
             gc.collect()
 
         # Close LMDB
-        if hasattr(self, '_env') and self._env is not None:
+        if hasattr(self, "_env") and self._env is not None:
             self._env.close()
 
     def __enter__(self) -> SecretVault:
@@ -781,8 +738,6 @@ class SecretVault:
     async def __aexit__(self, *_: Any) -> None:
         self.close()
 
-    # ---- Batch operations (Rust-accelerated) ----
-
     async def put_batch(self, items: dict[str, dict[str, Any]]) -> int:
         """
         Batch store multiple secrets.
@@ -792,7 +747,7 @@ class SecretVault:
 
         Returns:
             Number of successfully stored secrets.
-        
+
         M1 optimization:
             - >= 32 items: Rust batch_encrypt_aes_gcm with rayon parallel
             - < 32 items: Python AES-256-GCM (hardware AES-NI via cryptography)
@@ -807,9 +762,7 @@ class SecretVault:
         if self._rust_available and len(plaintexts) >= 32:
             # Async call to Rust batch encrypt (offloads to thread pool)
             plaintexts_str = [p.decode() for p in plaintexts]
-            encrypted_list = await _rust_batch_encrypt_async(
-                self._password, self._salt, plaintexts_str
-            )
+            encrypted_list = await _rust_batch_encrypt_async(self._password, self._salt, plaintexts_str)
             if len(encrypted_list) == len(keys):
                 encrypted_blobs = [bytes(e) for e in encrypted_list]
             else:
@@ -819,7 +772,7 @@ class SecretVault:
 
         async with self._lock:
             success = 0
-            for k, blob in zip(keys, encrypted_blobs):
+            for k, blob in zip(keys, encrypted_blobs, strict=False):
                 try:
                     if self._lmdb_put(k, blob):
                         success += 1
@@ -837,7 +790,7 @@ class SecretVault:
 
         Returns:
             Dict of key -> secret payload (None if not found/decryption failed).
-        
+
         M1 optimization:
             - >= 32 items: Rust batch_decrypt_aes_gcm with rayon parallel
             - < 32 items: Python AES-256-GCM (hardware AES-NI via cryptography)
@@ -851,7 +804,7 @@ class SecretVault:
 
         valid_keys = [k for k in keys if encrypted_blobs[k] is not None]
         if not valid_keys:
-            return {k: None for k in keys}
+            return dict.fromkeys(keys)
 
         # Filtered above: each valid_blobs item is bytes (not None)
         valid_blobs = cast(list[bytes], [encrypted_blobs[k] for k in valid_keys])
@@ -861,9 +814,7 @@ class SecretVault:
         async with self._lock:
             if self._rust_available and len(valid_blobs) >= 32:
                 # Async call to Rust batch decrypt (offloads to thread pool)
-                decrypted_list = await _rust_batch_decrypt_async(
-                    self._password, self._salt, valid_blobs
-                )
+                decrypted_list = await _rust_batch_decrypt_async(self._password, self._salt, valid_blobs)
                 for i, k in enumerate(valid_keys):
                     d = decrypted_list[i]
                     if d is not None:

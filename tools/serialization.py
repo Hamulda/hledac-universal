@@ -12,20 +12,13 @@ Current feature tracking:
   - F-SERIAL-03: Binary pack/unpack for inter-process communication
 """
 
-
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import orjson
-import numpy as np
-from _core import aclose
 
-
-# ============================================================================
-# Canonical serialization (for hash-chain compatibility - MUST stay unchanged)
-# ============================================================================
 
 def serialize_canonical(obj: Any) -> bytes:
     """
@@ -38,18 +31,8 @@ def serialize_canonical(obj: Any) -> bytes:
     Returns:
         UTF-8 encoded bytes
     """
-    return json.dumps(
-        obj,
-        sort_keys=True,
-        separators=(',', ':'),
-        ensure_ascii=False,
-        default=str
-    ).encode('utf-8')
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
 
-
-# ============================================================================
-# Storage serialization (optimized with orjson - native numpy support)
-# ============================================================================
 
 # OPT_SORT_KEYS pro determinismus, OPT_APPEND_NEWLINE pro .jsonl formát
 ORJSON_STORAGE_OPTIONS = orjson.OPT_SORT_KEYS | orjson.OPT_APPEND_NEWLINE
@@ -79,11 +62,6 @@ def deserialize_storage(data: bytes | str) -> dict[str, Any]:
         Decoded Python dict
     """
     return orjson.loads(data)
-
-
-# ============================================================================
-# Binary serialization (optimized with orjson - native numpy support)
-# ============================================================================
 
 
 def pack(data: Any) -> bytes:

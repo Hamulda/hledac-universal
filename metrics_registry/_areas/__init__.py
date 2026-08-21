@@ -28,6 +28,6 @@ Sprint ISSUE-16 (2026-08-18)
 from __future__ import annotations
 
 # Re-export area modules for easy import
-from metrics_registry._areas import http, ml, storage, sprint, pipeline
+from metrics_registry._areas import http, ml, pipeline, sprint, storage
 
 __all__ = ["http", "ml", "storage", "sprint", "pipeline"]

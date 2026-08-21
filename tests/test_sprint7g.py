@@ -13,35 +13,33 @@ Canonical replacements:
 - SprintSchedulerConfig duration handling
 """
 
-import asyncio
 import inspect
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from hledac.universal.runtime.sprint_scheduler import SprintScheduler, SprintSchedulerConfig
-from _core import aclose
 
 
 class TestScanCtFix:
     """TEST 1: SprintScheduler config and initialization"""
 
-    def test_sprint_scheduler_config_attributes(self):
+    def test_sprint_scheduler_config_attributes(self) -> None:
         """SprintSchedulerConfig should have expected attributes"""
         config = SprintSchedulerConfig(
             sprint_duration_s=5,
             aggressive_mode=True,
-    )
+        )
         assert config.sprint_duration_s == 5
         assert config.aggressive_mode is True
 
     @pytest.mark.asyncio
-    async def test_sprint_scheduler_can_be_created(self):
+    async def test_sprint_scheduler_can_be_created(self) -> None:
         """SprintScheduler should be creatable without errors."""
         config = SprintSchedulerConfig(
             sprint_duration_s=3,
             aggressive_mode=False,
-    )
+        )
         scheduler = SprintScheduler(config)
 
         # Verify basic attributes
@@ -54,19 +52,21 @@ class TestScanCtFix:
 class TestStealthCrawlerFix:
     """TEST 2: stealth crawler returns real non-coroutine result"""
 
-    def test_fetch_html_sync_returns_string_not_coroutine(self):
+    def test_fetch_html_sync_returns_string_not_coroutine(self) -> None:
         """_fetch_html should return str | None, not a coroutine"""
         from hledac.universal.recon.stealth.scraper import StealthCrawler
 
         # Patch __init__ to skip dependency checks and set _curl_cffi_available directly
-        def mock_init(self, use_header_spoofer=True):
+        def mock_init(self, use_header_spoofer=True) -> None:
             self._curl_cffi_available = True
             self._httpx_available = False
             self._session = None
             self._header_spoofer = None
 
-        with patch.object(StealthCrawler, "__init__", mock_init), \
-             patch.object(StealthCrawler, "_fetch_with_curl_cffi", return_value="<html><body>test</body></html>"):
+        with (
+            patch.object(StealthCrawler, "__init__", mock_init),
+            patch.object(StealthCrawler, "_fetch_with_curl_cffi", return_value="<html><body>test</body></html>"),
+        ):
             crawler = StealthCrawler()
             result = crawler._fetch_html("https://example.com", {"User-Agent": "test"})
 
@@ -76,7 +76,7 @@ class TestStealthCrawlerFix:
         assert isinstance(result, str)
         assert result == "<html><body>test</body></html>"
 
-    def test_search_duckduckgo_returns_list_not_coroutine(self):
+    def test_search_duckduckgo_returns_list_not_coroutine(self) -> None:
         """_search_duckduckgo should return List[SearchResult], not a coroutine"""
         from hledac.universal.recon.stealth.scraper import StealthCrawler
 
@@ -99,29 +99,29 @@ class TestStealthCrawlerFix:
 class TestDurationCapFix:
     """TEST 3: SprintScheduler config respects duration"""
 
-    def test_sprint_scheduler_config_duration(self):
+    def test_sprint_scheduler_config_duration(self) -> None:
         """SprintSchedulerConfig should store sprint_duration_s"""
         config = SprintSchedulerConfig(
             sprint_duration_s=30,  # 30 second sprint
-    )
+        )
         scheduler = SprintScheduler(config)
 
         # Verify config has duration
         assert scheduler._config.sprint_duration_s == 30
 
-    def test_sprint_scheduler_config_windup_lead(self):
+    def test_sprint_scheduler_config_windup_lead(self) -> None:
         """SprintSchedulerConfig should store windup_lead_s"""
         config = SprintSchedulerConfig(
             sprint_duration_s=60,
             windup_lead_s=10,
-    )
+        )
         assert config.windup_lead_s == 10
 
 
 class TestBenchmarkFPS:
     """TEST 6: benchmark_fps formula uses tolerance"""
 
-    def test_benchmark_fps_tolerance(self):
+    def test_benchmark_fps_tolerance(self) -> None:
         """benchmark_fps should equal iterations/elapsed_s within tolerance"""
         iterations = 100
         elapsed_s = 10.5
@@ -145,7 +145,7 @@ class TestBenchmarkFPS:
 class TestShutdownWarning:
     """TEST 4: quantum shutdown no bare except"""
 
-    def test_quantum_wipe_no_bare_except(self):
+    def test_quantum_wipe_no_bare_except(self) -> None:
         """secure_wipe_keys should not use bare except in __del__"""
         import inspect
 
@@ -172,11 +172,11 @@ class TestSmokeIntegration:
     """SMOKE: sprint scheduler basic initialization"""
 
     @pytest.mark.asyncio
-    async def test_sprint_scheduler_init_no_blocker_errors(self):
+    async def test_sprint_scheduler_init_no_blocker_errors(self) -> None:
         """FIX F350M-R: Use @pytest.mark.asyncio instead of asyncio.run()."""
         config = SprintSchedulerConfig(
             sprint_duration_s=5,
-    )
+        )
         scheduler = SprintScheduler(config)
 
         # Basic sanity check

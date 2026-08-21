@@ -34,7 +34,6 @@ M1 8GB: each JSON file is typically < 10 KB. No runtime overhead.
 from __future__ import annotations
 
 import logging
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 

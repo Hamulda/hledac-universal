@@ -16,7 +16,6 @@ import time
 from unittest.mock import patch
 
 import pytest
-from _core import aclose
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -73,7 +72,7 @@ class TestSprintF260:
     """Sprint F260 — StealthLayer + GhostLayer 4-seam wiring tests."""
 
     # ------------------------------------------------------------------ A
-    def test_probe_f260_stealth(self):
+    def test_probe_f260_stealth(self) -> None:
         """get_stealth_layer() returns non-None instance with default config."""
         from layers import get_stealth_layer
 
@@ -83,7 +82,7 @@ class TestSprintF260:
         assert hasattr(sl, "get_timing_jitter"), "StealthLayer must expose get_timing_jitter()"
 
     # ------------------------------------------------------------------ B
-    def test_probe_f260_stealth_jitter(self):
+    def test_probe_f260_stealth_jitter(self) -> None:
         """get_timing_jitter() returns float in [0.0, 2.0]."""
         from layers import get_stealth_layer
 
@@ -95,7 +94,7 @@ class TestSprintF260:
             assert 0.0 <= jitter <= 2.0, f"jitter {jitter} out of [0.0, 2.0] bound"
 
     # ------------------------------------------------------------------ C
-    def test_probe_f260_ghost(self):
+    def test_probe_f260_ghost(self) -> None:
         """get_ghost_layer() returns non-None instance."""
         from layers import get_ghost_layer
 
@@ -106,7 +105,7 @@ class TestSprintF260:
         assert hasattr(gl, "force_neural_cleanup"), "GhostLayer must expose force_neural_cleanup()"
 
     # ------------------------------------------------------------------ D
-    def test_probe_f260_ghost_anti_vm(self):
+    def test_probe_f260_ghost_anti_vm(self) -> None:
         """is_vm_environment() returns bool (does not raise)."""
         from layers import get_ghost_layer
 
@@ -118,7 +117,7 @@ class TestSprintF260:
         assert isinstance(result, bool), f"expected bool, got {type(result)}"
 
     # ------------------------------------------------------------------ E
-    def test_probe_f260_inject_none(self, sprint_scheduler):
+    def test_probe_f260_inject_none(self, sprint_scheduler) -> None:
         """SprintScheduler.inject_stealth_layer(None) does not raise."""
         # Both None injections must succeed silently — caller is allowed to
         # pass None as a "no-op" opt-in. The scheduler must not crash.
@@ -138,7 +137,7 @@ class TestSprintF260:
         assert sprint_scheduler._ghost_layer is stub
 
     # ------------------------------------------------------------------ F
-    def test_probe_f260_mode_gate(self):
+    def test_probe_f260_mode_gate(self) -> None:
         """Without --extreme or --stealth-layer, layers are NOT injected (default OFF)."""
         # The default-OFF contract is enforced in two places:
         #   1. core/__main__.py:1425 — only injects if args.extreme or args.stealth_layer
@@ -157,7 +156,7 @@ class TestSprintF260:
         assert scheduler._ghost_layer is None
 
     # ------------------------------------------------------------------ G
-    def test_probe_f260_fail_soft(self):
+    def test_probe_f260_fail_soft(self) -> None:
         """Forcing StealthLayer() to raise → get_stealth_layer() returns None → no crash."""
         from layers import get_stealth_layer
 
@@ -172,7 +171,7 @@ class TestSprintF260:
         assert result is None, "get_stealth_layer() must return None on init failure"
 
     # ------------------------------------------------------------------ H
-    def test_probe_f260_perf(self):
+    def test_probe_f260_perf(self) -> None:
         """Median get_timing_jitter() call < 1 ms (perf bound from §6.1)."""
         from layers import get_stealth_layer
 

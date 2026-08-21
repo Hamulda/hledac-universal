@@ -61,15 +61,6 @@ use std::sync::LazyLock;
 // NEXTGEN-03: Crossbeam channel for dispatcher communication
 use crossbeam_channel;
 
-// ---------------------------------------------------------------------------
-// MODERN-33: Single Source of Truth for P-core detection
-// ---------------------------------------------------------------------------
-// MODERN-33 FIX: Removed duplicate detect_topology_p_cores().
-// Now uses lib.rs::detect_p_core_count() as single source of truth.
-// This eliminates 50+ lines of duplicate sysctlbyname code.
-
-// ---------------------------------------------------------------------------
-
 /// Global CPU-bound pool — wrapped in Arc<RwLock> for dynamic replacement.
 /// Initialized lazily on first resize call or pool reference access.
 static CPU_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
@@ -77,9 +68,6 @@ static CPU_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
 /// Global I/O-bound pool — wrapped in Arc<RwLock> for dynamic replacement.
 /// Initialized lazily on first resize call or pool reference access.
 static IO_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
-
-// NEXTGEN-03: Dedicated pools for asymmetric topology-aware scheduling
-// ============================================================================
 
 /// Global SIMD pool — 2 threads, P-cores 0,1, USER_INITIATED QoS.
 /// For ARM NEON SIMD operations (simd_similarity.rs, deep_ac Aho-Corasick).
@@ -92,10 +80,6 @@ static MLX_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
 /// Global Graph pool — 1 thread, P-core 2 (shared with MLX), USER_INITIATED QoS.
 /// For Kuzu graph traversal and petgraph PageRank.
 static GRAPH_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
-
-// ---------------------------------------------------------------------------
-// Pool building helpers (mirror lib.rs patterns)
-// ---------------------------------------------------------------------------
 
 /// Build a CPU-bound ThreadPool with `num_threads` threads.
 /// Applies P-core QoS hints (macOS) and CPU affinity (Linux).
@@ -202,9 +186,6 @@ fn apply_affinity_hint(_cores: usize) {}
 )))]
 fn apply_affinity_hint(_cores: usize) {}
 
-// NEXTGEN-03: Dedicated pool builders for asymmetric topology-aware scheduling
-// ============================================================================
-
 /// NEXTGEN-03: Build SIMD pool with explicit P-core affinity.
 ///
 /// Pool config:
@@ -215,7 +196,6 @@ fn apply_affinity_hint(_cores: usize) {}
 ///
 /// Uses spawn_fifo() to minimize work-stealing across pools.
 fn build_simd_pool() -> Result<ThreadPool, String> {
-    // Get P-core indices for SIMD pool
     let topo = crate::topology::get_topology();
     let p_cores = &topo.p_core_indices;
     let simd_cores = if p_cores.len() >= 2 {
@@ -266,7 +246,6 @@ fn build_simd_pool() -> Result<ThreadPool, String> {
 ///
 /// USER_INTERACTIVE ensures MLX GPU command buffer submission has minimal latency.
 fn build_mlx_pool() -> Result<ThreadPool, String> {
-    // Get P-core indices for MLX pool (skip first 2 used by SIMD)
     let topo = crate::topology::get_topology();
     let p_cores = &topo.p_core_indices;
     let mlx_cores = if p_cores.len() >= 4 {
@@ -385,10 +364,6 @@ fn apply_affinity_to_cores(cores: &[usize]) {
 fn apply_affinity_to_cores(_cores: &[usize]) {
     // No-op on other platforms
 }
-
-// ---------------------------------------------------------------------------
-// Core resize API — replaces LazyLock singletons from lib.rs
-// ---------------------------------------------------------------------------
 
 /// Resize the CPU-bound pool to `num_threads`.
 ///
@@ -541,10 +516,6 @@ fn init_dedicated_pools() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pool reference getters — used by pool_run.rs dispatchers
-// ---------------------------------------------------------------------------
-
 /// Get the current CPU pool as Arc<ThreadPool>.
 /// Initializes with defaults (4 threads) if not yet set.
 ///
@@ -609,10 +580,6 @@ pub fn get_io_pool() -> Arc<ThreadPool> {
     pool
 }
 
-// ---------------------------------------------------------------------------
-// Legacy compatibility aliases — for code that still uses lib.rs cpu_pool()
-// ---------------------------------------------------------------------------
-
 /// Legacy: returns current CPU pool (for backward compatibility).
 /// Prefer `get_cpu_pool()` in new code.
 pub fn cpu_pool() -> Arc<ThreadPool> {
@@ -624,9 +591,6 @@ pub fn cpu_pool() -> Arc<ThreadPool> {
 pub fn io_pool() -> Arc<ThreadPool> {
     get_io_pool()
 }
-
-// NEXTGEN-03: Dedicated pool getters
-// ============================================================================
 
 /// Get the SIMD pool for ARM NEON operations.
 pub fn get_simd_pool() -> Arc<ThreadPool> {
@@ -724,9 +688,6 @@ pub fn get_graph_pool_threads() -> usize {
     }
 }
 
-// NEXTGEN-03: Crossbeam channel senders for dedicated pools
-// ============================================================================
-
 use crossbeam_channel::{bounded, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -781,7 +742,6 @@ fn spawn_simd_dispatcher(rx: crossbeam_channel::Receiver<crate::pool_run::WorkIt
         .name("hledac-dispatch-simd".to_string())
         .stack_size(4_194_304)
         .spawn(move || {
-            // Initialize the SIMD pool on first dispatcher call
             let _ = get_simd_pool();
 
             // Run dispatcher loop with P-core QoS
@@ -815,7 +775,6 @@ fn spawn_mlx_dispatcher(rx: crossbeam_channel::Receiver<crate::pool_run::WorkIte
         .name("hledac-dispatch-mlx".to_string())
         .stack_size(4_194_304)
         .spawn(move || {
-            // Initialize the MLX pool on first dispatcher call
             let _ = get_mlx_pool();
 
             // Run dispatcher loop with USER_INTERACTIVE QoS (higher priority)
@@ -849,7 +808,6 @@ fn spawn_graph_dispatcher(rx: crossbeam_channel::Receiver<crate::pool_run::WorkI
         .name("hledac-dispatch-graph".to_string())
         .stack_size(4_194_304)
         .spawn(move || {
-            // Initialize the Graph pool on first dispatcher call
             let _ = get_graph_pool();
 
             // Run dispatcher loop with P-core QoS
@@ -876,10 +834,6 @@ fn spawn_graph_dispatcher(rx: crossbeam_channel::Receiver<crate::pool_run::WorkI
         })
         .expect("elastic_pool: Graph dispatcher spawn failed");
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 bindings — called by Python RayonPoolManager
-// ---------------------------------------------------------------------------
 
 /// Resize CPU pool from Python. Enforces MAX_TOTAL_THREADS=8.
 #[pyfunction]
@@ -927,9 +881,6 @@ pub fn get_elastic_total_threads_py() -> usize {
     get_total_active_threads()
 }
 
-// NEXTGEN-03: Dedicated pool PyO3 bindings
-// ============================================================================
-
 /// Get SIMD pool thread count.
 #[pyfunction]
 #[pyo3(name = "get_simd_pool_threads")]
@@ -972,10 +923,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_all_pool_threads_py))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

@@ -27,13 +27,13 @@ Preferred alternatives:
 
 Run: python tools/audit/ban_stdlib_json.py [--fix]
 """
+
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]]:
@@ -62,9 +62,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
         "utils/codec.py",  # Canonical codec with proper fallback
     }
     # Files in _core that use stdlib json for Rust backend fallbacks
-    skip_in_patterns = (
-        "_core/rust_backend/",
-    )
+    skip_in_patterns = ("_core/rust_backend/",)
 
     for py_file in root.rglob("*.py"):
         path_str = str(py_file)
@@ -76,7 +74,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             continue
         try:
             content = py_file.read_text()
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             continue
 
         try:
@@ -108,19 +106,13 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
                 continue  # Legitimate fallback
 
             # Violation: stdlib json import outside except block
-            lineno = getattr(node, 'lineno', 0)
+            lineno = getattr(node, "lineno", 0)
             if isinstance(node, ast.Import):
-                violations.append((
-                    py_file,
-                    lineno,
-                    f"`import json` outside except-block (use orjson/msgspec instead)"
-                ))
+                violations.append((py_file, lineno, "`import json` outside except-block (use orjson/msgspec instead)"))
             else:
-                violations.append((
-                    py_file,
-                    lineno,
-                    f"`from json import ...` outside except-block (use orjson/msgspec instead)"
-                ))
+                violations.append(
+                    (py_file, lineno, "`from json import ...` outside except-block (use orjson/msgspec instead)")
+                )
 
     return violations
 

@@ -10,12 +10,13 @@ Functions:
 
 Usage:
     from utils.coreml.inference import run_coreml_inference
-    
+
     result = await run_coreml_inference(
         model_name="prm_step",
         inputs={"text": "evidence fact"}
     )
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -92,7 +93,7 @@ async def run_coreml_inference(
             return result.model_dump()
         return {"score": 0.5, "outputs": {}}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("[CoreML Inference] Timeout for model %s", model_name)
         return {"score": 0.5, "outputs": {}, "error": "timeout"}
     except Exception as e:
@@ -126,7 +127,6 @@ async def batch_coreml_inference(
 
     client = await _get_coreml_client()
     if client is None:
-        # Return fallback results
         return [{"score": 0.5, "outputs": {}} for _ in inputs_list]
 
     try:
@@ -142,7 +142,6 @@ async def batch_coreml_inference(
         }
         compute_unit_enum = compute_unit_map.get(compute_unit.upper(), ComputeUnit.ALL)
 
-        # Process in batches
         results = []
         for i in range(0, len(inputs_list), batch_size):
             batch = inputs_list[i : i + batch_size]
@@ -162,15 +161,11 @@ async def batch_coreml_inference(
                 else:
                     results.extend([{} for _ in batch])
 
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "[CoreML Inference] Batch timeout at index %d", i
-                )
+            except TimeoutError:
+                logger.warning("[CoreML Inference] Batch timeout at index %d", i)
                 results.extend([{"score": 0.5, "error": "timeout"} for _ in batch])
             except Exception as e:
-                logger.debug(
-                    "[CoreML Inference] Batch error at index %d: %s", i, e
-                )
+                logger.debug("[CoreML Inference] Batch error at index %d: %s", i, e)
                 results.extend([{"score": 0.5, "error": str(e)} for _ in batch])
 
         return results

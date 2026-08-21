@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING
 
-
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
@@ -53,7 +52,7 @@ class _RustUrlDomain:
         M1 8GB safe: rayon parallel, GIL released during batch.
         """
         raw_results = self._ext.batch_fingerprint(urls)
-        return [format(fp, '016x') if fp is not None else '' for fp in raw_results]
+        return [format(fp, "016x") if fp is not None else "" for fp in raw_results]
 
 
 class _PythonUrlDomain:
@@ -101,19 +100,13 @@ class _PythonUrlDomain:
     def looks_like_feed_url(url: str) -> bool:
         return _python_looks_like_feed_url(url)
 
+
 # priority_classify_urls is a module-level function exposed by rust_extensions.
 # _RustUrlDomain does NOT expose it as a method — use rust.priority_classify_urls()
 # directly if needed. The Python fallback is intentionally omitted (dead code,
 # never called in the codebase).
 
-# ------------------------------------------------------------------
-# Pure-Python URL helpers (moved from top of rust_backend.py)
-# F3XX: All hot-path functions are @lru_cache'd — O(1) cached lookups
-# replace repeated urlparse calls in hot paths. Thread-safe via
-# CPython's internal lru_cache lock (PEP 701).
-# ------------------------------------------------------------------
-from functools import lru_cache  # noqa: E402
-from _core._util import aclose
+from functools import lru_cache
 
 
 @lru_cache(maxsize=8192)
@@ -142,10 +135,22 @@ def _python_url_fingerprint(url: str) -> str:
 
 # Frozenset: immutable, hashable, faster lookup than set literal.
 # Matches Rust TRACKING_PARAMS union TRACKING_PARAM_PREFIXES.
-_TRACKING_PARAMS_PY: frozenset[str] = frozenset({
-    "fbclid", "gclid", "gclsrc", "dclid", "msclkid", "twclid",
-    "mc_cid", "mc_eid", "_ga", "_gl", "ref", "yclid",
-})
+_TRACKING_PARAMS_PY: frozenset[str] = frozenset(
+    {
+        "fbclid",
+        "gclid",
+        "gclsrc",
+        "dclid",
+        "msclkid",
+        "twclid",
+        "mc_cid",
+        "mc_eid",
+        "_ga",
+        "_gl",
+        "ref",
+        "yclid",
+    }
+)
 
 
 @lru_cache(maxsize=4096)
@@ -223,10 +228,11 @@ def _get_feed_url_re():
     global _FEED_URL_RE
     if _FEED_URL_RE is None:
         import re
+
         _FEED_URL_RE = re.compile(
             r"\.(rss|atom|xml|opensearch|sitemap)$",
             re.IGNORECASE,
-    )
+        )
     return _FEED_URL_RE
 
 
@@ -261,7 +267,7 @@ def _python_classify_url(url: str) -> tuple[str, str]:
         if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
             return ("storage", "cloud")
         # Onion / I2P before clearnet — use hostname (port-stripped) so :8080 doesn't break .i2p detection
-        hostname = parsed.hostname or ''
+        hostname = parsed.hostname or ""
         if hostname.endswith(".onion"):
             return ("onion", parsed.netloc)
         if hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
@@ -282,6 +288,7 @@ def _get_host_re():
     global _HOST_RE
     if _HOST_RE is None:
         import re
+
         _HOST_RE = re.compile(rb"://([^/]+)")
     return _HOST_RE
 
@@ -294,8 +301,6 @@ def _python_batch_classify(urls: list[str]) -> list[tuple[str, str]]:
     """
     if not urls:
         return []
-
-    import re
 
     # Single regex pass: extract all hosts from concatenated blob
     try:

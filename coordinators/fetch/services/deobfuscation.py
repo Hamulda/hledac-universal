@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -16,13 +15,13 @@ MAX_BATCH_SIZE: int = 1000
 
 # Absolute path to deobfuscate.py — loaded directly to bypass rust_backend.__init__
 # chain (avoids mlx_memory lock registration issues on cold start)
-_DEOBFUSCATE_PY_PATH: str = "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/_core/rust_backend/deobfuscate.py"
+_DEOBFUSCATE_PY_PATH: str = (
+    "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/_core/rust_backend/deobfuscate.py"
+)
 
 
 def _load_python_fallback_domain() -> object:
-    spec = importlib.util.spec_from_file_location(
-        "_deobfuscate_fallback", _DEOBFUSCATE_PY_PATH
-    )
+    importlib.util.spec_from_file_location("_deobfuscate_fallback", _DEOBFUSCATE_PY_PATH)
     code = open(_DEOBFUSCATE_PY_PATH).read()
     ns: dict = {}
     exec(compile(code, "deobfuscate.py", "exec"), ns)
@@ -63,6 +62,7 @@ class DeobfuscationService:
             self._domain = domain
         else:
             from _core.rust_backend import rust
+
             self._domain = rust.deobfuscate
 
     def decode_single(self, text: str, max_depth: int | None = None) -> DeobfuscationResult:
@@ -72,9 +72,7 @@ class DeobfuscationService:
         raw = self._domain.decode(text, depth)
         return DeobfuscationResult.from_backend(raw)
 
-    def decode_batch(
-        self, texts: list[str], max_depth: int | None = None
-    ) -> list[DeobfuscationResult]:
+    def decode_batch(self, texts: list[str], max_depth: int | None = None) -> list[DeobfuscationResult]:
         if not texts:
             return []
         depth = max_depth if max_depth is not None else self._max_depth

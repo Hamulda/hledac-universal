@@ -3,13 +3,9 @@ NER Engine — Named Entity Recognition using GLiNER-X on CPU.
 
 Uses knowledgator/gliner-relex-large-v0.5 model for joint NER + RE extraction
 
-
-
-
 with lazy loading and explicit CPU-only mode.
 
 Alternative: utils/entity_extractor.py (regex-based, faster but less accurate)
-
 
 Usage:
     from hledac.universal.brain.ner_engine import NEREngine, get_ner_engine
@@ -22,9 +18,10 @@ Features:
 - ANE acceleration via NaturalLanguage framework (PyObjC)
 - CoreML NER model fallback
 """
+
 from __future__ import annotations
+
 import asyncio
-import orjson as json
 import logging
 import os
 import subprocess
@@ -32,20 +29,24 @@ import sys
 import tempfile
 import threading
 from collections import deque
-from dataclasses import dataclass, field
-from functools import partial
+from dataclasses import field
 from typing import TYPE_CHECKING, Any
+
+import orjson as json
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
-from operator import attrgetter, itemgetter
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
+from operator import attrgetter
 from pathlib import Path
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
+from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+
 _TORCH_AVAILABLE = False
 _torch_module = None
+
 
 def _get_torch():
     """Lazy torch accessor - imports torch only when first needed."""
@@ -53,29 +54,26 @@ def _get_torch():
     if _torch_module is None:
         try:
             import torch
+
             _torch_module = torch
             _TORCH_AVAILABLE = True
         except ImportError:
             _torch_module = None
             _TORCH_AVAILABLE = False
     return _torch_module
+
+
 logger = logging.getLogger(__name__)
 _NL_AVAILABLE = False
 try:
     import NaturalLanguage
+
     _NL_AVAILABLE = True
 except ImportError:  # noqa: BLE001
     pass
 MAX_STRICT_TEXT_LENGTH = 10000
 MAX_STRICT_LABELS = 5
 MAX_STRICT_TEXTS = 3
-
-# ---------------------------------------------------------------------------
-# Persistent Worker Pool for GLiNER Subprocess
-# ---------------------------------------------------------------------------
-# Long-running subprocess that loads GLiNER once and processes via JSONL stdin/stdout.
-# Survives 1000+ requests without reloading model. ~50-150ms startup (no torch/GLiNER reload).
-# M1 8GB: single worker = ~1GB resident for GLiNER model.
 
 
 class _NERPersistentWorker:
@@ -86,22 +84,20 @@ class _NERPersistentWorker:
     (original behavior preserved for robustness).
     """
 
-    __slots__ = tuple(
-        (
-            "_closed",
-            "_lock",
-            "_proc",
-            "_reader_task",
-            "_stderr_task",
-            "_stderr_buffer",
-            "_stdout_reader",
-            "_stdin_lock",
-            "_model_name",
-            "_ready_event",
-            "_response_queues",
-            "_request_id",
-            "_started",
-    )
+    __slots__ = (
+        "_closed",
+        "_lock",
+        "_proc",
+        "_reader_task",
+        "_stderr_task",
+        "_stderr_buffer",
+        "_stdout_reader",
+        "_stdin_lock",
+        "_model_name",
+        "_ready_event",
+        "_response_queues",
+        "_request_id",
+        "_started",
     )
 
     def __init__(self, model_name: str) -> None:
@@ -151,7 +147,7 @@ class _NERPersistentWorker:
                 stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, "TOKENIZERS_PARALLELISM": "false"},
                 limit=10 * 1024 * 1024,  # 10 MB stdout buffer
-    )
+            )
             self._stdout_reader = self._proc.stdout
 
             # Start stderr collector (non-blocking)
@@ -163,7 +159,7 @@ class _NERPersistentWorker:
                     while not self._closed:
                         try:
                             async with asyncio.timeout(1.0):
-                                line = await proc_stderr.readline()
+                                await proc_stderr.readline()
                         except TimeoutError:
                             continue
                         except Exception:
@@ -202,7 +198,7 @@ class _NERPersistentWorker:
                                 self._response_queues[rid].put_nowait(response)
                             else:
                                 logger.warning(f"NER worker unexpected response: {line[:100]}")
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             if self._proc is None or self._proc.returncode is not None:
                                 break
                             continue
@@ -272,7 +268,6 @@ class _NERPersistentWorker:
         if not await self._ensure_started():
             return None
 
-        # Check for stderr errors first
         if self._stderr_buffer:
             error_lines = [b"".join(self._stderr_buffer).decode("utf-8", errors="replace")][:500]
             logger.debug(f"NER worker stderr: {error_lines}")
@@ -352,14 +347,14 @@ class _NERPersistentWorker:
         if self._reader_task:
             try:
                 await asyncio.wait_for(asyncio.shield(self._reader_task), timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
+            except TimeoutError, asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._reader_task = None
 
         if self._stderr_task:
             try:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
+            except TimeoutError, asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._stderr_task = None
 
@@ -420,9 +415,20 @@ class NEREngine:
     - Sprint 76: ANE acceleration via NaturalLanguage framework
     - Sprint 76: CoreML NER model fallback
     """
-    __slots__ = tuple(('_ane_predictions', '_coreml_ner_model', '_initialized', '_lock', '_mlx_gliner2_available', '_mlx_gliner2_extractor', '_model', '_nl_available', 'model_name'))
 
-    def __init__(self, model_name: str='knowledgator/gliner-relex-large-v0.5'):
+    __slots__ = (
+        "_ane_predictions",
+        "_coreml_ner_model",
+        "_initialized",
+        "_lock",
+        "_mlx_gliner2_available",
+        "_mlx_gliner2_extractor",
+        "_model",
+        "_nl_available",
+        "model_name",
+    )
+
+    def __init__(self, model_name: str = "knowledgator/gliner-relex-large-v0.5") -> None:
         self.model_name = model_name
         self._model: PreTrainedModel | Any | None = None  # type: ignore[assignment]
         self._lock = threading.RLock()
@@ -441,26 +447,29 @@ class NEREngine:
         Without the flag, mlx-gliner2 is never imported (RAM budget on M1 8GB).
         """
         # ISSUE-B3: Guard — mlx-gliner2 adds ~500MB resident; only load when profile-enabled
-        if os.getenv('HLEDAC_ENABLE_GLINER2', '1') != '1':
-            logger.debug('mlx-gliner2 skipped (HLEDAC_ENABLE_GLINER2 != 1)')
+        if os.getenv("HLEDAC_ENABLE_GLINER2", "1") != "1":
+            logger.debug("mlx-gliner2 skipped (HLEDAC_ENABLE_GLINER2 != 1)")
             return False
         if self._mlx_gliner2_extractor is not None:
             return True
         try:
             import mlx_gliner2
-            model_path = os.environ.get('MLX_GLINER2_MODEL', str(Path.home() / '.hledac' / 'models' / 'fastino_gliner2-base-v1'))
+
+            model_path = os.environ.get(
+                "MLX_GLINER2_MODEL", str(Path.home() / ".hledac" / "models" / "fastino_gliner2-base-v1")
+            )
             self._mlx_gliner2_extractor = mlx_gliner2.GLiNER2.from_pretrained(model_path)
             self._mlx_gliner2_available = True
-            logger.info('mlx-gliner2 loaded (Metal GPU / ANE)')
+            logger.info("mlx-gliner2 loaded (Metal GPU / ANE)")
             return True
         except ImportError:
-            logger.debug('mlx-gliner2 not installed')
+            logger.debug("mlx-gliner2 not installed")
             return False
         except Exception as e:
-            logger.debug(f'mlx-gliner2 load failed: {e}')
+            logger.debug(f"mlx-gliner2 load failed: {e}")
             return False
 
-    def _mlx_gliner2_extract(self, text: str, labels: list[str], threshold: float=0.5) -> list[dict]:
+    def _mlx_gliner2_extract(self, text: str, labels: list[str], threshold: float = 0.5) -> list[dict]:
         """
         Synchronní mlx-gliner2 inference na Metal GPU.
 
@@ -474,23 +483,25 @@ class NEREngine:
             # SPRINT F320: správný API — List[Dict] s text/label/score/start/end
             result: list[dict] = self._mlx_gliner2_extractor.extract_entities(
                 text, labels, threshold=threshold, include_confidence=True, include_spans=True
-    )
+            )
             entities = []
             for item in result:
                 if isinstance(item, dict):
-                    entities.append({
-                        'entity': item.get('text', ''),
-                        'label': item.get('label', ''),
-                        'span': (item.get('start', 0), item.get('end', 0)),
-                        'score': item.get('score', 0.9),
-                    })
+                    entities.append(
+                        {
+                            "entity": item.get("text", ""),
+                            "label": item.get("label", ""),
+                            "span": (item.get("start", 0), item.get("end", 0)),
+                            "score": item.get("score", 0.9),
+                        }
+                    )
             return entities
         except Exception as e:
-            logger.warning(f'mlx-gliner2 extraction failed: {e}')
+            logger.warning(f"mlx-gliner2 extraction failed: {e}")
             return []
 
     def _mlx_gliner2_extract_batch(
-        self, texts: list[str], labels: list[str], threshold: float=0.5, batch_size: int=8
+        self, texts: list[str], labels: list[str], threshold: float = 0.5, batch_size: int = 8
     ) -> list[list[dict]]:
         """
         Batch mlx-gliner2 inference na Metal GPU.
@@ -503,37 +514,39 @@ class NEREngine:
         try:
             # SPRINT F320: batch API — jeden Metal kernel pro celý batch
             results: list[list[dict]] = self._mlx_gliner2_extractor.batch_extract_entities(
-                texts, labels, threshold=threshold, batch_size=batch_size,
-                include_confidence=True, include_spans=True
-    )
+                texts, labels, threshold=threshold, batch_size=batch_size, include_confidence=True, include_spans=True
+            )
             # Normalizace na stejný formát jako _mlx_gliner2_extract
             normalized: list[list[dict]] = []
             for batch_result in results:
                 batch_entities: list[dict] = []
                 for item in batch_result:
                     if isinstance(item, dict):
-                        batch_entities.append({
-                            'entity': item.get('text', ''),
-                            'label': item.get('label', ''),
-                            'span': (item.get('start', 0), item.get('end', 0)),
-                            'score': item.get('score', 0.9),
-                        })
+                        batch_entities.append(
+                            {
+                                "entity": item.get("text", ""),
+                                "label": item.get("label", ""),
+                                "span": (item.get("start", 0), item.get("end", 0)),
+                                "score": item.get("score", 0.9),
+                            }
+                        )
                 normalized.append(batch_entities)
             return normalized
         except Exception as e:
-            logger.warning(f'mlx-gliner2 batch extraction failed: {e}')
+            logger.warning(f"mlx-gliner2 batch extraction failed: {e}")
             return [[] for _ in texts]
 
-    async def _load_coreml_model(self):
+    async def _load_coreml_model(self) -> None:
         """Lazy load CoreML NER model (běží na ANE)."""
         try:
             import coremltools as ct
-            model_path = Path.home() / '.hledac' / 'models' / 'ner.mlmodel'
+
+            model_path = Path.home() / ".hledac" / "models" / "ner.mlmodel"
             if model_path.exists():
                 self._coreml_ner_model = ct.models.MLModel(str(model_path))
-                logger.info('CoreML NER model loaded')
+                logger.info("CoreML NER model loaded")
         except Exception as e:
-            logger.debug(f'CoreML NER load failed: {e}')
+            logger.debug(f"CoreML NER load failed: {e}")
 
     def _nl_process_sync(self, text: str) -> list[dict]:
         """Synchronní volání NaturalLanguage.framework přes PyObjC."""
@@ -542,19 +555,29 @@ class NEREngine:
         try:
             from Foundation import NSString
             from NaturalLanguage import NLTagger, NLTagScheme, NLTokenUnit
+
             entities = []
             ns_string = NSString.stringWithString_(text)
             tagger = NLTagger.alloc().initWithTagSchemes_([NLTagScheme.nameType])
             tagger.setString_(ns_string)
 
-            def _block(tag, token_range, stop):
+            def _block(tag, token_range, stop) -> bool:
                 if tag:
-                    entities.append({'text': text[token_range.location:token_range.location + token_range.length], 'type': str(tag).split('.')[-1], 'confidence': 0.85})
+                    entities.append(
+                        {
+                            "text": text[token_range.location : token_range.location + token_range.length],
+                            "type": str(tag).split(".")[-1],
+                            "confidence": 0.85,
+                        }
+                    )
                 return True
-            tagger.enumerateTagsInRange_unit_scheme_options_usingBlock_((0, len(text)), NLTokenUnit.word, NLTagScheme.nameType, 0, _block)
+
+            tagger.enumerateTagsInRange_unit_scheme_options_usingBlock_(
+                (0, len(text)), NLTokenUnit.word, NLTagScheme.nameType, 0, _block
+            )
             return entities
         except Exception as e:
-            logger.warning(f'NL framework failed: {e}')
+            logger.warning(f"NL framework failed: {e}")
             return []
 
     def get_ane_prediction_count(self) -> int:
@@ -568,48 +591,50 @@ class NEREngine:
 
     async def initialize(self) -> None:
         """
-        Explicitní inicializace - načte model do paměti.
+                Explicitní inicializace - načte model do paměti.
 
-n        Pokud je model již načten, nic nedělá.
+        n        Pokud je model již načten, nic nedělá.
         """
         if self._initialized and self._model is not None:
-            logger.debug('NEREngine již inicializován')
+            logger.debug("NEREngine již inicializován")
             return
         with self._lock:
             if self._initialized and self._model is not None:
                 return
-            logger.info(f'Načítání GLiNER modelu: {self.model_name}')
+            logger.info(f"Načítání GLiNER modelu: {self.model_name}")
             try:
                 from gliner import GLiNER
+
                 self._model = GLiNER.from_pretrained(self.model_name, load_tokenizer=True)
                 self._model.eval()
-                if hasattr(self._model, 'device'):
-                    self._model = self._model.to('cpu')
+                if hasattr(self._model, "device"):
+                    self._model = self._model.to("cpu")
                 self._initialized = True
-                logger.info('GLiNER model úspěšně načten (CPU)')
+                logger.info("GLiNER model úspěšně načten (CPU)")
             except Exception as e:
-                logger.error(f'Chyba při načítání GLiNER modelu: {e}')
+                logger.error(f"Chyba při načítání GLiNER modelu: {e}")
                 self._model = None
                 self._initialized = False
-                raise RuntimeError(f'Nepodařilo se načíst GLiNER model: {e}') from e
+                raise RuntimeError(f"Nepodařilo se načíst GLiNER model: {e}") from e
 
     def _ensure_loaded(self) -> None:
         """Interní metoda pro lazy loading - volá se automaticky před inference."""
         if self._model is None:
-            logger.info('Lazy loading GLiNER modelu...')
+            logger.info("Lazy loading GLiNER modelu...")
             try:
                 from gliner import GLiNER
+
                 self._model = GLiNER.from_pretrained(self.model_name, load_tokenizer=True)
                 self._model.eval()
-                if hasattr(self._model, 'device'):
-                    self._model = self._model.to('cpu')
+                if hasattr(self._model, "device"):
+                    self._model = self._model.to("cpu")
                 self._initialized = True
-                logger.info('GLiNER model lazy-loaded (CPU)')
+                logger.info("GLiNER model lazy-loaded (CPU)")
             except Exception as e:
-                logger.error(f'Chyba při lazy loadingu GLiNER modelu: {e}')
-                raise RuntimeError(f'Nepodařilo se načíst GLiNER model: {e}') from e
+                logger.error(f"Chyba při lazy loadingu GLiNER modelu: {e}")
+                raise RuntimeError(f"Nepodařilo se načíst GLiNER model: {e}") from e
 
-    def predict(self, text: str, labels: list[str], threshold: float=0.5) -> list[dict[str, Any]]:
+    def predict(self, text: str, labels: list[str], threshold: float = 0.5) -> list[dict[str, Any]]:
         """
         Extrahuje entity z textu.
 
@@ -629,16 +654,24 @@ n        Pokud je model již načten, nic nedělá.
         if not text or not text.strip():
             return []
         if not labels:
-            raise ValueError('Musí být zadán alespoň jeden label')
+            raise ValueError("Musí být zadán alespoň jeden label")
         try:
             entities = self._model.predict_entities(text, labels, threshold=threshold)
             result = []
             for entity in entities:
-                result.append({'entity': entity.get('text', ''), 'label': entity.get('label', ''), 'span': (entity.get('start', 0), entity.get('end', 0)), 'score': entity.get('score', 0.0)})
+                result.append(
+                    {
+                        "entity": entity.get("text", ""),
+                        "label": entity.get("label", ""),
+                        "span": (entity.get("start", 0), entity.get("end", 0)),
+                        "score": entity.get("score", 0.0),
+                    }
+                )
             return result
         except Exception as e:
-            logger.error(f'Chyba při NER predikci: {e}')
-            raise RuntimeError(f'NER predikce selhala: {e}') from e
+            logger.error(f"Chyba při NER predikci: {e}")
+            raise RuntimeError(f"NER predikce selhala: {e}") from e
+
     _MLX_AVAILABLE = False
     _MLX_EXTRACTOR = None
     _MLX_LOAD_LOCK: asyncio.Lock | None = None
@@ -650,15 +683,15 @@ n        Pokud je model již načten, nic nedělá.
             NEREngine._MLX_LOAD_LOCK = asyncio.Lock()
         return NEREngine._MLX_LOAD_LOCK
 
-    async def _load_mlx_extractor(self):
+    async def _load_mlx_extractor(self) -> None:
         """
         Lazy load MLX outlines extractor (async-safe DCLP).
 
         ISSUE-B3: Profile-gated — only loads when HLEDAC_ENABLE_MLX_OUTLINES=1.
         Without the flag, outlines+mlx are never imported (RAM budget on M1 8GB).
         """
-        if os.getenv('HLEDAC_ENABLE_MLX_OUTLINES', '1') != '1':
-            logger.debug('MLX outlines skipped (HLEDAC_ENABLE_MLX_OUTLINES != 1)')
+        if os.getenv("HLEDAC_ENABLE_MLX_OUTLINES", "1") != "1":
+            logger.debug("MLX outlines skipped (HLEDAC_ENABLE_MLX_OUTLINES != 1)")
             NEREngine._MLX_AVAILABLE = False
             return
         if NEREngine._MLX_AVAILABLE:
@@ -668,11 +701,12 @@ n        Pokud je model již načten, nic nedělá.
                 return
             try:
                 from outlines.models import mlx as mlx_outlines
-                NEREngine._MLX_EXTRACTOR = mlx_outlines('mlx-community/Llama-3.2-3B-Instruct-4bit')
+
+                NEREngine._MLX_EXTRACTOR = mlx_outlines("mlx-community/Llama-3.2-3B-Instruct-4bit")
                 NEREngine._MLX_AVAILABLE = True
-                logger.info('MLX outlines extractor loaded')
+                logger.info("MLX outlines extractor loaded")
             except Exception as e:
-                logger.debug(f'MLX outlines load failed: {e}')
+                logger.debug(f"MLX outlines load failed: {e}")
                 NEREngine._MLX_AVAILABLE = False
 
     async def _extract_with_mlx(self, text: str) -> list[dict]:
@@ -682,21 +716,22 @@ n        Pokud je model již načten, nic nedělá.
         if not NEREngine._MLX_AVAILABLE or NEREngine._MLX_EXTRACTOR is None:
             return []
         try:
-            import msgspec
-            from compat.msgspec_gc_compat import Struct
             import outlines
+
+            from compat.msgspec_gc_compat import Struct
 
             class EntityList(Struct):
                 entities: list[dict]
+
             generator = outlines.generate.json(NEREngine._MLX_EXTRACTOR, EntityList)
-            prompt = f'Extract named entities from text:\n{text[:2000]}'
+            prompt = f"Extract named entities from text:\n{text[:2000]}"
             result = generator(prompt)
             return result.entities
         except Exception as e:
-            logger.warning(f'MLX extraction failed: {e}')
+            logger.warning(f"MLX extraction failed: {e}")
             return []
 
-    async def predict_async(self, text: str, labels: list[str], threshold: float=0.5) -> list[dict[str, Any]]:
+    async def predict_async(self, text: str, labels: list[str], threshold: float = 0.5) -> list[dict[str, Any]]:
         """
         Asynchronní varianta predict - běží v thread poolu.
 
@@ -720,12 +755,14 @@ n        Pokud je model již načten, nic nedělá.
         if self._coreml_ner_model is None:
             await self._load_coreml_model()
         if self._coreml_ner_model:
-            result = await asyncio.to_thread(self._coreml_ner_model.predict, {'text': text[:512]})
+            result = await asyncio.to_thread(self._coreml_ner_model.predict, {"text": text[:512]})
             self._ane_predictions += 1
-            return result.get('entities', [])
+            return result.get("entities", [])
         return await asyncio.to_thread(self.predict, text, labels, threshold)
 
-    def predict_with_relations(self, text: str, labels: list[str], relations: list[dict[str, Any]] | None=None, threshold: float=0.5) -> dict[str, Any]:
+    def predict_with_relations(
+        self, text: str, labels: list[str], relations: list[dict[str, Any]] | None = None, threshold: float = 0.5
+    ) -> dict[str, Any]:
         """
         Extrahuje entity a volitelně vztahy z textu pomocí gliner-relex.
 
@@ -741,21 +778,25 @@ n        Pokud je model již načten, nic nedělá.
         """
         self._ensure_loaded()
         if not text or not text.strip():
-            return {'entities': [], 'relations': []}
+            return {"entities": [], "relations": []}
         if not labels:
-            raise ValueError('Musí být zadán alespoň jeden label')
+            raise ValueError("Musí být zadán alespoň jeden label")
         try:
             if relations:
-                entities, rels = self._model.predict(texts=[text], labels=labels, relations=relations, threshold=threshold, return_relations=True)
-                return {'entities': entities[0] if entities else [], 'relations': rels[0] if rels else []}
+                entities, rels = self._model.predict(
+                    texts=[text], labels=labels, relations=relations, threshold=threshold, return_relations=True
+                )
+                return {"entities": entities[0] if entities else [], "relations": rels[0] if rels else []}
             else:
                 entities = self._model.predict_entities(text, labels, threshold=threshold)
-                return {'entities': entities, 'relations': []}
+                return {"entities": entities, "relations": []}
         except Exception as e:
-            logger.error(f'Chyba při NER+RE predikci: {e}')
-            raise RuntimeError(f'NER+RE predikce selhala: {e}') from e
+            logger.error(f"Chyba při NER+RE predikci: {e}")
+            raise RuntimeError(f"NER+RE predikce selhala: {e}") from e
 
-    def predict_batch(self, texts: list[str], labels: list[str], threshold: float=0.5, batch_size: int=8) -> list[list[dict[str, Any]]]:
+    def predict_batch(
+        self, texts: list[str], labels: list[str], threshold: float = 0.5, batch_size: int = 8
+    ) -> list[list[dict[str, Any]]]:
         """
         Batch predikce pro více textů.
 
@@ -779,11 +820,13 @@ n        Pokud je model již načten, nic nedělá.
                 entities = self.predict(text, labels, threshold)
                 results.append(entities)
             except Exception as e:
-                logger.error(f'Chyba při batch predikci pro text: {e}')
+                logger.error(f"Chyba při batch predikci pro text: {e}")
                 results.append([])
         return results
 
-    async def predict_batch_async(self, texts: list[str], labels: list[str], threshold: float=0.5, batch_size: int=8) -> list[list[dict[str, Any]]]:
+    async def predict_batch_async(
+        self, texts: list[str], labels: list[str], threshold: float = 0.5, batch_size: int = 8
+    ) -> list[list[dict[str, Any]]]:
         """
         Asynchronní batch predikce — MLX batch-first.
 
@@ -803,9 +846,7 @@ n        Pokud je model již načten, nic nedělá.
             await self._load_mlx_gliner2()
         if self._mlx_gliner2_available and self._mlx_gliner2_extractor is not None:
             # SPRINT F320: MLX batch path — paralelní Metal inference
-            return await asyncio.to_thread(
-                self._mlx_gliner2_extract_batch, texts, labels, threshold, batch_size
-    )
+            return await asyncio.to_thread(self._mlx_gliner2_extract_batch, texts, labels, threshold, batch_size)
         # Fallback: serial per-text inference
         return await asyncio.to_thread(self.predict_batch, texts, labels, threshold, batch_size)
 
@@ -817,19 +858,22 @@ n        Pokud je model již načten, nic nedělá.
         """
         with self._lock:
             if self._model is not None:
-                logger.info('Uvolňování GLiNER modelu z paměti...')
+                logger.info("Uvolňování GLiNER modelu z paměti...")
                 del self._model
                 self._model = None
                 self._initialized = False
                 if _TORCH_AVAILABLE:
                     _t = _get_torch()
-                    if _t is not None and hasattr(_t, 'cuda') and _t.cuda.is_available():
+                    if _t is not None and hasattr(_t, "cuda") and _t.cuda.is_available():
                         _t.cuda.empty_cache()
                 import gc
-                gc.collect()
-                logger.info('GLiNER model uvolněn')
 
-    async def predict_strict(self, text: str, labels: list[str], threshold: float=0.5, timeout: int=60) -> list[dict[str, Any]]:
+                gc.collect()
+                logger.info("GLiNER model uvolněn")
+
+    async def predict_strict(
+        self, text: str, labels: list[str], threshold: float = 0.5, timeout: int = 60
+    ) -> list[dict[str, Any]]:
         """
         MEMORY_STRICT mód - optimalizované rozhodování.
 
@@ -848,24 +892,27 @@ n        Pokud je model již načten, nic nedělá.
         """
         if len(text) > MAX_STRICT_TEXT_LENGTH:
             text = text[:MAX_STRICT_TEXT_LENGTH]
-            logger.warning(f'Text truncated to {MAX_STRICT_TEXT_LENGTH} chars in strict mode')
+            logger.warning(f"Text truncated to {MAX_STRICT_TEXT_LENGTH} chars in strict mode")
         if len(labels) > MAX_STRICT_LABELS:
             labels = labels[:MAX_STRICT_LABELS]
-            logger.warning(f'Labels limited to {MAX_STRICT_LABELS} in strict mode')
+            logger.warning(f"Labels limited to {MAX_STRICT_LABELS} in strict mode")
         if len(text) <= MAX_STRICT_TEXT_LENGTH and self._model is not None:
             try:
                 import asyncio
+
                 result = await asyncio.to_thread(self.predict, text=text, labels=labels, threshold=threshold)
                 return result
             except Exception as e:
-                logger.warning(f'In-process NER failed ({e}), falling back to subprocess')
+                logger.warning(f"In-process NER failed ({e}), falling back to subprocess")
         try:
             return await self._run_in_subprocess(texts=[text], labels=labels, threshold=threshold, timeout=timeout)
         except Exception as e:
-            logger.error(f'Strict mode NER failed: {e}')
+            logger.error(f"Strict mode NER failed: {e}")
             return []
 
-    async def predict_batch_strict(self, texts: list[str], labels: list[str], threshold: float=0.5, timeout: int=120) -> list[list[dict[str, Any]]]:
+    async def predict_batch_strict(
+        self, texts: list[str], labels: list[str], threshold: float = 0.5, timeout: int = 120
+    ) -> list[list[dict[str, Any]]]:
         """
         MEMORY_STRICT batch mód.
 
@@ -880,7 +927,7 @@ n        Pokud je model již načten, nic nedělá.
         """
         if len(texts) > MAX_STRICT_TEXTS:
             texts = texts[:MAX_STRICT_TEXTS]
-            logger.warning(f'Texts limited to {MAX_STRICT_TEXTS} in strict mode')
+            logger.warning(f"Texts limited to {MAX_STRICT_TEXTS} in strict mode")
         texts = [t[:MAX_STRICT_TEXT_LENGTH] if len(t) > MAX_STRICT_TEXT_LENGTH else t for t in texts]
         if len(labels) > MAX_STRICT_LABELS:
             labels = labels[:MAX_STRICT_LABELS]
@@ -889,25 +936,32 @@ n        Pokud je model již načten, nic nedělá.
             if len(text) <= MAX_STRICT_TEXT_LENGTH and self._model is not None:
                 try:
                     import asyncio
+
                     entity_result = await asyncio.to_thread(self.predict, text=text, labels=labels, threshold=threshold)
                     results.append(entity_result)
                 except Exception as e:
-                    logger.warning(f'In-process NER failed ({e}), falling back to subprocess')
+                    logger.warning(f"In-process NER failed ({e}), falling back to subprocess")
                     try:
-                        sub_result = await self._run_in_subprocess(texts=[text], labels=labels, threshold=threshold, timeout=timeout)
+                        sub_result = await self._run_in_subprocess(
+                            texts=[text], labels=labels, threshold=threshold, timeout=timeout
+                        )
                         results.append(sub_result[0] if sub_result else [])
                     except Exception:
                         results.append([])
             else:
                 try:
-                    sub_result = await self._run_in_subprocess(texts=[text], labels=labels, threshold=threshold, timeout=timeout)
+                    sub_result = await self._run_in_subprocess(
+                        texts=[text], labels=labels, threshold=threshold, timeout=timeout
+                    )
                     results.append(sub_result[0] if sub_result else [])
                 except Exception as e:
-                    logger.error(f'Strict mode NER failed: {e}')
+                    logger.error(f"Strict mode NER failed: {e}")
                     results.append([])
         return results
 
-    async def _run_in_subprocess(self, texts: list[str], labels: list[str], threshold: float, timeout: int) -> list[list[dict[str, Any]]]:
+    async def _run_in_subprocess(
+        self, texts: list[str], labels: list[str], threshold: float, timeout: int
+    ) -> list[list[dict[str, Any]]]:
         """
         Spustí GLiNER inference — preferuje persistent worker, fallback na temp subprocess.
 
@@ -935,21 +989,28 @@ n        Pokud je model již načten, nic nedělá.
 
         # 2) Fallback: temporary subprocess (original behavior)
         child_code = '\nimport json\nimport sys\nimport os\n\n# Potlačit PyTorch warningy\nos.environ[\'TOKENIZERS_PARALLELISM\'] = \'false\'\n\n# Načíst vstup\ninput_data = json.loads(sys.stdin.read())\ntexts = input_data[\'texts\']\nlabels = input_data[\'labels\']\nthreshold = input_data[\'threshold\']\nmodel_name = input_data.get(\'model_name\', \'knowledgator/gliner-relex-large-v0.5\')\n\ntry:\n    from gliner import GLiNER\n    import torch\n\n    # Načíst model\n    model = GLiNER.from_pretrained(model_name, load_tokenizer=True)\n    model.eval()\n\n    results = []\n    for text in texts:\n        if not text.strip():\n            results.append([])\n            continue\n\n        try:\n            entities = model.predict_entities(text, labels, threshold=threshold)\n            result = [{\n                "entity": e.get("text", ""),\n                "label": e.get("label", ""),\n                "span": (e.get("start", 0), e.get("end", 0)),\n                "score": e.get("score", 0.0)\n            } for e in entities]\n            results.append(result)\n        except Exception as e:\n            results.append([{"error": str(e)}])\n\n    # Výstup jako JSON\n    print(json.dumps({"success": True, "results": results}))\n\nexcept Exception as e:\n    print(json.dumps({"success": False, "error": str(e)}))\n'
-        input_data = {'texts': texts, 'labels': labels, 'threshold': threshold, 'model_name': self.model_name}
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        input_data = {"texts": texts, "labels": labels, "threshold": threshold, "model_name": self.model_name}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(child_code)
             temp_script = f.name
         try:
-            proc = await asyncio.create_subprocess_exec(sys.executable, temp_script, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, 'TOKENIZERS_PARALLELISM': 'false'})
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                temp_script,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "TOKENIZERS_PARALLELISM": "false"},
+            )
             async with asyncio.timeout(timeout):
                 stdout, stderr = await proc.communicate(input=_msgspec_encode(input_data))
             if proc.returncode != 0:
-                error_msg = stderr.decode() if stderr else 'Unknown error'
-                raise RuntimeError(f'Subprocess failed: {error_msg}')
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                raise RuntimeError(f"Subprocess failed: {error_msg}")
             result = _msgspec_decode(stdout)
-            if not result.get('success'):
-                raise RuntimeError(result.get('error', 'Unknown error'))
-            results = result['results']
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "Unknown error"))
+            results = result["results"]
             if len(texts) == 1:
                 return results[0] if results else []
             return results
@@ -969,11 +1030,25 @@ n        Pokud je model již načten, nic nedělá.
                     num_threads = _t.get_num_threads()
                 except Exception:  # noqa: BLE001
                     pass
-        return {'model_name': self.model_name, 'is_loaded': self.is_loaded, 'initialized': self._initialized, 'device': 'cpu', 'num_threads': num_threads, 'memory_strict_limits': {'max_text_length': MAX_STRICT_TEXT_LENGTH, 'max_labels': MAX_STRICT_LABELS, 'max_texts': MAX_STRICT_TEXTS}}
+        return {
+            "model_name": self.model_name,
+            "is_loaded": self.is_loaded,
+            "initialized": self._initialized,
+            "device": "cpu",
+            "num_threads": num_threads,
+            "memory_strict_limits": {
+                "max_text_length": MAX_STRICT_TEXT_LENGTH,
+                "max_labels": MAX_STRICT_LABELS,
+                "max_texts": MAX_STRICT_TEXTS,
+            },
+        }
+
+
 _default_engine: NEREngine | None = None
 _ner_lock: threading.Lock = threading.Lock()
 
-def get_ner_engine(model_name: str='knowledgator/gliner-relex-large-v0.5') -> NEREngine:
+
+def get_ner_engine(model_name: str = "knowledgator/gliner-relex-large-v0.5") -> NEREngine:
     """
     Vrátí singleton instanci NEREngine (thread-safe, double-checked locking).
 
@@ -991,6 +1066,7 @@ def get_ner_engine(model_name: str='knowledgator/gliner-relex-large-v0.5') -> NE
             _default_engine = NEREngine(model_name)
         return _default_engine
 
+
 def reset_ner_engine() -> None:
     """Resetuje singleton instanci (thread-safe, uvolní model z paměti a worker)."""
     global _default_engine
@@ -1005,6 +1081,7 @@ def reset_ner_engine() -> None:
             _ner_worker.close()
             _ner_worker = None
 
+
 def get_ner_backend() -> str:
     """
     Return the active NER/RE backend name.
@@ -1017,14 +1094,15 @@ def get_ner_backend() -> str:
     """
     engine = _default_engine
     if engine is None:
-        return 'unavailable'
+        return "unavailable"
     if engine._model is not None:
-        return 'gliner-relex'
+        return "gliner-relex"
     if engine._coreml_ner_model is not None:
-        return 'coreml'
+        return "coreml"
     if engine._nl_available:
-        return 'nltagger'
-    return 'unavailable'
+        return "nltagger"
+    return "unavailable"
+
 
 def get_extraction_status() -> dict:
     """
@@ -1035,11 +1113,21 @@ def get_extraction_status() -> dict:
                         coreml_ner_inactive, nltagger_inactive,
                         relex_model, config_model
     """
-    return {'ner_backend': get_ner_backend(), 'ner_loaded': _default_engine._model is not None if _default_engine else False, 'pii_backend': 'regex', 'coreml_ner_inactive': True, 'nltagger_inactive': not (_default_engine._nl_available if _default_engine else False), 'relex_model': 'knowledgator/gliner-relex-large-v0.5', 'config_model': 'knowledgator/gliner-x-base'}
+    return {
+        "ner_backend": get_ner_backend(),
+        "ner_loaded": _default_engine._model is not None if _default_engine else False,
+        "pii_backend": "regex",
+        "coreml_ner_inactive": True,
+        "nltagger_inactive": not (_default_engine._nl_available if _default_engine else False),
+        "relex_model": "knowledgator/gliner-relex-large-v0.5",
+        "config_model": "knowledgator/gliner-x-base",
+    }
+
+
 import math as _math
 import re as _re
+
 from hledac.universal.utils.asyncx import safe_wait_for
-from _core import aclose
 
 # OSINT-01 FIX: Use `regex` module (linear-time guarantees) instead of `re` for
 # domain pattern. The `re` module's Python engine suffers catastrophic backtracking
@@ -1049,23 +1137,101 @@ from _core import aclose
 try:
     import regex as _regex_module
 
-    _DOMAIN_PAT = _regex_module.compile(
-        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
-    )
+    _DOMAIN_PAT = _regex_module.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 except ImportError:
     # Fallback: compile with `re` but rely on the text[:10000] pre-truncate in
     # extract_iocs_from_text as a depth-limiting measure. This is a best-effort
     # fallback when `regex` is not installed — the ReDoS risk remains for
     # pathological inputs within 10k chars but is significantly reduced.
-    _DOMAIN_PAT = _re.compile(
-        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
-    )
+    _DOMAIN_PAT = _re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
 
-_GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = ((_re.compile('\\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\\b', _re.IGNORECASE), 'organization'), (_re.compile('\\b(?:Mr|Mrs|Ms|Dr|Prof)\\.\\s+\\w+', _re.IGNORECASE), 'person'), (_re.compile('\\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\\b', _re.IGNORECASE), 'location'), (_re.compile('\\b[A-Fa-f0-9]{32,64}\\b'), 'hash'))
-_IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [('cve', _re.compile('\\bCVE-\\d{4}-\\d{4,7}\\b')), ('sha256', _re.compile('\\b[0-9a-fA-F]{64}\\b')), ('md5', _re.compile('\\b[0-9a-fA-F]{32}\\b')), ('sha1', _re.compile('\\b[0-9a-fA-F]{40}\\b')), ('email', _re.compile('\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b')), ('url', _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')), ('ipv4', _re.compile('\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b')), ('ipv6', _re.compile('\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b'))]
-_DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({'exe', 'dll', 'bin', 'so', 'dylib', 'lib', 'o', 'a', 'obj', 'deb', 'rpm', 'dmg', 'pkg', 'apk', 'ipa', 'jar', 'war', 'ear', 'class', 'cab', 'msi', 'lnk', 'tar', 'gz', 'zip', 'rar', '7z', 'iso', 'img', 'dat', 'tmp', 'bak', 'log', 'conf', 'cfg', 'ini', 'env', 'py', 'js', 'ts', 'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'toml', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'})
-_IOC_CONFIDENCE: dict[str, float] = {'cve': 0.98, 'sha256': 0.97, 'sha1': 0.96, 'md5': 0.95, 'email': 0.9, 'url': 0.85, 'ipv4': 0.85, 'ipv6': 0.8, 'domain': 0.7}
+_GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = (
+    (_re.compile("\\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\\b", _re.IGNORECASE), "organization"),
+    (_re.compile("\\b(?:Mr|Mrs|Ms|Dr|Prof)\\.\\s+\\w+", _re.IGNORECASE), "person"),
+    (_re.compile("\\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\\b", _re.IGNORECASE), "location"),
+    (_re.compile("\\b[A-Fa-f0-9]{32,64}\\b"), "hash"),
+)
+_IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [
+    ("cve", _re.compile("\\bCVE-\\d{4}-\\d{4,7}\\b")),
+    ("sha256", _re.compile("\\b[0-9a-fA-F]{64}\\b")),
+    ("md5", _re.compile("\\b[0-9a-fA-F]{32}\\b")),
+    ("sha1", _re.compile("\\b[0-9a-fA-F]{40}\\b")),
+    ("email", _re.compile("\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b")),
+    ("url", _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')),
+    ("ipv4", _re.compile("\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b")),
+    ("ipv6", _re.compile("\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b")),
+]
+_DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset(
+    {
+        "exe",
+        "dll",
+        "bin",
+        "so",
+        "dylib",
+        "lib",
+        "o",
+        "a",
+        "obj",
+        "deb",
+        "rpm",
+        "dmg",
+        "pkg",
+        "apk",
+        "ipa",
+        "jar",
+        "war",
+        "ear",
+        "class",
+        "cab",
+        "msi",
+        "lnk",
+        "tar",
+        "gz",
+        "zip",
+        "rar",
+        "7z",
+        "iso",
+        "img",
+        "dat",
+        "tmp",
+        "bak",
+        "log",
+        "conf",
+        "cfg",
+        "ini",
+        "env",
+        "py",
+        "js",
+        "ts",
+        "html",
+        "htm",
+        "json",
+        "xml",
+        "yaml",
+        "yml",
+        "toml",
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+    }
+)
+_IOC_CONFIDENCE: dict[str, float] = {
+    "cve": 0.98,
+    "sha256": 0.97,
+    "sha1": 0.96,
+    "md5": 0.95,
+    "email": 0.9,
+    "url": 0.85,
+    "ipv4": 0.85,
+    "ipv6": 0.8,
+    "domain": 0.7,
+}
 _SPACY_NLP = None
+
 
 def _get_spacy():
     """Lazy spaCy loader."""
@@ -1073,10 +1239,12 @@ def _get_spacy():
     if _SPACY_NLP is None:
         try:
             import spacy
-            _SPACY_NLP = spacy.load('en_core_web_sm')
+
+            _SPACY_NLP = spacy.load("en_core_web_sm")
         except Exception:  # noqa: BLE001
             pass
     return _SPACY_NLP
+
 
 def extract_iocs_from_text(text: str) -> list[dict]:
     """
@@ -1090,20 +1258,21 @@ def extract_iocs_from_text(text: str) -> list[dict]:
     results: list[dict] = []
     seen: set[str] = set()
 
-    def _add(value: str, ioc_type: str, conf: float):
+    def _add(value: str, ioc_type: str, conf: float) -> None:
         v = value.strip()
         if v and v not in seen and (len(v) > 3):
             seen.add(v)
-            results.append({'value': v, 'ioc_type': ioc_type, 'confidence': conf})
+            results.append({"value": v, "ioc_type": ioc_type, "confidence": conf})
+
     # OSINT-01: Domain extraction uses _DOMAIN_PAT (regex module with linear-time
     # guarantees) instead of the vulnerable re.compile() pattern. Processed first
     # so TLD denylist check runs before other patterns.
     try:
         for m in _DOMAIN_PAT.findall(text[:10000]):
-            tld = m.rsplit('.', 1)[-1].lower()
+            tld = m.rsplit(".", 1)[-1].lower()
             if tld in _DOMAIN_TLD_DENYLIST:
                 continue
-            _add(m, 'domain', 0.7)
+            _add(m, "domain", 0.7)
     except Exception:  # noqa: BLE001
         pass
     for ioc_type, pattern in _IOC_PATTERNS:
@@ -1117,18 +1286,31 @@ def extract_iocs_from_text(text: str) -> list[dict]:
         try:
             doc = nlp(text[:5000])
             for ent in doc.ents:
-                if ent.label_ in ('ORG', 'PERSON', 'GPE', 'PRODUCT'):
+                if ent.label_ in ("ORG", "PERSON", "GPE", "PRODUCT"):
                     _add(ent.text, ent.label_.lower(), 0.65)
         except Exception:  # noqa: BLE001
             pass
     return results
+
 
 class IOCScorer:
     """
     Skóruje IOC záznamy podle zdroje a koroborace.
     Výsledné skóre vždy v [0.0, 1.0].
     """
-    SOURCE_WEIGHTS: dict[str, float] = {'abuse_ch': 0.96, 'circl_pdns': 0.92, 'crtsh': 0.88, 'taxii': 0.9, 'shodan': 0.82, 'github_dork': 0.75, 'multi_engine': 0.65, 'ner_extracted': 0.58, 'dht_crawl': 0.52, 'regex_fallback': 0.5}
+
+    SOURCE_WEIGHTS: dict[str, float] = {
+        "abuse_ch": 0.96,
+        "circl_pdns": 0.92,
+        "crtsh": 0.88,
+        "taxii": 0.9,
+        "shodan": 0.82,
+        "github_dork": 0.75,
+        "multi_engine": 0.65,
+        "ner_extracted": 0.58,
+        "dht_crawl": 0.52,
+        "regex_fallback": 0.5,
+    }
 
     @classmethod
     def score_by_source(cls, source: str) -> float:
@@ -1152,31 +1334,34 @@ class IOCScorer:
         Kombinuje source weight + corroboration bonus.
         Clamp na [0.0, 1.0].
         """
-        base = cls.score_by_source(ioc_entry.get('source', ''))
-        bonus = cls.score_by_corroboration(ioc_entry.get('hit_count', 1))
-        existing = float(ioc_entry.get('confidence', 0.5))
+        base = cls.score_by_source(ioc_entry.get("source", ""))
+        bonus = cls.score_by_corroboration(ioc_entry.get("hit_count", 1))
+        existing = float(ioc_entry.get("confidence", 0.5))
         combined = max(base, existing) * 0.7 + bonus * 0.3
         return round(min(1.0, max(0.0, combined)), 4)
+
 
 def _normalize_entity_text(text: str) -> str:
     """Lowercase + strip for dedup."""
     return text.strip().lower()
 
-def _extract_snippet(text: str, entity_value: str, context_chars: int=60) -> str:
+
+def _extract_snippet(text: str, entity_value: str, context_chars: int = 60) -> str:
     """Extract a short contextual snippet around entity occurrence."""
     if not text or not entity_value:
-        return ''
+        return ""
     pos = _normalize_entity_text(text).find(_normalize_entity_text(entity_value))
     if pos < 0:
-        return text[:context_chars] + ('...' if len(text) > context_chars else '')
+        return text[:context_chars] + ("..." if len(text) > context_chars else "")
     start = max(0, pos - context_chars // 2)
     end = min(len(text), pos + len(entity_value) + context_chars // 2)
     snippet = text[start:end]
     if start > 0:
-        snippet = '…' + snippet
+        snippet = "…" + snippet
     if end < len(text):
-        snippet = snippet + '…'
+        snippet = snippet + "…"
     return snippet
+
 
 def _guess_entity_type(ioc_type: str | None, raw_text: str) -> str:
     """Guess entity type from IOC type or text patterns."""
@@ -1186,12 +1371,24 @@ def _guess_entity_type(ioc_type: str | None, raw_text: str) -> str:
     for pattern, entity_type in _GUESS_PATTERNS:
         if pattern.search(text_lower):
             return entity_type
-    return 'unknown'
+    return "unknown"
+
 
 def _ioc_type_to_entity_type(ioc_type: str) -> str:
     """Map IOC type string to entity type string."""
-    mapping = {'cve': 'cve', 'sha256': 'hash', 'sha1': 'hash', 'md5': 'hash', 'email': 'email', 'url': 'url', 'ipv4': 'ipv4', 'ipv6': 'ipv6', 'domain': 'domain'}
+    mapping = {
+        "cve": "cve",
+        "sha256": "hash",
+        "sha1": "hash",
+        "md5": "hash",
+        "email": "email",
+        "url": "url",
+        "ipv4": "ipv4",
+        "ipv6": "ipv6",
+        "domain": "domain",
+    }
     return mapping.get(ioc_type, ioc_type)
+
 
 def _extract_iocs_from_text_bounded(text: str) -> list[dict]:
     """
@@ -1200,10 +1397,13 @@ def _extract_iocs_from_text_bounded(text: str) -> list[dict]:
     """
     iocs = extract_iocs_from_text(text)
     for ioc in iocs:
-        ioc['type'] = _ioc_type_to_entity_type(ioc.get('ioc_type', ''))
+        ioc["type"] = _ioc_type_to_entity_type(ioc.get("ioc_type", ""))
     return iocs
 
-def extract_entities_from_texts(texts: list[str], *, min_count: int=1, max_entities: int=100, include_types: list[str] | None=None) -> list[dict]:
+
+def extract_entities_from_texts(
+    texts: list[str], *, min_count: int = 1, max_entities: int = 100, include_types: list[str] | None = None
+) -> list[dict]:
     """
     Extract and rank entities from a list of raw texts.
     Falls back to IOC regex patterns when no model is loaded.
@@ -1227,34 +1427,45 @@ def extract_entities_from_texts(texts: list[str], *, min_count: int=1, max_entit
     if not texts:
         return []
     entity_map: dict[tuple[str, str], dict] = {}
-    capped_texts = [t[:15000] if t else '' for t in texts]
+    capped_texts = [t[:15000] if t else "" for t in texts]
     from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts as _batch_extract
+
     all_iocs = _batch_extract(capped_texts)
     for idx, iocs in enumerate(all_iocs):
         text = capped_texts[idx]
         for ioc in iocs:
-            key = (_normalize_entity_text(ioc['value']), ioc['type'])
+            key = (_normalize_entity_text(ioc["value"]), ioc["type"])
             if key not in entity_map:
-                entity_map[key] = {'value': ioc['value'], 'type': ioc['type'], 'count': 0, 'confidence': ioc.get('confidence', 0.5), 'snippets': deque(), '_snippet_seen': set()}
-            entity_map[key]['count'] += 1
-            snippet = _extract_snippet(text, ioc['value'])
-            if snippet and snippet not in entity_map[key]['_snippet_seen']:
-                entity_map[key]['_snippet_seen'].add(snippet)
-                entity_map[key]['snippets'].append(snippet)
-                if len(entity_map[key]['snippets']) > 3:
-                    entity_map[key]['snippets'].popleft()
+                entity_map[key] = {
+                    "value": ioc["value"],
+                    "type": ioc["type"],
+                    "count": 0,
+                    "confidence": ioc.get("confidence", 0.5),
+                    "snippets": deque(),
+                    "_snippet_seen": set(),
+                }
+            entity_map[key]["count"] += 1
+            snippet = _extract_snippet(text, ioc["value"])
+            if snippet and snippet not in entity_map[key]["_snippet_seen"]:
+                entity_map[key]["_snippet_seen"].add(snippet)
+                entity_map[key]["snippets"].append(snippet)
+                if len(entity_map[key]["snippets"]) > 3:
+                    entity_map[key]["snippets"].popleft()
     entities = []
     for (_value, etype), ent in entity_map.items():
         if include_types and etype not in include_types:
             continue
-        if ent['count'] < min_count:
+        if ent["count"] < min_count:
             continue
-        ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
+        ent["confidence"] = round(min(1.0, ent["confidence"] + _math.log1p(ent["count"] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
+    entities.sort(key=lambda e: e["count"] * e["confidence"], reverse=True)
     return entities[:max_entities]
 
-def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, max_entities: int=100, include_types: list[str] | None=None) -> list[dict]:
+
+def extract_entities_from_findings(
+    findings: list[dict], *, min_count: int = 1, max_entities: int = 100, include_types: list[str] | None = None
+) -> list[dict]:
     """
     Extract and rank entities from structured findings.
     Each finding should have 'text' field; optional 'url' and 'source' for co-occurrence.
@@ -1286,47 +1497,58 @@ def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, ma
     source_by_text: dict[int, str] = {}
     url_by_text: dict[int, str] = {}
     for f in findings:
-        text = f.get('text', '') if isinstance(f, dict) else str(f)
+        text = f.get("text", "") if isinstance(f, dict) else str(f)
         if text:
             idx = len(texts)
             texts.append(text)
             if isinstance(f, dict):
-                if f.get('source'):
-                    source_by_text[idx] = f['source']
-                if f.get('url'):
-                    url_by_text[idx] = f['url']
+                if f.get("source"):
+                    source_by_text[idx] = f["source"]
+                if f.get("url"):
+                    url_by_text[idx] = f["url"]
     entity_map: dict[tuple[str, str], dict] = {}
-    capped_texts = [t[:15000] if t else '' for t in texts]
+    capped_texts = [t[:15000] if t else "" for t in texts]
     from hledac.universal.pipeline.public_patterns import extract_iocs_from_texts as _batch_extract
+
     all_iocs = _batch_extract(capped_texts)
     for idx, iocs in enumerate(all_iocs):
         source = source_by_text.get(idx)
         url = url_by_text.get(idx)
         for ioc in iocs:
-            key = (_normalize_entity_text(ioc['value']), ioc['type'])
+            key = (_normalize_entity_text(ioc["value"]), ioc["type"])
             if key not in entity_map:
-                entity_map[key] = {'value': ioc['value'], 'type': ioc['type'], 'count': 0, 'confidence': ioc.get('confidence', 0.5), 'snippets': deque(), '_snippet_seen': set(), 'sources': [], 'urls': []}
-            entity_map[key]['count'] += 1
-            snippet = _extract_snippet(capped_texts[idx], ioc['value'])
-            if snippet and snippet not in entity_map[key]['_snippet_seen']:
-                entity_map[key]['_snippet_seen'].add(snippet)
-                entity_map[key]['snippets'].append(snippet)
-                if len(entity_map[key]['snippets']) > 3:
-                    entity_map[key]['snippets'].popleft()
-            if source and source not in entity_map[key]['sources']:
-                entity_map[key]['sources'].append(source)
-            if url and url not in entity_map[key]['urls']:
-                entity_map[key]['urls'].append(url)
+                entity_map[key] = {
+                    "value": ioc["value"],
+                    "type": ioc["type"],
+                    "count": 0,
+                    "confidence": ioc.get("confidence", 0.5),
+                    "snippets": deque(),
+                    "_snippet_seen": set(),
+                    "sources": [],
+                    "urls": [],
+                }
+            entity_map[key]["count"] += 1
+            snippet = _extract_snippet(capped_texts[idx], ioc["value"])
+            if snippet and snippet not in entity_map[key]["_snippet_seen"]:
+                entity_map[key]["_snippet_seen"].add(snippet)
+                entity_map[key]["snippets"].append(snippet)
+                if len(entity_map[key]["snippets"]) > 3:
+                    entity_map[key]["snippets"].popleft()
+            if source and source not in entity_map[key]["sources"]:
+                entity_map[key]["sources"].append(source)
+            if url and url not in entity_map[key]["urls"]:
+                entity_map[key]["urls"].append(url)
     entities = []
     for (_value, etype), ent in entity_map.items():
         if include_types and etype not in include_types:
             continue
-        if ent['count'] < min_count:
+        if ent["count"] < min_count:
             continue
-        ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
+        ent["confidence"] = round(min(1.0, ent["confidence"] + _math.log1p(ent["count"] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
+    entities.sort(key=lambda e: e["count"] * e["confidence"], reverse=True)
     return entities[:max_entities]
+
 
 def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
     """
@@ -1337,41 +1559,42 @@ def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
     public_patterns.extract_iocs_from_texts when batch size is large enough
     to amortize rayon overhead. Falls back to single-text path for small inputs.
     """
-    hints: dict[str, list[str]] = {'domains': [], 'urls': [], 'orgs': [], 'ips': []}
+    hints: dict[str, list[str]] = {"domains": [], "urls": [], "orgs": [], "ips": []}
     text = text[:5000]
     seen_domain: set[str] = set()
     seen_url: set[str] = set()
     seen_org: set[str] = set()
     seen_ip: set[str] = set()
     for ioc in _extract_iocs_from_text_bounded(text):
-        t = ioc.get('type', '')
-        v = ioc.get('value', '')
-        if t == 'domain' and v not in seen_domain:
+        t = ioc.get("type", "")
+        v = ioc.get("value", "")
+        if t == "domain" and v not in seen_domain:
             seen_domain.add(v)
-            hints['domains'].append(v)
-        elif t == 'url' and v not in seen_url:
+            hints["domains"].append(v)
+        elif t == "url" and v not in seen_url:
             seen_url.add(v)
-            hints['urls'].append(v)
-        elif t in ('ipv4', 'ipv6') and v not in seen_ip:
+            hints["urls"].append(v)
+        elif t in ("ipv4", "ipv6") and v not in seen_ip:
             seen_ip.add(v)
-            hints['ips'].append(v)
+            hints["ips"].append(v)
     nlp = _get_spacy()
     if nlp is not None:
         try:
             doc = nlp(text[:2000])
             for ent in doc.ents:
-                if ent.label_ in ('ORG', 'PRODUCT'):
+                if ent.label_ in ("ORG", "PRODUCT"):
                     v = ent.text.strip()
                     if v and v not in seen_org:
                         seen_org.add(v)
-                        hints['orgs'].append(v)
+                        hints["orgs"].append(v)
         except Exception:  # noqa: BLE001
             pass
     for k in hints:
         hints[k] = hints[k][:10]
     return hints
 
-def build_entity_cooccurrence_map(findings: list[dict], *, max_findings: int=50) -> dict[str, list[dict]]:
+
+def build_entity_cooccurrence_map(findings: list[dict], *, max_findings: int = 50) -> dict[str, list[dict]]:
     """
     Build a co-occurrence map across findings.
     Groups entities that appear in the same or closely related findings.
@@ -1394,7 +1617,7 @@ def build_entity_cooccurrence_map(findings: list[dict], *, max_findings: int=50)
     findings = findings[:max_findings]
     finding_hints: list[dict] = []
     for f in findings:
-        text = f.get('text', '') if isinstance(f, dict) else str(f)
+        text = f.get("text", "") if isinstance(f, dict) else str(f)
         if not text:
             finding_hints.append({})
             continue
@@ -1405,47 +1628,56 @@ def build_entity_cooccurrence_map(findings: list[dict], *, max_findings: int=50)
     url_org_map: dict[tuple[str, str], int] = {}
     by_domain: dict[str, dict[str, list[str]]] = {}
     for hints in finding_hints:
-        domains = hints.get('domains', [])
-        urls = hints.get('urls', [])
-        orgs = hints.get('orgs', [])
-        ips = hints.get('ips', [])
+        domains = hints.get("domains", [])
+        urls = hints.get("urls", [])
+        orgs = hints.get("orgs", [])
+        ips = hints.get("ips", [])
         for d in domains:
             if d not in by_domain:
-                by_domain[d] = {'orgs': [], 'ips': [], 'urls': []}
+                by_domain[d] = {"orgs": [], "ips": [], "urls": []}
             for o in orgs:
                 key = (d, o)
                 domain_org_map[key] = domain_org_map.get(key, 0) + 1
-                if o not in by_domain[d]['orgs']:
-                    by_domain[d]['orgs'].append(o)
+                if o not in by_domain[d]["orgs"]:
+                    by_domain[d]["orgs"].append(o)
         for d in domains:
             for ip in ips:
                 key = (d, ip)
                 domain_ip_map[key] = domain_ip_map.get(key, 0) + 1
-                if ip not in by_domain[d]['ips']:
-                    by_domain[d]['ips'].append(ip)
+                if ip not in by_domain[d]["ips"]:
+                    by_domain[d]["ips"].append(ip)
         for u in urls:
             for o in orgs:
                 key = (u, o)
                 url_org_map[key] = url_org_map.get(key, 0) + 1
         for d in domains:
             for u in urls:
-                if u not in by_domain[d]['urls']:
-                    by_domain[d]['urls'].append(u)
+                if u not in by_domain[d]["urls"]:
+                    by_domain[d]["urls"].append(u)
 
-    def _top_k(mapping: dict, k: int=10) -> list:
+    def _top_k(mapping: dict, k: int = 10) -> list:
         return sorted(mapping.items(), key=lambda x: x[1], reverse=True)[:k]
-    return {'domain_org': [(d, o, c) for (d, o), c in _top_k(domain_org_map)], 'domain_ip': [(d, ip, c) for (d, ip), c in _top_k(domain_ip_map)], 'url_org': [(u, o, c) for (u, o), c in _top_k(url_org_map)], 'by_domain': by_domain}
 
-def _top_by_score(entities: list[dict], k: int=10) -> list[dict]:
+    return {
+        "domain_org": [(d, o, c) for (d, o), c in _top_k(domain_org_map)],
+        "domain_ip": [(d, ip, c) for (d, ip), c in _top_k(domain_ip_map)],
+        "url_org": [(u, o, c) for (u, o), c in _top_k(url_org_map)],
+        "by_domain": by_domain,
+    }
+
+
+def _top_by_score(entities: list[dict], k: int = 10) -> list[dict]:
     """Return top-k entities sorted by count * confidence."""
     if not entities:
         return []
-    scored = sorted(entities, key=lambda e: e.get('count', 1) * e.get('confidence', 0.5), reverse=True)
+    scored = sorted(entities, key=lambda e: e.get("count", 1) * e.get("confidence", 0.5), reverse=True)
     return scored[:k]
 
-def _corroborated_findings(entities: list[dict], min_sources: int=2) -> list[dict]:
+
+def _corroborated_findings(entities: list[dict], min_sources: int = 2) -> list[dict]:
     """Filter entities seen across multiple sources (corroborated)."""
-    return [e for e in entities if len(e.get('sources', [])) >= min_sources]
+    return [e for e in entities if len(e.get("sources", [])) >= min_sources]
+
 
 def _dominant_type(entities: list[dict]) -> str | None:
     """Return the most frequent entity type by total count."""
@@ -1453,24 +1685,26 @@ def _dominant_type(entities: list[dict]) -> str | None:
         return None
     type_counts: dict[str, int] = {}
     for e in entities:
-        t = e.get('type', 'unknown')
-        type_counts[t] = type_counts.get(t, 0) + e.get('count', 1)
+        t = e.get("type", "unknown")
+        type_counts[t] = type_counts.get(t, 0) + e.get("count", 1)
     if not type_counts:
         return None
     return max(type_counts, key=type_counts.get)
 
-def _build_cooccurrence_pivots(co_map: dict, top_k: int=5) -> list[dict]:
+
+def _build_cooccurrence_pivots(co_map: dict, top_k: int = 5) -> list[dict]:
     """
     Extract useful co-occurrence pivots from cooccurrence map.
     Returns small list of readable pivot dicts.
     """
     pivots: list[dict] = []
-    for rel_type, pairs in [('domain_org', co_map.get('domain_org', [])), ('domain_ip', co_map.get('domain_ip', []))]:
+    for rel_type, pairs in [("domain_org", co_map.get("domain_org", [])), ("domain_ip", co_map.get("domain_ip", []))]:
         for domain, target, count in pairs[:top_k]:
-            pivots.append({'pivot': domain, 'relation': rel_type, 'target': target, 'count': count})
+            pivots.append({"pivot": domain, "relation": rel_type, "target": target, "count": count})
     return pivots
 
-def build_entity_summary(findings: list[dict], *, max_entities: int=20, max_cooccurrence_findings: int=30) -> dict:
+
+def build_entity_summary(findings: list[dict], *, max_entities: int = 20, max_cooccurrence_findings: int = 30) -> dict:
     """
     Condensed entity summary from findings — second-level condensation.
 
@@ -1500,7 +1734,15 @@ def build_entity_summary(findings: list[dict], *, max_entities: int=20, max_cooc
             }
     """
     if not findings:
-        return {'top_entities': [], 'corroborated': [], 'co_occurrence_pivots': [], 'dominant_type': None, 'entity_takeaway': 'No findings to analyze.', 'type_breakdown': {}, 'total_entities': 0}
+        return {
+            "top_entities": [],
+            "corroborated": [],
+            "co_occurrence_pivots": [],
+            "dominant_type": None,
+            "entity_takeaway": "No findings to analyze.",
+            "type_breakdown": {},
+            "total_entities": 0,
+        }
     entities = extract_entities_from_findings(findings, min_count=1, max_entities=200)
     co_map = build_entity_cooccurrence_map(findings[:max_cooccurrence_findings], max_findings=max_cooccurrence_findings)
     top_entities = _top_by_score(entities, k=max_entities)
@@ -1509,17 +1751,26 @@ def build_entity_summary(findings: list[dict], *, max_entities: int=20, max_cooc
     dominant = _dominant_type(entities)
     type_breakdown: dict[str, int] = {}
     for e in entities:
-        t = e.get('type', 'unknown')
-        type_breakdown[t] = type_breakdown.get(t, 0) + e.get('count', 1)
-    total_count = sum((e.get('count', 1) for e in entities))
+        t = e.get("type", "unknown")
+        type_breakdown[t] = type_breakdown.get(t, 0) + e.get("count", 1)
+    total_count = sum(e.get("count", 1) for e in entities)
     unique_count = len(entities)
-    top_type = dominant or 'unknown'
-    top_entity_val = top_entities[0]['value'] if top_entities else None
+    top_type = dominant or "unknown"
+    top_entity_val = top_entities[0]["value"] if top_entities else None
     if top_entity_val:
-        takeaway = f'{unique_count} unique entities ({total_count} total hits); dominant type={top_type}; top entity={top_entity_val}'
+        takeaway = f"{unique_count} unique entities ({total_count} total hits); dominant type={top_type}; top entity={top_entity_val}"
     else:
-        takeaway = f'{unique_count} unique entities across {len(findings)} findings.'
-    return {'top_entities': top_entities, 'corroborated': corroborated, 'co_occurrence_pivots': pivots, 'dominant_type': dominant, 'entity_takeaway': takeaway, 'type_breakdown': type_breakdown, 'total_entities': unique_count}
+        takeaway = f"{unique_count} unique entities across {len(findings)} findings."
+    return {
+        "top_entities": top_entities,
+        "corroborated": corroborated,
+        "co_occurrence_pivots": pivots,
+        "dominant_type": dominant,
+        "entity_takeaway": takeaway,
+        "type_breakdown": type_breakdown,
+        "total_entities": unique_count,
+    }
+
 
 class FeedbackPack(Struct):
     """
@@ -1538,16 +1789,22 @@ class FeedbackPack(Struct):
 
     Priority order for shortlist: IOC pivots > entity_pair > relationship > entity
     """
+
     entity_summary: dict = field(default_factory=dict)
     hypothesis_pack_as_dict: dict = field(default_factory=dict)
     semantic_pivots: list = field(default_factory=list)
-    provenance: str = 'heuristic'
+    provenance: str = "heuristic"
 
     def is_empty(self) -> bool:
         """Check if pack has any actionable content."""
-        return not self.entity_summary.get('top_entities') and (not self.hypothesis_pack_as_dict.get('suggested_queries')) and (not self.hypothesis_pack_as_dict.get('ioc_follow_ups')) and (not self.semantic_pivots)
+        return (
+            not self.entity_summary.get("top_entities")
+            and (not self.hypothesis_pack_as_dict.get("suggested_queries"))
+            and (not self.hypothesis_pack_as_dict.get("ioc_follow_ups"))
+            and (not self.semantic_pivots)
+        )
 
-    def actionable_shortlist(self, max_items: int=5) -> list:
+    def actionable_shortlist(self, max_items: int = 5) -> list:
         """
         Return compact shortlist for scheduler consumption.
 
@@ -1557,27 +1814,54 @@ class FeedbackPack(Struct):
         shortlist = []
         seen_queries = set()
 
-        def _add(item):
-            query = item.get('query', '')
+        def _add(item) -> None:
+            query = item.get("query", "")
             if query and query not in seen_queries:
                 seen_queries.add(query)
-                item['priority'] = item.get('priority', 0.5)
+                item["priority"] = item.get("priority", 0.5)
                 shortlist.append(item)
-        for pivot in self.hypothesis_pack_as_dict.get('ioc_follow_ups', []):
+
+        for pivot in self.hypothesis_pack_as_dict.get("ioc_follow_ups", []):
             if len(shortlist) >= max_items:
                 break
-            _add({'action_type': 'ioc_pivot', 'query': pivot.get('query', ''), 'from_ioc': pivot.get('from', ''), 'to_field': pivot.get('to', ''), 'rationale': pivot.get('rationale', 'IOC pivot'), 'priority': pivot.get('priority', 0.9), 'pivot_type': 'ioc'})
-        for q in self.hypothesis_pack_as_dict.get('suggested_queries', []):
+            _add(
+                {
+                    "action_type": "ioc_pivot",
+                    "query": pivot.get("query", ""),
+                    "from_ioc": pivot.get("from", ""),
+                    "to_field": pivot.get("to", ""),
+                    "rationale": pivot.get("rationale", "IOC pivot"),
+                    "priority": pivot.get("priority", 0.9),
+                    "pivot_type": "ioc",
+                }
+            )
+        for q in self.hypothesis_pack_as_dict.get("suggested_queries", []):
             if len(shortlist) >= max_items:
                 break
-            pt = q.get('pivot_type', 'general')
-            if pt in ('entity_pair', 'relationship', 'entity'):
-                _add({'action_type': q.get('action_type', 'query'), 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': pt})
+            pt = q.get("pivot_type", "general")
+            if pt in ("entity_pair", "relationship", "entity"):
+                _add(
+                    {
+                        "action_type": q.get("action_type", "query"),
+                        "query": q.get("query", ""),
+                        "rationale": q.get("rationale", ""),
+                        "priority": q.get("priority", 0.5),
+                        "pivot_type": pt,
+                    }
+                )
         for piv in self.semantic_pivots:
             if len(shortlist) >= max_items:
                 break
-            _add({'action_type': 'semantic_pivot', 'query': piv.get('text', '')[:200], 'rationale': f"semantic similarity {piv.get('score', 0):.2f}", 'priority': piv.get('score', 0.3), 'pivot_type': 'semantic'})
-        shortlist.sort(key=attrgetter("get")('priority', 0), reverse=True)
+            _add(
+                {
+                    "action_type": "semantic_pivot",
+                    "query": piv.get("text", "")[:200],
+                    "rationale": f"semantic similarity {piv.get('score', 0):.2f}",
+                    "priority": piv.get("score", 0.3),
+                    "pivot_type": "semantic",
+                }
+            )
+        shortlist.sort(key=attrgetter("get")("priority", 0), reverse=True)
         return shortlist[:max_items]
 
     @property
@@ -1590,9 +1874,17 @@ class FeedbackPack(Struct):
         across correlation/hypothesis/NER-augmented paths.
         """
         raw = self.actionable_shortlist(max_items=3)
-        return [{'action': item.get('query', ''), 'target': item.get('rationale', '')[:80], 'rationale': item.get('pivot_type', '')} for item in raw]
+        return [
+            {
+                "action": item.get("query", ""),
+                "target": item.get("rationale", "")[:80],
+                "rationale": item.get("pivot_type", ""),
+            }
+            for item in raw
+        ]
 
-def feedback_compact(findings: list, context: dict | None=None, semantic_pivots: list | None=None) -> FeedbackPack:
+
+def feedback_compact(findings: list, context: dict | None = None, semantic_pivots: list | None = None) -> FeedbackPack:
     """
     Build FeedbackPack from findings — unified entry point for feedback loop.
 
@@ -1611,18 +1903,50 @@ def feedback_compact(findings: list, context: dict | None=None, semantic_pivots:
         FeedbackPack with all fields bounded and populated
     """
     if not findings:
-        return FeedbackPack(entity_summary={}, hypothesis_pack_as_dict={}, semantic_pivots=semantic_pivots or [], provenance='heuristic')
+        return FeedbackPack(
+            entity_summary={}, hypothesis_pack_as_dict={}, semantic_pivots=semantic_pivots or [], provenance="heuristic"
+        )
     entity_summary = build_entity_summary(findings, max_entities=20)
-    finding_texts = [f.get('text', '') if isinstance(f, dict) else str(f) for f in findings]
+    finding_texts = [f.get("text", "") if isinstance(f, dict) else str(f) for f in findings]
     from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+
     engine = HypothesisEngine()
     engine._hypotheses = {}
     enriched_context = context.copy() if context else {}
-    if not enriched_context.get('known_entities'):
-        top_vals = [e['value'] for e in entity_summary.get('top_entities', [])[:20]]
-        enriched_context['known_entities'] = set(top_vals)
+    if not enriched_context.get("known_entities"):
+        top_vals = [e["value"] for e in entity_summary.get("top_entities", [])[:20]]
+        enriched_context["known_entities"] = set(top_vals)
     pack = engine.build_hypothesis_pack(finding_texts, enriched_context)
-    hypothesis_pack_as_dict = {'hypotheses': pack.hypotheses, 'suggested_queries': pack.suggested_queries, 'ioc_follow_ups': pack.ioc_follow_ups, 'source_hints': pack.source_hints, 'provenance': pack.provenance}
+    hypothesis_pack_as_dict = {
+        "hypotheses": pack.hypotheses,
+        "suggested_queries": pack.suggested_queries,
+        "ioc_follow_ups": pack.ioc_follow_ups,
+        "source_hints": pack.source_hints,
+        "provenance": pack.provenance,
+    }
     final_pivots = semantic_pivots if semantic_pivots is not None else []
-    return FeedbackPack(entity_summary=entity_summary, hypothesis_pack_as_dict=hypothesis_pack_as_dict, semantic_pivots=final_pivots, provenance='mixed' if pack.provenance == 'model-assisted' else 'heuristic')
-__all__ = ['extract_iocs_from_text', '_IOC_PATTERNS', '_IOC_CONFIDENCE', 'IOCScorer', 'NEREngine', 'get_ner_engine', 'reset_ner_engine', 'get_ner_backend', 'get_extraction_status', 'extract_entities_from_texts', 'extract_entities_from_findings', 'build_entity_cooccurrence_map', 'build_entity_summary', 'FeedbackPack', 'feedback_compact']
+    return FeedbackPack(
+        entity_summary=entity_summary,
+        hypothesis_pack_as_dict=hypothesis_pack_as_dict,
+        semantic_pivots=final_pivots,
+        provenance="mixed" if pack.provenance == "model-assisted" else "heuristic",
+    )
+
+
+__all__ = [
+    "extract_iocs_from_text",
+    "_IOC_PATTERNS",
+    "_IOC_CONFIDENCE",
+    "IOCScorer",
+    "NEREngine",
+    "get_ner_engine",
+    "reset_ner_engine",
+    "get_ner_backend",
+    "get_extraction_status",
+    "extract_entities_from_texts",
+    "extract_entities_from_findings",
+    "build_entity_cooccurrence_map",
+    "build_entity_summary",
+    "FeedbackPack",
+    "feedback_compact",
+]

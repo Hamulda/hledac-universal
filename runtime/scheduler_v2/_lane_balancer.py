@@ -18,8 +18,7 @@ Usage:
     lb = LaneBalancer()
     lb.allocate_lane('discovery', 60.0)  # 60s budget for discovery
     lb.consume_lane('discovery', 5.5)     # 5.5s consumed
-    
-    # Check feed dominance before accepting findings
+
     dom_result = lb.check_dominance(
         total_accepted=100,
         feed_accepted=96,
@@ -40,24 +39,24 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     pass
 
-
 log = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Lane Names — Extended for sprint lanes (C11 pattern)
-# =============================================================================
 
 # Sprint lanes for discovery + original classification lanes
 LaneName = Literal[
-    "discovery", "ioc_validation", "enrichment",  # C11: sprint lanes
-    "public", "feed", "ct", "dns", "passive", "structured", "deep", "hot", "warm", "cold"  # Original
+    "discovery",
+    "ioc_validation",
+    "enrichment",  # C11: sprint lanes
+    "public",
+    "feed",
+    "ct",
+    "dns",
+    "passive",
+    "structured",
+    "deep",
+    "hot",
+    "warm",
+    "cold",  # Original
 ]
-
-
-# =============================================================================
-# Policy Import Pattern — Reuse from Rust backend
-# =============================================================================
 
 # Rust availability flag and thread lock
 _RustAvailable: bool = False
@@ -73,10 +72,6 @@ _RustLaneBudgetPool: type | None = None
 FeedDominanceResult: type | None = None
 
 
-# =============================================================================
-# Inline Fallback Classes (only used when Rust backend module unavailable)
-# =============================================================================
-
 def _feed_dominance_ratio_class(ratio: float) -> str:
     """Classify feed dominance ratio — shared with Rust backend."""
     if ratio >= 0.99:
@@ -91,6 +86,7 @@ def _feed_dominance_ratio_class(ratio: float) -> str:
 @_dataclass(slots=True)
 class _InlineFeedDominanceGuardResult:
     """Result object for FeedDominanceGuard.compute() — inline fallback."""
+
     feed_dominance_ratio: float
     nonfeed_accepted_findings: int
     feed_dominance_class: str
@@ -102,9 +98,12 @@ class _InlineFeedDominanceGuardResult:
 
 class _InlineFeedDominanceGuard:
     """Inline Python FeedDominanceGuard fallback — used only when Rust backend module unavailable."""
+
     __slots__ = ("_threshold", "_min_nonfeed", "_strict")
 
-    def __init__(self, dominance_ratio_threshold: float = 0.95, min_nonfeed_findings: int = 5, strict: bool = False) -> None:
+    def __init__(
+        self, dominance_ratio_threshold: float = 0.95, min_nonfeed_findings: int = 5, strict: bool = False
+    ) -> None:
         self._threshold = dominance_ratio_threshold
         self._min_nonfeed = min_nonfeed_findings
         self._strict = strict
@@ -147,13 +146,15 @@ class _InlineFeedDominanceGuard:
             reason=reason,
         )
 
-    def compute_simple(self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int) -> _InlineFeedDominanceGuardResult:
+    def compute_simple(
+        self, total_accepted: int, feed_accepted: int, nonfeed_accepted: int
+    ) -> _InlineFeedDominanceGuardResult:
         return self.compute(total_accepted, feed_accepted, nonfeed_accepted)
 
 
-# Inline lane budget allocation (used by _InlineLaneBudgetPool)
 class _InlineLaneBudgetAllocation:
     """Per-lane budget slot — inline fallback."""
+
     __slots__ = ("lane_name", "allocated_s", "consumed_s", "released_s", "timeout_count")
 
     def __init__(self, lane_name: LaneName, budget_s: float = 0.0) -> None:
@@ -174,6 +175,7 @@ class _InlineLaneBudgetAllocation:
 
 class _InlineLaneBudgetPool:
     """Inline Python LaneBudgetPool fallback."""
+
     __slots__ = ("_allocations",)
 
     def __init__(self) -> None:
@@ -242,21 +244,20 @@ def _init_policies() -> None:
     """Initialize policy classes from Rust backend with Python fallback."""
     global _PythonFeedDominanceGuard, _PythonLaneBudgetPool, _RustAvailable, _PolicyLock
     global _RustFeedDominanceGuard, _RustLaneBudgetPool, FeedDominanceResult
-    
+
     if _PolicyLock is None:
         _PolicyLock = threading.RLock()
-    
+
     with _PolicyLock:
         if _PythonFeedDominanceGuard is not None:
             return  # Already initialized
-        
+
         # Try Rust backend first
         try:
             from _core.rust_backend import rust as _rust
-            
+
             if _rust.is_available:
                 _RustAvailable = True
-                # Get Rust domain wrappers
                 _RustFeedDominanceGuard = _rust.sprint_policies.FeedDominanceGuard
                 _RustLaneBudgetPool = _rust.sprint_policies.LaneBudgetPool
                 log.debug("[LaneBalancer] Rust sprint_policies loaded (RustAvailable=True)")
@@ -266,14 +267,19 @@ def _init_policies() -> None:
             log.debug("[LaneBalancer] Rust sprint_policies unavailable: %s", _e)
             _RustFeedDominanceGuard = None
             _RustLaneBudgetPool = None
-        
+
         # Always import Python fallbacks from Rust backend module
         try:
             from _core.rust_backend.sprint_policies import (
                 PythonFeedDominanceGuard as _PFG,
-                PythonLaneBudgetPool as _PLBP,
+            )
+            from _core.rust_backend.sprint_policies import (
                 PythonFeedDominanceGuardResult as _FeedResult,
             )
+            from _core.rust_backend.sprint_policies import (
+                PythonLaneBudgetPool as _PLBP,
+            )
+
             _PythonFeedDominanceGuard = _PFG
             _PythonLaneBudgetPool = _PLBP
             FeedDominanceResult = _FeedResult
@@ -286,10 +292,6 @@ def _init_policies() -> None:
             log.warning("[LaneBalancer] Using inline fallbacks")
 
 
-# =============================================================================
-# Lane Balancer — Main Class
-# =============================================================================
-
 class LaneBalancer:
     """R13: Adaptive lane balancer for SprintScheduler v2.
 
@@ -301,50 +303,50 @@ class LaneBalancer:
 
     Usage:
         lb = LaneBalancer()
-        
+
         # Per-cycle dominance check
         result = lb.check_dominance(
             total_accepted=100,
             feed_accepted=96,
             nonfeed_accepted=4,
         )
-        
+
         # Per-lane budget management
         lb.allocate_lane('discovery', 60.0)
         lb.consume_lane('discovery', 5.5)
-        
+
         # Check if lane is at risk
         if lb.is_lane_at_risk('discovery'):
             logger.warning("Discovery lane at risk: %s", lb.get_lane_stats()['discovery'])
     """
 
     __slots__ = (
-        "_fg",           # FeedDominanceGuard instance
-        "_pool",         # LaneBudgetPool instance
-        "_lock",         # Thread safety
-        "_last_check",   # Last dominance check time
+        "_fg",  # FeedDominanceGuard instance
+        "_pool",  # LaneBudgetPool instance
+        "_lock",  # Thread safety
+        "_last_check",  # Last dominance check time
         "_dominance_threshold",  # Configurable threshold
-        "_min_nonfeed_findings", # Configurable min nonfeed
-        "_strict",       # Strict mode blocks early exit
-        "_feed_count",   # Feed findings count for dominance tracking
-        "_nonfeed_count", # Nonfeed findings count for dominance tracking
+        "_min_nonfeed_findings",  # Configurable min nonfeed
+        "_strict",  # Strict mode blocks early exit
+        "_feed_count",  # Feed findings count for dominance tracking
+        "_nonfeed_count",  # Nonfeed findings count for dominance tracking
     )
 
     # Default lane budgets (seconds) — C11 pattern
     DEFAULT_LANE_BUDGETS: dict[str, float] = {
-        "discovery": 120.0,      # Discovery phase budget
+        "discovery": 120.0,  # Discovery phase budget
         "ioc_validation": 60.0,  # IOC validation budget
-        "enrichment": 90.0,     # Enrichment budget
-        "public": 30.0,         # Public source budget
-        "feed": 20.0,           # Feed source budget
-        "ct": 15.0,             # Certificate transparency budget
-        "dns": 10.0,            # DNS budget
-        "passive": 10.0,        # Passive DNS budget
-        "structured": 25.0,     # Structured data budget
-        "deep": 40.0,           # Deep/dark web budget
-        "hot": 5.0,             # Hot/recent budget
-        "warm": 15.0,           # Warm budget
-        "cold": 45.0,           # Cold/archived budget
+        "enrichment": 90.0,  # Enrichment budget
+        "public": 30.0,  # Public source budget
+        "feed": 20.0,  # Feed source budget
+        "ct": 15.0,  # Certificate transparency budget
+        "dns": 10.0,  # DNS budget
+        "passive": 10.0,  # Passive DNS budget
+        "structured": 25.0,  # Structured data budget
+        "deep": 40.0,  # Deep/dark web budget
+        "hot": 5.0,  # Hot/recent budget
+        "warm": 15.0,  # Warm budget
+        "cold": 45.0,  # Cold/archived budget
     }
 
     def __init__(
@@ -362,10 +364,8 @@ class LaneBalancer:
             strict: If True, guard blocks early exit when triggered
             lane_budgets: Optional dict of lane budgets (seconds). Defaults to DEFAULT_LANE_BUDGETS.
         """
-        # Initialize policies lazily
         _init_policies()
 
-        # Create FeedDominanceGuard
         if _RustFeedDominanceGuard is not None:
             self._fg = _RustFeedDominanceGuard(dominance_ratio_threshold, min_nonfeed_findings, strict)
         elif _PythonFeedDominanceGuard is not None:
@@ -373,7 +373,6 @@ class LaneBalancer:
         else:
             self._fg = _InlineFeedDominanceGuard(dominance_ratio_threshold, min_nonfeed_findings, strict)
 
-        # Create LaneBudgetPool
         if _RustLaneBudgetPool is not None:
             self._pool = _RustLaneBudgetPool()
         elif _PythonLaneBudgetPool is not None:
@@ -389,12 +388,11 @@ class LaneBalancer:
         self._dominance_threshold = dominance_ratio_threshold
         self._min_nonfeed_findings = min_nonfeed_findings
         self._strict = strict
-        
+
         # Per-cycle dominance tracking
         self._feed_count: int = 0
         self._nonfeed_count: int = 0
 
-        # Initialize default lane budgets
         budgets = lane_budgets or self.DEFAULT_LANE_BUDGETS
         for lane, budget in budgets.items():
             try:
@@ -434,7 +432,7 @@ class LaneBalancer:
         """
         with self._lock:
             self._last_check = _time.monotonic()
-            
+
             # Use internal tracking if counts not provided
             if total_accepted is None:
                 total_accepted = self._feed_count + self._nonfeed_count
@@ -442,9 +440,9 @@ class LaneBalancer:
                 nonfeed_accepted = self._nonfeed_count
 
             # Use compute_simple for hot path (consistent API)
-            if hasattr(self._fg, 'compute_simple'):
+            if hasattr(self._fg, "compute_simple"):
                 result = self._fg.compute_simple(total_accepted, feed_accepted or 0, nonfeed_accepted or 0)
-            elif hasattr(self._fg, 'compute'):
+            elif hasattr(self._fg, "compute"):
                 result = self._fg.compute(total_accepted, feed_accepted or 0, nonfeed_accepted or 0)
             else:
                 # Fallback for other implementations
@@ -462,7 +460,7 @@ class LaneBalancer:
 
     def record_findings(self, feed_count: int = 0, nonfeed_count: int = 0) -> None:
         """Record finding counts for dominance tracking.
-        
+
         Args:
             feed_count: Number of feed-sourced findings
             nonfeed_count: Number of nonfeed findings
@@ -583,10 +581,7 @@ class LaneBalancer:
             List of lane names needing attention
         """
         stats = self.get_lane_stats()
-        return [
-            name for name, stat in stats.items()
-            if stat["utilization"] >= threshold
-        ]
+        return [name for name, stat in stats.items() if stat["utilization"] >= threshold]
 
     def record_lane_timeout(self, lane_name: LaneName) -> None:
         """Record a timeout for a lane.
@@ -595,9 +590,9 @@ class LaneBalancer:
             lane_name: Lane identifier
         """
         with self._lock:
-            if hasattr(self._pool, 'timeout'):
+            if hasattr(self._pool, "timeout"):
                 self._pool.timeout(lane_name)
-            elif hasattr(self._pool, '_allocations') and lane_name in self._pool._allocations:
+            elif hasattr(self._pool, "_allocations") and lane_name in self._pool._allocations:
                 self._pool._allocations[lane_name].timeout_count += 1
 
     def reset_lane(self, lane_name: LaneName) -> None:
@@ -614,7 +609,7 @@ class LaneBalancer:
     def clear(self) -> None:
         """Clear all lane budgets."""
         with self._lock:
-            if hasattr(self._pool, 'clear'):
+            if hasattr(self._pool, "clear"):
                 self._pool.clear()
             log.debug("[LaneBalancer] Cleared all lane budgets")
 
@@ -628,7 +623,7 @@ class LaneBalancer:
     def total_allocated_s(self) -> float:
         """Total allocated budget in seconds."""
         with self._lock:
-            if hasattr(self._pool, 'total_allocated_s'):
+            if hasattr(self._pool, "total_allocated_s"):
                 return self._pool.total_allocated_s()
             return 0.0
 
@@ -652,7 +647,7 @@ class LaneBalancer:
         """
         with self._lock:
             util = self.lane_utilization(lane_name)
-            
+
             # If lane is under-utilized, give more budget
             if util < 0.5:
                 adjusted = base_budget_s * min(multiplier, 2.0)
@@ -673,10 +668,10 @@ class LaneBalancer:
         """
         with self._lock:
             stats = self.get_lane_stats()
-            
+
             at_risk = []
             needs_attention = []
-            
+
             for name, stat in stats.items():
                 util = stat["utilization"]
                 if util >= 0.90:
@@ -701,10 +696,6 @@ class LaneBalancer:
         )
 
 
-# =============================================================================
-# Convenience Factory
-# =============================================================================
-
 _LANE_BALANCER_GLOBAL: LaneBalancer | None = None
 _LB_GLOBAL_LOCK: threading.Lock = threading.Lock()
 
@@ -715,10 +706,10 @@ def get_lane_balancer() -> LaneBalancer:
     Thread-safe singleton pattern.
     """
     global _LANE_BALANCER_GLOBAL
-    
+
     if _LANE_BALANCER_GLOBAL is not None:
         return _LANE_BALANCER_GLOBAL
-    
+
     with _LB_GLOBAL_LOCK:
         if _LANE_BALANCER_GLOBAL is None:
             _LANE_BALANCER_GLOBAL = LaneBalancer()

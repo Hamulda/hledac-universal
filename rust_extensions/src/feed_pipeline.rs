@@ -404,8 +404,6 @@ pub fn feed_batch_pipeline(
     Ok(results)
 }
 
-// Internal non-PyO3 version — called from feed_batch_pipeline within py.detach scope.
-// Shares automaton and seen_guids across all feeds for cross-feed dedup.
 fn feed_entry_pipeline_xml_impl(
     raw_xml: &str,
     max_entries: usize,

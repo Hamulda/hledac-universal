@@ -54,10 +54,6 @@ use crate::adaptive_scheduler;
 use crate::memory;
 use crate::url_set;
 
-// ---------------------------------------------------------------------------
-// Global health call counter
-// ---------------------------------------------------------------------------
-
 /// Total number of health_check() calls since process start.
 /// Incremented atomically on every call — monotonically increasing.
 static HEALTH_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -66,10 +62,6 @@ static HEALTH_CALLS: AtomicU64 = AtomicU64::new(0);
 /// Incremented only on panic/exception paths — these indicate Python-callable
 /// bugs, not business-logic failures.
 static HEALTH_ERRORS: AtomicU64 = AtomicU64::new(0);
-
-// ---------------------------------------------------------------------------
-// HealthInfo — return type for per-component health reporters
-// ---------------------------------------------------------------------------
 
 /// Minimalist health info struct. All fields are Copy so no heap allocation.
 #[derive(Default)]
@@ -165,10 +157,6 @@ impl HealthInfo {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// PyO3 API
-// ---------------------------------------------------------------------------
 
 /// Increment the health-call counter (called before fill to get monotonic count).
 fn bump_health_calls() {
@@ -270,10 +258,6 @@ pub fn health_check<'a>(
 
     Ok(dict)
 }
-
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
 
 /// Register the health module in the parent PyModule.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

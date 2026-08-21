@@ -2,10 +2,6 @@
 Absence Mining Engine — [FINAL]-019-01
 ======================================
 
-
-
-
-
 Detects structural absences (negative evidence) in OSINT findings:
 
 1. **IOC Completeness Rules** — checks whether reported IOCs have expected
@@ -58,7 +54,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.asyncx import safe_gather, safe_wait_for
-from _core import aclose
 
 if TYPE_CHECKING:
     from hledac.universal.brain.synthesis_runner import IOCEntity, OSINTReport
@@ -66,45 +61,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Feature Flag
-# ============================================================================
-_ABSENCE_MINING_ENABLED = os.environ.get(
-    "HLEDAC_ENABLE_ABSENCE_MINING", "1"
-).lower() in ("1", "true", "yes", "on")
+_ABSENCE_MINING_ENABLED = os.environ.get("HLEDAC_ENABLE_ABSENCE_MINING", "1").lower() in ("1", "true", "yes", "on")
 
-# ============================================================================
-# Absence Severity & Type
-# ============================================================================
 
 class AbsenceType(Enum):
     """Categories of structural absence."""
-    ZOMBIE_DOMAIN = "zombie_domain"           # Domain with no A/AAAA records
-    CT_VIRGIN = "ct_virgin"                   # Domain never had a certificate
-    PDNS_VIRGIN = "pdns_virgin"               # No passive DNS history
-    WHOIS_VOID = "whois_void"                 # Domain with no WHOIS data
-    ORPHAN_IP = "orphan_ip"                  # IP with no domain associations
-    UNRESOLVED_PTR = "unresolved_ptr"         # IP missing reverse DNS
-    HASH_VOID = "hash_void"                  # Hash with no supporting context
-    ONION_UNVERIFIED = "onion_unverified"    # Onion without supporting evidence
-    GRAPH_FRAGMENT = "graph_fragment"         # Entity with no graph edges
+
+    ZOMBIE_DOMAIN = "zombie_domain"  # Domain with no A/AAAA records
+    CT_VIRGIN = "ct_virgin"  # Domain never had a certificate
+    PDNS_VIRGIN = "pdns_virgin"  # No passive DNS history
+    WHOIS_VOID = "whois_void"  # Domain with no WHOIS data
+    ORPHAN_IP = "orphan_ip"  # IP with no domain associations
+    UNRESOLVED_PTR = "unresolved_ptr"  # IP missing reverse DNS
+    HASH_VOID = "hash_void"  # Hash with no supporting context
+    ONION_UNVERIFIED = "onion_unverified"  # Onion without supporting evidence
+    GRAPH_FRAGMENT = "graph_fragment"  # Entity with no graph edges
 
 
 @dataclass(slots=True)
 class AbsenceFinding:
     """A structural absence detected for an entity."""
+
     entity_value: str
     absence_type: AbsenceType
-    severity: float                    # 0.0–1.0, affects confidence
+    severity: float  # 0.0–1.0, affects confidence
     description: str
-    missing_evidence: list[str]         # What should exist but doesn't
-    suggested_protocols: list[str]      # Which protocols to try for re-fetch
+    missing_evidence: list[str]  # What should exist but doesn't
+    suggested_protocols: list[str]  # Which protocols to try for re-fetch
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass(slots=True)
 class AbsenceReport:
     """Aggregated absence report for a sprint."""
+
     query: str
     absences: list[AbsenceFinding]
     total_checked: int
@@ -112,10 +102,6 @@ class AbsenceReport:
     should_trigger_refetch: bool
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-
-# ============================================================================
-# LRU Cache for metadata lookups
-# ============================================================================
 
 class _AbsenceLRUCache:
     """
@@ -159,20 +145,13 @@ class _AbsenceLRUCache:
     def _evict_stale(self) -> None:
         """Remove expired entries."""
         now = time.monotonic()
-        stale = [
-            k for k, (_, ts) in self._data.items()
-            if now - ts > self._ttl_s
-        ]
+        stale = [k for k, (_, ts) in self._data.items() if now - ts > self._ttl_s]
         for k in stale:
             del self._data[k]
 
     def clear(self) -> None:
         self._data.clear()
 
-
-# ============================================================================
-# AbsenceMiningEngine
-# ============================================================================
 
 class AbsenceMiningEngine:
     """
@@ -193,25 +172,21 @@ class AbsenceMiningEngine:
 
     _CHECK_TIMEOUT_S: float = 5.0
     _MAX_CHECKS_PER_SPRINT: int = 200
-    _CT_CHECK_MAX: int = 3           # Max CT checks per sprint (rate limit)
+    _CT_CHECK_MAX: int = 3  # Max CT checks per sprint (rate limit)
     _PDNS_CHECK_MAX: int = 5
     _WHOIS_CHECK_MAX: int = 3
-    _GRAPH_EDGES_MIN: int = 1        # Min edges before calling orphan
+    _GRAPH_EDGES_MIN: int = 1  # Min edges before calling orphan
 
-    def __init__(self, duckdb_store: "DuckDBShadowStore | None" = None) -> None:
+    def __init__(self, duckdb_store: DuckDBShadowStore | None = None) -> None:
         self._duckdb_store = duckdb_store
         self._cache = _AbsenceLRUCache(max_size=512, ttl_s=300)
         self._semaphore = asyncio.Semaphore(8)
         self._checked_this_sprint: set[str] = set()
 
-    # ------------------------------------------------------------------
-    # Public API — called from synthesis_runner.py
-    # ------------------------------------------------------------------
-
     async def run(
         self,
-        report: "OSINTReport",
-        duckdb_store: "DuckDBShadowStore | None" = None,
+        report: OSINTReport,
+        duckdb_store: DuckDBShadowStore | None = None,
     ) -> AbsenceReport:
         """
         Run absence mining on a synthesized OSINTReport.
@@ -234,7 +209,7 @@ class AbsenceMiningEngine:
                 total_checked=0,
                 confidence_adjustments={},
                 should_trigger_refetch=False,
-    )
+            )
 
         store = duckdb_store or self._duckdb_store
         absences: list[AbsenceFinding] = []
@@ -243,21 +218,16 @@ class AbsenceMiningEngine:
 
         try:
             # Deduplicate entity checks
-            entities_to_check: dict[str, "IOCEntity"] = {}
-            for entity in (report.ioc_entities or []):
+            entities_to_check: dict[str, IOCEntity] = {}
+            for entity in report.ioc_entities or []:
                 if entity.value not in entities_to_check:
                     entities_to_check[entity.value] = entity
 
             if len(entities_to_check) > self._MAX_CHECKS_PER_SPRINT:
-                entities_to_check = dict(
-                    list(entities_to_check.items())[: self._MAX_CHECKS_PER_SPRINT]
-    )
+                entities_to_check = dict(list(entities_to_check.items())[: self._MAX_CHECKS_PER_SPRINT])
 
             # Parallel absence checks bounded by semaphore
-            tasks = [
-                self._check_entity(entity)
-                for entity in entities_to_check.values()
-            ]
+            tasks = [self._check_entity(entity) for entity in entities_to_check.values()]
 
             result = await safe_gather(*tasks, label="absence_checks")
             if result.re_raised is not None:
@@ -275,20 +245,13 @@ class AbsenceMiningEngine:
                         adjustments[absence.entity_value] = delta
 
             # Graph topology absence check
-            graph_absences = await self._check_graph_topology(
-                report, store
-    )
+            graph_absences = await self._check_graph_topology(report, store)
             absences.extend(graph_absences)
             for a in graph_absences:
                 if a.severity > 0.3:
-                    adjustments[a.entity_value] = adjustments.get(
-                        a.entity_value, 0.0
-                    ) + (a.severity * -0.2)
+                    adjustments[a.entity_value] = adjustments.get(a.entity_value, 0.0) + (a.severity * -0.2)
 
-            # Emit entropy alerts for high-severity absences
-            should_refetch = await self._emit_absence_alerts(
-                absences, report, store
-    )
+            should_refetch = await self._emit_absence_alerts(absences, report, store)
 
             self._checked_this_sprint.clear()
             self._checked_this_sprint.update(entities_to_check.keys())
@@ -299,7 +262,7 @@ class AbsenceMiningEngine:
                 total_checked=checked,
                 confidence_adjustments=adjustments,
                 should_trigger_refetch=should_refetch,
-    )
+            )
 
         except Exception as e:
             logger.warning("[ABSENCE] Exception during absence mining: %s", e)
@@ -309,11 +272,11 @@ class AbsenceMiningEngine:
                 total_checked=checked,
                 confidence_adjustments=adjustments,
                 should_trigger_refetch=False,
-    )
+            )
 
     def apply_confidence_adjustment(
         self,
-        report: "OSINTReport",
+        report: OSINTReport,
         absence_report: AbsenceReport,
     ) -> float:
         """
@@ -342,23 +305,18 @@ class AbsenceMiningEngine:
         adjusted = base_confidence - reduction
 
         logger.debug(
-            "[ABSENCE] Confidence adjustment: %.3f → %.3f "
-            "(avg_severity=%.3f, n_absences=%d)",
+            "[ABSENCE] Confidence adjustment: %.3f → %.3f (avg_severity=%.3f, n_absences=%d)",
             base_confidence,
             max(0.0, min(1.0, adjusted)),
             avg_severity,
             len(adjustments),
-    )
+        )
 
         return max(0.0, min(1.0, adjusted))
 
-    # ------------------------------------------------------------------
-    # Per-Entity Absence Checks
-    # ------------------------------------------------------------------
-
     async def _check_entity(
         self,
-        entity: "IOCEntity",
+        entity: IOCEntity,
     ) -> tuple[AbsenceFinding | None, float] | None:
         """
         Check one IOC entity for structural absences.
@@ -375,10 +333,10 @@ class AbsenceMiningEngine:
                 result = await safe_wait_for(
                     self._do_entity_check(entity),
                     timeout=self._CHECK_TIMEOUT_S,
-    )
+                )
             self._checked_this_sprint.add(entity_key)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("[ABSENCE] Timeout checking entity: %s", entity.value)
             return None
         except Exception as e:
@@ -387,7 +345,7 @@ class AbsenceMiningEngine:
 
     async def _do_entity_check(
         self,
-        entity: "IOCEntity",
+        entity: IOCEntity,
     ) -> tuple[AbsenceFinding | None, float] | None:
         """Execute the actual absence check for an entity type."""
         ioc_type = entity.ioc_type.lower()
@@ -407,7 +365,8 @@ class AbsenceMiningEngine:
             return None
 
     async def _check_domain_absence(
-        self, domain: str,
+        self,
+        domain: str,
     ) -> tuple[AbsenceFinding | None, float]:
         """
         Check domain for structural absences.
@@ -417,17 +376,14 @@ class AbsenceMiningEngine:
         2. Passive DNS history
         3. WHOIS registration data
         """
-        # Check CT log
         ct_result = await self._check_ct_presence(domain)
         if ct_result is not None:
             return ct_result
 
-        # Check passive DNS
         pdns_result = await self._check_pdns_presence(domain)
         if pdns_result is not None:
             return pdns_result
 
-        # Check WHOIS
         whois_result = await self._check_whois_presence(domain)
         if whois_result is not None:
             return whois_result
@@ -435,7 +391,8 @@ class AbsenceMiningEngine:
         return (None, 0.0)
 
     async def _check_ip_absence(
-        self, ip: str,
+        self,
+        ip: str,
     ) -> tuple[AbsenceFinding | None, float]:
         """
         Check IP for structural absences.
@@ -444,12 +401,10 @@ class AbsenceMiningEngine:
         1. Reverse DNS (PTR) resolution
         2. Passive DNS association
         """
-        # Check reverse DNS
         ptr_result = await self._check_ptr_presence(ip)
         if ptr_result is not None:
             return ptr_result
 
-        # Check passive DNS association
         pdns_result = await self._check_ip_pdns_presence(ip)
         if pdns_result is not None:
             return pdns_result
@@ -457,14 +412,14 @@ class AbsenceMiningEngine:
         return (None, 0.0)
 
     async def _check_hash_absence(
-        self, hash_val: str,
+        self,
+        hash_val: str,
     ) -> tuple[AbsenceFinding | None, float]:
         """
         Check hash for absence of supporting context.
 
         Severity: High severity if no VT results, no source attribution.
         """
-        # Check DuckDB for hash context
         if self._duckdb_store:
             try:
                 context = await self._query_hash_context(hash_val)
@@ -484,7 +439,8 @@ class AbsenceMiningEngine:
         ), -0.1
 
     async def _check_onion_absence(
-        self, onion: str,
+        self,
+        onion: str,
     ) -> tuple[AbsenceFinding | None, float]:
         """
         Check onion service for absence of verification.
@@ -494,8 +450,9 @@ class AbsenceMiningEngine:
         if self._duckdb_store:
             try:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    onion, limit=1,
-    )
+                    onion,
+                    limit=1,
+                )
                 if results and len(results) > 0:
                     return (None, 0.0)
             except Exception:  # noqa: BLE001
@@ -511,7 +468,8 @@ class AbsenceMiningEngine:
         ), -0.12
 
     async def _check_cve_absence(
-        self, cve: str,
+        self,
+        cve: str,
     ) -> tuple[AbsenceFinding | None, float]:
         """
         Check CVE for absence of NVD/mitre data.
@@ -521,8 +479,9 @@ class AbsenceMiningEngine:
         if self._duckdb_store:
             try:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    cve, limit=3,
-    )
+                    cve,
+                    limit=3,
+                )
                 if results and len(results) >= 2:
                     return (None, 0.0)
             except Exception:  # noqa: BLE001
@@ -537,12 +496,9 @@ class AbsenceMiningEngine:
             suggested_protocols=["nvd", "cve_search", "exploitdb", "packetstorm"],
         ), -0.08
 
-    # ------------------------------------------------------------------
-    # Protocol-Specific Checks
-    # ------------------------------------------------------------------
-
     async def _check_ct_presence(
-        self, domain: str,
+        self,
+        domain: str,
     ) -> tuple[AbsenceFinding, float] | None:
         """Check if domain appears in Certificate Transparency logs."""
         cache_key = f"ct:{domain}"
@@ -562,13 +518,13 @@ class AbsenceMiningEngine:
         try:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    domain, limit=1,
-    )
+                    domain,
+                    limit=1,
+                )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
 
-            # Check crt.sh directly
             result = await self._fetch_ct_via_crtsh(domain)
             if result:
                 self._cache.set(cache_key, True)
@@ -598,7 +554,7 @@ class AbsenceMiningEngine:
                 "https://crt.sh/",
                 params={"q": domain, "output": "json"},
                 timeout=5.0,
-    )
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 return isinstance(data, list) and len(data) > 0
@@ -607,7 +563,8 @@ class AbsenceMiningEngine:
         return False
 
     async def _check_pdns_presence(
-        self, domain: str,
+        self,
+        domain: str,
     ) -> tuple[AbsenceFinding, float] | None:
         """Check if domain has passive DNS history."""
         cache_key = f"pdns:{domain}"
@@ -627,13 +584,13 @@ class AbsenceMiningEngine:
         try:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    domain, limit=1,
-    )
+                    domain,
+                    limit=1,
+                )
                 if results and len(results) > 0:
-                    # Check source_type for PDNS
                     for r in results:
-                        src = r.get('source_type', '')
-                        if src in ('pdns', 'passive_dns', 'dns'):
+                        src = r.get("source_type", "")
+                        if src in ("pdns", "passive_dns", "dns"):
                             self._cache.set(cache_key, True)
                             return None
                 # Fallback: any finding with the domain counts as presence
@@ -656,7 +613,8 @@ class AbsenceMiningEngine:
             return None
 
     async def _check_whois_presence(
-        self, domain: str,
+        self,
+        domain: str,
     ) -> tuple[AbsenceFinding, float] | None:
         """Check if domain has WHOIS registration data."""
         cache_key = f"whois:{domain}"
@@ -676,12 +634,13 @@ class AbsenceMiningEngine:
         try:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    domain, limit=1,
-    )
+                    domain,
+                    limit=1,
+                )
                 if results and len(results) > 0:
                     for r in results:
-                        src = r.get('source_type', '')
-                        if src in ('whois', 'rdap'):
+                        src = r.get("source_type", "")
+                        if src in ("whois", "rdap"):
                             self._cache.set(cache_key, True)
                             return None
                     if results and len(results) > 0:
@@ -703,7 +662,8 @@ class AbsenceMiningEngine:
             return None
 
     async def _check_ptr_presence(
-        self, ip: str,
+        self,
+        ip: str,
     ) -> tuple[AbsenceFinding, float] | None:
         """Check if IP has reverse DNS (PTR record)."""
         cache_key = f"ptr:{ip}"
@@ -723,8 +683,9 @@ class AbsenceMiningEngine:
         try:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    ip, limit=1,
-    )
+                    ip,
+                    limit=1,
+                )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
@@ -744,7 +705,8 @@ class AbsenceMiningEngine:
             return None
 
     async def _check_ip_pdns_presence(
-        self, ip: str,
+        self,
+        ip: str,
     ) -> tuple[AbsenceFinding, float] | None:
         """Check if IP has passive DNS associations."""
         cache_key = f"ip_pdns:{ip}"
@@ -764,8 +726,9 @@ class AbsenceMiningEngine:
         try:
             if self._duckdb_store:
                 results = await self._duckdb_store.async_query_findings_by_text(
-                    ip, limit=1,
-    )
+                    ip,
+                    limit=1,
+                )
                 if results and len(results) > 0:
                     self._cache.set(cache_key, True)
                     return None
@@ -792,20 +755,17 @@ class AbsenceMiningEngine:
             # Search for hash in content (prefix match since full hash may be long)
             prefix = hash_val[:16] if len(hash_val) >= 16 else hash_val
             results = await self._duckdb_store.async_query_findings_by_text(
-                prefix, limit=1,
-    )
+                prefix,
+                limit=1,
+            )
             return bool(results and len(results) > 0)
         except Exception:
             return False
 
-    # ------------------------------------------------------------------
-    # Graph Topology Absence Check
-    # ------------------------------------------------------------------
-
     async def _check_graph_topology(
         self,
-        report: "OSINTReport",
-        store: "DuckDBShadowStore | None",
+        report: OSINTReport,
+        store: DuckDBShadowStore | None,
     ) -> list[AbsenceFinding]:
         """
         Check for missing graph relationships using existing cooccurrence data.
@@ -820,35 +780,28 @@ class AbsenceMiningEngine:
             return absences
 
         try:
-            # Get entity values
-            entity_values: list[str] = [
-                e.value for e in (report.ioc_entities or [])
-                if e.ioc_type in ("ip", "domain")
-            ]
+            entity_values: list[str] = [e.value for e in (report.ioc_entities or []) if e.ioc_type in ("ip", "domain")]
 
-            # Check each entity for cooccurrence/graph connectivity
             for entity_value in entity_values:
                 try:
-                    # Check cooccurrence table for relationships
                     results = await store.async_query_findings_by_text(
-                        entity_value, limit=2,
-    )
+                        entity_value,
+                        limit=2,
+                    )
                     edge_count = len(results) if results else 0
 
                     if edge_count < 2:
-                        ioc_type = next(
-                            (e.ioc_type for e in (report.ioc_entities or [])
-                             if e.value == entity_value),
-                            "unknown"
-    )
-                        absences.append(AbsenceFinding(
-                            entity_value=entity_value,
-                            absence_type=AbsenceType.GRAPH_FRAGMENT,
-                            severity=0.3,
-                            description=f"Entity {entity_value} has no graph relationships",
-                            missing_evidence=["graph edge", "relationship to any other entity"],
-                            suggested_protocols=["shodan", "censys", "ct", "pdns"],
-                        ))
+                        next((e.ioc_type for e in (report.ioc_entities or []) if e.value == entity_value), "unknown")
+                        absences.append(
+                            AbsenceFinding(
+                                entity_value=entity_value,
+                                absence_type=AbsenceType.GRAPH_FRAGMENT,
+                                severity=0.3,
+                                description=f"Entity {entity_value} has no graph relationships",
+                                missing_evidence=["graph edge", "relationship to any other entity"],
+                                suggested_protocols=["shodan", "censys", "ct", "pdns"],
+                            )
+                        )
                 except Exception as e:
                     logger.debug("[ABSENCE] Graph topology check failed: %s", e)
 
@@ -857,15 +810,11 @@ class AbsenceMiningEngine:
 
         return absences
 
-    # ------------------------------------------------------------------
-    # Closed-Loop: EntropyAlert Emission
-    # ------------------------------------------------------------------
-
     async def _emit_absence_alerts(
         self,
         absences: list[AbsenceFinding],
-        report: "OSINTReport",
-        store: "DuckDBShadowStore | None",
+        report: OSINTReport,
+        store: DuckDBShadowStore | None,
     ) -> bool:
         """
         Emit EntropyAlerts for high-severity absences via EntropyFetchBridge.
@@ -879,8 +828,9 @@ class AbsenceMiningEngine:
         try:
             # Dynamic import to avoid circular dependency
             from hledac.universal.brain.uncertainty_quant import (
-                EntropyAlert, get_entropy_bridge,
-    )
+                EntropyAlert,
+                get_entropy_bridge,
+            )
 
             bridge = get_entropy_bridge()
             if bridge is None:
@@ -897,10 +847,7 @@ class AbsenceMiningEngine:
                     entropy=entropy_bits,
                     threshold_exceeded=1.0,  # Structural absence threshold
                     confidence=0.0,  # Not applicable — this is a structural alert
-                    risk_level=(
-                        "high" if absence.severity > 0.7
-                        else "medium"
-                    ),
+                    risk_level=("high" if absence.severity > 0.7 else "medium"),
                     metadata={
                         "absence_type": absence.absence_type.value,
                         "description": absence.description,
@@ -908,7 +855,7 @@ class AbsenceMiningEngine:
                         "source": "absence_mining",
                         "reason": f"structural_absence:{absence.absence_type.value}",
                     },
-    )
+                )
                 bridge.emit(alert)
                 emitted += 1
 
@@ -916,7 +863,7 @@ class AbsenceMiningEngine:
                 logger.info(
                     "[ABSENCE] Emitted %d EntropyAlerts for high-severity absences",
                     emitted,
-    )
+                )
             return emitted > 0
 
         except ImportError:
@@ -927,16 +874,12 @@ class AbsenceMiningEngine:
             return False
 
 
-# ============================================================================
-# Singleton accessor
-# ============================================================================
-
 _ENGINE: AbsenceMiningEngine | None = None
 _ENGINE_LOCK = asyncio.Lock()
 
 
 async def get_absence_engine(
-    duckdb_store: "DuckDBShadowStore | None" = None,
+    duckdb_store: DuckDBShadowStore | None = None,
 ) -> AbsenceMiningEngine:
     """Get or create the AbsenceMiningEngine singleton."""
     global _ENGINE
@@ -950,7 +893,7 @@ async def get_absence_engine(
 
 
 def get_absence_engine_sync(
-    duckdb_store: "DuckDBShadowStore | None" = None,
+    duckdb_store: DuckDBShadowStore | None = None,
 ) -> AbsenceMiningEngine:
     """Synchronous accessor for AbsenceMiningEngine singleton."""
     global _ENGINE

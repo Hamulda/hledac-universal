@@ -18,18 +18,12 @@ Architecture:
     - Bounded collections with explicit max sizes
     - Fail-safe defaults — no field is None
 """
+
 from __future__ import annotations
 
 from typing import Final
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
-
-
-# ---------------------------------------------------------------------------
-# Rejection reason system
-# ---------------------------------------------------------------------------
 
 RejectionReason = str
 
@@ -50,10 +44,6 @@ REJECTION_STORAGE_UNAVAILABLE: Final[str] = "storage_unavailable"
 REJECTION_QUALITY_GATE: Final[str] = "quality_gate"
 REJECTION_CANDIDATE_BUILT_NOT_STORED: Final[str] = "candidate_built_not_stored"
 
-
-# ---------------------------------------------------------------------------
-# Bridge configuration structs
-# ---------------------------------------------------------------------------
 
 _BRIDGE_CONFIDENCE_MAX: Final = 1.0
 _BRIDGE_CONFIDENCE_MIN: Final = 0.0
@@ -77,9 +67,7 @@ class BridgeConfig(Struct, frozen=True):
         if not self.source_type:
             raise ValueError("source_type must be non-empty")
         if not (0.0 < self.confidence <= 1.0):
-            raise ValueError(
-                f"confidence must be in (0.0, 1.0], got {self.confidence}"
-    )
+            raise ValueError(f"confidence must be in (0.0, 1.0], got {self.confidence}")
         if not self.salt:
             raise ValueError("salt must be non-empty")
 
@@ -159,20 +147,12 @@ class RDAPBridgeConfig(BridgeConfig, frozen=True):
     salt: str = "rdapbridge"
 
 
-# ---------------------------------------------------------------------------
-# Default instances (singleton pattern — frozen msgspec.Struct is safe)
-# ---------------------------------------------------------------------------
-
 CT_BRIDGE: Final[CTBridgeConfig] = CTBridgeConfig()
 WAYBACK_BRIDGE: Final[WaybackBridgeConfig] = WaybackBridgeConfig()
 PDNS_BRIDGE: Final[PDNSBridgeConfig] = PDNSBridgeConfig()
 DOH_BRIDGE: Final[DOHBridgeConfig] = DOHBridgeConfig()
 RDAP_BRIDGE: Final[RDAPBridgeConfig] = RDAPBridgeConfig()
 
-
-# ---------------------------------------------------------------------------
-# Global output bounds
-# ---------------------------------------------------------------------------
 
 MAX_BRIDGE_OUTPUT: Final[int] = 500
 MAX_PAYLOAD_TEXT_CHARS: Final[int] = 2000
@@ -182,15 +162,13 @@ MAX_CT_QUARANTINE_SAMPLES: Final[int] = 10
 MAX_EXPANSION_CLUE_EXAMPLES: Final[int] = 5
 
 
-# ---------------------------------------------------------------------------
-# Private data — domain/IP classification
-# ---------------------------------------------------------------------------
-
-_PRIVATE_HOSTNAMES: Final[frozenset[str]] = frozenset({
-    "localhost",
-    "invalid",
-    "test",
-})
+_PRIVATE_HOSTNAMES: Final[frozenset[str]] = frozenset(
+    {
+        "localhost",
+        "invalid",
+        "test",
+    }
+)
 
 _PRIVATE_IP_PREFIXES: Final[tuple[str, ...]] = (
     "10.",
@@ -219,7 +197,7 @@ _PRIVATE_IP_PREFIXES: Final[tuple[str, ...]] = (
     "fe80:",
     "fc00:",
     "fd00:",
-    )
+)
 
 
 def is_private_hostname(hostname: str) -> bool:

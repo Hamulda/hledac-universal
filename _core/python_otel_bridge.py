@@ -2,8 +2,6 @@
 core/python_otel_bridge.py — Rust → Python OTel Bridge
 =====================================================
 
-
-
 Role: Zero-copy bridge mezi Rust telemetry_agg.rs a Python OpenTelemetry pipeline.
 
 Funkce:
@@ -31,20 +29,15 @@ Public API:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import sys
 import threading
-from collections import OrderedDict
-
-from hledac.universal._core.locks import LockCategory, make_lock
 import time
-from dataclasses import dataclass, field
+from collections import OrderedDict
 from datetime import UTC, datetime
-import msgspec
+from typing import Any
+
 from compat.msgspec_gc_compat import Struct
-from typing import Any, TYPE_CHECKING
-from _core._util import aclose
+from hledac.universal._core.locks import LockCategory, make_lock
 
 # TYPE_CHECKING guards for type hints only — actual imports are lazy inside functions
 # to avoid loading OTel SDK at module import time (M1 8GB RAM budget)
@@ -60,25 +53,27 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 # Module-level bridge singleton (lazily constructed)
-_BRIDGE: "OtelBridge | None" = None
+_BRIDGE: OtelBridge | None = None
 _BRIDGE_LOCK = make_lock(LockCategory.METRICS, "python_otel_bridge._BRIDGE_LOCK")
-
 
 # ── Lazy OTel imports (M1 8GB RAM budget) ────────────────────────────────────
 
-def _get_otel_tracer() -> "Tracer | None":
+
+def _get_otel_tracer() -> Tracer | None:
     """Lazily get OTel tracer."""
     try:
         from opentelemetry import trace
+
         return trace.get_tracer("hledac.rust.aggregator")
     except Exception:
         return None
 
 
-def _get_otel_meter() -> "Meter | None":
+def _get_otel_meter() -> Meter | None:
     """Lazily get OTel meter."""
     try:
         from opentelemetry.metrics import get_meter
+
         return get_meter("hledac.rust.aggregator")
     except Exception:
         return None
@@ -88,6 +83,7 @@ def _get_rust_aggregator() -> Any:
     """Lazily get Rust PyTelemetryAggregator."""
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal._core.rust_backend import rust
+
     create_fn = rust.raw.create_telemetry_aggregator
     if create_fn is None:
         logger.warning("[otel_bridge] Rust telemetry aggregator unavailable")
@@ -101,14 +97,17 @@ def _get_rust_aggregator() -> Any:
 
 # ── Metric instruments cache ────────────────────────────────────────────────────
 
+
 class _MetricInstruments(Struct):
     """Cached OTel metric instruments for one metric name."""
+
     counter_values: dict[str, tuple[int, int]]  # name → (count, bytes)
     histogram_values: dict[str, dict[str, int]]  # name → {p50, p95, p99, ...}
     gauge_values: dict[str, float]  # name → value
 
 
 # ── OtelBridge ────────────────────────────────────────────────────────────────
+
 
 class OtelBridge:
     """
@@ -133,11 +132,22 @@ class OtelBridge:
     """
 
     __slots__ = (
-        "_aggregator", "_tracer", "_meter", "_interval_ms",
-        "_running", "_export_task", "_lock",
-        "_counters", "_histograms", "_gauges",
-        "_last_export_time", "_export_count", "_error_count",
-        "_stage_stats_cache", "_stage_lru_order", "_memory_pressure_history",  # ISSUE-12
+        "_aggregator",
+        "_tracer",
+        "_meter",
+        "_interval_ms",
+        "_running",
+        "_export_task",
+        "_lock",
+        "_counters",
+        "_histograms",
+        "_gauges",
+        "_last_export_time",
+        "_export_count",
+        "_error_count",
+        "_stage_stats_cache",
+        "_stage_lru_order",
+        "_memory_pressure_history",  # ISSUE-12
     )
 
     def __init__(
@@ -174,9 +184,10 @@ class OtelBridge:
         self._stage_stats_cache: dict[str, dict[str, Any]] = {}
         self._stage_lru_order: OrderedDict[str, None] = OrderedDict()  # O(1) LRU
         self._stage_stats_max_size = max_stage_cache_size
-        
+
         # ISSUE-12: Memory pressure history for correlation (FIX-12: use deque for O(1))
         from collections import deque
+
         self._memory_pressure_history: deque[dict[str, float]] = deque(maxlen=100)
         self._memory_pressure_max_history = 100
 
@@ -304,19 +315,21 @@ class OtelBridge:
                 if len(self._stage_stats_cache) >= self._stage_stats_max_size:
                     lru_name, _ = self._stage_lru_order.popitem(last=False)  # O(1) with OrderedDict
                     self._stage_stats_cache.pop(lru_name, None)
-                
+
                 # Add to LRU order
                 self._stage_lru_order[stage_name] = None
 
-            # Update stats
-            stats = self._stage_stats_cache.get(stage_name, {
-                "invocations": 0,
-                "total_latency_ms": 0.0,
-                "total_items_in": 0,
-                "total_items_out": 0,
-                "errors": 0,
-                "last_latency_ms": 0.0,
-            })
+            stats = self._stage_stats_cache.get(
+                stage_name,
+                {
+                    "invocations": 0,
+                    "total_latency_ms": 0.0,
+                    "total_items_in": 0,
+                    "total_items_out": 0,
+                    "errors": 0,
+                    "last_latency_ms": 0.0,
+                },
+            )
             stats["invocations"] += 1
             stats["total_latency_ms"] += latency_ms
             stats["total_items_in"] += items_in
@@ -359,12 +372,14 @@ class OtelBridge:
             # FIX-12: Update history - deque with maxlen auto-evicts (O(1))
             # FIX-11: Use lock for thread safety on deque append
             with self._lock:
-                self._memory_pressure_history.append({
-                    "pressure": pressure,
-                    "available_gib": available_gib,
-                    "rss_gib": rss_gib,
-                    "timestamp": time.monotonic(),
-                })
+                self._memory_pressure_history.append(
+                    {
+                        "pressure": pressure,
+                        "available_gib": available_gib,
+                        "rss_gib": rss_gib,
+                        "timestamp": time.monotonic(),
+                    }
+                )
 
         except Exception as e:
             logger.debug(f"[otel_bridge] record_memory_pressure failed: {e}")
@@ -413,8 +428,8 @@ class OtelBridge:
         }
         """
         try:
-            import sys
             import json as _json
+            import sys
 
             data = self.get_stage_latency_correlation()
             output = {
@@ -482,7 +497,6 @@ class OtelBridge:
         histograms = snapshot.get("histograms", {})
         gauges = snapshot.get("gauges", {})
 
-        # Update cache
         with self._lock:
             self._counters.update(counters)
             self._histograms.update(histograms)
@@ -499,7 +513,7 @@ class OtelBridge:
                 span.set_attribute("otelbridge.timestamp_ms", timestamp_ms)
 
                 # Add metric summary as span event attributes
-                for name, (count, bytes_val) in list(counters.items())[:10]:
+                for name, (count, _bytes_val) in list(counters.items())[:10]:
                     span.set_attribute(f"counter.{name}.count", count)
                 for name, histo in list(histograms.items())[:5]:
                     span.set_attribute(f"histogram.{name}.p50_ns", histo.get("p50_ns", 0))
@@ -548,7 +562,10 @@ class OtelBridge:
         try:
             # F350M-R ISSUE #31: safe_create_task with eager_start=True (export loop is hot path)
             from hledac.universal.utils.asyncx import safe_create_task
-            self._export_task = safe_create_task(self._periodic_export_loop(), name='otel_bridge.export', eager_start=True)
+
+            self._export_task = safe_create_task(
+                self._periodic_export_loop(), name="otel_bridge.export", eager_start=True
+            )
             logger.info(f"[otel_bridge] Started with interval={self._interval_ms}ms")
         except RuntimeError:
             # No running loop — start in thread
@@ -559,8 +576,9 @@ class OtelBridge:
                     loop.run_until_complete(self._periodic_export_loop())
                 finally:
                     loop.close()
+
             self._export_task = None  # Will be created in new loop
-            logger.info(f"[otel_bridge] Started (no running loop)")
+            logger.info("[otel_bridge] Started (no running loop)")
 
     def stop(self) -> None:
         """Stop periodic export loop."""
@@ -589,6 +607,7 @@ class OtelBridge:
 
 
 # ── Module-level API ──────────────────────────────────────────────────────────
+
 
 def configure_otel_bridge(interval_ms: int = 5000) -> OtelBridge:
     """

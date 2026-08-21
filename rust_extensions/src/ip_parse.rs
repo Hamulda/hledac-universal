@@ -96,7 +96,6 @@ pub fn batch_ip_classify(ips: Vec<String>) -> Vec<u8> {
     let n = ips);
     let _results_cap = n;
 
-    // Process up to BATCH_MAX, rest marked invalid
     let batch: Vec<&[String]> = ips.chunks(BATCH_MAX));
 
     crate::io_pool().install(|| {
@@ -134,7 +133,6 @@ pub fn cidr_contains(cidr: &str, ip: &str) -> bool {
         Err(_) => return false,
     };
 
-    // Check that the IP version matches the network
     match (network, addr) {
         (IpNetwork::V4(_), IpAddr::V4(_)) | (IpNetwork::V6(_), IpAddr::V6(_)) => {
             network.contains(addr)

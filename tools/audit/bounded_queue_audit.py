@@ -11,20 +11,20 @@ Allowed exceptions (by design):
 
 No imports with heavy side effects. Pure stdlib + pathlib.
 """
+
 import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from _core import aclose
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = REPO_ROOT / "probe_f207n_bounded_queue"
 
 # Files/patterns that are allowed exceptions
 LRU_CACHE_ALLOWED = {
-    "utils/lazy_singleton.py",   # LazySingleton intentional; bounded LRUCache underneath
-    "core/env_config.py",         # @lru_cache(maxsize=512) — bounded
+    "utils/lazy_singleton.py",  # LazySingleton intentional; bounded LRUCache underneath
+    "core/env_config.py",  # @lru_cache(maxsize=512) — bounded
     # tools/ excluded — audit/documentation scripts, not production code
 }
 
@@ -54,6 +54,7 @@ def classify(path: str) -> str:
 
 # ── Queue scanner ──────────────────────────────────────────────────────────────
 
+
 def scan_unbounded_queues() -> list[dict[str, Any]]:
     """Find all asyncio.Queue() without maxsize."""
     results = []
@@ -69,19 +70,22 @@ def scan_unbounded_queues() -> list[dict[str, Any]]:
                 continue
             # Match asyncio.Queue() with no maxsize argument
             # Exclude: asyncio.Queue(maxsize=...), Queue(maxsize=...)
-            if re.search(r'asyncio\.Queue\(\s*(?!maxsize\s*=)', line):
+            if re.search(r"asyncio\.Queue\(\s*(?!maxsize\s*=)", line):
                 rel = str(py_file.relative_to(REPO_ROOT))
-                results.append({
-                    "file": rel,
-                    "line": lineno,
-                    "category": classify(rel),
-                    "code": line.strip(),
-                })
+                results.append(
+                    {
+                        "file": rel,
+                        "line": lineno,
+                        "category": classify(rel),
+                        "code": line.strip(),
+                    }
+                )
 
     return results
 
 
 # ── lru_cache scanner ─────────────────────────────────────────────────────────
+
 
 def scan_unbounded_lru() -> list[dict[str, Any]]:
     """
@@ -112,56 +116,60 @@ def scan_unbounded_lru() -> list[dict[str, Any]]:
 
         # ── Pattern 1: single-line @lru_cache(maxsize=None) ────────────────
         for lineno, line in enumerate(content.splitlines(), 1):
-            if 'lru_cache' not in line:
+            if "lru_cache" not in line:
                 continue
-            if re.search(r'@\w*\.?lru_cache\s*\(\s*maxsize\s*=\s*None\s*\)', line):
-                results.append({
-                    "file": rel,
-                    "line": lineno,
-                    "category": classify(rel),
-                    "code": line.strip(),
-                })
+            if re.search(r"@\w*\.?lru_cache\s*\(\s*maxsize\s*=\s*None\s*\)", line):
+                results.append(
+                    {
+                        "file": rel,
+                        "line": lineno,
+                        "category": classify(rel),
+                        "code": line.strip(),
+                    }
+                )
 
         # ── Pattern 2: @cache (py39+), equivalent to unbounded lru_cache ──
         for lineno, line in enumerate(content.splitlines(), 1):
-            if '@' not in line:
+            if "@" not in line:
                 continue
-            if re.search(r'@\s*\.?cache\b', line):
-                results.append({
-                    "file": rel,
-                    "line": lineno,
-                    "category": classify(rel),
-                    "code": line.strip(),
-                })
+            if re.search(r"@\s*\.?cache\b", line):
+                results.append(
+                    {
+                        "file": rel,
+                        "line": lineno,
+                        "category": classify(rel),
+                        "code": line.strip(),
+                    }
+                )
 
         # ── Pattern 3: multi-line lru_cache(maxsize=None) ───────────────────
         # Match @...lru_cache( ... maxsize=None ... ) spanning newlines
         multi = re.search(
-            r'@[\w.]*lru_cache\s*\([^)]*maxsize\s*=\s*None[^)]*\)',
+            r"@[\w.]*lru_cache\s*\([^)]*maxsize\s*=\s*None[^)]*\)",
             content,
             re.DOTALL,
-    )
+        )
         if multi:
             # approximate line number: count newlines before match
-            line_num = content[:multi.start()].count('\n') + 1
+            line_num = content[: multi.start()].count("\n") + 1
             # Avoid duplicate if already caught by single-line pattern
-            snippet = content[multi.start(): multi.end()].replace('\n', '↵')
-            existing = any(
-                r["file"] == rel and r["line"] == line_num
-                for r in results
-    )
+            snippet = content[multi.start() : multi.end()].replace("\n", "↵")
+            existing = any(r["file"] == rel and r["line"] == line_num for r in results)
             if not existing:
-                results.append({
-                    "file": rel,
-                    "line": line_num,
-                    "category": classify(rel),
-                    "code": f"@lru_cache(...maxsize=None...) = {snippet!r}",
-                })
+                results.append(
+                    {
+                        "file": rel,
+                        "line": line_num,
+                        "category": classify(rel),
+                        "code": f"@lru_cache(...maxsize=None...) = {snippet!r}",
+                    }
+                )
 
     return results
 
 
 # ── Reporting ─────────────────────────────────────────────────────────────────
+
 
 def to_markdown(queues: list[dict[str, Any]], lru_hits: list[dict[str, Any]]) -> str:
     """Render combined audit results as Markdown."""
@@ -179,8 +187,16 @@ def to_markdown(queues: list[dict[str, Any]], lru_hits: list[dict[str, Any]]) ->
         categories_q.setdefault(r["category"], []).append(r)
 
     for cat in [
-        "runtime_critical", "pipeline", "brain", "coordinator",
-        "intelligence", "layers", "transport", "unknown", "test_only", "external",
+        "runtime_critical",
+        "pipeline",
+        "brain",
+        "coordinator",
+        "intelligence",
+        "layers",
+        "transport",
+        "unknown",
+        "test_only",
+        "external",
     ]:
         items = categories_q.get(cat, [])
         if not items:
@@ -201,8 +217,16 @@ def to_markdown(queues: list[dict[str, Any]], lru_hits: list[dict[str, Any]]) ->
         categories_l.setdefault(r["category"], []).append(r)
 
     for cat in [
-        "runtime_critical", "pipeline", "brain", "coordinator",
-        "intelligence", "layers", "transport", "unknown", "test_only", "external",
+        "runtime_critical",
+        "pipeline",
+        "brain",
+        "coordinator",
+        "intelligence",
+        "layers",
+        "transport",
+        "unknown",
+        "test_only",
+        "external",
     ]:
         items = categories_l.get(cat, [])
         if not items:
@@ -259,7 +283,7 @@ if __name__ == "__main__":
     md_path = OUTPUT_DIR / "REPORT_BOUNDED_RESOURCES.md"
     md_path.write_text(to_markdown(queues, lrus))
 
-    print(f"Audit complete:")
+    print("Audit complete:")
     print(f"  unbounded queues: {len(queues)}")
     for cat, n in sorted(q_counts.items()):
         print(f"    {cat}: {n}")

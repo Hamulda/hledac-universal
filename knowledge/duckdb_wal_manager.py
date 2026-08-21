@@ -30,11 +30,9 @@ M1 8GB constraints:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
@@ -64,12 +62,12 @@ class DuckDBWALManager:
     """
 
     __slots__ = (
-        "_wal_manager",       # WALManager instance
-        "_wal_root",          # Path to WAL directory
-        "_dedup_lmdb_path",   # Path to dedup LMDB
+        "_wal_manager",  # WALManager instance
+        "_wal_root",  # Path to WAL directory
+        "_dedup_lmdb_path",  # Path to dedup LMDB
         "_query_cache_lmdb",  # _DuckDBQueryCache instance
-        "_unified_lmdb",      # F272: UnifiedLMDBStore or None
-        "_unified_store",     # F272: unified_store passed to WALManager
+        "_unified_lmdb",  # F272: UnifiedLMDBStore or None
+        "_unified_store",  # F272: unified_store passed to WALManager
     )
 
     def __init__(
@@ -96,7 +94,7 @@ class DuckDBWALManager:
         self._wal_manager = WALManager(
             wal_path=str(wal_root / "shadow_wal.lmdb"),
             unified_store=unified_store,
-    )
+        )
 
     # ── WAL Manager delegation ──────────────────────────────────────────────
 
@@ -128,7 +126,7 @@ class DuckDBWALManager:
                 query=str(query),
                 source_type=str(source_type),
                 confidence=float(confidence),
-    )
+            )
         # Finding-object form: finding_id is actually the finding object
         finding_obj = finding_id
         finding_id_str = getattr(finding_obj, "finding_id", None) or getattr(finding_obj, "id", None)
@@ -139,7 +137,7 @@ class DuckDBWALManager:
             query=str(getattr(finding_obj, "query", "")),
             source_type=str(getattr(finding_obj, "source_type", "")),
             confidence=float(getattr(finding_obj, "confidence", 0.0)),
-    )
+        )
 
     def wal_get_finding(self, finding_id: str) -> bytes | None:
         """Get finding WAL truth record by ID."""

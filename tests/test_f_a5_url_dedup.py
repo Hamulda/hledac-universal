@@ -37,13 +37,13 @@ def fresh_filter():
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_empty_input_returns_empty_tuple(fresh_filter):
+def test_dedupe_empty_input_returns_empty_tuple(fresh_filter) -> None:
     unique, dropped = dedupe_url_list([], fresh_filter)
     assert unique == []
     assert dropped == 0
 
 
-def test_dedupe_single_url_passes_through(fresh_filter):
+def test_dedupe_single_url_passes_through(fresh_filter) -> None:
     unique, dropped = dedupe_url_list(["https://a.example/"], fresh_filter)
     assert unique == ["https://a.example/"]
     assert dropped == 0
@@ -51,7 +51,7 @@ def test_dedupe_single_url_passes_through(fresh_filter):
     assert "https://a.example/" in fresh_filter
 
 
-def test_dedupe_intra_batch_duplicates_dropped(fresh_filter):
+def test_dedupe_intra_batch_duplicates_dropped(fresh_filter) -> None:
     urls = [
         "https://a.example/path",
         "https://b.example/",
@@ -69,7 +69,7 @@ def test_dedupe_intra_batch_duplicates_dropped(fresh_filter):
     assert dropped == 2
 
 
-def test_dedupe_cross_batch_dups_dropped(fresh_filter):
+def test_dedupe_cross_batch_dups_dropped(fresh_filter) -> None:
     # Seed the filter with a URL from a "previous batch".
     fresh_filter.add("https://seen-before.example/")
     urls = [
@@ -81,7 +81,7 @@ def test_dedupe_cross_batch_dups_dropped(fresh_filter):
     assert dropped == 1
 
 
-def test_dedupe_preserves_first_seen_order(fresh_filter):
+def test_dedupe_preserves_first_seen_order(fresh_filter) -> None:
     urls = [
         "https://z.example/",
         "https://a.example/",
@@ -101,7 +101,7 @@ def test_dedupe_preserves_first_seen_order(fresh_filter):
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_adds_surviving_urls_to_filter(fresh_filter):
+def test_dedupe_adds_surviving_urls_to_filter(fresh_filter) -> None:
     urls = ["https://x.example/", "https://y.example/"]
     dedupe_url_list(urls, fresh_filter)
     # Normalized forms are what's in the filter (matches F214AD contract).
@@ -109,7 +109,7 @@ def test_dedupe_adds_surviving_urls_to_filter(fresh_filter):
     assert "https://y.example/" in fresh_filter
 
 
-def test_dedupe_does_not_re_add_urls_already_in_filter(fresh_filter):
+def test_dedupe_does_not_re_add_urls_already_in_filter(fresh_filter) -> None:
     """Pre-existing URLs in the filter should not trigger a second add.
 
     The dedupe logic skips ``filter.add()`` when ``key in filter`` is
@@ -140,7 +140,7 @@ def test_dedupe_does_not_re_add_urls_already_in_filter(fresh_filter):
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_unparseable_urls_kept_without_poisoning_filter(fresh_filter):
+def test_dedupe_unparseable_urls_kept_without_poisoning_filter(fresh_filter) -> None:
     """Garbage URLs stay in the result but do NOT enter the filter."""
     urls = [
         "not a url at all",
@@ -156,13 +156,13 @@ def test_dedupe_unparseable_urls_kept_without_poisoning_filter(fresh_filter):
     assert "https://good.example/" in fresh_filter
 
 
-def test_dedupe_empty_strings_counted_as_dropped(fresh_filter):
+def test_dedupe_empty_strings_counted_as_dropped(fresh_filter) -> None:
     unique, dropped = dedupe_url_list(["", "", "https://a.example/"], fresh_filter)
     assert unique == ["https://a.example/"]
     assert dropped == 2
 
 
-def test_dedupe_normalize_false_skips_normalization(fresh_filter):
+def test_dedupe_normalize_false_skips_normalization(fresh_filter) -> None:
     """When normalize=False, raw URL strings are the dedup keys."""
     urls = [
         "HTTPS://A.EXAMPLE/path",  # uppercase scheme/host
@@ -183,7 +183,7 @@ def test_dedupe_normalize_false_skips_normalization(fresh_filter):
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_with_none_filter_falls_back_to_in_list_dedup():
+def test_dedupe_with_none_filter_falls_back_to_in_list_dedup() -> None:
     """Defensive path: caller passed None — no filter mutation, only
     in-list dedup happens."""
     urls = [
@@ -201,7 +201,7 @@ def test_dedupe_with_none_filter_falls_back_to_in_list_dedup():
 # ---------------------------------------------------------------------------
 
 
-def test_dedupe_discovery_scenario_150_urls_from_3_queries(fresh_filter):
+def test_dedupe_discovery_scenario_150_urls_from_3_queries(fresh_filter) -> None:
     """Simulate the 3-search-queries scenario described in the I5 spec.
 
     3 search queries each return 50 URLs. They share many hostnames,
@@ -210,7 +210,7 @@ def test_dedupe_discovery_scenario_150_urls_from_3_queries(fresh_filter):
     """
     # Build 150 URLs across 30 unique hostnames.
     urls: list[str] = []
-    for query_idx in range(3):
+    for _query_idx in range(3):
         for url_idx in range(50):
             # Round-robin over 30 hostnames with different paths so
             # URLs are distinct (no intra-batch dups within one query).
@@ -228,7 +228,7 @@ def test_dedupe_discovery_scenario_150_urls_from_3_queries(fresh_filter):
     # Build a more realistic input:
     urls2: list[str] = []
     base_pages = [f"page{i}" for i in range(20)]  # 20 unique pages
-    for query_idx in range(3):
+    for _query_idx in range(3):
         for host_idx in range(30):
             for page in base_pages:
                 urls2.append(f"https://h{host_idx:02d}.example/{page}")

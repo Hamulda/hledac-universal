@@ -24,11 +24,10 @@ Usage:
 """
 
 from __future__ import annotations
-from _core import aclose
 
 __all__ = [
     "get_adaptive_cache_size",
-    "get_model_cache_max", 
+    "get_model_cache_max",
     "get_lora_cache_max",
     "is_m1_8gb",
     "get_memory_tier_gb",
@@ -38,12 +37,13 @@ __all__ = [
 def get_memory_tier_gb() -> float:
     """
     Get total system memory in GB.
-    
+
     Returns:
         Total RAM in GB, or 16.0 as safe default on error.
     """
     try:
         import psutil
+
         return psutil.virtual_memory().total / (1024**3)
     except Exception:
         return 16.0  # safe default
@@ -57,11 +57,11 @@ def is_m1_8gb() -> bool:
 def get_adaptive_cache_size() -> int:
     """
     Adaptive model cache size based on available RAM.
-    
+
     M1 8GB:  1 model   (strict — Hermes + ModernBERT + GLiNER = 3-4 GB)
     M1 16GB: 2 models
     M2/M3:   3-4 models
-    
+
     Returns:
         Maximum number of models that fit in memory.
     """

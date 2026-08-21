@@ -53,15 +53,11 @@ import threading
 from typing import Any
 
 import msgspec
-from compat.msgspec_gc_compat import Struct
 import msgspec.json
-from _core import aclose
+
+from compat.msgspec_gc_compat import Struct
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# Typed Struct definitions
-# =============================================================================
 
 
 class SearchResult(Struct, frozen=True):
@@ -90,10 +86,6 @@ class CacheEntry(Struct, frozen=True):
     ttl: int = 3600
 
 
-# =============================================================================
-# Optional accelerators (lazy-verified)
-# =============================================================================
-
 try:
     import orjson  # type: ignore[import-not-found]
 
@@ -108,15 +100,9 @@ except ImportError:  # pragma: no cover — orjson is in default deps
     _ORJSON_OPT_INDENT_2 = 0
     _ORJSON_OPT_SERIALIZE_NUMPY = 0
 
-# =============================================================================
-# Module-level singletons (zero-overhead single-threaded path)
-# =============================================================================
 _DEFAULT_ENCODER: msgspec.json.Encoder = msgspec.json.Encoder()
 _DEFAULT_DECODER: msgspec.json.Decoder = msgspec.json.Decoder()
 
-# =============================================================================
-# Per-thread pool (Python 3.14+ free-threaded compatible)
-# =============================================================================
 _POOL_MAX: int = 8  # ~16KB per thread max
 
 _thread_local = threading.local()
@@ -156,9 +142,6 @@ def _release_thread_decoder(dec: msgspec.json.Decoder) -> None:
         pool.append(dec)
 
 
-# =============================================================================
-# Zstd compression (Python 3.14+ stdlib, lazy import)
-# =============================================================================
 _zstd: Any = None
 ZSTD_AVAILABLE: bool = False
 
@@ -179,9 +162,6 @@ def _ensure_zstd() -> Any:
         return None
 
 
-# =============================================================================
-# Rust serde_json extension (lazy import, fail-soft)
-# =============================================================================
 _rust_json: Any = None
 _RUST_JSON_PROBED: bool = False
 
@@ -203,9 +183,6 @@ def _ensure_rust_json() -> Any:
     return None
 
 
-# =============================================================================
-# E3: Rust zstd extension (lazy import, fail-soft)
-# =============================================================================
 _rust_zstd: Any = None
 _RUST_ZSTD_PROBED: bool = False
 
@@ -227,11 +204,6 @@ def _ensure_rust_zstd() -> Any:
     except Exception:  # noqa: BLE001
         pass
     return None
-
-
-# =============================================================================
-# Core API: encode / decode
-# =============================================================================
 
 
 def encode(obj: Any) -> bytes:
@@ -275,11 +247,7 @@ def decode(data: bytes | str | memoryview | bytearray) -> Any:
     try:
         return dec.decode(data)  # type: ignore[no-any-return]
     except Exception as exc:
-        if (
-            ORJSON_AVAILABLE
-            and orjson is not None
-            and isinstance(data, (bytes, bytearray, str))
-        ):
+        if ORJSON_AVAILABLE and orjson is not None and isinstance(data, (bytes, bytearray, str)):
             logger.debug("msgspec.decode fallback to orjson: %s", exc)
             return orjson.loads(data)  # type: ignore[no-any-return]
         import json as _stdlib_json
@@ -287,11 +255,6 @@ def decode(data: bytes | str | memoryview | bytearray) -> Any:
         return _stdlib_json.loads(data)  # type: ignore[no-any-return]
     finally:
         _release_thread_decoder(dec)
-
-
-# =============================================================================
-# String convenience
-# =============================================================================
 
 
 def encode_str(
@@ -389,11 +352,6 @@ def encode_pretty_sorted(obj: Any) -> str:
     return _stdlib_json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)
 
 
-# =============================================================================
-# Typed decode
-# =============================================================================
-
-
 def decode_typed(raw: bytes, typ: type) -> object:
     """
     Typed msgspec decode — use for known-schema hot paths.
@@ -413,14 +371,6 @@ def decode_typed(raw: bytes, typ: type) -> object:
         return msgspec.json.decode(raw, type=typ)  # type: ignore[no-any-return]
     except msgspec.ValidationError:
         return decode(raw)
-
-
-# =============================================================================
-# Zstd-compressed JSON
-#
-# Wire format: 4-byte LE uncompressed length + zstd frame.
-# This lets the decoder detect truncation before invoking zstd (~ns check).
-# =============================================================================
 
 
 def encode_zstd(obj: Any, level: int = 3) -> bytes:
@@ -488,9 +438,7 @@ def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
         try:
             raw = rust_domain.decompress_zstd(compressed)
             if len(raw) != raw_len:
-                raise ValueError(
-                    f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
-                )
+                raise ValueError(f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})")
             return decode(raw)
         except Exception:
             pass
@@ -501,10 +449,9 @@ def decode_zstd(data: bytes | memoryview | bytearray) -> Any:
         raise RuntimeError("zstd compression not available (compression.zstd from Python 3.14+ required)")
     raw = zstd_mod.decompress(compressed)
     if len(raw) != raw_len:
-        raise ValueError(
-            f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})"
-        )
+        raise ValueError(f"decode_zstd: length mismatch (prefix={raw_len}, actual={len(raw)})")
     return decode(raw)
+
 
 def encode_stix(obj: Any, *, pretty: bool = False, sort_keys: bool = True) -> bytes:
     """
@@ -573,11 +520,6 @@ def encode_stix_str(obj: Any, *, pretty: bool = False, sort_keys: bool = True) -
     return encode_stix(obj, pretty=pretty, sort_keys=sort_keys).decode("utf-8")
 
 
-# =============================================================================
-# Arrow integration
-# =============================================================================
-
-
 def encode_for_arrow(obj: Any) -> bytes | None:
     """
     Encode for Arrow ``pa.array(bytes, type=pa.string())`` ingestion.
@@ -599,11 +541,6 @@ def encode_for_arrow(obj: Any) -> bytes | None:
     if isinstance(obj, (list, tuple)) and len(obj) == 0:
         return None
     return _DEFAULT_ENCODER.encode(obj)
-
-
-# =============================================================================
-# Single-threaded fast variants (no pool, no fallback overhead)
-# =============================================================================
 
 
 def encode_fast(obj: Any) -> bytes:
@@ -630,10 +567,6 @@ def decode_fast(data: bytes | str | bytearray) -> Any:
         return _stdlib_json.loads(data)  # type: ignore[no-any-return]
 
 
-# =============================================================================
-# Legacy aliases (backwards compatibility)
-# =============================================================================
-
 json_dumps = encode
 """Alias for :func:`encode` (legacy naming from shared memory serialization)."""
 
@@ -651,10 +584,6 @@ loads = decode
 
 # orjson option flags (exposed for callers that want fine control)
 OPT_SERIALIZE_NUMPY = _ORJSON_OPT_SERIALIZE_NUMPY
-
-# =============================================================================
-# Public API surface
-# =============================================================================
 
 __all__ = [
     # Core

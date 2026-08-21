@@ -11,7 +11,6 @@ M1 8GB invariant: Soft ceiling 5.5GiB, tier thresholds.
 from __future__ import annotations
 
 import pytest
-from _core import aclose
 
 
 class TestMetalMemoryStats:
@@ -48,7 +47,7 @@ class TestMetalMemoryStats:
             peak_gb=3.0,
             metal_tier="critical",
             pressure_level="critical",
-    )
+        )
         assert stats.metal_tier == "critical"
         assert stats.pressure_level == "critical"
 
@@ -230,8 +229,7 @@ class TestMetalDeviceMemoryAccessors:
 
     def test_get_stats_returns_stats_object(self) -> None:
         """Test get_stats returns MetalMemoryStats."""
-        from brain._metal.metal_device import MetalDevice
-        from brain._metal.metal_device import MetalMemoryStats
+        from brain._metal.metal_device import MetalDevice, MetalMemoryStats
 
         device = MetalDevice()
         stats = device.get_stats()
@@ -275,7 +273,7 @@ class TestMetalDeviceSingleton:
 
     def test_singleton_returns_same_instance(self) -> None:
         """Test get_metal_device returns same instance."""
-        from brain._metal.metal_device import get_metal_device, MetalDevice
+        from brain._metal.metal_device import MetalDevice, get_metal_device
 
         device1 = get_metal_device()
         device2 = get_metal_device()

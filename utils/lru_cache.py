@@ -27,13 +27,10 @@ from __future__ import annotations
 import functools
 import warnings
 from collections.abc import Callable
-from typing import Generic, TypeVar, cast
+from typing import TypeVar, cast
 
 # Re-export from new location for backward compatibility
-from hledac.universal.utils.cache import LRUCache
-from hledac.universal.utils.cache import SlidingWindowKVCache
-from hledac.universal.utils.cache import TTLCache
-from _core import aclose
+from hledac.universal.utils.cache import LRUCache, SlidingWindowKVCache, TTLCache
 
 __all__ = ["LRUCache", "TTLCache", "SlidingWindowKVCache", "lru_cache"]
 
@@ -61,7 +58,7 @@ def lru_cache(max_size: int = 128) -> Callable[[_F], _F]:
         "Use functools.lru_cache for sync functions or "
         "utils.cache.async_cached for async functions.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     cache: LRUCache[tuple, object] = LRUCache(max_size=max_size, thread_safe=True)
 

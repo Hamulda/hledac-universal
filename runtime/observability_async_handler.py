@@ -23,19 +23,18 @@ Decoupling (F350M-R):
   Adaptéry: AsyncioQueueAdapter, AsyncioLockAdapter, ThreadingEventAdapter.
   Lze snadno vyměnit za jiné implementace (mock, fake, jiné frameworky).
 """
+
 from __future__ import annotations
 
 import asyncio
-import os
+import queue
 import sys
 import threading
-import queue
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from datetime import UTC, datetime
+from typing import Any, Protocol, runtime_checkable
 
-from hledac.universal.utils.asyncx import safe_create_task
 from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
-from _core import aclose
+from hledac.universal.utils.asyncx import safe_create_task
 
 _structlog: Any | None = None
 
@@ -49,8 +48,6 @@ def _get_structlog() -> Any | None:
             _structlog = None
     return _structlog
 
-
-# === Protocol interfaces (Dependency Inversion) ===
 
 @runtime_checkable
 class AsyncQueue(Protocol):
@@ -77,11 +74,9 @@ class AsyncQueue(Protocol):
 class AsyncLock(Protocol):
     """Abstract async lock interface."""
 
-    async def __aenter__(self) -> Any:
-        ...
+    async def __aenter__(self) -> Any: ...
 
-    async def __aexit__(self, *args: Any) -> None:
-        ...
+    async def __aexit__(self, *args: Any) -> None: ...
 
 
 @runtime_checkable
@@ -100,8 +95,6 @@ class ThreadEvent(Protocol):
         """Clear the event."""
         ...
 
-
-# === Concrete adapters (default implementations) ===
 
 class AsyncioQueueAdapter:
     """asyncio.Queue adapter implementing AsyncQueue protocol."""
@@ -191,13 +184,9 @@ class StdQueueAdapter:
         self._queue.task_done()
 
 
-# === Configuration constants ===
-
 MAX_QUEUE_SIZE = 10_000
 _ASYNC_LOG_ENABLED = FeatureFlags.get(FeatureFlag.ASYNC_LOG, default=False)
 
-
-# === AsyncLogHandler with Dependency Injection ===
 
 class AsyncLogHandler:
     """
@@ -214,12 +203,11 @@ class AsyncLogHandler:
       - _lock: AsyncLock (default: AsyncioLockAdapter)
       - _stop_event: ThreadEvent (default: ThreadingEventAdapter)
     """
-    _instance: "AsyncLogHandler | None" = None
+
+    _instance: AsyncLogHandler | None = None
     _lock: AsyncLock | None = None
 
-    __slots__ = tuple(
-        ("_drop_oldest", "_queue", "_started", "_stop_event", "_thread")
-    )
+    __slots__ = ("_drop_oldest", "_queue", "_started", "_stop_event", "_thread")
 
     def __init__(
         self,
@@ -235,7 +223,7 @@ class AsyncLogHandler:
         self._started = False
 
     @classmethod
-    async def get_instance(cls) -> "AsyncLogHandler":
+    async def get_instance(cls) -> AsyncLogHandler:
         """Get or create singleton instance (async-safe)."""
         if cls._lock is None:
             cls._lock = AsyncioLockAdapter()
@@ -250,9 +238,7 @@ class AsyncLogHandler:
         if self._started:
             return
         self._started = True
-        self._thread = threading.Thread(
-            target=self._flush_loop, daemon=True, name="AsyncLogHandler-flush"
-    )
+        self._thread = threading.Thread(target=self._flush_loop, daemon=True, name="AsyncLogHandler-flush")
         self._thread.start()
 
     def _flush_loop(self) -> None:
@@ -325,14 +311,12 @@ async def configure_async_logging() -> None:
                 context_class=dict,
                 logger_factory=sl.stdlib.LoggerFactory(),
                 cache_logger_on_first_use=True,
-    )
+            )
         except Exception:  # noqa: BLE001
             pass
 
 
-def _inject_trace_context_async(
-    _logger: Any, _method_name: str, event: dict[str, Any]
-) -> dict[str, Any]:
+def _inject_trace_context_async(_logger: Any, _method_name: str, event: dict[str, Any]) -> dict[str, Any]:
     """Async-aware structlog processor: inject trace context into event_dict.
 
     structlog processor protocol: (logger, method_name, event_dict) -> event_dict
@@ -355,9 +339,7 @@ def _inject_trace_context_async(
     return event
 
 
-def _json_renderer_async(
-    _logger: Any, _method: str, event: dict[str, Any]
-) -> str:
+def _json_renderer_async(_logger: Any, _method: str, event: dict[str, Any]) -> str:
     """Async-safe structlog JSON renderer that uses async queue.
 
     structlog processor protocol: (logger, method_name, event_dict) -> str
@@ -372,7 +354,7 @@ def _json_renderer_async(
             event.update(ctx)
 
         rendered = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "level": _method.upper(),
             "event": event.pop("event", ""),
             **event,
@@ -382,20 +364,14 @@ def _json_renderer_async(
 
         if _ASYNC_LOG_ENABLED and AsyncLogHandler._instance is not None:
             try:
-                safe_create_task(
-                    AsyncLogHandler._instance.emit(line), name="log:emit"
-    )
+                safe_create_task(AsyncLogHandler._instance.emit(line), name="log:emit")
                 return ""  # structlog requires non-None return
             except RuntimeError:  # noqa: BLE001
                 # No event loop - fall through to sync write
                 pass
 
         # Sync fallback
-        out = (
-            sys.stderr
-            if _method.upper() in ("ERROR", "CRITICAL", "WARNING")
-            else sys.stdout
-    )
+        out = sys.stderr if _method.upper() in ("ERROR", "CRITICAL", "WARNING") else sys.stdout
         out.write(line + "\n")
         return ""  # structlog requires non-None return
     except Exception:

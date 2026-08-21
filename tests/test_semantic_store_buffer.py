@@ -8,13 +8,11 @@ Verifies:
 - DuckDBShadowStore._semantic_add_texts() delegates to buffer
 """
 
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from hledac.universal.knowledge.semantic_store_buffer import SemanticStoreBuffer
-from _core import aclose
 
 
 class MockFinding:
@@ -29,7 +27,7 @@ class MockFinding:
         source_type: str = "test_source",
         ts: float = 1234.5,
         pattern_matches: list | None = None,
-    ):
+    ) -> None:
         self.finding_id = finding_id
         self.payload_text = payload_text
         self.source_type = source_type
@@ -75,7 +73,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-tuple",
             payload_text="evil domain example.com",
             pattern_matches=[("example.com", "domain")],
-    )
+        )
         buffer.buffer_findings([finding])
 
         mock_store.add_text.assert_called_once()
@@ -93,7 +91,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-dict",
             payload_text="hash  deadbeef",
             pattern_matches=[{"label": "sha256", "value": "deadbeef"}],
-    )
+        )
         buffer.buffer_findings([finding])
 
         mock_store.add_text.assert_called_once()
@@ -113,7 +111,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("example.com", "domain"),
                 {"label": "sha256", "value": "deadbeef"},
             ],
-    )
+        )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -132,7 +130,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("example.com", "domain"),
                 ("evil.com", "domain"),
             ],
-    )
+        )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -148,7 +146,7 @@ class TestSemanticStoreBufferPatternMatches:
             finding_id="fid-no-pm",
             payload_text="plain text",
             pattern_matches=None,
-    )
+        )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -167,7 +165,7 @@ class TestSemanticStoreBufferPatternMatches:
                 ("only-one-element",),
                 ("example.com", "domain"),
             ],
-    )
+        )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -187,7 +185,7 @@ class TestSemanticStoreBufferOtherFindingAttrs:
             finding_id="fid-src",
             payload_text="content",
             source_type="ct_indicators",
-    )
+        )
         buffer.buffer_findings([finding])
 
         call_kwargs = mock_store.add_text.call_args.kwargs
@@ -250,6 +248,7 @@ class TestDuckDBShadowStoreCompatibility:
     def test_buffer_instantiation_is_cheap(self) -> None:
         """SemanticStoreBuffer with no args is lightweight (no DuckDB, no LanceDB)."""
         import sys
+
         buf = SemanticStoreBuffer()
         # Should not pull in duckdb or lancedb
         assert "duckdb" not in sys.modules or "duckdb" in str(type(buf))

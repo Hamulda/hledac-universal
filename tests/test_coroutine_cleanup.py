@@ -23,7 +23,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from _core import aclose
 
 # === Test fixtures ===
 
@@ -84,7 +83,7 @@ class TestCoroutineCleanup:
 
         # Consume only first few items, then break
         count = 0
-        async for item in gen:
+        async for _item in gen:
             tracker.track(gen)  # Track the generator itself to detect leaks
             count += 1
             if count >= 5:
@@ -119,7 +118,7 @@ class TestCoroutineCleanup:
 
         count = 0
         try:
-            async for item in gen:
+            async for _item in gen:
                 count += 1
                 if count >= 5:
                     break
@@ -162,7 +161,7 @@ class TestCoroutineCleanup:
                 pass  # Cleanup logic here
 
         count = 0
-        async for item in tracked_generator():
+        async for _item in tracked_generator():
             count += 1
             if count >= 5:
                 break
@@ -205,7 +204,7 @@ class TestWaitForTimeouts:
             pass
 
         del task
-        leaked = tracker.collect()
+        tracker.collect()
 
         # Note: Cancelled tasks may still appear in weakref tracking
         # The key point is this pattern has NO timeout protection
@@ -214,15 +213,15 @@ class TestWaitForTimeouts:
     @pytest.mark.asyncio
     async def test_wait_for_prevents_infinite_hang(self) -> None:
         """
-        FIXED: asyncio.wait_for prevents infinite hangs.
+            FIXED: asyncio.wait_for prevents infinite hangs.
 
-        Correct pattern (F271B reference):
-        ```python
-        result = await asyncio.wait_for(
-            some_coroutine(),
-            timeout=35.0  # Match F271B spec
-    )
-        ```
+            Correct pattern (F271B reference):
+            ```python
+            result = await asyncio.wait_for(
+                some_coroutine(),
+                timeout=35.0  # Match F271B spec
+        )
+            ```
         """
 
         async def slow_operation() -> str:
@@ -335,6 +334,7 @@ class TestLoopCleanup:
         This test verifies that proper cleanup patterns work.
         In production, always cancel tasks before closing the loop.
         """
+
         async def long_running() -> None:
             await asyncio.sleep(0.001)
 
@@ -400,7 +400,7 @@ class TestPipelinePatterns:
             async with asyncio.timeout(1.0):
                 result = await mock_pipeline_run()
                 assert result["status"] == "ok"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pytest.fail("Pipeline should not timeout on mock")
 
     @pytest.mark.asyncio
@@ -422,16 +422,16 @@ class TestF271BCompliance:
     @pytest.mark.asyncio
     async def test_discovery_coroutine_has_timeout(self) -> None:
         """
-        F271B: _ASYNC_DISCOVERY_SEARCH must use asyncio.wait_for(timeout=35.0).
+            F271B: _ASYNC_DISCOVERY_SEARCH must use asyncio.wait_for(timeout=35.0).
 
-        This test verifies the pattern exists in the codebase.
-        Actual implementation should be:
-        ```python
-        result = await asyncio.wait_for(
-            _async_discovery_search(...),
-            timeout=35.0
-    )
-        ```
+            This test verifies the pattern exists in the codebase.
+            Actual implementation should be:
+            ```python
+            result = await asyncio.wait_for(
+                _async_discovery_search(...),
+                timeout=35.0
+        )
+            ```
         """
 
         async def mock_discovery() -> list[str]:

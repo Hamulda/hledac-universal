@@ -29,12 +29,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import orjson
 
 from hledac.universal.utils.asyncx import _check_gathered
-from _core import aclose
 
 _logger = logging.getLogger(__name__)
 
@@ -58,9 +57,9 @@ class DuckDBVectorStore:
     """
 
     __slots__ = (
-        "_duckdb_conn",      # DuckDB connection (from DuckDBShadowStore)
-        "_executor",         # ThreadPoolExecutor for sync DuckDB calls
-        "_initialized",      # Schema initialized flag
+        "_duckdb_conn",  # DuckDB connection (from DuckDBShadowStore)
+        "_executor",  # ThreadPoolExecutor for sync DuckDB calls
+        "_initialized",  # Schema initialized flag
         "_rag_schema_initialized",
         "_entity_schema_initialized",
     )
@@ -151,7 +150,7 @@ class DuckDBVectorStore:
                     _logger.debug(
                         "[ARCH-DB-001] RAG chunk validation failed for chunk_id=%s",
                         chunk.get("chunk_id", "?"),
-    )
+                    )
                     return False  # Skip write — validation failed
 
                 # Validation passed — proceed with upsert
@@ -172,14 +171,14 @@ class DuckDBVectorStore:
                         len(embedding_list),
                         float(chunk.get("created_at", 0.0)),
                     ],
-    )
+                )
                 return True
             except Exception as e:  # noqa: BLE001 — best-effort per chunk
                 _logger.debug(
                     "[DUCKDB:VEC] upsert_rag_embeddings failed for %s: %s",
                     chunk.get("chunk_id", "?"),
                     e,
-    )
+                )
                 return False
 
         # Process chunks in parallel batches to avoid unbounded concurrency
@@ -248,9 +247,7 @@ class DuckDBVectorStore:
                     ORDER BY distance ASC
                     LIMIT ?
                 """
-                rows = await asyncio.to_thread(
-                    self._duckdb_conn.execute, sql, [query_vector, k]
-                ).fetchall()
+                rows = await asyncio.to_thread(self._duckdb_conn.execute, sql, [query_vector, k]).fetchall()
 
             return [
                 {
@@ -293,7 +290,6 @@ class DuckDBVectorStore:
         k = min(k, _MAX_ANN_K)
         fetch_k = min(fetch_k, _MAX_MMR_FETCH_K)
 
-        # Fetch candidates
         candidates = await self.vector_search_rag(query_vector, k=fetch_k)
         if not candidates:
             return []
@@ -303,9 +299,9 @@ class DuckDBVectorStore:
 
         # MMR reranking
         try:
-            from context_optimization.mmr import maximal_marginal_relevance
-
             import numpy as np
+
+            from context_optimization.mmr import maximal_marginal_relevance
 
             vectors: list[Any] = []
             ids: list[str] = []
@@ -314,9 +310,7 @@ class DuckDBVectorStore:
                     vectors.append(np.array(c["embedding"], dtype=np.float32))
                     ids.append(c["chunk_id"])
                 elif c.get("distance") is not None:
-                    vectors.append(
-                        np.array(query_vector, dtype=np.float32) * (1.0 - c["distance"])
-    )
+                    vectors.append(np.array(query_vector, dtype=np.float32) * (1.0 - c["distance"]))
                     ids.append(c["chunk_id"])
 
             if not vectors:
@@ -325,9 +319,7 @@ class DuckDBVectorStore:
             matrix = np.vstack(vectors)
             query_vec = np.array(query_vector, dtype=np.float32)
 
-            mmr_indices = maximal_marginal_relevance(
-                query_vec, matrix, k=k, lambda_mult=lambda_mult
-    )
+            mmr_indices = maximal_marginal_relevance(query_vec, matrix, k=k, lambda_mult=lambda_mult)
 
             return [candidates[i] for i in mmr_indices if i < len(candidates)]
 
@@ -379,7 +371,7 @@ class DuckDBVectorStore:
                     _logger.debug(
                         "[ARCH-DB-001] Entity embedding validation failed for entity_id=%s",
                         entity.get("entity_id", "?"),
-    )
+                    )
                     return False  # Skip write — validation failed
 
                 # Validation passed — proceed with upsert
@@ -400,14 +392,14 @@ class DuckDBVectorStore:
                         len(embedding_list),
                         float(entity.get("updated_at", 0.0)),
                     ],
-    )
+                )
                 return True
             except Exception as e:  # noqa: BLE001
                 _logger.debug(
                     "[DUCKDB:VEC] upsert_entity_embeddings failed for %s: %s",
                     entity.get("entity_id", "?"),
                     e,
-    )
+                )
                 return False
 
         # Process entities in parallel batches to avoid unbounded concurrency
@@ -476,9 +468,7 @@ class DuckDBVectorStore:
                     ORDER BY distance ASC
                     LIMIT ?
                 """
-                rows = await asyncio.to_thread(
-                    self._duckdb_conn.execute, sql, [query_vector, k]
-                ).fetchall()
+                rows = await asyncio.to_thread(self._duckdb_conn.execute, sql, [query_vector, k]).fetchall()
 
             return [
                 {

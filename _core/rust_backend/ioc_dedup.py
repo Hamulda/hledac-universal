@@ -1,9 +1,6 @@
 # ioc_dedup.py — IOC deduplication domain
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
-
-
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions

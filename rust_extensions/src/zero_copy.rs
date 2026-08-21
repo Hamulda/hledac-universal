@@ -38,10 +38,6 @@ use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NE
 // zero_copy parallel decisions with pool sizing in mixed_pool(n).
 use crate::adaptive_scheduler;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MODERN-18 FIX: True Zero-Copy Buffer Extraction
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// Result of buffer extraction for entropy computation.
 ///
 /// MODERN-18: This function provides safe buffer access without panicking:
@@ -82,20 +78,12 @@ fn extract_buffer_bytes(input: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     input.extract::<Vec<u8>>()
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 /// Hard cap for batch sizes — prevents OOM on pathological inputs.
 /// M1 8GB: 1000 texts × 1MB max = 1GB worst-case, we cap at 10k items.
 pub const ZERO_COPY_BATCH_MAX_ITEMS: usize = 10_000;
 
 /// Hard cap for total byte size — prevents OOM from few huge texts.
 pub const ZERO_COPY_BATCH_MAX_BYTES: usize = 100_000_000; // 100 MB
-
-// ---------------------------------------------------------------------------
-// Zero-Copy Iterators
-// ---------------------------------------------------------------------------
 
 /// Zero-copy borrowed iterator over a Python list of strings.
 ///
@@ -155,10 +143,6 @@ impl<'py> ExactSizeIterator for PyStrListIter<'py> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Batch Validation (OOM prevention)
-// ---------------------------------------------------------------------------
-
 /// Validate batch size against hard limits for OOM prevention.
 /// Uses 1% sampling for byte size estimation (performance safety).
 ///
@@ -205,10 +189,6 @@ pub(crate) fn validate_batch<'py>(items: &Bound<'py, PyList>, _py: Python<'py>) 
     Ok(n)
 }
 
-// ---------------------------------------------------------------------------
-// Zero-Copy Batch Processors
-// ---------------------------------------------------------------------------
-
 /// Trait for zero-copy batch operations.
 /// Implementors define `process_one` which receives borrowed Python strings
 /// and writes results directly to a Python list.
@@ -246,10 +226,6 @@ pub trait ZeroCopyBatch: Send + Sync {
         Ok(results.len())
     }
 }
-
-// ---------------------------------------------------------------------------
-// PyBuffer-based batch processing (true zero-copy)
-// ---------------------------------------------------------------------------
 
 /// Zero-copy entropy computation from raw bytes, buffer-backed objects, or list of strings.
 /// GIL is held across the entire operation — PyO3 access is safe.
@@ -597,10 +573,6 @@ pub fn batch_ioc_extract_into<'py>(
     Ok(n)
 }
 
-// ---------------------------------------------------------------------------
-// PyBytes return wrappers (zero-copy output)
-// ---------------------------------------------------------------------------
-
 /// Compute SHA256 hash of input bytes and return as Py<PyBytes>.
 /// Zero-copy output: returns pre-allocated PyBytes without intermediate Vec<u8>.
 ///
@@ -682,10 +654,6 @@ pub fn blake2b_128_buffer<'py>(
     Ok(PyBytes::new(py, &result))
 }
 
-// ---------------------------------------------------------------------------
-// Module Registration
-// ---------------------------------------------------------------------------
-
 /// Register zero-copy batch functions with the Python module.
 ///
 /// # Arguments
@@ -711,10 +679,6 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(blake2b_128_buffer))?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

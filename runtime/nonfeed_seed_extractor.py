@@ -31,21 +31,108 @@ Publisher domains (feed aggregators — excluded as seeds unless real indicators
     welivesecurity.com, sans.edu, darkreading.com, zdnet.com,
     theregister.com, arstechnica.com, securityweek.com
 """
+
 import re
 from collections.abc import AsyncIterator
 
-import msgspec
 from compat.msgspec_gc_compat import Struct
-from _core import aclose
-__all__ = ['NonfeedSeed', 'SeedQuality', 'classify_seed_quality', 'extract_nonfeed_seeds_from_text', 'extract_nonfeed_seeds_from_findings', 'compute_lane_unlocks', 'PUBLISHER_DOMAINS', 'extract_nonfeed_seeds_from_stream', 'extract_nonfeed_seeds_from_file']
-PUBLISHER_DOMAINS: frozenset[str] = frozenset(['krebsonsecurity.com', 'thehackernews.com', 'bleepingcomputer.com', 'welivesecurity.com', 'sans.edu', 'darkreading.com', 'zdnet.com', 'theregister.com', 'arstechnica.com', 'securityweek.com', 'infoworld.com', 'threatpost.com', 'darknet.com.au', 'journalofcloudsecurity.com'])
-'Publisher/aggregator domains filtered from seed extraction.'
-_GENERIC_DROP_DOMAINS: frozenset[str] = frozenset(['example.com', 'example.org', 'example.net', 'example.edu', 'localhost', 'test.com', 'testing.com', 'invalid.com'])
-'Generic infra / test domains — always drop.'
-_WEAK_DOMAINS: frozenset[str] = frozenset(['mozilla.org', 'google.com', 'cloudflare.com', 'github.com', 'microsoft.com', 'apple.com', 'amazon.com', 'facebook.com', 'twitter.com', 'linkedin.com', 'instagram.com', 'youtube.com', 'reddit.com', 'dropbox.com', 'zoom.us', 'office.com', 'live.com', 'msn.com', 'aol.com', 'yahoo.com'])
-'Major platform / publisher domains — weak unless explicit IOC context.'
-_RANSOMWARE_KEYWORDS: frozenset[str] = frozenset(['ransomware', 'lockbit', 'conti', 'revil', 'clop', 'alphv', 'blackcat', 'hive', 'darkrace', 'vice society', 'PLAY', 'mount', 'babuk', 'avaddon', 'phobos', 'dharma', 'cem', 'mallox', 'stopdoj', 'doesp', ' Lucifer', 'malware', 'breach', 'leak', 'stolen', 'exposed', 'onion', 'darkweb', 'panel', 'victim', 'payment'])
-'Context keywords that boost weak domains to keep.'
+
+__all__ = [
+    "NonfeedSeed",
+    "SeedQuality",
+    "classify_seed_quality",
+    "extract_nonfeed_seeds_from_text",
+    "extract_nonfeed_seeds_from_findings",
+    "compute_lane_unlocks",
+    "PUBLISHER_DOMAINS",
+    "extract_nonfeed_seeds_from_stream",
+    "extract_nonfeed_seeds_from_file",
+]
+PUBLISHER_DOMAINS: frozenset[str] = frozenset(
+    [
+        "krebsonsecurity.com",
+        "thehackernews.com",
+        "bleepingcomputer.com",
+        "welivesecurity.com",
+        "sans.edu",
+        "darkreading.com",
+        "zdnet.com",
+        "theregister.com",
+        "arstechnica.com",
+        "securityweek.com",
+        "infoworld.com",
+        "threatpost.com",
+        "darknet.com.au",
+        "journalofcloudsecurity.com",
+    ]
+)
+"Publisher/aggregator domains filtered from seed extraction."
+_GENERIC_DROP_DOMAINS: frozenset[str] = frozenset(
+    ["example.com", "example.org", "example.net", "example.edu", "localhost", "test.com", "testing.com", "invalid.com"]
+)
+"Generic infra / test domains — always drop."
+_WEAK_DOMAINS: frozenset[str] = frozenset(
+    [
+        "mozilla.org",
+        "google.com",
+        "cloudflare.com",
+        "github.com",
+        "microsoft.com",
+        "apple.com",
+        "amazon.com",
+        "facebook.com",
+        "twitter.com",
+        "linkedin.com",
+        "instagram.com",
+        "youtube.com",
+        "reddit.com",
+        "dropbox.com",
+        "zoom.us",
+        "office.com",
+        "live.com",
+        "msn.com",
+        "aol.com",
+        "yahoo.com",
+    ]
+)
+"Major platform / publisher domains — weak unless explicit IOC context."
+_RANSOMWARE_KEYWORDS: frozenset[str] = frozenset(
+    [
+        "ransomware",
+        "lockbit",
+        "conti",
+        "revil",
+        "clop",
+        "alphv",
+        "blackcat",
+        "hive",
+        "darkrace",
+        "vice society",
+        "PLAY",
+        "mount",
+        "babuk",
+        "avaddon",
+        "phobos",
+        "dharma",
+        "cem",
+        "mallox",
+        "stopdoj",
+        "doesp",
+        " Lucifer",
+        "malware",
+        "breach",
+        "leak",
+        "stolen",
+        "exposed",
+        "onion",
+        "darkweb",
+        "panel",
+        "victim",
+        "payment",
+    ]
+)
+"Context keywords that boost weak domains to keep."
+
 
 class SeedQuality(Struct, frozen=True):
     """
@@ -56,11 +143,13 @@ class SeedQuality(Struct, frozen=True):
         reason:    Human-readable reason
         score:      Quality score [0.0, 1.0]
     """
+
     decision: str
     reason: str
     score: float
 
-def classify_seed_quality(seed: NonfeedSeed, *, query: str='', context: str='') -> SeedQuality:
+
+def classify_seed_quality(seed: NonfeedSeed, *, query: str = "", context: str = "") -> SeedQuality:
     """
     Sprint F223B: Classify seed quality — drop generic infra, weaken
     major platforms, keep ransomware-relevant IOCs.
@@ -73,38 +162,39 @@ def classify_seed_quality(seed: NonfeedSeed, *, query: str='', context: str='') 
     Returns:
         SeedQuality with decision, reason, score.
     """
-    combined = f'{query} {context}'.lower()
+    combined = f"{query} {context}".lower()
     if seed.value.lower() in _GENERIC_DROP_DOMAINS:
-        return SeedQuality(decision='drop', reason='generic_or_test_domain', score=0.0)
+        return SeedQuality(decision="drop", reason="generic_or_test_domain", score=0.0)
     if _is_publisher_domain(seed.value):
-        has_ioc_context = any((kw in combined for kw in _RANSOMWARE_KEYWORDS))
+        has_ioc_context = any(kw in combined for kw in _RANSOMWARE_KEYWORDS)
         if not has_ioc_context:
-            return SeedQuality(decision='drop', reason='publisher_domain_no_ioc_context', score=0.1)
-        return SeedQuality(decision='keep', reason='publisher_domain_explicit_ioc_context', score=0.7)
+            return SeedQuality(decision="drop", reason="publisher_domain_no_ioc_context", score=0.1)
+        return SeedQuality(decision="keep", reason="publisher_domain_explicit_ioc_context", score=0.7)
     lower_val = seed.value.lower()
-    if not lower_val.endswith('.onion'):
-        parts = lower_val.split('.')
+    if not lower_val.endswith(".onion"):
+        parts = lower_val.split(".")
         if len(parts) == 2:
             base = parts[0]
-            if len(base) <= 2 or base in ('www', 'ftp', 'mail', 'ns1', 'ns2'):
-                return SeedQuality(decision='drop', reason='bare_or_invalid_tld', score=0.0)
-    parts = lower_val.split('.')
-    is_weak = any(('.'.join(parts[i:]) in _WEAK_DOMAINS for i, _ in enumerate(parts)))
+            if len(base) <= 2 or base in ("www", "ftp", "mail", "ns1", "ns2"):
+                return SeedQuality(decision="drop", reason="bare_or_invalid_tld", score=0.0)
+    parts = lower_val.split(".")
+    is_weak = any((".".join(parts[i:]) in _WEAK_DOMAINS for i, _ in enumerate(parts)))
     if is_weak:
-        has_ioc_context = any((kw in combined for kw in _RANSOMWARE_KEYWORDS))
+        has_ioc_context = any(kw in combined for kw in _RANSOMWARE_KEYWORDS)
         if has_ioc_context:
-            return SeedQuality(decision='keep', reason='weak_domain_explicit_ransomware_context', score=0.75)
-        return SeedQuality(decision='weak', reason='major_platform_domain', score=0.3)
-    if seed.kind in ('hash', 'sha256', 'sha1', 'md5', 'ip', 'cve', 'email'):
-        return SeedQuality(decision='keep', reason=f'ioc_{seed.kind}_preserved', score=0.9)
-    if seed.kind == 'url':
+            return SeedQuality(decision="keep", reason="weak_domain_explicit_ransomware_context", score=0.75)
+        return SeedQuality(decision="weak", reason="major_platform_domain", score=0.3)
+    if seed.kind in ("hash", "sha256", "sha1", "md5", "ip", "cve", "email"):
+        return SeedQuality(decision="keep", reason=f"ioc_{seed.kind}_preserved", score=0.9)
+    if seed.kind == "url":
         lower_url = seed.value.lower()
-        if any((kw in lower_url for kw in ('onion', 'panel', 'leak', 'stolen', 'dump'))):
-            return SeedQuality(decision='keep', reason='url_contains_onion_or_illegal_path', score=0.9)
+        if any(kw in lower_url for kw in ("onion", "panel", "leak", "stolen", "dump")):
+            return SeedQuality(decision="keep", reason="url_contains_onion_or_illegal_path", score=0.9)
     lower_value = seed.value.lower()
-    if any((kw in lower_value for kw in _RANSOMWARE_KEYWORDS)):
-        return SeedQuality(decision='keep', reason='domain_contains_ransomware_keyword', score=0.85)
-    return SeedQuality(decision='keep', reason='standard_ioc_preserved', score=0.65)
+    if any(kw in lower_value for kw in _RANSOMWARE_KEYWORDS):
+        return SeedQuality(decision="keep", reason="domain_contains_ransomware_keyword", score=0.85)
+    return SeedQuality(decision="keep", reason="standard_ioc_preserved", score=0.65)
+
 
 class NonfeedSeed(Struct, frozen=True):
     """
@@ -120,6 +210,7 @@ class NonfeedSeed(Struct, frozen=True):
         confidence:  Extraction confidence [0.0, 1.0]
         reason:      Why this was extracted
     """
+
     value: str
     kind: str
     source: str
@@ -129,19 +220,21 @@ class NonfeedSeed(Struct, frozen=True):
     # NOTE: Former __post_init__ kind validation removed — all 12 call sites
     # in this module already pass literal valid kind strings. External callers
     # should validate via _VALID_KINDS frozenset.
-_IP_RE = re.compile('\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b')
-_HASH_RE = re.compile('\\b([a-fA-F0-9]{32,64})\\b')
-_CVE_RE = re.compile('\\b(CVE-\\d{4}-\\d{4,})\\b', re.IGNORECASE)
-_DOMAIN_RE = re.compile('(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}[a-zA-Z0-9/_\\-]*')
-_URL_RE = re.compile('https?://[^\\s\\"\'<>]+')
-_EMAIL_RE = re.compile('\\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b')
-_OBFUSCATED_RE = re.compile('\\[(\\.)\\]|\\((\\.)\\)')
+
+
+_IP_RE = re.compile("\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b")
+_HASH_RE = re.compile("\\b([a-fA-F0-9]{32,64})\\b")
+_CVE_RE = re.compile("\\b(CVE-\\d{4}-\\d{4,})\\b", re.IGNORECASE)
+_DOMAIN_RE = re.compile("(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}[a-zA-Z0-9/_\\-]*")
+_URL_RE = re.compile("https?://[^\\s\\\"'<>]+")
+_EMAIL_RE = re.compile("\\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\\b")
+_OBFUSCATED_RE = re.compile("\\[(\\.)\\]|\\((\\.)\\)")
+
 
 def _is_publisher_domain(domain: str) -> bool:
     """Return True if domain is a known publisher/aggregator."""
     return domain.lower() in PUBLISHER_DOMAINS
 
-# ─── Generic IOC extractor factory (DRY: replaces 4× identical patterns) ────────
 
 def _make_ioc_extractor(
     pattern: re.Pattern[str],
@@ -154,6 +247,7 @@ def _make_ioc_extractor(
 
     Eliminates 4× identical extractor patterns (urls, emails, ips, cves).
     """
+
     def extractor(cleaned: str, seen: dict, max_seeds: int) -> None:
         if len(seen) >= max_seeds:
             return
@@ -164,30 +258,45 @@ def _make_ioc_extractor(
                 seen[key] = NonfeedSeed(
                     value=raw,
                     kind=kind,
-                    source='body',
+                    source="body",
                     confidence=confidence,
-                    reason=f'{reason_prefix}_in_body',
-    )
+                    reason=f"{reason_prefix}_in_body",
+                )
             if len(seen) >= max_seeds:
                 return
+
     extractor.__doc__ = f"Extract {kind.upper()} IOCs. Early-return when max_seeds reached."
     return extractor
 
+
 # Concrete extractors (generated from factory)
 _extract_urls = _make_ioc_extractor(
-    pattern=_URL_RE, kind='url', confidence=0.9, reason_prefix='url',
-    )
+    pattern=_URL_RE,
+    kind="url",
+    confidence=0.9,
+    reason_prefix="url",
+)
 _extract_emails = _make_ioc_extractor(
-    pattern=_EMAIL_RE, kind='email', confidence=0.85, reason_prefix='email',
+    pattern=_EMAIL_RE,
+    kind="email",
+    confidence=0.85,
+    reason_prefix="email",
     extract_value=lambda m, _: m.group(1).lower(),
-    )
+)
 _extract_ips = _make_ioc_extractor(
-    pattern=_IP_RE, kind='ip', confidence=0.95, reason_prefix='ip',
-    )
+    pattern=_IP_RE,
+    kind="ip",
+    confidence=0.95,
+    reason_prefix="ip",
+)
 _extract_cves = _make_ioc_extractor(
-    pattern=_CVE_RE, kind='cve', confidence=0.9, reason_prefix='cve',
+    pattern=_CVE_RE,
+    kind="cve",
+    confidence=0.9,
+    reason_prefix="cve",
     extract_value=lambda m, _: m.group(1).upper(),
-    )
+)
+
 
 def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
     """Extract hashes (MD5/SHA1/SHA256). Early-return when max_seeds reached."""
@@ -196,18 +305,21 @@ def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
     for m in _HASH_RE.finditer(cleaned):
         raw = m.group(1).lower()
         if len(raw) == 32:
-            kind_str = 'md5'
+            kind_str = "md5"
         elif len(raw) == 40:
-            kind_str = 'sha1'
+            kind_str = "sha1"
         elif len(raw) == 64:
-            kind_str = 'sha256'
+            kind_str = "sha256"
         else:
-            kind_str = 'unknown'
-        key = ('hash', raw)
+            kind_str = "unknown"
+        key = ("hash", raw)
         if key not in seen:
-            seen[key] = NonfeedSeed(value=raw, kind='hash', source='body', confidence=0.8, reason=f'hash_in_body_{kind_str}')
+            seen[key] = NonfeedSeed(
+                value=raw, kind="hash", source="body", confidence=0.8, reason=f"hash_in_body_{kind_str}"
+            )
         if len(seen) >= max_seeds:
             return
+
 
 def _extract_domains(cleaned: str, seen: dict, max_seeds: int) -> None:
     """Extract domains (generic fallback). Early-return when max_seeds reached."""
@@ -215,17 +327,18 @@ def _extract_domains(cleaned: str, seen: dict, max_seeds: int) -> None:
         return
     for m in _DOMAIN_RE.finditer(cleaned):
         raw = m.group(0).lower()
-        if raw.endswith(('.gov.', '.edu.', '.mil.', '.onion')):
+        if raw.endswith((".gov.", ".edu.", ".mil.", ".onion")):
             continue
         if _is_publisher_domain(raw):
             continue
-        key = ('domain', raw)
+        key = ("domain", raw)
         if key not in seen:
-            seen[key] = NonfeedSeed(value=raw, kind='domain', source='body', confidence=0.7, reason='domain_in_body')
+            seen[key] = NonfeedSeed(value=raw, kind="domain", source="body", confidence=0.7, reason="domain_in_body")
         if len(seen) >= max_seeds:
             return
 
-def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int=50) -> list[NonfeedSeed]:
+
+def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int = 50) -> list[NonfeedSeed]:
     """
     Sprint F222D: Extract IOC seeds from arbitrary text.
 
@@ -248,7 +361,7 @@ def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int=50) -> list[Non
     """
     if not text or not isinstance(text, str):
         return []
-    cleaned = _OBFUSCATED_RE.sub('.', text)
+    cleaned = _OBFUSCATED_RE.sub(".", text)
     seen: dict[tuple[str, str], NonfeedSeed] = {}
     _extract_urls(cleaned, seen, max_seeds)
     _extract_emails(cleaned, seen, max_seeds)
@@ -258,7 +371,8 @@ def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int=50) -> list[Non
     _extract_domains(cleaned, seen, max_seeds)
     return list(seen.values())
 
-def extract_nonfeed_seeds_from_findings(findings: list[dict], *, max_seeds: int=100) -> list[NonfeedSeed]:
+
+def extract_nonfeed_seeds_from_findings(findings: list[dict], *, max_seeds: int = 100) -> list[NonfeedSeed]:
     """
     Sprint F222D: Extract IOC seeds from a list of finding dicts.
 
@@ -285,30 +399,41 @@ def extract_nonfeed_seeds_from_findings(findings: list[dict], *, max_seeds: int=
             continue
         if len(seen) >= max_seeds:
             break
-        payload = finding.get('payload_text', '') or ''
+        payload = finding.get("payload_text", "") or ""
         if isinstance(payload, str) and payload:
             seeds = extract_nonfeed_seeds_from_text(payload, max_seeds=max_seeds)
             for s in seeds:
                 key = (s.kind, s.value)
                 if key not in seen:
-                    seen[key] = NonfeedSeed(value=s.value, kind=s.kind, source='body', confidence=s.confidence, reason=s.reason)
-        title = finding.get('title', '') or ''
+                    seen[key] = NonfeedSeed(
+                        value=s.value, kind=s.kind, source="body", confidence=s.confidence, reason=s.reason
+                    )
+        title = finding.get("title", "") or ""
         if isinstance(title, str) and title:
             seeds = extract_nonfeed_seeds_from_text(title, max_seeds=max_seeds)
             for s in seeds:
                 key = (s.kind, s.value)
                 if key not in seen:
-                    seen[key] = NonfeedSeed(value=s.value, kind=s.kind, source='title', confidence=min(s.confidence + 0.05, 1.0), reason='domain_in_title' if s.kind == 'domain' else s.reason)
-        query = finding.get('query', '') or ''
+                    seen[key] = NonfeedSeed(
+                        value=s.value,
+                        kind=s.kind,
+                        source="title",
+                        confidence=min(s.confidence + 0.05, 1.0),
+                        reason="domain_in_title" if s.kind == "domain" else s.reason,
+                    )
+        query = finding.get("query", "") or ""
         if isinstance(query, str) and query:
             seeds = extract_nonfeed_seeds_from_text(query, max_seeds=max_seeds)
             for s in seeds:
                 key = (s.kind, s.value)
                 if key not in seen:
-                    seen[key] = NonfeedSeed(value=s.value, kind=s.kind, source='query', confidence=0.85, reason=f'ioc_in_query_{s.kind}')
+                    seen[key] = NonfeedSeed(
+                        value=s.value, kind=s.kind, source="query", confidence=0.85, reason=f"ioc_in_query_{s.kind}"
+                    )
         total += 1
     result = list(seen.values())
     return result[:max_seeds]
+
 
 def compute_lane_unlocks(seeds: list[NonfeedSeed]) -> dict[str, list[str]]:
     """
@@ -323,18 +448,22 @@ def compute_lane_unlocks(seeds: list[NonfeedSeed]) -> dict[str, list[str]]:
             "graph":       [hash seeds],
         }
     """
-    domains = [s for s in seeds if s.kind == 'domain']
-    ips = [s for s in seeds if s.kind in ('ip', 'ipv4')]
-    urls = [s for s in seeds if s.kind == 'url']
-    hashes = [s for s in seeds if s.kind == 'hash']
-    cves = [s for s in seeds if s.kind == 'cve']
-    return {'ct': [s.value for s in domains], 'passive_dns': [s.value for s in domains + ips], 'wayback': [s.value for s in domains + urls], 'doh': [s.value for s in domains], 'graph': [s.value for s in hashes], 'cve': [s.value for s in cves]}
+    domains = [s for s in seeds if s.kind == "domain"]
+    ips = [s for s in seeds if s.kind in ("ip", "ipv4")]
+    urls = [s for s in seeds if s.kind == "url"]
+    hashes = [s for s in seeds if s.kind == "hash"]
+    cves = [s for s in seeds if s.kind == "cve"]
+    return {
+        "ct": [s.value for s in domains],
+        "passive_dns": [s.value for s in domains + ips],
+        "wayback": [s.value for s in domains + urls],
+        "doh": [s.value for s in domains],
+        "graph": [s.value for s in hashes],
+        "cve": [s.value for s in cves],
+    }
 
 
-# HEIST-01: Streaming IOC extraction via Rust StreamingIocScanner
-# ---------------------------------------------------------------------------
-
-def _ioc_hit_to_seed(hit: dict, source: str = 'stream') -> NonfeedSeed | None:
+def _ioc_hit_to_seed(hit: dict, source: str = "stream") -> NonfeedSeed | None:
     """Convert a streaming scanner hit to a NonfeedSeed.
 
     Args:
@@ -344,38 +473,38 @@ def _ioc_hit_to_seed(hit: dict, source: str = 'stream') -> NonfeedSeed | None:
     Returns:
         NonfeedSeed if the pattern is a recognized IOC kind, None otherwise.
     """
-    pattern = hit.get('pattern', '')
-    value = hit.get('value', '')
+    pattern = hit.get("pattern", "")
+    value = hit.get("value", "")
 
     if not value:
         return None
 
     # Map pattern to IOC kind
-    if pattern in ('127.0.0.1', '0.0.0.0', '255.255.255.255', '192.168.', '10.0.', '172.16.'):
-        kind = 'ip'
+    if pattern in ("127.0.0.1", "0.0.0.0", "255.255.255.255", "192.168.", "10.0.", "172.16."):
+        kind = "ip"
         confidence = 0.95
-    elif '@' in value and '.' in value:
-        kind = 'email'
+    elif "@" in value and "." in value:
+        kind = "email"
         confidence = 0.85
-    elif value.startswith('CVE-') or pattern in ('CVE-', 'CVE-202', 'CVE-201'):
-        kind = 'cve'
+    elif value.startswith("CVE-") or pattern in ("CVE-", "CVE-202", "CVE-201"):
+        kind = "cve"
         confidence = 0.9
-    elif len(value) >= 32 and all(c in '0123456789abcdefABCDEF' for c in value):
+    elif len(value) >= 32 and all(c in "0123456789abcdefABCDEF" for c in value):
         # Likely a hash
-        kind = 'hash'
+        kind = "hash"
         confidence = 0.8
-    elif value.startswith('http://') or value.startswith('https://') or '/' in value:
-        kind = 'url'
+    elif value.startswith("http://") or value.startswith("https://") or "/" in value:
+        kind = "url"
         confidence = 0.9
-    elif '.' in value and not value.startswith('.'):
-        kind = 'domain'
+    elif "." in value and not value.startswith("."):
+        kind = "domain"
         confidence = 0.7
     else:
-        kind = 'unknown'
+        kind = "unknown"
         confidence = 0.5
 
     # Filter publisher domains
-    if kind == 'domain' and value.lower() in PUBLISHER_DOMAINS:
+    if kind == "domain" and value.lower() in PUBLISHER_DOMAINS:
         return None
 
     return NonfeedSeed(
@@ -383,7 +512,7 @@ def _ioc_hit_to_seed(hit: dict, source: str = 'stream') -> NonfeedSeed | None:
         kind=kind,
         source=source,
         confidence=confidence,
-        reason=f'{kind}_in_{source}',
+        reason=f"{kind}_in_{source}",
     )
 
 
@@ -414,7 +543,7 @@ async def extract_nonfeed_seeds_from_stream(
         """Callback for each IOC found by scanner."""
         if len(seen) >= max_seeds:
             return
-        seed = _ioc_hit_to_seed(hit, source='stream')
+        seed = _ioc_hit_to_seed(hit, source="stream")
         if seed is not None:
             key = (seed.kind, seed.value)
             if key not in seen:
@@ -453,7 +582,7 @@ async def extract_nonfeed_seeds_from_file(
         """Callback for each IOC found by scanner."""
         if len(seen) >= max_seeds:
             return
-        seed = _ioc_hit_to_seed(hit, source='file')
+        seed = _ioc_hit_to_seed(hit, source="file")
         if seed is not None:
             key = (seed.kind, seed.value)
             if key not in seen:

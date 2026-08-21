@@ -37,7 +37,7 @@ import threading
 import time as _time_module
 from collections.abc import Callable
 from typing import Any
-from _core._util import aclose
+
 from _core.lock_registry import LockCategory, register_lock
 
 # Deferred import — psutil is a hard dependency of the M1 8GB stack but we
@@ -51,9 +51,6 @@ except ImportError:  # noqa: BLE001
     pass  # _psutil stays None, fail-safe
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# 1-second TTL cache — shared with resource_governor._psutil_cache
-# ----------------------------------------------------------------------------------------------------------------------
 _psutil_cache: dict[str, tuple[Any, float]] = {}  # key → (result, timestamp)
 _CACHE_TTL_S: float = 1.0
 
@@ -62,11 +59,6 @@ _CACHE_TTL_S: float = 1.0
 def _psutil_meta_lock() -> threading.Lock:
     """Module-level lock for psutil cache dict operations."""
     return threading.Lock()
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Readers — MUST run in a thread (blocking syscalls)
-# ----------------------------------------------------------------------------------------------------------------------
 
 
 def _read_virtual_memory_sync() -> Any:
@@ -81,11 +73,6 @@ def _read_swap_memory_sync() -> Any:
     if _psutil is None:
         return None
     return _psutil.swap_memory()
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Public API — cached reads
-# ----------------------------------------------------------------------------------------------------------------------
 
 
 def get_virtual_memory() -> Any:

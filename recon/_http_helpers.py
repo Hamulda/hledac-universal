@@ -16,9 +16,8 @@ up — callers already handle session-acquisition failure in their existing
 ``except Exception: return None`` envelopes, so no extra guards are needed here.
 """
 
-
 import httpx
-from _core import aclose
+
 
 async def get_intelligence_session() -> httpx.AsyncClient:
     """

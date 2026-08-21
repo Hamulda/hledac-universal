@@ -39,19 +39,15 @@ USAGE
 -----
 from hledac.universal.utils.aho_extractor import get_suspicious_keywords_automaton, aho_scan_text
 
-from operator import attrgetter, itemgetter
+from operator import itemgetter
 # Cached automaton
 automaton = get_suspicious_keywords_automaton()
 
 # Scan text
 matches = aho_scan_text(automaton, "This document is classified and secret")
-# Returns normalized list
 """
 
-
-
 from typing import Any
-from _core import aclose
 
 __all__ = [
     "get_suspicious_keywords_automaton",
@@ -94,9 +90,6 @@ def scan_suspicious_keywords_list(text: str) -> list[str]:
     text_lower = text.lower()
     return [kw for kw in PILOT_PATTERNS if kw in text_lower]
 
-# ------------------------------------------------------------------
-# Pilot pattern set (from document_intelligence.DocumentIntelligence)
-# ------------------------------------------------------------------
 
 PILOT_PATTERNS: list[str] = [
     "confidential",
@@ -110,10 +103,6 @@ PILOT_PATTERNS: list[str] = [
     "sensitive",
 ]
 
-# ------------------------------------------------------------------
-# Lazy import guard
-# ------------------------------------------------------------------
-
 _AhoCorasickModule: Any | None = None
 
 
@@ -126,10 +115,6 @@ def _get_ahocorasick() -> Any:
         _AhoCorasickModule = ahocorasick
     return _AhoCorasickModule
 
-
-# ------------------------------------------------------------------
-# Cached automaton singleton
-# ------------------------------------------------------------------
 
 _automaton_cache: Any | None = None
 
@@ -152,11 +137,6 @@ def get_suspicious_keywords_automaton() -> Any:
     return _automaton_cache
 
 
-# ------------------------------------------------------------------
-# Output normalization
-# ------------------------------------------------------------------
-
-
 def normalize_aho_match(end_index: int, match_value: str) -> dict[str, Any]:
     """
     Normalize a pyahocorasick (end_index, value) pair to exclusive end.
@@ -169,11 +149,6 @@ def normalize_aho_match(end_index: int, match_value: str) -> dict[str, Any]:
     start = end_index - length + 1
     end = end_index + 1  # EXCLUSIVE
     return {"start": start, "end": end, "match": match_value}
-
-
-# ------------------------------------------------------------------
-# Aho scan
-# ------------------------------------------------------------------
 
 
 def aho_scan_text(automaton: Any, text: str) -> list[dict[str, Any]]:
@@ -191,11 +166,6 @@ def aho_scan_text(automaton: Any, text: str) -> list[dict[str, Any]]:
     for end_index, value in automaton.iter(text.lower()):
         matches.append(normalize_aho_match(end_index, value))
     return matches
-
-
-# ------------------------------------------------------------------
-# Ground truth: regex / substring scan (mirrors document_intelligence)
-# ------------------------------------------------------------------
 
 
 def regex_scan_suspicious_keywords(text: str) -> list[dict[str, Any]]:
@@ -218,11 +188,6 @@ def regex_scan_suspicious_keywords(text: str) -> list[dict[str, Any]]:
     return matches
 
 
-# ------------------------------------------------------------------
-# A/B comparison
-# ------------------------------------------------------------------
-
-
 def compare_aho_vs_regex(
     text: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
@@ -242,11 +207,6 @@ def compare_aho_vs_regex(
     are_identical = aho_set == regex_set
 
     return aho_matches, regex_matches, are_identical
-
-
-# ------------------------------------------------------------------
-# Boot isolation check (for tests)
-# ------------------------------------------------------------------
 
 
 def is_ahocorasick_loaded() -> bool:

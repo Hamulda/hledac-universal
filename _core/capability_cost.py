@@ -3,10 +3,6 @@ core.capability_cost — Per-capability memory cost registry for QoS triage.
 
 [FINAL]-019-07: Replaces hardcoded HEAVY_SIDECAR_COST_MB with a decorator-based
 
-
-
-
-
 registration system that each capability module uses to declare its memory profile.
 
 Usage in a capability module:
@@ -43,11 +39,10 @@ M1 8GB memory budget reference:
 from __future__ import annotations
 
 import threading
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 from _core.lock_registry import LockCategory, register_lock
-from operator import attrgetter, itemgetter
-import msgspec
 from compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
@@ -77,6 +72,7 @@ class CostTier(Struct, frozen=True):
     - medium:  Second candidate (Whisper, embedding)
     - light:   Last to disable (basic extraction, metadata)
     """
+
     name: str
     priority: int  # Lower = higher priority to keep
 
@@ -107,6 +103,7 @@ class CapabilityCost(Struct, frozen=True):
         rir_correlation:  rss_mb=256,  peak_mb=384
         dashboard:       rss_mb=200,  peak_mb=400
     """
+
     name: str
     rss_mb: int
     peak_mb: int
@@ -114,10 +111,7 @@ class CapabilityCost(Struct, frozen=True):
     tags: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
-        return (
-            f"CapabilityCost(name={self.name!r}, rss_mb={self.rss_mb}, "
-            f"peak_mb={self.peak_mb}, tier={self.tier!r})"
-    )
+        return f"CapabilityCost(name={self.name!r}, rss_mb={self.rss_mb}, peak_mb={self.peak_mb}, tier={self.tier!r})"
 
     @property
     def savings_mb(self) -> int:
@@ -140,6 +134,7 @@ class TriageDecision(Struct, frozen=True):
     Returned by QoSLadderController.triage() when the system needs to
     free memory by disabling capabilities.
     """
+
     # Capabilities to disable, ordered by cost-benefit ratio
     disable_order: tuple[str, ...]
     # Total memory that would be freed
@@ -155,9 +150,8 @@ class TriageDecision(Struct, frozen=True):
 
     def __repr__(self) -> str:
         return (
-            f"TriageDecision(disable={self.disable_order!r}, "
-            f"savings={self.total_savings_mb}MB, met={self.target_met})"
-    )
+            f"TriageDecision(disable={self.disable_order!r}, savings={self.total_savings_mb}MB, met={self.target_met})"
+        )
 
 
 class CapabilityCostRegistry:
@@ -315,19 +309,19 @@ def capability_cost(
         tier: "critical" | "heavy" | "medium" | "light"
         tags: Optional tags for filtering
     """
+
     def decorator(cls: type[object]) -> type[object]:
         name = cls.__name__.lower()
         register_capability_cost(name=name, rss_mb=rss_mb, peak_mb=peak_mb, tier=tier, tags=tags)
         return cls
+
     return decorator
 
-
-# ─── QoS Ladder Controller ────────────────────────────────────────────────────
 
 _DEFAULT_WINDUP_LEAD_S = 30
 # SSOT: Use UmaBudget.MISSION_PEAK_RSS_GIB instead of hardcoded 5.5 GiB
 from hledac.universal.utils.uma_budget import MISSION_PEAK_RSS_GIB
-from _core._util import aclose
+
 _DEFAULT_MISSION_PEAK_MB = MISSION_PEAK_RSS_GIB * 1024  # 5632 MB on M1 8GB (SSOT)
 
 
@@ -415,14 +409,10 @@ class QoSLadderController:
         """
         disabled_set = set(already_disabled)
 
-        # Get all registered costs
         all_costs = self._registry.get_all()
 
         # Filter: skip disabled and CRITICAL capabilities
-        candidates = [
-            cost for cost in all_costs.values()
-            if cost.name not in disabled_set and cost.tier != "critical"
-        ]
+        candidates = [cost for cost in all_costs.values() if cost.name not in disabled_set and cost.tier != "critical"]
 
         # Sort: lowest tier priority (heaviest) first, then by peak_mb descending
         candidates.sort(key=self._tier_sort_key)
@@ -430,7 +420,6 @@ class QoSLadderController:
         # Accumulate savings until target met
         disable_order: list[str] = []
         total_savings = 0
-        remaining = target_mb
 
         for cost in candidates:
             if total_savings >= target_mb:
@@ -447,7 +436,7 @@ class QoSLadderController:
             target_mb=target_mb,
             target_met=total_savings >= target_mb,
             already_disabled=already_disabled,
-    )
+        )
 
     def estimate_savings(self, capabilities: list[str]) -> int:
         """

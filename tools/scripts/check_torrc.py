@@ -17,12 +17,9 @@ Exit codes:
     2 = torrc not found / unreadable
 """
 
-
-
 import argparse
 import pathlib
 import sys
-from _core import aclose
 
 
 def find_torrc() -> str | None:
@@ -102,7 +99,9 @@ def check_hidden_service_statistics(torrc_path: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check torrc for anonymity directives", suggest_on_error=True, color=True)  # noqa: E501
+    parser = argparse.ArgumentParser(
+        description="Check torrc for anonymity directives", suggest_on_error=True, color=True
+    )  # noqa: E501
     parser.add_argument(
         "--torrc",
         dest="torrc_path",

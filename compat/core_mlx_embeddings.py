@@ -4,6 +4,7 @@ Deprecated: use ``core.mlx_embeddings`` directly.
 Moved to core/mlx_embeddings.py (F350M-R A-01).
 This stub exists only for backward compatibility during migration.
 """
+
 import warnings
 
 __all__ = [
@@ -24,18 +25,17 @@ warnings.warn(
     "This shim will be removed in a future sprint.",
     DeprecationWarning,
     stacklevel=2,
-    )
+)
 
 from hledac.universal._core.mlx_embeddings import (
-    MLXEmbeddingManager,
-    get_mlx_embedder,
-    get_embedding_manager,
-    EmbeddingTask,
     EmbeddingDimensionError,
-    assert_embedding_dimension,
-    should_normalize,
+    EmbeddingTask,
+    MLXEmbeddingManager,
     apply_task_prefix,
-    prewarm_embedding_model,
+    assert_embedding_dimension,
+    get_embedding_manager,
+    get_mlx_embedder,
     is_embedding_model_prewarmed,
-    )
-from _core import aclose
+    prewarm_embedding_model,
+    should_normalize,
+)

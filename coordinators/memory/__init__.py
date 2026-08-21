@@ -34,16 +34,15 @@ from hledac.universal.coordinators.memory._core import (
     ContextItem,
     ContextPriority,
     ResearchPhase,
-    )
+)
 
 # Managers (re-export from their modules)
 from hledac.universal.coordinators.memory.context_optimizer import (
     ContextOptimizationManager,
-    )
+)
 from hledac.universal.coordinators.memory.multi_level_cache import (
     MultiLevelContextCache,
-    )
-from _core import aclose
+)
 
 __all__ = [
     # Types (from _core.py)

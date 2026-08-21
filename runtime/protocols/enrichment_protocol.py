@@ -10,10 +10,7 @@ GHOST_INVARIANTS:
 - Bounded: evidence_log size limited
 """
 
-
-
 from typing import Any, Protocol, runtime_checkable
-from _core import aclose
 
 
 @runtime_checkable
@@ -29,14 +26,10 @@ class EnrichmentProtocol(Protocol):
         - log_evidence: record evidence for audit
     """
 
-    async def enrich_finding(
-        self, finding: Any, enrichment_types: list[str]
-    ) -> dict[str, Any]:
+    async def enrich_finding(self, finding: Any, enrichment_types: list[str]) -> dict[str, Any]:
         """Enrich finding with external data."""
         ...
 
-    async def log_evidence(
-        self, finding: Any, evidence: dict[str, Any]
-    ) -> None:
+    async def log_evidence(self, finding: Any, evidence: dict[str, Any]) -> None:
         """Log evidence for forensic audit."""
         ...

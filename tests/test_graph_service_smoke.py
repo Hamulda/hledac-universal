@@ -7,13 +7,12 @@ Run: pytest tests/test_graph_service_smoke.py -v
 import asyncio
 
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
-from _core import aclose
 
 
 class TestDuckPGQGraphPersistence:
     """Verify DuckPGQGraph persistence survives reinit."""
 
-    def test_add_entity_and_query(self):
+    def test_add_entity_and_query(self) -> None:
         """Add entity via DuckPGQGraph, query via find_connected after reinit."""
         g1 = DuckPGQGraph()
         node_id = g1.add_ioc("smoke.ip.test", "ip_address", 0.95, "smoke_test")
@@ -31,7 +30,7 @@ class TestDuckPGQGraphPersistence:
         stats = g2.stats()
         assert stats.get("nodes", 0) >= 1
 
-    def test_add_relation_and_query(self):
+    def test_add_relation_and_query(self) -> None:
         """Add relation, query via find_connected after reinit."""
         g1 = DuckPGQGraph()
         g1.add_ioc("smoke.src.test", "domain", 0.9, "smoke_rel")
@@ -44,7 +43,7 @@ class TestDuckPGQGraphPersistence:
         dst_values = [n["value"] for n in neighbors]
         assert "smoke.dst.test" in dst_values, f"Relation not persisted: dst={dst_values}"
 
-    def test_path_query_finds_path(self, session_event_loop: asyncio.AbstractEventLoop):
+    def test_path_query_finds_path(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
         g1 = DuckPGQGraph()
         g1.add_ioc("path.src.test", "domain", 0.9, "smoke_path")
@@ -55,12 +54,12 @@ class TestDuckPGQGraphPersistence:
         g2 = DuckPGQGraph()
         paths = session_event_loop.run_until_complete(
             g2.find_paths_between_iocs("path.src.test", "path.dst.test", max_hops=4)
-    )
+        )
         assert len(paths) >= 1, f"No path found between src and dst: {paths}"
         assert paths[0][0] == "path.src.test"
         assert paths[0][-1] == "path.dst.test"
 
-    def test_stats_returns_node_edge_counts(self):
+    def test_stats_returns_node_edge_counts(self) -> None:
         """stats() returns non-empty dict with nodes/edges keys."""
         g = DuckPGQGraph()
         stats = g.stats()
@@ -69,7 +68,7 @@ class TestDuckPGQGraphPersistence:
         assert stats.get("nodes", 0) >= 0
         assert stats.get("edges", 0) >= 0
 
-    def test_find_connected_batch_returns_dict_structure(self):
+    def test_find_connected_batch_returns_dict_structure(self) -> None:
         """find_connected_batch returns dict with correct structure (same-instance)."""
         g = DuckPGQGraph()
         g.add_ioc("batch.src1.test", "domain", 0.9, "smoke_batch")
@@ -80,7 +79,7 @@ class TestDuckPGQGraphPersistence:
         result = g.find_connected_batch(
             ["batch.src1.test", "batch.src2.test", "batch.none.test"],
             max_hops=2,
-    )
+        )
         assert isinstance(result, dict), f"Expected dict, got {type(result)}"
         assert "batch.src1.test" in result
         assert isinstance(result["batch.src1.test"], list)
@@ -89,13 +88,13 @@ class TestDuckPGQGraphPersistence:
         assert "batch.none.test" in result
         assert isinstance(result["batch.none.test"], list)
 
-    def test_find_connected_batch_empty_input(self):
+    def test_find_connected_batch_empty_input(self) -> None:
         """find_connected_batch with empty list returns empty dict."""
         g = DuckPGQGraph()
         result = g.find_connected_batch([], max_hops=2)
         assert result == {}
 
-    def test_find_connected_batch_exception_fallback(self):
+    def test_find_connected_batch_exception_fallback(self) -> None:
         """find_connected_batch returns {} on graph unavailable."""
         # When DuckPGQGraph is in READ-ONLY with no lock, graph is usable
         g = DuckPGQGraph()
@@ -107,7 +106,7 @@ class TestDuckPGQGraphPersistence:
 class TestGraphServicePythonSetDedup:
     """Verify GraphService Python-set dedup path (when Rust unavailable)."""
 
-    def test_upsert_ioc_adds_to_seen_set(self):
+    def test_upsert_ioc_adds_to_seen_set(self) -> None:
         """upsert_ioc adds (value, ioc_type) tuple to _seen_iocs Python set."""
         import hledac.universal.knowledge.graph_service as gs
 
@@ -123,7 +122,7 @@ class TestGraphServicePythonSetDedup:
         assert result is True, "upsert_ioc returned False"
         assert ("gs.dedup.test", "domain") in svc._seen_iocs
 
-    def test_find_entity_history_returns_list(self):
+    def test_find_entity_history_returns_list(self) -> None:
         """find_entity_history returns list (empty or populated)."""
         import hledac.universal.knowledge.graph_service as gs
 

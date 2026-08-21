@@ -164,7 +164,7 @@ _LOADED: set = set()
 class _LazyForceLoadFinder:
     """Meta-path finder: force-loads from HUB_DIR on first import, then steps aside."""
 
-    def find_spec(self, fullname, path=None, target=None):
+    def find_spec(self, fullname, path=None, target=None) -> None:
         if not any(fullname == p or fullname.startswith(p + ".") for p in _TRACKED_PREFIXES):
             return None
         if fullname in _LOADED:
@@ -248,8 +248,8 @@ def _ensure_r0_artifacts() -> None:
             check=False,
             capture_output=True,
             timeout=60,
-    )
-    except subprocess.TimeoutExpired as err:  # noqa: BLE001
+        )
+    except subprocess.TimeoutExpired:  # noqa: BLE001
         # Fail-safe: neblokuj testy kvůli autoprobe
         pass
 
@@ -265,7 +265,6 @@ _ensure_r0_artifacts()
 
 import asyncio  # noqa: E402
 
-
 # ── TEST-01: Global Timeout Enforcement ─────────────────────────────────────
 # Problem: 15,710 tests, only 2 with @pytest.mark.timeout. CI/CD pipelines can
 # hang on: network timeouts, deadlocks, infinite loops, resource exhaustion.
@@ -275,7 +274,6 @@ import asyncio  # noqa: E402
 # Env var HLEDAC_TEST_TIMEOUT overrides global default (seconds).
 import os
 import platform
-import threading
 
 import pytest
 
@@ -329,29 +327,30 @@ _HLEDAC_PROFILES = {
 
 def _detect_hardware_profile() -> str:
     """Auto-detect hardware profile based on available resources.
-    
+
     Detection logic:
     - CI environment (CI env var set) → ci
     - M1 Mac with 8GB RAM → m1-8gb
     - M1 Mac with 16GB+ RAM → m1-16gb
     - Linux with GPU/nvidia → check for GPU profile
     - Otherwise → local
-    
+
     Note: Falls back to m1-8gb on arm64 if psutil unavailable,
     but will not mis-detect non-M1 arm64 (e.g., AWS Graviton).
     """
     # Check for explicit CI environment first
     if os.environ.get("CI") == "true":
         return "ci"
-    
+
     # Check for Apple Silicon (M1/M2/M3)
     is_darwin = platform.system() == "Darwin"
     is_arm64 = platform.machine() == "arm64"
-    
+
     if is_darwin and is_arm64:
         # Try to detect memory size using psutil
         try:
             import psutil
+
             mem_gb = psutil.virtual_memory().total / (1024**3)
             if mem_gb <= 10:  # 8GB or less
                 return "m1-8gb"
@@ -361,6 +360,7 @@ def _detect_hardware_profile() -> str:
             # psutil unavailable - use sysctl as fallback on macOS
             try:
                 import subprocess
+
                 result = subprocess.run(
                     ["sysctl", "-n", "hw.memsize"],
                     capture_output=True,
@@ -376,10 +376,10 @@ def _detect_hardware_profile() -> str:
                         return "m1-16gb"
             except Exception:
                 pass
-        
+
         # Fallback: assume M1 8GB (safe default for Apple Silicon)
         return "m1-8gb"
-    
+
     # Non-Apple Silicon: use local profile
     return "local"
 
@@ -387,7 +387,7 @@ def _detect_hardware_profile() -> str:
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Add custom pytest options for hardware-aware test execution (ROADMAP-008)."""
     group = parser.getgroup("hledac", "Hledac test configuration")
-    
+
     group.addoption(
         "--hledac-profile",
         action="store",
@@ -401,7 +401,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Override: HLEDAC_TEST_PROFILE=ci|m1-8gb|m1-16gb|minimal|heavy|local"
         ),
     )
-    
+
     group.addoption(
         "--hledac-workers",
         action="store",
@@ -415,7 +415,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Override: HLEDAC_TEST_WORKERS=2"
         ),
     )
-    
+
     group.addoption(
         "--hledac-markers",
         action="store",
@@ -432,7 +432,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Apply hledac profile configuration (ROADMAP-008).
-    
+
     This hook runs after pytest_addoption and applies:
     1. Profile selection (auto-detect or explicit)
     2. Worker count (-n flag)
@@ -442,36 +442,36 @@ def pytest_configure(config: pytest.Config) -> None:
     """
     # Get profile (from CLI, env, or auto-detect)
     profile_name = (
-        config.getoption("--hledac-profile") or
-        os.environ.get("HLEDAC_TEST_PROFILE") or
-        _detect_hardware_profile()
+        config.getoption("--hledac-profile") or os.environ.get("HLEDAC_TEST_PROFILE") or _detect_hardware_profile()
     )
-    
+
     profile = _HLEDAC_PROFILES.get(profile_name, _HLEDAC_PROFILES["local"])
-    
+
     # Store profile info for fixtures
     config._hledac_profile = profile_name
     config._hledac_profile_info = profile
-    
+
     # Apply worker count
     workers = (
-        config.getoption("--hledac-workers") if config.getoption("--hledac-workers") is not None
+        config.getoption("--hledac-workers")
+        if config.getoption("--hledac-workers") is not None
         else int(os.environ.get("HLEDAC_TEST_WORKERS", profile["workers"]))
     )
-    
+
     # Validation: Check for conflicting options
     warnings = []
-    
+
     if profile_name == "heavy" and workers > 1:
         warnings.append(
             f"[ROADMAP-008] Warning: profile='heavy' with workers={workers} may cause OOM. "
             f"Consider using workers=1 for heavy tests."
         )
-    
+
     if workers >= 4 and platform.system() == "Darwin" and platform.machine() == "arm64":
         # Check memory (if psutil available)
         try:
             import psutil
+
             mem_gb = psutil.virtual_memory().total / (1024**3)
             if mem_gb <= 10:
                 warnings.append(
@@ -480,7 +480,7 @@ def pytest_configure(config: pytest.Config) -> None:
                 )
         except Exception:
             pass
-    
+
     if user_cli_markers := config.getoption("--hledac-markers"):
         # If user sets markers explicitly, profile markers are ignored
         pass
@@ -490,7 +490,7 @@ def pytest_configure(config: pytest.Config) -> None:
         if "not " in markers_str:
             # This profile excludes some tests
             pass
-    
+
     if workers == 0:
         # Serial execution - remove -n flag if present
         pass
@@ -499,12 +499,12 @@ def pytest_configure(config: pytest.Config) -> None:
         config.option.n = workers
         if hasattr(config.option, "dist"):
             config.option.dist = "loadscope"
-    
+
     # Apply marker filter
     # Check if user explicitly set markers via CLI (not from profile/env)
     user_cli_markers = config.getoption("--hledac-markers")
     env_markers = os.environ.get("HLEDAC_TEST_MARKERS")
-    
+
     if user_cli_markers:
         # Explicit CLI override takes highest priority
         config.option.markexpr = user_cli_markers
@@ -517,11 +517,11 @@ def pytest_configure(config: pytest.Config) -> None:
         current_markers = getattr(config.option, "markexpr", None)
         if not current_markers or current_markers == "":
             config.option.markexpr = profile["markers"]
-    
+
     # Apply timeout
     timeout_override = int(os.environ.get("HLEDAC_TEST_TIMEOUT", profile["timeout"]))
     config.option.timeout = timeout_override
-    
+
     # Store config for pytest_report_header
     config._hledac_config = {
         "profile": profile_name,
@@ -574,7 +574,7 @@ def _enforce_global_timeout() -> None:
             f"test hung on network/deadlock/infinite-loop. "
             f"Add @pytest.mark.timeout(N) to the offending test.",
             pytrace=False,
-    )
+        )
 
     old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(_TEST_TIMEOUT_ENV)
@@ -583,6 +583,7 @@ def _enforce_global_timeout() -> None:
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
+
 
 # Python 3.14 removed asyncio._all_loops. Monkey-patch it back for hermetic
 # loop leak detection in tests. _loop_registry tracks (loop_id -> loop_ref).
@@ -839,9 +840,7 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
                         if pending:
                             for t in pending:
                                 t.cancel()
-                            loop.run_until_complete(
-                                asyncio.gather(*pending, return_exceptions=True)
-    )
+                            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                         loop.close()
                     except Exception:  # noqa: BLE001
                         pass
@@ -875,6 +874,7 @@ def _env_config_cache_clear() -> None:
     """
     try:
         from hledac.universal._core.env_config import _get_cached
+
         # @functools.cache stores in func.__wrapped__.__dict__ or func.__dict__
         _get_cached.cache_clear()
     except Exception:  # noqa: BLE001
@@ -1412,7 +1412,7 @@ def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
             f"Ensure all coroutines are awaited or explicitly cancelled.",
             RuntimeWarning,
             stacklevel=2,
-    )
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -1600,8 +1600,6 @@ def pytest_configure(config: pytest.Config) -> None:
 _TIMEOUT_DEFAULT = int(os.environ.get("HLEDAC_TEST_TIMEOUT", "120"))
 
 
-
-
 def _clear_all_lock_registries() -> None:
     """Clear ALL _LockRegistry instances across all module namespaces.
 
@@ -1610,11 +1608,11 @@ def _clear_all_lock_registries() -> None:
     These register locks in their respective 'core.locks' module's _LockRegistry.
     The fixture must clear ALL lock registries to prevent stale lock conflicts.
     """
-    for mod_name, mod in list(sys.modules.items()):
+    for _mod_name, mod in list(sys.modules.items()):
         if mod is None:
             continue
         try:
-            registry = getattr(mod, '_LockRegistry', None)
+            registry = getattr(mod, "_LockRegistry", None)
             if registry is not None and isinstance(registry, dict):
                 registry.clear()
         except Exception:  # noqa: BLE001
@@ -1835,6 +1833,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
 # Sprint tests are now auto-tagged with phase_gate marker at collection time.
 # =============================================================================
 
+
 def _discover_sprint_tests() -> set[str]:
     """Discover actual test_sprint*.py files on disk at collection time."""
     sprint_files: set[str] = set()
@@ -1846,9 +1845,7 @@ def _discover_sprint_tests() -> set[str]:
     return sprint_files
 
 
-def pytest_collection_modifyitems(
-    items: list[pytest.Item], config: pytest.Config
-) -> None:
+def pytest_collection_modifyitems(items: list[pytest.Item], config: pytest.Config) -> None:
     """
     TEST-01 + O-03 + CI skip: unified collection modifier.
 

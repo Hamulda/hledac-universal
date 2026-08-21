@@ -53,20 +53,15 @@ This is the "first-line real backend" — the next sprint may add
 PeerNodeTransport (Tier 2) as a cross-host overlay above it.
 """
 
-
-
 import asyncio
 import logging
 import time
 from typing import Any
 
 from .protocol import NodeTransport, NodeTransportFactory, set_sprint_id_attr
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
-
-# --- M1 BOUNDS (lane_dispatch-specific) --------------------------------------
 
 LANE_DISPATCH_TIMEOUT_S: float = 8.0
 """Per-lane dispatch timeout. Caller enforces 10s overall; we use 8s
@@ -89,12 +84,9 @@ DEFAULT_CONFIDENCE: float = 0.5
 # Source type strings (align with utils.source_types.SourceType where applicable).
 _LANE_SOURCE_TYPES: dict[str, str] = {
     "surface": "federated_lane_dispatch_surface",
-    "dark":    "federated_lane_dispatch_dark",
+    "dark": "federated_lane_dispatch_dark",
     "archive": "federated_lane_dispatch_archive",
 }
-
-
-# --- DISPATCH HELPERS --------------------------------------------------------
 
 
 def _truncate_query(query: str) -> str:
@@ -103,7 +95,7 @@ def _truncate_query(query: str) -> str:
         return ""
     if len(query) <= LANE_DISPATCH_MAX_QUERY_LEN:
         return query
-    return query[: LANE_DISPATCH_MAX_QUERY_LEN] + "..."
+    return query[:LANE_DISPATCH_MAX_QUERY_LEN] + "..."
 
 
 def _bound_payload(text: str | None) -> str | None:
@@ -117,7 +109,7 @@ def _bound_payload(text: str | None) -> str | None:
             return None
     if len(text) <= LANE_DISPATCH_PAYLOAD_MAX_CHARS:
         return text
-    return text[: LANE_DISPATCH_PAYLOAD_MAX_CHARS] + "...[truncated]"
+    return text[:LANE_DISPATCH_PAYLOAD_MAX_CHARS] + "...[truncated]"
 
 
 def _normalize_finding(
@@ -147,7 +139,7 @@ def _normalize_finding(
         return None
     try:
         confidence = float(raw.get("confidence", DEFAULT_CONFIDENCE) or DEFAULT_CONFIDENCE)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         confidence = DEFAULT_CONFIDENCE
     confidence = max(0.0, min(1.0, confidence))
 
@@ -174,12 +166,6 @@ def _normalize_finding(
     return finding
 
 
-# --- LANE DISPATCHERS --------------------------------------------------------
-# Each dispatch function returns a list[dict] of normalized findings.
-# All are async, all bounded by LANE_DISPATCH_TIMEOUT_S (caller), all
-# fail-soft. Heavy imports are inside the function body.
-
-
 async def _dispatch_surface(query: str, sprint_id: str) -> list[dict[str, Any]]:
     """
     surface lane → clearnet IOC cross-reference.
@@ -199,9 +185,8 @@ async def _dispatch_surface(query: str, sprint_id: str) -> list[dict[str, Any]]:
     q = _truncate_query(query)
     # Cheap URL/domain regex extraction (no external deps).
     import re
-    domain_re = re.compile(
-        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
-    )
+
+    domain_re = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")
     domains: list[str] = []
     for m in domain_re.finditer(q):
         d = m.group(0).lower()
@@ -222,7 +207,7 @@ async def _dispatch_surface(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="surface",
                 sprint_id=sprint_id,
-    )
+            )
         )
     return findings[:LANE_DISPATCH_MAX_FINDINGS]
 
@@ -243,6 +228,7 @@ async def _dispatch_dark(query: str, sprint_id: str) -> list[dict[str, Any]]:
     q = _truncate_query(query)
     findings: list[dict[str, Any]] = []
     import re
+
     # Onion v3 addresses are 56 chars of base32 (a-z, 2-7).
     # Onion v2 addresses are 16 chars — kept for backward compat detection.
     onion_re = re.compile(r"\b[a-zA-Z2-7]{56}\.onion\b|\b[a-zA-Z2-7]{16}\.onion\b")
@@ -265,7 +251,7 @@ async def _dispatch_dark(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="dark",
                 sprint_id=sprint_id,
-    )
+            )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
@@ -286,7 +272,7 @@ async def _dispatch_dark(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="dark",
                 sprint_id=sprint_id,
-    )
+            )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
@@ -312,6 +298,7 @@ async def _dispatch_archive(query: str, sprint_id: str) -> list[dict[str, Any]]:
 
     # Cheap archive-URL extraction from the query.
     import re
+
     archive_re = re.compile(
         r"https?://(?:web\.archive\.org|wayback\.machine\.org|webarchive\.jira\.com)"
         r"/web/\d+(?:im_|js_|\*)?/([^\s'\"<>]+)",
@@ -335,24 +322,19 @@ async def _dispatch_archive(query: str, sprint_id: str) -> list[dict[str, Any]]:
                 },
                 lane="archive",
                 sprint_id=sprint_id,
-    )
+            )
         )
         if len(findings) >= LANE_DISPATCH_MAX_FINDINGS:
             break
     return findings[:LANE_DISPATCH_MAX_FINDINGS]
 
 
-# --- LANE DISPATCH REGISTRY --------------------------------------------------
-
 # A lane → async dispatch function map. Pure data, no side effects.
 _LANE_DISPATCHERS: dict[str, Any] = {
     "surface": _dispatch_surface,
-    "dark":    _dispatch_dark,
+    "dark": _dispatch_dark,
     "archive": _dispatch_archive,
 }
-
-
-# --- MAIN TRANSPORT ----------------------------------------------------------
 
 
 @NodeTransportFactory.register("lane_dispatch")
@@ -398,8 +380,9 @@ class LaneDispatchTransport:
             if dispatcher is None:
                 logger.debug(
                     "[FED-TRANS] lane_dispatch: unknown lane=%r (known: %s)",
-                    lane, sorted(_LANE_DISPATCHERS.keys()),
-    )
+                    lane,
+                    sorted(_LANE_DISPATCHERS.keys()),
+                )
                 return []
             try:
                 async with asyncio.timeout(LANE_DISPATCH_TIMEOUT_S):
@@ -407,8 +390,9 @@ class LaneDispatchTransport:
             except TimeoutError:
                 logger.warning(
                     "[FED-TRANS] lane_dispatch: lane=%r timeout after %.1fs",
-                    lane, LANE_DISPATCH_TIMEOUT_S,
-    )
+                    lane,
+                    LANE_DISPATCH_TIMEOUT_S,
+                )
                 return []
             except asyncio.CancelledError:
                 # Re-raise cancellation — it's not an error.
@@ -428,8 +412,10 @@ class LaneDispatchTransport:
             elapsed = time.monotonic() - started
             logger.debug(
                 "[FED-TRANS] lane_dispatch: lane=%r findings=%d dur=%.3fs",
-                lane, len(out), elapsed,
-    )
+                lane,
+                len(out),
+                elapsed,
+            )
             return out
         except asyncio.CancelledError:
             raise
@@ -437,8 +423,11 @@ class LaneDispatchTransport:
             elapsed = time.monotonic() - started
             logger.warning(
                 "[FED-TRANS] lane_dispatch: lane=%r fail-soft %s: %s dur=%.3fs",
-                lane, type(e).__name__, e, elapsed,
-    )
+                lane,
+                type(e).__name__,
+                e,
+                elapsed,
+            )
             return []
 
     async def close(self) -> None:

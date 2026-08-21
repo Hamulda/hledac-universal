@@ -3,9 +3,6 @@ discovery/crtsh_adapter.py — CT/crt.sh Providerless Pivot Adapter
 
 Sprint F206AV: transport alignment with canonical session_runtime + circuit_breaker.
 
-
-
-
 Replaces local httpx.AsyncClient + local checked_aiohttp_get with:
 - async_get_httpx_session() from network.session_runtime
 - checked_aiohttp_get() from transport.circuit_breaker
@@ -13,29 +10,27 @@ Replaces local httpx.AsyncClient + local checked_aiohttp_get with:
 Passive only — no auth/API key, no body fetch beyond crt.sh JSON endpoint.
 Fail-soft throughout.
 """
+
 import asyncio
-from hledac.universal.utils.asyncx import parallel
 import logging
 import re
-from utils._patterns import looks_like_domain as _looks_like_domain
 import time
-from dataclasses import dataclass
-import msgspec
-from compat.msgspec_gc_compat import Struct
 from enum import Enum
 from pathlib import Path
+
 import httpx
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
+from hledac.universal.utils.asyncx import parallel
+from utils._patterns import looks_like_domain as _looks_like_domain
+
 from .base import DiscoveryBatchResult, DiscoveryHit
-from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
-from _core import aclose
-__all__ = ['call_crtsh', 'CTOutcome', 'CTProviderStatus']
 
+__all__ = ["call_crtsh", "CTOutcome", "CTProviderStatus"]
 
-# =============================================================================
-# Factory Functions - Reduce Clone Code (89 pairs eliminated)
-# =============================================================================
 
 def _make_ct_outcome(
     query: str,
@@ -43,12 +38,12 @@ def _make_ct_outcome(
     built_count: int,
     error: str | None,
     elapsed: float,
-    provider_status: 'CTProviderStatus',
+    provider_status: CTProviderStatus,
     timeout: bool = False,
     ct_cache_used: bool = False,
     ct_cache_stale: bool = False,
     ct_cache_age_s: float = 0.0,
-) -> 'CTOutcome':
+) -> CTOutcome:
     """Factory: Build CTOutcome with common parameters."""
     return CTOutcome(
         attempted=True,
@@ -70,16 +65,16 @@ def _make_discovery_result(
     error: str | None,
     error_type: str,
     elapsed: float,
-    provider_chain: tuple[str, ...] = ('crtsh',),
+    provider_chain: tuple[str, ...] = ("crtsh",),
 ) -> DiscoveryBatchResult:
     """Factory: Build DiscoveryBatchResult with common parameters."""
     return DiscoveryBatchResult(
         hits=hits,
         error=error,
         error_type=error_type,
-        provider_name='crtsh',
+        provider_name="crtsh",
         provider_chain=provider_chain,
-        source_family='ct',
+        source_family="ct",
         elapsed_s=elapsed,
     )
 
@@ -92,14 +87,14 @@ def _make_stale_cache_response(
     error_type: str,
     stale_age: float,
     elapsed: float,
-    provider_status: 'CTProviderStatus',
-) -> tuple[DiscoveryBatchResult, 'CTOutcome']:
+    provider_status: CTProviderStatus,
+) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """Factory: Build stale cache hit response."""
     outcome = _make_ct_outcome(
         query=query,
         raw_count=raw_count,
         built_count=len(hits),
-        error=f'{error_prefix}_stale_cache',
+        error=f"{error_prefix}_stale_cache",
         elapsed=elapsed,
         provider_status=provider_status,
         ct_cache_used=True,
@@ -108,7 +103,7 @@ def _make_stale_cache_response(
     )
     result = _make_discovery_result(
         hits=tuple(hits),
-        error=f'{error_prefix}_stale_cache',
+        error=f"{error_prefix}_stale_cache",
         error_type=error_type,
         elapsed=elapsed,
     )
@@ -120,10 +115,10 @@ def _make_error_response(
     error_type: str,
     query: str,
     elapsed: float,
-    provider_status: 'CTProviderStatus',
+    provider_status: CTProviderStatus,
     raw_count: int = 0,
     built_count: int = 0,
-) -> tuple[DiscoveryBatchResult, 'CTOutcome']:
+) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """Factory: Build error response."""
     outcome = _make_ct_outcome(
         query=query,
@@ -147,7 +142,7 @@ def _make_success_response(
     raw_count: int,
     query: str,
     elapsed: float,
-) -> tuple[DiscoveryBatchResult, 'CTOutcome']:
+) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """Factory: Build success response."""
     outcome = _make_ct_outcome(
         query=query,
@@ -160,7 +155,7 @@ def _make_success_response(
     result = _make_discovery_result(
         hits=tuple(hits),
         error=None,
-        error_type='none',
+        error_type="none",
         elapsed=elapsed,
     )
     return (result, outcome)
@@ -168,16 +163,18 @@ def _make_success_response(
 
 class CTProviderStatus(Enum):
     """F217D: Explicit CT provider status tags. F219E adds cooldown states."""
-    OK = 'ok'
-    HTTP_5XX = 'http_5xx'
-    HTTP_4XX = 'http_4xx'
-    TIMEOUT = 'timeout'
-    PARSE_ERROR = 'parse_error'
-    EMPTY = 'empty'
-    DISABLED = 'disabled'
-    CACHE_HIT_STALE = 'cache_hit_stale'
-    COOLDOWN_ACTIVE = 'cooldown_active'
-    PROVIDER_FAILURE = 'provider_failure'
+
+    OK = "ok"
+    HTTP_5XX = "http_5xx"
+    HTTP_4XX = "http_4xx"
+    TIMEOUT = "timeout"
+    PARSE_ERROR = "parse_error"
+    EMPTY = "empty"
+    DISABLED = "disabled"
+    CACHE_HIT_STALE = "cache_hit_stale"
+    COOLDOWN_ACTIVE = "cooldown_active"
+    PROVIDER_FAILURE = "provider_failure"
+
 
 class CTProviderStatusReport(Struct, frozen=True):
     """
@@ -201,7 +198,8 @@ class CTProviderStatusReport(Struct, frozen=True):
         stale_cache_preferred:        True if stale cache was preferred due to cooldown.
         provider_attempt_suppressed:  True if provider call was suppressed due to cooldown.
     """
-    provider_name: str = 'crtsh'
+
+    provider_name: str = "crtsh"
     attempted: bool = False
     status: CTProviderStatus = CTProviderStatus.DISABLED
     raw_count: int = 0
@@ -215,6 +213,7 @@ class CTProviderStatusReport(Struct, frozen=True):
     cooldown_started_at_monotonic: float = 0.0
     stale_cache_preferred: bool = False
     provider_attempt_suppressed: bool = False
+
 
 class CTOutcome(Struct, frozen=True):
     """
@@ -236,8 +235,9 @@ class CTOutcome(Struct, frozen=True):
         ct_cache_age_s: Seconds since cache was written (0 if not cached).
         provider_status: CTProviderStatus enum tag for explicit provider state.
     """
+
     attempted: bool = False
-    query: str = ''
+    query: str = ""
     raw_count: int = 0
     built_count: int = 0
     accepted_count: None = None
@@ -249,19 +249,72 @@ class CTOutcome(Struct, frozen=True):
     ct_cache_stale: bool = False
     ct_cache_age_s: float = 0.0
     provider_status: CTProviderStatus = CTProviderStatus.DISABLED
+
+
 logger = logging.getLogger(__name__)
 _MAX_CERTS = 50
 _MAX_HITS = 20
-_CRTSH_URL = 'https://crt.sh/'
-_CERTSPOTTER_URL = 'https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names'
+_CRTSH_URL = "https://crt.sh/"
+_CERTSPOTTER_URL = "https://api.certspotter.com/v1/issuances?domain={domain}&include_subdomains=true&expand=dns_names"
 _CERTSPOTTER_RATE_LIMIT_S = 3.0
 _HTTP_TIMEOUT_S = 8.0
 _STALE_THRESHOLD_S = 604800
 _COOLDOWN_DEFAULT_S = 300.0
 _MAX_COOLDOWN_KEYS = 256
-_PRIVATE_HOSTNAMES = {'localhost', 'invalid', 'test'}
-_WILDCARD_ONLY_RE = re.compile('^\\*\\.')
-_STOPWORDS = {'report', 'operation', 'campaign', 'tool', 'framework', 'payload', 'group', 'actor', 'attack', 'security', 'alert', 'tracker', 'intel', 'feed', 'platform', 'portal', 'api', 'monitor', 'scan', 'map', 'probe', 'watch', 'data', 'open', 'source', 'system', 'network', 'target', 'domain', 'host', 'server', 'client', 'user', 'password', 'email', 'name', 'id', 'ip', 'url', 'web', 'site', 'com', 'net', 'org', 'info', 'io', 'dev', ' Ryuk', ' Hive'}
+_PRIVATE_HOSTNAMES = {"localhost", "invalid", "test"}
+_WILDCARD_ONLY_RE = re.compile("^\\*\\.")
+_STOPWORDS = {
+    "report",
+    "operation",
+    "campaign",
+    "tool",
+    "framework",
+    "payload",
+    "group",
+    "actor",
+    "attack",
+    "security",
+    "alert",
+    "tracker",
+    "intel",
+    "feed",
+    "platform",
+    "portal",
+    "api",
+    "monitor",
+    "scan",
+    "map",
+    "probe",
+    "watch",
+    "data",
+    "open",
+    "source",
+    "system",
+    "network",
+    "target",
+    "domain",
+    "host",
+    "server",
+    "client",
+    "user",
+    "password",
+    "email",
+    "name",
+    "id",
+    "ip",
+    "url",
+    "web",
+    "site",
+    "com",
+    "net",
+    "org",
+    "info",
+    "io",
+    "dev",
+    " Ryuk",
+    " Hive",
+}
+
 
 def _build_crtsh_queries(seed: str) -> list[str]:
     """
@@ -275,7 +328,7 @@ def _build_crtsh_queries(seed: str) -> list[str]:
     terms found.
     """
     term_bucket: list[str] = []
-    for token in re.findall('[a-zA-Z0-9]{3,}', seed):
+    for token in re.findall("[a-zA-Z0-9]{3,}", seed):
         lowered = token.lower()
         if lowered not in _STOPWORDS:
             term_bucket.append(lowered)
@@ -286,12 +339,13 @@ def _build_crtsh_queries(seed: str) -> list[str]:
             seen_terms.add(term)
             output_terms.append(term)
     top_terms = output_terms[:6]
-    tlds = ('com', 'net', 'io', 'org', 'site', 'info')
+    tlds = ("com", "net", "io", "org", "site", "info")
     queries: list[str] = []
     for term in top_terms:
         for tld in tlds:
-            queries.append(f'https://crt.sh/?q=%.{term}.{tld}&output=json')
+            queries.append(f"https://crt.sh/?q=%.{term}.{tld}&output=json")
     return queries
+
 
 def _is_private_domain(domain: str) -> bool:
     """Return True if domain is private, internal, or reserved."""
@@ -302,13 +356,15 @@ def _is_private_domain(domain: str) -> bool:
         return True
     return False
 
+
 def _is_ip_like(value: str) -> bool:
     """Return True if value looks like an IP address (v4 or v6)."""
-    if re.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', value):
+    if re.match("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$", value):
         return True
-    if ':' in value:
+    if ":" in value:
         return True
     return False
+
 
 def _extract_domain_from_query(query: str) -> str | None:
     """
@@ -326,20 +382,24 @@ def _extract_domain_from_query(query: str) -> str | None:
         return query
     for token in query.split():
         token = token.strip().lower()
-        if '.' in token and _looks_like_domain(token):
-            parts = token.split('.')
+        if "." in token and _looks_like_domain(token):
+            parts = token.split(".")
             if len(parts) >= 2 and len(parts[0]) <= 63:
                 return token
     return None
+
 
 def _make_cache_key(domain: str) -> str:
     """Make a cache key for a domain using xxhash."""
     try:
         import xxhash
-        return f'{xxhash.xxh3_64(domain.encode()).hexdigest()}.json'
+
+        return f"{xxhash.xxh3_64(domain.encode()).hexdigest()}.json"
     except ImportError:
         import hashlib
-        return f'{hashlib.sha256(domain.encode()).hexdigest()[:16]}.json'
+
+        return f"{hashlib.sha256(domain.encode()).hexdigest()[:16]}.json"
+
 
 def _read_stale_cache(domain: str, cache_dir: Path | None, max_age_s: float) -> tuple[list | None, float]:
     """
@@ -362,12 +422,16 @@ def _read_stale_cache(domain: str, cache_dir: Path | None, max_age_s: float) -> 
         return (None, 0.0)
     try:
         import orjson
+
         raw_data = orjson.loads(cache_path.read_bytes())
         return (raw_data, age_s)
     except Exception:
         return (None, 0.0)
 
-def _build_hits_from_raw(raw_data: list, domain_candidate: str, query: str, max_results: int) -> tuple[list[DiscoveryHit], int]:
+
+def _build_hits_from_raw(
+    raw_data: list, domain_candidate: str, query: str, max_results: int
+) -> tuple[list[DiscoveryHit], int]:
     """
     F217D: Build DiscoveryHit list from raw crt.sh JSON data (live or cached).
 
@@ -381,7 +445,7 @@ def _build_hits_from_raw(raw_data: list, domain_candidate: str, query: str, max_
 
     def _process_cert(cert: dict, name_value: str) -> None:
         """Process a single certificate and add valid subdomains to hits."""
-        for subdomain in name_value.split('\n'):
+        for subdomain in name_value.split("\n"):
             subdomain = subdomain.strip()
             if not subdomain or _is_wildcard_only(subdomain) or _is_private_domain(subdomain):
                 continue
@@ -389,25 +453,38 @@ def _build_hits_from_raw(raw_data: list, domain_candidate: str, query: str, max_
             if subdomain_lower in seen_domains or len(hits) >= max_results:
                 continue
             seen_domains.add(subdomain_lower)
-            hits.append(DiscoveryHit(
-                query=query, title=f'CT: {subdomain}', url=f'https://{subdomain}/',
-                snippet=f'Certificate Transparency match via crt.sh — {subdomain}',
-                source='crtsh', rank=len(hits), retrieved_ts=now,
-                score=1.0 - len(hits) / max_results, reason='ct_subdomain',
-                ct_name_value=name_value, ct_common_name=cert.get('common_name'),
-                ct_issuer_name=cert.get('issuer_name'), ct_not_before=cert.get('not_before'),
-                ct_not_after=cert.get('not_after'), ct_entry_timestamp=cert.get('entry_timestamp'),
-                ct_serial_number=cert.get('serial_number')
-            ))
+            hits.append(
+                DiscoveryHit(
+                    query=query,
+                    title=f"CT: {subdomain}",
+                    url=f"https://{subdomain}/",
+                    snippet=f"Certificate Transparency match via crt.sh — {subdomain}",
+                    source="crtsh",
+                    rank=len(hits),
+                    retrieved_ts=now,
+                    score=1.0 - len(hits) / max_results,
+                    reason="ct_subdomain",
+                    ct_name_value=name_value,
+                    ct_common_name=cert.get("common_name"),
+                    ct_issuer_name=cert.get("issuer_name"),
+                    ct_not_before=cert.get("not_before"),
+                    ct_not_after=cert.get("not_after"),
+                    ct_entry_timestamp=cert.get("entry_timestamp"),
+                    ct_serial_number=cert.get("serial_number"),
+                )
+            )
 
     for cert in (raw_data if isinstance(raw_data, list) else [])[:_MAX_CERTS]:
-        if isinstance(cert, dict) and cert.get('name_value'):
-            _process_cert(cert, cert['name_value'])
+        if isinstance(cert, dict) and cert.get("name_value"):
+            _process_cert(cert, cert["name_value"])
         if len(hits) >= max_results:
             break
     return (hits, raw_count)
 
-async def _fetch_certspotter_fallback(session: httpx.AsyncClient, domain: str, timeout: httpx.Timeout) -> tuple[list | None, int, str | None]:
+
+async def _fetch_certspotter_fallback(
+    session: httpx.AsyncClient, domain: str, timeout: httpx.Timeout
+) -> tuple[list | None, int, str | None]:
     """
     F285: Fetch CT entries from certspotter.io when crt.sh circuit breaker is OPEN.
 
@@ -416,22 +493,33 @@ async def _fetch_certspotter_fallback(session: httpx.AsyncClient, domain: str, t
     We convert to crt.sh format: [{name_value: ..., issuer_name: ..., ...}]
     """
     url = _CERTSPOTTER_URL.format(domain=domain)
-    raw, status, err = await checked_aiohttp_get(session, url, timeout=timeout, failure_kind='certspotter_ct')
+    raw, status, err = await checked_aiohttp_get(session, url, timeout=timeout, failure_kind="certspotter_ct")
     if err or not isinstance(raw, list):
-        return (None, status or 0, err or 'certspotter_parse_error')
+        return (None, status or 0, err or "certspotter_parse_error")
     entries: list[dict] = []
     for item in raw[:50]:
-        dns_names = item.get('dns_names', [])
+        dns_names = item.get("dns_names", [])
         if not isinstance(dns_names, list):
             continue
         for name in dns_names:
-            name = name.strip().lstrip('*.')
-            if name and '.' in name and (len(name) < 253):
-                entries.append({'name_value': name, 'issuer_name': item.get('issuer', {}).get('name', ''), 'not_before': item.get('not_before', ''), 'not_after': item.get('not_after', ''), 'serial_number': item.get('serial_number', '')})
+            name = name.strip().lstrip("*.")
+            if name and "." in name and (len(name) < 253):
+                entries.append(
+                    {
+                        "name_value": name,
+                        "issuer_name": item.get("issuer", {}).get("name", ""),
+                        "not_before": item.get("not_before", ""),
+                        "not_after": item.get("not_after", ""),
+                        "serial_number": item.get("serial_number", ""),
+                    }
+                )
     if not entries:
-        return (None, status, 'certspotter_empty')
+        return (None, status, "certspotter_empty")
     return (entries, status, None)
+
+
 _ct_provider_cooldown: dict[str, tuple[float, str]] = {}
+
 
 def _enter_cooldown(domain: str, reason: str, now: float) -> None:
     """
@@ -445,6 +533,7 @@ def _enter_cooldown(domain: str, reason: str, now: float) -> None:
         _ct_provider_cooldown.pop(oldest_key, None)
     _ct_provider_cooldown[domain_key] = (now, reason)
 
+
 def _check_cooldown(domain: str, now: float) -> tuple[bool, float, str]:
     """
     F219E: Check if domain is in active cooldown.
@@ -454,28 +543,25 @@ def _check_cooldown(domain: str, now: float) -> tuple[bool, float, str]:
     domain_key = domain.lower()
     entry = _ct_provider_cooldown.get(domain_key)
     if entry is None:
-        return (False, 0.0, '')
+        return (False, 0.0, "")
     started_at, reason = entry
     remaining = _COOLDOWN_DEFAULT_S - (now - started_at)
     if remaining <= 0:
         _ct_provider_cooldown.pop(domain_key, None)
-        return (False, 0.0, '')
+        return (False, 0.0, "")
     return (True, remaining, reason)
+
 
 def _clear_cooldown(domain: str) -> None:
     """F219E: Clear cooldown for a domain on provider success."""
     _ct_provider_cooldown.pop(domain.lower(), None)
 
 
-# =============================================================================
-# call_crtsh helper functions (complexity reduction)
-# =============================================================================
-
 def _normalize_max_results(raw_max: Any) -> int:
     """Validate and normalize max_results parameter."""
     try:
         return max(1, min(int(raw_max), _MAX_HITS))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 20
 
 
@@ -496,28 +582,46 @@ async def _try_certspotter_fallback(
             hits, raw_count = _build_hits_from_raw(raw, query, query, _MAX_HITS)
             if hits:
                 outcome = CTOutcome(
-                    attempted=True, query=query, raw_count=raw_count, built_count=len(hits),
-                    error=None, timeout=False, duration_s=elapsed, provider_status=CTProviderStatus.OK
-    )
+                    attempted=True,
+                    query=query,
+                    raw_count=raw_count,
+                    built_count=len(hits),
+                    error=None,
+                    timeout=False,
+                    duration_s=elapsed,
+                    provider_status=CTProviderStatus.OK,
+                )
                 result = DiscoveryBatchResult(
-                    hits=tuple(hits)[:_MAX_HITS], error=None, error_type='ok',
-                    provider_name='certspotter',
-                    provider_chain=('certspotter', f'crtsh_{circuit_reason}'),
-                    source_family='ct', elapsed_s=elapsed
-    )
+                    hits=tuple(hits)[:_MAX_HITS],
+                    error=None,
+                    error_type="ok",
+                    provider_name="certspotter",
+                    provider_chain=("certspotter", f"crtsh_{circuit_reason}"),
+                    source_family="ct",
+                    elapsed_s=elapsed,
+                )
                 return (result, outcome)
     except Exception:  # noqa: BLE001
         pass
     elapsed = time.monotonic() - start
     outcome = CTOutcome(
-        attempted=True, query=query, raw_count=0, built_count=0,
-        error='circuit_breaker_open', skip_reason=f'circuit_open:{circuit_reason}',
-        duration_s=elapsed, provider_status=CTProviderStatus.PROVIDER_FAILURE
+        attempted=True,
+        query=query,
+        raw_count=0,
+        built_count=0,
+        error="circuit_breaker_open",
+        skip_reason=f"circuit_open:{circuit_reason}",
+        duration_s=elapsed,
+        provider_status=CTProviderStatus.PROVIDER_FAILURE,
     )
     result = DiscoveryBatchResult(
-        hits=(), error=f'circuit_breaker_open:{circuit_reason}',
-        error_type='circuit_breaker_open', provider_name='crtsh',
-        provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
+        hits=(),
+        error=f"circuit_breaker_open:{circuit_reason}",
+        error_type="circuit_breaker_open",
+        provider_name="crtsh",
+        provider_chain=("crtsh",),
+        source_family="ct",
+        elapsed_s=elapsed,
     )
     return (result, outcome)
 
@@ -536,6 +640,7 @@ async def _search_wildcards(
     search_start = time.monotonic()
 
     from hledac.universal._core.concurrency import ConcurrencyCategory, get_semaphore
+
     sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
@@ -544,14 +649,17 @@ async def _search_wildcards(
                 session = await async_get_httpx_session()
                 timeout = httpx.Timeout(min(15.0, _HTTP_TIMEOUT_S))
                 data, status, err = await checked_aiohttp_get(
-                    session, url, params={'output': 'json'},
-                    headers={'User-Agent': 'Hledac/1.0 (research bot)'},
-                    timeout=timeout, failure_kind='crtsh'
-    )
+                    session,
+                    url,
+                    params={"output": "json"},
+                    headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                    timeout=timeout,
+                    failure_kind="crtsh",
+                )
                 if err:
-                    return ([], err, CTProviderStatus.TIMEOUT if err == 'timeout' else CTProviderStatus.HTTP_5XX)
+                    return ([], err, CTProviderStatus.TIMEOUT if err == "timeout" else CTProviderStatus.HTTP_5XX)
                 if status != 200:
-                    return ([], f'http_{status}', CTProviderStatus.HTTP_5XX)
+                    return ([], f"http_{status}", CTProviderStatus.HTTP_5XX)
                 hits, _ = _build_hits_from_raw(data, url, url, _MAX_HITS)
                 return (hits, None, CTProviderStatus.OK)
             except asyncio.CancelledError:
@@ -562,9 +670,8 @@ async def _search_wildcards(
     try:
         async with asyncio.timeout(min(timeout_s, 15.0)):
             result = await parallel(
-                [_fetch_one(u) for u in wildcard_urls],
-                taskgroup=True, policy='collect', ctx='crtsh_adapter:wildcard'
-    )
+                [_fetch_one(u) for u in wildcard_urls], taskgroup=True, policy="collect", ctx="crtsh_adapter:wildcard"
+            )
             results = result.ok
     except asyncio.CancelledError:
         raise
@@ -594,27 +701,45 @@ async def _search_wildcards(
     elif not wildcard_urls:
         elapsed = time.monotonic() - start
         outcome = CTOutcome(
-            attempted=True, query=query, raw_count=0, built_count=0,
-            error='no_domain_like_token', skip_reason='no_domain_like_token', duration_s=elapsed
-    )
+            attempted=True,
+            query=query,
+            raw_count=0,
+            built_count=0,
+            error="no_domain_like_token",
+            skip_reason="no_domain_like_token",
+            duration_s=elapsed,
+        )
         result = DiscoveryBatchResult(
-            hits=(), error='no_domain_like_token', error_type='invalid_query',
-            provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
-    )
+            hits=(),
+            error="no_domain_like_token",
+            error_type="invalid_query",
+            provider_name="crtsh",
+            provider_chain=("crtsh",),
+            source_family="ct",
+            elapsed_s=elapsed,
+        )
         return (result, outcome)
     else:
         elapsed = time.monotonic() - search_start
         outcome = CTOutcome(
-            attempted=True, query=query, raw_count=0, built_count=0,
-            error=strong_error or 'all_wildcard_failed',
+            attempted=True,
+            query=query,
+            raw_count=0,
+            built_count=0,
+            error=strong_error or "all_wildcard_failed",
             timeout=strong_tag == CTProviderStatus.TIMEOUT,
-            duration_s=elapsed, provider_status=strong_tag
-    )
+            duration_s=elapsed,
+            provider_status=strong_tag,
+        )
         result = DiscoveryBatchResult(
-            hits=(), error=strong_error or 'all_wildcard_failed',
-            error_type='wildcard_exhausted', provider_name='crtsh',
-            provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
-    )
+            hits=(),
+            error=strong_error or "all_wildcard_failed",
+            error_type="wildcard_exhausted",
+            provider_name="crtsh",
+            provider_chain=("crtsh",),
+            source_family="ct",
+            elapsed_s=elapsed,
+        )
         return (result, outcome)
 
 
@@ -625,7 +750,7 @@ async def _search_freetext(
 ) -> tuple[DiscoveryBatchResult | None, CTOutcome | None]:
     """Search using freetext query when no domain candidate found."""
     freetext_query = query[:200]
-    freetext_url = f'https://crt.sh/?q={freetext_query}&output=json'
+    freetext_url = f"https://crt.sh/?q={freetext_query}&output=json"
     search_start = time.monotonic()
 
     try:
@@ -633,10 +758,13 @@ async def _search_freetext(
             session = await async_get_httpx_session()
             timeout = httpx.Timeout(min(12.0, _HTTP_TIMEOUT_S))
             data, status, err = await checked_aiohttp_get(
-                session, freetext_url, params={'output': 'json'},
-                headers={'User-Agent': 'Hledac/1.0 (research bot)'},
-                timeout=timeout, failure_kind='crtsh'
-    )
+                session,
+                freetext_url,
+                params={"output": "json"},
+                headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                timeout=timeout,
+                failure_kind="crtsh",
+            )
             if err is None and status == 200:
                 hits, raw = _build_hits_from_raw(data, freetext_query, freetext_query, _MAX_HITS)
                 if hits:
@@ -647,12 +775,22 @@ async def _search_freetext(
 
     elapsed = time.monotonic() - start
     outcome = CTOutcome(
-        attempted=True, query=query, raw_count=0, built_count=0,
-        error='no_domain_like_token', skip_reason='no_domain_like_token', duration_s=elapsed
+        attempted=True,
+        query=query,
+        raw_count=0,
+        built_count=0,
+        error="no_domain_like_token",
+        skip_reason="no_domain_like_token",
+        duration_s=elapsed,
     )
     result = DiscoveryBatchResult(
-        hits=(), error='no_domain_like_token', error_type='invalid_query',
-        provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
+        hits=(),
+        error="no_domain_like_token",
+        error_type="invalid_query",
+        provider_name="crtsh",
+        provider_chain=("crtsh",),
+        source_family="ct",
+        elapsed_s=elapsed,
     )
     return (result, outcome)
 
@@ -674,49 +812,62 @@ async def _handle_cooldown_with_cache(
             hits=stale_hits,
             raw_count=stale_raw,
             query=domain,
-            error_prefix='cooldown',
-            error_type='cooldown_cache_fallback',
+            error_prefix="cooldown",
+            error_type="cooldown_cache_fallback",
             stale_age=stale_age,
             elapsed=elapsed,
             provider_status=CTProviderStatus.CACHE_HIT_STALE,
-    )
+        )
 
     return _make_error_response(
-        error='cooldown_active',
-        error_type='cooldown_active',
+        error="cooldown_active",
+        error_type="cooldown_active",
         query=domain,
         elapsed=elapsed,
         provider_status=CTProviderStatus.COOLDOWN_ACTIVE,
     )
 
 
-def _build_http_error_response(status: int, domain: str, elapsed: float, provider_status: CTProviderStatus, error: str, error_type: str) -> tuple[DiscoveryBatchResult, CTOutcome]:
+def _build_http_error_response(
+    status: int, domain: str, elapsed: float, provider_status: CTProviderStatus, error: str, error_type: str
+) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """Build a standard HTTP error response."""
     outcome = CTOutcome(
-        attempted=True, query=domain, raw_count=0, built_count=0,
-        error=error, duration_s=elapsed, provider_status=provider_status
+        attempted=True,
+        query=domain,
+        raw_count=0,
+        built_count=0,
+        error=error,
+        duration_s=elapsed,
+        provider_status=provider_status,
     )
     result = DiscoveryBatchResult(
-        hits=(), error=error, error_type=error_type,
-        provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed
+        hits=(),
+        error=error,
+        error_type=error_type,
+        provider_name="crtsh",
+        provider_chain=("crtsh",),
+        source_family="ct",
+        elapsed_s=elapsed,
     )
     return (result, outcome)
 
 
-def _handle_http_error(status: int, domain: str, cooldown_now: float, cache_dir: Path | None, elapsed: float) -> tuple[DiscoveryBatchResult | None, CTOutcome | None]:
+def _handle_http_error(
+    status: int, domain: str, cooldown_now: float, cache_dir: Path | None, elapsed: float
+) -> tuple[DiscoveryBatchResult | None, CTOutcome | None]:
     """Handle HTTP error status codes using dispatch table."""
-    # Dispatch table for error responses
     dispatch: dict[int, tuple[str, CTProviderStatus, str]] = {
-        429: ('rate_limited', CTProviderStatus.HTTP_5XX, 'http_429'),
-        403: ('captcha_or_blocked', CTProviderStatus.HTTP_4XX, 'http_403'),
+        429: ("rate_limited", CTProviderStatus.HTTP_5XX, "http_429"),
+        403: ("captcha_or_blocked", CTProviderStatus.HTTP_4XX, "http_403"),
     }
-    
+
     if status in dispatch:
         error, prov_status, err_type = dispatch[status]
         return _build_http_error_response(status, domain, elapsed, prov_status, error, err_type)
-    
+
     if status >= 500:
-        _enter_cooldown(domain, f'http_{status}', cooldown_now)
+        _enter_cooldown(domain, f"http_{status}", cooldown_now)
         stale_data, stale_age = _read_stale_cache(domain, cache_dir, _STALE_THRESHOLD_S)
         if stale_data is not None:
             stale_hits, stale_raw = _build_hits_from_raw(stale_data, domain, domain, _MAX_HITS)
@@ -724,16 +875,20 @@ def _handle_http_error(status: int, domain: str, cooldown_now: float, cache_dir:
                 hits=stale_hits,
                 raw_count=stale_raw,
                 query=domain,
-                error_prefix=f'http_{status}',
-                error_type='http_5xx_cache_fallback',
+                error_prefix=f"http_{status}",
+                error_type="http_5xx_cache_fallback",
                 stale_age=stale_age,
                 elapsed=elapsed,
                 provider_status=CTProviderStatus.CACHE_HIT_STALE,
-    )
-        return _build_http_error_response(status, domain, elapsed, CTProviderStatus.HTTP_5XX, f'http_{status}', 'http_5xx')
+            )
+        return _build_http_error_response(
+            status, domain, elapsed, CTProviderStatus.HTTP_5XX, f"http_{status}", "http_5xx"
+        )
 
     if status >= 400:
-        return _build_http_error_response(status, domain, elapsed, CTProviderStatus.HTTP_4XX, f'http_{status}', 'http_4xx')
+        return _build_http_error_response(
+            status, domain, elapsed, CTProviderStatus.HTTP_4XX, f"http_{status}", "http_4xx"
+        )
 
     return (None, None)
 
@@ -742,10 +897,10 @@ def _process_cert_entry(cert: dict, query: str, seen_domains: set[str], hits: li
     """Process a single certificate entry and add hits."""
     if not isinstance(cert, dict):
         return
-    name_value = cert.get('name_value', '')
+    name_value = cert.get("name_value", "")
     if not name_value:
         return
-    for subdomain in name_value.split('\n'):
+    for subdomain in name_value.split("\n"):
         subdomain = subdomain.strip()
         if not subdomain:
             continue
@@ -757,28 +912,38 @@ def _process_cert_entry(cert: dict, query: str, seen_domains: set[str], hits: li
         if len(hits) >= _MAX_HITS:
             return
         seen_domains.add(subdomain_lower)
-        hits.append(DiscoveryHit(
-            query=query, title=f'CT: {subdomain}', url=f'https://{subdomain}/',
-            snippet=f'Certificate Transparency match via crt.sh — {subdomain}',
-            source='crtsh', rank=len(hits), retrieved_ts=now,
-            score=1.0 - len(hits) / _MAX_HITS, reason='ct_subdomain',
-            ct_name_value=name_value, ct_common_name=cert.get('common_name'),
-            ct_issuer_name=cert.get('issuer_name'), ct_not_before=cert.get('not_before'),
-            ct_not_after=cert.get('not_after'), ct_entry_timestamp=cert.get('entry_timestamp'),
-            ct_serial_number=cert.get('serial_number')
-        ))
+        hits.append(
+            DiscoveryHit(
+                query=query,
+                title=f"CT: {subdomain}",
+                url=f"https://{subdomain}/",
+                snippet=f"Certificate Transparency match via crt.sh — {subdomain}",
+                source="crtsh",
+                rank=len(hits),
+                retrieved_ts=now,
+                score=1.0 - len(hits) / _MAX_HITS,
+                reason="ct_subdomain",
+                ct_name_value=name_value,
+                ct_common_name=cert.get("common_name"),
+                ct_issuer_name=cert.get("issuer_name"),
+                ct_not_before=cert.get("not_before"),
+                ct_not_after=cert.get("not_after"),
+                ct_entry_timestamp=cert.get("entry_timestamp"),
+                ct_serial_number=cert.get("serial_number"),
+            )
+        )
 
 
 def _parse_cert_data(data: list, query: str, elapsed: float) -> tuple[DiscoveryBatchResult | None, CTOutcome | None]:
     """Parse certificate data and build hits."""
     if not isinstance(data, list):
         return _make_error_response(
-            error='unexpected_response_format',
-            error_type='parse_error',
+            error="unexpected_response_format",
+            error_type="parse_error",
             query=query,
             elapsed=elapsed,
             provider_status=CTProviderStatus.PARSE_ERROR,
-    )
+        )
 
     raw_count = len(data)
     seen_domains: set[str] = set()
@@ -790,13 +955,13 @@ def _parse_cert_data(data: list, query: str, elapsed: float) -> tuple[DiscoveryB
 
     if not hits:
         return _make_error_response(
-            error='no_subdomains_found',
-            error_type='provider_empty',
+            error="no_subdomains_found",
+            error_type="provider_empty",
             query=query,
             elapsed=elapsed,
             provider_status=CTProviderStatus.EMPTY,
             raw_count=raw_count,
-    )
+        )
 
     return _make_success_response(hits, raw_count, query, elapsed)
 
@@ -812,24 +977,30 @@ async def _make_crtsh_api_call(
     """Make the main crt.sh API call and handle all response cases."""
     session = await async_get_httpx_session()
     timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
-    params = {'q': domain, 'output': 'json'}
+    params = {"q": domain, "output": "json"}
 
     try:
         async with asyncio.timeout(timeout_s):
             data, status, err = await checked_aiohttp_get(
-                session, _CRTSH_URL, params=params,
-                headers={'User-Agent': 'Hledac/1.0 (research bot)'},
-                timeout=timeout, failure_kind='crtsh'
-    )
+                session,
+                _CRTSH_URL,
+                params=params,
+                headers={"User-Agent": "Hledac/1.0 (research bot)"},
+                timeout=timeout,
+                failure_kind="crtsh",
+            )
     except asyncio.CancelledError:
         raise
 
     elapsed = time.monotonic() - start
 
-    # Handle errors
     if err:
-        is_timeout = err == 'timeout'
-        err_tag = 'timeout' if is_timeout else ('circuit_breaker_open' if err.startswith('circuit_breaker_open:') else 'network_error')
+        is_timeout = err == "timeout"
+        err_tag = (
+            "timeout"
+            if is_timeout
+            else ("circuit_breaker_open" if err.startswith("circuit_breaker_open:") else "network_error")
+        )
         _enter_cooldown(domain, err, cooldown_now)
         stale_data, stale_age = _read_stale_cache(domain, cache_dir, _STALE_THRESHOLD_S)
         if stale_data is not None and is_timeout:
@@ -839,25 +1010,23 @@ async def _make_crtsh_api_call(
                 raw_count=stale_raw,
                 query=domain,
                 error_prefix=err,
-                error_type='timeout_cache_fallback',
+                error_type="timeout_cache_fallback",
                 stale_age=stale_age,
                 elapsed=elapsed,
                 provider_status=CTProviderStatus.CACHE_HIT_STALE,
-    )
+            )
         return _make_error_response(
             error=err,
             error_type=err_tag,
             query=domain,
             elapsed=elapsed,
             provider_status=CTProviderStatus.TIMEOUT if is_timeout else CTProviderStatus.HTTP_5XX,
-    )
+        )
 
-    # Handle HTTP status codes
     http_result, http_outcome = _handle_http_error(status, domain, cooldown_now, cache_dir, elapsed)
     if http_result is not None:
         return (http_result, http_outcome)
 
-    # Parse response
     parse_result, parse_outcome = _parse_cert_data(data, query, elapsed)
     if parse_result is not None:
         _clear_cooldown(domain)
@@ -876,7 +1045,7 @@ async def _handle_crtsh_timeout(
 ) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """Handle timeout case with fallback to certspotter and stale cache."""
     elapsed = time.monotonic() - start
-    _enter_cooldown(domain, 'timeout', start)
+    _enter_cooldown(domain, "timeout", start)
 
     # Try certspotter fallback
     try:
@@ -895,16 +1064,16 @@ async def _handle_crtsh_timeout(
                     elapsed=cs_elapsed,
                     provider_status=CTProviderStatus.OK,
                     timeout=True,
-    )
+                )
                 result = DiscoveryBatchResult(
                     hits=tuple(hits)[:_MAX_HITS],
                     error=None,
-                    error_type='ok',
-                    provider_name='certspotter',
-                    provider_chain=('certspotter', 'crtsh_timeout'),
-                    source_family='ct',
+                    error_type="ok",
+                    provider_name="certspotter",
+                    provider_chain=("certspotter", "crtsh_timeout"),
+                    source_family="ct",
                     elapsed_s=cs_elapsed,
-    )
+                )
                 return (result, outcome)
     except Exception:  # noqa: BLE001
         pass
@@ -917,23 +1086,25 @@ async def _handle_crtsh_timeout(
             hits=stale_hits,
             raw_count=stale_raw,
             query=domain,
-            error_prefix='timeout',
-            error_type='timeout_cache_fallback',
+            error_prefix="timeout",
+            error_type="timeout_cache_fallback",
             stale_age=stale_age,
             elapsed=elapsed,
             provider_status=CTProviderStatus.CACHE_HIT_STALE,
-    )
+        )
 
     return _make_error_response(
-        error='timeout',
-        error_type='timeout',
+        error="timeout",
+        error_type="timeout",
         query=domain,
         elapsed=elapsed,
         provider_status=CTProviderStatus.TIMEOUT,
     )
 
 
-async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cache_dir: Path | None=None) -> tuple[DiscoveryBatchResult, CTOutcome]:
+async def call_crtsh(
+    query: str, max_results: int = 20, timeout_s: float = 8.0, cache_dir: Path | None = None
+) -> tuple[DiscoveryBatchResult, CTOutcome]:
     """
     crt.sh search with normalized outcome — F207F, extended F217D.
 
@@ -951,19 +1122,19 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
     """
     start = time.monotonic()
     max_results = _normalize_max_results(max_results)
-    query_stripped = query.strip() if query else ''
+    query_stripped = query.strip() if query else ""
 
-    # Phase 1: Empty query check
     if not query_stripped:
         elapsed = time.monotonic() - start
         return _make_error_response(
-            error='empty_query', error_type='invalid_query',
-            query=query_stripped, elapsed=elapsed,
-            provider_status=CTProviderStatus.SKIP
-    )
+            error="empty_query",
+            error_type="invalid_query",
+            query=query_stripped,
+            elapsed=elapsed,
+            provider_status=CTProviderStatus.SKIP,
+        )
 
-    # Phase 2: Circuit breaker check with fallback
-    crtsh_decision = domain_breaker_check('crt.sh')
+    crtsh_decision = domain_breaker_check("crt.sh")
     if not crtsh_decision.allowed:
         result = await _try_certspotter_fallback(query_stripped, timeout_s, crtsh_decision.reason, start)
         if result is not None:
@@ -972,22 +1143,19 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
     domain_candidate = _extract_domain_from_query(query_stripped)
     wildcard_urls = _build_crtsh_queries(query_stripped)
 
-    # Phase 3: Wildcard search (if applicable)
     if wildcard_urls and domain_candidate is None:
         result = await _search_wildcards(wildcard_urls, query_stripped, timeout_s, start)
         if result is not None:
             return result
 
-    # Phase 4: Freetext search (if applicable)
     if domain_candidate is None:
         result = await _search_freetext(query_stripped, timeout_s, start)
         if result is not None:
             return result
 
-    # Phase 5: Cooldown + stale cache handling
     cooldown_now = time.monotonic()
     in_cooldown, _, _ = _check_cooldown(domain_candidate, cooldown_now)
-    dc_decision = domain_breaker_check('crt.sh')
+    dc_decision = domain_breaker_check("crt.sh")
 
     if not dc_decision.allowed:
         result = await _try_certspotter_fallback(domain_candidate, timeout_s, dc_decision.reason, start)
@@ -999,7 +1167,6 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         if result is not None:
             return result
 
-    # Phase 6: Main API call
     try:
         return await _make_crtsh_api_call(domain_candidate, query_stripped, timeout_s, cooldown_now, cache_dir, start)
     except asyncio.CancelledError:
@@ -1008,12 +1175,14 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         return await _handle_crtsh_timeout(domain_candidate, query_stripped, timeout_s, cache_dir, start)
     except Exception as e:
         elapsed = time.monotonic() - start
-        logger.warning(f'[crtsh] unexpected error: {e}')
+        logger.warning(f"[crtsh] unexpected error: {e}")
         return _make_error_response(
-            error=str(e), error_type='provider_exception',
-            query=domain_candidate, elapsed=elapsed,
-            provider_status=CTProviderStatus.PARSE_ERROR
-    )
+            error=str(e),
+            error_type="provider_exception",
+            query=domain_candidate,
+            elapsed=elapsed,
+            provider_status=CTProviderStatus.PARSE_ERROR,
+        )
 
 
 class CRTshAdapter(BaseDiscoveryMixin):
@@ -1043,9 +1212,7 @@ class CRTshAdapter(BaseDiscoveryMixin):
     def timeout_s(self) -> float:
         return 8.0
 
-    async def _do_discover(
-        self, query: str, limit: int
-    ):
+    async def _do_discover(self, query: str, limit: int):
         """Wrap call_crtsh() as an async iterator — AP-06 FIX."""
         try:
             result, _outcome = await call_crtsh(query, max_results=limit, timeout_s=self.timeout_s)
@@ -1081,4 +1248,4 @@ class CRTshAdapter(BaseDiscoveryMixin):
                 score=hit.score,
                 reason=hit.reason,
                 metadata=metadata,
-    )
+            )

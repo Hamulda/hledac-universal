@@ -16,12 +16,11 @@ All tests run with HLEDAC_HTTP_CACHE behaviour bypassed — the gate lives
 in FetchCoordinator, not in build_cache_transport itself.
 """
 
-
 import sys
+from typing import Never
 from unittest.mock import patch
 
 import pytest
-from _core import aclose
 
 # Ensure the universal package is importable when pytest is invoked from
 # the repo root (matches the project's existing test bootstrap).
@@ -57,20 +56,18 @@ async def test_cache_transport_builds() -> None:
     if hishel_present and httpx_present:
         # hishel present → wrapped object expected (not the bare sentinel)
         assert result is not sentinel_base, (
-            "hishel is installed but build_cache_transport returned the bare "
-            "base — wrap did not happen"
-    )
+            "hishel is installed but build_cache_transport returned the bare base — wrap did not happen"
+        )
         # Heuristic: the wrapped object should expose handle_async_request
         # (the httpx AsyncBaseTransport contract hishel implements).
-        assert hasattr(result, "handle_async_request") or hasattr(
-            result, "_transport"
-        ), "wrapped transport missing expected hishel/httpx surface"
+        assert hasattr(result, "handle_async_request") or hasattr(result, "_transport"), (
+            "wrapped transport missing expected hishel/httpx surface"
+        )
     else:
         # hishel not installed in this env → sentinel returned unchanged
         assert result is sentinel_base, (
-            "hishel not installed; build_cache_transport must pass through "
-            "base_transport unchanged"
-    )
+            "hishel not installed; build_cache_transport must pass through base_transport unchanged"
+        )
 
 
 @pytest.mark.asyncio
@@ -93,7 +90,7 @@ async def test_cache_transport_fail_soft() -> None:
                 return self
             return None
 
-        def load_module(self, *args):  # pragma: no cover
+        def load_module(self, *args) -> Never:  # pragma: no cover
             del args
             raise ImportError("hishel deliberately masked for fail-soft test")
 
@@ -104,9 +101,8 @@ async def test_cache_transport_fail_soft() -> None:
         with patch.dict(sys.modules, {"hishel": None}):
             result = await build_cache_transport(sentinel_base)
         assert result is sentinel_base, (
-            "fail-soft contract broken: build_cache_transport did not return "
-            "base_transport when hishel import failed"
-    )
+            "fail-soft contract broken: build_cache_transport did not return base_transport when hishel import failed"
+        )
     finally:
         # Cleanup: remove blocker + restore hishel if it was loaded before.
         try:
@@ -132,5 +128,14 @@ async def test_cache_transport_constants_bounded() -> None:
     assert MAX_CACHE_SIZE_BYTES == 256 * 1024 * 1024, "size cap must stay 256MB"
     assert DEFAULT_TTL_SECONDS == 7 * 24 * 3600, "TTL must stay 7 days"
     assert CACHEABLE_STATUS_CODES == [
-        200, 203, 204, 300, 301, 404, 405, 410, 414, 501,
+        200,
+        203,
+        204,
+        300,
+        301,
+        404,
+        405,
+        410,
+        414,
+        501,
     ], "cacheable status codes drifted from spec"

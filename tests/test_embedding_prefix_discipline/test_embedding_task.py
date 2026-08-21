@@ -32,7 +32,7 @@ from hledac.universal._core.mlx_embeddings import (
 class TestEmbeddingTask:
     """Testy pro EmbeddingTask enum a helper funkce."""
 
-    def test_asymmetric_prefix_differ(self):
+    def test_asymmetric_prefix_differ(self) -> None:
         """Asymetrické tasky musí mít různé prefixy."""
         text = "machine learning"
         query = apply_task_prefix(text, EmbeddingTask.SEARCH_QUERY)
@@ -42,7 +42,7 @@ class TestEmbeddingTask:
         assert query == "search_query: machine learning"
         assert doc == "search_document: machine learning"
 
-    def test_symmetric_prefix_same(self):
+    def test_symmetric_prefix_same(self) -> None:
         """Symetrické tasky mají stejný prefix pro oba texty."""
         text_a = "text A"
         text_b = "text B"
@@ -54,7 +54,7 @@ class TestEmbeddingTask:
         assert b_prefixed.startswith("clustering:")
         assert a_prefixed != b_prefixed  # Same prefix, different content
 
-    def test_classification_prefix(self):
+    def test_classification_prefix(self) -> None:
         """Classification task má svůj prefix."""
         text = "duplicate content"
         result = apply_task_prefix(text, EmbeddingTask.CLASSIFICATION)
@@ -62,19 +62,19 @@ class TestEmbeddingTask:
         assert result.startswith("classification:")
         assert "classification: classification:" not in result  # No double prefix
 
-    def test_none_task_no_prefix(self):
+    def test_none_task_no_prefix(self) -> None:
         """NONE task nepřidává prefix."""
         text = "plain text"
         result = apply_task_prefix(text, EmbeddingTask.NONE)
 
         assert result == text
 
-    def test_empty_text_no_prefix(self):
+    def test_empty_text_no_prefix(self) -> None:
         """Prázdný text vrací prázdný string."""
         result = apply_task_prefix("", EmbeddingTask.SEARCH_QUERY)
         assert result == ""
 
-    def test_prefix_idempotence(self):
+    def test_prefix_idempotence(self) -> None:
         """Dvojitá aplikace prefixu nedupilikuje prefix."""
         text = "test"
         once = apply_task_prefix(text, EmbeddingTask.SEARCH_QUERY)
@@ -83,7 +83,7 @@ class TestEmbeddingTask:
         assert twice == once
         assert twice == "search_query: test"
 
-    def test_normalization_rules(self):
+    def test_normalization_rules(self) -> None:
         """Normalizace podle typu tasku (embedding_task.py pravidlo)."""
         assert should_normalize(EmbeddingTask.SEARCH_QUERY) is True
         assert should_normalize(EmbeddingTask.SEARCH_DOCUMENT) is True
@@ -98,39 +98,31 @@ class TestEmbeddingTask:
 class TestMLXProviderCapabilities:
     """Testy pro MLX provider capability guard."""
 
-    def test_mlx_supports_task_prefix(self):
+    def test_mlx_supports_task_prefix(self) -> None:
         """MLXEmbeddingManager podporuje task prefixy."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert hasattr(mgr, 'supports_task_prefix')
+            assert hasattr(mgr, "supports_task_prefix")
             assert mgr.supports_task_prefix is True
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_mlx_embedding_dimension(self):
+    def test_mlx_embedding_dimension(self) -> None:
         """MLX má správnou MRL architekturu (canonical 256, native 768, MRL_DIMS)."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
             # MRL canonical: 256d is the M1 8GB UMA sweet-spot
-            assert mgr.EMBEDDING_DIM == 256, (
-                f"EMBEDDING_DIM must be 256 (MRL canonical), got {mgr.EMBEDDING_DIM}"
-            )
+            assert mgr.EMBEDDING_DIM == 256, f"EMBEDDING_DIM must be 256 (MRL canonical), got {mgr.EMBEDDING_DIM}"
             # MRL_DIM aliases EMBEDDING_DIM by design (MRL canonical)
-            assert mgr.MRL_DIM == 256, (
-                f"MRL_DIM must be 256 (MRL canonical), got {mgr.MRL_DIM}"
-            )
+            assert mgr.MRL_DIM == 256, f"MRL_DIM must be 256 (MRL canonical), got {mgr.MRL_DIM}"
             # ModernBERT native hidden size is 768
-            assert mgr.NATIVE_DIM == 768, (
-                f"NATIVE_DIM must be 768 (ModernBERT native), got {mgr.NATIVE_DIM}"
-            )
+            assert mgr.NATIVE_DIM == 768, f"NATIVE_DIM must be 768 (ModernBERT native), got {mgr.NATIVE_DIM}"
             # MRL_DIMS must contain all valid Matryoshka dimensions
-            assert mgr.MRL_DIMS == (256, 512, 768), (
-                f"MRL_DIMS must be (256, 512, 768), got {mgr.MRL_DIMS}"
-            )
+            assert mgr.MRL_DIMS == (256, 512, 768), f"MRL_DIMS must be (256, 512, 768), got {mgr.MRL_DIMS}"
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_mlx_validate_mrl_dim(self):
+    def test_mlx_validate_mrl_dim(self) -> None:
         """validate_mrl_dim() accepts 256/512/768, rejects others."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
@@ -146,7 +138,7 @@ class TestMLXProviderCapabilities:
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_mlx_get_mrl_dims(self):
+    def test_mlx_get_mrl_dims(self) -> None:
         """get_mrl_dims() returns the canonical MRL dimensions tuple."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
@@ -158,7 +150,7 @@ class TestMLXProviderCapabilities:
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_model_path(self):
+    def test_model_path(self) -> None:
         """ModernBERT model path."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
@@ -170,43 +162,43 @@ class TestMLXProviderCapabilities:
 class TestTaskAwareMethods:
     """Testy pro task-aware embedding metody v MLXEmbeddingManager."""
 
-    def test_embed_query_method_exists(self):
+    def test_embed_query_method_exists(self) -> None:
         """Manager má embed_query metodu."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert hasattr(mgr, 'embed_query')
+            assert hasattr(mgr, "embed_query")
             assert callable(mgr.embed_query)
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_embed_document_method_exists(self):
+    def test_embed_document_method_exists(self) -> None:
         """Manager má embed_document metodu."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert hasattr(mgr, 'embed_document')
+            assert hasattr(mgr, "embed_document")
             assert callable(mgr.embed_document)
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_embed_for_dedup_method_exists(self):
+    def test_embed_for_dedup_method_exists(self) -> None:
         """Manager má embed_for_dedup metodu."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert hasattr(mgr, 'embed_for_dedup')
+            assert hasattr(mgr, "embed_for_dedup")
             assert callable(mgr.embed_for_dedup)
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_embed_for_clustering_method_exists(self):
+    def test_embed_for_clustering_method_exists(self) -> None:
         """Manager má embed_for_clustering metodu."""
         try:
             mgr = MLXEmbeddingManager(lazy_load=True)
-            assert hasattr(mgr, 'embed_for_clustering')
+            assert hasattr(mgr, "embed_for_clustering")
             assert callable(mgr.embed_for_clustering)
         except ImportError:
             pytest.skip("MLX not available")
 
-    def test_singleton_factory(self):
+    def test_singleton_factory(self) -> None:
         """get_embedding_manager vrací singleton."""
         try:
             mgr1 = get_embedding_manager()
@@ -219,7 +211,7 @@ class TestTaskAwareMethods:
 class TestPrefixDiscipline:
     """Testy pro prefix discipline pravidla."""
 
-    def test_prefix_never_in_db(self):
+    def test_prefix_never_in_db(self) -> None:
         """Prefix se aplikuje pouze během embeddování - test logiky."""
         # Tento test ověřuje, že apply_task_prefix vrací prefixovaný text
         # ale neukládáme ho nikam - použijeme jen v _embed_task metodě
@@ -231,7 +223,7 @@ class TestPrefixDiscipline:
         # Ale originál zůstává nezměněn pro DB
         assert text == "original document"
 
-    def test_different_tasks_different_embeddings(self):
+    def test_different_tasks_different_embeddings(self) -> None:
         """Různé tasky = různé prefixy = různé embeddings (teoreticky)."""
         # Ověřujeme že prefixy jsou správně aplikovány
         text = "same content"
@@ -245,7 +237,7 @@ class TestPrefixDiscipline:
         assert d != c
         assert q != c
 
-    def test_prefix_memory_safe_batch(self):
+    def test_prefix_memory_safe_batch(self) -> None:
         """Batch prefixing je memory-safe (žádné velké allocations)."""
         # Ověřujeme že list comprehension funguje správně
         texts = [f"document {i}" for i in range(10)]

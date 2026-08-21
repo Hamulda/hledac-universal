@@ -15,21 +15,29 @@ Fix: Use parallel() or parallel_ok() from utils.async_helpers
 
 Run: python tools/audit/ban_raw_gather.py [--fix]
 """
+
 from __future__ import annotations
 
-import ast
 import argparse
+import ast
 import sys
 from pathlib import Path
-from _core import aclose
 
 
 def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]]:
     """Find raw asyncio.gather() calls without return_exceptions."""
     violations = []
     skip_dirs = {
-        "__pycache__", ".venv", ".venv-test", "archive", "probe_", "tests/archive",
-        ".git", ".claude", "tools/migrate", "tests",  # tests use raw gather legitimately for concurrent-test fixtures
+        "__pycache__",
+        ".venv",
+        ".venv-test",
+        "archive",
+        "probe_",
+        "tests/archive",
+        ".git",
+        ".claude",
+        "tools/migrate",
+        "tests",  # tests use raw gather legitimately for concurrent-test fixtures
     }
     skip_files = {
         "tools/migrate/migrate_gather_to_safe_gather.py",
@@ -45,7 +53,7 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
             continue
         try:
             content = py_file.read_text()
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             continue
 
         try:
@@ -74,18 +82,14 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
                 continue
 
             # Check for return_exceptions=True
-            has_return_exceptions = any(
-                kw.arg == "return_exceptions"
-                for kw in node.keywords
-    )
+            has_return_exceptions = any(kw.arg == "return_exceptions" for kw in node.keywords)
 
             if has_return_exceptions:
                 continue
 
             # Violation: asyncio.gather without return_exceptions
             lineno = node.lineno
-            col_offset = node.col_offset
-            violations.append((py_file, lineno, f"asyncio.gather(...) without return_exceptions=True"))
+            violations.append((py_file, lineno, "asyncio.gather(...) without return_exceptions=True"))
 
     return violations
 
@@ -93,7 +97,9 @@ def find_violations(root: Path, fix: bool = False) -> list[tuple[Path, int, str]
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ban raw asyncio.gather() without return_exceptions=True")
     parser.add_argument("--fix", action="store_true", help="Auto-fix violations (not yet implemented)")
-    parser.add_argument("--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
+    )
     args = parser.parse_args()
 
     violations = find_violations(args.root)

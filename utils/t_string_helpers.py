@@ -41,9 +41,7 @@ Example:
 Requires: Python 3.14+ with t-string support (string.templatelib)
 """
 
-
-from string.templatelib import Interpolation, Template
-from _core import aclose
+from string.templatelib import Template
 
 __all__ = [
     "t_analyze",
@@ -63,7 +61,7 @@ def _require_template(obj: object, func_name: str) -> Template:
             f"{func_name}() requires a Template object (from t'...' literal), "
             f"got {type(obj).__name__}. "
             f"Use t'...' syntax for template strings."
-    )
+        )
     return obj
 
 
@@ -144,9 +142,7 @@ def t_inspect(tpl: Template) -> dict[str, object]:
         # }
     """
     _require_template(tpl, "t_inspect")
-    has_format_specs = any(
-        interp.format_spec for interp in tpl.interpolations
-    )
+    has_format_specs = any(interp.format_spec for interp in tpl.interpolations)
     return {
         "variable_count": len(tpl.interpolations),
         "static_parts": tpl.strings,

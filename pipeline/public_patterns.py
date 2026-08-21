@@ -8,67 +8,37 @@ Handles: IOC extraction (rust backend), pattern context, quality scoring,
 Pure functions, no I/O, no async. Heavy I/O (rust backend) is fail-safe.
 """
 
-
 import hashlib
 import html.parser
 import re
 from typing import TYPE_CHECKING, Any
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-# ----------------------------------------------------------------------
-# Quality tier constants (re-exported from public_constants for convenience)
-# ----------------------------------------------------------------------
 _QUALITY_TIER_VERY_GOOD = "very_good"
 _QUALITY_TIER_GOOD = "good"
 _QUALITY_TIER_OK = "ok"
 _QUALITY_TIER_WEAK = "weak_low_signal"
 _QUALITY_TIER_SKIP = "SKIP_WEAK"
 
-# ----------------------------------------------------------------------
-# Fetch budget tiers
-# ----------------------------------------------------------------------
 _FETCH_BUDGET_STRONG: float = 1.25
 _FETCH_BUDGET_NORMAL: float = 1.0
 _FETCH_BUDGET_WEAK: float = 0.65
 _FETCH_BUDGET_SKIP: float = 0.0
 
-# ----------------------------------------------------------------------
-# Discovery signal thresholds
-# ----------------------------------------------------------------------
 _DISCOVERY_SIGNAL_SCORE_THRESHOLD: float = 0.3
 _DISCOVERY_FALSE_POSITIVE_THRESHOLD: float = 0.5
 _DISCOVERY_SKIP_THRESHOLD: float = 0.15
 
-# ----------------------------------------------------------------------
-# Text processing
-# ----------------------------------------------------------------------
 MAX_EXTRACTED_TEXT_CHARS: int = 200_000
 MAX_METADATA_PREPEND_CHARS: int = 500
 _FINDING_ID_CONTEXT_RADIUS: int = 100
 _LOW_ENTROPY_UNIQUE_WORD_RATIO: float = 0.25
 
-# ----------------------------------------------------------------------
-# Pattern hit sentinel
-# ----------------------------------------------------------------------
 _NO_HIT_START = object()
 
-# ----------------------------------------------------------------------
-# Compiled regex patterns for O(1) reuse
-# ----------------------------------------------------------------------
 _WHITESPACE_RE = re.compile(r"\s+")
-
-
-# ----------------------------------------------------------------------
-# HTML extraction — OSINT-03: MAX_HTML_INPUT_SIZE bounds DOM node allocation
-
-
-# ----------------------------------------------------------------------
-# HTML extraction — OSINT-03: MAX_HTML_INPUT_SIZE bounds DOM node allocation
-# OSINT-04: _HTML_CONTENT_TYPES gate validates content-type before parsing
-# ----------------------------------------------------------------------
 
 ### OSINT-03: Maximum HTML input size (5 MB).
 ### Prevents OOM on M1 8GB by bounding parser allocation.
@@ -80,11 +50,14 @@ MAX_HTML_INPUT_SIZE: int = 5 * 1024 * 1024
 ### text/plain → passthrough (no parsing needed)
 ### application/xhtml+xml → treated as HTML (XHTML is valid HTML)
 ### Anything else → rejected (prevents JSON/XML being parsed as HTML)
-_HTML_CONTENT_TYPES: frozenset[str] = frozenset({
-    "text/html",
-    "application/xhtml+xml",
-    "text/plain",  # passthrough — no parsing needed
-})
+_HTML_CONTENT_TYPES: frozenset[str] = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+        "text/plain",  # passthrough — no parsing needed
+    }
+)
+
 
 ### Normalized content-type → True if HTML/text parser should run.
 ### Fail-safe: returns False for unknown/missing content-type.
@@ -113,9 +86,7 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
         self._chunks: list[str] = []
         self._last_end = 0
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ("body", "div", "p", "tr", "li", "article", "section", "main"):
             if not self._chunks or self._chunks[-1] != " ":
                 self._chunks.append(" ")
@@ -125,8 +96,22 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if tag in (
-            "body", "div", "p", "tr", "li", "article", "section", "main", "h1",
-            "h2", "h3", "h4", "h5", "h6", "ul", "ol",
+            "body",
+            "div",
+            "p",
+            "tr",
+            "li",
+            "article",
+            "section",
+            "main",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "ul",
+            "ol",
         ):
             if self._chunks and self._chunks[-1] != " ":
                 self._chunks.append(" ")
@@ -169,10 +154,11 @@ def _html_to_text(
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         extract_html_text = rust.raw.extract_html_text
 
         return extract_html_text(html_content)
-    except (ImportError, Exception):  # noqa: BLE001
+    except ImportError, Exception:  # noqa: BLE001
         pass
     # Fallback: Python stdlib HTMLParser
     try:
@@ -211,23 +197,17 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
     try:
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal._core.rust_backend import rust
+
         batch_extract_html_text = rust.raw.batch_extract_html_text
 
         return batch_extract_html_text(truncated)
-    except (ImportError, Exception):  # noqa: BLE001
+    except ImportError, Exception:  # noqa: BLE001
         pass
     # Fallback: sequential Python HTMLParser
     return [_html_to_text(html) for html in truncated]
 
 
-# ----------------------------------------------------------------------
-# Finding ID
-# ----------------------------------------------------------------------
-
-
-def _make_finding_id(
-    query: str, url: str, label: str, pattern: str, value: str
-) -> str:
+def _make_finding_id(query: str, url: str, label: str, pattern: str, value: str) -> str:
     """Deterministic finding ID via SHA-256 hash of pipeline inputs.
 
     Uses rust backend xxhash if available (10-20x faster), falls back to sha256.
@@ -243,11 +223,6 @@ def _make_finding_id(
         return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
-# ----------------------------------------------------------------------
-# Pattern context window
-# ----------------------------------------------------------------------
-
-
 def _pattern_context(
     text: str,
     start: int,
@@ -261,11 +236,6 @@ def _pattern_context(
     lo = max(0, start - radius)
     hi = min(len(text), end + radius)
     return text[lo:hi]
-
-
-# ----------------------------------------------------------------------
-# JS confidence
-# ----------------------------------------------------------------------
 
 
 def _js_confidence_from_verdict(
@@ -285,11 +255,6 @@ def _js_confidence_from_verdict(
     return 0.30
 
 
-# ----------------------------------------------------------------------
-# Text enrichment
-# ----------------------------------------------------------------------
-
-
 def _enrich_text_with_metadata(
     title: str,
     snippet: str,
@@ -302,6 +267,7 @@ def _enrich_text_with_metadata(
     try:
         from hledac.universal.pipeline.scoring import _strip_html_tags_from_text
     except ImportError:
+
         def _strip_html_tags_from_text(text: str) -> str:
             if not text:
                 return ""
@@ -332,11 +298,6 @@ def _enrich_text_with_metadata(
     return meta_prefix + content
 
 
-# ----------------------------------------------------------------------
-# Quality scoring
-# ----------------------------------------------------------------------
-
-
 def _score_page_quality(
     *,
     hit_url: str,
@@ -354,37 +315,34 @@ def _score_page_quality(
     """
     extracted_len = len(extracted_text) if extracted_text else 0
 
-    # ---- Tier 1: Discovery signal check ----
     if discovery_score is not None and discovery_score >= 0.7:
         if discovery_reason in (
-            "rescue_candidate", "bootstrap_security_txt",
-            "seed_context_domain", "seed_context_url"
+            "rescue_candidate",
+            "bootstrap_security_txt",
+            "seed_context_domain",
+            "seed_context_url",
         ):
             return _QUALITY_TIER_GOOD
         if discovery_score >= 0.85:
             return _QUALITY_TIER_VERY_GOOD
 
-    # ---- Tier 2: Pre-fetch text length gate (F275) ----
     if extracted_len < 80:
         return _QUALITY_TIER_SKIP
 
-    # ---- Tier 3: Low entropy detection (F163B) ----
     if extracted_text:
         words = extracted_text.split()
         if words:
-            unique_ratio = len(set(w.lower() for w in words)) / len(words)
+            unique_ratio = len({w.lower() for w in words}) / len(words)
             if unique_ratio < _LOW_ENTROPY_UNIQUE_WORD_RATIO:
                 return _QUALITY_TIER_WEAK
 
-    # ---- Tier 4: URL pattern quality ----
     url_lower = hit_url.lower()
-    if any(p in url_lower for p in (
-        "/.well-known/security.txt", "/robots.txt", "/sitemap.xml",
-        "cisa.gov", "github.com", "abuse.ch"
-    )):
+    if any(
+        p in url_lower
+        for p in ("/.well-known/security.txt", "/robots.txt", "/sitemap.xml", "cisa.gov", "github.com", "abuse.ch")
+    ):
         return _QUALITY_TIER_VERY_GOOD
 
-    # ---- Tier 5: Title/snippet signal ----
     title_len = len(hit_title) if hit_title else 0
     snippet_len = len(hit_snippet) if hit_snippet else 0
     if title_len > 30 and snippet_len > 50:
@@ -392,15 +350,9 @@ def _score_page_quality(
     if title_len > 10 or snippet_len > 30:
         return _QUALITY_TIER_OK
 
-    # ---- Tier 6: Default ----
     if extracted_len > 200:
         return _QUALITY_TIER_OK
     return _QUALITY_TIER_WEAK
-
-
-# ----------------------------------------------------------------------
-# Page usability computation
-# ----------------------------------------------------------------------
 
 
 def _compute_page_usable_fields(
@@ -419,7 +371,6 @@ def _compute_page_usable_fields(
     Returns: (is_usable, quality_tier, quality_reason, is_strong_signal,
               strong_signal_reason, waste_category)
     """
-    # ---- Error path ----
     if error:
         if "404" in error or "NOT FOUND" in error.upper():
             return (False, "SKIP_WEAK", "http_404", False, "", "http_error")
@@ -427,21 +378,17 @@ def _compute_page_usable_fields(
             return (False, "SKIP_WEAK", "fetch_timeout", False, "", "timeout")
         return (False, "SKIP_WEAK", "fetch_error", False, "", "http_error")
 
-    # ---- Not fetched ----
     if not fetched:
         return (False, "SKIP_WEAK", "not_fetched", False, "", "not_fetched")
 
-    # ---- No extracted text ----
     if extracted_text_len == 0:
         return (False, "SKIP_WEAK", "empty_text", False, "", "empty_text")
 
-    # ---- Quality tier mapping ----
     tier = quality_reason or _QUALITY_TIER_OK
 
     if tier == _QUALITY_TIER_SKIP or tier == "SKIP_WEAK":
         return (False, _QUALITY_TIER_SKIP, quality_reason or "skip", False, "", "weak_signal")
 
-    # ---- Strong discovery signal ----
     strong_signal = False
     strong_signal_reason = ""
     if discovery_signal and discovery_score is not None and discovery_score >= _DISCOVERY_SIGNAL_SCORE_THRESHOLD:
@@ -452,7 +399,6 @@ def _compute_page_usable_fields(
             strong_signal = True
             strong_signal_reason = f"discovery_fp_bypass={discovery_score:.2f}"
 
-    # ---- Usable ----
     is_usable = tier in (_QUALITY_TIER_VERY_GOOD, _QUALITY_TIER_GOOD, _QUALITY_TIER_OK)
 
     waste_category = ""
@@ -471,15 +417,6 @@ def _compute_page_usable_fields(
         waste_category,
     )
 
-
-# ----------------------------------------------------------------------
-# IOC extraction (rust backend)
-# ----------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------
-# Deobfuscation pre-extract hook (ADVERSARY-003: CyberChef-Pipeline)
-# ----------------------------------------------------------------------
 
 _DEOBFUSCATE_ENABLED: bool | None = None
 
@@ -561,11 +498,6 @@ def _deobfuscate_text(text: str) -> tuple[list[str], int]:
         return ([], 0)
 
 
-# ----------------------------------------------------------------------
-# IOC extraction (rust backend)
-# ----------------------------------------------------------------------
-
-
 def _extract_from_deobfuscated_candidates(candidates: list[str]) -> set[tuple[str, str]]:
     """Extract IOCs from decoded candidate strings.
 
@@ -606,6 +538,7 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     """
     try:
         from hledac.universal._core.rust_backend import rust as _rust_backend
+
         if _rust_backend.is_available and hasattr(_rust_backend, "ioc"):
             ioc = _rust_backend.ioc
 
@@ -781,25 +714,19 @@ def extract_iocs_from_texts(
             return [extract_iocs_from_text(t) for t in texts]
 
         ioc = _rust_backend.ioc
-        decoded_per_text = _batch_decode_candidates(
-            texts, ioc, _is_deobfuscate_enabled()
-    )
+        decoded_per_text = _batch_decode_candidates(texts, ioc, _is_deobfuscate_enabled())
         if not hasattr(ioc, "batch_extract_iocs_simd_indexed"):
             return [extract_iocs_from_text(t) for t in texts]
 
         # Large batch: Rust batch path — single GIL acquisition, rayon parallel
-        result = _process_rust_ioc_batch(
-            ioc.batch_extract_iocs_simd_indexed(texts), texts
-    )
+        result = _process_rust_ioc_batch(ioc.batch_extract_iocs_simd_indexed(texts), texts)
 
         # ADVERSARY-003: merge deobfuscated candidates into results
         # For deobfuscated candidates, we scan each one with the SIMD engine.
         # We do this as one batch scan (single GIL acquisition) and then
         # attribute results back to each text by re-scanning per-candidate.
         if decoded_per_text and any(decoded_per_text):
-            all_candidates: list[str] = [
-                c for candidates in decoded_per_text for c in candidates
-            ]
+            all_candidates: list[str] = [c for candidates in decoded_per_text for c in candidates]
             if all_candidates:
                 decoded_iocs: list[tuple[str, str]] = ioc.batch_extract_iocs_simd(all_candidates)
                 _merge_decoded_iocs(result, decoded_per_text, decoded_iocs)
@@ -807,11 +734,6 @@ def extract_iocs_from_texts(
         return result
     else:
         return [extract_iocs_from_text(t) for t in texts]
-
-
-# ----------------------------------------------------------------------
-# Threat actor / malware family extraction
-# ----------------------------------------------------------------------
 
 
 # Bounded compiled patterns — max 500 entries in dictionary, O(1) lookup
@@ -826,7 +748,7 @@ _THREAT_ACTOR_RE = re.compile(
     r"\b(?:Ocean Lot|Reaper Group|Geumseong|APT32|APT37|APT38)\b|"
     r"\b(?:TA428|MenuPass|Tailgater Team|Joe Team)\b",
     re.IGNORECASE,
-    )
+)
 
 _RANSOMWARE_FAMILY_RE = re.compile(
     r"\b(?:LockBit|LockBit\s*2(?:\.0)?|LockBit\s*3|LDX)\b|"
@@ -840,7 +762,7 @@ _RANSOMWARE_FAMILY_RE = re.compile(
     r"\b(?:Cobalt Strike|CobaltStrike|CS)\b|"
     r"\b(?:Metasploit|Metasploit Framework|MSF)\b",
     re.IGNORECASE,
-    )
+)
 
 
 def extract_threat_entities(text: str) -> list[tuple[str, str]]:
@@ -861,14 +783,12 @@ def extract_threat_entities(text: str) -> list[tuple[str, str]]:
         results: list[tuple[str, str]] = []
         seen: set[str] = set()
 
-        # Extract threat actors
         for match in _THREAT_ACTOR_RE.finditer(text):
             name = match.group().strip()
             if name and name not in seen:
                 seen.add(name)
                 results.append((name, "threat_actor"))
 
-        # Extract malware families
         for match in _RANSOMWARE_FAMILY_RE.finditer(text):
             name = match.group().strip()
             if name and name not in seen:
@@ -880,11 +800,6 @@ def extract_threat_entities(text: str) -> list[tuple[str, str]]:
         return []
 
 
-# ----------------------------------------------------------------------
-# UMA state helper
-# ----------------------------------------------------------------------
-
-
 def _get_uma_state() -> tuple[str, bool]:
     """Read UMA status via resource_governor surface.
 
@@ -894,21 +809,18 @@ def _get_uma_state() -> tuple[str, bool]:
         evaluate_uma_state,
         sample_uma_status,
     )
+
     status = sample_uma_status()
     state = evaluate_uma_state(status.system_used_gib)
     io_only = status.io_only
     return state, io_only
 
 
-# ----------------------------------------------------------------------
-# Patterns configured count
-# ----------------------------------------------------------------------
-
-
 def _get_patterns_configured_count() -> int:
     """Return count of configured pattern matchers from singleton registry."""
     try:
         import sys
+
         state = sys.modules["hledac.universal.patterns.pattern_matcher"]._matcher_state
         return len(state._registry_snapshot) if state._registry_snapshot else 0
     except Exception:

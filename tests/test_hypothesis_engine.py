@@ -27,9 +27,11 @@ from hledac_hypothesis.hypothesisgenerator import (
 # Test fixtures
 # ---------------------------------------------------------------------------
 
+
 class MockFinding:
     """Minimal finding mock for hypothesis generation."""
-    def __init__(self, finding_id: str, payload_text: str):
+
+    def __init__(self, finding_id: str, payload_text: str) -> None:
         self.finding_id = finding_id
         self.payload_text = payload_text
 
@@ -38,7 +40,8 @@ class MockFinding:
 # DSPy gate paths
 # ---------------------------------------------------------------------------
 
-def test_generate_with_dspy_disabled(monkeypatch):
+
+def test_generate_with_dspy_disabled(monkeypatch) -> None:
     """
     With HLEDAC_ENABLE_DSPY=0, _heuristic_generate() is called directly.
     Output is list[ResearchHypothesis] bounded by MAX_HYPOTHESES.
@@ -57,7 +60,7 @@ def test_generate_with_dspy_disabled(monkeypatch):
     assert len(result) >= 1  # fail-soft always returns >= 1
 
 
-def test_generate_with_dspy_enabled_but_unavailable(monkeypatch):
+def test_generate_with_dspy_enabled_but_unavailable(monkeypatch) -> None:
     """
     DSPy enabled but _load_dspy_program returns None → fallback to heuristic.
     No exception propagated, output is valid ResearchHypothesis list.
@@ -77,7 +80,7 @@ def test_generate_with_dspy_enabled_but_unavailable(monkeypatch):
     assert len(result) >= 1
 
 
-def test_generate_with_dspy_forward_exception(monkeypatch):
+def test_generate_with_dspy_forward_exception(monkeypatch) -> None:
     """
     DSPy forward() raises → _heuristic_generate fallback is triggered.
     Exception is caught, no propagation.
@@ -101,7 +104,8 @@ def test_generate_with_dspy_forward_exception(monkeypatch):
 # Dempster-Shafer belief propagation
 # ---------------------------------------------------------------------------
 
-def test_ds_belief_single_hypothesis():
+
+def test_ds_belief_single_hypothesis() -> None:
     """
     Add 1 hypothesis, add 1 supporting evidence → belief() > 0.5.
     """
@@ -112,7 +116,7 @@ def test_ds_belief_single_hypothesis():
     assert belief > 0.5, f"Expected belief > 0.5, got {belief}"
 
 
-def test_ds_belief_multiple_hypotheses():
+def test_ds_belief_multiple_hypotheses() -> None:
     """
     Multiple hypotheses → belief values sum correctly.
     """
@@ -130,7 +134,7 @@ def test_ds_belief_multiple_hypotheses():
     assert abs(total_belief - (h1_belief + h2_belief + h3_belief)) < 0.01
 
 
-def test_ds_contradiction_detection():
+def test_ds_contradiction_detection() -> None:
     """
     Dempster-Shafer contradiction detection via plausibility comparison.
 
@@ -163,7 +167,7 @@ def test_ds_contradiction_detection():
     assert 0 <= p2 <= 1
 
 
-def test_ds_no_contradiction_below_threshold():
+def test_ds_no_contradiction_below_threshold() -> None:
     """
     Mild evidence → detect_contradiction(threshold=0.5) returns False.
     """
@@ -175,7 +179,7 @@ def test_ds_no_contradiction_below_threshold():
     assert ds.detect_contradiction(threshold=0.5) is False
 
 
-def test_ds_round_trip_serialization():
+def test_ds_round_trip_serialization() -> None:
     """
     to_dict() → from_dict() → belief() == original.
     """
@@ -195,7 +199,7 @@ def test_ds_round_trip_serialization():
     assert ds.belief("h3") == ds2.belief("h3")
 
 
-def test_ds_source_weight_modulates_belief():
+def test_ds_source_weight_modulates_belief() -> None:
     """
     Higher source_weight → higher belief contribution.
     """
@@ -205,11 +209,10 @@ def test_ds_source_weight_modulates_belief():
     ds2 = DempsterShafer(hypotheses={"h1"})
     ds2.add_evidence("h1", mass=0.8, source_weight=0.5)
 
-    assert ds1.belief("h1") > ds2.belief("h1"), \
-        "Higher weight should produce higher belief"
+    assert ds1.belief("h1") > ds2.belief("h1"), "Higher weight should produce higher belief"
 
 
-def test_ds_empty_hypotheses():
+def test_ds_empty_hypotheses() -> None:
     """
     DempsterShafer with no hypotheses → belief() returns 0.
     """
@@ -221,14 +224,12 @@ def test_ds_empty_hypotheses():
 # Heuristic extractors
 # ---------------------------------------------------------------------------
 
-def test_extract_ips():
+
+def test_extract_ips() -> None:
     """
     Finding with known IP → IP extracted into hypothesis pivot_seeds.
     """
-    findings = [
-        MockFinding("f1", f"indicator 8.8.8.{i} resolved")
-        for i in range(5)
-    ]
+    findings = [MockFinding("f1", f"indicator 8.8.8.{i} resolved") for i in range(5)]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=1)
 
     # At least one hypothesis should reference an 8.8.8.x IP
@@ -237,11 +238,12 @@ def test_extract_ips():
 
     # Check pivot seeds contain subnet
     for h in ip_hypotheses:
-        assert any("8.8.8" in seed or "/16" in seed for seed in h.pivot_seeds), \
+        assert any("8.8.8" in seed or "/16" in seed for seed in h.pivot_seeds), (
             f"IP hypothesis should have subnet pivot seed, got {h.pivot_seeds}"
+        )
 
 
-def test_extract_domains():
+def test_extract_domains() -> None:
     """
     Finding with known domain → domain extracted into hypothesis.
     """
@@ -251,17 +253,14 @@ def test_extract_domains():
     ]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=1)
 
-    domain_hypotheses = [
-        h for h in result
-        if "example.com" in h.hypothesis_text or "evil-example" in h.hypothesis_text
-    ]
+    domain_hypotheses = [h for h in result if "example.com" in h.hypothesis_text or "evil-example" in h.hypothesis_text]
     assert len(domain_hypotheses) >= 1, "Expected domain extraction"
 
     for h in domain_hypotheses:
         assert len(h.pivot_seeds) >= 1, "Domain hypothesis should have pivot seeds"
 
 
-def test_extract_emails():
+def test_extract_emails() -> None:
     """
     Finding with known email → adversarial hypothesis with leak: pivot seed.
     """
@@ -277,30 +276,25 @@ def test_extract_emails():
     assert has_leak_seed, "Email hypothesis should have leak: pivot seed"
 
 
-def test_extract_hashes():
+def test_extract_hashes() -> None:
     """
     Finding with MD5/SHA256 → lateral hypothesis with hash: pivot seed.
     """
     findings = [
         MockFinding(
-            "f1",
-            "file detected with hash abc123def456789012345678901234ab "
-            "matching malware in breach database"
+            "f1", "file detected with hash abc123def456789012345678901234ab matching malware in breach database"
         ),
     ]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=1)
 
-    hash_hypotheses = [
-        h for h in result
-        if "abc123" in h.hypothesis_text or h.hypothesis_type == "lateral"
-    ]
+    hash_hypotheses = [h for h in result if "abc123" in h.hypothesis_text or h.hypothesis_type == "lateral"]
     assert len(hash_hypotheses) >= 1, "Expected hash extraction"
 
     has_hash_seed = any("hash:" in seed for seed in hash_hypotheses[0].pivot_seeds)
     assert has_hash_seed, "Hash hypothesis should have hash: pivot seed"
 
 
-def test_extract_none_returns_empty_lists():
+def test_extract_none_returns_empty_lists() -> None:
     """Empty payload → no extractions."""
     from hledac_hypothesis.hypothesisgenerator import _extract_domains, _extract_emails, _extract_hashes, _extract_ips
 
@@ -319,7 +313,8 @@ def test_extract_none_returns_empty_lists():
 # Hypothesis types coverage
 # ---------------------------------------------------------------------------
 
-def test_all_four_hypothesis_types_generated():
+
+def test_all_four_hypothesis_types_generated() -> None:
     """
     Input triggers entity_expansion, temporal, lateral, adversarial.
     Assert all 4 types appear in output.
@@ -335,11 +330,10 @@ def test_all_four_hypothesis_types_generated():
     types_present = {h.hypothesis_type for h in result}
     expected_types = {"entity_expansion", "temporal", "lateral", "adversarial"}
 
-    assert expected_types.issubset(types_present), \
-        f"Expected all 4 types {expected_types}, got {types_present}"
+    assert expected_types.issubset(types_present), f"Expected all 4 types {expected_types}, got {types_present}"
 
 
-def test_hypothesis_type_entity_expansion():
+def test_hypothesis_type_entity_expansion() -> None:
     """
     IP finding → entity_expansion type with high confidence.
     """
@@ -351,7 +345,7 @@ def test_hypothesis_type_entity_expansion():
     assert entity_hypotheses[0].confidence >= 0.5
 
 
-def test_hypothesis_type_temporal_requires_depth():
+def test_hypothesis_type_temporal_requires_depth() -> None:
     """
     sprint_depth=1 → limited hypotheses (no temporal).
     sprint_depth=2 → temporal hypotheses may appear for registered domains.
@@ -372,7 +366,7 @@ def test_hypothesis_type_temporal_requires_depth():
     assert len(types_d2) >= 1, "Depth 2 should produce at least one hypothesis type"
 
 
-def test_hypothesis_type_lateral():
+def test_hypothesis_type_lateral() -> None:
     """
     Hash finding → lateral type hypothesis.
     """
@@ -385,7 +379,7 @@ def test_hypothesis_type_lateral():
     assert len(lateral_hypotheses) >= 1, "Expected lateral hypothesis from hash"
 
 
-def test_hypothesis_type_adversarial():
+def test_hypothesis_type_adversarial() -> None:
     """
     Email finding → adversarial type hypothesis.
     """
@@ -402,42 +396,36 @@ def test_hypothesis_type_adversarial():
 # MAX_HYPOTHESES invariant
 # ---------------------------------------------------------------------------
 
-def test_max_hypotheses_bound_respected():
+
+def test_max_hypotheses_bound_respected() -> None:
     """
     INVARIANT: MAX_HYPOTHESES is a config constant.
     Output MUST NOT exceed MAX_HYPOTHESES regardless of input.
     """
     # Generate findings that would produce > MAX_HYPOTHESES hypotheses
-    findings = [
-        MockFinding(f"f{i}", f"indicator 10.0.0.{i} beacon")
-        for i in range(50)
-    ]
+    findings = [MockFinding(f"f{i}", f"indicator 10.0.0.{i} beacon") for i in range(50)]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=1)
 
-    assert len(result) <= MAX_HYPOTHESES, \
-        f"Output {len(result)} exceeds MAX_HYPOTHESES={MAX_HYPOTHESES}"
+    assert len(result) <= MAX_HYPOTHESES, f"Output {len(result)} exceeds MAX_HYPOTHESES={MAX_HYPOTHESES}"
 
 
-def test_hypothesis_generator_respects_max():
+def test_hypothesis_generator_respects_max() -> None:
     """
     HypothesisGenerator.generate() respects MAX_HYPOTHESES bound.
     """
-    findings = [
-        MockFinding(f"f{i}", f"domain{i}.example.com resolved")
-        for i in range(20)
-    ]
+    findings = [MockFinding(f"f{i}", f"domain{i}.example.com resolved") for i in range(20)]
     gen = HypothesisGenerator(graph=None)
     result = gen.generate(findings, current_seeds=["test.com"], sprint_depth=1)
 
-    assert len(result) <= MAX_HYPOTHESES, \
-        f"Generator output {len(result)} exceeds MAX_HYPOTHESES={MAX_HYPOTHESES}"
+    assert len(result) <= MAX_HYPOTHESES, f"Generator output {len(result)} exceeds MAX_HYPOTHESES={MAX_HYPOTHESES}"
 
 
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
-def test_empty_findings_returns_fallback():
+
+def test_empty_findings_returns_fallback() -> None:
     """
     No findings, no seeds → single fallback hypothesis.
     """
@@ -449,7 +437,7 @@ def test_empty_findings_returns_fallback():
     assert isinstance(result[0], ResearchHypothesis)
 
 
-def test_empty_findings_with_seeds():
+def test_empty_findings_with_seeds() -> None:
     """
     No findings but seeds present → valid hypotheses from seeds.
     """
@@ -461,26 +449,25 @@ def test_empty_findings_with_seeds():
     assert any("test.com" in h.hypothesis_text or "test.com" in h.pivot_seeds for h in result)
 
 
-def test_confidence_range():
+def test_confidence_range() -> None:
     """
     All hypotheses have confidence in [0.0, 1.0].
     """
-    findings = [
-        MockFinding(f"f{i}", f"indicator 10.0.0.{i}")
-        for i in range(5)
-    ]
+    findings = [MockFinding(f"f{i}", f"indicator 10.0.0.{i}") for i in range(5)]
     result = _heuristic_generate(findings, current_seeds=[], sprint_depth=2)
 
     for h in result:
-        assert 0.0 <= h.confidence <= 1.0, \
+        assert 0.0 <= h.confidence <= 1.0, (
             f"Confidence {h.confidence} out of range for hypothesis: {h.hypothesis_text[:50]}"
+        )
 
 
 # ---------------------------------------------------------------------------
 # ResearchHypothesis immutable properties
 # ---------------------------------------------------------------------------
 
-def test_research_hypothesis_immutable():
+
+def test_research_hypothesis_immutable() -> None:
     """
     ResearchHypothesis is frozen → attributes cannot be modified after creation.
     """
@@ -494,7 +481,7 @@ def test_research_hypothesis_immutable():
         h.confidence = 0.5  # type: ignore
 
 
-def test_research_hypothesis_default_type():
+def test_research_hypothesis_default_type() -> None:
     """
     Default hypothesis_type is entity_expansion.
     """

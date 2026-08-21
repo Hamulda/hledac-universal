@@ -7,9 +7,9 @@ unnecessary TLS handshakes.
 
 Acceptance: test shows 0 new handshakes for repeated (host, ip) requests.
 """
+
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,9 +18,9 @@ import pytest
 from hledac.universal.transport.curl_cffi_fetch import (
     _MAX_RESOLVED_SESSIONS,
     _RESOLVED_SESSION_TTL_S,
+    _get_or_create_resolved_session,
     _resolved_sessions,
     _resolved_sessions_order,
-    _get_or_create_resolved_session,
 )
 
 
@@ -38,7 +38,7 @@ class TestResolvedSessionCache:
     """Tests for the (host, resolve_bindings) session cache."""
 
     @pytest.mark.asyncio
-    async def test_cache_hit_reuses_session(self):
+    async def test_cache_hit_reuses_session(self) -> None:
         """
         When the same (host, frozenset of resolve bindings) is requested twice,
         the second call returns the cached session (cache hit).
@@ -63,23 +63,17 @@ class TestResolvedSessionCache:
             side_effect=create_session_factory,
         ):
             # First call — creates session
-            session1, prof1 = await _get_or_create_resolved_session(
-                resolve, profile, timeout_s
-            )
+            session1, prof1 = await _get_or_create_resolved_session(resolve, profile, timeout_s)
             assert session_count == 1, "First call should create a session"
             assert prof1 == profile
 
             # Second call with same resolve — should hit cache
-            session2, _ = await _get_or_create_resolved_session(
-                resolve, profile, timeout_s
-            )
-            assert session_count == 1, (
-                "Second call with same resolve should hit cache, not create new session"
-            )
+            session2, _ = await _get_or_create_resolved_session(resolve, profile, timeout_s)
+            assert session_count == 1, "Second call with same resolve should hit cache, not create new session"
             assert session1 is session2, "Cached session should be returned"
 
     @pytest.mark.asyncio
-    async def test_different_resolve_bindings_create_different_sessions(self):
+    async def test_different_resolve_bindings_create_different_sessions(self) -> None:
         """
         Different resolve bindings for the same host create separate sessions.
         """
@@ -98,30 +92,27 @@ class TestResolvedSessionCache:
                 nonlocal session_count
                 session_count += 1
                 return session_obj
+
             return create
 
         with patch(
             "curl_cffi.requests.AsyncSession",
             side_effect=create_session_factory(mock_session_a),
         ):
-            session1, _ = await _get_or_create_resolved_session(
-                {"example.com": "1.2.3.4"}, profile, timeout_s
-            )
+            session1, _ = await _get_or_create_resolved_session({"example.com": "1.2.3.4"}, profile, timeout_s)
 
         # Different resolve bindings
         with patch(
             "curl_cffi.requests.AsyncSession",
             side_effect=create_session_factory(mock_session_b),
         ):
-            session2, _ = await _get_or_create_resolved_session(
-                {"example.com": "5.6.7.8"}, profile, timeout_s
-            )
+            session2, _ = await _get_or_create_resolved_session({"example.com": "5.6.7.8"}, profile, timeout_s)
 
         assert session_count == 2, "Different resolve bindings should create separate sessions"
         assert session1 is not session2
 
     @pytest.mark.asyncio
-    async def test_empty_resolve_bindings_uses_host_cache(self):
+    async def test_empty_resolve_bindings_uses_host_cache(self) -> None:
         """
         Empty resolve dict falls back gracefully — no session is created
         since there are no resolve bindings to encode in CURLOPT_RESOLVE.
@@ -150,14 +141,12 @@ class TestResolvedSessionCache:
             result = await _get_or_create_resolved_session(resolve, profile, timeout_s)
             # Empty resolve → no resolve_bindings → no CURLOPT_RESOLVE needed
             # Should not create a session in the resolved cache
-            assert session_count == 0, (
-                "Empty resolve should not create a new session"
-            )
+            assert session_count == 0, "Empty resolve should not create a new session"
             # Empty resolve should return (None, profile) or raise gracefully
             assert result[1] == profile
 
     @pytest.mark.asyncio
-    async def test_lru_eviction_on_max_capacity(self):
+    async def test_lru_eviction_on_max_capacity(self) -> None:
         """
         When _MAX_RESOLVED_SESSIONS is exceeded, oldest entries are evicted.
         """
@@ -170,16 +159,14 @@ class TestResolvedSessionCache:
         ):
             # Create MAX_RESOLVED_SESSIONS + 1 unique entries
             for i in range(_MAX_RESOLVED_SESSIONS + 1):
-                await _get_or_create_resolved_session(
-                    {f"host{i}.com": f"1.1.1.{i}"}, "chrome110", 30.0
-                )
+                await _get_or_create_resolved_session({f"host{i}.com": f"1.1.1.{i}"}, "chrome110", 30.0)
 
             # Oldest entry should have been evicted
             assert len(_resolved_sessions) == _MAX_RESOLVED_SESSIONS
             assert len(_resolved_sessions_order) == _MAX_RESOLVED_SESSIONS
 
     @pytest.mark.asyncio
-    async def test_ttl_expiry(self):
+    async def test_ttl_expiry(self) -> None:
         """
         Sessions older than _RESOLVED_SESSION_TTL_S are evicted on access.
         """
@@ -195,9 +182,7 @@ class TestResolvedSessionCache:
             return_value=mock_session,
         ):
             # Create session
-            session1, _ = await _get_or_create_resolved_session(
-                resolve, profile, timeout_s
-            )
+            session1, _ = await _get_or_create_resolved_session(resolve, profile, timeout_s)
 
             # Manually age the entry past TTL
             old_key = ("example.com", frozenset({("example.com", 443, "1.2.3.4")}))
@@ -212,7 +197,7 @@ class TestResolvedSessionCache:
                     pass
 
     @pytest.mark.asyncio
-    async def test_zero_new_handshakes_for_repeated_resolve(self):
+    async def test_zero_new_handshakes_for_repeated_resolve(self) -> None:
         """
         ACCEPTANCE TEST: For repeated requests to the same (host, ip),
         there should be 0 new TLS handshakes (sessions reused from cache).
@@ -237,15 +222,9 @@ class TestResolvedSessionCache:
             # Simulate 5 repeated requests to same (host, ip)
             sessions = []
             for _ in range(5):
-                session, _ = await _get_or_create_resolved_session(
-                    resolve, profile, timeout_s
-                )
+                session, _ = await _get_or_create_resolved_session(resolve, profile, timeout_s)
                 sessions.append(session)
 
-            assert handshake_count == 1, (
-                f"Expected 1 handshake for 5 repeated requests, got {handshake_count}"
-            )
+            assert handshake_count == 1, f"Expected 1 handshake for 5 repeated requests, got {handshake_count}"
             # All sessions should be identical (same cached session)
-            assert all(s is sessions[0] for s in sessions), (
-                "All 5 requests should return the same cached session"
-            )
+            assert all(s is sessions[0] for s in sessions), "All 5 requests should return the same cached session"

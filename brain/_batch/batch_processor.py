@@ -30,13 +30,11 @@ from collections.abc import Callable
 from hledac.universal.utils.asyncx import safe_wait_for
 from hledac.universal.utils._patterns import collect_results_async
 
-from operator import attrgetter, itemgetter
 
 # _core is at the project root level
 from hledac.universal._core import aclose
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
 
 logger = logging.getLogger(__name__)
 

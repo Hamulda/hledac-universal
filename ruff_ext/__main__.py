@@ -1,11 +1,10 @@
 """Entry point: python -m ruff_ext"""
+
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
-
-from _core import aclose
 
 
 def main() -> int:
@@ -26,6 +25,7 @@ def main() -> int:
 
     if args.rule == "ruff022":
         from ruff_ext import check_directory as ruff022_check
+
         violations = ruff022_check(args.root)
         if not violations:
             print("RUFF022: 0 violations")
@@ -38,6 +38,7 @@ def main() -> int:
 
     elif args.rule == "tuuid7":
         from ruff_ext.tuuid7 import check_directory as tuuid7_check
+
         violations = tuuid7_check(args.root)
         if not violations:
             print("TUUID7: 0 violations")

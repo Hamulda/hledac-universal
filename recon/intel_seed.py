@@ -23,15 +23,11 @@ Usage:
   # Returns list of (domain, confidence) tuples
 """
 
-
-import os
 import logging
-import time
+import os
 from pathlib import Path
-from typing import Any
 
 from hledac.universal.utils.lazy_singleton import LazySingleton
-from _core import aclose
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +66,7 @@ def _load_yaml() -> dict[str, list[tuple[str, float]]]:
         log.warning(
             "intel_seed: apt_onion_mapping.yaml not found at %s — using empty mapping",
             yaml_path,
-    )
+        )
         return {}
 
     try:
@@ -92,15 +88,13 @@ def _load_yaml() -> dict[str, list[tuple[str, float]]]:
             confidence_map = {"confirmed": 1.0, "plausible": 0.7, "unconfirmed": 0.3}
             confidence = confidence_map.get(confidence_str, 0.3)
 
-            result[actor_name.lower()] = [
-                (d, confidence) for d in domains if isinstance(d, str)
-            ]
+            result[actor_name.lower()] = [(d, confidence) for d in domains if isinstance(d, str)]
 
         log.debug(
             "intel_seed: loaded %d APT actors from %s",
             len(result),
             yaml_path,
-    )
+        )
         return result
 
     except Exception as e:
@@ -110,11 +104,6 @@ def _load_yaml() -> dict[str, list[tuple[str, float]]]:
 
 # Thread-safe lazy cache — initialized exactly once, even under concurrent access
 _cache: LazySingleton[dict[str, list[tuple[str, float]]]] = LazySingleton(_load_yaml)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 class AptOnionSeeder:
@@ -198,11 +187,6 @@ class AptOnionSeeder:
         """Force-reload the YAML from disk (clears cache)."""
         _cache.reset()
         object.__setattr__(self, "_mapping", _cache())
-
-
-# ---------------------------------------------------------------------------
-# Standalone function — drop-in replacement for _ooda_apt_domain_mapping
-# ---------------------------------------------------------------------------
 
 
 def get_apt_onion_candidates(query: str) -> list[str]:

@@ -32,9 +32,8 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from _core import aclose
 
 # rust_extensions/  →  project root
 _REPO_ROOT = Path(__file__).resolve().parent  # .../hledac/universal/rust_extensions
@@ -43,10 +42,6 @@ ABI_OUT = REPO_ROOT / "core" / "rust_backend"
 MANIFEST_PATH = ABI_OUT / "_ffi_manifest.json"
 LIB_RS_PATH = _REPO_ROOT / "src" / "lib.rs"
 
-
-# ---------------------------------------------------------------------------
-# Static analysis — parse lib.rs
-# ---------------------------------------------------------------------------
 
 def _extract_class_name(line: str) -> tuple[str, str] | None:
     """
@@ -59,7 +54,7 @@ def _extract_class_name(line: str) -> tuple[str, str] | None:
     gt2 = line.find(">", gt)
     if gt < 0 or gt2 < 0:
         return None
-    path = line[gt + 1:gt2]  # e.g. "bloom::BloomFilter"
+    path = line[gt + 1 : gt2]  # e.g. "bloom::BloomFilter"
     segments = path.split("::")
     if len(segments) < 2:
         return None
@@ -92,7 +87,7 @@ def _extract_register_functions_body(module_name: str, lib_rs_text: str) -> list
     if not match:
         # Try bare form (module .rs file — no module_name:: prefix)
         # Match: 'register_functions(...) -> PyResult<()> {'  OR  'register_functions(...) {'
-        pattern = rf"(register_functions\s*\([^)]*\)\s*(->\s*PyResult<[^>]*>\s*)?{{)"
+        pattern = r"(register_functions\s*\([^)]*\)\s*(->\s*PyResult<[^>]*>\s*)?{)"
         match = re.search(pattern, lib_rs_text)
         if not match:
             return []
@@ -108,7 +103,7 @@ def _extract_register_functions_body(module_name: str, lib_rs_text: str) -> list
         elif c == "}":
             depth -= 1
         pos += 1
-    body = lib_rs_text[start + 1:pos - 1]
+    body = lib_rs_text[start + 1 : pos - 1]
 
     # Extract all wrap_pyfunction! calls within the body
     # Two forms:
@@ -194,10 +189,6 @@ def parse_lib_rs_symbols(lib_rs_text: str) -> dict[str, list[str]]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Rust module file reader
-# ---------------------------------------------------------------------------
-
 _SRC_DIR = _REPO_ROOT / "src"  # _REPO_ROOT = rust_extensions/ dir
 
 
@@ -216,10 +207,6 @@ def _read_rust_module(module_name: str) -> str:
     return ""
 
 
-# ---------------------------------------------------------------------------
-# Git revision
-# ---------------------------------------------------------------------------
-
 def get_git_rev() -> str:
     try:
         return subprocess.run(
@@ -232,10 +219,6 @@ def get_git_rev() -> str:
     except Exception:
         return "unknown"
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def generate_manifest(check: bool = False) -> dict:
     lib_rs_text = LIB_RS_PATH.read_text()
@@ -250,7 +233,7 @@ def generate_manifest(check: bool = False) -> dict:
 
     manifest = {
         "version": "1.0.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "git_rev": get_git_rev(),
         "lib_rs_symbols": lib_rs_symbols,
         "all_lib_rs": all_lib_rs,
@@ -264,24 +247,20 @@ def generate_manifest(check: bool = False) -> dict:
             print(
                 f"[build_ffi_manifest] MANIFEST STALE: git rev {old_rev} -> {new_rev}",
                 file=sys.stderr,
-    )
+            )
             print(
-                f"  Run: python rust_extensions/build_ffi_manifest.py to regenerate",
+                "  Run: python rust_extensions/build_ffi_manifest.py to regenerate",
                 file=sys.stderr,
-    )
+            )
             sys.exit(1)
         print(
-            f"[build_ffi_manifest] MANIFEST OK: rev={new_rev}, "
-            f"modules={len(lib_rs_symbols)}, symbols={len(all_lib_rs)}"
-    )
+            f"[build_ffi_manifest] MANIFEST OK: rev={new_rev}, modules={len(lib_rs_symbols)}, symbols={len(all_lib_rs)}"
+        )
     else:
         ABI_OUT.mkdir(parents=True, exist_ok=True)
         MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
         print(f"[build_ffi_manifest] Written: {MANIFEST_PATH}")
-        print(
-            f"  modules={len(lib_rs_symbols)}, "
-            f"symbols={len(all_lib_rs)}"
-    )
+        print(f"  modules={len(lib_rs_symbols)}, symbols={len(all_lib_rs)}")
 
     return manifest
 

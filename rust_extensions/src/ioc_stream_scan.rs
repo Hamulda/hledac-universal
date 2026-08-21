@@ -47,10 +47,6 @@ use pyo3::types::PyBytes;
 use std::collections::HashMap;
 use std::fs::File;
 
-// ---------------------------------------------------------------------------
-// InternStore — shared with aho_corasick.rs pattern (label interning)
-// ---------------------------------------------------------------------------
-
 /// Interned string store — Box::leak for 'static lifetime.
 /// Identical pattern to aho_corasick::InternStore.
 struct InternStore {
@@ -74,10 +70,6 @@ impl InternStore {
         leaked
     }
 }
-
-// ---------------------------------------------------------------------------
-// StreamPatternHit — PyClass for zero-copy match results
-// ---------------------------------------------------------------------------
 
 /// A single pattern match from the streaming scanner.
 ///
@@ -118,10 +110,6 @@ impl StreamPatternHit {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// StreamingIocScanner — the main PyClass
-// ---------------------------------------------------------------------------
 
 /// Streaming IOC scanner for mmap'd files and raw byte buffers.
 ///
@@ -404,7 +392,6 @@ impl StreamingIocScanner {
         Ok(self.automaton.find_iter(&mmap).count())
     }
 
-
     /// Scan a batch of text strings and return per-item hits.
     ///
     /// E4: Batch equivalent of `scan_bytes()` — feeds N strings through the
@@ -433,21 +420,6 @@ impl StreamingIocScanner {
             })
             .collect()
     }
-    // ---------------------------------------------------------------------------
-    // MODERN-24: Arrow IPC Zero-Copy Export
-    // ---------------------------------------------------------------------------
-    // These methods export scan results as Arrow IPC bytes instead of
-    // Vec<StreamPatternHit>. This eliminates Python heap allocations for
-    // per-item PyObject creation.
-    //
-    // Performance comparison:
-    //   - scan_mmap() -> Vec<StreamPatternHit>: N × PyObject allocs
-    //   - scan_mmap_arrow_ipc() -> PyBytes: 1 × PyBytes alloc + Arrow IPC serialization
-    //
-    // Arrow IPC serialization is O(N) byte copy, but:
-    //   - Single Python allocation (PyBytes)
-    //   - pyarrow reads with zero-copy views into the buffer
-    //   - No per-item Python object overhead
 
     /// Scan an mmap'd file and return results as Arrow IPC bytes.
     ///
@@ -586,10 +558,6 @@ impl StreamingIocScanner {
         // InternStore labels are leaked — process lifetime, intentional
     }
 }
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
 
 impl StreamingIocScanner {
     /// Open an mmap for a file path with proper error handling.
@@ -746,19 +714,11 @@ impl StreamingIocScanner {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Module registration
-// ---------------------------------------------------------------------------
-
 /// Register the StreamingIocScanner class with the Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<StreamingIocScanner>()?;
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -962,7 +922,6 @@ mod tests {
 
         // Create a file larger than default chunk size with patterns spread out
         let mut f = File::create(&path));
-        // Write 100KB of padding, then a pattern, then more padding
         let padding_a = vec![b'A'; 50_000];
         f.write_all(&padding_a));
         f.write_all(b"malware"));

@@ -21,15 +21,13 @@ Bezpečnostní invarianty (testované):
   I15) Skript v PATTERNS pokrývá minimálně 8 kategorií nebezpečných příkazů
 """
 
-
-import stat
 import json
 import re
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest  # type: ignore[import-not-found]
-from _core import aclose
 
 ROOT = Path("/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal")
 GUARD_SCRIPT = ROOT / ".claude" / "hooks" / "git-stash-guard.sh"
@@ -95,7 +93,7 @@ def _allowed_cmds() -> list[tuple[str, str]]:
 
 
 @pytest.mark.parametrize("name,payload", _blocked_cmds(), ids=[c[0] for c in _blocked_cmds()])
-def test_destructive_git_blocked(name, payload):
+def test_destructive_git_blocked(name, payload) -> None:
     """Invariant I1–I7: destruktivní git příkaz vrací exit=2 (blokující)."""
     exit_code = _run_guard(payload)
     assert exit_code == 2, f"{name}: expected exit=2 (BLOCKED), got {exit_code}"
@@ -107,7 +105,7 @@ def test_destructive_git_blocked(name, payload):
 
 
 @pytest.mark.parametrize("name,payload", _allowed_cmds(), ids=[c[0] for c in _allowed_cmds()])
-def test_allowed_commands_pass(name, payload):
+def test_allowed_commands_pass(name, payload) -> None:
     """Invariant I8–I10: read-only git a ne-git příkazy vracejí exit=0."""
     exit_code = _run_guard(payload)
     assert exit_code == 0, f"{name}: expected exit=0 (ALLOWED), got {exit_code}"
@@ -118,13 +116,13 @@ def test_allowed_commands_pass(name, payload):
 # =============================================================================
 
 
-def test_guard_script_is_executable():
+def test_guard_script_is_executable() -> None:
     """Invariant I11: skript má executable bit (Bash hook vyžaduje)."""
     mode = GUARD_SCRIPT.stat().st_mode
     assert mode & stat.S_IXUSR, f"git-stash-guard.sh missing user-exec bit: {oct(mode)}"
 
 
-def test_guard_script_exists():
+def test_guard_script_exists() -> None:
     """Guard skript musí fyzicky existovat."""
     assert GUARD_SCRIPT.exists(), f"Guard not found: {GUARD_SCRIPT}"
 
@@ -134,7 +132,7 @@ def test_guard_script_exists():
 # =============================================================================
 
 
-def test_guard_registered_as_first_pretooluse(mock_settings_json):
+def test_guard_registered_as_first_pretooluse(mock_settings_json) -> None:
     """Invariant I12: guard je v PreToolUse[0] (první = vykoná se první)."""
     settings = mock_settings_json
     pre = settings["hooks"]["PreToolUse"]
@@ -145,7 +143,7 @@ def test_guard_registered_as_first_pretooluse(mock_settings_json):
     assert "git-stash-guard.sh" in cmd, f"PreToolUse[0] command: {cmd!r}"
 
 
-def test_guard_is_synchronous(mock_settings_json):
+def test_guard_is_synchronous(mock_settings_json) -> None:
     """Invariant I13: guard nesmí být async — async hooky blokovat nemohou."""
     settings = mock_settings_json
     pre = settings["hooks"]["PreToolUse"]
@@ -155,7 +153,7 @@ def test_guard_is_synchronous(mock_settings_json):
     )
 
 
-def test_stop_hooks_no_destructive_git(mock_settings_json):
+def test_stop_hooks_no_destructive_git(mock_settings_json) -> None:
     """Invariant I14: Stop hooky v projektu NESMÍ volat destruktivní git operace."""
     settings = mock_settings_json
     stop_section = settings["hooks"].get("Stop", [])
@@ -175,7 +173,7 @@ def test_stop_hooks_no_destructive_git(mock_settings_json):
             for pattern in blocked_patterns:
                 assert pattern not in cmd, (
                     f"Stop hook obsahuje destruktivní git příkaz! pattern={pattern!r} command={cmd!r}"
-    )
+                )
 
 
 # =============================================================================
@@ -183,7 +181,7 @@ def test_stop_hooks_no_destructive_git(mock_settings_json):
 # =============================================================================
 
 
-def test_guard_pattern_coverage():
+def test_guard_pattern_coverage() -> None:
     """Invariant I15: skript má v PATTERNS minimálně 8 různých kategorií.
 
     Aktuální pokrytí: git stash, reset --hard, checkout --, clean -fd,
@@ -201,15 +199,13 @@ def test_guard_pattern_coverage():
 # =============================================================================
 
 
-def test_backup_exists():
+def test_backup_exists() -> None:
     """Záloha originálního settings.json musí existovat pro případný rollback."""
     backup = ROOT / ".claude" / "settings.json.pre-stash-fix-2026-06-03.bak"
     assert backup.exists(), f"Záloha chybí: {backup}"
 
 
-def test_backup_is_valid_json(mock_settings_bak):
+def test_backup_is_valid_json(mock_settings_bak) -> None:
     """Záloha musí být validní JSON (parsovatelná)."""
 
-
     json.loads(mock_settings_bak)  # vyhodí výjimku pokud není validní
-

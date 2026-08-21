@@ -12,32 +12,29 @@ Run with: pytest tests/test_property_based.py -v
 
 from __future__ import annotations
 
-import asyncio
 import pytest
-from hypothesis import given, settings, Verbosity
+from hypothesis import Verbosity, given, settings
 from hypothesis.strategies import (
     floats,
     integers,
-    lists,
     sampled_from,
     text,
 )
 
 from hledac.universal.coordinators.fetch_coordinator import (
-    AIMDWindow,
     AIMD_MAX_CONCURRENCY,
     AIMD_MIN_CONCURRENCY,
-    AIMD_DECREASE_BY_STATE,
+    AIMDWindow,
 )
 from hledac.universal.tools.url_dedup import (
     create_rotating_bloom_filter,
     dedupe_url_list,
 )
 
-
 # ---------------------------------------------------------------------------
 # AIMD Controller — convergence + bound invariants
 # ---------------------------------------------------------------------------
+
 
 class TestAIMDPropertyBased:
     """AIMD convergence and bound invariants via Hypothesis."""
@@ -48,14 +45,13 @@ class TestAIMDPropertyBased:
         successes=integers(min_value=0, max_value=200),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None)
-    async def test_window_bounded_after_successes(self, initial, successes):
+    async def test_window_bounded_after_successes(self, initial, successes) -> None:
         """Window is always within [AIMD_MIN_CONCURRENCY, AIMD_MAX_CONCURRENCY] after successes."""
         w = AIMDWindow(initial=initial)
         for _ in range(successes):
             await w.on_success()
         assert AIMD_MIN_CONCURRENCY <= w.window <= AIMD_MAX_CONCURRENCY, (
-            f"Window {w.window} outside [{AIMD_MIN_CONCURRENCY}, {AIMD_MAX_CONCURRENCY}] "
-            f"after {successes} successes"
+            f"Window {w.window} outside [{AIMD_MIN_CONCURRENCY}, {AIMD_MAX_CONCURRENCY}] after {successes} successes"
         )
 
     @pytest.mark.asyncio
@@ -64,15 +60,13 @@ class TestAIMDPropertyBased:
         failures=integers(min_value=0, max_value=100),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=50)
-    async def test_window_decreases_on_failure(self, initial, failures):
+    async def test_window_decreases_on_failure(self, initial, failures) -> None:
         """Window monotonically decreases with each failure (for non-zero decrease factor)."""
         w = AIMDWindow(initial=initial)
         prev = w.window
         for _ in range(failures):
-            await w.on_failure(uma_state='warn')  # decrease factor 0.5
-            assert w.window <= prev, (
-                f"Window {w.window} > previous {prev} — not monotonic decrease"
-            )
+            await w.on_failure(uma_state="warn")  # decrease factor 0.5
+            assert w.window <= prev, f"Window {w.window} > previous {prev} — not monotonic decrease"
             prev = w.window
 
     @pytest.mark.asyncio
@@ -80,7 +74,7 @@ class TestAIMDPropertyBased:
         initial=floats(min_value=1.0, max_value=100.0),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30)
-    async def test_convergence_toward_max(self, initial):
+    async def test_convergence_toward_max(self, initial) -> None:
         """After 50 consecutive successes, window converges to AIMD_MAX_CONCURRENCY."""
         w = AIMDWindow(initial=initial)
         for _ in range(50):
@@ -95,11 +89,11 @@ class TestAIMDPropertyBased:
         initial=floats(min_value=1.0, max_value=100.0),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30)
-    async def test_repeated_failures_converge_to_min(self, initial):
+    async def test_repeated_failures_converge_to_min(self, initial) -> None:
         """After 50 consecutive failures (from emergency state), window converges to min."""
         w = AIMDWindow(initial=initial)
         for _ in range(50):
-            await w.on_failure(uma_state='emergency')  # decrease factor 0.0
+            await w.on_failure(uma_state="emergency")  # decrease factor 0.0
         assert w.window == AIMD_MIN_CONCURRENCY, (
             f"After 50 emergency failures, window {w.window} != min {AIMD_MIN_CONCURRENCY}"
         )
@@ -109,6 +103,7 @@ class TestAIMDPropertyBased:
 # URL Dedup — FPR bounded property
 # ---------------------------------------------------------------------------
 
+
 class TestURLDedupPropertyBased:
     """RotatingBloomFilter FPR bounded property via Hypothesis."""
 
@@ -117,7 +112,7 @@ class TestURLDedupPropertyBased:
         fp_rate=floats(min_value=0.001, max_value=0.05),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=20, deadline=None)
-    def test_fpr_within_bound(self, n_urls, fp_rate):
+    def test_fpr_within_bound(self, n_urls, fp_rate) -> None:
         """
         False-positive rate stays within configured bound.
 
@@ -136,15 +131,13 @@ class TestURLDedupPropertyBased:
         new_urls = [f"https://neverseen{i}.example.com/path" for i in range(n_urls)]
         false_positives = sum(1 for url in new_urls if url in bf)
         observed_fpr = false_positives / n_urls
-        assert observed_fpr <= fp_rate * 3, (
-            f"FPR {observed_fpr:.4f} > {fp_rate * 3:.4f} (3× bound) for n={n_urls}"
-        )
+        assert observed_fpr <= fp_rate * 3, f"FPR {observed_fpr:.4f} > {fp_rate * 3:.4f} (3× bound) for n={n_urls}"
 
     @given(
         n_urls=integers(min_value=10, max_value=500),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30)
-    def test_dedupe_exact_order_preserved(self, n_urls):
+    def test_dedupe_exact_order_preserved(self, n_urls) -> None:
         """dedupe_url_list preserves first-seen order for unique URLs."""
         bf = create_rotating_bloom_filter()
         urls = [f"https://example{i}.com" for i in range(n_urls)]
@@ -157,7 +150,7 @@ class TestURLDedupPropertyBased:
         n_urls=integers(min_value=10, max_value=500),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30)
-    def test_dedupe_removes_duplicates(self, n_urls):
+    def test_dedupe_removes_duplicates(self, n_urls) -> None:
         """dedupe_url_list removes intra-batch duplicates (first-seen wins)."""
         bf = create_rotating_bloom_filter()
         # Create list with duplicates
@@ -177,6 +170,7 @@ class TestURLDedupPropertyBased:
 # IOC Extraction — regex vs Aho-Corasick parity
 # ---------------------------------------------------------------------------
 
+
 class TestIOCExtractionPropertyBased:
     """IOC extraction parity between regex and Aho-Corasick paths."""
 
@@ -184,7 +178,7 @@ class TestIOCExtractionPropertyBased:
         n_iocs=integers(min_value=5, max_value=50),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30, deadline=None)
-    def test_ioc_extract_stability(self, n_iocs):
+    def test_ioc_extract_stability(self, n_iocs) -> None:
         """
         extract_iocs_flat returns consistent results and never crashes.
         Property: determinism — same input gives same output.
@@ -210,7 +204,7 @@ class TestIOCExtractionPropertyBased:
         text_content=text(min_size=10, max_size=1000),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=50, deadline=None)
-    def test_ioc_extract_no_crash(self, text_content):
+    def test_ioc_extract_no_crash(self, text_content) -> None:
         """extract_iocs_flat never crashes on arbitrary text."""
         from hledac.universal._core.rust_backend import rust
 
@@ -218,9 +212,11 @@ class TestIOCExtractionPropertyBased:
         result = rust.ioc.extract_iocs_flat(text_content)
         assert isinstance(result, list)
 
+
 # ---------------------------------------------------------------------------
 # Memory Pressure Hysteresis — state machine invariants
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryPressureHysteresis:
     """State machine monotonicity and hysteresis gap invariants."""
@@ -229,7 +225,7 @@ class TestMemoryPressureHysteresis:
         initial_state=sampled_from(["ok", "soft_warn", "warn", "critical", "emergency"]),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=100)
-    def test_state_transitions_are_strict(self, initial_state):
+    def test_state_transitions_are_strict(self, initial_state) -> None:
         """
         Memory pressure state can only transition to adjacent states
         (ok→soft_warn→warn→critical→emergency) — no skipping.
@@ -258,7 +254,7 @@ class TestMemoryPressureHysteresis:
         state=sampled_from(["ok", "soft_warn", "warn", "critical", "emergency"]),
     )
     @settings(verbosity=Verbosity.verbose, max_examples=30)
-    def test_preset_values_for_all_states(self, state):
+    def test_preset_values_for_all_states(self, state) -> None:
         """Each state produces a valid ConcurrencyPreset with positive fetch_limit."""
         from hledac.universal._core.resource_governor import ConcurrencyPreset
 
@@ -269,21 +265,22 @@ class TestMemoryPressureHysteresis:
         assert preset.aimd_decrease_factor <= 1.0
         assert preset.cache_ttl_seconds > 0
 
-    def test_hysteresis_gap_exists(self):
+    def test_hysteresis_gap_exists(self) -> None:
         """
         Entry to warn happens at higher threshold than exit from warn.
         This is the core hysteresis property: system doesn't flap.
         """
         from hledac.universal._core.resource_governor import (
-            _THRESHOLD_WARN_GIB,
             _HYSTERESIS_EXIT_GIB,
+            _THRESHOLD_WARN_GIB,
         )
+
         # Exit threshold must be at or below entry threshold (hysteresis gap)
         assert _HYSTERESIS_EXIT_GIB <= _THRESHOLD_WARN_GIB, (
             f"Exit {_HYSTERESIS_EXIT_GIB} > entry {_THRESHOLD_WARN_GIB} — no hysteresis gap"
         )
 
-    def test_critical_is_more_restrictive_than_warn(self):
+    def test_critical_is_more_restrictive_than_warn(self) -> None:
         """Critical preset has strictly fewer workers and lower fetch limit than warn."""
         from hledac.universal._core.resource_governor import ConcurrencyPreset
 
@@ -293,7 +290,7 @@ class TestMemoryPressureHysteresis:
         assert crit_preset.fetch_limit <= warn_preset.fetch_limit
         assert crit_preset.aimd_decrease_factor <= warn_preset.aimd_decrease_factor
 
-    def test_emergency_is_most_restrictive(self):
+    def test_emergency_is_most_restrictive(self) -> None:
         """Emergency preset has max_workers=0 and minimal fetch_limit."""
         from hledac.universal._core.resource_governor import ConcurrencyPreset
 

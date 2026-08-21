@@ -24,22 +24,27 @@ Usage:
     )
     # config.kv_bits, config.max_kv_size, config.tier
 """
+
 from __future__ import annotations
+
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from _core import aclose
+
 if TYPE_CHECKING:
     pass
 
+
 class MemoryTier(Enum):
     """Metal memory pressure tiers (shared by all brain components)."""
-    NORMAL = 'normal'
-    WARN = 'warn'
-    CRITICAL = 'critical'
-    EMERGENCY = 'emergency'
+
+    NORMAL = "normal"
+    WARN = "warn"
+    CRITICAL = "critical"
+    EMERGENCY = "emergency"
+
 
 @dataclass(frozen=True, slots=True)
 class KVCacheConfig:
@@ -49,6 +54,7 @@ class KVCacheConfig:
     Single source of truth for kv_bits and max_kv_size parameters
     that go into mlx_lm.generate() — never hardcode these inline.
     """
+
     kv_bits: int
     max_kv_size: int
     tier: MemoryTier
@@ -56,11 +62,12 @@ class KVCacheConfig:
     def as_kwargs(self) -> dict[str, Any]:
         """mlx_lm.generate() kwargs — drop max_kv_size when 0 (cache off)."""
         if self.max_kv_size == 0:
-            return {'kv_bits': self.kv_bits}
-        return {'kv_bits': self.kv_bits, 'max_kv_size': self.max_kv_size}
+            return {"kv_bits": self.kv_bits}
+        return {"kv_bits": self.kv_bits, "max_kv_size": self.max_kv_size}
 
     def __repr__(self) -> str:
-        return f'KVCacheConfig(kv_bits={self.kv_bits}, max_kv_size={self.max_kv_size}, tier={self.tier.value})'
+        return f"KVCacheConfig(kv_bits={self.kv_bits}, max_kv_size={self.max_kv_size}, tier={self.tier.value})"
+
 
 def get_metal_tier_thresholds() -> tuple[int, int, int]:
     """
@@ -72,6 +79,7 @@ def get_metal_tier_thresholds() -> tuple[int, int, int]:
     """
     try:
         from hledac.universal.rust_extensions import rust_extensions as _rust
+
         limit_bytes = _rust.get_metal_limit_bytes_py()
         if limit_bytes > 0:
             return (int(limit_bytes * 1.75), int(limit_bytes * 1.05), int(limit_bytes * 0.7))
@@ -79,13 +87,16 @@ def get_metal_tier_thresholds() -> tuple[int, int, int]:
         pass
     return (2684354560, 1610612736, 1073741824)
 
+
 @dataclass(slots=True)
 class MetalProbeResult:
     """Result of a Metal memory probe."""
+
     active_bytes: int
     utilization_fraction: float
     tier: MemoryTier
     cached_at: float
+
 
 class MetalProbe:
     """
@@ -98,9 +109,10 @@ class MetalProbe:
     so we cache the result for 100ms to avoid repeated calls
     within the same inference batch.
     """
-    __slots__ = ('_cache', '_cache_ttl_s')
 
-    def __init__(self, cache_ttl_ms: int=100) -> None:
+    __slots__ = ("_cache", "_cache_ttl_s")
+
+    def __init__(self, cache_ttl_ms: int = 100) -> None:
         self._cache: MetalProbeResult | None = None
         self._cache_ttl_s: float = cache_ttl_ms / 1000.0
 
@@ -117,10 +129,11 @@ class MetalProbe:
         active_bytes = 0
         try:
             from hledac.universal.brain.mlx_interface import get_mlx
+
             mx = get_mlx()
-            if hasattr(mx.metal, 'get_active_memory'):
+            if hasattr(mx.metal, "get_active_memory"):
                 active_bytes = int(mx.metal.get_active_memory())
-            elif hasattr(mx, 'get_active_memory'):
+            elif hasattr(mx, "get_active_memory"):
                 active_bytes = int(mx.get_active_memory())
         except Exception:
             pass
@@ -134,7 +147,9 @@ class MetalProbe:
             tier = MemoryTier.WARN
         else:
             tier = MemoryTier.NORMAL
-        self._cache = MetalProbeResult(active_bytes=active_bytes, utilization_fraction=utilization, tier=tier, cached_at=now)
+        self._cache = MetalProbeResult(
+            active_bytes=active_bytes, utilization_fraction=utilization, tier=tier, cached_at=now
+        )
         return self._cache
 
     def clear_cache(self) -> None:
@@ -150,8 +165,11 @@ class MetalProbe:
     def tier(self) -> MemoryTier:
         """Cached memory tier."""
         return self.probe().tier
+
+
 _UMA_STATE_CACHED: tuple[str, float, int] | None = None
 _UMA_CACHE_TTL_S: float = 1.0
+
 
 def probe_uma_state() -> tuple[str, float]:
     """
@@ -168,17 +186,28 @@ def probe_uma_state() -> tuple[str, float]:
             return (state, rss_x100 / 100.0)
     try:
         from hledac.universal._core.resource_governor import sample_uma_status
+
         status = sample_uma_status()
-        state = getattr(status, 'state', 'ok')
-        rss_gib = getattr(status, 'rss_gib', 0.0)
+        state = getattr(status, "state", "ok")
+        rss_gib = getattr(status, "rss_gib", 0.0)
     except Exception:
-        state, rss_gib = ('ok', 0.0)
+        state, rss_gib = ("ok", 0.0)
     _UMA_STATE_CACHED = (state, now, int(rss_gib * 100))
     return (state, rss_gib)
+
+
 _DEFAULT_KV_BITS: int = 4
 _DEFAULT_MAX_KV_SIZE: int = 8192
 
-def get_kv_cache_config(input_tokens: int | None=None, max_tokens: int | None=None, *, metal_active_bytes: int | None=None, uma_state: str | None=None, kv_bits_override: int | None=None) -> KVCacheConfig:
+
+def get_kv_cache_config(
+    input_tokens: int | None = None,
+    max_tokens: int | None = None,
+    *,
+    metal_active_bytes: int | None = None,
+    uma_state: str | None = None,
+    kv_bits_override: int | None = None,
+) -> KVCacheConfig:
     """
     Compute KV cache configuration for mlx_lm.generate() on M1 8GB.
 
@@ -218,20 +247,20 @@ def get_kv_cache_config(input_tokens: int | None=None, max_tokens: int | None=No
         uma_state, _ = probe_uma_state()
     emergency_bytes, critical_bytes, warn_bytes = get_metal_tier_thresholds()
     metal_tier = MemoryTier.NORMAL
-    if metal_active_bytes >= emergency_bytes or uma_state == 'emergency':
+    if metal_active_bytes >= emergency_bytes or uma_state == "emergency":
         metal_tier = MemoryTier.EMERGENCY
-    elif metal_active_bytes >= critical_bytes or uma_state == 'critical':
+    elif metal_active_bytes >= critical_bytes or uma_state == "critical":
         metal_tier = MemoryTier.CRITICAL
-    elif metal_active_bytes >= warn_bytes or uma_state == 'warn':
+    elif metal_active_bytes >= warn_bytes or uma_state == "warn":
         metal_tier = MemoryTier.WARN
     else:
         metal_tier = MemoryTier.NORMAL
-    if os.getenv('HLEDAC_KV_QUANTIZE', '0') == '1':
+    if os.getenv("HLEDAC_KV_QUANTIZE", "0") == "1":
         kv_bits = max(4, kv_bits_override or _DEFAULT_KV_BITS)
         tier = MemoryTier.NORMAL
         max_kv_size = _DEFAULT_MAX_KV_SIZE
         return KVCacheConfig(kv_bits=kv_bits, max_kv_size=max_kv_size, tier=tier)
-    active_gib = metal_active_bytes / 1024 ** 3 if metal_active_bytes else 0.0
+    active_gib = metal_active_bytes / 1024**3 if metal_active_bytes else 0.0
     if active_gib > 2.0:
         kv_bits = 8
     elif active_gib > 1.5:
@@ -244,10 +273,10 @@ def get_kv_cache_config(input_tokens: int | None=None, max_tokens: int | None=No
     _max_tok = max_tokens if max_tokens is not None else 512
     _headroom = min(_max_tok, 1024)
     _min_cache = _in_tokens + _headroom
-    if metal_tier == MemoryTier.EMERGENCY or uma_state == 'emergency':
+    if metal_tier == MemoryTier.EMERGENCY or uma_state == "emergency":
         return KVCacheConfig(kv_bits=kv_bits, max_kv_size=0, tier=MemoryTier.EMERGENCY)
-    if metal_tier == MemoryTier.CRITICAL or uma_state == 'critical':
-        if uma_state == 'critical':
+    if metal_tier == MemoryTier.CRITICAL or uma_state == "critical":
+        if uma_state == "critical":
             factor = 0.35 if metal_tier == MemoryTier.NORMAL else 0.2
             base = max(256, int(_DEFAULT_MAX_KV_SIZE * factor))
         else:
@@ -255,7 +284,7 @@ def get_kv_cache_config(input_tokens: int | None=None, max_tokens: int | None=No
             base = max(256, int(_DEFAULT_MAX_KV_SIZE * factor))
         max_kv_size = max(_min_cache, base)
         return KVCacheConfig(kv_bits=kv_bits, max_kv_size=max_kv_size, tier=MemoryTier.CRITICAL)
-    if metal_tier == MemoryTier.WARN or uma_state == 'warn':
+    if metal_tier == MemoryTier.WARN or uma_state == "warn":
         factor = 0.8 if metal_tier == MemoryTier.NORMAL else 0.5
         base = max(1024, int(_DEFAULT_MAX_KV_SIZE * factor))
         max_kv_size = max(_min_cache, base)
@@ -264,7 +293,10 @@ def get_kv_cache_config(input_tokens: int | None=None, max_tokens: int | None=No
     max_kv_size = max(_min_cache, base)
     return KVCacheConfig(kv_bits=kv_bits, max_kv_size=max_kv_size, tier=MemoryTier.NORMAL)
 
-def get_kv_cache_kwargs(input_tokens: int | None=None, max_tokens: int | None=None, **kwargs: Any) -> dict[str, Any]:
+
+def get_kv_cache_kwargs(
+    input_tokens: int | None = None, max_tokens: int | None = None, **kwargs: Any
+) -> dict[str, Any]:
     """
     Convenience wrapper: probe + return mlx_lm.generate() kwargs.
 
@@ -279,7 +311,10 @@ def get_kv_cache_kwargs(input_tokens: int | None=None, max_tokens: int | None=No
     """
     config = get_kv_cache_config(input_tokens=input_tokens, max_tokens=max_tokens)
     return config.as_kwargs()
+
+
 _metal_probe: MetalProbe | None = None
+
 
 def get_metal_probe() -> MetalProbe:
     """Get the module-level MetalProbe singleton (lazy, thread-safe enough)."""

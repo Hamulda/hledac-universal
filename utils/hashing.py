@@ -15,14 +15,11 @@ Benchmark (M1 MacBook Air):
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import TYPE_CHECKING
-from _core import aclose
 
 if TYPE_CHECKING:
     pass
 
-# --- Internal caching ---
 _rust_backend = None  # type: ignore[assignment]
 _rust_available = False
 
@@ -33,17 +30,13 @@ def _get_rust() -> object | None:
     if _rust_backend is None:
         try:
             from hledac.universal._core.rust_backend import rust as _rust_mod
+
             _rust_backend = _rust_mod
             _rust_available = True
         except Exception:  # noqa: BLE001
             _rust_backend = None
             _rust_available = False
     return _rust_backend
-
-
-# ============================================================================
-# PUBLIC API — xxh3-64 (non-crypto, fast)
-# ============================================================================
 
 
 def xxh3_64_hex(data: str | bytes) -> str:
@@ -68,12 +61,14 @@ def xxh3_64_hex(data: str | bytes) -> str:
     # Python xxhash fallback
     try:
         import xxhash
+
         return xxhash.xxh3_64(data_bytes).hexdigest()
     except Exception:  # noqa: BLE001
         pass
 
     # Pure Python fallback: blake2b
     import hashlib
+
     return hashlib.blake2b(data_bytes, digest_size=8).hexdigest()
 
 
@@ -102,21 +97,15 @@ def batch_xxh3_64_hex(items: list[str] | list[bytes]) -> list[str]:
     # Serial fallback
     try:
         import xxhash
+
         return [xxhash.xxh3_64(item).hexdigest() for item in items_bytes]
     except Exception:  # noqa: BLE001:
         pass
 
     # Pure Python fallback
     import hashlib
-    return [
-        hashlib.blake2b(item, digest_size=8).hexdigest()
-        for item in items_bytes
-    ]
 
-
-# ============================================================================
-# PUBLIC API — SHA-256 (crypto-grade, for cert fingerprints etc.)
-# ============================================================================
+    return [hashlib.blake2b(item, digest_size=8).hexdigest() for item in items_bytes]
 
 
 def sha256_hex(data: str | bytes) -> str:
@@ -140,12 +129,8 @@ def sha256_hex(data: str | bytes) -> str:
 
     # Pure Python fallback
     import hashlib
+
     return hashlib.sha256(data_bytes).hexdigest()
-
-
-# ============================================================================
-# PUBLIC API — blake3-64 (non-crypto, for embeddings/dedup)
-# ============================================================================
 
 
 def blake3_64_hex(data: str | bytes) -> str:
@@ -169,13 +154,9 @@ def blake3_64_hex(data: str | bytes) -> str:
 
     # Pure Python fallback: blake2b 8-byte
     import hashlib
+
     h = hashlib.blake2b(data_bytes, digest_size=8).digest()
     return f"{int.from_bytes(h[:8], 'little'):016x}"
-
-
-# ============================================================================
-# UTILITIES — query fingerprints (ToT checkpoint recovery)
-# ============================================================================
 
 
 def query_fingerprint(query: str) -> str:
@@ -206,11 +187,6 @@ def query_fingerprint(query: str) -> str:
 
     # Pure Python: SHA256-16 (faster than blake2b-16 for short inputs)
     return hashlib.sha256(data_bytes).hexdigest()[:32]
-
-
-# ============================================================================
-# UTILITIES — batch fingerprints for dedup
-# ============================================================================
 
 
 def url_fingerprint(url: str) -> str:

@@ -10,11 +10,11 @@ M1 8GB optimized:
 - Token budgeting prevents context window overflow
 - Progressive truncation: facts -> paths -> metadata
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ def _get_tokenizer():
     if _tokenizer is None:
         try:
             import tiktoken
+
             # Use cl100k_base (GPT-4/Claude compatible)
             _tokenizer = tiktoken.get_encoding("cl100k_base")
         except ImportError:
@@ -90,7 +91,6 @@ def build_graph_chatml_context(
     if not graph_result:
         return ""
 
-    # Extract components with priority ordering
     insights = graph_result.get("insights", [])[:MAX_FACTS]
     paths = graph_result.get("paths", [])[:MAX_PATHS]
     summary_text = graph_result.get("summary_text", "")
@@ -98,7 +98,6 @@ def build_graph_chatml_context(
     counter_paths = graph_result.get("counter_paths", [])[:5]
     narratives = graph_result.get("narratives", [])[:3]
 
-    # Build context sections with token tracking
     sections = []
     used_tokens = 0
 
@@ -125,7 +124,7 @@ def build_graph_chatml_context(
     if contested and used_tokens < token_budget * 0.9:
         contested_section, contested_tokens = _build_contested_section(
             counter_paths, narratives, used_tokens, token_budget
-    )
+        )
         if contested_section:
             sections.append(contested_section)
             used_tokens += contested_tokens
@@ -149,13 +148,7 @@ def build_graph_chatml_context(
     return chatml_context
 
 
-# ------------------------------------------------------------------
-# Complexity-reduced section builders (complexity: 25 → ~10)
-# ------------------------------------------------------------------
-
-def _build_summary_section(
-    summary_text: str, used_tokens: int, token_budget: int
-) -> tuple[str, int]:
+def _build_summary_section(summary_text: str, used_tokens: int, token_budget: int) -> tuple[str, int]:
     """Build summary section if within budget."""
     if not summary_text:
         return "", 0
@@ -166,9 +159,7 @@ def _build_summary_section(
     return "", 0
 
 
-def _build_insights_section(
-    insights: list[Any], used_tokens: int, token_budget: int
-) -> tuple[str, int]:
+def _build_insights_section(insights: list[Any], used_tokens: int, token_budget: int) -> tuple[str, int]:
     """Build key insights section with progressive truncation."""
     if not insights:
         return "", 0
@@ -195,9 +186,7 @@ def _build_insights_section(
     return "", 0
 
 
-def _build_paths_section(
-    paths: list[Any], used_tokens: int, token_budget: int
-) -> tuple[str, int]:
+def _build_paths_section(paths: list[Any], used_tokens: int, token_budget: int) -> tuple[str, int]:
     """Build evidence paths section."""
     if not paths:
         return "", 0

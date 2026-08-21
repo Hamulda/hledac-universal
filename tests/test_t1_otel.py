@@ -45,13 +45,12 @@ from otel import (
     set_status,
     shutdown_telemetry,
     span,
-    )
+)
 from otel._buffer import BoundedRing
 from otel._exporter_ring import RingBufferExporter
 from otel._exporter_stdout import StdoutJSONExporter
 from otel._instrumentation import _filter_attrs
 from otel._noop import _NOOP_TRACER, _NoOpSpan
-from _core import aclose
 
 # ── Reset module state between tests ──────────────────────────────────────
 
@@ -271,7 +270,7 @@ class TestSprintT1StdoutExporter:
 
         buf = io.StringIO()
         exp = StdoutJSONExporter(stream=buf)
-        result = exp.export([_Sp()])
+        exp.export([_Sp()])
         assert exp.stats()["exported"] == 1
         line = buf.getvalue().strip()
         obj = json.loads(line)
@@ -300,7 +299,7 @@ class TestSprintT1StdoutExporter:
             parent = None
             status = None
 
-            def get_span_context(self):
+            def get_span_context(self) -> None:
                 return None
 
         buf = io.StringIO()
@@ -321,7 +320,7 @@ class TestSprintT1StdoutExporter:
             parent = None
             status = None
 
-            def get_span_context(self):
+            def get_span_context(self) -> None:
                 return None
 
         buf = io.StringIO()
@@ -342,12 +341,12 @@ class TestSprintT1StdoutExporter:
             parent = None
             status = None
 
-            def get_span_context(self):
+            def get_span_context(self) -> None:
                 return None
 
         buf = io.StringIO()
         exp = StdoutJSONExporter(stream=buf)
-        result = exp.export([_Sp()])
+        exp.export([_Sp()])
         assert exp.stats()["failed"] == 0
 
     def test_nan_inf_safe(self) -> None:
@@ -360,12 +359,12 @@ class TestSprintT1StdoutExporter:
             parent = None
             status = None
 
-            def get_span_context(self):
+            def get_span_context(self) -> None:
                 return None
 
         buf = io.StringIO()
         exp = StdoutJSONExporter(stream=buf)
-        result = exp.export([_Sp()])
+        exp.export([_Sp()])
         assert exp.stats()["failed"] == 0
 
     def test_export_empty(self) -> None:
@@ -623,7 +622,7 @@ class TestSprintT1Context:
     def test_trace_id_nonzero_in_span(self) -> None:
         ring: BoundedRing = BoundedRing(capacity=16)
         init_telemetry(TelemetryConfig(exporter_kind="ring", ring_sink=ring, sample_ratio=1.0))
-        with span("ctxtest") as s:
+        with span("ctxtest"):
             tid = current_trace_id()
             sid = current_span_id()
             assert tid != "0" * 32, f"expected non-zero trace id, got {tid}"
@@ -639,6 +638,7 @@ class TestSprintT1Integration:
 
     def test_async_decorator_preserves_signature(self, session_event_loop: asyncio.AbstractEventLoop) -> None:
         """FIX F350M-R: Use session_event_loop fixture instead of asyncio.run()."""
+
         @instrumented("integration.test")
         async def my_async_fn(url: str, count: int = 10) -> dict[str, Any]:
             return {"url": url, "count": count, "ts": time.monotonic()}
@@ -748,6 +748,7 @@ class _FakeSpan:
     @property
     def status(self) -> Any:
         from opentelemetry.trace import StatusCode
+
         code_map = {"OK": StatusCode.OK, "ERROR": StatusCode.ERROR, "UNSET": StatusCode.UNSET}
         return type("S", (), {"status_code": code_map.get(self._status_code, StatusCode.UNSET)})()
 
@@ -755,6 +756,7 @@ class _FakeSpan:
         class _Ctx:
             trace_id = self._trace_id
             span_id = self._span_id
+
         return _Ctx()
 
 
@@ -791,7 +793,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # aggressive sampling
             slow_span_threshold_ms=1000.0,
             skip_prefixes=("fetch.",),
-    )
+        )
         # ERROR span with high-freq prefix should still be exported
         span = _FakeSpan(name="fetch.url", status_code="ERROR")
         proc.on_end(span)  # type: ignore[arg-type]
@@ -808,7 +810,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # aggressive sampling
             slow_span_threshold_ms=50.0,  # 50ms threshold
             skip_prefixes=("fetch.",),
-    )
+        )
         # Slow span with high-freq prefix should still be exported
         span = _FakeSpan(name="fetch.url", duration_ms=100.0)  # 100ms > 50ms threshold
         proc.on_end(span)  # type: ignore[arg-type]
@@ -825,7 +827,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.", "http.", "db."),
-    )
+        )
         # Run many spans to observe statistical ~10% export rate
         exported = 0
         total = 10_000
@@ -853,7 +855,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,  # would skip 99% of matching
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-    )
+        )
         # Span NOT matching any skip prefix → always exported
         span = _FakeSpan(name="sprint.run", duration_ms=5.0)
         proc.on_end(span)  # type: ignore[arg-type]
@@ -870,7 +872,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.01,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("custom.",),  # only custom. prefix is sampled
-    )
+        )
         # fetch.url should NOT be sampled (not in custom prefixes)
         span = _FakeSpan(name="fetch.url", duration_ms=5.0)
         proc.on_end(span)  # type: ignore[arg-type]
@@ -893,7 +895,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.5,  # 50% for easy counting
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-    )
+        )
         # Submit 100 spans
         for i in range(100):
             span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
@@ -915,7 +917,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-    )
+        )
         span = _FakeSpan(name="fetch.url")
         proc.on_start(span)  # type: ignore[arg-type]
         assert len(next_proc.started) == 1
@@ -949,7 +951,8 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
-    )
+        )
+
         # Span whose get_span_context() raises — triggers fail-soft path
         class _RaisingFakeSpan(_FakeSpan):
             def get_span_context(self) -> Any:
@@ -970,7 +973,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch",),
-    )
+        )
         # Same trace_id + name should always be same result
         results = []
         for _ in range(100):
@@ -988,12 +991,13 @@ class TestSamplingSpanProcessor:
         on_end() (SpanProcessor interface). Wrap it so SamplingSpanProcessor
         can delegate via on_end() → export() conversion.
         """
-        from otel._duckdb_exporter import SamplingSpanProcessor
         from otel._buffer import BoundedRing
+        from otel._duckdb_exporter import SamplingSpanProcessor
         from otel._exporter_ring import RingBufferExporter
 
         class _RingExporterWrapper:
             """Adapt SpanExporter (export) to SpanProcessor (on_start/on_end)."""
+
             __slots__ = ("_exporter",)
 
             def __init__(self, exporter: Any) -> None:
@@ -1018,7 +1022,7 @@ class TestSamplingSpanProcessor:
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.", "http."),
-    )
+        )
         # Submit 1000 fast high-freq spans
         for i in range(1000):
             span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)

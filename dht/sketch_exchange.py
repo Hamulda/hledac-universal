@@ -7,11 +7,8 @@ from typing import Any, TYPE_CHECKING
 from hledac.universal._core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import DHTStoreProtocol, LocalGraphReaderProtocol
 from hledac.universal.utils.asyncx import parallel, safe_create_task
-from _core import aclose
 
 if TYPE_CHECKING:
-    from hledac.universal.dht.kademlia_node import KademliaNode
-    from hledac.universal.dht.local_graph import LocalGraphStore
 
 logger = logging.getLogger(__name__)
 MAX_SKETCH_ITEMS = 10000

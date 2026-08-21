@@ -39,8 +39,6 @@ Flags:
     SCHEMA_UNRECOGNIZED_FAIL_SOFT=true
 """
 
-
-
 """Sprint F222H: DuckDB NonfeedSeed Extraction - Refactored with modern Python patterns."""
 
 import argparse
@@ -48,9 +46,9 @@ import json
 import re
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 # scripts/extract_nonfeed_seeds.py → universal/ → hledac/ → Hledac/ (project root)
 _project_root = Path(__file__).parent.parent
@@ -65,8 +63,7 @@ from hledac.universal.runtime.nonfeed_seed_extractor import (  # noqa: E402
     classify_seed_quality,
     compute_lane_unlocks,
     extract_nonfeed_seeds_from_findings,
-    )
-
+)
 
 # ---------------------------------------------------------------------------
 # Dataclasses for typed results (modern Python 3.14+ pattern)
@@ -76,6 +73,7 @@ from hledac.universal.runtime.nonfeed_seed_extractor import (  # noqa: E402
 @dataclass(slots=True)
 class DuckDBReadResult:
     """Result of reading findings from DuckDB."""
+
     findings: list[dict[str, Any]]
     tables_checked: list[str]
     rows_scanned: int
@@ -84,6 +82,7 @@ class DuckDBReadResult:
 @dataclass(slots=True, frozen=True)
 class TableSchema:
     """Schema information for a DuckDB table."""
+
     name: str
     columns: list[str]
     text_columns: list[str]
@@ -95,16 +94,35 @@ class TableSchema:
 # ---------------------------------------------------------------------------
 
 # Text-like column names to look for in any DuckDB table
-_TEXT_COLUMNS: frozenset[str] = frozenset([
-    "title", "summary", "body", "content", "url", "source_url",
-    "evidence", "raw_text", "description", "indicator", "value",
-    "query", "payload_text", "text", "finding_text",
-])
+_TEXT_COLUMNS: frozenset[str] = frozenset(
+    [
+        "title",
+        "summary",
+        "body",
+        "content",
+        "url",
+        "source_url",
+        "evidence",
+        "raw_text",
+        "description",
+        "indicator",
+        "value",
+        "query",
+        "payload_text",
+        "text",
+        "finding_text",
+    ]
+)
 
 # Timestamp column candidates
-_TIMESTAMP_COLUMNS: frozenset[str] = frozenset([
-    "ts", "timestamp", "created_at", "added_at",
-])
+_TIMESTAMP_COLUMNS: frozenset[str] = frozenset(
+    [
+        "ts",
+        "timestamp",
+        "created_at",
+        "added_at",
+    ]
+)
 
 # Column name → finding key mapping (dictionary dispatch replaces if/elif chains)
 _COLUMN_DISPATCH: dict[str, tuple[str, type | None]] = {
@@ -208,12 +226,10 @@ def _get_table_schema(conn: Any, table_name: str) -> TableSchema | None:
 # Query building helpers
 # ---------------------------------------------------------------------------
 
-import re
 from contextlib import contextmanager
-from _core import aclose
 
 # Safe identifier validation: alphanumeric + underscore only, no dots, no dashes
-_SAFE_IDENTIFIER_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 def _build_where_clause(
@@ -232,9 +248,7 @@ def _build_where_clause(
 
     if query_filter:
         # Search all text columns for the query filter
-        text_col_refs = " || ' ' || ".join(
-            f'COALESCE("{c}", \'\')' for c in schema.text_columns
-    )
+        text_col_refs = " || ' ' || ".join(f"COALESCE(\"{c}\", '')" for c in schema.text_columns)
         where_parts.append(f"({text_col_refs}) LIKE '%' || ? || '%'")
         params.append(query_filter)
 
@@ -243,14 +257,9 @@ def _build_where_clause(
         params.append(sprint_id_filter)
 
     if since_hours is not None:
-        ts_candidates = [
-            c for c in schema.columns
-            if c.lower() in _TIMESTAMP_COLUMNS
-        ]
+        ts_candidates = [c for c in schema.columns if c.lower() in _TIMESTAMP_COLUMNS]
         if ts_candidates:
-            where_parts.append(
-                f"{ts_candidates[0]} >= CURRENT_TIMESTAMP - INTERVAL '{since_hours} hours'"
-    )
+            where_parts.append(f"{ts_candidates[0]} >= CURRENT_TIMESTAMP - INTERVAL '{since_hours} hours'")
 
     if where_parts:
         return " WHERE " + " AND ".join(where_parts), params
@@ -291,7 +300,7 @@ def _map_dispatch_values(row_dict: dict[str, Any], column_map: dict[str, list[st
                 elif expected_type is float:
                     try:
                         finding[key] = float(val)
-                    except (TypeError, ValueError):  # noqa: BLE001
+                    except TypeError, ValueError:  # noqa: BLE001
                         pass
     return finding
 
@@ -305,7 +314,7 @@ def _map_row_to_finding(
 
     Returns None if no valid text content found.
     """
-    row_dict = dict(zip(schema.columns, row))
+    row_dict = dict(zip(schema.columns, row, strict=False))
 
     # Apply column dispatch for known fields
     finding = _map_dispatch_values(row_dict, schema.column_map)
@@ -377,9 +386,7 @@ def _read_findings_from_duckdb(
             tables_checked.append(table_name)
 
             # Build and execute query
-            where_clause, params = _build_where_clause(
-                schema, query_filter, sprint_id_filter, since_hours
-    )
+            where_clause, params = _build_where_clause(schema, query_filter, sprint_id_filter, since_hours)
             select_cols = ", ".join(f'"{c}"' for c in schema.columns)
             sql = f'SELECT {select_cols} FROM "{table_name}"{where_clause} LIMIT {limit_findings}'
 
@@ -401,7 +408,7 @@ def _read_findings_from_duckdb(
                             findings=all_findings,
                             tables_checked=tables_checked,
                             rows_scanned=rows_scanned,
-    )
+                        )
 
             # Early termination check
             if len(all_findings) >= limit_findings:
@@ -447,10 +454,9 @@ def _build_findings_from_duckdb(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Extract nonfeed IOC seeds from a live sprint JSON report or DuckDB."
-    )
+    parser = argparse.ArgumentParser(description="Extract nonfeed IOC seeds from a live sprint JSON report or DuckDB.")
     parser.add_argument(
         "--report",
         help="Path to live sprint JSON report (deprecated, use --duckdb)",
@@ -526,7 +532,7 @@ def main() -> None:
             query_filter=args.query,
             sprint_id_filter=args.sprint_id,
             since_hours=args.since_hours,
-    )
+        )
         findings = duckdb_result.findings
         tables_checked = duckdb_result.tables_checked
         rows_scanned = duckdb_result.rows_scanned
@@ -618,10 +624,7 @@ def _classify_and_filter_seeds(
     include_weak: bool,
 ) -> tuple[list[tuple[NonfeedSeed, SeedQuality]], list[tuple[NonfeedSeed, SeedQuality]]]:
     """Classify seeds by quality and filter by threshold."""
-    classified = [
-        (s, classify_seed_quality(s, query=query or "", context=""))
-        for s in seeds
-    ]
+    classified = [(s, classify_seed_quality(s, query=query or "", context="")) for s in seeds]
 
     def passes_gate(s: NonfeedSeed, q: SeedQuality) -> bool:
         if q.decision == "drop":
@@ -719,10 +722,12 @@ def _print_summary(
     """Print execution summary."""
     print(f"Source: {source}")
     print(f"Extracted {len(seeds)} seeds from {len(findings)} findings")
-    print(f"Quality gate: kept={output['quality_summary']['kept']}, "
-          f"weak={output['quality_summary']['weak']} "
-          f"(included={include_weak}), "
-          f"dropped={output['quality_summary']['dropped']}")
+    print(
+        f"Quality gate: kept={output['quality_summary']['kept']}, "
+        f"weak={output['quality_summary']['weak']} "
+        f"(included={include_weak}), "
+        f"dropped={output['quality_summary']['dropped']}"
+    )
     print(f"Seed kinds: {output['seed_kinds']}")
     if output["lane_unlocks"]:
         print(f"Lane unlocks: {', '.join(output['lane_unlocks'].keys())}")

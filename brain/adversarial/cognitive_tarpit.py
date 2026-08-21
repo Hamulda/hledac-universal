@@ -7,8 +7,6 @@ perfectly grammatical English, low typo density, uniform sentence length
 (high burstiness deviation toward flat LLM signatures), and high Shannon
 entropy per byte (LLMs default to ~4.5 bits/byte in English vs. human ~4.1).
 
-
-
 This module provides three orthogonal sub-scores that detect LLM-generated
 content WITHOUT requiring a model inference pass (except SmolLM path):
 
@@ -33,7 +31,6 @@ M1 8GB budget:
 from __future__ import annotations
 
 import math
-import os
 import re
 import statistics
 import threading
@@ -41,10 +38,6 @@ from dataclasses import dataclass
 from typing import Final
 
 from _core.lock_registry import LockCategory, register_lock
-
-# ---------------------------------------------------------------------------
-# msglike types — frozen, gc=False for M1 memory efficiency
-# ---------------------------------------------------------------------------
 
 try:
     import msgspec
@@ -54,19 +47,19 @@ except ImportError:
     msgspec = None  # type: ignore[assignment]
     _HAVE_MSGSPEC = False
 
-
 # msgspec-based if available, else pure-dataclass fallback
 if _HAVE_MSGSPEC:
 
     class CognitiveTarpitVerdict(Struct, frozen=True):  # type: ignore[valid-type,misc]
         """Detection result for LLM-generated honeypot text."""
+
         is_cognitive_tarpit: bool
         cognitive_tarpit_score: float  # 0.0 (human) — 1.0 (certain LLM honeypot)
         reasons: tuple[str, ...]
         # Sub-scores
-        entropy_score: float   # 0.0 — 1.0
+        entropy_score: float  # 0.0 — 1.0
         burstiness_score: float  # 0.0 — 1.0
-        pos_score: float       # 0.0 — 1.0 (0 if POS tagging disabled)
+        pos_score: float  # 0.0 — 1.0 (0 if POS tagging disabled)
         perplexity_score: float  # 0.0 — 1.0 (0 if SmolLM disabled)
         # Diagnostics
         entropy_variance: float = 0.0
@@ -81,6 +74,7 @@ else:
     @dataclass(frozen=True, slots=True)
     class CognitiveTarpitVerdict:
         """Detection result for LLM-generated honeypot text."""
+
         is_cognitive_tarpit: bool
         cognitive_tarpit_score: float
         reasons: tuple[str, ...]
@@ -96,14 +90,9 @@ else:
         analysis_ms: float = 0.0
 
 
-# ---------------------------------------------------------------------------
-# Constants — thresholds derived from LLM vs human corpora analysis
-# ---------------------------------------------------------------------------
-
 # Feature gate — SWARM-010 compliant via FeatureFlags
-from hledac.universal._core.feature_flags import FeatureFlags, FeatureFlag
-from compat.msgspec_gc_compat import Struct
-from _core import aclose
+from hledac.universal._core.feature_flags import FeatureFlag, FeatureFlags
+
 _COGNITIVE_TARPIT_ENABLED: Final[bool] = FeatureFlags.get(FeatureFlag.COGNITIVE_TARPIT)
 
 # POS tagging gate (heavy, off by default) — SWARM-010 compliant via FeatureFlags
@@ -157,10 +146,6 @@ _smollm_model: object | None = None
 _smollm_tokenizer: object | None = None
 
 
-# ---------------------------------------------------------------------------
-# Byte-level Shannon entropy
-# ---------------------------------------------------------------------------
-
 def _shannon_entropy(data: bytes) -> float:
     """Compute Shannon entropy of a byte sequence in bits/byte."""
     if not data:
@@ -206,19 +191,13 @@ def _entropy_score(variance: float) -> float:
     if variance >= _ENTROPY_VAR_HUMAN_BOUND:
         return 0.0
     # Linear interpolation between bounds
-    return 1.0 - (variance - _ENTROPY_VAR_LLM_BOUND) / (
-        _ENTROPY_VAR_HUMAN_BOUND - _ENTROPY_VAR_LLM_BOUND
-    )
+    return 1.0 - (variance - _ENTROPY_VAR_LLM_BOUND) / (_ENTROPY_VAR_HUMAN_BOUND - _ENTROPY_VAR_LLM_BOUND)
 
-
-# ---------------------------------------------------------------------------
-# Burstiness deviation (sentence length variance / mean)
-# ---------------------------------------------------------------------------
 
 _SENTENCE_SPLIT_RE: Final[re.Pattern] = re.compile(
     r"(?<=[.!?])\s+",
     re.MULTILINE,
-    )
+)
 
 
 def _sentence_lengths(text: str) -> list[int]:
@@ -248,14 +227,8 @@ def _burstiness_score(deviation: float) -> float:
         return 1.0
     if deviation >= _BURSTINESS_HUMAN_MIN:
         return 0.0
-    return 1.0 - (deviation - _BURSTINESS_LLM_MAX) / (
-        _BURSTINESS_HUMAN_MIN - _BURSTINESS_LLM_MAX
-    )
+    return 1.0 - (deviation - _BURSTINESS_LLM_MAX) / (_BURSTINESS_HUMAN_MIN - _BURSTINESS_LLM_MAX)
 
-
-# ---------------------------------------------------------------------------
-# POS trigram ratio (DT-JJ-NN / NN-VB-DT)
-# ---------------------------------------------------------------------------
 
 # Simple regex-based POS approximation patterns
 # (No spacy/nltk dependency — pure Python heuristic for M1 8GB)
@@ -270,27 +243,27 @@ def _burstiness_score(deviation: float) -> float:
 _DETERMINER_RE: Final[re.Pattern] = re.compile(
     r"\b(?:the|this|that|these|those|a|an|my|your|his|her|its|our|their)\b",
     re.IGNORECASE,
-    )
+)
 
 _ADJECTIVE_RE: Final[re.Pattern] = re.compile(
     r"\b(?:[\w]+(?:ous|ful|less|ive|able|ible|al|ial|ous|ent|ant|ary|ery|ish|tive|ic|sive))\b",
     re.IGNORECASE,
-    )
+)
 
 _NOUN_RE: Final[re.Pattern] = re.compile(
     r"\b(?:\w+(?:tion|sion|ness|ment|ity|ance|ence|er|or|ist|ism|logy|graphy|scopy|data|ics))\b",
     re.IGNORECASE,
-    )
+)
 
 _VERB_RE: Final[re.Pattern] = re.compile(
     r"\b(?:\w+(?:ify|ize|ate|ify|en|ed|ing|es|s))\b",
     re.IGNORECASE,
-    )
+)
 
 _PREPOSITION_RE: Final[re.Pattern] = re.compile(
     r"\b(?:in|on|at|for|to|with|by|from|of|about|into|through|during|before|after|above|below|between|under|over|around|among)\b",
     re.IGNORECASE,
-    )
+)
 
 
 def _pos_tag_tokens(text: str) -> list[str]:
@@ -365,10 +338,6 @@ def _pos_score(ratio: float) -> float:
     return (ratio - 0.5) / 1.5
 
 
-# ---------------------------------------------------------------------------
-# SmolLM pseudo-perplexity (teacher-forcing cross-entropy)
-# ---------------------------------------------------------------------------
-
 def _load_smollm() -> tuple[object, object] | tuple[None, None]:
     """Lazy-load SmolLM-360M-4bit model and tokenizer.
 
@@ -393,21 +362,21 @@ def _load_smollm() -> tuple[object, object] | tuple[None, None]:
                 # SmolLM only loaded if BLITZ_TRIAGE is enabled
                 return None, None
 
-            # Import MLX components lazily
             from mlx_lm import load as _mlx_load
 
             _MODEL_ID = "mlx-community/SmolLM-360M-Instruct-4bit"
             _smollm_model, _smollm_tokenizer = _mlx_load(
                 _MODEL_ID,
                 tokenizer_config={"trust_remote_code": True},
-    )
+            )
             return _smollm_model, _smollm_tokenizer
         except Exception:
             return None, None
 
 
 def _smollm_pseudo_perplexity(
-    text: str, chunk_tokens: int = _SMOLLM_CHUNK_TOKENS,
+    text: str,
+    chunk_tokens: int = _SMOLLM_CHUNK_TOKENS,
 ) -> float:
     """Compute pseudo-perplexity via SmolLM-360M teacher-forcing.
 
@@ -433,11 +402,9 @@ def _smollm_pseudo_perplexity(
         if len(tokens) < 16:
             return 0.0
 
-        # Process in chunks
         chunk_size = min(chunk_tokens, len(tokens) - 1)
         losses: list[float] = []
 
-        # Import MLX lazily
         import mlx.core as mx
 
         for i in range(0, len(tokens) - 1, chunk_size):
@@ -446,11 +413,10 @@ def _smollm_pseudo_perplexity(
                 continue
 
             input_ids = mx.array(chunk[:-1])
-            labels = mx.array(chunk[1:])
+            mx.array(chunk[1:])
 
             try:
                 import mlx.core as _mx
-                import mlx_lm as _mlx_lm
 
                 input_ids = _mx.array(chunk[:-1])
                 targets = _mx.array(chunk[1:])
@@ -467,7 +433,7 @@ def _smollm_pseudo_perplexity(
                         continue
 
                 # logits: (seq_len, vocab_size), targets: (seq_len,)
-                ce = _mx.mean(_mx.losses.cross_entropy(logits, targets, reduction='none'))
+                ce = _mx.mean(_mx.losses.cross_entropy(logits, targets, reduction="none"))
                 losses.append(float(ce))
             except Exception:
                 continue
@@ -491,10 +457,6 @@ def _smollm_pseudo_perplexity(
     except Exception:
         return 0.0
 
-
-# ---------------------------------------------------------------------------
-# Main scoring function
-# ---------------------------------------------------------------------------
 
 def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     """Compute composite LLM-honeypot detection score.
@@ -522,7 +484,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             perplexity_score=0.0,
             text_length_chars=len(text),
             analysis_ms=0.0,
-    )
+        )
 
     # Guard: minimum text length
     if len(text) < _MIN_TEXT_LENGTH:
@@ -536,7 +498,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             perplexity_score=0.0,
             text_length_chars=len(text),
             analysis_ms=0.0,
-    )
+        )
 
     # Truncate to bound CPU
     analysis_text = text[:_MAX_TEXT_ANALYSIS_CHARS]
@@ -556,9 +518,7 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     burst_dev = _burstiness_deviation(sent_lens)
     burst_sc = _burstiness_score(burst_dev)
     if burst_sc > 0.7:
-        reasons.append(
-            f"burstiness_deviation={burst_dev:.3f} (LLM-flat, sentences={len(sent_lens)})"
-    )
+        reasons.append(f"burstiness_deviation={burst_dev:.3f} (LLM-flat, sentences={len(sent_lens)})")
     burstiness_score = burst_sc
 
     # ── 3. POS trigram ratio (only if enabled) ────────────────────────────
@@ -585,14 +545,10 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
             + _BURSTINESS_WEIGHT * burstiness_score
             + _POS_WEIGHT * pos_sc
             + _PERPLEXITY_WEIGHT * perplexity_sc
-    )
+        )
     else:
         # No perplexity — weight redistributed to entropy + burstiness
-        cognitive_tarpit_score = (
-            0.40 * entropy_score
-            + 0.45 * burstiness_score
-            + 0.15 * pos_sc
-    )
+        cognitive_tarpit_score = 0.40 * entropy_score + 0.45 * burstiness_score + 0.15 * pos_sc
 
     # Decision: cognitive tarpit if composite > threshold
     is_cognitive_tarpit = cognitive_tarpit_score >= _COGNITIVE_TARPIT_THRESHOLD
@@ -618,10 +574,6 @@ def _cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     )
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     """Public API: detect LLM-generated honeypot text.
 
@@ -639,10 +591,6 @@ def cognitive_tarpit_score(text: str) -> CognitiveTarpitVerdict:
     """
     return _cognitive_tarpit_score(text)
 
-
-# ---------------------------------------------------------------------------
-# SmolLM model cache invalidation (called on memory pressure)
-# ---------------------------------------------------------------------------
 
 def invalidate_smollm_cache() -> None:
     """Invalidate cached SmolLM model (call on M1 memory pressure)."""

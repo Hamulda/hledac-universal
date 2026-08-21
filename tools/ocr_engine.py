@@ -8,7 +8,6 @@ Optimized for M1 Mac with fail-safe handling.
 import asyncio
 import logging
 import os
-from _core import aclose
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class VisionOCR:
             if file_size > max_size_bytes:
                 logger.warning(
                     f"[VisionOCR] File too large: {image_path} ({file_size} bytes > {max_size_bytes} bytes), skipping"
-    )
+                )
                 return []
         except OSError as e:
             logger.warning(f"[VisionOCR] Could not get file size for {image_path}: {e}")
@@ -90,7 +89,7 @@ class VisionOCR:
 
             import ocrmac
 
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 f.write(image_bytes)
                 tmp = f.name
             try:
@@ -109,8 +108,9 @@ class VisionOCR:
 
 async def recognize_async(image_path: str) -> list[str]:
     """Async wrapper for OCR recognition."""
+
     def _read_and_recognize():
-        with open(image_path, 'rb') as f:
+        with open(image_path, "rb") as f:
             return VisionOCR().recognize_bytes(f.read())
 
     return await asyncio.to_thread(_read_and_recognize)

@@ -19,9 +19,7 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-import anyio
 import pytest
-from _core import aclose
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -29,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 class TestI2PURLRouting:
     """invariant_I2P-T1: *.i2p URLs are routed to i2p_socks lane."""
 
-    def test_i2p_url_gets_i2p_lane(self):
+    def test_i2p_url_gets_i2p_lane(self) -> None:
         """route_transport returns lane='i2p_socks' for .i2p domains."""
         from hledac.universal.transport.transport_router import route_transport
 
@@ -37,7 +35,7 @@ class TestI2PURLRouting:
         assert result.lane == "i2p_socks", f"Expected i2p_socks, got {result.lane}"
         assert result.reason == "darknet_i2p"
 
-    def test_b32_i2p_url_gets_i2p_lane(self):
+    def test_b32_i2p_url_gets_i2p_lane(self) -> None:
         """route_transport returns lane='i2p_socks' for .b32.i2p domains."""
         from hledac.universal.transport.transport_router import route_transport
 
@@ -45,14 +43,14 @@ class TestI2PURLRouting:
         assert result.lane == "i2p_socks", f"Expected i2p_socks, got {result.lane}"
         assert result.reason == "darknet_i2p"
 
-    def test_clearnet_url_does_not_get_i2p_lane(self):
+    def test_clearnet_url_does_not_get_i2p_lane(self) -> None:
         """clearnet URLs route to clearnet lane, not i2p_socks."""
         from hledac.universal.transport.transport_router import route_transport
 
         result = route_transport("https://example.com/page")
         assert result.lane != "i2p_socks"
 
-    def test_onion_url_does_not_get_i2p_lane(self):
+    def test_onion_url_does_not_get_i2p_lane(self) -> None:
         """onion URLs route to tor_socks, not i2p_socks."""
         from hledac.universal.transport.transport_router import route_transport
 
@@ -63,7 +61,7 @@ class TestI2PURLRouting:
 class TestI2PSessionPool:
     """invariant_I2P-T2: pool creates aiohttp session via ProxyConnector."""
 
-    def test_i2p_socks_proxy_constant_exported(self):
+    def test_i2p_socks_proxy_constant_exported(self) -> None:
         """I2P_SOCKS_PROXY is exported from public_fetcher."""
         from hledac.universal.fetching.public_fetcher import I2P_SOCKS_PROXY
 
@@ -71,7 +69,7 @@ class TestI2PSessionPool:
         assert "socks5://" in I2P_SOCKS_PROXY
         assert "7654" in I2P_SOCKS_PROXY
 
-    def test_i2p_socks_proxy_from_env(self, monkeypatch):
+    def test_i2p_socks_proxy_from_env(self, monkeypatch) -> None:
         """I2P_SOCKS_PROXY reads from I2P_PROXY_URL env var."""
         monkeypatch.setenv("I2P_PROXY_URL", "socks5://127.0.0.1:9999")
 
@@ -79,16 +77,18 @@ class TestI2PSessionPool:
         import importlib
 
         from hledac.universal.fetching import public_fetcher as pf
+
         importlib.reload(pf)
 
         assert pf.I2P_SOCKS_PROXY == "socks5://127.0.0.1:9999"
 
     @pytest.mark.asyncio
-    async def test_get_i2p_session_creates_session(self):
+    async def test_get_i2p_session_creates_session(self) -> None:
         """_get_i2p_session creates httpx.AsyncClient with SOCKS5H proxy."""
         import importlib
 
         from hledac.universal.fetching import public_fetcher as pf
+
         importlib.reload(pf)
 
         # Reset module-level state
@@ -113,7 +113,7 @@ class TestI2PSessionPool:
                 assert session is mock_session
 
     @pytest.mark.asyncio
-    async def test_get_i2p_session_injects_provider(self):
+    async def test_get_i2p_session_injects_provider(self) -> None:
         """get_session_manager().get_i2p_session() uses injected provider when available."""
         from hledac.universal.fetching._session_mgr import get_session_manager
 
@@ -136,7 +136,7 @@ class TestI2PFallback:
     """invariant_I2P-T3: pool failure falls back to darknet path."""
 
     @pytest.mark.asyncio
-    async def test_get_i2p_session_raises_on_missing_dep(self):
+    async def test_get_i2p_session_raises_on_missing_dep(self) -> None:
         """Missing httpx_socks raises RuntimeError."""
         from hledac.universal.fetching._session_mgr import get_session_manager
 
@@ -144,11 +144,11 @@ class TestI2PFallback:
 
         # Force curl_cffi unavailable and httpx_socks import failure
         with patch("hledac.universal.transport.curl_cffi_runtime.is_curl_cffi_available", return_value=(False, "test")):
-            with patch.dict('sys.modules', {'httpx_socks': None}):
+            with patch.dict("sys.modules", {"httpx_socks": None}):
                 with pytest.raises((ModuleNotFoundError, RuntimeError)):
                     await mgr.get_i2p_session()
 
-    def test_is_i2p_url_helper(self):
+    def test_is_i2p_url_helper(self) -> None:
         """_is_i2p_url returns True for .i2p and .b32.i2p, False otherwise."""
         from hledac.universal.fetching.public_fetcher import _is_i2p_url
 
@@ -159,7 +159,7 @@ class TestI2PFallback:
         # .b32.i2p is suffix of .i2p, but we check .b32.i2p first
         assert _is_i2p_url("http://v4.b32.i2p.i2p/page") is True  # endswith .i2p
 
-    def test_i2p_fetch_result_has_i2p_transport(self):
+    def test_i2p_fetch_result_has_i2p_transport(self) -> None:
         """FetchResult for i2p URL marks selected_transport='aiohttp_socks'."""
         from hledac.universal.fetching.public_fetcher import _is_i2p_url
 

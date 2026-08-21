@@ -4,49 +4,42 @@ This module contains the Phase classes that orchestrate the public OSINT pipelin
 Each phase is responsible for one stage of the pipeline.
 
 F360-REFACTOR: Extracted from live_public_pipeline.py to reduce god function complexity.
-F364-REFACTOR: Result types converted to msgspec.Struct(frozen=True, gc=False) 
+F364-REFACTOR: Result types converted to msgspec.Struct(frozen=True, gc=False)
                for memory efficiency on M1 8GB.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.runtime.lane_registry import LANE_REGISTRY
-from hledac.universal.utils.locks import LazyAsyncioLock
-from hledac.universal.utils.asyncx import parallel, safe_create_task
-from hledac.universal.tools.url_dedup import get_default_bloom_filter
-
 # Import msgspec.Struct for memory-efficient data structures (M1 8GB)
 from compat.msgspec_gc_compat import Struct
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
+from hledac.universal.tools.url_dedup import get_default_bloom_filter
+from hledac.universal.utils.asyncx import parallel, safe_create_task
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 logger = logging.getLogger(__name__)
 
-# Import from generators module
 from hledac.universal.pipeline.public._generators import (
-    _is_threat_query,
-    _filter_public_noise,
-    _query_looks_like_domain,
     _extract_base_domain,
+    _filter_public_noise,
+    _is_threat_query,
+    _query_looks_like_domain,
     generate_bootstrap_urls,
+    generate_keyword_bootstrap_urls,
     generate_rescue_urls,
     generate_seed_context_bootstrap_urls,
-    generate_keyword_bootstrap_urls,
 )
-
-# ----------------------------------------------------------------------
-# Types (F364: Converted to msgspec.Struct for M1 8GB memory efficiency)
-# ----------------------------------------------------------------------
 
 
 class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
@@ -55,6 +48,7 @@ class DiscoveryPhaseResult(Struct, frozen=True, gc=False):
     F364-REFACTOR: Converted from __slots__ class to msgspec.Struct for
                    memory efficiency on M1 8GB.
     """
+
     hits: tuple = ()
     discovery_result: Any = None
     discovery_error: str | None = None
@@ -77,6 +71,7 @@ class PipelinePageResult(Struct, frozen=True, gc=False):
     F364-REFACTOR: Converted from __slots__ class to msgspec.Struct for
                    memory efficiency on M1 8GB.
     """
+
     url: str = ""
     fetched: bool = False
     matched_patterns: int = 0
@@ -106,6 +101,7 @@ class PipelinePageResult(Struct, frozen=True, gc=False):
 
 class PipelineRunResult:
     """Top-level result of a full pipeline run."""
+
     __slots__ = (
         "query",
         "discovered",
@@ -510,16 +506,12 @@ class PipelineRunResult:
         self.public_discovery_empty_reason = public_discovery_empty_reason
 
 
-# ----------------------------------------------------------------------
-# Pipeline Context
-# ----------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class PipelineContext:
     """Immutable context passed through all pipeline phases."""
+
     query: str
-    store: "DuckDBShadowStore | None"
+    store: DuckDBShadowStore | None
     max_results: int
     fetch_timeout_s: float
     fetch_max_bytes: int
@@ -547,17 +539,7 @@ class PipelineContext:
     error: str | None = None
 
 
-# ----------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------
-
-
 _MAX_BOOTSTRAP_URLS = 5
-
-
-# ----------------------------------------------------------------------
-# Phase Classes
-# ----------------------------------------------------------------------
 
 
 class Phase1_Initialization:
@@ -567,6 +549,7 @@ class Phase1_Initialization:
         """Initialize pipeline context with temporal reset, cache clear, DI resolution."""
         try:
             from hledac.universal.layers import reset_temporal_signal_layer
+
             reset_temporal_signal_layer()
         except Exception:
             pass
@@ -574,6 +557,7 @@ class Phase1_Initialization:
         if _resolved_clear_cache is None:
             try:
                 from hledac.universal.discovery.duckduckgo_adapter import _clear_query_cache
+
                 _resolved_clear_cache = _clear_query_cache
             except ImportError:
                 _resolved_clear_cache = None
@@ -586,6 +570,7 @@ class Phase1_Initialization:
         persistence_restored = False
         try:
             from hledac.universal.layers import is_temporal_store_enabled, load_temporal_signal_snapshot
+
             persistence_enabled = is_temporal_store_enabled()
             if persistence_enabled:
                 persistence_restored = load_temporal_signal_snapshot()
@@ -596,17 +581,20 @@ class Phase1_Initialization:
             # E1: Hardware-accelerated SHA-256 (ARM NEON on Apple Silicon)
             try:
                 from _core.rust_backend import rust
+
                 hashes = rust.crypto.batch_sha256_hw([ctx.query])
                 session_id = hashes[0][:16] if hashes else hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
             except Exception:
                 session_id = hashlib.sha256(ctx.query.encode()).hexdigest()[:16]
-        return PipelineContext(**{
-            **ctx.__dict__,
-            "session_id": session_id,
-            "_persistence_enabled": persistence_enabled,
-            "_persistence_restored": persistence_restored,
-            "_persistence_saved": False,
-        })
+        return PipelineContext(
+            **{
+                **ctx.__dict__,
+                "session_id": session_id,
+                "_persistence_enabled": persistence_enabled,
+                "_persistence_restored": persistence_restored,
+                "_persistence_saved": False,
+            }
+        )
 
 
 class Phase2_ResourceGovernance:
@@ -619,6 +607,7 @@ class Phase2_ResourceGovernance:
             UMA_STATE_EMERGENCY,
             UMA_STATE_OK,
         )
+
         uma_state = UMA_STATE_OK
         try:
             uma_state, _ = await _get_uma_state()
@@ -627,13 +616,15 @@ class Phase2_ResourceGovernance:
         effective_concurrency = ctx.fetch_concurrency
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
             effective_concurrency = 1
-        return PipelineContext(**{
-            **ctx.__dict__,
-            "uma_state": uma_state,
-            "effective_concurrency": effective_concurrency,
-            "_semaphore": asyncio.Semaphore(effective_concurrency),
-            "_is_emergency": uma_state == UMA_STATE_EMERGENCY,
-        })
+        return PipelineContext(
+            **{
+                **ctx.__dict__,
+                "uma_state": uma_state,
+                "effective_concurrency": effective_concurrency,
+                "_semaphore": asyncio.Semaphore(effective_concurrency),
+                "_is_emergency": uma_state == UMA_STATE_EMERGENCY,
+            }
+        )
 
 
 class Phase3_DiscoveryRunner:
@@ -649,11 +640,13 @@ class Phase3_DiscoveryRunner:
             seed_context=ctx.seed_context,
         ).run(uma_state=ctx.uma_state)
         return (
-            PipelineContext(**{
-                **ctx.__dict__,
-                "hits": discovery_info.hits,
-                "discovery_telemetry": discovery_info.discovery_telemetry,
-            }),
+            PipelineContext(
+                **{
+                    **ctx.__dict__,
+                    "hits": discovery_info.hits,
+                    "discovery_telemetry": discovery_info.discovery_telemetry,
+                }
+            ),
             discovery_info,
         )
 
@@ -664,10 +657,11 @@ class Phase4_FetchOrchestrator:
     async def run(self, ctx: PipelineContext, discovery: DiscoveryPhaseResult) -> tuple[PipelineContext, list]:
         """Execute fetch batch and return page results."""
         from hledac.universal.pipeline.public_fetch import _fetch_and_process_page
+
         is_threat = _is_threat_query(ctx.query)
         hits, noise_rejections = _filter_public_noise(discovery.hits, is_threat)
         noise_reject_reasons: dict[str, int] = {}
-        for url, reason in noise_rejections:
+        for _url, reason in noise_rejections:
             noise_reject_reasons[reason] = noise_reject_reasons.get(reason, 0) + 1
         bloom_filter = get_default_bloom_filter()
         seen_url_count = 0
@@ -703,13 +697,15 @@ class Phase4_FetchOrchestrator:
         ok_results, error_results = (_result.ok, _result.errors)
         all_page_results = list(ok_results)
         return (
-            PipelineContext(**{
-                **ctx.__dict__,
-                "all_page_results": all_page_results,
-                "_seen_url_count": seen_url_count,
-                "_noise_reject_reasons": noise_reject_reasons,
-                "_error_results": error_results,
-            }),
+            PipelineContext(
+                **{
+                    **ctx.__dict__,
+                    "all_page_results": all_page_results,
+                    "_seen_url_count": seen_url_count,
+                    "_noise_reject_reasons": noise_reject_reasons,
+                    "_error_results": error_results,
+                }
+            ),
             all_page_results,
         )
 
@@ -746,9 +742,10 @@ class Phase6_ReportGenerator:
         """Execute report generation and RL/ToT phases."""
         from hledac.universal.pipeline.public._report_helpers import (
             _generate_and_store_report,
-            _run_rl_loop,
             _run_hypothesis_tot,
+            _run_rl_loop,
         )
+
         generated_report = ""
         tot_solution_count = 0
         if ctx.hermes_engine is not None and all_page_results:
@@ -775,11 +772,13 @@ class Phase6_ReportGenerator:
             except Exception:
                 pass
         return (
-            PipelineContext(**{
-                **ctx.__dict__,
-                "generated_report": generated_report,
-                "tot_solution_count": tot_solution_count,
-            }),
+            PipelineContext(
+                **{
+                    **ctx.__dict__,
+                    "generated_report": generated_report,
+                    "tot_solution_count": tot_solution_count,
+                }
+            ),
             generated_report,
             tot_solution_count,
         )
@@ -794,6 +793,7 @@ class Phase7_SynthesisRunner:
             return
         try:
             import psutil
+
             rss_gib = psutil.Process().memory_info().rss / 1024**3
             if rss_gib > 5.5:
                 logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
@@ -818,7 +818,7 @@ class Phase8_ExportManager:
             pass
         try:
             from hledac.universal.export.export_manager import get_export_manager
-            from hledac.universal.memory.memory_manager import export_session
+
             resolved_export_dir = ctx.export_dir or os.environ.get("GHOST_EXPORT_DIR")
             export_mgr = get_export_manager(resolved_export_dir)
             sources = [getattr(p, "url", "") for p in all_page_results if hasattr(p, "url") and p.url][:20]
@@ -828,7 +828,9 @@ class Phase8_ExportManager:
                 "tags": ["hledac", "osint", "public-pipeline"],
                 "session_id": ctx.session_id,
             }
-            md_path = export_mgr.export_markdown(report=generated_report, findings=[], file_path=None, metadata=export_metadata)
+            md_path = export_mgr.export_markdown(
+                report=generated_report, findings=[], file_path=None, metadata=export_metadata
+            )
             if md_path:
                 logger.info(f"[P18] Exported markdown to {md_path}")
         except Exception as e:
@@ -842,10 +844,11 @@ class Phase9_TemporalPersistence:
         """Save and return persistence status."""
         try:
             from hledac.universal.layers import (
-                get_temporal_signal_summary,
                 build_temporal_priority_hints,
+                get_temporal_signal_summary,
                 save_temporal_signal_snapshot,
             )
+
             temporal_signal_summary = get_temporal_signal_summary(k=10)
             temporal_priority_hints = build_temporal_priority_hints(k=10)
             persistence_saved = save_temporal_signal_snapshot()
@@ -858,11 +861,6 @@ class Phase9_TemporalPersistence:
             "temporal_priority_hints": temporal_priority_hints,
             "persistence_saved": persistence_saved,
         }
-
-
-# ----------------------------------------------------------------------
-# DiscoveryEngine
-# ----------------------------------------------------------------------
 
 
 async def safe_wait_for(coro, timeout, label):
@@ -881,6 +879,7 @@ def _ensure_discovery_patched() -> None:
         if LANE_REGISTRY.is_enabled("providerless_discovery"):
             try:
                 from hledac.universal.discovery.cascade import async_search_providerless
+
                 _ASYNC_DISCOVERY_SEARCH = async_search_providerless
             except ImportError:
                 _ASYNC_DISCOVERY_SEARCH = async_search_public_web
@@ -895,6 +894,7 @@ def _ensure_ct_scanner_patched() -> None:
         return
     try:
         from hledac.universal.network.ct_log_scanner import _CTLogScanner
+
         _scanner = _CTLogScanner(allow_external=True, cache_ttl_days=30)
 
         async def _get_subdomains(domain: str, async_session: Any = None) -> list[str]:
@@ -912,6 +912,7 @@ def _ensure_ct_scanner_patched() -> None:
 
 class DiscoveryEngine:
     """Engine 1: Handles all discovery-related logic."""
+
     __slots__ = ("query", "store", "max_results", "public_bootstrap_enabled", "seed_context")
 
     def __init__(
@@ -938,7 +939,14 @@ class DiscoveryEngine:
         discovery_error_type = disc["error_type"]
         discovery_elapsed_s = disc["elapsed"]
         discovery_attempted = disc["attempted"]
-        kw_result = {"candidates_count": 0, "fetch_attempted": 0, "fetch_success": 0, "bootstrap_order": "disabled", "errors": 0, "hits": ()}
+        kw_result = {
+            "candidates_count": 0,
+            "fetch_attempted": 0,
+            "fetch_success": 0,
+            "bootstrap_order": "disabled",
+            "errors": 0,
+            "hits": (),
+        }
         if not hits:
             kw_result = await self._run_keyword_fallback()
             hits = kw_result["hits"]
@@ -1047,7 +1055,9 @@ class DiscoveryEngine:
                     seed_urls = generate_seed_context_bootstrap_urls(self.seed_context, max_candidates=10)
                     candidates_count = len(seed_urls)
                     for idx, url in enumerate(seed_urls):
-                        bootstrap_hits.append(_make_discovery_hit(self.query, url, idx, reason="seed_context_bootstrap"))
+                        bootstrap_hits.append(
+                            _make_discovery_hit(self.query, url, idx, reason="seed_context_bootstrap")
+                        )
                 except Exception:
                     candidates_count = 0
         return {
@@ -1104,7 +1114,9 @@ class DiscoveryEngine:
         try:
             _discovery_start = time.monotonic()
             discovery_attempted = True
-            discovery_result = await safe_wait_for(_ASYNC_DISCOVERY_SEARCH(self.query, self.max_results), timeout=35.0, label="live_public_discovery")
+            discovery_result = await safe_wait_for(
+                _ASYNC_DISCOVERY_SEARCH(self.query, self.max_results), timeout=35.0, label="live_public_discovery"
+            )
             discovery_elapsed_s = time.monotonic() - _discovery_start
             cache_hit = int(getattr(discovery_result, "cache_hit", False))
             if hasattr(discovery_result, "hits"):
@@ -1119,7 +1131,11 @@ class DiscoveryEngine:
                 hits = tuple(rescue_hits) + disc_hits
             else:
                 hits = disc_hits
-            err_val = discovery_result.get("error") if isinstance(discovery_result, dict) else getattr(discovery_result, "error", None)
+            err_val = (
+                discovery_result.get("error")
+                if isinstance(discovery_result, dict)
+                else getattr(discovery_result, "error", None)
+            )
             if err_val:
                 discovery_error = str(err_val)
         except asyncio.CancelledError:
@@ -1169,14 +1185,10 @@ class DiscoveryEngine:
         }
 
 
-# ----------------------------------------------------------------------
-# Helper Functions
-# ----------------------------------------------------------------------
-
-
 def _make_discovery_hit(query: str, url: str, rank: int, reason: str = "deterministic_bootstrap") -> Any:
     """Create a DiscoveryHit-like object."""
     from hledac.universal.discovery.duckduckgo_adapter import DiscoveryHit
+
     return DiscoveryHit(
         query=query,
         title=f"Bootstrap {rank + 1}",
@@ -1197,11 +1209,15 @@ def _extract_hit_metadata(hit) -> dict:
     if hit_score is None and hasattr(hit, "__getitem__"):
         try:
             hit_score = float(hit[4]) if len(hit) > 4 else None
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             hit_score = None
     hit_reason = getattr(hit, "reason", None)
-    hit_title = getattr(hit, "title", None) or (str(hit[1] if len(hit) > 1 else "") if hasattr(hit, "__getitem__") else "")
-    hit_snippet = getattr(hit, "snippet", None) or (str(hit[3] if len(hit) > 3 else "") if hasattr(hit, "__getitem__") else "")
+    hit_title = getattr(hit, "title", None) or (
+        str(hit[1] if len(hit) > 1 else "") if hasattr(hit, "__getitem__") else ""
+    )
+    hit_snippet = getattr(hit, "snippet", None) or (
+        str(hit[3] if len(hit) > 3 else "") if hasattr(hit, "__getitem__") else ""
+    )
     hit_rank = getattr(hit, "rank", 0)
     return {
         "url": hit_url,
@@ -1217,6 +1233,7 @@ async def _get_uma_state() -> tuple[str, bool]:
     """Read UMA status via resource governor surface."""
     try:
         from hledac.universal._core.resource_governor import evaluate_uma_state, sample_uma_status_async
+
         status = await sample_uma_status_async()
         state = evaluate_uma_state(status.system_used_gib)
         return (state, status.io_only)
@@ -1231,6 +1248,7 @@ async def _run_academic_lane(store: Any, query: str) -> int:
         try:
             if LANE_REGISTRY.is_enabled("academic"):
                 from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
+
                 if ACADEMIC_ENABLED:
                     academic_results = await search_all_academic(query, max_results_per_source=10)
                     all_findings = []
@@ -1246,6 +1264,7 @@ async def _run_academic_lane(store: Any, query: str) -> int:
 
 async def _run_phase1_augmentation(hits: tuple, query: str, store: Any) -> tuple:
     """Phase 1: CT + CC + Pastebin/GitHub in parallel."""
+
     async def _ct_wrapper():
         try:
             return await _inject_ct_subdomain_hits(hits, query)
@@ -1261,7 +1280,9 @@ async def _run_phase1_augmentation(hits: tuple, query: str, store: Any) -> tuple
     async def _pastebin_github_wrapper():
         return (0, 0)
 
-    _build_p1 = await parallel([_ct_wrapper(), _cc_wrapper(), _pastebin_github_wrapper()], concurrency=4, policy="collect", ctx="phase1_aug")
+    _build_p1 = await parallel(
+        [_ct_wrapper(), _cc_wrapper(), _pastebin_github_wrapper()], concurrency=4, policy="collect", ctx="phase1_aug"
+    )
     return (_build_p1.ok[0], _build_p1.ok[1], _build_p1.ok[2])
 
 
@@ -1298,9 +1319,15 @@ def _build_discovery_telemetry(**kwargs) -> dict:
         "public_provider_stub": kwargs.get("pub_provider_stub", []),
         "public_provider_errors": kwargs.get("pub_provider_errors", []),
         "public_query_variants": kwargs.get("pub_query_variants", []),
-        "public_provider_timeout_count": kwargs.get("pub_provider_timeout_count", [0])[0] if kwargs.get("pub_provider_timeout_count") else 0,
-        "public_provider_import_error_count": kwargs.get("pub_provider_import_error_count", [0])[0] if kwargs.get("pub_provider_import_error_count") else 0,
-        "public_discovery_empty_reason": kwargs.get("pub_discovery_empty_reason", [""])[0] if kwargs.get("pub_discovery_empty_reason") else "",
+        "public_provider_timeout_count": kwargs.get("pub_provider_timeout_count", [0])[0]
+        if kwargs.get("pub_provider_timeout_count")
+        else 0,
+        "public_provider_import_error_count": kwargs.get("pub_provider_import_error_count", [0])[0]
+        if kwargs.get("pub_provider_import_error_count")
+        else 0,
+        "public_discovery_empty_reason": kwargs.get("pub_discovery_empty_reason", [""])[0]
+        if kwargs.get("pub_discovery_empty_reason")
+        else "",
         "discovery_error_type": kwargs.get("error_type") or "",
         "discovery_elapsed_s": round(kwargs.get("elapsed"), 3) if kwargs.get("elapsed") else None,
         "public_candidates_discovered": 0,
@@ -1315,11 +1342,6 @@ def _build_discovery_telemetry(**kwargs) -> dict:
     }
 
 
-# ----------------------------------------------------------------------
-# CT / CC / Onion Injection
-# ----------------------------------------------------------------------
-
-
 async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     """Thin CT winner-slice adapter."""
     global _CT_SCANNER_GET_SUBDOMAINS
@@ -1331,6 +1353,7 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     base_domain = _extract_base_domain(query)
     try:
         from hledac.universal.network.session_runtime import async_get_httpx_session
+
         shared_session = await async_get_httpx_session()
     except Exception:
         shared_session = None
@@ -1341,7 +1364,9 @@ async def _inject_ct_subdomain_hits(hits: tuple, query: str) -> tuple:
     if not subdomains:
         return hits
     subdomains = subdomains[:10]
-    ct_hits = tuple(_make_discovery_hit(query, f"https://{sub}", idx, "ct_subdomain") for idx, sub in enumerate(subdomains))
+    ct_hits = tuple(
+        _make_discovery_hit(query, f"https://{sub}", idx, "ct_subdomain") for idx, sub in enumerate(subdomains)
+    )
     return ct_hits + hits
 
 
@@ -1377,6 +1402,7 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
             pf_key = f"{query}\x00{onion_url}\x00onion_discovery"
             try:
                 from _core.rust_backend import rust
+
                 hashes = rust.crypto.batch_sha256_hw([pf_key])
                 pf_id = hashes[0][:16] if hashes else hashlib.sha256(pf_key.encode()).hexdigest()[:16]
             except Exception:
@@ -1404,11 +1430,6 @@ async def _inject_onion_hits(hits: tuple, query: str, store: Any) -> int:
         except Exception:
             pass
     return len(findings)
-
-
-# ----------------------------------------------------------------------
-# Result Builders
-# ----------------------------------------------------------------------
 
 
 def _get_patterns_configured_count() -> int:
@@ -1564,7 +1585,9 @@ def _build_pipeline_run_result(
         public_discovery_deduped_count=t.get("seen_url_count", 0),
         public_pages_fetched=total_fetched,
         public_pages_accepted=sum(1 for p in ctx.all_page_results if getattr(p, "accepted_findings", 0) > 0),
-        public_pages_rejected=sum(1 for p in ctx.all_page_results if getattr(p, "fetched", False) and getattr(p, "accepted_findings", 0) == 0),
+        public_pages_rejected=sum(
+            1 for p in ctx.all_page_results if getattr(p, "fetched", False) and getattr(p, "accepted_findings", 0) == 0
+        ),
         public_findings_accepted=total_accepted,
         zero_hit_accessible_fetch_count=0,
         ct_subdomain_injected=discovery.ct_injected,
@@ -1656,7 +1679,9 @@ def _build_pipeline_run_result(
 
 
 # Report helpers stubs
-async def _generate_and_store_report(query: str, pages: tuple, store: Any, hermes_engine: Any, vector_store: Any = None) -> str:
+async def _generate_and_store_report(
+    query: str, pages: tuple, store: Any, hermes_engine: Any, vector_store: Any = None
+) -> str:
     """Generate OSINT report from top findings."""
     return ""
 

@@ -11,14 +11,14 @@ no eval, no event loop blocking.
 """
 
 import pytest
-from hledac.universal.federated.qtable import FederatedQTable, MAX_QTABLE_ENTRIES
-from _core import aclose
+
+from hledac.universal.federated.qtable import FederatedQTable
 
 
 class TestFederatedQTableUpdate:
     """Test Q-learning update rule."""
 
-    def test_q_update_with_reward(self):
+    def test_q_update_with_reward(self) -> None:
         """
         Test that Q-learning update changes Q-value correctly.
 
@@ -43,7 +43,7 @@ class TestFederatedQTableUpdate:
         actual_q = qtable.get_q(state, action)
         assert abs(actual_q - expected_q) < 0.001, f"Expected {expected_q}, got {actual_q}"
 
-    def test_q_update_accumulates(self):
+    def test_q_update_accumulates(self) -> None:
         """Test that repeated updates accumulate Q-values."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         state = ("test", 0, 0, 0, False)
@@ -61,7 +61,7 @@ class TestFederatedQTableUpdate:
 
         assert q2 > q1, "Q-value should accumulate with repeated updates"
 
-    def test_q_update_with_next_state_values(self):
+    def test_q_update_with_next_state_values(self) -> None:
         """
         Test that max(Q(s',a')) influences update.
 
@@ -88,7 +88,7 @@ class TestFederatedQTableUpdate:
 class TestFederatedQTableActionSelection:
     """Test that action selection is deterministic on ties."""
 
-    def test_greedy_prefers_higher_q(self):
+    def test_greedy_prefers_higher_q(self) -> None:
         """Test that higher Q-value is always preferred."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         state = ("test", 0, 0, 0, False)
@@ -101,14 +101,14 @@ class TestFederatedQTableActionSelection:
         action = qtable.get_best_action(state, actions)
         assert action == "discovery", f"Expected 'discovery' (highest Q), got {action}"
 
-    def test_get_best_action_returns_first_on_empty(self):
+    def test_get_best_action_returns_first_on_empty(self) -> None:
         """Empty actions list returns empty string, not raises."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         state = ("test", 0)
         action = qtable.get_best_action(state, [])
         assert action == ""
 
-    def test_get_best_action_returns_first_on_tie(self):
+    def test_get_best_action_returns_first_on_tie(self) -> None:
         """On equal Q-values, returns first action in list."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         state = ("test", 0, 0, 0, False)
@@ -122,7 +122,7 @@ class TestFederatedQTableActionSelection:
 class TestFederatedQTableBounds:
     """Test bounded table size (MAX_QTABLE_ENTRIES)."""
 
-    def test_max_entries_eviction(self):
+    def test_max_entries_eviction(self) -> None:
         """When over MAX_QTABLE_ENTRIES, lowest Q entries are evicted."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9, max_entries=10)
         # Add many entries
@@ -133,7 +133,7 @@ class TestFederatedQTableBounds:
         # Should be capped at max_entries
         assert len(qtable) <= 10, f"Expected <= 10, got {len(qtable)}"
 
-    def test_len_returns_entry_count(self):
+    def test_len_returns_entry_count(self) -> None:
         """len() returns the number of entries."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         assert len(qtable) == 0
@@ -146,7 +146,7 @@ class TestFederatedQTableBounds:
 class TestFederatedQTableSerialization:
     """Test FederatedQTable serialization for LMDB persistence."""
 
-    def test_to_dict(self):
+    def test_to_dict(self) -> None:
         """Test FederatedQTable to_dict serialization."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         qtable.update(("test", 0, 0, 0, False), "discovery", 0.5, ("test", 1, 0, 0, False))
@@ -157,7 +157,7 @@ class TestFederatedQTableSerialization:
         # Keys are "state|action" format
         assert any("|" in k for k in data.keys())
 
-    def test_from_dict_roundtrip(self):
+    def test_from_dict_roundtrip(self) -> None:
         """Test FederatedQTable from_dict deserialization."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         qtable.update(("test", 0, 0, 0, False), "discovery", 0.5, ("test", 1, 0, 0, False))
@@ -169,7 +169,7 @@ class TestFederatedQTableSerialization:
         # Check it restored some entries
         assert len(restored) > 0
 
-    def test_from_dict_empty_data(self):
+    def test_from_dict_empty_data(self) -> None:
         """from_dict with empty/None data returns fresh qtable."""
         qt = FederatedQTable.from_dict({})
         assert len(qt) == 0
@@ -184,7 +184,7 @@ class TestFederatedQTableSerialization:
 class TestFederatedQTableFailSoft:
     """Test that FederatedQTable never raises."""
 
-    def test_get_q_on_invalid_state(self):
+    def test_get_q_on_invalid_state(self) -> None:
         """get_q returns 0.0 on invalid input, never raises."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         # None as state
@@ -194,14 +194,14 @@ class TestFederatedQTableFailSoft:
         result = qtable.get_q(123, "action")  # type: ignore
         assert result == 0.0
 
-    def test_update_on_invalid_state(self):
+    def test_update_on_invalid_state(self) -> None:
         """update silently handles invalid input."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         # Should not raise
         qtable.update(None, "action", 0.5, None)  # type: ignore
         qtable.update(123, "action", 0.5, 456)  # type: ignore
 
-    def test_get_best_action_on_empty_actions(self):
+    def test_get_best_action_on_empty_actions(self) -> None:
         """Empty actions returns empty string."""
         qtable = FederatedQTable(alpha=0.1, gamma=0.9)
         result = qtable.get_best_action(("test",), [])

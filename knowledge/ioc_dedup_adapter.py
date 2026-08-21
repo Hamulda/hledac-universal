@@ -27,21 +27,23 @@ PERSISTENCE:
 
 M1 8GB: Rust AHashMap (50k capacity) ≈ 5-8 MB resident
 """
+
 import atexit
-import orjson
 import logging
 import weakref
-from dataclasses import dataclass
-import msgspec
+from typing import TYPE_CHECKING, Any
+
+import orjson
+
 from compat.msgspec_gc_compat import Struct
 from hledac.universal.compat.msgspec_gc_compat import Struct
-from typing import TYPE_CHECKING, Any
 from hledac.universal.paths import LMDB_ROOT
-from _core import aclose
+
 if TYPE_CHECKING:
     pass
 logger = logging.getLogger(__name__)
-_IOC_DEDUP_LMDB_PATH = LMDB_ROOT / 'ioc_dedup.lmdb'
+_IOC_DEDUP_LMDB_PATH = LMDB_ROOT / "ioc_dedup.lmdb"
+
 
 def _ioc_dedup_at_exit_close(instance: IocDedupAdapter) -> None:
     """Called by weakref.finalize at interpreter exit if explicit close() was not called.
@@ -62,36 +64,39 @@ def _ioc_dedup_at_exit_close(instance: IocDedupAdapter) -> None:
     except Exception:  # noqa: BLE001
         pass
 
+
 def _normalize_ioc_value(value: str, ioc_type: str) -> str:
     """
     Normalize IOC value according to type rules.
     Mirrors Rust ioc_dedup.rs::normalize_ioc() for Python fallback path.
     """
     if not value:
-        return ''
+        return ""
     lower_type = ioc_type.lower()
-    if lower_type in ('domain', 'fqdn'):
+    if lower_type in ("domain", "fqdn"):
         lower = value.lower()
-        return lower[4:] if lower.startswith('www.') else lower
-    if lower_type in ('md5', 'sha1', 'sha256', 'sha2'):
+        return lower[4:] if lower.startswith("www.") else lower
+    if lower_type in ("md5", "sha1", "sha256", "sha2"):
         return value.lower()
-    if lower_type == 'cve':
+    if lower_type == "cve":
         return value.upper()
-    if lower_type in ('ip', 'ipv4'):
-        parts = value.split('.')
+    if lower_type in ("ip", "ipv4"):
+        parts = value.split(".")
         normalized = []
         for octet in parts:
             try:
                 normalized.append(str(int(octet)))
             except ValueError:
                 normalized.append(octet)
-        return '.'.join(normalized)
-    if lower_type == 'ipv6':
+        return ".".join(normalized)
+    if lower_type == "ipv6":
         return value.lower()
     return value
 
+
 class _IocEntryPython(Struct):
     """Python fallback entry matching ioc_dedup.rs::IocEntry."""
+
     normalized_value: str
     ioc_type: str
     first_seen_sprint: int
@@ -99,26 +104,28 @@ class _IocEntryPython(Struct):
     occurrence_count: int
     confidence_max: float
 
+
 class IocDedupStorePythonFallback:
     """
     Pure-Python IocDedupStore fallback.
     Mirrors Rust IocDedupStore API for environments without compiled extension.
     """
-    __slots__ = tuple(('_current_sprint', '_entries', '_total_deduped', '_total_seen'))
 
-    def __init__(self, sprint_id: int=0) -> None:
+    __slots__ = ("_current_sprint", "_entries", "_total_deduped", "_total_seen")
+
+    def __init__(self, sprint_id: int = 0) -> None:
         self._entries: dict[str, _IocEntryPython] = {}
         self._current_sprint = sprint_id
         self._total_seen = 0
         self._total_deduped = 0
 
-    def add(self, value: str, ioc_type_str: str, confidence: float=0.5) -> bool:
+    def add(self, value: str, ioc_type_str: str, confidence: float = 0.5) -> bool:
         """Add IOC — returns True if NEW, False if duplicate."""
         self._total_seen += 1
         if not value:
             return False
         normalized = _normalize_ioc_value(value, ioc_type_str)
-        key = f'{ioc_type_str.lower()}:{normalized}'
+        key = f"{ioc_type_str.lower()}:{normalized}"
         if key in self._entries:
             entry = self._entries[key]
             entry.last_seen_sprint = self._current_sprint
@@ -127,7 +134,14 @@ class IocDedupStorePythonFallback:
                 entry.confidence_max = confidence
             self._total_deduped += 1
             return False
-        self._entries[key] = _IocEntryPython(normalized_value=normalized, ioc_type=ioc_type_str.lower(), first_seen_sprint=self._current_sprint, last_seen_sprint=self._current_sprint, occurrence_count=1, confidence_max=confidence)
+        self._entries[key] = _IocEntryPython(
+            normalized_value=normalized,
+            ioc_type=ioc_type_str.lower(),
+            first_seen_sprint=self._current_sprint,
+            last_seen_sprint=self._current_sprint,
+            occurrence_count=1,
+            confidence_max=confidence,
+        )
         return True
 
     def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
@@ -139,7 +153,7 @@ class IocDedupStorePythonFallback:
         if not value:
             return False
         normalized = _normalize_ioc_value(value, ioc_type_str)
-        key = f'{ioc_type_str.lower()}:{normalized}'
+        key = f"{ioc_type_str.lower()}:{normalized}"
         return key in self._entries
 
     def advance_sprint(self, new_sprint_id: int) -> None:
@@ -161,7 +175,13 @@ class IocDedupStorePythonFallback:
         total = self._total_seen
         hit_rate = self._total_deduped / total if total > 0 else 0.0
         hit_rate_bp = int(hit_rate * 10000)
-        return {'total_seen': self._total_seen, 'total_deduped': self._total_deduped, 'unique_count': len(self._entries), 'current_sprint': self._current_sprint, 'hit_rate_bp': hit_rate_bp}
+        return {
+            "total_seen": self._total_seen,
+            "total_deduped": self._total_deduped,
+            "unique_count": len(self._entries),
+            "current_sprint": self._current_sprint,
+            "hit_rate_bp": hit_rate_bp,
+        }
 
     def get_by_type(self, ioc_type_str: str) -> list[str]:
         """Get all IOC values of specified type."""
@@ -171,14 +191,33 @@ class IocDedupStorePythonFallback:
     def get_entries_by_type(self, ioc_type_str: str) -> list[tuple[str, int, int, int, float]]:
         """Get entries with full metadata."""
         lower = ioc_type_str.lower()
-        return [(e.normalized_value, e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max) for e in self._entries.values() if e.ioc_type == lower]
+        return [
+            (e.normalized_value, e.first_seen_sprint, e.last_seen_sprint, e.occurrence_count, e.confidence_max)
+            for e in self._entries.values()
+            if e.ioc_type == lower
+        ]
 
     def get_sprint(self) -> int:
         return self._current_sprint
 
     def to_bytes(self) -> bytes:
         """Serialize state to bytes (compatible with Rust get_state_bytes)."""
-        data = {'entries': {k: {'nv': v.normalized_value, 'it': v.ioc_type, 'fs': v.first_seen_sprint, 'ls': v.last_seen_sprint, 'oc': v.occurrence_count, 'cm': v.confidence_max} for k, v in self._entries.items()}, 'cs': self._current_sprint, 'ts': self._total_seen, 'td': self._total_deduped}
+        data = {
+            "entries": {
+                k: {
+                    "nv": v.normalized_value,
+                    "it": v.ioc_type,
+                    "fs": v.first_seen_sprint,
+                    "ls": v.last_seen_sprint,
+                    "oc": v.occurrence_count,
+                    "cm": v.confidence_max,
+                }
+                for k, v in self._entries.items()
+            },
+            "cs": self._current_sprint,
+            "ts": self._total_seen,
+            "td": self._total_deduped,
+        }
         return orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
 
     def clear(self) -> None:
@@ -186,13 +225,16 @@ class IocDedupStorePythonFallback:
         self._total_seen = 0
         self._total_deduped = 0
 
+
 class IocDedupStats(Struct, frozen=True):
     """Stats snapshot from IocDedupAdapter."""
+
     total_seen: int = 0
     total_deduped: int = 0
     unique_count: int = 0
     current_sprint: int = 0
     hit_rate_bp: int = 0
+
 
 class IocDedupAdapter:
     """
@@ -210,9 +252,10 @@ class IocDedupAdapter:
     PERSISTENCE: State persisted to LMDB on every advance_sprint() call.
     Load happens lazily on first add() after init or after process restart.
     """
-    __slots__ = tuple(('_dirty', '_finalizer', '_lmdb_env', '_load_attempted', '_rust_available', '_sprint_id', '_store'))
 
-    def __init__(self, sprint_id: int=0) -> None:
+    __slots__ = ("_dirty", "_finalizer", "_lmdb_env", "_load_attempted", "_rust_available", "_sprint_id", "_store")
+
+    def __init__(self, sprint_id: int = 0) -> None:
         self._sprint_id = sprint_id
         self._rust_available = False
         self._store: Any = None
@@ -222,14 +265,15 @@ class IocDedupAdapter:
         self._rust_available = False
         try:
             from hledac.universal._core.rust_backend import rust as _rust_backend
+
             if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
                 self._store = _rust_backend.ioc_dedup.IocDedupStore(sprint_id=sprint_id)
                 self._rust_available = True
-                logger.debug('[IOC-DEDUP] Rust IocDedupStore initialized (sprint_id=%d)', sprint_id)
+                logger.debug("[IOC-DEDUP] Rust IocDedupStore initialized (sprint_id=%d)", sprint_id)
             else:
-                raise ImportError('Rust ioc_dedup not available')
+                raise ImportError("Rust ioc_dedup not available")
         except Exception as exc:
-            logger.debug('[IOC-DEDUP] Rust IocDedupStore unavailable (%s), using Python fallback', exc)
+            logger.debug("[IOC-DEDUP] Rust IocDedupStore unavailable (%s), using Python fallback", exc)
             self._store = IocDedupStorePythonFallback(sprint_id=sprint_id)
         try:
             _IOC_DEDUP_LMDB_PATH.mkdir(parents=True, exist_ok=True)
@@ -238,7 +282,7 @@ class IocDedupAdapter:
         self._finalizer = weakref.finalize(self, _ioc_dedup_at_exit_close, self)
         atexit.register(self._finalizer)
 
-    def add(self, value: str, ioc_type: str, confidence: float=0.5) -> bool:
+    def add(self, value: str, ioc_type: str, confidence: float = 0.5) -> bool:
         """
         Add IOC to dedup store. Returns True if NEW (not duplicate), False if duplicate.
 
@@ -257,7 +301,7 @@ class IocDedupAdapter:
             self._dirty = True
             return result
         except Exception as exc:
-            logger.warning('[IOC-DEDUP] add(%s, %s) failed: %s', value[:30], ioc_type, exc)
+            logger.warning("[IOC-DEDUP] add(%s, %s) failed: %s", value[:30], ioc_type, exc)
             return True
 
     def add_batch(self, items: list[tuple[str, str, float]]) -> list[bool]:
@@ -295,7 +339,7 @@ class IocDedupAdapter:
                 self._store.advance_sprint(new_sprint_id)
                 self._sprint_id = new_sprint_id
             except Exception as exc:
-                logger.warning('[IOC-DEDUP] advance_sprint(%d) failed: %s', new_sprint_id, exc)
+                logger.warning("[IOC-DEDUP] advance_sprint(%d) failed: %s", new_sprint_id, exc)
 
     def len(self) -> int:
         return len(self._store) if self._store else 0
@@ -310,9 +354,15 @@ class IocDedupAdapter:
         try:
             stats = self._store.stats()
             stats_dict = self._store.stats_dict()
-            return IocDedupStats(total_seen=stats[0], total_deduped=stats[1], unique_count=stats[2], current_sprint=stats_dict.get('current_sprint', self._sprint_id), hit_rate_bp=stats_dict.get('hit_rate_bp', 0))
+            return IocDedupStats(
+                total_seen=stats[0],
+                total_deduped=stats[1],
+                unique_count=stats[2],
+                current_sprint=stats_dict.get("current_sprint", self._sprint_id),
+                hit_rate_bp=stats_dict.get("hit_rate_bp", 0),
+            )
         except Exception as exc:
-            logger.warning('[IOC-DEDUP] get_stats() failed: %s', exc)
+            logger.warning("[IOC-DEDUP] get_stats() failed: %s", exc)
             return IocDedupStats()
 
     def get_by_type(self, ioc_type: str) -> list[str]:
@@ -356,10 +406,11 @@ class IocDedupAdapter:
             return True
         try:
             import lmdb
+
             self._lmdb_env = lmdb.open(str(_IOC_DEDUP_LMDB_PATH), map_size=16 * 1024 * 1024, readonly=False, lock=True)
             return True
         except Exception as exc:
-            logger.debug('[IOC-DEDUP] LMDB open failed (non-fatal): %s', exc)
+            logger.debug("[IOC-DEDUP] LMDB open failed (non-fatal): %s", exc)
             self._lmdb_env = None
             return False
 
@@ -375,30 +426,42 @@ class IocDedupAdapter:
             return False
         try:
             with self._lmdb_env.begin() as txn:
-                data = txn.get(b'ioc_dedup_state')
+                data = txn.get(b"ioc_dedup_state")
                 if data is None:
                     return False
             if self._rust_available:
                 from hledac.universal._core.rust_backend import rust as _rust_backend
-                ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, 'ioc_dedup_from_bytes', None)
+
+                ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, "ioc_dedup_from_bytes", None)
                 if ioc_dedup_from_bytes:
                     self._store = ioc_dedup_from_bytes(data)
                 else:
-                    raise ImportError('ioc_dedup_from_bytes not available')
+                    raise ImportError("ioc_dedup_from_bytes not available")
             else:
                 parsed = orjson.loads(data)
-                fallback = IocDedupStorePythonFallback(sprint_id=parsed.get('cs', 0))
+                fallback = IocDedupStorePythonFallback(sprint_id=parsed.get("cs", 0))
                 fallback._entries = {}
-                for k, v in parsed.get('entries', {}).items():
-                    fallback._entries[k] = _IocEntryPython(normalized_value=v['nv'], ioc_type=v['it'], first_seen_sprint=v['fs'], last_seen_sprint=v['ls'], occurrence_count=v['oc'], confidence_max=v['cm'])
-                fallback._total_seen = parsed.get('ts', 0)
-                fallback._total_deduped = parsed.get('td', 0)
+                for k, v in parsed.get("entries", {}).items():
+                    fallback._entries[k] = _IocEntryPython(
+                        normalized_value=v["nv"],
+                        ioc_type=v["it"],
+                        first_seen_sprint=v["fs"],
+                        last_seen_sprint=v["ls"],
+                        occurrence_count=v["oc"],
+                        confidence_max=v["cm"],
+                    )
+                fallback._total_seen = parsed.get("ts", 0)
+                fallback._total_deduped = parsed.get("td", 0)
                 self._store = fallback
-            logger.info('[IOC-DEDUP] Loaded %d entries from LMDB (rust=%s)', len(self._store) if self._store else 0, self._rust_available)
+            logger.info(
+                "[IOC-DEDUP] Loaded %d entries from LMDB (rust=%s)",
+                len(self._store) if self._store else 0,
+                self._rust_available,
+            )
             self._dirty = False
             return True
         except Exception as exc:
-            logger.debug('[IOC-DEDUP] LMDB load failed (non-fatal): %s', exc)
+            logger.debug("[IOC-DEDUP] LMDB load failed (non-fatal): %s", exc)
             return False
 
     def _persist_lmdb(self) -> bool:
@@ -411,20 +474,22 @@ class IocDedupAdapter:
         if not self._ensure_lmdb():
             return False
         try:
-            if self._rust_available and hasattr(self._store, 'to_bytes'):
+            if self._rust_available and hasattr(self._store, "to_bytes"):
                 state_bytes = self._store.to_bytes()
             elif self._store is not None:
                 state_bytes = self._store.to_bytes()
             else:
                 return False
             with self._lmdb_env.begin(write=True) as txn:
-                assert isinstance(state_bytes, (bytes, memoryview)), f'Expected bytes/memoryview, got {type(state_bytes)}'
-                txn.put(b'ioc_dedup_state', state_bytes)
+                assert isinstance(state_bytes, (bytes, memoryview)), (
+                    f"Expected bytes/memoryview, got {type(state_bytes)}"
+                )
+                txn.put(b"ioc_dedup_state", state_bytes)
             self._dirty = False
-            logger.debug('[IOC-DEDUP] Persisted %d entries to LMDB', len(self._store) if self._store else 0)
+            logger.debug("[IOC-DEDUP] Persisted %d entries to LMDB", len(self._store) if self._store else 0)
             return True
         except Exception as exc:
-            logger.warning('[IOC-DEDUP] LMDB persist failed (non-fatal): %s', exc)
+            logger.warning("[IOC-DEDUP] LMDB persist failed (non-fatal): %s", exc)
             return False
 
     def flush(self) -> bool:

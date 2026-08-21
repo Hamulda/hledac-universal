@@ -9,22 +9,26 @@ When the Rust fulltext module (hledac_rust_extensions.fulltext) is available,
 
 LocalSearchSeam delegates to mmap-backed Tantivy. Otherwise falls back to the
 pure-Python BM25Index transparently."""
+
 import logging
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
-import msgspec
-from compat.msgspec_gc_compat import Struct
-from hledac.universal.compat.msgspec_gc_compat import Struct
 from time import perf_counter
 from typing import Any
-from _core import aclose
+
+import msgspec
+
+from compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
+
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 
+
 class SearchDocument(Struct, frozen=True):
     """OSINT document for BM25 indexing."""
+
     url: str
     title: str
     content: str
@@ -32,11 +36,14 @@ class SearchDocument(Struct, frozen=True):
     score: float = 0.0
     # frozen=True auto-generates __hash__ and __eq__
 
+
 class SearchResult(Struct, frozen=True):
     """Search results with timing metadata."""
+
     query: str
     results: list[SearchDocument]
     timing_ms: float
+
 
 class BM25Index:
     """BM25 fulltext index over SearchDocument collection.
@@ -44,10 +51,23 @@ class BM25Index:
     Bounded to MAX_BM25_DOCUMENTS to prevent unbounded term_doc_freqs growth.
     Uses rank_bm25 if available, falls back to pure Python implementation.
     """
-    MAX_BM25_DOCUMENTS: int = 50000
-    __slots__ = tuple(('_N', '_RankBM25', '_avg_doc_length', '_doc_freqs', '_doc_lengths', '_documents', '_rank_bm25', '_term_doc_freqs', '_use_rank_bm25', 'b', 'k1'))
 
-    def __init__(self, k1: float=1.5, b: float=0.75):
+    MAX_BM25_DOCUMENTS: int = 50000
+    __slots__ = (
+        "_N",
+        "_RankBM25",
+        "_avg_doc_length",
+        "_doc_freqs",
+        "_doc_lengths",
+        "_documents",
+        "_rank_bm25",
+        "_term_doc_freqs",
+        "_use_rank_bm25",
+        "b",
+        "k1",
+    )
+
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         self.k1 = k1
         self.b = b
         self._documents: list[SearchDocument] = []
@@ -59,6 +79,7 @@ class BM25Index:
         self._rank_bm25 = None
         try:
             from rank_bm25 import BM25Okapi as _RankBM25
+
             self._RankBM25 = _RankBM25
             self._use_rank_bm25 = True
         except ImportError:
@@ -67,7 +88,7 @@ class BM25Index:
 
     def _tokenize(self, text: str) -> list[str]:
         """Simple tokenization matching rag_engine pattern."""
-        return re.findall('\\b[a-zA-Z]+\\b', text.lower())
+        return re.findall("\\b[a-zA-Z]+\\b", text.lower())
 
     def _score_bm25(self, term: str, doc_idx: int, doc_len: int, term_freq: int) -> float:
         """Compute BM25 score for one term-document pair."""
@@ -90,7 +111,7 @@ class BM25Index:
     def add_document(self, doc: SearchDocument) -> None:
         """Add document to index. Silently drops if MAX reached."""
         if len(self._documents) >= self.MAX_BM25_DOCUMENTS:
-            logger.debug('BM25Index at max capacity (%d), dropping document', self.MAX_BM25_DOCUMENTS)
+            logger.debug("BM25Index at max capacity (%d), dropping document", self.MAX_BM25_DOCUMENTS)
             return
         tokens = self._tokenize(doc.content)
         doc_length = len(tokens)
@@ -109,7 +130,7 @@ class BM25Index:
             tokenized_corpus = [self._tokenize(d.content) for d in self._documents]
             self._rank_bm25 = self._RankBM25(tokenized_corpus)
 
-    def search(self, query: str, top_k: int=10) -> list[tuple[int, float]]:
+    def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Search index, return list of (doc_idx, score) sorted descending."""
         if not self._documents:
             return []
@@ -118,6 +139,7 @@ class BM25Index:
             return []
         if self._use_rank_bm25 and self._rank_bm25 is not None:
             import numpy as np
+
             scores = self._rank_bm25.get_scores(query_tokens)
             top_indices = np.argsort(scores)[::-1][:top_k]
             return [(int(idx), float(scores[idx])) for idx in top_indices if scores[idx] > 0]
@@ -131,9 +153,11 @@ class BM25Index:
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_scores[:top_k]
 
+
 class MetadataStore:
     """Dict-backed per-URL metadata store with bulk load support."""
-    __slots__ = tuple(('_data',))
+
+    __slots__ = ("_data",)
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
@@ -157,24 +181,28 @@ class MetadataStore:
     def __len__(self) -> int:
         return len(self._data)
 
+
 class LocalSearchSeam:
     """Facade combining BM25Index + MetadataStore for local search.
 
     Provides search(query, top_k) and index(documents) methods.
     Thread-unsafe — single-threaded usage only.
     """
-    MAX_RESULT_SET: int = 100
-    __slots__ = tuple(('_bm25', '_metadata'))
 
-    def __init__(self, k1: float=1.5, b: float=0.75):
+    MAX_RESULT_SET: int = 100
+    __slots__ = ("_bm25", "_metadata")
+
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None:
         # ISSUE-011: Use TantivyFulltextIndex (Rust mmap) when available.
         # Falls back to Python BM25Index transparently.
         try:
             from hledac.universal.knowledge.rag_engine import TantivyFulltextIndex
+
             self._bm25: Any = TantivyFulltextIndex(
-                k1=k1, b=b,
-                index_path=str(Path.home() / '.hledac' / 'osint_fulltext_index'),
-    )
+                k1=k1,
+                b=b,
+                index_path=str(Path.home() / ".hledac" / "osint_fulltext_index"),
+            )
         except ImportError:
             self._bm25 = BM25Index(k1=k1, b=b)
         self._metadata = MetadataStore()
@@ -190,7 +218,7 @@ class LocalSearchSeam:
         self._bm25.index(documents)
         return len(documents)
 
-    def search(self, query: str, top_k: int=10) -> SearchResult:
+    def search(self, query: str, top_k: int = 10) -> SearchResult:
         """Search index, return SearchResult with documents and timing."""
         top_k = min(top_k, self.MAX_RESULT_SET)
         start = perf_counter()

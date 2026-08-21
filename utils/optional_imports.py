@@ -51,7 +51,6 @@ ISSUE #14 FIX: MLX-specific lazy import patterns for M1 8GB optimization.
 import importlib
 import threading
 from typing import Any
-from _core import aclose
 
 __all__ = [
     "optional",
@@ -71,6 +70,7 @@ __all__ = [
 # MLX Lazy Import Patterns (ISSUE #14 FIX)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _detect_mlx_available() -> bool:
     """
     Return True only if mlx package is installed (no mlx.core import).
@@ -81,6 +81,7 @@ def _detect_mlx_available() -> bool:
     """
     try:
         import importlib.metadata
+
         importlib.metadata.version("mlx")
         return True
     except Exception:
@@ -163,6 +164,7 @@ def get_mlx_nn() -> Any:
 # Callable lazy import proxies (for drop-in replacement of top-level imports)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class _LazyModuleProxy:
     """
     Callable lazy import proxy for MLX modules.
@@ -178,6 +180,7 @@ class _LazyModuleProxy:
 
     ISSUE #14 FIX: Zero-cost at module load, ~200-500ms cold start savings.
     """
+
     __slots__ = ("_dotted", "_cache", "_resolved", "_lock")
 
     def __init__(self, dotted: str) -> None:
@@ -200,7 +203,7 @@ class _LazyModuleProxy:
                     self._cache = getattr(mod, attr_name)
                 else:
                     self._cache = importlib.import_module(self._dotted)
-            except (ImportError, AttributeError):
+            except ImportError, AttributeError:
                 self._cache = None
             self._resolved = True
         return self._cache
@@ -252,6 +255,7 @@ mlx_optimizers: _LazyModuleProxy = _LazyModuleProxy("mlx.optimizers")
 
 class _Unresolved:
     """Sentinel — distinguish 'not resolved yet' from None (which may be a valid resolved value)."""
+
     __slots__ = ()
 
 
@@ -303,7 +307,7 @@ class _OptionalImport:
             if self._attr:
                 return getattr(mod, self._attr)
             return mod
-        except (ImportError, AttributeError):
+        except ImportError, AttributeError:
             return None
 
     def __call__(self) -> Any:
@@ -404,6 +408,7 @@ class _LazyDecorator:
             # Return identity decorator when nothing resolves
             def identity(fn: Any) -> Any:
                 return fn
+
             return identity
         return self._value(*args, **kwargs)
 

@@ -9,15 +9,9 @@ Used for evidence log mpsc channel implementation.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from _core._util import aclose
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-
-
-# =============================================================================
-# SPSC Queue Domain
-# =============================================================================
 
 
 class _RustSPSCDomain:
@@ -68,7 +62,6 @@ class _PythonSPSCDomain:
 
     def item_free(self, item_ptr: int) -> None:
         """Python fallback: no-op."""
-        pass
 
 
 class _PythonSPSCSender:

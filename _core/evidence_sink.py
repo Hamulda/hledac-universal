@@ -15,10 +15,11 @@ Pravidla:
 - Implementace (EvidenceLog) žije v injection layer
 - Fail-safe: pokud evidence_sink=None, evidence se pouze sbírají v paměti
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac.universal.evidence_log import EvidenceEvent
@@ -75,5 +76,4 @@ class EvidenceSink(ABC):
 
 
 # Protocol verze — pro structural typing (Protocol + typing.Protocol)
-from typing import Protocol as EvidenceSinkProtocol  # noqa: E402, F401
-from _core._util import aclose
+from typing import Protocol as EvidenceSinkProtocol

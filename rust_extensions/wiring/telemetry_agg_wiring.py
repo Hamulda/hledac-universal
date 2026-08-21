@@ -34,11 +34,9 @@ from typing import TYPE_CHECKING
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
-# Import the integration layer
 from rust_extensions.integrations import TelemetryIntegration, TelemetryCounter, TelemetryHistogram
 
 # Global telemetry instance
@@ -48,11 +46,9 @@ _telemetry = TelemetryIntegration()
 _counters: dict[str, TelemetryCounter] = {}
 _histograms: dict[str, TelemetryHistogram] = {}
 
-
 def telemetry_wired() -> TelemetryIntegration:
     """Get the wired telemetry integration."""
     return _telemetry
-
 
 def get_counter(name: str) -> TelemetryCounter:
     """
@@ -67,7 +63,6 @@ def get_counter(name: str) -> TelemetryCounter:
     if name not in _counters:
         _counters[name] = _telemetry.create_counter(name)
     return _counters[name]
-
 
 def get_histogram(
     name: str,
@@ -88,7 +83,6 @@ def get_histogram(
     if name not in _histograms:
         _histograms[name] = _telemetry.create_histogram(name, min_value, max_value)
     return _histograms[name]
-
 
 # Decorator for automatic telemetry
 def tracked(
@@ -162,13 +156,11 @@ def tracked(
 
     return decorator
 
-
 @dataclass
 class TelemetrySnapshot:
     """Snapshot of all telemetry data."""
     counters: dict[str, tuple[int, int]]
     histograms: dict[str, dict[str, float]]
-
 
 def get_snapshot() -> TelemetrySnapshot:
     """
@@ -187,7 +179,6 @@ def get_snapshot() -> TelemetrySnapshot:
 
     return TelemetrySnapshot(counters=counters, histograms=histograms)
 
-
 def reset_all() -> None:
     """Reset all counters and histograms."""
     for counter in _counters.values():
@@ -195,8 +186,6 @@ def reset_all() -> None:
         counter._python_bytes = 0
     _histograms.clear()
 
-
-# Check availability at import time for logging
 if _telemetry.available:
     logger.info("[Telemetry] Rust telemetry_agg.rs integration: ENABLED")
 else:

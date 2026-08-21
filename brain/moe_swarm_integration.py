@@ -27,12 +27,10 @@ import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Optional
-from .content_router import ContentRouter, classify_content, get_preferred_model, route_content
-from .micro_model_pool import MICRO_MODELS, IMicroModelPool, LoadedMicroModel, MicroModelPool, MicroModelSpec, TaskType, create_micro_model_pool
+from .content_router import ContentRouter, classify_content, route_content
+from .micro_model_pool import MicroModelPool, TaskType
 from .micro_model_swarm import MicroModelSwarmRouter, create_swarm_router
 if TYPE_CHECKING:
-    import mlx.core as mx
-    import mlx.nn as mlx_nn
 logger = logging.getLogger(__name__)
 
 class ResourceGovernor:

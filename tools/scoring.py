@@ -2,25 +2,20 @@
 Lead scoring and contradiction utilities (no dependencies on internal storage).
 """
 
-from itertools import combinations
-
 import re
 import time
-from _core import aclose
+from itertools import combinations
 
 
 def normalize_text(text: str) -> str:
     """Normalize text for contradiction detection (lowercase, trim, remove punctuation)."""
     text = text.lower().strip()
-    text = re.sub(r'[^\w\s]', '', text)
-    return re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def has_contradiction(
-    object_variants: list[str],
-    predicate: str,
-    whitelist: set[str],
-    domain_sets: list[set[str]]
+    object_variants: list[str], predicate: str, whitelist: set[str], domain_sets: list[set[str]]
 ) -> bool:
     """
     Determine if a set of object variants represents a significant contradiction.
@@ -40,12 +35,11 @@ def has_contradiction(
     differing = False
     for (i, var_i), (j, var_j) in combinations(enumerate(norm_variants), 2):
         if var_i != var_j:
-            # Check domain independence for this pair
             domains_i = domain_sets[i] if i < len(domain_sets) else set()
             domains_j = domain_sets[j] if j < len(domain_sets) else set()
             if len(domains_i | domains_j) >= 2:
-                    differing = True
-                    break
+                differing = True
+                break
         if differing:
             break
 
